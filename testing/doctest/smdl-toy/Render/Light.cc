@@ -135,7 +135,7 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER)};
+                                         Fixture::RECEIVER, false)};
     const bool sampled{i == 0 || i == 4};
     CHECK((pdf > 0.0f) == sampled);
     CHECK(lights.causticLight(hit.instIndex) == sampled);
@@ -187,7 +187,7 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER)};
+                                         Fixture::RECEIVER, false)};
     const bool emitter{i != 2};
     CHECK((pdf > 0.0f) == emitter);
     CHECK(lights.causticLight(hit.instIndex) == emitter);
@@ -294,7 +294,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
         CHECK(sample.pdf ==
               doctest::Approx(lights.solidAnglePDF(sample.hit.instIndex,
                                                    sample.target, sample.normal,
-                                                   Fixture::RECEIVER))
+                                                   Fixture::RECEIVER, false))
                   .epsilon(1e-4));
       }
     }
@@ -302,7 +302,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   }
   REQUIRE(pmfLamp > 0.0f);
   CHECK(numArea > 0);
-  // A sphere's selection PMF is what is left of `solidAnglePDF()` after
+  // A sphere's selection PMF is what is left of `solidAnglePDF(, false)` after
   // the geometry: the instances are translated only, so the position
   // density is one over the object area.
   auto spherePMF{[&](int i) {
@@ -312,7 +312,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
     const float distSq{lengthSquared(toLight)};
     const float cosLight{absDot(hit.Ng, toLight / std::sqrt(distSq))};
     const float pmf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER) *
+                                         Fixture::RECEIVER, true) *
                     area * cosLight / distSq};
     allocator.reset();
     return pmf;
@@ -323,6 +323,140 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   CHECK(pmfPower == doctest::Approx(pmfExitance / PI).epsilon(1e-3));
   CHECK(pmfLamp + pmfExitance + pmfPower ==
         doctest::Approx(1.0f).epsilon(1e-3));
+}
+
+namespace {
+
+// Two `glow` spheres, one of them mirrored across X so that the cone
+// draw's object-space mapping is exercised through a reflecting
+// placement, seen from the receiver below and to the side.
+class ConeFixture final {
+public:
+  ConeFixture() {
+    if (auto error{compiler.addCode("::conetest", MATERIALS)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    for (int i = 0; i < 2; i++) {
+      LayoutItem item{};
+      item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+      item.primitive.radius = RADIUS;
+      item.materials.all = "glow";
+      item.light = true;
+      if (i == 1) item.objectToWorld[0] = float4(-1.0f, 0.0f, 0.0f, 0.0f);
+      item.objectToWorld[3] = float4(center(i), 1.0f);
+      scene.add(item);
+    }
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto gridSpec{std::vector<float>(16)};
+    for (size_t i = 0; i < gridSpec.size(); i++)
+      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+    wavelengths =
+        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+    renderWavelengths() = wavelengths;
+    scene.commit(wavelengths);
+  }
+
+  [[nodiscard]] static float3 center(int i) noexcept {
+    return float3(2.0f * float(i), 0.0f, 0.0f);
+  }
+
+  static constexpr float RADIUS{0.5f};
+  static constexpr float3 RECEIVER{4.0f, 0.0f, -3.0f};
+
+  smdl::Compiler compiler{};
+  Scene scene{compiler};
+  Color wavelengths{};
+};
+
+} // namespace
+
+TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
+          "manifold gather") {
+  ConeFixture fixture{};
+  const LightSampler lights{
+      fixture.compiler, fixture.scene, nullptr, {}, fixture.wavelengths};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  Sampler sampler{};
+  // Exitance 2 per band is a radiance of `2 / pi`; the irradiance of a
+  // sphere on a receiver facing its center is `pi L (R / d)^2`; both
+  // spheres weigh the same, so each is drawn half the time.
+  const float radiance{2.0f / PI};
+  constexpr int NUM_DRAWS{4096};
+  double sum[2][2]{};
+  double sumSq[2][2]{};
+  int num[2][2]{};
+  for (int i = 0; i < NUM_DRAWS; i++) {
+    for (int pass = 0; pass < 2; pass++) {
+      const bool keepDark{pass == 1};
+      sampler.startPixelSample(0, uint32_t(i));
+      LightSample sample{};
+      if (!lights.sample(state, sampler, ConeFixture::RECEIVER, sample,
+                         keepDark)) {
+        allocator.reset();
+        continue;
+      }
+      CAPTURE(i);
+      CAPTURE(pass);
+      const int k{int(sample.hit.instIndex)};
+      REQUIRE(k < 2);
+      const float3 toCenter{ConeFixture::center(k) - ConeFixture::RECEIVER};
+      const float dist{length(toCenter)};
+      const float3 axis{toCenter / dist};
+      const float cosThetaMax{std::sqrt(
+          1.0f - ConeFixture::RADIUS * ConeFixture::RADIUS / (dist * dist))};
+      // On the sphere, at the density the arrival site recomputes for the
+      // same technique.
+      CHECK(length(sample.target - ConeFixture::center(k)) ==
+            doctest::Approx(ConeFixture::RADIUS).epsilon(1.0e-4));
+      CHECK(sample.pdf ==
+            doctest::Approx(
+                lights.solidAnglePDF(uint32_t(k), sample.target, sample.normal,
+                                     ConeFixture::RECEIVER, keepDark))
+                .epsilon(1.0e-4));
+      const double estimate{double(sample.Li[0]) * dot(sample.wi, axis) /
+                            sample.pdf};
+      if (!keepDark) {
+        // Inside the cone, facing the receiver, lit, at the cone's density.
+        CHECK(dot(sample.wi, axis) >= cosThetaMax * (1.0f - 1.0e-5f));
+        CHECK(dot(sample.normal, -sample.wi) > 0.0f);
+        CHECK(sample.Li[0] == doctest::Approx(radiance).epsilon(1.0e-3));
+        CHECK(sample.pdf ==
+              doctest::Approx(0.5f / (TWO_PI * (1.0f - cosThetaMax)))
+                  .epsilon(1.0e-3));
+      }
+      num[pass][k]++;
+      sum[pass][k] += estimate;
+      sumSq[pass][k] += estimate * estimate;
+      allocator.reset();
+    }
+  }
+  for (int k = 0; k < 2; k++) {
+    CAPTURE(k);
+    const float dist{length(ConeFixture::center(k) - ConeFixture::RECEIVER)};
+    const double irradiance{PI * radiance * ConeFixture::RADIUS *
+                            ConeFixture::RADIUS / (dist * dist)};
+    CHECK(num[0][k] > NUM_DRAWS / 4);
+    CHECK(num[1][k] > NUM_DRAWS / 4);
+    CHECK(sum[0][k] / NUM_DRAWS == doctest::Approx(irradiance).epsilon(0.02));
+    CHECK(sum[1][k] / NUM_DRAWS == doctest::Approx(irradiance).epsilon(0.08));
+    // Among the draws of one sphere, the cone estimate barely varies
+    // while the area estimate is zero half the time.
+    const auto spread{[&](int pass) {
+      const double mean{sum[pass][k] / num[pass][k]};
+      return std::sqrt(
+          std::max(sumSq[pass][k] / num[pass][k] - mean * mean, 0.0));
+    }};
+    CHECK(spread(0) < 0.1 * spread(1));
+  }
 }
 
 // The lights the layout declares, against the visible lamp they stand
@@ -549,6 +683,11 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     // Six by two in the world, so a radiance of `2 / (pi 12)` per band.
     const float area{12.0f};
     const float radiance{2.0f / (PI * area)};
+    const float solidAngle{
+        4.0f * std::atan(3.0f * 1.0f /
+                         (LampFixture::HEIGHT *
+                          std::sqrt(LampFixture::HEIGHT * LampFixture::HEIGHT +
+                                    9.0f + 1.0f)))};
     int num{};
     for (int i = 0; i < 1024; i++) {
       sampler.startPixelSample(0, uint32_t(i));
@@ -560,15 +699,15 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
       }
       CAPTURE(i);
       num++;
-      const float distSq{lengthSquared(sample.target - LampFixture::RECEIVER)};
-      const float cosLight{absDot(sample.normal, sample.wi)};
       CHECK(std::abs(sample.target.x) <= 3.0f * (1.0f + 1.0e-5f));
       CHECK(std::abs(sample.target.y) <= 1.0f * (1.0f + 1.0e-5f));
       CHECK(sample.target.z == doctest::Approx(LampFixture::HEIGHT));
       CHECK(sample.normal.z == doctest::Approx(-1.0f));
       CHECK(sample.Li[0] == doctest::Approx(radiance));
-      CHECK(sample.pdf * area * cosLight / distSq ==
-            doctest::Approx(0.5f).epsilon(1.0e-3));
+      // Uniform over the spherical rectangle: the same density for every
+      // draw, one over the solid angle a 6 by 2 rectangle subtends 3
+      // units below its center, times the selection PMF.
+      CHECK(sample.pdf == doctest::Approx(0.5f / solidAngle).epsilon(1.0e-3));
       allocator.reset();
     }
     CHECK(num > 256);

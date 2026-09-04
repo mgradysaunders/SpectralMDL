@@ -523,6 +523,13 @@ PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
   }
 }
 
+float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
+                   const float3 &objectPoint) {
+  PieceHit hit{};
+  hit.point = objectPoint;
+  return pieceUV(spec, primID, hit);
+}
+
 PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
   // Pick the piece proportionally to its area, rescaling the used
   // coordinate so the pick costs no stratification within the piece.

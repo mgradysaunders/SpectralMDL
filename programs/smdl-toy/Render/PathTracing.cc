@@ -1173,6 +1173,16 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
 // unmasked continuation density exactly as the continuation's arrivals
 // are weighed for those lobes (`tracePath()` keeps their share of each
 // arrival and drops the claimed share).
+// Does the gather at a vertex of `kind` run the manifold estimators,
+// whose light samples are drawn by area (`LightSampler::sample()`'s
+// `keepDark`)? The arrival sites ask this of the previous vertex to
+// recompute the density its gather drew with.
+[[nodiscard]] static bool gatherRunsManifold(const MNEEOptions &mneeOptions,
+                                             VertexKind kind,
+                                             bool receiver) noexcept {
+  return kind != VertexKind::HAIR && mneeOptions.depth > 0 && receiver;
+}
+
 [[nodiscard]]
 Color gatherDirect(const Scene &scene, Sampler &sampler,
                    const Color &wavelengths, smdl::BumpPtrAllocator &allocator,
@@ -1185,7 +1195,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
                    const ManifoldClaim &manifoldClaim = {},
                    bool armedBehind = false, bool receiver = true) {
   const auto mneeDepth{kind == VertexKind::HAIR ? 0 : mneeOptions.depth};
-  const bool runManifold{mneeDepth > 0 && receiver};
+  const bool runManifold{gatherRunsManifold(mneeOptions, kind, receiver)};
   Color direct{};
   if (lights.empty()) return direct;
   LightSample lightSample{};
@@ -1410,6 +1420,9 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   Color prevClaimedShare{};
   bool prevShareCausticOnly{};
   float3 prevPoint{};
+  // Whether the gather at that vertex drew its light sample by area, so
+  // the arrival's MIS density is the one it drew with.
+  bool prevAreaSampled{};
   MNEECoverage mneeCoverage{};
   // The clamp scale of a contribution with the given number of bounces:
   // 1 outside the contribution bound's reach, else what scales the
@@ -1580,6 +1593,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           wpdfPrev = phaseValue;
           prevDirac = false;
           prevPoint = point;
+          prevAreaSampled =
+              gatherRunsManifold(mneeOptions, VertexKind::VOLUME, true);
           // A volume vertex is a manifold-NEE receiver like any other.
           mneeCoverage.arm(mneeOptions.any(), point, phaseValue, medium);
           // Phase functions scatter wide, so grow the cone like a
@@ -1709,12 +1724,12 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     if (mat.hasEmission()) {
       Color Le{};
       if (lightSampler.emittedRadiance(mat, hit.instIndex, wo, Le)) {
-        float weight{
-            depth == 2 || prevDirac
-                ? 1.0f
-                : smdl::powerHeuristic(wpdfPrev, lightSampler.solidAnglePDF(
-                                                     hit.instIndex, hit.point,
-                                                     hit.Ng, prevPoint))};
+        float weight{depth == 2 || prevDirac
+                         ? 1.0f
+                         : smdl::powerHeuristic(
+                               wpdfPrev, lightSampler.solidAnglePDF(
+                                             hit.instIndex, hit.point, hit.Ng,
+                                             prevPoint, prevAreaSampled))};
         addArrival(
             Le, weight, depth - 2, lightSampler.causticLight(hit.instIndex),
             records && numRecords > 1 ? &records[numRecords - 2] : nullptr,
@@ -1726,8 +1741,9 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
               target.point = hit.point;
               target.isInfinite = false;
               target.normal = hit.Ng;
-              return lightSampler.solidAnglePDF(
-                  hit.instIndex, hit.point, hit.Ng, mneeCoverage.receiver());
+              return lightSampler.solidAnglePDF(hit.instIndex, hit.point,
+                                                hit.Ng, mneeCoverage.receiver(),
+                                                /*areaSampled=*/true);
             });
       }
     }
@@ -1849,6 +1865,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     wpdfPrev = wpdf;
     prevDirac = isDiracBounce;
     prevPoint = hit.point;
+    prevAreaSampled = gatherRunsManifold(
+        mneeOptions, isHair ? VertexKind::HAIR : VertexKind::SURFACE, receiver);
     const bool transmits{!isHair && mat.isTransmitting(wo, wNext)};
     const Color claimedShare{claimedShareOf(
         mat, reachable, wo, wNext, f, isDiracBounce, transmits, sampledLobe)};

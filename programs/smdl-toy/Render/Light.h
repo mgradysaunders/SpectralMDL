@@ -122,6 +122,12 @@ public:
   /// stretch, so the MIS pdf of a BSDF-sampled hit is exact even under
   /// a deformed placement. See `LightSampler::solidAnglePDF()`.
   float3x3 invCofactor{};
+
+  /// A sphere under a similarity placement, which `LightSampler::sample()`
+  /// draws by its cone from the receiver: the world center and radius,
+  /// the radius zero for every other light.
+  float3 sphereCenter{};
+  float sphereRadius{};
 };
 
 /// A light the layout declares: a point, a spot, an IES profile, a
@@ -168,12 +174,16 @@ public:
   [[nodiscard]] Color Li(const float3 &point, const float3 &incidencePoint,
                          float metersPerSceneUnit) const noexcept;
 
-  /// Shapes: a point drawn uniformly over the shape as placed, and its
-  /// position density, which is one over the world area everywhere. A
-  /// planar shape has one area stretch under any affine placement, so
-  /// object-uniform is world-uniform and the density is exact.
-  [[nodiscard]] float3 sampleShape(float2 xi,
-                                   float &positionPDF) const noexcept;
+  /// Shapes: a point on the shape as placed, and its density in solid
+  /// angle at `receiver`. A rect whose placed axes are orthogonal is
+  /// drawn uniformly over the spherical rectangle it subtends (Urena,
+  /// Fajardo, and King, "An Area-Preserving Parametrization for
+  /// Spherical Rectangles", 2013), so every direction into it is
+  /// equally likely; otherwise, and for a disk, uniformly by area, which
+  /// a planar shape keeps exact under any affine placement. The density
+  /// is zero when the receiver is in the shape's plane.
+  [[nodiscard]] float3 sampleShape(const float3 &receiver, float2 xi,
+                                   float &pdf) const noexcept;
 
   /// Shapes: the radiance emitted from `lightPoint` on the shape toward
   /// `incidencePoint`, the baked radiance when that point is on the
@@ -408,7 +418,10 @@ public:
   /// that faces the mirror but not the receiver, or a spot cone aimed at
   /// the glass, is a legitimate target for it, and refusing such samples
   /// loses their transport outright, since the path tracer is barred from
-  /// the same paths on the strength of the gather producing them.
+  /// the same paths on the strength of the gather producing them. For
+  /// the same reason a `keepDark` draw of a sphere is uniform over its
+  /// whole area, where a plain draw is uniform over the cone the sphere
+  /// subtends at `point` and never lands on the far side.
   [[nodiscard]] bool sample(const smdl::State &state, Sampler &sampler,
                             const float3 &point, LightSample &lightSample,
                             bool keepDark = false) const;
@@ -465,14 +478,25 @@ public:
 
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
-  /// happens to hit an emitter. Returns zero if the mesh instance is not a
-  /// sampled light.
+  /// happens to hit an emitter. `areaSampled` says the gather at `point`
+  /// drew by area, as a `keepDark` draw does, rather than by a sphere's
+  /// cone. Returns zero if the mesh instance is not a sampled light, or
+  /// the cone does not reach `lightPoint`.
   [[nodiscard]] float solidAnglePDF(uint32_t instIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
-                                    const float3 &point) const;
+                                    const float3 &point,
+                                    bool areaSampled) const;
 
 private:
+  /// Draw a sphere light by its cone from `point`: the hit at the
+  /// sampled point and the density in solid angle. Returns false with
+  /// nothing drawn when `point` is inside the sphere, for the caller to
+  /// draw by area instead.
+  [[nodiscard]] bool sampleSphereCone(const AreaLight &light,
+                                      const float3 &point, float2 xi, Hit &hit,
+                                      float &pdf) const;
+
   smdl::Compiler &compiler;
 
   const Scene &scene;

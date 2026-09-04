@@ -119,3 +119,10 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex);
 /// Sample the whole surface uniformly by object-space area.
 [[nodiscard]] PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec,
                                                       float2 xi);
+
+/// The surface parameters of an object-space point on piece `primID`,
+/// the inverse of the parametric surface: what a sample taken by some
+/// other route than `samplePrimitiveArea()` hands
+/// `Scene::makePrimitiveHit()`.
+[[nodiscard]] float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
+                                 const float3 &objectPoint);
