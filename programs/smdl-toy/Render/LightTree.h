@@ -27,11 +27,11 @@ public:
 };
 
 /// A bounding volume hierarchy over the lights, for drawing a light
-/// with a probability that depends on where the receiver is. A light's
-/// importance to a receiver is its power over the squared distance to
-/// it, clamped to the cluster's own radius inside a cluster (Conty
-/// Estevez and Kulla, "Importance Sampling of Many Lights with Adaptive
-/// Tree Splitting", 2018, without the orientation terms), and the
+/// with a probability that depends on where the receiver is (after
+/// Conty Estevez and Kulla, "Importance Sampling of Many Lights with
+/// Adaptive Tree Splitting", 2018, without the orientation terms and
+/// without splitting). A cluster's importance to a receiver is its
+/// power over the mean squared distance to its lights, and the
 /// traversal picks a child in proportion to the two children's
 /// importances, so a receiver next to one lamp of a thousand draws that
 /// lamp most of the time and a receiver far from all of them draws by

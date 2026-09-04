@@ -139,10 +139,18 @@ uint32_t LightTree::build(std::vector<uint32_t> &order,
 
 float LightTree::importance(const Node &node,
                             const float3 &point) const noexcept {
-  // Closer than the self-intersection offset is as close as a receiver
-  // ever stands to a light, which keeps a point light finite.
+  // The power over the mean squared distance to the cluster's lights,
+  // modeled as spread uniformly over the box: by the parallel axis
+  // theorem that mean is the squared distance to the center plus a
+  // third of the squared half diagonal. Clamping the distance to the
+  // radius instead, the usual guard against the singularity inside a
+  // cluster, is blind there: a receiver inside both children's spheres
+  // then descends by power alone, and a receiver under a field of
+  // lamps reaches its own lamp no more often than any other. The
+  // self-intersection offset is as close as a receiver ever stands to
+  // a point light, which keeps a leaf finite.
   const float distSq{lengthSquared(point - node.center)};
-  return node.phi / std::max(distSq, std::max(node.radiusSq, EPS * EPS));
+  return node.phi / std::max(distSq + node.radiusSq * (1.0f / 3.0f), EPS * EPS);
 }
 
 float LightTree::leftProbability(uint32_t nodeIndex,

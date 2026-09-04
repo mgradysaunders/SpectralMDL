@@ -322,19 +322,22 @@ LightSelection::LightSelection(smdl::Span<const LightBounds> lights,
 int LightSelection::select(const float3 &point, float xi,
                            float &pmf) const noexcept {
   if (!mTree) return mDistr.indexSample(xi, nullptr, &pmf);
+  // The environment takes the top of the unit interval, where the flat
+  // distribution's last entry puts it, so a scene of one light and the
+  // sky draws the same light for the same float either way.
   const float envPMF{mHasEnv ? mDistr.indexPMF(mLightCount) : 0.0f};
-  if (mHasEnv && xi < envPMF) {
+  const float lightShare{1.0f - envPMF};
+  if (mHasEnv && xi >= lightShare) {
     pmf = envPMF;
     return mLightCount;
   }
-  const float lightShare{1.0f - envPMF};
   if (mTree->empty() || !(lightShare > 0.0f)) {
     pmf = 0.0f;
     return 0;
   }
   float treePMF{};
   const int lightIndex{
-      mTree->sample(point, clampUnit((xi - envPMF) / lightShare), treePMF)};
+      mTree->sample(point, clampUnit(xi / lightShare), treePMF)};
   pmf = lightShare * treePMF;
   return lightIndex;
 }

@@ -313,11 +313,11 @@ struct LightSample final {
 /// receiver whose gather competes with the arrival, and it must be the
 /// probability that gather drew with.
 ///
-/// Two strategies: the flat power-weighted distribution, the same
-/// probabilities at every receiver, and on request the `LightTree`,
-/// which weighs each light by its power over its squared distance to
-/// the receiver. The environment keeps the flat distribution's share
-/// under both, so the tree redistributes the lights' share alone. An
+/// Two strategies: the `LightTree`, which weighs each light by its
+/// power over its squared distance to the receiver, and on request the
+/// flat power-weighted distribution, the same probabilities at every
+/// receiver. The environment keeps the flat distribution's share under
+/// both, so the tree redistributes the lights' share alone. An
 /// unsampled area light has weight zero, which keeps it out of
 /// `select()` and out of every PMF either way.
 class LightSelection final {
@@ -326,7 +326,7 @@ public:
 
   /// Construct over the lights' bounds and weights in index order, then
   /// the environment's weight when `hasEnv`, through the tree when
-  /// `useTree`.
+  /// `useTree` and the flat distribution otherwise.
   LightSelection(smdl::Span<const LightBounds> lights, bool hasEnv,
                  float envWeight, bool useTree);
 
@@ -362,16 +362,17 @@ private:
 
 /// The unified light-selection path over every light in the scene: each
 /// emissive mesh instance the layout marks `light`, plus the layout's
-/// declared lights, plus the environment, weighted by power. Every
-/// other emissive instance renders through the path hits the walk finds
-/// on its own, at MIS weight 1; see `AreaLight::sampled`.
+/// declared lights, plus the environment, weighted by power and, through
+/// the `LightTree`, by distance to the receiver. Every other emissive
+/// instance renders through the path hits the walk finds on its own, at
+/// MIS weight 1; see `AreaLight::isSampled`.
 class LightSampler final {
 public:
   /// `allLights` samples every emissive instance whether or not it is
   /// marked: the `-all-lights` switch, and what a render without a
   /// layout to carry marks wants. `useTree` selects through the
-  /// `LightTree` rather than the flat distribution; see
-  /// `LightSelection`.
+  /// `LightTree` rather than the flat distribution, which is what
+  /// `-no-light-tree` asks for; see `LightSelection`.
   LightSampler(smdl::Compiler &compiler, const Scene &scene,
                const EnvLight *envLight,
                const std::vector<LayoutLight> &layoutLights,
