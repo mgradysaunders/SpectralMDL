@@ -566,7 +566,7 @@ manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
 /// there makes an estimator that is zero almost always and enormous
 /// otherwise; the paths it claims are then lost at any feasible sample
 /// count, while ordinary sampling handles a narrow lobe well. So a
-/// vertex receives only with a generic (diffuse-like) lobe, or with a
+/// vertex receives only with a smooth (diffuse-like) lobe, or with a
 /// glossy lobe whose squared roughness reaches `minAlpha`, read from the
 /// normal hook on the side the path arrived (a material layering several
 /// lobes reports the one its proposal draws from `xi`, which makes
@@ -593,7 +593,7 @@ template <typename DrawXi>
                                              float minAlpha) {
   const int dfLobes{mat.getLobes(backface)};
   if ((dfLobes & DF_FINITE) == 0) return false;
-  if ((dfLobes & DF_GENERIC) != 0) return true;
+  if ((dfLobes & DF_SMOOTH) != 0) return true;
   if (!(minAlpha > 0.0f) || !mat.material->scatterNormalSample) return true;
   // One glossy kind, per the hook's contract; see above.
   const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF

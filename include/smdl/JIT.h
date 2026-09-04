@@ -120,22 +120,21 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// transmission over a diffuse reflection would report identical words,
 /// and only the second has a Dirac transmission to refract through.
 ///
-/// A reflective lobe with a finite density and no normal distribution
-/// behind it: diffuse, sheen, micrograin and Hapke lobes among them. It
-/// can be sampled and evaluated by direction, but has no half vector to
-/// constrain.
+/// A reflective lobe whose density is a smooth function of direction,
+/// with no normal distribution behind it: diffuse, sheen, micrograin and
+/// Hapke lobes among them. It can be sampled and evaluated by direction,
+/// but has no half vector to constrain.
 ///
 /// The energy-compensation lobe of a rough BSDF is one of these, so a
 /// glossy BSDF that carries one reports both kinds and a mask cuts
 /// between them. See `DF_GLOSSY_BRDF`.
-static constexpr int DF_GENERIC_BRDF = (1 << 0);
+static constexpr int DF_SMOOTH_BRDF = (1 << 0);
 
-/// \copydoc DF_GENERIC_BRDF
-static constexpr int DF_GENERIC_BTDF = (1 << 3);
+/// \copydoc DF_SMOOTH_BRDF
+static constexpr int DF_SMOOTH_BTDF = (1 << 3);
 
-/// Every lobe with a density but no normal distribution, of either
-/// domain.
-static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
+/// Every smooth lobe of either domain.
+static constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 
 /// A reflective lobe with a sampleable normal distribution, so a half
 /// vector is a meaningful quantity of it and a manifold constraint can be
@@ -143,14 +142,14 @@ static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
 ///
 /// This holds of the whole lobe and not merely of most of it, which is
 /// why the Kulla-Conty style compensation lobe that a rough BSDF adds to
-/// make up its energy deficit is `DF_GENERIC_BRDF` rather than part of
+/// make up its energy deficit is `DF_SMOOTH_BRDF` rather than part of
 /// this: it is a cosine hemisphere with no normal distribution behind it,
 /// and a caller that asks for a half vector must not be handed a lobe
 /// that has none.
 ///
 /// Having a normal distribution is necessary and not sufficient. A lobe
 /// that mixes one with something else, or whose half vector nothing would
-/// ever want to constrain, belongs in `DF_GENERIC_BRDF`; the micrograin
+/// ever want to constrain, belongs in `DF_SMOOTH_BRDF`; the micrograin
 /// layer is both and is classified there.
 static constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
@@ -173,13 +172,13 @@ static constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 /// Every lobe with a density, which is every lobe but the Dirac ones.
 /// This is the question a caller asks to find out whether a vertex can
 /// scatter a direction that another strategy could also have produced.
-static constexpr int DF_FINITE = DF_GENERIC | DF_GLOSSY;
+static constexpr int DF_FINITE = DF_SMOOTH | DF_GLOSSY;
 
 /// Every reflective lobe.
-static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
+static constexpr int DF_BRDF = DF_SMOOTH_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
 
 /// Every transmissive lobe.
-static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
+static constexpr int DF_BTDF = DF_SMOOTH_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
 
 /// Every lobe, which is the lobe mask of a caller that wants the whole
 /// distribution.
@@ -512,7 +511,7 @@ public:
     ///
     /// One distribution can contribute more than one bit: a rough BSDF
     /// with an energy-compensation lobe is `DF_GLOSSY_BRDF` and
-    /// `DF_GENERIC_BRDF` together, since the two parts are different kinds
+    /// `DF_SMOOTH_BRDF` together, since the two parts are different kinds
     /// on the same domain.
     ///
     /// The word also carries the normal property bits `DF_SETS_NORMAL`

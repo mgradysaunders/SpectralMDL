@@ -240,9 +240,9 @@ unit_test "Lobes keep domain and kind together" {
   // table are two ways of covering the same set and each row meets each
   // column in exactly one lobe.
   #assert(df::DF_ALL == (df::DF_BRDF | df::DF_BTDF));
-  #assert(df::DF_ALL == (df::DF_GENERIC | df::DF_GLOSSY | df::DF_DIRAC));
+  #assert(df::DF_ALL == (df::DF_SMOOTH | df::DF_GLOSSY | df::DF_DIRAC));
   #assert((df::DF_BRDF & df::DF_BTDF) == 0);
-  #assert((df::DF_GENERIC & df::DF_GLOSSY) == 0);
+  #assert((df::DF_SMOOTH & df::DF_GLOSSY) == 0);
   #assert((df::DF_GLOSSY & df::DF_DIRAC) == 0);
   #assert(df::DF_DIRAC_BTDF == (df::DF_BTDF & df::DF_DIRAC));
   #assert(df::DF_GLOSSY_BRDF == (df::DF_BRDF & df::DF_GLOSSY));
@@ -257,8 +257,8 @@ unit_test "Lobes keep domain and kind together" {
     weight: 0.5, normal: N,
     layer: df::specular_bsdf(mode: df::scatter_reflect_transmit),
     base: df::diffuse_reflection_bsdf(tint: 0.8)));
-  #assert(mirrorOverDT == (df::DF_DIRAC_BRDF | df::DF_GENERIC_BTDF));
-  #assert(glassOverDiffuse == (df::DF_GENERIC_BRDF | df::DF_DIRAC_BRDF | df::DF_DIRAC_BTDF));
+  #assert(mirrorOverDT == (df::DF_DIRAC_BRDF | df::DF_SMOOTH_BTDF));
+  #assert(glassOverDiffuse == (df::DF_SMOOTH_BRDF | df::DF_DIRAC_BRDF | df::DF_DIRAC_BTDF));
   #assert((mirrorOverDT & df::DF_DIRAC_BTDF) == 0);
   #assert((glassOverDiffuse & df::DF_DIRAC_BTDF) != 0);
   // The axis unions answer the coarse questions identically for both, which
@@ -492,7 +492,7 @@ unit_test "Lobe mask additivity" {
       base: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
   const auto all = evaluate(scattering, wo, wi);
   const auto ndf = evaluate(scattering, wo, wi, lobeMask: df::DF_GLOSSY);
-  const auto density = evaluate(scattering, wo, wi, lobeMask: df::DF_GENERIC);
+  const auto density = evaluate(scattering, wo, wi, lobeMask: df::DF_SMOOTH);
   const auto dirac = evaluate(scattering, wo, wi, lobeMask: df::DF_DIRAC);
   #assert(#any(all.f > 0.0));     // Else the checks pass vacuously
   #assert(#any(ndf.f > 0.0));     // Else the split is not exercised
@@ -564,13 +564,13 @@ unit_test "A sample reports the one lobe it came from" {
       layer: df::diffuse_reflection_bsdf(tint: 0.7),
       base: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
   const int declared = surfaceLobes(scattering);
-  #assert(declared == (df::DF_GENERIC_BRDF | df::DF_GLOSSY_BRDF | df::DF_DIRAC_BRDF |
+  #assert(declared == (df::DF_SMOOTH_BRDF | df::DF_GLOSSY_BRDF | df::DF_DIRAC_BRDF |
                        df::DF_GLOSSY_BTDF | df::DF_DIRAC_BTDF));
   // Every declared lobe, reached deterministically by naming it.
   int seen = 0;
   for (int i = 0; i < 16; i++) {
     const auto xi = float4((i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
-    seen |= checkSampledLobe(scattering, xi, wo, df::DF_GENERIC_BRDF);
+    seen |= checkSampledLobe(scattering, xi, wo, df::DF_SMOOTH_BRDF);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_GLOSSY_BRDF);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_DIRAC_BRDF);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_GLOSSY_BTDF);
@@ -595,7 +595,7 @@ unit_test "A sample reports the one lobe it came from" {
 
 // The Kulla-Conty compensation lobe of a `multiscatter_tint` is a cosine
 // hemisphere with no normal distribution behind it, so the lobe carrying it
-// is GENERIC as well as GLOSSY and a mask can cut between the two kinds. A
+// is SMOOTH as well as GLOSSY and a mask can cut between the two kinds. A
 // caller asking for a normal distribution must not be handed the diffuse term
 // that exists to make up for the energy one loses.
 unit_test "Multiscatter compensation is a lobe of its own" {
@@ -605,21 +605,21 @@ unit_test "Multiscatter compensation is a lobe of its own" {
     roughness_u: 0.8, roughness_v: 0.8, tint: 0.9, multiscatter_tint: color(1.0));
   // Declared only when the compensation is actually there, and only on the
   // domain it scatters to.
-  #assert(surfaceLobes(rough) == (df::DF_GLOSSY_BRDF | df::DF_GENERIC_BRDF));
+  #assert(surfaceLobes(rough) == (df::DF_GLOSSY_BRDF | df::DF_SMOOTH_BRDF));
   #assert(surfaceLobes(df::microfacet_ggx_smith_bsdf(
             roughness_u: 0.8, roughness_v: 0.8, tint: 0.9)) == df::DF_GLOSSY_BRDF);
   #assert(surfaceLobes(df::microfacet_ggx_smith_bsdf(
             roughness_u: 0.8, roughness_v: 0.8, tint: 0.9,
             multiscatter_tint: 0.0)) == df::DF_GLOSSY_BRDF);
   // A lobe that only transmits never reaches the compensation, which
-  // reflects, so it declares nothing generic either.
+  // reflects, so it declares nothing smooth either.
   #assert(surfaceLobes(df::microfacet_ggx_smith_bsdf(
             roughness_u: 0.8, roughness_v: 0.8, tint: 0.9, multiscatter_tint: color(1.0),
             mode: df::scatter_transmit)) == df::DF_GLOSSY_BTDF);
   // The two kinds partition the value.
   const auto all = evaluate(rough, wo, wi);
   const auto ndf = evaluate(rough, wo, wi, lobeMask: df::DF_GLOSSY);
-  const auto comp = evaluate(rough, wo, wi, lobeMask: df::DF_GENERIC);
+  const auto comp = evaluate(rough, wo, wi, lobeMask: df::DF_SMOOTH);
   #assert(#any(all.f > 0.0));  // Else the checks pass vacuously
   #assert(#any(ndf.f > 0.0));  // Else the split is not exercised
   #assert(#any(comp.f > 0.0)); //
@@ -651,19 +651,19 @@ unit_test "Multiscatter compensation selection chance" {
   #assert(comp.lobeChance + ndf.lobeChance ~== |1e-5| 1.0);
   #assert((0.0 < comp.lobeChance) & (comp.lobeChance < 1.0));
   // The mask renormalizes the selection, so the compensation lobe is
-  // unreachable under `DF_GLOSSY` and certain under `DF_GENERIC` however the
+  // unreachable under `DF_GLOSSY` and certain under `DF_SMOOTH` however the
   // selection sample falls, while the chance reported stays the unmasked one.
   for (int i = 0; i < 8; i++) {
     const auto xi = float4(0.3, 0.7, 0.5, i / 8.0);
     const auto glossyOnly = sample(rough, xi, wo, lobeMask: df::DF_GLOSSY);
-    const auto genericOnly = sample(rough, xi, wo, lobeMask: df::DF_GENERIC);
-    #assert(glossyOnly.success & genericOnly.success);
-    #assert(#all(genericOnly.wi ~== |1e-5| comp.wi));
+    const auto smoothOnly = sample(rough, xi, wo, lobeMask: df::DF_SMOOTH);
+    #assert(glossyOnly.success & smoothOnly.success);
+    #assert(#all(smoothOnly.wi ~== |1e-5| comp.wi));
     #assert(!#all(glossyOnly.wi ~== |1e-3| comp.wi));
-    #assert(genericOnly.lobeChance ~== |1e-5| comp.lobeChance);
+    #assert(smoothOnly.lobeChance ~== |1e-5| comp.lobeChance);
     #assert(glossyOnly.lobeChance ~== |1e-5| ndf.lobeChance);
     // And what a masked sample reports is the density it drew from.
-    #assert(genericOnly.pdf.x ~== |1e-5| evaluate(rough, wo, genericOnly.wi, lobeMask: df::DF_GENERIC).pdf.x);
+    #assert(smoothOnly.pdf.x ~== |1e-5| evaluate(rough, wo, smoothOnly.wi, lobeMask: df::DF_SMOOTH).pdf.x);
     #assert(glossyOnly.pdf.x ~== |1e-3| evaluate(rough, wo, glossyOnly.wi, lobeMask: df::DF_GLOSSY).pdf.x);
   }
 }
@@ -770,7 +770,7 @@ unit_test "Normal distribution masking" {
   #assert(!normalSample(df::specular_bsdf(mode: df::scatter_reflect_transmit), xi, lobeMask: df::DF_ALL).success);
   #assert(!normalSample(df::diffuse_reflection_bsdf(tint: 0.7), xi, lobeMask: df::DF_ALL).success);
   #assert(!normalSample(df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, lobeMask: df::DF_ALL).success);
-  // Nor the micrograin layer, which declares GENERIC precisely so that it
+  // Nor the micrograin layer, which declares SMOOTH precisely so that it
   // does not: its base is what answers here.
   const auto dusted = df::micrograin_layer(
     filling_factor: 0.4, grain_diffuse_albedo: color(0.5), base: glossyReflect);
@@ -815,7 +815,7 @@ unit_test "Normal distribution under a tilted layer normal" {
 // not a lobe of its own, so masking cannot drop it.
 //
 // The base is glossy so the mask has something to cut on. The micrograin lobe
-// is GENERIC, deliberately, so a diffuse base would be indistinguishable from
+// is SMOOTH, deliberately, so a diffuse base would be indistinguishable from
 // it by mask and there would be no split to test.
 unit_test "Micrograin layer masked additivity" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
@@ -825,7 +825,7 @@ unit_test "Micrograin layer masked additivity" {
     filling_factor: 0.4, beta_u: 0.3, beta_v: 0.3,
     grain_diffuse_albedo: color(0.5), base: base);
   const auto all = evaluate(scattering, wo, wi);
-  const auto grain = evaluate(scattering, wo, wi, lobeMask: df::DF_GENERIC);
+  const auto grain = evaluate(scattering, wo, wi, lobeMask: df::DF_SMOOTH);
   const auto through = evaluate(scattering, wo, wi, lobeMask: df::DF_GLOSSY);
   #assert(#any(all.f > 0.0));   // Else the checks pass vacuously
   #assert(#any(grain.f > 0.0)); // Else the split is not exercised
@@ -835,7 +835,7 @@ unit_test "Micrograin layer masked additivity" {
   #assert(#all(through.f < evaluate(base, wo, wi).f));
   // And the micrograin lobe is not a normal distribution a caller can ask
   // for, whatever it has inside: naming the glossy kinds reaches the base.
-  #assert(surfaceLobes(scattering) == (df::DF_GENERIC_BRDF | df::DF_GLOSSY_BRDF));
+  #assert(surfaceLobes(scattering) == (df::DF_SMOOTH_BRDF | df::DF_GLOSSY_BRDF));
 }
 
 // Check the bidirectional consistency of the given BSDF for the given directions:
@@ -1315,7 +1315,7 @@ unit_test "Bounded VNDF sampling PDF" {
   const auto ms = df::microfacet_ggx_smith_bsdf(roughness_u: 0.8, tint: 1.0, multiscatter_tint: color(1.0));
   checkScatterPDFIntegral(ms, wo, 1.0);
   checkScatterPDFIntegral(ms, wo, 1.0, df::DF_GLOSSY);
-  checkScatterPDFIntegral(ms, wo, 1.0, df::DF_GENERIC);
+  checkScatterPDFIntegral(ms, wo, 1.0, df::DF_SMOOTH);
 }
 
 unit_test "LTC sheen energy and sampling PDF" {

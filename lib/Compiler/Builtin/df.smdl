@@ -54,15 +54,15 @@ float scatterReflectChance(const scatter_mode mode) {
 //
 // A bit is a lobe and not a distribution type. One struct declares as many
 // bits as it has ways to scatter: a rough BSDF with an energy-compensation
-// term is GLOSSY and GENERIC together, the two being different kinds on the
+// term is GLOSSY and SMOOTH together, the two being different kinds on the
 // same domain; see `multiscatterLobes`.
-export const int DF_GENERIC_BRDF = (1 << 0);
+export const int DF_SMOOTH_BRDF = (1 << 0);
 
 export const int DF_GLOSSY_BRDF = (1 << 1);
 
 export const int DF_DIRAC_BRDF = (1 << 2);
 
-export const int DF_GENERIC_BTDF = (1 << 3);
+export const int DF_SMOOTH_BTDF = (1 << 3);
 
 export const int DF_GLOSSY_BTDF = (1 << 4);
 
@@ -71,13 +71,13 @@ export const int DF_DIRAC_BTDF = (1 << 5);
 // The rows and columns of that table, as unions. They name an axis
 // without constraining the other, so intersecting two of them names the
 // single lobe their names spell: `DF_DIRAC & DF_BTDF` is `DF_DIRAC_BTDF`.
-export const int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
+export const int DF_BRDF = DF_SMOOTH_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
 
-export const int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
+export const int DF_BTDF = DF_SMOOTH_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
 
-// A finite density with no normal distribution behind it, so there is no
-// half vector to constrain.
-export const int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
+// A density that is a smooth function of direction with no normal
+// distribution behind it, so there is no half vector to constrain.
+export const int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 
 // A sampleable normal distribution, so a half vector is meaningful.
 export const int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
@@ -86,7 +86,7 @@ export const int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
 export const int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 
 // Every lobe with a density, which is every lobe but the Dirac ones.
-export const int DF_FINITE = DF_GENERIC | DF_GLOSSY;
+export const int DF_FINITE = DF_SMOOTH | DF_GLOSSY;
 
 // Every lobe, which is the lobe mask of a caller that wants the whole
 // distribution.
@@ -219,7 +219,7 @@ bool hasMultiscatter(const auto multiscatterTint) {
 // The lobes a compensation term adds to the distribution carrying it.
 //
 // The lobe is a cosine hemisphere with no normal distribution behind it, so
-// it is GENERIC where the lobe it compensates is GLOSSY, and declaring that
+// it is SMOOTH where the lobe it compensates is GLOSSY, and declaring that
 // is what lets a mask cut between the two: a caller asking for a normal
 // distribution should not be handed the diffuse term that exists to make up
 // for one.
@@ -233,7 +233,7 @@ bool hasMultiscatter(const auto multiscatterTint) {
 // `ScatterEvaluateResultWithMultiscatter`.
 @(pure macro)
 int multiscatterLobes(const auto multiscatterTint, const int mode [[anno::unused()]]) {
-  return hasMultiscatter(multiscatterTint) ? modeLobes(mode, DF_GENERIC_BRDF) : 0;
+  return hasMultiscatter(multiscatterTint) ? modeLobes(mode, DF_SMOOTH_BRDF) : 0;
 }
 
 // The property bits a node's `normal` parameter contributes to its
@@ -846,10 +846,10 @@ float fetchDirectionalAlbedo(const auto lut, const float cosTheta, const int j, 
 //
 // `ssLobes` is the lobe of the single scattering the caller just
 // evaluated and `msLobes` the lobe of the compensation, which is
-// `DF_GENERIC_BRDF` wherever the two can be told apart. They are equal on the
+// `DF_SMOOTH_BRDF` wherever the two can be told apart. They are equal on the
 // paths where they cannot: a thin-walled transmission delivers both through
 // the reflect branch with the incoming direction flipped, and a lobe that is
-// itself GENERIC has nothing to distinguish. `maskedChance` then returns the
+// itself SMOOTH has nothing to distinguish. `maskedChance` then returns the
 // unmasked chance and the two parts live or die together, as they did before
 // the compensation had a lobe of its own.
 @(pure macro)
@@ -1075,7 +1075,7 @@ auto scatterSampleMasked(const auto this, inline const &ScatterSampleParameters 
   return scatterSample(this, params);
 }
 
-// Everything with no normal distribution behind it: every GENERIC and DIRAC
+// Everything with no normal distribution behind it: every SMOOTH and DIRAC
 // leaf, every emission and volume node, and every empty default. The
 // dispatchers below prune these by `df_lobes` before they are reached, so
 // this is what makes the overload set total rather than what does the work.
@@ -1215,7 +1215,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   const $(?(color | float)) multiscatter_tint = none;
 
   /// The flags.
-  static const int df_lobes = DF_GENERIC_BRDF;
+  static const int df_lobes = DF_SMOOTH_BRDF;
 };
 
 @(pure)
@@ -1303,7 +1303,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_GENERIC_BTDF;
+  static const int df_lobes = DF_SMOOTH_BTDF;
 };
 
 @(pure)
@@ -1471,10 +1471,10 @@ export struct measured_bsdf: bsdf {
   /// The handle.
   void handle = "";
 
-  /// The flags. `DF_GENERIC` rather than `DF_GLOSSY` because tabulated
+  /// The flags. `DF_SMOOTH` rather than `DF_GLOSSY` because tabulated
   /// data has no normal distribution behind it to sample a half vector
   /// from, which is the distinction the flag draws.
-  const int df_lobes = modeLobes(int(mode) & measurement.mode, DF_GENERIC);
+  const int df_lobes = modeLobes(int(mode) & measurement.mode, DF_SMOOTH);
 
   /// The primaries the RGB the measurement yields is upsampled against.
   /// Captured rather than accepted, like `df_lobes`; see `RGBPrimaries`.
@@ -2018,7 +2018,7 @@ export struct sheen_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_GENERIC_BRDF;
+  static const int df_lobes = DF_SMOOTH_BRDF;
 
   finalize {
     roughness = saturate(roughness);
@@ -2080,7 +2080,7 @@ auto scatterEvaluate(const &sheen_bsdf this, inline const &ScatterEvaluateParame
 @(pure)
 auto scatterSample(const &sheen_bsdf this, inline const &ScatterSampleParameters params) {
   if ((tbn := recalculateTangentSpace(params))) {
-    if (result := ScatterSampleResultWithMultiscatter(this, params, DF_GENERIC_BRDF, DF_GENERIC_BRDF, *tbn)) {
+    if (result := ScatterSampleResultWithMultiscatter(this, params, DF_SMOOTH_BRDF, DF_SMOOTH_BRDF, *tbn)) {
       return *result;
     }
     const auto co(sheenLTCFetch(this.roughness, wo.z));
@@ -2177,7 +2177,7 @@ auto scatterEvaluate(const &ward_geisler_moroder_bsdf this, inline const &Scatte
     const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     const auto f(f0 * cosThetai);
     const auto pdf(float2(f0 * (cosThetao + cosThetai) / 2));
-    auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, roughness0, "ward_geisler_moroder_bsdf", DF_GLOSSY_BRDF, DF_GENERIC_BRDF, lobeMask));
+    auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, roughness0, "ward_geisler_moroder_bsdf", DF_GLOSSY_BRDF, DF_SMOOTH_BRDF, lobeMask));
     result.f *= shadingNormalCorrection if (isImportance);
     return result;
   } else {
@@ -2233,7 +2233,7 @@ auto scatterSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterS
   tangent_u = this.tangent_u;
   if ((tbn := recalculateTangentSpace(params))) {
     // Sample multiscatter.
-    if (result := ScatterSampleResultWithMultiscatter(this, params, DF_GLOSSY_BRDF, DF_GENERIC_BRDF, *tbn)) {
+    if (result := ScatterSampleResultWithMultiscatter(this, params, DF_GLOSSY_BRDF, DF_SMOOTH_BRDF, *tbn)) {
       return *result;
     } else {
       // Sample specular.
@@ -2649,7 +2649,7 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
   // distribution declares, so it stays with the single scattering rather
   // than being separable by mask.
   const int ssLobes(thinTransmit ? DF_GLOSSY_BTDF : DF_GLOSSY_BRDF);
-  const int msLobes(thinTransmit ? DF_GLOSSY_BTDF : DF_GENERIC_BRDF);
+  const int msLobes(thinTransmit ? DF_GLOSSY_BTDF : DF_SMOOTH_BRDF);
   // Horizon cull: below the threshold the `1/cos` factors are dominated
   // by the directional noise of normalized vectors (and can overflow),
   // so zero the result and the densities together.
@@ -2900,10 +2900,10 @@ auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParam
   if (mode == scatter_reflect || thin_walled) {
     // A transmission can only reach here through a thin wall, and the
     // compensation lobe is flipped along with it, so on that path it is not
-    // the `DF_GENERIC_BRDF` the lobe word declares and the mask cannot single it
+    // the `DF_SMOOTH_BRDF` the lobe word declares and the mask cannot single it
     // out. See `ScatterEvaluateResultWithMultiscatter`.
     const int ssLobes(mode == scatter_transmit ? DF_GLOSSY_BTDF : DF_GLOSSY_BRDF);
-    const int msLobes(mode == scatter_transmit ? DF_GLOSSY_BTDF : DF_GENERIC_BRDF);
+    const int msLobes(mode == scatter_transmit ? DF_GLOSSY_BTDF : DF_SMOOTH_BRDF);
     if (result := ScatterSampleResultWithMultiscatter(this, params, ssLobes, msLobes, *tbn)) {
       if (mode == scatter_transmit)
         return ScatterSampleResult(wi: result.wi * float3(+1, +1, -1), mode: mode);
@@ -3201,7 +3201,7 @@ export struct micrograin_layer: bsdf {
 
   /// The lobes.
   ///
-  /// GENERIC rather than GLOSSY, which is the exception in this module: the
+  /// SMOOTH rather than GLOSSY, which is the exception in this module: the
   /// micrograin term does have a normal distribution, and it is still the
   /// wrong label. GLOSSY promises a lobe a caller can constrain a half vector
   /// through, and this is not that lobe. It is a grazing-angle dusting whose
@@ -3209,8 +3209,8 @@ export struct micrograin_layer: bsdf {
   /// with a cosine hemisphere off `grain_diffuse_albedo`, so a caller asking
   /// for the normal distribution behind it would be handed a draw that half
   /// the time has nothing to do with one. `sheen_bsdf`, which it resembles,
-  /// is GENERIC for the same reason.
-  const int df_lobes = DF_GENERIC_BRDF | base.df_lobes | normalParamLobes(normal);
+  /// is SMOOTH for the same reason.
+  const int df_lobes = DF_SMOOTH_BRDF | base.df_lobes | normalParamLobes(normal);
 
   finalize {
     filling_factor = micrograin::clamp_filling_factor(filling_factor);
@@ -3254,13 +3254,13 @@ auto scatterEvaluate(const &micrograin_layer this, inline const &ScatterEvaluate
   // selection, so the densities mix by whichever the mask leaves alive,
   // exactly as `scatterSample` chooses between them.
   const float2 pBase(maskedChance(float2(micrograin::base_chance(tau0, woT.z), micrograin::base_chance(tau0, wiT.z)),
-                                  this.base.df_lobes, DF_GENERIC_BRDF, lobeMask));
+                                  this.base.df_lobes, DF_SMOOTH_BRDF, lobeMask));
   // The micrograin term is this layer's own lobe, so it answers to the
   // mask here; the base answered to it on the way in. What the pores let
   // through is this layer's weight on the base rather than a lobe of its
   // own, so it applies either way.
   return ScatterEvaluateResult(f: Vp * resultBase.f, pdf: pBase * resultBase.pdf, isBlack: resultBase.isBlack) //
-         if (!isLobeLive(DF_GENERIC_BRDF, lobeMask));
+         if (!isLobeLive(DF_SMOOTH_BRDF, lobeMask));
   if (mode == scatter_reflect) {
     const auto wm(normalize(wo + wi));
     const auto dotWoWm(#abs(#sum(wo * wm)));
@@ -3340,7 +3340,7 @@ auto scatterSample(const &micrograin_layer this, inline const &ScatterSamplePara
   // child.
   const float rawChanceBase(micrograin::base_chance(tau0, micrograin::beta_transform(beta, wo).z));
   const float chanceBase(maskedChance(rawChanceBase, this.base.df_lobes,
-                                      DF_GENERIC_BRDF, lobeMask));
+                                      DF_SMOOTH_BRDF, lobeMask));
   if (sampling::bool_sample(&xi.z, chanceBase)) {
     lobeChance *= rawChanceBase;
     // The base answers in the inherited frame, which is where
@@ -3369,7 +3369,7 @@ auto scatterSample(const &micrograin_layer this, inline const &ScatterSamplePara
     lobeChance *= 1 - rawChanceBase;
     // This layer's own lobe is reached without a dispatcher, so it narrows
     // by hand. Both of its branches are the one lobe the struct declares.
-    sampledLobe &= DF_GENERIC_BRDF;
+    sampledLobe &= DF_SMOOTH_BRDF;
     const float avgF(average(micrograinFresnel(this, params, #abs(wo.z))));
     const float avgKd(average(this.grain_diffuse_albedo));
     // The exact guarded branch matches the `pDiffuse` weights reported
@@ -3620,7 +3620,7 @@ export struct hapke_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_GENERIC_BRDF;
+  static const int df_lobes = DF_SMOOTH_BRDF;
 
   finalize {
     // The slope override enters as the roughness it corresponds to, so that
@@ -4001,7 +4001,7 @@ export struct chiang_hair_bsdf: hair_bsdf {
   /// The flags. `DF_GLOSSY` is deliberately absent: hair scatters about
   /// a fiber axis rather than a surface half vector, so there is no
   /// normal distribution to sample.
-  static const int df_lobes = DF_GENERIC;
+  static const int df_lobes = DF_SMOOTH;
 };
 
 // The one-sided Chiang evaluation: the value and the density of sampling
@@ -4099,7 +4099,7 @@ auto chiangHairEvaluate(const &chiang_hair_bsdf this, const float3 wo, const flo
 
 @(pure)
 auto scatterEvaluate(const &chiang_hair_bsdf this, const &ScatterEvaluateParameters params) {
-  // Hair is GENERIC in both domains, so a mask can remove one of its
+  // Hair is SMOOTH in both domains, so a mask can remove one of its
   // domains by kind while the whole-material gate keeps that domain
   // alive through kinds of other distributions.
   return ScatterEvaluateResult(isBlack: true) //

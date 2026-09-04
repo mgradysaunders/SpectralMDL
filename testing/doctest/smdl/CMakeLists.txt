@@ -21,6 +21,8 @@ smdl_add_doctest(
     "Resource/Image.cc"
     "Resource/LightProfile.cc"
     "Resource/SceneData.cc"
+    "Resource/Spectrum.cc"
+    "Resource/SpectrumLibrary.cc"
     "Resource/VoxelGrid.cc"
     "Support/FileLocator.cc"
     "Support/FlatYAML.cc"

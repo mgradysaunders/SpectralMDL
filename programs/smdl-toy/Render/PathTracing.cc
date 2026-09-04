@@ -1834,7 +1834,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // toward more prefiltering deeper in the path.
     if (!isDiracBounce) {
       spread =
-          std::min(spread + ((mat.getLobes(backface) & smdl::DF_GENERIC) != 0
+          std::min(spread + ((mat.getLobes(backface) & smdl::DF_SMOOTH) != 0
                                  ? ANGLE_GROWTH_DIFFUSE
                                  : ANGLE_GROWTH_GLOSSY),
                    ANGLE_MAX);

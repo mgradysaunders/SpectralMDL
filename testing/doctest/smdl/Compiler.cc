@@ -2549,16 +2549,16 @@ TEST_CASE("Compiler reports lobe words per side of the interface") {
   // from both sides, so the back side reports the surface word and not
   // the empty one the raw `df_lobes_backface` field holds.
   auto oneSided{smdl::JIT::MaterialInstance(state, oneSidedMaterial)};
-  CHECK(lobes(oneSided, false) == smdl::DF_GENERIC_BRDF);
-  CHECK(lobes(oneSided, true) == smdl::DF_GENERIC_BRDF);
-  CHECK((oneSided.getLobes() & smdl::DF_ALL) == smdl::DF_GENERIC_BRDF);
+  CHECK(lobes(oneSided, false) == smdl::DF_SMOOTH_BRDF);
+  CHECK(lobes(oneSided, true) == smdl::DF_SMOOTH_BRDF);
+  CHECK((oneSided.getLobes() & smdl::DF_ALL) == smdl::DF_SMOOTH_BRDF);
   // A two-sided one distinguishes, and the sideless union is the two
   // together.
   auto twoSided{smdl::JIT::MaterialInstance(state, twoSidedMaterial)};
-  CHECK(lobes(twoSided, false) == smdl::DF_GENERIC_BRDF);
+  CHECK(lobes(twoSided, false) == smdl::DF_SMOOTH_BRDF);
   CHECK(lobes(twoSided, true) == smdl::DF_DIRAC_BRDF);
   CHECK((twoSided.getLobes() & smdl::DF_ALL) ==
-        (smdl::DF_GENERIC_BRDF | smdl::DF_DIRAC_BRDF));
+        (smdl::DF_SMOOTH_BRDF | smdl::DF_DIRAC_BRDF));
   // And the claim follows the side: a diffuse front has no kind a walk
   // can solve, so a mark claims nothing there however the back mirrors.
   // The sideless claim is the union of the two, which is what a load-time

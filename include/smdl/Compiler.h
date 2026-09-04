@@ -14,6 +14,7 @@
 #include "smdl/Resource/LightProfile.h"
 #include "smdl/Resource/SceneData.h"
 #include "smdl/Resource/Spectrum.h"
+#include "smdl/Resource/SpectrumLibrary.h"
 #include "smdl/Resource/VoxelGrid.h"
 #include "smdl/Support/FileLocator.h"
 #include "smdl/Support/MD5Hash.h"

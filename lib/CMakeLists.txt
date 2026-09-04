@@ -45,6 +45,7 @@ add_library(
     "Resource/LightProfile.cc"
     "Resource/SceneData.cc"
     "Resource/Spectrum.cc"
+    "Resource/SpectrumLibrary.cc"
     "Resource/VoxelGrid.cc"
     "Support/BumpPtrAllocator.cc"
     "Support/Error.cc"
