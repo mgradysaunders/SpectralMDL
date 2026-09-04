@@ -671,10 +671,11 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       // direction, so where a guiding cell participates at the interface
       // the continuation's chance of this chain carries that branch's
       // discrete weight besides the material's own selection.
-      chainChance *=
-          vertexChance *
-          diracBranchChance(guiding, vertex.geometry.point,
-                            (crossMat.getLobes() & smdl::JIT::DF_FINITE) != 0);
+      chainChance *= vertexChance *
+                     diracBranchChance(
+                         guiding, vertex.geometry.point,
+                         (crossMat.getLobes(crossMat.isInterior(vertex.wPrev)) &
+                          smdl::JIT::DF_FINITE) != 0);
       if (!(chainChance > 0.0f) || beta.isAllZero()) return {};
     }
     // A reflection stays on the side it arrived from, so it crosses no
@@ -1146,7 +1147,8 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
     // weighing the same number.
     Q *= vertexChance *
          diracBranchChance(guiding, chainHits[i].point,
-                           (crossMat.getLobes() & smdl::JIT::DF_FINITE) != 0);
+                           (crossMat.getLobes(crossMat.isInterior(-travel)) &
+                            smdl::JIT::DF_FINITE) != 0);
     prev = chainHits[i].point;
   }
   const float arrivalPdf{receiverPdf * Q * transfer};
@@ -1691,6 +1693,13 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     travel += castDistance;
     width += spread * castDistance;
     const float3 wo{-ray.dir};
+    // The side of the interface the path arrived on, which selects the
+    // material's `backface` scattering tree where it declares one. This
+    // is the side the scattering functions derive for themselves, so the
+    // lobes read from it describe the tree they will actually run. A hair
+    // hit has no such side: `wo` behind the fiber normal is an ordinary
+    // configuration rather than a backface.
+    const bool backface{!isHair && mat.isInterior(wo)};
     GuideRecord *record{records ? &records[numRecords++] : nullptr};
     if (record) {
       *record = GuideRecord{};
@@ -1743,9 +1752,9 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // its continuation the manifold estimators claim is decided by the
     // value the direction carries, not by what sampled it.
     const bool wasArmed{mneeCoverage.isArmed()};
-    const DTree *dtree{
-        guidingCellAt(guiding, hit.point,
-                      !isHair && (mat.getLobes() & smdl::JIT::DF_FINITE) != 0)};
+    const DTree *dtree{guidingCellAt(
+        guiding, hit.point,
+        !isHair && (mat.getLobes(backface) & smdl::JIT::DF_FINITE) != 0)};
     // The one-sample-MIS mixture weight at this vertex: the cell's
     // learned weight unless pinned for experiments. Meaningful only when
     // `dtree` is non-null, and shared by the gather below, whose MIS
@@ -1756,7 +1765,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // here. This vertex gathers the rest, and the claimed share of its
     // continuation is dropped at the light.
     const auto claim{mneeOptions.any() && !isHair
-                         ? manifoldClaim(mat, hit.instance->causticCaster,
+                         ? manifoldClaim(mat, backface,
+                                         hit.instance->causticCaster,
                                          mneeOptions.maxRoughness)
                          : ManifoldClaim()};
     const auto reachable{mneeCoverage.reach(claim, mneeOptions, prevDirac)};
@@ -1764,8 +1774,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // and it arms for the claims behind, or neither.
     const bool receiver{mneeOptions.any() && !isHair &&
                         isManifoldReceiver(
-                            mat, dot(wo, hit.Ng) < 0.0f,
-                            [&] { return float4(sampler); },
+                            mat, backface, [&] { return float4(sampler); },
                             mneeOptions.minReceiverAlpha)};
     // Gather direct lighting at this vertex, before the bounce, so the
     // cone the gather rays inherit is the arrival cone.
@@ -1836,10 +1845,11 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // sampled lobe was specular still gets its diffuse growth, which errs
     // toward more prefiltering deeper in the path.
     if (!isDiracBounce) {
-      spread = std::min(spread + ((mat.getLobes() & smdl::JIT::DF_GENERIC) != 0
-                                      ? ANGLE_GROWTH_DIFFUSE
-                                      : ANGLE_GROWTH_GLOSSY),
-                        ANGLE_MAX);
+      spread = std::min(
+          spread + ((mat.getLobes(backface) & smdl::JIT::DF_GENERIC) != 0
+                        ? ANGLE_GROWTH_DIFFUSE
+                        : ANGLE_GROWTH_GLOSSY),
+          ANGLE_MAX);
     }
     if (record) {
       record->wNext = wNext;

@@ -360,11 +360,11 @@ void buildFrameSeeds(const ManifoldSurfaces &surfaces,
 
 } // namespace
 
-ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
-                            float maxGlossyAlpha) {
+ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
+                            bool marked, float maxGlossyAlpha) {
   ManifoldClaim claim{};
   if (mat.hasEmission()) return claim;
-  const int dfLobes{mat.getLobes()};
+  const int dfLobes{mat.getLobes(backface)};
   // A df node scattering about a normal it was given is a field the walk
   // does not solve for, and under a remapped `geometry.normal` even a
   // given normal equal to the state normal detaches, that not being the
@@ -383,16 +383,16 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
   if (marked)
     claim.reflectLobes = dfLobes & (JIT::DF_DIRAC_BRDF | JIT::DF_GLOSSY_BRDF);
   // The width gate, at a FIXED center draw so every evaluation of the
-  // claim answers the same however the two sides reached it; see the
-  // header.
+  // claim on this side answers the same however the two halves of the
+  // estimator reached it; see the header.
   if (maxGlossyAlpha > 0.0f && mat.material->scatterNormalSample &&
       (claim.lobes() & JIT::DF_GLOSSY) != 0) {
     auto tooWide{[&](int kind) {
       float3 wm{};
       float pdf{};
       float2 alpha{};
-      if (!mat.scatterNormalSample(float4(0.5f, 0.5f, 0.5f, 0.5f),
-                                   /*backface=*/false, wm, pdf, alpha, kind))
+      if (!mat.scatterNormalSample(float4(0.5f, 0.5f, 0.5f, 0.5f), backface, wm,
+                                   pdf, alpha, kind))
         return false;
       return std::min(alpha.x, alpha.y) > maxGlossyAlpha;
     }};
@@ -403,6 +403,17 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
         tooWide(JIT::DF_GLOSSY_BRDF))
       claim.reflectLobes &= ~JIT::DF_GLOSSY_BRDF;
   }
+  return claim;
+}
+
+ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
+                            float maxGlossyAlpha) {
+  ManifoldClaim claim{
+      manifoldClaim(mat, /*backface=*/false, marked, maxGlossyAlpha)};
+  const ManifoldClaim back{
+      manifoldClaim(mat, /*backface=*/true, marked, maxGlossyAlpha)};
+  claim.reflectLobes |= back.reflectLobes;
+  claim.refractLobes |= back.refractLobes;
   return claim;
 }
 

@@ -2507,6 +2507,76 @@ TEST_CASE("Compiler enableScatterNormal") {
   }
 }
 
+TEST_CASE("Compiler reports lobe words per side of the interface") {
+  // The `surface` and `backface` trees scatter on their own sides of the
+  // interface, so a question that knows its side reads one word and never
+  // the union: claiming a kind on the side that cannot produce it bars
+  // the ordinary estimators from transport the manifold gather then fails
+  // to draw, and the two lose it between them.
+  auto compiler{smdl::Compiler()};
+  auto error{compiler.addCode(
+      "::sides", "#smdl\nimport ::df::*;\n"
+                 "export material one_sided() = material(\n"
+                 "  surface: material_surface(scattering: "
+                 "df::diffuse_reflection_bsdf(tint: 0.8)));\n"
+                 "export material two_sided() = material(\n"
+                 "  thin_walled: true,\n"
+                 "  surface: material_surface(scattering: "
+                 "df::diffuse_reflection_bsdf(tint: 0.8)),\n"
+                 "  backface: material_surface(scattering: "
+                 "df::specular_bsdf(mode: df::scatter_reflect)));\n")};
+  REQUIRE(!error);
+  error = compiler.compile(smdl::OPT_LEVEL_O2);
+  if (error) FAIL(error->message);
+  error = compiler.jitCompile();
+  if (error) FAIL(error->message);
+  auto *oneSidedMaterial{compiler.findMaterial("one_sided")};
+  auto *twoSidedMaterial{compiler.findMaterial("two_sided")};
+  REQUIRE(oneSidedMaterial);
+  REQUIRE(twoSidedMaterial);
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+  auto state{smdl::State()};
+  state.allocator = &allocator;
+  state.wavelength_min = 380.0f;
+  state.wavelength_max = 720.0f;
+  state.wavelength_base = wavelengths.data();
+  for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+    const float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+    wavelengths[i] =
+        (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+  }
+  state.finalizeAndApplyInternalSpaceConventions();
+  const auto lobes{[](const smdl::JIT::MaterialInstance &mat, bool backface) {
+    return mat.getLobes(backface) & smdl::JIT::DF_ALL;
+  }};
+  // A material with no `backface` initializer scatters by its `surface`
+  // from both sides, so the back side reports the surface word and not
+  // the empty one the raw `df_lobes_backface` field holds.
+  auto oneSided{smdl::JIT::MaterialInstance(state, oneSidedMaterial)};
+  CHECK(lobes(oneSided, false) == smdl::JIT::DF_GENERIC_BRDF);
+  CHECK(lobes(oneSided, true) == smdl::JIT::DF_GENERIC_BRDF);
+  CHECK((oneSided.getLobes() & smdl::JIT::DF_ALL) ==
+        smdl::JIT::DF_GENERIC_BRDF);
+  // A two-sided one distinguishes, and the sideless union is the two
+  // together.
+  auto twoSided{smdl::JIT::MaterialInstance(state, twoSidedMaterial)};
+  CHECK(lobes(twoSided, false) == smdl::JIT::DF_GENERIC_BRDF);
+  CHECK(lobes(twoSided, true) == smdl::JIT::DF_DIRAC_BRDF);
+  CHECK((twoSided.getLobes() & smdl::JIT::DF_ALL) ==
+        (smdl::JIT::DF_GENERIC_BRDF | smdl::JIT::DF_DIRAC_BRDF));
+  // And the claim follows the side: a diffuse front has no kind a walk
+  // can solve, so a mark claims nothing there however the back mirrors.
+  // The sideless claim is the union of the two, which is what a load-time
+  // enumeration of marked instances asks.
+  CHECK(smdl::manifoldClaim(twoSided, /*backface=*/false, /*marked=*/true)
+            .empty());
+  CHECK(smdl::manifoldClaim(twoSided, /*backface=*/true, /*marked=*/true)
+            .reflectLobes == smdl::JIT::DF_DIRAC_BRDF);
+  CHECK(smdl::manifoldClaim(twoSided, /*marked=*/true).reflectLobes ==
+        smdl::JIT::DF_DIRAC_BRDF);
+}
+
 TEST_CASE("Compiler vertex color reaches SMDL and the scene data alias") {
   // The renderer's contract: the state carries the color and the count,
   // and the host registers "vertex_color" scene data that reads the
