@@ -133,7 +133,7 @@ private:
   /// The next canonical sample in `(0,1)`.
   [[nodiscard]] float next() noexcept {
     return std::clamp(float(nextBits()) * 0x1p-32f,
-                      std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+                      std::numeric_limits<float>::min(), ONE_MINUS_EPS);
   }
 
 #if SMDL_TOY_SAMPLER_PCG32
@@ -156,6 +156,6 @@ wavelengthJitterOffset(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
   const uint32_t bits{smdl::nestedUniformScramble(
       smdl::reverseBits(sampleIndex),
       smdl::mixBits(pixelIndex ^ uint32_t(0x5CE4B17DU)))};
-  return std::clamp(float(bits) * 0x1p-32f,
-                    std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+  return std::clamp(float(bits) * 0x1p-32f, std::numeric_limits<float>::min(),
+                    ONE_MINUS_EPS);
 }
