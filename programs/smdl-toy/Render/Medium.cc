@@ -104,7 +104,7 @@ public:
     for (int axis = 0; axis < 3 && tEnter <= tExit; axis++) {
       const float o{mBrickOrg[axis]};
       const float v{mBrickDir[axis]};
-      if (v != 0.0f) {
+      if (SMDL_LIKELY(v != 0.0f)) {
         const float tA{(0.0f - o) / v};
         const float tB{(boxMax[axis] - o) / v};
         tEnter = std::max(tEnter, std::min(tA, tB));
@@ -477,7 +477,7 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
   // A homogeneous medium has the same coefficients everywhere, so it
   // never queries and has no segment to place.
   if (!mHeterogeneous) return;
-  if (mMoving) {
+  if (SMDL_UNLIKELY(mMoving)) {
     projectSegmentMoving(org, dir, time);
   } else {
     projectSegment(org, dir);
@@ -649,8 +649,8 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
 
 bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
                             Color &emitted) const {
-  if (!mHasMedium) return false;
-  if (mIsHaze) {
+  if (SMDL_UNLIKELY(!mHasMedium)) return false;
+  if (SMDL_UNLIKELY(mIsHaze)) {
     // The analytic exponential-height medium. The optical depth is the
     // extinction at the segment origin times one distance shape shared
     // by every band, so the free-flight distance inverts in closed form
@@ -700,7 +700,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // computed it, and the two ulp `transmittance()` carries are enough
     // to turn this integral negative there.
     const Color mu{mSigmaA + mSigmaS};
-    if (mHasEmission) {
+    if (SMDL_UNLIKELY(mHasEmission)) {
       const float tEmit{std::min(tEnd, 1e8f)};
       for (size_t i = 0; i < mu.size(); i++)
         emitted[i] +=
@@ -723,7 +723,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       Tr[i] = transmittance(mu[i] * tTravel);
     if (tScatter < tEnd) {
       beta *= mSigmaS * Tr / (mu * Tr).average();
-      if (!mComponents.empty())
+      if (SMDL_UNLIKELY(!mComponents.empty()))
         pickScatterComponent(float(sampler), mSigmaS, beta);
       t = tScatter;
       return true;
@@ -750,7 +750,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
   // variable number here would push every draw after the medium onto
   // different dimensions from sample to sample, destroying the
   // stratification of the rest of the path.
-  if (!(mMajorant > 0.0f)) return false;
+  if (SMDL_UNLIKELY(!(mMajorant > 0.0f))) return false;
   const int hero{sampler.index(int(mSigmaA.size()))};
   auto rng{smdl::RNG(nextSeed64(sampler))};
   Color P{1.0f};
@@ -775,7 +775,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     while (true) {
       tCur += -std::log1p(-rng.generateFloat()) / m;
       if (!(tCur < span.t1)) break;
-      if (++iter > MAX_TENTATIVE_COLLISIONS) {
+      if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
         beta = Color();
         return false;
       }
@@ -787,7 +787,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // the whole segment, at no extra 'volumeEvaluate' cost. The same
       // balance-heuristic normalization as the terminal weights
       // applies, and the common renormalization of 'P' cancels.
-      if (mHasEmission) {
+      if (SMDL_UNLIKELY(mHasEmission)) {
         const float pdfEmit{m * P.average()};
         if (pdfEmit > 0.0f) emitted += emission * P / pdfEmit;
       }
@@ -798,12 +798,12 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
         // absorption is folded into the weight rather than terminating,
         // exactly like the homogeneous path.
         const float pdf{(muT * P).average()};
-        if (!(pdf > 0.0f)) {
+        if (SMDL_UNLIKELY(!(pdf > 0.0f))) {
           beta = Color();
           return false;
         }
         beta *= sigmaS * P / pdf;
-        if (!mComponents.empty())
+        if (SMDL_UNLIKELY(!mComponents.empty()))
           pickScatterComponent(rng.generateFloat(), sigmaS, beta);
         t = tCur;
         return true;
@@ -812,7 +812,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // clamp in 'evaluateCoefficients' keeps non-negative per bin.
       P *= m - muT;
       const float renormalize{P.maxComponent()};
-      if (!(renormalize > 0.0f)) {
+      if (SMDL_UNLIKELY(!(renormalize > 0.0f))) {
         // Every bin hit the majorant: the chain carries no throughput
         // in any wavelength, so the path is dead.
         beta = Color();
@@ -827,8 +827,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
 
 void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
                        bool unbounded) const {
-  if (!mHasMedium) return;
-  if (mIsHaze) {
+  if (SMDL_UNLIKELY(!mHasMedium)) return;
+  if (SMDL_UNLIKELY(mIsHaze)) {
     // Closed-form Beer-Lambert against the analytic optical depth: a
     // shadow ray through the haze is exact and draws nothing, which is
     // the whole reason not to track it.
@@ -860,7 +860,7 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
   // residuals of either sign, so no hero selection or MIS weighting is
   // involved. The loop draws from a seeded generator for the same
   // fixed-dimension-count reason as in 'sampleDistance'.
-  if (!(mMajorant > 0.0f)) return;
+  if (SMDL_UNLIKELY(!(mMajorant > 0.0f))) return;
   auto rng{smdl::RNG(nextSeed64(sampler))};
   int iter{0};
   // See `sampleDistance()`; the emission this one asks for goes unread.
@@ -882,7 +882,7 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
     while (true) {
       tCur += -std::log1p(-rng.generateFloat()) / m;
       if (!(tCur < span.t1)) break;
-      if (++iter > MAX_TENTATIVE_COLLISIONS) {
+      if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
         beta = Color();
         return;
       }
@@ -892,7 +892,7 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
       // extinction dips below the control the factor exceeds 1, which
       // the estimator identity covers for residuals of either sign.
       beta *= (m - ((sigmaA + sigmaS) - majorantColor * span.scaleMin)) / m;
-      if (!(beta.maxComponent() > 0.0f)) {
+      if (SMDL_UNLIKELY(!(beta.maxComponent() > 0.0f))) {
         beta = Color();
         return;
       }

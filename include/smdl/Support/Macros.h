@@ -40,6 +40,23 @@ namespace smdl {
 #define SMDL_NO_INLINE
 #endif
 
+/// Mark a branch condition as almost always true (`SMDL_LIKELY`) or
+/// almost always false (`SMDL_UNLIKELY`).
+///
+/// This is a hint to the optimizer's block layout, not to the hardware:
+/// the branch predictor learns the direction on its own, so what the
+/// hint moves is which successor falls through and which is placed out
+/// of line, and how the optimizer weighs the two when it inlines,
+/// spills, and if-converts. Reserve it for a hot path where the
+/// condition is one-sided and the layout was measured to matter.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMDL_LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define SMDL_UNLIKELY(cond) __builtin_expect(!!(cond), 0)
+#else
+#define SMDL_LIKELY(cond) (!!(cond))
+#define SMDL_UNLIKELY(cond) (!!(cond))
+#endif
+
 template <typename To, typename From>
 [[nodiscard]]
 SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {
@@ -124,7 +141,6 @@ private:
 
 } // namespace detail
 #endif // #if !SMDL_DOXYGEN
-
 
 /// \}
 

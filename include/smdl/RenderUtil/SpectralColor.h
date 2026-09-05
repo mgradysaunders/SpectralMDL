@@ -49,7 +49,7 @@ public:
   /// Construct with `size` bands of `value`.
   explicit SpectralColor(size_t size, float value = 0.0f) {
     reallocate(size);
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] = value;
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] = value;
@@ -63,7 +63,7 @@ public:
   }
 
   SpectralColor(const SpectralColor &other) {
-    if (other.isInline()) {
+    if (SMDL_LIKELY(other.isInline())) {
       std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
       mSize = other.mSize;
     } else {
@@ -76,7 +76,7 @@ public:
 
   SpectralColor &operator=(const SpectralColor &other) {
     if (this != &other) {
-      if (other.isInline() && isInline()) {
+      if (SMDL_LIKELY(other.isInline() && isInline())) {
         std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
         mSize = other.mSize;
       } else {
@@ -89,14 +89,14 @@ public:
 
   SpectralColor &operator=(SpectralColor &&other) noexcept {
     if (this != &other) {
-      if (!isInline()) delete[] mData;
+      if (SMDL_UNLIKELY(!isInline())) delete[] mData;
       stealOrCopy(other);
     }
     return *this;
   }
 
   ~SpectralColor() {
-    if (!isInline()) delete[] mData;
+    if (SMDL_UNLIKELY(!isInline())) delete[] mData;
     mData = mLocal;
     mSize = 0;
   }
@@ -117,7 +117,7 @@ public:
 public:
   SpectralColor &operator+=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs.mLocal[i];
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] += rhs.mData[i];
@@ -127,7 +127,7 @@ public:
 
   SpectralColor &operator-=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs.mLocal[i];
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] -= rhs.mData[i];
@@ -137,7 +137,7 @@ public:
 
   SpectralColor &operator*=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs.mLocal[i];
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] *= rhs.mData[i];
@@ -147,7 +147,7 @@ public:
 
   SpectralColor &operator/=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs.mLocal[i];
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] /= rhs.mData[i];
@@ -156,7 +156,7 @@ public:
   }
 
   SpectralColor &operator+=(float rhs) noexcept {
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs;
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] += rhs;
@@ -165,7 +165,7 @@ public:
   }
 
   SpectralColor &operator-=(float rhs) noexcept {
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs;
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] -= rhs;
@@ -174,7 +174,7 @@ public:
   }
 
   SpectralColor &operator*=(float rhs) noexcept {
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs;
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] *= rhs;
@@ -183,7 +183,7 @@ public:
   }
 
   SpectralColor &operator/=(float rhs) noexcept {
-    if (isInline()) {
+    if (SMDL_LIKELY(isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs;
     } else {
       for (size_t i = 0; i < mSize; i++) mData[i] /= rhs;
@@ -195,7 +195,7 @@ public:
 
   [[nodiscard]] SpectralColor operator-() const {
     SpectralColor result{*this};
-    if (result.isInline()) {
+    if (SMDL_LIKELY(result.isInline())) {
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
         result.mLocal[i] = -result.mLocal[i];
     } else {
@@ -365,7 +365,10 @@ private:
   /// Is the storage the inline buffer? True exactly when
   /// `mSize <= INLINE_CAPACITY`, which is what makes the fixed-length
   /// fast paths sound: an inline operand of an agreeing size is
-  /// another inline buffer.
+  /// another inline buffer. Every branch on it is hinted: the optimizer's
+  /// static heuristic reads a pointer equality as unlikely and laid the
+  /// inline path, the one every operation takes at a band count within
+  /// `INLINE_CAPACITY`, out of line at every site.
   [[nodiscard]] bool isInline() const noexcept { return mData == mLocal; }
 
   /// Point `mData` at storage for `size` bands, uninitialized beyond
@@ -374,8 +377,8 @@ private:
   /// heap is in use exactly when the size exceeds `INLINE_CAPACITY`.
   void reallocate(size_t size) {
     if (size == mSize) return;
-    if (!isInline()) delete[] mData;
-    mData = size <= INLINE_CAPACITY ? mLocal : new float[size];
+    if (SMDL_UNLIKELY(!isInline())) delete[] mData;
+    mData = SMDL_LIKELY(size <= INLINE_CAPACITY) ? mLocal : new float[size];
     mSize = size;
   }
 
@@ -383,7 +386,7 @@ private:
   /// the whole inline buffer. The moved-from vector is left empty.
   void stealOrCopy(SpectralColor &other) noexcept {
     mSize = other.mSize;
-    if (!other.isInline()) {
+    if (SMDL_UNLIKELY(!other.isInline())) {
       mData = other.mData;
     } else {
       mData = mLocal;

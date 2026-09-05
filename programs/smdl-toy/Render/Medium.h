@@ -101,15 +101,16 @@ public:
   /// and so also the solid-angle density of `volumeScatterSample()`.
   [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
                                             const float3 &wi) const {
-    return mHaze ? mHaze->phase().evaluate(wo, wi)
-                 : mMat->volumeScatterEvaluate(wo, wi);
+    return SMDL_UNLIKELY(mHaze) ? mHaze->phase().evaluate(wo, wi)
+                                : mMat->volumeScatterEvaluate(wo, wi);
   }
 
   /// Sample the phase function of a volume vertex, returning its value.
   [[nodiscard]] float volumeScatterSample(const float4 &xi, const float3 &wo,
                                           float3 &wi) const {
-    return mHaze ? mHaze->phase().sample(float3(xi.x, xi.y, xi.z), wo, wi)
-                 : mMat->volumeScatterSample(xi, wo, wi);
+    return SMDL_UNLIKELY(mHaze)
+               ? mHaze->phase().sample(float3(xi.x, xi.y, xi.z), wo, wi)
+               : mMat->volumeScatterSample(xi, wo, wi);
   }
 
 private:
@@ -250,7 +251,8 @@ public:
   /// the medium, which with additive overlap is the component the
   /// collision picked.
   [[nodiscard]] Scatterer scatterer() const noexcept {
-    return mIsHaze ? Scatterer(*mHaze) : Scatterer(*mScatterInstance);
+    return SMDL_UNLIKELY(mIsHaze) ? Scatterer(*mHaze)
+                                  : Scatterer(*mScatterInstance);
   }
 
 private:
