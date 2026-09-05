@@ -1,4 +1,4 @@
-#include "smdl/Resource/SceneData.h"
+#include "smdl/SceneData.h"
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"

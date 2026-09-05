@@ -59,7 +59,7 @@ public:
       item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
       item.primitive.radius = RADIUS;
       item.materials.all = materials[i];
-      item.light = marks[i];
+      item.isLight = marks[i];
       item.objectToWorld[3] = float4(2.0f * float(i), 0.0f, 0.0f, 1.0f);
       scene.add(item);
     }
@@ -347,7 +347,7 @@ public:
       item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
       item.primitive.radius = RADIUS;
       item.materials.all = "glow";
-      item.light = true;
+      item.isLight = true;
       if (i == 1) item.objectToWorld[0] = float4(-1.0f, 0.0f, 0.0f, 0.0f);
       item.objectToWorld[3] = float4(center(i), 1.0f);
       scene.add(item);
@@ -483,7 +483,7 @@ public:
     item.primitive.shape = PrimitiveSpec::Shape::DISK;
     item.primitive.radius = RADIUS;
     item.materials.all = "glow_power";
-    item.light = true;
+    item.isLight = true;
     item.objectToWorld[1] = float4(0.0f, -1.0f, 0.0f, 0.0f);
     item.objectToWorld[2] = float4(0.0f, 0.0f, -1.0f, 0.0f);
     item.objectToWorld[3] = float4(0.0f, 0.0f, HEIGHT, 1.0f);
@@ -819,7 +819,7 @@ public:
       item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
       item.primitive.radius = RADIUS;
       item.materials.all = "glow";
-      item.light = true;
+      item.isLight = true;
       item.objectToWorld[3] = float4(center, 1.0f);
       return item;
     }};
@@ -835,7 +835,7 @@ public:
       LayoutItem item{};
       item.fileName = quad;
       item.materials.all = "glow";
-      item.light = true;
+      item.isLight = true;
       item.objectToWorld[0].x = scale;
       item.objectToWorld[1].y = scale;
       item.objectToWorld[3] = float4(QUAD_CENTER, 1.0f);

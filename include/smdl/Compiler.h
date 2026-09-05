@@ -12,10 +12,10 @@
 #include "smdl/Resource/BSDFMeasurement.h"
 #include "smdl/Resource/Image.h"
 #include "smdl/Resource/LightProfile.h"
-#include "smdl/Resource/SceneData.h"
 #include "smdl/Resource/Spectrum.h"
 #include "smdl/Resource/SpectrumLibrary.h"
 #include "smdl/Resource/VoxelGrid.h"
+#include "smdl/SceneData.h"
 #include "smdl/Support/FileLocator.h"
 #include "smdl/Support/MD5Hash.h"
 

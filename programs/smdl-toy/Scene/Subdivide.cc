@@ -138,7 +138,7 @@ bool subdivideMesh(Mesh &mesh) {
   sdcOptions.SetVtxBoundaryInterpolation(
       Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER);
   sdcOptions.SetFVarLinearInterpolation(
-      spec.smooth ? Sdc::Options::FVAR_LINEAR_BOUNDARIES
+      spec.isSmooth ? Sdc::Options::FVAR_LINEAR_BOUNDARIES
                   : Sdc::Options::FVAR_LINEAR_ALL);
   // The 2x2 of split and smoothing, which OpenSubdiv spells with three
   // schemes rather than four: Catmull-Clark and bilinear split faces
@@ -147,7 +147,7 @@ bool subdivideMesh(Mesh &mesh) {
   // such counterpart, and stays Loop for the unsmoothed triangle split;
   // `varyingPoints` below is what takes the smoothing back out of it.
   const auto sdcScheme{isLoop        ? Sdc::SCHEME_LOOP
-                       : spec.smooth ? Sdc::SCHEME_CATMARK
+                       : spec.isSmooth ? Sdc::SCHEME_CATMARK
                                      : Sdc::SCHEME_BILINEAR};
   using Factory = Far::TopologyRefinerFactory<Far::TopologyDescriptor>;
   auto refiner{std::unique_ptr<Far::TopologyRefiner>(
@@ -170,7 +170,7 @@ bool subdivideMesh(Mesh &mesh) {
   // whatever topology the scheme refined. The quad half of the 2x2 does
   // not need this, because SCHEME_BILINEAR already applies those very
   // masks as its own.
-  const bool varyingPoints{isLoop && !spec.smooth};
+  const bool varyingPoints{isLoop && !spec.isSmooth};
   // Interpolate positions level by level through one flat buffer, the
   // last level's block last.
   auto points{std::vector<OsdPoint>(size_t(refiner->GetNumVerticesTotal()))};
@@ -214,7 +214,7 @@ bool subdivideMesh(Mesh &mesh) {
   auto limitDv{std::vector<OsdPoint>()};
   auto limitCorners{std::vector<OsdCorner>()};
   auto haveLimitNormals{false};
-  if (spec.smooth) {
+  if (spec.isSmooth) {
     limitPoints.resize(numFineVerts);
     limitDu.resize(numFineVerts);
     limitDv.resize(numFineVerts);

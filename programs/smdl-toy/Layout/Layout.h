@@ -67,13 +67,13 @@ public:
   /// every vertex and UV where linear interpolation puts it, raising
   /// the sampling density without moving the surface: the refinement a
   /// displacement map authored against the mesh as modeled wants.
-  bool smooth{true};
+  bool isSmooth{true};
 
   /// Apply the material `geometry.displacement` to the final vertices?
-  bool displace{};
+  bool isDisplaced{};
 
   /// Anything to do at all?
-  [[nodiscard]] bool active() const noexcept { return levels > 0 || displace; }
+  [[nodiscard]] bool active() const noexcept { return levels > 0 || isDisplaced; }
 
   /// A key that distinguishes two specs, for callers that cache by
   /// (file, spec). Empty for the inactive default, so a file placed
@@ -82,8 +82,8 @@ public:
     if (!active()) return {};
     auto result{std::string("subdivide ") + std::to_string(levels)};
     if (scheme == Scheme::LOOP) result += " loop";
-    if (!smooth) result += " linear";
-    if (displace) result += " displace";
+    if (!isSmooth) result += " linear";
+    if (isDisplaced) result += " displace";
     return result;
   }
 };
@@ -453,7 +453,7 @@ public:
   /// It applies to mesh files and shapes; a curves groom cannot carry
   /// it, and on a layout target it passes down to the whole subtree
   /// like a placement override.
-  bool caster{};
+  bool isCaster{};
   LayoutLocation casterLoc{};
 
   /// The bare operation `light`: every placement of this asset is a
@@ -471,7 +471,7 @@ public:
   /// it passes down to the whole subtree, a curves groom cannot carry
   /// it, and a mark on an asset whose material has no emission is
   /// reported at scene load and ignored. `caustic` implies it.
-  bool light{};
+  bool isLight{};
   LayoutLocation lightLoc{};
 
   /// The bare operation `caustic`: every placement of this asset is a
@@ -484,7 +484,7 @@ public:
   /// no placement override: mark the asset, or declare two. A caustic
   /// target is necessarily a light, so the mark implies `light`, and
   /// `light off` on a placement of a caustic asset is an error.
-  bool caustic{};
+  bool isCaustic{};
 };
 
 /// One `light` declaration: a named emitter with no surface in the
@@ -573,7 +573,7 @@ public:
   float radius{0.5f};
 
   /// Is a caustic target; see `LayoutAssetDecl::caustic`.
-  bool caustic{};
+  bool isCaustic{};
 
   /// The correction transform the block's operations accumulated,
   /// applied innermost, underneath every placement of the light.
@@ -783,15 +783,15 @@ public:
 
   /// Is a caustic caster, with the asset's mark and every override on
   /// the place path already composed; see `LayoutAssetDecl::caster`.
-  bool caster{};
+  bool isCaster{};
 
   /// Is a light, composed the same way, with `caustic` folded in; see
   /// `LayoutAssetDecl::light`.
-  bool light{};
+  bool isLight{};
 
   /// Is a caustic target, from the asset's mark alone; see
   /// `LayoutAssetDecl::caustic`.
-  bool causticLight{};
+  bool isCausticLight{};
 
   /// The `/`-joined chain of `as` names along the place path that
   /// produced this item, or empty. The stable identity a future stage

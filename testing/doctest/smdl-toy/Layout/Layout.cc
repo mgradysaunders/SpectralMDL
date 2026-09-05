@@ -117,11 +117,11 @@ TEST_CASE("Layout lowering: the marks compose") {
   REQUIRE(layout.items.size() == caster.size());
   for (size_t i = 0; i < caster.size(); i++) {
     CAPTURE(i);
-    CHECK(layout.items[i].caster == caster[i]);
-    CHECK(layout.items[i].light == light[i]);
+    CHECK(layout.items[i].isCaster == caster[i]);
+    CHECK(layout.items[i].isLight == light[i]);
     CHECK(layout.items[i].primitive.shape == PrimitiveSpec::Shape::SPHERE);
     // The caustic mark itself is asset-level: it never passes down.
-    CHECK(layout.items[i].causticLight == (i == 3));
+    CHECK(layout.items[i].isCausticLight == (i == 3));
   }
   // The group's translations survive the composition.
   CHECK(layout.items[4].objectToWorld[3].x == doctest::Approx(1.0f));
@@ -223,8 +223,8 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
     const auto layout{lowerOK(diags, entry)};
     REQUIRE(layout.items.size() == 1);
     CHECK(layout.items[0].curves.active);
-    CHECK(!layout.items[0].caster);
-    CHECK(!layout.items[0].light);
+    CHECK(!layout.items[0].isCaster);
+    CHECK(!layout.items[0].isLight);
     CHECK(layout.items[0].materials.all == "m");
   }
 }

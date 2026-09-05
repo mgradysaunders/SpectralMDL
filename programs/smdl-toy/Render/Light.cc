@@ -712,7 +712,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       }
       auto &light{analyticLights.emplace_back(compiler, state, wavelengths,
                                               layoutLight, std::move(profile))};
-      light.caustic = layoutLight.decl.caustic;
+      light.caustic = layoutLight.decl.isCaustic;
       bounds.push_back({light.bounds(), light.weight()});
     }
   }

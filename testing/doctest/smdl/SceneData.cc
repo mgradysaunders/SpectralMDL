@@ -2,7 +2,7 @@
 
 #include <array>
 
-#include "smdl/Resource/SceneData.h"
+#include "smdl/SceneData.h"
 
 TEST_CASE("SceneData") {
   smdl::SceneData sceneData{};

@@ -209,7 +209,7 @@ void Scene::addMesh(const std::string &fileName,
   // at commit, so under `subdiv.displace` the renames stay in the key
   // and the meshes genuinely differ.
   auto meshLevel{materials};
-  const bool renamesPerInstance{!subdiv.displace && !meshLevel.renames.empty()};
+  const bool renamesPerInstance{!subdiv.isDisplaced && !meshLevel.renames.empty()};
   if (renamesPerInstance) meshLevel.renames.clear();
   std::error_code ignored{};
   auto key{std::filesystem::weakly_canonical(fileName, ignored).string()};
@@ -336,13 +336,13 @@ void Scene::add(const LayoutItem &item) {
   }
   // Every instance the item produced carries its mark; the lowering has
   // already refused it on a groom.
-  if (item.caster && !item.curves.active)
+  if (item.isCaster && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].causticCaster = true;
-  if (item.causticLight && !item.curves.active)
+  if (item.isCausticLight && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].causticLight = true;
-  if (item.light && !item.curves.active)
+  if (item.isLight && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].light = true;
 }
@@ -931,7 +931,7 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   // 'displace' with nothing to displace usually means the scene resolved
   // to materials other than the ones the author had in mind.
   bool displaceRequested{};
-  for (auto i : pending) displaceRequested |= meshes[i]->subdiv.displace;
+  for (auto i : pending) displaceRequested |= meshes[i]->subdiv.isDisplaced;
   if (displaceRequested && numDisplaced.load() == 0)
     SMDL_LOG_WARN(
         "'displace' was requested but every material involved has provably "
@@ -957,7 +957,7 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
     recomputeTangents(mesh);
   }
   auto displaced{false};
-  if (mesh.subdiv.displace) {
+  if (mesh.subdiv.isDisplaced) {
     displaced = displaceMesh(mesh, wavelengths, spread, weldOnce());
     if (displaced) {
       // The surface changed; the shading frame must follow it.
@@ -1145,7 +1145,7 @@ void Scene::load(const aiMesh &assMesh,
     mesh->faces[i] = {uint32_t(assMesh.mFaces[i].mIndices[0]),
                       uint32_t(assMesh.mFaces[i].mIndices[1]),
                       uint32_t(assMesh.mFaces[i].mIndices[2])};
-  if (subdiv.displace) {
+  if (subdiv.isDisplaced) {
     // Displacement without subdivision: the triangles are final but the
     // vertices are not, and moving them needs the materials `commit()`
     // resolves, so the BVH waits.

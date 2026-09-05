@@ -506,9 +506,9 @@ private:
             document.materialAliases, variantIndex == PlacesFile::NO_VARIANT
                                           ? baseOuter
                                           : outerByVariant[variantIndex]);
-        item.caster = caster;
-        item.light = lightMark;
-        item.causticLight = decl->caustic;
+        item.isCaster = caster;
+        item.isLight = lightMark;
+        item.isCausticLight = decl->isCaustic;
         item.placeName = placeName;
         if (xfs.size() == 1) {
           placeItem(item, xfs[0]);
@@ -580,9 +580,9 @@ private:
       item.materials = decl->materials;
       item.materials.renames =
           composeRename(document.materialAliases, effectiveOuter);
-      item.caster = caster;
-      item.light = lightMark;
-      item.causticLight = decl->caustic;
+      item.isCaster = caster;
+      item.isLight = lightMark;
+      item.isCausticLight = decl->isCaustic;
       item.placeName = placeName;
       return;
     }
@@ -594,11 +594,11 @@ private:
       // that `light off` under `caustic` is refused wherever it is said.
       (void)lightOf(*decl, effectiveMarks, nullptr);
       auto passed{effectiveMarks};
-      if (!passed.caster && decl->caster) {
+      if (!passed.caster && decl->isCaster) {
         passed.caster = true;
         passed.casterLoc = decl->casterLoc;
       }
-      if (!passed.light && (decl->light || decl->caustic)) {
+      if (!passed.light && (decl->isLight || decl->isCaustic)) {
         passed.light = true;
         passed.lightLoc = decl->lightLoc ? decl->lightLoc : decl->nameLoc;
       }
@@ -624,9 +624,9 @@ private:
     item.materials = decl->materials;
     item.materials.renames =
         composeRename(document.materialAliases, effectiveOuter);
-    item.caster = caster;
-    item.light = lightMark;
-    item.causticLight = decl->caustic;
+    item.isCaster = caster;
+    item.isLight = lightMark;
+    item.isCausticLight = decl->isCaustic;
     item.placeName = placeName;
   }
 
@@ -637,7 +637,7 @@ private:
   [[nodiscard]] bool casterOf(const LayoutAssetDecl &decl,
                               const MarkOverrides &marks,
                               const Target *target) {
-    const bool caster{marks.caster.value_or(decl.caster)};
+    const bool caster{marks.caster.value_or(decl.isCaster)};
     if (caster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
                    smdl::concat("'caster' applies to a mesh file or a shape, "
@@ -654,7 +654,7 @@ private:
   // selection has no way to sample a fiber.
   [[nodiscard]] bool lightOf(const LayoutAssetDecl &decl,
                              const MarkOverrides &marks, const Target *target) {
-    if (decl.caustic && marks.light == std::optional<bool>(false)) {
+    if (decl.isCaustic && marks.light == std::optional<bool>(false)) {
       mDiags
           .error(marks.lightLoc,
                  smdl::concat("'light off' cannot apply to ",
@@ -663,7 +663,7 @@ private:
           .note(decl.nameLoc, "declared 'caustic' here");
       throw SkipPlacement();
     }
-    const bool light{marks.light.value_or(decl.light) || decl.caustic};
+    const bool light{marks.light.value_or(decl.isLight) || decl.isCaustic};
     if (light && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
                    smdl::concat("'light' applies to a mesh file or a shape, "
@@ -774,8 +774,8 @@ private:
     item.materials = placement.importMaterials;
     item.materials.renames =
         composeRename(document.materialAliases, outerRenames);
-    item.caster = effectiveMarks.caster.value_or(false);
-    item.light = effectiveMarks.light.value_or(false);
+    item.isCaster = effectiveMarks.caster.value_or(false);
+    item.isLight = effectiveMarks.light.value_or(false);
   }
 
   // The `material` assignments written against a layout target, turned
@@ -952,7 +952,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
     item.fileName = asset.renderFileName;
     item.curves.active = classifyCurves(asset.renderFileName);
     item.objectToWorld = asset.correction;
-    item.light = !item.curves.active;
+    item.isLight = !item.curves.active;
     result.frontAzimuth = asset.front;
     return result;
   }
@@ -961,6 +961,6 @@ Layout resolveLayoutArgument(const std::string &fileName,
   auto &item{result.items.emplace_back()};
   item.fileName = path.string();
   item.curves.active = classifyCurves(path);
-  item.light = !item.curves.active;
+  item.isLight = !item.curves.active;
   return result;
 }

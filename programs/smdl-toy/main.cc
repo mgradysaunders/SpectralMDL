@@ -1399,7 +1399,7 @@ int main(int argc, char **argv) try {
   // crossing draws its half vector from, and nothing else here asks for
   // them, so they are emitted only when that is on.
   bool anyCaster{false};
-  for (const auto &item : layout.items) anyCaster |= item.caster;
+  for (const auto &item : layout.items) anyCaster |= item.isCaster;
   compiler.enableScatterNormal =
       (optMNEE && anyCaster) || optMNEETestNormalHook;
   // The built-in stand-in, always available: a scene whose materials

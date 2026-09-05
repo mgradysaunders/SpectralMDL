@@ -82,10 +82,10 @@ public:
       item.objectToWorld[3] = float4(4.0f * float(i), 0.0f, 0.0f, 1.0f);
       if (i == 5) {
         item.subdiv.levels = 1;
-        item.subdiv.smooth = false;
+        item.subdiv.isSmooth = false;
       } else if (i == 6) {
         item.subdiv.levels = 2;
-        item.subdiv.smooth = true;
+        item.subdiv.isSmooth = true;
       }
       scene.add(item);
     }

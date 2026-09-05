@@ -29,8 +29,8 @@ place lamp as hero translate 0 0 3
   CHECK(lamp.primitive.shape == PrimitiveSpec::Shape::SPHERE);
   CHECK(lamp.primitive.radius == doctest::Approx(0.2f));
   CHECK(lamp.materials.all == "lamp_r020");
-  CHECK(lamp.caster);
-  CHECK(!lamp.caustic);
+  CHECK(lamp.isCaster);
+  CHECK(!lamp.isCaustic);
   REQUIRE(document.lights.size() == 1);
   const auto &beam{document.lights[0]};
   CHECK(beam.kind == LayoutLightDecl::Kind::SPOT);
@@ -192,16 +192,16 @@ import "b.gltf" { caster off light off }
 import "b.gltf" { caster light }
 )")};
     REQUIRE(document.assets.size() == 2);
-    CHECK(document.assets[0].caster);
+    CHECK(document.assets[0].isCaster);
     CHECK(bool(document.assets[0].casterLoc));
-    CHECK(document.assets[0].light);
+    CHECK(document.assets[0].isLight);
     CHECK(bool(document.assets[0].lightLoc));
-    CHECK(document.assets[0].caustic);
-    CHECK(!document.assets[1].caster);
-    CHECK(!document.assets[1].light);
-    CHECK(!document.assets[1].caustic);
+    CHECK(document.assets[0].isCaustic);
+    CHECK(!document.assets[1].isCaster);
+    CHECK(!document.assets[1].isLight);
+    CHECK(!document.assets[1].isCaustic);
     REQUIRE(document.lights.size() == 1);
-    CHECK(document.lights[0].caustic);
+    CHECK(document.lights[0].isCaustic);
     REQUIRE(document.placements.size() == 6);
     const auto casterOf{
         [&](size_t i) { return document.placements[i].casterOverride; }};
@@ -280,13 +280,13 @@ light coin = disk { rotate_x 90 }
   CHECK(panel.size.y == doctest::Approx(1.0f));
   CHECK(panel.powerSet);
   CHECK(panel.power == doctest::Approx(400.0f));
-  CHECK(panel.caustic);
+  CHECK(panel.isCaustic);
   const auto &ring{document.lights[1]};
   CHECK(ring.kind == LayoutLightDecl::Kind::DISK);
   CHECK(ring.kindName() == "disk");
   CHECK(ring.radius == doctest::Approx(0.25f));
   CHECK(!ring.powerSet);
-  CHECK(!ring.caustic);
+  CHECK(!ring.isCaustic);
   // The defaults: a unit square and a unit diameter.
   CHECK(document.lights[2].size.x == doctest::Approx(1.0f));
   CHECK(document.lights[2].size.y == doctest::Approx(1.0f));

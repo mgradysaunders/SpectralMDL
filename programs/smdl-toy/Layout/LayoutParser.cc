@@ -312,7 +312,7 @@ private:
         } else if (op == "subdivide") {
           parseSubdivide(decl.subdiv, opLoc);
         } else {
-          decl.subdiv.displace = true;
+          decl.subdiv.isDisplaced = true;
         }
       } else if (op == "radius" || op == "height" || op == "size") {
         if (!decl.primitive.active()) {
@@ -382,13 +382,13 @@ private:
       } else if (op == "material") {
         parseMaterialOps(decl.materials, "asset");
       } else if (op == "caster") {
-        decl.caster = true;
+        decl.isCaster = true;
         decl.casterLoc = opLoc;
       } else if (op == "light") {
-        decl.light = true;
+        decl.isLight = true;
         decl.lightLoc = opLoc;
       } else if (op == "caustic") {
-        decl.caustic = true;
+        decl.isCaustic = true;
       } else if (op == "at") {
         mDiags
             .error(opLoc, "'at' blocks were retired with the '.scene' "
@@ -583,7 +583,7 @@ private:
         }
         decl.radius = value;
       } else if (op == "caustic") {
-        decl.caustic = true;
+        decl.isCaustic = true;
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         // Note 'scale' is taken by the profile multiplier, so unlike the
         // other blocks it is not offered as a transform here; a shape is
@@ -1057,7 +1057,7 @@ private:
       advance();
     }
     if (sawLoop) subdiv.scheme = SubdivSpec::Scheme::LOOP;
-    if (sawLinear) subdiv.smooth = false;
+    if (sawLinear) subdiv.isSmooth = false;
   }
 
   void parseAlias() {
