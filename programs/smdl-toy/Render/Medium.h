@@ -1,8 +1,7 @@
 #pragma once
 
 #include <optional>
-
-#include "llvm/ADT/SmallVector.h"
+#include <vector>
 
 #include "smdl/RenderUtil/Haze.h"
 
@@ -521,7 +520,11 @@ private:
   /// common single medium and one per overlapping medium otherwise. The
   /// inline capacity is what keeps the single-medium segment from
   /// allocating.
-  llvm::SmallVector<Component, 1> mComponents{};
+  // Not an 'llvm::SmallVector': 'Component' carries 'SpectralColor', whose
+  // inline buffer is over-aligned, and that container's heap growth is a
+  // plain 'malloc' that only guarantees the fundamental alignment. The
+  // capacity survives 'resolve()', so the storage is bought once per view.
+  std::vector<Component> mComponents{};
 
   /// See `scatterInstance()`. Mutable because a real collision picks
   /// the component during the const sampling call.

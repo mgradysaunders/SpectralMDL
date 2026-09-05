@@ -349,6 +349,10 @@ void renderSamples(const Options &opts, const Frame &frame,
         // one, so what a block shares is the memory, never the state.
         smdl::BumpPtrAllocator allocator;
         Sampler sampler;
+        // The medium view every path of the block resolves through. Its
+        // component storage is bought once here rather than once per
+        // sample; every path invalidates it before its first use.
+        Medium medium;
         // Training records for `trainGuiding()`, one per vertex the walk
         // may reach, sized only on the pre-final guiding passes that fill
         // them: at a runtime band count every record holds sized vectors,
@@ -406,7 +410,7 @@ void renderSamples(const Options &opts, const Frame &frame,
               if (renderShutter().isOpen()) shutterFraction = float(sampler);
               const PathTime time{shutterFraction};
               camera->toWorld(cameraSample, time.fraction);
-              PathContext path{allocator, sampler,  sampleWavelengths,
+              PathContext path{allocator, sampler,  medium, sampleWavelengths,
                                time,      &guiding, records};
               Lsample = tracePath(render, path, cameraSample);
               numRecords = path.numRecords;

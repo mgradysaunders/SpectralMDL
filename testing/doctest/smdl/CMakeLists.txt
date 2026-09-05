@@ -24,6 +24,7 @@ smdl_add_doctest(
     "Resource/SpectrumLibrary.cc"
     "Resource/VoxelGrid.cc"
     "SceneData.cc"
+    "Support/BumpPtrAllocator.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
     "Support/FlatYAML.cc"

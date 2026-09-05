@@ -175,6 +175,19 @@ struct PathContext final {
   /// for.
   Sampler &sampler;
 
+  /// The medium of the segment in flight, shared by the path and every
+  /// visibility walk it spawns so that a segment inside the medium the
+  /// path is already in resolves nothing; see `Medium::reset()`. Every
+  /// walk overwrites it, so no caller may expect it to survive one.
+  ///
+  /// Borrowed rather than owned because it holds the component storage a
+  /// resolution fills, which is worth buying once for a block of pixels
+  /// instead of once per sample. Reuse across paths is safe because
+  /// `PathWalk` sets the haze at the head of every path, which
+  /// invalidates whatever the last one resolved; nothing may rely on the
+  /// resolution surviving, since the stacks it keyed on are gone.
+  Medium &medium;
+
   /// The wavelengths the path estimates at, which is this sample's own
   /// grid where the render jitters them.
   const Color &wavelengths;
@@ -197,12 +210,6 @@ struct PathContext final {
 
   /// How many of `records` the walk filled in.
   uint64_t numRecords{};
-
-  /// The medium of the segment in flight, shared by the path and every
-  /// visibility walk it spawns so that a segment inside the medium the
-  /// path is already in resolves nothing; see `Medium::reset()`. Every
-  /// walk overwrites it, so no caller may expect it to survive one.
-  Medium medium{};
 
   /// The state `shadeHit()` shades in, empty until the first hit that
   /// needs it, so that a path which shades none, which is every path in
