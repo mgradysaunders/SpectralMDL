@@ -94,7 +94,7 @@ public:
     SMDL_SANITY_CHECK(iBand < mNumBands);
     return mNumSamples > 0
                ? mTotals[(mNumPixelsX * iY + iX) * mNumBands + iBand] /
-                     double(mNumSamples)
+                     static_cast<double>(mNumSamples)
                : 0.0;
   }
 
@@ -107,7 +107,7 @@ public:
     /// The wavelengths in nanometers, empty if the header has none.
     std::vector<float> wavelengths{};
 
-    /// The value of the `smdl spp` header field, or 0 if the
+    /// The value of the `render spp` header field, or 0 if the
     /// header does not carry one (a foreign or legacy file). The film
     /// reads back with `getNumSamples()` equal to this clamped to 1, so
     /// means stay meaningful even when the true count is unknown. It
@@ -115,11 +115,11 @@ public:
     uint64_t samplesPerPixel{};
 
     /// The pixel rectangle the sample count applies to, from the
-    /// `smdl window` header field, or the whole frame when the header
-    /// carries none. Pixels outside it read back empty, so a caller
+    /// `render crop window` header field, or the whole frame when the
+    /// header carries none. Pixels outside it read back empty, so a caller
     /// always compares whole rectangles and never has to ask whether
     /// the field was there.
-    int4 window{};
+    int4 cropWindow{};
 
     /// Every header field this loader has no specific handling for,
     /// keyed by the lower-cased field name, values verbatim.

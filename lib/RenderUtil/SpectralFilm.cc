@@ -42,26 +42,32 @@ void SpectralFilm::add(const SpectralFilm &other) noexcept {
   for (size_t i{}; i < numTotals; i++) mTotals[i] += other.mTotals[i];
 }
 
+namespace {
+
 // Vector `operator==` yields one result per component, per MDL
 // semantics, so whole-rectangle equality needs spelling out.
-[[nodiscard]] static bool sameWindow(int4 lhs, int4 rhs) noexcept {
+[[nodiscard]] bool sameWindow(int4 lhs, int4 rhs) noexcept {
   return lhs[0] == rhs[0] && lhs[1] == rhs[1] && //
          lhs[2] == rhs[2] && lhs[3] == rhs[3];
 }
 
+} // namespace
+
 void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                                  const std::string &fileName,
                                  Span<const std::string> extraHeaderLines,
-                                 std::optional<int4> window) const {
-  const auto wholeImage{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
-  if (window && !(0 <= (*window)[0] && (*window)[0] < (*window)[2] &&
-                  (*window)[2] <= wholeImage[2] && 0 <= (*window)[1] &&
-                  (*window)[1] < (*window)[3] && (*window)[3] <= wholeImage[3]))
+                                 std::optional<int4> cropWindow) const {
+  const auto noCrop{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
+  if (cropWindow &&
+      !(0 <= (*cropWindow)[0] && 0 <= (*cropWindow)[1] && //
+        (*cropWindow)[0] < (*cropWindow)[2] && (*cropWindow)[2] <= noCrop[2] &&
+        (*cropWindow)[1] < (*cropWindow)[3] && (*cropWindow)[3] <= noCrop[3]))
     throw Error(concat("cannot write ", Quoted(fileName), ": the window ",
-                       (*window)[0], ",", (*window)[1], ",", (*window)[2], ",",
-                       (*window)[3], " is not a non-empty sub-rectangle of ",
-                       mNumPixelsX, "x", mNumPixelsY));
-  const auto pixelWindow{window.value_or(wholeImage)};
+                       (*cropWindow)[0], ",", (*cropWindow)[1], ",",
+                       (*cropWindow)[2], ",", (*cropWindow)[3],
+                       " is not a non-empty sub-rectangle of ", mNumPixelsX,
+                       "x", mNumPixelsY));
+  const auto pixelWindow{cropWindow.value_or(noCrop)};
   // Write the header file
   {
     auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
@@ -85,12 +91,13 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
     // A zero count is not recorded, and such a file cannot seed a
     // resumed accumulation.
     if (mNumSamples > 0) {
-      file << "smdl spp = " << mNumSamples << '\n';
+      file << "render spp = " << mNumSamples << '\n';
       // Only when it narrows the image: a whole-image window is what the
       // reader assumes anyway, so every unwindowed header stays as it was.
-      if (!sameWindow(pixelWindow, wholeImage))
-        file << "smdl window = {" << pixelWindow[0] << ", " << pixelWindow[1]
-             << ", " << pixelWindow[2] << ", " << pixelWindow[3] << "}\n";
+      if (!sameWindow(pixelWindow, noCrop))
+        file << "render crop window = {"                         //
+             << pixelWindow[0] << ", " << pixelWindow[1] << ", " //
+             << pixelWindow[2] << ", " << pixelWindow[3] << "}\n";
     }
     for (const auto &line : extraHeaderLines) file << line << '\n';
   }
@@ -110,21 +117,25 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
   }
 }
 
+namespace {
+
 // Parse the `key = value` lines of an ENVI header into a map keyed by
 // the lower-cased key. A value that opens a `{...}` array continues
 // across lines until the closing brace, per the format.
-[[nodiscard]] static std::map<std::string, std::string>
-parseENVIHeader(const std::string &fileName, const std::string &text) {
-  auto trim{[](std::string str) {
+[[nodiscard]]
+std::map<std::string, std::string> parseENVIHeader(const std::string &fileName,
+                                                   const std::string &text) {
+
+  std::map<std::string, std::string> fields{};
+  size_t pos{};
+  const auto trim{[](std::string str) {
     const char *WS{" \t\r\n"};
     str.erase(0, str.find_first_not_of(WS));
     str.erase(str.find_last_not_of(WS) + 1);
     return str;
   }};
-  auto fields{std::map<std::string, std::string>{}};
-  size_t pos{};
-  auto nextLine{[&]() -> std::string {
-    size_t end{text.find('\n', pos)};
+  const auto nextLine{[&]() -> std::string {
+    auto end{text.find('\n', pos)};
     if (end == std::string::npos) end = text.size();
     auto line{text.substr(pos, end - pos)};
     pos = std::min(end + 1, text.size());
@@ -135,10 +146,10 @@ parseENVIHeader(const std::string &fileName, const std::string &text) {
                        ": missing 'ENVI' magic line"));
   while (pos < text.size()) {
     auto line{nextLine()};
-    auto equals{line.find('=')};
-    if (equals == std::string::npos) continue;
-    auto key{trim(line.substr(0, equals))};
-    auto value{trim(line.substr(equals + 1))};
+    auto eq{line.find('=')};
+    if (eq == std::string::npos) continue;
+    auto key{trim(line.substr(0, eq))};
+    auto value{trim(line.substr(eq + 1))};
     if (key.empty()) continue;
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -152,49 +163,52 @@ parseENVIHeader(const std::string &fileName, const std::string &text) {
 }
 
 // Extract a required unsigned integer header field.
-[[nodiscard]] static uint64_t
-requiredCount(const std::string &fileName,
-              std::map<std::string, std::string> &fields, const char *key) {
+[[nodiscard]]
+uint64_t requiredCount(const std::string &fileName,
+                       std::map<std::string, std::string> &fields,
+                       const char *key) {
   auto itr{fields.find(key)};
   if (itr == fields.end())
     throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": missing ",
                        Quoted(key), " field"));
-  auto value{uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10))};
+  auto value{std::strtoull(itr->second.c_str(), nullptr, 10)};
   fields.erase(itr);
   return value;
 }
+
+} // namespace
 
 SpectralFilm::ENVIFileInfo
 SpectralFilm::readENVIFile(const std::string &fileName) try {
   auto result{ENVIFileInfo{}};
   auto fields{parseENVIHeader(fileName, readOrThrow(fileName + ".hdr"))};
-  const auto numPixelsX{requiredCount(fileName, fields, "samples")};
-  const auto numPixelsY{requiredCount(fileName, fields, "lines")};
-  const auto numBands{requiredCount(fileName, fields, "bands")};
+  const auto nX{requiredCount(fileName, fields, "samples")};
+  const auto nY{requiredCount(fileName, fields, "lines")};
+  const auto nBands{requiredCount(fileName, fields, "bands")};
   // Accept exactly the format the writer emits: 64-bit floats,
   // band-interleaved-by-pixel. The byte order is the one thing worth
   // fixing up rather than rejecting.
-  if (auto dataType{requiredCount(fileName, fields, "data type")};
-      dataType != 5)
-    throw Error(concat("cannot load ", Quoted(fileName), ": data type ",
-                       dataType, " (expected 5, 64-bit float)"));
+  if (auto type{requiredCount(fileName, fields, "data type")}; type != 5) {
+    throw Error(concat("cannot load ", Quoted(fileName), ": data type ", type,
+                       " (expected 5, 64-bit float)"));
+  }
   if (auto itr{fields.find("interleave")};
-      itr == fields.end() || itr->second != "bip")
+      itr != fields.end() && itr->second == "bip") {
+    fields.erase(itr);
+  } else {
     throw Error(concat("cannot load ", Quoted(fileName),
                        ": expected 'interleave = bip'"));
-  else
-    fields.erase(itr);
+  }
   const auto byteOrder{requiredCount(fileName, fields, "byte order")};
   const auto headerOffset{fields.count("header offset")
                               ? requiredCount(fileName, fields, "header offset")
                               : 0};
-  if (auto itr{fields.find("smdl spp")}; itr != fields.end()) {
-    result.samplesPerPixel =
-        uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10));
+  if (auto itr{fields.find("render spp")}; itr != fields.end()) {
+    result.samplesPerPixel = std::strtoull(itr->second.c_str(), nullptr, 10);
     fields.erase(itr);
   }
-  result.window = int4{0, 0, int(numPixelsX), int(numPixelsY)};
-  if (auto itr{fields.find("smdl window")}; itr != fields.end()) {
+  result.cropWindow = int4{0, 0, int(nX), int(nY)};
+  if (auto itr{fields.find("render crop window")}; itr != fields.end()) {
     auto value{itr->second};
     for (auto &c : value)
       if (c == '{' || c == '}' || c == ',') c = ' ';
@@ -209,17 +223,17 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     if (bounds.size() != 4)
       throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
                          bounds.size(),
-                         " values in 'smdl window' (expected 4)"));
-    result.window = int4(bounds.data());
-    if (!(0 <= result.window[0] && result.window[0] < result.window[2] &&
-          result.window[2] <= int(numPixelsX) && 0 <= result.window[1] &&
-          result.window[1] < result.window[3] &&
-          result.window[3] <= int(numPixelsY)))
-      throw Error(
-          concat("cannot load ", Quoted(fileName + ".hdr"), ": 'smdl window' ",
-                 result.window[0], ",", result.window[1], ",", result.window[2],
-                 ",", result.window[3], " is not a non-empty sub-rectangle of ",
-                 numPixelsX, "x", numPixelsY));
+                         " values in 'crop window' (expected 4)"));
+    result.cropWindow = int4(bounds.data());
+    if (const auto &cropWindow{result.cropWindow};
+        !(0 <= cropWindow[0] && 0 <= cropWindow[1] &&                  //
+          cropWindow[0] < cropWindow[2] && cropWindow[2] <= int(nX) && //
+          cropWindow[1] < cropWindow[3] && cropWindow[3] <= int(nY)))
+      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"),
+                         ": 'render crop window' ",              //
+                         cropWindow[0], ",", cropWindow[1], ",", //
+                         cropWindow[2], ",", cropWindow[3],      //
+                         " is not a non-empty sub-rectangle of ", nX, "x", nY));
     fields.erase(itr);
   }
   if (auto itr{fields.find("wavelength")}; itr != fields.end()) {
@@ -235,10 +249,10 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
       ptr = end;
     }
     fields.erase(itr);
-    if (result.wavelengths.size() != numBands)
+    if (result.wavelengths.size() != nBands)
       throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
-                         result.wavelengths.size(), " wavelengths for ",
-                         numBands, " bands"));
+                         result.wavelengths.size(), " wavelengths for ", nBands,
+                         " bands"));
   }
   fields.erase("file type");
   fields.erase("wavelength units");
@@ -249,16 +263,17 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   const auto count{std::max(result.samplesPerPixel, uint64_t(1))};
   auto file{openOrThrow(fileName, std::ios::in | std::ios::binary)};
   file.ignore(std::streamsize(headerOffset));
-  resize(numBands, numPixelsX, numPixelsY);
+  resize(nBands, nX, nY);
   addSamples(count);
   const bool swapBytes{byteOrder !=
                        (llvm::endianness::native == llvm::endianness::little
                             ? uint64_t(0)
                             : uint64_t(1))};
-  auto values{std::vector<double>(numBands)};
-  for (size_t iY = 0; iY < numPixelsY; iY++) {
-    for (size_t iX = 0; iX < numPixelsX; iX++) {
-      for (size_t i = 0; i < numBands; i++) {
+  auto values{std::vector<double>(nBands)};
+  for (size_t iY = 0; iY < nY; iY++) {
+    for (size_t iX = 0; iX < nX; iX++) {
+      for (size_t i = 0; i < nBands; i++) {
+        // NOLINTNEXTLINE
         char bytes[8]{};
         if (!file.read(bytes, 8))
           throw Error(concat("cannot load ", Quoted(fileName),
@@ -272,8 +287,8 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
       // outside it is read past and dropped, leaving those pixels the
       // zeros `resize()` wrote. That is what keeps the one count honest
       // when this film is merged and rendered into again.
-      if (int(iX) >= result.window[0] && int(iX) < result.window[2] &&
-          int(iY) >= result.window[1] && int(iY) < result.window[3])
+      if (int(iX) >= result.cropWindow[0] && int(iX) < result.cropWindow[2] &&
+          int(iY) >= result.cropWindow[1] && int(iY) < result.cropWindow[3])
         addTotals(iX, iY, values.data());
     }
   }

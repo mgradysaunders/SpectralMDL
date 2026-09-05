@@ -1159,6 +1159,8 @@ int main(int argc, char **argv) try {
   // output stage at the bottom.
   auto resumedFilm{smdl::SpectralFilm{}};
   auto resumed{smdl::SpectralFilm::ENVIFileInfo{}};
+  bool resuming{false};
+  const bool resumeRequested{!std::string(optResume).empty()};
   size_t sampleIndexBase{optSampleOffset};
   // The sample index the sequence BEGAN at, recorded in the spectrum
   // header and restored on resume, so that `-sample-offset` survives a
@@ -1171,11 +1173,9 @@ int main(int argc, char **argv) try {
   // so that an image built over many resumed sessions still knows what
   // it cost. A file written before these fields existed starts the tally
   // at this session.
-  double cumulativeWallSeconds{};
-  double cumulativeComputeSeconds{};
-  uint64_t sessionCount{};
-  const bool resumeRequested{!std::string(optResume).empty()};
-  bool resuming{false};
+  double totalSeconds{};
+  double totalCPUSeconds{};
+  uint64_t numSessions{};
   if (resumeRequested) {
     // A wholly missing data-plus-header pair is not an error: it makes
     // this run the first session of an intended sequence, rendering
@@ -1222,21 +1222,21 @@ int main(int argc, char **argv) try {
     // the film would stop having a single samples per pixel. Both
     // directions land here: the file's window defaults to the whole
     // frame, and so does this session's.
-    if (!sameWindow(resumed.window, window))
+    if (!sameWindow(resumed.cropWindow, window))
       throw smdl::Error(smdl::concat(
           "cannot resume: the file was rendered with -crop-window ",
-          formatWindow(resumed.window), " against this session's ",
+          formatWindow(resumed.cropWindow), " against this session's ",
           formatWindow(window),
           "; the window must be held constant across a resumed sequence, "
           "otherwise the samples per pixel stop being uniform"));
-    if (auto itr{resumed.fields.find("smdl sampler")};
+    if (auto itr{resumed.fields.find("render sampler")};
         itr == resumed.fields.end() || itr->second != SAMPLER_VERSION)
       SMDL_LOG_WARN(
           "resuming a file from a different sampler: the continuation "
           "samples are independent of the first session's rather than "
           "jointly stratified (still unbiased, noise just improves more "
           "slowly)");
-    if (auto itr{resumed.fields.find("smdl wavelength jitter")};
+    if (auto itr{resumed.fields.find("render wavelength jitter")};
         (itr != resumed.fields.end() && itr->second != "0") !=
         bool(optWavelengthJitter))
       SMDL_LOG_WARN(
@@ -1244,7 +1244,7 @@ int main(int argc, char **argv) try {
           "holds the mean radiance over the band and an unjittered one holds "
           "the radiance at one wavelength, so the merged image mixes two "
           "different quantities");
-    if (auto itr{resumed.fields.find("smdl args")};
+    if (auto itr{resumed.fields.find("render args")};
         itr != resumed.fields.end() &&
         stripSessionOnlyArgs(itr->second) != stripSessionOnlyArgs(argsEcho))
       SMDL_LOG_WARN("resuming with different flags: the file records ",
@@ -1252,7 +1252,7 @@ int main(int argc, char **argv) try {
                     "; if the scene or camera changed, the merged image "
                     "mixes two different renders");
     sequenceSampleOffset = 0;
-    if (auto itr{resumed.fields.find("smdl sample offset")};
+    if (auto itr{resumed.fields.find("render sample offset")};
         itr != resumed.fields.end())
       sequenceSampleOffset =
           size_t(std::strtoull(itr->second.c_str(), nullptr, 10));
@@ -1262,11 +1262,11 @@ int main(int argc, char **argv) try {
       const double seconds{std::strtod(itr->second.c_str(), nullptr)};
       return std::isfinite(seconds) && seconds > 0.0 ? seconds : 0.0;
     }};
-    cumulativeWallSeconds = resumedSeconds("smdl wall seconds");
-    cumulativeComputeSeconds = resumedSeconds("smdl compute seconds");
-    if (auto itr{resumed.fields.find("smdl sessions")};
+    totalSeconds = resumedSeconds("render seconds");
+    totalCPUSeconds = resumedSeconds("render cpu seconds");
+    if (auto itr{resumed.fields.find("render sessions")};
         itr != resumed.fields.end())
-      sessionCount = uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10));
+      numSessions = uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10));
     sampleIndexBase = sequenceSampleOffset + resumed.samplesPerPixel;
     SMDL_LOG_INFO("Resuming: ", resumed.samplesPerPixel,
                   " samples per pixel from ",
@@ -1764,8 +1764,8 @@ int main(int argc, char **argv) try {
   // Written beside the output and renamed into place: a watcher polling
   // the path never opens a half-written PNG.
   const double previewEvery{std::max(double(optPreviewEvery), 0.0)};
-  const bool checkpointing{previewEvery > 0.0 &&
-                           !std::string(optOutputRGB).empty()};
+  const bool isCheckpointing{previewEvery > 0.0 &&
+                             !std::string(optOutputRGB).empty()};
   const auto writeDisplayImage{[&] {
     // Resolve first, so that a guided preview stands on every pass folded
     // so far, the resumed seed included, instead of the newest pass
@@ -1788,7 +1788,7 @@ int main(int argc, char **argv) try {
   }};
   auto lastCheckpoint{std::chrono::steady_clock::now()};
   const auto checkpoint{[&] {
-    if (!checkpointing) return;
+    if (!isCheckpointing) return;
     const auto now{std::chrono::steady_clock::now()};
     if (std::chrono::duration<double>(now - lastCheckpoint).count() <
         previewEvery)
@@ -1831,7 +1831,7 @@ int main(int argc, char **argv) try {
   // termination rule, so the estimate is the fixed-depth truncation.
   PathOptions pathOptions{};
   pathOptions.maxBounces = unsigned(optMaxBounces);
-  pathOptions.roulette = optMaxBounces.getNumOccurrences() == 0;
+  pathOptions.useRoulette = optMaxBounces.getNumOccurrences() == 0;
   pathOptions.maxContribution = std::max(float(optMaxContribution), 0.0f);
   pathOptions.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
@@ -1861,7 +1861,7 @@ int main(int argc, char **argv) try {
   // means the same thing in every session of a resumed sequence.
   const auto renderStartWall{std::chrono::steady_clock::now()};
   const double renderStartCompute{cpuTimeSeconds()};
-  auto progress{ProgressBar(progressOptions)};
+  ProgressBar progress{progressOptions};
   size_t sppDone{0};
   size_t chunkSpp{1};
   for (size_t passIndex = 0; passIndex < passes.size(); passIndex++) {
@@ -1887,44 +1887,44 @@ int main(int argc, char **argv) try {
     // for. With guiding the passes are the chunks: they already grow
     // geometrically, and splitting one would change what the combiner
     // weights.
-    const bool chunked{checkpointing && !combiner};
+    const bool isChunked{isCheckpointing && !combiner};
     for (size_t passDone{0}; passDone < thisPass;) {
-      const size_t chunk{chunked ? std::min(chunkSpp, thisPass - passDone)
-                                 : thisPass - passDone};
+      const size_t chunk{isChunked ? std::min(chunkSpp, thisPass - passDone)
+                                   : thisPass - passDone};
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
       smdl::parallelFor(0, numWindowPixels, [&](size_t k) {
         // Denormals are worth flushing for the whole task: the material
-        // code the walk runs produces them, and the assist each one
+        // code the walk runs produces them, and the microcode assist each one
         // costs is a measurable fraction of the render.
         const ScopedFlushDenormals flushDenormals{};
         // The pixel index in the whole frame, which seeds the sampler and
         // addresses every per-pixel buffer, so a window renders the same
         // pixels the whole frame would.
-        const size_t i{(size_t(window[1]) + k / size_t(window[2] - window[0])) *
-                           numPixelsX +
-                       size_t(window[0]) + k % size_t(window[2] - window[0])};
+        const size_t windowWidth{size_t(window[2] - window[0])};
+        const size_t i{(size_t(window[1]) + k / windowWidth) * numPixelsX +
+                       (size_t(window[0]) + k % windowWidth)};
+        const size_t x{i % numPixelsX};
+        const size_t y{i / numPixelsX};
         // Constructed per pixel deliberately: hoisting this to a
         // thread_local measures as pure noise (the few malloc/free pairs
         // per pixel amortize across worker threads and malloc's own thread
         // cache), so the simpler lifetime wins.
-        auto allocator{smdl::BumpPtrAllocator()};
-        auto sampler{Sampler()};
+        smdl::BumpPtrAllocator allocator;
+        Sampler sampler;
         // Training records for `trainGuiding()`, one per vertex the walk
         // may reach, constructed only on the pre-final guiding passes
         // that fill them: at a runtime band count every record holds
         // sized vectors, too much to pay per pixel of a non-guiding
         // render.
-        auto guideRecords{std::vector<GuideRecord>()};
+        std::vector<GuideRecord> guideRecords;
         if (recordPass) guideRecords.resize(pathOptions.maxBounces + 1);
         // The sample's own wavelength grid, rewritten in place once per
         // sample: a `Color` past `SpectralColor::INLINE_CAPACITY` bands
         // heaps, and every state built from it holds the pointer rather
         // than a copy, so one buffer per pixel serves the whole sample.
-        auto jittered{std::optional<Color>()};
+        std::optional<Color> jittered;
         if (jitterWavelength) jittered.emplace(wavelengths);
-        auto y{i / numPixelsX};
-        auto x{i % numPixelsX};
         Color Lsum{};
         PassCombiner::PixelHalves halves{};
         Guiding guiding{};
@@ -1936,8 +1936,8 @@ int main(int argc, char **argv) try {
         guiding.bsdfFractionFixed =
             optGuideBSDFFraction.getNumOccurrences() > 0;
         for (size_t s = 0; s < chunk; s++) {
-          const auto sampleIndex{
-              uint32_t(sampleIndexBase + sppDone + chunkBase + s)};
+          const uint32_t sampleIndex =
+              sampleIndexBase + sppDone + chunkBase + s;
           sampler.startPixelSample(uint32_t(i), sampleIndex);
           if (jitterWavelength)
             jitterWavelengths(*jittered,
@@ -1945,12 +1945,12 @@ int main(int argc, char **argv) try {
           const Color &sampleWavelengths{jitterWavelength ? *jittered
                                                           : wavelengths};
           Color Lsample{};
-          auto cameraSample{camera->sample(x, y, sampler)};
           // A fully vignetted sample contributes nothing, so skip the
           // walk but let it still count in the average below, keeping the
           // darkening unbiased.
           uint64_t numRecords{0};
-          if (cameraSample.weight > 0) {
+          if (auto cameraSample{camera->sample(x, y, sampler)};
+              cameraSample.weight > 0) {
             // The path's time. The shutter fraction is drawn only when
             // the shutter is open, matching the lens-point precedent, so
             // a default render's sampler sequence is unchanged; the
@@ -2002,7 +2002,7 @@ int main(int argc, char **argv) try {
       // checkpoint below, which divides by it.
       if (!combiner) film.addSamples(chunk);
       passDone += chunk;
-      if (chunked) {
+      if (isChunked) {
         // Aim the next chunk at the interval from what this one cost,
         // and never more than quadruple it at once: the first chunk is
         // one sample, and a scene that is cheap at one sample and dear at
@@ -2043,13 +2043,11 @@ int main(int argc, char **argv) try {
   // A '-spp 0' re-run of the output stage rendered nothing, so it is not
   // a session and must leave the totals it rewrites exactly as they were.
   if (spp > 0) {
-    cumulativeWallSeconds +=
-        std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                      renderStartWall)
-            .count();
-    cumulativeComputeSeconds +=
-        std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
-    sessionCount++;
+    totalSeconds += std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - renderStartWall)
+                        .count();
+    totalCPUSeconds += std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
+    numSessions++;
   }
   if (optMNEEReport) ManifoldStats::global().print(std::cout);
   // Resolve the pass combination back into the film every downstream
@@ -2065,18 +2063,24 @@ int main(int argc, char **argv) try {
     }
   }
   if (!outputSpectrum.empty()) {
+    // TODO If using procedural SunSky, and standard ENVI header lines:
+    // sun azimuth = (degrees)
+    // sun elevation = (degrees)
+    // solar irradiance = {...} (W/m2/um)
+
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
     // be this very path.
     const auto partName{outputSpectrum + ".part"};
     const auto extraHeaderLines{std::vector<std::string>{
-        smdl::concat("smdl sampler = ", SAMPLER_VERSION),
-        smdl::concat("smdl wavelength jitter = ", jitterWavelength ? "1" : "0"),
-        smdl::concat("smdl sample offset = ", sequenceSampleOffset),
-        smdl::concat("smdl wall seconds = ", cumulativeWallSeconds),
-        smdl::concat("smdl compute seconds = ", cumulativeComputeSeconds),
-        smdl::concat("smdl sessions = ", sessionCount),
-        smdl::concat("smdl args = ", argsEcho)}};
+        smdl::concat("render sessions = ", numSessions),
+        smdl::concat("render seconds = ", totalSeconds),
+        smdl::concat("render cpu seconds = ", totalCPUSeconds),
+        smdl::concat("render sampler = ", SAMPLER_VERSION),
+        smdl::concat("render sample offset = ", sequenceSampleOffset),
+        smdl::concat("render wavelength jitter = ",
+                     jitterWavelength ? "1" : "0"),
+        smdl::concat("render args = ", argsEcho)}};
     // The window the recorded count belongs to, which the film itself
     // does not know: a windowed render still carries a full frame of
     // pixels, and the header must not describe the untouched ones as
@@ -2103,14 +2107,13 @@ int main(int argc, char **argv) try {
       SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
                     sdtree->leafCount(), " spatial leaves");
     }
-    SMDL_LOG_INFO(
-        "Cumulative render time: ", formatDuration(cumulativeWallSeconds),
-        " wall, ", formatDuration(cumulativeComputeSeconds), " compute over ",
-        sessionCount, " session(s)");
+    SMDL_LOG_INFO("Cumulative render time: ", formatDuration(totalSeconds),
+                  " wall, ", formatDuration(totalCPUSeconds), " compute over ",
+                  numSessions, " session(s)");
   }
   {
     const auto ldrImage{tonemap(tonemapOptions, rgbImage, film, wavelengths)};
-    if (auto error{smdl::write8bitImage(std::string(optOutputRGB), //
+    if (auto error{smdl::write8bitImage(std::string(optOutputRGB),
                                         int(numPixelsX), int(numPixelsY), 3,
                                         ldrImage.data())}) {
       error->print();
