@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include "Render/Manifold.h"
 #include "Scene/Primitive.h"
 
@@ -265,4 +267,70 @@ bool makeManifoldSeed(const MediumStack *medium,
   seed.etaNext = prevInterior ? mat.getExteriorIOR() : mat.getIOR();
   seed.sideSign = dot(wl, hit.normal) < 0 ? -1.0f : 1.0f;
   return true;
+}
+
+int runMNEETestNormalHook(const Scene &scene) {
+  constexpr int NUM_SAMPLES{64};
+  constexpr float TOLERANCE{1e-3f};
+  int failures{0};
+  for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
+       instIndex++) {
+    const auto &instance{scene.meshInstances[instIndex]};
+    if (instance.isCurves()) continue;
+    const auto matIndex{scene.materialIndexOf(instance)};
+    const auto *material{scene.materials[matIndex]};
+    if (!material || !material->geometryNormalEvaluate) continue;
+    const size_t faceCount{
+        instance.isPrimitive()
+            ? size_t(1)
+            : scene.meshes[instance.meshIndex]->faces.size()};
+    if (faceCount == 0) continue;
+    const bool remapped{material->remapsNormal()};
+    float maxNormalDot{-1.0f};
+    float minNormalDot{+1.0f};
+    float maxPartialErr{0.0f};
+    int samples{0};
+    for (int k = 0; k < NUM_SAMPLES; k++) {
+      // Deterministic low-discrepancy-ish points, interior to the face
+      // parameterization so the central differences stay inside it.
+      const auto faceIndex{uint32_t((size_t(k) * 2654435761UL) % faceCount)};
+      const float u{0.05f + 0.35f * std::fmod(0.618034f * float(k + 1), 1.0f)};
+      const float v{0.05f + 0.35f * std::fmod(0.754878f * float(k + 2), 1.0f)};
+      const auto hit{scene.makeHit(instIndex, faceIndex,
+                                   float3(1.0f - u - v, u, v), 0.0f)};
+      if (!hit.instance) continue;
+      const auto meshGeometry{scene.manifoldGeometry(hit)};
+      ManifoldGeometry hookGeometry{};
+      if (!manifoldHookGeometry(scene, hit, hookGeometry)) continue;
+      samples++;
+      const float normalDot{dot(meshGeometry.normal, hookGeometry.normal)};
+      maxNormalDot = std::max(maxNormalDot, normalDot);
+      minNormalDot = std::min(minNormalDot, normalDot);
+      for (int axis = 0; axis < 2; axis++) {
+        const float3 &a{axis == 0 ? meshGeometry.dNdu : meshGeometry.dNdv};
+        const float3 &b{axis == 0 ? hookGeometry.dNdu : hookGeometry.dNdv};
+        const float scale{std::max(length(a), length(b))};
+        if (scale > 1e-4f)
+          maxPartialErr = std::max(maxPartialErr, length(a - b) / scale);
+      }
+    }
+    if (samples == 0) continue;
+    if (remapped) {
+      std::cout << "  " << scene.fileNames[instIndex] << " (material "
+                << scene.materialNames[matIndex]
+                << "): remapped, max bend from mesh normal "
+                << smdl::degrees(
+                       std::acos(std::clamp(minNormalDot, -1.0f, 1.0f)))
+                << " deg over " << samples << " samples\n";
+      continue;
+    }
+    const bool ok{minNormalDot > 1.0f - TOLERANCE &&
+                  maxPartialErr <= TOLERANCE};
+    if (!ok) failures++;
+    std::cout << "  " << scene.fileNames[instIndex] << " (material "
+              << scene.materialNames[matIndex]
+              << "): " << (ok ? "OK" : "MISMATCH") << ", max relative dN error "
+              << maxPartialErr << " over " << samples << " samples\n";
+  }
+  return failures;
 }

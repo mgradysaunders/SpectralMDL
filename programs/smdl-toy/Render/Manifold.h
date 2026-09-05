@@ -210,3 +210,13 @@ public:
                                     const Hit &hit, const float3 &wl,
                                     float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);
+
+/// The '-mnee-test-normalhook' pass: at deterministic quasi-random points of
+/// every surface instance, read the shading normal field through the
+/// geometry-normal hook (with its central-difference partials) and compare
+/// against the analytic mesh derivatives. Wherever the material leaves
+/// 'geometry.normal' alone the two are the same field and must agree; a
+/// remapped material has no analytic truth to compare against, so it
+/// reports how far its field bends instead. Returns the number of
+/// unmapped instances that disagree.
+[[nodiscard]] int runMNEETestNormalHook(const Scene &scene);

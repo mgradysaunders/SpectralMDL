@@ -23,7 +23,12 @@ add_library("smdl-toy-objects" OBJECT)
 target_sources(
   "smdl-toy-objects"
   PRIVATE
+    "Options.cc"
+    "Output.cc"
     "Progress.cc"
+    "Render.cc"
+    "Resume.cc"
+    "Stage.cc"
     "Tonemap.cc"
     "IO/AssetFile.cc"
     "IO/CurvesFile.cc"
