@@ -6,6 +6,8 @@
 #include <cmath>
 #include <limits>
 
+#include "smdl/Support/Macros.h"
+
 namespace smdl {
 
 /// \addtogroup support
@@ -30,25 +32,27 @@ constexpr float ONE_MINUS_EPS =
 /// \{
 
 /// Convert degrees to radians.
-[[nodiscard]] constexpr float radians(float degrees) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr float radians(float degrees) noexcept {
   return degrees * PI / 180.0f;
 }
 
 /// Convert radians to degrees.
-[[nodiscard]] constexpr float degrees(float radians) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr float degrees(float radians) noexcept {
   return radians * (180.0f / PI);
 }
 
-[[nodiscard]] inline float finiteOrZero(float x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE float finiteOrZero(float x) noexcept {
   return std::isfinite(x) ? x : 0.0f;
 }
 
-[[nodiscard]] inline float incrementFloat(float x) noexcept {
-  return std::nextafter(x, +std::numeric_limits<float>::infinity());
+[[nodiscard]] SMDL_ALWAYS_INLINE float incrementFloat(float x) noexcept {
+  return std::nextafter(x, +INF);
 }
 
-[[nodiscard]] inline float decrementFloat(float x) noexcept {
-  return std::nextafter(x, -std::numeric_limits<float>::infinity());
+[[nodiscard]] SMDL_ALWAYS_INLINE float decrementFloat(float x) noexcept {
+  return std::nextafter(x, -INF);
 }
 
 template <typename T>
@@ -223,20 +227,23 @@ template <typename T, size_t N>
 
 /// Vector unary `operator+`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator+(Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator+(Vector<T, N> v) noexcept {
   return v;
 }
 
 /// Vector unary `operator-`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
   for (size_t i = 0; i < N; i++) v[i] = -v[i];
   return v;
 }
 
 /// Vector-vector `operator+`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N>
 operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] + v1[i];
@@ -245,7 +252,8 @@ operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 
 /// Vector-vector `operator-`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N>
 operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] - v1[i];
@@ -254,21 +262,22 @@ operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 
 /// Vector-vector `operator+=`.
 template <typename T, size_t N>
-constexpr Vector<T, N> &operator+=(Vector<T, N> &v0,
-                                   const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> &
+operator+=(Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v0 = v0 + v1;
 }
 
 /// Vector-vector `operator-=`.
 template <typename T, size_t N>
-constexpr Vector<T, N> &operator-=(Vector<T, N> &v0,
-                                   const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> &
+operator-=(Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v0 = v0 - v1;
 }
 
 /// Scalar-vector `operator*`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N>
 operator*(const T &s0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = s0 * v1[i];
@@ -277,8 +286,9 @@ operator*(const T &s0, const Vector<T, N> &v1) noexcept {
 
 /// Vector-scalar `operator*`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
-                                               const T &s1) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
+                                                    const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] * s1;
   return v;
@@ -286,8 +296,9 @@ template <typename T, size_t N>
 
 /// Vector-scalar `operator/`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
-                                               const T &s1) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
+                                                    const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] / s1;
   return v;
@@ -295,20 +306,23 @@ template <typename T, size_t N>
 
 /// Vector-scalar `operator*=`.
 template <typename T, size_t N>
-constexpr Vector<T, N> &operator*=(Vector<T, N> &v0, const T &s1) noexcept {
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> &operator*=(Vector<T, N> &v0,
+                                                      const T &s1) noexcept {
   return v0 = v0 * s1;
 }
 
 /// Vector-scalar `operator/=`.
 template <typename T, size_t N>
-constexpr Vector<T, N> &operator/=(Vector<T, N> &v0, const T &s1) noexcept {
+SMDL_ALWAYS_INLINE constexpr Vector<T, N> &operator/=(Vector<T, N> &v0,
+                                                      const T &s1) noexcept {
   return v0 = v0 / s1;
 }
 
 /// Vector-vector `operator==`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<bool, N>
-operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+[[nodiscard]]
+constexpr Vector<bool, N> operator==(const Vector<T, N> &v0,
+                                     const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] == v1[i];
   return v;
@@ -316,8 +330,9 @@ operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 
 /// Vector-vector `operator!=`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<bool, N>
-operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+[[nodiscard]]
+constexpr Vector<bool, N> operator!=(const Vector<T, N> &v0,
+                                     const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] != v1[i];
   return v;
@@ -325,44 +340,51 @@ operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 
 /// Vector dot product in 2 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 2> u, Vector<T, 2> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 2> u, Vector<T, 2> v) noexcept {
   return u.x * v.x + u.y * v.y;
 }
 
 /// Vector dot product in 3 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 3> u, Vector<T, 3> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 3> u, Vector<T, 3> v) noexcept {
   return u.x * v.x + u.y * v.y + u.z * v.z;
 }
 
 /// Vector dot product in 4 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 4> u, Vector<T, 4> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 4> u, Vector<T, 4> v) noexcept {
   return (u.x * v.x + u.y * v.y) + (u.z * v.z + u.w * v.w);
 }
 
 /// Absolute value of dot product.
 template <typename T, size_t N>
-[[nodiscard]] constexpr T absDot(Vector<T, N> u, Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr T absDot(Vector<T, N> u, Vector<T, N> v) noexcept {
   return std::abs(dot(u, v));
 }
 
 /// Vector length squared.
 template <typename T, size_t N>
-[[nodiscard]] constexpr T lengthSquared(Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr T lengthSquared(Vector<T, N> v) noexcept {
   return dot(v, v);
 }
 
 /// Vector length.
 template <typename T, size_t N>
-[[nodiscard]] inline T length(Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE T length(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   return std::sqrt(dot(v, v));
 }
 
 /// Normalize.
 template <typename T, size_t N>
-[[nodiscard]] inline Vector<T, N> normalize(Vector<T, N> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> normalize(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   auto len{length(v)};
   auto invLen{len > 0 ? 1 / len : 0};
@@ -371,7 +393,8 @@ template <typename T, size_t N>
 
 /// Try to normalize, return true if successful.
 template <typename T, size_t N>
-[[nodiscard]] inline bool tryNormalize(Vector<T, N> &v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (T len{length(v)}; len > T(0)) {
     v = v / len;
@@ -383,8 +406,9 @@ template <typename T, size_t N>
 
 /// Vector cross product in 3 dimensions.
 template <typename T>
-[[nodiscard]] constexpr Vector<T, 3> cross(Vector<T, 3> u,
-                                           Vector<T, 3> v) noexcept {
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr Vector<T, 3> cross(Vector<T, 3> u,
+                                                Vector<T, 3> v) noexcept {
   return {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
 }
 
@@ -548,8 +572,9 @@ using double4x4 = Matrix<double, 4, 4>;
 
 /// Matrix-Matrix `operator*`.
 template <typename T, size_t P, size_t N, size_t M>
-[[nodiscard]] constexpr Matrix<T, P, M>
-operator*(const Matrix<T, N, M> &m0, const Matrix<T, P, N> &m1) noexcept {
+[[nodiscard]]
+constexpr Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
+                                    const Matrix<T, P, N> &m1) noexcept {
   Matrix<T, P, M> m{};
   for (size_t i = 0; i < M; i++)
     for (size_t j = 0; j < P; j++)
@@ -559,8 +584,9 @@ operator*(const Matrix<T, N, M> &m0, const Matrix<T, P, N> &m1) noexcept {
 
 /// Matrix-Vector `operator*`.
 template <typename T, size_t N, size_t M>
-[[nodiscard]] constexpr Vector<T, M>
-operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) noexcept {
+[[nodiscard]]
+constexpr Vector<T, M> operator*(const Matrix<T, N, M> &m0,
+                                 const Vector<T, N> &v1) noexcept {
   Vector<T, M> v{};
   for (size_t i = 0; i < M; i++)
     for (size_t k = 0; k < N; k++) v[i] += m0[k][i] * v1[k];
@@ -574,8 +600,9 @@ operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) noexcept {
 /// difference between transforming a point and transforming a direction,
 /// and it is the easiest part of the spelling to mistype.
 template <typename T>
-[[nodiscard]] constexpr Vector<T, 3>
-transformPoint(const Matrix<T, 4, 4> &m, const Vector<T, 3> &p) noexcept {
+[[nodiscard]]
+constexpr Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
+                                      const Vector<T, 3> &p) noexcept {
   return Vector<T, 3>(m * Vector<T, 4>(p, T(1)));
 }
 
@@ -587,8 +614,9 @@ transformPoint(const Matrix<T, 4, 4> &m, const Vector<T, 3> &p) noexcept {
 /// two transform differently, and a normal needs the cofactor matrix
 /// (`cof(A) = det(A) A^-T`) rather than `A` itself.
 template <typename T>
-[[nodiscard]] constexpr Vector<T, 3>
-transformDirection(const Matrix<T, 4, 4> &m, const Vector<T, 3> &v) noexcept {
+[[nodiscard]]
+constexpr Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
+                                          const Vector<T, 3> &v) noexcept {
   return Vector<T, 3>(m * Vector<T, 4>(v, T(0)));
 }
 
@@ -628,8 +656,8 @@ template <typename T = float>
 /// anchored on the third column and preserving handedness. See
 /// `gramSchmidtOrthonormalize()`.
 template <typename T = float>
-[[nodiscard]] inline Matrix<T, 3, 3>
-orthonormalize(Matrix<T, 3, 3> m) noexcept {
+[[nodiscard]]
+inline Matrix<T, 3, 3> orthonormalize(Matrix<T, 3, 3> m) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (!tryNormalize(m[2])) m[2] = Vector<T, 3>(0, 0, 1);
   gramSchmidtOrthonormalize(m[2], m[0], m[1]);
@@ -638,9 +666,9 @@ orthonormalize(Matrix<T, 3, 3> m) noexcept {
 
 /// Calculate look-at transform.
 template <typename T = float>
-[[nodiscard]] inline Matrix<T, 4, 4>
-lookAt(const Vector<T, 3> &from, const Vector<T, 3> &to,
-       const Vector<T, 3> &up = {0, 0, 1}) noexcept {
+[[nodiscard]]
+inline Matrix<T, 4, 4> lookAt(const Vector<T, 3> &from, const Vector<T, 3> &to,
+                              const Vector<T, 3> &up = {0, 0, 1}) noexcept {
   static_assert(std::is_floating_point_v<T>);
   auto w{normalize(from - to)};
   auto u{normalize(cross(up, w))};
