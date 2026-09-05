@@ -33,9 +33,13 @@ namespace smdl {
 /// may compute to NaN (for example a division's `0/0`), so the
 /// predicates, which also test every inline lane to stay branch-free,
 /// mask the lanes past the size out of their verdict. The reductions
-/// that fold a running value (`average`, `maxComponent`) keep the
-/// size-bounded loop: its back-edge is predicted for free, and every
-/// masked fixed-length form measured no leaner.
+/// that fold a running value keep the size-bounded loop: its back-edge
+/// is predicted for free, and every masked fixed-length form measured
+/// no leaner. The extrema split the fold across four accumulators,
+/// which is the one place this class reassociates: a single running
+/// `max` is a chain of sixteen dependent instructions, and the compiler
+/// will not break it on its own because reassociating an extremum
+/// changes what it does with a NaN.
 ///
 /// Sizes must agree in mixed operations; this is sanity-checked, not
 /// reconciled. The default constructor makes an empty vector, which is
@@ -54,25 +58,26 @@ public:
   explicit SpectralColor(size_t size, float value = 0.0f) {
     reallocate(size);
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] = value;
+      // NOLINTNEXTLINE
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] = value;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] = value;
     }
   }
 
   /// Construct with `values.size()` bands copied from `values`.
   explicit SpectralColor(Span<const float> values) {
     reallocate(values.size());
-    if (mSize > 0) std::memcpy(mData, values.data(), mSize * sizeof(float));
+    if (mSize > 0) std::memcpy(mPtr, values.data(), mSize * sizeof(float));
   }
 
   SpectralColor(const SpectralColor &other) {
     if (SMDL_LIKELY(other.isInline())) {
-      std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+      std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
       mSize = other.mSize;
     } else {
       reallocate(other.mSize);
-      std::memcpy(mData, other.mData, mSize * sizeof(float));
+      std::memcpy(mPtr, other.mPtr, mSize * sizeof(float));
     }
   }
 
@@ -81,11 +86,11 @@ public:
   SpectralColor &operator=(const SpectralColor &other) {
     if (this != &other) {
       if (SMDL_LIKELY(other.isInline() && isInline())) {
-        std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+        std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
         mSize = other.mSize;
       } else {
         reallocate(other.mSize);
-        if (mSize > 0) std::memcpy(mData, other.mData, mSize * sizeof(float));
+        if (mSize > 0) std::memcpy(mPtr, other.mPtr, mSize * sizeof(float));
       }
     }
     return *this;
@@ -93,38 +98,49 @@ public:
 
   SpectralColor &operator=(SpectralColor &&other) noexcept {
     if (this != &other) {
-      if (SMDL_UNLIKELY(!isInline())) delete[] mData;
+      if (SMDL_UNLIKELY(!isInline())) delete[] mPtr;
       stealOrCopy(other);
     }
     return *this;
   }
 
   ~SpectralColor() {
-    if (SMDL_UNLIKELY(!isInline())) delete[] mData;
-    mData = mLocal;
+    if (SMDL_UNLIKELY(!isInline())) delete[] mPtr;
+    mPtr = mBuf;
     mSize = 0;
   }
 
 public:
   [[nodiscard]] size_t size() const noexcept { return mSize; }
 
-  [[nodiscard]] float *data() noexcept { return mData; }
+  [[nodiscard]] float *data() noexcept { return mPtr; }
 
-  [[nodiscard]] const float *data() const noexcept { return mData; }
+  [[nodiscard]] const float *data() const noexcept { return mPtr; }
 
-  [[nodiscard]] float &operator[](size_t i) noexcept { return mData[i]; }
+  [[nodiscard]] float &operator[](size_t i) noexcept { return mPtr[i]; }
 
   [[nodiscard]] const float &operator[](size_t i) const noexcept {
-    return mData[i];
+    return mPtr[i];
   }
 
 public:
   SpectralColor &operator+=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs.mLocal[i];
+      // Through a local rather than straight into `mBuf`, which reads as
+      // the obvious form and does not vectorize: nothing rules out
+      // `this == &rhs`, so a store to lane i may alias the load of lane
+      // j, and the fixed trip count is short enough that the unroller
+      // reaches it before the vectorizer does. The local cannot escape,
+      // so its stores provably alias neither operand, the loads hoist
+      // above them, and the copy back folds into the same vectors.
+      // NOLINTNEXTLINE
+      alignas(32) float tmp[INLINE_CAPACITY];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        tmp[i] = mBuf[i] + rhs.mBuf[i];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = tmp[i];
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] += rhs.mData[i];
+      for (size_t i = 0; i < mSize; i++) mPtr[i] += rhs.mPtr[i];
     }
     return *this;
   }
@@ -132,9 +148,13 @@ public:
   SpectralColor &operator-=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs.mLocal[i];
+      // NOLINTNEXTLINE
+      alignas(32) float tmp[INLINE_CAPACITY];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        tmp[i] = mBuf[i] - rhs.mBuf[i];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = tmp[i];
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] -= rhs.mData[i];
+      for (size_t i = 0; i < mSize; i++) mPtr[i] -= rhs.mPtr[i];
     }
     return *this;
   }
@@ -142,9 +162,13 @@ public:
   SpectralColor &operator*=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs.mLocal[i];
+      // NOLINTNEXTLINE
+      alignas(32) float tmp[INLINE_CAPACITY];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        tmp[i] = mBuf[i] * rhs.mBuf[i];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = tmp[i];
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] *= rhs.mData[i];
+      for (size_t i = 0; i < mSize; i++) mPtr[i] *= rhs.mPtr[i];
     }
     return *this;
   }
@@ -152,45 +176,53 @@ public:
   SpectralColor &operator/=(const SpectralColor &rhs) noexcept {
     SMDL_SANITY_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs.mLocal[i];
+      // NOLINTNEXTLINE
+      alignas(32) float tmp[INLINE_CAPACITY];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        tmp[i] = mBuf[i] / rhs.mBuf[i];
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = tmp[i];
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] /= rhs.mData[i];
+      for (size_t i = 0; i < mSize; i++) mPtr[i] /= rhs.mPtr[i];
     }
     return *this;
   }
 
   SpectralColor &operator+=(float rhs) noexcept {
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs;
+      // NOLINTNEXTLINE
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] += rhs;
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] += rhs;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] += rhs;
     }
     return *this;
   }
 
   SpectralColor &operator-=(float rhs) noexcept {
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs;
+      // NOLINTNEXTLINE
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] -= rhs;
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] -= rhs;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] -= rhs;
     }
     return *this;
   }
 
   SpectralColor &operator*=(float rhs) noexcept {
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs;
+      // NOLINTNEXTLINE
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] *= rhs;
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] *= rhs;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] *= rhs;
     }
     return *this;
   }
 
   SpectralColor &operator/=(float rhs) noexcept {
     if (SMDL_LIKELY(isInline())) {
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs;
+      // NOLINTNEXTLINE
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] /= rhs;
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] /= rhs;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] /= rhs;
     }
     return *this;
   }
@@ -200,11 +232,12 @@ public:
   [[nodiscard]] SpectralColor operator-() const {
     SpectralColor result{*this};
     if (SMDL_LIKELY(result.isInline())) {
+      // NOLINTNEXTLINE
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        result.mLocal[i] = -result.mLocal[i];
+        result.mBuf[i] = -result.mBuf[i];
     } else {
       for (size_t i = 0; i < result.mSize; i++)
-        result.mData[i] = -result.mData[i];
+        result.mPtr[i] = -result.mPtr[i];
     }
     return result;
   }
@@ -294,11 +327,11 @@ public:
     if (SMDL_LIKELY(isInline())) {
       uint32_t bits{};
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        bits |= uint32_t(!(std::abs(mLocal[i]) <= thresh)) << i;
+        bits |= uint32_t(!(std::abs(mBuf[i]) <= thresh)) << i;
       return (bits & liveLanes()) == 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (!(std::abs(mData[i]) <= thresh)) return false;
+      if (!(std::abs(mPtr[i]) <= thresh)) return false;
     return true;
   }
 
@@ -307,11 +340,11 @@ public:
     if (SMDL_LIKELY(isInline())) {
       uint32_t bits{};
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        bits |= uint32_t(std::isinf(mLocal[i])) << i;
+        bits |= uint32_t(std::isinf(mBuf[i])) << i;
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (std::isinf(mData[i])) return true;
+      if (std::isinf(mPtr[i])) return true;
     return false;
   }
 
@@ -320,11 +353,11 @@ public:
     if (SMDL_LIKELY(isInline())) {
       uint32_t bits{};
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        bits |= uint32_t(std::isnan(mLocal[i])) << i;
+        bits |= uint32_t(std::isnan(mBuf[i])) << i;
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (std::isnan(mData[i])) return true;
+      if (std::isnan(mPtr[i])) return true;
     return false;
   }
 
@@ -333,65 +366,84 @@ public:
     if (SMDL_LIKELY(isInline())) {
       uint32_t bits{};
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        bits |= uint32_t(!std::isfinite(mLocal[i])) << i;
+        bits |= uint32_t(!std::isfinite(mBuf[i])) << i;
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (!std::isfinite(mData[i])) return true;
+      if (!std::isfinite(mPtr[i])) return true;
     return false;
   }
 
   /// Set all non-positive components to zero.
   void setNonPositiveToZero() noexcept {
     if (SMDL_LIKELY(isInline())) {
+      // NOLINTNEXTLINE
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        mLocal[i] = std::max(mLocal[i], 0.0f);
+        mBuf[i] = std::max(mBuf[i], 0.0f);
     } else {
-      for (size_t i = 0; i < mSize; i++) mData[i] = std::max(mData[i], 0.0f);
+      for (size_t i = 0; i < mSize; i++) mPtr[i] = std::max(mPtr[i], 0.0f);
     }
   }
 
   /// Set all non-finite components to zero.
   void setNonFiniteToZero() noexcept {
     if (SMDL_LIKELY(isInline())) {
+      // NOLINTNEXTLINE
       for (size_t i = 0; i < INLINE_CAPACITY; i++)
-        mLocal[i] = maskedFloat(mLocal[i], std::isfinite(mLocal[i]));
+        mBuf[i] = maskedFloat(mBuf[i], std::isfinite(mBuf[i]));
     } else {
       for (size_t i = 0; i < mSize; i++)
-        if (!std::isfinite(mData[i])) mData[i] = 0.0f;
+        if (!std::isfinite(mPtr[i])) mPtr[i] = 0.0f;
     }
   }
 
   /// Calculate the average.
   [[nodiscard]] float average() const noexcept {
     SMDL_SANITY_CHECK(mSize > 0);
+    // Sequential, unlike the extrema below: the summation order is the
+    // documented contract, and splitting the accumulator would reassociate
+    // it. A band count this short cannot pay for that anyway.
     float result{};
-    for (size_t i = 0; i < mSize; i++) result += mData[i];
+    for (size_t i = 0; i < mSize; i++) result += mPtr[i];
     return result / float(mSize);
   }
 
   /// Find the maximum component.
   [[nodiscard]] float maxComponent() const noexcept {
     SMDL_SANITY_CHECK(mSize > 0);
-    float result{mData[0]};
-    for (size_t i = 1; i < mSize; i++) result = std::max(result, mData[i]);
-    return result;
+    float r0{mPtr[0]}, r1{r0}, r2{r0}, r3{r0};
+    size_t i{1};
+    for (; i + 3 < mSize; i += 4) {
+      r0 = std::max(r0, mPtr[i + 0]);
+      r1 = std::max(r1, mPtr[i + 1]);
+      r2 = std::max(r2, mPtr[i + 2]);
+      r3 = std::max(r3, mPtr[i + 3]);
+    }
+    for (; i < mSize; i++) r0 = std::max(r0, mPtr[i]);
+    // NOLINTNEXTLINE
+    return std::max(std::max(r0, r1), std::max(r2, r3));
   }
 
   /// Find the minimum component.
   [[nodiscard]] float minComponent() const noexcept {
     SMDL_SANITY_CHECK(mSize > 0);
-    float result{mData[0]};
-    for (size_t i = 1; i < mSize; i++) result = std::min(result, mData[i]);
-    return result;
+    float r0{mPtr[0]}, r1{r0}, r2{r0}, r3{r0};
+    size_t i{1};
+    for (; i + 3 < mSize; i += 4) {
+      r0 = std::min(r0, mPtr[i + 0]);
+      r1 = std::min(r1, mPtr[i + 1]);
+      r2 = std::min(r2, mPtr[i + 2]);
+      r3 = std::min(r3, mPtr[i + 3]);
+    }
+    for (; i < mSize; i++) r0 = std::min(r0, mPtr[i]);
+    // NOLINTNEXTLINE
+    return std::min(std::min(r0, r1), std::min(r2, r3));
   }
 
-  [[nodiscard]] operator Span<float>() noexcept {
-    return Span<float>(mData, mSize);
-  }
+  [[nodiscard]] operator Span<float>() noexcept { return {mPtr, mSize}; }
 
   [[nodiscard]] operator Span<const float>() const noexcept {
-    return Span<const float>(mData, mSize);
+    return {mPtr, mSize};
   }
 
 private:
@@ -402,7 +454,9 @@ private:
   /// static heuristic reads a pointer equality as unlikely and laid the
   /// inline path, the one every operation takes at a band count within
   /// `INLINE_CAPACITY`, out of line at every site.
-  [[nodiscard]] bool isInline() const noexcept { return mData == mLocal; }
+  [[nodiscard]] SMDL_ALWAYS_INLINE bool isInline() const noexcept {
+    return mSize <= INLINE_CAPACITY;
+  }
 
   /// One bit per inline lane within the size. The predicates test every
   /// inline lane into a bit each and mask with this, which is a handful
@@ -410,12 +464,13 @@ private:
   /// sixteen trips with a back-edge each; a per-lane comparison against
   /// the size costs more than the loop did, because the optimizer widens
   /// it to 64-bit lanes.
-  [[nodiscard]] uint32_t liveLanes() const noexcept {
+  [[nodiscard]] SMDL_ALWAYS_INLINE uint32_t liveLanes() const noexcept {
     return (uint32_t(1) << mSize) - 1u;
   }
 
   /// `value` where `keep`, else zero, by an integer mask.
-  [[nodiscard]] static float maskedFloat(float value, bool keep) noexcept {
+  [[nodiscard]] SMDL_ALWAYS_INLINE static float
+  maskedFloat(float value, bool keep) noexcept {
     return bitCast<float>(bitCast<uint32_t>(value) & (0u - uint32_t(keep)));
   }
 
@@ -425,8 +480,8 @@ private:
   /// heap is in use exactly when the size exceeds `INLINE_CAPACITY`.
   void reallocate(size_t size) {
     if (size == mSize) return;
-    if (SMDL_UNLIKELY(!isInline())) delete[] mData;
-    mData = SMDL_LIKELY(size <= INLINE_CAPACITY) ? mLocal : new float[size];
+    if (SMDL_UNLIKELY(!isInline())) delete[] mPtr;
+    mPtr = SMDL_LIKELY(size <= INLINE_CAPACITY) ? mBuf : new float[size];
     mSize = size;
   }
 
@@ -435,12 +490,12 @@ private:
   void stealOrCopy(SpectralColor &other) noexcept {
     mSize = other.mSize;
     if (SMDL_UNLIKELY(!other.isInline())) {
-      mData = other.mData;
+      mPtr = other.mPtr;
     } else {
-      mData = mLocal;
-      std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+      mPtr = mBuf;
+      std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     }
-    other.mData = other.mLocal;
+    other.mPtr = other.mBuf;
     other.mSize = 0;
   }
 
@@ -449,11 +504,11 @@ private:
 
   /// The band values: `mLocal` when `mSize <= INLINE_CAPACITY`, a heap
   /// allocation otherwise.
-  float *mData{mLocal};
+  float *mPtr{mBuf};
 
   /// The inline storage. Zero-initialized in full so the fixed-length
   /// fast paths only ever read initialized lanes.
-  alignas(32) float mLocal[INLINE_CAPACITY]{};
+  alignas(32) float mBuf[INLINE_CAPACITY]{};
 };
 
 /// \}

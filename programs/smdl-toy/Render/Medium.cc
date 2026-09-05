@@ -462,12 +462,16 @@ SMDL_ALWAYS_INLINE void Medium::queryComponent(const Component &component,
   // material declared, and a misdeclared negative one must not invert
   // the bounds.
   const float scale{component.scaledByGrid ? majorantScale : 1.0f};
-  for (size_t i = 0; i < sigmaA.size(); i++) {
-    sigmaA[i] = std::min(std::max(sigmaA[i] * mUnitScale, 0.0f),
-                         component.maxSigmaA[i] * scale);
-    sigmaS[i] = std::min(std::max(sigmaS[i] * mUnitScale, 0.0f),
-                         component.maxSigmaS[i] * scale);
-    emission[i] = std::max(emission[i] * mUnitScale, 0.0f);
+  float *SMDL_RESTRICT pA{sigmaA.data()};
+  float *SMDL_RESTRICT pS{sigmaS.data()};
+  float *SMDL_RESTRICT pE{emission.data()};
+  const float *SMDL_RESTRICT pMaxA{component.maxSigmaA.data()};
+  const float *SMDL_RESTRICT pMaxS{component.maxSigmaS.data()};
+  const size_t n{sigmaA.size()};
+  for (size_t i = 0; i < n; i++) {
+    pA[i] = std::min(std::max(pA[i] * mUnitScale, 0.0f), pMaxA[i] * scale);
+    pS[i] = std::min(std::max(pS[i] * mUnitScale, 0.0f), pMaxS[i] * scale);
+    pE[i] = std::max(pE[i] * mUnitScale, 0.0f);
   }
   if (stash) component.lastSigmaS = sigmaS;
 }
@@ -656,8 +660,14 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     const float m{mMajorantBase + mMajorantGrid * span.scale};
     if (!(m > 0.0f)) continue;
     float tCur{span.t0};
+    const float invM{1.0f / m};
     while (true) {
-      tCur += -std::log1p(-rng.generateFloat()) / m;
+      // The free flight off the canonical draw itself rather than off
+      // its complement: the two are equidistributed, and taking the
+      // logarithm of the draw keeps full precision where the flight is
+      // long, which is the tail that decides how many steps this loop
+      // runs.
+      tCur += -smdl::fastLog(rng.generateFloat()) * invM;
       if (!(tCur < span.t1)) break;
       if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
         beta = Color();
@@ -763,8 +773,14 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
     const float m{mMajorantGrid * (span.scale - span.scaleMin) + mMajorantBase};
     if (!(m > 0.0f)) continue;
     float tCur{span.t0};
+    const float invM{1.0f / m};
     while (true) {
-      tCur += -std::log1p(-rng.generateFloat()) / m;
+      // The free flight off the canonical draw itself rather than off
+      // its complement: the two are equidistributed, and taking the
+      // logarithm of the draw keeps full precision where the flight is
+      // long, which is the tail that decides how many steps this loop
+      // runs.
+      tCur += -smdl::fastLog(rng.generateFloat()) * invM;
       if (!(tCur < span.t1)) break;
       if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
         beta = Color();

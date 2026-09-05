@@ -233,6 +233,32 @@ TEST_CASE("QMC helpers") {
       checkNet(X, Y, m);
     }
   }
+  SUBCASE("Sobol dimension 1 agrees with its direction numbers") {
+    static constexpr uint32_t DIRECTIONS[32] = {
+        0x80000000U, 0xC0000000U, 0xA0000000U, 0xF0000000U, //
+        0x88000000U, 0xCC000000U, 0xAA000000U, 0xFF000000U, //
+        0x80800000U, 0xC0C00000U, 0xA0A00000U, 0xF0F00000U, //
+        0x88880000U, 0xCCCC0000U, 0xAAAA0000U, 0xFFFF0000U, //
+        0x80008000U, 0xC000C000U, 0xA000A000U, 0xF000F000U, //
+        0x88008800U, 0xCC00CC00U, 0xAA00AA00U, 0xFF00FF00U, //
+        0x80808080U, 0xC0C0C0C0U, 0xA0A0A0A0U, 0xF0F0F0F0U, //
+        0x88888888U, 0xCCCCCCCCU, 0xAAAAAAAAU, 0xFFFFFFFFU};
+    const auto byTable{[](uint32_t index) {
+      uint32_t X{};
+      for (int bit = 0; bit < 32; bit++)
+        X ^= DIRECTIONS[bit] & (0U - ((index >> bit) & 1U));
+      return X;
+    }};
+    bool agrees{true};
+    for (int bit = 0; bit < 32; bit++)
+      agrees &= smdl::sobolDim1(uint32_t(1) << bit) == DIRECTIONS[bit];
+    std::mt19937 prng{};
+    for (int iter = 0; iter < 100000; iter++) {
+      const auto index{uint32_t(prng())};
+      agrees &= smdl::sobolDim1(index) == byTable(index);
+    }
+    CHECK(agrees);
+  }
 }
 
 TEST_CASE("OwenSobolSampler") {

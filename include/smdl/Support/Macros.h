@@ -40,6 +40,20 @@ namespace smdl {
 #define SMDL_NO_INLINE
 #endif
 
+/// Promise that a pointer is the only access path to what it points at
+/// for the lifetime of the declaration.
+///
+/// Its use is to keep the vectorizer from guarding a short loop with
+/// runtime overlap checks, which for a loop of a few vector iterations
+/// cost more than the loop: the checks are quadratic in the number of
+/// distinct arrays the body touches. It is a promise the compiler cannot
+/// verify, so the caller must genuinely pass distinct buffers.
+#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
+#define SMDL_RESTRICT __restrict
+#else
+#define SMDL_RESTRICT
+#endif
+
 /// Mark a branch condition as almost always true (`SMDL_LIKELY`) or
 /// almost always false (`SMDL_UNLIKELY`).
 ///

@@ -382,6 +382,10 @@ private:
   /// heterogeneous one. `stash` records the clamped scattering
   /// coefficient for `pickScatterComponent()`, which only an overlap
   /// runs.
+  ///
+  /// The three spectra must be distinct objects: the clamping loop
+  /// promises the compiler they do not overlap, which is what keeps a
+  /// two-vector loop from being guarded by ten runtime alias checks.
   void queryComponent(const Component &component, float t, float majorantScale,
                       bool stash, Color &sigmaA, Color &sigmaS,
                       Color &emission) const;

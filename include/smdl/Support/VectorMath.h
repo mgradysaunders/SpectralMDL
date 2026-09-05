@@ -397,7 +397,7 @@ template <typename T, size_t N>
 SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (T len{length(v)}; len > T(0)) {
-    v = v / len;
+    v = v * (T(1) / len);
     return true;
   } else {
     return false;

@@ -422,24 +422,21 @@ private:
 
 /// The second Sobol dimension at `index`. (The first Sobol dimension is
 /// just `reverseBits`.)
+///
+/// The direction numbers are Pascal's triangle mod two, so by Lucas'
+/// theorem bit 31-j of the result is the XOR of the index bits k whose
+/// binary digits cover j. That is the superset zeta transform over the
+/// five-bit cube of bit positions, which is five shift-mask-XOR
+/// butterflies, and the reversal puts j back where the direction
+/// numbers had it. The doctest checks this against the table.
 [[nodiscard]] inline uint32_t sobolDim1(uint32_t index) noexcept {
-  static constexpr std::array<uint32_t, 32> directions = {
-      0x80000000U, 0xC0000000U, 0xA0000000U, 0xF0000000U, //
-      0x88000000U, 0xCC000000U, 0xAA000000U, 0xFF000000U, //
-      0x80800000U, 0xC0C00000U, 0xA0A00000U, 0xF0F00000U, //
-      0x88880000U, 0xCCCC0000U, 0xAAAA0000U, 0xFFFF0000U, //
-      0x80008000U, 0xC000C000U, 0xA000A000U, 0xF000F000U, //
-      0x88008800U, 0xCC00CC00U, 0xAA00AA00U, 0xFF00FF00U, //
-      0x80808080U, 0xC0C0C0C0U, 0xA0A0A0A0U, 0xF0F0F0F0U, //
-      0x88888888U, 0xCCCCCCCCU, 0xAAAAAAAAU, 0xFFFFFFFFU};
-  // Fixed trip count with a mask instead of a data-dependent branch: the
-  // callers pass scrambled indexes whose bits are coin flips, so the branch
-  // mispredicts every other bit and dominates the sampler's cost, while the
-  // masked form unrolls and vectorizes.
-  uint32_t X{};
-  for (int bit = 0; bit < 32; bit++)
-    X ^= directions[bit] & (0U - ((index >> bit) & 1U));
-  return X;
+  uint32_t w{index};
+  w ^= (w >> 1) & 0x55555555U;
+  w ^= (w >> 2) & 0x33333333U;
+  w ^= (w >> 4) & 0x0F0F0F0FU;
+  w ^= (w >> 8) & 0x00FF00FFU;
+  w ^= (w >> 16) & 0x0000FFFFU;
+  return reverseBits(w);
 }
 
 /// \}
@@ -472,6 +469,7 @@ public:
     mSeedHash = mixBits(seed);
     mIndex = index;
     mDimension = 0;
+    mPairIndex = ~uint32_t(0);
   }
 
   /// Generates the next scrambled sample as raw bits, advancing the
@@ -480,11 +478,17 @@ public:
     const uint32_t pair{mDimension >> 1};
     const uint32_t component{mDimension & 1};
     ++mDimension;
-    const uint32_t seed{mixBits(mSeedHash ^ (0x9E3779B9U * pair))};
-    const uint32_t shuffledIndex{nestedUniformScramble(mIndex, seed)};
-    const uint32_t X{component == 0 ? reverseBits(shuffledIndex)
-                                    : sobolDim1(shuffledIndex)};
-    return nestedUniformScramble(X, mixBits(seed ^ (0x55555555U + component)));
+    // Both components of a pair share the seed and the shuffled index,
+    // so the pair pays for them once.
+    if (pair != mPairIndex) {
+      mPairIndex = pair;
+      mPairSeed = mixBits(mSeedHash ^ (0x9E3779B9U * pair));
+      mPairShuffled = nestedUniformScramble(mIndex, mPairSeed);
+    }
+    const uint32_t X{component == 0 ? reverseBits(mPairShuffled)
+                                    : sobolDim1(mPairShuffled)};
+    return nestedUniformScramble(
+        X, mixBits(mPairSeed ^ (0x55555555U + component)));
   }
 
   /// Generates the next canonical sample in `(0,1)`.
@@ -525,6 +529,15 @@ private:
 
   /// The dimension counter.
   uint32_t mDimension{};
+
+  /// The pair the cache below belongs to, or `~0` for none.
+  uint32_t mPairIndex{~uint32_t(0)};
+
+  /// The pair's hashed seed.
+  uint32_t mPairSeed{};
+
+  /// The pair's shuffled point index.
+  uint32_t mPairShuffled{};
 };
 
 /// \}
