@@ -27,8 +27,8 @@ namespace smdl {
 /// fixed-length loops over the full `INLINE_CAPACITY` and copies move
 /// the whole inline buffer, so the compiler unrolls and vectorizes
 /// exactly as it did when the size was a compile-time 16. This is
-/// sound because the inline buffer is zero-initialized at construction
-/// and only ever written by these same fixed-length operations, so
+/// sound because every constructor fills the inline buffer in full and
+/// it is only ever written by these same fixed-length operations, so
 /// lanes at or beyond `size()` always hold initialized floats; they
 /// may compute to NaN (for example a division's `0/0`), so the
 /// predicates, which also test every inline lane to stay branch-free,
@@ -52,28 +52,31 @@ public:
   static constexpr size_t INLINE_CAPACITY = 16;
 
   /// Construct empty.
-  SpectralColor() = default;
+  SpectralColor() noexcept {
+    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = 0.0f;
+  }
 
   /// Construct with `size` bands of `value`.
   explicit SpectralColor(size_t size, float value = 0.0f) {
+    // Before the allocation and whether or not the buffer ends up being
+    // the storage, so that the common case writes it exactly once.
+    // NOLINTNEXTLINE
+    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
     reallocate(size);
-    if (SMDL_LIKELY(isInline())) {
-      // NOLINTNEXTLINE
-      for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
-    } else {
+    if (SMDL_UNLIKELY(!isInline()))
       for (size_t i = 0; i < mSize; i++) mPtr[i] = value;
-    }
   }
 
   /// Construct with `values.size()` bands copied from `values`.
   explicit SpectralColor(Span<const float> values) {
+    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = 0.0f;
     reallocate(values.size());
     if (mSize > 0) std::memcpy(mPtr, values.data(), mSize * sizeof(float));
   }
 
   SpectralColor(const SpectralColor &other) {
+    std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     if (SMDL_LIKELY(other.isInline())) {
-      std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
       mSize = other.mSize;
     } else {
       reallocate(other.mSize);
@@ -85,8 +88,8 @@ public:
 
   SpectralColor &operator=(const SpectralColor &other) {
     if (this != &other) {
+      std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
       if (SMDL_LIKELY(other.isInline() && isInline())) {
-        std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
         mSize = other.mSize;
       } else {
         reallocate(other.mSize);
@@ -489,11 +492,11 @@ private:
   /// the whole inline buffer. The moved-from vector is left empty.
   void stealOrCopy(SpectralColor &other) noexcept {
     mSize = other.mSize;
+    std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     if (SMDL_UNLIKELY(!other.isInline())) {
       mPtr = other.mPtr;
     } else {
       mPtr = mBuf;
-      std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     }
     other.mPtr = other.mBuf;
     other.mSize = 0;
@@ -502,13 +505,20 @@ private:
   /// The number of bands.
   size_t mSize{};
 
-  /// The band values: `mLocal` when `mSize <= INLINE_CAPACITY`, a heap
+  /// The band values: `mBuf` when `mSize <= INLINE_CAPACITY`, a heap
   /// allocation otherwise.
   float *mPtr{mBuf};
 
-  /// The inline storage. Zero-initialized in full so the fixed-length
-  /// fast paths only ever read initialized lanes.
-  alignas(32) float mBuf[INLINE_CAPACITY]{};
+  /// The inline storage, which every constructor fills in full whether
+  /// or not it is the storage in use, so that the fixed-length fast
+  /// paths only ever read initialized lanes.
+  ///
+  /// Deliberately without an initializer here: one would make the whole
+  /// buffer a dead store on every path that fills it anyway, and the
+  /// compiler cannot remove it, because `mPtr` takes the buffer's
+  /// address in the same breath and an escaped address is one a later
+  /// allocation might read through.
+  alignas(32) float mBuf[INLINE_CAPACITY];
 };
 
 /// \}
