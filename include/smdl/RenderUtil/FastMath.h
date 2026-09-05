@@ -7,6 +7,8 @@
 #include <cstring>
 #include <limits>
 
+#include "smdl/Support/Macros.h"
+
 namespace smdl {
 
 /// \addtogroup renderutil
@@ -42,7 +44,7 @@ namespace smdl {
 /// series and the power built by assembling the exponent field. The
 /// reduction subtracts ln2 in two pieces (Cody-Waite), because the
 /// one-piece form loses a digit per decade of the argument.
-[[nodiscard]] inline float fastExp(float x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE float fastExp(float x) noexcept {
   constexpr float X_MIN = -87.33f;
   constexpr float X_MAX = 88.72f;
   const float xc{std::clamp(x, X_MIN, X_MAX)};
@@ -65,7 +67,7 @@ namespace smdl {
 /// 709.44, on the same grounds as the float overload. The one-piece
 /// reduction is enough here: the rounding of `n ln2` at n = 1024 is 1e-13
 /// relative, far under the degree-7 series' own error.
-[[nodiscard]] inline double fastExp(double x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE double fastExp(double x) noexcept {
   constexpr double X_MIN = -708.39;
   constexpr double X_MAX = 709.78;
   const double xc{std::clamp(x, X_MIN, X_MAX)};
@@ -94,7 +96,7 @@ namespace smdl {
 /// the term that lands below float rounding of the result. A denormal is
 /// first scaled into the normal range, exactly, so that its exponent
 /// reads correctly too.
-[[nodiscard]] inline float fastLog(float x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE float fastLog(float x) noexcept {
   const bool denormal{x < std::numeric_limits<float>::min()};
   x = denormal ? x * 8388608.0f : x;
   std::uint32_t bits{};
@@ -103,10 +105,7 @@ namespace smdl {
   bits = (bits & 0x807FFFFFu) | (127u << 23);
   float m{};
   std::memcpy(&m, &bits, sizeof(m));
-  if (m > 1.3333333f) {
-    m *= 0.5f;
-    e += 1;
-  }
+  if (m > 1.3333333f) m *= 0.5f, e += 1;
   const float s{(m - 1.0f) / (m + 1.0f)};
   const float s2{s * s};
   return float(e) * 0.6931472f +
@@ -118,7 +117,7 @@ namespace smdl {
 /// to 2e-11 relative to \f$ \ln x \f$ away from 1 and 5e-12 absolute
 /// within [0.5, 2], exactly 0 at 1. The same reduction as the float
 /// overload with two more terms of the series.
-[[nodiscard]] inline double fastLog(double x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE double fastLog(double x) noexcept {
   const bool denormal{x < std::numeric_limits<double>::min()};
   x = denormal ? x * 4503599627370496.0 : x;
   std::uint64_t bits{};
@@ -127,10 +126,7 @@ namespace smdl {
   bits = (bits & 0x800FFFFFFFFFFFFFull) | (1023ull << 52);
   double m{};
   std::memcpy(&m, &bits, sizeof(m));
-  if (m > 1.3333333333333333) {
-    m *= 0.5;
-    e += 1;
-  }
+  if (m > 1.3333333333333333) m *= 0.5, e += 1;
   const double s{(m - 1.0) / (m + 1.0)};
   const double s2{s * s};
   return double(e) * 0.6931471805599453 +
@@ -148,7 +144,7 @@ namespace smdl {
 /// Stegun 4.4.46, the degree-7 polynomial in |x| scaled by sqrt(1 - |x|),
 /// reflected through acos(x) = pi - acos(-x) for a negative argument: one
 /// square root and no division.
-[[nodiscard]] inline float fastAcos(float x) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE float fastAcos(float x) noexcept {
   const float a{std::abs(x)};
   const float p{
       std::sqrt(1.0f - a) *
