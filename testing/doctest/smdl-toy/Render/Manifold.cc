@@ -264,3 +264,49 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
                  chain);
   }
 }
+
+// The clustering the biased claimed estimators accumulate through: one
+// value per distinct solution however often a walk re-finds it, and a
+// hard cap past which a distinct solution is dropped rather than summed
+// unclustered.
+TEST_CASE("Manifold solution set: distinct solutions counted once") {
+  const float3 receiver{};
+  // A one-crossing connection at `point`, which is all
+  // `isSameManifoldSolution()` reads.
+  const auto connectionAt{[](const float3 &point) {
+    ManifoldConnection connection{};
+    connection.count = 1;
+    connection.vertices[0].vertex.point = point;
+    return connection;
+  }};
+  // Distinct by a wide margin against
+  // `MANIFOLD_SOLUTION_IDENTITY_FRACTION` of the unit receiver distance.
+  const auto solutionAt{[&](int i) {
+    return connectionAt(float3(1.0f, 0.01f * float(i), 0.0f));
+  }};
+  int valued{};
+  const auto value{[&](const ManifoldConnection &) {
+    valued++;
+    return Color(1.0f);
+  }};
+  SUBCASE("a re-find is valued and summed once") {
+    ManifoldSolutionSet solutions{};
+    solutions.consider(receiver, solutionAt(0), value);
+    solutions.consider(receiver, solutionAt(0), value);
+    solutions.consider(receiver, solutionAt(1), value);
+    solutions.consider(receiver, solutionAt(0), value);
+    CHECK(valued == 2);
+    CHECK(solutions.sum()[0] == doctest::Approx(2.0f));
+  }
+  SUBCASE("a distinct solution past the cap is dropped, not summed") {
+    ManifoldSolutionSet solutions{};
+    for (int i = 0; i < 64; i++)
+      solutions.consider(receiver, solutionAt(i), value);
+    // The cap is what the sum stops at, and nothing past it is valued.
+    CHECK(valued == int(solutions.sum()[0]));
+    CHECK(valued < 64);
+    // A re-find of one already counted still costs nothing.
+    solutions.consider(receiver, solutionAt(0), value);
+    CHECK(valued == int(solutions.sum()[0]));
+  }
+}

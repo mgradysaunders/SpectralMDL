@@ -1048,13 +1048,44 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
   return true;
 }
 
+// The solid-angle density of a cone draw toward the sphere a spherical
+// light subtends at `point`, or nothing when the receiver stands inside
+// the sphere and the draw was by area after all. A receiver behind the
+// cap the cone covers has density zero rather than none.
+[[nodiscard]] static SMDL_ALWAYS_INLINE std::optional<float>
+sphereConePDF(const float3 &center, float radius, const float3 &lightPoint,
+              const float3 &lightNormal, const float3 &point, float selectPMF) {
+  const float distSqCenter{lengthSquared(center - point)};
+  const float radiusSq{radius * radius};
+  if (!(distSqCenter > radiusSq)) return std::nullopt;
+  // The cone covers the cap facing the receiver and nothing else.
+  if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
+  const float sinThetaMaxSq{radiusSq / distSqCenter};
+  const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
+  return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
+}
+
+// The solid-angle density at `point` of a draw whose density on the
+// light is `positionPDF` per unit world area: the area density carried
+// over the segment by its length and the foreshortening at the light.
+[[nodiscard]] static SMDL_ALWAYS_INLINE float
+areaToSolidAngle(const float3 &lightPoint, const float3 &lightNormal,
+                 const float3 &point, float positionPDF, float selectPMF) {
+  const float3 direction{lightPoint - point};
+  const float distSq{lengthSquared(direction)};
+  if (!(distSq > 0)) return 0.0f;
+  const float cosTheta{absDot(lightNormal, normalize(direction))};
+  if (!(cosTheta > 0)) return 0.0f;
+  return selectPMF * distSq * positionPDF / cosTheta;
+}
+
 // The solid-angle density of a moving or deforming light's draw, the
 // geometry read from the frame at the hit's time: a primitive's sphere
 // center and radius from the frame's columns and its area stretch
 // through the inverse cofactor, a mesh light's face share over the
-// face's world area at the time. The static path below keeps its own
-// arithmetic, and this stays out of line so that it keeps its leaf
-// shape too.
+// face's world area at the time. The static path below reads the same
+// geometry off the cached fields instead, and this stays out of line so
+// that it keeps its leaf shape.
 [[nodiscard]] static SMDL_NO_INLINE float solidAnglePDFMoving(
     const Scene &scene, const AreaLight &light, const MeshInstance &instance,
     uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
@@ -1062,30 +1093,19 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
   std::optional<InstanceFrame> scratch{};
   const auto &frame{instance.frameAt(time, scratch)};
   const auto &objectToWorld{frame.objectToWorld};
-  if (light.sphereObjectRadius > 0.0f && !areaSampled) {
-    const float3 center{objectToWorld[3]};
-    const float radius{light.sphereObjectRadius *
-                       length(float3(objectToWorld[0]))};
-    const float distSqCenter{lengthSquared(center - point)};
-    const float radiusSq{radius * radius};
-    if (distSqCenter > radiusSq) {
-      if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
-      const float sinThetaMaxSq{radiusSq / distSqCenter};
-      const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
-      return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
-    }
-  }
-  auto direction{lightPoint - point};
-  const float distSq{lengthSquared(direction)};
-  if (!(distSq > 0)) return 0.0f;
-  const float cosTheta{absDot(lightNormal, normalize(direction))};
-  if (!(cosTheta > 0)) return 0.0f;
+  if (light.sphereObjectRadius > 0.0f && !areaSampled)
+    if (auto conePDF{sphereConePDF(float3(objectToWorld[3]),
+                                   light.sphereObjectRadius *
+                                       length(float3(objectToWorld[0])),
+                                   lightPoint, lightNormal, point, selectPMF)})
+      return *conePDF;
   const float positionPDF{
       light.isPrimitive
           ? length(inverseCofactorOf(objectToWorld) * lightNormal) /
                 light.objectArea
           : faceAreaDensity(scene, light, instance, frame, faceIndex, time)};
-  return selectPMF * distSq * positionPDF / cosTheta;
+  return areaToSolidAngle(lightPoint, lightNormal, point, positionPDF,
+                          selectPMF);
 }
 
 float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
@@ -1106,22 +1126,10 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
     return solidAnglePDFMoving(mScene, light, instance, faceIndex, lightPoint,
                                lightNormal, point, areaSampled, time,
                                selectPMF);
-  if (light.sphereRadius > 0.0f && !areaSampled) {
-    const float distSqCenter{lengthSquared(light.sphereCenter - point)};
-    const float radiusSq{light.sphereRadius * light.sphereRadius};
-    if (distSqCenter > radiusSq) {
-      // The cone covers the cap facing the receiver and nothing else.
-      if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
-      const float sinThetaMaxSq{radiusSq / distSqCenter};
-      const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
-      return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
-    }
-  }
-  auto direction{lightPoint - point};
-  float distSq{lengthSquared(direction)};
-  if (!(distSq > 0)) return 0.0f;
-  float cosTheta{absDot(lightNormal, normalize(direction))};
-  if (!(cosTheta > 0)) return 0.0f;
+  if (light.sphereRadius > 0.0f && !areaSampled)
+    if (auto conePDF{sphereConePDF(light.sphereCenter, light.sphereRadius,
+                                   lightPoint, lightNormal, point, selectPMF)})
+      return *conePDF;
   // A primitive light's position density is object-uniform through the
   // placement's area stretch, recovered exactly from the world normal:
   // J = 1 / |inv(cofactor) * n|, so 1 / (A J) = |inv(cofactor) * n| / A.
@@ -1129,5 +1137,6 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                               ? length(light.invCofactor * lightNormal) /
                                     light.objectArea
                               : 1.0f / light.totalArea};
-  return selectPMF * distSq * positionPDF / cosTheta;
+  return areaToSolidAngle(lightPoint, lightNormal, point, positionPDF,
+                          selectPMF);
 }

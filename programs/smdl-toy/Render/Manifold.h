@@ -188,6 +188,48 @@ public:
   std::vector<MNEECaster> casters{};
 };
 
+/// The distinct solutions one biased clustered estimate has found.
+///
+/// The biased claimed mode runs a fixed number of walks per estimate
+/// rather than the reciprocal one, so the same solution is reached
+/// several times and has to be summed once. That rule lives here so
+/// that the two estimates running it, the refractive Dirac chain and
+/// the biased branch of the reciprocal estimators, cannot drift apart
+/// on the cluster cap or on what happens past it.
+class ManifoldSolutionSet final {
+public:
+  /// Count `connection` unless it is a re-find of one already counted,
+  /// valuing a genuinely new solution with `value` and adding that to
+  /// the sum.
+  ///
+  /// A distinct solution past the cap is dropped rather than summed
+  /// unclustered, so a re-find can never double-count; a surface with
+  /// more solutions in reach than the cap needs the walk count raised
+  /// far past it anyway.
+  template <typename Value>
+  void consider(const float3 &receiver, const ManifoldConnection &connection,
+                const Value &value) {
+    for (int i = 0; i < mCount; i++)
+      if (isSameManifoldSolution(receiver, mSolutions[i], connection)) return;
+    if (mCount == MAX_SOLUTIONS) return;
+    mSolutions[mCount++] = connection;
+    const Color contribution{value(connection)};
+    ManifoldStats::global().recordContribution(!contribution.isAllZero());
+    mSum += contribution;
+  }
+
+  /// The sum over the distinct solutions.
+  [[nodiscard]] const Color &sum() const noexcept { return mSum; }
+
+private:
+  /// The most distinct solutions one estimate clusters.
+  static constexpr int MAX_SOLUTIONS{32};
+
+  std::array<ManifoldConnection, MAX_SOLUTIONS> mSolutions{};
+  int mCount{};
+  Color mSum{};
+};
+
 /// Seed one chain vertex from an interface the straight segment
 /// crosses: resolve the instance's exterior IOR against `medium`, admit
 /// the interface only if `manifoldClaim()` claims a transmission lobe

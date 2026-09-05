@@ -264,9 +264,35 @@ void renderSamples(const Options &opts, const Frame &frame,
   // high-albedo transport; giving -max-bounces makes the bound the whole
   // termination rule, so the estimate is the fixed-depth truncation.
   const auto &pathOptions{opts.path};
+  // What every path of this render is traced against; see
+  // `RenderContext`. Built once, shared by every worker thread.
+  const RenderContext render{compiler,    scene, lights,        mneeOptions,
+                             pathOptions, haze,  exteriorMedium};
   // Whether every sample draws its own wavelength grid; see
   // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
   const bool jitterWavelength{!renderGrid().bandEdges.empty()};
+  // The window row length, which turns a window pixel index into a frame
+  // pixel index below.
+  const size_t windowWidth{size_t(window[2] - window[0])};
+  // The parallel loop runs over blocks of pixels rather than over single
+  // pixels, so that everything a pixel needs but does not own (the
+  // allocator, the sampler, the guide record buffer, the jitter buffer)
+  // is built once per block: on a guiding pass the record buffer alone
+  // is `maxBounces + 1` records of runtime-sized spectra. Nothing about
+  // the estimate depends on how the pixels are grouped, since each one
+  // writes its own film cell from a sampler that is deterministic in
+  // (pixel, sample index) and the guide accumulator counts in integers.
+  //
+  // The size is a balance: large enough to amortize that setup, small
+  // enough that one block of expensive pixels cannot become the tail the
+  // rest of the pool waits on. Taken from the work available so a
+  // thumbnail still spreads over every thread.
+  constexpr size_t MAX_PIXELS_PER_BLOCK{64};
+  constexpr size_t BLOCKS_PER_THREAD{8};
+  const size_t blockSize{std::clamp<size_t>(
+      numWindowPixels / (BLOCKS_PER_THREAD * smdl::getThreadCount()), 1,
+      MAX_PIXELS_PER_BLOCK)};
+  const size_t numBlocks{(numWindowPixels + blockSize - 1) / blockSize};
   progressOptions.total = numWindowPixels * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary =
@@ -313,107 +339,108 @@ void renderSamples(const Options &opts, const Frame &frame,
                                    : thisPass - passDone};
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
-      smdl::parallelFor(0, numWindowPixels, [&](size_t k) {
+      smdl::parallelFor(0, numBlocks, [&](size_t block) {
         // Denormals are worth flushing for the whole task: the material
         // code the walk runs produces them, and the microcode assist each one
         // costs is a measurable fraction of the render.
         const smdl::ScopedFlushDenormals flushDenormals{};
-        // The pixel index in the whole frame, which seeds the sampler and
-        // addresses every per-pixel buffer, so a window renders the same
-        // pixels the whole frame would.
-        const size_t windowWidth{size_t(window[2] - window[0])};
-        const size_t i{(size_t(window[1]) + k / windowWidth) * numPixelsX +
-                       (size_t(window[0]) + k % windowWidth)};
-        const size_t x{i % numPixelsX};
-        const size_t y{i / numPixelsX};
-        // Constructed per pixel deliberately: hoisting this to a
-        // thread_local measures as pure noise (the few malloc/free pairs
-        // per pixel amortize across worker threads and malloc's own thread
-        // cache), so the simpler lifetime wins.
+        // The scratch the block's pixels take in turn. The allocator is
+        // rewound after every sample and the sampler restarted at every
+        // one, so what a block shares is the memory, never the state.
         smdl::BumpPtrAllocator allocator;
         Sampler sampler;
         // Training records for `trainGuiding()`, one per vertex the walk
-        // may reach, constructed only on the pre-final guiding passes
-        // that fill them: at a runtime band count every record holds
-        // sized vectors, too much to pay per pixel of a non-guiding
-        // render.
+        // may reach, sized only on the pre-final guiding passes that fill
+        // them: at a runtime band count every record holds sized vectors,
+        // too much to pay per pixel of a non-guiding render. The walk
+        // resets every record it appends, so one buffer serves the block.
         std::vector<GuideRecord> guideRecords;
         if (recordPass) guideRecords.resize(pathOptions.maxBounces + 1);
+        GuideRecord *const records{recordPass ? guideRecords.data() : nullptr};
         // The sample's own wavelength grid, rewritten in place once per
         // sample: a `Color` past `SpectralColor::INLINE_CAPACITY` bands
         // heaps, and every state built from it holds the pointer rather
-        // than a copy, so one buffer per pixel serves the whole sample.
+        // than a copy, so one buffer serves the block.
         std::optional<Color> jittered;
         if (jitterWavelength) jittered.emplace(wavelengths);
-        Color Lsum{};
-        PassCombiner::PixelHalves halves{};
         Guiding guiding{};
         guiding.tree = sdtree.get();
-        guiding.pixelEstimate =
-            combiner && opts.guide.adrrs ? combiner->pixelEstimate(i) : 0.0f;
         guiding.bsdfFraction =
             std::clamp(opts.guide.bsdfFraction.value, 0.0f, 1.0f);
         guiding.bsdfFractionFixed = opts.guide.bsdfFraction.given;
-        for (size_t s = 0; s < chunk; s++) {
-          const uint32_t sampleIndex =
-              resumed.sampleIndexBase + sppDone + chunkBase + s;
-          sampler.startPixelSample(uint32_t(i), sampleIndex);
-          if (jitterWavelength)
-            jitterWavelengths(*jittered,
-                              wavelengthJitterOffset(uint32_t(i), sampleIndex));
-          const Color &sampleWavelengths{jitterWavelength ? *jittered
-                                                          : wavelengths};
-          Color Lsample{};
-          // A fully vignetted sample contributes nothing, so skip the
-          // walk but let it still count in the average below, keeping the
-          // darkening unbiased.
-          uint64_t numRecords{0};
-          if (auto cameraSample{camera->sample(x, y, sampler)};
-              cameraSample.weight > 0) {
-            // The path's time. The shutter fraction is drawn only when
-            // the shutter is open, matching the lens-point precedent, so
-            // a default render's sampler sequence is unchanged; the
-            // camera ray is placed in the world only now, at that time.
-            float shutterFraction{};
-            if (renderShutter().isOpen()) shutterFraction = float(sampler);
-            const PathTime time{shutterFraction};
-            camera->toWorld(cameraSample, time.fraction);
-            Lsample = tracePath(
-                compiler, allocator, scene, sampler, sampleWavelengths,
-                cameraSample.ray, time, cameraSample.weight,
-                cameraSample.coneAngle, exteriorMedium, haze, lights,
-                mneeOptions, pathOptions, &guiding,
-                recordPass ? guideRecords.data() : nullptr, numRecords);
-          }
-          // Train the SD-tree on the records the walk retained.
-          if (recordPass && numRecords > 0)
-            trainGuiding(*sdtree, *guideAccumulator, sampler,
-                         guideRecords.data(), numRecords);
-          Lsum += Lsample;
-          if (combiner) {
-            // Split the samples into two half images so the combination can
-            // cross-weight each half by the other's variance estimate.
-            float value{Lsample.average()};
-            if ((chunkBase + s) % 2 == 0) {
-              halves.halfA += Lsample;
-              halves.squaresA += value * value;
-            } else {
-              halves.halfB += Lsample;
-              halves.squaresB += value * value;
+        const size_t kBegin{block * blockSize};
+        const size_t kEnd{std::min(numWindowPixels, kBegin + blockSize)};
+        for (size_t k = kBegin; k < kEnd; k++) {
+          // The pixel index in the whole frame, which seeds the sampler and
+          // addresses every per-pixel buffer, so a window renders the same
+          // pixels the whole frame would.
+          const size_t i{(size_t(window[1]) + k / windowWidth) * numPixelsX +
+                         (size_t(window[0]) + k % windowWidth)};
+          const size_t x{i % numPixelsX};
+          const size_t y{i / numPixelsX};
+          Color Lsum{};
+          PassCombiner::PixelHalves halves{};
+          guiding.pixelEstimate =
+              combiner && opts.guide.adrrs ? combiner->pixelEstimate(i) : 0.0f;
+          for (size_t s = 0; s < chunk; s++) {
+            const uint32_t sampleIndex =
+                resumed.sampleIndexBase + sppDone + chunkBase + s;
+            sampler.startPixelSample(uint32_t(i), sampleIndex);
+            if (jitterWavelength)
+              jitterWavelengths(
+                  *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
+            const Color &sampleWavelengths{jitterWavelength ? *jittered
+                                                            : wavelengths};
+            Color Lsample{};
+            // A fully vignetted sample contributes nothing, so skip the
+            // walk but let it still count in the average below, keeping the
+            // darkening unbiased.
+            uint64_t numRecords{0};
+            if (auto cameraSample{camera->sample(x, y, sampler)};
+                cameraSample.weight > 0) {
+              // The path's time. The shutter fraction is drawn only when
+              // the shutter is open, matching the lens-point precedent, so
+              // a default render's sampler sequence is unchanged; the
+              // camera ray is placed in the world only now, at that time.
+              float shutterFraction{};
+              if (renderShutter().isOpen()) shutterFraction = float(sampler);
+              const PathTime time{shutterFraction};
+              camera->toWorld(cameraSample, time.fraction);
+              PathContext path{allocator, sampler,  sampleWavelengths,
+                               time,      &guiding, records};
+              Lsample = tracePath(render, path, cameraSample);
+              numRecords = path.numRecords;
             }
+            // Train the SD-tree on the records the walk retained.
+            if (recordPass && numRecords > 0)
+              trainGuiding(*sdtree, *guideAccumulator, sampler,
+                           guideRecords.data(), numRecords);
+            Lsum += Lsample;
+            if (combiner) {
+              // Split the samples into two half images so the combination can
+              // cross-weight each half by the other's variance estimate.
+              float value{Lsample.average()};
+              if ((chunkBase + s) % 2 == 0) {
+                halves.halfA += Lsample;
+                halves.squaresA += value * value;
+              } else {
+                halves.halfB += Lsample;
+                halves.squaresB += value * value;
+              }
+            }
+            allocator.reset();
           }
-          allocator.reset();
-        }
-        // With guiding the combination owns the film and resolves into
-        // it, pass by pass; without, the accumulation is the film.
-        if (combiner) {
-          combiner->deposit(i, halves);
-        } else {
-          film.addTotals(x, y, Lsum.data());
+          // With guiding the combination owns the film and resolves into
+          // it, pass by pass; without, the accumulation is the film.
+          if (combiner) {
+            combiner->deposit(i, halves);
+          } else {
+            film.addTotals(x, y, Lsum.data());
+          }
         }
         // Counted where the work is finished rather than where it starts,
         // which at thumbnail sizes is a whole pool's worth of pixels.
-        progress.advance(chunk);
+        progress.advance(chunk * (kEnd - kBegin));
       });
       // Every pixel of the window took the same samples, so the count
       // belongs to the film rather than to each pixel, and is recorded

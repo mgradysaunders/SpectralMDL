@@ -9,6 +9,8 @@
 class LightSampler;
 class MNEECasterSet;
 
+struct CameraSample;
+struct GuideRecord;
 struct Guiding;
 
 /// Which manifold estimators run for a render, and how they discover
@@ -123,16 +125,83 @@ public:
   int maxContributionBounces{1};
 };
 
-struct GuideRecord;
-
-/// The scratch one path and every visibility walk it spawns share, so
-/// that neither the medium a segment travels in nor the state a hit
-/// shades in is built from nothing at every use.
+/// Everything a render fixes for every path it traces: the scene the
+/// walk casts against, the lights it gathers from, the exterior it
+/// starts in, and the bounds and estimators the command line chose.
 ///
-/// Its lifetime is one path, because the medium view resolves stacks by
-/// address and the allocator that owns them is reset between samples.
-struct PathScratch final {
-  /// The medium of the segment in flight; see `Medium::reset()`.
+/// Built once per render and shared by every worker thread, so nothing
+/// reachable through it may be written while paths are in flight.
+struct RenderContext final {
+  smdl::Compiler &compiler;
+
+  const Scene &scene;
+
+  /// The lights direct lighting is gathered from, and what the walk's
+  /// own arrivals at emitters and the environment are weighed against.
+  const LightSampler &lights;
+
+  /// Which manifold estimators run and how they discover their
+  /// connections; see `MNEEOptions`.
+  const MNEEOptions &mneeOptions;
+
+  /// How long a walk may run and what one contribution may add to the
+  /// estimate; see `PathOptions`.
+  const PathOptions &pathOptions;
+
+  /// The scene-wide exterior atmosphere, or null. It is the medium of
+  /// every segment a walk spends outside all geometry, so it is
+  /// mutually exclusive with `exteriorMedium`, which occupies the same
+  /// place with a material behind it.
+  const smdl::Haze *haze{};
+
+  /// The bottom of the nested-medium stack every walk starts inside,
+  /// null for vacuum: typically a scene-wide fog or atmosphere named by
+  /// the composition's `medium` directive, whose `MediumStack` entry
+  /// the caller owns for the whole render.
+  const MediumStack *exteriorMedium{};
+};
+
+/// What one camera path is traced with, what it works in, and what it
+/// leaves behind.
+///
+/// Its lifetime is one path: the states and medium stacks it holds are
+/// built in `allocator`, which the caller resets between samples, and
+/// the medium view below resolves those stacks by address.
+struct PathContext final {
+  /// Where the path builds its shading states and nested-medium stacks.
+  smdl::BumpPtrAllocator &allocator;
+
+  /// The sampler, positioned at the pixel and sample index this path is
+  /// for.
+  Sampler &sampler;
+
+  /// The wavelengths the path estimates at, which is this sample's own
+  /// grid where the render jitters them.
+  const Color &wavelengths;
+
+  /// The path's time: its seconds reach every material, light and
+  /// medium evaluation along it as `State::animation_time`, and its
+  /// shutter fraction every ray the path and its gathers trace.
+  PathTime time;
+
+  /// The SD-tree the walk steers by and the pixel estimate that drives
+  /// its Russian roulette, or null for plain path tracing; a null
+  /// `Guiding::tree` behaves the same way.
+  const Guiding *guiding{};
+
+  /// Where to retain the walk's training data for `trainGuiding()`, or
+  /// null to retain none. It must hold `PathOptions::maxBounces + 1`
+  /// entries: the walk appends one record per vertex and reports how
+  /// many it filled in `numRecords`.
+  GuideRecord *records{};
+
+  /// How many of `records` the walk filled in.
+  uint64_t numRecords{};
+
+  /// The medium of the segment in flight, shared by the path and every
+  /// visibility walk it spawns so that a segment inside the medium the
+  /// path is already in resolves nothing; see `Medium::reset()`. Every
+  /// walk overwrites it, so no caller may expect it to survive one.
   Medium medium{};
 
   /// The state `shadeHit()` shades in, empty until the first hit that
@@ -147,198 +216,44 @@ struct PathScratch final {
   ///
   /// Nothing here writes the state's level-of-detail fields or `rng`,
   /// which is what lets opacity evaluate at full fidelity, the
-  /// conservative choice for a shadow ray. The state keeps the
-  /// wavelengths, allocator and time of the first call, so the callers
-  /// sharing it must agree on those, which they do: they are the
-  /// path's.
-  [[nodiscard]] smdl::State &shadeHit(const Hit &hit, const float3 &wState,
-                                      const Color &wavelengths,
-                                      smdl::BumpPtrAllocator &allocator,
-                                      float time) {
+  /// conservative choice for a shadow ray. Every caller shades in the
+  /// one state, so they all see the wavelengths, allocator and time it
+  /// was first built with, which are the path's.
+  [[nodiscard]] smdl::State &shadeHit(const Hit &hit, const float3 &wState) {
     if (!hitState)
-      hitState.emplace(makeRenderState(wavelengths, &allocator, time));
+      hitState.emplace(makeRenderState(wavelengths, &allocator, time.seconds));
     hit.applyGeometryToState(*hitState, wState);
     return *hitState;
   }
 };
 
-// TODO Remove `mNeedBlocker` -> instead update method signature to
-// `bool nextBlocker(Hit *hit = {});` so that `nextBlocker()` or
-// `nextBlocker(nullptr)` behaves as if `mNeedBlocker=false` and
-// `nextBlocker(&hit)` behaves as if `mNeedBlocker=true`.
-
-/// A visibility segment walk from `point0` toward `point1`: attenuates
-/// medium transmittance into `beta` over the spans it covers, passes
-/// through cutout hits and null interfaces with the nested-medium stack
-/// kept current, and stops on the first surface that blocks under
-/// cutout semantics, leaving what to make of that surface to the
-/// caller. Plain shadow rays treat it as the occluder.
-class VisibilityWalk final {
-public:
-  /// `needBlocker` promises the caller reads the blocker `nextBlocker()`
-  /// returns, which is what the manifold refraction gather does to
-  /// discover chains; it keeps the walk on the closest-hit path in
-  /// scenes whose `Scene::opaqueShadows` would otherwise answer the walk
-  /// as a boolean occlusion query and return no blocker at all.
-  /// `scratch` belongs to the path the walk hangs off, so that a segment
-  /// inside the medium the path is already in resolves nothing; see
-  /// `PathScratch`. The walk overwrites both of its members, so a caller
-  /// must not expect either to survive the walk.
-  VisibilityWalk(smdl::BumpPtrAllocator &allocator, const Scene &scene,
-                 Sampler &sampler, const Color &wavelengths, PathTime time,
-                 const MediumStack *medium, PathScratch &scratch,
-                 const float3 &point0, const float3 &point1, Color &beta,
-                 bool needBlocker = false, bool infiniteTarget = false);
-
-  /// Advance to the next blocking surface. Returns true with `hit`
-  /// filled in; returns false when the walk finished without one,
-  /// either because the segment reached `point1` or because `beta` was
-  /// fully absorbed along the way (the caller distinguishes by looking
-  /// at `beta`).
-  [[nodiscard]] bool nextBlocker(Hit &hit);
-
-  /// The nested-medium stack as of the walk's current position, e.g.,
-  /// at the blocker just returned.
-  [[nodiscard]] const MediumStack *medium() const noexcept { return mMedium; }
-
-  /// Pass through the blocker `nextBlocker()` just returned: update the
-  /// nested-medium stack across it with the given instance and continue
-  /// the walk on the far side, exactly as the walk passes its own
-  /// cutout hits.
-  void passThrough(const smdl::JIT::MaterialInstance &mat, const Hit &hit);
-
-  // TODO Is there any way to get MNEE to work with cutouts? Or at least
-  //      to get MNEE to work with deterministic cutouts, i.e., leaves where
-  //      the mask is mostly exactly 0 or exactly 1 so we can know the
-  //      re-walk will be deterministic?
-
-  /// Did the walk pass through a cutout so far? The manifold gather
-  /// declines such segments, so that its coverage stays the exact
-  /// complement of the deterministic re-walk the arrival-side MIS
-  /// runs.
-  [[nodiscard]] bool passedCutout() const noexcept { return mPassedCutout; }
-
-private:
-  smdl::BumpPtrAllocator &mAllocator;
-  const Scene &mScene;
-  Sampler &mSampler;
-  const Color &mWavelengths;
-  PathTime mTime;
-
-  /// The nested-medium stack as of the walk's current position, a
-  /// walk-local view that evolves across the boundaries it passes
-  /// through without touching the caller's stack.
-  const MediumStack *mMedium{};
-
-  /// The path's scratch, whose medium view the walk retargets at every
-  /// segment and whose state it shades every surface it passes through
-  /// in; see the constructor.
-  PathScratch &mScratch;
-
-  Color &mBeta;
-
-  /// The world-space segment length.
-  float mDist{};
-
-  /// The normalized segment direction, or zero when the endpoints
-  /// coincide, honoring the zero-means-off `State` convention.
-  float3 mShadowDir{};
-
-  /// The self-intersection offset in the segment's unit
-  /// parameterization. Offsets are parametric, so for segments longer
-  /// than one scene unit they are rescaled to stay near `EPS` in WORLD
-  /// units: a sun shadow ray spans the whole scene, and an offset
-  /// scaled by that length is wide enough to skip real geometry, and a
-  /// boundary crossing inside the skipped sliver desyncs the medium
-  /// stack for the entire segment.
-  float mParamEps{};
-
-  /// The current cast over the segment's unit parameterization.
-  Ray mRay{};
-
-  /// The parameter up to which the medium has been integrated, tracked
-  /// separately from `mRay.tmin` deliberately: integrating only
-  /// `[tmin, tmax]` of each cast would skip a scene-scaled sliver of
-  /// medium at every pass-through restart, and where such a gap crosses
-  /// dense medium the skipped optical depth reads as a bright seam in
-  /// the shadow.
-  float mTCovered{};
-
-  /// See `passedCutout()`.
-  bool mPassedCutout{};
-
-  /// See the constructor.
-  bool mNeedBlocker{};
-
-  /// Does the segment end where it does only because a light infinitely
-  /// far away needs a finite point to aim at? See `Medium::attenuate()`.
-  bool mInfiniteTarget{};
-};
-
-/// Trace a camera path and return its radiance estimate.
+/// Trace the camera path `camera` starts and return its radiance
+/// estimate.
 ///
-/// The path starts on `ray`, whose direction must be normalized, carrying
-/// `cameraWeight` as the initial throughput and `cameraConeAngle` as the
-/// per-pixel ray cone spread (zero switches the LOD cone off end to end).
 /// Direct lighting is gathered at every scattering vertex as the walk
-/// reaches it, so nothing is retained per vertex.
+/// reaches it, so nothing is retained per vertex. Each vertex pairs
+/// light sampling with the walk's own continuation as the BSDF-sampling
+/// half of the MIS estimate: an emitter hit or an environment escape
+/// contributes MIS-weighted against what light sampling at the previous
+/// vertex would have produced, and the camera segment, which no light
+/// sampling competes with, contributes at weight 1.
 ///
-/// `time` is the whole path's: its seconds reach every material, light,
-/// and medium evaluation along it as `State::animation_time`, and its
-/// shutter fraction every ray the path and its gathers trace.
-///
-/// Each vertex pairs light sampling with the walk's own continuation as
-/// the BSDF-sampling half of the MIS estimate: an emitter hit or an
-/// environment escape contributes MIS-weighted against what light
-/// sampling at the previous vertex would have produced, and the camera
-/// segment, which no light sampling competes with, contributes at
-/// weight 1.
-///
-/// The `haze` is the scene-wide exterior atmosphere, or null. It is the
-/// medium of every segment the walk spends outside all geometry, so it
-/// is mutually exclusive with an `exteriorMedium`, which occupies the
-/// same place with a material behind it.
-///
-/// The walk starts inside `exteriorMedium`, which may be null for
-/// vacuum: this is the bottom of the nested-medium stack, typically a
-/// scene-wide fog or atmosphere named by the composition's `medium`
-/// directive, whose `MediumStack` entry the caller owns for the whole
-/// render.
-///
-/// `mneeOptions` decides which manifold estimators run; see
-/// `MNEEOptions`. With `depth > 0`, a light gather whose straight
-/// shadow segment is blocked by up to that many smooth refractive
-/// interfaces connects through them by manifold next-event estimation
-/// instead of reading as occluded: toward the sun and sky, toward
-/// punctual lights (whose through-interface transport no other
+/// With `RenderContext::mneeOptions` enabled, a light gather whose straight
+/// shadow segment is blocked by up to `MNEEOptions::depth` smooth
+/// refractive interfaces connects through them by manifold next-event
+/// estimation instead of reading as occluded: toward the sun and sky,
+/// toward punctual lights (whose through-interface transport no other
 /// estimator can reach at all), and toward area lights. The walk's own
 /// arrivals at lights through such chains, environment escapes and
 /// emitter hits alike, are weighed against the gather by re-walk MIS:
 /// the arrival keeps its full weight exactly where the gather cannot
-/// produce the transport (a chain family or fold solution the walk
-/// does not reach, a failed walk, a light the sampler never draws), so
-/// the combined estimator is unbiased rather than exclusive.
+/// produce the transport (a chain family or fold solution the walk does
+/// not reach, a failed walk, a light the sampler never draws), so the
+/// combined estimator is unbiased rather than exclusive.
 ///
-/// `pathOptions` bounds the walk's length and what any single
-/// contribution may add to the estimate; see `PathOptions`. The medium's
-/// own emission is never bounded: it is bounded transport with no
-/// rare-event tail.
-///
-/// The `guiding` may be null or have a null tree, in which case direction
-/// sampling and Russian roulette behave as plain path tracing; with a
-/// tree, non-Dirac surface bounces one-sample-MIS the SD-tree against the
-/// BSDF and roulette becomes adjoint-driven.
-///
-/// If `records` is non-null it must hold `pathOptions.maxBounces + 1`
-/// entries: the walk appends one `GuideRecord` per vertex, returns the
-/// count in `numRecords`, and the completed buffer feeds
-/// `trainGuiding()`. A null `records` retains nothing.
+/// With `Guiding::tree`, non-Dirac surface bounces one-sample-MIS the
+/// SD-tree against the BSDF and Russian roulette becomes adjoint-driven;
+/// without one, direction sampling and roulette are plain path tracing's.
 [[nodiscard]]
-Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
-                const Scene &scene, Sampler &sampler, const Color &wavelengths,
-                Ray ray, PathTime time, float cameraWeight,
-                float cameraConeAngle, const MediumStack *exteriorMedium,
-                const smdl::Haze *haze, const LightSampler &lightSampler,
-                const MNEEOptions &mneeOptions, const PathOptions &pathOptions,
-                const Guiding *guiding, GuideRecord *records,
-                uint64_t &numRecords);
+Color tracePath(const RenderContext &render, PathContext &path,
+                const CameraSample &camera);
