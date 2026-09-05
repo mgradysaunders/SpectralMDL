@@ -23,7 +23,7 @@ namespace {
 static_assert(rolo_moon::WAVELENGTH_COUNT == rural::WAVELENGTH_COUNT);
 
 constexpr double DEG_TO_RAD = 0.017453292519943295;
-constexpr float DEG_TO_RAD_F = 0.017453292f;
+constexpr float RAD_TO_DEG_F = 57.29578f;
 
 // The trained parameter ranges
 constexpr double SUN_ZENITH_MIN_DEG = 5.0;
@@ -93,16 +93,21 @@ constexpr auto SKY_FEATURE_INV_STD_F = narrow(SKY_FEATURE_INV_STD);
   return (raw - SKY_FEATURE_MEAN_F[i]) * SKY_FEATURE_INV_STD_F[i];
 }
 
+// The reciprocal of the Kasten-Young airmass, which is the form the sky
+// fit wants: it takes the logarithm of the airmass, and the logarithm of
+// a reciprocal is a negation, so forming the airmass first would spend a
+// division to be undone.
+[[nodiscard]] inline float airmassReciprocal(float zenithDeg,
+                                             float cosZenith) {
+  return cosZenith +
+         0.50572f * fastExp(-1.6364f * fastLog(96.07995f - zenithDeg));
+}
+
 // Kasten-Young relative airmass. The cosine of the zenith angle is a
 // separate argument because every caller already has it.
 [[nodiscard]] double airmass(double zenithDeg, double cosZenith) {
   return 1.0 / (cosZenith +
                 0.50572 * fastExp(-1.6364 * fastLog(96.07995 - zenithDeg)));
-}
-
-[[nodiscard]] inline float airmass(float zenithDeg, float cosZenith) {
-  return 1.0f / (cosZenith +
-                 0.50572f * fastExp(-1.6364f * fastLog(96.07995f - zenithDeg)));
 }
 
 // Expand standardized features into the polynomial's terms. Each term is
@@ -319,7 +324,7 @@ void viewGeometry(const float3 &direction, float &cosView, float &viewZenithDeg,
                   float2 &horizontal) {
   const float cosZ = std::clamp(direction.z, -1.0f, 1.0f);
   viewZenithDeg =
-      std::min(fastAcos(cosZ) / DEG_TO_RAD_F, float(VIEW_ZENITH_MAX_DEG));
+      std::min(fastAcos(cosZ) * RAD_TO_DEG_F, float(VIEW_ZENITH_MAX_DEG));
   cosView = std::max(cosZ, float(COS_VIEW_ZENITH_MAX));
   horizontal = float2(direction.x, direction.y);
   const float len = std::sqrt(lengthSquared(horizontal));
@@ -343,7 +348,7 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
   const float cosPsi{std::clamp(cosSunZenith * cosView +
                                     sinSunZenith * sinView * cosRelativeAzimuth,
                                 -1.0f, 1.0f)};
-  const float psiDeg{fastAcos(cosPsi) / DEG_TO_RAD_F};
+  const float psiDeg{fastAcos(cosPsi) * RAD_TO_DEG_F};
   // The five features the view supplies, in the order the specialized
   // monomials index them. The logarithms, exponentials, and arccosines
   // here are the inline ones from FastMath.h: libm's out-of-line calls
@@ -351,9 +356,9 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
   // dwarfs their error.
   const float zz[SKY_VIEW_FEATURE_COUNT + 1]{
       standardizeSky(1, cosView),
-      standardizeSky(3, fastLog(airmass(viewZenithDeg, cosView))),
+      standardizeSky(3, -fastLog(airmassReciprocal(viewZenithDeg, cosView))),
       standardizeSky(4, cosPsi),
-      standardizeSky(5, fastExp(-psiDeg / 15.0f)),
+      standardizeSky(5, fastExp(psiDeg * (-1.0f / 15.0f))),
       standardizeSky(6, fastLog(psiDeg + 3.0f)),
       1.0f,
   };
