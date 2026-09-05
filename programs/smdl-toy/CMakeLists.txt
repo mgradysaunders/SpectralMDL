@@ -92,6 +92,9 @@ endif()
 if(CXX_ARCH_FLAGS)
   target_compile_options("smdl-toy-objects" PUBLIC ${CXX_ARCH_FLAGS})
 endif()
+if(CXX_FP_FLAGS)
+  target_compile_options("smdl-toy-objects" PUBLIC ${CXX_FP_FLAGS})
+endif()
 
 smdl_add_program(
   "smdl-toy"

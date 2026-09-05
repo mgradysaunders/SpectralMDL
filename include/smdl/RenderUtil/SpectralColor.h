@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #include "smdl/Export.h"
@@ -29,9 +30,12 @@ namespace smdl {
 /// sound because the inline buffer is zero-initialized at construction
 /// and only ever written by these same fixed-length operations, so
 /// lanes at or beyond `size()` always hold initialized floats; they
-/// may compute to NaN (for example a division's `0/0`) but they are
-/// never read by anything size-bounded, which is everything the class
-/// exposes.
+/// may compute to NaN (for example a division's `0/0`), so the
+/// predicates, which also test every inline lane to stay branch-free,
+/// mask the lanes past the size out of their verdict. The reductions
+/// that fold a running value (`average`, `maxComponent`) keep the
+/// size-bounded loop: its back-edge is predicted for free, and every
+/// masked fixed-length form measured no leaner.
 ///
 /// Sizes must agree in mixed operations; this is sanity-checked, not
 /// reconciled. The default constructor makes an empty vector, which is
@@ -287,6 +291,12 @@ public:
   /// spectra.
   ///
   [[nodiscard]] bool isAllZero(float thresh = 0.0f) const noexcept {
+    if (SMDL_LIKELY(isInline())) {
+      uint32_t bits{};
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        bits |= uint32_t(!(std::abs(mLocal[i]) <= thresh)) << i;
+      return (bits & liveLanes()) == 0;
+    }
     for (size_t i = 0; i < mSize; i++)
       if (!(std::abs(mData[i]) <= thresh)) return false;
     return true;
@@ -294,6 +304,12 @@ public:
 
   /// Is any component infinite?
   [[nodiscard]] bool isAnyInf() const noexcept {
+    if (SMDL_LIKELY(isInline())) {
+      uint32_t bits{};
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        bits |= uint32_t(std::isinf(mLocal[i])) << i;
+      return (bits & liveLanes()) != 0;
+    }
     for (size_t i = 0; i < mSize; i++)
       if (std::isinf(mData[i])) return true;
     return false;
@@ -301,6 +317,12 @@ public:
 
   /// Is any component not-a-number?
   [[nodiscard]] bool isAnyNan() const noexcept {
+    if (SMDL_LIKELY(isInline())) {
+      uint32_t bits{};
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        bits |= uint32_t(std::isnan(mLocal[i])) << i;
+      return (bits & liveLanes()) != 0;
+    }
     for (size_t i = 0; i < mSize; i++)
       if (std::isnan(mData[i])) return true;
     return false;
@@ -308,6 +330,12 @@ public:
 
   /// Is any component either infinite or not-a-number?
   [[nodiscard]] bool isAnyNonFinite() const noexcept {
+    if (SMDL_LIKELY(isInline())) {
+      uint32_t bits{};
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        bits |= uint32_t(!std::isfinite(mLocal[i])) << i;
+      return (bits & liveLanes()) != 0;
+    }
     for (size_t i = 0; i < mSize; i++)
       if (!std::isfinite(mData[i])) return true;
     return false;
@@ -315,17 +343,22 @@ public:
 
   /// Set all non-positive components to zero.
   void setNonPositiveToZero() noexcept {
-    for (size_t i = 0; i < mSize; i++) {
-      mData[i] = std::max(mData[i], 0.0f);
+    if (SMDL_LIKELY(isInline())) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        mLocal[i] = std::max(mLocal[i], 0.0f);
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] = std::max(mData[i], 0.0f);
     }
   }
 
   /// Set all non-finite components to zero.
   void setNonFiniteToZero() noexcept {
-    for (size_t i = 0; i < mSize; i++) {
-      if (!std::isfinite(mData[i])) {
-        mData[i] = 0.0f;
-      }
+    if (SMDL_LIKELY(isInline())) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        mLocal[i] = maskedFloat(mLocal[i], std::isfinite(mLocal[i]));
+    } else {
+      for (size_t i = 0; i < mSize; i++)
+        if (!std::isfinite(mData[i])) mData[i] = 0.0f;
     }
   }
 
@@ -370,6 +403,21 @@ private:
   /// inline path, the one every operation takes at a band count within
   /// `INLINE_CAPACITY`, out of line at every site.
   [[nodiscard]] bool isInline() const noexcept { return mData == mLocal; }
+
+  /// One bit per inline lane within the size. The predicates test every
+  /// inline lane into a bit each and mask with this, which is a handful
+  /// of straight-line instructions where the size-bounded loop was
+  /// sixteen trips with a back-edge each; a per-lane comparison against
+  /// the size costs more than the loop did, because the optimizer widens
+  /// it to 64-bit lanes.
+  [[nodiscard]] uint32_t liveLanes() const noexcept {
+    return (uint32_t(1) << mSize) - 1u;
+  }
+
+  /// `value` where `keep`, else zero, by an integer mask.
+  [[nodiscard]] static float maskedFloat(float value, bool keep) noexcept {
+    return bitCast<float>(bitCast<uint32_t>(value) & (0u - uint32_t(keep)));
+  }
 
   /// Point `mData` at storage for `size` bands, uninitialized beyond
   /// the guarantee that inline lanes stay initialized. A size equal to

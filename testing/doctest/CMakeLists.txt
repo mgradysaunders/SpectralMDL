@@ -34,7 +34,10 @@ string(RANDOM LENGTH 8 ALPHABET "0123456789" SEED)
 #
 # The RTTI flag matches the library's, as 'lib' and 'programs' do; the
 # 'BuildInfo' test relies on this to check 'hasRTTI' against the test
-# binary's own compile.
+# binary's own compile. The floating-point flags match too, because the
+# suites test inline header code (the spectral color predicates, the
+# fast-math approximations) that only means what it means under the
+# flags the library and the renderer compile it with.
 function(smdl_add_doctest BIN_NAME)
   set(Options)
   set(OneValArgs)
@@ -45,6 +48,9 @@ function(smdl_add_doctest BIN_NAME)
   target_link_libraries(${BIN_NAME} PRIVATE "doctest-runner" ${Args_LINK})
   if(RTTI_FLAG)
     target_compile_options(${BIN_NAME} PRIVATE "${RTTI_FLAG}")
+  endif()
+  if(CXX_FP_FLAGS)
+    target_compile_options(${BIN_NAME} PRIVATE ${CXX_FP_FLAGS})
   endif()
   set_target_properties(
     ${BIN_NAME}

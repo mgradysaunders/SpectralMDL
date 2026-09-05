@@ -1,7 +1,10 @@
 #include "doctest.h"
 
+#include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #include "smdl/RenderUtil/SpectralColor.h"
 
@@ -120,4 +123,112 @@ TEST_CASE("SpectralColor reductions and predicates") {
   c.setNonPositiveToZero();
   CHECK(c[1] == 0.0f);
   CHECK(c[3] == 6.0f);
+}
+
+// A color of `values` whose inline lanes past the size hold `past`, the
+// garbage the fixed-length arithmetic is allowed to leave there: the
+// span constructor leaves those lanes zero and a fill sets every lane,
+// so dividing, multiplying and subtracting the two plants whatever a
+// reduction has to ignore.
+static SpectralColor withLanesPastSize(std::initializer_list<float> values,
+                                       float past) {
+  const size_t n{values.size()};
+  const std::vector<float> ones(n, 1.0f);
+  const SpectralColor within{smdl::Span<const float>(ones.data(), n)};
+  const SpectralColor given{smdl::Span<const float>(values.begin(), n)};
+  if (std::isnan(past)) {
+    SpectralColor result{given};
+    result /= within; // 0 / 0 past the size
+    return result;
+  }
+  SpectralColor result{n, std::isinf(past) ? 1.0f : past};
+  if (std::isinf(past)) {
+    result /= within; // 1 / 0 past the size
+    result -= within;
+  } else {
+    result -= result * within;
+  }
+  result += given;
+  return result;
+}
+
+TEST_CASE("SpectralColor reductions ignore the inline lanes past the size") {
+  const float nan{std::numeric_limits<float>::quiet_NaN()};
+  const float inf{std::numeric_limits<float>::infinity()};
+  const auto same{[](float a, float b) {
+    return (std::isnan(a) && std::isnan(b)) || a == b;
+  }};
+  for (float past : {nan, inf, 1e30f, -1e30f}) {
+    CAPTURE(past);
+    const SpectralColor c{
+        withLanesPastSize({1.0f, -2.0f, 3.0f, 6.0f, 0.5f}, past)};
+    REQUIRE(c.size() == 5);
+    for (size_t i = 5; i < SpectralColor::INLINE_CAPACITY; i++)
+      REQUIRE(same(c.data()[i], past));
+    CHECK(c.average() == 8.5f / 5.0f);
+    CHECK(c.maxComponent() == 6.0f);
+    CHECK(c.minComponent() == -2.0f);
+    CHECK(!c.isAllZero());
+    CHECK(!c.isAnyInf());
+    CHECK(!c.isAnyNan());
+    CHECK(!c.isAnyNonFinite());
+    const SpectralColor z{withLanesPastSize({0.0f, 0.0f, 0.0f}, past)};
+    CHECK(z.isAllZero());
+    CHECK(z.isAllZero(1e-3f));
+    CHECK(z.average() == 0.0f);
+    // A non-finite lane within the size still shows through the mask,
+    // and the maximum keeps the sequential semantics of `std::max`: a
+    // NaN in the first lane sticks, one anywhere else is skipped.
+    SpectralColor d{c};
+    d[1] = inf;
+    CHECK(d.isAnyInf());
+    CHECK(!d.isAnyNan());
+    CHECK(d.isAnyNonFinite());
+    CHECK(d.maxComponent() == inf);
+    d[1] = nan;
+    CHECK(d.isAnyNan());
+    CHECK(d.isAnyNonFinite());
+    CHECK(d.maxComponent() == 6.0f);
+    CHECK(d.minComponent() == 0.5f);
+    d.setNonFiniteToZero();
+    CHECK(d[1] == 0.0f);
+    CHECK(d[3] == 6.0f);
+    CHECK(!d.isAnyNonFinite());
+    d[0] = nan;
+    CHECK(std::isnan(d.maxComponent()));
+    CHECK(std::isnan(d.minComponent()));
+    SpectralColor e{c};
+    e.setNonPositiveToZero();
+    CHECK(e[0] == 1.0f);
+    CHECK(e[1] == 0.0f);
+    CHECK(e[2] == 3.0f);
+  }
+  SUBCASE("The average keeps the sequential summation order") {
+    const std::initializer_list<float> values{1e8f,  1.0f, -1e8f, 1.0f,
+                                              0.25f, 3.0f, -7.0f};
+    const SpectralColor c{withLanesPastSize(values, nan)};
+    float sum{};
+    for (float v : values) sum += v;
+    CHECK(c.average() == sum / 7.0f);
+  }
+  SUBCASE("A full inline buffer and a heap buffer") {
+    SpectralColor f{16, 2.0f};
+    f[3] = -1.0f;
+    f[15] = 9.0f;
+    CHECK(f.maxComponent() == 9.0f);
+    CHECK(f.minComponent() == -1.0f);
+    CHECK(f.average() == 36.0f / 16.0f);
+    CHECK(!f.isAllZero());
+    SpectralColor h{17, 2.0f};
+    h[16] = 9.0f;
+    CHECK(h.maxComponent() == 9.0f);
+    CHECK(h.minComponent() == 2.0f);
+    CHECK(h.average() == 41.0f / 17.0f);
+    CHECK(!h.isAnyNonFinite());
+    h[16] = inf;
+    CHECK(h.isAnyInf());
+    CHECK(h.isAnyNonFinite());
+    h.setNonFiniteToZero();
+    CHECK(h[16] == 0.0f);
+  }
 }

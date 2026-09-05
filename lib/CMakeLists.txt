@@ -109,6 +109,9 @@ endif()
 if(CXX_ARCH_FLAGS)
   target_compile_options(SpectralMDL PRIVATE ${CXX_ARCH_FLAGS})
 endif()
+if(CXX_FP_FLAGS)
+  target_compile_options(SpectralMDL PRIVATE ${CXX_FP_FLAGS})
+endif()
 target_include_directories(
   SpectralMDL
   PUBLIC

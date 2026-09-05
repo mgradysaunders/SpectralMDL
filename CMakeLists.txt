@@ -95,6 +95,29 @@ if(SMDL_CXX_X86_ISA)
   message(STATUS "CXX_X86_ISA: ${SMDL_CXX_X86_ISA} (${CXX_ARCH_FLAGS})")
 endif()
 
+# Resolve the floating-point flags into 'CXX_FP_FLAGS', applied wherever
+# 'CXX_ARCH_FLAGS' is, plus the test suites, so that the inline header
+# code is tested under the flags it runs under. The C++ never reads
+# 'errno' after a math call and never traps on a floating-point
+# exception, so GCC and Clang may drop both contracts: without them every
+# 'std::sqrt' is a 'vsqrtss' plus a branch to the library for the
+# negative case, and a sine and cosine of one argument stay two calls.
+# Results are bit-identical. Contraction is the one relaxation beyond
+# that (see 'SMDL_CXX_FP_CONTRACT'); '-ffast-math' and
+# '-funsafe-math-optimizations' must never appear here, both because of
+# what they do to the guards and because at link time they add a startup
+# object that sets flush-to-zero in the host process's MXCSR.
+set(CXX_FP_FLAGS "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  list(APPEND CXX_FP_FLAGS "-fno-math-errno" "-fno-trapping-math")
+  if(SMDL_CXX_FP_CONTRACT)
+    list(APPEND CXX_FP_FLAGS "-ffp-contract=fast")
+  endif()
+  message(STATUS "CXX_FP_FLAGS: ${CXX_FP_FLAGS}")
+elseif(SMDL_CXX_FP_CONTRACT)
+  message(STATUS "CXX_FP_CONTRACT: ignored on ${CMAKE_CXX_COMPILER_ID}")
+endif()
+
 # MSVC needs to be told two things it cannot work out on its own: '/utf-8',
 # because the sources are UTF-8 and a few doc comments are not ASCII (MSVC
 # otherwise reads them in the active code page and warns C4819), and
