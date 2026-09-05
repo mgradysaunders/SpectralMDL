@@ -18,11 +18,13 @@ TEST_CASE("SpectralFilm") {
   constexpr size_t NUM_X = 3;
   constexpr size_t NUM_Y = 2;
   constexpr uint64_t SPP = 5;
+  // NOLINTNEXTLINE
   const float wavelengths[NUM_BANDS] = {400.0f, 500.0f, 600.0f, 700.0f};
   auto film{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
   film.addSamples(SPP);
   for (size_t y = 0; y < NUM_Y; y++) {
     for (size_t x = 0; x < NUM_X; x++) {
+      // NOLINTNEXTLINE
       double sums[NUM_BANDS]{};
       for (size_t b = 0; b < NUM_BANDS; b++)
         sums[b] = double(SPP) * double(100 * x + 10 * y + b);
@@ -45,10 +47,11 @@ TEST_CASE("SpectralFilm") {
   }
   SUBCASE("ENVI round trip") {
     auto fileName{(tmpDir / "test.envi").string()};
-    const std::string extraLines[] = {std::string("smdl sampler = test-1"),
-                                      std::string("smdl args = -spp 5")};
+    const std::array<std::string, 2> extraLines = {
+        std::string("render sampler = test-1"),
+        std::string("render args = -spp 5")};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
-                       fileName, smdl::Span<const std::string>(extraLines, 2));
+                       fileName, extraLines);
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loadedFilm.getNumBands() == NUM_BANDS);
@@ -60,10 +63,10 @@ TEST_CASE("SpectralFilm") {
     CHECK(loaded.wavelengths[0] == 400.0f);
     CHECK(loaded.wavelengths[3] == 700.0f);
     // The extra header lines must come back through `fields`.
-    REQUIRE(loaded.fields.count("smdl sampler") == 1);
-    CHECK(loaded.fields.at("smdl sampler") == "test-1");
-    REQUIRE(loaded.fields.count("smdl args") == 1);
-    CHECK(loaded.fields.at("smdl args") == "-spp 5");
+    REQUIRE(loaded.fields.count("render sampler") == 1);
+    CHECK(loaded.fields.at("render sampler") == "test-1");
+    REQUIRE(loaded.fields.count("render args") == 1);
+    CHECK(loaded.fields.at("render args") == "-spp 5");
     // Means and the reconstructed accumulator must match the original.
     for (size_t y = 0; y < NUM_Y; y++) {
       for (size_t x = 0; x < NUM_X; x++) {
@@ -86,6 +89,7 @@ TEST_CASE("SpectralFilm") {
     auto windowed{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
     windowed.addSamples(SPP);
     for (size_t y = 0; y < NUM_Y; y++) {
+      // NOLINTNEXTLINE
       double sums[NUM_BANDS]{};
       for (size_t b = 0; b < NUM_BANDS; b++)
         sums[b] = double(SPP) * double(100 + 10 * y + b);
@@ -97,10 +101,10 @@ TEST_CASE("SpectralFilm") {
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.samplesPerPixel == SPP);
-    CHECK(loaded.window[0] == 1);
-    CHECK(loaded.window[1] == 0);
-    CHECK(loaded.window[2] == 2);
-    CHECK(loaded.window[3] == int(NUM_Y));
+    CHECK(loaded.cropWindow[0] == 1);
+    CHECK(loaded.cropWindow[1] == 0);
+    CHECK(loaded.cropWindow[2] == 2);
+    CHECK(loaded.cropWindow[3] == int(NUM_Y));
     CHECK(loadedFilm.getNumSamples() == SPP);
     for (size_t y = 0; y < NUM_Y; y++) {
       for (size_t x = 0; x < NUM_X; x++) {
@@ -128,6 +132,7 @@ TEST_CASE("SpectralFilm") {
     windowed.addSamples(SPP);
     for (size_t y = 0; y < NUM_Y; y++) {
       for (size_t x = 0; x < NUM_X; x++) {
+        // NOLINTNEXTLINE
         double sums[NUM_BANDS]{};
         if (y == 0)
           for (size_t b = 0; b < NUM_BANDS; b++)
@@ -141,7 +146,7 @@ TEST_CASE("SpectralFilm") {
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.samplesPerPixel == SPP);
-    CHECK(loaded.window[3] == 1);
+    CHECK(loaded.cropWindow[3] == 1);
     CHECK(loadedFilm.getNumSamples() == SPP);
     CHECK(loadedFilm.mean(2, 0, 1) == doctest::Approx(201.0).epsilon(1e-12));
     CHECK(loadedFilm.mean(2, 1, 1) == 0.0);
@@ -156,13 +161,13 @@ TEST_CASE("SpectralFilm") {
       auto file{std::ifstream(headerName)};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
-    CHECK(text.find("smdl window") == std::string::npos);
+    CHECK(text.find("render window") == std::string::npos);
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
-    CHECK(loaded.window[0] == 0);
-    CHECK(loaded.window[1] == 0);
-    CHECK(loaded.window[2] == int(NUM_X));
-    CHECK(loaded.window[3] == int(NUM_Y));
+    CHECK(loaded.cropWindow[0] == 0);
+    CHECK(loaded.cropWindow[1] == 0);
+    CHECK(loaded.cropWindow[2] == int(NUM_X));
+    CHECK(loaded.cropWindow[3] == int(NUM_Y));
     CHECK(loadedFilm.getNumSamples() == SPP);
   }
   SUBCASE("ENVI write rejects a window outside the frame") {
@@ -178,7 +183,8 @@ TEST_CASE("SpectralFilm") {
     auto fileName{(tmpDir / "brokenwindow.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
-    std::ofstream(fileName + ".hdr", std::ios::app) << "smdl window = {0, 0}\n";
+    std::ofstream(fileName + ".hdr", std::ios::app)
+        << "render window = {0, 0}\n";
     CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
   }
   SUBCASE("ENVI read rejects a missing file") {
@@ -205,7 +211,7 @@ TEST_CASE("SpectralFilm") {
     CHECK(loadedFilm.getNumBands() == 0);
     CHECK(loadedFilm.getNumSamples() == 0);
   }
-  SUBCASE("No 'smdl spp' reads back with a count of 1") {
+  SUBCASE("No 'render spp' reads back with a count of 1") {
     auto fileName{(tmpDir / "foreign.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
@@ -215,7 +221,7 @@ TEST_CASE("SpectralFilm") {
     {
       auto file{std::ifstream(headerName)};
       for (std::string line; std::getline(file, line);)
-        if (line.rfind("smdl spp", 0) != 0) text += line + "\n";
+        if (line.rfind("render spp", 0) != 0) text += line + "\n";
     }
     std::ofstream(headerName) << text;
     auto loadedFilm{smdl::SpectralFilm{}};
