@@ -265,6 +265,16 @@ private:
   /// coefficients do not vary along the segment.
   void setSegment(const float3 &org, const float3 &dir, float time) noexcept;
 
+  /// The projection of `setSegment()`: the segment into the rigid frame
+  /// of the medium, or of every heterogeneous component. `setSegment()`
+  /// runs this under the instances' own frames and calls
+  /// `projectSegmentMoving()` under `mMoving`, so that the static path,
+  /// which runs per segment, keeps the frame query out of line.
+  void projectSegment(const float3 &org, const float3 &dir) noexcept;
+
+  SMDL_NO_INLINE void projectSegmentMoving(const float3 &org, const float3 &dir,
+                                           float time) noexcept;
+
   /// One component of an additive overlap, mirroring the single-medium
   /// members below; populated only when the segment is inside two or
   /// more overlapping media.
@@ -497,6 +507,10 @@ private:
   /// `setSegment()` projects the segment into. Null for a medium with
   /// no geometry, which queries in world space directly.
   const MeshInstance *mMeshInstance{};
+
+  /// Does an instance the queries evaluate in move over the shutter, so
+  /// that `setSegment()` reads its frame at the segment's time?
+  bool mMoving{};
 
   /// With the hint, the affine map from the rigid frame into the grid's
   /// brick space, per axis: `(x - mBrickBoundMin) * mBrickScale`.

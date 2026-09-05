@@ -137,10 +137,21 @@ public:
   /// Place the ray `sample()` built into the world at shutter fraction
   /// `u`: apply the camera frame at `u`, normalize the direction, and
   /// stamp the ray's time. A still camera applies its one frame
-  /// whatever `u` is.
-  void toWorld(CameraSample &sample, float u) const noexcept;
+  /// whatever `u` is, here; a moving camera builds its frame at `u` out
+  /// of line, in `toWorldMoving()`.
+  void toWorld(CameraSample &sample, float u) const noexcept {
+    if (moving) return toWorldMoving(sample, u);
+    sample.ray.transform(cameraToWorld);
+    sample.ray.dir = normalize(sample.ray.dir);
+    sample.ray.time = u;
+  }
 
 private:
+  /// The moving half of `toWorld()`: the look-at of the framing vectors
+  /// interpolated to `u`, see `lookFrom`.
+  SMDL_NO_INLINE void toWorldMoving(CameraSample &sample,
+                                    float u) const noexcept;
+
   /// The image dimensions in pixels.
   float numPixelsX{}, numPixelsY{};
 

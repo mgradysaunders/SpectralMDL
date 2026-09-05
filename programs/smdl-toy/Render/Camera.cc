@@ -209,14 +209,10 @@ CameraSample Camera::sample(size_t x, size_t y,
   return result;
 }
 
-void Camera::toWorld(CameraSample &sample, float u) const noexcept {
-  if (!moving) {
-    sample.ray.transform(cameraToWorld);
-  } else {
-    sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromShut,
-                                      (1 - u) * lookTo + u * lookToShut,
-                                      (1 - u) * lookUp + u * lookUpShut));
-  }
+void Camera::toWorldMoving(CameraSample &sample, float u) const noexcept {
+  sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromShut,
+                                    (1 - u) * lookTo + u * lookToShut,
+                                    (1 - u) * lookUp + u * lookUpShut));
   sample.ray.dir = normalize(sample.ray.dir);
   sample.ray.time = u;
 }

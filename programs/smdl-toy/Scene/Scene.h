@@ -81,7 +81,7 @@ public:
 
   /// The moving half of `applyGeometryToState()`: the frame queried
   /// at the hit's time, then the body.
-  SMDL_TOY_NOINLINE void
+  SMDL_NO_INLINE void
   applyGeometryToStateMoving(smdl::State &state,
                              const float3 &rayDir) const noexcept;
 
@@ -370,7 +370,7 @@ public:
   /// The moving half of `frameAt()`, kept out of line so the static path
   /// inlines to a load and a branch and the query stays out of the hit
   /// builders.
-  [[nodiscard]] SMDL_TOY_NOINLINE const InstanceFrame &
+  [[nodiscard]] SMDL_NO_INLINE const InstanceFrame &
   frameAtMoving(float time,
                 std::optional<InstanceFrame> &scratch) const noexcept;
 
@@ -767,16 +767,16 @@ public:
 
   /// The moving twins of the public builders: the frame queried at
   /// `time` through the retained handle, then the body.
-  [[nodiscard]] SMDL_TOY_NOINLINE Hit makeHitMoving(uint32_t instIndex,
-                                                    uint32_t faceIndex,
-                                                    const float3 &bary,
-                                                    float time) const;
+  [[nodiscard]] SMDL_NO_INLINE Hit makeHitMoving(uint32_t instIndex,
+                                                 uint32_t faceIndex,
+                                                 const float3 &bary,
+                                                 float time) const;
 
-  [[nodiscard]] SMDL_TOY_NOINLINE Hit makePrimitiveHitMoving(
+  [[nodiscard]] SMDL_NO_INLINE Hit makePrimitiveHitMoving(
       uint32_t instIndex, uint32_t primID, const float3 &bary, float time,
       const float3 &objectPoint) const;
 
-  [[nodiscard]] SMDL_TOY_NOINLINE ManifoldGeometry
+  [[nodiscard]] SMDL_NO_INLINE ManifoldGeometry
   manifoldGeometryMoving(uint32_t instIndex, uint32_t faceIndex,
                          const float3 &bary, float time) const;
 
@@ -794,6 +794,33 @@ public:
                                   float v, float time, const float3 &objectNg,
                                   const float3 &worldPoint,
                                   const float3 &rayDir) const;
+
+  /// The hit `intersect()` builds from what Embree reports, under
+  /// `frame`: the curve, primitive, or mesh record for piece `primID` at
+  /// its `(u, v)`, with the object-space `Ng` it reported, on `ray`
+  /// clipped to the hit. `intersect()` runs this under the instance's
+  /// own frame and calls `makeHitMoving()` otherwise, the split of the
+  /// builders above for the same reason.
+  [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t primID, float u, float v,
+                            const float3 &objectNg, const Ray &ray) const;
+
+  [[nodiscard]] SMDL_NO_INLINE Hit makeHitMoving(uint32_t instIndex,
+                                                 uint32_t primID, float u,
+                                                 float v,
+                                                 const float3 &objectNg,
+                                                 const Ray &ray) const;
+
+  /// The world point of the hit Embree reports, under `frame`, which is
+  /// all `intersect(Ray &, ManifoldHit &)` reconstructs; the same split.
+  [[nodiscard]] float3 manifoldHitPoint(const InstanceFrame &frame,
+                                        const MeshInstance &meshInstance,
+                                        uint32_t primID,
+                                        const float3 &bary) const;
+
+  [[nodiscard]] SMDL_NO_INLINE float3
+  manifoldHitPointMoving(const MeshInstance &meshInstance, uint32_t primID,
+                         const float3 &bary, float time) const;
 
 public:
   [[nodiscard]] bool intersect(Ray &ray, Hit &hit) const;

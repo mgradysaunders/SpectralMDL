@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/VectorMath.h"
 
 using namespace smdl::vector_type_aliases;
@@ -22,15 +23,6 @@ using smdl::PI;
 using smdl::TWO_PI;
 
 constexpr uint32_t INVALID_INDEX = uint32_t(-1);
-
-/// Keep a cold function out of its hot callers, for a branch whose rare
-/// side would otherwise be inlined into a function the render loop runs
-/// per hit.
-#if defined(_MSC_VER)
-#define SMDL_TOY_NOINLINE __declspec(noinline)
-#else
-#define SMDL_TOY_NOINLINE __attribute__((noinline))
-#endif
 
 /// An axis-aligned box, accumulated by folding in points or other
 /// boxes. The default is the empty box, whose `lower` exceeds its

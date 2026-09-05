@@ -1192,45 +1192,51 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
   rayHit.hit.primID = unsigned(-1);
   rayHit.hit.geomID = unsigned(-1);
   rtcIntersect1(scene, &rayHit, nullptr);
-  if (rayHit.hit.primID == unsigned(-1)) {
-    return false;
-  } else {
-    ray.tmax = rayHit.ray.tfar;
-    const auto instIndex{
-        instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
-    const auto &meshInstance{meshInstances[instIndex]};
-    std::optional<InstanceFrame> scratch{};
-    const auto &frame{meshInstance.frameAt(ray.time, scratch)};
-    // A curve hit is built here rather than through `makeHit()`, because
-    // it needs the ray: the point comes from `tfar`, the tube normal
-    // from the object-space `Ng`, and the ribbon normal from the ray
-    // direction. The (u, v) are the curve parameters, NOT barycentrics,
-    // so the triangle path's clamp-and-complement does not apply
-    // (ribbon `v` legitimately spans -1 to +1).
-    if (meshInstance.isCurves()) {
-      hit = makeCurvesHit(
-          frame, instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
-          ray.time, float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z),
-          ray(rayHit.ray.tfar), ray.dir);
-      return true;
-    }
-    auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
-    auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
-                     clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
-    // A primitive reports its object-space point in the normal slots,
-    // and the hit is built from that rather than from the parameters.
-    if (meshInstance.isPrimitive()) {
-      const auto &primitive{*primitives[meshInstance.primIndex]};
-      hit = makePrimitiveHitFrom(
-          frame, instIndex, rayHit.hit.primID, bary, ray.time,
-          evalPrimitiveSurfaceAt(
-              primitive.spec, rayHit.hit.primID,
-              float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)));
-    } else {
-      hit = makeHit(frame, instIndex, rayHit.hit.primID, bary, ray.time);
-    }
-    return true;
+  if (rayHit.hit.primID == unsigned(-1)) return false;
+  ray.tmax = rayHit.ray.tfar;
+  const auto instIndex{
+      instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
+  const auto &meshInstance{meshInstances[instIndex]};
+  const auto objectNg{
+      float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
+  hit = meshInstance.isMoving
+            ? makeHitMoving(instIndex, rayHit.hit.primID, rayHit.hit.u,
+                            rayHit.hit.v, objectNg, ray)
+            : makeHit(meshInstance.frame, instIndex, rayHit.hit.primID,
+                      rayHit.hit.u, rayHit.hit.v, objectNg, ray);
+  return true;
+}
+
+Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
+                         const float3 &objectNg, const Ray &ray) const {
+  std::optional<InstanceFrame> scratch{};
+  return makeHit(meshInstances[instIndex].frameAtMoving(ray.time, scratch),
+                 instIndex, primID, u, v, objectNg, ray);
+}
+
+Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                   uint32_t primID, float u, float v, const float3 &objectNg,
+                   const Ray &ray) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  // A curve hit needs the ray: the point comes from `tmax`, the tube
+  // normal from the object-space `Ng`, and the ribbon normal from the
+  // ray direction. The (u, v) are the curve parameters, NOT
+  // barycentrics, so the triangle path's clamp-and-complement does not
+  // apply (ribbon `v` legitimately spans -1 to +1).
+  if (meshInstance.isCurves())
+    return makeCurvesHit(frame, instIndex, primID, u, v, ray.time, objectNg,
+                         ray(ray.tmax), ray.dir);
+  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
+  const auto bary{float3(clamp01(1.0f - u - v), clamp01(u), clamp01(v))};
+  // A primitive reports its object-space point in the normal slots,
+  // and the hit is built from that rather than from the parameters.
+  if (meshInstance.isPrimitive()) {
+    const auto &primitive{*primitives[meshInstance.primIndex]};
+    return makePrimitiveHitFrom(
+        frame, instIndex, primID, bary, ray.time,
+        evalPrimitiveSurfaceAt(primitive.spec, primID, objectNg));
   }
+  return makeHit(frame, instIndex, primID, bary, ray.time);
 }
 
 bool Scene::isOccluded(const Ray &ray) const {
@@ -1289,26 +1295,41 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   const auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
                          clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
   hit.vertex.coords = bary;
+  hit.vertex.point = meshInstance.isMoving
+                         ? manifoldHitPointMoving(
+                               meshInstance, rayHit.hit.primID, bary, ray.time)
+                         : manifoldHitPoint(meshInstance.frame, meshInstance,
+                                            rayHit.hit.primID, bary);
+  return true;
+}
+
+float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
+                                     uint32_t primID, const float3 &bary,
+                                     float time) const {
   std::optional<InstanceFrame> scratch{};
-  const auto &objectToWorld{
-      meshInstance.frameAt(ray.time, scratch).objectToWorld};
+  return manifoldHitPoint(meshInstance.frameAtMoving(time, scratch),
+                          meshInstance, primID, bary);
+}
+
+float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
+                               const MeshInstance &meshInstance,
+                               uint32_t primID, const float3 &bary) const {
+  const auto &objectToWorld{frame.objectToWorld};
   if (meshInstance.isPrimitive()) {
     const auto &primitive{*primitives[meshInstance.primIndex]};
-    const auto surface{evalPrimitiveSurface(primitive.spec, rayHit.hit.primID,
-                                            float2(bary[1], bary[2]))};
-    hit.vertex.point = float3(objectToWorld * float4(surface.point, 1.0f));
-  } else {
-    const auto &mesh{*meshes[meshInstance.meshIndex]};
-    const auto &face{mesh.faces[rayHit.hit.primID]};
-    const auto &vert0{mesh.verts[face[0]]};
-    const auto &vert1{mesh.verts[face[1]]};
-    const auto &vert2{mesh.verts[face[2]]};
-    const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-    const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-    const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
-    hit.vertex.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+    const auto surface{
+        evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2]))};
+    return float3(objectToWorld * float4(surface.point, 1.0f));
   }
-  return true;
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const auto &face{mesh.faces[primID]};
+  const auto &vert0{mesh.verts[face[0]]};
+  const auto &vert1{mesh.verts[face[1]]};
+  const auto &vert2{mesh.verts[face[2]]};
+  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
+  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
+  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
 Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,

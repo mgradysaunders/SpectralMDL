@@ -237,6 +237,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   mResolved = true;
   mHasMedium = false;
   mHeterogeneous = false;
+  mMoving = false;
   mIsHaze = false;
   mMaterial = nullptr;
   mHasEmission = false;
@@ -328,6 +329,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     // space directly.
     mMeshInstance = primary->meshInstance;
     if (mMeshInstance) {
+      mMoving = mMeshInstance->isMoving;
       if (mMeshInstance->frame.isDeformed) warnDeformedVolumeOnce(mMaterial);
       std::optional<InstanceFrame> scratch{};
       mState->object_to_world_matrix =
@@ -386,6 +388,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
           component.state = renderState;
           component.meshInstance = entry->meshInstance;
           if (component.meshInstance) {
+            mMoving |= component.meshInstance->isMoving;
             if (component.meshInstance->frame.isDeformed)
               warnDeformedVolumeOnce(mat.material);
             std::optional<InstanceFrame> scratch{};
@@ -469,32 +472,10 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
   // A homogeneous medium has the same coefficients everywhere, so it
   // never queries and has no segment to place.
   if (!mHeterogeneous) return;
-  if (mComponents.empty()) {
-    if (mMeshInstance) {
-      std::optional<InstanceFrame> scratch{};
-      const auto &toRigid{mMeshInstance->frameAt(time, scratch).worldToRigid};
-      mOrgR = float3(toRigid * float4(org, 1.0f));
-      mDirR = float3(toRigid * float4(dir, 0.0f));
-    } else {
-      mOrgR = org;
-      mDirR = dir;
-    }
-    mState->direction = mDirR;
+  if (mMoving) {
+    projectSegmentMoving(org, dir, time);
   } else {
-    for (auto &component : mComponents) {
-      if (!component.heterogeneous) continue;
-      if (component.meshInstance) {
-        std::optional<InstanceFrame> scratch{};
-        const auto &toRigid{
-            component.meshInstance->frameAt(time, scratch).worldToRigid};
-        component.orgR = float3(toRigid * float4(org, 1.0f));
-        component.dirR = float3(toRigid * float4(dir, 0.0f));
-      } else {
-        component.orgR = org;
-        component.dirR = dir;
-      }
-      component.state.direction = component.dirR;
-    }
+    projectSegment(org, dir);
   }
   if (mDensityGrid) {
     // The grid's own component drives the spans, which is the single
@@ -507,6 +488,64 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
       mBrickOrg[axis] = (orgR[axis] - mBrickBoundMin[axis]) * mBrickScale[axis];
       mBrickDir[axis] = dirR[axis] * mBrickScale[axis];
     }
+  }
+}
+
+void Medium::projectSegment(const float3 &org, const float3 &dir) noexcept {
+  if (mComponents.empty()) {
+    if (mMeshInstance) {
+      const auto &toRigid{mMeshInstance->frame.worldToRigid};
+      mOrgR = float3(toRigid * float4(org, 1.0f));
+      mDirR = float3(toRigid * float4(dir, 0.0f));
+    } else {
+      mOrgR = org;
+      mDirR = dir;
+    }
+    mState->direction = mDirR;
+    return;
+  }
+  for (auto &component : mComponents) {
+    if (!component.heterogeneous) continue;
+    if (component.meshInstance) {
+      const auto &toRigid{component.meshInstance->frame.worldToRigid};
+      component.orgR = float3(toRigid * float4(org, 1.0f));
+      component.dirR = float3(toRigid * float4(dir, 0.0f));
+    } else {
+      component.orgR = org;
+      component.dirR = dir;
+    }
+    component.state.direction = component.dirR;
+  }
+}
+
+void Medium::projectSegmentMoving(const float3 &org, const float3 &dir,
+                                  float time) noexcept {
+  if (mComponents.empty()) {
+    if (mMeshInstance) {
+      std::optional<InstanceFrame> scratch{};
+      const auto &toRigid{mMeshInstance->frameAt(time, scratch).worldToRigid};
+      mOrgR = float3(toRigid * float4(org, 1.0f));
+      mDirR = float3(toRigid * float4(dir, 0.0f));
+    } else {
+      mOrgR = org;
+      mDirR = dir;
+    }
+    mState->direction = mDirR;
+    return;
+  }
+  for (auto &component : mComponents) {
+    if (!component.heterogeneous) continue;
+    if (component.meshInstance) {
+      std::optional<InstanceFrame> scratch{};
+      const auto &toRigid{
+          component.meshInstance->frameAt(time, scratch).worldToRigid};
+      component.orgR = float3(toRigid * float4(org, 1.0f));
+      component.dirR = float3(toRigid * float4(dir, 0.0f));
+    } else {
+      component.orgR = org;
+      component.dirR = dir;
+    }
+    component.state.direction = component.dirR;
   }
 }
 

@@ -1027,8 +1027,9 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
 // from the frame at the hit's time: the sphere's center and radius from
 // its columns, and the area stretch through its inverse cofactor, for
 // a mesh light exactly as for a primitive. The static path below keeps
-// its own arithmetic.
-[[nodiscard]] static float
+// its own arithmetic, and this stays out of line so that it keeps its
+// leaf shape too.
+[[nodiscard]] static SMDL_NO_INLINE float
 solidAnglePDFMoving(const AreaLight &light, const MeshInstance &instance,
                     const float3 &lightPoint, const float3 &lightNormal,
                     const float3 &point, bool areaSampled, float time,
