@@ -1487,7 +1487,7 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto objectNg{
       float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
-  hit = meshInstance.isMoving
+  hit = meshInstance.isMoving || meshInstance.isDeforming
             ? makeHitMoving(instIndex, rayHit.hit.primID, rayHit.hit.u,
                             rayHit.hit.v, objectNg, ray)
             : makeHit(meshInstance.frame, instIndex, rayHit.hit.primID,
@@ -1497,9 +1497,15 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
 
 Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
                          const float3 &objectNg, const Ray &ray) const {
+  const auto &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  return makeHit(meshInstances[instIndex].frameAtMoving(ray.time, scratch),
-                 instIndex, primID, u, v, objectNg, ray);
+  const auto &frame{meshInstance.frameAt(ray.time, scratch)};
+  if (!meshInstance.isDeforming)
+    return makeHit(frame, instIndex, primID, u, v, objectNg, ray);
+  // Only a mesh deforms, so the barycentric clamp of the body applies.
+  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
+  const auto bary{float3(clamp01(1.0f - u - v), clamp01(u), clamp01(v))};
+  return makeHitDeforming(frame, instIndex, primID, bary, ray.time);
 }
 
 Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
@@ -1583,7 +1589,7 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   const auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
                          clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
   hit.vertex.coords = bary;
-  hit.vertex.point = meshInstance.isMoving
+  hit.vertex.point = meshInstance.isMoving || meshInstance.isDeforming
                          ? manifoldHitPointMoving(
                                meshInstance, rayHit.hit.primID, bary, ray.time)
                          : manifoldHitPoint(meshInstance.frame, meshInstance,
@@ -1595,8 +1601,21 @@ float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
                                      uint32_t primID, const float3 &bary,
                                      float time) const {
   std::optional<InstanceFrame> scratch{};
-  return manifoldHitPoint(meshInstance.frameAtMoving(time, scratch),
-                          meshInstance, primID, bary);
+  const auto &frame{meshInstance.frameAt(time, scratch)};
+  if (!meshInstance.isDeforming)
+    return manifoldHitPoint(frame, meshInstance, primID, bary);
+  // The three points at the time, by the expression `makeHitFrom()`
+  // interpolates its own with.
+  const auto &objectToWorld{frame.objectToWorld};
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const auto &face{mesh.faces[primID]};
+  const auto vert0{mesh.vertAt(face[0], time)};
+  const auto vert1{mesh.vertAt(face[1], time)};
+  const auto vert2{mesh.vertAt(face[2], time)};
+  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
+  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
+  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
 float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
@@ -1623,7 +1642,7 @@ float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
 Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
                    float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
-  if (meshInstance.isMoving)
+  if (meshInstance.isMoving || meshInstance.isDeforming)
     return makeHitMoving(instIndex, faceIndex, bary, time);
   return meshInstance.isPrimitive()
              ? makePrimitiveHit(meshInstance.frame, instIndex, faceIndex, bary,
@@ -1635,9 +1654,11 @@ Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
                          const float3 &bary, float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAtMoving(time, scratch)};
-  return meshInstance.isPrimitive()
-             ? makePrimitiveHit(frame, instIndex, faceIndex, bary, time)
+  const auto &frame{meshInstance.frameAt(time, scratch)};
+  if (meshInstance.isPrimitive())
+    return makePrimitiveHit(frame, instIndex, faceIndex, bary, time);
+  return meshInstance.isDeforming
+             ? makeHitDeforming(frame, instIndex, faceIndex, bary, time)
              : makeHit(frame, instIndex, faceIndex, bary, time);
 }
 
@@ -1649,9 +1670,30 @@ Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
   SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   const auto &face{mesh.faces[faceIndex]};
-  const auto &vert0{mesh.verts[face[0]]};
-  const auto &vert1{mesh.verts[face[1]]};
-  const auto &vert2{mesh.verts[face[2]]};
+  return makeHitFrom(frame, instIndex, faceIndex, bary, time,
+                     mesh.verts[face[0]], mesh.verts[face[1]],
+                     mesh.verts[face[2]]);
+}
+
+Hit Scene::makeHitDeforming(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t faceIndex, const float3 &bary,
+                            float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  SMDL_SANITY_CHECK(mesh.deforms());
+  const auto &face{mesh.faces[faceIndex]};
+  return makeHitFrom(frame, instIndex, faceIndex, bary, time,
+                     mesh.vertAt(face[0], time), mesh.vertAt(face[1], time),
+                     mesh.vertAt(face[2], time));
+}
+
+Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                       uint32_t faceIndex, const float3 &bary, float time,
+                       const Mesh::Vert &vert0, const Mesh::Vert &vert1,
+                       const Mesh::Vert &vert2) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const auto &face{mesh.faces[faceIndex]};
   const auto &objectToWorld{frame.objectToWorld};
   // World space first, everything else after. Interpolating the transformed
   // points is the same as transforming the interpolated point, so this
@@ -1789,7 +1831,7 @@ ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
 ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
                                          const float3 &bary, float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
-  if (meshInstance.isMoving)
+  if (meshInstance.isMoving || meshInstance.isDeforming)
     return manifoldGeometryMoving(instIndex, faceIndex, bary, time);
   return manifoldGeometry(meshInstance.frame, instIndex, faceIndex, bary, time);
 }
@@ -1800,8 +1842,11 @@ ManifoldGeometry Scene::manifoldGeometryMoving(uint32_t instIndex,
                                                float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  return manifoldGeometry(meshInstance.frameAtMoving(time, scratch), instIndex,
-                          faceIndex, bary, time);
+  const auto &frame{meshInstance.frameAt(time, scratch)};
+  return meshInstance.isDeforming
+             ? manifoldGeometryDeforming(frame, instIndex, faceIndex, bary,
+                                         time)
+             : manifoldGeometry(frame, instIndex, faceIndex, bary, time);
 }
 
 void Hit::applyGeometryToStateMoving(smdl::State &state,
@@ -1810,58 +1855,14 @@ void Hit::applyGeometryToStateMoving(smdl::State &state,
   applyGeometryToState(instance->frameAtMoving(time, scratch), state, rayDir);
 }
 
-ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
-                                         uint32_t instIndex, uint32_t faceIndex,
-                                         const float3 &bary, float time) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  SMDL_SANITY_CHECK(!meshInstance.isCurves());
-  const auto &objectToWorld{frame.objectToWorld};
-  ManifoldGeometry geometry{};
-  // The point and geometry normal by the same expressions `makeHit()`
-  // uses, and the unnormalized shading normal field and its parametric
-  // partials through the cofactor matrix exactly as `makeHit()`
-  // transforms the normal itself; the winding flip on the shading field
-  // is applied at the end, where it negates the unit normal and its
-  // partials together.
-  float3 rawNormal{};
-  float3 dRawdu{};
-  float3 dRawdv{};
-  if (meshInstance.isPrimitive()) {
-    const auto &primitive{*primitives[meshInstance.primIndex]};
-    const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
-                                            float2(bary[1], bary[2]))};
-    geometry.point = float3(objectToWorld * float4(surface.point, 1.0f));
-    geometry.dPdu = float3(objectToWorld * float4(surface.dPdu, 0.0f));
-    geometry.dPdv = float3(objectToWorld * float4(surface.dPdv, 0.0f));
-    rawNormal = frame.normalMatrix * surface.normal;
-    dRawdu = frame.normalMatrix * surface.dNdu;
-    dRawdv = frame.normalMatrix * surface.dNdv;
-    geometry.Ng = normalize(frame.normalMatrix * surface.normal);
-    if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
-  } else {
-    const auto &mesh{*meshes[meshInstance.meshIndex]};
-    const auto &face{mesh.faces[faceIndex]};
-    const auto &vert0{mesh.verts[face[0]]};
-    const auto &vert1{mesh.verts[face[1]]};
-    const auto &vert2{mesh.verts[face[2]]};
-    const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-    const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-    const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
-    geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
-    // The parameterization is the barycentric pair (bary[1], bary[2]).
-    geometry.dPdu = point1 - point0;
-    geometry.dPdv = point2 - point0;
-    rawNormal =
-        frame.normalMatrix * (bary[0] * vert0.normal + bary[1] * vert1.normal +
-                              bary[2] * vert2.normal);
-    dRawdu = frame.normalMatrix * (vert1.normal - vert0.normal);
-    dRawdv = frame.normalMatrix * (vert2.normal - vert0.normal);
-    // The same expression `makeHit()` uses, see there.
-    geometry.Ng = normalize(cross(point1 - point0, point2 - point0));
-    if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
-  }
-  // Differentiate the normalization: with N = m / |m|,
-  // dN = (dm - N dot(N, dm)) / |m|.
+namespace {
+
+// The shared end of every manifold geometry: differentiate the
+// normalization of the shading normal field and apply the winding flip.
+// With N = m / |m|, dN = (dm - N dot(N, dm)) / |m|.
+void finishManifoldGeometry(const InstanceFrame &frame,
+                            ManifoldGeometry &geometry, const float3 &rawNormal,
+                            const float3 &dRawdu, const float3 &dRawdv) {
   const float rawLength{length(rawNormal)};
   if (!(rawLength > 0.0f)) {
     // The interpolated normal field collapsed here, which a seam whose
@@ -1872,7 +1873,7 @@ ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
     // `geometry.Ng` already carries the winding flip, so this returns
     // before the flip below.
     geometry.normal = geometry.Ng;
-    return geometry;
+    return;
   }
   geometry.normal = normalize(rawNormal);
   geometry.dNdu =
@@ -1884,6 +1885,81 @@ ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
     geometry.dNdu = -geometry.dNdu;
     geometry.dNdv = -geometry.dNdv;
   }
+}
+
+} // namespace
+
+ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
+                                         uint32_t instIndex, uint32_t faceIndex,
+                                         const float3 &bary, float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  SMDL_SANITY_CHECK(!meshInstance.isCurves());
+  if (!meshInstance.isPrimitive()) {
+    const auto &mesh{*meshes[meshInstance.meshIndex]};
+    const auto &face{mesh.faces[faceIndex]};
+    return manifoldGeometryFrom(frame, bary, mesh.verts[face[0]],
+                                mesh.verts[face[1]], mesh.verts[face[2]]);
+  }
+  // The point and geometry normal by the same expressions `makeHit()`
+  // uses, and the unnormalized shading normal field and its parametric
+  // partials through the cofactor matrix exactly as `makeHit()`
+  // transforms the normal itself; the winding flip on the shading field
+  // is applied at the end, where it negates the unit normal and its
+  // partials together.
+  const auto &objectToWorld{frame.objectToWorld};
+  const auto &primitive{*primitives[meshInstance.primIndex]};
+  const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
+                                          float2(bary[1], bary[2]))};
+  ManifoldGeometry geometry{};
+  geometry.point = float3(objectToWorld * float4(surface.point, 1.0f));
+  geometry.dPdu = float3(objectToWorld * float4(surface.dPdu, 0.0f));
+  geometry.dPdv = float3(objectToWorld * float4(surface.dPdv, 0.0f));
+  geometry.Ng = normalize(frame.normalMatrix * surface.normal);
+  if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
+  finishManifoldGeometry(frame, geometry, frame.normalMatrix * surface.normal,
+                         frame.normalMatrix * surface.dNdu,
+                         frame.normalMatrix * surface.dNdv);
+  return geometry;
+}
+
+ManifoldGeometry Scene::manifoldGeometryDeforming(const InstanceFrame &frame,
+                                                  uint32_t instIndex,
+                                                  uint32_t faceIndex,
+                                                  const float3 &bary,
+                                                  float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  SMDL_SANITY_CHECK(mesh.deforms());
+  const auto &face{mesh.faces[faceIndex]};
+  return manifoldGeometryFrom(frame, bary, mesh.vertAt(face[0], time),
+                              mesh.vertAt(face[1], time),
+                              mesh.vertAt(face[2], time));
+}
+
+ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
+                                             const float3 &bary,
+                                             const Mesh::Vert &vert0,
+                                             const Mesh::Vert &vert1,
+                                             const Mesh::Vert &vert2) const {
+  // See the primitive half of `manifoldGeometry()` for the conventions.
+  const auto &objectToWorld{frame.objectToWorld};
+  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
+  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
+  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  ManifoldGeometry geometry{};
+  geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+  // The parameterization is the barycentric pair (bary[1], bary[2]).
+  geometry.dPdu = point1 - point0;
+  geometry.dPdv = point2 - point0;
+  // The same expression `makeHitFrom()` uses, see there.
+  geometry.Ng = normalize(cross(point1 - point0, point2 - point0));
+  if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
+  finishManifoldGeometry(frame, geometry,
+                         frame.normalMatrix *
+                             (bary[0] * vert0.normal + bary[1] * vert1.normal +
+                              bary[2] * vert2.normal),
+                         frame.normalMatrix * (vert1.normal - vert0.normal),
+                         frame.normalMatrix * (vert2.normal - vert0.normal));
   return geometry;
 }
 

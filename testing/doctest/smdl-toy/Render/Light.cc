@@ -13,6 +13,7 @@
 #include "Layout/Layout.h"
 #include "Render/Light.h"
 #include "Render/Sampler.h"
+#include "RigFixtures.h"
 #include "Scene/Scene.h"
 
 namespace fs = std::filesystem;
@@ -139,8 +140,9 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
     CAPTURE(i);
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
-    const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, false, 0.0f)};
+    const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
+                                         hit.point, hit.Ng, Fixture::RECEIVER,
+                                         false, 0.0f)};
     const bool sampled{i == 0 || i == 4};
     CHECK((pdf > 0.0f) == sampled);
     CHECK(lights.causticLight(hit.instIndex) == sampled);
@@ -191,8 +193,9 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
     CAPTURE(i);
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
-    const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, false, 0.0f)};
+    const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
+                                         hit.point, hit.Ng, Fixture::RECEIVER,
+                                         false, 0.0f)};
     const bool emitter{i != 2};
     CHECK((pdf > 0.0f) == emitter);
     CHECK(lights.causticLight(hit.instIndex) == emitter);
@@ -296,11 +299,12 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
         pmfLamp = sample.pdf;
       } else {
         numArea++;
-        CHECK(sample.pdf == doctest::Approx(lights.solidAnglePDF(
-                                                sample.hit.instIndex,
-                                                sample.target, sample.normal,
-                                                Fixture::RECEIVER, false, 0.0f))
-                                .epsilon(1e-4));
+        CHECK(sample.pdf ==
+              doctest::Approx(lights.solidAnglePDF(
+                                  sample.hit.instIndex, sample.hit.faceIndex,
+                                  sample.target, sample.normal,
+                                  Fixture::RECEIVER, false, 0.0f))
+                  .epsilon(1e-4));
       }
     }
     allocator.reset();
@@ -316,8 +320,9 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
     const float3 toLight{hit.point - Fixture::RECEIVER};
     const float distSq{lengthSquared(toLight)};
     const float cosLight{absDot(hit.Ng, toLight / std::sqrt(distSq))};
-    const float pmf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, true, 0.0f) *
+    const float pmf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
+                                         hit.point, hit.Ng, Fixture::RECEIVER,
+                                         true, 0.0f) *
                     area * cosLight / distSq};
     allocator.reset();
     return pmf;
@@ -424,7 +429,8 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
             doctest::Approx(ConeFixture::RADIUS).epsilon(1.0e-4));
       CHECK(sample.pdf ==
             doctest::Approx(
-                lights.solidAnglePDF(uint32_t(k), sample.target, sample.normal,
+                lights.solidAnglePDF(uint32_t(k), sample.hit.faceIndex,
+                                     sample.target, sample.normal,
                                      ConeFixture::RECEIVER, keepDark, 0.0f))
                 .epsilon(1.0e-4));
       const double estimate{double(sample.Li[0]) * dot(sample.wi, axis) /
@@ -910,15 +916,15 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
               doctest::Approx(MotionFixture::RADIUS).epsilon(1.0e-4));
         // The density the arrival site recomputes, for this light at
         // this time, and for the still twin at the same place.
-        const float own{lights.solidAnglePDF(0, sample.target, sample.normal,
-                                             MotionFixture::RECEIVER, false,
-                                             u)};
+        const float own{lights.solidAnglePDF(
+            0, sample.hit.faceIndex, sample.target, sample.normal,
+            MotionFixture::RECEIVER, false, u)};
         CHECK(sample.pdf == doctest::Approx(own).epsilon(1.0e-4));
         if (u == 0.0f || u == 1.0f) {
           const uint32_t twin{u == 0.0f ? 1u : 2u};
-          const float still{
-              lights.solidAnglePDF(twin, sample.target, sample.normal,
-                                   MotionFixture::RECEIVER, false, 0.0f)};
+          const float still{lights.solidAnglePDF(
+              twin, sample.hit.faceIndex, sample.target, sample.normal,
+              MotionFixture::RECEIVER, false, 0.0f)};
           CHECK(sample.pdf == doctest::Approx(still).epsilon(1.0e-4));
         }
       }
@@ -946,7 +952,8 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
               scale * (1.0f + 1.0e-5f));
         CHECK(std::fabs(sample.target.y - MotionFixture::QUAD_CENTER.y) <=
               scale * (1.0f + 1.0e-5f));
-        const float own{lights.solidAnglePDF(3, sample.target, sample.normal,
+        const float own{lights.solidAnglePDF(3, sample.hit.faceIndex,
+                                             sample.target, sample.normal,
                                              MotionFixture::RECEIVER, true, u)};
         CHECK(sample.pdf == doctest::Approx(own).epsilon(1.0e-4));
         if (u == 1.0f) {
@@ -954,9 +961,9 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
           // (its area is the shut-key area, the moving light's the
           // open-key one), so its selection probability is four times
           // the moving light's; past that, the two densities are one.
-          const float still{
-              lights.solidAnglePDF(4, sample.target, sample.normal,
-                                   MotionFixture::RECEIVER, true, 0.0f)};
+          const float still{lights.solidAnglePDF(
+              4, sample.hit.faceIndex, sample.target, sample.normal,
+              MotionFixture::RECEIVER, true, 0.0f)};
           CHECK(4.0f * own == doctest::Approx(still).epsilon(1.0e-4));
         }
       }
@@ -1059,5 +1066,114 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     CHECK(box.lower.z == 5.0f);
     CHECK(box.upper.z == 7.0f);
     CHECK(box.upper.x == 2.0f);
+  }
+}
+
+namespace {
+
+// A deforming emitter: the morph quad of `RigFixtures.h`, lit, alone in
+// the scene so its selection probability is one, under the clock at
+// 0.25 s with a 0.5 s shutter. Its lift is 0.25 at open and 0.75 at
+// shut, and its x = 1 edge stands 0.125 out at open and 0.375 at shut,
+// so its area is 1.125 at open, 1.375 at shut, and linear between.
+class DeformFixture final {
+public:
+  DeformFixture() {
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    files = rig::writeFiles(dir);
+    if (auto error{compiler.addCode("::deformtest", MATERIALS)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    renderTime() = 0.25f;
+    renderShutter() = 0.5f;
+    LayoutItem item{};
+    item.fileName = files.morph;
+    item.materials.all = "glow";
+    item.isLight = true;
+    scene.add(item);
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto gridSpec{std::vector<float>(16)};
+    for (size_t i = 0; i < gridSpec.size(); i++)
+      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+    wavelengths =
+        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+    renderWavelengths() = wavelengths;
+    scene.commit(wavelengths);
+  }
+  ~DeformFixture() {
+    renderTime() = 0.0f;
+    renderShutter() = 0.0f;
+    fs::remove_all(dir);
+  }
+
+  static constexpr float3 RECEIVER{0.6f, 0.5f, 3.0f};
+
+  fs::path dir{fs::temp_directory_path() / "smdl-toy-light-deform-test"};
+  rig::Files files{};
+  smdl::Compiler compiler{};
+  Scene scene{compiler};
+  Color wavelengths{};
+};
+
+} // namespace
+
+TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
+          "time") {
+  DeformFixture fixture{};
+  const LightSampler lights{
+      fixture.compiler,    fixture.scene, nullptr,          {},
+      fixture.wavelengths, false,         /*useTree=*/false};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  Sampler sampler{};
+  constexpr int NUM_DRAWS{1024};
+  REQUIRE(fixture.scene.meshInstances[0].isDeforming);
+  for (const float u : {0.0f, 0.5f, 1.0f}) {
+    CAPTURE(u);
+    const float lift{0.25f + 0.5f * u};
+    const float stretch{0.125f + 0.25f * u};
+    const float area{1.0f + stretch};
+    int numDrawn{};
+    for (int i = 0; i < NUM_DRAWS; i++) {
+      sampler.startPixelSample(0, uint32_t(i));
+      LightSample sample{};
+      const bool drawn{
+          lights.sample(state, sampler, DeformFixture::RECEIVER, u, sample)};
+      allocator.reset();
+      if (!drawn) continue;
+      numDrawn++;
+      CAPTURE(i);
+      CHECK(sample.hit.time == u);
+      // On the quad as it stands at the time.
+      CHECK(sample.target.z == doctest::Approx(lift).epsilon(1e-4));
+      CHECK(sample.target.x >= -1e-4f);
+      CHECK(sample.target.x <= 1.0f + stretch + 1e-4f);
+      CHECK(sample.target.y >= -1e-4f);
+      CHECK(sample.target.y <= 1.0f + 1e-4f);
+      // Uniform over the quad's area at the time: each face is drawn by
+      // its object area, the two being equal, and pays its own world
+      // area then, so the density is one over the whole area.
+      const float3 direction{sample.target - DeformFixture::RECEIVER};
+      const float distSq{smdl::dot(direction, direction)};
+      const float cosTheta{
+          std::fabs(smdl::dot(sample.normal, smdl::normalize(direction)))};
+      CHECK(sample.pdf ==
+            doctest::Approx(distSq / (area * cosTheta)).epsilon(1e-3));
+      // The arrival site recovers the same density from the hit's face.
+      const float own{lights.solidAnglePDF(
+          sample.hit.instIndex, sample.hit.faceIndex, sample.target,
+          sample.normal, DeformFixture::RECEIVER, true, u)};
+      CHECK(sample.pdf == doctest::Approx(own).epsilon(1e-4));
+    }
+    CHECK(numDrawn > NUM_DRAWS / 2);
   }
 }

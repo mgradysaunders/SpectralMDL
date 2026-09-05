@@ -92,10 +92,10 @@ public:
   bool isSampled{};
 
   /// The area-weighted distribution over the mesh faces, by world area
-  /// for a static light and by object area for a moving one, whose
-  /// world area is a function of time. Empty for a primitive light,
-  /// which samples its shape analytically instead, and for an unsampled
-  /// light, which is never drawn.
+  /// for a static light and by object area at the open key for a moving
+  /// or deforming one, whose world area is a function of time. Empty
+  /// for a primitive light, which samples its shape analytically
+  /// instead, and for an unsampled light, which is never drawn.
   smdl::Distribution1D faceDistr{};
 
   /// The total world-space surface area: the divisor `intensity_power`
@@ -116,10 +116,11 @@ public:
   /// reads as every light marked.
   bool isCaustic{};
 
-  /// The object-space surface area: a primitive's, or a moving mesh
-  /// light's, which is drawn by object area with the exact stretch of
-  /// the frame at the time the way a primitive is; zero for a static
-  /// mesh light, which is drawn by world area.
+  /// The object-space surface area: a primitive's, or a moving or
+  /// deforming mesh light's at the open key, whose faces are drawn by
+  /// their object areas and whose density is each face's share over its
+  /// world area at the time; zero for a static mesh light, which is
+  /// drawn by world area.
   float objectArea{};
 
   /// The inverse of the instance's cofactor matrix (static primitive
@@ -533,13 +534,17 @@ public:
   [[nodiscard]] bool causticEnv() const noexcept { return mEnvCaustic; }
 
   /// The solid-angle density of `sample()` connecting `point` to
-  /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
-  /// happens to hit an emitter. `areaSampled` says the gather at `point`
-  /// drew by area, as a `keepDark` draw does, rather than by a sphere's
-  /// cone. `time` is the hit's shutter fraction, which a moving light's
-  /// geometry is read at. Returns zero if the mesh instance is not a
-  /// sampled light, or the cone does not reach `lightPoint`.
-  [[nodiscard]] float solidAnglePDF(uint32_t instIndex,
+  /// `lightPoint` on face `faceIndex` of the given mesh instance, for
+  /// MIS when a BSDF sample happens to hit an emitter. `areaSampled`
+  /// says the gather at `point` drew by area, as a `keepDark` draw
+  /// does, rather than by a sphere's cone. `time` is the hit's shutter
+  /// fraction, which a moving or deforming light's geometry is read at;
+  /// the face is what a moving or deforming mesh light's density is
+  /// recovered from, since its faces are drawn by object area and each
+  /// pays its own world area at the time. Returns zero if the mesh
+  /// instance is not a sampled light, or the cone does not reach
+  /// `lightPoint`.
+  [[nodiscard]] float solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
                                     const float3 &point, bool areaSampled,
@@ -557,12 +562,15 @@ private:
                                       const float3 &point, float time,
                                       float2 xi, Hit &hit, float &pdf) const;
 
-  /// The area-light draw of `sample()` for a moving emitter: the frame
-  /// resolved once at the path's time, every read through it, and a
-  /// mesh light drawn the way a primitive light is, uniformly by object
-  /// area with the exact stretch of that frame. Draws the static path's
-  /// dimensions in the static path's order. Fills the hit and the
-  /// position density, or the cone density when the sphere cone drew.
+  /// The area-light draw of `sample()` for a moving or deforming
+  /// emitter: the frame resolved once at the path's time, every read
+  /// through it, a primitive light drawn uniformly by object area with
+  /// the exact stretch of that frame, and a mesh light by a face drawn
+  /// by its object area and a point uniform within the face as it
+  /// stands at the time, at the density that face's share over its
+  /// world area then. Draws the static path's dimensions in the static
+  /// path's order. Fills the hit and the position density, or the cone
+  /// density when the sphere cone drew.
   [[nodiscard]] bool sampleAreaMoving(const AreaLight &light,
                                       const MeshInstance &instance,
                                       Sampler &sampler, const float3 &point,

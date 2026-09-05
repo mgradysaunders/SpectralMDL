@@ -1722,13 +1722,13 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     if (mat.hasEmission()) {
       Color Le{};
       if (lightSampler.emittedRadiance(mat, hit.instIndex, wo, Le)) {
-        float weight{
-            depth == 2 || prevDirac
-                ? 1.0f
-                : smdl::powerHeuristic(
-                      wpdfPrev, lightSampler.solidAnglePDF(
-                                    hit.instIndex, hit.point, hit.Ng, prevPoint,
-                                    prevAreaSampled, hit.time))};
+        float weight{depth == 2 || prevDirac
+                         ? 1.0f
+                         : smdl::powerHeuristic(
+                               wpdfPrev, lightSampler.solidAnglePDF(
+                                             hit.instIndex, hit.faceIndex,
+                                             hit.point, hit.Ng, prevPoint,
+                                             prevAreaSampled, hit.time))};
         addArrival(
             Le, weight, depth - 2, lightSampler.causticLight(hit.instIndex),
             records && numRecords > 1 ? &records[numRecords - 2] : nullptr,
@@ -1740,9 +1740,9 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
               target.point = hit.point;
               target.isInfinite = false;
               target.normal = hit.Ng;
-              return lightSampler.solidAnglePDF(hit.instIndex, hit.point,
-                                                hit.Ng, mneeCoverage.receiver(),
-                                                /*areaSampled=*/true, hit.time);
+              return lightSampler.solidAnglePDF(
+                  hit.instIndex, hit.faceIndex, hit.point, hit.Ng,
+                  mneeCoverage.receiver(), /*areaSampled=*/true, hit.time);
             });
       }
     }

@@ -795,3 +795,78 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
                 float3(1 + std::cos(shut), std::sin(shut), 0.1f)));
   }
 }
+
+TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
+  RigFixture fixture{0.25f, 0.5f};
+  const auto flatInst{fixture.add(fixture.files.morph, {})};
+  // The same quad three units over, under a placement that also rises one
+  // unit over the shutter.
+  LayoutItem rising{};
+  rising.fileName = fixture.files.morph;
+  rising.materials.all = "paint";
+  rising.objectToWorld[3] = float4(3.0f, 0.0f, 0.0f, 1.0f);
+  rising.objectToWorldShut = rising.objectToWorld;
+  (*rising.objectToWorldShut)[3].z = 1.0f;
+  const auto risingInst{uint32_t(fixture.scene.meshInstances.size())};
+  fixture.scene.add(rising);
+  fixture.commit();
+  const auto castDown{[&](float x, float y, float time) {
+    Ray ray{float3(x, y, 5.0f), float3(0.0f, 0.0f, -1.0f), EPS, INF};
+    ray.time = time;
+    Hit hit{};
+    REQUIRE(fixture.scene.intersect(ray, hit));
+    return hit;
+  }};
+  // The morph quad's lift is 0.25 at open and 0.75 at shut, and the
+  // stretch target tilts every normal toward +X by its weight, 0.125 at
+  // open and 0.375 at shut.
+  const auto normalAt{[](float weight) {
+    return smdl::normalize(float3(weight, 0.0f, 1.0f - weight));
+  }};
+  SUBCASE("The point and the normal land between the keys") {
+    for (const auto &key : {std::pair{0.0f, 0.25f}, std::pair{0.5f, 0.5f},
+                            std::pair{1.0f, 0.75f}}) {
+      const float u{key.first}, z{key.second};
+      CAPTURE(u);
+      const auto hit{castDown(0.5f, 0.5f, u)};
+      CHECK(hit.instIndex == flatInst);
+      CHECK(hit.time == u);
+      CHECK(hit.point.z == doctest::Approx(z).epsilon(1e-4));
+      CHECK(near3(hit.Ng, float3(0, 0, 1)));
+      const auto expected{smdl::normalize((1.0f - u) * normalAt(0.125f) +
+                                          u * normalAt(0.375f))};
+      CHECK(near3(hit.normal, expected, 1e-4f));
+    }
+  }
+  SUBCASE("The manifold geometry and the projection hit reproduce it") {
+    const auto hit{castDown(0.5f, 0.5f, 0.5f)};
+    const auto geometry{fixture.scene.manifoldGeometry(hit)};
+    for (int i = 0; i < 3; i++) {
+      CHECK(geometry.point[i] == hit.point[i]);
+      CHECK(geometry.normal[i] == hit.normal[i]);
+      CHECK(geometry.Ng[i] == hit.Ng[i]);
+    }
+    Ray ray{float3(0.5f, 0.5f, 5.0f), float3(0.0f, 0.0f, -1.0f), EPS, INF};
+    ray.time = 0.5f;
+    ManifoldHit projected{};
+    REQUIRE(fixture.scene.intersect(ray, projected));
+    CHECK(projected.vertex.face == hit.faceIndex);
+    for (int i = 0; i < 3; i++)
+      CHECK(projected.vertex.point[i] == hit.point[i]);
+  }
+  SUBCASE("Deformation composes with the placement's motion") {
+    const auto &inst{fixture.scene.meshInstances[risingInst]};
+    CHECK(inst.isMoving);
+    CHECK(inst.isDeforming);
+    for (const auto &key : {std::pair{0.0f, 0.25f}, std::pair{0.5f, 1.0f},
+                            std::pair{1.0f, 1.75f}}) {
+      const float u{key.first}, z{key.second};
+      CAPTURE(u);
+      const auto hit{castDown(3.5f, 0.5f, u)};
+      CHECK(hit.instIndex == risingInst);
+      CHECK(hit.point.z == doctest::Approx(z).epsilon(1e-3));
+      const auto geometry{fixture.scene.manifoldGeometry(hit)};
+      for (int i = 0; i < 3; i++) CHECK(geometry.point[i] == hit.point[i]);
+    }
+  }
+}

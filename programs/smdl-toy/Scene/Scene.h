@@ -195,6 +195,23 @@ public:
     return !vertsShut.empty() || !basePointsShut.empty();
   }
 
+  /// The vertex record of a deforming mesh at a shutter fraction: the
+  /// two keys lerped as `(1 - t) a + t b`, the form Embree interpolates
+  /// its vertex buffers in, with the open key's texture coordinate.
+  /// Every consumer that rebuilds geometry at a time reads through
+  /// this, so the hit, the manifold walk, and the light sampler see one
+  /// triangle. Only for a mesh that `deforms()`.
+  [[nodiscard]] Vert vertAt(uint32_t index, float time) const noexcept {
+    const auto &open{verts[index]};
+    const auto &shut{vertsShut[index]};
+    Vert vert{};
+    vert.point = (1.0f - time) * open.point + time * shut.point;
+    vert.normal = (1.0f - time) * open.normal + time * shut.normal;
+    vert.tangent = (1.0f - time) * open.tangent + time * shut.tangent;
+    vert.texcoord = open.texcoord;
+    return vert;
+  }
+
   /// The refinement the import asked for; inactive by default.
   SubdivSpec subdiv{};
 
@@ -791,18 +808,30 @@ private:
 public:
   /// The builders under a given frame, the bodies of the public ones:
   /// `frame` is the instance's at `time`, as `frameAt()` answers it. A
-  /// public builder tail-calls its `Moving` twin for a moving instance
-  /// and otherwise runs the body under `frame`; `intersect()` resolves
-  /// the frame once for the hit it is about to build and calls the body
-  /// directly, and so does the light sampler for a moving emitter, whose
-  /// stretch and sphere fields come off the same frame. The split is
-  /// what keeps the static path a leaf: a call on a branch inside a
-  /// body, even the cold moving-instance query, costs every static hit
-  /// the callee-saved register traffic of a non-leaf, which the bench
-  /// sees.
+  /// public builder tail-calls its `Moving` twin for a moving or
+  /// deforming instance and otherwise runs the body under `frame`;
+  /// `intersect()` resolves the frame once for the hit it is about to
+  /// build and calls the body directly, and so does the light sampler
+  /// for a moving emitter, whose stretch and sphere fields come off the
+  /// same frame. The split is what keeps the static path a leaf: a call
+  /// on a branch inside a body, even the cold moving-instance query,
+  /// costs every static hit the callee-saved register traffic of a
+  /// non-leaf, which the bench sees.
+  ///
+  /// The mesh body reads the face's three vertex records out of
+  /// `Mesh::verts` and runs `makeHitFrom()` over them; its deforming
+  /// twin below reads them through `Mesh::vertAt()` at the hit's time,
+  /// the lerp of the two keys, and runs the same tail, so a deforming
+  /// mesh's hit sits on the triangle Embree traced.
   [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
                             uint32_t faceIndex, const float3 &bary,
                             float time) const;
+
+  [[nodiscard]] SMDL_NO_INLINE Hit makeHitDeforming(const InstanceFrame &frame,
+                                                    uint32_t instIndex,
+                                                    uint32_t faceIndex,
+                                                    const float3 &bary,
+                                                    float time) const;
 
   /// The primitive half of `makeHit()`: rebuild the differential
   /// geometry of `primID`'s piece at the (u, v) packed in `bary[1]` and
@@ -821,6 +850,12 @@ public:
   [[nodiscard]] ManifoldGeometry
   manifoldGeometry(const InstanceFrame &frame, uint32_t instIndex,
                    uint32_t faceIndex, const float3 &bary, float time) const;
+
+  /// The deforming twin of the geometry above, over the records at the
+  /// hit's time; the same split as `makeHitDeforming()`.
+  [[nodiscard]] SMDL_NO_INLINE ManifoldGeometry manifoldGeometryDeforming(
+      const InstanceFrame &frame, uint32_t instIndex, uint32_t faceIndex,
+      const float3 &bary, float time) const;
 
   /// The moving twins of the public builders: the frame queried at
   /// `time` through the retained handle, then the body.
@@ -869,7 +904,9 @@ public:
                                                  const Ray &ray) const;
 
   /// The world point of the hit Embree reports, under `frame`, which is
-  /// all `intersect(Ray &, ManifoldHit &)` reconstructs; the same split.
+  /// all `intersect(Ray &, ManifoldHit &)` reconstructs; the same split,
+  /// the moving twin also serving a deforming mesh, whose three points
+  /// it lerps to the time.
   [[nodiscard]] float3 manifoldHitPoint(const InstanceFrame &frame,
                                         const MeshInstance &meshInstance,
                                         uint32_t primID,
@@ -878,6 +915,20 @@ public:
   [[nodiscard]] SMDL_NO_INLINE float3
   manifoldHitPointMoving(const MeshInstance &meshInstance, uint32_t primID,
                          const float3 &bary, float time) const;
+
+  /// The tail of the mesh hit builders: the world-space record from the
+  /// face's three vertex records, which the static body takes out of
+  /// `Mesh::verts` and the deforming one lerps to the time. Inlined into
+  /// both, so the static body stays the leaf it was.
+  [[nodiscard]] SMDL_ALWAYS_INLINE Hit makeHitFrom(
+      const InstanceFrame &frame, uint32_t instIndex, uint32_t faceIndex,
+      const float3 &bary, float time, const Mesh::Vert &vert0,
+      const Mesh::Vert &vert1, const Mesh::Vert &vert2) const;
+
+  /// The tail of the mesh manifold geometry builders, likewise.
+  [[nodiscard]] SMDL_ALWAYS_INLINE ManifoldGeometry manifoldGeometryFrom(
+      const InstanceFrame &frame, const float3 &bary, const Mesh::Vert &vert0,
+      const Mesh::Vert &vert1, const Mesh::Vert &vert2) const;
 
 public:
   [[nodiscard]] bool intersect(Ray &ray, Hit &hit) const;

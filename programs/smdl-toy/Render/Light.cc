@@ -587,10 +587,12 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // the light tree sees where it can be (a proxy rather than a hull
     // for a turn, and consistent between `select()` and `pmf()`, which
     // is all the tree needs), and the sphere cone is drawn only when
-    // the shape is a sphere at both keys.
+    // the shape is a sphere at both keys. A deforming mesh light takes
+    // the same registration, its shut vertices under its shut frame.
     std::optional<InstanceFrame> shutScratch{};
     const InstanceFrame *shutFrame{
         instance.isMoving ? &instance.frameAt(1.0f, shutScratch) : nullptr};
+    const bool movingLike{instance.isMoving || instance.isDeforming};
     auto box{BoundBox3()};
     if (instance.isPrimitive()) {
       const auto &primitive{*scene.primitives[instance.primIndex]};
@@ -630,12 +632,14 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       }};
       // The face distribution serves `sample()` alone, so an unsampled
       // emitter, which only needs its total area, does not build one. A
-      // moving light's is over object area, since its world area is a
-      // function of time; see `sampleAreaMoving()`.
+      // moving or deforming light's is over object area at the open
+      // key, since its world area is a function of time; see
+      // `sampleAreaMoving()`.
       auto faceAreas{std::vector<float>()};
       auto objectFaceAreas{std::vector<float>()};
       if (light.isSampled) faceAreas.reserve(mesh.faces.size());
-      if (shutFrame) objectFaceAreas.reserve(mesh.faces.size());
+      if (movingLike) objectFaceAreas.reserve(mesh.faces.size());
+      const auto &shutXf{shutFrame ? shutFrame->objectToWorld : objectToWorld};
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
@@ -646,7 +650,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
-        if (shutFrame) {
+        if (movingLike) {
           const auto &object0{mesh.verts[face[0]].point};
           const auto &object1{mesh.verts[face[1]].point};
           const auto &object2{mesh.verts[face[2]].point};
@@ -654,13 +658,17 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
               0.5f * length(cross(object1 - object0, object2 - object0))};
           objectFaceAreas.push_back(objectArea);
           light.objectArea += objectArea;
-          for (const auto &object : {object0, object1, object2})
-            box.extend(float3(shutFrame->objectToWorld * float4(object, 1.0f)));
+          // The shut key's corners under the shut frame: the shut
+          // vertices of a deforming mesh, the open ones otherwise.
+          const auto &shutVerts{instance.isDeforming ? mesh.vertsShut
+                                                     : mesh.verts};
+          for (const auto index : face)
+            box.extend(float3(shutXf * float4(shutVerts[index].point, 1.0f)));
         }
       }
       if (light.isSampled && light.totalArea > 0)
         light.faceDistr =
-            smdl::Distribution1D(shutFrame ? objectFaceAreas : faceAreas);
+            smdl::Distribution1D(movingLike ? objectFaceAreas : faceAreas);
     }
     if (!(light.totalArea > 0)) {
       allocator.reset();
@@ -710,8 +718,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         }
         profile = cached;
       }
-      auto &light{mAnalyticLights.emplace_back(compiler, state, wavelengths,
-                                              layoutLight, std::move(profile))};
+      auto &light{mAnalyticLights.emplace_back(
+          compiler, state, wavelengths, layoutLight, std::move(profile))};
       light.isCaustic = layoutLight.decl.isCaustic;
       bounds.push_back({light.bounds(), light.weight()});
     }
@@ -773,7 +781,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
       lightIndex == int(mAreaLights.size() + mAnalyticLights.size())) {
     float dirPDF{};
     lightSample.wi = mEnvLight->Li_sample(mCompiler, state, float2(sampler),
-                                         dirPDF, lightSample.Li);
+                                          dirPDF, lightSample.Li);
     if (!(dirPDF > 0)) return false;
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * mScene.boundRadius * lightSample.wi;
@@ -827,7 +835,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   float positionPDF{}; // world-space area density at the sampled point
   float conePDF{};     // solid-angle density instead, when drawn by cone
   const auto &instance{mScene.meshInstances[light.instIndex]};
-  if (instance.isMoving) {
+  if (instance.isMoving || instance.isDeforming) {
     if (!sampleAreaMoving(light, instance, sampler, point, time, keepDark, hit,
                           positionPDF, conePDF))
       return false;
@@ -850,10 +858,10 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
       const float stretch{
           length(instance.frame.normalMatrix * areaSample.normal)};
       if (!(stretch > 0)) return false;
-      hit =
-          mScene.makePrimitiveHit(light.instIndex, areaSample.primID,
-                                 float3(0.0f, areaSample.uv.x, areaSample.uv.y),
-                                 time, areaSample.point);
+      hit = mScene.makePrimitiveHit(
+          light.instIndex, areaSample.primID,
+          float3(0.0f, areaSample.uv.x, areaSample.uv.y), time,
+          areaSample.point);
       positionPDF = 1.0f / (light.objectArea * stretch);
     }
   } else {
@@ -892,13 +900,39 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   return true;
 }
 
+// The world-space area density of a moving or deforming mesh light's
+// draw: the face's share of the object area at the open key over its
+// world area at the time, the world triangle being the one under the
+// frame at the time, lerped to the time when the mesh deforms. For a
+// rigid mover this is the object area times the frame's stretch, written
+// the one way that also serves a deforming face.
+[[nodiscard]] static float faceAreaDensity(const Scene &scene,
+                                           const AreaLight &light,
+                                           const MeshInstance &instance,
+                                           const InstanceFrame &frame,
+                                           uint32_t faceIndex, float time) {
+  const auto &mesh{*scene.meshes[instance.meshIndex]};
+  const auto &face{mesh.faces[faceIndex]};
+  const auto worldPoint{[&](uint32_t index) {
+    const auto object{instance.isDeforming ? mesh.vertAt(index, time).point
+                                           : mesh.verts[index].point};
+    return float3(frame.objectToWorld * float4(object, 1.0f));
+  }};
+  const auto point0{worldPoint(face[0])};
+  const auto point1{worldPoint(face[1])};
+  const auto point2{worldPoint(face[2])};
+  const float worldArea{0.5f * length(cross(point1 - point0, point2 - point0))};
+  if (!(worldArea > 0)) return 0.0f;
+  return light.faceDistr.indexPMF(int(faceIndex)) / worldArea;
+}
+
 bool LightSampler::sampleAreaMoving(const AreaLight &light,
                                     const MeshInstance &instance,
                                     Sampler &sampler, const float3 &point,
                                     float time, bool keepDark, Hit &hit,
                                     float &positionPDF, float &conePDF) const {
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{instance.frameAtMoving(time, scratch)};
+  const auto &frame{instance.frameAt(time, scratch)};
   if (light.isPrimitive) {
     const auto &primitive{*mScene.primitives[instance.primIndex]};
     const float2 xi{sampler};
@@ -919,25 +953,21 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
     positionPDF = 1.0f / (light.objectArea * stretch);
     return true;
   }
-  // Uniform by object area: the face by its object area, the point
-  // uniformly within it, and the density through the exact stretch of
-  // the frame at the time, which is constant over a face.
-  const auto &mesh{*mScene.meshes[instance.meshIndex]};
+  // The face by its object area at the open key, the point uniformly
+  // within the face as it stands at the time, and the density as the
+  // face's share over its world area then.
   const int faceIndex{light.faceDistr.indexSample(float(sampler))};
   const float2 xi{sampler};
   const float sqrtXi{std::sqrt(xi.x)};
   const auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
-  hit = mScene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary, time);
-  const auto &face{mesh.faces[size_t(faceIndex)]};
-  const auto &object0{mesh.verts[face[0]].point};
-  const auto &object1{mesh.verts[face[1]].point};
-  const auto &object2{mesh.verts[face[2]].point};
-  const float3 objectNormal{
-      normalize(cross(object1 - object0, object2 - object0))};
-  const float stretch{length(frame.normalMatrix * objectNormal)};
-  if (!(stretch > 0)) return false;
-  positionPDF = 1.0f / (light.objectArea * stretch);
-  return true;
+  hit = instance.isDeforming
+            ? mScene.makeHitDeforming(frame, light.instIndex,
+                                      uint32_t(faceIndex), bary, time)
+            : mScene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary,
+                             time);
+  positionPDF = faceAreaDensity(mScene, light, instance, frame,
+                                uint32_t(faceIndex), time);
+  return positionPDF > 0;
 }
 
 bool LightSampler::sampleSphereCone(const AreaLight &light,
@@ -1023,20 +1053,20 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
   return true;
 }
 
-// The solid-angle density of a moving light's draw, the geometry read
-// from the frame at the hit's time: the sphere's center and radius from
-// its columns, and the area stretch through its inverse cofactor, for
-// a mesh light exactly as for a primitive. The static path below keeps
-// its own arithmetic, and this stays out of line so that it keeps its
-// leaf shape too.
-[[nodiscard]] static SMDL_NO_INLINE float
-solidAnglePDFMoving(const AreaLight &light, const MeshInstance &instance,
-                    const float3 &lightPoint, const float3 &lightNormal,
-                    const float3 &point, bool areaSampled, float time,
-                    float selectPMF) {
+// The solid-angle density of a moving or deforming light's draw, the
+// geometry read from the frame at the hit's time: a primitive's sphere
+// center and radius from the frame's columns and its area stretch
+// through the inverse cofactor, a mesh light's face share over the
+// face's world area at the time. The static path below keeps its own
+// arithmetic, and this stays out of line so that it keeps its leaf
+// shape too.
+[[nodiscard]] static SMDL_NO_INLINE float solidAnglePDFMoving(
+    const Scene &scene, const AreaLight &light, const MeshInstance &instance,
+    uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
+    const float3 &point, bool areaSampled, float time, float selectPMF) {
   std::optional<InstanceFrame> scratch{};
-  const auto &objectToWorld{
-      instance.frameAtMoving(time, scratch).objectToWorld};
+  const auto &frame{instance.frameAt(time, scratch)};
+  const auto &objectToWorld{frame.objectToWorld};
   if (light.sphereObjectRadius > 0.0f && !areaSampled) {
     const float3 center{objectToWorld[3]};
     const float radius{light.sphereObjectRadius *
@@ -1056,12 +1086,15 @@ solidAnglePDFMoving(const AreaLight &light, const MeshInstance &instance,
   const float cosTheta{absDot(lightNormal, normalize(direction))};
   if (!(cosTheta > 0)) return 0.0f;
   const float positionPDF{
-      length(inverseCofactorOf(objectToWorld) * lightNormal) /
-      light.objectArea};
+      light.isPrimitive
+          ? length(inverseCofactorOf(objectToWorld) * lightNormal) /
+                light.objectArea
+          : faceAreaDensity(scene, light, instance, frame, faceIndex, time)};
   return selectPMF * distSq * positionPDF / cosTheta;
 }
 
-float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
+float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
+                                  const float3 &lightPoint,
                                   const float3 &lightNormal,
                                   const float3 &point, bool areaSampled,
                                   float time) const {
@@ -1074,9 +1107,10 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
   if (!light.isSampled) return 0.0f;
   const float selectPMF{mSelection.pmf(int(lightIndex), point)};
   if (const auto &instance{mScene.meshInstances[light.instIndex]};
-      instance.isMoving)
-    return solidAnglePDFMoving(light, instance, lightPoint, lightNormal, point,
-                               areaSampled, time, selectPMF);
+      instance.isMoving || instance.isDeforming)
+    return solidAnglePDFMoving(mScene, light, instance, faceIndex, lightPoint,
+                               lightNormal, point, areaSampled, time,
+                               selectPMF);
   if (light.sphereRadius > 0.0f && !areaSampled) {
     const float distSqCenter{lengthSquared(light.sphereCenter - point)};
     const float radiusSq{light.sphereRadius * light.sphereRadius};
