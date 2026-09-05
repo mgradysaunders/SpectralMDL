@@ -161,7 +161,7 @@ TEST_CASE("SpectralFilm") {
       auto file{std::ifstream(headerName)};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
-    CHECK(text.find("render window") == std::string::npos);
+    CHECK(text.find("render crop window") == std::string::npos);
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.cropWindow[0] == 0);
@@ -184,7 +184,7 @@ TEST_CASE("SpectralFilm") {
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
     std::ofstream(fileName + ".hdr", std::ios::app)
-        << "render window = {0, 0}\n";
+        << "render crop window = {0, 0}\n";
     CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
   }
   SUBCASE("ENVI read rejects a missing file") {

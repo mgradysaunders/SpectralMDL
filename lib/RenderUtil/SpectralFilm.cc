@@ -223,7 +223,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     if (bounds.size() != 4)
       throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
                          bounds.size(),
-                         " values in 'crop window' (expected 4)"));
+                         " values in 'render crop window' (expected 4)"));
     result.cropWindow = int4(bounds.data());
     if (const auto &cropWindow{result.cropWindow};
         !(0 <= cropWindow[0] && 0 <= cropWindow[1] &&                  //
