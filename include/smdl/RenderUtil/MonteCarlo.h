@@ -352,6 +352,20 @@ public:
 
   /// The direction sampling routine.
   ///
+  /// The pixel and the density both come back from `directionPDF()` of
+  /// the direction returned, rather than from the pixel the draw picked.
+  /// The two disagree whenever rounding puts the direction across a pixel
+  /// boundary from the rectangle it was drawn in, and where the
+  /// neighboring pixel is much darker the density reported that way is
+  /// wrong by that whole ratio, which multiple importance sampling then
+  /// divides by. Reporting the density of the direction in hand costs one
+  /// more arccosine and arctangent and makes the two exactly agree.
+  ///
+  /// A direction whose recovered density is zero comes back with a pdf of
+  /// zero and a pixel index of `(-1, -1)`, which callers already have to
+  /// handle: it means this direction cannot be drawn, so the sample
+  /// carries nothing.
+  ///
   /// \param[in]  xi      The random sample \f$ \xi \in (0,1)^2 \f$.
   /// \param[out] iPixel  If non-null, receives the associated pixel index.
   /// \param[out] pdf     If non-null, receives the associated PDF.

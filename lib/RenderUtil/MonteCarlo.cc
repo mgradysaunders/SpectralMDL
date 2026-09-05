@@ -1,7 +1,8 @@
-#include "smdl/RenderUtil/FastMath.h"
 #include "smdl/RenderUtil/MonteCarlo.h"
 
 #include <algorithm>
+
+#include "smdl/RenderUtil/FastMath.h"
 
 namespace smdl {
 
@@ -232,20 +233,23 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
 
 float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
                                        float *pdf) const noexcept {
-  int2 i{pixelSample(xi, &xi, pdf)};
-  if (iPixel) *iPixel = i;
+  if (iPixel) *iPixel = int2(-1, -1);
+  if (pdf) *pdf = 0.0f;
+  const int2 i{pixelSample(xi, &xi)};
   const float phi{(float(i.x) + xi.x) * (TWO_PI / float(numTexelsX))};
   const float theta{(float(i.y) + xi.y) * (PI / float(numTexelsY))};
   const float cosTheta{std::cos(theta)};
   const float sinTheta{std::sin(theta)};
-  if (sinTheta == 0.0f) {
-    if (pdf) *pdf = 0.0f;
-    return {};
-  } else {
-    if (pdf) *pdf *= float(numTexelsX * numTexelsY) / (TWO_PI * PI * sinTheta);
-    return normalize(float3(sinTheta * std::cos(phi), //
-                            sinTheta * std::sin(phi), cosTheta));
-  }
+  if (sinTheta == 0.0f) return {};
+  const float3 wi{normalize(float3(sinTheta * std::cos(phi), //
+                                   sinTheta * std::sin(phi), cosTheta))};
+  // The pixel and the density of the direction in hand, not of the
+  // rectangle it was drawn from; see the header.
+  int2 iRecovered{-1, -1};
+  const float density{directionPDF(wi, &iRecovered)};
+  if (iPixel) *iPixel = iRecovered;
+  if (pdf) *pdf = density;
+  return wi;
 }
 
 } // namespace smdl
