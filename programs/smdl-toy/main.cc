@@ -32,6 +32,7 @@
 #include "Progress.h"
 #include "Render/Autolook.h"
 #include "Render/Camera.h"
+#include "Render/DenormalMode.h"
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Manifold.h"
@@ -1893,6 +1894,10 @@ int main(int argc, char **argv) try {
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
       smdl::parallelFor(0, numWindowPixels, [&](size_t k) {
+        // Denormals are worth flushing for the whole task: the material
+        // code the walk runs produces them, and the assist each one
+        // costs is a measurable fraction of the render.
+        const ScopedFlushDenormals flushDenormals{};
         // The pixel index in the whole frame, which seeds the sampler and
         // addresses every per-pixel buffer, so a window renders the same
         // pixels the whole frame would.
