@@ -140,84 +140,84 @@ public:
   /// whatever `u` is, here; a moving camera builds its frame at `u` out
   /// of line, in `toWorldMoving()`.
   void toWorld(CameraSample &sample, float u) const noexcept {
-    if (moving) return toWorldMoving(sample, u);
-    sample.ray.transform(cameraToWorld);
+    if (mMoving) return toWorldMoving(sample, u);
+    sample.ray.transform(mCameraToWorld);
     sample.ray.dir = normalize(sample.ray.dir);
     sample.ray.time = u;
   }
 
 private:
   /// The moving half of `toWorld()`: the look-at of the framing vectors
-  /// interpolated to `u`, see `lookFrom`.
+  /// interpolated to `u`, see `mLookFrom`.
   SMDL_NO_INLINE void toWorldMoving(CameraSample &sample,
                                     float u) const noexcept;
 
   /// The image dimensions in pixels.
-  float numPixelsX{}, numPixelsY{};
+  float mNumPixelsX{}, mNumPixelsY{};
 
   /// The aspect ratio, X over Y.
-  float aspectRatio{};
+  float mAspectRatio{};
 
   /// The image plane distance in units of image height.
-  float focalLength{};
+  float mFocalLength{};
 
-  /// One pixel of the image plane (height 1 at distance `focalLength`)
+  /// One pixel of the image plane (height 1 at distance `mFocalLength`)
   /// subtends this angle, or 0 when LOD is disabled.
-  float coneAngleBase{};
+  float mConeAngleBase{};
 
   /// The camera-to-world transform at shutter open, orthonormal by
   /// construction.
-  float4x4 cameraToWorld{float4x4(1.0f)};
+  float4x4 mCameraToWorld{float4x4(1.0f)};
 
   /// Does the camera move over the shutter? False when the shut keys
   /// equal the open keys, so a still camera exported under motion blur
   /// renders bit for bit what it renders exported without.
-  bool moving{};
+  bool mMoving{};
 
   /// The framing at shutter open and at shutter shut, read only when
-  /// `moving`. The frame at fraction `u` is the look-at of the vectors
+  /// `mMoving`. The frame at fraction `u` is the look-at of the vectors
   /// interpolated as `(1 - u) * open + u * shut`, spelled so that the
   /// two ends reproduce the keys exactly. The view direction is then
   /// the normalized chord, whose angular rate differs from a slerp's by
   /// third order in the pan angle: nothing over the angle a shutter
   /// spans, and the interpolation of what the file states.
-  float3 lookFrom{}, lookTo{}, lookUp{};
-  float3 lookFromShut{}, lookToShut{}, lookUpShut{};
+  float3 mLookFrom{}, mLookTo{}, mLookUp{};
+  float3 mLookFromShut{}, mLookToShut{}, mLookUpShut{};
 
   /// The image radius at the frame corner, which normalizes the
   /// distortion polynomial and the rim displacement.
-  float rCorner{};
+  float mRCorner{};
 
   /// The radial distortion coefficients.
-  float distortionK1{}, distortionK2{};
+  float mDistortionK1{}, mDistortionK2{};
 
   /// Is either distortion coefficient nonzero?
-  bool hasDistortion{};
+  bool mHasDistortion{};
 
   /// Under `distortionFit` the whole map is divided by its value at
   /// the corner, so only the interior warps. The monotonicity scan in
   /// the constructor guarantees the divisor is positive.
-  float distortionScale{1};
+  float mDistortionScale{1};
 
   /// The thin-lens radius in scene units, zero for the pinhole default.
-  float lensRadius{};
+  float mLensRadius{};
 
   /// The focus distance along the view axis in scene units.
-  float focusDistance{};
+  float mFocusDistance{};
 
   /// The number of aperture blades, 0 for a round lens.
-  int numBlades{};
+  int mNumBlades{};
 
   /// The rotation of the aperture polygon in radians.
-  float bladeAngle{};
+  float mBladeAngle{};
 
   /// The strength of cos^4 falloff, 0 when off.
-  float vignetteStrength{};
+  float mVignetteStrength{};
 
   /// The barrel rim radius in scene units, 0 when mechanical
   /// vignetting is off.
-  float rimRadius{};
+  float mRimRadius{};
 
   /// The rim displacement per unit of image radius, 0 when off.
-  float rimSlope{};
+  float mRimSlope{};
 };

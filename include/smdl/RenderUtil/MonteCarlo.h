@@ -68,10 +68,31 @@ private:
 /// \name Functions (sampling)
 /// \{
 
+/// Hold a canonical random sample strictly inside \f$ (0,1) \f$.
+///
+/// Both endpoints are excluded because a canonical sample is divided by
+/// and passed to a logarithm, so this is a guard against zero and one
+/// rather than against any particular magnitude: the bound is the
+/// smallest normal float only because nothing here needs a smaller one.
+[[nodiscard]] SMDL_ALWAYS_INLINE float canonicalize(float xi) noexcept {
+  return std::clamp(xi, std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+}
+
+/// The canonical random sample in \f$ (0,1) \f$ that `bits` names: the
+/// bit pattern read as a fraction of \f$ 2^{32} \f$, canonicalized.
+///
+/// Both clamps do work. Only `bits == 0` reaches the bottom, the next
+/// pattern up already landing at \f$ 2^{-32} \f$; every pattern near
+/// \f$ 2^{32} \f$ reaches the top, because `float(bits)` rounds up to
+/// that power of two and the product lands exactly on 1.
+[[nodiscard]] SMDL_ALWAYS_INLINE float
+canonicalFromBits(std::uint32_t bits) noexcept {
+  return canonicalize(float(bits) * 0x1p-32f);
+}
+
 /// Generate canonical random sample in \f$ (0,1) \f$.
 template <typename G> [[nodiscard]] inline float generateCanonical(G &g) {
-  return std::clamp(std::generate_canonical<float, 32>(g),
-                    std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+  return canonicalize(std::generate_canonical<float, 32>(g));
 }
 
 /// Generate canonical random sample in \f$ (0,1)^2 \f$.
@@ -137,6 +158,18 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
 [[nodiscard]] SMDL_EXPORT float2 uniformDiskSample(float2 xi) noexcept;
+
+/// Uniform triangle sample, as the barycentric coordinates of the point.
+/// The three weights sum to 1 and each is nonnegative, so the caller
+/// interpolates whatever the triangle's corners carry.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] inline float3 uniformTriangleSample(float2 xi) noexcept {
+  const float sqrtXi{std::sqrt(xi.x)};
+  return {1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y};
+}
 
 /// Cosine-weighted hemisphere direction PDF.
 ///
@@ -456,8 +489,7 @@ public:
 
   /// Generates the next canonical sample in `(0,1)`.
   [[nodiscard]] float generateFloat() noexcept {
-    return std::clamp(float(generate()) * 0x1p-32f,
-                      std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+    return canonicalFromBits(generate());
   }
 
   /// Generates the next 2 canonical samples in `(0,1)^2`.

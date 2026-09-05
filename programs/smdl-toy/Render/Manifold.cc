@@ -93,8 +93,8 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
   auto internalNormal{float3()};
   material.geometryNormalEvaluate(state, internalNormal);
   const auto objectNormal{
-      float3(state.tangent_to_object_matrix * float4(internalNormal, 0.0f))};
-  normal = float3(state.object_to_world_matrix * float4(objectNormal, 0.0f));
+      transformDirection(state.tangent_to_object_matrix, internalNormal)};
+  normal = transformDirection(state.object_to_world_matrix, objectNormal);
   return smdl::tryNormalize(normal);
 }
 
@@ -146,7 +146,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
   for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
        instIndex++) {
     const auto &instance{scene.meshInstances[instIndex]};
-    if (!instance.causticCaster || instance.isCurves()) continue;
+    if (!instance.isCausticCaster || instance.isCurves()) continue;
     const auto matIndex{scene.materialIndexOf(instance)};
     const auto *material{scene.materials[matIndex]};
     if (!material) continue;
@@ -202,13 +202,13 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
       auto faceAreas{std::vector<float>()};
       faceAreas.reserve(mesh.faces.size());
       auto toWorld{[&](const float3 &point) {
-        return float3(instance.frame.objectToWorld * float4(point, 1.0f));
+        return transformPoint(instance.frame.objectToWorld, point);
       }};
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
         const auto point2{toWorld(mesh.verts[face[2]].point)};
-        const auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
+        const auto area{triangleArea(point0, point1, point2)};
         faceAreas.push_back(area);
         caster.totalArea += area;
       }
@@ -240,11 +240,8 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
     return hit.instance != nullptr;
   }
   const auto faceIndex{caster.faceDistr.indexSample(float(sampler))};
-  const float2 xi{sampler};
-  const float sqrtXi{std::sqrt(xi.x)};
-  hit = scene.makeHit(
-      caster.instIndex, uint32_t(faceIndex),
-      float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y), time);
+  hit = scene.makeHit(caster.instIndex, uint32_t(faceIndex),
+                      smdl::uniformTriangleSample(float2(sampler)), time);
   return hit.instance != nullptr;
 }
 
@@ -258,8 +255,8 @@ bool makeManifoldSeed(const MediumStack *medium,
   // whose scattering tree the claim may speak for and the side whose
   // index is the previous one.
   const bool prevInterior{mat.isInterior(woStraight)};
-  const auto claim{manifoldClaim(mat, prevInterior, hit.instance->causticCaster,
-                                 maxGlossyAlpha)};
+  const auto claim{manifoldClaim(
+      mat, prevInterior, hit.instance->isCausticCaster, maxGlossyAlpha)};
   if (claim.refractLobes == 0) return false;
   seed.claimedLobes = claim.refractLobes;
   seed.isGlossy = false;

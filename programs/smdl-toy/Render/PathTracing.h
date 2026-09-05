@@ -75,13 +75,13 @@ public:
 
   /// Does the Dirac-chain machinery treat this environment target
   /// direction as one of its own?
-  [[nodiscard]] bool envTarget(const float3 &wi) const noexcept {
+  [[nodiscard]] bool isEnvTarget(const float3 &wi) const noexcept {
     return !sunOnly || dot(wi, sunDirection) >= cosSunRadius;
   }
 
   /// Does the manifold estimator run at all? The MNEE coverage only
   /// arms when it does.
-  [[nodiscard]] bool any() const noexcept { return depth > 0; }
+  [[nodiscard]] bool isEnabled() const noexcept { return depth > 0; }
 };
 
 /// The bounds on the walk: how many scattering events a path may
@@ -163,7 +163,7 @@ struct PathScratch final {
 };
 
 // TODO Remove `mNeedBlocker` -> instead update method signature to
-// `bool nextBlocker(Hit *hit = {});` so that `nextBlocker()` or 
+// `bool nextBlocker(Hit *hit = {});` so that `nextBlocker()` or
 // `nextBlocker(nullptr)` behaves as if `mNeedBlocker=false` and
 // `nextBlocker(&hit)` behaves as if `mNeedBlocker=true`.
 
@@ -207,7 +207,7 @@ public:
   /// cutout hits.
   void passThrough(const smdl::JIT::MaterialInstance &mat, const Hit &hit);
 
-  // TODO Is there any way to get MNEE to work with cutouts? Or at least 
+  // TODO Is there any way to get MNEE to work with cutouts? Or at least
   //      to get MNEE to work with deterministic cutouts, i.e., leaves where
   //      the mask is mostly exactly 0 or exactly 1 so we can know the
   //      re-walk will be deterministic?

@@ -37,7 +37,7 @@ public:
   /// The mean radiance over the sphere of directions, for weighing the
   /// environment against area lights in light selection.
   [[nodiscard]] float averageRadiance() const noexcept {
-    return scaleFactor * meanRadiance;
+    return mScaleFactor * mMeanRadiance;
   }
 
   /// The procedural sun disk, for gating manifold work to the sun cone:
@@ -46,20 +46,20 @@ public:
   /// procedural sun-sky with the sun enabled. An image environment has
   /// no analytic sun and returns false.
   [[nodiscard]] bool sunCone(float3 &direction, float &cosRadius) const {
-    if (!sunSky || !sunSky->hasSun()) return false;
-    direction = sunSky->sunDirection();
-    cosRadius = sunSky->cosSunAngularRadius();
+    if (!mSunSky || !mSunSky->hasSun()) return false;
+    direction = mSunSky->sunDirection();
+    cosRadius = mSunSky->cosSunAngularRadius();
     return true;
   }
 
 private:
-  float scaleFactor{1.0f};
+  float mScaleFactor{1.0f};
 
-  /// The procedural sun and sky in place of `image` when constructed
+  /// The procedural sun and sky in place of `mImage` when constructed
   /// from `smdl::SunSkyOptions`.
-  std::optional<smdl::SunSky> sunSky{};
+  std::optional<smdl::SunSky> mSunSky{};
 
-  smdl::Image image{};
+  smdl::Image mImage{};
 
   /// The sampling distribution over the image, MIS-compensated: the mean
   /// radiance is subtracted from the tabulated density (clamped at zero),
@@ -68,11 +68,11 @@ private:
   /// reports is the true density actually sampled from, so the estimator
   /// stays unbiased; texels at or below the mean are reachable only by
   /// BSDF sampling, whose MIS weight there becomes 1.
-  smdl::Distribution2D imageDistr{};
+  smdl::Distribution2D mImageDistr{};
 
-  /// The mean image radiance before `scaleFactor`, kept because
-  /// compensation makes it unrecoverable from `imageDistr`.
-  float meanRadiance{};
+  /// The mean image radiance before `mScaleFactor`, kept because
+  /// compensation makes it unrecoverable from `mImageDistr`.
+  float mMeanRadiance{};
 };
 
 /// A mesh or primitive instance whose material has a non-default
@@ -522,7 +522,7 @@ public:
   /// reflective gather's to drop? An unsampled emitter is nobody's
   /// target: light selection never aims at it, so no gather claims its
   /// transport and its arrivals keep their ordinary weights.
-  [[nodiscard]] bool causticLight(uint32_t instIndex) const noexcept {
+  [[nodiscard]] bool isCausticLight(uint32_t instIndex) const noexcept {
     const auto lightIndex{instIndex < mInstanceToLight.size()
                               ? mInstanceToLight[instIndex]
                               : INVALID_INDEX};
@@ -530,8 +530,8 @@ public:
            mAreaLights[lightIndex].isCaustic;
   }
 
-  /// Is an environment escape a caustic target's; see `causticLight()`.
-  [[nodiscard]] bool causticEnv() const noexcept { return mEnvCaustic; }
+  /// Is an environment escape a caustic target's; see `isCausticLight()`.
+  [[nodiscard]] bool isCausticEnv() const noexcept { return mEnvCaustic; }
 
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on face `faceIndex` of the given mesh instance, for

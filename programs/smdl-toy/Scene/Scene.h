@@ -268,9 +268,7 @@ struct WeldMap final {
 uvTextureDensity(const float3 &point0, const float3 &point1,
                  const float3 &point2, const float2 &texcoord0,
                  const float2 &texcoord1, const float2 &texcoord2) noexcept {
-  auto edge1{point1 - point0};
-  auto edge2{point2 - point0};
-  float worldArea{0.5f * smdl::length(smdl::cross(edge1, edge2))};
+  float worldArea{triangleArea(point0, point1, point2)};
   if (!(worldArea > 1e-12f)) return 0.0f;
   auto uv1{texcoord1 - texcoord0};
   auto uv2{texcoord2 - texcoord0};
@@ -431,18 +429,18 @@ public:
   /// search for specular and glossy connections to the lights and claim
   /// that transport from the path tracer. See `LayoutAssetDecl::caster`
   /// for the grammar and `manifoldClaim()` for what the mark claims.
-  bool causticCaster{};
+  bool isCausticCaster{};
 
   /// Is a caustic target for the manifold reflective gather, from the
   /// layout's `caustic` mark; consumed by the `LightSampler`, which
   /// treats every light as a target while no light anywhere is marked.
-  bool causticLight{};
+  bool isCausticLight{};
 
   /// Marked `light` in the layout (or `caustic`, which implies it): an
   /// emitter that light selection aims at. See `LayoutAssetDecl::light`
   /// for the grammar; the `LightSampler` gives an unmarked emitter no
   /// selection weight, so it renders through path hits alone.
-  bool light{};
+  bool isLight{};
 
   /// Instantiates a primitive rather than a mesh?
   [[nodiscard]] bool isPrimitive() const noexcept {
@@ -481,12 +479,12 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
   // space again exactly, because that is the very matrix `worldToRigid`
   // inverts and the library leaves an orthonormal one untouched.
   const auto &toRigid{frame.worldToRigid};
-  auto pointR{float3(toRigid * float4(point, 1.0f))};
-  auto rayDirR{float3(toRigid * float4(rayDir, 0.0f))};
-  auto normalR{float3(toRigid * float4(normal, 0.0f))};
-  auto tangentR{float3(toRigid * float4(tangent, 0.0f))};
-  auto NgR{float3(toRigid * float4(Ng, 0.0f))};
-  auto TgR{float3(toRigid * float4(Tg, 0.0f))};
+  auto pointR{transformPoint(toRigid, point)};
+  auto rayDirR{transformDirection(toRigid, rayDir)};
+  auto normalR{transformDirection(toRigid, normal)};
+  auto tangentR{transformDirection(toRigid, tangent)};
+  auto NgR{transformDirection(toRigid, Ng)};
+  auto TgR{transformDirection(toRigid, Tg)};
   state.object_to_world_matrix = frame.rigidToWorld;
   state.position = pointR;
   state.direction = rayDirR;

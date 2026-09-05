@@ -100,6 +100,24 @@ bestPathForPrinting(std::string path) noexcept;
 ///
 [[nodiscard]] SMDL_EXPORT std::string parentPathOf(std::string path) noexcept;
 
+/// Rename `from` onto `to`, replacing whatever `to` held.
+///
+/// This is the second half of the write-through-a-temporary discipline a
+/// file that something else may be reading has to follow: write to
+/// `to + ".part"`, then rename. A reader polling `to` never sees a
+/// partial file, and an interrupted write cannot destroy what `to`
+/// already held, which matters most when `to` is the very file the
+/// writer is resuming from.
+///
+/// \throws Error if the rename fails.
+SMDL_EXPORT void renameOnto(const std::string &from, const std::string &to);
+
+/// `renameOnto()` reporting failure by return value, for a caller whose
+/// file is not worth failing over: a progress line a tool polls is
+/// better stale than fatal.
+SMDL_EXPORT bool tryRenameOnto(const std::string &from,
+                               const std::string &to) noexcept;
+
 /// Open file or throw an `Error`.
 [[nodiscard]] SMDL_EXPORT std::fstream openOrThrow(const std::string &path,
                                                    std::ios::openmode mode);

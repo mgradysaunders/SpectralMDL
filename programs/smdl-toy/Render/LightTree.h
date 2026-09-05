@@ -1,20 +1,11 @@
 #pragma once
 
-#include <algorithm>
-#include <limits>
 #include <vector>
 
 #include "Common.h"
 
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Support/Span.h"
-
-/// Keep a remapped uniform strictly inside the unit interval, as
-/// `smdl::Distribution1D` keeps it, so that a nested draw never lands
-/// on an endpoint.
-[[nodiscard]] inline float clampUnit(float xi) noexcept {
-  constexpr float ONE_MINUS_EPS = 1.0f - 0x1p-24f;
-  return std::clamp(xi, std::numeric_limits<float>::min(), ONE_MINUS_EPS);
-}
 
 /// What light selection keeps per light for the `LightTree`: the
 /// world-space box of the emitting geometry and the selection weight,

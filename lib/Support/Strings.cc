@@ -2,20 +2,42 @@
 #include "smdl/Support/Filesystem.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 
 namespace smdl {
 
-void Quoted::appendTo(std::string &result) {
+void Quoted::appendTo(std::string &result) const {
   result += '\'';
   result += str;
   result += '\'';
 }
 
-void QuotedPath::appendTo(std::string &result) {
+void QuotedPath::appendTo(std::string &result) const {
   result += '\'';
   result += bestPathForPrinting(std::string(str));
   result += '\'';
+}
+
+// Both of these go through `snprintf` rather than the `<charconv>`
+// floating point overloads, which libstdc++ only grew in GCC 11 and
+// which this build's floor does not assume.
+void Precise::appendTo(std::string &result) const {
+  // Nine significant digits round-trip every float, and seventeen every
+  // double; nine is the right number here because every caller is
+  // writing a float that came out of a `float` field.
+  // NOLINTNEXTLINE
+  char buffer[32]{};
+  std::snprintf(buffer, sizeof(buffer), "%.9g", value);
+  result += buffer;
+}
+
+void Brief::appendTo(std::string &result) const {
+  // NOLINTNEXTLINE
+  char buffer[32]{};
+  std::snprintf(buffer, sizeof(buffer), "%.*g", std::clamp(digits, 1, 17),
+                value);
+  result += buffer;
 }
 
 std::string_view suggestNearestName(std::string_view name,

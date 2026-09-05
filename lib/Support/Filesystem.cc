@@ -155,6 +155,23 @@ std::string parentPathOf(std::string path) noexcept try {
   return path;
 }
 
+void renameOnto(const std::string &from, const std::string &to) {
+  std::error_code error{};
+  std::filesystem::rename(from, to, error);
+  if (error)
+    throw Error(concat("cannot rename ", QuotedPath(from), " onto ",
+                       QuotedPath(to), ": ", error.message()));
+}
+
+bool tryRenameOnto(const std::string &from, const std::string &to) noexcept
+    try {
+  std::error_code error{};
+  std::filesystem::rename(from, to, error);
+  return !error;
+} catch (...) {
+  return false;
+}
+
 std::fstream openOrThrow(const std::string &path, std::ios::openmode mode) {
   auto stream{std::fstream(path, mode)};
   if (!stream.is_open())

@@ -73,35 +73,35 @@ public:
     // reproduces the same draws for the same (pixel, sample) the
     // low-discrepancy sequence does. The stream keeps two pixels whose
     // seeds happen to collide on separate sequences anyway.
-    rng = smdl::RNG(
+    mRng = smdl::RNG(
         smdl::mixBits((uint64_t(pixelIndex) << 32) | uint64_t(sampleIndex)),
         smdl::mixBits(uint64_t(0x9E3779B97F4A7C15ULL) ^ uint64_t(pixelIndex)));
 #else
-    sobol.start(pixelIndex, sampleIndex);
+    mSobol.start(pixelIndex, sampleIndex);
 #endif
   }
 
-  [[nodiscard]] operator float() {
+  [[nodiscard]] explicit operator float() {
     alignPair();
     const float xi{next()};
     alignPair();
     return xi;
   }
 
-  [[nodiscard]] operator float2() {
+  [[nodiscard]] explicit operator float2() {
     alignPair();
     const float x{next()};
     return {x, next()};
   }
 
-  [[nodiscard]] operator float3() {
+  [[nodiscard]] explicit operator float3() {
     alignPair();
     const float x{next()}, y{next()}, z{next()};
     alignPair();
     return {x, y, z};
   }
 
-  [[nodiscard]] operator float4() {
+  [[nodiscard]] explicit operator float4() {
     alignPair();
     const float x{next()}, y{next()}, z{next()};
     return {x, y, z, next()};
@@ -115,9 +115,9 @@ public:
   /// The next sample as raw bits.
   [[nodiscard]] uint32_t nextBits() noexcept {
 #if SMDL_TOY_SAMPLER_PCG32
-    return rng.generate();
+    return mRng.generate();
 #else
-    return sobol.generate();
+    return mSobol.generate();
 #endif
   }
 
@@ -126,22 +126,34 @@ private:
   /// every draw so that none of them straddles two pairs.
   void alignPair() noexcept {
 #if !SMDL_TOY_SAMPLER_PCG32
-    sobol.alignPair();
+    mSobol.alignPair();
 #endif
   }
 
   /// The next canonical sample in `(0,1)`.
   [[nodiscard]] float next() noexcept {
-    return std::clamp(float(nextBits()) * 0x1p-32f,
-                      std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+    return smdl::canonicalFromBits(nextBits());
   }
 
 #if SMDL_TOY_SAMPLER_PCG32
-  smdl::RNG rng{};
+  smdl::RNG mRng{};
 #else
-  smdl::OwenSobolSampler sobol{};
+  smdl::OwenSobolSampler mSobol{};
 #endif
 };
+
+/// The 64-bit seed of two consecutive draws, high half first.
+///
+/// Spelled out rather than written inline as `(next() << 32) | next()`,
+/// because `operator|` does not sequence its operands: which draw lands
+/// in the high half would be the compiler's choice, and the two draws
+/// are different dimensions of the sequence.
+[[nodiscard]] SMDL_ALWAYS_INLINE uint64_t
+nextSeed64(Sampler &sampler) noexcept {
+  const uint64_t hi{sampler.nextBits()};
+  const uint64_t lo{sampler.nextBits()};
+  return (hi << 32) | lo;
+}
 
 /// The `-wavelength-jitter` offset of one sample: the Owen-scrambled
 /// radical inverse of the sample index, seeded per pixel.
@@ -153,9 +165,7 @@ private:
 /// session continues the sequence where the last one left off.
 [[nodiscard]] inline float
 wavelengthJitterOffset(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
-  const uint32_t bits{smdl::nestedUniformScramble(
+  return smdl::canonicalFromBits(smdl::nestedUniformScramble(
       smdl::reverseBits(sampleIndex),
-      smdl::mixBits(pixelIndex ^ uint32_t(0x5CE4B17DU)))};
-  return std::clamp(float(bits) * 0x1p-32f, std::numeric_limits<float>::min(),
-                    ONE_MINUS_EPS);
+      smdl::mixBits(pixelIndex ^ uint32_t(0x5CE4B17DU))));
 }

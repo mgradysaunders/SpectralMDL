@@ -90,9 +90,8 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
     // arises from an all-zero distribution; the remap has nowhere to
     // land, so give it the bottom of the interval rather than a
     // division by zero.
-    *xiRemap = std::clamp(
-        width > 0 ? float((double(xi) - bound0) / (bound1 - bound0)) : 0.0f,
-        std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+    *xiRemap = canonicalize(
+        width > 0 ? float((double(xi) - bound0) / (bound1 - bound0)) : 0.0f);
   }
   if (pmf) *pmf = float(INV_CMF_SCALE * double(width));
   return i;

@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <type_traits>
 #include <vector>
@@ -94,6 +95,54 @@ static void checkNet(const std::vector<uint32_t> &X,
   }
 }
 
+TEST_CASE("Canonical samples") {
+  SUBCASE("canonicalFromBits excludes both endpoints") {
+    // Only the zero pattern reaches the bottom clamp: the next one up
+    // already lands at 2^-32, which is an ordinary normal float.
+    CHECK(smdl::canonicalFromBits(0) == std::numeric_limits<float>::min());
+    CHECK(smdl::canonicalFromBits(1) == 0x1p-32f);
+    CHECK(smdl::canonicalFromBits(1) > std::numeric_limits<float>::min());
+    // The top pattern reaches the top clamp, `float(0xFFFFFFFF)` having
+    // rounded up to 2^32 so that the product is exactly 1.
+    CHECK(float(0xFFFFFFFFU) * 0x1p-32f == 1.0f);
+    CHECK(smdl::canonicalFromBits(0xFFFFFFFFU) == smdl::ONE_MINUS_EPS);
+    CHECK(smdl::canonicalFromBits(0xFFFFFFFFU) < 1.0f);
+  }
+  SUBCASE("canonicalize holds anything inside the open interval") {
+    CHECK(smdl::canonicalize(0.0f) > 0.0f);
+    CHECK(smdl::canonicalize(-1.0f) > 0.0f);
+    CHECK(smdl::canonicalize(1.0f) < 1.0f);
+    CHECK(smdl::canonicalize(2.0f) < 1.0f);
+    CHECK(smdl::canonicalize(0.5f) == 0.5f);
+    // Every value it can return is safe to divide by and to take the
+    // logarithm of, which is the whole contract.
+    for (std::uint32_t bits : {0U, 1U, 42U, 0x7FFFFFFFU, 0xFFFFFFFFU}) {
+      const float xi{smdl::canonicalFromBits(bits)};
+      CHECK(std::isfinite(1.0f / xi));
+      CHECK(std::isfinite(std::log(xi)));
+      CHECK(std::isfinite(std::log1p(-xi)));
+    }
+  }
+  SUBCASE("uniformTriangleSample stays in the triangle") {
+    std::mt19937 prng{};
+    bool inside{true};
+    smdl::float3 mean{};
+    constexpr int NUM_SAMPLES{100'000};
+    for (int iter = 0; iter < NUM_SAMPLES; iter++) {
+      const auto bary{
+          smdl::uniformTriangleSample(smdl::generateCanonical2(prng))};
+      inside &= bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f;
+      inside &= std::abs(bary.x + bary.y + bary.z - 1.0f) < 1e-5f;
+      mean = mean + bary * (1.0f / float(NUM_SAMPLES));
+    }
+    CHECK(inside);
+    // Uniform over the triangle puts the mean at the centroid.
+    CHECK(mean.x == doctest::Approx(1.0 / 3.0).epsilon(1e-2));
+    CHECK(mean.y == doctest::Approx(1.0 / 3.0).epsilon(1e-2));
+    CHECK(mean.z == doctest::Approx(1.0 / 3.0).epsilon(1e-2));
+  }
+}
+
 TEST_CASE("QMC helpers") {
   // The golden values pin the exact bit patterns, which the sampler
   // sequence and thus resumable renders depend on.
@@ -126,8 +175,7 @@ TEST_CASE("QMC helpers") {
           0xE220A8397B1DCDAFULL);
   }
   SUBCASE("nestedUniformScramble nested property") {
-    CHECK(smdl::nestedUniformScramble(0x12345678U, 0xCAFEBABEU) ==
-          0x7530FA95U);
+    CHECK(smdl::nestedUniformScramble(0x12345678U, 0xCAFEBABEU) == 0x7530FA95U);
     // The property that makes the scramble Owen-style: inputs agreeing in
     // their top k bits map to outputs agreeing in their top k bits, for
     // every k, which is what preserves net structure.
@@ -205,7 +253,8 @@ TEST_CASE("OwenSobolSampler") {
     other.start(0xC0FFEFU, 12345U);
     sampler.start(0xC0FFEEU, 12345U);
     bool anyDiff{false};
-    for (int i = 0; i < 8; i++) anyDiff |= other.generate() != sampler.generate();
+    for (int i = 0; i < 8; i++)
+      anyDiff |= other.generate() != sampler.generate();
     CHECK(anyDiff);
   }
   SUBCASE("draws in strict (0,1)") {

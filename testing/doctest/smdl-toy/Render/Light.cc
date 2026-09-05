@@ -145,7 +145,7 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
                                          false, 0.0f)};
     const bool sampled{i == 0 || i == 4};
     CHECK((pdf > 0.0f) == sampled);
-    CHECK(lights.causticLight(hit.instIndex) == sampled);
+    CHECK(lights.isCausticLight(hit.instIndex) == sampled);
     allocator.reset();
   }
   // Over many draws the unmarked emitters never come up and both marked
@@ -198,7 +198,7 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
                                          false, 0.0f)};
     const bool emitter{i != 2};
     CHECK((pdf > 0.0f) == emitter);
-    CHECK(lights.causticLight(hit.instIndex) == emitter);
+    CHECK(lights.isCausticLight(hit.instIndex) == emitter);
     allocator.reset();
   }
   const auto drawn{drawnInstances(lights, fixture, 512)};

@@ -73,7 +73,7 @@ namespace smdl {
 class SMDL_EXPORT Quoted final {
 public:
   constexpr Quoted(std::string_view str) : str(str) {}
-  void appendTo(std::string &result);
+  void appendTo(std::string &result) const;
 
 public:
   std::string_view str{};
@@ -83,10 +83,49 @@ public:
 class SMDL_EXPORT QuotedPath final {
 public:
   constexpr QuotedPath(std::string_view str) : str(str) {}
-  void appendTo(std::string &result);
+  void appendTo(std::string &result) const;
 
 public:
   std::string_view str{};
+};
+
+/// A number written with enough digits to read back exactly, for use
+/// with `concat`. This is what a number something will parse again
+/// needs: nine significant digits round-trip every `float`, and trailing
+/// zeros are dropped, so the small integers a text format is mostly made
+/// of still read as themselves.
+class SMDL_EXPORT Precise final {
+public:
+  constexpr Precise(double value) : value(value) {}
+  void appendTo(std::string &result) const;
+
+public:
+  double value{};
+};
+
+/// A number written to a few significant digits, for use with `concat`.
+///
+/// This is what a log line or a diagnostic wants. `concat` sends a bare
+/// arithmetic value through `std::to_string`, which is six decimal
+/// places whatever the magnitude, so a scene height reads as `0.000000`
+/// and a plane extent as `1000.000000`; those are the sites this is for.
+///
+/// The digits are SIGNIFICANT digits, not decimal places, and six is the
+/// default because that is where the ordinary run of scene-scale numbers
+/// stops going exponential: `1000` stays `1000` and only past a million
+/// does a magnitude earn an exponent. Ask for fewer where the quantity
+/// is one a reader skims rather than reads, such as a duration.
+class SMDL_EXPORT Brief final {
+public:
+  constexpr Brief(double value, int digits = 6)
+      : value(value), digits(digits) {}
+  void appendTo(std::string &result) const;
+
+public:
+  double value{};
+
+  /// The significant digits, clamped to `[1, 17]` when written.
+  int digits{6};
 };
 
 namespace detail {
@@ -97,7 +136,9 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
   if constexpr (std::is_arithmetic_v<DecayT>) {
     str += std::to_string(value);
   } else if constexpr (std::is_same_v<DecayT, Quoted> ||
-                       std::is_same_v<DecayT, QuotedPath>) {
+                       std::is_same_v<DecayT, QuotedPath> ||
+                       std::is_same_v<DecayT, Precise> ||
+                       std::is_same_v<DecayT, Brief>) {
     value.appendTo(str);
   } else {
     str += value;

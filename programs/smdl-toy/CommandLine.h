@@ -1,6 +1,7 @@
 #pragma once
 
 #include "smdl/Common.h"
+#include "smdl/Support/Strings.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -71,6 +72,25 @@ private:
   bool mValid{};
 };
 
+/// A vector in the comma-separated syntax an option is typed in, so that
+/// what `-print-options` shows, and what a diagnostic quotes back, can be
+/// pasted onto a command line. `smdl::Brief` rather than `concat`'s bare
+/// arithmetic path, which is six decimal places and would print a frame
+/// width as `1280.000000`.
+template <typename T, size_t N>
+[[nodiscard]] inline std::string spellVector(const smdl::Vector<T, N> &value) {
+  std::string result{};
+  for (size_t i{}; i < N; i++) {
+    if (i != 0) result += ',';
+    if constexpr (std::is_floating_point_v<T>) {
+      smdl::Brief(value[i]).appendTo(result);
+    } else {
+      result += std::to_string(value[i]);
+    }
+  }
+  return result;
+}
+
 template <typename T, size_t N>
 class cl::parser<smdl::Vector<T, N>>
     : public cl::basic_parser<smdl::Vector<T, N>> {
@@ -126,7 +146,7 @@ public:
                        typename base::OptVal Default,
                        size_t GlobalWidth) const {
     this->printOptionName(O, GlobalWidth);
-    const auto value{spell(V)};
+    const auto value{spellVector(V)};
     outs() << "= " << value;
     // The value column is padded to 8 before the default, matching the
     // scalar parsers in LLVM's `CommandLine.cpp`.
@@ -136,30 +156,9 @@ public:
     // a value. Asking anyway is not allowed: `getValue()` on the class
     // specialization is `llvm_unreachable`.
     if (Default.hasValue())
-      outs() << spell(Default.getValue());
+      outs() << spellVector(Default.getValue());
     else
       outs() << "*no default*";
     outs() << ")\n";
-  }
-
-private:
-  /// The value in the comma-separated syntax the option is typed in, so
-  /// that what `-print-options` shows can be pasted back onto a command
-  /// line. `%g` rather than `raw_ostream`'s own float formatting, which
-  /// is fixed-exponent and would print a frame width as `1.280000e+03`.
-  [[nodiscard]] static std::string spell(const smdl::Vector<T, N> &value) {
-    std::string result{};
-    for (size_t i{}; i < N; i++) {
-      if (i != 0) result += ',';
-      if constexpr (std::is_floating_point_v<T>) {
-        // NOLINTNEXTLINE
-        char buffer[32]{};
-        std::snprintf(buffer, sizeof(buffer), "%g", double(value[i]));
-        result += buffer;
-      } else {
-        result += std::to_string(value[i]);
-      }
-    }
-    return result;
   }
 };

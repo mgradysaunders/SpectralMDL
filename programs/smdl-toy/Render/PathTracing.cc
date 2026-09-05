@@ -413,7 +413,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
   // same predicate, so only a chain with a glossy claim is worth
   // discovering.
   const bool envGated{lightSample.isInfinite &&
-                      !mneeOptions.envTarget(lightSample.wi)};
+                      !mneeOptions.isEnvTarget(lightSample.wi)};
   int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
   // One state for every crossing the discovery walks in turn; see
   // `Hit::applyGeometryToState()`.
@@ -1594,7 +1594,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           prevAreaSampled =
               gatherRunsManifold(mneeOptions, VertexKind::VOLUME, true);
           // A volume vertex is a manifold-NEE receiver like any other.
-          mneeCoverage.arm(mneeOptions.any(), point, phaseValue, medium);
+          mneeCoverage.arm(mneeOptions.isEnabled(), point, phaseValue, medium);
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           spread = std::min(spread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
@@ -1632,10 +1632,10 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
         // its ordinary weight without spending a re-walk; the gather
         // side stands down by the same predicate.
         addArrival(
-            Li, weight, depth - 1, lightSampler.causticEnv(),
+            Li, weight, depth - 1, lightSampler.isCausticEnv(),
             records && numRecords > 0 ? &records[numRecords - 1] : nullptr,
             [&](ManifoldTarget &target) {
-              if (!mneeOptions.envTarget(ray.dir)) return -1.0f;
+              if (!mneeOptions.isEnvTarget(ray.dir)) return -1.0f;
               target.wl = ray.dir;
               return lightSampler.envSelectionPMF(mneeCoverage.receiver()) *
                      Lipdf;
@@ -1661,9 +1661,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // Reseed the stochastic-evaluation generator at every vertex, so
     // stochastically evaluated BSDFs decorrelate across bounces, samples,
     // and pixels while staying deterministic for a given sampler state.
-    const uint64_t seedHi{sampler.nextBits()};
-    const uint64_t seedLo{sampler.nextBits()};
-    state.rng = smdl::RNG((seedHi << 32) | seedLo, uint64_t(order));
+    state.rng = smdl::RNG(nextSeed64(sampler), uint64_t(order));
     auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
     mat.setExteriorIOR(ExteriorIOR(medium, mat, -ray.dir));
     // A hair vertex: a curve hit whose material binds `material.hair`,
@@ -1730,7 +1728,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                                              hit.point, hit.Ng, prevPoint,
                                              prevAreaSampled, hit.time))};
         addArrival(
-            Le, weight, depth - 2, lightSampler.causticLight(hit.instIndex),
+            Le, weight, depth - 2, lightSampler.isCausticLight(hit.instIndex),
             records && numRecords > 1 ? &records[numRecords - 2] : nullptr,
             [&](ManifoldTarget &target) {
               const float3 toLight{hit.point - mneeCoverage.receiver()};
@@ -1770,15 +1768,15 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // claim, narrowed to what the gathers behind can actually reach from
     // here. This vertex gathers the rest, and the claimed share of its
     // continuation is dropped at the light.
-    const auto claim{mneeOptions.any() && !isHair
+    const auto claim{mneeOptions.isEnabled() && !isHair
                          ? manifoldClaim(mat, backface,
-                                         hit.instance->causticCaster,
+                                         hit.instance->isCausticCaster,
                                          mneeOptions.maxRoughness)
                          : ManifoldClaim()};
     const auto reachable{mneeCoverage.reach(claim, mneeOptions, prevDirac)};
     // Whether this vertex is a manifold receiver: the gathers run from it
     // and it arms for the claims behind, or neither.
-    const bool receiver{mneeOptions.any() && !isHair &&
+    const bool receiver{mneeOptions.isEnabled() && !isHair &&
                         isManifoldReceiver(
                             mat, backface, [&] { return float4(sampler); },
                             mneeOptions.minReceiverAlpha)};

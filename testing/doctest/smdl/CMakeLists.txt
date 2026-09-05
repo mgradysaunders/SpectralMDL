@@ -25,11 +25,13 @@ smdl_add_doctest(
     "Resource/VoxelGrid.cc"
     "SceneData.cc"
     "Support/FileLocator.cc"
+    "Support/Filesystem.cc"
     "Support/FlatYAML.cc"
     "Support/MD5Hash.cc"
     "Support/QualifiedName.cc"
     "Support/RNG.cc"
     "Support/Strings.cc"
+    "Support/VectorMath.cc"
   LINK
     "SpectralMDL::SpectralMDL"
   )

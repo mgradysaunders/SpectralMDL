@@ -63,6 +63,23 @@ public:
 /// The self-intersection offset, in scene units.
 constexpr float EPS = 0.0001f;
 
+/// The area of the triangle on the given corners, in whatever space
+/// they are given in. Zero for a degenerate triangle, never negative.
+[[nodiscard]] SMDL_ALWAYS_INLINE float
+triangleArea(const float3 &point0, const float3 &point1,
+             const float3 &point2) noexcept {
+  return 0.5f * smdl::length(smdl::cross(point1 - point0, point2 - point0));
+}
+
+/// The barycentric coordinate of the triangle parameters `(u, v)` an
+/// intersector reports. Both are clamped into the triangle before the
+/// first weight is completed, so that rounding at an edge cannot make
+/// the three weights sum past 1 or send one of them negative.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 baryFromUV(float u, float v) noexcept {
+  const auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
+  return {clamp01(1.0f - u - v), clamp01(u), clamp01(v)};
+}
+
 class Ray final {
 public:
   /// Evaluate.
@@ -72,8 +89,8 @@ public:
 
   /// Apply transform.
   void transform(const float4x4 &xf) noexcept {
-    org = xf * float4(org, 1.0f);
-    dir = xf * float4(dir, 0.0f);
+    org = transformPoint(xf, org);
+    dir = transformDirection(xf, dir);
   }
 
 public:

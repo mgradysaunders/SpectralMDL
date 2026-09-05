@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -13,6 +12,7 @@
 #include "llvm/Support/Process.h"
 
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Filesystem.h"
 
 namespace {
 
@@ -317,8 +317,9 @@ void ProgressBar::reportLocked(uint64_t done) {
            << " elapsed=" << std::fixed << std::setprecision(2) << elapsed
            << " eta=" << remaining << " note=" << mNote << '\n';
   }
-  std::error_code ignored{};
-  std::filesystem::rename(partPath, mOptions.filePath, ignored);
+  // A progress line is not worth failing a render over, so a rename
+  // that loses a race with a reader is dropped rather than reported.
+  (void)smdl::tryRenameOnto(partPath, mOptions.filePath);
 }
 
 void ProgressBar::drawLocked(uint64_t done) {

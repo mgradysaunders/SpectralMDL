@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <unordered_map>
@@ -390,13 +389,13 @@ void Scene::add(const LayoutItem &item) {
   // already refused it on a groom.
   if (item.isCaster && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].causticCaster = true;
+      meshInstances[i].isCausticCaster = true;
   if (item.isCausticLight && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].causticLight = true;
+      meshInstances[i].isCausticLight = true;
   if (item.isLight && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].light = true;
+      meshInstances[i].isLight = true;
 }
 
 uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
@@ -538,10 +537,8 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
         node.moves = node.nodeToFile[j][k] != node.nodeToFileShut[j][k];
     numMoving += node.moves;
   }
-  char at[32]{}, duration[32]{};
-  std::snprintf(at, sizeof(at), "%.3g", ticksOpen / ticksPerSecond(*clip));
-  std::snprintf(duration, sizeof(duration), "%.3g",
-                clip->mDuration / ticksPerSecond(*clip));
+  const smdl::Brief at{ticksOpen / ticksPerSecond(*clip), 3};
+  const smdl::Brief duration{clip->mDuration / ticksPerSecond(*clip), 3};
   if (poseShut) {
     SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " plays ",
                   smdl::Quoted(clip->mName.C_Str()), " at ", at, " s (",
@@ -803,7 +800,7 @@ BoundBox3 Scene::preCommitBounds() const {
   BoundBox3 bound{};
   for (const auto &instance : meshInstances) {
     auto fold{[&](const float4x4 &xf, const float3 &point) {
-      bound.extend(float3(xf * float4(point, 1.0f)));
+      bound.extend(transformPoint(xf, point));
     }};
     const auto &open{instance.frame.objectToWorld};
     if (instance.isPrimitive()) {
@@ -1463,22 +1460,40 @@ void Scene::buildMeshGeometry(Mesh &mesh) {
   rtcReleaseGeometry(geometry);
 }
 
-bool Scene::intersect(Ray &ray, Hit &hit) const {
+// The Embree query struct of a ray. Written once and shared by all three
+// query entry points, since a field left unset here is a query that
+// silently means something else.
+[[nodiscard]] static SMDL_ALWAYS_INLINE RTCRay
+toRTCRay(const Ray &ray) noexcept {
+  RTCRay rtcRay{};
+  rtcRay.org_x = ray.org.x;
+  rtcRay.org_y = ray.org.y;
+  rtcRay.org_z = ray.org.z;
+  rtcRay.dir_x = ray.dir.x;
+  rtcRay.dir_y = ray.dir.y;
+  rtcRay.dir_z = ray.dir.z;
+  rtcRay.tnear = ray.tmin;
+  rtcRay.tfar = ray.tmax;
+  rtcRay.time = ray.time;
+  rtcRay.mask = unsigned(-1);
+  rtcRay.id = 0;
+  rtcRay.flags = 0;
+  return rtcRay;
+}
+
+// The Embree query struct of a closest-hit query: the ray, plus the
+// sentinel identifiers that say nothing has been hit yet.
+[[nodiscard]] static SMDL_ALWAYS_INLINE RTCRayHit
+toRTCRayHit(const Ray &ray) noexcept {
   RTCRayHit rayHit{};
-  rayHit.ray.org_x = ray.org.x;
-  rayHit.ray.org_y = ray.org.y;
-  rayHit.ray.org_z = ray.org.z;
-  rayHit.ray.dir_x = ray.dir.x;
-  rayHit.ray.dir_y = ray.dir.y;
-  rayHit.ray.dir_z = ray.dir.z;
-  rayHit.ray.tnear = ray.tmin;
-  rayHit.ray.tfar = ray.tmax;
-  rayHit.ray.time = ray.time;
-  rayHit.ray.mask = unsigned(-1);
-  rayHit.ray.id = 0;
-  rayHit.ray.flags = 0;
+  rayHit.ray = toRTCRay(ray);
   rayHit.hit.primID = unsigned(-1);
   rayHit.hit.geomID = unsigned(-1);
+  return rayHit;
+}
+
+bool Scene::intersect(Ray &ray, Hit &hit) const {
+  auto rayHit{toRTCRayHit(ray)};
   rtcIntersect1(scene, &rayHit, nullptr);
   if (rayHit.hit.primID == unsigned(-1)) return false;
   ray.tmax = rayHit.ray.tfar;
@@ -1503,8 +1518,7 @@ Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
   if (!meshInstance.isDeforming)
     return makeHit(frame, instIndex, primID, u, v, objectNg, ray);
   // Only a mesh deforms, so the barycentric clamp of the body applies.
-  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
-  const auto bary{float3(clamp01(1.0f - u - v), clamp01(u), clamp01(v))};
+  const auto bary{baryFromUV(u, v)};
   return makeHitDeforming(frame, instIndex, primID, bary, ray.time);
 }
 
@@ -1520,8 +1534,7 @@ Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
   if (meshInstance.isCurves())
     return makeCurvesHit(frame, instIndex, primID, u, v, ray.time, objectNg,
                          ray(ray.tmax), ray.dir);
-  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
-  const auto bary{float3(clamp01(1.0f - u - v), clamp01(u), clamp01(v))};
+  const auto bary{baryFromUV(u, v)};
   // A primitive reports its object-space point in the normal slots,
   // and the hit is built from that rather than from the parameters.
   if (meshInstance.isPrimitive()) {
@@ -1534,39 +1547,13 @@ Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
 }
 
 bool Scene::isOccluded(const Ray &ray) const {
-  RTCRay rtcRay{};
-  rtcRay.org_x = ray.org.x;
-  rtcRay.org_y = ray.org.y;
-  rtcRay.org_z = ray.org.z;
-  rtcRay.dir_x = ray.dir.x;
-  rtcRay.dir_y = ray.dir.y;
-  rtcRay.dir_z = ray.dir.z;
-  rtcRay.tnear = ray.tmin;
-  rtcRay.tfar = ray.tmax;
-  rtcRay.time = ray.time;
-  rtcRay.mask = unsigned(-1);
-  rtcRay.id = 0;
-  rtcRay.flags = 0;
+  auto rtcRay{toRTCRay(ray)};
   rtcOccluded1(scene, &rtcRay, nullptr);
   return rtcRay.tfar < 0.0f;
 }
 
 bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
-  RTCRayHit rayHit{};
-  rayHit.ray.org_x = ray.org.x;
-  rayHit.ray.org_y = ray.org.y;
-  rayHit.ray.org_z = ray.org.z;
-  rayHit.ray.dir_x = ray.dir.x;
-  rayHit.ray.dir_y = ray.dir.y;
-  rayHit.ray.dir_z = ray.dir.z;
-  rayHit.ray.tnear = ray.tmin;
-  rayHit.ray.tfar = ray.tmax;
-  rayHit.ray.time = ray.time;
-  rayHit.ray.mask = unsigned(-1);
-  rayHit.ray.id = 0;
-  rayHit.ray.flags = 0;
-  rayHit.hit.primID = unsigned(-1);
-  rayHit.hit.geomID = unsigned(-1);
+  auto rayHit{toRTCRayHit(ray)};
   rtcIntersect1(scene, &rayHit, nullptr);
   if (rayHit.hit.primID == unsigned(-1)) return false;
   ray.tmax = rayHit.ray.tfar;
@@ -1585,9 +1572,7 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
     hit.vertex.coords = float3(0.0f, rayHit.hit.u, rayHit.hit.v);
     return true;
   }
-  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
-  const auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
-                         clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
+  const auto bary{baryFromUV(rayHit.hit.u, rayHit.hit.v)};
   hit.vertex.coords = bary;
   hit.vertex.point = meshInstance.isMoving || meshInstance.isDeforming
                          ? manifoldHitPointMoving(
@@ -1612,9 +1597,9 @@ float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
   const auto vert0{mesh.vertAt(face[0], time)};
   const auto vert1{mesh.vertAt(face[1], time)};
   const auto vert2{mesh.vertAt(face[2], time)};
-  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  const auto point0{transformPoint(objectToWorld, vert0.point)};
+  const auto point1{transformPoint(objectToWorld, vert1.point)};
+  const auto point2{transformPoint(objectToWorld, vert2.point)};
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
@@ -1626,16 +1611,16 @@ float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
     const auto &primitive{*primitives[meshInstance.primIndex]};
     const auto surface{
         evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2]))};
-    return float3(objectToWorld * float4(surface.point, 1.0f));
+    return transformPoint(objectToWorld, surface.point);
   }
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   const auto &face{mesh.faces[primID]};
   const auto &vert0{mesh.verts[face[0]]};
   const auto &vert1{mesh.verts[face[1]]};
   const auto &vert2{mesh.verts[face[2]]};
-  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  const auto point0{transformPoint(objectToWorld, vert0.point)};
+  const auto point1{transformPoint(objectToWorld, vert1.point)};
+  const auto point2{transformPoint(objectToWorld, vert2.point)};
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
@@ -1698,9 +1683,9 @@ Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // World space first, everything else after. Interpolating the transformed
   // points is the same as transforming the interpolated point, so this
   // costs three matrix-vector products and buys exactness under scale.
-  auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-  auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-  auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  auto point0{transformPoint(objectToWorld, vert0.point)};
+  auto point1{transformPoint(objectToWorld, vert1.point)};
+  auto point2{transformPoint(objectToWorld, vert2.point)};
   // `Ng` from the raw edges: scaling either one only scales the cross
   // product, which the normalize divides back out, so the edges need not be
   // unit for it. `Tg` does need a unit edge, and is the only reason one of
@@ -1731,7 +1716,7 @@ Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // together.
   hit.normal = normalize(frame.normalMatrix * barycentric(&Mesh::Vert::normal));
   hit.tangent = normalize(
-      float3(objectToWorld * float4(barycentric(&Mesh::Vert::tangent), 0.0f)));
+      transformDirection(objectToWorld, barycentric(&Mesh::Vert::tangent)));
   hit.Ng = normalize(faceNormal);
   if (frame.flipsWinding) {
     hit.normal = -hit.normal;
@@ -1799,7 +1784,7 @@ Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.material = materials[hit.matIndex];
   hit.time = time;
   hit.bary = bary;
-  hit.point = float3(objectToWorld * float4(surface.point, 1.0f));
+  hit.point = transformPoint(objectToWorld, surface.point);
   // The analytic normal transforms by the cofactor matrix like any
   // other; a mirroring instance flips its image inward, and the same
   // correction the mesh path applies flips it back out.
@@ -1808,8 +1793,8 @@ Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // Shading and geometric agree by construction: that is the point of
   // an analytic surface.
   hit.Ng = hit.normal;
-  const auto dPduWorld{float3(objectToWorld * float4(surface.dPdu, 0.0f))};
-  const auto dPdvWorld{float3(objectToWorld * float4(surface.dPdv, 0.0f))};
+  const auto dPduWorld{transformDirection(objectToWorld, surface.dPdu)};
+  const auto dPdvWorld{transformDirection(objectToWorld, surface.dPdv)};
   auto tangent{dPduWorld};
   hit.tangent =
       smdl::tryNormalize(tangent) ? tangent : smdl::perpendicularTo(hit.normal);
@@ -1911,9 +1896,9 @@ ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
   const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
                                           float2(bary[1], bary[2]))};
   ManifoldGeometry geometry{};
-  geometry.point = float3(objectToWorld * float4(surface.point, 1.0f));
-  geometry.dPdu = float3(objectToWorld * float4(surface.dPdu, 0.0f));
-  geometry.dPdv = float3(objectToWorld * float4(surface.dPdv, 0.0f));
+  geometry.point = transformPoint(objectToWorld, surface.point);
+  geometry.dPdu = transformDirection(objectToWorld, surface.dPdu);
+  geometry.dPdv = transformDirection(objectToWorld, surface.dPdv);
   geometry.Ng = normalize(frame.normalMatrix * surface.normal);
   if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
   finishManifoldGeometry(frame, geometry, frame.normalMatrix * surface.normal,
@@ -1943,9 +1928,9 @@ ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
                                              const Mesh::Vert &vert2) const {
   // See the primitive half of `manifoldGeometry()` for the conventions.
   const auto &objectToWorld{frame.objectToWorld};
-  const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
-  const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
-  const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  const auto point0{transformPoint(objectToWorld, vert0.point)};
+  const auto point1{transformPoint(objectToWorld, vert1.point)};
+  const auto point2{transformPoint(objectToWorld, vert2.point)};
   ManifoldGeometry geometry{};
   geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
   // The parameterization is the barycentric pair (bary[1], bary[2]).
@@ -1978,7 +1963,7 @@ Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   // control points) fall back to any perpendicular so the frame stays a
   // frame.
   const auto axis{groom.axisAt(primID, u)};
-  auto tangent{float3(objectToWorld * float4(axis.tangent, 0.0f))};
+  auto tangent{transformDirection(objectToWorld, axis.tangent)};
   const bool ribbon{groom.spec.mode == CurvesSpec::Mode::RIBBON};
   auto normal{float3()};
   if (ribbon) {
@@ -1997,8 +1982,7 @@ Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
     // grooms with surface materials render exactly as before.
     if (material->hasHair()) {
       const float sinGamma{std::min(std::fabs(v), 1.0f)};
-      auto widthDir{worldPoint -
-                    float3(objectToWorld * float4(axis.point, 1.0f))};
+      auto widthDir{worldPoint - transformPoint(objectToWorld, axis.point)};
       widthDir = widthDir - dot(widthDir, tangent) * tangent;
       if (sinGamma > 0.0f && smdl::tryNormalize(widthDir)) {
         auto tilted{std::sqrt(1.0f - sinGamma * sinGamma) * normal +
@@ -2042,9 +2026,9 @@ Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   // The world-space fiber diameter, scaled by the isotropic part of the
   // instance transform (the cube root of the linear determinant), which
   // is exact for the rigid and uniformly scaled placements grooms use.
-  const auto lx{float3(objectToWorld * float4(1.0f, 0.0f, 0.0f, 0.0f))};
-  const auto ly{float3(objectToWorld * float4(0.0f, 1.0f, 0.0f, 0.0f))};
-  const auto lz{float3(objectToWorld * float4(0.0f, 0.0f, 1.0f, 0.0f))};
+  const auto lx{float3(objectToWorld[0])};
+  const auto ly{float3(objectToWorld[1])};
+  const auto lz{float3(objectToWorld[2])};
   hit.fiberThickness =
       2.0f * axis.radius * std::cbrt(std::fabs(dot(lx, smdl::cross(ly, lz))));
   if (!groom.rootUVs.empty()) {

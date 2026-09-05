@@ -143,11 +143,9 @@ void printObjectTable(const Layout &layout) {
       os << "  animations:";
       for (size_t i = 0; i < info.animations.size(); i++) {
         const auto &clip{info.animations[i]};
-        char duration[32]{};
-        std::snprintf(duration, sizeof(duration), "%.3g",
-                      double(clip.duration));
         os << (i == 0 ? " " : ", ")
-           << smdl::concat(smdl::Quoted(clip.name), " (", duration, " s)");
+           << smdl::concat(smdl::Quoted(clip.name), " (",
+                           smdl::Brief(clip.duration, 3), " s)");
       }
       os << '\n';
     }
@@ -325,15 +323,6 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
     os << "Pass the MDL modules too to see how each name resolves.\n";
 }
 
-// A float with enough digits to read back exactly through the layout
-// parser, for the pack/dump round trip.
-[[nodiscard]]
-static std::string placeNumber(float value) {
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", double(value));
-  return buffer;
-}
-
 void dumpPlaces(const std::string &fileName) {
   const auto places{readPlacesFile(fileName)};
   auto &os{llvm::outs()};
@@ -347,7 +336,7 @@ void dumpPlaces(const std::string &fileName) {
     os << "place thing matrix";
     for (int row = 0; row < 4; row++)
       for (int column = 0; column < 4; column++)
-        os << ' ' << placeNumber(transform[column][row]);
+        os << ' ' << smdl::concat(smdl::Precise(transform[column][row]));
     if (places.hasVariants() && places.variants[i] != PlacesFile::NO_VARIANT)
       os << smdl::concat("  # variant ", places.variants[i]);
     os << '\n';

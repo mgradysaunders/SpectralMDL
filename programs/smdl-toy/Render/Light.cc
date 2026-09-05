@@ -6,15 +6,15 @@
 #include <set>
 
 EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
-    : scaleFactor(scaleFactor) {
+    : mScaleFactor(scaleFactor) {
   // Never mipped: the environment is sampled by direction through the
   // tabulated density below, never with a texture-space footprint. So
   // nothing here requests a chain, and none is allocated.
-  if (auto error{image.startLoad(fileName)}) error->printAndExit();
-  image.finishLoad();
+  if (auto error{mImage.startLoad(fileName)}) error->printAndExit();
+  mImage.finishLoad();
   auto weights{std::vector<float>{}};
-  const int numTexelsX{image.getNumTexelsX()};
-  const int numTexelsY{image.getNumTexelsY()};
+  const int numTexelsX{mImage.getNumTexelsX()};
+  const int numTexelsY{mImage.getNumTexelsY()};
   weights.reserve(numTexelsX * numTexelsY);
   double lumSum{};
   double sinThetaSum{};
@@ -22,14 +22,14 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
     auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
     auto sinTheta{std::sin(theta)};
     for (int iX = 0; iX < numTexelsX; iX++) {
-      auto value{image.fetch(iX, iY)};
+      auto value{mImage.fetch(iX, iY)};
       auto lum{(value.x + value.y + value.z) / 3.0f};
       weights.push_back(sinTheta * lum);
       lumSum += double(sinTheta) * lum;
       sinThetaSum += sinTheta;
     }
   }
-  meanRadiance = sinThetaSum > 0 ? float(lumSum / sinThetaSum) : 0.0f;
+  mMeanRadiance = sinThetaSum > 0 ? float(lumSum / sinThetaSum) : 0.0f;
   // MIS compensation (Karlík et al., SIGGRAPH Asia 2019): subtract the
   // mean radiance from the tabulated density and clamp at zero, so light
   // sampling concentrates on the above-average part of the image. Fall
@@ -44,62 +44,62 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
       auto sinTheta{std::sin(theta)};
       for (int iX = 0; iX < numTexelsX; iX++, texel++) {
         auto lum{sinTheta > 0 ? weights[texel] / sinTheta : 0.0f};
-        compensated[texel] = sinTheta * std::max(lum - meanRadiance, 0.0f);
+        compensated[texel] = sinTheta * std::max(lum - mMeanRadiance, 0.0f);
         compensatedSum += compensated[texel];
       }
     }
     if (compensatedSum > 0) weights = std::move(compensated);
   }
-  imageDistr = smdl::Distribution2D(numTexelsX, numTexelsY, weights);
+  mImageDistr = smdl::Distribution2D(numTexelsX, numTexelsY, weights);
 }
 
 EnvLight::EnvLight(const smdl::SunSkyOptions &options)
-    : sunSky(smdl::SunSky(options)) {
+    : mSunSky(smdl::SunSky(options)) {
   // The `SunSky` applies its own scale factor internally, so the mean
   // radiance it reports is final.
-  meanRadiance = sunSky->averageRadiance();
+  mMeanRadiance = mSunSky->averageRadiance();
 }
 
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
                    float3 wi, float &pdf) const {
   Color Li{};
-  if (sunSky) {
+  if (mSunSky) {
     // Spectral end to end: the model evaluates directly at the render
     // wavelengths. The pdf is the sun/sky mixture density, so hitting
     // the sun disk by BSDF sampling MIS-weights correctly against the
     // cone-sampling branch of `sample()`.
-    sunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
-    pdf = sunSky->pdf(wi);
+    mSunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
+    pdf = mSunSky->pdf(wi);
     return Li;
   }
   int2 iPixel{-1, -1};
-  pdf = imageDistr.directionPDF(wi, &iPixel);
+  pdf = mImageDistr.directionPDF(wi, &iPixel);
   // The radiance must be fetched independently of the pdf: with MIS
   // compensation the sampling density is zero wherever the radiance is at
   // or below the mean, but the radiance itself is not.
   if (iPixel.x >= 0 && iPixel.y >= 0)
-    compiler.convertRGBToColor(state, image.fetch(iPixel.x, iPixel.y),
+    compiler.convertRGBToColor(state, mImage.fetch(iPixel.x, iPixel.y),
                                Li.data());
-  return Li * scaleFactor;
+  return Li * mScaleFactor;
 }
 
 float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
                            float2 xi, float &pdf, Color &Li) const {
-  if (sunSky) {
-    float3 wi{sunSky->sample(xi, &pdf)};
+  if (mSunSky) {
+    float3 wi{mSunSky->sample(xi, &pdf)};
     if (pdf > 0.0f) {
-      sunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
+      mSunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
     } else {
       Li = Color(0.0f);
     }
     return wi;
   }
   int2 iPixel{};
-  float3 wi{imageDistr.directionSample(xi, &iPixel, &pdf)};
+  float3 wi{mImageDistr.directionSample(xi, &iPixel, &pdf)};
   if (pdf > 0.0f) {
-    compiler.convertRGBToColor(state, image.fetch(iPixel.x, iPixel.y),
+    compiler.convertRGBToColor(state, mImage.fetch(iPixel.x, iPixel.y),
                                Li.data());
-    Li *= scaleFactor;
+    Li *= mScaleFactor;
   } else {
     Li = Color(0.0f);
   }
@@ -504,7 +504,7 @@ int LightSelection::select(const float3 &point, float xi,
   }
   float treePMF{};
   const int lightIndex{
-      mTree->sample(point, clampUnit(xi / lightShare), treePMF)};
+      mTree->sample(point, smdl::canonicalize(xi / lightShare), treePMF)};
   pmf = lightShare * treePMF;
   return lightIndex;
 }
@@ -550,7 +550,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     if (!mat.hasEmission()) {
       // The mark is scene judgment about an emitter; on anything else it
       // is a mistake worth one line, as the caster mark's is.
-      if (instance.light && warnedMarkMaterials.insert(matIndex).second)
+      if (instance.isLight && warnedMarkMaterials.insert(matIndex).second)
         SMDL_LOG_WARN("The material ",
                       smdl::Quoted(scene.materialNames[matIndex]),
                       " is marked 'light' but has no emission; the mark is "
@@ -574,8 +574,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     auto light{AreaLight()};
     light.instIndex = instIndex;
-    light.isSampled = instance.light || allLights;
-    light.isCaustic = instance.causticLight;
+    light.isSampled = instance.isLight || allLights;
+    light.isCaustic = instance.isCausticLight;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and
     // must emit proportionally more power. Because an `AreaLight` is per
@@ -599,9 +599,9 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       light.isPrimitive = true;
       light.objectArea = primitive.objectArea;
       for (const auto &point : primitive.proxyPoints) {
-        box.extend(float3(objectToWorld * float4(point, 1.0f)));
+        box.extend(transformPoint(objectToWorld, point));
         if (shutFrame)
-          box.extend(float3(shutFrame->objectToWorld * float4(point, 1.0f)));
+          box.extend(transformPoint(shutFrame->objectToWorld, point));
       }
       if (primitive.spec.shape == PrimitiveSpec::Shape::SPHERE &&
           !instance.frame.isDeformed && !(shutFrame && shutFrame->isDeformed)) {
@@ -628,7 +628,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     } else {
       const auto &mesh{*scene.meshes[instance.meshIndex]};
       auto toWorld{[&](const float3 &point) {
-        return float3(objectToWorld * float4(point, 1.0f));
+        return transformPoint(objectToWorld, point);
       }};
       // The face distribution serves `sample()` alone, so an unsampled
       // emitter, which only needs its total area, does not build one. A
@@ -647,15 +647,14 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         box.extend(point0);
         box.extend(point1);
         box.extend(point2);
-        auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
+        auto area{triangleArea(point0, point1, point2)};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
         if (movingLike) {
           const auto &object0{mesh.verts[face[0]].point};
           const auto &object1{mesh.verts[face[1]].point};
           const auto &object2{mesh.verts[face[2]].point};
-          const float objectArea{
-              0.5f * length(cross(object1 - object0, object2 - object0))};
+          const float objectArea{triangleArea(object0, object1, object2)};
           objectFaceAreas.push_back(objectArea);
           light.objectArea += objectArea;
           // The shut key's corners under the shut frame: the shut
@@ -663,7 +662,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
           const auto &shutVerts{instance.isDeforming ? mesh.vertsShut
                                                      : mesh.verts};
           for (const auto index : face)
-            box.extend(float3(shutXf * float4(shutVerts[index].point, 1.0f)));
+            box.extend(transformPoint(shutXf, shutVerts[index].point));
         }
       }
       if (light.isSampled && light.totalArea > 0)
@@ -870,9 +869,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     // world-space area, so this is uniform over the instance as it stands
     // in the world, and `Scene::makeHit` reports the point in the same
     // space.
-    float2 xi{sampler};
-    float sqrtXi{std::sqrt(xi.x)};
-    auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
+    const auto bary{smdl::uniformTriangleSample(float2(sampler))};
     hit = mScene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time);
     positionPDF = 1.0f / light.totalArea;
   }
@@ -916,12 +913,12 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   const auto worldPoint{[&](uint32_t index) {
     const auto object{instance.isDeforming ? mesh.vertAt(index, time).point
                                            : mesh.verts[index].point};
-    return float3(frame.objectToWorld * float4(object, 1.0f));
+    return transformPoint(frame.objectToWorld, object);
   }};
   const auto point0{worldPoint(face[0])};
   const auto point1{worldPoint(face[1])};
   const auto point2{worldPoint(face[2])};
-  const float worldArea{0.5f * length(cross(point1 - point0, point2 - point0))};
+  const float worldArea{triangleArea(point0, point1, point2)};
   if (!(worldArea > 0)) return 0.0f;
   return light.faceDistr.indexPMF(int(faceIndex)) / worldArea;
 }
@@ -957,9 +954,7 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
   // within the face as it stands at the time, and the density as the
   // face's share over its world area then.
   const int faceIndex{light.faceDistr.indexSample(float(sampler))};
-  const float2 xi{sampler};
-  const float sqrtXi{std::sqrt(xi.x)};
-  const auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
+  const auto bary{smdl::uniformTriangleSample(float2(sampler))};
   hit = instance.isDeforming
             ? mScene.makeHitDeforming(frame, light.instIndex,
                                       uint32_t(faceIndex), bary, time)
@@ -995,7 +990,7 @@ bool LightSampler::sampleSphereCone(const AreaLight &light,
   const auto &instance{mScene.meshInstances[light.instIndex]};
   const auto &primitive{*mScene.primitives[instance.primIndex]};
   const float3 objectNormal{
-      normalize(float3(frame.worldToRigid * float4(normal, 0.0f)))};
+      normalize(transformDirection(frame.worldToRigid, normal))};
   const float3 objectPoint{primitive.spec.radius * objectNormal};
   const float2 uv{primitiveUV(primitive.spec, 0, objectPoint)};
   hit = mScene.makePrimitiveHitFrom(

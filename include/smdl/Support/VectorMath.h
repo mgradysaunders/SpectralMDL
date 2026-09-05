@@ -567,6 +567,31 @@ operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
+/// Apply an affine transform to a point, i.e., with the translation.
+///
+/// This is the whole of what `m * Vector<T, 4>(p, 1)` narrowed back to 3
+/// dimensions means, said once: the homogeneous coordinate is the entire
+/// difference between transforming a point and transforming a direction,
+/// and it is the easiest part of the spelling to mistype.
+template <typename T>
+[[nodiscard]] constexpr Vector<T, 3>
+transformPoint(const Matrix<T, 4, 4> &m, const Vector<T, 3> &p) noexcept {
+  return Vector<T, 3>(m * Vector<T, 4>(p, T(1)));
+}
+
+/// Apply an affine transform to a direction, i.e., without the
+/// translation.
+///
+/// \note
+/// A direction is not a normal. Under a shear or a non-uniform scale the
+/// two transform differently, and a normal needs the cofactor matrix
+/// (`cof(A) = det(A) A^-T`) rather than `A` itself.
+template <typename T>
+[[nodiscard]] constexpr Vector<T, 3>
+transformDirection(const Matrix<T, 4, 4> &m, const Vector<T, 3> &v) noexcept {
+  return Vector<T, 3>(m * Vector<T, 4>(v, T(0)));
+}
+
 /// Matrix transpose.
 template <typename T, size_t N, size_t M>
 [[nodiscard]]

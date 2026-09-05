@@ -190,11 +190,11 @@ int LightTree::sample(const float3 &point, float xi,
     const float pLeft{leftProbability(nodeIndex, point)};
     if (xi < pLeft) {
       p *= pLeft;
-      xi = clampUnit(xi / pLeft);
+      xi = smdl::canonicalize(xi / pLeft);
       nodeIndex++;
     } else {
       p *= 1.0f - pLeft;
-      xi = clampUnit((xi - pLeft) / (1.0f - pLeft));
+      xi = smdl::canonicalize((xi - pLeft) / (1.0f - pLeft));
       nodeIndex = node.link;
     }
   }

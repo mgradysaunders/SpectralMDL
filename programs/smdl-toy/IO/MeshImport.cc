@@ -1,4 +1,5 @@
 #include "IO/MeshImport.h"
+#include "IO/Assimp.h"
 
 #include "assimp/Importer.hpp"
 #include "assimp/config.h"
@@ -12,20 +13,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-
-namespace {
-
-// An assimp matrix as a `float4x4`. assimp stores rows, this stores columns;
-// both denote the same map, so nothing about the composition order changes
-// with the conversion.
-[[nodiscard]] float4x4 fromAssimp(const aiMatrix4x4 &m) noexcept {
-  return float4x4{
-      float4{m.a1, m.b1, m.c1, m.d1}, float4{m.a2, m.b2, m.c2, m.d2},
-      float4{m.a3, m.b3, m.c3, m.d3}, float4{m.a4, m.b4, m.c4, m.d4}};
-}
-
-} // namespace
 
 void configureImporter(Assimp::Importer &importer,
                        unsigned extraRemovedComponents) {
@@ -307,7 +294,7 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
     for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
       const auto &vertex{assMesh.mVertices[i]};
       bound.extend(
-          float3(nodeToFile * float4(vertex.x, vertex.y, vertex.z, 1.0f)));
+          transformPoint(nodeToFile, float3(vertex.x, vertex.y, vertex.z)));
     }
     // Charge the geometry to the node that places it and to every ancestor,
     // so that a subtree reports what selecting it would instantiate.
@@ -363,9 +350,7 @@ namespace {
 // non-finite value is reported as the absence of a number.
 [[nodiscard]] std::string jsonFloat(float value) {
   if (!std::isfinite(value)) return "null";
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", double(value));
-  return buffer;
+  return smdl::concat(smdl::Precise(value));
 }
 
 // Coordinate triples are written whole rather than through `array()`,

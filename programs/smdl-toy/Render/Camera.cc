@@ -59,90 +59,90 @@ Camera::Camera(const CameraOptions &options) {
             "-distortion-k2"));
     }
   }
-  numPixelsX = float(options.resolution.x);
-  numPixelsY = float(options.resolution.y);
-  aspectRatio = numPixelsX / numPixelsY;
-  focalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
+  mNumPixelsX = float(options.resolution.x);
+  mNumPixelsY = float(options.resolution.y);
+  mAspectRatio = mNumPixelsX / mNumPixelsY;
+  mFocalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
   // One pixel's subtended angle, the ray cone spread that seeds the LOD
   // state; zero switches the cone off end to end.
-  coneAngleBase =
-      options.noLOD ? 0.0f : std::atan(1.0f / (focalLength * numPixelsY));
-  cameraToWorld =
+  mConeAngleBase =
+      options.noLOD ? 0.0f : std::atan(1.0f / (mFocalLength * mNumPixelsY));
+  mCameraToWorld =
       smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp);
-  lookFrom = options.lookFrom;
-  lookTo = options.lookTo;
-  lookUp = options.lookUp;
+  mLookFrom = options.lookFrom;
+  mLookTo = options.lookTo;
+  mLookUp = options.lookUp;
   if (options.motion) {
-    lookFromShut = options.lookFromShut;
-    lookToShut = options.lookToShut;
-    lookUpShut = options.lookUpShut;
-    const auto same{[](const float3 &a, const float3 &b) {
-      return a.x == b.x && a.y == b.y && a.z == b.z;
-    }};
-    moving = !(same(lookFromShut, lookFrom) && same(lookToShut, lookTo) &&
-               same(lookUpShut, lookUp));
+    mLookFromShut = options.lookFromShut;
+    mLookToShut = options.lookToShut;
+    mLookUpShut = options.lookUpShut;
+    mMoving = !(smdl::isAllTrue(mLookFromShut == mLookFrom) &&
+                smdl::isAllTrue(mLookToShut == mLookTo) &&
+                smdl::isAllTrue(mLookUpShut == mLookUp));
   }
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
-  rCorner = std::hypot(0.5f * aspectRatio, 0.5f);
-  distortionK1 = options.distortionK1;
-  distortionK2 = options.distortionK2;
-  hasDistortion = distortionK1 != 0 || distortionK2 != 0;
-  distortionScale =
-      options.distortionFit ? 1 / (1 + distortionK1 + distortionK2) : 1.0f;
-  if (hasDistortion) {
-    SMDL_LOG_INFO("Lens distortion: corner displacement ",
-                  100 *
-                      (distortionScale * (1 + distortionK1 + distortionK2) - 1),
-                  "%, center scale ", distortionScale);
+  mRCorner = std::hypot(0.5f * mAspectRatio, 0.5f);
+  mDistortionK1 = options.distortionK1;
+  mDistortionK2 = options.distortionK2;
+  mHasDistortion = mDistortionK1 != 0 || mDistortionK2 != 0;
+  mDistortionScale =
+      options.distortionFit ? 1 / (1 + mDistortionK1 + mDistortionK2) : 1.0f;
+  if (mHasDistortion) {
+    SMDL_LOG_INFO(
+        "Lens distortion: corner displacement ",
+        100 * (mDistortionScale * (1 + mDistortionK1 + mDistortionK2) - 1),
+        "%, center scale ", mDistortionScale);
   }
   // `lookAt()` is orthonormal, so the lens disk needs no unit conversion.
   // The LOD ray cone keeps the per-pixel spread: defocus blur comes out of
   // averaging the lens samples, so widening the cone for it would blur the
   // textures a second time.
   if (options.aperture > 0) {
-    lensRadius = options.aperture;
+    mLensRadius = options.aperture;
   } else if (options.fStop > 0) {
-    // A 35mm frame is 24mm high and `focalLength` is in units of image
+    // A 35mm frame is 24mm high and `mFocalLength` is in units of image
     // height, so the equivalent lens is 24mm*focalLength long and 1/fstop
     // of that across.
-    lensRadius = 0.5f * 0.024f * focalLength / options.fStop;
+    mLensRadius = 0.5f * 0.024f * mFocalLength / options.fStop;
   }
-  focusDistance = options.focus > 0 ? options.focus
-                                    : length(options.lookTo - options.lookFrom);
-  numBlades = options.blades;
-  bladeAngle = smdl::radians(options.bladeAngleDeg);
-  vignetteStrength = options.vignetting;
+  mFocusDistance = options.focus > 0
+                       ? options.focus
+                       : length(options.lookTo - options.lookFrom);
+  mNumBlades = options.blades;
+  mBladeAngle = smdl::radians(options.bladeAngleDeg);
+  mVignetteStrength = options.vignetting;
   // The barrel rim radius and the rim displacement per unit of image
   // radius, both zero when mechanical vignetting is off. Parameterizing
   // the barrel half-length by its corner displacement is exact, since the
   // displacement is proportional to the image radius.
-  rimRadius = options.catEyeRadius > 0 ? options.catEyeRadius : lensRadius;
-  rimSlope = options.catEye * rimRadius / rCorner;
-  if (lensRadius > 0) {
-    SMDL_LOG_INFO("Depth of field: lens radius ", lensRadius,
-                  " scene units, focus at ", focusDistance,
-                  numBlades >= 3 ? smdl::concat(", ", numBlades, " blades")
-                                 : std::string());
+  mRimRadius = options.catEyeRadius > 0 ? options.catEyeRadius : mLensRadius;
+  mRimSlope = options.catEye * mRimRadius / mRCorner;
+  if (mLensRadius > 0) {
+    SMDL_LOG_INFO("Depth of field: lens radius ", mLensRadius,
+                  " scene units, focus at ", mFocusDistance,
+                  mNumBlades >= 3 ? smdl::concat(", ", mNumBlades, " blades")
+                                  : std::string());
   }
-  if (vignetteStrength > 0) {
-    SMDL_LOG_INFO("Natural vignetting: strength ", vignetteStrength,
-                  ", corner transmission ",
-                  std::pow(focalLength * focalLength /
-                               (rCorner * rCorner + focalLength * focalLength),
-                           2 * vignetteStrength));
+  if (mVignetteStrength > 0) {
+    SMDL_LOG_INFO(
+        "Natural vignetting: strength ", mVignetteStrength,
+        ", corner transmission ",
+        std::pow(mFocalLength * mFocalLength /
+                     (mRCorner * mRCorner + mFocalLength * mFocalLength),
+                 2 * mVignetteStrength));
   }
-  if (rimSlope > 0 && lensRadius > 0) {
-    SMDL_LOG_INFO("Mechanical vignetting: rim radius ", rimRadius,
-                  " scene units against a lens radius of ", lensRadius,
-                  ", displaced ", options.catEye * rimRadius,
+  if (mRimSlope > 0 && mLensRadius > 0) {
+    SMDL_LOG_INFO("Mechanical vignetting: rim radius ", mRimRadius,
+                  " scene units against a lens radius of ", mLensRadius,
+                  ", displaced ", options.catEye * mRimRadius,
                   " at the frame corner");
   }
-  if (moving) {
+  if (mMoving) {
     SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
-                  length(lookFromShut - lookFrom),
+                  length(mLookFromShut - mLookFrom),
                   " scene units and the target moves ",
-                  length(lookToShut - lookTo));
+                  length(mLookToShut - mLookTo));
   } else if (options.motion) {
     SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
                   "rendering still");
@@ -153,46 +153,47 @@ CameraSample Camera::sample(size_t x, size_t y,
                             Sampler &sampler) const noexcept {
   // The pixel jitter is always dimensions 0-1 of the sequence.
   const auto xi{float2(sampler)};
-  const float u{(float(x) + xi.x) / numPixelsX};
-  const float v{(float(y) + xi.y) / numPixelsY};
+  const float u{(float(x) + xi.x) / mNumPixelsX};
+  const float v{(float(y) + xi.y) / mNumPixelsY};
   // The image-plane point: the film point inverted through the lens.
-  const float2 image{+(u - 0.5f) * aspectRatio, -(v - 0.5f)};
+  const float2 image{+(u - 0.5f) * mAspectRatio, -(v - 0.5f)};
   // Distortion remaps only the direction this sensor point looks in;
   // `image` stays the sensor coordinate, which is what the vignetting
   // below needs, since vignetting is film and pupil geometry rather
   // than a property of the outgoing ray.
   float2 imageIdeal{image};
   float distortConeScale{1.0f};
-  if (hasDistortion)
-    imageIdeal =
-        distortSensorPoint(image, distortionK1, distortionK2, distortionScale,
-                           rCorner, focalLength, distortConeScale);
+  if (mHasDistortion)
+    imageIdeal = distortSensorPoint(image, mDistortionK1, mDistortionK2,
+                                    mDistortionScale, mRCorner, mFocalLength,
+                                    distortConeScale);
   float2 lens{};
   auto result{CameraSample{}};
   result.ray = Ray{float3(0.0f),
-                   float3(imageIdeal.x, imageIdeal.y, -focalLength), EPS, INF};
-  if (lensRadius > 0) {
+                   float3(imageIdeal.x, imageIdeal.y, -mFocalLength), EPS, INF};
+  if (mLensRadius > 0) {
     // Thin lens: the pinhole direction locates the point of the focus
     // plane (camera-space z = -focusDistance) that this pixel images,
     // and the ray runs to it from a point on the lens.
-    float3 pointOnFocusPlane{result.ray.dir * (focusDistance / focalLength)};
-    lens = lensRadius *
-           smdl::uniformApertureSample(numBlades, bladeAngle, float2(sampler));
+    float3 pointOnFocusPlane{result.ray.dir * (mFocusDistance / mFocalLength)};
+    lens = mLensRadius * smdl::uniformApertureSample(mNumBlades, mBladeAngle,
+                                                     float2(sampler));
     result.ray.org = float3(lens.x, lens.y, 0.0f);
     result.ray.dir = pointOnFocusPlane - result.ray.org;
   }
   // The estimator averages radiance with no geometric weight of its
   // own, so everything between the scene and the film lands on the
   // weight here.
-  if (vignetteStrength > 0) {
+  if (mVignetteStrength > 0) {
     // Natural vignetting: cos^4 of the film-to-lens segment. The film
     // point is the image point inverted, hence the sum. The strength
     // enters as an exponent so it scales the falloff in stops.
-    float cosSquared{focalLength * focalLength /
-                     (lengthSquared(lens + image) + focalLength * focalLength)};
-    result.weight *= std::pow(cosSquared, 2 * vignetteStrength);
+    float cosSquared{
+        mFocalLength * mFocalLength /
+        (lengthSquared(lens + image) + mFocalLength * mFocalLength)};
+    result.weight *= std::pow(cosSquared, 2 * mVignetteStrength);
   }
-  if (rimSlope > 0 && lensRadius > 0) {
+  if (mRimSlope > 0 && mLensRadius > 0) {
     // Mechanical vignetting: the barrel rims, projected onto the
     // lens plane and displaced either way along the image point's
     // radial direction. The lens point must clear both, so the
@@ -200,19 +201,19 @@ CameraSample Camera::sample(size_t x, size_t y,
     // eye seen in corner bokeh. Rejection darkens the corner by the
     // same factor that thins the samples, so relative noise barely
     // moves.
-    float2 offset{rimSlope * image};
-    if (lengthSquared(lens - offset) > rimRadius * rimRadius ||
-        lengthSquared(lens + offset) > rimRadius * rimRadius)
+    float2 offset{mRimSlope * image};
+    if (lengthSquared(lens - offset) > mRimRadius * mRimRadius ||
+        lengthSquared(lens + offset) > mRimRadius * mRimRadius)
       result.weight = 0;
   }
-  result.coneAngle = coneAngleBase * distortConeScale;
+  result.coneAngle = mConeAngleBase * distortConeScale;
   return result;
 }
 
 void Camera::toWorldMoving(CameraSample &sample, float u) const noexcept {
-  sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromShut,
-                                    (1 - u) * lookTo + u * lookToShut,
-                                    (1 - u) * lookUp + u * lookUpShut));
+  sample.ray.transform(smdl::lookAt((1 - u) * mLookFrom + u * mLookFromShut,
+                                    (1 - u) * mLookTo + u * mLookToShut,
+                                    (1 - u) * mLookUp + u * mLookUpShut));
   sample.ray.dir = normalize(sample.ray.dir);
   sample.ray.time = u;
 }

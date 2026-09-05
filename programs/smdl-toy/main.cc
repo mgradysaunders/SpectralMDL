@@ -32,7 +32,6 @@
 #include "Progress.h"
 #include "Render/Autolook.h"
 #include "Render/Camera.h"
-#include "Render/DenormalMode.h"
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Manifold.h"
@@ -43,6 +42,7 @@
 
 #include "smdl/Common.h"
 #include "smdl/RenderUtil/SpectralFilm.h"
+#include "smdl/Support/Denormals.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
@@ -519,19 +519,6 @@ static cl::opt<std::string> optProfile{
              "* open in chrome://tracing or https://ui.perfetto.dev"),
     cl::ValueOptional, cl::init(std::string{}), cl::cat(catOutput)};
 //--}
-
-// A pixel window as '-crop-window' spells it.
-[[nodiscard]] static std::string formatWindow(int4 window) {
-  return smdl::concat(window[0], ",", window[1], ",", window[2], ",",
-                      window[3]);
-}
-
-// Whole-rectangle equality, which vector `operator==` does not give:
-// it yields one result per component, per MDL semantics.
-[[nodiscard]] static bool sameWindow(int4 lhs, int4 rhs) noexcept {
-  return lhs[0] == rhs[0] && lhs[1] == rhs[1] && //
-         lhs[2] == rhs[2] && lhs[3] == rhs[3];
-}
 
 // The command line, joined for the `smdl args` metadata field, with the
 // session-only flags stripped: outputs, display transforms, the sample
@@ -1137,7 +1124,7 @@ int main(int argc, char **argv) try {
           window[2] <= resolution.x && 0 <= window[1] &&
           window[1] < window[3] && window[3] <= resolution.y))
       throw smdl::Error(
-          smdl::concat("-crop-window ", formatWindow(window),
+          smdl::concat("-crop-window ", spellVector(window),
                        " is not a non-empty sub-rectangle of -resolution ",
                        resolution.x, ",", resolution.y));
   }
@@ -1222,11 +1209,11 @@ int main(int argc, char **argv) try {
     // the film would stop having a single samples per pixel. Both
     // directions land here: the file's window defaults to the whole
     // frame, and so does this session's.
-    if (!sameWindow(resumed.cropWindow, window))
+    if (!smdl::isAllTrue(resumed.cropWindow == window))
       throw smdl::Error(smdl::concat(
           "cannot resume: the file was rendered with -crop-window ",
-          formatWindow(resumed.cropWindow), " against this session's ",
-          formatWindow(window),
+          spellVector(resumed.cropWindow), " against this session's ",
+          spellVector(window),
           "; the window must be held constant across a resumed sequence, "
           "otherwise the samples per pixel stop being uniform"));
     if (auto itr{resumed.fields.find("render sampler")};
@@ -1783,8 +1770,9 @@ int main(int argc, char **argv) try {
       error->print();
       return;
     }
-    std::error_code ignored{};
-    std::filesystem::rename(partPath, path, ignored);
+    // A checkpoint that loses the rename is one missed preview, not a
+    // reason to stop the render.
+    (void)smdl::tryRenameOnto(partPath.string(), path.string());
   }};
   auto lastCheckpoint{std::chrono::steady_clock::now()};
   const auto checkpoint{[&] {
@@ -1851,7 +1839,7 @@ int main(int argc, char **argv) try {
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary =
       optCropWindow.getNumOccurrences() > 0
-          ? smdl::concat("Rendered window ", formatWindow(window), " of ",
+          ? smdl::concat("Rendered window ", spellVector(window), " of ",
                          numPixelsX, "x", numPixelsY, " at ", spp, " spp")
           : smdl::concat("Rendered ", numPixelsX, "x", numPixelsY, " at ", spp,
                          " spp");
@@ -1897,7 +1885,7 @@ int main(int argc, char **argv) try {
         // Denormals are worth flushing for the whole task: the material
         // code the walk runs produces them, and the microcode assist each one
         // costs is a measurable fraction of the render.
-        const ScopedFlushDenormals flushDenormals{};
+        const smdl::ScopedFlushDenormals flushDenormals{};
         // The pixel index in the whole frame, which seeds the sampler and
         // addresses every per-pixel buffer, so a window renders the same
         // pixels the whole frame would.
@@ -2088,11 +2076,10 @@ int main(int argc, char **argv) try {
     film.writeENVIFile(
         smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
         partName, extraHeaderLines, window);
-    if (std::rename(partName.c_str(), outputSpectrum.c_str()) != 0 ||
-        std::rename((partName + ".hdr").c_str(),
-                    (outputSpectrum + ".hdr").c_str()) != 0)
-      throw smdl::Error(smdl::concat("cannot rename ", smdl::Quoted(partName),
-                                     " into place"));
+    // Both members of the ENVI pair; `writeENVIFile()` wrote them under
+    // the temporary name and its own '.hdr' suffix.
+    smdl::renameOnto(partName, outputSpectrum);
+    smdl::renameOnto(partName + ".hdr", outputSpectrum + ".hdr");
     if (savingTree) {
       // The guide tree rides beside the accumulation with the same
       // temporary-and-rename discipline, stamped with the merged sample
@@ -2101,9 +2088,7 @@ int main(int argc, char **argv) try {
       const auto treeName{outputSpectrum + std::string(GUIDE_TREE_EXTENSION)};
       const auto treePartName{treeName + ".part"};
       sdtree->writeFile(treePartName, resumed.samplesPerPixel + spp);
-      if (std::rename(treePartName.c_str(), treeName.c_str()) != 0)
-        throw smdl::Error(smdl::concat(
-            "cannot rename ", smdl::Quoted(treePartName), " into place"));
+      smdl::renameOnto(treePartName, treeName);
       SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
                     sdtree->leafCount(), " spatial leaves");
     }

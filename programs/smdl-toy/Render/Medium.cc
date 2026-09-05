@@ -1,7 +1,6 @@
 #include "Render/Medium.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <mutex>
 #include <set>
 
@@ -495,8 +494,8 @@ void Medium::projectSegment(const float3 &org, const float3 &dir) noexcept {
   if (mComponents.empty()) {
     if (mMeshInstance) {
       const auto &toRigid{mMeshInstance->frame.worldToRigid};
-      mOrgR = float3(toRigid * float4(org, 1.0f));
-      mDirR = float3(toRigid * float4(dir, 0.0f));
+      mOrgR = transformPoint(toRigid, org);
+      mDirR = transformDirection(toRigid, dir);
     } else {
       mOrgR = org;
       mDirR = dir;
@@ -508,8 +507,8 @@ void Medium::projectSegment(const float3 &org, const float3 &dir) noexcept {
     if (!component.heterogeneous) continue;
     if (component.meshInstance) {
       const auto &toRigid{component.meshInstance->frame.worldToRigid};
-      component.orgR = float3(toRigid * float4(org, 1.0f));
-      component.dirR = float3(toRigid * float4(dir, 0.0f));
+      component.orgR = transformPoint(toRigid, org);
+      component.dirR = transformDirection(toRigid, dir);
     } else {
       component.orgR = org;
       component.dirR = dir;
@@ -524,8 +523,8 @@ void Medium::projectSegmentMoving(const float3 &org, const float3 &dir,
     if (mMeshInstance) {
       std::optional<InstanceFrame> scratch{};
       const auto &toRigid{mMeshInstance->frameAt(time, scratch).worldToRigid};
-      mOrgR = float3(toRigid * float4(org, 1.0f));
-      mDirR = float3(toRigid * float4(dir, 0.0f));
+      mOrgR = transformPoint(toRigid, org);
+      mDirR = transformDirection(toRigid, dir);
     } else {
       mOrgR = org;
       mDirR = dir;
@@ -539,8 +538,8 @@ void Medium::projectSegmentMoving(const float3 &org, const float3 &dir,
       std::optional<InstanceFrame> scratch{};
       const auto &toRigid{
           component.meshInstance->frameAt(time, scratch).worldToRigid};
-      component.orgR = float3(toRigid * float4(org, 1.0f));
-      component.dirR = float3(toRigid * float4(dir, 0.0f));
+      component.orgR = transformPoint(toRigid, org);
+      component.dirR = transformDirection(toRigid, dir);
     } else {
       component.orgR = org;
       component.dirR = dir;
@@ -741,8 +740,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
   // stratification of the rest of the path.
   if (!(mMajorant > 0.0f)) return false;
   const int hero{sampler.index(int(mSigmaA.size()))};
-  auto rng{
-      smdl::RNG((uint64_t(sampler.nextBits()) << 32) | sampler.nextBits())};
+  auto rng{smdl::RNG(nextSeed64(sampler))};
   Color P{1.0f};
   int iter{0};
   // The coefficients of one tentative collision, held across the loop
@@ -851,8 +849,7 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
   // involved. The loop draws from a seeded generator for the same
   // fixed-dimension-count reason as in 'sampleDistance'.
   if (!(mMajorant > 0.0f)) return;
-  auto rng{
-      smdl::RNG((uint64_t(sampler.nextBits()) << 32) | sampler.nextBits())};
+  auto rng{smdl::RNG(nextSeed64(sampler))};
   int iter{0};
   // See `sampleDistance()`; the emission this one asks for goes unread.
   Color sigmaA{}, sigmaS{}, emissionUnused{};

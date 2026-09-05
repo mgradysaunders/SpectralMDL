@@ -28,9 +28,11 @@ namespace smdl {
 /// What they owe the caller: a finite argument in the stated domain. There
 /// are no domain guards, so `fastLog` of zero, a denormal, a negative, or
 /// an infinity, and a NaN passed to any of them, are unspecified. A
-/// denormal is out of `fastLog`'s domain on purpose: the samplers clamp
-/// their canonical floats to the smallest normal float, and the render
-/// threads run with denormals flushed to zero, so no caller can form one.
+/// denormal is out of `fastLog`'s domain on purpose: `canonicalize()`
+/// holds the samplers' canonical floats at the smallest normal float, and
+/// the threads that run material code are expected to hold
+/// `ScopedFlushDenormals` (`Support/Denormals.h`), so no caller can form
+/// one.
 ///
 /// \{
 

@@ -1,4 +1,5 @@
 #include "IO/MeshDeform.h"
+#include "IO/Assimp.h"
 
 #include "assimp/anim.h"
 #include "assimp/commonMetaData.h"
@@ -12,26 +13,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 
 namespace {
-
-// An assimp matrix as a `float4x4`. assimp stores rows, this stores columns;
-// both denote the same map.
-[[nodiscard]] float4x4 fromAssimp(const aiMatrix4x4 &m) noexcept {
-  return float4x4{
-      float4{m.a1, m.b1, m.c1, m.d1}, float4{m.a2, m.b2, m.c2, m.d2},
-      float4{m.a3, m.b3, m.c3, m.d3}, float4{m.a4, m.b4, m.c4, m.d4}};
-}
-
-[[nodiscard]] float3 fromAssimp(const aiVector3D &v) noexcept {
-  return float3(v.x, v.y, v.z);
-}
-
-// A quaternion as (x, y, z, w).
-[[nodiscard]] float4 fromAssimp(const aiQuaternion &q) noexcept {
-  return float4(q.x, q.y, q.z, q.w);
-}
 
 [[nodiscard]] float4 normalizeQuat(float4 q) noexcept {
   if (!smdl::tryNormalize(q)) return float4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -265,19 +248,11 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
   auto listing{std::string()};
   for (unsigned i = 0; i < assScene.mNumAnimations; i++) {
     const auto &clip{*assScene.mAnimations[i]};
-    char duration[32]{};
-    std::snprintf(duration, sizeof(duration), "%.3g",
-                  clip.mDuration / ticksPerSecond(clip));
-    listing += smdl::concat("\n  ", i, ": ", smdl::Quoted(clip.mName.C_Str()),
-                            " (", duration, " s)");
+    listing += smdl::concat(
+        "\n  ", i, ": ", smdl::Quoted(clip.mName.C_Str()), " (",
+        smdl::Brief(clip.mDuration / ticksPerSecond(clip), 3), " s)");
   }
   return listing;
-}
-
-[[nodiscard]] std::string formatFloat(float value) {
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", double(value));
-  return buffer;
 }
 
 } // namespace
@@ -289,8 +264,9 @@ std::string AnimationSpec::key() const {
     parts.push_back(smdl::concat("clip ", smdl::Quoted(clipName)));
   else if (clipIndex != INVALID_INDEX)
     parts.push_back(smdl::concat("clip ", clipIndex));
-  if (offset != 0) parts.push_back("offset " + formatFloat(offset));
-  if (speed != 1) parts.push_back("speed " + formatFloat(speed));
+  if (offset != 0)
+    parts.push_back(smdl::concat("offset ", smdl::Precise(offset)));
+  if (speed != 1) parts.push_back(smdl::concat("speed ", smdl::Precise(speed)));
   if (once) parts.push_back("once");
   auto result{std::string()};
   for (const auto &part : parts) {
@@ -561,7 +537,7 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
         const auto &boneXf{boneXfs[influences[k].bone]};
         for (size_t j = 0; j < 4; j++) xf[j] += w * boneXf[j];
       }
-      bake.points[i] = float3(xf * float4(bake.points[i], 1.0f));
+      bake.points[i] = transformPoint(xf, bake.points[i]);
       const auto axis0{float3(xf[0])}, axis1{float3(xf[1])},
           axis2{float3(xf[2])};
       if (!bake.normals.empty()) {

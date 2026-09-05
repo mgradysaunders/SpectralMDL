@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 // The analytic geometry of the primitive shapes, in one place: the
 // closed-form surface evaluation, the Embree user-geometry callbacks
