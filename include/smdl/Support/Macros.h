@@ -95,6 +95,23 @@ SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {
     if (!(cond)) ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__); \
   } while (false)
 
+/// Sanity check a condition in a debug build only.
+///
+/// For an invariant on an operation small enough that the always-on
+/// check would cost more than the work it guards: the size agreement of
+/// two spectra about to be added band by band, say, which is three
+/// instructions in front of six. Reserve it for invariants the library
+/// establishes itself. A precondition a caller could get wrong, and
+/// above all one that decides whether a load is in bounds, stays on the
+/// always-on `SMDL_SANITY_CHECK`; where that one is too expensive for a
+/// hot caller, give the caller an unchecked entry point instead of
+/// weakening the checked one.
+#ifdef NDEBUG
+#define SMDL_DEBUG_CHECK(cond) ((void)0)
+#else
+#define SMDL_DEBUG_CHECK(cond) SMDL_SANITY_CHECK(cond)
+#endif
+
 /// Sanity check a condition, explaining what it means if it fails.
 #define SMDL_SANITY_CHECK_MSG(cond, message)                                 \
   do {                                                                       \

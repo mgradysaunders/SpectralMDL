@@ -107,4 +107,33 @@ TEST_CASE("FastMath") {
     CHECK(std::abs(smdl::fastAcos(-tiny) - smdl::fastAcos(+tiny)) < 1e-6f);
     CHECK(std::abs(smdl::fastAcos(-1e-7f) - smdl::fastAcos(+1e-7f)) < 1e-6f);
   }
+  SUBCASE("atan2, absolute error in radians over the circle") {
+    double worst{};
+    // Over angles rather than over the plane, so that every eighth of
+    // the circle the reflections stitch together is swept evenly, and
+    // over several magnitudes, because the result is scale invariant
+    // only up to the rounding of the one division.
+    for (const double radius : {1.0e-4, 1.0, 3.7, 1.0e5}) {
+      sweep(-3.14159265358979, 3.14159265358979, [&](double angle) {
+        const float y{float(radius * std::sin(angle))};
+        const float x{float(radius * std::cos(angle))};
+        const double ref{std::atan2(double(y), double(x))};
+        double err{std::abs(double(smdl::fastAtan2(y, x)) - ref)};
+        if (err > 3.14159265358979)
+          err = 6.28318530717959 - err; // across the branch cut
+        worst = std::max(worst, err);
+      });
+    }
+    CHECK(worst < 4e-7);
+  }
+  SUBCASE("atan2, the axes and the origin") {
+    CHECK(smdl::fastAtan2(0.0f, 0.0f) == 0.0f);
+    CHECK(smdl::fastAtan2(0.0f, 1.0f) == 0.0f);
+    CHECK(smdl::fastAtan2(0.0f, -1.0f) == doctest::Approx(3.14159265));
+    CHECK(smdl::fastAtan2(1.0f, 0.0f) == doctest::Approx(1.57079633));
+    CHECK(smdl::fastAtan2(-1.0f, 0.0f) == doctest::Approx(-1.57079633));
+    // The one place it parts with 'std::atan2', which reads the sign of
+    // a zero and answers -pi here.
+    CHECK(smdl::fastAtan2(-0.0f, -1.0f) == doctest::Approx(3.14159265));
+  }
 }

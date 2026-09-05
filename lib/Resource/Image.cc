@@ -552,6 +552,10 @@ float4 Image::fetch(int x, int y, int level) const noexcept {
   SMDL_SANITY_CHECK(0 <= level && level < getNumLevels());
   SMDL_SANITY_CHECK(0 <= x && x < getNumTexelsX(level));
   SMDL_SANITY_CHECK(0 <= y && y < getNumTexelsY(level));
+  return fetchUnsafe(x, y, level);
+}
+
+float4 Image::fetchUnsafe(int x, int y, int level) const noexcept {
   auto texel{float4{std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),

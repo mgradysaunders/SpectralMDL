@@ -1,3 +1,4 @@
+#include "smdl/RenderUtil/FastMath.h"
 #include "smdl/RenderUtil/MonteCarlo.h"
 
 #include <algorithm>
@@ -214,16 +215,16 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
   const float lenSq{lengthSquared(wi)};
   if (!(lenSq > 0)) return 0.0f;
   const float cosTheta{std::clamp(wi.z / std::sqrt(lenSq), -1.0f, 1.0f)};
-  const float theta{std::acos(cosTheta)};
+  const float theta{fastAcos(cosTheta)};
   const float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
   if (!(sinTheta > 0)) return 0.0f;
-  float phi{std::atan2(wi.y, wi.x)};
+  float phi{fastAtan2(wi.y, wi.x)};
   if (phi < 0.0f) phi += TWO_PI;
   phi = std::clamp(phi, 0.0f, TWO_PI);
   const int nX{numTexelsX};
   const int nY{numTexelsY};
-  const int iX{std::clamp(int(float(nX) * (phi / TWO_PI)), 0, nX - 1)};
-  const int iY{std::clamp(int(float(nY) * (theta / PI)), 0, nY - 1)};
+  const int iX{std::clamp(int(float(nX) * (phi * INV_TWO_PI)), 0, nX - 1)};
+  const int iY{std::clamp(int(float(nY) * (theta * INV_PI)), 0, nY - 1)};
   if (iPixel) *iPixel = {iX, iY};
   return pixelPMF(int2(iX, iY)) *
          (float(numTexelsX * numTexelsY) / (TWO_PI * PI * sinTheta));

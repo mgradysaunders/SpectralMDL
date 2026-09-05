@@ -253,6 +253,16 @@ public:
   ///
   [[nodiscard]] float4 fetch(int x, int y, int level = 0) const noexcept;
 
+  /// The same texel with none of the checks, for a caller that has
+  /// already clamped its coordinates and fetches often enough to feel
+  /// them.
+  ///
+  /// Every bound `fetch()` checks is a precondition here: the image must
+  /// be loaded, `level` must be a level it has, and `x` and `y` must be
+  /// inside that level. Out of range reads out of bounds.
+  ///
+  [[nodiscard]] float4 fetchUnsafe(int x, int y, int level = 0) const noexcept;
+
 private:
   /// The `Compiler` drops images the optimized module provably never
   /// reads, and defines the texel address as a JIT symbol, which needs

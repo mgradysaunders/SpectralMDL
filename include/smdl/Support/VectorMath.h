@@ -19,6 +19,14 @@ constexpr float PI = 3.141592653589793f;
 /// The constant `2 PI`.
 constexpr float TWO_PI = 6.283185307179586f;
 
+/// The constant `1 / PI`, for the hot paths that would otherwise divide:
+/// neither this nor `INV_TWO_PI` is exact, so the compiler will not fold
+/// the division into a multiply on its own.
+constexpr float INV_PI = 0.3183098861837907f;
+
+/// The constant `1 / (2 PI)`. See `INV_PI`.
+constexpr float INV_TWO_PI = 0.15915494309189535f;
+
 /// Positive infinity, the canonical unbounded ray parameter.
 constexpr float INF = std::numeric_limits<float>::infinity();
 

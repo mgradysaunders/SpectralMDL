@@ -22,7 +22,7 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
     auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
     auto sinTheta{std::sin(theta)};
     for (int iX = 0; iX < numTexelsX; iX++) {
-      auto value{mImage.fetch(iX, iY)};
+      auto value{mImage.fetchUnsafe(iX, iY)};
       auto lum{(value.x + value.y + value.z) / 3.0f};
       weights.push_back(sinTheta * lum);
       lumSum += double(sinTheta) * lum;
@@ -78,7 +78,7 @@ Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
   // compensation the sampling density is zero wherever the radiance is at
   // or below the mean, but the radiance itself is not.
   if (iPixel.x >= 0 && iPixel.y >= 0)
-    compiler.convertRGBToColor(state, mImage.fetch(iPixel.x, iPixel.y),
+    compiler.convertRGBToColor(state, mImage.fetchUnsafe(iPixel.x, iPixel.y),
                                Li.data());
   return Li * mScaleFactor;
 }
@@ -97,7 +97,7 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   int2 iPixel{};
   float3 wi{mImageDistr.directionSample(xi, &iPixel, &pdf)};
   if (pdf > 0.0f) {
-    compiler.convertRGBToColor(state, mImage.fetch(iPixel.x, iPixel.y),
+    compiler.convertRGBToColor(state, mImage.fetchUnsafe(iPixel.x, iPixel.y),
                                Li.data());
     Li *= mScaleFactor;
   } else {

@@ -62,6 +62,13 @@ struct WavelengthGrid final {
   /// color-to-RGB conversion and the night tonemap integrate against.
   std::vector<float> weights{};
 
+  /// The `smdl::State` every evaluation starts from: the library
+  /// defaults plus the wavelength endpoints and quadrature weights,
+  /// which no evaluation varies. `makeRenderState()` copies it rather
+  /// than building a fresh state, which is half a kilobyte of stores
+  /// per path vertex otherwise.
+  smdl::State stateBase{};
+
   /// The band edges in nanometers, one more than the band count, or
   /// empty when `-wavelength-jitter` is off.
   ///
@@ -101,13 +108,31 @@ struct WavelengthGrid final {
       }
     }
     bandEdges = jitter ? wavelengthBandEdges(grid) : std::vector<float>{};
+    // The endpoints come from the nominal grid rather than from the
+    // wavelengths an evaluation carries, which under
+    // `-wavelength-jitter` is the sample's own perturbed grid:
+    // `state::wavelength_min()` and `wavelength_max()` are render-wide
+    // constants, and the library's uniform quadrature falls back on
+    // their difference, which must not wobble per sample.
+    stateBase = smdl::State{};
+    stateBase.wavelength_min = grid[0];
+    stateBase.wavelength_max = grid[grid.size() - 1];
+    stateBase.wavelength_weight = weights.empty() ? nullptr : weights.data();
   }
 };
 
+/// The storage behind `renderGrid()`.
+///
+/// At namespace scope rather than inside the accessor because a
+/// function-local static is read through a guard, and `Color`'s
+/// constructor reads this at every path vertex. The cost is that it is
+/// initialized during startup instead of on first use, so nothing may
+/// touch it from another translation unit's static initializer.
+inline WavelengthGrid renderGridStorage{};
+
 /// The render-wide wavelength grid. See `WavelengthGrid`.
 [[nodiscard]] inline WavelengthGrid &renderGrid() noexcept {
-  static WavelengthGrid grid{};
-  return grid;
+  return renderGridStorage;
 }
 
 /// The render-wide shutter interval.
@@ -133,10 +158,13 @@ struct Shutter final {
   }
 };
 
+/// The storage behind `renderShutter()`, at namespace scope for the
+/// reason `renderGridStorage` is.
+inline Shutter renderShutterStorage{};
+
 /// The render-wide shutter interval. See `Shutter`.
 [[nodiscard]] inline Shutter &renderShutter() noexcept {
-  static Shutter shutter{};
-  return shutter;
+  return renderShutterStorage;
 }
 
 /// When a path happens, on both clocks: the shutter fraction in
@@ -189,20 +217,10 @@ public:
 makeRenderState(const smdl::SpectralColor &wavelengths,
                 smdl::BumpPtrAllocator *allocator = nullptr,
                 float time = renderShutter().time) noexcept {
-  smdl::State state{};
+  smdl::State state{renderGrid().stateBase};
   state.allocator = allocator;
   state.wavelength_base = wavelengths.data();
-  // The endpoints come from the nominal grid rather than from
-  // `wavelengths`, which under `-wavelength-jitter` is the sample's own
-  // perturbed grid: `state::wavelength_min()` and `wavelength_max()` are
-  // render-wide constants, and the library's uniform quadrature falls
-  // back on their difference, which must not wobble per sample.
-  const auto &nominal{renderGrid().wavelengths};
-  state.wavelength_min = nominal[0];
-  state.wavelength_max = nominal[nominal.size() - 1];
   state.animation_time = time;
-  const auto &weights{renderGrid().weights};
-  state.wavelength_weight = weights.empty() ? nullptr : weights.data();
   return state;
 }
 

@@ -125,7 +125,7 @@ public:
 
 public:
   SpectralColor &operator+=(const SpectralColor &rhs) noexcept {
-    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    SMDL_DEBUG_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
       // Through a local rather than straight into `mBuf`, which reads as
       // the obvious form and does not vectorize: nothing rules out
@@ -146,7 +146,7 @@ public:
   }
 
   SpectralColor &operator-=(const SpectralColor &rhs) noexcept {
-    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    SMDL_DEBUG_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
       // NOLINTNEXTLINE
       alignas(32) float tmp[INLINE_CAPACITY];
@@ -160,7 +160,7 @@ public:
   }
 
   SpectralColor &operator*=(const SpectralColor &rhs) noexcept {
-    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    SMDL_DEBUG_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
       // NOLINTNEXTLINE
       alignas(32) float tmp[INLINE_CAPACITY];
@@ -174,7 +174,7 @@ public:
   }
 
   SpectralColor &operator/=(const SpectralColor &rhs) noexcept {
-    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    SMDL_DEBUG_CHECK(mSize == rhs.mSize);
     if (SMDL_LIKELY(isInline())) {
       // NOLINTNEXTLINE
       alignas(32) float tmp[INLINE_CAPACITY];
@@ -399,7 +399,7 @@ public:
 
   /// Calculate the average.
   [[nodiscard]] float average() const noexcept {
-    SMDL_SANITY_CHECK(mSize > 0);
+    SMDL_DEBUG_CHECK(mSize > 0);
     // Sequential, unlike the extrema below: the summation order is the
     // documented contract, and splitting the accumulator would reassociate
     // it. A band count this short cannot pay for that anyway.
@@ -410,7 +410,7 @@ public:
 
   /// Find the maximum component.
   [[nodiscard]] float maxComponent() const noexcept {
-    SMDL_SANITY_CHECK(mSize > 0);
+    SMDL_DEBUG_CHECK(mSize > 0);
     float r0{mPtr[0]}, r1{r0}, r2{r0}, r3{r0};
     size_t i{1};
     for (; i + 3 < mSize; i += 4) {
@@ -426,7 +426,7 @@ public:
 
   /// Find the minimum component.
   [[nodiscard]] float minComponent() const noexcept {
-    SMDL_SANITY_CHECK(mSize > 0);
+    SMDL_DEBUG_CHECK(mSize > 0);
     float r0{mPtr[0]}, r1{r0}, r2{r0}, r3{r0};
     size_t i{1};
     for (; i + 3 < mSize; i += 4) {
