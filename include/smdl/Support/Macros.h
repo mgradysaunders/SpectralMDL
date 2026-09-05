@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <cstring>
 #include <functional>
 #include <type_traits>
 #include <utility>
@@ -39,6 +40,16 @@ namespace smdl {
 #define SMDL_NO_INLINE
 #endif
 
+template <typename To, typename From>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {
+  static_assert(sizeof(To) == sizeof(From) &&
+                std::is_trivially_constructible_v<To>);
+  To to;
+  std::memcpy(&to, &from, sizeof(From));
+  return to;
+}
+
 /// Sanity check a condition.
 ///
 /// \note
@@ -60,6 +71,7 @@ namespace smdl {
       ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__, message); \
   } while (false)
 
+#if !SMDL_DOXYGEN
 namespace detail {
 
 [[noreturn]] SMDL_EXPORT void sanityCheckFailed(const char *condition,
@@ -67,6 +79,7 @@ namespace detail {
                                                 const char *more = nullptr);
 
 } // namespace detail
+#endif // #if !SMDL_DOXYGEN
 
 /// Helper to implement `SMDL_CAT` correctly (Yes this is necessary!)
 #define SMDL_CAT__HELPER(X, Y) X##Y
@@ -83,39 +96,35 @@ namespace detail {
   const auto SMDL_CAT(__preserve, __LINE__) = \
       ::smdl::detail::Preserve(__VA_ARGS__)
 
+#if !SMDL_DOXYGEN
 namespace detail {
 
-template <typename Lambda> class Defer final {
+template <typename T> class Defer final {
 public:
-  explicit constexpr Defer(Lambda f) : f(std::move(f)) {}
-
+  explicit constexpr Defer(T func) : mFunc(std::move(func)) {}
   Defer(const Defer &) = delete;
-
   Defer(Defer &&) = delete;
+  ~Defer() { std::invoke(mFunc); }
 
-  ~Defer() { std::invoke(f); }
-
-  Lambda f;
+private:
+  T mFunc;
 };
 
 template <typename... Ts> class Preserve final {
 public:
-  explicit constexpr Preserve(Ts &...values)
-      : values(values...), backupValues(values...) {}
-
+  explicit constexpr Preserve(Ts &...refs) : mRefs(refs...), mTmps(refs...) {}
   Preserve(const Preserve &) = delete;
-
   Preserve(Preserve &&) = delete;
-
-  ~Preserve() { values = backupValues; }
+  ~Preserve() { mRefs = mTmps; }
 
 private:
-  std::tuple<Ts &...> values;
-
-  std::tuple<Ts...> backupValues;
+  std::tuple<Ts &...> mRefs;
+  std::tuple<Ts...> mTmps;
 };
 
 } // namespace detail
+#endif // #if !SMDL_DOXYGEN
+
 
 /// \}
 
