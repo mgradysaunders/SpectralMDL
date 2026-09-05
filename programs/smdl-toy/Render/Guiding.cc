@@ -1,11 +1,11 @@
 #include "Render/Guiding.h"
+#include "IO/BinaryFile.h"
 
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cstring>
 #include <fstream>
 
 // The fixed-point unit for a counter's next pass, from the total it
@@ -381,34 +381,17 @@ static_assert(sizeof(TreeFileSpatialNode) == 12, "a spatial node is 12 bytes");
 static_assert(sizeof(TreeFileLeaf) == 24, "a leaf payload is 24 bytes");
 static_assert(sizeof(TreeFileQuadNode) == 48, "a quadtree node is 48 bytes");
 
-// This code assumes a little-endian host outright, like the rest of the
-// renderer's binary I/O; the check is here so a big-endian port fails
-// loudly instead of reading garbage.
-[[nodiscard]] bool hostIsLittleEndian() noexcept {
-  const uint32_t probe{1};
-  return *reinterpret_cast<const unsigned char *>(&probe) == 1;
-}
-
-template <typename T> void put(std::ofstream &stream, const T &record) {
-  stream.write(reinterpret_cast<const char *>(&record), sizeof(record));
-}
-
-template <typename T> void get(std::ifstream &stream, T &record) {
-  stream.read(reinterpret_cast<char *>(&record), sizeof(record));
-}
-
 } // namespace
 
 void STree::writeFile(const std::string &fileName,
                       uint64_t samplesPerPixel) const {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("guide tree I/O requires a little-endian host");
+  requireLittleEndianHost("guide tree");
   auto stream{std::ofstream(fileName, std::ios::binary)};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot write guide tree ", smdl::QuotedPath(fileName)));
   auto header{TreeFileHeader()};
-  std::memcpy(header.magic, GUIDE_TREE_MAGIC.data(), GUIDE_TREE_MAGIC.size());
+  setMagic(header.magic, GUIDE_TREE_MAGIC);
   header.version = 1;
   header.nodeCount = uint32_t(mNodes.size());
   header.samplesPerPixel = samplesPerPixel;
@@ -416,13 +399,13 @@ void STree::writeFile(const std::string &fileName,
     header.boundMin[i] = mBoundMin[i];
     header.boundExtent[i] = mBoundExtent[i];
   }
-  put(stream, header);
+  putRecord(stream, header);
   for (const auto &node : mNodes) {
     auto spatial{TreeFileSpatialNode()};
     spatial.child[0] = node.child[0];
     spatial.child[1] = node.child[1];
     spatial.axis = node.axis;
-    put(stream, spatial);
+    putRecord(stream, spatial);
     if (node.child[0] != 0) continue;
     const auto &sampling{node.sampling};
     auto leaf{TreeFileLeaf()};
@@ -431,14 +414,14 @@ void STree::writeFile(const std::string &fileName,
     leaf.fluxUnit = sampling.fluxUnit;
     leaf.momentUnit = node.building.momentUnit;
     leaf.quadNodeCount = uint32_t(sampling.mNodes.size());
-    put(stream, leaf);
+    putRecord(stream, leaf);
     for (const auto &quad : sampling.mNodes) {
       auto quadFile{TreeFileQuadNode()};
       for (int q = 0; q < 4; q++) {
         quadFile.flux[q] = uint64_t(quad.flux[q]);
         quadFile.child[q] = quad.child[q];
       }
-      put(stream, quadFile);
+      putRecord(stream, quadFile);
     }
   }
   if (!stream)
@@ -447,8 +430,7 @@ void STree::writeFile(const std::string &fileName,
 }
 
 STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("guide tree I/O requires a little-endian host");
+  requireLittleEndianHost("guide tree");
   auto stream{std::ifstream(fileName, std::ios::binary)};
   if (!stream)
     throw smdl::Error(
@@ -458,9 +440,8 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
                                     smdl::QuotedPath(fileName), ": ", what));
   }};
   auto header{TreeFileHeader()};
-  get(stream, header);
-  if (!stream || std::memcmp(header.magic, GUIDE_TREE_MAGIC.data(),
-                             GUIDE_TREE_MAGIC.size()) != 0)
+  getRecord(stream, header);
+  if (!stream || !hasMagic(header.magic, GUIDE_TREE_MAGIC))
     throw corrupt("bad magic; expected it to begin with \"SMDLSDTR\"");
   if (header.version != 1)
     throw smdl::Error(smdl::concat(
@@ -485,7 +466,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
   tree.mNodes.resize(header.nodeCount);
   for (auto &node : tree.mNodes) {
     auto spatial{TreeFileSpatialNode()};
-    get(stream, spatial);
+    getRecord(stream, spatial);
     if (!stream) throw corrupt("truncated");
     if ((spatial.child[0] == 0) != (spatial.child[1] == 0) ||
         spatial.child[0] >= header.nodeCount ||
@@ -495,7 +476,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
     node.axis = uint8_t(spatial.axis);
     if (node.child[0] != 0) continue;
     auto leaf{TreeFileLeaf()};
-    get(stream, leaf);
+    getRecord(stream, leaf);
     if (!stream) throw corrupt("truncated");
     if (!(leaf.fluxUnit > 0.0f) || !std::isfinite(leaf.fluxUnit) ||
         !(leaf.momentUnit > 0.0f) || !std::isfinite(leaf.momentUnit) ||
@@ -506,7 +487,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
     sampling.mNodes.resize(leaf.quadNodeCount);
     for (auto &quad : sampling.mNodes) {
       auto quadFile{TreeFileQuadNode()};
-      get(stream, quadFile);
+      getRecord(stream, quadFile);
       if (!stream) throw corrupt("truncated");
       for (int q = 0; q < 4; q++) {
         if (quadFile.child[q] >= leaf.quadNodeCount)

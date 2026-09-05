@@ -4,6 +4,7 @@ smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
     "Color.cc"
+    "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"
     "Layout/Layout.cc"

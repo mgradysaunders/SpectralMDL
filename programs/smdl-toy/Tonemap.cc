@@ -9,13 +9,40 @@
 
 //--{ Spectral to RGB
 
-// The photopic luminous efficiency V(lambda) for lambda in nm, as the
-// same Gaussian fit the night filter uses. It closely tracks the CIE
-// y-bar observer, which makes it the right mass for deciding whether
-// the grid can see color at all.
+// The value at `fraction` of the way through `values`, by partial sort:
+// the whole of what the auto exposure and the fused-deviation report
+// need, and cheaper than sorting for one order statistic.
+//
+// Partitions `values` in place, so a caller taking several percentiles
+// off one vector gets them from a progressively better-partitioned
+// array, which is correct because every call re-partitions around its
+// own index. Zero for an empty vector, which is the answer every caller
+// wants for "no pixels to look at".
+[[nodiscard]] static float nthValue(std::vector<float> &values,
+                                    double fraction) {
+  if (values.empty()) return 0.0f;
+  const size_t i{std::min(size_t(fraction * double(values.size() - 1)),
+                          values.size() - 1)};
+  std::nth_element(values.begin(), values.begin() + long(i), values.end());
+  return values[i];
+}
+
+// The luminous efficiency curves as Gaussian fits over wavelength in
+// nm: photopic V(l) ~ 1.019 exp(-285.4 (l - 0.5590)^2), which closely
+// tracks the CIE y-bar observer, and scotopic V'(l) ~ 0.992
+// exp(-321.9 (l - 0.5030)^2).
+//
+// Both are unit-peak here; the 683 and 1700 lm/W the night filter
+// weighs them by are its own, and deciding whether the grid can see
+// color at all needs only the shape.
 [[nodiscard]] static double photopicV(double lambda) {
   const double um{lambda * 1.0e-3};
   return 1.019 * std::exp(-285.4 * (um - 0.5590) * (um - 0.5590));
+}
+
+[[nodiscard]] static double scotopicV(double lambda) {
+  const double um{lambda * 1.0e-3};
+  return 0.992 * std::exp(-321.9 * (um - 0.5030) * (um - 0.5030));
 }
 
 // The fraction of the photopic luminous mass the wavelength grid can
@@ -479,14 +506,8 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
                  "no local exposure applied\n";
     return {};
   }
-  auto percentile{[&](double fraction) {
-    const size_t i{std::min(size_t(fraction * double(sorted.size() - 1)),
-                            sorted.size() - 1)};
-    std::nth_element(sorted.begin(), sorted.begin() + long(i), sorted.end());
-    return sorted[i];
-  }};
-  const float lumLo{percentile(0.01)};
-  const float lumHi{percentile(0.99)};
+  const float lumLo{nthValue(sorted, 0.01)};
+  const float lumHi{nthValue(sorted, 0.99)};
   if (!(lumLo > 0.0f) || !(lumHi > lumLo)) {
     std::cerr << "fusion tonemap: the image has no dynamic range to "
                  "redistribute, no local exposure applied\n";
@@ -557,16 +578,8 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
     deviation.push_back(ev);
     gain[p] = std::exp2(options.localStrength * ev);
   }
-  auto evPercentile{[&](double fraction) {
-    if (deviation.empty()) return 0.0f;
-    const size_t i{std::min(size_t(fraction * double(deviation.size() - 1)),
-                            deviation.size() - 1)};
-    std::nth_element(deviation.begin(), deviation.begin() + long(i),
-                     deviation.end());
-    return deviation[i];
-  }};
-  const float evLo{evPercentile(0.05)};
-  const float evHi{evPercentile(0.95)};
+  const float evLo{nthValue(deviation, 0.05)};
+  const float evHi{nthValue(deviation, 0.95)};
   char note[192]{};
   std::snprintf(note, sizeof(note),
                 "fusion tonemap: %.2f EV span over %zu exposures, auto "
@@ -611,10 +624,9 @@ applyNightFilter(const std::vector<float> &rgbImage,
                  const smdl::SpectralFilm &film, const Color &wavelengths) {
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
-  // Luminous efficiency as Gaussian fits over wavelength in um:
-  // photopic V(l) ~ 1.019 exp(-285.4 (l - 0.5590)^2), 683 lm/W at
-  // peak; scotopic V'(l) ~ 0.992 exp(-321.9 (l - 0.5030)^2), 1700
-  // lm/W at peak. Trapezoid weights over the render's band grid.
+  // The luminous efficiency curves at their photometric peaks, 683 lm/W
+  // photopic and 1700 lm/W scotopic, integrated over the render's band
+  // grid by trapezoid weights.
   const size_t numBands{wavelengths.size()};
   auto weightPhotopic{std::vector<double>(numBands)};
   auto weightScotopic{std::vector<double>(numBands)};
@@ -629,16 +641,12 @@ applyNightFilter(const std::vector<float> &rgbImage,
   const auto &quadWeights{renderWavelengthWeights()};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
-    const double um{double(wavelengths[i]) * 1.0e-3};
+    const double lambda{double(wavelengths[i])};
     const double trap{i == 0 || i == numBands - 1 ? 0.5 : 1.0};
     const double width{quadWeights.empty() ? dLambda * trap
                                            : double(quadWeights[i])};
-    weightPhotopic[i] = 683.0 * 1.019 *
-                        std::exp(-285.4 * (um - 0.5590) * (um - 0.5590)) *
-                        width;
-    weightScotopic[i] = 1700.0 * 0.992 *
-                        std::exp(-321.9 * (um - 0.5030) * (um - 0.5030)) *
-                        width;
+    weightPhotopic[i] = 683.0 * photopicV(lambda) * width;
+    weightScotopic[i] = 1700.0 * scotopicV(lambda) * width;
     photopicMass += weightPhotopic[i];
   }
   // A grid that misses the visible has no photopic signal to model an
@@ -692,17 +700,15 @@ applyNightFilter(const std::vector<float> &rgbImage,
       out[2] = float(coneWeight * b + (1.0 - coneWeight) * rodY * ROD_TINT[2]);
     }
   }
-  // Auto white point. This is folded into the image rather than left in
-  // the scale because it is an exposure decision, and so is exactly what
-  // fusion should be free to supersede.
+  // Auto white point at the 99.5th percentile channel value. This is
+  // folded into the image rather than left in the scale because it is an
+  // exposure decision, and so is exactly what fusion should be free to
+  // supersede.
   auto peaks{std::vector<float>(numPixelsX * numPixelsY)};
   for (size_t p = 0; p < peaks.size(); p++)
     peaks[p] = std::max(
         {nightImage[3 * p + 0], nightImage[3 * p + 1], nightImage[3 * p + 2]});
-  const size_t nth{
-      std::min(size_t(0.995 * double(peaks.size())), peaks.size() - 1)};
-  std::nth_element(peaks.begin(), peaks.begin() + long(nth), peaks.end());
-  float white{peaks[nth]};
+  float white{nthValue(peaks, 0.995)};
   if (!(white > 0.0f)) white = 1.0f;
   for (auto &value : nightImage) value /= white;
   // The night filter's mild darkening (Jensen et al.): the display

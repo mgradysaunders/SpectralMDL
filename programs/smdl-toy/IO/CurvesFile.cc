@@ -1,9 +1,9 @@
 #include "IO/CurvesFile.h"
+#include "IO/BinaryFile.h"
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
-#include <cstring>
 #include <fstream>
 
 // The `.curves` reader, writer, and basis math: explicit-width
@@ -38,14 +38,6 @@ static_assert(sizeof(float4) == 16, "points are packed float4s");
 static_assert(sizeof(float2) == 8, "root UVs are packed float2s");
 
 constexpr uint16_t FLAG_ROOT_UVS = 1;
-
-// This code assumes a little-endian host outright, like the rest of the
-// renderer's binary I/O; the check is here so a big-endian port fails
-// loudly instead of scattering garbage.
-[[nodiscard]] bool hostIsLittleEndian() noexcept {
-  const uint32_t probe{1};
-  return *reinterpret_cast<const unsigned char *>(&probe) == 1;
-}
 
 // The shared shape validation, so that reading a bad file and being
 // asked to write one fail with the same words. `fileName` names the
@@ -82,16 +74,14 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
 } // namespace
 
 CurvesFile readCurvesFile(const std::string &fileName) {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("'.curves' I/O requires a little-endian host");
+  requireLittleEndianHost("'.curves'");
   auto stream{std::ifstream(fileName, std::ios::binary)};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open curves ", smdl::QuotedPath(fileName)));
   auto header{CurvesHeader()};
-  stream.read(reinterpret_cast<char *>(&header), sizeof(header));
-  if (!stream ||
-      std::memcmp(header.magic, CURVES_MAGIC.data(), CURVES_MAGIC.size()) != 0)
+  getRecord(stream, header);
+  if (!stream || !hasMagic(header.magic, CURVES_MAGIC))
     throw smdl::Error(smdl::concat(
         smdl::QuotedPath(fileName),
         " is not a '.curves' file (bad magic; expected it to begin "
@@ -108,17 +98,10 @@ CurvesFile readCurvesFile(const std::string &fileName) {
   auto curves{CurvesFile()};
   curves.version = header.version;
   curves.basis = CurvesFile::Basis(header.basis);
-  curves.strandOffsets.resize(size_t(header.strandCount) + 1);
-  stream.read(reinterpret_cast<char *>(curves.strandOffsets.data()),
-              std::streamsize(sizeof(uint32_t) * curves.strandOffsets.size()));
-  curves.points.resize(header.pointCount);
-  stream.read(reinterpret_cast<char *>(curves.points.data()),
-              std::streamsize(sizeof(float4) * curves.points.size()));
-  if (header.flags & FLAG_ROOT_UVS) {
-    curves.rootUVs.resize(header.strandCount);
-    stream.read(reinterpret_cast<char *>(curves.rootUVs.data()),
-                std::streamsize(sizeof(float2) * curves.rootUVs.size()));
-  }
+  getArray(stream, curves.strandOffsets, size_t(header.strandCount) + 1);
+  getArray(stream, curves.points, header.pointCount);
+  if (header.flags & FLAG_ROOT_UVS)
+    getArray(stream, curves.rootUVs, header.strandCount);
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot read curves ", smdl::QuotedPath(fileName),
@@ -129,28 +112,23 @@ CurvesFile readCurvesFile(const std::string &fileName) {
 }
 
 void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("'.curves' I/O requires a little-endian host");
+  requireLittleEndianHost("'.curves'");
   validateCurvesShape(curves, fileName, "write");
   auto stream{std::ofstream(fileName, std::ios::binary)};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot write curves ", smdl::QuotedPath(fileName)));
   auto header{CurvesHeader()};
-  std::memcpy(header.magic, CURVES_MAGIC.data(), CURVES_MAGIC.size());
+  setMagic(header.magic, CURVES_MAGIC);
   header.version = 1;
   header.basis = uint16_t(curves.basis);
   header.flags = curves.hasRootUVs() ? FLAG_ROOT_UVS : 0;
   header.strandCount = curves.strandCount();
   header.pointCount = uint32_t(curves.points.size());
-  stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
-  stream.write(reinterpret_cast<const char *>(curves.strandOffsets.data()),
-               std::streamsize(sizeof(uint32_t) * curves.strandOffsets.size()));
-  stream.write(reinterpret_cast<const char *>(curves.points.data()),
-               std::streamsize(sizeof(float4) * curves.points.size()));
-  if (curves.hasRootUVs())
-    stream.write(reinterpret_cast<const char *>(curves.rootUVs.data()),
-                 std::streamsize(sizeof(float2) * curves.rootUVs.size()));
+  putRecord(stream, header);
+  putArray(stream, curves.strandOffsets);
+  putArray(stream, curves.points);
+  if (curves.hasRootUVs()) putArray(stream, curves.rootUVs);
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot write curves ", smdl::QuotedPath(fileName)));

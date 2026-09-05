@@ -38,7 +38,7 @@ public:
   [[nodiscard]] Token next() {
     const auto &text{mSource.text};
     for (;;) {
-      while (mPos < text.size() && isSpace(text[mPos])) mPos++;
+      while (mPos < text.size() && smdl::isSpace(text[mPos])) mPos++;
       if (mPos >= text.size()) return {Token::END, {}, position(), 1};
       if (text[mPos] != '#') break;
       while (mPos < text.size() && text[mPos] != '\n') mPos++;
@@ -64,18 +64,15 @@ public:
       return {Token::STRING, std::move(content), start, position() - start};
     }
     std::string content{};
-    while (mPos < text.size() && !isSpace(text[mPos]) && text[mPos] != '{' &&
-           text[mPos] != '}' && text[mPos] != '=' && text[mPos] != '#') {
+    while (mPos < text.size() && !smdl::isSpace(text[mPos]) &&
+           text[mPos] != '{' && text[mPos] != '}' && text[mPos] != '=' &&
+           text[mPos] != '#') {
       content += text[mPos], mPos++;
     }
     return {Token::WORD, std::move(content), start, position() - start};
   }
 
 private:
-  [[nodiscard]] static bool isSpace(char ch) noexcept {
-    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
-  }
-
   [[nodiscard]] uint32_t position() const noexcept { return uint32_t(mPos); }
 
   LayoutDiagnostics &mDiags;
@@ -280,19 +277,8 @@ private:
   }
 
   void parseAssetBody(LayoutAssetDecl &decl) {
-    advance(); // '{'
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind != Token::END && mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected an asset operation or '}'");
-        throw Recover();
-      }
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      const auto op{mToken.text};
-      const auto opLoc{location()};
-      advance();
+    parseSettings("an asset operation", [&](const std::string &op,
+                                            const LayoutLocation &opLoc) {
       if (op == "select" || op == "recenter" || op == "subdivide" ||
           op == "displace") {
         // Analytic shapes have no objects to pick, no polygons to refine,
@@ -337,14 +323,8 @@ private:
           }
           decl.primitive.size = float3(values[0], values[1], values[2]);
         } else {
-          const auto value{numbers<1>()[0]};
-          if (!(value > 0)) {
-            mDiags.error(opLoc, smdl::concat("expected a positive number for ",
-                                             smdl::Quoted(op)));
-            throw Recover();
-          }
           (op == "radius" ? decl.primitive.radius : decl.primitive.height) =
-              value;
+              positive(opLoc, op, numbers<1>()[0]);
         }
       } else if (op == "tube" || op == "ribbon" || op == "radius_scale") {
         // Whether the path names a curves file is the lowering's to
@@ -360,13 +340,7 @@ private:
         }
         if (!decl.curvesOpsLoc) decl.curvesOpsLoc = opLoc;
         if (op == "radius_scale") {
-          const auto value{numbers<1>()[0]};
-          if (!(value > 0)) {
-            mDiags.error(opLoc,
-                         "expected a positive number for 'radius_scale'");
-            throw Recover();
-          }
-          decl.curves.radiusScale = value;
+          decl.curves.radiusScale = positive(opLoc, op, numbers<1>()[0]);
         } else {
           // One word decides the cross-section, so a second is either
           // a repeat or a contradiction, and both are conflicts.
@@ -413,8 +387,7 @@ private:
                                         "rotate_z, or matrix)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // The `animation` operation of an asset: a clip by quoted name or by
@@ -488,12 +461,7 @@ private:
       } else {
         const auto setting{mToken.text};
         advance();
-        const auto value{numbers<1>()[0]};
-        if (!std::isfinite(value)) {
-          mDiags.error(settingLoc, smdl::concat("expected a finite number for ",
-                                                smdl::Quoted(setting)));
-          throw Recover();
-        }
+        const auto value{finite(settingLoc, setting, numbers<1>()[0])};
         if (setting == "speed" && value == 0) {
           mDiags.error(settingLoc, "'speed' must be nonzero");
           throw Recover();
@@ -562,38 +530,17 @@ private:
   }
 
   void parseLightBody(LayoutLightDecl &decl) {
-    advance(); // '{'
     const auto isSpot{decl.kind == LayoutLightDecl::Kind::SPOT};
     const auto isProfile{decl.kind == LayoutLightDecl::Kind::PROFILE};
     const auto isRect{decl.kind == LayoutLightDecl::Kind::RECT};
     const auto isDisk{decl.kind == LayoutLightDecl::Kind::DISK};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a light setting or '}'");
-        throw Recover();
-      }
-      const auto op{mToken.text};
-      const auto opLoc{location()};
-      advance();
+    parseSettings("a light setting", [&](const std::string &op,
+                                         const LayoutLocation &opLoc) {
       if (op == "power") {
-        const auto value{numbers<1>()[0]};
-        if (!(value > 0)) {
-          mDiags.error(opLoc, "expected a positive number for 'power'");
-          throw Recover();
-        }
-        decl.power = value;
+        decl.power = positive(opLoc, op, numbers<1>()[0]);
         decl.powerSet = true;
       } else if (op == "temperature") {
-        const auto value{numbers<1>()[0]};
-        if (!(value > 0)) {
-          mDiags.error(opLoc, "expected a positive number for 'temperature'");
-          throw Recover();
-        }
-        decl.temperature = value;
+        decl.temperature = positive(opLoc, op, numbers<1>()[0]);
       } else if (op == "color") {
         const auto v{numbers<3>()};
         if (!(v[0] >= 0 && v[1] >= 0 && v[2] >= 0)) {
@@ -638,12 +585,7 @@ private:
                                         : ""));
           throw Recover();
         }
-        const auto value{numbers<1>()[0]};
-        if (!(value > 0)) {
-          mDiags.error(opLoc, "expected a positive number for 'scale'");
-          throw Recover();
-        }
-        decl.scale = value;
+        decl.scale = positive(opLoc, op, numbers<1>()[0]);
       } else if (op == "size") {
         if (!isRect) {
           mDiags.error(opLoc, smdl::concat("'size' applies to a rect, and this "
@@ -665,12 +607,7 @@ private:
                                     decl.kindName()));
           throw Recover();
         }
-        const auto value{numbers<1>()[0]};
-        if (!(value > 0)) {
-          mDiags.error(opLoc, "expected a positive number for 'radius'");
-          throw Recover();
-        }
-        decl.radius = value;
+        decl.radius = positive(opLoc, op, numbers<1>()[0]);
       } else if (op == "caustic") {
         decl.isCaustic = true;
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
@@ -689,8 +626,7 @@ private:
                                   "rotate_y, rotate_z, or matrix)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // A `group` declaration: a named arrangement of `place` statements
@@ -1206,20 +1142,9 @@ private:
       mDiags.error(location(), "expected '{' after 'camera'");
       throw Recover();
     }
-    advance(); // '{'
     auto &camera{mDocument.camera};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a camera setting or '}'");
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
+    parseSettings("a camera setting", [&](const std::string &key,
+                                          const LayoutLocation &keyLoc) {
       if (key == "resolution") {
         auto v{numbers<2>()};
         if (!(v[0] >= 1 && v[1] >= 1)) {
@@ -1275,8 +1200,7 @@ private:
                          "vignetting, cat_eye, cat_eye_radius, or motion)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // The `motion { ... }` block inside `camera`: the framing at shutter
@@ -1286,21 +1210,10 @@ private:
       mDiags.error(location(), "expected '{' after 'motion'");
       throw Recover();
     }
-    advance(); // '{'
     if (!camera.motion) camera.motion.emplace();
     auto &motion{*camera.motion};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a camera motion setting or '}'");
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
+    parseSettings("a camera motion setting", [&](const std::string &key,
+                                                 const LayoutLocation &keyLoc) {
       if (key == "look_from") {
         auto v{numbers<3>()};
         motion.lookFrom = float3(v[0], v[1], v[2]);
@@ -1317,8 +1230,7 @@ private:
                                           "or look_up)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // A `sky { ... }` block, merged per field like `camera`.
@@ -1329,20 +1241,9 @@ private:
       mDiags.error(location(), "expected '{' after 'sky'");
       throw Recover();
     }
-    advance(); // '{'
     auto &sky{mDocument.sky};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a sky setting or '}'");
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
+    parseSettings("a sky setting", [&](const std::string &key,
+                                       const LayoutLocation &keyLoc) {
       if (key == "none") {
         // A bare keyword, like 'recenter': there is nothing to say about
         // an environment that is not there.
@@ -1379,8 +1280,7 @@ private:
                                   "moon_distance, ibl, or ibl_scale)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // A `haze { ... }` block, merged per field like `sky`. Writing the
@@ -1393,20 +1293,9 @@ private:
       mDiags.error(location(), "expected '{' after 'haze'");
       throw Recover();
     }
-    advance(); // '{'
     auto &haze{mDocument.haze};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a haze setting or '}'");
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
+    parseSettings("a haze setting", [&](const std::string &key,
+                                        const LayoutLocation &keyLoc) {
       if (key == "none") {
         haze.none = true;
       } else if (key == "visibility") {
@@ -1424,8 +1313,7 @@ private:
                                   "base_height, or droplet)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
   // A `time { ... }` block, merged per field like `sky`.
@@ -1436,20 +1324,9 @@ private:
       mDiags.error(location(), "expected '{' after 'time'");
       throw Recover();
     }
-    advance(); // '{'
     auto &time{mDocument.time};
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a time setting or '}'");
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
+    parseSettings("a time setting", [&](const std::string &key,
+                                        const LayoutLocation &keyLoc) {
       if (key == "base") {
         time.base = finite(keyLoc, key, numbers<1>()[0]);
       } else if (key == "shutter") {
@@ -1466,12 +1343,14 @@ private:
                                   " (expected base or shutter)"));
         throw Recover();
       }
-    }
-    advance(); // '}'
+    });
   }
 
-  // Check a setting whose zero means "unset" everywhere downstream, so
-  // that writing it down has to mean something.
+  // Check a setting that has to be positive to mean anything: a size, a
+  // power, a scale, or one of the camera and sky quantities whose zero
+  // means "unset" everywhere downstream. Writing one down has to say
+  // something, and in every case leaving it out is what asks for the
+  // default, which is what the message points at.
   [[nodiscard]] float positive(const LayoutLocation &keyLoc,
                                std::string_view key, float value) {
     if (!(value > 0)) {
@@ -1554,15 +1433,20 @@ private:
     return tryNumber(token, ignored);
   }
 
+  // Not `std::stof`, which reports "not a number" by throwing: this is
+  // asked of every token of a directive that takes a variable count of
+  // them, so the answer "no" has to be cheap.
   [[nodiscard]] static bool tryNumber(const Token &token, float &value) {
-    if (token.kind != Token::WORD) return false;
-    size_t used{};
-    try {
-      value = std::stof(token.text, &used);
-    } catch (const std::exception &) {
-      return false;
-    }
-    return used == token.text.size();
+    if (token.kind != Token::WORD || token.text.empty()) return false;
+    const char *begin{token.text.c_str()};
+    char *end{};
+    const float parsed{std::strtof(begin, &end)};
+    // A value out of float's range is a number the grammar accepts and
+    // the range checks downstream reject, which is where saying so
+    // belongs; `strtof` still returns the saturated value for it.
+    if (end != begin + token.text.size()) return false;
+    value = parsed;
+    return true;
   }
 
   template <size_t N> [[nodiscard]] std::array<float, N> numbers() {
@@ -1592,6 +1476,36 @@ private:
     auto text{mToken.text};
     advance();
     return text;
+  }
+
+  // The `{ ... }` body of a block whose contents are a run of settings:
+  // the loop, the two diagnostics every such block was spelling for
+  // itself, and the keyword and location handed to `body` with the
+  // keyword already consumed. `what` is the article and noun the
+  // messages use, e.g. `"a camera setting"`.
+  //
+  // The caller has already established that `{` is current, either by
+  // checking it (a top-level block, where a missing brace is its own
+  // error) or by calling this only when it is (an asset or light body,
+  // whose block is optional).
+  template <typename Body>
+  void parseSettings(std::string_view what, Body &&body) {
+    advance(); // '{'
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), smdl::concat("expected ", what, " or '}'"));
+        throw Recover();
+      }
+      const auto key{mToken.text};
+      const auto keyLoc{location()};
+      advance();
+      body(key, keyLoc);
+    }
+    advance(); // '}'
   }
 
   [[nodiscard]] LayoutLocation location() const noexcept {

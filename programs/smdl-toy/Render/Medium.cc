@@ -9,11 +9,17 @@
 #include "smdl/Support/Logger.h"
 
 // The Beer-Lambert transmittance of one band, exp(-d): exactly 1 for a
-// negative depth, exactly 0 past 87, where the true value is under 1e-38,
-// and 0 for a depth that is not a number. Inline because the per-band
-// loops call it once per band and libm's expf neither inlines nor
-// vectorizes, which left it at 7 percent of a scene rendered through a
-// homogeneous medium.
+// negative depth, exactly 0 past 87, and 0 for a depth that is not a
+// number. Inline because the per-band loops call it once per band and
+// libm's expf neither inlines nor vectorizes, which left it at 7 percent
+// of a scene rendered through a homogeneous medium.
+//
+// The cutoff at 87 is a termination threshold, not a domain guard, and
+// is deliberately below `fastExp`'s own floor of -87.33: over the sliver
+// between them the true value is a normal float around 1.5e-38, which
+// flush-to-zero does NOT flush, so dropping the cutoff would leave every
+// fully absorbed segment carrying 1e-38 of throughput past the
+// `maxComponent() > 0` checks that are supposed to retire it.
 [[nodiscard]] static inline float transmittance(float opticalDepth) noexcept {
   const float d{opticalDepth > 0.0f ? opticalDepth : 0.0f};
   return opticalDepth < 87.0f ? smdl::fastExp(-d) : 0.0f;
@@ -731,6 +737,12 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
   // balance-heuristic weight through the chain. 'P' is meaningful only
   // up to a common scale, which cancels in every weight, so it is
   // renormalized as it goes to keep the products from underflowing.
+  //
+  // The renormalization is not obsolete under flush-to-zero; it is more
+  // necessary. A product that underflows reaches exactly zero at the
+  // smallest NORMAL float rather than creeping down to 1e-45 first, so
+  // the chain loses its whole weight sooner and the divisions below
+  // would see a zero denominator.
   //
   // The tracking loop draws from a plain generator seeded by the
   // sampler rather than from the sampler itself, so that this call

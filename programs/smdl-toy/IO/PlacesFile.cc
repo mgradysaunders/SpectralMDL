@@ -1,9 +1,9 @@
 #include "IO/PlacesFile.h"
+#include "IO/BinaryFile.h"
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
-#include <cstring>
 #include <fstream>
 
 // The `.places` reader and writer. Everything here is explicit-width
@@ -28,27 +28,17 @@ static_assert(sizeof(float) == 4, "records are 32-bit floats");
 
 constexpr uint16_t FLAG_VARIANTS = 1;
 
-// This code assumes a little-endian host outright, like the rest of the
-// renderer's binary I/O; the check is here so a big-endian port fails
-// loudly instead of scattering garbage.
-[[nodiscard]] bool hostIsLittleEndian() noexcept {
-  const uint32_t probe{1};
-  return *reinterpret_cast<const unsigned char *>(&probe) == 1;
-}
-
 } // namespace
 
 PlacesFile readPlacesFile(const std::string &fileName) {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("'.places' I/O requires a little-endian host");
+  requireLittleEndianHost("'.places'");
   auto stream{std::ifstream(fileName, std::ios::binary)};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open places buffer ", smdl::QuotedPath(fileName)));
   auto header{PlacesHeader()};
-  stream.read(reinterpret_cast<char *>(&header), sizeof(header));
-  if (!stream ||
-      std::memcmp(header.magic, PLACES_MAGIC.data(), PLACES_MAGIC.size()) != 0)
+  getRecord(stream, header);
+  if (!stream || !hasMagic(header.magic, PLACES_MAGIC))
     throw smdl::Error(smdl::concat(
         smdl::QuotedPath(fileName),
         " is not a '.places' buffer (bad magic; expected it to begin "
@@ -67,7 +57,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
   places.transforms.resize(header.count, float4x4(1.0f));
   for (auto &transform : places.transforms) {
     float rows[12]{};
-    stream.read(reinterpret_cast<char *>(rows), sizeof(rows));
+    getRecord(stream, rows);
     // Row-major rows into the column-major matrix: rows[4 * i + j] is
     // row i, column j.
     for (int i = 0; i < 3; i++)
@@ -75,11 +65,8 @@ PlacesFile readPlacesFile(const std::string &fileName) {
     transform[0][3] = transform[1][3] = transform[2][3] = 0.0f;
     transform[3][3] = 1.0f;
   }
-  if (header.flags & FLAG_VARIANTS) {
-    places.variants.resize(header.count);
-    stream.read(reinterpret_cast<char *>(places.variants.data()),
-                std::streamsize(sizeof(uint32_t) * places.variants.size()));
-  }
+  if (header.flags & FLAG_VARIANTS)
+    getArray(stream, places.variants, header.count);
   if (!stream)
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
                                    ": truncated (the header "
@@ -89,8 +76,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
 }
 
 void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
-  if (!hostIsLittleEndian())
-    throw smdl::Error("'.places' I/O requires a little-endian host");
+  requireLittleEndianHost("'.places'");
   if (!places.variants.empty() &&
       places.variants.size() != places.transforms.size())
     throw smdl::Error(
@@ -104,21 +90,19 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
     throw smdl::Error(smdl::concat("cannot write places buffer ",
                                    smdl::QuotedPath(fileName)));
   auto header{PlacesHeader()};
-  std::memcpy(header.magic, PLACES_MAGIC.data(), PLACES_MAGIC.size());
+  setMagic(header.magic, PLACES_MAGIC);
   header.version = 1;
   header.flags = anyVariant ? FLAG_VARIANTS : 0;
   header.count = uint32_t(places.transforms.size());
   header.reserved = 0;
-  stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
+  putRecord(stream, header);
   for (const auto &transform : places.transforms) {
     float rows[12]{};
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < 4; j++) rows[4 * i + j] = transform[j][i];
-    stream.write(reinterpret_cast<const char *>(rows), sizeof(rows));
+    putRecord(stream, rows);
   }
-  if (anyVariant)
-    stream.write(reinterpret_cast<const char *>(places.variants.data()),
-                 std::streamsize(sizeof(uint32_t) * places.variants.size()));
+  if (anyVariant) putArray(stream, places.variants);
   if (!stream)
     throw smdl::Error(smdl::concat("cannot write places buffer ",
                                    smdl::QuotedPath(fileName)));
