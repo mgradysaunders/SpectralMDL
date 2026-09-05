@@ -46,12 +46,17 @@ struct OsdCorner final {
 // base polygons as they are, so a hostile mesh renders unsubdivided
 // rather than not at all. Normals and tangents are left for the caller.
 void fanTriangulate(Mesh &mesh) {
-  mesh.verts.resize(mesh.basePoints.size());
-  for (size_t i = 0; i < mesh.basePoints.size(); i++) {
-    mesh.verts[i].point = mesh.basePoints[i];
-    if (i < mesh.baseTexcoords.size())
-      mesh.verts[i].texcoord = mesh.baseTexcoords[i];
-  }
+  const auto fill{
+      [&](std::vector<Mesh::Vert> &verts, const std::vector<float3> &points) {
+        verts.resize(points.size());
+        for (size_t i = 0; i < points.size(); i++) {
+          verts[i].point = points[i];
+          if (i < mesh.baseTexcoords.size())
+            verts[i].texcoord = mesh.baseTexcoords[i];
+        }
+      }};
+  fill(mesh.verts, mesh.basePoints);
+  if (!mesh.basePointsShut.empty()) fill(mesh.vertsShut, mesh.basePointsShut);
   if (!mesh.baseColors.empty()) mesh.colors = mesh.baseColors;
   size_t corner{};
   for (const auto count : mesh.baseFaceCounts) {
@@ -90,15 +95,22 @@ bool subdivideMesh(Mesh &mesh) {
   // topological vertices subdivision refines, so that copies split to
   // carry different UVs (texture seams) subdivide as one surface. See
   // `positionKey()` for why exactness is the point.
+  // The shut key of a deforming mesh rides the same weld, by the open
+  // key's positions: a group takes the shut point of its first member.
+  const bool hasShut{!mesh.basePointsShut.empty()};
   auto weldOf{std::vector<int>(mesh.basePoints.size())};
   auto weldedPoints{std::vector<float3>()};
+  auto weldedPointsShut{std::vector<float3>()};
   {
     auto groups{std::unordered_map<std::array<uint32_t, 3>, int, WeldHash>()};
     groups.reserve(mesh.basePoints.size());
     for (size_t i = 0; i < mesh.basePoints.size(); i++) {
       auto [entry, isNew]{groups.try_emplace(positionKey(mesh.basePoints[i]),
                                              int(weldedPoints.size()))};
-      if (isNew) weldedPoints.push_back(mesh.basePoints[i]);
+      if (isNew) {
+        weldedPoints.push_back(mesh.basePoints[i]);
+        if (hasShut) weldedPointsShut.push_back(mesh.basePointsShut[i]);
+      }
       weldOf[i] = entry->second;
     }
   }
@@ -139,16 +151,16 @@ bool subdivideMesh(Mesh &mesh) {
       Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER);
   sdcOptions.SetFVarLinearInterpolation(
       spec.isSmooth ? Sdc::Options::FVAR_LINEAR_BOUNDARIES
-                  : Sdc::Options::FVAR_LINEAR_ALL);
+                    : Sdc::Options::FVAR_LINEAR_ALL);
   // The 2x2 of split and smoothing, which OpenSubdiv spells with three
   // schemes rather than four: Catmull-Clark and bilinear split faces
   // into quads identically and differ only in where they put the
   // vertices, so bilinear *is* the unsmoothed quad scheme. Loop has no
   // such counterpart, and stays Loop for the unsmoothed triangle split;
   // `varyingPoints` below is what takes the smoothing back out of it.
-  const auto sdcScheme{isLoop        ? Sdc::SCHEME_LOOP
+  const auto sdcScheme{isLoop          ? Sdc::SCHEME_LOOP
                        : spec.isSmooth ? Sdc::SCHEME_CATMARK
-                                     : Sdc::SCHEME_BILINEAR};
+                                       : Sdc::SCHEME_BILINEAR};
   using Factory = Far::TopologyRefinerFactory<Far::TopologyDescriptor>;
   auto refiner{std::unique_ptr<Far::TopologyRefiner>(
       Factory::Create(desc, Factory::Options(sdcScheme, sdcOptions)))};
@@ -172,20 +184,29 @@ bool subdivideMesh(Mesh &mesh) {
   // masks as its own.
   const bool varyingPoints{isLoop && !spec.isSmooth};
   // Interpolate positions level by level through one flat buffer, the
-  // last level's block last.
-  auto points{std::vector<OsdPoint>(size_t(refiner->GetNumVerticesTotal()))};
-  for (size_t i = 0; i < weldedPoints.size(); i++)
-    points[i].value = weldedPoints[i];
-  auto *srcPoint{points.data()};
-  for (int level = 1; level <= int(spec.levels); level++) {
-    auto *dstPoint{srcPoint + refiner->GetLevel(level - 1).GetNumVertices()};
-    if (varyingPoints) {
-      primvar.InterpolateVarying(level, srcPoint, dstPoint);
-    } else {
-      primvar.Interpolate(level, srcPoint, dstPoint);
+  // last level's block last; the shut key of a deforming mesh goes
+  // through the same refiner, so the two keys share every index.
+  const auto refinePoints{[&](const std::vector<float3> &welded,
+                              std::vector<OsdPoint> &buffer) -> OsdPoint * {
+    buffer.resize(size_t(refiner->GetNumVerticesTotal()));
+    for (size_t i = 0; i < welded.size(); i++) buffer[i].value = welded[i];
+    auto *src{buffer.data()};
+    for (int level = 1; level <= int(spec.levels); level++) {
+      auto *dst{src + refiner->GetLevel(level - 1).GetNumVertices()};
+      if (varyingPoints) {
+        primvar.InterpolateVarying(level, src, dst);
+      } else {
+        primvar.Interpolate(level, src, dst);
+      }
+      src = dst;
     }
-    srcPoint = dstPoint;
-  }
+    return src;
+  }};
+  auto points{std::vector<OsdPoint>()};
+  auto *srcPoint{refinePoints(weldedPoints, points)};
+  auto pointsShut{std::vector<OsdPoint>()};
+  auto *srcPointShut{hasShut ? refinePoints(weldedPointsShut, pointsShut)
+                             : nullptr};
   // And likewise the face-varying corner attributes.
   auto corners{std::vector<OsdCorner>()};
   auto *srcCorner{static_cast<OsdCorner *>(nullptr)};
@@ -209,19 +230,29 @@ bool subdivideMesh(Mesh &mesh) {
   // surface, whose first derivatives are exact normals; that is what
   // "smooth" means, and it is what every DCC displays. The limit corner
   // attributes pair with the limit positions for the same reason.
-  auto limitPoints{std::vector<OsdPoint>()};
-  auto limitDu{std::vector<OsdPoint>()};
-  auto limitDv{std::vector<OsdPoint>()};
+  class LimitKey final {
+  public:
+    std::vector<OsdPoint> points{};
+    std::vector<OsdPoint> du{};
+    std::vector<OsdPoint> dv{};
+  };
+  auto limitOpen{LimitKey()};
+  auto limitShut{LimitKey()};
   auto limitCorners{std::vector<OsdCorner>()};
   auto haveLimitNormals{false};
   if (spec.isSmooth) {
-    limitPoints.resize(numFineVerts);
-    limitDu.resize(numFineVerts);
-    limitDv.resize(numFineVerts);
-    auto *dstPoints{limitPoints.data()};
-    auto *dstDu{limitDu.data()};
-    auto *dstDv{limitDv.data()};
-    primvar.Limit(srcPoint, dstPoints, dstDu, dstDv);
+    const auto limitKey{[&](OsdPoint *&src, LimitKey &limit) {
+      limit.points.resize(numFineVerts);
+      limit.du.resize(numFineVerts);
+      limit.dv.resize(numFineVerts);
+      auto *dstPoints{limit.points.data()};
+      auto *dstDu{limit.du.data()};
+      auto *dstDv{limit.dv.data()};
+      primvar.Limit(src, dstPoints, dstDu, dstDv);
+      src = limit.points.data();
+    }};
+    limitKey(srcPoint, limitOpen);
+    if (hasShut) limitKey(srcPointShut, limitShut);
     haveLimitNormals = true;
     if (hasCorners) {
       limitCorners.resize(size_t(lastLevel.GetNumFVarValues(0)));
@@ -229,7 +260,6 @@ bool subdivideMesh(Mesh &mesh) {
       primvar.LimitFaceVarying(srcCorner, dstCorners, 0);
       srcCorner = limitCorners.data();
     }
-    srcPoint = limitPoints.data();
   }
   // Emit the unique (vertex, corner) pairs of the last level as the final
   // vertices, and split its quads into triangles. A vertex on a texture
@@ -238,33 +268,40 @@ bool subdivideMesh(Mesh &mesh) {
   // result is deterministic regardless of the hashing underneath.
   auto outIndex{std::unordered_map<std::pair<int, int>, uint32_t, WeldHash>()};
   outIndex.reserve(numFineVerts);
+  // One key's vertex from its refined (or limit) points.
+  const auto fillVert{[&](Mesh::Vert &vert, const OsdPoint *src,
+                          const LimitKey &limit, int vertex, int corner) {
+    vert.point = src[vertex].value;
+    if (corner >= 0) vert.texcoord = srcCorner[corner].uv;
+    if (haveLimitNormals) {
+      const auto normal{smdl::cross(limit.du[size_t(vertex)].value,
+                                    limit.dv[size_t(vertex)].value)};
+      const auto len{smdl::length(normal)};
+      // A degenerate limit derivative (an unlucky extraordinary
+      // point) poisons the whole mesh back to geometric normals
+      // rather than shading one vertex with a lie.
+      if (len > 0) {
+        vert.normal = normal / len;
+      } else {
+        haveLimitNormals = false;
+      }
+    }
+  }};
   auto emit{[&](int vertex, int corner) {
     auto [entry, isNew]{outIndex.try_emplace(std::make_pair(vertex, corner),
                                              uint32_t(mesh.verts.size()))};
     if (isNew) {
-      auto &vert{mesh.verts.emplace_back()};
-      vert.point = srcPoint[vertex].value;
-      if (corner >= 0) {
-        vert.texcoord = srcCorner[corner].uv;
-        if (hasColors) mesh.colors.push_back(srcCorner[corner].color);
-      }
-      if (haveLimitNormals) {
-        const auto normal{smdl::cross(limitDu[size_t(vertex)].value,
-                                      limitDv[size_t(vertex)].value)};
-        const auto len{smdl::length(normal)};
-        // A degenerate limit derivative (an unlucky extraordinary
-        // point) poisons the whole mesh back to geometric normals
-        // rather than shading one vertex with a lie.
-        if (len > 0) {
-          vert.normal = normal / len;
-        } else {
-          haveLimitNormals = false;
-        }
-      }
+      fillVert(mesh.verts.emplace_back(), srcPoint, limitOpen, vertex, corner);
+      if (hasShut)
+        fillVert(mesh.vertsShut.emplace_back(), srcPointShut, limitShut, vertex,
+                 corner);
+      if (corner >= 0 && hasColors)
+        mesh.colors.push_back(srcCorner[corner].color);
     }
     return entry->second;
   }};
   mesh.verts.reserve(numFineVerts);
+  if (hasShut) mesh.vertsShut.reserve(numFineVerts);
   if (hasColors) mesh.colors.reserve(numFineVerts);
   mesh.faces.reserve(size_t(lastLevel.GetNumFaces()) * (isLoop ? 1 : 2));
   for (int face = 0; face < lastLevel.GetNumFaces(); face++) {

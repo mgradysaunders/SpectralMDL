@@ -16,9 +16,9 @@ VisibilityWalk::VisibilityWalk(smdl::BumpPtrAllocator &allocator,
       mWavelengths(wavelengths), mTime(time), mMedium(medium),
       mScratch(scratch), mBeta(beta), mNeedBlocker(needBlocker),
       mInfiniteTarget(infiniteTarget) {
-  mDistance = length(point1 - point0);
-  mShadowDir = mDistance > 0 ? (point1 - point0) / mDistance : float3{};
-  mParamEps = mDistance > 1.0f ? EPS / mDistance : EPS;
+  mDist = length(point1 - point0);
+  mShadowDir = mDist > 0 ? (point1 - point0) / mDist : float3{};
+  mParamEps = mDist > 1.0f ? EPS / mDist : EPS;
   mRay =
       Ray{point0, point1 - point0, mParamEps, 1.0f - mParamEps, time.fraction};
 }
@@ -43,7 +43,7 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
       mScratch.medium.reset(mMedium, mWavelengths, mTime, mRay(mTCovered),
                             mShadowDir);
       if (!occluded) {
-        mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDistance,
+        mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDist,
                                   mBeta, mInfiniteTarget);
       } else if (mScratch.medium.attenuationDraws()) {
         (void)mSampler.nextBits();
@@ -66,7 +66,7 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
     if (mMedium || mScratch.medium.hasHaze()) {
       mScratch.medium.reset(mMedium, mWavelengths, mTime, mRay(mTCovered),
                             mShadowDir);
-      mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDistance,
+      mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDist,
                                 mBeta, mInfiniteTarget && !hitSurface);
     }
     mTCovered = mRay.tmax;
@@ -1452,7 +1452,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   // gather apiece to carry a throughput roulette would have retired.
   const auto rouletteSurvives{[&](uint64_t depth, const DTree *dtree,
                                   float gate = 1.0f) noexcept -> bool {
-    if (!pathOptions.roulette || depth <= ROULETTE_MIN_DEPTH) return true;
+    if (!pathOptions.useRoulette || depth <= ROULETTE_MIN_DEPTH) return true;
     float survival{};
     const float meanRadiance{
         dtree && guiding->pixelEstimate > 0 ? dtree->meanRadiance() : 0};

@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "Common.h"
+#include "IO/MeshDeform.h"
 
 namespace llvm::json {
 class OStream;
@@ -74,6 +75,18 @@ public:
   std::string path{};                  ///< The `/`-joined path.
   float4x4 nodeToFile{float4x4(1.0f)}; ///< Accumulated from the root.
   uint32_t parent{INVALID_INDEX};      ///< The parent, or `INVALID_INDEX`.
+
+  /// The transform at shutter shut when the file's clip moves this node
+  /// over the shutter, otherwise a copy of `nodeToFile`; see `moves`. The
+  /// scene composes it under a placement's own shut key, so a rigid
+  /// animated part is a moving instance exactly as a `motion` block
+  /// makes one.
+  float4x4 nodeToFileShut{float4x4(1.0f)};
+
+  /// Does the clip move this node between the keys? Written by the
+  /// scene's animated read from the poses at the two keys; the
+  /// flattening itself leaves it false.
+  bool moves{};
 };
 
 /// Where one file's node graph puts one of its meshes: the node that places
@@ -103,10 +116,11 @@ public:
 };
 
 /// Configure an importer to read the least that assimp can be made to read:
-/// triangle geometry, one texture coordinate set, and material names. That is
-/// everything the renderer takes from a scene file, since SMDL loads every
-/// texture itself and the material name is the only thing a material
-/// contributes.
+/// triangle geometry, one texture coordinate set, material names, and the
+/// animation data (bones and their weights, morph targets, clips) that the
+/// deformation evaluator in `MeshDeform.h` plays. That is everything the
+/// renderer takes from a scene file, since SMDL loads every texture itself
+/// and the material name is the only thing a material contributes.
 ///
 /// A listing built on this therefore answers "what will the renderer see"
 /// rather than "what is in the file". The configuration is lossy by design, so
@@ -197,6 +211,10 @@ public:
   /// renderer hands materials as `state::vertex_color()`?
   bool hasColors{};
 
+  /// Does any mesh the subtree places carry a skin or morph targets, so
+  /// that a clip of the file can deform it?
+  bool deforms{};
+
   /// The distinct materials the subtree uses, in the order encountered.
   std::vector<std::string> materialNames{};
 
@@ -279,6 +297,13 @@ public:
 
   /// Does any mesh the file places carry per-vertex colors?
   bool hasColors{};
+
+  /// Does any mesh the file places carry a skin or morph targets?
+  bool deforms{};
+
+  /// The clips the file carries, in the file's order: what `animation` on
+  /// an asset can name.
+  std::vector<ClipInfo> animations{};
 };
 
 /// Import only the object listing of a scene file: what `select` can name,

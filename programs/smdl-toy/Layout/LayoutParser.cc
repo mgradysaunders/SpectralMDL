@@ -379,6 +379,8 @@ private:
                                             : CurvesSpec::Mode::TUBE;
           decl.curves.modeSet = true;
         }
+      } else if (op == "animation") {
+        parseAssetAnimation(decl, opLoc);
       } else if (op == "material") {
         parseMaterialOps(decl.materials, "asset");
       } else if (op == "caster") {
@@ -405,14 +407,101 @@ private:
                                         "rotate_z, or matrix)"
                                       : " (expected select, recenter, "
                                         "subdivide, displace, tube, ribbon, "
-                                        "radius_scale, material, caster, "
-                                        "light, translate, scale, rotate, "
-                                        "rotate_x, rotate_y, rotate_z, or "
-                                        "matrix)"));
+                                        "radius_scale, animation, material, "
+                                        "caster, light, translate, scale, "
+                                        "rotate, rotate_x, rotate_y, "
+                                        "rotate_z, or matrix)"));
         throw Recover();
       }
     }
     advance(); // '}'
+  }
+
+  // The `animation` operation of an asset: a clip by quoted name or by
+  // bare index, then `offset <seconds>`, `speed <factor>`, and `once` in
+  // any order; or the single word `off`. The settings end at the first
+  // word that is none of these, which is the next asset operation, so
+  // `animation` alone is legal and means the file's only clip.
+  void parseAssetAnimation(LayoutAssetDecl &decl, const LayoutLocation &opLoc) {
+    if (decl.primitive.active()) {
+      mDiags.error(opLoc, smdl::concat("'animation' applies to a mesh file, "
+                                       "but this asset is a ",
+                                       decl.primitive.name()));
+      throw Recover();
+    }
+    if (decl.animationLoc) {
+      mDiags.error(opLoc, "'animation' appears twice in one asset")
+          .note(decl.animationLoc, "first written here");
+      throw Recover();
+    }
+    decl.animationLoc = opLoc;
+    if (mToken.kind == Token::OPEN) {
+      mDiags
+          .error(location(), "'animation' takes a clip and settings, not a "
+                             "block")
+          .note({}, "write 'animation \"<clip>\" offset <seconds> speed "
+                    "<factor> once', or 'animation off'");
+      throw Recover();
+    }
+    auto &spec{decl.animation};
+    const auto isSetting{[&] {
+      return mToken.kind == Token::STRING ||
+             (mToken.kind == Token::WORD &&
+              (mToken.text == "offset" || mToken.text == "speed" ||
+               mToken.text == "once" || mToken.text == "off" ||
+               isNumber(mToken)));
+    }};
+    auto anySetting{false};
+    while (isSetting()) {
+      const auto settingLoc{location()};
+      if (mToken.kind == Token::STRING || isNumber(mToken)) {
+        if (spec.hasClip()) {
+          mDiags.error(settingLoc, "'animation' names two clips");
+          throw Recover();
+        }
+        if (mToken.kind == Token::STRING) {
+          spec.clipName = mToken.text;
+        } else {
+          float value{};
+          (void)tryNumber(mToken, value);
+          if (!(value >= 0 && value == std::floor(value))) {
+            mDiags.error(settingLoc,
+                         "expected a quoted clip name or an unsigned clip "
+                         "index after 'animation'");
+            throw Recover();
+          }
+          spec.clipIndex = uint32_t(value);
+        }
+        advance();
+      } else if (mToken.text == "off") {
+        advance();
+        if (anySetting || isSetting()) {
+          mDiags.error(settingLoc, "'animation off' takes no clip and no "
+                                   "settings");
+          throw Recover();
+        }
+        spec.off = true;
+        return;
+      } else if (mToken.text == "once") {
+        spec.once = true;
+        advance();
+      } else {
+        const auto setting{mToken.text};
+        advance();
+        const auto value{numbers<1>()[0]};
+        if (!std::isfinite(value)) {
+          mDiags.error(settingLoc, smdl::concat("expected a finite number for ",
+                                                smdl::Quoted(setting)));
+          throw Recover();
+        }
+        if (setting == "speed" && value == 0) {
+          mDiags.error(settingLoc, "'speed' must be nonzero");
+          throw Recover();
+        }
+        (setting == "offset" ? spec.offset : spec.speed) = value;
+      }
+      anySetting = true;
+    }
   }
 
   // A `light` declaration: `light <name> = point|spot|profile
@@ -740,7 +829,7 @@ private:
     advance();
     if (op == "select" || op == "recenter" || op == "subdivide" ||
         op == "displace" || op == "tube" || op == "ribbon" ||
-        op == "radius_scale") {
+        op == "radius_scale" || op == "animation") {
       mDiags.error(opLoc,
                    smdl::concat(smdl::Quoted(op),
                                 " is a property of what is loaded, so it "
@@ -849,14 +938,38 @@ private:
       parsePlaceMotion(placement, opLoc);
       return;
     }
+    if (op == "offset") {
+      parsePlaceOffset(placement, opLoc);
+      return;
+    }
     if (!parseTransformOp(op, opLoc, placement.transform)) {
       mDiags.error(opLoc,
                    smdl::concat("unknown place operation ", smdl::Quoted(op),
                                 " (expected material, variant, caster, "
-                                "light, motion, translate, scale, rotate, "
-                                "rotate_x, rotate_y, rotate_z, or matrix)"));
+                                "light, motion, offset, translate, scale, "
+                                "rotate, rotate_x, rotate_y, rotate_z, or "
+                                "matrix)"));
       throw Recover();
     }
+  }
+
+  // The `offset <seconds>` operation of a place: seconds added to the
+  // render clock of everything the placement places. One per place; a
+  // second is an error rather than a sum, since the value is one number.
+  void parsePlaceOffset(LayoutPlacement &placement,
+                        const LayoutLocation &opLoc) {
+    if (placement.animationOffset) {
+      mDiags.error(opLoc, "'offset' appears twice in one place")
+          .note(placement.animationOffsetLoc, "first written here");
+      throw Recover();
+    }
+    const auto value{numbers<1>()[0]};
+    if (!std::isfinite(value)) {
+      mDiags.error(opLoc, "expected a finite number of seconds for 'offset'");
+      throw Recover();
+    }
+    placement.animationOffset = value;
+    placement.animationOffsetLoc = opLoc;
   }
 
   // The `motion { ... }` block of a place: the placement's transform at
@@ -946,7 +1059,7 @@ private:
       advance();
       if (op == "select" || op == "recenter" || op == "subdivide" ||
           op == "displace" || op == "tube" || op == "ribbon" ||
-          op == "radius_scale") {
+          op == "radius_scale" || op == "animation") {
         mDiags
             .error(opLoc,
                    smdl::concat(smdl::Quoted(op),
@@ -963,12 +1076,15 @@ private:
             .note({}, "write one top-level 'place' per instance instead");
         throw Recover();
       }
-      if (op == "motion") {
+      if (op == "motion" || op == "offset") {
         mDiags
-            .error(opLoc, "'motion' is a place operation, not an import "
-                          "operation")
-            .note({}, "declare the file as an asset and 'place' it with a "
-                      "'motion' block");
+            .error(opLoc, smdl::concat(smdl::Quoted(op),
+                                       " is a place operation, not an import "
+                                       "operation"))
+            .note({}, smdl::concat("declare the file as an asset and 'place' "
+                                   "it with ",
+                                   op == "motion" ? "a 'motion' block"
+                                                  : "an 'offset'"));
         throw Recover();
       }
       if (op == "material") {

@@ -53,7 +53,10 @@ private:
 
 /// Uniformly refine `mesh` per `mesh.subdiv` with OpenSubdiv, consuming
 /// the base polygon arrays and filling `verts` and `faces` with the
-/// triangulated result.
+/// triangulated result. A deforming mesh (`basePointsShut` present)
+/// refines its shut key through the same refiner into `vertsShut`, which
+/// is parallel to `verts` by construction: one topology, welded by the
+/// open key's positions, two point buffers.
 ///
 /// The spec's scheme and its smoothing are independent, and make a 2x2:
 ///

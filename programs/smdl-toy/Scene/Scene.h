@@ -32,6 +32,7 @@
 // The fiber geometry, the third thing an instance can wrap.
 #include "Scene/Curves.h"
 
+struct aiAnimation;
 struct aiMesh;
 struct aiScene;
 
@@ -174,6 +175,26 @@ public:
   /// deliberately not a field of `Vert`.
   std::vector<float4> colors{};
 
+  /// The vertices at shutter shut, parallel to `verts`, or empty for a
+  /// mesh that does not deform over the shutter: the second key of the
+  /// Embree geometry, which lerps between the two, and what the hit
+  /// lerps against `verts` at the hit's time. Baked from the file's own
+  /// skin and morph targets by the animated read, the texture coordinate
+  /// of each entry a copy of the open one so a `Vert` lerps uniformly.
+  /// Never resized once the geometry is built, like `verts`.
+  std::vector<Vert> vertsShut{};
+
+  /// Was the mesh skinned into file space by its bones? The placing
+  /// node's transform then applies as the identity, since the bones
+  /// already carry it; see `MeshBake::isSkinned`.
+  bool isSkinned{};
+
+  /// Does the mesh deform over the shutter, before finalize (a second
+  /// set of base points) or after (a second vertex array)?
+  [[nodiscard]] bool deforms() const noexcept {
+    return !vertsShut.empty() || !basePointsShut.empty();
+  }
+
   /// The refinement the import asked for; inactive by default.
   SubdivSpec subdiv{};
 
@@ -194,9 +215,10 @@ public:
   /// finalize. Normals and
   /// tangents are deliberately absent: both are recomputed from the
   /// refined (and possibly displaced) surface.
-  std::vector<float3> basePoints{};       ///< Per imported vertex.
-  std::vector<float2> baseTexcoords{};    ///< Empty if the file has no UVs.
-  std::vector<float4> baseColors{};       ///< Empty if the file has no colors.
+  std::vector<float3> basePoints{};     ///< Per imported vertex.
+  std::vector<float3> basePointsShut{}; ///< At shutter shut; parallel or empty.
+  std::vector<float2> baseTexcoords{};  ///< Empty if the file has no UVs.
+  std::vector<float4> baseColors{};     ///< Empty if the file has no colors.
   std::vector<uint32_t> baseFaceCounts{}; ///< Vertex count per polygon.
   std::vector<uint32_t> baseIndices{};    ///< Concatenated corner indices.
 };
@@ -355,6 +377,12 @@ public:
   /// its transform over the shutter? Set by the builders when the
   /// placement carries one; `frameAt()` never queries otherwise.
   bool isMoving{};
+
+  /// Does the instantiated mesh deform over the shutter
+  /// (`Mesh::deforms()`), so that Embree interpolates its vertices? Set
+  /// by the builders from the mesh; a still placement of a deforming
+  /// mesh is `isDeforming` and not `isMoving`.
+  bool isDeforming{};
 
   /// The Embree geometry this instance is an element of, retained for
   /// `frameAt()` (an instance array's elements share one) and released
@@ -535,13 +563,20 @@ public:
   /// displacement bakes into the vertices at commit, so the renames
   /// rejoin the key and the meshes genuinely differ.
   ///
-  /// \throws smdl::Error  If assimp cannot read the file, or if a selection
-  ///                      pattern matches nothing.
+  /// `animation` says which clip of the file plays and where the render
+  /// clock reads into it; it joins the cache key too, since the pose a
+  /// file is baked in is part of what its meshes are. The default spec
+  /// still plays a file's only clip.
+  ///
+  /// \throws smdl::Error  If assimp cannot read the file, if a selection
+  ///                      pattern matches nothing, or if the animation
+  ///                      spec names a clip the file does not have.
   ///
   void add(const std::string &fileName,
            const float4x4 &objectToWorld = float4x4(1.0f),
            const ObjectSelection &selection = {}, const SubdivSpec &subdiv = {},
-           const MaterialAssignment &materials = {});
+           const MaterialAssignment &materials = {},
+           const AnimationSpec &animation = {});
 
   /// Add one lowered layout item, whichever kind it is: a mesh file
   /// through `add()`, a primitive through `addPrimitive()`, or a curves
@@ -631,11 +666,23 @@ public:
   void commit(const Color &wavelengths);
 
 private:
+  /// Load every mesh of a read file and flatten its node graph. `clip`
+  /// is the clip the spec resolved, or null; the poses at the two keys
+  /// come from it, each deforming mesh is baked at both, and the node
+  /// keys are written from the poses. `joinCorners` says the read held
+  /// assimp's vertex join back, so the meshes weld their own corners.
   [[nodiscard]] ImportFile load(const aiScene &assScene,
                                 const SubdivSpec &subdiv,
-                                const MaterialAssignment &materials);
+                                const MaterialAssignment &materials,
+                                const aiAnimation *clip,
+                                const AnimationSpec &animation,
+                                bool joinCorners, std::string_view fileName);
+  /// Load one mesh, from its bakes at the two keys when it deforms
+  /// (`bakeShut` null under a shut shutter) and from the file's own
+  /// arrays otherwise.
   void load(const aiMesh &assMesh, const std::vector<uint32_t> &materialRemap,
-            const SubdivSpec &subdiv);
+            const SubdivSpec &subdiv, const MeshBake *bakeOpen,
+            const MeshBake *bakeShut, bool joinCorners);
   /// The batch-capable body of `add()`: every entry of `worldXfs` is
   /// one placement of the file. One entry becomes an ordinary instance;
   /// several become one Embree instance array per instantiated mesh,
@@ -644,7 +691,8 @@ private:
   void addMesh(const std::string &fileName, smdl::Span<const float4x4> worldXfs,
                smdl::Span<const float4x4> worldXfsShut,
                const ObjectSelection &selection, const SubdivSpec &subdiv,
-               const MaterialAssignment &materials);
+               const MaterialAssignment &materials,
+               const AnimationSpec &animation);
 
   /// Returns the new instance's index in `meshInstances`. Exactly one
   /// of `meshIndex`, `primIndex`, and `curvesIndex` names the
@@ -668,12 +716,17 @@ private:
   /// `worldXfs[i] * nodeXf`, appending one `MeshInstance` per element
   /// so every consumer that walks `meshInstances` is none the wiser.
   /// `worldXfsShut` is empty or parallel; a batch moves as a whole or
-  /// not at all. Returns the first element's index in `meshInstances`.
+  /// not at all. `nodeXfShut` is the node's transform at shutter shut
+  /// when the file's clip moves the node, composed under the place's
+  /// shut key (or its open key, for a still place). Returns the first
+  /// element's index in `meshInstances`.
   uint32_t addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex,
                             smdl::Span<const float4x4> worldXfs,
                             smdl::Span<const float4x4> worldXfsShut,
-                            const float4x4 &nodeXf, std::string_view fileName,
+                            const float4x4 &nodeXf,
+                            const std::optional<float4x4> &nodeXfShut,
+                            std::string_view fileName,
                             uint32_t matIndex = INVALID_INDEX);
 
   /// The index of `name` in `materials`, appending it if this is the first
@@ -711,23 +764,27 @@ private:
   ///
   bool finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread);
 
-  /// Apply the material `geometry.displacement` to the final vertices, in
-  /// the mesh's own space. Offsets are evaluated once per position-welded
-  /// vertex, averaging over split copies whose UVs disagree (texture
-  /// seams), and applied to every copy, so the displaced surface cannot
-  /// crack along seams. Returns true if any vertex moved, false when the
-  /// material is null or provably undisplaced.
+  /// Apply the material `geometry.displacement` to one key of the final
+  /// vertices (`verts` is `mesh.verts` or `mesh.vertsShut`), in the
+  /// mesh's own space, with `State::animation_time` at `seconds`.
+  /// Offsets are evaluated once per position-welded vertex, averaging
+  /// over split copies whose UVs disagree (texture seams), and applied
+  /// to every copy, so the displaced surface cannot crack along seams.
+  /// Returns true if any vertex moved, false when the material is null
+  /// or provably undisplaced.
   ///
   /// The result does not depend on `spread`: only the material evaluation
   /// is spread, and the accumulation that follows stays in vertex order.
   ///
   /// `weld` must describe `mesh` as it stands, so a subdivided mesh has to
-  /// be welded after refinement replaces its vertices.
-  bool displaceMesh(Mesh &mesh, const Color &wavelengths, bool spread,
-                    const WeldMap &weld);
+  /// be welded after refinement replaces its vertices; it is by the open
+  /// key's positions and serves both keys.
+  bool displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts, float seconds,
+                    const Color &wavelengths, bool spread, const WeldMap &weld);
 
   /// Build and commit the Embree triangle geometry for `mesh.verts` and
-  /// `mesh.faces` into `mesh.scene`. The buffers are shared, so the
+  /// `mesh.faces` into `mesh.scene`, with `mesh.vertsShut` as a second
+  /// time step when the mesh deforms. The buffers are shared, so the
   /// vectors must not change size afterward.
   void buildMeshGeometry(Mesh &mesh);
 

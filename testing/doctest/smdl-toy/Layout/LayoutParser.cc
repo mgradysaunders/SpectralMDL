@@ -573,3 +573,127 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(document.placements.size() == 2);
   }
 }
+
+// Parse from memory, require exactly one error, and return its message.
+static std::string firstErrorOf(const std::string &text) {
+  LayoutDiagnostics diags{};
+  const auto &source{diags.addSource("test.layout", text)};
+  (void)parseLayout(diags, source, "/nowhere");
+  if (diags.errorCount() != 1) MESSAGE(diags.renderAll(false));
+  REQUIRE(diags.errorCount() == 1);
+  for (const auto &diagnostic : diags.all())
+    if (diagnostic.kind == LayoutDiagnostic::Kind::ERROR)
+      return diagnostic.message;
+  return {};
+}
+
+TEST_CASE("LayoutParser: the animation operation") {
+  LayoutDiagnostics diags{};
+  SUBCASE(
+      "A clip by name, settings in any order, ended by the next operation") {
+    const auto document{parseOK(diags, "#smdl layout\n"
+                                       "asset hero = \"hero.glb\" {\n"
+                                       "  animation \"walk\" speed 2 offset "
+                                       "0.25 once material m\n"
+                                       "}\n"
+                                       "place hero\n")};
+    REQUIRE(document.assets.size() == 1);
+    const auto &hero{document.assets[0]};
+    CHECK(hero.animationLoc);
+    CHECK(hero.animation.clipName == "walk");
+    CHECK(hero.animation.clipIndex == INVALID_INDEX);
+    CHECK(hero.animation.speed == doctest::Approx(2.0f));
+    CHECK(hero.animation.offset == doctest::Approx(0.25f));
+    CHECK(hero.animation.once);
+    CHECK(!hero.animation.off);
+    CHECK(hero.materials.all == "m");
+  }
+  SUBCASE("A clip by index, the bare word, off, and nothing") {
+    const auto document{parseOK(diags, "#smdl layout\n"
+                                       "asset a = \"a.glb\" { animation 2 }\n"
+                                       "asset b = \"b.glb\" { animation }\n"
+                                       "asset c = \"c.glb\" { animation off }\n"
+                                       "asset d = \"d.glb\"\n"
+                                       "place a\n")};
+    REQUIRE(document.assets.size() == 4);
+    CHECK(document.assets[0].animation.clipIndex == 2);
+    CHECK(document.assets[0].animation.clipName.empty());
+    CHECK(document.assets[0].animation.key() == "clip 2");
+    CHECK(document.assets[1].animationLoc);
+    CHECK(!document.assets[1].animation.hasClip());
+    CHECK(document.assets[1].animation.key().empty());
+    CHECK(document.assets[2].animation.off);
+    CHECK(document.assets[2].animation.key() == "off");
+    CHECK(!document.assets[3].animationLoc);
+  }
+  SUBCASE("The errors") {
+    const auto at{[](const std::string &body) {
+      return firstErrorOf("#smdl layout\nasset h = \"h.glb\" { " + body +
+                          " }\nplace h\n");
+    }};
+    CHECK(at("animation \"a\" animation \"b\"").find("appears twice") !=
+          std::string::npos);
+    CHECK(at("animation { }").find("not a block") != std::string::npos);
+    CHECK(at("animation off once").find("takes no clip and no settings") !=
+          std::string::npos);
+    CHECK(at("animation once off").find("takes no clip and no settings") !=
+          std::string::npos);
+    CHECK(at("animation \"a\" 2").find("names two clips") != std::string::npos);
+    CHECK(at("animation 1.5").find("unsigned clip index") != std::string::npos);
+    CHECK(at("animation -1").find("unsigned clip index") != std::string::npos);
+    CHECK(at("animation speed 0").find("'speed' must be nonzero") !=
+          std::string::npos);
+    CHECK(at("animation offset fast").find("expected a number") !=
+          std::string::npos);
+    CHECK(at("frobnicate").find("animation") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nasset s = sphere { material m "
+                       "animation \"x\" }\nplace s\n")
+              .find("but this asset is a sphere") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nasset h = \"h.glb\"\n"
+                       "place h animation \"x\"\n")
+              .find("property of what is loaded") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nimport \"h.glb\" { animation \"x\" }\n")
+              .find("belongs on an 'asset' declaration") != std::string::npos);
+  }
+}
+
+TEST_CASE("LayoutParser: the offset on a place") {
+  LayoutDiagnostics diags{};
+  SUBCASE("The one-line form, the block form, a group's place, a bulk place") {
+    const auto document{parseOK(diags,
+                                "#smdl layout\n"
+                                "asset hero = \"hero.glb\"\n"
+                                "group rig { place hero offset 0.1 }\n"
+                                "place hero translate 1 0 0 offset 0.4\n"
+                                "place hero { offset 0.5 material a = b }\n"
+                                "place hero * \"crowd.places\" offset 1\n"
+                                "place hero\n")};
+    REQUIRE(document.groups.size() == 1);
+    REQUIRE(document.groups[0].placements.size() == 1);
+    CHECK(document.groups[0].placements[0].animationOffset ==
+          std::optional<float>(0.1f));
+    REQUIRE(document.placements.size() == 4);
+    CHECK(document.placements[0].animationOffset == std::optional<float>(0.4f));
+    CHECK(document.placements[0].animationOffsetLoc);
+    CHECK(document.placements[0].transform[3].x == doctest::Approx(1.0f));
+    CHECK(document.placements[1].animationOffset == std::optional<float>(0.5f));
+    CHECK(document.placements[1].overrides.size() == 1);
+    CHECK(document.placements[2].placesPath == "crowd.places");
+    CHECK(document.placements[2].animationOffset == std::optional<float>(1.0f));
+    CHECK(!document.placements[3].animationOffset);
+    CHECK(!document.placements[3].animationOffsetLoc);
+  }
+  SUBCASE("The errors") {
+    CHECK(firstErrorOf("#smdl layout\nasset h = \"h.glb\"\n"
+                       "place h offset 1 offset 2\n")
+              .find("'offset' appears twice") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nasset h = \"h.glb\"\n"
+                       "place h offset fast\n")
+              .find("expected a number") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nimport \"h.glb\" { offset 1 }\n")
+              .find("'offset' is a place operation") != std::string::npos);
+    CHECK(firstErrorOf("#smdl layout\nasset h = \"h.glb\"\n"
+                       "place h frobnicate\n")
+              .find("offset") != std::string::npos);
+  }
+}

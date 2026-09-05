@@ -106,7 +106,7 @@ public:
   /// leaves `maxBounces` as a backstop roulette reaches only in
   /// high-albedo transport. Off, every path runs to `maxBounces` and the
   /// estimate is the fixed-depth truncation.
-  bool roulette{true};
+  bool useRoulette{true};
 
   /// The largest value any band of one contribution may add, 0 when
   /// unbounded. The standard biased firefly control: a contribution
@@ -162,6 +162,11 @@ struct PathScratch final {
   }
 };
 
+// TODO Remove `mNeedBlocker` -> instead update method signature to
+// `bool nextBlocker(Hit *hit = {});` so that `nextBlocker()` or 
+// `nextBlocker(nullptr)` behaves as if `mNeedBlocker=false` and
+// `nextBlocker(&hit)` behaves as if `mNeedBlocker=true`.
+
 /// A visibility segment walk from `point0` toward `point1`: attenuates
 /// medium transmittance into `beta` over the spans it covers, passes
 /// through cutout hits and null interfaces with the nested-medium stack
@@ -202,6 +207,11 @@ public:
   /// cutout hits.
   void passThrough(const smdl::JIT::MaterialInstance &mat, const Hit &hit);
 
+  // TODO Is there any way to get MNEE to work with cutouts? Or at least 
+  //      to get MNEE to work with deterministic cutouts, i.e., leaves where
+  //      the mask is mostly exactly 0 or exactly 1 so we can know the
+  //      re-walk will be deterministic?
+
   /// Did the walk pass through a cutout so far? The manifold gather
   /// declines such segments, so that its coverage stays the exact
   /// complement of the deterministic re-walk the arrival-side MIS
@@ -228,7 +238,7 @@ private:
   Color &mBeta;
 
   /// The world-space segment length.
-  float mDistance{};
+  float mDist{};
 
   /// The normalized segment direction, or zero when the endpoints
   /// coincide, honoring the zero-means-off `State` convention.

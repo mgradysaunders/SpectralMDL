@@ -1,7 +1,9 @@
 #include "doctest.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,6 +13,7 @@
 #include "Color.h"
 #include "IO/MeshImport.h"
 #include "Layout/Layout.h"
+#include "RigFixtures.h"
 #include "Scene/Scene.h"
 
 namespace fs = std::filesystem;
@@ -506,5 +509,289 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
     std::optional<InstanceFrame> scratch{};
     CHECK(&insideOut.frameAt(1.0f, scratch) == &insideOut.frame);
     CHECK(sameMatrix(readBack(insideOut, 1.0f), float4x4(1.0f)));
+  }
+}
+
+// The animated read: the rigged glTF files of `RigFixtures.h` placed
+// under a clock, checked for what the read bakes, welds, and hands the
+// instances, before any hit is built.
+
+static const char *RIG_MATERIALS{
+    "#smdl\n"
+    "import ::df::*;\n"
+    "export material paint() = material(\n"
+    "  surface: material_surface(emission: material_emission(\n"
+    "    emission: df::diffuse_edf(), intensity: 1.0)));\n"
+    "export material bump() = material(\n"
+    "  geometry: material_geometry(displacement: float3(0.0, 0.0, 0.1)));\n"};
+
+namespace {
+
+class RigFixture final {
+public:
+  RigFixture(float base, float shutter) {
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    files = rig::writeFiles(dir);
+    if (auto error{compiler.addCode("::rigtest", RIG_MATERIALS)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    renderTime() = base;
+    renderShutter() = shutter;
+  }
+  ~RigFixture() {
+    renderTime() = 0.0f;
+    renderShutter() = 0.0f;
+    fs::remove_all(dir);
+  }
+
+  /// Place `fileName` under `spec`; returns its first instance index.
+  uint32_t add(const std::string &fileName, const AnimationSpec &spec,
+               const SubdivSpec &subdiv = {}, const char *material = "paint") {
+    LayoutItem item{};
+    item.fileName = fileName;
+    item.animation = spec;
+    item.subdiv = subdiv;
+    item.materials.all = material;
+    const auto first{uint32_t(scene.meshInstances.size())};
+    scene.add(item);
+    return first;
+  }
+
+  void commit() {
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto gridSpec{std::vector<float>(16)};
+    for (size_t i = 0; i < gridSpec.size(); i++)
+      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+    wavelengths =
+        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+    renderWavelengths() = wavelengths;
+    scene.commit(wavelengths);
+  }
+
+  [[nodiscard]] const Mesh &meshOf(uint32_t instIndex) const {
+    return *scene.meshes[scene.meshInstances[instIndex].meshIndex];
+  }
+
+  fs::path dir{fs::temp_directory_path() / "smdl-toy-rig-scene-test"};
+  rig::Files files{};
+  smdl::Compiler compiler{};
+  Scene scene{compiler};
+  Color wavelengths{};
+};
+
+[[nodiscard]] bool near3(const float3 &a, const float3 &b, float tol = 1e-4f) {
+  return std::fabs(a.x - b.x) < tol && std::fabs(a.y - b.y) < tol &&
+         std::fabs(a.z - b.z) < tol;
+}
+
+// The vertex whose open point is nearest `point`: the reader renumbers
+// vertices and the weld renumbers them again, so nothing else is stable.
+[[nodiscard]] uint32_t nearestVert(const Mesh &mesh, const float3 &point) {
+  uint32_t best{};
+  float bestDist{INF};
+  for (uint32_t i = 0; i < mesh.verts.size(); i++) {
+    const float dist{smdl::length(mesh.verts[i].point - point)};
+    if (dist < bestDist) bestDist = dist, best = i;
+  }
+  return best;
+}
+
+} // namespace
+
+TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
+  // Open at 0.25 s and shut at 0.75 s: inside the one-second clip, since
+  // a looping clip at exactly its duration wraps to its start.
+  RigFixture fixture{0.25f, 0.5f};
+  const float open{0.25f * PI / 2}, shut{0.75f * PI / 2};
+  const float3 tipOpen{1 + std::cos(open), std::sin(open), 0};
+  const float3 tipShut{1 + std::cos(shut), std::sin(shut), 0};
+  AnimationSpec off{};
+  off.off = true;
+  AnimationSpec swing{};
+  swing.clipName = "swing";
+  AnimationSpec phase{};
+  phase.offset = 0.25f;
+  const auto waveInst{fixture.add(fixture.files.wave, {})};
+  const auto stillInst{fixture.add(fixture.files.wave, off)};
+  const auto phaseInst{fixture.add(fixture.files.wave, phase)};
+  const auto armInst{fixture.add(fixture.files.pendulum, swing)};
+  // The same two as a batch of two records each, ten units apart.
+  const auto batchOf{
+      [&](const std::string &fileName, const AnimationSpec &spec) {
+        LayoutItem item{};
+        item.fileName = fileName;
+        item.animation = spec;
+        item.materials.all = "paint";
+        for (int i = 0; i < 2; i++) {
+          auto xf{float4x4(1.0f)};
+          xf[3] = float4(10.0f * float(i), 0.0f, 0.0f, 1.0f);
+          item.batchXfs.push_back(xf);
+        }
+        const auto first{uint32_t(fixture.scene.meshInstances.size())};
+        fixture.scene.add(item);
+        return first;
+      }};
+  const auto waveBatch{batchOf(fixture.files.wave, {})};
+  const auto armBatch{batchOf(fixture.files.pendulum, swing)};
+  fixture.commit();
+  SUBCASE("A skinned mesh carries a parallel shut key in file space") {
+    const auto &mesh{fixture.meshOf(waveInst)};
+    const auto &inst{fixture.scene.meshInstances[waveInst]};
+    CHECK(mesh.isSkinned);
+    CHECK(mesh.deforms());
+    CHECK(inst.isDeforming);
+    CHECK(!inst.isMoving);
+    REQUIRE(mesh.verts.size() == 7);
+    REQUIRE(mesh.vertsShut.size() == 7);
+    // The tip has turned 22.5 degrees at open and 67.5 at shut.
+    const auto tip{nearestVert(mesh, tipOpen)};
+    CHECK(near3(mesh.verts[tip].point, tipOpen));
+    CHECK(near3(mesh.vertsShut[tip].point, tipShut));
+    CHECK(near3(mesh.vertsShut[tip].normal, float3(0, 0, 1)));
+    const auto base{nearestVert(mesh, float3(0, 0, 0))};
+    CHECK(near3(mesh.vertsShut[base].point, float3(0, 0, 0)));
+    const auto loose{nearestVert(mesh, float3(5, 5, 0))};
+    CHECK(near3(mesh.verts[loose].point, float3(5, 5, 0)));
+    CHECK(near3(mesh.vertsShut[loose].point, float3(5, 5, 0)));
+    // The placing node's five units up never reach a skinned mesh.
+    for (const auto &vert : mesh.verts)
+      CHECK(vert.point.z == doctest::Approx(0));
+    CHECK(fixture.scene.meshInstances[waveInst].frame.objectToWorld[3].z ==
+          doctest::Approx(0));
+  }
+  SUBCASE("'off' reads the bind pose as a still mesh, welded alike") {
+    const auto &mesh{fixture.meshOf(stillInst)};
+    CHECK(&mesh != &fixture.meshOf(waveInst));
+    CHECK(!mesh.isSkinned);
+    CHECK(!mesh.deforms());
+    CHECK(!fixture.scene.meshInstances[stillInst].isDeforming);
+    CHECK(mesh.verts.size() == 7);
+    CHECK(near3(mesh.verts[nearestVert(mesh, float3(2, 0, 0))].point,
+                float3(2, 0, 0)));
+    // The bind pose sits under the node's transform, as a still file does.
+    CHECK(fixture.scene.meshInstances[stillInst].frame.objectToWorld[3].z ==
+          doctest::Approx(5));
+  }
+  SUBCASE("A phase is another mesh set") {
+    const auto &mesh{fixture.meshOf(phaseInst)};
+    CHECK(&mesh != &fixture.meshOf(waveInst));
+    // 0.5 s into the clip at open: forty-five degrees.
+    const float3 expected{1 + rig::SIN45, rig::SIN45, 0};
+    CHECK(near3(mesh.verts[nearestVert(mesh, expected)].point, expected));
+  }
+  SUBCASE("A clip that moves a node moves the instance") {
+    const auto &inst{fixture.scene.meshInstances[armInst]};
+    CHECK(inst.isMoving);
+    CHECK(!inst.isDeforming);
+    CHECK(!fixture.meshOf(armInst).deforms());
+    std::optional<InstanceFrame> scratch{};
+    CHECK(near3(float3(inst.frame.objectToWorld[0]),
+                float3(std::cos(open), std::sin(open), 0)));
+    CHECK(near3(float3(inst.frameAt(1.0f, scratch).objectToWorld[0]),
+                float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
+  }
+  SUBCASE("A batch carries the same keys per element") {
+    for (uint32_t i = 0; i < 2; i++) {
+      const auto &skinned{fixture.scene.meshInstances[waveBatch + i]};
+      CHECK(skinned.isDeforming);
+      CHECK(!skinned.isMoving);
+      CHECK(&fixture.meshOf(waveBatch + i) == &fixture.meshOf(waveInst));
+      CHECK(skinned.frame.objectToWorld[3].x == doctest::Approx(10.0f * i));
+      const auto &arm{fixture.scene.meshInstances[armBatch + i]};
+      CHECK(arm.isMoving);
+      CHECK(!arm.isDeforming);
+      std::optional<InstanceFrame> scratch{};
+      CHECK(near3(float3(arm.frame.objectToWorld[0]),
+                  float3(std::cos(open), std::sin(open), 0)));
+      const auto &shutFrame{arm.frameAt(1.0f, scratch)};
+      CHECK(near3(float3(shutFrame.objectToWorld[0]),
+                  float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
+      CHECK(shutFrame.objectToWorld[3].x == doctest::Approx(10.0f * i));
+    }
+  }
+}
+
+TEST_CASE("Scene: a shut shutter holds the pose at the base time") {
+  RigFixture fixture{0.5f, 0.0f};
+  AnimationSpec swing{};
+  swing.clipName = "swing";
+  const auto waveInst{fixture.add(fixture.files.wave, {})};
+  const auto armInst{fixture.add(fixture.files.pendulum, swing)};
+  fixture.commit();
+  const auto &mesh{fixture.meshOf(waveInst)};
+  CHECK(mesh.isSkinned);
+  CHECK(!mesh.deforms());
+  CHECK(mesh.vertsShut.empty());
+  CHECK(!fixture.scene.meshInstances[waveInst].isDeforming);
+  const float3 tip{1 + rig::SIN45, rig::SIN45, 0};
+  CHECK(near3(mesh.verts[nearestVert(mesh, tip)].point, tip));
+  const auto &arm{fixture.scene.meshInstances[armInst]};
+  CHECK(!arm.isMoving);
+  CHECK(near3(float3(arm.frame.objectToWorld[0]),
+              float3(rig::SIN45, rig::SIN45, 0)));
+}
+
+TEST_CASE("Scene: subdivision and displacement carry the shut key") {
+  RigFixture fixture{0.25f, 0.5f};
+  SubdivSpec linear{};
+  linear.levels = 1;
+  linear.isSmooth = false;
+  SubdivSpec displaced{};
+  displaced.isDisplaced = true;
+  const auto morphInst{fixture.add(fixture.files.morph, {}, linear)};
+  const auto bumpInst{fixture.add(fixture.files.wave, {}, displaced, "bump")};
+  const auto flatInst{fixture.add(fixture.files.morph, {})};
+  fixture.commit();
+  SUBCASE("The animated read welds a duplicated corner at both keys") {
+    // Five authored corners, four after the weld, at both keys.
+    const auto &mesh{fixture.meshOf(flatInst)};
+    CHECK(mesh.verts.size() == 4);
+    CHECK(mesh.vertsShut.size() == 4);
+    CHECK(mesh.faces.size() == 2);
+    for (const auto &face : mesh.faces)
+      for (const auto index : face) CHECK(index < 4);
+  }
+  SUBCASE("A linearly subdivided morph lifts by its weights at each key") {
+    const auto &mesh{fixture.meshOf(morphInst)};
+    CHECK(mesh.deforms());
+    CHECK(fixture.scene.meshInstances[morphInst].isDeforming);
+    // The file's quad is two triangles, which the bilinear split turns
+    // into six quads over eleven vertices.
+    REQUIRE(mesh.verts.size() == 11);
+    REQUIRE(mesh.vertsShut.size() == 11);
+    // Weights (0.25, 0.125) at 0.25 s and (0.75, 0.375) at 0.75 s: the
+    // lift is the first weight, the stretch of the x = 1 edge the second.
+    float maxOpenX{}, maxShutX{};
+    for (size_t i = 0; i < mesh.verts.size(); i++) {
+      CHECK(mesh.verts[i].point.z == doctest::Approx(0.25f));
+      CHECK(mesh.vertsShut[i].point.z == doctest::Approx(0.75f));
+      maxOpenX = std::max(maxOpenX, mesh.verts[i].point.x);
+      maxShutX = std::max(maxShutX, mesh.vertsShut[i].point.x);
+    }
+    CHECK(maxOpenX == doctest::Approx(1.125f));
+    CHECK(maxShutX == doctest::Approx(1.375f));
+  }
+  SUBCASE("A displaced skin moves both keys along their normals") {
+    const auto &mesh{fixture.meshOf(bumpInst)};
+    REQUIRE(mesh.vertsShut.size() == mesh.verts.size());
+    for (size_t i = 0; i < mesh.verts.size(); i++) {
+      CHECK(mesh.verts[i].point.z == doctest::Approx(0.1f));
+      CHECK(mesh.vertsShut[i].point.z == doctest::Approx(0.1f));
+    }
+    const float open{0.25f * PI / 2}, shut{0.75f * PI / 2};
+    const float3 tip{1 + std::cos(open), std::sin(open), 0.1f};
+    const auto index{nearestVert(mesh, tip)};
+    CHECK(near3(mesh.verts[index].point, tip));
+    CHECK(near3(mesh.vertsShut[index].point,
+                float3(1 + std::cos(shut), std::sin(shut), 0.1f)));
   }
 }

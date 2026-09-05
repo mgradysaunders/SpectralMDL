@@ -114,7 +114,7 @@ public:
   /// Is a caustic target, from the instance's layout mark, normalized
   /// by the `LightSampler` constructor so that "no marks anywhere"
   /// reads as every light marked.
-  bool caustic{};
+  bool isCaustic{};
 
   /// The object-space surface area: a primitive's, or a moving mesh
   /// light's, which is drawn by object area with the exact stretch of
@@ -257,7 +257,7 @@ public:
 
   /// Is a caustic target; see `AreaLight::caustic`. Normalized by the
   /// `LightSampler` constructor, hence settable.
-  bool caustic{};
+  bool isCaustic{};
 
 private:
   /// The placement `xf` derives to; see `Placement`.
@@ -276,7 +276,7 @@ private:
   Placement mPlacement{};
 
   /// The two keys, read only under `mMoving`.
-  bool mMoving{};
+  bool mIsMoving{};
   float4x4 mLightToWorld{float4x4(1.0f)};
   float4x4 mLightToWorldShut{float4x4(1.0f)};
 
@@ -441,14 +441,14 @@ public:
   [[nodiscard]] bool empty() const noexcept { return mSelection.empty(); }
 
   /// The environment light, or null.
-  [[nodiscard]] const EnvLight *env() const noexcept { return envLight; }
+  [[nodiscard]] const EnvLight *env() const noexcept { return mEnvLight; }
 
   /// The probability of light selection picking the environment for
   /// the receiver at `point`.
   [[nodiscard]] float envSelectionPMF(const float3 &point) const noexcept {
-    return envLight && !empty()
-               ? mSelection.pmf(int(areaLights.size() + analyticLights.size()),
-                                point)
+    return mEnvLight && !empty()
+               ? mSelection.pmf(
+                     int(mAreaLights.size() + mAnalyticLights.size()), point)
                : 0.0f;
   }
 
@@ -522,11 +522,11 @@ public:
   /// target: light selection never aims at it, so no gather claims its
   /// transport and its arrivals keep their ordinary weights.
   [[nodiscard]] bool causticLight(uint32_t instIndex) const noexcept {
-    const auto lightIndex{instIndex < instanceToLight.size()
-                              ? instanceToLight[instIndex]
+    const auto lightIndex{instIndex < mInstanceToLight.size()
+                              ? mInstanceToLight[instIndex]
                               : INVALID_INDEX};
-    return lightIndex != INVALID_INDEX && areaLights[lightIndex].isSampled &&
-           areaLights[lightIndex].caustic;
+    return lightIndex != INVALID_INDEX && mAreaLights[lightIndex].isSampled &&
+           mAreaLights[lightIndex].isCaustic;
   }
 
   /// Is an environment escape a caustic target's; see `causticLight()`.
@@ -569,24 +569,25 @@ private:
                                       float time, bool keepDark, Hit &hit,
                                       float &positionPDF, float &conePDF) const;
 
-  smdl::Compiler &compiler;
+  smdl::Compiler &mCompiler;
 
-  const Scene &scene;
+  const Scene &mScene;
 
-  const EnvLight *envLight{};
+  const EnvLight *mEnvLight{};
 
-  std::vector<AreaLight> areaLights{};
+  std::vector<AreaLight> mAreaLights{};
 
-  std::vector<AnalyticLight> analyticLights{};
+  std::vector<AnalyticLight> mAnalyticLights{};
 
   /// Map from mesh instance index to index in `areaLights`, or
   /// `INVALID_INDEX`.
-  std::vector<uint32_t> instanceToLight{};
+  std::vector<uint32_t> mInstanceToLight{};
 
   /// The selection over `areaLights`, then `analyticLights`, then the
   /// environment if present; see `LightSelection`.
   LightSelection mSelection{};
 
+  // TODO Revisit this?
   /// Is the environment a caustic target: true exactly while no light
   /// carries a mark, since the environment cannot be marked.
   bool mEnvCaustic{true};

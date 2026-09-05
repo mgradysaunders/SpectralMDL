@@ -115,23 +115,28 @@ public:
   }
 };
 
-// A placement transform at both keys of the shutter, and whether
-// anything on the path actually carried a `motion` block. Composes
-// pairwise, so a static factor (an asset's correction, a file's node
-// transform, a bulk record) multiplies into both keys, and a moving
-// factor above or below it moves everything it holds.
+// A placement transform at both keys of the shutter, whether anything
+// on the path actually carried a `motion` block, and the seconds the
+// path adds to the clock of what it places. Composes pairwise, so a
+// static factor (an asset's correction, a file's node transform, a bulk
+// record) multiplies into both keys, and a moving factor above or below
+// it moves everything it holds; the offsets add, since they travel the
+// same path the keys do.
 class MotionXf final {
 public:
   MotionXf() = default;
   MotionXf(const float4x4 &xf) : open(xf), shut(xf) {}
-  MotionXf(const float4x4 &open, const std::optional<float4x4> &shut)
-      : open(open), shut(shut.value_or(open)), moving(shut.has_value()) {}
+  MotionXf(const float4x4 &open, const std::optional<float4x4> &shut,
+           float offset = 0.0f)
+      : open(open), shut(shut.value_or(open)), moving(shut.has_value()),
+        offset(offset) {}
 
   [[nodiscard]] MotionXf operator*(const MotionXf &other) const {
     auto result{MotionXf()};
     result.open = open * other.open;
     result.shut = shut * other.shut;
     result.moving = moving || other.moving;
+    result.offset = offset + other.offset;
     return result;
   }
 
@@ -150,7 +155,17 @@ public:
   float4x4 open{float4x4(1.0f)};
   float4x4 shut{float4x4(1.0f)};
   bool moving{};
+  float offset{};
 };
+
+// The clip an item lowered from `decl` plays, with the path's offsets
+// added to the asset's own.
+[[nodiscard]] static AnimationSpec animationOf(const LayoutAssetDecl &decl,
+                                               const MotionXf &xf) {
+  auto spec{decl.animation};
+  spec.offset += xf.offset;
+  return spec;
+}
 
 static void placeItem(LayoutItem &item, const MotionXf &xf) {
   item.objectToWorld = xf.open;
@@ -399,7 +414,8 @@ private:
     // The placement's own keys under everything above it. The block's
     // shut key, when there is one, is absolute: it stands where the
     // open operations stand, and everything below composes under both.
-    const auto placeXf{xf * MotionXf(placement.transform, placement.motion)};
+    const auto placeXf{xf * MotionXf(placement.transform, placement.motion,
+                                     placement.animationOffset.value_or(0.0f))};
     if (!placement.placesPath.empty()) {
       // The bulk form: one instance per record, each record's transform
       // standing where a one-line place's operations would, and each
@@ -500,6 +516,7 @@ private:
           item.fileName = target.path;
           item.selection = decl->selection;
           item.subdiv = decl->subdiv;
+          item.animation = animationOf(*decl, placeXf);
         }
         item.materials = decl->materials;
         item.materials.renames = composeRename(
@@ -620,6 +637,7 @@ private:
     } else {
       item.selection = decl->selection;
       item.subdiv = decl->subdiv;
+      item.animation = animationOf(*decl, combinedXf);
     }
     item.materials = decl->materials;
     item.materials.renames =
@@ -700,6 +718,13 @@ private:
                                 target.kindName()));
       throw SkipPlacement();
     }
+    if (target.kind != Target::Kind::MESH && decl.animationLoc) {
+      mDiags.error(decl.animationLoc,
+                   smdl::concat("'animation' applies to a mesh file, but ",
+                                smdl::QuotedPath(decl.path), " is a ",
+                                target.kindName()));
+      throw SkipPlacement();
+    }
     if (target.kind == Target::Kind::CURVES) {
       // Fibers have no mesh slots, so like a primitive the one thing
       // the declaration cannot go without is the whole-asset binding.
@@ -769,6 +794,7 @@ private:
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     item.curves.active = target.kind == Target::Kind::CURVES;
+    if (target.kind == Target::Kind::MESH) item.animation.offset = xf.offset;
     placeItem(item,
               xf * MotionXf(placement.transform) * MotionXf(target.correction));
     item.materials = placement.importMaterials;

@@ -214,8 +214,16 @@ syn keyword layoutMotionOp motion nextgroup=layoutMotionBlock skipwhite skipempt
 
 " Asset operations. `radius`, `height`, and `size` belong to a shape,
 " `radius_scale` to a `.curves` file, and the rest to a mesh file.
+" `animation` takes a clip and its settings (`offset`, `speed`, `once`),
+" or `off`.
 syn keyword layoutAssetOp contained select recenter subdivide displace tube ribbon
-syn keyword layoutAssetSetting contained radius height size radius_scale
+syn keyword layoutAnimationOp contained animation nextgroup=layoutCasterOff skipwhite
+syn keyword layoutAssetSetting contained radius height size radius_scale speed once
+
+" offset <seconds> on a place: the seconds the placement adds to the clock
+" of what it places. Top level like `motion`, since a one-line place writes
+" it outside any block; inside an asset block it is `animation`'s setting.
+syn keyword layoutOffsetOp offset
 
 " The caustic caster and light marks: bare on an asset, `caster` or `caster
 " off` (`light`, `light off`) on a place or an import. Top level like
@@ -268,8 +276,8 @@ syn cluster layoutCommon
       \ contains=layoutComment,layoutString,layoutNumber,layoutBadWord
 
 syn region layoutAssetBlock contained matchgroup=layoutDelim start="{" end="}"
-      \ contains=@layoutCommon,layoutAssetOp,layoutAssetSetting,layoutSubdivMod,
-      \ layoutTransform,layoutMaterialOp,layoutCasterOp
+      \ contains=@layoutCommon,layoutAssetOp,layoutAnimationOp,layoutAssetSetting,
+      \ layoutSubdivMod,layoutTransform,layoutMaterialOp,layoutCasterOp,layoutOffsetOp
 
 syn region layoutLightBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutLightSetting,layoutTransform
@@ -278,11 +286,11 @@ syn region layoutLightBlock contained matchgroup=layoutDelim start="{" end="}"
 " never becomes a scope.
 syn region layoutGroupBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutPlaceStmt,layoutTransform,layoutMaterialOp,
-      \ layoutVariant,layoutCasterOp,layoutMotionOp
+      \ layoutVariant,layoutCasterOp,layoutMotionOp,layoutOffsetOp
 
 syn region layoutPlaceBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutTransform,layoutMaterialOp,layoutVariant,
-      \ layoutCasterOp,layoutMotionOp
+      \ layoutCasterOp,layoutMotionOp,layoutOffsetOp
 
 " A variant holds `material <from> = <to>` overrides and nothing else.
 syn region layoutVariantBlock contained matchgroup=layoutDelim start="{" end="}"
@@ -341,6 +349,8 @@ hi def link layoutCausticOp       Keyword
 hi def link layoutCasterOff       Keyword
 hi def link layoutVariant         Keyword
 hi def link layoutMotionOp        Keyword
+hi def link layoutAnimationOp     Keyword
+hi def link layoutOffsetOp        Keyword
 hi def link layoutAs              Keyword
 
 hi def link layoutAssetSetting    Label

@@ -27,6 +27,7 @@ target_sources(
     "Tonemap.cc"
     "IO/AssetFile.cc"
     "IO/CurvesFile.cc"
+    "IO/MeshDeform.cc"
     "IO/MeshImport.cc"
     "IO/PlacesFile.cc"
     "Layout/Layout.cc"

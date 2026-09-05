@@ -4,6 +4,7 @@ smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
     "Color.cc"
+    "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"
     "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
@@ -16,3 +17,6 @@ smdl_add_doctest(
   LINK
     "smdl-toy-objects"
   )
+# The fixtures the suite's tests share ('RigFixtures.h') live beside this
+# file, so it is on the include path.
+target_include_directories("smdl-toy-doctest" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -47,23 +47,30 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
   for (size_t i = 0; i < scene.meshInstances.size(); i++) {
     if (uint32_t(i) == skipInstance) continue;
     const auto &instance{scene.meshInstances[i]};
-    auto fold{[&](const float3 &objectPoint) {
-      const auto point{
-          float3(instance.frame.objectToWorld * float4(objectPoint, 1.0f))};
+    auto fold{[&](const float4x4 &xf, const float3 &objectPoint) {
+      const auto point{float3(xf * float4(objectPoint, 1.0f))};
       points.push_back(point);
       bound.extend(point);
     }};
+    const auto &open{instance.frame.objectToWorld};
     // A primitive or a groom stands in with its coarse proxy points.
     if (instance.isPrimitive()) {
       for (const auto &point :
            scene.primitives[instance.primIndex]->proxyPoints)
-        fold(point);
+        fold(open, point);
     } else if (instance.isCurves()) {
       for (const auto &point : scene.curves[instance.curvesIndex]->proxyPoints)
-        fold(point);
+        fold(open, point);
     } else {
-      for (const auto &vert : scene.meshes[instance.meshIndex]->verts)
-        fold(vert.point);
+      const auto &mesh{*scene.meshes[instance.meshIndex]};
+      for (const auto &vert : mesh.verts) fold(open, vert.point);
+      // A deforming mesh frames both keys, the shut one under the shut
+      // frame when the instance moves too.
+      if (mesh.deforms()) {
+        std::optional<InstanceFrame> scratch{};
+        const auto &shut{instance.frameAt(1.0f, scratch).objectToWorld};
+        for (const auto &vert : mesh.vertsShut) fold(shut, vert.point);
+      }
     }
   }
   return points;

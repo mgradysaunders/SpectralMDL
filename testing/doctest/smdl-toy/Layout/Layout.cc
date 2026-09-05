@@ -414,3 +414,103 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
   REQUIRE(layout.lights[0].lightToWorldShut);
   CHECK(near(translationOf(*layout.lights[0].lightToWorldShut), 11, 0, 5));
 }
+
+TEST_CASE("Layout lowering: the animation spec reaches the item with the "
+          "path's offsets") {
+  LayoutDir dir{};
+  dir.write("hero.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+  dir.write("sub.layout",
+            "#smdl layout\n"
+            "asset inner = \"hero.obj\" { animation \"walk\" offset 0.5 }\n"
+            "place inner offset 0.25\n");
+  dir.write("sub2.layout", "#smdl layout\nimport \"hero.obj\"\n");
+  {
+    auto places{PlacesFile()};
+    places.transforms = {float4x4(1.0f), float4x4(1.0f)};
+    places.transforms[1][3] = float4(0.0f, 1.0f, 0.0f, 1.0f);
+    writePlacesFile((dir.root / "pair.places").string(), places);
+  }
+  const auto entry{
+      dir.write("entry.layout",
+                "#smdl layout\n"
+                "asset hero = \"hero.obj\" { animation \"walk\" offset 0.25 }\n"
+                "asset plain = \"hero.obj\"\n"
+                "asset still = \"hero.obj\" { animation off }\n"
+                "asset sub = \"sub.layout\"\n"
+                "asset sub2 = \"sub2.layout\"\n"
+                "group rig { place hero offset 0.1 }\n"
+                "place hero\n"                            // 0
+                "place hero offset 0.5\n"                 // 1
+                "place rig offset 1\n"                    // 2
+                "place plain offset 2\n"                  // 3
+                "place still offset 3\n"                  // 4
+                "place sub offset 1\n"                    // 5
+                "place hero * \"pair.places\" offset 2\n" // 6
+                "import \"hero.obj\"\n"                   // 7
+                "place sub2 offset 4\n"                   // 8
+                "place hero\n"                            // 9
+                )};
+  LayoutDiagnostics diags{};
+  const auto layout{lowerOK(diags, entry)};
+  CHECK(diags.empty());
+  REQUIRE(layout.items.size() == 10);
+  const auto offsetOf{
+      [&](size_t i) { return layout.items[i].animation.offset; }};
+  // 0: the asset's own offset; 1: the place's added; 2: the group's and
+  // the member's added; 3: an asset that said nothing takes the place's
+  // offset over the default spec.
+  CHECK(layout.items[0].animation.clipName == "walk");
+  CHECK(offsetOf(0) == doctest::Approx(0.25f));
+  CHECK(offsetOf(1) == doctest::Approx(0.75f));
+  CHECK(offsetOf(2) == doctest::Approx(1.35f));
+  CHECK(layout.items[3].animation.clipName.empty());
+  CHECK(offsetOf(3) == doctest::Approx(2.0f));
+  CHECK(layout.items[3].animation.key() == "offset 2");
+  // 4: off stays off whatever the path adds.
+  CHECK(layout.items[4].animation.off);
+  CHECK(layout.items[4].animation.key() == "off");
+  // 5: a layout target passes the offset down to the meshes inside.
+  CHECK(layout.items[5].animation.clipName == "walk");
+  CHECK(offsetOf(5) == doctest::Approx(1.75f));
+  // 6: every record of a scatter shares the place's offset.
+  REQUIRE(layout.items[6].batchXfs.size() == 2);
+  CHECK(offsetOf(6) == doctest::Approx(2.25f));
+  // 7: an anonymous import at the top carries the default spec; 8: one
+  // under a placed layout carries the path's offset.
+  CHECK(layout.items[7].animation.key().empty());
+  CHECK(layout.items[8].animation.key() == "offset 4");
+  // The key tells two phases apart and equates two equal ones.
+  CHECK(layout.items[0].animation.key() != layout.items[1].animation.key());
+  CHECK(layout.items[0].animation.key() == layout.items[9].animation.key());
+}
+
+TEST_CASE("Layout lowering: 'animation' is refused on a groom and a layout") {
+  LayoutDir dir{};
+  dir.writeCurves("fur.curves");
+  dir.write("sub.layout", "#smdl layout\n"
+                          "asset inner = sphere { material m }\n"
+                          "place inner\n");
+  SUBCASE("On a groom") {
+    const auto entry{dir.write(
+        "entry.layout", "#smdl layout\n"
+                        "asset fur = \"fur.curves\" { material m animation "
+                        "\"x\" }\n"
+                        "place fur\n")};
+    LayoutDiagnostics diags{};
+    (void)lowerLayout(diags, entry);
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR,
+                        "'animation' applies to a mesh file"));
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR, "curves file"));
+  }
+  SUBCASE("On a layout") {
+    const auto entry{dir.write("entry.layout",
+                               "#smdl layout\n"
+                               "asset sub = \"sub.layout\" { animation 0 }\n"
+                               "place sub\n")};
+    LayoutDiagnostics diags{};
+    (void)lowerLayout(diags, entry);
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR,
+                        "'animation' applies to a mesh file"));
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR, "is a layout"));
+  }
+}

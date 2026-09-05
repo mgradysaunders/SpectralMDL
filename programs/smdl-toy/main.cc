@@ -2063,7 +2063,7 @@ int main(int argc, char **argv) try {
     }
   }
   if (!outputSpectrum.empty()) {
-    // TODO If using procedural SunSky, and standard ENVI header lines:
+    // TODO If using procedural SunSky (and not in moonlight mode), and standard ENVI header lines:
     // sun azimuth = (degrees)
     // sun elevation = (degrees)
     // solar irradiance = {...} (W/m2/um)

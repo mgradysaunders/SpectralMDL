@@ -73,7 +73,9 @@ public:
   bool isDisplaced{};
 
   /// Anything to do at all?
-  [[nodiscard]] bool active() const noexcept { return levels > 0 || isDisplaced; }
+  [[nodiscard]] bool active() const noexcept {
+    return levels > 0 || isDisplaced;
+  }
 
   /// A key that distinguishes two specs, for callers that cache by
   /// (file, spec). Empty for the inactive default, so a file placed
@@ -485,6 +487,14 @@ public:
   /// target is necessarily a light, so the mark implies `light`, and
   /// `light off` on a placement of a caustic asset is an error.
   bool isCaustic{};
+
+  /// The `animation` operation: which clip of the file plays, and how
+  /// the render clock reads into it. The default spec when the block
+  /// says nothing, which still plays a file's only clip. `animationLoc`
+  /// is set iff the word was written, which is what the lowering checks
+  /// against the target's kind: a groom and a layout do not animate.
+  AnimationSpec animation{};
+  LayoutLocation animationLoc{};
 };
 
 /// One `light` declaration: a named emitter with no surface in the
@@ -682,6 +692,15 @@ public:
   /// records carry no keys of their own.
   std::optional<float4x4> motion{};
   LayoutLocation motionLoc{};
+
+  /// PLACE: the `offset <seconds>` operation, or unset: seconds this
+  /// placement adds to the render clock of everything it places, on top
+  /// of the asset's own `animation offset` and every enclosing place's,
+  /// so that a crowd of one asset walks out of step. It passes through a
+  /// group or a layout target to the meshes inside; a shape, a groom,
+  /// and a light have no clip to offset and take no notice.
+  std::optional<float> animationOffset{};
+  LayoutLocation animationOffsetLoc{};
 };
 
 /// One `group` declaration: a named, reusable arrangement of `place`
@@ -814,6 +833,12 @@ public:
   /// as a whole, so every record's shut key is its record transform
   /// under the moved placement.
   std::vector<float4x4> batchXfsShut{};
+  /// The clip the item's meshes play and the clock offset they play it
+  /// at: the asset's `animation` with every `offset` on the place path
+  /// added. The default spec for an item whose asset said nothing, which
+  /// still plays a file's only clip; `off` for one that said so. Joins
+  /// the mesh cache key, so two phases of one asset are two mesh sets.
+  AnimationSpec animation{};
 };
 
 /// One punctual light placed in the world: what the lowering emits and

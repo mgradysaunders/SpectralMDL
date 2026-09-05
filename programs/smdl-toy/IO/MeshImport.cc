@@ -37,11 +37,9 @@ void configureImporter(Assimp::Importer &importer,
   // back into an `unsigned int` field.
   const unsigned removedComponents{
       extraRemovedComponents |
-      aiComponent_TEXTURES |    // Embedded FBX/GLB image blobs
-      aiComponent_BONEWEIGHTS | //
-      aiComponent_ANIMATIONS |  //
-      aiComponent_LIGHTS |      //
-      aiComponent_CAMERAS |     //
+      aiComponent_TEXTURES | // Embedded FBX/GLB image blobs
+      aiComponent_LIGHTS |   //
+      aiComponent_CAMERAS |  //
       aiComponent_TEXCOORDSn(1) | aiComponent_TEXCOORDSn(2) |
       aiComponent_TEXCOORDSn(3) | aiComponent_TEXCOORDSn(4) |
       aiComponent_TEXCOORDSn(5) | aiComponent_TEXCOORDSn(6)};
@@ -57,17 +55,18 @@ void configureImporter(Assimp::Importer &importer,
   importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_TEXTURES, false);
   importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_CAMERAS, false);
   importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_LIGHTS, false);
-  importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_ANIMATIONS, false);
-  importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_WEIGHTS, false);
+  // Bone weights and animations stay in: the deformation evaluator plays
+  // them, and a file without any reads exactly as it would without them.
+  // Skeleton meshes are geometry the file does not have.
   importer.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
 }
 
 const aiScene *readLossless(Assimp::Importer &importer,
                             const std::string &fileName) {
   // Not a call to `configureImporter()` with the removals cleared: that
-  // function also suppresses the FBX reader's textures, cameras, lights,
-  // animations and weights at the source, and those are exactly what a
-  // report about the file has to see.
+  // function also suppresses the FBX reader's textures, cameras, and
+  // lights at the source, and those are exactly what a report about the
+  // file has to see.
   importer.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
   auto assScene{importer.ReadFile(fileName.c_str(), 0)};
   if (!assScene)
@@ -86,6 +85,7 @@ void flattenNodes(const aiNode &assNode, const float4x4 &parentXf,
   auto &node{file.nodes.emplace_back()};
   node.parent = parentIndex;
   node.nodeToFile = xf;
+  node.nodeToFileShut = xf;
   // The root contributes no path component: its name is whatever the
   // importer decided to call it, not anything the file's author chose.
   if (parentIndex != INVALID_INDEX) {
@@ -316,6 +316,7 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
       usage[i].instanceCount++;
       usage[i].triangleCount += assMesh.mNumFaces;
       usage[i].hasColors |= assMesh.mColors[0] != nullptr;
+      usage[i].deforms |= assMesh.HasBones() || assMesh.mNumAnimMeshes > 0;
       usage[i].bound.extend(bound);
       auto &indices{materialIndices[i]};
       if (std::find(indices.begin(), indices.end(), assMesh.mMaterialIndex) ==
@@ -341,7 +342,9 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
     info->materialNames = usage[0].materialNames;
     info->triangleCount = usage[0].triangleCount;
     info->hasColors = usage[0].hasColors;
+    info->deforms = usage[0].deforms;
   }
+  if (info) info->animations = listClips(*assScene);
   // The root has no name and so cannot be selected; an unnamed node cannot
   // either. Everything else is reported in preorder, as authored.
   usage.erase(std::remove_if(usage.begin(), usage.end(),
@@ -390,6 +393,16 @@ void objectListingJSON(llvm::json::OStream &json, std::string_view fileName,
     json.attribute("file", llvm::StringRef(fileName.data(), fileName.size()));
     json.attribute("triangles", info.triangleCount);
     json.attribute("colors", info.hasColors);
+    json.attribute("deforms", info.deforms);
+    json.attributeArray("animations", [&] {
+      for (const auto &clip : info.animations)
+        json.object([&] {
+          json.attribute("name", clip.name);
+          json.attributeBegin("duration");
+          json.rawValue(jsonFloat(clip.duration));
+          json.attributeEnd();
+        });
+    });
     json.attribute("up_axis", info.upAxis);
     json.attribute("up_axis_sign", info.upAxisSign);
     json.attributeBegin("meters_per_unit");
@@ -410,6 +423,7 @@ void objectListingJSON(llvm::json::OStream &json, std::string_view fileName,
           json.attribute("triangles", entry.triangleCount);
           json.attribute("instances", entry.instanceCount);
           json.attribute("colors", entry.hasColors);
+          json.attribute("deforms", entry.deforms);
           json.attributeBegin("materials");
           jsonStrings(json, entry.materialNames);
           json.attributeEnd();

@@ -70,7 +70,7 @@ void printObjectUsageRows(llvm::raw_ostream &os,
         entry.instanceCount == 1
             ? std::string()
             : smdl::concat(" in ", entry.instanceCount, " meshes"),
-        entry.hasColors ? ", colors" : ""));
+        entry.hasColors ? ", colors" : "", entry.deforms ? ", deforms" : ""));
     nameWidth = std::max(nameWidth, names.back().size());
     countWidth = std::max(countWidth, counts.back().size());
   }
@@ -132,12 +132,25 @@ void printObjectTable(const Layout &layout) {
                          file.hasRootUVs() ? ", root UVs" : "", "\n\n");
       continue;
     }
-    const auto usage{importObjectUsage(item.fileName)};
+    auto info{ObjectFileInfo()};
+    const auto usage{importObjectUsage(item.fileName, &info)};
     uint64_t numTriangles{};
     for (const auto &entry : usage)
       if (entry.depth == 0) numTriangles += entry.triangleCount;
     os << smdl::concat(item.fileName, ": ", usage.size(), " object(s), ",
                        numTriangles, " triangles\n");
+    if (!info.animations.empty()) {
+      os << "  animations:";
+      for (size_t i = 0; i < info.animations.size(); i++) {
+        const auto &clip{info.animations[i]};
+        char duration[32]{};
+        std::snprintf(duration, sizeof(duration), "%.3g",
+                      double(clip.duration));
+        os << (i == 0 ? " " : ", ")
+           << smdl::concat(smdl::Quoted(clip.name), " (", duration, " s)");
+      }
+      os << '\n';
+    }
     printObjectUsageRows(os, usage);
   }
   os << "Select one in a '.layout' file, for instance:\n"
