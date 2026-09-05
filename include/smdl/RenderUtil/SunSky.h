@@ -70,6 +70,50 @@ struct SunSkyOptions final {
   float moonDistanceScale{1.0f};
 };
 
+class SunSky;
+
+/// The sky and sun spectra resolved onto one wavelength grid.
+///
+/// Most of what `SunSky::skyRadiance()` does per call is turn wavelengths
+/// into pairs of model channels and interpolate the spectral modes
+/// between them, and that depends on the grid alone, never on the view
+/// direction. A renderer that evaluates the sky many times against one
+/// grid resolves it once into this and hands it back on every call,
+/// leaving a contraction over the modes and nothing else.
+///
+/// The grid may change as often as the caller likes: a render that
+/// jitters the wavelengths resolves once per sample, which still
+/// amortizes over the evaluations that sample makes.
+///
+/// Resolving interpolates the spectral shape between the two channels
+/// before the clamp at zero rather than after, so a wavelength that
+/// straddles a channel where the fit goes slightly negative reads a
+/// hair differently than the per-wavelength path did. The difference is
+/// far below the fit's own residual, and `SunSky::skyRadiance()` takes
+/// this path either way, so the two agree.
+class SMDL_EXPORT SkyBasis final {
+public:
+  SkyBasis() = default;
+
+  /// The number of bands resolved, zero until `SunSky::resolve()`.
+  [[nodiscard]] int numBands() const noexcept { return mNumBands; }
+
+private:
+  friend class SunSky;
+
+  /// The number of bands, which is the row length below.
+  int mNumBands{};
+
+  /// The spectral shape band-major: row 0 is the mean shape and row
+  /// `1 + m` is spectral mode `m`, each interpolated onto the grid with
+  /// the per-channel scale folded in.
+  std::vector<float> mRows{};
+
+  /// The direct solar irradiance interpolated onto the grid, in the fit
+  /// tables' native units exactly as `SunSky::sunIrradiance`.
+  std::vector<float> mSunIrradiance{};
+};
+
 /// An empirical clear-sky sun and sky model fitted to MODTRAN
 /// simulations, spanning the VNIR-SWIR range of 400nm to 2500nm with
 /// the rural boundary-layer aerosol family.
@@ -115,6 +159,21 @@ public:
   /// `radiance` is in W/(m^2 sr nm) times the `scaleFactor` option.
   void skyRadiance(const float3 &direction, int numWavelens,
                    const float *wavelens, float *radiance) const;
+
+  /// Resolve this model onto `wavelens` for the overloads below, which
+  /// is the form a renderer evaluating the sky repeatedly wants. See
+  /// `SkyBasis`.
+  void resolve(Span<const float> wavelens, SkyBasis &basis) const;
+
+  /// The sky-dome spectral radiance toward `direction` over a resolved
+  /// grid, writing `basis.numBands()` values.
+  void skyRadiance(const float3 &direction, const SkyBasis &basis,
+                   float *radiance) const;
+
+  /// The total spectral radiance toward `direction` over a resolved
+  /// grid: the sky plus the sun disk when `direction` is inside it.
+  void radiance(const float3 &direction, const SkyBasis &basis,
+                float *radiance) const;
 
   /// The sun-disk spectral radiance, uniform over the disk: the direct
   /// solar irradiance divided by `sunSolidAngle()`. Filled with zeros
@@ -255,8 +314,7 @@ private:
   /// cosine, already clamped to the trained range, because the caller
   /// has both and recovering either from the other costs a transcendental.
   ///
-  void evalSkyFit(float cosView, float viewZenithDeg,
-                  float cosRelativeAzimuth,
+  void evalSkyFit(float cosView, float viewZenithDeg, float cosRelativeAzimuth,
                   float (&outputs)[SKY_FIT_OUTPUT_COUNT]) const noexcept;
 
   /// The sky polynomial specialized to these options: the fit is cubic

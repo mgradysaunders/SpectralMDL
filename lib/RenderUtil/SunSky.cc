@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "smdl/RenderUtil/FastMath.h"
+#include "smdl/Support/Macros.h"
 
 #include "Support/SIMD.h"
 
@@ -288,14 +289,6 @@ void evalSunOutputs(double sunZenithDeg, double visibility, double waterVapor,
 // is stored as float, and six terms of accumulation cannot use more than
 // that, so widening to double only buys conversions in the innermost
 // loop the model has.
-[[nodiscard]]
-float skyShape(const float (&modeCoeffs)[rural::SKY_MODE_COUNT], int i) {
-  float shape = rural::SKY_MEAN_SHAPE[i];
-  for (std::size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
-    shape += modeCoeffs[m] * rural::SKY_MODES[m][i];
-  return std::max(shape, 0.0f);
-}
-
 // The continuous channel coordinate of the given wavelength in
 // nanometers, clamped to the grid. Non-finite wavelengths clamp to the
 // first channel. The indexes are signed because converting a float to
@@ -598,10 +591,34 @@ SunSky::SunSky(const SunSkyOptions &options) {
       float((skyIntegral + sunIntegral) / (4.0 * double(PI)) * scaleFactor);
 }
 
-void SunSky::skyRadiance(const float3 &direction, int numWavelens,
-                         const float *wavelens, float *radiance) const {
+void SunSky::resolve(Span<const float> wavelens, SkyBasis &basis) const {
+  const std::size_t numBands{wavelens.size()};
+  basis.mNumBands = int(numBands);
+  basis.mRows.assign((1 + rural::SKY_MODE_COUNT) * numBands, 0.0f);
+  basis.mSunIrradiance.assign(numBands, 0.0f);
+  if (sunIrradiance.empty()) return; // default-constructed
+  for (std::size_t j = 0; j < numBands; ++j) {
+    const auto lerp = channelOf(wavelens[j]);
+    const float scale0{channelScale.empty() ? 1.0f : channelScale[lerp.i0]};
+    const float scale1{channelScale.empty() ? 1.0f : channelScale[lerp.i1]};
+    const auto mix{
+        [frac = lerp.frac](float a, float b) { return a + frac * (b - a); }};
+    basis.mRows[j] = mix(scale0 * rural::SKY_MEAN_SHAPE[lerp.i0],
+                         scale1 * rural::SKY_MEAN_SHAPE[lerp.i1]);
+    for (std::size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
+      basis.mRows[(1 + m) * numBands + j] =
+          mix(scale0 * rural::SKY_MODES[m][lerp.i0],
+              scale1 * rural::SKY_MODES[m][lerp.i1]);
+    basis.mSunIrradiance[j] =
+        mix(sunIrradiance[lerp.i0], sunIrradiance[lerp.i1]);
+  }
+}
+
+void SunSky::skyRadiance(const float3 &direction, const SkyBasis &basis,
+                         float *radiance) const {
+  const int numBands{basis.mNumBands};
   if (sunIrradiance.empty()) { // default-constructed
-    std::fill(radiance, radiance + numWavelens, 0.0f);
+    std::fill(radiance, radiance + numBands, 0.0f);
     return;
   }
   const float3 wi = normalize(direction);
@@ -613,19 +630,41 @@ void SunSky::skyRadiance(const float3 &direction, int numWavelens,
   float outputs[SKY_FIT_OUTPUT_COUNT]{};
   evalSkyFit(cosView, viewZenithDeg, cosRelAz, outputs);
   const float brightnessScale = fastExp(outputs[0]) * scaleFactor;
-  float modeCoeffs[rural::SKY_MODE_COUNT]{};
-  for (std::size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
-    modeCoeffs[m] = outputs[m + 1];
-  for (int j = 0; j < numWavelens; j++) {
-    const auto lerp = channelOf(wavelens[j]);
-    float value0 = skyShape(modeCoeffs, lerp.i0);
-    float value1 = skyShape(modeCoeffs, lerp.i1);
-    if (!channelScale.empty()) {
-      value0 *= channelScale[lerp.i0];
-      value1 *= channelScale[lerp.i1];
-    }
-    radiance[j] = (value0 + lerp.frac * (value1 - value0)) * brightnessScale;
+  // One contraction over the modes, band by band. The rows are
+  // `restrict` against the output because a caller passing a band buffer
+  // that overlaps them would otherwise cost a runtime overlap check per
+  // row in front of a loop this short.
+  const float *SMDL_RESTRICT rows[1 + rural::SKY_MODE_COUNT];
+  for (std::size_t m = 0; m < 1 + rural::SKY_MODE_COUNT; ++m)
+    rows[m] = basis.mRows.data() + m * std::size_t(numBands);
+  float *SMDL_RESTRICT out{radiance};
+  for (int j = 0; j < numBands; j++) {
+    float shape{rows[0][j]};
+    for (std::size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
+      shape += outputs[1 + m] * rows[1 + m][j];
+    out[j] = std::max(shape, 0.0f) * brightnessScale;
   }
+}
+
+void SunSky::radiance(const float3 &direction, const SkyBasis &basis,
+                      float *radiance) const {
+  skyRadiance(direction, basis, radiance);
+  if (sunEnabled && !sunIrradiance.empty() &&
+      dot(normalize(direction), sunDir) >= float(COS_SUN_ANGULAR_RADIUS)) {
+    const float diskScale = float(double(scaleFactor) / SUN_SOLID_ANGLE);
+    const float *SMDL_RESTRICT disk{basis.mSunIrradiance.data()};
+    float *SMDL_RESTRICT out{radiance};
+    for (int j = 0; j < basis.mNumBands; j++) out[j] += disk[j] * diskScale;
+  }
+}
+
+void SunSky::skyRadiance(const float3 &direction, int numWavelens,
+                         const float *wavelens, float *radiance) const {
+  // Resolved on the spot, so that the two forms cannot drift apart: this
+  // one is for a caller with no grid to hold onto, not for a hot loop.
+  SkyBasis basis{};
+  resolve(Span<const float>(wavelens, std::size_t(numWavelens)), basis);
+  skyRadiance(direction, basis, radiance);
 }
 
 void SunSky::sunRadiance(int numWavelens, const float *wavelens,

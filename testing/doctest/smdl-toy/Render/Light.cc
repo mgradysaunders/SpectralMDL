@@ -41,6 +41,8 @@ static const char *MATERIALS{
     "df::diffuse_reflection_bsdf()));\n"};
 
 namespace {
+// These fixtures carry no environment, so no sky is resolved for them.
+static const smdl::SkyBasis NO_SKY{};
 
 // The scene the test cases share: built once per test case, since the
 // compiler must outlive everything evaluated through it.
@@ -116,7 +118,8 @@ public:
   for (int i = 0; i < numDraws; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample lightSample{};
-    if (lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, lightSample)) {
+    if (lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+                      lightSample)) {
       CHECK(!lightSample.isDirac);
       CHECK(!lightSample.isInfinite);
       drawn.insert(lightSample.hit.instIndex);
@@ -226,7 +229,8 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   for (int i = 0; i < 512; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, sample)) {
+    if (!lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+                       sample)) {
       allocator.reset();
       continue;
     }
@@ -293,7 +297,8 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   for (int i = 0; i < 256; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, sample)) {
+    if (lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+                      sample)) {
       CAPTURE(i);
       if (sample.isDirac) {
         pmfLamp = sample.pdf;
@@ -409,8 +414,8 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
       const bool keepDark{pass == 1};
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, ConeFixture::RECEIVER, 0.0f, sample,
-                         keepDark)) {
+      if (!lights.sample(state, NO_SKY, sampler, ConeFixture::RECEIVER, 0.0f,
+                         sample, keepDark)) {
         allocator.reset();
         continue;
       }
@@ -577,7 +582,8 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
   for (int i = 0; i < NUM_DRAWS; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample)) {
+    if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+                       sample)) {
       allocator.reset();
       continue;
     }
@@ -656,7 +662,8 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample) ||
+      if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+                         sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -703,7 +710,8 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < 1024; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample) ||
+      if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+                         sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -745,10 +753,11 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       // receiver below finds the radiance again.
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool drawn{lights.sample(state, sampler, above, 0.0f, sample)};
+      const bool drawn{
+          lights.sample(state, NO_SKY, sampler, above, 0.0f, sample)};
       if (drawn) CHECK(sample.analyticIndex == INVALID_INDEX);
       sampler.startPixelSample(0, uint32_t(i));
-      if (!lights.sample(state, sampler, above, 0.0f, sample, true) ||
+      if (!lights.sample(state, NO_SKY, sampler, above, 0.0f, sample, true) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -779,7 +788,7 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
     for (int i = 0; i < 64; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, above, 0.0f, sample) ||
+      if (!lights.sample(state, NO_SKY, sampler, above, 0.0f, sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -905,8 +914,8 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool drawn{
-            lights.sample(state, sampler, MotionFixture::RECEIVER, u, sample)};
+        const bool drawn{lights.sample(state, NO_SKY, sampler,
+                                       MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
         if (!drawn || sample.hit.instIndex != 0) continue;
         numDrawn++;
@@ -939,8 +948,8 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool drawn{
-            lights.sample(state, sampler, MotionFixture::RECEIVER, u, sample)};
+        const bool drawn{lights.sample(state, NO_SKY, sampler,
+                                       MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
         if (!drawn || sample.hit.instIndex != 3) continue;
         numDrawn++;
@@ -1146,8 +1155,8 @@ TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool drawn{
-          lights.sample(state, sampler, DeformFixture::RECEIVER, u, sample)};
+      const bool drawn{lights.sample(state, NO_SKY, sampler,
+                                     DeformFixture::RECEIVER, u, sample)};
       allocator.reset();
       if (!drawn) continue;
       numDrawn++;

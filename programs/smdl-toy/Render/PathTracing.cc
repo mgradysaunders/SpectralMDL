@@ -1286,8 +1286,9 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
   // receiver: its connection arrives at the light from elsewhere and reads
   // the radiance from there. The plain estimate of such a sample is zero
   // and is skipped below.
-  if (render.lights.sample(gatherState, path.sampler, vertex.point,
-                           path.time.fraction, lightSample, runManifold)) {
+  if (render.lights.sample(gatherState, path.skyBasis, path.sampler,
+                           vertex.point, path.time.fraction, lightSample,
+                           runManifold)) {
     const MNEEGather mneeGather{render, path, gatherState, vertex, lightSample};
     // The reflect claims belong to the reflective gather, which the
     // layout's light marks may restrict to the caustic targets: toward
@@ -1738,7 +1739,8 @@ Color PathWalk::trace(const CameraSample &camera) {
       // cover, at weight 1, which is what the power heuristic degrades to.
       if (envLight) {
         float Lipdf{};
-        Color Li{envLight->Li(mRender.compiler, mGatherState, ray.dir, Lipdf)};
+        Color Li{envLight->Li(mRender.compiler, mGatherState, mPath.skyBasis,
+                              ray.dir, Lipdf)};
         float weight{
             mDepth == 1 || mPrev.isDirac
                 ? 1.0f

@@ -61,14 +61,14 @@ EnvLight::EnvLight(const smdl::SunSkyOptions &options)
 }
 
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
-                   float3 wi, float &pdf) const {
+                   const smdl::SkyBasis &basis, float3 wi, float &pdf) const {
   Color Li{};
   if (mSunSky) {
     // Spectral end to end: the model evaluates directly at the render
     // wavelengths. The pdf is the sun/sky mixture density, so hitting
     // the sun disk by BSDF sampling MIS-weights correctly against the
     // cone-sampling branch of `sample()`.
-    mSunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
+    mSunSky->radiance(wi, basis, Li.data());
     pdf = mSunSky->pdf(wi);
     return Li;
   }
@@ -84,11 +84,12 @@ Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
 }
 
 float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
-                           float2 xi, float &pdf, Color &Li) const {
+                           const smdl::SkyBasis &basis, float2 xi, float &pdf,
+                           Color &Li) const {
   if (mSunSky) {
     float3 wi{mSunSky->sample(xi, &pdf)};
     if (pdf > 0.0f) {
-      mSunSky->radiance(wi, Li.size(), state.wavelength_base, Li.data());
+      mSunSky->radiance(wi, basis, Li.data());
     } else {
       Li = Color(0.0f);
     }
@@ -765,8 +766,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                    tree->depth());
 }
 
-bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
-                          const float3 &point, float time,
+bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
+                          Sampler &sampler, const float3 &point, float time,
                           LightSample &lightSample, bool keepDark) const {
   if (empty()) return false;
   float selectPMF{};
@@ -779,8 +780,8 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   if (mEnvLight &&
       lightIndex == int(mAreaLights.size() + mAnalyticLights.size())) {
     float dirPDF{};
-    lightSample.wi = mEnvLight->Li_sample(mCompiler, state, float2(sampler),
-                                          dirPDF, lightSample.Li);
+    lightSample.wi = mEnvLight->Li_sample(
+        mCompiler, state, basis, float2(sampler), dirPDF, lightSample.Li);
     if (!(dirPDF > 0)) return false;
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * mScene.boundRadius * lightSample.wi;

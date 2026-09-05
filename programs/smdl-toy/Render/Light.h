@@ -27,12 +27,24 @@ public:
   /// density, so the existing MIS logic covers the sun disk.
   explicit EnvLight(const smdl::SunSkyOptions &options);
 
+  /// The radiance arriving from `wi` and the density light sampling
+  /// realizes there. `basis` must be the sun-sky resolved onto the same
+  /// wavelengths the state carries, see `resolve()`; the image
+  /// environment ignores it.
   [[nodiscard]] Color Li(smdl::Compiler &compiler, const smdl::State &state,
-                         float3 wi, float &pdf) const;
+                         const smdl::SkyBasis &basis, float3 wi,
+                         float &pdf) const;
 
   [[nodiscard]] float3 Li_sample(smdl::Compiler &compiler,
-                                 const smdl::State &state, float2 xi,
+                                 const smdl::State &state,
+                                 const smdl::SkyBasis &basis, float2 xi,
                                  float &pdf, Color &Li) const;
+
+  /// Resolve the procedural sun-sky onto `wavelens` for the two above.
+  /// An image environment leaves the basis alone, having no use for one.
+  void resolve(smdl::Span<const float> wavelens, smdl::SkyBasis &basis) const {
+    if (mSunSky) mSunSky->resolve(wavelens, basis);
+  }
 
   /// The mean radiance over the sphere of directions, for weighing the
   /// environment against area lights in light selection.
@@ -474,7 +486,8 @@ public:
   ///
   /// `time` is the path's shutter fraction, which the hit an area sample
   /// carries is built at; see `PathTime`.
-  [[nodiscard]] bool sample(const smdl::State &state, Sampler &sampler,
+  [[nodiscard]] bool sample(const smdl::State &state,
+                            const smdl::SkyBasis &basis, Sampler &sampler,
                             const float3 &point, float time,
                             LightSample &lightSample,
                             bool keepDark = false) const;

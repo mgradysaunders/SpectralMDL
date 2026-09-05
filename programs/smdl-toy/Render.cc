@@ -367,6 +367,14 @@ void renderSamples(const Options &opts, const Frame &frame,
         // than a copy, so one buffer serves the block.
         std::optional<Color> jittered;
         if (jitterWavelength) jittered.emplace(wavelengths);
+        // The sun-sky resolved onto the block's current wavelength grid.
+        // Bought once here for the same reason `medium` is: the sky is
+        // evaluated many times per path and the resolution depends on the
+        // grid alone. A jittering render redoes it once per sample below,
+        // which still amortizes over that sample's evaluations.
+        smdl::SkyBasis skyBasis;
+        if (render.lights.env())
+          render.lights.env()->resolve(wavelengths, skyBasis);
         Guiding guiding{};
         guiding.tree = sdtree.get();
         guiding.bsdfFraction =
@@ -390,9 +398,12 @@ void renderSamples(const Options &opts, const Frame &frame,
             const uint32_t sampleIndex =
                 resumed.sampleIndexBase + sppDone + chunkBase + s;
             sampler.startPixelSample(uint32_t(i), sampleIndex);
-            if (jitterWavelength)
+            if (jitterWavelength) {
               jitterWavelengths(
                   *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
+              if (render.lights.env())
+                render.lights.env()->resolve(*jittered, skyBasis);
+            }
             const Color &sampleWavelengths{jitterWavelength ? *jittered
                                                             : wavelengths};
             Color Lsample{};
@@ -410,8 +421,8 @@ void renderSamples(const Options &opts, const Frame &frame,
               if (renderShutter().isOpen()) shutterFraction = float(sampler);
               const PathTime time{shutterFraction};
               camera->toWorld(cameraSample, time.fraction);
-              PathContext path{allocator, sampler,  medium, sampleWavelengths,
-                               time,      &guiding, records};
+              PathContext path{allocator,         sampler, medium,   skyBasis,
+                               sampleWavelengths, time,    &guiding, records};
               Lsample = tracePath(render, path, cameraSample);
               numRecords = path.numRecords;
             }

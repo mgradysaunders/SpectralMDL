@@ -6,6 +6,10 @@
 #include "Render/Medium.h"
 #include "Render/Sampler.h"
 
+namespace smdl {
+class SkyBasis;
+} // namespace smdl
+
 class LightSampler;
 class MNEECasterSet;
 
@@ -187,6 +191,13 @@ struct PathContext final {
   /// invalidates whatever the last one resolved; nothing may rely on the
   /// resolution surviving, since the stacks it keyed on are gone.
   Medium &medium;
+
+  /// The sun-sky resolved onto `wavelengths`, which every environment
+  /// evaluation this path makes reads. Borrowed rather than owned for
+  /// the reason `medium` is: it is worth resolving once per sample
+  /// instead of once per evaluation, and a render that does not jitter
+  /// resolves it once for the whole frame.
+  const smdl::SkyBasis &skyBasis;
 
   /// The wavelengths the path estimates at, which is this sample's own
   /// grid where the render jitters them.
