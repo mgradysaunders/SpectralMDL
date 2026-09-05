@@ -23,28 +23,18 @@ namespace {
 class ScopedGrid final {
 public:
   explicit ScopedGrid(const std::vector<float> &wavelens) {
-    const auto span{smdl::Span<const float>(wavelens.data(), wavelens.size())};
-    renderNumBands() = wavelens.size();
-    renderWavelengths() = Color(span);
-    renderWavelengthBandEdges() = wavelengthBandEdges(span);
+    renderGrid().reset(
+        smdl::Span<const float>(wavelens.data(), wavelens.size()), true);
   }
 
   ScopedGrid(const ScopedGrid &) = delete;
 
   ScopedGrid &operator=(const ScopedGrid &) = delete;
 
-  ~ScopedGrid() {
-    renderNumBands() = mNumBands;
-    renderWavelengths() = mWavelengths;
-    renderWavelengthBandEdges() = mBandEdges;
-  }
+  ~ScopedGrid() { renderGrid() = mSaved; }
 
 private:
-  const size_t mNumBands{renderNumBands()};
-
-  const Color mWavelengths{renderWavelengths()};
-
-  const std::vector<float> mBandEdges{renderWavelengthBandEdges()};
+  const WavelengthGrid mSaved{renderGrid()};
 };
 
 } // namespace
@@ -90,7 +80,7 @@ TEST_CASE("Color wavelength band edges") {
 TEST_CASE("Color wavelength jitter") {
   const auto wavelens{std::vector<float>{400, 420, 500, 900}};
   const ScopedGrid grid{wavelens};
-  const auto &edges{renderWavelengthBandEdges()};
+  const auto &edges{renderGrid().bandEdges};
   SUBCASE("The offset places every band at the same point of its band") {
     auto wavelengths{Color(smdl::Span<const float>(wavelens.data(), //
                                                    wavelens.size()))};

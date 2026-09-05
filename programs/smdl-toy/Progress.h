@@ -5,8 +5,32 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 #include "smdl/Support/Logger.h"
+
+/// How a `ProgressBar` draws.
+enum class ProgressStyle {
+  /// Draw the block drawing characters when the environment claims
+  /// UTF-8, and the ASCII bar when it does not.
+  AUTO,
+
+  /// Always draw the ASCII bar. The escape hatch for a terminal that
+  /// claims UTF-8 and then draws the block characters as boxes.
+  PLAIN,
+
+  /// Never draw at all.
+  NONE
+};
+
+/// Parse the `-progress` name, which is the one place it is spelled.
+/// The bar is not constructed until everything has loaded and compiled,
+/// so leaving this to the constructor would report a misspelling only
+/// once the render is about to start.
+///
+/// \throws smdl::Error  If the name is not recognized.
+///
+[[nodiscard]] ProgressStyle parseProgressStyle(std::string_view name);
 
 /// What a `ProgressBar` measures and how it draws, resolved from the
 /// command line into plain values.
@@ -17,10 +41,8 @@ struct ProgressOptions final {
   /// The counter suffix, e.g. `"px"`. Empty prints bare counters.
   std::string units{};
 
-  /// The style: `"auto"`, `"plain"`, or `"none"`. Auto draws the block
-  /// characters when the environment claims UTF-8 and the ASCII bar when
-  /// it does not; plain always draws ASCII; none never draws at all.
-  std::string style{"auto"};
+  /// How the bar draws.
+  ProgressStyle style{ProgressStyle::AUTO};
 
   /// The total work units. Zero disables the bar.
   uint64_t total{};
@@ -46,16 +68,6 @@ struct ProgressOptions final {
 /// bar prints elapsed time and the ETA, and how the render times recorded
 /// in the spectral output's header are logged.
 [[nodiscard]] std::string formatDuration(double seconds);
-
-/// Check that the style name is recognized.
-///
-/// The bar is not constructed until everything has loaded and compiled,
-/// so leaving this to the constructor would report a misspelled style
-/// only once the render is about to start. Call it at the command line.
-///
-/// \throws smdl::Error  If the style is not a recognized name.
-///
-void validateProgressOptions(const ProgressOptions &options);
 
 /// A progress bar drawn in place on stderr, in the style of a package
 /// manager's download bar.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include "Color.h"
 
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -7,6 +9,51 @@
 namespace smdl {
 class Compiler;
 }
+
+/// The appearance stage: how the estimated radiance becomes a linear
+/// display color.
+enum class AppearanceMode {
+  /// Pass the radiance through to the display curve.
+  LINEAR,
+
+  /// Shorthand for `LINEAR` with the log curve.
+  LOG,
+
+  /// Model human vision at absolute luminance and auto-expose, for
+  /// physically dim scenes like moonlight.
+  NIGHT
+};
+
+/// The display curve: how a linear display color reaches the 8-bit range.
+enum class DisplayCurveKind {
+  /// Clamp and gamma-encode.
+  GAMMA,
+
+  /// Map the decades below the exposure-scaled white point.
+  LOG,
+
+  /// Roll the highlights off toward white instead of clipping them.
+  FILMIC
+};
+
+/// The local operator: a smooth per-pixel exposure, or none.
+enum class LocalOperator { OFF, FUSION };
+
+/// \name Command line names
+///
+/// The one place each name is spelled. The display transform runs after
+/// the last sample, so parsing at the command line is what reports a
+/// misspelling before the render is paid for rather than after.
+///
+/// \throws smdl::Error  If the name is not recognized.
+///
+/// \{
+[[nodiscard]] AppearanceMode parseAppearanceMode(std::string_view name);
+
+[[nodiscard]] DisplayCurveKind parseDisplayCurveKind(std::string_view name);
+
+[[nodiscard]] LocalOperator parseLocalOperator(std::string_view name);
+/// \}
 
 /// The display transform, resolved from the command line into plain
 /// values.
@@ -18,15 +65,14 @@ class Compiler;
 /// 8-bit range. None of this touches the floating point or spectral
 /// outputs, which stay radiometric.
 struct TonemapOptions final {
-  /// The appearance stage: `"linear"` or `"night"`. The `"log"` spelling
-  /// is shorthand for `"linear"` with the log `curve`.
-  std::string mode{"linear"};
+  /// The appearance stage.
+  AppearanceMode mode{AppearanceMode::LINEAR};
 
-  /// The display curve: `"gamma"`, `"log"`, or `"filmic"`.
-  std::string curve{"gamma"};
+  /// The display curve.
+  DisplayCurveKind curve{DisplayCurveKind::GAMMA};
 
-  /// The local operator: `"off"` or `"fusion"`.
-  std::string local{"off"};
+  /// The local operator.
+  LocalOperator local{LocalOperator::OFF};
 
   /// The exposure applied before the display curve.
   float exposure{1.0f};
@@ -45,15 +91,6 @@ struct TonemapOptions final {
   /// With fusion, the largest local exposure deviation in EV.
   float localClamp{3.0f};
 };
-
-/// Check that the mode, curve, and local names are recognized.
-///
-/// The display transform runs after the last sample, so `tonemap()`
-/// calling this on the way in would report a misspelled name only once
-/// the render is already paid for. Call it at the command line too.
-///
-/// \throws smdl::Error if any of the three names is not recognized.
-void validateTonemapOptions(const TonemapOptions &options);
 
 /// How `resolveRGB()` maps the film to RGB when the CIE
 /// projection is not simply the right thing.
@@ -93,9 +130,6 @@ struct RGBPolicy final {
 /// absolute photopic and scotopic luminance of every pixel rather than
 /// the RGB projection alone; `rgbImage` must be the `resolveRGB()` of
 /// the same film, so every mode displays the same radiance.
-///
-/// \throws smdl::Error if any of the mode, curve, or local names is not
-/// recognized.
 [[nodiscard]] std::vector<uint8_t> tonemap(const TonemapOptions &options,
                                            const std::vector<float> &rgbImage,
                                            const smdl::SpectralFilm &film,

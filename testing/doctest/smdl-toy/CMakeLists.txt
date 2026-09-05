@@ -7,6 +7,7 @@ smdl_add_doctest(
     "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"
+    "IO/RenderHeader.cc"
     "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
     "Render/Camera.cc"

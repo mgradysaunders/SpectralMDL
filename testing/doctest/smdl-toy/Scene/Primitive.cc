@@ -135,7 +135,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderWavelengths() = wavelengths;
+    renderGrid().wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 

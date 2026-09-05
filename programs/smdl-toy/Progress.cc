@@ -165,23 +165,22 @@ std::atomic<ProgressBar *> sActive{nullptr};
   return str;
 }
 
-void validateProgressOptions(const ProgressOptions &options) {
-  if (options.style != "auto" && options.style != "plain" &&
-      options.style != "none")
-    throw smdl::Error(
-        smdl::concat("expected the progress style to be 'auto', 'plain', or "
-                     "'none', not ",
-                     smdl::Quoted(options.style)));
+ProgressStyle parseProgressStyle(std::string_view name) {
+  if (name == "auto") return ProgressStyle::AUTO;
+  if (name == "plain") return ProgressStyle::PLAIN;
+  if (name == "none") return ProgressStyle::NONE;
+  throw smdl::Error(
+      smdl::concat("expected the progress style to be 'auto', 'plain', or "
+                   "'none', not ",
+                   smdl::Quoted(name)));
 }
 
 ProgressBar::ProgressBar(ProgressOptions options)
     : mOptions(std::move(options)), mStartTime(Clock::now()) {
   mOptions.displayScale = std::max<uint64_t>(mOptions.displayScale, 1);
-  mEnabled =
-      mOptions.total > 0 && mOptions.style != "none" && stderrIsInteractive();
-  // 'plain' is the escape hatch for a terminal that claims UTF-8 and then
-  // draws the block characters as boxes.
-  mUnicode = mOptions.style == "auto" && localeIsUTF8();
+  mEnabled = mOptions.total > 0 && mOptions.style != ProgressStyle::NONE &&
+             stderrIsInteractive();
+  mUnicode = mOptions.style == ProgressStyle::AUTO && localeIsUTF8();
   mReporting = !mOptions.filePath.empty() && mOptions.total > 0;
   if (mReporting) {
     std::lock_guard<std::mutex> guard{mMutex};

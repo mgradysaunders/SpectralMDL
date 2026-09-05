@@ -174,7 +174,7 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
     gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
   const auto wavelengths{
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
-  renderWavelengths() = wavelengths;
+  renderGrid().wavelengths = wavelengths;
   scene.commit(wavelengths);
   const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
 

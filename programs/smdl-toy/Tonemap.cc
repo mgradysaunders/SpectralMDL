@@ -254,17 +254,15 @@ static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
 // curve is free to treat color its own way as long as the two agree on
 // grays, which is all the local operator relies on.
 struct DisplayCurve final {
-  enum Kind { GAMMA, LOG, FILMIC };
-
-  Kind kind{GAMMA};
+  DisplayCurveKind kind{DisplayCurveKind::GAMMA};
 
   float logDecades{4.0f};
 
   [[nodiscard]] float apply(float value) const noexcept {
     switch (kind) {
-    case GAMMA:
+    case DisplayCurveKind::GAMMA:
       return std::pow(std::clamp(value, 0.0f, 1.0f), 1.0f / 2.2f);
-    case LOG:
+    case DisplayCurveKind::LOG:
       return value > 0.0f
                  ? std::clamp(1.0f + std::log10(value) / logDecades, 0.0f, 1.0f)
                  : 0.0f;
@@ -281,9 +279,9 @@ struct DisplayCurve final {
     // exact cutoff matters far less than staying finite.
     display = std::clamp(display, 0.0f, 1.0f - 1e-4f);
     switch (kind) {
-    case GAMMA:
+    case DisplayCurveKind::GAMMA:
       return std::pow(display, 2.2f);
-    case LOG:
+    case DisplayCurveKind::LOG:
       return std::pow(10.0f, (display - 1.0f) * logDecades);
     default:
       return pbrNeutralGrayInverse(std::pow(display, 2.2f));
@@ -292,10 +290,10 @@ struct DisplayCurve final {
 
   void applyRGB(const float *rgb, float *out) const noexcept {
     switch (kind) {
-    case GAMMA:
+    case DisplayCurveKind::GAMMA:
       for (int i = 0; i < 3; i++) out[i] = apply(rgb[i]);
       return;
-    case LOG: {
+    case DisplayCurveKind::LOG: {
       // Scale the channels by the luminance ratio so the log curve
       // moves brightness without moving hue. The luminance here is
       // deliberately the channel mean, not the Rec.709 weighting.
@@ -638,7 +636,7 @@ applyNightFilter(const std::vector<float> &rgbImage,
   // uniform formula below is what those widths degenerate to on a
   // uniform grid, kept spelled out so the default render is unchanged
   // to the bit.
-  const auto &quadWeights{renderWavelengthWeights()};
+  const auto &quadWeights{renderGrid().weights};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};
@@ -734,39 +732,32 @@ applyNightFilter(const std::vector<float> &rgbImage,
 //--{ Option names
 
 // The appearance stage, once the name is known to be one of the three.
-enum class AppearanceMode { LINEAR, LOG, NIGHT };
 
 // These three are the only place a name is spelled out, so validating
 // early and resolving later cannot drift apart.
-[[nodiscard]] static AppearanceMode parseMode(const std::string &mode) {
-  if (mode == "linear") return AppearanceMode::LINEAR;
-  if (mode == "log") return AppearanceMode::LOG;
-  if (mode == "night") return AppearanceMode::NIGHT;
-  throw smdl::Error(smdl::concat("unknown -tonemap mode ", mode,
+//--}
+
+AppearanceMode parseAppearanceMode(std::string_view name) {
+  if (name == "linear") return AppearanceMode::LINEAR;
+  if (name == "log") return AppearanceMode::LOG;
+  if (name == "night") return AppearanceMode::NIGHT;
+  throw smdl::Error(smdl::concat("unknown -tonemap mode ", name,
                                  " (expected 'linear', 'log', or 'night')"));
 }
 
-[[nodiscard]] static DisplayCurve::Kind parseCurve(const std::string &curve) {
-  if (curve == "gamma") return DisplayCurve::GAMMA;
-  if (curve == "log") return DisplayCurve::LOG;
-  if (curve == "filmic") return DisplayCurve::FILMIC;
-  throw smdl::Error(smdl::concat("unknown -curve ", curve,
+DisplayCurveKind parseDisplayCurveKind(std::string_view name) {
+  if (name == "gamma") return DisplayCurveKind::GAMMA;
+  if (name == "log") return DisplayCurveKind::LOG;
+  if (name == "filmic") return DisplayCurveKind::FILMIC;
+  throw smdl::Error(smdl::concat("unknown -curve ", name,
                                  " (expected 'gamma', 'log', or 'filmic')"));
 }
 
-[[nodiscard]] static bool parseLocalIsFusion(const std::string &local) {
-  if (local == "off") return false;
-  if (local == "fusion") return true;
+LocalOperator parseLocalOperator(std::string_view name) {
+  if (name == "off") return LocalOperator::OFF;
+  if (name == "fusion") return LocalOperator::FUSION;
   throw smdl::Error(
-      smdl::concat("unknown -local ", local, " (expected 'off' or 'fusion')"));
-}
-
-//--}
-
-void validateTonemapOptions(const TonemapOptions &options) {
-  (void)parseMode(options.mode);
-  (void)parseCurve(options.curve);
-  (void)parseLocalIsFusion(options.local);
+      smdl::concat("unknown -local ", name, " (expected 'off' or 'fusion')"));
 }
 
 std::vector<uint8_t> tonemap(const TonemapOptions &options,
@@ -775,21 +766,20 @@ std::vector<uint8_t> tonemap(const TonemapOptions &options,
                              const Color &wavelengths) {
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
-  const auto mode{parseMode(options.mode)};
   auto curve{DisplayCurve{}};
-  curve.kind = parseCurve(options.curve);
+  curve.kind = options.curve;
   curve.logDecades = std::max(0.1f, options.logDecades);
   auto appearance{Appearance{}};
-  if (mode == AppearanceMode::NIGHT) {
+  if (options.mode == AppearanceMode::NIGHT) {
     appearance = applyNightFilter(rgbImage, film, wavelengths);
   } else {
     appearance = Appearance{rgbImage, 1.0f};
     // '-tonemap log' is shorthand for '-tonemap linear -curve log'.
-    if (mode == AppearanceMode::LOG) curve.kind = DisplayCurve::LOG;
+    if (options.mode == AppearanceMode::LOG) curve.kind = DisplayCurveKind::LOG;
   }
   auto gain{std::vector<float>()};
   float autoExposure{1.0f};
-  if (parseLocalIsFusion(options.local))
+  if (options.local == LocalOperator::FUSION)
     gain = computeFusionGain(appearance.image, numPixelsX, numPixelsY, curve,
                              options, autoExposure);
   const float scale{options.exposure * appearance.scale *

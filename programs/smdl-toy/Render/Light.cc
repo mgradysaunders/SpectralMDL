@@ -112,7 +112,7 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
 // uniform spacing otherwise, and 1 for a single-band render, where
 // "per nanometer" degenerates to a plain per-band value.
 [[nodiscard]] static std::vector<float> bandWidths(const Color &wavelengths) {
-  if (const auto &weights{renderWavelengthWeights()}; !weights.empty())
+  if (const auto &weights{renderGrid().weights}; !weights.empty())
     return weights;
   auto widths{std::vector<float>(wavelengths.size(), 1.0f)};
   if (wavelengths.size() > 1) {

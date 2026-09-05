@@ -27,6 +27,7 @@
 #include "llvm/Support/WithColor.h"
 
 #include "Color.h"
+#include "IO/RenderHeader.h"
 #include "Layout/Layout.h"
 #include "Layout/LayoutTables.h"
 #include "Progress.h"
@@ -906,12 +907,6 @@ int main(int argc, char **argv) try {
     throw smdl::Error("expected -autolook-zenith between 1 and 179");
   if (!(float(optAutolookMargin) >= 0 && float(optAutolookMargin) <= 0.5f))
     throw smdl::Error("expected -autolook-margin between 0 and 0.5");
-  // '-tonemap log' is kept as shorthand for '-tonemap linear -curve
-  // log'; allow it, but not while the curve says otherwise.
-  if (std::string(optTonemap) == "log" && optCurve.getNumOccurrences() > 0 &&
-      std::string(optCurve) != "log")
-    throw smdl::Error("expected -curve log with -tonemap log ('-tonemap log' "
-                      "is shorthand for '-tonemap linear -curve log')");
   if (!(float(optLocalStrength) >= 0) || !(float(optLocalStrength) <= 1))
     throw smdl::Error("expected -local-strength between 0 and 1");
   if (!(float(optLocalClamp) > 0))
@@ -936,18 +931,24 @@ int main(int argc, char **argv) try {
       parseWavelengthRangeFlag(std::string(optWavelengthRange))};
   const auto explicitWavelengths{
       parseWavelengthsFlag(std::string(optWavelengths))};
-  // The display transform only runs after the last sample, so check its
+  // The display transform only runs after the last sample, so parse its
   // names now rather than at the end of an hour-long render.
   auto tonemapOptions{TonemapOptions{}};
-  tonemapOptions.mode = std::string(optTonemap);
-  tonemapOptions.curve = std::string(optCurve);
-  tonemapOptions.local = std::string(optLocal);
+  tonemapOptions.mode = parseAppearanceMode(std::string(optTonemap));
+  tonemapOptions.curve = parseDisplayCurveKind(std::string(optCurve));
+  tonemapOptions.local = parseLocalOperator(std::string(optLocal));
   tonemapOptions.exposure = float(optImageExposure);
   tonemapOptions.logDecades = float(optTonemapDecades);
   tonemapOptions.localStrength = float(optLocalStrength);
   tonemapOptions.localRange = float(optLocalRange);
   tonemapOptions.localClamp = float(optLocalClamp);
-  validateTonemapOptions(tonemapOptions);
+  // '-tonemap log' is kept as shorthand for '-tonemap linear -curve
+  // log'; allow it, but not while the curve says otherwise.
+  if (tonemapOptions.mode == AppearanceMode::LOG &&
+      optCurve.getNumOccurrences() > 0 &&
+      tonemapOptions.curve != DisplayCurveKind::LOG)
+    throw smdl::Error("expected -curve log with -tonemap log ('-tonemap log' "
+                      "is shorthand for '-tonemap linear -curve log')");
   // The '.places' utilities bow out before anything else: they touch
   // nothing but the named files.
   if (!std::string(optDumpPlaces).empty()) {
@@ -966,13 +967,12 @@ int main(int argc, char **argv) try {
   // remains; see the note on its declaration.
   if (std::string(optInputSceneFile).empty())
     throw smdl::Error("expected an <input scene> argument");
-  // Validated now, though not read until the render starts.
+  // Parsed now, though not read until the render starts.
   auto progressOptions{ProgressOptions{}};
   progressOptions.label = "Rendering";
   progressOptions.units = "px";
-  progressOptions.style = std::string(optProgress);
+  progressOptions.style = parseProgressStyle(std::string(optProgress));
   progressOptions.filePath = std::string(optProgressFile);
-  validateProgressOptions(progressOptions);
   // The profiler covers everything from here to just before the render
   // loop: layout parsing, MDL compilation, scene import, and the
   // acceleration structures. The library's own entries (module parse, IR
@@ -1051,8 +1051,8 @@ int main(int argc, char **argv) try {
   // The two clocks, merged the same way from the layout's 'time'
   // directive. The parser has already refused a file value that is not
   // finite or, for the shutter, negative.
-  renderTime() = pick(optTime, layout.time.base);
-  renderShutter() = pick(optShutterSpeed, layout.time.shutter);
+  renderShutter().time = pick(optTime, layout.time.base);
+  renderShutter().length = pick(optShutterSpeed, layout.time.shutter);
   // The camera's shut keys. The layout wrote them against its own
   // framing, so a flag that replaces that framing drops them rather
   // than moving a camera the file never described; a key the block
@@ -1067,7 +1067,7 @@ int main(int argc, char **argv) try {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
                     " replaces the framing the layout's 'motion' was "
                     "written against");
-    } else if (!(renderShutter() > 0)) {
+    } else if (!renderShutter().isOpen()) {
       SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
                     "holds its open framing");
     } else {
@@ -1090,7 +1090,7 @@ int main(int argc, char **argv) try {
     for (const auto &light : layout.lights)
       numMovingLights += light.lightToWorldShut.has_value();
     if (numMovingItems + numMovingLights > 0) {
-      if (!(renderShutter() > 0)) {
+      if (!renderShutter().isOpen()) {
         for (auto &item : layout.items) {
           item.objectToWorldShut.reset();
           item.batchXfsShut.clear();
@@ -1149,20 +1149,13 @@ int main(int argc, char **argv) try {
   bool resuming{false};
   const bool resumeRequested{!std::string(optResume).empty()};
   size_t sampleIndexBase{optSampleOffset};
-  // The sample index the sequence BEGAN at, recorded in the spectrum
-  // header and restored on resume, so that `-sample-offset` survives a
-  // resumed session: a two-seed reference pair stays decorrelated only
-  // if each seed's continuation keeps to its own stream.
-  size_t sequenceSampleOffset{optSampleOffset};
-  // How long the sequence has taken so far, over every session that has
-  // rendered into it: wall clock, and the CPU time summed over all the
-  // worker threads. Recorded in the spectrum header and added to below,
-  // so that an image built over many resumed sessions still knows what
-  // it cost. A file written before these fields existed starts the tally
-  // at this session.
-  double totalSeconds{};
-  double totalCPUSeconds{};
-  uint64_t numSessions{};
+  // The sequence's own record: where it began, what it has cost over
+  // every session that has rendered into it, and the settings it was
+  // rendered under. Seeded from the resumed file, added to below, and
+  // written back into the spectrum header at the end. A fresh sequence
+  // begins at the `-sample-offset` flag with an empty tally.
+  auto header{RenderHeader{}};
+  header.sampleOffset = optSampleOffset;
   if (resumeRequested) {
     // A wholly missing data-plus-header pair is not an error: it makes
     // this run the first session of an intended sequence, rendering
@@ -1202,7 +1195,7 @@ int main(int argc, char **argv) try {
           resumedFilm.getNumPixelsY(), " against -resolution ", numPixelsX, ",",
           numPixelsY));
     if (resumed.samplesPerPixel == 0)
-      throw smdl::Error("cannot resume: the header has no 'smdl spp' count "
+      throw smdl::Error("cannot resume: the header has no 'render spp' count "
                         "(the file was not written by -output-spectrum)");
     // The window is what the recorded count applies to, so a session
     // that moved it would accumulate over a different set of pixels and
@@ -1216,49 +1209,36 @@ int main(int argc, char **argv) try {
           spellVector(window),
           "; the window must be held constant across a resumed sequence, "
           "otherwise the samples per pixel stop being uniform"));
-    if (auto itr{resumed.fields.find("render sampler")};
-        itr == resumed.fields.end() || itr->second != SAMPLER_VERSION)
+    // The record continues rather than restarts, so the tally comes off
+    // the file and so does the sample offset: the flag names where a
+    // sequence begins, and only its first session gets to say. The
+    // fingerprint fields come off the file too, to be compared against
+    // this session here and replaced by it at the write below.
+    header.sampleOffset = 0;
+    header.readFrom(resumed.fields);
+    if (header.sampler != SAMPLER_VERSION)
       SMDL_LOG_WARN(
           "resuming a file from a different sampler: the continuation "
           "samples are independent of the first session's rather than "
           "jointly stratified (still unbiased, noise just improves more "
           "slowly)");
-    if (auto itr{resumed.fields.find("render wavelength jitter")};
-        (itr != resumed.fields.end() && itr->second != "0") !=
-        bool(optWavelengthJitter))
+    if (header.wavelengthJitter != bool(optWavelengthJitter))
       SMDL_LOG_WARN(
           "resuming across a -wavelength-jitter change: a jittered band "
           "holds the mean radiance over the band and an unjittered one holds "
           "the radiance at one wavelength, so the merged image mixes two "
           "different quantities");
-    if (auto itr{resumed.fields.find("render args")};
-        itr != resumed.fields.end() &&
-        stripSessionOnlyArgs(itr->second) != stripSessionOnlyArgs(argsEcho))
+    if (!header.args.empty() &&
+        stripSessionOnlyArgs(header.args) != stripSessionOnlyArgs(argsEcho))
       SMDL_LOG_WARN("resuming with different flags: the file records ",
-                    smdl::Quoted(itr->second),
+                    smdl::Quoted(header.args),
                     "; if the scene or camera changed, the merged image "
                     "mixes two different renders");
-    sequenceSampleOffset = 0;
-    if (auto itr{resumed.fields.find("render sample offset")};
-        itr != resumed.fields.end())
-      sequenceSampleOffset =
-          size_t(std::strtoull(itr->second.c_str(), nullptr, 10));
-    const auto resumedSeconds{[&](const char *key) {
-      auto itr{resumed.fields.find(key)};
-      if (itr == resumed.fields.end()) return 0.0;
-      const double seconds{std::strtod(itr->second.c_str(), nullptr)};
-      return std::isfinite(seconds) && seconds > 0.0 ? seconds : 0.0;
-    }};
-    totalSeconds = resumedSeconds("render seconds");
-    totalCPUSeconds = resumedSeconds("render cpu seconds");
-    if (auto itr{resumed.fields.find("render sessions")};
-        itr != resumed.fields.end())
-      numSessions = uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10));
-    sampleIndexBase = sequenceSampleOffset + resumed.samplesPerPixel;
+    sampleIndexBase = header.sampleOffset + resumed.samplesPerPixel;
     SMDL_LOG_INFO("Resuming: ", resumed.samplesPerPixel,
                   " samples per pixel from ",
                   smdl::Quoted(std::string(optResume)), " (sample offset ",
-                  sequenceSampleOffset, ")");
+                  header.sampleOffset, ")");
   }
   // The wavelength grid, in priority order: explicit '-wavelengths',
   // '-wavelength-range' uniform bands (endpoint-inclusive), or, when
@@ -1283,47 +1263,15 @@ int main(int argc, char **argv) try {
       gridSpec[i] = (1 - t) * waveRange.range.x + t * waveRange.range.y;
     }
   }
-  renderNumBands() = gridSpec.size();
-  // Trapezoid band widths for a non-uniform grid. A uniform grid keeps
-  // the weights empty and `State::wavelength_weight` null, which the
-  // library treats as uniform quadrature, so the default render is
-  // unchanged to the bit.
-  {
-    auto &weights{renderWavelengthWeights()};
-    weights.clear();
-    bool uniform{true};
-    for (size_t i = 2; i < gridSpec.size(); i++)
-      if (std::abs((gridSpec[i] - gridSpec[i - 1]) -
-                   (gridSpec[1] - gridSpec[0])) >
-          1e-3f * (gridSpec[1] - gridSpec[0]))
-        uniform = false;
-    if (!uniform) {
-      weights.resize(gridSpec.size());
-      for (size_t i = 0; i < gridSpec.size(); i++) {
-        const float lo{i > 0 ? gridSpec[i - 1] : gridSpec[0]};
-        const float hi{i + 1 < gridSpec.size() ? gridSpec[i + 1]
-                                               : gridSpec[gridSpec.size() - 1]};
-        weights[i] = 0.5f * (hi - lo);
-      }
-    }
-  }
-  // The jitter rectangles; see `renderWavelengthBandEdges()`. Left empty
-  // when the flag is off, which is what the renderer tests, so a default
-  // render never asks.
-  {
-    auto &edges{renderWavelengthBandEdges()};
-    edges.clear();
-    if (optWavelengthJitter) {
-      edges = wavelengthBandEdges(
-          smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-      if (edges.empty())
-        SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
-                      "band width to jitter within, so it does nothing here");
-    }
-  }
+  // The band count has to land before the first `Color` is built, since
+  // that is what sizes it.
+  renderGrid().reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
+                     bool(optWavelengthJitter));
+  if (optWavelengthJitter && renderGrid().bandEdges.empty())
+    SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
+                  "band width to jitter within, so it does nothing here");
   const auto wavelengths{
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
-  renderWavelengths() = wavelengths;
   if (resuming) {
     if (resumedFilm.getNumBands() != wavelengths.size())
       throw smdl::Error(smdl::concat(
@@ -1344,7 +1292,7 @@ int main(int argc, char **argv) try {
                   " nm");
   // The spectral extent the render actually reaches, which the jitter
   // widens to the outermost band edges.
-  const auto &bandEdges{renderWavelengthBandEdges()};
+  const auto &bandEdges{renderGrid().bandEdges};
   const float gridLower{bandEdges.empty() ? wavelengths[0] : bandEdges.front()};
   const float gridUpper{bandEdges.empty() ? wavelengths[wavelengths.size() - 1]
                                           : bandEdges.back()};
@@ -1824,8 +1772,8 @@ int main(int argc, char **argv) try {
   pathOptions.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
   // Whether every sample draws its own wavelength grid; see
-  // `renderWavelengthBandEdges()` and `jitterWavelengths()`.
-  const bool jitterWavelength{!renderWavelengthBandEdges().empty()};
+  // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
+  const bool jitterWavelength{!renderGrid().bandEdges.empty()};
   if (optMNEETestNormalHook) {
     std::cout << "Checking the geometry-normal hook against the meshes:\n";
     const int failures{runMNEETestNormalHook(scene)};
@@ -1944,7 +1892,7 @@ int main(int argc, char **argv) try {
             // a default render's sampler sequence is unchanged; the
             // camera ray is placed in the world only now, at that time.
             float shutterFraction{};
-            if (renderShutter() > 0) shutterFraction = float(sampler);
+            if (renderShutter().isOpen()) shutterFraction = float(sampler);
             const PathTime time{shutterFraction};
             camera->toWorld(cameraSample, time.fraction);
             Lsample = tracePath(
@@ -2031,11 +1979,11 @@ int main(int argc, char **argv) try {
   // A '-spp 0' re-run of the output stage rendered nothing, so it is not
   // a session and must leave the totals it rewrites exactly as they were.
   if (spp > 0) {
-    totalSeconds += std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - renderStartWall)
-                        .count();
-    totalCPUSeconds += std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
-    numSessions++;
+    header.seconds += std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - renderStartWall)
+                          .count();
+    header.cpuSeconds += std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
+    header.sessions++;
   }
   if (optMNEEReport) ManifoldStats::global().print(std::cout);
   // Resolve the pass combination back into the film every downstream
@@ -2051,31 +1999,27 @@ int main(int argc, char **argv) try {
     }
   }
   if (!outputSpectrum.empty()) {
-    // TODO If using procedural SunSky (and not in moonlight mode), and standard ENVI header lines:
-    // sun azimuth = (degrees)
-    // sun elevation = (degrees)
+    // TODO If using procedural SunSky (and not in moonlight mode), and standard
+    // ENVI header lines: sun azimuth = (degrees) sun elevation = (degrees)
     // solar irradiance = {...} (W/m2/um)
 
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
     // be this very path.
     const auto partName{outputSpectrum + ".part"};
-    const auto extraHeaderLines{std::vector<std::string>{
-        smdl::concat("render sessions = ", numSessions),
-        smdl::concat("render seconds = ", totalSeconds),
-        smdl::concat("render cpu seconds = ", totalCPUSeconds),
-        smdl::concat("render sampler = ", SAMPLER_VERSION),
-        smdl::concat("render sample offset = ", sequenceSampleOffset),
-        smdl::concat("render wavelength jitter = ",
-                     jitterWavelength ? "1" : "0"),
-        smdl::concat("render args = ", argsEcho)}};
+    // The tally accumulated above is the sequence's, but the fingerprint
+    // is this session's: the settings a later resume compares itself
+    // against are the ones the samples now in the film were drawn under.
+    header.sampler = SAMPLER_VERSION;
+    header.wavelengthJitter = jitterWavelength;
+    header.args = argsEcho;
     // The window the recorded count belongs to, which the film itself
     // does not know: a windowed render still carries a full frame of
     // pixels, and the header must not describe the untouched ones as
     // samples.
     film.writeENVIFile(
         smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        partName, extraHeaderLines, window);
+        partName, header.headerLines(), window);
     // Both members of the ENVI pair; `writeENVIFile()` wrote them under
     // the temporary name and its own '.hdr' suffix.
     smdl::renameOnto(partName, outputSpectrum);
@@ -2092,9 +2036,9 @@ int main(int argc, char **argv) try {
       SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
                     sdtree->leafCount(), " spatial leaves");
     }
-    SMDL_LOG_INFO("Cumulative render time: ", formatDuration(totalSeconds),
-                  " wall, ", formatDuration(totalCPUSeconds), " compute over ",
-                  numSessions, " session(s)");
+    SMDL_LOG_INFO("Cumulative render time: ", formatDuration(header.seconds),
+                  " wall, ", formatDuration(header.cpuSeconds),
+                  " compute over ", header.sessions, " session(s)");
   }
   {
     const auto ldrImage{tonemap(tonemapOptions, rgbImage, film, wavelengths)};

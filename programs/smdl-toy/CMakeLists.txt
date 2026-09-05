@@ -30,6 +30,7 @@ target_sources(
     "IO/MeshDeform.cc"
     "IO/MeshImport.cc"
     "IO/PlacesFile.cc"
+    "IO/RenderHeader.cc"
     "Layout/Layout.cc"
     "Layout/LayoutDiagnostics.cc"
     "Layout/LayoutParser.cc"
