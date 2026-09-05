@@ -145,6 +145,40 @@ namespace smdl {
   return x < 0.0f ? 3.14159265f - p : p;
 }
 
+/// The arctangent of `y/x` in the quadrant the signs select, over the
+/// full circle `(-pi, pi]`, to 4e-7 radians.
+///
+/// The ratio of the smaller magnitude to the larger lands in `[0, 1]`,
+/// where a degree-17 odd minimax polynomial gives the arctangent, and
+/// the two comparisons that follow reflect that eighth of the circle out
+/// to the whole of it. One division, and no reduction that needs a
+/// second one.
+///
+/// Both arguments zero gives zero, as `std::atan2` does. Unlike
+/// `std::atan2` this does not read the sign of a zero, so a negative
+/// zero `y` returns `+pi` rather than `-pi` on the negative x axis.
+[[nodiscard]] SMDL_ALWAYS_INLINE float fastAtan2(float y, float x) noexcept {
+  const float a{std::abs(y)};
+  const float b{std::abs(x)};
+  const float hi{std::max(a, b)};
+  const float lo{std::min(a, b)};
+  const float z{hi > 0.0f ? lo / hi : 0.0f};
+  const float z2{z * z};
+  float r{
+      z * (0.9999999520f +
+           z2 * (-0.3333314528f +
+                 z2 * (0.1999355085f +
+                       z2 * (-0.1420889944f +
+                             z2 * (0.1065626393f +
+                                   z2 * (-0.0752896400f +
+                                         z2 * (0.0429096138f +
+                                               z2 * (-0.0161657367f +
+                                                     z2 * 0.0028662257f))))))))};
+  if (a > b) r = 1.57079633f - r;
+  if (x < 0.0f) r = 3.14159265f - r;
+  return y < 0.0f ? -r : r;
+}
+
 /// \}
 
 /// \}
