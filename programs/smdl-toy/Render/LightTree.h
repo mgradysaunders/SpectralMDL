@@ -13,8 +13,7 @@
 /// on an endpoint.
 [[nodiscard]] inline float clampUnit(float xi) noexcept {
   constexpr float ONE_MINUS_EPS = 1.0f - 0x1p-24f;
-  return std::clamp(xi, std::numeric_limits<float>::denorm_min(),
-                    ONE_MINUS_EPS);
+  return std::clamp(xi, std::numeric_limits<float>::min(), ONE_MINUS_EPS);
 }
 
 /// What light selection keeps per light for the `LightTree`: the
