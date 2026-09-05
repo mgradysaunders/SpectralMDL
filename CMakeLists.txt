@@ -102,20 +102,25 @@ endif()
 # exception, so GCC and Clang may drop both contracts: without them every
 # 'std::sqrt' is a 'vsqrtss' plus a branch to the library for the
 # negative case, and a sine and cosine of one argument stay two calls.
-# Results are bit-identical. Contraction is the one relaxation beyond
-# that (see 'SMDL_CXX_FP_CONTRACT'); '-ffast-math' and
-# '-funsafe-math-optimizations' must never appear here, both because of
-# what they do to the guards and because at link time they add a startup
-# object that sets flush-to-zero in the host process's MXCSR.
+# Results are bit-identical.
+#
+# '-ffp-contract=on' is pinned rather than left to the compiler, and is
+# the strongest contraction setting that is safe here. It is Clang's
+# default, but GCC's default under '-std=gnu++17' is 'fast', which fuses
+# multiply-adds across statements: that rounds away a named intermediate
+# the source asked for, and where the renderer computes one quantity
+# twice (a sampling density and the same density recovered for multiple
+# importance sampling) the two copies stop agreeing, which shows up as
+# fireflies. Note GCC before 14 implements 'on' as 'off' and so gets no
+# contraction at all. '-ffast-math' and '-funsafe-math-optimizations'
+# must never appear here, both because of what they do to the guards and
+# because at link time they add a startup object that sets flush-to-zero
+# in the host process's MXCSR.
 set(CXX_FP_FLAGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  list(APPEND CXX_FP_FLAGS "-fno-math-errno" "-fno-trapping-math")
-  if(SMDL_CXX_FP_CONTRACT)
-    list(APPEND CXX_FP_FLAGS "-ffp-contract=fast")
-  endif()
+  list(APPEND CXX_FP_FLAGS "-fno-math-errno" "-fno-trapping-math"
+       "-ffp-contract=on")
   message(STATUS "CXX_FP_FLAGS: ${CXX_FP_FLAGS}")
-elseif(SMDL_CXX_FP_CONTRACT)
-  message(STATUS "CXX_FP_CONTRACT: ignored on ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
 # MSVC needs to be told two things it cannot work out on its own: '/utf-8',

@@ -18,16 +18,6 @@ set(SMDL_CXX_X86_ISA "" CACHE STRING
 # targets the host machine regardless, and Embree builds and dispatches its
 # own kernels (see SMDL_TOY_EMBREE_X86_ISA).
 option(SMDL_CXX_NATIVE "Compile for the build machine's CPU (-march=native) at the cost of portability?" OFF)
-# On by default because it is the one floating-point relaxation that
-# measured (2 to 3 percent on the manifold-heavy renders, from fusing
-# multiply-adds across statements) and passes every test at its stated
-# accuracy. It changes results in the last bit, so the same source
-# renders the same image only when built with the same setting; GCC
-# already contracts this way unless asked not to. The rest of
-# '-ffast-math' is deliberately not offered: reassociation breaks the
-# error bounds 'RenderUtil/FastMath.h' promises, and finite-math-only
-# folds away the NaN and infinity guards the renderer relies on.
-option(SMDL_CXX_FP_CONTRACT "Fuse multiply-adds across statements (-ffp-contract=fast; GCC and Clang only)?" ON)
 # Off by default because it is not free and not yet needed: it trades the
 # task spawns for one atomic per chunk, and on a 12 thread machine the
 # renderer already runs at 98 to 99 percent of perfect scaling, so there
