@@ -71,7 +71,7 @@ private:
 /// Generate canonical random sample in \f$ (0,1) \f$.
 template <typename G> [[nodiscard]] inline float generateCanonical(G &g) {
   return std::clamp(std::generate_canonical<float, 32>(g),
-                    std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+                    std::numeric_limits<float>::min(), ONE_MINUS_EPS);
 }
 
 /// Generate canonical random sample in \f$ (0,1)^2 \f$.
@@ -457,7 +457,7 @@ public:
   /// Generates the next canonical sample in `(0,1)`.
   [[nodiscard]] float generateFloat() noexcept {
     return std::clamp(float(generate()) * 0x1p-32f,
-                      std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+                      std::numeric_limits<float>::min(), ONE_MINUS_EPS);
   }
 
   /// Generates the next 2 canonical samples in `(0,1)^2`.

@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
-#include <limits>
 
 #include "smdl/Support/Macros.h"
 
@@ -28,8 +26,11 @@ namespace smdl {
 /// nothing.
 ///
 /// What they owe the caller: a finite argument in the stated domain. There
-/// are no domain guards, so `fastLog` of zero, a negative, or an infinity,
-/// and a NaN passed to any of them, are unspecified.
+/// are no domain guards, so `fastLog` of zero, a denormal, a negative, or
+/// an infinity, and a NaN passed to any of them, are unspecified. A
+/// denormal is out of `fastLog`'s domain on purpose: the samplers clamp
+/// their canonical floats to the smallest normal float, and the render
+/// threads run with denormals flushed to zero, so no caller can form one.
 ///
 /// \{
 
@@ -57,9 +58,7 @@ namespace smdl {
                             u * (0.041666668f +
                                  u * (0.008333334f + u * 0.0013888889f)))))};
   const std::uint32_t bits{std::uint32_t(int(n) + 127) << 23};
-  float s{};
-  std::memcpy(&s, &bits, sizeof(s));
-  return x < X_MIN ? 0.0f : p * s;
+  return x < X_MIN ? 0.0f : p * bitCast<float>(bits);
 }
 
 /// The exponential \f$ e^x \f$ to 1e-8 relative wherever the result is a
@@ -82,29 +81,20 @@ namespace smdl {
                                      u * (0.001388888888888889 +
                                           u * 0.0001984126984126984))))))};
   const std::uint64_t bits{std::uint64_t(int(n) + 1023) << 52};
-  double s{};
-  std::memcpy(&s, &bits, sizeof(s));
-  return x < X_MIN ? 0.0 : p * s;
+  return x < X_MIN ? 0.0 : p * bitCast<double>(bits);
 }
 
-/// The natural logarithm of a positive finite float, denormals included,
-/// to 3e-7 relative to \f$ \ln x \f$ away from 1 and 1e-7 absolute within
-/// [0.5, 2], exactly 0 at 1.
+/// The natural logarithm of a positive normal float to 3e-7 relative to
+/// \f$ \ln x \f$ away from 1 and 1e-7 absolute within [0.5, 2], exactly 0
+/// at 1.
 ///
 /// The exponent comes off the bit pattern and the mantissa, folded into
 /// [2/3, 4/3), goes through the odd series in (m - 1) / (m + 1), cut at
-/// the term that lands below float rounding of the result. A denormal is
-/// first scaled into the normal range, exactly, so that its exponent
-/// reads correctly too.
+/// the term that lands below float rounding of the result.
 [[nodiscard]] SMDL_ALWAYS_INLINE float fastLog(float x) noexcept {
-  const bool denormal{x < std::numeric_limits<float>::min()};
-  x = denormal ? x * 8388608.0f : x;
-  std::uint32_t bits{};
-  std::memcpy(&bits, &x, sizeof(bits));
-  int e{int((bits >> 23) & 0xFF) - 127 - (denormal ? 23 : 0)};
-  bits = (bits & 0x807FFFFFu) | (127u << 23);
-  float m{};
-  std::memcpy(&m, &bits, sizeof(m));
+  const auto bits{bitCast<std::uint32_t>(x)};
+  int e{int((bits >> 23) & 0xFF) - 127};
+  float m{bitCast<float>((bits & 0x807FFFFFu) | (127u << 23))};
   if (m > 1.3333333f) m *= 0.5f, e += 1;
   const float s{(m - 1.0f) / (m + 1.0f)};
   const float s2{s * s};
@@ -113,19 +103,14 @@ namespace smdl {
                            s2 * (0.4f + s2 * (0.2857143f + s2 * 0.2222222f))));
 }
 
-/// The natural logarithm of a positive finite double, denormals included,
-/// to 2e-11 relative to \f$ \ln x \f$ away from 1 and 5e-12 absolute
-/// within [0.5, 2], exactly 0 at 1. The same reduction as the float
-/// overload with two more terms of the series.
+/// The natural logarithm of a positive normal double to 2e-11 relative to
+/// \f$ \ln x \f$ away from 1 and 5e-12 absolute within [0.5, 2], exactly
+/// 0 at 1. The same reduction as the float overload with two more terms
+/// of the series.
 [[nodiscard]] SMDL_ALWAYS_INLINE double fastLog(double x) noexcept {
-  const bool denormal{x < std::numeric_limits<double>::min()};
-  x = denormal ? x * 4503599627370496.0 : x;
-  std::uint64_t bits{};
-  std::memcpy(&bits, &x, sizeof(bits));
-  int e{int((bits >> 52) & 0x7FF) - 1023 - (denormal ? 52 : 0)};
-  bits = (bits & 0x800FFFFFFFFFFFFFull) | (1023ull << 52);
-  double m{};
-  std::memcpy(&m, &bits, sizeof(m));
+  const auto bits{bitCast<std::uint64_t>(x)};
+  int e{int((bits >> 52) & 0x7FF) - 1023};
+  double m{bitCast<double>((bits & 0x800FFFFFFFFFFFFFull) | (1023ull << 52))};
   if (m > 1.3333333333333333) m *= 0.5, e += 1;
   const double s{(m - 1.0) / (m + 1.0)};
   const double s2{s * s};
