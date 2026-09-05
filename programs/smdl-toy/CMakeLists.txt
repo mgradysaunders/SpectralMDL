@@ -62,9 +62,9 @@ set_target_properties(
 if(RTTI_FLAG)
   target_compile_options("smdl-toy-objects" PRIVATE "${RTTI_FLAG}")
 endif()
-# LLVMSupport is for command line parsing and JSON output only; all of
-# the code generation lives inside SpectralMDL, which links the native
-# backend privately.
+# LLVMSupport is for command line parsing, JSON output and `SmallVector`
+# only; all of the code generation lives inside SpectralMDL, which links
+# the native backend privately.
 target_link_libraries(
   "smdl-toy-objects"
   PUBLIC

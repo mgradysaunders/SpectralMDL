@@ -244,13 +244,10 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   mHeterogeneous = false;
   mMoving = false;
   mIsHaze = false;
-  mMaterial = nullptr;
   mHasEmission = false;
   mMajorant = 0.0f;
   mMajorantBase = 0.0f;
   mMajorantGrid = 0.0f;
-  mMeshInstance = nullptr;
-  mState = std::nullopt;
   mDensityGrid = nullptr;
   mGridComponent = -1;
   mInvMaxValue = 0.0f;
@@ -272,144 +269,70 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     return;
   }
 
-  // Collect the active media: the run of additive entries from the top
-  // of the stack plus the first non-additive entry, which replaces
-  // everything below it. Entries that carry no coefficients and no
-  // emission (e.g., clear glass interiors) contribute nothing but
-  // still terminate the walk when non-additive.
-  const MediumStack *primary{};
-  size_t count{0};
-  for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-    const auto &mat{entry->mat};
-    if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
-      if (!primary) primary = entry;
-      ++count;
-    }
-    if (!mat.hasAdditiveVolume()) break;
-  }
-  if (count == 0) return;
-  mHasMedium = true;
   const auto renderState{makeRenderState(wavelengths, nullptr, time.seconds)};
   // Coefficients are in inverse meters per the MDL specification;
   // distances here are in scene units. smdl-toy renders with the
   // default meters-per-scene-unit of 1, so this is the identity, but
   // the conversion is where a unit-aware scene flag would land.
-  const float unitScale{renderState.meters_per_scene_unit};
-  mUnitScale = unitScale;
-  if (count == 1) {
-    // The single-medium segment, which is the overwhelmingly common
-    // case: everything lives in the flat members and the component
-    // vector stays empty.
-    const auto &mat{primary->mat};
-    mScatterInstance = &mat;
-    mMaterial = mat.material;
-    mSigmaA = Color(mat.getAbsorptionCoefficient()) * unitScale;
-    mSigmaS = Color(mat.getScatteringCoefficient()) * unitScale;
-    mHasEmission = !mat.getVolumeEmissionIntensity().empty();
-    mEmission = Color(mat.getVolumeEmissionIntensity()) * unitScale;
-    if (mMaterial->hasHomogeneousVolume()) return;
-    // Heterogeneous (or unproven, which must be treated the same): the
-    // per-point queries need majorants to track against, covering every
-    // coefficient the material actually has.
-    const bool missingMajorantA{!mat.getAbsorptionCoefficient().empty() &&
-                                mat.getMaxAbsorptionCoefficient().empty()};
-    const bool missingMajorantS{!mat.getScatteringCoefficient().empty() &&
-                                mat.getMaxScatteringCoefficient().empty()};
-    if (missingMajorantA || missingMajorantS) {
-      warnMissingMajorantOnce(mMaterial);
-      return;
-    }
-    mHeterogeneous = true;
-    mState = renderState;
-    mMaxSigmaA = Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
-    mMaxSigmaS = Color(mat.getMaxScatteringCoefficient()) * unitScale;
-    mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
-    mMajorantGrid = mMajorant;
-    mGridMaxSigma = mMaxSigmaA + mMaxSigmaS;
-    // The queries evaluate in the rigid frame of the instance whose
-    // boundary entered the medium, paired with the rigid transform so
-    // world reassembly inside the material is exact. The rigid transform
-    // has no scale, so the direction stays unit length and distances
-    // stay in scene units. A medium with no geometry queries in world
-    // space directly.
-    mMeshInstance = primary->meshInstance;
-    if (mMeshInstance) {
-      mMoving = mMeshInstance->isMoving;
-      if (mMeshInstance->frame.isDeformed) warnDeformedVolumeOnce(mMaterial);
-      std::optional<InstanceFrame> scratch{};
-      mState->object_to_world_matrix =
-          mMeshInstance->frameAt(time.fraction, scratch).rigidToWorld;
-    }
-    // The density acceleration hint, active only when the material
-    // declares all three fields and they are usable. The hint box spans
-    // texture space [0,1]^3, which spans the voxel extent, and bricks
-    // are 16 voxels per axis, which is the map `setSegment()` takes the
-    // segment into brick space with.
-    if (hasUsableDensityGrid(mat)) {
-      const auto *densityGrid{mat.getVolumeDensityGrid()};
-      const auto *boundMin{mat.getVolumeDensityBoundMin()};
-      const auto *boundMax{mat.getVolumeDensityBoundMax()};
-      mDensityGrid = densityGrid;
-      const auto extent{densityGrid->getExtent()};
-      mBrickBoundMin = *boundMin;
-      mBrickScale =
-          float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
-                 float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
-                 float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
-      mInvMaxValue = 1.0f / densityGrid->getMaxValue();
-    }
-    return;
-  }
-  // Additive overlap: two or more media are active at once. Set up one
-  // component per entry, mirroring the single-medium setup, and
-  // aggregate the sums the sampling loops run against.
-  mComponents.reserve(count);
-  int gridComponent{-1};
+  mUnitScale = renderState.meters_per_scene_unit;
+  // Collect the active media: the run of additive entries from the top
+  // of the stack plus the first non-additive entry, which replaces
+  // everything below it. Entries that carry no coefficients and no
+  // emission (e.g., clear glass interiors) contribute nothing but
+  // still terminate the walk when non-additive.
   int gridCandidates{0};
   for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
     const auto &mat{entry->mat};
-    const bool contributes{mat.hasMedium() ||
-                           !mat.getVolumeEmissionIntensity().empty()};
-    if (contributes) {
+    if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
       auto &component{mComponents.emplace_back()};
       component.mat = &mat;
-      component.sigmaA = Color(mat.getAbsorptionCoefficient()) * unitScale;
-      component.sigmaS = Color(mat.getScatteringCoefficient()) * unitScale;
-      component.emission = Color(mat.getVolumeEmissionIntensity()) * unitScale;
+      component.sigmaA = Color(mat.getAbsorptionCoefficient()) * mUnitScale;
+      component.sigmaS = Color(mat.getScatteringCoefficient()) * mUnitScale;
+      component.emission = Color(mat.getVolumeEmissionIntensity()) * mUnitScale;
       mHasEmission |= !mat.getVolumeEmissionIntensity().empty();
+      // Heterogeneous (or unproven, which must be treated the same): the
+      // per-point queries need majorants to track against, covering every
+      // coefficient the material actually has.
       if (!mat.material->hasHomogeneousVolume()) {
-        const bool missingMajorantA{!mat.getAbsorptionCoefficient().empty() &&
-                                    mat.getMaxAbsorptionCoefficient().empty()};
-        const bool missingMajorantS{!mat.getScatteringCoefficient().empty() &&
-                                    mat.getMaxScatteringCoefficient().empty()};
-        if (missingMajorantA || missingMajorantS) {
+        if (!hasUsableMajorants(mat)) {
           warnMissingMajorantOnce(mat.material);
         } else {
           component.heterogeneous = true;
           component.maxSigmaA =
-              Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
+              Color(mat.getMaxAbsorptionCoefficient()) * mUnitScale;
           component.maxSigmaS =
-              Color(mat.getMaxScatteringCoefficient()) * unitScale;
+              Color(mat.getMaxScatteringCoefficient()) * mUnitScale;
           component.state = renderState;
+          // The queries evaluate in the rigid frame of the instance whose
+          // boundary entered the medium, paired with the rigid transform so
+          // world reassembly inside the material is exact. The rigid transform
+          // has no scale, so the direction stays unit length and distances
+          // stay in scene units. A medium with no geometry queries in world
+          // space directly.
           component.meshInstance = entry->meshInstance;
           if (component.meshInstance) {
             mMoving |= component.meshInstance->isMoving;
             if (component.meshInstance->frame.isDeformed)
               warnDeformedVolumeOnce(mat.material);
             std::optional<InstanceFrame> scratch{};
-            component.state.object_to_world_matrix =
+            component.state->object_to_world_matrix =
                 component.meshInstance->frameAt(time.fraction, scratch)
                     .rigidToWorld;
           }
+          // The density acceleration hint, active only when the material
+          // declares all three fields and they are usable.
           if (hasUsableDensityGrid(mat)) {
             ++gridCandidates;
-            gridComponent = int(mComponents.size()) - 1;
+            mGridComponent = int(mComponents.size()) - 1;
           }
         }
       }
     }
     if (!mat.hasAdditiveVolume()) break;
   }
+  if (mComponents.empty()) return;
+  mHasMedium = true;
+  mScatterInstance = mComponents.front().mat;
   // The aggregates. The homogeneous closed form runs on the summed
   // snapshots when every component is homogeneous; otherwise the
   // tracking loops run against the summed majorants, a homogeneous
@@ -436,32 +359,36 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   // The density-hint spans can drive the walk only when exactly one
   // component has a usable grid: its contribution scales per span, and
   // everything else is the constant base. With competing grids (or
-  // none) the whole majorant is the constant global span.
+  // none) the whole majorant is the constant global span, whose lower
+  // bound the iterator reports as zero, so the control below goes
+  // unread.
   if (gridCandidates == 1) {
-    auto &component{mComponents[size_t(gridComponent)]};
+    auto &component{mComponents[size_t(mGridComponent)]};
     component.scaledByGrid = true;
-    mGridComponent = gridComponent;
     mGridMaxSigma = component.maxSigmaA + component.maxSigmaS;
     mMajorantGrid = mGridMaxSigma.maxComponent();
     mMajorantBase = std::max(
         (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
-    const auto &mat{*component.mat};
-    const auto *densityGrid{mat.getVolumeDensityGrid()};
-    const auto *boundMin{mat.getVolumeDensityBoundMin()};
-    const auto *boundMax{mat.getVolumeDensityBoundMax()};
-    mDensityGrid = densityGrid;
-    const auto extent{densityGrid->getExtent()};
-    mBrickBoundMin = *boundMin;
-    mBrickScale =
-        float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
-               float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
-               float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
-    mInvMaxValue = 1.0f / densityGrid->getMaxValue();
+    setDensityGrid(*component.mat);
   } else {
+    mGridComponent = -1;
     mGridMaxSigma = Color();
     mMajorantGrid = mMajorant;
     mMajorantBase = 0.0f;
   }
+}
+
+void Medium::setDensityGrid(const smdl::JIT::MaterialInstance &mat) noexcept {
+  const auto *densityGrid{mat.getVolumeDensityGrid()};
+  const auto *boundMin{mat.getVolumeDensityBoundMin()};
+  const auto *boundMax{mat.getVolumeDensityBoundMax()};
+  mDensityGrid = densityGrid;
+  const auto extent{densityGrid->getExtent()};
+  mBrickBoundMin = *boundMin;
+  mBrickScale = float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
+                       float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
+                       float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
+  mInvMaxValue = 1.0f / densityGrid->getMaxValue();
 }
 
 void Medium::setSegment(const float3 &org, const float3 &dir,
@@ -483,132 +410,86 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
     projectSegment(org, dir);
   }
   if (mDensityGrid) {
-    // The grid's own component drives the spans, which is the single
-    // medium itself where there is no overlap.
-    const float3 &orgR{
-        mGridComponent < 0 ? mOrgR : mComponents[size_t(mGridComponent)].orgR};
-    const float3 &dirR{
-        mGridComponent < 0 ? mDirR : mComponents[size_t(mGridComponent)].dirR};
+    // The grid's own component is the one whose segment maps.
+    const auto &component{mComponents[size_t(mGridComponent)]};
     for (int axis = 0; axis < 3; axis++) {
-      mBrickOrg[axis] = (orgR[axis] - mBrickBoundMin[axis]) * mBrickScale[axis];
-      mBrickDir[axis] = dirR[axis] * mBrickScale[axis];
+      mBrickOrg[axis] =
+          (component.orgR[axis] - mBrickBoundMin[axis]) * mBrickScale[axis];
+      mBrickDir[axis] = component.dirR[axis] * mBrickScale[axis];
     }
   }
 }
 
 void Medium::projectSegment(const float3 &org, const float3 &dir) noexcept {
-  if (mComponents.empty()) {
-    if (mMeshInstance) {
-      const auto &toRigid{mMeshInstance->frame.worldToRigid};
-      mOrgR = transformPoint(toRigid, org);
-      mDirR = transformDirection(toRigid, dir);
-    } else {
-      mOrgR = org;
-      mDirR = dir;
-    }
-    mState->direction = mDirR;
-    return;
-  }
-  for (auto &component : mComponents) {
-    if (!component.heterogeneous) continue;
-    if (component.meshInstance) {
-      const auto &toRigid{component.meshInstance->frame.worldToRigid};
-      component.orgR = transformPoint(toRigid, org);
-      component.dirR = transformDirection(toRigid, dir);
-    } else {
-      component.orgR = org;
-      component.dirR = dir;
-    }
-    component.state.direction = component.dirR;
-  }
+  projectSegmentWith(org, dir,
+                     [](const MeshInstance &instance) -> const float4x4 & {
+                       return instance.frame.worldToRigid;
+                     });
 }
 
 void Medium::projectSegmentMoving(const float3 &org, const float3 &dir,
                                   float time) noexcept {
-  if (mComponents.empty()) {
-    if (mMeshInstance) {
-      std::optional<InstanceFrame> scratch{};
-      const auto &toRigid{mMeshInstance->frameAt(time, scratch).worldToRigid};
-      mOrgR = transformPoint(toRigid, org);
-      mDirR = transformDirection(toRigid, dir);
-    } else {
-      mOrgR = org;
-      mDirR = dir;
-    }
-    mState->direction = mDirR;
+  // The scratch outlives every reference the projection takes out of
+  // it, each of which is consumed before the next component asks.
+  std::optional<InstanceFrame> scratch{};
+  projectSegmentWith(org, dir,
+                     [&](const MeshInstance &instance) -> const float4x4 & {
+                       return instance.frameAt(time, scratch).worldToRigid;
+                     });
+}
+
+SMDL_ALWAYS_INLINE void Medium::queryComponent(const Component &component,
+                                               float t, float majorantScale,
+                                               bool stash, Color &sigmaA,
+                                               Color &sigmaS,
+                                               Color &emission) const {
+  if (!component.heterogeneous) {
+    sigmaA = component.sigmaA;
+    sigmaS = component.sigmaS;
+    emission = component.emission;
     return;
   }
-  for (auto &component : mComponents) {
-    if (!component.heterogeneous) continue;
-    if (component.meshInstance) {
-      std::optional<InstanceFrame> scratch{};
-      const auto &toRigid{
-          component.meshInstance->frameAt(time, scratch).worldToRigid};
-      component.orgR = transformPoint(toRigid, org);
-      component.dirR = transformDirection(toRigid, dir);
-    } else {
-      component.orgR = org;
-      component.dirR = dir;
-    }
-    component.state.direction = component.dirR;
+  component.state->position = component.orgR + t * component.dirR;
+  component.mat->material->volumeEvaluate(*component.state, sigmaA.data(),
+                                          sigmaS.data(), emission.data());
+  // Convert to inverse scene units and clamp to the declared majorants
+  // at the local scale, so a lying majorant or density hint renders a
+  // clamped medium instead of accumulating negative-weight bias. The
+  // density-hint scale applies only to the component whose own grid
+  // drives the spans. The emission coefficient has no majorant and only
+  // clamps nonnegative: it never gates sampling, so no bound is needed
+  // for unbiasedness. Not `std::clamp`: the majorant is what the
+  // material declared, and a misdeclared negative one must not invert
+  // the bounds.
+  const float scale{component.scaledByGrid ? majorantScale : 1.0f};
+  for (size_t i = 0; i < sigmaA.size(); i++) {
+    sigmaA[i] = std::min(std::max(sigmaA[i] * mUnitScale, 0.0f),
+                         component.maxSigmaA[i] * scale);
+    sigmaS[i] = std::min(std::max(sigmaS[i] * mUnitScale, 0.0f),
+                         component.maxSigmaS[i] * scale);
+    emission[i] = std::max(emission[i] * mUnitScale, 0.0f);
   }
+  if (stash) component.lastSigmaS = sigmaS;
 }
 
 void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
                                   Color &sigmaS, Color &emission) const {
-  if (mComponents.empty()) {
-    mState->position = mOrgR + t * mDirR;
-    mMaterial->volumeEvaluate(*mState, sigmaA.data(), sigmaS.data(),
-                              emission.data());
-    // Convert to inverse scene units and clamp to the declared majorants
-    // at the local scale, so a lying majorant or density hint renders a
-    // clamped medium instead of accumulating negative-weight bias. The
-    // emission coefficient has no majorant and only clamps nonnegative:
-    // it never gates sampling, so no bound is needed for unbiasedness.
-    // Not `std::clamp`: the majorant is what the material declared, and a
-    // misdeclared negative one must not invert the bounds.
-    for (size_t i = 0; i < sigmaA.size(); i++) {
-      sigmaA[i] = std::min(std::max(sigmaA[i] * mUnitScale, 0.0f),
-                           mMaxSigmaA[i] * majorantScale);
-      sigmaS[i] = std::min(std::max(sigmaS[i] * mUnitScale, 0.0f),
-                           mMaxSigmaS[i] * majorantScale);
-      emission[i] = std::max(emission[i] * mUnitScale, 0.0f);
-    }
-    return;
-  }
-  // Additive overlap: sum the per-component queries, each clamped to
-  // its own majorants, with the density-hint scale applying only to
-  // the grid component. Homogeneous components contribute their exact
-  // snapshots. The clamped scattering coefficient is stashed per
-  // heterogeneous component for the phase pick at a real collision.
-  sigmaA = Color();
-  sigmaS = Color();
-  emission = Color();
-  // One component's query, reused down the components: `volumeEvaluate`
+  // The first component writes the sums and the rest add into them, so
+  // that the single-medium segment, which is the overwhelmingly common
+  // one, writes its coefficients exactly once and never touches the
+  // scratch below.
+  const bool overlapping{mComponents.size() > 1};
+  queryComponent(mComponents.front(), t, majorantScale, overlapping, sigmaA,
+                 sigmaS, emission);
+  if (SMDL_LIKELY(!overlapping)) return;
+  // One component's query, reused down the rest: `queryComponent()`
   // overwrites every band of all three.
   Color a{}, s{}, e{};
-  for (const auto &component : mComponents) {
-    if (!component.heterogeneous) {
-      sigmaA += component.sigmaA;
-      sigmaS += component.sigmaS;
-      emission += component.emission;
-      continue;
-    }
-    component.state.position = component.orgR + t * component.dirR;
-    component.mat->material->volumeEvaluate(component.state, a.data(), s.data(),
-                                            e.data());
-    const float scale{component.scaledByGrid ? majorantScale : 1.0f};
-    for (size_t i = 0; i < a.size(); i++) {
-      a[i] = std::min(std::max(a[i] * mUnitScale, 0.0f),
-                      component.maxSigmaA[i] * scale);
-      s[i] = std::min(std::max(s[i] * mUnitScale, 0.0f),
-                      component.maxSigmaS[i] * scale);
-      e[i] = std::max(e[i] * mUnitScale, 0.0f);
-    }
+  for (size_t i = 1; i < mComponents.size(); i++) {
+    queryComponent(mComponents[i], t, majorantScale, true, a, s, e);
     sigmaA += a;
     sigmaS += s;
     emission += e;
-    component.lastSigmaS = s;
   }
 }
 
@@ -723,7 +604,10 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       Tr[i] = transmittance(mu[i] * tTravel);
     if (tScatter < tEnd) {
       beta *= mSigmaS * Tr / (mu * Tr).average();
-      if (SMDL_UNLIKELY(!mComponents.empty()))
+      // Only an overlap has a phase function to choose; a single
+      // medium must not draw here, or every render with a medium moves
+      // onto a different sampler dimension.
+      if (SMDL_UNLIKELY(mComponents.size() > 1))
         pickScatterComponent(float(sampler), mSigmaS, beta);
       t = tScatter;
       return true;
@@ -803,7 +687,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
           return false;
         }
         beta *= sigmaS * P / pdf;
-        if (SMDL_UNLIKELY(!mComponents.empty()))
+        if (SMDL_UNLIKELY(mComponents.size() > 1))
           pickScatterComponent(rng.generateFloat(), sigmaS, beta);
         t = tCur;
         return true;

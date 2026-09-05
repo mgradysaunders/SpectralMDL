@@ -1,7 +1,8 @@
 #pragma once
 
 #include <optional>
-#include <vector>
+
+#include "llvm/ADT/SmallVector.h"
 
 #include "smdl/RenderUtil/Haze.h"
 
@@ -267,19 +268,11 @@ private:
   /// coefficients do not vary along the segment.
   void setSegment(const float3 &org, const float3 &dir, float time) noexcept;
 
-  /// The projection of `setSegment()`: the segment into the rigid frame
-  /// of the medium, or of every heterogeneous component. `setSegment()`
-  /// runs this under the instances' own frames and calls
-  /// `projectSegmentMoving()` under `mMoving`, so that the static path,
-  /// which runs per segment, keeps the frame query out of line.
-  void projectSegment(const float3 &org, const float3 &dir) noexcept;
-
-  SMDL_NO_INLINE void projectSegmentMoving(const float3 &org, const float3 &dir,
-                                           float time) noexcept;
-
-  /// One component of an additive overlap, mirroring the single-medium
-  /// members below; populated only when the segment is inside two or
-  /// more overlapping media.
+  /// One active medium of the segment, and the only representation of
+  /// one: a single medium is one of these, an additive overlap is
+  /// several, and every path below runs over the list either way. The
+  /// flat members further down are the aggregates the sampling loops
+  /// read, which are sums over these.
   struct Component final {
     /// The material instance of the stack entry, whose lifetime is the
     /// path's allocator.
@@ -323,9 +316,14 @@ private:
     /// See `orgR`.
     float3 dirR{};
 
-    /// The `volumeEvaluate` query state of this component, mutable for
-    /// the same reason as `mState`.
-    mutable smdl::State state{};
+    /// The partial state for `volumeEvaluate` queries: render-wide
+    /// fields plus the rigid-frame transform; `position` is set per
+    /// query. Mutable because queries write the position into it while
+    /// leaving the medium logically unchanged. Present only on a
+    /// heterogeneous component, which is the only one that queries: a
+    /// `State` is some 700 bytes of initialization, too much to give a
+    /// component that never asks a material anything.
+    mutable std::optional<smdl::State> state{};
 
     /// The clamped scattering coefficient at the most recent
     /// `evaluateCoefficients` query, which is the collision point when
@@ -333,13 +331,69 @@ private:
     mutable smdl::SpectralColor lastSigmaS{};
   };
 
+  /// The projection of `setSegment()`: the segment into the rigid frame
+  /// of every heterogeneous component, `rigidOf` answering with the
+  /// frame of one component's instance. `setSegment()` picks the static
+  /// answer or `projectSegmentMoving()`'s, so that the static path,
+  /// which runs per segment, keeps the frame query out of line.
+  template <typename RigidOf>
+  void projectSegmentWith(const float3 &org, const float3 &dir,
+                          const RigidOf &rigidOf) noexcept {
+    for (auto &component : mComponents) {
+      if (!component.heterogeneous) continue;
+      if (component.meshInstance) {
+        const auto &toRigid{rigidOf(*component.meshInstance)};
+        component.orgR = transformPoint(toRigid, org);
+        component.dirR = transformDirection(toRigid, dir);
+      } else {
+        component.orgR = org;
+        component.dirR = dir;
+      }
+      component.state->direction = component.dirR;
+    }
+  }
+
+  void projectSegment(const float3 &org, const float3 &dir) noexcept;
+
+  SMDL_NO_INLINE void projectSegmentMoving(const float3 &org, const float3 &dir,
+                                           float time) noexcept;
+
+  /// Does the material declare a majorant for every coefficient it
+  /// carries? A heterogeneous volume that cannot bound its own field is
+  /// treated as homogeneous, the captured snapshot standing in for what
+  /// no tracking could be run against.
+  [[nodiscard]] static bool
+  hasUsableMajorants(const smdl::JIT::MaterialInstance &mat) noexcept {
+    return (mat.getAbsorptionCoefficient().empty() ||
+            !mat.getMaxAbsorptionCoefficient().empty()) &&
+           (mat.getScatteringCoefficient().empty() ||
+            !mat.getMaxScatteringCoefficient().empty());
+  }
+
+  /// Take the density acceleration hint from the material whose grid
+  /// drives the majorant spans: the hint box spans texture space
+  /// `[0,1]^3`, which spans the voxel extent, and bricks are 16 voxels
+  /// per axis, which is the map `setSegment()` takes the segment into
+  /// brick space with.
+  void setDensityGrid(const smdl::JIT::MaterialInstance &mat) noexcept;
+
+  /// One component's contribution at distance `t` along the segment,
+  /// written into the given spectra: the snapshot of a homogeneous
+  /// component, or the clamped `volumeEvaluate` query of a
+  /// heterogeneous one. `stash` records the clamped scattering
+  /// coefficient for `pickScatterComponent()`, which only an overlap
+  /// runs.
+  void queryComponent(const Component &component, float t, float majorantScale,
+                      bool stash, Color &sigmaA, Color &sigmaS,
+                      Color &emission) const;
+
   /// Query the volume coefficients at distance `t` along the segment,
   /// clamped to the declared majorants scaled by `majorantScale` (the
   /// local density-hint bound, or 1 without the hint; with overlap the
   /// scale applies only to the grid component), in inverse scene
   /// units, along with the emission coefficient, which has no majorant
-  /// and is only clamped nonnegative. With overlap this sums the
-  /// per-component queries.
+  /// and is only clamped nonnegative. This sums the per-component
+  /// queries, a homogeneous component contributing its snapshot.
   void evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
                             Color &sigmaS, Color &emission) const;
 
@@ -384,11 +438,8 @@ private:
   /// Is the medium heterogeneous (or unproven) with usable majorants?
   bool mHeterogeneous{};
 
-  /// The material of the medium, for `volumeEvaluate`.
-  const smdl::JIT::Material *mMaterial{};
-
-  /// The absorption coefficient captured by the instance (summed over
-  /// components with overlap), either the exact homogeneous spectrum
+  /// The absorption coefficient summed over the components, either the
+  /// exact homogeneous spectrum
   /// or the surface-hit snapshot that the heterogeneous path ignores,
   /// in inverse scene units.
   ///
@@ -412,8 +463,8 @@ private:
   smdl::SpectralColor mEmission{};
 
   /// The declared majorants in inverse scene units, present only on
-  /// the heterogeneous path. With overlap these are per-bin sums, a
-  /// homogeneous component contributing its exact spectrum.
+  /// the heterogeneous path: per-bin sums over the components, a
+  /// homogeneous one contributing its exact spectrum.
   smdl::SpectralColor mMaxSigmaA{};
 
   /// See `mMaxSigmaA`.
@@ -436,18 +487,11 @@ private:
 
   /// The extinction majorant spectrum that `span.scaleMin` lower
   /// bounds, which residual ratio tracking uses as its analytic
-  /// control: the summed majorant for a single medium, the grid
-  /// component's alone with overlap (the other components' extinction
-  /// is not bounded below by the grid). Sized only on the
-  /// heterogeneous path.
+  /// control: the grid component's own majorant, the other components'
+  /// extinction not being bounded below by the grid. Zero without a
+  /// grid, where the spans report a zero lower bound and nothing reads
+  /// it. Sized only on the heterogeneous path.
   smdl::SpectralColor mGridMaxSigma{};
-
-  /// The segment origin in the rigid frame of the medium's instance.
-  float3 mOrgR{};
-
-  /// The segment direction in the rigid frame, still unit length
-  /// because the rigid transform has no scale.
-  float3 mDirR{};
 
   /// The density acceleration hint grid, non-null only when the
   /// material declares the complete hint (see `material_volume.density`
@@ -468,24 +512,16 @@ private:
   /// scales per-brick maxima into majorant scale factors in `[0, 1]`.
   float mInvMaxValue{};
 
-  /// The partial state for `volumeEvaluate` queries: render-wide
-  /// fields plus the rigid-frame transform; `position` is set per
-  /// query. Mutable because queries write the position into it while
-  /// leaving the medium logically unchanged. Present only on the
-  /// heterogeneous path, which is the only one that queries: a `State`
-  /// is some 700 bytes of initialization, too much to hand a view that
-  /// never asks a material anything.
-  mutable std::optional<smdl::State> mState{};
-
   /// The `State::meters_per_scene_unit` conversion the coefficient
   /// clamps apply, hoisted so the per-component states need not be
   /// consulted.
   float mUnitScale{1.0f};
 
-  /// The components of an additive overlap, empty for the common
-  /// single-medium segment, which keeps to the members above and
-  /// allocates nothing extra.
-  std::vector<Component> mComponents{};
+  /// The active media of the segment, one entry for the overwhelmingly
+  /// common single medium and one per overlapping medium otherwise. The
+  /// inline capacity is what keeps the single-medium segment from
+  /// allocating.
+  llvm::SmallVector<Component, 1> mComponents{};
 
   /// See `scatterInstance()`. Mutable because a real collision picks
   /// the component during the const sampling call.
@@ -505,11 +541,6 @@ private:
   /// See `mStack`.
   bool mResolved{};
 
-  /// The instance whose rigid frame the queries evaluate in, which
-  /// `setSegment()` projects the segment into. Null for a medium with
-  /// no geometry, which queries in world space directly.
-  const MeshInstance *mMeshInstance{};
-
   /// Does an instance the queries evaluate in move over the shutter, so
   /// that `setSegment()` reads its frame at the segment's time?
   bool mMoving{};
@@ -522,7 +553,6 @@ private:
   float3 mBrickScale{};
 
   /// With the hint, the index in `mComponents` of the component whose
-  /// grid drives the majorant spans, or -1 for a single medium, whose
-  /// own segment is the one that maps.
+  /// grid drives the majorant spans; -1 when there is no hint.
   int mGridComponent{-1};
 };

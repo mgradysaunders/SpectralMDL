@@ -14,6 +14,7 @@ smdl_add_doctest(
     "Render/Light.cc"
     "Render/LightTree.cc"
     "Render/Manifold.cc"
+    "Render/Medium.cc"
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
   LINK
