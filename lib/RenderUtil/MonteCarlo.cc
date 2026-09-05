@@ -22,8 +22,9 @@ constexpr double INV_CMF_SCALE = 1.0 / CMF_SCALE;
 // Quantize a CMF value in [0, 1]. Truncating keeps a nondecreasing
 // sequence nondecreasing; the top of the range saturates because 1.0
 // scales to exactly one past the largest representable value.
-[[nodiscard]] std::uint32_t quantizeCMF(double cmf) noexcept {
-  return static_cast<std::uint32_t>(std::min(cmf * CMF_SCALE, 4294967295.0));
+[[nodiscard]]
+SMDL_ALWAYS_INLINE std::uint32_t quantizeCMF(double cmf) noexcept {
+  return std::uint32_t(std::min(CMF_SCALE * cmf, 4294967295.0));
 }
 
 } // namespace
@@ -54,13 +55,12 @@ Distribution1D::Distribution1D(Span<const float> values) {
 
 float Distribution1D::indexPMF(int i) const noexcept {
   if (0 <= i && i < size())
-    return static_cast<float>(double(cmfs[i + 1] - cmfs[i]) * INV_CMF_SCALE);
+    return float(INV_CMF_SCALE * double(cmfs[i + 1] - cmfs[i]));
   return 0.0f;
 }
 
 float Distribution1D::indexCMF(int i) const noexcept {
-  if (0 <= i && i < size())
-    return static_cast<float>(double(cmfs[i]) * INV_CMF_SCALE);
+  if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs[i]));
   return i < 0 ? 0.0f : 1.0f;
 }
 
@@ -84,20 +84,17 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
     // Against the dequantized bounds rather than against `key`, so the
     // remapped sample keeps the resolution of the incoming float instead
     // of inheriting that of the table.
-    const double bound0{double(cmf0) * INV_CMF_SCALE};
-    const double bound1{double(cmf1) * INV_CMF_SCALE};
+    const double bound0{INV_CMF_SCALE * double(cmf0)};
+    const double bound1{INV_CMF_SCALE * double(cmf1)};
     // Zero width means the entry cannot be sampled at all, which only
     // arises from an all-zero distribution; the remap has nowhere to
     // land, so give it the bottom of the interval rather than a
     // division by zero.
-    *xiRemap =
-        width > 0 ? float((double(xi) - bound0) / (bound1 - bound0)) : 0.0f;
-    *xiRemap = std::clamp(*xiRemap, std::numeric_limits<float>::denorm_min(),
-                          ONE_MINUS_EPS);
+    *xiRemap = std::clamp(
+        width > 0 ? float((double(xi) - bound0) / (bound1 - bound0)) : 0.0f,
+        std::numeric_limits<float>::min(), ONE_MINUS_EPS);
   }
-  if (pmf) {
-    *pmf = static_cast<float>(double(width) * INV_CMF_SCALE);
-  }
+  if (pmf) *pmf = float(INV_CMF_SCALE * double(width));
   return i;
 }
 
@@ -148,8 +145,8 @@ float2 uniformApertureSample(int numBlades, float bladeAngle,
 }
 
 float erfInverse(float y) noexcept {
-  float w = -std::log(
-      std::max(std::numeric_limits<float>::denorm_min(), (1 - y) * (1 + y)));
+  float w =
+      -std::log(std::max(std::numeric_limits<float>::min(), (1 - y) * (1 + y)));
   float x = 0;
   if (w < 5) {
     w = w - 2.5f;
@@ -184,8 +181,9 @@ Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
   SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
   conditionals.reserve(numTexelsY);
   auto margins{std::vector<float>(size_t(numTexelsY))};
-  for (int iY{}; iY < numTexelsY; iY++) {
-    conditionals.emplace_back(values.subspan(numTexelsX * iY, numTexelsX));
+  for (int iY = 0; iY < numTexelsY; iY++) {
+    conditionals.emplace_back(
+        values.subspan(size_t(numTexelsX) * size_t(iY), numTexelsX));
     margins[iY] = conditionals.back().unnormalizedSum();
   }
   marginal = Distribution1D(margins);

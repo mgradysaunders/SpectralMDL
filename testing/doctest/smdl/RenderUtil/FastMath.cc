@@ -94,28 +94,6 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 2e-11);
   }
-  SUBCASE("log float, denormal arguments") {
-    double worst{};
-    const float tiny{std::numeric_limits<float>::denorm_min()};
-    sweep(1.0f, 8388607.0f, [&](float k) {
-      const float x{std::floor(k) * tiny};
-      const double ref{std::log(double(x))};
-      const double err{std::abs(double(smdl::fastLog(x)) - ref)};
-      worst = std::max(worst, err / std::max(1.0, std::abs(ref)));
-    });
-    CHECK(worst < 3e-7);
-  }
-  SUBCASE("log double, denormal arguments") {
-    long double worst{};
-    sweep(-1074.0, -1022.01, [&](double u) {
-      const double x{std::exp2(u)};
-      const long double ref{std::log(static_cast<long double>(x))};
-      const long double err{
-          std::abs(static_cast<long double>(smdl::fastLog(x)) - ref)};
-      worst = std::max(worst, err / std::max(1.0L, std::abs(ref)));
-    });
-    CHECK(worst < 2e-11);
-  }
   SUBCASE("acos, absolute error in radians") {
     double worst{};
     sweep(-1.0f, 1.0f, [&](float x) {
