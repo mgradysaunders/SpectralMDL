@@ -536,9 +536,15 @@ public:
   /// The material to substitute for scene material names that do not
   /// resolve. If empty, an unresolved name is an error instead.
   ///
+  /// \param[in] robustIntersection
+  /// Build the acceleration structures for watertight ray intersection.
+  /// See `robustIntersection`.
+  ///
   explicit Scene(const smdl::Compiler &compiler,
-                 std::string_view fallbackMaterialName = {})
+                 std::string_view fallbackMaterialName = {},
+                 bool robustIntersection = true)
       : compiler(compiler), fallbackMaterialName(fallbackMaterialName),
+        robustIntersection(robustIntersection),
         device(rtcNewDevice(
             smdl::concat("verbose=0,threads=", smdl::getThreadCount())
                 .c_str())),
@@ -1024,10 +1030,23 @@ public:
 public:
   const smdl::Compiler &compiler;     ///< The compiler.
   std::string fallbackMaterialName{}; ///< The unresolved-name substitute.
-  RTCDevice device{};                 ///< The Embree device.
-  RTCScene scene{};                   ///< The Embree scene.
-  float3 boundCenter{};               ///< The bound center.
-  float boundRadius{};                ///< The bound radius.
+
+  /// Build the acceleration structures for watertight ray intersection,
+  /// where a ray meeting the edge two triangles share hits exactly one of
+  /// them. Embree's faster test can let such a ray pass between the two,
+  /// which reads as speckle on dense geometry at grazing angles and as a
+  /// stalled walk where a manifold projection lands on the leak. Off
+  /// trades that for a few percent; see `-no-robust-intersection`.
+  ///
+  /// Set on the mesh, curve and primitive scenes, which hold the
+  /// primitives a ray is tested against. The instance scene above them
+  /// carries no primitives of its own.
+  bool robustIntersection{true};
+
+  RTCDevice device{};   ///< The Embree device.
+  RTCScene scene{};     ///< The Embree scene.
+  float3 boundCenter{}; ///< The bound center.
+  float boundRadius{};  ///< The bound radius.
 
   /// Shadow rays are pure boolean queries: every material an instance
   /// shades with blocks a shadow ray at its first hit

@@ -55,6 +55,16 @@ static cl::opt<std::string> optGroundMaterial{
     cl::desc("With -ground, the MDL material for the ground plane (default: 10 "
              "percent gray)"),
     cl::cat(catScene)};
+static cl::opt<bool> optNoRobustIntersection{
+    "no-robust-intersection",
+    cl::desc("Trace against the faster ray-triangle test instead of the "
+             "watertight one\n"
+             "* a ray that meets an edge shared by two triangles may then "
+             "pass between them, which reads as speckle on dense geometry at "
+             "grazing angles, and worse where a manifold walk projects onto "
+             "the leak\n"
+             "* worth perhaps five percent of a mesh-heavy render"),
+    cl::init(false), cl::cat(catScene)};
 static cl::opt<std::string> optFallbackMaterial{
     "fallback-material",
     cl::desc("The MDL material for names the scene does not resolve "
@@ -665,6 +675,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.scene.groundZ = flag(optGroundZ);
   opts.scene.groundMaterial = std::string(optGroundMaterial);
   opts.scene.fallbackMaterial = std::string(optFallbackMaterial);
+  opts.scene.noRobustIntersection = bool(optNoRobustIntersection);
 
   opts.shutter.time = flag(optTime);
   opts.shutter.speed = flag(optShutterSpeed);

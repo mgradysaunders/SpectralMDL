@@ -331,7 +331,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // The lowering folds every alias and override into the items
   // themselves, which is what keeps an imported layout's names closed;
   // see `MaterialAssignment::renames`.
-  scene.emplace(compiler, fallbackMaterial);
+  scene.emplace(compiler, fallbackMaterial, !opts.scene.noRobustIntersection);
   for (const auto &item : layout.items) {
     SMDL_PROFILER_ENTRY("Scene::add()", item.fileName.c_str());
     scene->add(item);
