@@ -353,7 +353,11 @@ ReliefHit reliefMarch(
     const int2 xi(int2(#floor(p)));
     const int2 xw(((xi % extent) + extent) % extent);
     const int2 base(xi - xw);
-    const int2 c(#min(xw / cellSize, levelExtent - 1));
+    // A shift rather than a division by 'cellSize': 'xw' is non-negative,
+    // so the two agree, while a signed division by a runtime power of two
+    // lowers to 'idiv'. The range this gives 'c' is also what lets the
+    // wrap inside the bound fetch below fold away.
+    const int2 c(#min(xw >>> level, levelExtent - 1));
     // The cell's span in level-0 texels along the unwrapped ray, the
     // last cell of a level reaching the image edge (the chain widens it
     // the same way). Under clamp, outside the image lies a half-infinite
