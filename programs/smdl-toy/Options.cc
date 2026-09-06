@@ -1,3 +1,4 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -34,15 +35,11 @@ static cl::opt<float> optTime{
              "layout's 'time' directive (default: 0)"),
     cl::init(0.0f), cl::cat(catScene)};
 static cl::list<std::string> optInputMeshFiles{
-    "mesh", cl::desc("Add another mesh, repeatable"), cl::cat(catScene)};
+    "mesh-file", cl::desc("Add another mesh, repeatable"), cl::cat(catScene)};
 static cl::list<std::string> optAssetDirs{
     "asset-dir",
     cl::desc("Add a directory to search for assets and meshes, repeatable"),
     cl::cat(catScene)};
-static cl::opt<bool> optAllMaterials{
-    "all-materials",
-    cl::desc("Compile every material in the given MDL modules unconditionally"),
-    cl::init(false), cl::cat(catScene)};
 static cl::opt<bool> optGround{"ground",
                                cl::desc("Add a ground plane under the scene"),
                                cl::init(false), cl::cat(catScene)};
@@ -54,22 +51,6 @@ static cl::opt<std::string> optGroundMaterial{
     "ground-material",
     cl::desc("With -ground, the MDL material for the ground plane (default: 10 "
              "percent gray)"),
-    cl::cat(catScene)};
-static cl::opt<bool> optNoRobustIntersection{
-    "no-robust-intersection",
-    cl::desc("Trace against the faster ray-triangle test instead of the "
-             "watertight one\n"
-             "* a ray that meets an edge shared by two triangles may then "
-             "pass between them, which reads as speckle on dense geometry at "
-             "grazing angles, and worse where a manifold walk projects onto "
-             "the leak\n"
-             "* worth perhaps five percent of a mesh-heavy render"),
-    cl::init(false), cl::cat(catScene)};
-static cl::opt<std::string> optFallbackMaterial{
-    "fallback-material",
-    cl::desc("The MDL material for names the scene does not resolve "
-             "(default: none, an error)\n"
-             "* 'default_object' is built in, a plain 20 percent Lambertian"),
     cl::cat(catScene)};
 //--}
 //--{ CLI: Utility Options
@@ -103,102 +84,149 @@ static cl::opt<bool> optJSON{
     cl::desc(
         "With -list-objects or -list-materials, print JSON instead of a table"),
     cl::init(false), cl::cat(catUtility)};
+static cl::opt<bool> optCompileAllMaterials{
+    "compile-all-materials",
+    cl::desc("Compile every material in the given MDL modules unconditionally"),
+    cl::init(false), cl::cat(catUtility)};
+static cl::opt<unsigned> optThreads{
+    "threads",
+    cl::desc("Set the thread limit, or 0 for the maximum (default: 0)\n"
+             "* '-threads 1' runs inline with no pool at all, for a debugger"),
+    cl::init(0), cl::cat(catUtility)};
+static cl::opt<std::string> optProfile{
+    "profile",
+    cl::desc("Write a time-trace JSON of everything before rendering starts "
+             "(default: smdl-toy.trace.json)\n"
+             "* open in chrome://tracing or https://ui.perfetto.dev"),
+    cl::ValueOptional, cl::init(std::string{}), cl::cat(catUtility)};
 //--}
-//--{ CLI: Sampling Options
-static cl::OptionCategory catSampling{"Sampling Options"};
+//--{ CLI: Rendering Options
+static cl::OptionCategory catRendering{"Rendering Options"};
 static cl::opt<unsigned> optSPP{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
-    cl::init(8U), cl::cat(catSampling)};
+    cl::init(8U), cl::cat(catRendering)};
 static cl::opt<unsigned> optSampleOffset{
     "sample-offset",
     cl::desc("The sample index this render starts from, to decorrelate renders "
              "(default: 0, -resume overrides)"),
-    cl::init(0), cl::cat(catSampling)};
+    cl::init(0), cl::cat(catRendering)};
 static cl::opt<unsigned> optMaxBounces{
     "max-bounces",
     cl::desc("Trace every path to at most this many bounces with no Russian "
              "roulette (default: roulette, backstopped at 63)\n"
              "* a bounce is a scattering event: 0 keeps only the emission the "
              "camera sees directly, 1 adds direct lighting"),
-    cl::init(63U), cl::cat(catSampling)};
+    cl::init(63U), cl::cat(catRendering)};
 static cl::opt<float> optMaxContribution{
     "max-contribution",
     cl::desc("Limit any single contribution to this per-band radiance "
              "(default: 0, off)"),
-    cl::init(0.0f), cl::cat(catSampling)};
+    cl::init(0.0f), cl::cat(catRendering)};
 static cl::opt<unsigned> optMaxContributionBounces{
     "max-contribution-bounces",
     cl::desc("With -max-contribution, only bound contributions of at least "
              "this many bounces (default: 1)"),
-    cl::init(1U), cl::cat(catSampling)};
-static cl::opt<bool> optNoLOD{
-    "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
-    cl::init(false), cl::cat(catSampling)};
-static cl::opt<unsigned> optThreads{
-    "threads",
-    cl::desc("Set the thread limit, or 0 for the maximum (default: 0)\n"
-             "* '-threads 1' runs inline with no pool at all, for a debugger"),
-    cl::init(0), cl::cat(catSampling)};
+    cl::init(1U), cl::cat(catRendering)};
 static cl::opt<bool> optGuide{"guide", cl::desc("Enable SD-tree path guiding"),
-                              cl::init(false), cl::cat(catSampling)};
+                              cl::init(false), cl::cat(catRendering)};
 static cl::opt<bool> optGuideADRRS{
     "guide-adrrs",
     cl::desc("With -guide, drive Russian roulette by expected pixel "
              "contribution instead of throughput (default: true)\n"
              "* moot with -max-bounces, which turns roulette off"),
-    cl::init(true), cl::cat(catSampling)};
+    cl::init(true), cl::cat(catRendering)};
 static cl::opt<float> optGuideBSDFFraction{
     "guide-bsdf-fraction",
     cl::desc("With -guide, probability of sampling the BSDF instead of "
              "the SD-tree at guided vertices (default: 0.5)"),
-    cl::init(0.5f), cl::cat(catSampling)};
+    cl::init(0.5f), cl::cat(catRendering)};
 static cl::opt<float> optGuideSplit{
     "guide-split",
     cl::desc("With -guide, SD-tree spatial split threshold in records "
              "(default: 12000)"),
-    cl::init(12000.0f), cl::cat(catSampling)};
+    cl::init(12000.0f), cl::cat(catRendering)};
 static cl::opt<bool> optMNEE{"mnee",
                              cl::desc("Enable manifold next-event estimation"),
-                             cl::init(false), cl::cat(catSampling)};
+                             cl::init(false), cl::cat(catRendering)};
 static cl::opt<unsigned> optMNEEDepth{
     "mnee-depth",
     cl::desc("With -mnee, maximum number of refractive interfaces a "
              "connection may cross, 1 to 4 (default: 4)"),
-    cl::init(4), cl::cat(catSampling)};
+    cl::init(4), cl::cat(catRendering)};
 static cl::opt<unsigned> optMNEEMaxTrials{
     "mnee-max-trials",
     cl::desc("With -mnee, max attempts to re-find a reciprocal "
              "estimate before dropping the sample (default: 256)"),
-    cl::init(256), cl::cat(catSampling)};
+    cl::init(256), cl::cat(catRendering)};
 static cl::opt<float> optMNEEReceiverAlpha{
     "mnee-receiver-alpha",
     cl::desc("With -mnee, squared roughness needed to be a "
              "receiver (default: 0.005, 0 takes every finite lobe)"),
-    cl::init(0.005f), cl::cat(catSampling)};
+    cl::init(0.005f), cl::cat(catRendering)};
 static cl::opt<unsigned> optMNEEBiased{
     "mnee-biased",
     cl::desc("With -mnee, enable biased mode with this many walks per estimate "
              "(default: 0, unbiased)"),
-    cl::init(0), cl::cat(catSampling)};
+    cl::init(0), cl::cat(catRendering)};
 static cl::opt<float> optMNEEMaxRoughness{
     "mnee-max-roughness",
     cl::desc("With -mnee, do not claim glossy lobes with roughness wider than "
              "this (default: 0, no limit)"),
-    cl::init(0.0f), cl::cat(catSampling)};
+    cl::init(0.0f), cl::cat(catRendering)};
 static cl::opt<bool> optMNEESunOnly{
     "mnee-sun-only",
-    cl::desc("With -mnee and the procedural sun-sky, restrict the Dirac-chain "
+    cl::desc("With -mnee and procedural sun-sky, restrict the Dirac-chain "
              "machinery to the sun disk"),
-    cl::init(false), cl::cat(catSampling)};
+    cl::init(false), cl::cat(catRendering)};
 static cl::opt<bool> optMNEEReport{
     "mnee-report",
     cl::desc("With -mnee, print the manifold estimator stats after the render"),
-    cl::init(false), cl::cat(catSampling)};
+    cl::init(false), cl::cat(catRendering)};
 static cl::opt<bool> optMNEETestNormalHook{
     "mnee-test-normalhook",
     cl::desc("Test the geometry-normal hook against the meshes and exit, "
              "non-zero on failure"),
-    cl::init(false), cl::cat(catSampling)};
+    cl::init(false), cl::cat(catRendering)};
+static cl::opt<bool> optMarkAllLights{
+    "mark-all-lights",
+    cl::desc("Aim light selection at every emissive surface, marked 'light' "
+             "in the layout or not (a scene given without a layout marks "
+             "everything already)"),
+    cl::init(false), cl::cat(catRendering)};
+static cl::opt<std::string> optProgress{
+    "progress",
+    cl::desc("Draw a progress bar while rendering: 'auto', 'plain', or 'none' "
+             "(default: auto)"),
+    cl::init(std::string("auto")), cl::cat(catRendering)};
+static cl::opt<std::string> optProgressFile{
+    "progress-file",
+    cl::desc("Write 'done=N total=M elapsed=S eta=S note=...' progress into "
+             "this file, about ten times a second"),
+    cl::cat(catRendering)};
+static cl::opt<double> optPreviewEvery{
+    "preview-every",
+    cl::desc("Rewrite '-output-rgb' about this often in seconds "
+             "(default: 0, off)"),
+    cl::init(0.0), cl::cat(catRendering)};
+static cl::opt<bool> optNoLOD{
+    "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
+    cl::init(false), cl::cat(catRendering)};
+static cl::opt<bool> optNoLightTree{
+    "no-light-tree",
+    cl::desc("Select lights from the flat power-weighted distribution "
+             "instead of the spatial light tree"),
+    cl::init(false), cl::cat(catRendering)};
+static cl::opt<bool> optNoRobustIntersection{
+    "no-robust-intersection",
+    cl::desc("Trace against the faster ray-triangle test instead of the "
+             "watertight one"),
+    cl::init(false), cl::cat(catRendering)};
+static cl::opt<std::string> optFallbackMaterial{
+    "fallback-material",
+    cl::desc("The MDL material for names the scene does not resolve "
+             "(default: none, an error)\n"
+             "* 'default_object' is built in, a plain 20 percent Lambertian"),
+    cl::cat(catRendering)};
 //--}
 //--{ CLI: Camera Options
 static cl::OptionCategory catCamera{"Camera Options"};
@@ -391,19 +419,6 @@ static cl::opt<std::string> optIBLFilename{
 static cl::opt<float> optIBLScale{
     "ibl-scale", cl::desc("With -ibl, the IBL scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
-static cl::opt<bool> optAllLights{
-    "all-lights",
-    cl::desc("Aim light selection at every emissive surface, marked 'light' "
-             "in the layout or not (a scene given without a layout marks "
-             "everything already)"),
-    cl::init(false), cl::cat(catLight)};
-static cl::opt<bool> optNoLightTree{
-    "no-light-tree",
-    cl::desc("Select lights from the flat power-weighted distribution, the "
-             "same at every receiver, instead of the light tree, which "
-             "weighs each light by its power over its squared distance to "
-             "the receiver"),
-    cl::init(false), cl::cat(catLight)};
 //--}
 //--{ CLI: Tonemapping Options
 static cl::OptionCategory catTonemap{"Tonemapping Options"};
@@ -478,27 +493,6 @@ static cl::opt<std::string> optResume{
     cl::desc("Resume accumulating from this ENVI file written by a previous "
              "-output-spectrum"),
     cl::cat(catOutput)};
-static cl::opt<std::string> optProgressFile{
-    "progress-file",
-    cl::desc("Write 'done=N total=M elapsed=S eta=S note=...' progress into "
-             "this file, about ten times a second"),
-    cl::cat(catOutput)};
-static cl::opt<double> optPreviewEvery{
-    "preview-every",
-    cl::desc("Rewrite '-output-rgb' about this often in seconds "
-             "(default: 0, off)"),
-    cl::init(0.0), cl::cat(catOutput)};
-static cl::opt<std::string> optProgress{
-    "progress",
-    cl::desc("Draw a progress bar while rendering: 'auto', 'plain', or 'none' "
-             "(default: auto)"),
-    cl::init(std::string("auto")), cl::cat(catOutput)};
-static cl::opt<std::string> optProfile{
-    "profile",
-    cl::desc("Write a time-trace JSON of everything before rendering starts "
-             "(default: smdl-toy.trace.json)\n"
-             "* open in chrome://tracing or https://ui.perfetto.dev"),
-    cl::ValueOptional, cl::init(std::string{}), cl::cat(catOutput)};
 //--}
 namespace {
 
@@ -603,7 +597,7 @@ Options parseCommandLine(int argc, char **argv) {
                       ".", OPENSUBDIV_VERSION_PATCH)});
     os << info.toString();
   });
-  cl::HideUnrelatedOptions({&catScene, &catUtility, &catSampling, &catCamera,
+  cl::HideUnrelatedOptions({&catScene, &catUtility, &catRendering, &catCamera,
                             &catCameraLens, &catLight, &catTonemap,
                             &catOutput});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
@@ -670,7 +664,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.scene.inputMeshFiles.assign(optInputMeshFiles.begin(),
                                    optInputMeshFiles.end());
   opts.scene.assetDirs.assign(optAssetDirs.begin(), optAssetDirs.end());
-  opts.scene.allMaterials = bool(optAllMaterials);
+  opts.scene.allMaterials = bool(optCompileAllMaterials);
   opts.scene.ground = bool(optGround);
   opts.scene.groundZ = flag(optGroundZ);
   opts.scene.groundMaterial = std::string(optGroundMaterial);
@@ -732,7 +726,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.sky.moonDistance = flag(optMoonDistance);
   opts.sky.iblFileName = flag(optIBLFilename);
   opts.sky.iblScale = flag(optIBLScale);
-  opts.sky.allLights = bool(optAllLights);
+  opts.sky.allLights = bool(optMarkAllLights);
   opts.sky.noLightTree = bool(optNoLightTree);
 
   opts.haze.on = bool(optHaze);

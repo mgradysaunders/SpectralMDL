@@ -1,4 +1,3 @@
-// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include <cstdlib>
 #include <iostream>
 #include <memory>
