@@ -97,8 +97,7 @@ constexpr auto SKY_FEATURE_INV_STD_F = narrow(SKY_FEATURE_INV_STD);
 // fit wants: it takes the logarithm of the airmass, and the logarithm of
 // a reciprocal is a negation, so forming the airmass first would spend a
 // division to be undone.
-[[nodiscard]] inline float airmassReciprocal(float zenithDeg,
-                                             float cosZenith) {
+[[nodiscard]] inline float airmassReciprocal(float zenithDeg, float cosZenith) {
   return cosZenith +
          0.50572f * fastExp(-1.6364f * fastLog(96.07995f - zenithDeg));
 }

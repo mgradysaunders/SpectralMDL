@@ -199,6 +199,28 @@ struct PathContext final {
   /// resolves it once for the whole frame.
   const smdl::SkyBasis &skyBasis;
 
+  /// The three shading states the path works in, borrowed for the reason
+  /// `medium` is: everything in one but the animation time is a property
+  /// of the block rather than the path, and every field a vertex varies
+  /// is overwritten at the vertex, so building them per path is half a
+  /// kilobyte of copy each for two fields' worth of difference. The
+  /// caller sets `animation_time` on all three at the head of the path.
+  ///
+  /// \{
+
+  /// The pristine gather-side state, which nothing writes geometry into.
+  smdl::State &gatherState;
+
+  /// The walk's own vertex state, which carries the level-of-detail
+  /// fields the walk tracks along the path.
+  smdl::State &walkState;
+
+  /// The state `shadeHit()` shades in, which deliberately carries no
+  /// level-of-detail so that opacity evaluates at full fidelity.
+  smdl::State &shadeState;
+
+  /// \}
+
   /// The wavelengths the path estimates at, which is this sample's own
   /// grid where the render jitters them.
   const Color &wavelengths;
@@ -222,11 +244,6 @@ struct PathContext final {
   /// How many of `records` the walk filled in.
   uint64_t numRecords{};
 
-  /// The state `shadeHit()` shades in, empty until the first hit that
-  /// needs it, so that a path which shades none, which is every path in
-  /// a scene with `Scene::opaqueShadows`, builds none.
-  std::optional<smdl::State> hitState{};
-
   /// The shading state of `hit`, reached along the direction of
   /// propagation `wState`, which is the shared state with this hit's
   /// geometry applied over the last one's; see
@@ -236,12 +253,10 @@ struct PathContext final {
   /// which is what lets opacity evaluate at full fidelity, the
   /// conservative choice for a shadow ray. Every caller shades in the
   /// one state, so they all see the wavelengths, allocator and time it
-  /// was first built with, which are the path's.
+  /// carries, which are the path's.
   [[nodiscard]] smdl::State &shadeHit(const Hit &hit, const float3 &wState) {
-    if (!hitState)
-      hitState.emplace(makeRenderState(wavelengths, &allocator, time.seconds));
-    hit.applyGeometryToState(*hitState, wState);
-    return *hitState;
+    hit.applyGeometryToState(shadeState, wState);
+    return shadeState;
   }
 };
 

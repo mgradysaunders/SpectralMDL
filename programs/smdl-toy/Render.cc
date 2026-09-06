@@ -305,6 +305,13 @@ void renderSamples(const Options &opts, const Frame &frame,
   // passes and the previews written between them, but none of the setup
   // that came before or the outputs that come after, so that the number
   // means the same thing in every session of a resumed sequence.
+  // The sun-sky resolved onto the render-wide grid, which every path of
+  // every block shares because the grid holds still. Read-only once the
+  // threads start. A jittering render cannot use it: its grid moves with
+  // every sample, so each block resolves its own below.
+  smdl::SkyBasis renderSkyBasis;
+  if (!jitterWavelength && lights.env())
+    lights.env()->resolve(wavelengths, renderSkyBasis);
   const auto renderStartWall{std::chrono::steady_clock::now()};
   const double renderStartCompute{cpuTimeSeconds()};
   ProgressBar progress{progressOptions};
@@ -367,14 +374,23 @@ void renderSamples(const Options &opts, const Frame &frame,
         // than a copy, so one buffer serves the block.
         std::optional<Color> jittered;
         if (jitterWavelength) jittered.emplace(wavelengths);
-        // The sun-sky resolved onto the block's current wavelength grid.
-        // Bought once here for the same reason `medium` is: the sky is
-        // evaluated many times per path and the resolution depends on the
-        // grid alone. A jittering render redoes it once per sample below,
-        // which still amortizes over that sample's evaluations.
-        smdl::SkyBasis skyBasis;
-        if (render.lights.env())
-          render.lights.env()->resolve(wavelengths, skyBasis);
+        // The sun-sky resolved onto this sample's own grid, rewritten
+        // below once per sample, which still amortizes over the many
+        // evaluations one sample makes. Empty and unused when the
+        // wavelengths hold still, where `renderSkyBasis` serves instead.
+        smdl::SkyBasis jitteredSkyBasis;
+        const smdl::SkyBasis &skyBasis{jitterWavelength ? jitteredSkyBasis
+                                                        : renderSkyBasis};
+        // The three states every path of the block works in, built here
+        // rather than per path: only the animation time below tells one
+        // path's from another's, and the jittered grid is rewritten in
+        // place, so the wavelength pointer holds still too. See
+        // `PathContext`.
+        const Color &blockWavelengths{jitterWavelength ? *jittered
+                                                       : wavelengths};
+        smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
+        smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
+        smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
         Guiding guiding{};
         guiding.tree = sdtree.get();
         guiding.bsdfFraction =
@@ -402,7 +418,7 @@ void renderSamples(const Options &opts, const Frame &frame,
               jitterWavelengths(
                   *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
               if (render.lights.env())
-                render.lights.env()->resolve(*jittered, skyBasis);
+                render.lights.env()->resolve(*jittered, jitteredSkyBasis);
             }
             const Color &sampleWavelengths{jitterWavelength ? *jittered
                                                             : wavelengths};
@@ -421,8 +437,13 @@ void renderSamples(const Options &opts, const Frame &frame,
               if (renderShutter().isOpen()) shutterFraction = float(sampler);
               const PathTime time{shutterFraction};
               camera->toWorld(cameraSample, time.fraction);
-              PathContext path{allocator,         sampler, medium,   skyBasis,
-                               sampleWavelengths, time,    &guiding, records};
+              gatherState.animation_time = time.seconds;
+              walkState.animation_time = time.seconds;
+              shadeState.animation_time = time.seconds;
+              PathContext path{
+                  allocator,   sampler,   medium,     skyBasis,
+                  gatherState, walkState, shadeState, sampleWavelengths,
+                  time,        &guiding,  records};
               Lsample = tracePath(render, path, cameraSample);
               numRecords = path.numRecords;
             }

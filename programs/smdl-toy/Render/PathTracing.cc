@@ -1470,10 +1470,7 @@ class PathWalk final {
 public:
   PathWalk(const RenderContext &render, PathContext &path)
       : mRender(render), mPath(path),
-        mGatherState(makeRenderState(path.wavelengths, &path.allocator,
-                                     path.time.seconds)),
-        mState(makeRenderState(path.wavelengths, &path.allocator,
-                               path.time.seconds)),
+        mGatherState(path.gatherState), mState(path.walkState),
         mMediumStack(render.exteriorMedium) {
     path.numRecords = 0;
     path.medium.setHaze(render.haze);
@@ -1582,12 +1579,12 @@ private:
   PathContext &mPath;
 
   // The pristine gather-side state, see `gatherDirect()`.
-  const smdl::State mGatherState;
+  const smdl::State &mGatherState;
 
-  // The vertex shading state: the fields that never change are set up
-  // once here, and the geometric ones at every vertex by
+  // The vertex shading state: the fields that never change were set up
+  // with the block's, and the geometric ones at every vertex by
   // `Hit::applyGeometryToState()`.
-  smdl::State mState;
+  smdl::State &mState;
 
   // The estimate so far, and the throughput the next contribution is
   // weighed by.
