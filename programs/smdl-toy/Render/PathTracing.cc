@@ -5,6 +5,7 @@
 #include "Render/Manifold.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -184,10 +185,20 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     }
     return occluded;
   }
-  Hit unread{};
-  Hit &found{hit ? *hit : unread};
+  // The blocker the walk works in: the caller's where it wants one, its
+  // own where it does not. Built only in the second case, because the
+  // gather supplies one at every vertex and a plain local would be a
+  // hundred and ninety-two bytes of default member initializers that
+  // nothing there ever reads. Its own rather than shared, because a
+  // caller's blocker outlives the call and the walks it goes on to spawn
+  // ask for one of these themselves.
+  std::optional<Hit> ownBlocker;
+  Hit &found{hit ? *hit : ownBlocker.emplace()};
   while (mRay.tmin < mRay.tmax) {
-    found = Hit{};
+    // Nothing clears the hit first: `Scene::intersect()` assigns the
+    // whole of it where it finds one, and where it does not this returns
+    // below without reading it, so what the last iteration left standing
+    // is never seen.
     bool hitSurface{mRender.scene.intersect(mRay, found)};
     // Attenuate over the span actually traveled, hit or miss
     // (`Scene::intersect` narrows `tmax` to the hit parameter on a
@@ -1469,9 +1480,8 @@ struct PrevBounce final {
 class PathWalk final {
 public:
   PathWalk(const RenderContext &render, PathContext &path)
-      : mRender(render), mPath(path),
-        mGatherState(path.gatherState), mState(path.walkState),
-        mMediumStack(render.exteriorMedium) {
+      : mRender(render), mPath(path), mGatherState(path.gatherState),
+        mState(path.walkState), mMediumStack(render.exteriorMedium) {
     path.numRecords = 0;
     path.medium.setHaze(render.haze);
   }

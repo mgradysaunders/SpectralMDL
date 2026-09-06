@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-
 #include "Render/Manifold.h"
 #include "Render/Medium.h"
 #include "Render/Sampler.h"
