@@ -3024,8 +3024,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     }
     auto texelPtrType{texelPtrTypeOf(*images[0])};
     // Only the level 0 texels of each tile are named; the higher
-    // levels live contiguously behind them, at the offsets tabulated
-    // below (see the layout note on 'texture_2d' in 'api.smdl').
+    // levels live contiguously behind them, at the offsets the tile
+    // table below carries (see the layout note on 'texture_2d' in
+    // 'api.smdl').
     //
     // The level count is per texture, not per image: the images are
     // shared with every other reference to the same files, so a texture
@@ -3035,31 +3036,34 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     if (withMipLevels)
       for (auto &image : images)
         numLevels = std::max(numLevels, image->getNumLevels());
-    auto valueTileExtents{Value::zero(
-        context.getArrayType(context.getIntType(2), tileCountU * tileCountV))};
     auto valueTileBuffers{Value::zero(
         context.getArrayType(texelPtrType, tileCountU * tileCountV))};
-    auto levelOffsets{
-        std::vector<int>(size_t(tileCountU) * tileCountV * numLevels)};
+    // The tile table, laid out as 'texture_2d' documents: the level 0
+    // extent, then one texel offset per level. A tile no image resolved
+    // to keeps its zeros, which reads as the zero extent marking it
+    // absent.
+    const auto tileStride{size_t(numLevels) + 2};
+    auto tileTable{
+        std::vector<int>(size_t(tileCountU) * tileCountV * tileStride)};
     for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
       auto &imagePath{resolvedImagePaths[i]};
       auto &image{images[i]};
       auto insertPos{imagePath.tileIndexV * tileCountU + imagePath.tileIndexU};
-      auto extent{
-          int2(int(image->getNumTexelsX()), int(image->getNumTexelsY()))};
-      valueTileExtents =
-          insert(valueTileExtents, context.getComptimeVector(extent), insertPos,
-                 srcLoc);
       valueTileBuffers = insert(valueTileBuffers,
                                 context.getImageTexelBase(texelPtrType, *image),
                                 insertPos, srcLoc);
+      auto entry{size_t(insertPos) * tileStride};
+      auto extent{
+          int2(int(image->getNumTexelsX()), int(image->getNumTexelsY()))};
+      tileTable[entry] = extent.x;
+      tileTable[entry + 1] = extent.y;
       // Each level is the one before it halved and saturated at 1x1, so
       // the offset of level 'l' is the texel count of every level under
       // it, and a chain that reaches 1x1 before the texture's level
       // count stops growing there.
       auto offset{0};
       for (int level = 0; level < numLevels; level++) {
-        levelOffsets[size_t(insertPos) * numLevels + level] = offset;
+        tileTable[entry + 2 + size_t(level)] = offset;
         if (extent.x <= 1 && extent.y <= 1) continue;
         offset += extent.x * extent.y;
         extent = int2(std::max(extent.x / 2, 1), std::max(extent.y / 2, 1));
@@ -3072,11 +3076,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
          Argument{"num_levels", context.getComptimeInt(numLevels)},
          Argument{"max_mipmap",
                   context.getComptimeBool(maxMipmap && numLevels > 1)},
-         Argument{"tile_extents", valueTileExtents},
          Argument{"tile_buffers", valueTileBuffers},
-         Argument{
-             "tile_level_offsets",
-             context.getComptimeIntArray(levelOffsets, ".tile_level_offsets")},
+         Argument{"tile_table",
+                  context.getComptimeIntArray(tileTable, ".tile_table")},
          Argument{"gamma", valueGammaAsInt}},
         srcLoc);
   }

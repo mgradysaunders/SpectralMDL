@@ -39,9 +39,32 @@ int getTileIndex(const texture_2d tex, const int2 uv_tile) {
   return uv_tile.y * tex.tile_count.x + uv_tile.x;
 }
 
+/// Where tile `i` starts in `tile_table`. See the layout note on
+/// `texture_2d` in `api.smdl`.
 @(pure macro)
-int2 getExtent(const texture_2d tex, const int2 uv_tile = int2(0)) {
-  return (i := getTileIndex(tex, uv_tile)) < 0 ? int2(0) : tex.tile_extents[i];
+int getTileEntry(const texture_2d tex, const int i) = i * (tex.num_levels + 2);
+
+/// The level 0 extent of tile `i`, which the caller has resolved and
+/// found backed by a tile buffer, so the table is not null.
+@(pure macro)
+int2 getTileExtent(const texture_2d tex, const int i) {
+  const auto e(getTileEntry(tex, i));
+  return int2(tex.tile_table[e], tex.tile_table[e + 1]);
+}
+
+/// The texel offset of level `l` of tile `i` from `tile_buffers[i]`,
+/// under the same precondition as `getTileExtent()`.
+@(pure macro)
+int getTileLevelOffset(const texture_2d tex, const int i, const int l) = tex.tile_table[getTileEntry(tex, i) + 2 + l];
+
+@(pure macro)
+int2 getExtent(const texture_2d tex, const int2 uv_tile = int2(0) [[anno::unused()]]) {
+  // Unlike the fetches below, this is reachable on a texture backed by
+  // no image, which is how a caller asks whether there is one. That
+  // comptime instantiation returns before it looks at the tile, which
+  // is what the annotation above quiets.
+  return int2(0) if (!tex.tile_table);
+  return (i := getTileIndex(tex, uv_tile)) < 0 ? int2(0) : getTileExtent(tex, i);
 }
 
 /// The width in texels, of the given uv-tile for uv-tilesets.
@@ -129,9 +152,10 @@ auto texelFetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int
   const auto texel_type(*#typeOf(tex.tile_buffers[0]));
   const auto i(getTileIndex(tex, uv_tile));
   return texel_type(0) if (i < 0);
-  const auto tileExtent(tex.tile_extents[i]);
   const auto tileBuffer(tex.tile_buffers[i]);
-  return texel_type(0) if (!tileBuffer | #any((coord < 0) | (coord >= tileExtent)));
+  return texel_type(0) if (!tileBuffer);
+  const auto tileExtent(getTileExtent(tex, i));
+  return texel_type(0) if (#any((coord < 0) | (coord >= tileExtent)));
   // Each level is stored in file order, top row first, while texel
   // coordinates are v-up per the MDL convention, so the row is mirrored
   // here. This module is the only place that knows the storage order.
@@ -215,8 +239,8 @@ auto levelTexelFetch(const texture_2d tex, const int level, const int2 coord, co
   // Where the level sits in the contiguous chain (see the layout note
   // on 'texture_2d' in 'api.smdl').
   const int l(#max(0, #min(level, tex.num_levels - 1)));
-  const int2 levelExtent(#max(tex.tile_extents[i] >>> l, 1));
-  const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l]);
+  const int2 levelExtent(#max(getTileExtent(tex, i) >>> l, 1));
+  const int levelOffset(getTileLevelOffset(tex, i, l));
   const auto ic(applyWrap(wrap, levelExtent, coord));
   // See 'texelFetch()': mirror within the level, then index within the row.
   return tileBuffer[levelOffset + ic.x + levelExtent.x * (levelExtent.y - 1 - ic.y)];
@@ -269,9 +293,9 @@ export float4 lookup_float4(
     const int2 tileIndex(#floor(coord));
     const auto i(getTileIndex(tex, tileIndex));
     return float4(0) if (i < 0);
-    const auto tileExtent(tex.tile_extents[i]);
     const auto tileBuffer(tex.tile_buffers[i]);
     return float4(0) if (!tileBuffer);
+    const auto tileExtent(getTileExtent(tex, i));
     coord -= tileIndex;
     coord *= tileExtent;
     coord -= 0.5;
@@ -299,9 +323,9 @@ export float4 lookup_float4(
     return float4(0) if ((int(wrap_v) == int(wrap_clip)) & !((coord.y >= 0.0) & (coord.y < 1.0)));
     const auto i(getTileIndex(tex, int2(0)));
     return float4(0) if (i < 0);
-    const auto tileExtent(tex.tile_extents[i]);
     const auto tileBuffer(tex.tile_buffers[i]);
     return float4(0) if (!tileBuffer);
+    const auto tileExtent(getTileExtent(tex, i));
     const auto iCropU(int2(crop_u * tileExtent));
     const auto iCropV(int2(crop_v * tileExtent));
     const auto iCorner0(int2(iCropU[0], iCropV[0]));
@@ -672,8 +696,8 @@ export float4 lookup_float4_lod(
     // note on 'texture_2d' in 'api.smdl'). A tile whose own chain runs
     // out before the tileset-wide level count repeats its last level,
     // which is what the tabulated offsets say.
-    const int2 levelExtent(#max(tex.tile_extents[i] >>> l0, 1));
-    const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l0]);
+    const int2 levelExtent(#max(getTileExtent(tex, i) >>> l0, 1));
+    const int levelOffset(getTileLevelOffset(tex, i, l0));
     const auto s0(lookupLevelTileset(tileBuffer, levelOffset, levelExtent, coord));
     return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
     const auto s1(lookupLevelTileset(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,
@@ -689,8 +713,8 @@ export float4 lookup_float4_lod(
     const auto tileBuffer(tex.tile_buffers[i]);
     return float4(0) if (!tileBuffer);
     const int2 wrap(int(wrap_u), int(wrap_v));
-    const int2 levelExtent(#max(tex.tile_extents[i] >>> l0, 1));
-    const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l0]);
+    const int2 levelExtent(#max(getTileExtent(tex, i) >>> l0, 1));
+    const int levelOffset(getTileLevelOffset(tex, i, l0));
     const auto s0(lookupLevelPlain(tileBuffer, levelOffset, levelExtent, coord, wrap, crop_u, crop_v));
     return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
     const auto s1(lookupLevelPlain(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,

@@ -1,6 +1,7 @@
 #include "Context.h"
 #include "Builtin.h"
 #include "BuiltinAccess.h"
+#include "llvm/Support/xxhash.h"
 
 #include "../thirdparty/miniz.h"
 
@@ -513,12 +514,30 @@ Value Context::getComptimeIntArray(Span<const int> values,
     llvmValues.push_back(llvm::ConstantInt::get(
         llvmIntType, llvm::APInt(sizeof(int) * 8, value, /*isSigned=*/true)));
   auto *llvmArrayType{llvm::ArrayType::get(llvmIntType, llvmValues.size())};
+  auto *llvmInit{llvm::ConstantArray::get(llvmArrayType, llvmValues)};
+  // Named by content and reused, the way 'getImageTexelBase()' reuses
+  // the texel symbol. A material body is emitted once per entry point,
+  // so the same table is asked for many times over, and a fresh global
+  // each time would put a distinct value in every 'texture_2d' that
+  // carries it: instantiations keyed on that value stop coinciding, and
+  // one shared function becomes one per entry point.
+  // 'xxh3_64bits' rather than 'llvm::hash_value', which is seeded per
+  // process and would name the same table differently on every run,
+  // leaving a dumped object file irreproducible.
+  auto uniqueName{
+      concat(std::string_view(name.data(), name.size()), ".",
+             llvm::utohexstr(llvm::xxh3_64bits(llvm::ArrayRef<uint8_t>(
+                 reinterpret_cast<const uint8_t *>(values.begin()),
+                 values.size() * sizeof(int)))))};
+  if (auto *llvmGlobal{llvmModule.getNamedGlobal(uniqueName)};
+      llvmGlobal && llvmGlobal->hasInitializer() &&
+      llvmGlobal->getInitializer() == llvmInit)
+    return RValue(getPointerType(getIntType()), llvmGlobal);
   auto *llvmGlobal{new llvm::GlobalVariable(
       llvmModule, llvmArrayType, /*isConstant=*/true,
-      llvm::GlobalValue::PrivateLinkage,
-      llvm::ConstantArray::get(llvmArrayType, llvmValues), name)};
-  // Nothing compares the address, so two identical tables are free to
-  // become one.
+      llvm::GlobalValue::PrivateLinkage, llvmInit, uniqueName)};
+  // Nothing compares the address, so two tables that hash apart but
+  // hold the same thing are still free to become one.
   llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   return RValue(getPointerType(getIntType()), llvmGlobal);
 }

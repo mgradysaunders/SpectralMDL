@@ -349,14 +349,15 @@ export struct texture_2d {
   /// The number of mip levels this texture reads, i.e., the maximum
   /// over the tiles of `1 + floor(log2(max_extent))` when it asked for
   /// mip filtering, and 1 when it did not. The extent of a tile at
-  /// level `l` is `#max(tile_extents[i] >> l, 1)`, saturating at 1x1.
+  /// level `l` is its level 0 extent shifted right by `l`, saturating
+  /// at 1x1.
   ///
   /// Each tile buffer holds its entire mip chain contiguously, level 0
   /// first, with each level tightly packed in row-major order, so
   /// level `l` starts at the texel offset given by summing the texel
-  /// counts of levels `0` through `l - 1`. Those sums are
-  /// `tile_level_offsets`. The layout is produced by `smdl::Image` on
-  /// the C++ side; the two must agree.
+  /// counts of levels `0` through `l - 1`. Those sums are in
+  /// `tile_table`. The layout is produced by `smdl::Image` on the C++
+  /// side; the two must agree.
   ///
   /// Within a level, the rows run in file order, top row first, while
   /// texel coordinates are v-up per the MDL convention. `tex.smdl`
@@ -372,23 +373,31 @@ export struct texture_2d {
   /// `num_levels` is greater than 1.
   const bool max_mipmap = false;
 
-  /// The tile extents at mip level 0.
-  const auto tile_extents = int2[](int2(0));
-
   /// The tile buffers, pointing at the level 0 texels of each tile.
   const auto tile_buffers = auto[](cast<&float4>(none));
 
-  /// Where each level of each tile's chain starts, as `num_levels`
-  /// texel offsets per tile in tile order: entry `i * num_levels + l`
-  /// is the offset of level `l` of tile `i` from `tile_buffers[i]`.
+  /// Everything about the tiles that is not a pointer, as one table of
+  /// `num_levels + 2` entries per tile in tile order. For tile `i`,
+  /// with `e` its first entry `i * (num_levels + 2)`:
   ///
-  /// Stored rather than summed per fetch, because the sum is serial in
-  /// the level and the hierarchical relief march in `::extras::parallax`
-  /// pays it once per step at a level it only knows at run time.
+  /// | entry        | meaning                                      |
+  /// |--------------|----------------------------------------------|
+  /// | `e`, `e + 1` | the level 0 extent in x and y                |
+  /// | `e + 2 + l`  | level `l`'s texel offset in `tile_buffers[i]` |
   ///
-  /// Null for a texture backed by no image, which no lookup indexes:
-  /// every one of them returns on the null tile buffer first.
-  const auto tile_level_offsets = cast<&int>(none);
+  /// The offsets are tabulated rather than summed per fetch, because
+  /// the sum is serial in the level and the hierarchical relief march
+  /// in `::extras::parallax` pays it once per step at a level it only
+  /// knows at run time. The extents ride along so that this costs one
+  /// pointer rather than two: a table entry the tile index reaches at
+  /// compile time, which is every non-tileset lookup, folds back to
+  /// the constant it holds.
+  ///
+  /// Null exactly when the texture is backed by no image at all, in
+  /// which case every tile buffer is null too, so a lookup that has
+  /// checked its tile buffer may read this without checking. Anything
+  /// that reads it first, as the extent accessors do, checks.
+  const auto tile_table = cast<&int>(none);
 
   /// The gamma mode.
   const int gamma = 0;
