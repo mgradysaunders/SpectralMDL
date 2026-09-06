@@ -13,6 +13,8 @@ class SkyBasis;
 class LightSampler;
 class MNEECasterSet;
 
+struct LightSample;
+
 struct CameraSample;
 struct GuideRecord;
 struct Guiding;
@@ -218,6 +220,22 @@ struct PathContext final {
   /// The state `shadeHit()` shades in, which deliberately carries no
   /// level-of-detail so that opacity evaluates at full fidelity.
   smdl::State &shadeState;
+
+  /// The light sample and the blocker a gather works in, borrowed for
+  /// the reason the states above are: between them they are six hundred
+  /// bytes of default member initializers, and a gather runs at every
+  /// vertex. Neither carries anything into a gather.
+  /// `LightSampler::sample()` establishes the whole sample it returns
+  /// true for, and `VisibilityWalk::nextBlocker()` resets the blocker
+  /// before it looks at one.
+  ///
+  /// \{
+
+  LightSample &gatherSample;
+
+  Hit &gatherBlocker;
+
+  /// \}
 
   /// \}
 

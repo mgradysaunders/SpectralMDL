@@ -486,6 +486,10 @@ public:
   ///
   /// `time` is the path's shutter fraction, which the hit an area sample
   /// carries is built at; see `PathTime`.
+  /// A `true` return establishes every field of `lightSample` a consumer
+  /// reads, so the caller may reuse one sample across gathers instead of
+  /// building a fresh one; a `false` return leaves it in no particular
+  /// state, which is fine because nothing may read it then.
   [[nodiscard]] bool sample(const smdl::State &state,
                             const smdl::SkyBasis &basis, Sampler &sampler,
                             const float3 &point, float time,

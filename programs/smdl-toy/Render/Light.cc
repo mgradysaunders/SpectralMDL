@@ -773,7 +773,14 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
   float selectPMF{};
   const int lightIndex{mSelection.select(point, float(sampler), selectPMF)};
   if (!(selectPMF > 0)) return false;
+  // Everything a `true` return leaves standing is established here, so
+  // that a caller may hand the same sample back over and over rather
+  // than value-initializing half a kilobyte per gather. `hit` is the one
+  // field left alone, because it is unreachable unless the area branch
+  // below writes it: every other branch marks the sample infinite or
+  // analytic, and `reevaluateLi()` reads `hit` through neither.
   lightSample.isDirac = false;
+  lightSample.isInfinite = false;
   lightSample.isReachable = true;
   lightSample.normal = float3(0.0f);
   lightSample.analyticIndex = INVALID_INDEX;

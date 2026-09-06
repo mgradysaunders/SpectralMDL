@@ -391,6 +391,9 @@ void renderSamples(const Options &opts, const Frame &frame,
         smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
+        // The gather scratch, bought here for the same reason.
+        LightSample gatherSample{};
+        Hit gatherBlocker{};
         Guiding guiding{};
         guiding.tree = sdtree.get();
         guiding.bsdfFraction =
@@ -441,9 +444,10 @@ void renderSamples(const Options &opts, const Frame &frame,
               walkState.animation_time = time.seconds;
               shadeState.animation_time = time.seconds;
               PathContext path{
-                  allocator,   sampler,   medium,     skyBasis,
-                  gatherState, walkState, shadeState, sampleWavelengths,
-                  time,        &guiding,  records};
+                  allocator,     sampler,           medium,     skyBasis,
+                  gatherState,   walkState,         shadeState, gatherSample,
+                  gatherBlocker, sampleWavelengths, time,       &guiding,
+                  records};
               Lsample = tracePath(render, path, cameraSample);
               numRecords = path.numRecords;
             }

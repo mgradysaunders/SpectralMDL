@@ -1281,7 +1281,7 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       gatherRunsManifold(render.mneeOptions, vertex.kind, vertex.receiver)};
   Color direct{};
   if (render.lights.empty()) return direct;
-  LightSample lightSample{};
+  LightSample &lightSample{path.gatherSample};
   // A manifold gather keeps the samples that radiate nothing toward the
   // receiver: its connection arrives at the light from elsewhere and reads
   // the radiance from there. The plain estimate of such a sample is zero
@@ -1336,7 +1336,7 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       // which estimator runs, and the manifold connection does not care
       // whether the straight direction can scatter at the receiver.
       Color Tr{1.0f};
-      Hit blocker{};
+      Hit &blocker{path.gatherBlocker};
       VisibilityWalk walk{render,
                           path,
                           vertex.mediumStack,
