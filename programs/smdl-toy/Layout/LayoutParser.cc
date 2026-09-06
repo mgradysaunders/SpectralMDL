@@ -1,109 +1,41 @@
 #include "Layout/Layout.h"
 
+#include "Layout/TextParser.h"
+
 #include "smdl/Support/Strings.h"
 
 #include <algorithm>
 #include <array>
-#include <cmath>
-#include <cstdlib>
 #include <map>
 
-// The parser half of the layout toolchain: characters to tokens to a
-// `LayoutDocument`, with nothing else. Path resolution, imports, and
-// lowering live in `Layout.cc`, and everything here stays free of the
-// filesystem so that a document parses the same from disk or from a
-// test's string.
+// The layout format's own vocabulary: the statements, the declarations,
+// and the operations each block admits. The lexer and every helper that
+// speaks about the language rather than about this format live in
+// `TextParser.h`, which the `.camera` format derives from too. Path
+// resolution, imports, and lowering live in `Layout.cc`, and everything
+// here stays free of the filesystem so that a document parses the same
+// from disk or from a test's string.
 
 namespace {
 
-// One token, with the byte range it came from so that every diagnostic
-// can point at it.
-class Token final {
-public:
-  enum Kind { WORD, STRING, OPEN, CLOSE, EQUALS, END };
-  Kind kind{END};
-  std::string text{};
-  uint32_t offset{};
-  uint32_t length{};
-};
-
-// The whole file as tokens: quoted strings, bare words, and the three
-// punctuation marks. A directive body can span one line or several
-// without the parser caring which.
-class Lexer final {
-public:
-  Lexer(LayoutDiagnostics &diags, const LayoutSource &source)
-      : mDiags(diags), mSource(source) {}
-
-  [[nodiscard]] Token next() {
-    const auto &text{mSource.text};
-    for (;;) {
-      while (mPos < text.size() && smdl::isSpace(text[mPos])) mPos++;
-      if (mPos >= text.size()) return {Token::END, {}, position(), 1};
-      if (text[mPos] != '#') break;
-      while (mPos < text.size() && text[mPos] != '\n') mPos++;
-    }
-    const auto start{position()};
-    const char ch{text[mPos]};
-    if (ch == '{') return mPos++, Token{Token::OPEN, "{", start, 1};
-    if (ch == '}') return mPos++, Token{Token::CLOSE, "}", start, 1};
-    if (ch == '=') return mPos++, Token{Token::EQUALS, "=", start, 1};
-    if (ch == '"') {
-      mPos++;
-      std::string content{};
-      while (mPos < text.size() && text[mPos] != '"' && text[mPos] != '\n')
-        content += text[mPos], mPos++;
-      if (mPos < text.size() && text[mPos] == '"') {
-        mPos++;
-      } else {
-        // Stopped at a newline or the end of the file: take what was
-        // written as the string so parsing can continue past it.
-        mDiags.error({&mSource, start, position() - start},
-                     "unterminated string");
-      }
-      return {Token::STRING, std::move(content), start, position() - start};
-    }
-    std::string content{};
-    while (mPos < text.size() && !smdl::isSpace(text[mPos]) &&
-           text[mPos] != '{' && text[mPos] != '}' && text[mPos] != '=' &&
-           text[mPos] != '#') {
-      content += text[mPos], mPos++;
-    }
-    return {Token::WORD, std::move(content), start, position() - start};
-  }
-
-private:
-  [[nodiscard]] uint32_t position() const noexcept { return uint32_t(mPos); }
-
-  LayoutDiagnostics &mDiags;
-  const LayoutSource &mSource;
-  size_t mPos{};
-};
-
-// Thrown to abandon the statement being parsed after its diagnostic is
-// emitted; caught by the statement loop, which synchronizes at the next
-// top-level keyword. Never escapes `parseLayout()`.
-class Recover final {};
-
 // The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 11> TOP_LEVEL_KEYWORDS{
-    "asset",  "group",  "place", "import", "light", "material",
-    "medium", "camera", "sky",   "haze",   "time"};
+constexpr std::array<std::string_view, 9> TOP_LEVEL_KEYWORDS{
+    "asset",    "group",  "place", "import", "light",
+    "material", "medium", "sky",   "haze"};
 
-// The transform operations, named here so an unknown top-level
-// directive that is really a stray transform gets a pointed note.
-constexpr std::array<std::string_view, 7> TRANSFORM_OPS{
-    "translate", "scale",    "rotate", "rotate_x",
-    "rotate_y",  "rotate_z", "matrix"};
+// The directives a `.camera` file owns, kept here only so that writing
+// one in a layout is answered with where it belongs rather than with a
+// spelling suggestion.
+constexpr std::array<std::string_view, 2> CAMERA_FILE_KEYWORDS{"camera",
+                                                               "time"};
 
-class Parser final {
+class Parser final : public TextParser {
 public:
   Parser(LayoutDiagnostics &diags, const LayoutSource &source,
          LayoutDocument &document)
-      : mDiags(diags), mSource(source), mLexer(diags, source),
-        mDocument(document) {
-    mToken = mLexer.next();
-  }
+      : TextParser(diags, source, LAYOUT_MAGIC, "layout file",
+                   TOP_LEVEL_KEYWORDS),
+        mDocument(document) {}
 
   void parse() {
     checkMagic();
@@ -117,21 +49,6 @@ public:
   }
 
 private:
-  // The `#smdl layout` first line, checked against the raw text rather
-  // than the token stream, because to the grammar it is only a comment.
-  void checkMagic() {
-    const auto &text{mSource.text};
-    const auto magic{LAYOUT_MAGIC};
-    const bool present{
-        smdl::startsWith(text, magic) &&
-        (text.size() == magic.size() || text[magic.size()] == '\n' ||
-         text[magic.size()] == '\r' || text[magic.size()] == ' ')};
-    if (!present)
-      mDiags.error({&mSource, 0, 1},
-                   smdl::concat("expected ", smdl::Quoted(magic),
-                                " on the first line of a layout file"));
-  }
-
   void parseStatement() {
     if (mToken.kind != Token::WORD) {
       mDiags.error(location(), smdl::concat("expected a directive, got ",
@@ -152,20 +69,22 @@ private:
       parseAlias();
     } else if (mToken.text == "medium") {
       parseMedium();
-    } else if (mToken.text == "camera") {
-      parseCamera();
     } else if (mToken.text == "sky") {
       parseSky();
     } else if (mToken.text == "haze") {
       parseHaze();
-    } else if (mToken.text == "time") {
-      parseTime();
     } else {
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
-      if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(), mToken.text) !=
-          TRANSFORM_OPS.end()) {
+      if (std::find(CAMERA_FILE_KEYWORDS.begin(), CAMERA_FILE_KEYWORDS.end(),
+                    mToken.text) != CAMERA_FILE_KEYWORDS.end()) {
+        error.note({}, smdl::concat("'", mToken.text,
+                                    "' belongs in a '.camera' file, which the "
+                                    "render finds beside the layout or takes "
+                                    "from '-camera'"));
+      } else if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(),
+                           mToken.text) != TRANSFORM_OPS.end()) {
         error.note({}, "transform operations belong on a 'place' line or "
                        "inside its block");
       } else if (const auto nearest{
@@ -176,41 +95,6 @@ private:
       }
       throw Recover();
     }
-  }
-
-  // Skip to the next top-level keyword, tracking brace depth so that a
-  // keyword inside the abandoned statement's block does not fool the
-  // loop into starting mid-block. An error raised after a line's last
-  // token leaves the next statement's keyword current already; it is
-  // not part of the abandoned statement, so it is kept rather than
-  // skipped, and the line check is what tells it from a keyword that
-  // is merely an operation word of the abandoned line.
-  void synchronize() {
-    size_t depth{mToken.kind == Token::OPEN ? size_t(1) : size_t(0)};
-    if (depth == 0 && isTopLevelKeyword(mToken) &&
-        lineOf(mToken) > lastDiagnosticLine())
-      return;
-    if (mToken.kind != Token::END) advance();
-    while (mToken.kind != Token::END) {
-      if (mToken.kind == Token::OPEN) depth++;
-      if (mToken.kind == Token::CLOSE && depth > 0) depth--;
-      if (depth == 0 && isTopLevelKeyword(mToken)) return;
-      advance();
-    }
-  }
-
-  [[nodiscard]] static bool isTopLevelKeyword(const Token &token) noexcept {
-    return token.kind == Token::WORD &&
-           std::find(TOP_LEVEL_KEYWORDS.begin(), TOP_LEVEL_KEYWORDS.end(),
-                     token.text) != TOP_LEVEL_KEYWORDS.end();
-  }
-
-  // The line of the diagnostic just raised, or 0 if it points nowhere.
-  [[nodiscard]] uint32_t lastDiagnosticLine() const noexcept {
-    if (mDiags.all().empty()) return 0;
-    const auto &location{mDiags.all().back().location};
-    if (location.source != &mSource) return 0;
-    return mSource.lineAndColumn(location.offset).lineNo;
   }
 
   void parseAsset() {
@@ -908,13 +792,14 @@ private:
     placement.animationOffsetLoc = opLoc;
   }
 
-  // The `motion { ... }` block of a place: the placement's transform at
-  // shutter shut, accumulated from identity by the same operations
-  // that state it at open. One block per place; a second is an error
-  // rather than a merge, since the block is one transform.
+  // The `motion { at <seconds> ... }` block of a place: a track of keys
+  // at absolute times, each accumulating its own transform from identity
+  // exactly as the place's own operations do. One block per place; a
+  // second is an error rather than a merge, since the keys are one
+  // track.
   void parsePlaceMotion(LayoutPlacement &placement,
                         const LayoutLocation &opLoc) {
-    if (placement.motion) {
+    if (!placement.motion.empty()) {
       mDiags.error(opLoc, "'motion' appears twice in one place")
           .note(placement.motionLoc, "first written here");
       throw Recover();
@@ -924,31 +809,53 @@ private:
       throw Recover();
     }
     advance(); // '{'
-    auto xf{float4x4(1.0f)};
+    auto &track{placement.motion};
     while (mToken.kind != Token::CLOSE) {
       if (mToken.kind == Token::END) {
         mDiags.error(location(), "expected '}' before end of file");
         throw Recover();
       }
       if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected a transform operation or '}'");
+        mDiags.error(location(), "expected 'at' or a transform operation");
         throw Recover();
       }
-      const auto innerOp{mToken.text};
-      const auto innerLoc{location()};
+      const auto word{mToken.text};
+      const auto wordLoc{location()};
       advance();
-      if (!parseTransformOp(innerOp, innerLoc, xf)) {
-        mDiags.error(innerLoc,
-                     smdl::concat("expected a transform operation inside "
-                                  "'motion', got ",
-                                  smdl::Quoted(innerOp),
+      if (word == "at") {
+        const auto time{finite(wordLoc, "at", numbers<1>()[0])};
+        if (!track.keys.empty() && !(time > track.keys.back().time)) {
+          mDiags.error(wordLoc, "the keys of a 'motion' block are written in "
+                                "ascending time");
+          throw Recover();
+        }
+        track.keys.emplace_back().time = time;
+        continue;
+      }
+      if (track.keys.empty()) {
+        mDiags
+            .error(wordLoc, "a 'motion' block holds 'at <seconds>' keys, and "
+                            "every operation belongs to the key above it")
+            .note({}, "write 'motion { at 0 translate 0 0 0 at 1 translate "
+                      "1 0 0 }'");
+        throw Recover();
+      }
+      if (!parseTransformOp(word, wordLoc, track.keys.back().transform)) {
+        mDiags.error(wordLoc,
+                     smdl::concat("expected 'at' or a transform operation "
+                                  "inside 'motion', got ",
+                                  smdl::Quoted(word),
                                   " (translate, scale, rotate, rotate_x, "
                                   "rotate_y, rotate_z, or matrix)"));
         throw Recover();
       }
     }
     advance(); // '}'
-    placement.motion = xf;
+    if (track.keys.empty()) {
+      mDiags.error(opLoc, "a 'motion' block holds at least one 'at <seconds>' "
+                          "key");
+      throw Recover();
+    }
     placement.motionLoc = opLoc;
   }
 
@@ -1132,108 +1039,7 @@ private:
     mDocument.mediumLoc = opLoc;
   }
 
-  // A `camera { ... }` block. Last one wins per field within the file; a
-  // field no directive names is left unset for the command line, or
-  // failing that the built-in default, to fill in.
-  void parseCamera() {
-    if (!mDocument.cameraLoc) mDocument.cameraLoc = location();
-    advance();
-    if (mToken.kind != Token::OPEN) {
-      mDiags.error(location(), "expected '{' after 'camera'");
-      throw Recover();
-    }
-    auto &camera{mDocument.camera};
-    parseSettings("a camera setting", [&](const std::string &key,
-                                          const LayoutLocation &keyLoc) {
-      if (key == "resolution") {
-        auto v{numbers<2>()};
-        if (!(v[0] >= 1 && v[1] >= 1)) {
-          mDiags.error(keyLoc,
-                       "expected two positive integers for 'resolution'");
-          throw Recover();
-        }
-        camera.resolution = int2(int(v[0]), int(v[1]));
-      } else if (key == "look_from") {
-        auto v{numbers<3>()};
-        camera.lookFrom = float3(v[0], v[1], v[2]);
-      } else if (key == "look_to") {
-        auto v{numbers<3>()};
-        camera.lookTo = float3(v[0], v[1], v[2]);
-      } else if (key == "look_up") {
-        auto v{numbers<3>()};
-        camera.lookUp = float3(v[0], v[1], v[2]);
-      } else if (key == "fovy") {
-        camera.fovYDeg = positive(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "fstop") {
-        camera.fStop = positive(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "aperture") {
-        camera.aperture = positive(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "focus") {
-        camera.focus = positive(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "blades") {
-        camera.blades = int(numbers<1>()[0]);
-      } else if (key == "blade_angle") {
-        camera.bladeAngleDeg = numbers<1>()[0];
-      } else if (key == "distortion_k1") {
-        camera.distortionK1 = numbers<1>()[0];
-      } else if (key == "distortion_k2") {
-        camera.distortionK2 = numbers<1>()[0];
-      } else if (key == "distortion_fit") {
-        // A bare keyword, like 'recenter', since the flag it mirrors
-        // takes no value either.
-        camera.distortionFit = true;
-      } else if (key == "vignetting") {
-        camera.vignetting = numbers<1>()[0];
-      } else if (key == "cat_eye") {
-        camera.catEye = numbers<1>()[0];
-      } else if (key == "cat_eye_radius") {
-        camera.catEyeRadius = positive(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "motion") {
-        parseCameraMotion(camera);
-      } else {
-        mDiags.error(
-            keyLoc,
-            smdl::concat("unknown camera setting ", smdl::Quoted(key),
-                         " (expected resolution, look_from, look_to, look_up, "
-                         "fovy, fstop, aperture, focus, blades, blade_angle, "
-                         "distortion_k1, distortion_k2, distortion_fit, "
-                         "vignetting, cat_eye, cat_eye_radius, or motion)"));
-        throw Recover();
-      }
-    });
-  }
-
-  // The `motion { ... }` block inside `camera`: the framing at shutter
-  // shut, merged per field like the block around it.
-  void parseCameraMotion(LayoutCamera &camera) {
-    if (mToken.kind != Token::OPEN) {
-      mDiags.error(location(), "expected '{' after 'motion'");
-      throw Recover();
-    }
-    if (!camera.motion) camera.motion.emplace();
-    auto &motion{*camera.motion};
-    parseSettings("a camera motion setting", [&](const std::string &key,
-                                                 const LayoutLocation &keyLoc) {
-      if (key == "look_from") {
-        auto v{numbers<3>()};
-        motion.lookFrom = float3(v[0], v[1], v[2]);
-      } else if (key == "look_to") {
-        auto v{numbers<3>()};
-        motion.lookTo = float3(v[0], v[1], v[2]);
-      } else if (key == "look_up") {
-        auto v{numbers<3>()};
-        motion.lookUp = float3(v[0], v[1], v[2]);
-      } else {
-        mDiags.error(keyLoc, smdl::concat("unknown camera motion setting ",
-                                          smdl::Quoted(key),
-                                          " (expected look_from, look_to, "
-                                          "or look_up)"));
-        throw Recover();
-      }
-    });
-  }
-
-  // A `sky { ... }` block, merged per field like `camera`.
+  // A `sky { ... }` block, merged per field, last one wins.
   void parseSky() {
     if (!mDocument.skyLoc) mDocument.skyLoc = location();
     advance();
@@ -1316,212 +1122,6 @@ private:
     });
   }
 
-  // A `time { ... }` block, merged per field like `sky`.
-  void parseTime() {
-    if (!mDocument.timeLoc) mDocument.timeLoc = location();
-    advance();
-    if (mToken.kind != Token::OPEN) {
-      mDiags.error(location(), "expected '{' after 'time'");
-      throw Recover();
-    }
-    auto &time{mDocument.time};
-    parseSettings("a time setting", [&](const std::string &key,
-                                        const LayoutLocation &keyLoc) {
-      if (key == "base") {
-        time.base = finite(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "shutter") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
-        if (!(value >= 0)) {
-          mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
-                               "(0 or omitted is a shut shutter)");
-          throw Recover();
-        }
-        time.shutter = value;
-      } else {
-        mDiags.error(keyLoc,
-                     smdl::concat("unknown time setting ", smdl::Quoted(key),
-                                  " (expected base or shutter)"));
-        throw Recover();
-      }
-    });
-  }
-
-  // Check a setting that has to be positive to mean anything: a size, a
-  // power, a scale, or one of the camera and sky quantities whose zero
-  // means "unset" everywhere downstream. Writing one down has to say
-  // something, and in every case leaving it out is what asks for the
-  // default, which is what the message points at.
-  [[nodiscard]] float positive(const LayoutLocation &keyLoc,
-                               std::string_view key, float value) {
-    if (!(value > 0)) {
-      mDiags.error(keyLoc, smdl::concat("expected a positive number for ",
-                                        smdl::Quoted(key),
-                                        " (omit it to leave it unset)"));
-      throw Recover();
-    }
-    return value;
-  }
-
-  // Check a setting that is a clock reading, which the number syntax
-  // alone would let be infinite or not a number.
-  [[nodiscard]] float finite(const LayoutLocation &keyLoc, std::string_view key,
-                             float value) {
-    if (!std::isfinite(value)) {
-      mDiags.error(keyLoc, smdl::concat("expected a finite number for ",
-                                        smdl::Quoted(key)));
-      throw Recover();
-    }
-    return value;
-  }
-
-  // One transform operation, applied on the LEFT of `xf` so that it
-  // takes effect after everything above it. Returns false if `op` names
-  // no transform operation, leaving the caller to decide what that
-  // means.
-  [[nodiscard]] bool parseTransformOp(const std::string &op,
-                                      const LayoutLocation &opLoc,
-                                      float4x4 &xf) {
-    if (op == "translate") {
-      auto v{numbers<3>()};
-      xf = translation(v[0], v[1], v[2]) * xf;
-    } else if (op == "scale") {
-      // One number scales uniformly and three scale per axis. Operation
-      // names are never numbers, so looking at whether a number follows
-      // tells the two apart with no ambiguity.
-      auto scale{float3()};
-      scale[0] = numbers<1>()[0];
-      if (isNumber(mToken)) {
-        scale[1] = numbers<1>()[0];
-        if (!isNumber(mToken)) {
-          mDiags.error(opLoc,
-                       "expected one number for a uniform 'scale' or three "
-                       "for a non-uniform one");
-          throw Recover();
-        }
-        scale[2] = numbers<1>()[0];
-      } else {
-        scale[1] = scale[2] = scale[0];
-      }
-      xf = float4x4{float4{scale[0], 0, 0, 0}, float4{0, scale[1], 0, 0},
-                    float4{0, 0, scale[2], 0}, float4{0, 0, 0, 1}} *
-           xf;
-    } else if (op == "rotate_x" || op == "rotate_y" || op == "rotate_z") {
-      auto axis{float3{}};
-      axis[op.back() - 'x'] = 1.0f;
-      xf = rotation(axis, numbers<1>()[0]) * xf;
-    } else if (op == "rotate") {
-      auto v{numbers<4>()};
-      xf = rotation(float3(v[0], v[1], v[2]), v[3]) * xf;
-    } else if (op == "matrix") {
-      auto v{numbers<16>()};
-      // Written row-major, which is how anyone lays a matrix out on the
-      // page; `float4x4` stores columns.
-      auto m{float4x4()};
-      for (size_t i = 0; i < 4; i++)
-        for (size_t j = 0; j < 4; j++) m[j][i] = v[4 * i + j];
-      xf = m * xf;
-    } else {
-      return false;
-    }
-    return true;
-  }
-
-  // Does the token spell a number, in full? An operation name never
-  // does, which is what lets a directive take a variable count of them.
-  [[nodiscard]] static bool isNumber(const Token &token) {
-    float ignored{};
-    return tryNumber(token, ignored);
-  }
-
-  // Not `std::stof`, which reports "not a number" by throwing: this is
-  // asked of every token of a directive that takes a variable count of
-  // them, so the answer "no" has to be cheap.
-  [[nodiscard]] static bool tryNumber(const Token &token, float &value) {
-    if (token.kind != Token::WORD || token.text.empty()) return false;
-    const char *begin{token.text.c_str()};
-    char *end{};
-    const float parsed{std::strtof(begin, &end)};
-    // A value out of float's range is a number the grammar accepts and
-    // the range checks downstream reject, which is where saying so
-    // belongs; `strtof` still returns the saturated value for it.
-    if (end != begin + token.text.size()) return false;
-    value = parsed;
-    return true;
-  }
-
-  template <size_t N> [[nodiscard]] std::array<float, N> numbers() {
-    std::array<float, N> values{};
-    for (size_t i = 0; i < N; i++) {
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(
-            location(),
-            smdl::concat("expected ", N, " number(s), got ", i, " of them"));
-        throw Recover();
-      }
-      if (!tryNumber(mToken, values[i])) {
-        mDiags.error(location(), smdl::concat("expected a number, got ",
-                                              smdl::Quoted(mToken.text)));
-        throw Recover();
-      }
-      advance();
-    }
-    return values;
-  }
-
-  std::string expect(Token::Kind kind, std::string_view what) {
-    if (mToken.kind != kind) {
-      mDiags.error(location(), smdl::concat("expected ", what));
-      throw Recover();
-    }
-    auto text{mToken.text};
-    advance();
-    return text;
-  }
-
-  // The `{ ... }` body of a block whose contents are a run of settings:
-  // the loop, the two diagnostics every such block was spelling for
-  // itself, and the keyword and location handed to `body` with the
-  // keyword already consumed. `what` is the article and noun the
-  // messages use, e.g. `"a camera setting"`.
-  //
-  // The caller has already established that `{` is current, either by
-  // checking it (a top-level block, where a missing brace is its own
-  // error) or by calling this only when it is (an asset or light body,
-  // whose block is optional).
-  template <typename Body>
-  void parseSettings(std::string_view what, Body &&body) {
-    advance(); // '{'
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), smdl::concat("expected ", what, " or '}'"));
-        throw Recover();
-      }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
-      advance();
-      body(key, keyLoc);
-    }
-    advance(); // '}'
-  }
-
-  [[nodiscard]] LayoutLocation location() const noexcept {
-    return {&mSource, mToken.offset, std::max(mToken.length, uint32_t(1))};
-  }
-
-  void advance() { mToken = mLexer.next(); }
-
-  [[nodiscard]] static bool isIdentifier(std::string_view name) {
-    if (name.empty() || !(smdl::isAlpha(name[0]) || name[0] == '_'))
-      return false;
-    for (const char ch : name)
-      if (!smdl::isWord(ch)) return false;
-    return true;
-  }
-
   // The location of an existing declaration of `name` across the shared
   // asset/group/light namespace, or an invalid location. `skip` is the
   // entry being built, excluded from the search.
@@ -1536,35 +1136,6 @@ private:
     return {};
   }
 
-  // The 1-based line a token sits on, which is what decides where a
-  // one-line 'place' ends.
-  [[nodiscard]] uint32_t lineOf(const Token &token) const noexcept {
-    return mSource.lineAndColumn(token.offset).lineNo;
-  }
-
-  [[nodiscard]] static float4x4 translation(float x, float y, float z) {
-    return float4x4{float4{1, 0, 0, 0}, float4{0, 1, 0, 0}, float4{0, 0, 1, 0},
-                    float4{x, y, z, 1}};
-  }
-
-  [[nodiscard]] static float4x4 rotation(float3 axis, float degrees) {
-    if (!smdl::tryNormalize(axis)) return float4x4(1.0f);
-    const float radians{smdl::radians(degrees)};
-    const float c{std::cos(radians)}, s{std::sin(radians)}, t{1.0f - c};
-    return float4x4{
-        float4{t * axis.x * axis.x + c, t * axis.x * axis.y + s * axis.z,
-               t * axis.x * axis.z - s * axis.y, 0},
-        float4{t * axis.x * axis.y - s * axis.z, t * axis.y * axis.y + c,
-               t * axis.y * axis.z + s * axis.x, 0},
-        float4{t * axis.x * axis.z + s * axis.y,
-               t * axis.y * axis.z - s * axis.x, t * axis.z * axis.z + c, 0},
-        float4{0, 0, 0, 1}};
-  }
-
-  LayoutDiagnostics &mDiags;
-  const LayoutSource &mSource;
-  Lexer mLexer;
-  Token mToken{};
   LayoutDocument &mDocument;
 
   // Every `as` name seen, for the duplicate warning: identity is only

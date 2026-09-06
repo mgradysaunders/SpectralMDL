@@ -1,5 +1,7 @@
 #include "Scene/Scene.h"
 
+#include "Layout/Motion.h"
+
 #include "IO/MeshDeform.h"
 #include "IO/MeshImport.h"
 #include "Scene/Subdivide.h"
@@ -558,61 +560,18 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
 
 RTCQuaternionDecomposition
 quaternionDecompositionOf(const float4x4 &xf) noexcept {
-  const auto m0{float3(xf[0])};
-  const auto m1{float3(xf[1])};
-  const auto m2{float3(xf[2])};
-  const float sx{length(m0)};
-  const float3 q0{m0 / sx};
-  const float skewXY{dot(q0, m1)};
-  const float3 v1{m1 - skewXY * q0};
-  const float sy{length(v1)};
-  const float3 q1{v1 / sy};
-  const float3 q2{cross(q0, q1)};
-  const float skewXZ{dot(q0, m2)};
-  const float skewYZ{dot(q1, m2)};
-  const float sz{dot(q2, m2)};
-  // The rotation (q0 q1 q2) as a quaternion, by the largest of the
-  // trace and the diagonal, which keeps the divisor away from zero.
-  // `r<row><column>`; Embree normalizes what it is given.
-  const float r00{q0.x}, r10{q0.y}, r20{q0.z};
-  const float r01{q1.x}, r11{q1.y}, r21{q1.z};
-  const float r02{q2.x}, r12{q2.y}, r22{q2.z};
-  float w{}, x{}, y{}, z{};
-  if (const float trace{r00 + r11 + r22}; trace >= 0.0f) {
-    const float t{1.0f + trace};
-    const float s{0.5f / std::sqrt(t)};
-    w = t * s;
-    x = (r21 - r12) * s;
-    y = (r02 - r20) * s;
-    z = (r10 - r01) * s;
-  } else if (r00 >= std::max(r11, r22)) {
-    const float t{(1.0f + r00) - (r11 + r22)};
-    const float s{0.5f / std::sqrt(t)};
-    w = (r21 - r12) * s;
-    x = t * s;
-    y = (r10 + r01) * s;
-    z = (r02 + r20) * s;
-  } else if (r11 >= r22) {
-    const float t{(1.0f + r11) - (r22 + r00)};
-    const float s{0.5f / std::sqrt(t)};
-    w = (r02 - r20) * s;
-    x = (r10 + r01) * s;
-    y = t * s;
-    z = (r21 + r12) * s;
-  } else {
-    const float t{(1.0f + r22) - (r00 + r11)};
-    const float s{0.5f / std::sqrt(t)};
-    w = (r10 - r01) * s;
-    x = (r02 + r20) * s;
-    y = (r21 + r12) * s;
-    z = t * s;
-  }
+  const auto parts{decomposeTransform(xf)};
   RTCQuaternionDecomposition qd{};
   rtcInitQuaternionDecomposition(&qd);
-  rtcQuaternionDecompositionSetScale(&qd, sx, sy, sz);
-  rtcQuaternionDecompositionSetSkew(&qd, skewXY, skewXZ, skewYZ);
-  rtcQuaternionDecompositionSetQuaternion(&qd, w, x, y, z);
-  rtcQuaternionDecompositionSetTranslation(&qd, xf[3].x, xf[3].y, xf[3].z);
+  rtcQuaternionDecompositionSetScale(&qd, parts.scale.x, parts.scale.y,
+                                     parts.scale.z);
+  rtcQuaternionDecompositionSetSkew(&qd, parts.skew.x, parts.skew.y,
+                                    parts.skew.z);
+  rtcQuaternionDecompositionSetQuaternion(
+      &qd, parts.quaternion[0], parts.quaternion[1], parts.quaternion[2],
+      parts.quaternion[3]);
+  rtcQuaternionDecompositionSetTranslation(
+      &qd, parts.translation.x, parts.translation.y, parts.translation.z);
   return qd;
 }
 

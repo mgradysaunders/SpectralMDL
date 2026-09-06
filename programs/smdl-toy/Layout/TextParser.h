@@ -1,0 +1,211 @@
+/// \file
+/// The syntax core the layout toolchain's text formats share: the token,
+/// the lexer, and the parser base holding everything that is true of the
+/// grammar rather than of one format.
+///
+/// The `.layout` and `.camera` formats are one language with two
+/// vocabularies. Everything here is the language; the vocabularies live
+/// in `LayoutParser.cc` and `CameraFile.cc`, which derive from
+/// `TextParser` and add the statements they know.
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <string_view>
+
+#include "smdl/Support/Span.h"
+#include "smdl/Support/Strings.h"
+
+#include "Common.h"
+
+#include "Layout/LayoutDiagnostics.h"
+
+/// One token, with the byte range it came from so that every diagnostic
+/// can point at it.
+class Token final {
+public:
+  enum Kind { WORD, STRING, OPEN, CLOSE, EQUALS, END };
+  Kind kind{END};
+  std::string text{};
+  uint32_t offset{};
+  uint32_t length{};
+};
+
+/// The whole file as tokens: quoted strings, bare words, and the three
+/// punctuation marks. A directive body can span one line or several
+/// without the parser caring which.
+class Lexer final {
+public:
+  Lexer(LayoutDiagnostics &diags, const LayoutSource &source)
+      : mDiags(diags), mSource(source) {}
+
+  [[nodiscard]] Token next();
+
+private:
+  [[nodiscard]] uint32_t position() const noexcept { return uint32_t(mPos); }
+
+  LayoutDiagnostics &mDiags;
+  const LayoutSource &mSource;
+  size_t mPos{};
+};
+
+/// Thrown to abandon the statement being parsed after its diagnostic is
+/// emitted; caught by the statement loop, which synchronizes at the next
+/// top-level keyword. Never escapes a `parse...()` entry point.
+class Recover final {};
+
+/// The transform operations, named here so an unknown directive that is
+/// really a stray transform gets a pointed note.
+constexpr std::array<std::string_view, 7> TRANSFORM_OPS{
+    "translate", "scale",    "rotate", "rotate_x",
+    "rotate_y",  "rotate_z", "matrix"};
+
+/// The parser base: the token stream, the diagnostics, and every helper
+/// that speaks about the language rather than about one format's
+/// vocabulary.
+///
+/// A derived parser supplies its magic line, the noun its diagnostic
+/// spells, and its top-level keywords (the synchronization points), then
+/// writes one `parseStatement()` over the helpers here.
+///
+class TextParser {
+public:
+  /// `magic` is the first line the format requires and `noun` names the
+  /// format in the diagnostic when it is missing, e.g. "layout file".
+  /// `keywords` are the statement keywords `synchronize()` resumes at,
+  /// and must outlive the parser.
+  TextParser(LayoutDiagnostics &diags, const LayoutSource &source,
+             std::string_view magic, std::string_view noun,
+             smdl::Span<const std::string_view> keywords)
+      : mDiags(diags), mSource(source), mLexer(diags, source), mMagic(magic),
+        mNoun(noun), mKeywords(keywords) {
+    mToken = mLexer.next();
+  }
+
+protected:
+  /// The magic first line, checked against the raw text rather than the
+  /// token stream, because to the grammar it is only a comment.
+  void checkMagic();
+
+  /// Skip to the next top-level keyword, tracking brace depth so that a
+  /// keyword inside the abandoned statement's block does not fool the
+  /// loop into starting mid-block. An error raised after a line's last
+  /// token leaves the next statement's keyword current already; it is
+  /// not part of the abandoned statement, so it is kept rather than
+  /// skipped, and the line check is what tells it from a keyword that
+  /// is merely an operation word of the abandoned line.
+  void synchronize();
+
+  [[nodiscard]] bool isTopLevelKeyword(const Token &token) const noexcept;
+
+  /// The line of the last diagnostic, or 0. See `synchronize()`.
+  [[nodiscard]] uint32_t lastDiagnosticLine() const noexcept;
+
+  /// Check a setting that has to be positive to mean anything: a size, a
+  /// power, a scale, or one of the camera and sky quantities whose zero
+  /// means "unset" everywhere downstream. Writing one down has to say
+  /// something, and in every case leaving it out is what asks for the
+  /// default, which is what the message points at.
+  [[nodiscard]] float positive(const LayoutLocation &keyLoc,
+                               std::string_view key, float value);
+
+  /// Check a setting that is a clock reading, which the number syntax
+  /// alone would let be infinite or not a number.
+  [[nodiscard]] float finite(const LayoutLocation &keyLoc, std::string_view key,
+                             float value);
+
+  /// One transform operation, applied on the LEFT of `xf` so that it
+  /// takes effect after everything above it. Returns false if `op` names
+  /// no transform operation, leaving the caller to decide what that
+  /// means.
+  [[nodiscard]] bool parseTransformOp(const std::string &op,
+                                      const LayoutLocation &opLoc,
+                                      float4x4 &xf);
+
+  /// Does the token spell a number, in full? An operation name never
+  /// does, which is what lets a directive take a variable count of them.
+  [[nodiscard]] static bool isNumber(const Token &token);
+
+  /// Not `std::stof`, which reports "not a number" by throwing: this is
+  /// asked of every token of a directive that takes a variable count of
+  /// them, so the answer "no" has to be cheap.
+  [[nodiscard]] static bool tryNumber(const Token &token, float &value);
+
+  template <size_t N> [[nodiscard]] std::array<float, N> numbers() {
+    std::array<float, N> values{};
+    for (size_t i = 0; i < N; i++) {
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(
+            location(),
+            smdl::concat("expected ", N, " number(s), got ", i, " of them"));
+        throw Recover();
+      }
+      if (!tryNumber(mToken, values[i])) {
+        mDiags.error(location(), smdl::concat("expected a number, got ",
+                                              smdl::Quoted(mToken.text)));
+        throw Recover();
+      }
+      advance();
+    }
+    return values;
+  }
+
+  std::string expect(Token::Kind kind, std::string_view what);
+
+  /// The `{ ... }` body of a block whose contents are a run of settings:
+  /// the loop, the two diagnostics every such block was spelling for
+  /// itself, and the keyword and location handed to `body` with the
+  /// keyword already consumed. `what` is the article and noun the
+  /// messages use, e.g. `"a camera setting"`.
+  ///
+  /// The caller has already established that `{` is current, either by
+  /// checking it (a top-level block, where a missing brace is its own
+  /// error) or by calling this only when it is (an asset or light body,
+  /// whose block is optional).
+  template <typename Body>
+  void parseSettings(std::string_view what, Body &&body) {
+    advance(); // '{'
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), smdl::concat("expected ", what, " or '}'"));
+        throw Recover();
+      }
+      const auto key{mToken.text};
+      const auto keyLoc{location()};
+      advance();
+      body(key, keyLoc);
+    }
+    advance(); // '}'
+  }
+
+  [[nodiscard]] LayoutLocation location() const noexcept {
+    return {&mSource, mToken.offset, std::max(mToken.length, uint32_t(1))};
+  }
+
+  void advance() { mToken = mLexer.next(); }
+
+  [[nodiscard]] static bool isIdentifier(std::string_view name);
+
+  /// The 1-based line a token sits on, which is what decides where a
+  /// one-line 'place' ends.
+  [[nodiscard]] uint32_t lineOf(const Token &token) const noexcept;
+
+  [[nodiscard]] static float4x4 translation(float x, float y, float z);
+
+  [[nodiscard]] static float4x4 rotation(float3 axis, float degrees);
+
+  LayoutDiagnostics &mDiags;
+  const LayoutSource &mSource;
+  Lexer mLexer;
+  Token mToken{};
+
+private:
+  std::string_view mMagic{};
+  std::string_view mNoun{};
+  smdl::Span<const std::string_view> mKeywords{};
+};

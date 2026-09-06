@@ -915,26 +915,40 @@ def matrix_lines(matrix, indent):
     return [lead + rows[0]] + [" " * len(lead) + row for row in rows[1:]]
 
 
-def placement_lines(name, matrix, pairs=(), shut=None, indent=""):
+def placement_lines(name, matrix, pairs=(), shut=None, indent="", keys=None):
     """One `place` of `name`: the one-line form under `matrix` alone, or
     the block form when rename pairs ride along or a shut matrix differs
-    from the open one, the `motion` block restating the placement at
-    shutter shut. A shut matrix that writes the open one's rows is no
-    motion and is left out, so a still object under motion blur reads as
-    it always did."""
+    from the open one.
+
+    A shut matrix makes a `motion` track of two keys stamped with the
+    seconds they hold at, so the file says when it moves rather than
+    leaving it to whatever shutter the render happens to use. One that
+    writes the open matrix's rows is no motion and is left out, so a
+    still object under motion blur reads as it always did.
+    """
     if shut is not None and same_matrix(shut, matrix):
         shut = None
     if not pairs and shut is None:
         return place_lines(name, matrix, indent)
     lines = [f"{indent}place {name} {{"]
     lines.extend(f"{indent}  material {frm} = {to}" for frm, to in pairs)
-    lines.extend(matrix_lines(matrix, indent + "  "))
-    if shut is not None:
+    if shut is None:
+        lines.extend(matrix_lines(matrix, indent + "  "))
+    else:
         lines.append(f"{indent}  motion {{")
-        lines.extend(matrix_lines(shut, indent + "    "))
+        lines.extend(key_lines(keys.base, matrix, indent + "    "))
+        lines.extend(key_lines(keys.base + keys.shutter, shut, indent + "    "))
         lines.append(f"{indent}  }}")
     lines.append(f"{indent}}}")
     return lines
+
+
+def key_lines(seconds, matrix, indent):
+    """One `at <seconds> matrix ...` key of a `motion` track, wrapped one
+    row per line."""
+    lead = f"{indent}at {seconds:.9g} matrix "
+    rows = format_matrix(matrix)
+    return [lead + rows[0]] + [" " * len(lead) + row for row in rows[1:]]
 
 
 def write_places(filepath, matrices, column=None):
@@ -1072,10 +1086,23 @@ def shutter_keys(scene):
                        shutter=length * seconds_per_frame)
 
 
-def time_block(keys):
-    """The `time` directive from the shutter keys, or nothing."""
+def frame_seconds(scene):
+    """The current frame on the render clock, in seconds."""
+    render = scene.render
+    return ((scene.frame_current + scene.frame_subframe) *
+            render.fps_base / render.fps)
+
+
+def time_block(scene, keys):
+    """The `time` directive: which instant of the scene's timeline this
+    picture takes, and how long it is exposed.
+
+    The base is written whether or not motion blur is on, because a scene
+    keyframed on the clock renders the wrong instant without it; only the
+    shutter waits for blur.
+    """
     if keys is None:
-        return []
+        return ["time {", f"  base {frame_seconds(scene):.9g}", "}"]
     return ["time {",
             f"  base {keys.base:.9g}",
             f"  shutter {keys.shutter:.9g}",
@@ -1100,26 +1127,31 @@ def framing_at(scene, camera, key):
         return framing_of(camera.matrix_world)
 
 
-def framing_lines(framing, indent="  "):
+def framing_lines(framing, indent="  ", seconds=None):
+    """The three framing vectors, as settings of a `camera` block or, with
+    `seconds`, as one `at <seconds>` key of its `motion` track."""
     origin, target, up = framing
-    return [f"{indent}look_from {origin.x:.9g} {origin.y:.9g} {origin.z:.9g}",
-            f"{indent}look_to {target.x:.9g} {target.y:.9g} {target.z:.9g}",
-            f"{indent}look_up {up.x:.9g} {up.y:.9g} {up.z:.9g}"]
+    lead = f"{indent}at {seconds:.9g} " if seconds is not None else indent
+    pad = " " * len(lead) if seconds is not None else indent
+    return [f"{lead}look_from {origin.x:.9g} {origin.y:.9g} {origin.z:.9g}",
+            f"{pad}look_to {target.x:.9g} {target.y:.9g} {target.z:.9g}",
+            f"{pad}look_up {up.x:.9g} {up.y:.9g} {up.z:.9g}"]
 
 
 def camera_block(scene, keys=None):
     """The scene camera as a `camera` directive, or nothing.
 
     The framing is read at the shutter's open key when there is one and
-    at the current frame otherwise, and the `motion` block carries the
-    framing at the shut key whenever it differs, so a still camera under
-    motion blur writes none. The field of view and the lens hold over the
-    shutter. The lens comes from the add-on's Camera Options panel alone;
-    the camera datablock's own Depth of Field is deliberately not read, so
-    blur can never come from a panel this add-on does not draw. A setting
-    is written only when it differs from the renderer's default, which is
-    what the grammar demands: zero is not a value there, it is the
-    absence of one.
+    at the current frame otherwise. When it differs at the shut key, both
+    are written as `at <seconds>` keys of a `motion` track rather than as
+    the block's own settings, so the file says when the camera is where
+    it is; a still camera under motion blur writes no track. The field of
+    view and the lens hold over the shutter. The lens comes from the
+    add-on's Camera Options panel alone; the camera datablock's own Depth
+    of Field is deliberately not read, so blur can never come from a
+    panel this add-on does not draw. A setting is written only when it
+    differs from the renderer's default, which is what the grammar
+    demands: zero is not a value there, it is the absence of one.
     """
     camera = scene.camera
     if camera is None or camera.type != "CAMERA":
@@ -1139,11 +1171,15 @@ def camera_block(scene, keys=None):
     width = int(render.resolution_x * render.resolution_percentage / 100)
     height = int(render.resolution_y * render.resolution_percentage / 100)
     lines = ["camera {", f"  resolution {max(width, 1)} {max(height, 1)}"]
-    lines.extend(framing_lines(framing))
+    if motion is None:
+        lines.extend(framing_lines(framing))
     lines.append(f"  fovy {data.angle_y * 180.0 / 3.14159265358979:.9g}")
     if motion is not None:
         lines.append("  motion {")
-        lines.extend(framing_lines(motion, indent="    "))
+        lines.extend(framing_lines(framing, indent="    ",
+                                   seconds=keys.base))
+        lines.extend(framing_lines(motion, indent="    ",
+                                   seconds=keys.base + keys.shutter))
         lines.append("  }")
     settings = scene.smdl_render
     if settings.vignette > 0:
@@ -1180,6 +1216,30 @@ def camera_block(scene, keys=None):
             lines.append("  distortion_fit")
     lines.append("}")
     return lines
+
+
+def write_camera_file(scene, filepath, keys):
+    """Write the scene camera and the render clock as a `.camera` file,
+    the sibling of the layout that the renderer finds by name.
+
+    Returns the path, or "" when the scene has no camera to write. The
+    camera is a separate file because it is a separate decision: one
+    scene takes as many viewpoints as there are files, and neither has to
+    restate the other.
+    """
+    lines = ["#smdl camera",
+             "# Written by the SpectralMDL layout add-on from "
+             f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
+             ""]
+    lines.extend(time_block(scene, keys))
+    block = camera_block(scene, keys)
+    if not block:
+        return ""
+    lines.append("")
+    lines.extend(block)
+    with open(filepath, "w") as stream:
+        stream.write("\n".join(lines).rstrip() + "\n")
+    return filepath
 
 
 def world_environment_image(scene):
@@ -1291,7 +1351,7 @@ def light_ies_path(light):
     return ""
 
 
-def light_blocks(scene, problems, shut=None):
+def light_blocks(scene, problems, shut=None, keys=None):
     """The scene's point, spot, and area lamps as `light` declarations plus
     one `place` per lamp, or nothing. A sun lamp belongs to `sky_block`.
     `shut` is the `ShutKeys` of the shutter's shut key, or None; a lamp
@@ -1398,7 +1458,8 @@ def light_blocks(scene, problems, shut=None):
         lines.append(head)
         lines.extend(settings)
         lines.append("}")
-        lines.extend(placement_lines(name, matrix, (), shut_matrix))
+        lines.extend(placement_lines(name, matrix, (), shut_matrix,
+                                     keys=keys))
         lines.append("")
     return lines
 
@@ -1682,6 +1743,9 @@ def write_layout(context, filepath, asset_root, bake, collection,
         "#smdl layout",
         "# Written by the SpectralMDL layout add-on from "
         f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
+        "#",
+        "# The viewpoint and the clock are in the '.camera' beside this file,",
+        "# which the render finds by name; '-camera' points at another.",
         "#",
         "# Render with the asset library on the search path:",
         f"#   {hint}",
@@ -2013,10 +2077,10 @@ def write_layout(context, filepath, asset_root, bake, collection,
                                             shut_matrix)],
                                           where=f" in {source.name}")[0]
             lines.extend(placement_lines(member, matrix, pairs, shut_matrix,
-                                         "  "))
+                                         "  ", keys))
         for ob, matrix, shut_matrix in groom_members:
             lines.extend(placement_lines(groom_names[ob], matrix, (),
-                                         shut_matrix, "  "))
+                                         shut_matrix, "  ", keys))
         lines.append("}")
         lines.append("")
 
@@ -2039,7 +2103,8 @@ def write_layout(context, filepath, asset_root, bake, collection,
                             f"were written as text; per-record motion in a "
                             f"'.places' buffer is not supported yet")
         for matrix, pairs, shut_matrix in movers:
-            lines.extend(placement_lines(name, matrix, pairs, shut_matrix))
+            lines.extend(placement_lines(name, matrix, pairs, shut_matrix,
+                                         keys=keys))
         entries = still
         if places_threshold and len(entries) >= places_threshold:
             sidecar = f"{layout_stem}.{name}.places"
@@ -2145,23 +2210,25 @@ def write_layout(context, filepath, asset_root, bake, collection,
             lines.extend(volume_material_lines(material_name, baked))
         lines.append("")
 
-    lines.extend(light_blocks(context.scene, problems, shut))
+    lines.extend(light_blocks(context.scene, problems, shut, keys))
     lines.extend(sky_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
     lines.extend(haze_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
-    lines.extend(time_block(keys))
-    if lines and lines[-1] == "}":
-        lines.append("")
-    lines.extend(camera_block(context.scene, keys))
-    if context.scene.camera is None:
-        problems.append("the scene has no camera, so the layout carries no "
-                        "viewpoint")
-
     with open(filepath, "w") as stream:
         stream.write("\n".join(lines).rstrip() + "\n")
+
+    # The viewpoint and the clock go to the sibling '.camera', which the
+    # renderer finds by the layout's own name.
+    camera_file = write_camera_file(
+        context.scene, os.path.join(scene_directory, layout_stem + ".camera"),
+        keys)
+    if not camera_file:
+        problems.append("the scene has no camera, so no '.camera' file was "
+                        "written and the render falls back on its default "
+                        "viewpoint")
 
     return {
         "placements": (sum(len(entries) for _, entries in flat) +
@@ -2181,6 +2248,7 @@ def write_layout(context, filepath, asset_root, bake, collection,
         "dropped": dropped,
         "baked": len(untagged) if bake else 0,
         "material_file": material_file,
+        "camera_file": camera_file,
         "materials": materials,
         "problems": problems,
     }

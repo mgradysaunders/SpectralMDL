@@ -293,9 +293,9 @@ class SMDL_PT_export(bpy.types.Panel):
 
 
 class SMDL_PT_camera(bpy.types.Panel):
-    """The camera settings the exporter writes into the layout's `camera {}`
-    block. Dependent rows gray out rather than vanish, so the panel never
-    jumps around as checkboxes toggle."""
+    """The camera settings the exporter writes into the `.camera` file
+    beside the layout. Dependent rows gray out rather than vanish, so the
+    panel never jumps around as checkboxes toggle."""
 
     bl_label = "Camera Options"
     bl_space_type = "PROPERTIES"

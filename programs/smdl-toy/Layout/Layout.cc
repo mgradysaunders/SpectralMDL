@@ -1,5 +1,7 @@
 #include "Layout/Layout.h"
 
+#include "Layout/CameraFile.h"
+
 #include "IO/AssetFile.h"
 #include "IO/CurvesFile.h"
 #include "IO/PlacesFile.h"
@@ -126,10 +128,18 @@ class MotionXf final {
 public:
   MotionXf() = default;
   MotionXf(const float4x4 &xf) : open(xf), shut(xf) {}
-  MotionXf(const float4x4 &open, const std::optional<float4x4> &shut,
-           float offset = 0.0f)
-      : open(open), shut(shut.value_or(open)), moving(shut.has_value()),
-        offset(offset) {}
+
+  // A placement: its own operations composed outside its track,
+  // sampled at the two instants shifted by the clock this placement
+  // sits on, which is the offsets of every place above it.
+  MotionXf(const float4x4 &xf, const MotionTrack &track,
+           const MotionSampling &sampling, float offset)
+      : open(xf), shut(xf), moving(!track.empty()), offset(offset) {
+    if (moving) {
+      open = xf * track.at(sampling.open);
+      shut = xf * track.at(sampling.shut);
+    }
+  }
 
   [[nodiscard]] MotionXf operator*(const MotionXf &other) const {
     auto result{MotionXf()};
@@ -142,8 +152,9 @@ public:
 
   // The shut key an item or light records: the composed shut
   // transform when something moved and it differs from the open one,
-  // absent otherwise, so that a `motion` block restating the open key
-  // lowers to a static placement.
+  // absent otherwise, so that a track whose two samples agree (a shut
+  // shutter, or a key pair that restates one transform) lowers to a
+  // static placement.
   [[nodiscard]] std::optional<float4x4> shutKey() const {
     if (!moving) return std::nullopt;
     for (size_t j = 0; j < 4; j++)
@@ -187,8 +198,8 @@ static void placeBatch(LayoutItem &item, const std::vector<MotionXf> &xfs) {
 class Lowerer final {
 public:
   Lowerer(LayoutDiagnostics &diags, const AssetSearchPath &search,
-          Layout &result)
-      : mDiags(diags), mSearch(search), mResult(result) {}
+          const MotionSampling &sampling, Layout &result)
+      : mDiags(diags), mSearch(search), mSampling(sampling), mResult(result) {}
 
   void lowerFile(const std::string &fileName, const MotionXf &xf,
                  const RenameMap &outerRenames, const MarkOverrides &outerMarks,
@@ -236,16 +247,14 @@ private:
   void lowerDocument(const LayoutDocument &document, const MotionXf &xf,
                      const RenameMap &outerRenames,
                      const MarkOverrides &outerMarks, bool isEntry) {
-    // Only the entry file's camera, sky, haze, time, and medium take
-    // effect. An imported layout carrying its own is a layout that can
-    // also render standalone, so say what is being ignored rather than
-    // erroring, and never adopt it silently.
+    // Only the entry file's sky, haze, and medium take effect. An
+    // imported layout carrying its own is a layout that can also render
+    // standalone, so say what is being ignored rather than erroring, and
+    // never adopt it silently.
     if (isEntry) {
-      mResult.camera = document.camera;
       mResult.sky = document.sky;
       mResult.haze = document.haze;
       mResult.hasHaze = bool(document.hazeLoc);
-      mResult.time = document.time;
       mResult.entryMaterialAliases = document.materialAliases;
       if (!document.mediumName.empty())
         mResult.exteriorMediumName = document.mediumName;
@@ -255,10 +264,6 @@ private:
             !resolved.empty())
           mResult.sky.iblFileName = resolved.string();
     } else {
-      if (document.cameraLoc)
-        mDiags.warn(document.cameraLoc,
-                    "the 'camera' of an imported layout is ignored (only "
-                    "the entry layout's camera takes effect)");
       if (document.skyLoc)
         mDiags.warn(document.skyLoc,
                     "the 'sky' of an imported layout is ignored (only the "
@@ -267,10 +272,6 @@ private:
         mDiags.warn(document.hazeLoc,
                     "the 'haze' of an imported layout is ignored (only the "
                     "entry layout's haze takes effect)");
-      if (document.timeLoc)
-        mDiags.warn(document.timeLoc,
-                    "the 'time' of an imported layout is ignored (only the "
-                    "entry layout's time takes effect)");
       if (document.mediumLoc)
         mDiags.warn(document.mediumLoc,
                     "the 'medium' of an imported layout is ignored (only "
@@ -414,8 +415,20 @@ private:
     // The placement's own keys under everything above it. The block's
     // shut key, when there is one, is absolute: it stands where the
     // open operations stand, and everything below composes under both.
-    const auto placeXf{xf * MotionXf(placement.transform, placement.motion,
-                                     placement.animationOffset.value_or(0.0f))};
+    // The clock this placement sits on: every enclosing `offset` plus
+    // its own. Its track and the clips of what it places read the same
+    // one, so a placement written one second behind is one second behind
+    // in both.
+    const auto offset{xf.offset + placement.animationOffset.value_or(0.0f)};
+    const auto sampling{mSampling.shiftedBy(offset)};
+    const auto placeXf{
+        xf * MotionXf(placement.transform, placement.motion, sampling,
+                      placement.animationOffset.value_or(0.0f))};
+    if (!placement.motion.empty() &&
+        placement.motion.hasKeyBetween(sampling.open, sampling.shut))
+      mDiags.warn(placement.motionLoc,
+                  "a key of this 'motion' sits inside the shutter, so the "
+                  "placement moves along the chord of its two ends");
     if (!placement.placesPath.empty()) {
       // The bulk form: one instance per record, each record's transform
       // standing where a one-line place's operations would, and each
@@ -916,6 +929,7 @@ private:
 
   LayoutDiagnostics &mDiags;
   const AssetSearchPath &mSearch;
+  MotionSampling mSampling{};
   Layout &mResult;
   std::vector<OpenFile> mOpenFiles{};
 };
@@ -923,16 +937,18 @@ private:
 } // namespace
 
 Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
-                   const AssetSearchPath &search) {
+                   const AssetSearchPath &search,
+                   const MotionSampling &sampling) {
   auto result{Layout()};
-  Lowerer(diags, search, result)
+  Lowerer(diags, search, sampling, result)
       .lowerFile(fileName, MotionXf(), {}, {}, true, {});
   return result;
 }
 
-Layout readLayout(const std::string &fileName, const AssetSearchPath &search) {
+Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
+                  const MotionSampling &sampling) {
   auto diags{LayoutDiagnostics()};
-  auto result{lowerLayout(diags, fileName, search)};
+  auto result{lowerLayout(diags, fileName, search, sampling)};
   if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());
   if (diags.hasErrors())
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
@@ -943,12 +959,19 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search) {
 }
 
 Layout resolveLayoutArgument(const std::string &fileName,
-                             const AssetSearchPath &search) {
+                             const AssetSearchPath &search,
+                             const MotionSampling &sampling) {
   auto path{std::filesystem::path(fileName)};
   if (path.extension() == ".scene")
     throw smdl::Error(smdl::concat("the '.scene' format was retired; ",
                                    smdl::QuotedPath(fileName),
                                    " must be ported to '.layout'"));
+  if (path.extension() == CAMERA_EXTENSION)
+    throw smdl::Error(
+        smdl::concat(smdl::QuotedPath(fileName),
+                     " is a camera, not a scene; give it with '-camera', or "
+                     "name it after the layout it belongs to and it is found "
+                     "beside it"));
   // The argument names an asset the same way an import does, so that a
   // prepared asset can be rendered on its own without a layout file to
   // wrap it.
@@ -983,7 +1006,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
     return result;
   }
   if (path.extension() == LAYOUT_EXTENSION || sniffLayoutMagic(path))
-    return readLayout(fileName, search);
+    return readLayout(fileName, search, sampling);
   auto &item{result.items.emplace_back()};
   item.fileName = path.string();
   item.curves.active = classifyCurves(path);

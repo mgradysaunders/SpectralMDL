@@ -18,6 +18,7 @@
 #include "IO/MeshImport.h"
 
 #include "Layout/LayoutDiagnostics.h"
+#include "Layout/Motion.h"
 
 /// Where to look for a relative path that is not found beside the file
 /// that wrote it: the `-asset-dir` directories, in the order they were
@@ -290,49 +291,6 @@ public:
   }
 };
 
-/// The framing at shutter shut, the `motion` block inside `camera`.
-/// A key not restated holds its open value, so a block that names only
-/// `look_from` is a dolly and one that names only `look_to` is a pan.
-/// The same word on a `place` restates that placement at shutter shut;
-/// see `LayoutPlacement::motion`.
-class LayoutCameraMotion final {
-public:
-  std::optional<float3> lookFrom{};
-  std::optional<float3> lookTo{};
-  std::optional<float3> lookUp{};
-};
-
-/// The camera a layout's `camera` directive describes.
-///
-/// Everything is optional and unset by default. The built-in defaults
-/// are the base, the file overrides those, and explicit command-line
-/// flags override the file.
-///
-class LayoutCamera final {
-public:
-  std::optional<int2> resolution{};
-  std::optional<float3> lookFrom{};
-  std::optional<float3> lookTo{};
-  std::optional<float3> lookUp{};
-
-  /// The shut keys, present iff a `motion` block appeared. The keys
-  /// are absolute, written against this block's own framing: a flag
-  /// that replaces the framing drops them (see `main()`).
-  std::optional<LayoutCameraMotion> motion{};
-  std::optional<float> fovYDeg{};
-  std::optional<float> fStop{};
-  std::optional<float> aperture{};
-  std::optional<float> focus{};
-  std::optional<int> blades{};
-  std::optional<float> bladeAngleDeg{};
-  std::optional<float> distortionK1{};
-  std::optional<float> distortionK2{};
-  std::optional<bool> distortionFit{};
-  std::optional<float> vignetting{};
-  std::optional<float> catEye{};
-  std::optional<float> catEyeRadius{};
-};
-
 /// The environment a layout's `sky` directive describes.
 ///
 /// Everything is optional and merged with the command line the same
@@ -392,23 +350,6 @@ public:
   /// The water droplet diameter in micrometers, which drives the
   /// approximate Mie phase function; see `HazeOptions::dropletSize`.
   std::optional<float> droplet{};
-};
-
-/// The clock a layout's `time` directive sets: where the frame sits in
-/// the host's animation, in seconds, and how long the shutter stays
-/// open. Everything is optional and merged with the command line the
-/// same way `LayoutCamera` works, over the defaults of zero and zero.
-///
-/// The shutter is open iff `shutter` is positive. Shut, every path
-/// renders at `base` exactly, whatever motion the layout carries.
-///
-class LayoutTime final {
-public:
-  /// `base`: `State::animation_time` at shutter open, in seconds.
-  std::optional<float> base{};
-
-  /// `shutter`: the seconds from open to shut, nonnegative.
-  std::optional<float> shutter{};
 };
 
 /// One `asset` declaration: a named source with the properties of what
@@ -684,21 +625,29 @@ public:
   /// The transform the block's operations accumulated.
   float4x4 transform{float4x4(1.0f)};
 
-  /// PLACE: the transform at shutter shut, the `motion { ... }` block's
-  /// operations accumulated from identity exactly as `transform` is, or
-  /// unset for a static placement. Absolute, never a delta: it restates
-  /// the placement the way the open key states it, which is what a
-  /// machine writes. A bulk place's block moves the whole scatter; the
-  /// records carry no keys of their own.
-  std::optional<float4x4> motion{};
+  /// PLACE: the `motion { at <seconds> ... }` track, or empty for a
+  /// static placement. Each key's operations accumulate from identity
+  /// exactly as `transform` does, and the times are absolute readings of
+  /// the render clock rather than ends of a shutter, so what the file
+  /// says does not depend on how the render is exposed.
+  ///
+  /// `transform` composes OUTSIDE the track: the world transform at
+  /// `t` is `transform * motion.at(t)`, so a place states where a thing
+  /// stands and the track states how it moves in its own frame, and a
+  /// track written with no operations on the `place` line is absolute,
+  /// which is what a machine writes. A bulk place's track moves the
+  /// whole scatter; the records carry no keys of their own.
+  MotionTrack motion{};
   LayoutLocation motionLoc{};
 
   /// PLACE: the `offset <seconds>` operation, or unset: seconds this
-  /// placement adds to the render clock of everything it places, on top
-  /// of the asset's own `animation offset` and every enclosing place's,
-  /// so that a crowd of one asset walks out of step. It passes through a
-  /// group or a layout target to the meshes inside; a shape, a groom,
-  /// and a light have no clip to offset and take no notice.
+  /// placement adds to the render clock, on top of the asset's own
+  /// `animation offset` and every enclosing place's, so that a crowd of
+  /// one asset walks out of step. It shifts everything the placement
+  /// reads the clock for: its own `motion` track, the clips of the
+  /// meshes it places, and the same for everything inside a group or a
+  /// layout target. A shape, a groom, and a light have no clip, so on
+  /// one of those it moves the track alone.
   std::optional<float> animationOffset{};
   LayoutLocation animationOffsetLoc{};
 };
@@ -738,17 +687,13 @@ public:
   std::string mediumName{};
   LayoutLocation mediumLoc{};
 
-  /// The camera, sky, haze, and time, with the location of the first
-  /// directive so that lowering a non-entry file can say what it is
-  /// ignoring. An invalid location means the directive never appeared.
-  LayoutCamera camera{};
-  LayoutLocation cameraLoc{};
+  /// The sky and the haze, with the location of the first directive so
+  /// that lowering a non-entry file can say what it is ignoring. An
+  /// invalid location means the directive never appeared.
   LayoutSky sky{};
   LayoutLocation skyLoc{};
   LayoutHaze haze{};
   LayoutLocation hazeLoc{};
-  LayoutTime time{};
-  LayoutLocation timeLoc{};
 
   /// The written `ibl` path and where it was written, resolved by the
   /// lowering rather than the parser, so the parser stays free of the
@@ -861,9 +806,11 @@ public:
   std::string placeName{};
 };
 
-/// A lowered layout: the flat item list, plus the entry file's camera,
-/// sky, haze, time, medium, and aliases. Everything scoped is already folded
-/// into the items; what remains here is exactly what `main()` consumes.
+/// A lowered layout: the flat item list, plus the entry file's sky,
+/// haze, medium, and aliases. Everything scoped is already folded into
+/// the items; what remains here is exactly what the render stages
+/// consume. The camera and the clock are not here: they are a `.camera`
+/// file's, see `CameraFile.h`.
 class Layout final {
 public:
   std::vector<LayoutItem> items{};
@@ -881,9 +828,6 @@ public:
   /// vacuum. See the `medium` directive.
   std::string exteriorMediumName{};
 
-  /// Whatever the entry file's `camera` directives named, merged.
-  LayoutCamera camera{};
-
   /// Whatever the entry file's `sky` directives named, merged.
   LayoutSky sky{};
 
@@ -891,9 +835,6 @@ public:
   /// whether one appeared at all, which is what turns the haze on.
   LayoutHaze haze{};
   bool hasHaze{};
-
-  /// Whatever the entry file's `time` directives named, merged.
-  LayoutTime time{};
 
   /// The `front:` azimuth of the asset manifest the command line named
   /// directly, or unset. Only `resolveLayoutArgument()` fills this in:
@@ -914,11 +855,17 @@ public:
 
 /// Parse `fileName` and recursively lower it, imports and all.
 ///
+/// `sampling` is the two instants of the render clock every `motion`
+/// track is evaluated at, which is why the clock has to be settled
+/// before a layout is read; the default pair is one instant at zero, so
+/// every track lowers static.
+///
 /// Accumulates into `diags` and returns the best effort; the caller
 /// decides when errors are fatal. This is the seam the tests drive.
 [[nodiscard]] Layout lowerLayout(LayoutDiagnostics &diags,
                                  const std::string &fileName,
-                                 const AssetSearchPath &search = {});
+                                 const AssetSearchPath &search = {},
+                                 const MotionSampling &sampling = {});
 
 /// Read a layout file: parse, lower, print every diagnostic to standard
 /// error (colored when stderr is a terminal), and throw if any were
@@ -927,12 +874,15 @@ public:
 /// \throws smdl::Error  On any error, after printing the diagnostics.
 ///
 [[nodiscard]] Layout readLayout(const std::string &fileName,
-                                const AssetSearchPath &search = {});
+                                const AssetSearchPath &search = {},
+                                const MotionSampling &sampling = {});
 
 /// Resolve one command-line scene argument into the items it stands
 /// for: a layout file (by extension or by its `#smdl layout` first
 /// line) yields everything it names, an asset resolves through its
 /// manifest, and anything else is a mesh file placed at the origin. A
 /// `.scene` file is an error naming the retirement.
-[[nodiscard]] Layout resolveLayoutArgument(const std::string &fileName,
-                                           const AssetSearchPath &search = {});
+[[nodiscard]] Layout
+resolveLayoutArgument(const std::string &fileName,
+                      const AssetSearchPath &search = {},
+                      const MotionSampling &sampling = {});

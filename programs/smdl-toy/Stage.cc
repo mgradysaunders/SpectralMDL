@@ -10,6 +10,7 @@
 
 #include "CommandLine.h"
 
+#include "Layout/CameraFile.h"
 #include "Layout/LayoutTables.h"
 #include "Options.h"
 #include "Render/Autolook.h"
@@ -50,11 +51,29 @@ Frame resolveFrame(const Options &opts) {
   auto assetSearchPath{AssetSearchPath()};
   for (const auto &directory : opts.scene.assetDirs)
     assetSearchPath.push_back(smdl::makePathCanonical(directory));
+  // The camera file first: '-camera' if it was given, else the '.camera'
+  // beside the layout. It carries the clock, and the clock has to be
+  // settled before the scene is read, since what a layout's motion means
+  // is the transform at these two instants.
+  const auto cameraFileName{
+      resolveCameraFileName(opts.camera.file, opts.scene.inputSceneFile)};
+  const auto cameraDocument{
+      cameraFileName.empty() ? CameraDocument() : readCamera(cameraFileName)};
+  // The two clocks, merged from the camera file's 'time' directive and
+  // the flags. The parser has already refused a file value that is not
+  // finite or, for the shutter, negative.
+  gRenderShutter.time = pick(opts.shutter.time, cameraDocument.time.base);
+  gRenderShutter.length = pick(opts.shutter.speed, cameraDocument.time.shutter);
+  // What every 'motion' track is evaluated at. A shut shutter lands both
+  // samples on one instant, so every track lowers static and the render
+  // takes the path it takes with no motion at all.
+  const MotionSampling sampling{gRenderShutter.time,
+                                gRenderShutter.secondsAt(1.0f)};
   auto profReadLayout{smdl::profilerEntryBegin("Read layout")};
-  auto layout{
-      resolveLayoutArgument(opts.scene.inputSceneFile, assetSearchPath)};
+  auto layout{resolveLayoutArgument(opts.scene.inputSceneFile, assetSearchPath,
+                                    sampling)};
   for (const auto &fileName : opts.scene.inputMeshFiles) {
-    auto more{resolveLayoutArgument(fileName, assetSearchPath)};
+    auto more{resolveLayoutArgument(fileName, assetSearchPath, sampling)};
     layout.items.insert(layout.items.end(), more.items.begin(),
                         more.items.end());
     layout.lights.insert(layout.lights.end(), more.lights.begin(),
@@ -64,13 +83,14 @@ Frame resolveFrame(const Options &opts) {
   }
   smdl::profilerEntryEnd(profReadLayout);
   // The camera, merged from three sources in increasing order of priority:
-  // the defaults in `CameraOptions`, whatever the layout's 'camera'
+  // the defaults in `CameraOptions`, whatever the camera file's 'camera'
   // directive named, and whatever the command line explicitly gave. A flag
   // that was not given must not override the file, so what decides is the
-  // occurrence count rather than the value. Constructed before anything
-  // slow loads so that the value-dependent validation in the constructor
-  // also fails fast.
-  const auto &fileCamera{layout.camera};
+  // occurrence count rather than the value.
+  // The file's own settings resolved at shutter open, which is where
+  // everything but the framing is read: the renderer varies the framing
+  // within one shutter and holds the rest.
+  const auto fileCamera{cameraDocument.camera.at(gRenderShutter.time)};
   auto cameraOptions{CameraOptions{}};
   cameraOptions.resolution =
       pick(opts.camera.resolution, fileCamera.resolution);
@@ -101,19 +121,14 @@ Frame resolveFrame(const Options &opts) {
   // merged pair can be checked for naming both.
   if (cameraOptions.fStop > 0 && cameraOptions.aperture > 0)
     throw smdl::Error("expected at most one of -fstop and -aperture between "
-                      "the command line and the scene file's 'camera' "
+                      "the command line and the camera file's 'camera' "
                       "directive (they are two spellings of the same "
                       "quantity)");
-  // The two clocks, merged the same way from the layout's 'time'
-  // directive. The parser has already refused a file value that is not
-  // finite or, for the shutter, negative.
-  gRenderShutter.time = pick(opts.shutter.time, layout.time.base);
-  gRenderShutter.length = pick(opts.shutter.speed, layout.time.shutter);
-  // The camera's shut keys. The layout wrote them against its own
-  // framing, so a flag that replaces that framing drops them rather
-  // than moving a camera the file never described; a key the block
-  // leaves unstated holds its open value.
-  if (fileCamera.motion) {
+  // The camera's framing at shutter shut. The keys are absolute readings
+  // of the clock, so a flag that replaces the framing drops the track
+  // rather than moving a camera the file never described.
+  if (!cameraDocument.camera.motion.empty()) {
+    const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
     const char *framingFlag{opts.autolook.enabled        ? "-autolook"
                             : opts.camera.lookFrom.given ? "-look-from"
                             : opts.camera.lookTo.given   ? "-look-to"
@@ -121,23 +136,40 @@ Frame resolveFrame(const Options &opts) {
                                                          : nullptr};
     if (framingFlag) {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
-                    " replaces the framing the layout's 'motion' was "
-                    "written against");
+                    " replaces the framing the camera file's 'motion' "
+                    "was written against");
     } else if (!gRenderShutter.isOpen()) {
       SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
-                    "holds its open framing");
+                    "holds its framing at ", gRenderShutter.time, " s");
     } else {
-      const auto &motion{*fileCamera.motion};
+      const auto shutCamera{cameraDocument.camera.at(shutSeconds)};
       cameraOptions.motion = true;
       cameraOptions.lookFromShut =
-          motion.lookFrom.value_or(cameraOptions.lookFrom);
-      cameraOptions.lookToShut = motion.lookTo.value_or(cameraOptions.lookTo);
-      cameraOptions.lookUpShut = motion.lookUp.value_or(cameraOptions.lookUp);
+          pick(opts.camera.lookFrom, shutCamera.lookFrom);
+      cameraOptions.lookToShut = pick(opts.camera.lookTo, shutCamera.lookTo);
+      cameraOptions.lookUpShut = pick(opts.camera.lookUp, shutCamera.lookUp);
+    }
+    // What the shutter cannot carry: a lens setting the track varies
+    // over the shutter is read once, at open, and held.
+    if (gRenderShutter.isOpen()) {
+      if (const auto held{cameraDocument.camera.heldOverShutter(
+              gRenderShutter.time, shutSeconds)};
+          !held.empty()) {
+        auto names{std::string()};
+        for (const auto &name : held)
+          names += (names.empty() ? "" : ", ") + std::string(name);
+        SMDL_LOG_INFO("Camera motion: ", names,
+                      " vary over the shutter, which only the framing does; "
+                      "they hold the value at shutter open");
+      }
+      if (cameraDocument.camera.hasKeyBetween(gRenderShutter.time,
+                                              shutSeconds))
+        SMDL_LOG_INFO("Camera motion: a key sits inside the shutter, so the "
+                      "camera moves along the chord of its two ends");
     }
   }
-  // The instances' shut keys under a shut shutter are cleared, so
-  // that every placement builds and renders through the static path,
-  // which is what the layout without its 'motion' blocks renders.
+  // What actually moved. A shut shutter needs no clearing: both samples
+  // land on one instant, so every track lowered to one key already.
   {
     size_t numMovingItems{};
     size_t numMovingLights{};
@@ -145,21 +177,9 @@ Frame resolveFrame(const Options &opts) {
       numMovingItems += item.objectToWorldShut || !item.batchXfsShut.empty();
     for (const auto &light : layout.lights)
       numMovingLights += light.lightToWorldShut.has_value();
-    if (numMovingItems + numMovingLights > 0) {
-      if (!gRenderShutter.isOpen()) {
-        for (auto &item : layout.items) {
-          item.objectToWorldShut.reset();
-          item.batchXfsShut.clear();
-        }
-        for (auto &light : layout.lights) light.lightToWorldShut.reset();
-        SMDL_LOG_INFO("Instance motion: the shutter is shut, so ",
-                      numMovingItems, " placement(s) and ", numMovingLights,
-                      " light(s) hold their open keys");
-      } else {
-        SMDL_LOG_INFO("Instance motion: ", numMovingItems, " placement(s) and ",
-                      numMovingLights, " light(s) move over the shutter");
-      }
-    }
+    if (numMovingItems + numMovingLights > 0)
+      SMDL_LOG_INFO("Instance motion: ", numMovingItems, " placement(s) and ",
+                    numMovingLights, " light(s) move over the shutter");
   }
   // Under -autolook the position comes from measuring the committed scene,
   // so construction (with the lens validation and the summary it logs)

@@ -4,12 +4,13 @@
 "
 " The scene layout format that `smdl-toy` reads: `asset` and `light`
 " declarations, reusable `group` arrangements, `place` and `import`
-" statements, and the `material`, `medium`, `camera`, `sky`, `haze`, and
-" `time` directives.
+" statements, and the `material`, `medium`, `sky`, and `haze` directives.
+" The viewpoint, the lens, and the render clock are not here: they live in a
+" `.camera` file, which `camera.vim` covers.
 " This file is derived directly from the parser in
-" `programs/smdl-toy/LayoutParser.cc`, so the words it knows inside a block are
-" exactly the ones that block accepts, and anything else there is flagged the
-" way the parser flags it.
+" `programs/smdl-toy/Layout/LayoutParser.cc`, so the words it knows inside a
+" block are exactly the ones that block accepts, and anything else there is
+" flagged the way the parser flags it.
 "
 " A layout file is identified by `#smdl layout` on its first line. The
 " `.layout` extension is advisory, so detecting the magic catches the rest.
@@ -17,13 +18,15 @@
 " Install (drop-in, single file):
 "
 "   mkdir -p ~/.vim/syntax ~/.vim/ftdetect
-"   cp layout.vim ~/.vim/syntax/layout.vim
+"   cp layout.vim camera.vim ~/.vim/syntax/
 "   echo 'au BufRead,BufNewFile *.layout setf layout' > ~/.vim/ftdetect/layout.vim
+"   echo 'au BufRead,BufNewFile *.camera setf camera' > ~/.vim/ftdetect/camera.vim
 "
 " For Neovim, use ~/.config/nvim/syntax and ~/.config/nvim/ftdetect instead. To
 " catch layout files whatever they are named, detect the magic as well:
 "
 "   au BufRead,BufNewFile * if getline(1) =~# '^#smdl layout\>' | setf layout | endif
+"   au BufRead,BufNewFile * if getline(1) =~# '^#smdl camera\>' | setf camera | endif
 "
 " Options:
 "
@@ -143,12 +146,9 @@ syn keyword layoutStatement import nextgroup=layoutImportPath skipwhite skipempt
 syn match layoutImportPath contained display +"[^"]*"+
       \ nextgroup=layoutImportBlock skipwhite skipempty
 
-" camera { ... }, sky { ... }, haze { ... } and time { ... }, merged per
-" field, last one wins.
-syn keyword layoutStatement camera nextgroup=layoutCameraBlock skipwhite skipempty
+" sky { ... } and haze { ... }, merged per field, last one wins.
 syn keyword layoutStatement sky nextgroup=layoutSkyBlock skipwhite skipempty
 syn keyword layoutStatement haze nextgroup=layoutHazeBlock skipwhite skipempty
-syn keyword layoutStatement time nextgroup=layoutTimeBlock skipwhite skipempty
 
 " medium <material>
 syn keyword layoutStatement medium nextgroup=layoutMaterialName skipwhite skipempty
@@ -206,11 +206,11 @@ syn keyword layoutTransform
       \ translate scale rotate rotate_x rotate_y rotate_z matrix
 syn keyword layoutVariant variant nextgroup=layoutVariantBlock skipwhite skipempty
 
-" motion { ... } on a place: the placement's transform at shutter shut,
-" holding transform operations only. Top level like `variant`, since a
-" one-line place writes it outside any block; the camera's `motion` is the
-" contained setting above, which wins inside the camera block.
+" motion { at <seconds> ... } on a place: a track of keys at absolute times,
+" each holding transform operations only. Top level like `variant`, since a
+" one-line place writes it outside any block.
 syn keyword layoutMotionOp motion nextgroup=layoutMotionBlock skipwhite skipempty
+syn keyword layoutMotionAt contained at
 
 " Asset operations. `radius`, `height`, and `size` belong to a shape,
 " `radius_scale` to a `.curves` file, and the rest to a mesh file.
@@ -246,16 +246,6 @@ syn keyword layoutSubdivMod contained loop linear
 " `radius` are the rect's and the disk's extents.
 syn keyword layoutLightSetting contained power temperature color angle blend scale caustic size radius
 
-syn keyword layoutCameraSetting contained resolution look_from look_to look_up fovy fstop
-syn keyword layoutCameraSetting contained aperture focus blades blade_angle
-syn keyword layoutCameraSetting contained distortion_k1 distortion_k2 distortion_fit
-syn keyword layoutCameraSetting contained vignetting cat_eye cat_eye_radius
-
-" motion { ... } inside camera: the framing at shutter shut.
-syn keyword layoutCameraSetting contained motion
-      \ nextgroup=layoutCameraMotionBlock skipwhite skipempty
-syn keyword layoutCameraMotionSetting contained look_from look_to look_up
-
 syn keyword layoutSkySetting contained none sun_zenith sun_azimuth visibility
 syn keyword layoutSkySetting contained water_vapor scale moon moon_distance
 syn keyword layoutSkySetting contained ibl ibl_scale
@@ -263,9 +253,6 @@ syn keyword layoutSkySetting contained ibl ibl_scale
 " The haze settings.
 syn keyword layoutHazeSetting contained none visibility scale_height
 syn keyword layoutHazeSetting contained base_height albedo angstrom droplet
-
-" The time settings.
-syn keyword layoutTimeSetting contained base shutter
 "--}
 
 "--{ Blocks
@@ -296,27 +283,18 @@ syn region layoutPlaceBlock contained matchgroup=layoutDelim start="{" end="}"
 syn region layoutVariantBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutMaterialOp
 
-" A motion block holds transform operations and nothing else.
+" A motion block holds `at <seconds>` keys and transform operations.
 syn region layoutMotionBlock contained matchgroup=layoutDelim start="{" end="}"
-      \ contains=@layoutCommon,layoutTransform
+      \ contains=@layoutCommon,layoutMotionAt,layoutTransform
 
 syn region layoutImportBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutTransform,layoutMaterialOp,layoutCasterOp
-
-syn region layoutCameraBlock contained matchgroup=layoutDelim start="{" end="}"
-      \ contains=@layoutCommon,layoutCameraSetting
-
-syn region layoutCameraMotionBlock contained matchgroup=layoutDelim start="{" end="}"
-      \ contains=@layoutCommon,layoutCameraMotionSetting
 
 syn region layoutSkyBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutSkySetting
 
 syn region layoutHazeBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutHazeSetting
-
-syn region layoutTimeBlock contained matchgroup=layoutDelim start="{" end="}"
-      \ contains=@layoutCommon,layoutTimeSetting
 "--}
 
 " Blocks nest at most three deep (group, place, variant) and are short, so
@@ -349,17 +327,15 @@ hi def link layoutCausticOp       Keyword
 hi def link layoutCasterOff       Keyword
 hi def link layoutVariant         Keyword
 hi def link layoutMotionOp        Keyword
+hi def link layoutMotionAt        Keyword
 hi def link layoutAnimationOp     Keyword
 hi def link layoutOffsetOp        Keyword
 hi def link layoutAs              Keyword
 
 hi def link layoutAssetSetting    Label
 hi def link layoutLightSetting    Label
-hi def link layoutCameraSetting   Label
-hi def link layoutCameraMotionSetting Label
 hi def link layoutSkySetting      Label
 hi def link layoutHazeSetting     Label
-hi def link layoutTimeSetting     Label
 
 hi def link layoutShape           Constant
 hi def link layoutLightKind       Constant

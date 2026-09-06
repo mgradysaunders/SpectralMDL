@@ -263,10 +263,11 @@ class SMDLLightOptions(bpy.types.PropertyGroup):
 class SMDLRenderSettings(bpy.types.PropertyGroup):
     """Per-scene render settings.
 
-    Everything here except Exposure is written into the exported layout's
-    `camera {}`, `sky {}`, and `haze {}` blocks, and only when it differs
-    from the renderer's default, so an untouched panel exports nothing.
-    Exposure is a tonemapping option the layout does not carry, so it alone
+    Everything here except Exposure is written into an exported block, and
+    only when it differs from the renderer's default, so an untouched
+    panel exports nothing: the lens into the sibling `.camera` file's
+    `camera {}`, the rest into the layout's `sky {}` and `haze {}`.
+    Exposure is a tonemapping option neither file carries, so it alone
     rides the preview command line as `-exposure`.
     """
 

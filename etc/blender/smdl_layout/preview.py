@@ -58,8 +58,9 @@ def build_command(context, renderer, scene_path, output_path, material="",
     fraction = max(scene.smdl_preview_scale, 1) / 100.0
     width = max(int(render.resolution_x * fraction), 1)
     height = max(int(render.resolution_y * fraction), 1)
-    # The layout carries a camera, resolution included, so this overrides
-    # only the size and the framing stays exactly what the export wrote.
+    # The '.camera' beside the layout carries the viewpoint, resolution
+    # included, and the renderer finds it by name, so this overrides only
+    # the size and the framing stays exactly what the export wrote.
     command += ["-resolution", f"{width},{height}",
                 "-spp", str(max(scene.smdl_preview_spp, 1)),
                 "-output-rgb", output_path]

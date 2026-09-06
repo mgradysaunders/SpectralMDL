@@ -297,159 +297,6 @@ light coin = disk { rotate_x 90 }
   CHECK(document.lights[3].transform[1].y == doctest::Approx(0.0f));
 }
 
-TEST_CASE("LayoutParser: the time directive") {
-  LayoutDiagnostics diags{};
-  SUBCASE("Both settings parse, and the location is the first block's") {
-    const auto document{
-        parseOK(diags, "#smdl layout\ntime { base 2.5 shutter 0.02 }\n")};
-    REQUIRE(document.time.base);
-    REQUIRE(document.time.shutter);
-    CHECK(*document.time.base == doctest::Approx(2.5f));
-    CHECK(*document.time.shutter == doctest::Approx(0.02f));
-    REQUIRE(document.timeLoc);
-    CHECK(document.source->lineAndColumn(document.timeLoc.offset).lineNo == 2);
-  }
-  SUBCASE("Absent, both stay unset") {
-    const auto document{parseOK(diags, "#smdl layout\n")};
-    CHECK(!document.time.base);
-    CHECK(!document.time.shutter);
-    CHECK(!document.timeLoc);
-  }
-  SUBCASE("Two blocks merge per field, last one wins") {
-    const auto document{parseOK(diags, "#smdl layout\n"
-                                       "time { base 1 shutter 0.5 }\n"
-                                       "time { base 2 }\n")};
-    CHECK(*document.time.base == doctest::Approx(2.0f));
-    CHECK(*document.time.shutter == doctest::Approx(0.5f));
-  }
-  SUBCASE("A zero shutter is a shut shutter, not an error") {
-    const auto document{parseOK(diags, "#smdl layout\ntime { shutter 0 }\n")};
-    CHECK(*document.time.shutter == 0.0f);
-  }
-  SUBCASE("A negative shutter is an error") {
-    const auto &source{
-        diags.addSource("test.layout", "#smdl layout\ntime { shutter -1 }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find(
-              "nonnegative number for 'shutter'") != std::string::npos);
-  }
-  SUBCASE("A non-numeric base is an error") {
-    const auto &source{
-        diags.addSource("test.layout", "#smdl layout\ntime { base noon }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("expected a number") !=
-          std::string::npos);
-  }
-  SUBCASE("A non-finite base is an error") {
-    const auto &source{
-        diags.addSource("test.layout", "#smdl layout\ntime { base inf }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("finite number for 'base'") !=
-          std::string::npos);
-  }
-  SUBCASE("An unknown setting names the two that exist") {
-    const auto &source{
-        diags.addSource("test.layout", "#smdl layout\ntime { fps 24 }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown time setting") != std::string::npos);
-    CHECK(error.message.find("base or shutter") != std::string::npos);
-  }
-  SUBCASE("The parse resynchronizes at the next statement") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\ntime { shutter -1 }\nsky { none }\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(document.sky.none == true);
-  }
-}
-
-TEST_CASE("LayoutParser: the camera motion block") {
-  LayoutDiagnostics diags{};
-  SUBCASE("Absent, there is no motion") {
-    const auto document{
-        parseOK(diags, "#smdl layout\ncamera { look_from 1 2 3 }\n")};
-    CHECK(!document.camera.motion);
-  }
-  SUBCASE("One key: the others stay unset for the merge to fill") {
-    const auto document{parseOK(
-        diags, "#smdl layout\ncamera { motion { look_to 0 1 0.5 } }\n")};
-    REQUIRE(document.camera.motion);
-    CHECK(!document.camera.motion->lookFrom);
-    REQUIRE(document.camera.motion->lookTo);
-    CHECK(document.camera.motion->lookTo->y == doctest::Approx(1.0f));
-    CHECK(!document.camera.motion->lookUp);
-  }
-  SUBCASE("Two keys") {
-    const auto document{parseOK(diags, "#smdl layout\ncamera {\n"
-                                       "  look_from -6 0 2\n"
-                                       "  motion { look_from -5 0 2 "
-                                       "look_up 0.1 0 1 }\n"
-                                       "}\n")};
-    REQUIRE(document.camera.motion);
-    REQUIRE(document.camera.motion->lookFrom);
-    REQUIRE(document.camera.motion->lookUp);
-    CHECK(document.camera.motion->lookFrom->x == doctest::Approx(-5.0f));
-    CHECK(document.camera.motion->lookUp->x == doctest::Approx(0.1f));
-    CHECK(!document.camera.motion->lookTo);
-    REQUIRE(document.camera.lookFrom);
-    CHECK(document.camera.lookFrom->x == doctest::Approx(-6.0f));
-  }
-  SUBCASE("Three keys") {
-    const auto document{
-        parseOK(diags, "#smdl layout\ncamera { motion { look_from 1 2 3 "
-                       "look_to 4 5 6 look_up 7 8 9 } }\n")};
-    REQUIRE(document.camera.motion);
-    REQUIRE(document.camera.motion->lookFrom);
-    REQUIRE(document.camera.motion->lookTo);
-    REQUIRE(document.camera.motion->lookUp);
-    CHECK(document.camera.motion->lookFrom->z == doctest::Approx(3.0f));
-    CHECK(document.camera.motion->lookTo->z == doctest::Approx(6.0f));
-    CHECK(document.camera.motion->lookUp->z == doctest::Approx(9.0f));
-  }
-  SUBCASE("A repeated block merges per field, last one wins") {
-    const auto document{parseOK(diags,
-                                "#smdl layout\n"
-                                "camera { motion { look_from 1 0 0 "
-                                "look_to 0 1 0 } }\n"
-                                "camera { motion { look_from 2 0 0 } }\n")};
-    REQUIRE(document.camera.motion);
-    CHECK(document.camera.motion->lookFrom->x == doctest::Approx(2.0f));
-    CHECK(document.camera.motion->lookTo->y == doctest::Approx(1.0f));
-  }
-  SUBCASE("An unknown key inside names the three that exist") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\ncamera { motion { fovy 30 } }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown camera motion setting") !=
-          std::string::npos);
-    CHECK(error.message.find("look_from, look_to, or look_up") !=
-          std::string::npos);
-  }
-  SUBCASE("The block needs its brace") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\ncamera { motion look_to 0 0 0 }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("'{' after 'motion'") !=
-          std::string::npos);
-  }
-  SUBCASE("At the top level, motion is still an unknown directive") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\nmotion { look_to 0 0 0 }\n")};
-    (void)parseLayout(diags, source, "/nowhere");
-    REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("unknown directive") !=
-          std::string::npos);
-  }
-}
-
 TEST_CASE("LayoutParser: the motion block on a place") {
   LayoutDiagnostics diags{};
   SUBCASE("Absent, the placement is static") {
@@ -457,21 +304,31 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                                        "asset ball = sphere { material m }\n"
                                        "place ball translate 0 0 3\n")};
     REQUIRE(document.placements.size() == 1);
-    CHECK(!document.placements[0].motion);
+    CHECK(document.placements[0].motion.empty());
     CHECK(!document.placements[0].motionLoc);
   }
-  SUBCASE("The one-line form: the block restates the transform at shut") {
-    const auto document{parseOK(
-        diags, "#smdl layout\n"
-               "asset ball = sphere { material m }\n"
-               "place ball translate 0 0 3 motion { translate 0 0 3.2 }\n")};
+  SUBCASE("The one-line form: keys at absolute times") {
+    const auto document{
+        parseOK(diags, "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball translate 0 0 3 motion { at 0 translate "
+                       "0 0 0 at 0.5 translate 0 0 0.2 }\n")};
     REQUIRE(document.placements.size() == 1);
     const auto &place{document.placements[0]};
     CHECK(place.transform[3].z == doctest::Approx(3.0f));
-    REQUIRE(place.motion);
-    CHECK((*place.motion)[3].x == doctest::Approx(0.0f));
-    CHECK((*place.motion)[3].z == doctest::Approx(3.2f));
+    REQUIRE(place.motion.keys.size() == 2);
+    CHECK(place.motion.keys[0].time == doctest::Approx(0.0f));
+    CHECK(place.motion.keys[1].time == doctest::Approx(0.5f));
+    CHECK(place.motion.keys[1].transform[3].z == doctest::Approx(0.2f));
     CHECK(place.motionLoc);
+    // The place's own operations compose outside the track, so the world
+    // transform rises from z = 3 to z = 3.2 over half a second.
+    const auto worldAt{[&](float t) {
+      return place.transform * place.motion.at(t);
+    }};
+    CHECK(worldAt(0.0f)[3].z == doctest::Approx(3.0f));
+    CHECK(worldAt(0.5f)[3].z == doctest::Approx(3.2f));
+    CHECK(worldAt(0.25f)[3].z == doctest::Approx(3.1f));
   }
   SUBCASE("The block form, beside a rename, with operations in order") {
     const auto document{parseOK(diags,
@@ -480,77 +337,115 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                                 "place rock {\n"
                                 "  material a = b\n"
                                 "  translate 1 0 0\n"
-                                "  motion { translate 2 0 0 rotate_z 90 }\n"
+                                "  motion { at 1 translate 2 0 0 rotate_z 90 }\n"
                                 "}\n")};
     REQUIRE(document.placements.size() == 1);
     const auto &place{document.placements[0]};
     CHECK(place.overrides.size() == 1);
     CHECK(place.transform[3].x == doctest::Approx(1.0f));
-    REQUIRE(place.motion);
-    // The translation, then the turn about the origin, so the placed
+    REQUIRE(place.motion.keys.size() == 1);
+    // The translation, then the turn about the origin, so the key's own
     // origin lands on the y axis.
-    CHECK((*place.motion)[3].x == doctest::Approx(0.0f));
-    CHECK((*place.motion)[3].y == doctest::Approx(2.0f));
+    CHECK(place.motion.keys[0].transform[3].x == doctest::Approx(0.0f));
+    CHECK(place.motion.keys[0].transform[3].y == doctest::Approx(2.0f));
   }
   SUBCASE("A block spanning lines in the one-line form") {
     const auto document{parseOK(diags, "#smdl layout\n"
                                        "asset ball = sphere { material m }\n"
                                        "place ball translate 1 0 0 motion {\n"
-                                       "  translate 2 0 0\n"
+                                       "  at 0 translate 2 0 0\n"
                                        "}\n"
                                        "place ball\n")};
     REQUIRE(document.placements.size() == 2);
-    REQUIRE(document.placements[0].motion);
-    CHECK((*document.placements[0].motion)[3].x == doctest::Approx(2.0f));
-    CHECK(!document.placements[1].motion);
+    REQUIRE(document.placements[0].motion.keys.size() == 1);
+    CHECK(document.placements[0].motion.keys[0].transform[3].x ==
+          doctest::Approx(2.0f));
+    CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("On a group's place and on a bulk place") {
     const auto document{parseOK(
         diags, "#smdl layout\n"
                "asset ball = sphere { material m }\n"
-               "group rig { place ball motion { translate 1 0 0 } }\n"
-               "place ball * \"pair.places\" motion { rotate_z 10 }\n")};
+               "group rig { place ball motion { at 0 translate 1 0 0 } }\n"
+               "place ball * \"pair.places\" motion { at 0 rotate_z 10 }\n")};
     REQUIRE(document.groups.size() == 1);
     REQUIRE(document.groups[0].placements.size() == 1);
-    CHECK(document.groups[0].placements[0].motion);
+    CHECK(!document.groups[0].placements[0].motion.empty());
     REQUIRE(document.placements.size() == 1);
     CHECK(document.placements[0].placesPath == "pair.places");
-    CHECK(document.placements[0].motion);
+    CHECK(!document.placements[0].motion.empty());
+  }
+  SUBCASE("Keys are written in ascending time") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion { at 1 translate 1 0 0 at 0 "
+                       "translate 2 0 0 }\n"
+                       "place ball\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("ascending time") !=
+          std::string::npos);
+  }
+  SUBCASE("An operation before the first key names the spelling") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion { translate 1 0 0 }\n"
+                       "place ball\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK(error.message.find("'at <seconds>' keys") != std::string::npos);
+    REQUIRE(!error.notes.empty());
+  }
+  SUBCASE("An empty block is an error rather than a static placement") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion { }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("at least one") !=
+          std::string::npos);
   }
   SUBCASE("A second block on one place is an error, not a merge") {
     const auto &source{diags.addSource(
         "test.layout", "#smdl layout\n"
                        "asset ball = sphere { material m }\n"
-                       "place ball motion { translate 1 0 0 } motion { "
-                       "translate 2 0 0 }\n"
+                       "place ball motion { at 0 translate 1 0 0 } motion { "
+                       "at 1 translate 2 0 0 }\n"
                        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("'motion' appears twice") !=
           std::string::npos);
     REQUIRE(document.placements.size() == 2);
-    REQUIRE(document.placements[0].motion);
-    CHECK((*document.placements[0].motion)[3].x == doctest::Approx(1.0f));
-    CHECK(!document.placements[1].motion);
+    REQUIRE(document.placements[0].motion.keys.size() == 1);
+    CHECK(document.placements[0].motion.keys[0].transform[3].x ==
+          doctest::Approx(1.0f));
+    CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("On an import it is an error") {
     const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\n"
-                       "import \"rock.obj\" { motion { translate 1 0 0 } }\n"
-                       "asset ball = sphere { material m }\n"
-                       "place ball\n")};
+        "test.layout",
+        "#smdl layout\n"
+        "import \"rock.obj\" { motion { at 0 translate 1 0 0 } }\n"
+        "asset ball = sphere { material m }\n"
+        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("place operation") !=
           std::string::npos);
     CHECK(document.placements.size() == 2);
   }
-  SUBCASE("Only transform operations are admitted inside") {
-    const auto &source{diags.addSource("test.layout",
-                                       "#smdl layout\n"
-                                       "asset ball = sphere { material m }\n"
-                                       "place ball motion { material a = b }\n"
-                                       "place ball\n")};
+  SUBCASE("Only transform operations are admitted inside a key") {
+    const auto &source{
+        diags.addSource("test.layout",
+                        "#smdl layout\n"
+                        "asset ball = sphere { material m }\n"
+                        "place ball motion { at 0 material a = b }\n"
+                        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
@@ -558,13 +453,13 @@ TEST_CASE("LayoutParser: the motion block on a place") {
           std::string::npos);
     CHECK(error.message.find("rotate_z, or matrix") != std::string::npos);
     REQUIRE(document.placements.size() == 2);
-    CHECK(!document.placements[1].motion);
+    CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("The block needs its brace") {
     const auto &source{diags.addSource("test.layout",
                                        "#smdl layout\n"
                                        "asset ball = sphere { material m }\n"
-                                       "place ball motion translate 1 0 0\n"
+                                       "place ball motion at 0 translate 1 0 0\n"
                                        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);

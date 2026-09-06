@@ -45,9 +45,12 @@ public:
   fs::path root{fs::temp_directory_path() / "smdl-toy-layout-test"};
 };
 
-// Lower the entry file and require no errors.
-static Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName) {
-  auto layout{lowerLayout(diags, fileName)};
+// Lower the entry file and require no errors. `sampling` is the two
+// instants the file's `motion` tracks are read at; the default pair is
+// one instant, which lowers every track static.
+static Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName,
+                      const MotionSampling &sampling = {}) {
+  auto layout{lowerLayout(diags, fileName, {}, sampling)};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
   return layout;
@@ -298,39 +301,24 @@ TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
   CHECK(light.lightToWorld[3].z == doctest::Approx(5.0f));
 }
 
-TEST_CASE("Layout lowering: only the entry file's time takes effect") {
+TEST_CASE("Layout lowering: a camera directive names where it belongs") {
   LayoutDir dir{};
-  dir.write("inner.layout", "#smdl layout\n"
-                            "time { base 9 shutter 1 }\n"
-                            "asset ball = sphere { material m }\n"
-                            "place ball\n");
-  SUBCASE("An imported layout's time warns and is ignored") {
-    const auto entry{dir.write("entry.layout", "#smdl layout\n"
-                                               "time { base 2.5 }\n"
-                                               "import \"inner.layout\"\n")};
-    LayoutDiagnostics diags{};
-    const auto layout{lowerOK(diags, entry)};
-    REQUIRE(layout.items.size() == 1);
-    REQUIRE(layout.time.base);
-    CHECK(*layout.time.base == doctest::Approx(2.5f));
-    CHECK(!layout.time.shutter);
-    CHECK(diags.warningCount() == 1);
-    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::WARNING,
-                        "'time' of an imported layout is ignored"));
-  }
-  SUBCASE("An entry without the directive leaves both unset") {
-    const auto entry{dir.write("entry.layout", "#smdl layout\n"
-                                               "asset ball = sphere { "
-                                               "material m }\n"
-                                               "place ball\n")};
-    LayoutDiagnostics diags{};
-    const auto layout{lowerOK(diags, entry)};
-    CHECK(!layout.time.base);
-    CHECK(!layout.time.shutter);
-  }
+  const auto entry{dir.write("entry.layout", "#smdl layout\n"
+                                             "camera { fovy 30 }\n"
+                                             "asset ball = sphere { "
+                                             "material m }\n"
+                                             "place ball\n")};
+  LayoutDiagnostics diags{};
+  (void)lowerLayout(diags, entry);
+  REQUIRE(diags.errorCount() == 1);
+  const auto &error{diags.all().front()};
+  CHECK(error.message.find("unknown directive") != std::string::npos);
+  REQUIRE(!error.notes.empty());
+  CHECK(error.notes.front().message.find("'.camera' file") !=
+        std::string::npos);
 }
 
-TEST_CASE("Layout lowering: motion composes pairwise") {
+TEST_CASE("Layout lowering: motion tracks compose pairwise") {
   LayoutDir dir{};
   dir.write("sub.layout", "#smdl layout\n"
                           "asset inner = sphere { material m }\n"
@@ -347,6 +335,8 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
                          translate(0.0f, 2.0f, 0.0f)};
     writePlacesFile((dir.root / "pair.places").string(), places);
   }
+  // The keys are absolute readings of the clock, and the shutter below
+  // spans exactly the second they span, so each sample lands on a key.
   const auto entry{dir.write(
       "entry.layout",
       "#smdl layout\n"
@@ -355,19 +345,21 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
       "asset sub = \"sub.layout\"\n"
       "group rig {\n"
       "  place ball translate 1 0 0\n"
-      "  place ball translate 2 0 0 motion { translate 2 0 0 rotate_z 90 }\n"
-      "  place lamp translate 0 0 5\n"
+      "  place ball motion { at 0 translate 2 0 0 "
+      "at 1 translate 2 0 0 rotate_z 90 }\n"
       "}\n"
-      "place ball\n"                                              // 0
-      "place ball translate 5 0 0 motion { translate 6 0 0 }\n"   // 1
-      "place ball translate 5 0 0 motion { translate 5 0 0 }\n"   // 2
-      "place rig translate 10 0 0 motion { translate 11 0 0 }\n"  // 3, 4
-      "place sub translate 20 0 0 motion { translate 21 0 0 }\n"  // 5
-      "place ball * \"pair.places\" motion { translate 0 0 1 }\n" // 6
-      "place ball * \"pair.places\"\n"                            // 7
-      )};
+      "group lit { place lamp translate 0 0 5 }\n"
+      "place ball\n" // 0
+      "place ball motion { at 0 translate 5 0 0 at 1 translate 6 0 0 }\n" // 1
+      "place ball motion { at 0 translate 5 0 0 at 1 translate 5 0 0 }\n" // 2
+      "place rig motion { at 0 translate 10 0 0 at 1 translate 11 0 0 }\n"
+      "place sub motion { at 0 translate 20 0 0 at 1 translate 21 0 0 }\n"
+      "place ball * \"pair.places\" motion { at 0 translate 0 0 0 "
+      "at 1 translate 0 0 1 }\n"
+      "place ball * \"pair.places\"\n"
+      "place lit motion { at 0 translate 10 0 0 at 1 translate 11 0 0 }\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry)};
+  const auto layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
   CHECK(diags.empty());
   REQUIRE(layout.items.size() == 8);
   const auto translationOf{[](const float4x4 &xf) { return float3(xf[3]); }};
@@ -378,11 +370,11 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
   // 0: static, the asset's correction alone.
   CHECK(near(translationOf(layout.items[0].objectToWorld), 0, 0, 1));
   CHECK(!layout.items[0].objectToWorldShut);
-  // 1: the block's shut key over the correction.
+  // 1: the track's two keys over the correction.
   CHECK(near(translationOf(layout.items[1].objectToWorld), 5, 0, 1));
   REQUIRE(layout.items[1].objectToWorldShut);
   CHECK(near(translationOf(*layout.items[1].objectToWorldShut), 6, 0, 1));
-  // 2: a block restating the open key lowers static.
+  // 2: a track whose keys restate one transform lowers static.
   CHECK(near(translationOf(layout.items[2].objectToWorld), 5, 0, 1));
   CHECK(!layout.items[2].objectToWorldShut);
   // 3: a static member moves rigidly with its group.
@@ -390,7 +382,7 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
   REQUIRE(layout.items[3].objectToWorldShut);
   CHECK(near(translationOf(*layout.items[3].objectToWorldShut), 12, 0, 1));
   // 4: a moving member composes its shut key under the group's: the
-  // correction, then the member's translate and turn, then the group's.
+  // correction, then the member's own key, then the group's.
   CHECK(near(translationOf(layout.items[4].objectToWorld), 12, 0, 1));
   REQUIRE(layout.items[4].objectToWorldShut);
   CHECK(near(translationOf(*layout.items[4].objectToWorldShut), 11, 2, 1));
@@ -399,7 +391,7 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
   CHECK(near(translationOf(layout.items[5].objectToWorld), 20, 0, 1));
   REQUIRE(layout.items[5].objectToWorldShut);
   CHECK(near(translationOf(*layout.items[5].objectToWorldShut), 21, 0, 1));
-  // 6: a bulk place's block moves every record; 7: a static scatter
+  // 6: a bulk place's track moves every record; 7: a static scatter
   // carries no shut keys.
   REQUIRE(layout.items[6].batchXfs.size() == 2);
   REQUIRE(layout.items[6].batchXfsShut.size() == 2);
@@ -408,11 +400,102 @@ TEST_CASE("Layout lowering: motion composes pairwise") {
   REQUIRE(layout.items[7].batchXfs.size() == 2);
   CHECK(layout.items[7].batchXfsShut.empty());
   CHECK(near(translationOf(layout.items[7].batchXfs[0]), 0, 1, 1));
-  // The group's light moves with it.
+  // A light placed through a moving group moves with it.
   REQUIRE(layout.lights.size() == 1);
   CHECK(near(translationOf(layout.lights[0].lightToWorld), 10, 0, 5));
   REQUIRE(layout.lights[0].lightToWorldShut);
   CHECK(near(translationOf(*layout.lights[0].lightToWorldShut), 11, 0, 5));
+}
+
+TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
+  LayoutDir dir{};
+  const auto entry{dir.write(
+      "entry.layout",
+      "#smdl layout\n"
+      "asset ball = sphere { material m }\n"
+      "place ball motion { at 1 translate 0 0 0 at 3 translate 20 0 0 }\n")};
+  const auto xOf{[&](const MotionSampling &sampling, bool shut = false) {
+    LayoutDiagnostics diags{};
+    const auto layout{lowerOK(diags, entry, sampling)};
+    REQUIRE(layout.items.size() == 1);
+    const auto &item{layout.items[0]};
+    if (!shut) return item.objectToWorld[3].x;
+    REQUIRE(item.objectToWorldShut);
+    return (*item.objectToWorldShut)[3].x;
+  }};
+  SUBCASE("The same file renders a different instant at a different time") {
+    CHECK(xOf(MotionSampling(1.0f, 1.0f)) == doctest::Approx(0.0f));
+    CHECK(xOf(MotionSampling(2.0f, 2.0f)) == doctest::Approx(10.0f));
+    CHECK(xOf(MotionSampling(3.0f, 3.0f)) == doctest::Approx(20.0f));
+  }
+  SUBCASE("Outside the keys the track clamps") {
+    CHECK(xOf(MotionSampling(-9.0f, -9.0f)) == doctest::Approx(0.0f));
+    CHECK(xOf(MotionSampling(99.0f, 99.0f)) == doctest::Approx(20.0f));
+  }
+  SUBCASE("A shut shutter lowers static however the track moves") {
+    LayoutDiagnostics diags{};
+    const auto layout{lowerOK(diags, entry, MotionSampling(2.0f, 2.0f))};
+    REQUIRE(layout.items.size() == 1);
+    CHECK(!layout.items[0].objectToWorldShut);
+  }
+  SUBCASE("An open shutter takes the two instants it spans") {
+    CHECK(xOf(MotionSampling(1.5f, 2.5f)) == doctest::Approx(5.0f));
+    CHECK(xOf(MotionSampling(1.5f, 2.5f), true) == doctest::Approx(15.0f));
+  }
+  SUBCASE("A key inside the shutter is reported") {
+    LayoutDiagnostics diags{};
+    (void)lowerOK(diags, entry, MotionSampling(0.0f, 4.0f));
+    CHECK(diags.warningCount() == 1);
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::WARNING,
+                        "sits inside the shutter"));
+  }
+}
+
+TEST_CASE("Layout lowering: a place's operations compose outside its track") {
+  LayoutDir dir{};
+  const auto entry{dir.write(
+      "entry.layout", "#smdl layout\n"
+                      "asset ball = sphere { material m }\n"
+                      "place ball translate 0 0 7 motion { at 0 translate "
+                      "0 0 0 at 1 translate 4 0 0 }\n")};
+  LayoutDiagnostics diags{};
+  const auto layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
+  REQUIRE(layout.items.size() == 1);
+  const auto &item{layout.items[0]};
+  // Standing at z = 7 and sliding along x in its own frame.
+  CHECK(item.objectToWorld[3].x == doctest::Approx(0.0f));
+  CHECK(item.objectToWorld[3].z == doctest::Approx(7.0f));
+  REQUIRE(item.objectToWorldShut);
+  CHECK((*item.objectToWorldShut)[3].x == doctest::Approx(4.0f));
+  CHECK((*item.objectToWorldShut)[3].z == doctest::Approx(7.0f));
+}
+
+TEST_CASE("Layout lowering: an offset shifts the clock a track is read on") {
+  LayoutDir dir{};
+  dir.write("member.layout", "#smdl layout\n"
+                             "asset ball = sphere { material m }\n"
+                             "place ball motion { at 0 translate 0 0 0 "
+                             "at 4 translate 40 0 0 }\n");
+  const auto entry{dir.write(
+      "entry.layout", "#smdl layout\n"
+                      "asset sub = \"member.layout\"\n"
+                      "asset ball = sphere { material m }\n"
+                      "place sub\n"
+                      "place sub offset 2\n"
+                      "place ball motion { at 0 translate 0 0 0 "
+                      "at 4 translate 40 0 0 }\n"
+                      "place ball offset 2 motion { at 0 translate 0 0 0 "
+                      "at 4 translate 40 0 0 }\n")};
+  LayoutDiagnostics diags{};
+  const auto layout{lowerOK(diags, entry, MotionSampling(1.0f, 1.0f))};
+  REQUIRE(layout.items.size() == 4);
+  // An enclosing place's offset reaches the track inside it, and a
+  // placement's own offset reaches its own track: both stand where the
+  // unshifted one will stand two seconds from now.
+  CHECK(layout.items[0].objectToWorld[3].x == doctest::Approx(10.0f));
+  CHECK(layout.items[1].objectToWorld[3].x == doctest::Approx(30.0f));
+  CHECK(layout.items[2].objectToWorld[3].x == doctest::Approx(10.0f));
+  CHECK(layout.items[3].objectToWorld[3].x == doctest::Approx(30.0f));
 }
 
 TEST_CASE("Layout lowering: the animation spec reaches the item with the "

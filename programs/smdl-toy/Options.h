@@ -89,7 +89,7 @@ struct SceneOptions final {
   bool noRobustIntersection{};
 };
 
-/// The shutter, which the layout's `time` directive also sets.
+/// The shutter, which the camera file's `time` directive also sets.
 struct ShutterFlags final {
   Flag<float> time{};
 
@@ -119,9 +119,12 @@ struct GuideOptions final {
   float split{};
 };
 
-/// The camera, every setting of which the layout's `camera` directive
-/// may also give.
+/// The camera, every setting of which the camera file's `camera`
+/// directive may also give.
 struct CameraFlags final {
+  /// The '.camera' file, or empty to take the one beside the layout.
+  std::string file{};
+
   Flag<int2> resolution{};
 
   Flag<int4> cropWindow{};

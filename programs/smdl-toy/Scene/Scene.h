@@ -350,14 +350,10 @@ public:
 };
 
 /// The quaternion form of a placement key, for Embree to interpolate:
-/// `p' = T R S p`, with `S` upper triangular (the scales, the skews, and
-/// a zero shift), `R` a proper rotation, and `T` the translation. One
-/// fixed procedure, a Gram-Schmidt over the columns in the order x, y,
-/// z with the third axis by cross product, so that both keys of a pair
-/// decompose into comparable rotations and like-named skews, and a
-/// mirrored key comes out as a negative `scale_z` rather than an
-/// improper rotation. `R S` reproduces the linear part exactly; only
-/// the rotation-to-quaternion step rounds.
+/// `decomposeTransform()` in Embree's own spelling, with the shift left
+/// zero. Sharing that one procedure is what makes a `motion` track's
+/// keys and the shutter Embree spans between two of them agree about
+/// what interpolation means.
 [[nodiscard]] RTCQuaternionDecomposition
 quaternionDecompositionOf(const float4x4 &xf) noexcept;
 

@@ -31,6 +31,12 @@ cl::list<std::string> optInputMDLFiles{cl::Positional, cl::desc("<input mdl>"),
 
 cl::OptionCategory catCamera{"Camera Options"};
 //--{ Camera Options
+cl::opt<std::string> optCameraFile{
+    "camera",
+    cl::desc("The '.camera' file holding the viewpoint, the lens, and the "
+             "clock (default: the '.camera' beside the input layout, if "
+             "there is one)"),
+    cl::cat(catCamera)};
 cl::opt<float3> optLookFrom{
     "look-from", cl::desc("The position to look from (default: -6,0,2)"),
     cl::init(float3{-6, 0, 2}), cl::cat(catCamera)};
@@ -175,7 +181,8 @@ cl::opt<std::string> optResume{
     cl::cat(catImage)};
 cl::opt<std::string> optTonemap{
     "tonemap",
-    cl::desc(R"(The tonemap for 8-bit output as stages joined by '+', e.g., 'filmic+fusion', 'night+log:6', 'filmic+fusion:0.5,2' (default: gamma)
+    cl::desc(
+        R"(The tonemap for 8-bit output as stages joined by '+', e.g., 'filmic+fusion', 'night+log:6', 'filmic+fusion:0.5,2' (default: gamma)
 * 'gamma' clamps and gamma-encodes
 * 'log:DECADES' maps the decades below the exposure-scaled white point (default: 4)
 * 'filmic' rolls highlights off toward white instead of clipping them
@@ -650,6 +657,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.guide.bsdfFraction = flag(optGuideBSDFFraction);
   opts.guide.split = float(optGuideSplit);
 
+  opts.camera.file = std::string(optCameraFile);
   opts.camera.resolution = flag(optResolution);
   opts.camera.cropWindow = flag(optCropWindow);
   opts.camera.lookFrom = flag(optLookFrom);
