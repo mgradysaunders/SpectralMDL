@@ -52,6 +52,12 @@ static cl::opt<std::string> optGroundMaterial{
     cl::desc("With -ground, the MDL material for the ground plane (default: 10 "
              "percent gray)"),
     cl::cat(catScene)};
+static cl::opt<std::string> optFallbackMaterial{
+    "fallback-material",
+    cl::desc("The MDL material for names the scene does not resolve "
+             "(default: none, an error)\n"
+             "* 'default_object' is built in, a plain 20 percent Lambertian"),
+    cl::cat(catScene)};
 //--}
 //--{ CLI: Utility Options
 static cl::OptionCategory catUtility{"Utility Options"};
@@ -102,6 +108,16 @@ static cl::opt<std::string> optProfile{
 //--}
 //--{ CLI: Rendering Options
 static cl::OptionCategory catRendering{"Rendering Options"};
+static cl::opt<int2> optResolution{
+    "resolution",
+    cl::desc("The image dimensions in pixels (default: 1280,720)"),
+    cl::init(int2{1280, 720}), cl::cat(catRendering)};
+static cl::opt<int4> optCropWindow{
+    "crop-window",
+    cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
+             "frame, given as x0,y0,x1,y1 (default: the whole frame)\n"
+             "* the output keeps the full size with the rest black"),
+    cl::init(int4{0, 0, 0, 0}), cl::cat(catRendering)};
 static cl::opt<unsigned> optSPP{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catRendering)};
@@ -221,25 +237,26 @@ static cl::opt<bool> optNoRobustIntersection{
     cl::desc("Trace against the faster ray-triangle test instead of the "
              "watertight one"),
     cl::init(false), cl::cat(catRendering)};
-static cl::opt<std::string> optFallbackMaterial{
-    "fallback-material",
-    cl::desc("The MDL material for names the scene does not resolve "
-             "(default: none, an error)\n"
-             "* 'default_object' is built in, a plain 20 percent Lambertian"),
+static cl::opt<std::string> optWavelengthRange{
+    "wavelength-range",
+    cl::desc("Uniform wavelengths spanning A to B nm with N bands, "
+             "format 'A,B:N' where ':N' is optional (default: 380,720:16)"),
     cl::cat(catRendering)};
+static cl::opt<std::string> optWavelengths{
+    "wavelengths",
+    cl::desc("Explicit wavelengths in nm, comma-separated or a text file of "
+             "whitespace-separated values (mutually exclusive with "
+             "-wavelength-range)"),
+    cl::cat(catRendering)};
+static cl::opt<bool> optWavelengthJitter{
+    "wavelength-jitter",
+    cl::desc("Jitter each wavelength to estimate the mean radiance over the "
+             "band rather than the radiance at one wavelength\n"
+             "* the outermost bands reach half a band past the grid ends"),
+    cl::init(false), cl::cat(catRendering)};
 //--}
 //--{ CLI: Camera Options
 static cl::OptionCategory catCamera{"Camera Options"};
-static cl::opt<int2> optResolution{
-    "resolution",
-    cl::desc("The image dimensions in pixels (default: 1280,720)"),
-    cl::init(int2{1280, 720}), cl::cat(catCamera)};
-static cl::opt<int4> optCropWindow{
-    "crop-window",
-    cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
-             "frame, given as x0,y0,x1,y1 (default: the whole frame)\n"
-             "* the output keeps the full size with the rest black"),
-    cl::init(int4{0, 0, 0, 0}), cl::cat(catCamera)};
 static cl::opt<float3> optLookFrom{
     "look-from", cl::desc("The position to look from (default: -6,0,2)"),
     cl::init(float3{-6, 0, 2}), cl::cat(catCamera)};
@@ -252,24 +269,6 @@ static cl::opt<float3> optLookUp{"look-up",
 static cl::opt<float> optFOV{
     "fovy", cl::desc("The vertical FOV in degrees (default: 37.8)"),
     cl::init(37.8f), cl::cat(catCamera)};
-static cl::opt<std::string> optWavelengthRange{
-    "wavelength-range",
-    cl::desc("Uniform wavelengths spanning A to B nm with N bands, "
-             "format 'A,B:N' where ':N' is optional (default: 380,720:16)"),
-    cl::cat(catCamera)};
-static cl::opt<std::string> optWavelengths{
-    "wavelengths",
-    cl::desc("Explicit wavelengths in nm, comma-separated or a text file of "
-             "whitespace-separated values (mutually exclusive with "
-             "-wavelength-range)"),
-    cl::cat(catCamera)};
-static cl::opt<bool> optWavelengthJitter{
-    "wavelength-jitter",
-    cl::desc("Jitter each wavelength within its band, to "
-             "estimate the mean radiance over the band rather than the "
-             "radiance at one wavelength\n"
-             "* the outermost bands reach half a band past the grid ends"),
-    cl::init(false), cl::cat(catCamera)};
 static cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -298,66 +297,63 @@ static cl::opt<bool> optAutolookIgnoreBackfaces{
     cl::desc("With -autolook, neither avoid nor warn about views of backfacing "
              "geometry"),
     cl::init(false), cl::cat(catCamera)};
-//--}
-//--{ CLI: Camera-Lens Options
-static cl::OptionCategory catCameraLens{"Camera-Lens Options"};
 static cl::opt<float> optShutterSpeed{
     "shutter-speed",
     cl::desc("The seconds the shutter stays open, overriding the layout's "
              "'time' directive (default: 0, shut)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optAperture{
     "aperture",
     cl::desc("Enable DOF by aperture radius in scene units (mutually exclusive "
              "with -fstop)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optFocus{
     "focus",
     cl::desc("The focus distance along the view axis in scene units (default: "
              "distance between -look-from and -look-to)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<int> optBlades{
     "blades",
     cl::desc("The number of aperture blades (default: 0, a round lens)"),
-    cl::init(0), cl::cat(catCameraLens)};
+    cl::init(0), cl::cat(catCamera)};
 static cl::opt<float> optBladeAngle{
     "blade-angle",
     cl::desc("With -blades, the rotation of the aperture polygon in "
              "degrees (default: 0, vertex at screen right)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optDistortionK1{
     "distortion-k1",
     cl::desc("The radial distortion, in relative corner displacement (barrel "
              ">0, pincushion <0, default: 0)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optDistortionK2{
     "distortion-k2",
     cl::desc("The quartic term of radial distortion, same units as "
              "-distortion-k1 (default: 0)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<bool> optDistortionFit{
     "distortion-fit",
     cl::desc("Refit so frame corner directions hold constant under distortion"),
-    cl::init(false), cl::cat(catCameraLens)};
+    cl::init(false), cl::cat(catCamera)};
 static cl::opt<float> optVignetting{
     "vignetting",
     cl::desc("The strength of cos^4 falloff (default: 0 is off, 1 is the "
              "physical law)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optCatEye{
     "cat-eye",
     cl::desc(
         "With -fstop or -aperture, mechanical vignette from the lens barrel\n"
         "* corner displacement in rim radii (0 is off, 1 is fully dark)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 static cl::opt<float> optCatEyeRadius{
     "cat-eye-radius",
     cl::desc("With -cat-eye, the barrel rim radius in scene units (default: "
              "the aperture radius, i.e., wide-open)"),
-    cl::init(0.0f), cl::cat(catCameraLens)};
+    cl::init(0.0f), cl::cat(catCamera)};
 //--}
 //--{ CLI: Light Options
 static cl::OptionCategory catLight{"Light Options"};
@@ -420,60 +416,6 @@ static cl::opt<float> optIBLScale{
     "ibl-scale", cl::desc("With -ibl, the IBL scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
 //--}
-//--{ CLI: Tonemapping Options
-static cl::OptionCategory catTonemap{"Tonemapping Options"};
-static cl::opt<float> optImageExposure{
-    "exposure",
-    cl::desc("The exposure applied before tone mapping (default: 1)"),
-    cl::init(1.0f), cl::cat(catTonemap)};
-static cl::opt<std::string> optTonemap{
-    "tonemap", cl::desc(R"(Tone mapping for 8-bit output (default: linear)
-* 'linear' passes the radiance through to the display curve
-* 'log' is shorthand for '-tonemap linear -curve log'
-* 'night' models human vision at absolute luminance and auto-exposes,
-  for physically dim scenes like moonlight)"),
-    cl::init(std::string("linear")), cl::cat(catTonemap)};
-static cl::opt<float> optTonemapDecades{
-    "tonemap-decades",
-    cl::desc("With -curve=log, how many decades below white reach "
-             "black (default: 4)"),
-    cl::init(4.0f), cl::cat(catTonemap)};
-static cl::opt<std::string> optCurve{
-    "curve", cl::desc(R"(The display curve for 8-bit output (default: gamma)
-* 'gamma' clamps and gamma-encodes
-* 'log' maps decades below the exposure-scaled white point
-* 'filmic' rolls highlights off toward white instead of clipping them)"),
-    cl::init(std::string("gamma")), cl::cat(catTonemap)};
-static cl::opt<std::string> optLocal{
-    "local", cl::desc(R"(Local tone mapping for 8-bit output (default: off)
-* 'fusion' by Laplacian pyramid; also auto-exposes, leaving -exposure a relative adjustment)"),
-    cl::init(std::string("off")), cl::cat(catTonemap)};
-static cl::opt<float> optLocalStrength{
-    "local-strength",
-    cl::desc(
-        "With -local, how much local exposure to keep, 0 to 1 (default: 0.75)"),
-    cl::init(0.75f), cl::cat(catTonemap)};
-static cl::opt<float> optLocalRange{
-    "local-range",
-    cl::desc("With -local, the total bracket in EV (default: 0 means infer)"),
-    cl::init(0.0f), cl::cat(catTonemap)};
-static cl::opt<float> optLocalClamp{
-    "local-clamp",
-    cl::desc("With -local, the largest local exposure deviation in EV "
-             "(default: 3)"),
-    cl::init(3.0f), cl::cat(catTonemap)};
-static cl::opt<bool> optFalseColor{
-    "false-color",
-    cl::desc("Force false color band mapping for the RGB outputs\n"
-             "* engages automatically when wavelength grid does not cover the "
-             "visible"),
-    cl::init(false), cl::cat(catTonemap)};
-static cl::opt<float3> optRGBWaves{
-    "rgb-wavelengths",
-    cl::desc("With -false-color, the wavelengths in nm mapped to R,G,B "
-             "(default: 5/6, 1/2, and 1/6 of the grid span, long to red)"),
-    cl::init(float3{}), cl::cat(catTonemap)};
-//--}
 //--{ CLI: Output Options
 static cl::OptionCategory catOutput{"Output Options"};
 static cl::opt<std::string> optOutputRGB{
@@ -493,6 +435,57 @@ static cl::opt<std::string> optResume{
     cl::desc("Resume accumulating from this ENVI file written by a previous "
              "-output-spectrum"),
     cl::cat(catOutput)};
+static cl::opt<float> optImageExposure{
+    "exposure",
+    cl::desc("The exposure applied before tone mapping (default: 1)"),
+    cl::init(1.0f), cl::cat(catOutput)};
+static cl::opt<std::string> optTonemap{
+    "tonemap", cl::desc(R"(Tone mapping for 8-bit output (default: linear)
+* 'linear' passes the radiance through to the display curve
+* 'log' is shorthand for '-tonemap linear -curve log'
+* 'night' models human vision at absolute luminance and auto-exposes,
+  for physically dim scenes like moonlight)"),
+    cl::init(std::string("linear")), cl::cat(catOutput)};
+static cl::opt<float> optTonemapDecades{
+    "tonemap-decades",
+    cl::desc("With -curve=log, how many decades below white reach "
+             "black (default: 4)"),
+    cl::init(4.0f), cl::cat(catOutput)};
+static cl::opt<std::string> optCurve{
+    "curve", cl::desc(R"(The display curve for 8-bit output (default: gamma)
+* 'gamma' clamps and gamma-encodes
+* 'log' maps decades below the exposure-scaled white point
+* 'filmic' rolls highlights off toward white instead of clipping them)"),
+    cl::init(std::string("gamma")), cl::cat(catOutput)};
+static cl::opt<std::string> optLocal{
+    "local", cl::desc(R"(Local tone mapping for 8-bit output (default: off)
+* 'fusion' by Laplacian pyramid; also auto-exposes, leaving -exposure a relative adjustment)"),
+    cl::init(std::string("off")), cl::cat(catOutput)};
+static cl::opt<float> optLocalStrength{
+    "local-strength",
+    cl::desc(
+        "With -local, how much local exposure to keep, 0 to 1 (default: 0.75)"),
+    cl::init(0.75f), cl::cat(catOutput)};
+static cl::opt<float> optLocalRange{
+    "local-range",
+    cl::desc("With -local, the total bracket in EV (default: 0 means infer)"),
+    cl::init(0.0f), cl::cat(catOutput)};
+static cl::opt<float> optLocalClamp{
+    "local-clamp",
+    cl::desc("With -local, the largest local exposure deviation in EV "
+             "(default: 3)"),
+    cl::init(3.0f), cl::cat(catOutput)};
+static cl::opt<bool> optFalseColor{
+    "false-color",
+    cl::desc("Force false color band mapping for the RGB outputs\n"
+             "* engages automatically when wavelength grid does not cover the "
+             "visible"),
+    cl::init(false), cl::cat(catOutput)};
+static cl::opt<float3> optRGBWaves{
+    "rgb-wavelengths",
+    cl::desc("With -false-color, the wavelengths in nm mapped to R,G,B "
+             "(default: 5/6, 1/2, and 1/6 of the grid span, long to red)"),
+    cl::init(float3{}), cl::cat(catOutput)};
 //--}
 namespace {
 
@@ -598,8 +591,7 @@ Options parseCommandLine(int argc, char **argv) {
     os << info.toString();
   });
   cl::HideUnrelatedOptions({&catScene, &catUtility, &catRendering, &catCamera,
-                            &catCameraLens, &catLight, &catTonemap,
-                            &catOutput});
+                            &catLight, &catOutput});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
   // Honors '-print-options' and '-print-all-options', which LLVM
   // registers but leaves to the tool to act on; it prints nothing unless
