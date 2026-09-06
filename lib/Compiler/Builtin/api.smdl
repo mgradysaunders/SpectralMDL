@@ -354,10 +354,8 @@ export struct texture_2d {
   /// Each tile buffer holds its entire mip chain contiguously, level 0
   /// first, with each level tightly packed in row-major order, so
   /// level `l` starts at the texel offset given by summing the texel
-  /// counts of levels `0` through `l - 1`. The offsets are recomputed
-  /// from the tile extent at lookup time (see `tex.smdl`) rather than
-  /// stored here, which keeps this struct small enough to pass by
-  /// value in registers. The layout is produced by `smdl::Image` on
+  /// counts of levels `0` through `l - 1`. Those sums are
+  /// `tile_level_offsets`. The layout is produced by `smdl::Image` on
   /// the C++ side; the two must agree.
   ///
   /// Within a level, the rows run in file order, top row first, while
@@ -379,6 +377,18 @@ export struct texture_2d {
 
   /// The tile buffers, pointing at the level 0 texels of each tile.
   const auto tile_buffers = auto[](cast<&float4>(none));
+
+  /// Where each level of each tile's chain starts, as `num_levels`
+  /// texel offsets per tile in tile order: entry `i * num_levels + l`
+  /// is the offset of level `l` of tile `i` from `tile_buffers[i]`.
+  ///
+  /// Stored rather than summed per fetch, because the sum is serial in
+  /// the level and the hierarchical relief march in `::extras::parallax`
+  /// pays it once per step at a level it only knows at run time.
+  ///
+  /// Null for a texture backed by no image, which no lookup indexes:
+  /// every one of them returns on the null tile buffer first.
+  const auto tile_level_offsets = cast<&int>(none);
 
   /// The gamma mode.
   const int gamma = 0;

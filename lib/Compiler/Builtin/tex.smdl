@@ -212,16 +212,11 @@ auto levelTexelFetch(const texture_2d tex, const int level, const int2 coord, co
   return texel_type(0) if (i < 0);
   const auto tileBuffer(tex.tile_buffers[i]);
   return texel_type(0) if (!tileBuffer);
-  // Walk the contiguous chain down to the level (see the layout note on
-  // 'texture_2d' in 'api.smdl').
+  // Where the level sits in the contiguous chain (see the layout note
+  // on 'texture_2d' in 'api.smdl').
   const int l(#max(0, #min(level, tex.num_levels - 1)));
-  int levelOffset(0);
-  int2 levelExtent(tex.tile_extents[i]);
-  for (int k = 0; k < l; k++) {
-    if (#all(levelExtent <= 1)) break;
-    levelOffset += levelExtent.x * levelExtent.y;
-    levelExtent = #max(levelExtent / 2, 1);
-  }
+  const int2 levelExtent(#max(tex.tile_extents[i] >>> l, 1));
+  const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l]);
   const auto ic(applyWrap(wrap, levelExtent, coord));
   // See 'texelFetch()': mirror within the level, then index within the row.
   return tileBuffer[levelOffset + ic.x + levelExtent.x * (levelExtent.y - 1 - ic.y)];
@@ -673,16 +668,12 @@ export float4 lookup_float4_lod(
     const auto tileBuffer(tex.tile_buffers[i]);
     return float4(0) if (!tileBuffer);
     coord -= tileIndex;
-    // Walk the contiguous chain down to level 'l0' (see the layout
-    // note on 'texture_2d' in 'api.smdl'), stopping early if this
-    // tile's own chain runs out before the tileset-wide level count.
-    int levelOffset(0);
-    int2 levelExtent(tex.tile_extents[i]);
-    for (int k = 0; k < l0; k++) {
-      if (#all(levelExtent <= 1)) break;
-      levelOffset += levelExtent.x * levelExtent.y;
-      levelExtent = #max(levelExtent / 2, 1);
-    }
+    // Where level 'l0' sits in the contiguous chain (see the layout
+    // note on 'texture_2d' in 'api.smdl'). A tile whose own chain runs
+    // out before the tileset-wide level count repeats its last level,
+    // which is what the tabulated offsets say.
+    const int2 levelExtent(#max(tex.tile_extents[i] >>> l0, 1));
+    const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l0]);
     const auto s0(lookupLevelTileset(tileBuffer, levelOffset, levelExtent, coord));
     return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
     const auto s1(lookupLevelTileset(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,
@@ -698,13 +689,8 @@ export float4 lookup_float4_lod(
     const auto tileBuffer(tex.tile_buffers[i]);
     return float4(0) if (!tileBuffer);
     const int2 wrap(int(wrap_u), int(wrap_v));
-    int levelOffset(0);
-    int2 levelExtent(tex.tile_extents[i]);
-    for (int k = 0; k < l0; k++) {
-      if (#all(levelExtent <= 1)) break;
-      levelOffset += levelExtent.x * levelExtent.y;
-      levelExtent = #max(levelExtent / 2, 1);
-    }
+    const int2 levelExtent(#max(tex.tile_extents[i] >>> l0, 1));
+    const int levelOffset(tex.tile_level_offsets[i * tex.num_levels + l0]);
     const auto s0(lookupLevelPlain(tileBuffer, levelOffset, levelExtent, coord, wrap, crop_u, crop_v));
     return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
     const auto s1(lookupLevelPlain(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,

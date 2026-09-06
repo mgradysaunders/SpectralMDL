@@ -505,6 +505,24 @@ Value Context::getImageTexelBase(Type *type, const Image &image) {
   return RValue(type, llvmGlobal);
 }
 
+Value Context::getComptimeIntArray(Span<const int> values,
+                                   llvm::StringRef name) {
+  auto *llvmIntType{getIntType()->llvmType};
+  auto llvmValues{llvm::SmallVector<llvm::Constant *>()};
+  for (auto value : values)
+    llvmValues.push_back(llvm::ConstantInt::get(
+        llvmIntType, llvm::APInt(sizeof(int) * 8, value, /*isSigned=*/true)));
+  auto *llvmArrayType{llvm::ArrayType::get(llvmIntType, llvmValues.size())};
+  auto *llvmGlobal{new llvm::GlobalVariable(
+      llvmModule, llvmArrayType, /*isConstant=*/true,
+      llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantArray::get(llvmArrayType, llvmValues), name)};
+  // Nothing compares the address, so two identical tables are free to
+  // become one.
+  llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  return RValue(getPointerType(getIntType()), llvmGlobal);
+}
+
 namespace builtin {
 
 Span<const std::string_view> getAllNames() {

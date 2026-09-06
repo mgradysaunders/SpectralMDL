@@ -423,6 +423,13 @@ public:
   /// exact, since a symbol has a use list and an address does not.
   [[nodiscard]] Value getImageTexelBase(Type *type, const Image &image);
 
+  /// Get a pointer to a private constant array of `int` holding
+  /// `values`, materialized in the module rather than on the host so
+  /// that nothing outside has to outlive the JIT'd code, and so that
+  /// the optimizer can fold an index it happens to know.
+  [[nodiscard]] Value getComptimeIntArray(Span<const int> values,
+                                          llvm::StringRef name);
+
   [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
     return compiler.fileLocator.locate(
         fileName, currentModule->getResourceAnchor(),

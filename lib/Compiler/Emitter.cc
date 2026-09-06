@@ -3024,10 +3024,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     }
     auto texelPtrType{texelPtrTypeOf(*images[0])};
     // Only the level 0 texels of each tile are named; the higher
-    // levels live contiguously behind them and 'tex.smdl' recomputes
-    // their offsets from the tile extent (see the layout note on
-    // 'texture_2d' in 'api.smdl'). Carrying pointer tables instead
-    // would grow the struct past the by-value ABI sweet spot.
+    // levels live contiguously behind them, at the offsets tabulated
+    // below (see the layout note on 'texture_2d' in 'api.smdl').
     //
     // The level count is per texture, not per image: the images are
     // shared with every other reference to the same files, so a texture
@@ -3041,18 +3039,31 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         context.getArrayType(context.getIntType(2), tileCountU * tileCountV))};
     auto valueTileBuffers{Value::zero(
         context.getArrayType(texelPtrType, tileCountU * tileCountV))};
+    auto levelOffsets{
+        std::vector<int>(size_t(tileCountU) * tileCountV * numLevels)};
     for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
       auto &imagePath{resolvedImagePaths[i]};
       auto &image{images[i]};
       auto insertPos{imagePath.tileIndexV * tileCountU + imagePath.tileIndexU};
+      auto extent{
+          int2(int(image->getNumTexelsX()), int(image->getNumTexelsY()))};
       valueTileExtents =
-          insert(valueTileExtents,
-                 context.getComptimeVector(int2(int(image->getNumTexelsX()),
-                                                int(image->getNumTexelsY()))),
-                 insertPos, srcLoc);
+          insert(valueTileExtents, context.getComptimeVector(extent), insertPos,
+                 srcLoc);
       valueTileBuffers = insert(valueTileBuffers,
                                 context.getImageTexelBase(texelPtrType, *image),
                                 insertPos, srcLoc);
+      // Each level is the one before it halved and saturated at 1x1, so
+      // the offset of level 'l' is the texel count of every level under
+      // it, and a chain that reaches 1x1 before the texture's level
+      // count stops growing there.
+      auto offset{0};
+      for (int level = 0; level < numLevels; level++) {
+        levelOffsets[size_t(insertPos) * numLevels + level] = offset;
+        if (extent.x <= 1 && extent.y <= 1) continue;
+        offset += extent.x * extent.y;
+        extent = int2(std::max(extent.x / 2, 1), std::max(extent.y / 2, 1));
+      }
     }
     return invoke(
         texture2DType,
@@ -3063,6 +3074,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                   context.getComptimeBool(maxMipmap && numLevels > 1)},
          Argument{"tile_extents", valueTileExtents},
          Argument{"tile_buffers", valueTileBuffers},
+         Argument{
+             "tile_level_offsets",
+             context.getComptimeIntArray(levelOffsets, ".tile_level_offsets")},
          Argument{"gamma", valueGammaAsInt}},
         srcLoc);
   }
