@@ -470,11 +470,12 @@ public:
   }
 
   /// Sample a direction toward one light from `point`. The `state` must
-  /// carry the allocator and wavelengths; an area sample copies it to
-  /// construct the material instance at the sampled point, and the other
-  /// kinds only read it, so the copy is confined to the branch that
-  /// mutates. Returns `false` on a zero probability sample, and on a
-  /// zero radiance one unless `keepDark`.
+  /// carry the allocator and wavelengths, and is the caller's scratch:
+  /// an area sample applies the sampled point's geometry to it, over
+  /// whatever the last sample left, to construct the emitting material
+  /// instance there, and the other kinds only read it. Returns `false`
+  /// on a zero probability sample, and on a zero radiance one unless
+  /// `keepDark`.
   ///
   /// `keepDark` keeps an area or punctual sample that radiates nothing
   /// toward `point`, with `Li` zero and the measure untouched. A manifold
@@ -494,17 +495,17 @@ public:
   /// reads, so the caller may reuse one sample across gathers instead of
   /// building a fresh one; a `false` return leaves it in no particular
   /// state, which is fine because nothing may read it then.
-  [[nodiscard]] bool sample(const smdl::State &state,
-                            const smdl::SkyBasis &basis, Sampler &sampler,
-                            const float3 &point, float time,
+  [[nodiscard]] bool sample(smdl::State &state, const smdl::SkyBasis &basis,
+                            Sampler &sampler, const float3 &point, float time,
                             LightSample &lightSample,
                             bool keepDark = false) const;
 
   /// Re-evaluate a sample's incident radiance for a segment that
   /// arrives at the light from `incidencePoint` rather than from
   /// `point`, the receiver it was sampled from. `state` must carry the
-  /// allocator, wavelengths, and scene units; an area sample copies it
-  /// to rebuild the emitting material at its `hit`.
+  /// allocator, wavelengths, and scene units, and is the caller's
+  /// scratch as in `sample()`: an area sample rebuilds the emitting
+  /// material in it at its `hit`.
   ///
   /// What a manifold connection needs, because the segment that actually
   /// arrives at the light starts at the last chain crossing, and a light
@@ -525,8 +526,7 @@ public:
   /// `time` is the path's shutter fraction, which a moving declared
   /// light is placed at; an area sample carries its own on its hit.
   [[nodiscard]] Color reevaluateLi(const LightSample &lightSample,
-                                   const smdl::State &state,
-                                   const float3 &point,
+                                   smdl::State &state, const float3 &point,
                                    const float3 &incidencePoint,
                                    float time) const;
 

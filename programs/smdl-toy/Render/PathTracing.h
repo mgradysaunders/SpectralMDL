@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "Render/Manifold.h"
 #include "Render/Medium.h"
 #include "Render/Sampler.h"
@@ -165,12 +167,14 @@ struct RenderContext final {
   const MediumStack *exteriorMedium{};
 };
 
-/// What one camera path is traced with, what it works in, and what it
-/// leaves behind.
+/// What the camera paths of a block of pixels are traced with, what
+/// they work in, and what each leaves behind.
 ///
-/// Its lifetime is one path: the states and medium stacks it holds are
-/// built in `allocator`, which the caller resets between samples, and
-/// the medium view below resolves those stacks by address.
+/// Its lifetime is a block: everything here but `time` and `numRecords`
+/// is the block's, and `makePathWalk()` binds a walker to it for the
+/// block. The states and medium stacks a path builds live in
+/// `allocator`, which the caller resets between samples, and the medium
+/// view below resolves those stacks by address.
 struct PathContext final {
   /// Where the path builds its shading states and nested-medium stacks.
   smdl::BumpPtrAllocator &allocator;
@@ -200,12 +204,12 @@ struct PathContext final {
   /// resolves it once for the whole frame.
   const smdl::SkyBasis &skyBasis;
 
-  /// The three shading states the path works in, borrowed for the reason
+  /// The four shading states the path works in, borrowed for the reason
   /// `medium` is: everything in one but the animation time is a property
   /// of the block rather than the path, and every field a vertex varies
   /// is overwritten at the vertex, so building them per path is half a
   /// kilobyte of copy each for two fields' worth of difference. The
-  /// caller sets `animation_time` on all three at the head of the path.
+  /// caller sets `animation_time` on all four at the head of the path.
   ///
   /// \{
 
@@ -219,6 +223,11 @@ struct PathContext final {
   /// The state `shadeHit()` shades in, which deliberately carries no
   /// level-of-detail so that opacity evaluates at full fidelity.
   smdl::State &shadeState;
+
+  /// The state a light sample's emitter is evaluated in, which likewise
+  /// carries no level-of-detail: `LightSampler::sample()` applies the
+  /// light point's geometry to it over whatever the last sample left.
+  smdl::State &lightState;
 
   /// The light sample and the blocker a gather works in, borrowed for
   /// the reason the states above are: between them they are six hundred
@@ -242,9 +251,10 @@ struct PathContext final {
   /// grid where the render jitters them.
   const Color &wavelengths;
 
-  /// The path's time: its seconds reach every material, light and
-  /// medium evaluation along it as `State::animation_time`, and its
-  /// shutter fraction every ray the path and its gathers trace.
+  /// The path's time, which the caller sets at the head of each path:
+  /// its seconds reach every material, light and medium evaluation
+  /// along it as `State::animation_time`, and its shutter fraction
+  /// every ray the path and its gathers trace.
   PathTime time;
 
   /// The SD-tree the walk steers by and the pixel estimate that drives
@@ -277,8 +287,24 @@ struct PathContext final {
   }
 };
 
-/// Trace the camera path `camera` starts and return its radiance
-/// estimate.
+/// The walker of a block's paths: what `tracePath()` carries along a
+/// path, opaque to the caller. Built once per block by `makePathWalk()`
+/// rather than per path, because building it is over a kilobyte of
+/// default member initializers, most of them the manifold coverage's
+/// chain of hits, and no path reads what the last one left.
+class PathWalk;
+
+struct PathWalkDeleter final {
+  void operator()(PathWalk *walk) const noexcept;
+};
+
+/// Make the walker of `path`'s block, bound to `render` and `path` for
+/// as long as it lives.
+[[nodiscard]] std::unique_ptr<PathWalk, PathWalkDeleter>
+makePathWalk(const RenderContext &render, PathContext &path);
+
+/// Trace the camera path `camera` starts with `walk` and return its
+/// radiance estimate.
 ///
 /// Direct lighting is gathered at every scattering vertex as the walk
 /// reaches it, so nothing is retained per vertex. Each vertex pairs
@@ -304,6 +330,4 @@ struct PathContext final {
 /// With `Guiding::tree`, non-Dirac surface bounces one-sample-MIS the
 /// SD-tree against the BSDF and Russian roulette becomes adjoint-driven;
 /// without one, direction sampling and roulette are plain path tracing's.
-[[nodiscard]]
-Color tracePath(const RenderContext &render, PathContext &path,
-                const CameraSample &camera);
+[[nodiscard]] Color tracePath(PathWalk &walk, const CameraSample &camera);

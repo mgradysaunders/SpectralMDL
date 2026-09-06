@@ -55,8 +55,9 @@ constexpr const char *SAMPLER_VERSION =
 /// none of this applies and the draws are simply independent.
 ///
 /// The draw path is left to the inliner, which inlines everything but
-/// `smdl::OwenSobolSampler::generate()`, so every draw is one call.
-/// Forcing that call inline too was measured and rejected: it removes
+/// the generator's `generate()` and `generateFloat2()`, so a draw is
+/// one call per pair it consumes. Forcing the generator inline was
+/// measured and rejected: it removes
 /// about 2% of the instructions and still renders 1.4% slower on the
 /// sky-lit scenes, because the hashing lands at every draw site and the
 /// hot code outgrows the front end, a quarter more front-end stall
@@ -90,21 +91,22 @@ public:
 
   [[nodiscard]] explicit operator float2() {
     alignPair();
-    const float x{next()};
-    return {x, next()};
+    return nextPair();
   }
 
   [[nodiscard]] explicit operator float3() {
     alignPair();
-    const float x{next()}, y{next()}, z{next()};
+    const float2 xy{nextPair()};
+    const float z{next()};
     alignPair();
-    return {x, y, z};
+    return {xy.x, xy.y, z};
   }
 
   [[nodiscard]] explicit operator float4() {
     alignPair();
-    const float x{next()}, y{next()}, z{next()};
-    return {x, y, z, next()};
+    const float2 xy{nextPair()};
+    const float2 zw{nextPair()};
+    return {xy.x, xy.y, zw.x, zw.y};
   }
 
   [[nodiscard]] int index(int n) {
@@ -133,6 +135,17 @@ private:
   /// The next canonical sample in `(0,1)`.
   [[nodiscard]] float next() noexcept {
     return smdl::canonicalFromBits(nextBits());
+  }
+
+  /// The next two, which begin a pair when aligned: one generator call
+  /// for both where `next()` twice would be two.
+  [[nodiscard]] float2 nextPair() noexcept {
+#if SMDL_TOY_SAMPLER_PCG32
+    const float x{next()};
+    return {x, next()};
+#else
+    return mSobol.generateFloat2();
+#endif
   }
 
 #if SMDL_TOY_SAMPLER_PCG32

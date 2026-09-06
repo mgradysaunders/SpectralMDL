@@ -766,7 +766,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                    tree->depth());
 }
 
-bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
+bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
                           Sampler &sampler, const float3 &point, float time,
                           LightSample &lightSample, bool keepDark) const {
   if (empty()) return false;
@@ -887,10 +887,10 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
   float cosTheta{absDot(hit.Ng, lightSample.wi)};
   if (!(cosTheta > 0)) return false;
   // The NEE ray arrives at the light surface along `wi`. The LOD fields
-  // stay zero here deliberately: emission evaluates at full fidelity.
-  auto lightState{state};
-  hit.applyGeometryToState(lightState, lightSample.wi);
-  auto mat{smdl::JIT::MaterialInstance(lightState, hit.material)};
+  // are the caller's, zero by its contract, so emission evaluates at
+  // full fidelity.
+  hit.applyGeometryToState(state, lightSample.wi);
+  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
   if (!emittedRadiance(mat, light.instIndex, -lightSample.wi, lightSample.Li)) {
     if (!keepDark) return false;
     lightSample.Li = Color(0.0f);
@@ -1005,7 +1005,7 @@ bool LightSampler::sampleSphereCone(const AreaLight &light,
 }
 
 Color LightSampler::reevaluateLi(const LightSample &lightSample,
-                                 const smdl::State &state, const float3 &point,
+                                 smdl::State &state, const float3 &point,
                                  const float3 &incidencePoint,
                                  float time) const {
   if (lightSample.isInfinite) return lightSample.Li;
@@ -1022,9 +1022,8 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
   if (!smdl::tryNormalize(wEmit)) return Color(0.0f);
   // The arriving ray travels the other way down the same segment, which
   // is the sense `sample()` applies the geometry in.
-  auto lightState{state};
-  hit.applyGeometryToState(lightState, -wEmit);
-  auto mat{smdl::JIT::MaterialInstance(lightState, hit.material)};
+  hit.applyGeometryToState(state, -wEmit);
+  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
   Color Le{};
   if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return Color(0.0f);
   return Le;

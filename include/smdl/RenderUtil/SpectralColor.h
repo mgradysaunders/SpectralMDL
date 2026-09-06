@@ -136,6 +136,15 @@ public:
     return data()[i];
   }
 
+  /// Set every band to `value`.
+  void fill(float value) noexcept {
+    // The buffer whether or not it is the storage, as the constructors
+    // do, so that the common case is two vector stores and no branch.
+    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
+    if (SMDL_UNLIKELY(!isInline()))
+      for (size_t i = 0; i < mSize; i++) mHeap[i] = value;
+  }
+
 public:
   SMDL_ALWAYS_INLINE SpectralColor &
   operator+=(const SpectralColor &rhs) noexcept {

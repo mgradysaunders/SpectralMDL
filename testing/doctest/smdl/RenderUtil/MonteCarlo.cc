@@ -322,6 +322,34 @@ TEST_CASE("OwenSobolSampler") {
       }
     }
   }
+  SUBCASE("the pair draw is the two single draws") {
+    // Aligned, where the pair is formed once for both components, and
+    // unaligned, where the two draws straddle two pairs.
+    for (const uint32_t seed : {1U, 0xC0FFEEU}) {
+      for (const uint32_t index : {0U, 7U, 12345U}) {
+        for (const int skip : {0, 1, 2, 3}) {
+          auto single{smdl::OwenSobolSampler()};
+          auto paired{smdl::OwenSobolSampler()};
+          single.start(seed, index);
+          paired.start(seed, index);
+          for (int d = 0; d < skip; d++) {
+            (void)single.generate();
+            (void)paired.generate();
+          }
+          const float x{single.generateFloat()};
+          const float y{single.generateFloat()};
+          const float z{single.generateFloat()};
+          const float w{single.generateFloat()};
+          const auto xyzw{paired.generateFloat4()};
+          CHECK(xyzw.x == x);
+          CHECK(xyzw.y == y);
+          CHECK(xyzw.z == z);
+          CHECK(xyzw.w == w);
+          CHECK(single.dimension() == paired.dimension());
+        }
+      }
+    }
+  }
   SUBCASE("alignPair and dimension accounting") {
     auto sampler{smdl::OwenSobolSampler()};
     sampler.start(1U, 2U);

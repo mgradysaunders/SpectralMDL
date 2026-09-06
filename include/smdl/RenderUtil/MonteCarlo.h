@@ -510,17 +510,10 @@ public:
     const uint32_t pair{mDimension >> 1};
     const uint32_t component{mDimension & 1};
     ++mDimension;
-    // Both components of a pair share the seed and the shuffled index,
-    // so the pair pays for them once.
-    if (pair != mPairIndex) {
-      mPairIndex = pair;
-      mPairSeed = mixBits(mSeedHash ^ (0x9E3779B9U * pair));
-      mPairShuffled = nestedUniformScramble(mIndex, mPairSeed);
-    }
+    formPair(pair);
     const uint32_t X{component == 0 ? reverseBits(mPairShuffled)
                                     : sobolDim1(mPairShuffled)};
-    return nestedUniformScramble(
-        X, mixBits(mPairSeed ^ (0x55555555U + component)));
+    return nestedUniformScramble(X, componentSeed(component));
   }
 
   /// Generates the next canonical sample in `(0,1)`.
@@ -528,19 +521,35 @@ public:
     return canonicalFromBits(generate());
   }
 
-  /// Generates the next 2 canonical samples in `(0,1)^2`.
+  /// Generates the next 2 canonical samples in `(0,1)^2`: the two
+  /// `generateFloat()` would return in turn, and on an even dimension,
+  /// where they are the components of one pair, in one call that forms
+  /// the pair once for both.
   [[nodiscard]] float2 generateFloat2() noexcept {
-    return {generateFloat(), generateFloat()};
+    if (mDimension & 1) {
+      const float x{generateFloat()};
+      return {x, generateFloat()};
+    }
+    const uint32_t pair{mDimension >> 1};
+    mDimension += 2;
+    formPair(pair);
+    return {canonicalFromBits(nestedUniformScramble(reverseBits(mPairShuffled),
+                                                    componentSeed(0))),
+            canonicalFromBits(nestedUniformScramble(sobolDim1(mPairShuffled),
+                                                    componentSeed(1)))};
   }
 
   /// Generates the next 3 canonical samples in `(0,1)^3`.
   [[nodiscard]] float3 generateFloat3() noexcept {
-    return {generateFloat(), generateFloat(), generateFloat()};
+    const float2 xy{generateFloat2()};
+    return {xy.x, xy.y, generateFloat()};
   }
 
   /// Generates the next 4 canonical samples in `(0,1)^4`.
   [[nodiscard]] float4 generateFloat4() noexcept {
-    return {generateFloat(), generateFloat(), generateFloat(), generateFloat()};
+    const float2 xy{generateFloat2()};
+    const float2 zw{generateFloat2()};
+    return {xy.x, xy.y, zw.x, zw.y};
   }
 
   /// Round the dimension counter up to a pair boundary, so that the next
@@ -553,6 +562,22 @@ public:
   [[nodiscard]] uint32_t dimension() const noexcept { return mDimension; }
 
 private:
+  /// Form the seed and shuffled index of `pair` unless they are the
+  /// cached ones. Both components of a pair share them, so the pair
+  /// pays for them once.
+  void formPair(uint32_t pair) noexcept {
+    if (pair != mPairIndex) {
+      mPairIndex = pair;
+      mPairSeed = mixBits(mSeedHash ^ (0x9E3779B9U * pair));
+      mPairShuffled = nestedUniformScramble(mIndex, mPairSeed);
+    }
+  }
+
+  /// The Owen scramble seed of the given component of the cached pair.
+  [[nodiscard]] uint32_t componentSeed(uint32_t component) const noexcept {
+    return mixBits(mPairSeed ^ (0x55555555U + component));
+  }
+
   /// The hashed sequence-selecting seed.
   uint32_t mSeedHash{};
 

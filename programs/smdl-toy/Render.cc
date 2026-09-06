@@ -383,7 +383,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         smdl::SkyBasis jitteredSkyBasis;
         const smdl::SkyBasis &skyBasis{jitterWavelength ? jitteredSkyBasis
                                                         : renderSkyBasis};
-        // The three states every path of the block works in, built here
+        // The four states every path of the block works in, built here
         // rather than per path: only the animation time below tells one
         // path's from another's, and the jittered grid is rewritten in
         // place, so the wavelength pointer holds still too. See
@@ -393,6 +393,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
+        smdl::State lightState{makeRenderState(blockWavelengths, &allocator)};
         // The gather scratch, bought here for the same reason.
         LightSample gatherSample{};
         Hit gatherBlocker{};
@@ -401,6 +402,14 @@ void renderSamples(const Options &opts, const Frame &frame,
         guiding.bsdfFraction =
             std::clamp(opts.guide.bsdfFraction.value, 0.0f, 1.0f);
         guiding.bsdfFractionFixed = opts.guide.bsdfFraction.given;
+        // The context and the walker of the block's paths; the time is
+        // the open key until each path sets its own.
+        PathContext path{allocator,     sampler,          medium,
+                         skyBasis,      gatherState,      walkState,
+                         shadeState,    lightState,       gatherSample,
+                         gatherBlocker, blockWavelengths, PathTime{0.0f},
+                         &guiding,      records};
+        const auto walk{makePathWalk(render, path)};
         const size_t kBegin{block * blockSize};
         const size_t kEnd{std::min(numWindowPixels, kBegin + blockSize)};
         for (size_t k = kBegin; k < kEnd; k++) {
@@ -425,8 +434,6 @@ void renderSamples(const Options &opts, const Frame &frame,
               if (render.lights.env())
                 render.lights.env()->resolve(*jittered, jitteredSkyBasis);
             }
-            const Color &sampleWavelengths{jitterWavelength ? *jittered
-                                                            : wavelengths};
             Color Lsample{};
             // A fully vignetted sample contributes nothing, so skip the
             // walk but let it still count in the average below, keeping the
@@ -445,12 +452,9 @@ void renderSamples(const Options &opts, const Frame &frame,
               gatherState.animation_time = time.seconds;
               walkState.animation_time = time.seconds;
               shadeState.animation_time = time.seconds;
-              PathContext path{
-                  allocator,     sampler,           medium,     skyBasis,
-                  gatherState,   walkState,         shadeState, gatherSample,
-                  gatherBlocker, sampleWavelengths, time,       &guiding,
-                  records};
-              Lsample = tracePath(render, path, cameraSample);
+              lightState.animation_time = time.seconds;
+              path.time = time;
+              Lsample = tracePath(*walk, cameraSample);
               numRecords = path.numRecords;
             }
             // Train the SD-tree on the records the walk retained.

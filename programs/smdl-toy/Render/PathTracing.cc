@@ -680,8 +680,9 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       connection.vertices[connection.count - 1].geometry.point};
   Color Li{lightSample.Li};
   if (!lightSample.isInfinite) {
-    if (Li = render.lights.reevaluateLi(lightSample, gatherState, vertex.point,
-                                        lastPoint, path.time.fraction);
+    if (Li = render.lights.reevaluateLi(lightSample, path.lightState,
+                                        vertex.point, lastPoint,
+                                        path.time.fraction);
         Li.isAllZero())
       return {};
   }
@@ -999,6 +1000,9 @@ public:
     mReceiverMedium = medium;
   }
 
+  // Disarm, which is all a fresh path needs: `arm()` sets everything
+  // else before any reader consults it, and the chain arrays are read
+  // only below the length it resets.
   void disarm() noexcept { mArmed = false; }
 
   [[nodiscard]] bool isArmed() const noexcept { return mArmed; }
@@ -1303,7 +1307,7 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
   // receiver: its connection arrives at the light from elsewhere and reads
   // the radiance from there. The plain estimate of such a sample is zero
   // and is skipped below.
-  if (render.lights.sample(gatherState, path.skyBasis, path.sampler,
+  if (render.lights.sample(path.lightState, path.skyBasis, path.sampler,
                            vertex.point, path.time.fraction, lightSample,
                            runManifold)) {
     const MNEEGather mneeGather{render, path, gatherState, vertex, lightSample};
@@ -1470,20 +1474,31 @@ struct PrevBounce final {
   // arrivals at one of those; a glossy chain's share is the refractive
   // gather's and applies to any.
   bool shareCausticOnly{};
+
+  // Begin a path: no bounce behind the camera segment, and no share of
+  // it claimed, which is what the arrival sites read on that segment.
+  void reset() noexcept {
+    pdf = 0.0f;
+    isDirac = false;
+    point = float3(0.0f);
+    areaSampled = false;
+    claimedShare.fill(0.0f);
+    shareCausticOnly = false;
+  }
 };
 
-// One camera path: the walk, everything it carries from one vertex to
-// the next, and the bookkeeping its arrivals are weighed by. Its
-// lifetime is one path, since the states it holds are built in the
-// path's allocator, which the caller resets between samples.
+} // namespace
+
+// The walk of one camera path at a time: everything it carries from one
+// vertex to the next, and the bookkeeping its arrivals are weighed by.
+// It lives for a block of paths and `trace()` begins each afresh; the
+// states and stacks a path holds are built in the path's allocator,
+// which the caller resets between samples.
 class PathWalk final {
 public:
   PathWalk(const RenderContext &render, PathContext &path)
       : mRender(render), mPath(path), mGatherState(path.gatherState),
-        mState(path.walkState), mMediumStack(render.exteriorMedium) {
-    path.numRecords = 0;
-    path.medium.beginPath();
-  }
+        mState(path.walkState) {}
 
   // Trace the path the camera sample starts and return its radiance
   // estimate; see `tracePath()`.
@@ -1650,9 +1665,21 @@ private:
 };
 
 Color PathWalk::trace(const CameraSample &camera) {
-  mBeta = Color(camera.weight);
+  // Begin the path: nothing below reads what the last one left, other
+  // than through these.
+  mPath.numRecords = 0;
+  mPath.medium.beginPath();
+  mL.fill(0.0f);
+  mBeta.fill(camera.weight);
+  mMediumStack = mRender.exteriorMedium;
+  mCoverage.disarm();
+  mDepth = 1;
+  mPrev.reset();
+  mOrder = 0;
+  mTravel = 0.0f;
   // The camera's own per-pixel cone spread seeds the LOD context.
   mSpread = camera.coneAngle;
+  mWidth = 0.0f;
   const EnvLight *envLight{mRender.lights.env()};
 
   // The camera segment. The walk re-bases this at every vertex and at
@@ -2075,9 +2102,13 @@ Color PathWalk::trace(const CameraSample &camera) {
   return mL;
 }
 
-} // namespace
+void PathWalkDeleter::operator()(PathWalk *walk) const noexcept { delete walk; }
 
-Color tracePath(const RenderContext &render, PathContext &path,
-                const CameraSample &camera) {
-  return PathWalk{render, path}.trace(camera);
+std::unique_ptr<PathWalk, PathWalkDeleter>
+makePathWalk(const RenderContext &render, PathContext &path) {
+  return std::unique_ptr<PathWalk, PathWalkDeleter>(new PathWalk(render, path));
+}
+
+Color tracePath(PathWalk &walk, const CameraSample &camera) {
+  return walk.trace(camera);
 }
