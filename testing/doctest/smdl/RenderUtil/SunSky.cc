@@ -29,8 +29,8 @@ TEST_CASE("SunSky") {
     // The golden spectra come from the Python fit at exact grid
     // wavelengths, so the port must reproduce them to float roundoff;
     // the tolerance only absorbs the float3 direction round trip. The
-    // fit is in the native W/(cm^2 sr um), so the scale factor undoes
-    // the conversion to W/(m^2 sr nm) built into the outputs.
+    // golden data is in the fit's native W/(cm^2 sr um), so the scale
+    // factor converts the model's W/(m^2 sr nm) back to it.
     for (size_t c = 0; c < GOLDEN_CASE_COUNT; c++) {
       const double sunAzimuthDeg{25.0};
       smdl::SunSkyOptions options{};
@@ -86,6 +86,30 @@ TEST_CASE("SunSky") {
       CAPTURE(c);
       CHECK(worst < 5e-4f);
     }
+  }
+  SUBCASE("radiance units") {
+    // The fit tables carry the conversion from the fit's native
+    // W/(cm^2 sr um) to the library-wide W/(m^2 sr nm), so the outputs
+    // scale exactly with the scale factor and the factor of ten between
+    // the two conventions is the only difference between them.
+    smdl::SunSkyOptions options{};
+    options.sunDirection = makeDirection(35.0, 15.0);
+    const auto library{smdl::SunSky(options)};
+    options.scaleFactor = 0.1f;
+    const auto native{smdl::SunSky(options)};
+    const auto direction{makeDirection(55.0, 95.0)};
+    const float wavelens[4] = {450.0f, 550.0f, 1000.0f, 2100.0f};
+    float libraryValues[4]{}, nativeValues[4]{};
+    library.skyRadiance(direction, 4, wavelens, libraryValues);
+    native.skyRadiance(direction, 4, wavelens, nativeValues);
+    for (int j = 0; j < 4; j++) {
+      CHECK(libraryValues[j] > 0.0f);
+      CHECK(libraryValues[j] == doctest::Approx(10.0f * nativeValues[j]));
+    }
+    library.sunRadiance(4, wavelens, libraryValues);
+    native.sunRadiance(4, wavelens, nativeValues);
+    for (int j = 0; j < 4; j++)
+      CHECK(libraryValues[j] == doctest::Approx(10.0f * nativeValues[j]));
   }
   SUBCASE("wavelength interpolation and clamping") {
     const auto sunSky{

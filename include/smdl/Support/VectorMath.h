@@ -42,13 +42,13 @@ constexpr float ONE_MINUS_EPS =
 /// Convert degrees to radians.
 [[nodiscard]]
 SMDL_ALWAYS_INLINE constexpr float radians(float degrees) noexcept {
-  return degrees * PI / 180.0f;
+  return degrees * (PI / 180.0f);
 }
 
 /// Convert radians to degrees.
 [[nodiscard]]
 SMDL_ALWAYS_INLINE constexpr float degrees(float radians) noexcept {
-  return radians * (180.0f / PI);
+  return radians * (180.0f * INV_PI);
 }
 
 [[nodiscard]] SMDL_ALWAYS_INLINE float finiteOrZero(float x) noexcept {

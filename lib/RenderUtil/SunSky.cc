@@ -13,38 +13,13 @@
 #include "SunSkyRural.h"
 #include "Support/SIMD.h"
 
-namespace smdl {
-
-namespace {
-
 // The lunar multiplier is generated on the same 421-channel grid as
 // the sun-sky fit, so the channels line up one-to-one.
 static_assert(rolo_moon::WAVELENGTH_COUNT == rural::WAVELENGTH_COUNT);
 
-constexpr double DEG_TO_RAD = 0.017453292519943295;
-constexpr float RAD_TO_DEG_F = 57.29578f;
+namespace smdl {
 
-// The trained parameter ranges
-constexpr double SUN_ZENITH_MIN_DEG = 5.0;
-constexpr double SUN_ZENITH_MAX_DEG = 88.0;
-constexpr double VIEW_ZENITH_MAX_DEG = 88.0;
-// The cosine of the view zenith clamp, so that clamping the angle and
-// clamping its cosine agree.
-constexpr double COS_VIEW_ZENITH_MAX = 0.03489949670250108;
-constexpr double VISIBILITY_MIN_KM = 5.0;
-constexpr double VISIBILITY_MAX_KM = 100.0;
-constexpr double WATER_VAPOR_MIN = 0.3;
-constexpr double WATER_VAPOR_MAX = 3.0;
-
-// The cosine of the solar angular radius of 0.2665 degrees, and the
-// resulting disk solid angle \f$ 2\pi(1 - \cos\theta) \f$.
-constexpr double COS_SUN_ANGULAR_RADIUS = 0.99998918271223114;
-constexpr double SUN_SOLID_ANGLE = 6.7967023572838338e-05;
-
-// The conversion from the fit tables' native MODTRAN units of
-// W/(cm^2 sr um) to the library-wide spectral radiance convention of
-// W/(m^2 sr nm): 1e4 cm^2/m^2 divided by 1e3 nm/um.
-constexpr double NATIVE_TO_W_M2_SR_NM = 10.0;
+namespace {
 
 // The resolution of the tabulated sky sampling distribution.
 constexpr int SKY_DISTR_SIZE_X = 256;
@@ -53,51 +28,34 @@ constexpr int SKY_DISTR_SIZE_Y = 128;
 // The reciprocal of the channel spacing, so locating a wavelength on the
 // grid is a multiply. The per-wavelength loops below run this once per
 // wavelength, where a divide is the most expensive thing in them.
-constexpr float INV_WAVELENGTH_DELTA = 1.0f / float(rural::WAVELENGTH_DELTA);
+constexpr float INV_WAVELENGTH_DELTA = 1.0f / rural::WAVELENGTH_DELTA;
 
 // The reciprocals of a fit's feature standard deviations, so that
 // standardizing is a multiply. Every evaluation standardizes every
 // feature.
 template <size_t N>
-[[nodiscard]] constexpr std::array<double, N>
-reciprocals(const double (&values)[N]) {
-  std::array<double, N> result{};
-  for (size_t i = 0; i < N; i++) result[i] = 1.0 / values[i];
+[[nodiscard]] constexpr std::array<float, N>
+reciprocals(const float (&values)[N]) {
+  std::array<float, N> result{};
+  for (size_t i = 0; i < N; i++) result[i] = 1.0f / values[i];
   return result;
 }
 constexpr auto SKY_FEATURE_INV_STD = reciprocals(rural::SKY_FEATURE_STD);
 constexpr auto SUN_FEATURE_INV_STD = reciprocals(rural::SUN_FEATURE_STD);
 
-template <size_t N>
-[[nodiscard]] constexpr std::array<float, N>
-narrow(const std::array<double, N> &values) {
-  std::array<float, N> result{};
-  for (size_t i = 0; i < N; i++) result[i] = float(values[i]);
-  return result;
-}
-template <size_t N>
-[[nodiscard]] constexpr std::array<float, N> narrow(const double (&values)[N]) {
-  std::array<float, N> result{};
-  for (size_t i = 0; i < N; i++) result[i] = float(values[i]);
-  return result;
-}
-constexpr auto SKY_FEATURE_MEAN_F = narrow(rural::SKY_FEATURE_MEAN);
-constexpr auto SKY_FEATURE_INV_STD_F = narrow(SKY_FEATURE_INV_STD);
-
-[[nodiscard]] SMDL_ALWAYS_INLINE double standardizeSky(size_t i, double raw) {
+[[nodiscard]] SMDL_ALWAYS_INLINE float standardizeSky(size_t i, float raw) {
   return (raw - rural::SKY_FEATURE_MEAN[i]) * SKY_FEATURE_INV_STD[i];
 }
 
-[[nodiscard]] SMDL_ALWAYS_INLINE float standardizeSky(size_t i, float raw) {
-  return (raw - SKY_FEATURE_MEAN_F[i]) * SKY_FEATURE_INV_STD_F[i];
-}
-
 // Kasten-Young relative airmass. The cosine of the zenith angle is a
-// separate argument because every caller already has it.
-[[nodiscard]]
-SMDL_ALWAYS_INLINE double airmass(double zenithDeg, double cosZenith) {
-  return 1.0 / (cosZenith +
-                0.50572 * fastExp(-1.6364 * fastLog(96.07995 - zenithDeg)));
+// separate argument because every caller already has it. Only the
+// construction path forms the airmass itself, so this takes the accurate
+// transcendentals and leaves the inline approximations to the reciprocal
+// form below.
+[[nodiscard]] float airmass(float zenithDeg, float cosZenith) {
+  return 1.0f /
+         (cosZenith +
+          0.50572f * std::exp(-1.6364f * std::log(96.07995f - zenithDeg)));
 }
 
 // The reciprocal of the Kasten-Young airmass, which is the form the sky
@@ -113,16 +71,16 @@ SMDL_ALWAYS_INLINE float airmassReciprocal(float zenithDeg, float cosZenith) {
 // Expand standardized features into the polynomial's terms. Each term is
 // a product of up to `TermWidth` features, with a negative index marking
 // an unused slot.
-template <size_t NumFeatures, size_t NumTerms, size_t TermWidth, typename Term>
-void expandTerms(const double (&z)[NumFeatures],
-                 const int8_t (&termFeatures)[NumTerms][TermWidth], Term *terms,
-                 size_t count = NumTerms) {
-  for (size_t t = 0; t < count; ++t) {
-    double value = 1.0;
+template <size_t NumFeatures, size_t NumTerms, size_t TermWidth>
+void expandTerms(const float (&z)[NumFeatures],
+                 const int8_t (&termFeatures)[NumTerms][TermWidth],
+                 float (&terms)[NumTerms]) {
+  for (size_t t = 0; t < NumTerms; ++t) {
+    float value = 1.0f;
     for (size_t slot = 0; slot < TermWidth; ++slot) {
       if (const int8_t f = termFeatures[t][slot]; f >= 0) value *= z[size_t(f)];
     }
-    terms[t] = Term(value);
+    terms[t] = value;
   }
 }
 
@@ -133,7 +91,7 @@ static_assert(rural::SKY_OUTPUT_COUNT <= SKY_PACK_WIDTH);
 
 // Which of the fit's nine standardized features the options fix and which
 // the view direction supplies. The split is what lets the constructor
-// specialize the polynomial; see `SkyPolynomial`.
+// specialize the polynomial; see `SunSky::mSkyMatrix`.
 constexpr size_t SKY_FIXED_FEATURES[]{0, 2, 7, 8};
 constexpr size_t SKY_VIEW_FEATURES[]{1, 3, 4, 5, 6};
 constexpr size_t SKY_VIEW_FEATURE_COUNT =
@@ -154,7 +112,7 @@ static_assert(sizeof(SKY_FIXED_FEATURES) / sizeof(SKY_FIXED_FEATURES[0]) +
 // this deliberately: a term's fixed features fold into the coefficients
 // once per `SunSky`, so only the view part costs anything per
 // evaluation, and the cap is what sets how many monomials there are to
-// evaluate. See sunsky-plan.md.
+// evaluate.
 [[nodiscard]] constexpr size_t skyViewDegree() {
   size_t degree{};
   for (size_t t = 0; t < rural::SKY_TERM_COUNT; t++) {
@@ -179,6 +137,8 @@ constexpr size_t SKY_VIEW_DEGREE = skyViewDegree();
 // with weight costs a few vector multiply-accumulates and buys
 // straight-line code with no term table to walk at runtime.
 constexpr size_t SKY_MONOMIAL_ONE = SKY_VIEW_FEATURE_COUNT;
+// The build-time capacity of the table below, which is every monomial up
+// to the cubic; the fit's own degree decides how many of them it holds.
 constexpr size_t SKY_MONOMIAL_MAX = 56;
 struct SkyMonomials final {
   uint8_t features[SKY_MONOMIAL_MAX][3]{};
@@ -244,52 +204,45 @@ constexpr size_t SKY_TERM_STRIDE = (SKY_MONOMIAL_COUNT + 3) / 4 * 4;
 // Four accumulators, as in the matvec above and for the same reason.
 template <size_t NumFeatures, size_t NumTerms, size_t NumOutputs,
           size_t TermWidth>
-void evalSparsePolynomial(const double (&z)[NumFeatures],
+void evalSparsePolynomial(const float (&z)[NumFeatures],
                           const int8_t (&termFeatures)[NumTerms][TermWidth],
-                          const rural::Coeff *coefs,
-                          const uint16_t (&coefOffsets)[NumOutputs + 1],
-                          double (&outputs)[NumOutputs]) {
-  double terms[NumTerms]{};
+                          const rural::Coeff *coeffs,
+                          const int (&coeffOffsets)[NumOutputs + 1],
+                          float (&outputs)[NumOutputs]) {
+  // No initializer: `expandTerms` writes every entry before this reads
+  // any of them.
+  float terms[NumTerms];
   expandTerms(z, termFeatures, terms);
   for (size_t q = 0; q < NumOutputs; ++q) {
-    double sum0{}, sum1{}, sum2{}, sum3{};
-    uint16_t c = coefOffsets[q];
-    const uint16_t end = coefOffsets[q + 1];
+    float sum0{}, sum1{}, sum2{}, sum3{};
+    int c = coeffOffsets[q];
+    const int end = coeffOffsets[q + 1];
     for (; c + 4 <= end; c += 4) {
-      sum0 += double(coefs[c + 0].weight) * terms[coefs[c + 0].term];
-      sum1 += double(coefs[c + 1].weight) * terms[coefs[c + 1].term];
-      sum2 += double(coefs[c + 2].weight) * terms[coefs[c + 2].term];
-      sum3 += double(coefs[c + 3].weight) * terms[coefs[c + 3].term];
+      sum0 += coeffs[c + 0].weight * terms[coeffs[c + 0].term];
+      sum1 += coeffs[c + 1].weight * terms[coeffs[c + 1].term];
+      sum2 += coeffs[c + 2].weight * terms[coeffs[c + 2].term];
+      sum3 += coeffs[c + 3].weight * terms[coeffs[c + 3].term];
     }
-    for (; c < end; ++c) sum0 += double(coefs[c].weight) * terms[coefs[c].term];
+    for (; c < end; ++c) sum0 += coeffs[c].weight * terms[coeffs[c].term];
     outputs[q] = (sum0 + sum1) + (sum2 + sum3);
   }
 }
 
 // Evaluate the direct-beam-fit outputs. The zenith angle must already
 // be clamped to the trained range.
-void evalSunOutputs(double sunZenithDeg, double visibility, double waterVapor,
-                    double (&outputs)[rural::SUN_OUTPUT_COUNT]) {
-  const double cosSun = std::cos(sunZenithDeg * DEG_TO_RAD);
-  const double m = airmass(sunZenithDeg, cosSun);
-  const double raw[rural::SUN_FEATURE_COUNT] = {
-      cosSun, std::log(m), std::log(visibility), std::log(waterVapor), m,
-  };
-  double z[rural::SUN_FEATURE_COUNT]{};
+void evalSunOutputs(float sunZenithDeg, float visibility, float waterVapor,
+                    float (&outputs)[rural::SUN_OUTPUT_COUNT]) {
+  const float cosSun = std::cos(radians(sunZenithDeg));
+  const float air = airmass(sunZenithDeg, cosSun);
+  const float raw[rural::SUN_FEATURE_COUNT] = {
+      cosSun, std::log(air), std::log(visibility), std::log(waterVapor), air};
+  float z[rural::SUN_FEATURE_COUNT]{};
   for (size_t i = 0; i < rural::SUN_FEATURE_COUNT; ++i)
     z[i] = (raw[i] - rural::SUN_FEATURE_MEAN[i]) * SUN_FEATURE_INV_STD[i];
   evalSparsePolynomial(z, rural::SUN_TERM_FEATURES, rural::SUN_COEFFS,
                        rural::SUN_COEFF_OFFSETS, outputs);
 }
 
-// The sky spectral shape of channel `i` for the given spectral mode
-// coefficients, clamped nonnegative. The caller applies the broadband
-// brightness `exp(outputs[0])`, hoisted out of the per-wavelength loop.
-//
-// Single precision throughout: the modes it reads are float, the result
-// is stored as float, and six terms of accumulation cannot use more than
-// that, so widening to double only buys conversions in the innermost
-// loop the model has.
 // The continuous channel coordinate of the given wavelength in
 // nanometers, clamped to the grid. Non-finite wavelengths clamp to the
 // first channel. The indexes are signed because converting a float to
@@ -302,7 +255,7 @@ struct ChannelLerp final {
   float frac;
 };
 [[nodiscard]] ChannelLerp channelOf(float wavelenNm) {
-  float t = (wavelenNm - float(rural::WAVELENGTH_MIN)) * INV_WAVELENGTH_DELTA;
+  float t = (wavelenNm - rural::WAVELENGTH_MIN) * INV_WAVELENGTH_DELTA;
   if (!(t > 0.0f)) t = 0.0f;
   if (t > float(rural::WAVELENGTH_COUNT - 1))
     t = float(rural::WAVELENGTH_COUNT - 1);
@@ -320,9 +273,9 @@ struct ChannelLerp final {
 void viewGeometry(const float3 &dir, float &cosView, float &viewZenithDeg,
                   float2 &horz) {
   const float cosZ = std::clamp(dir.z, -1.0f, 1.0f);
-  cosView = std::max(cosZ, float(COS_VIEW_ZENITH_MAX));
+  cosView = std::max(cosZ, SunSky::COS_VIEW_ZENITH_MAX);
   viewZenithDeg =
-      std::min(fastAcos(cosZ) * RAD_TO_DEG_F, float(VIEW_ZENITH_MAX_DEG));
+      std::min(degrees(fastAcos(cosZ)), SunSky::VIEW_ZENITH_MAX_DEG);
   horz = float2(dir.x, dir.y);
   const float len = length(horz);
   horz = len > 1.0e-12f ? horz * (1.0f / len) : float2(1.0f, 0.0f);
@@ -336,7 +289,7 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
   // The header cannot name the fit tables, so the counts it declares are
   // checked against them here.
   static_assert(SKY_FIT_OUTPUT_COUNT == int(rural::SKY_OUTPUT_COUNT));
-  static_assert(SKY_FIT_TERM_COUNT >= int(SKY_TERM_STRIDE));
+  static_assert(SKY_FIT_TERM_COUNT == int(SKY_TERM_STRIDE));
   static_assert(SKY_FIT_OUTPUT_STRIDE == int(SKY_PACK_WIDTH));
   // As (1 - c)(1 + c) rather than 1 - c*c, which cancels away most of the
   // significand looking near the zenith, where c is close to one.
@@ -345,7 +298,7 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
   const float cosPsi{std::clamp(
       mCosSunZenith * cosView + mSinSunZenith * sinView * cosRelativeAzimuth,
       -1.0f, 1.0f)};
-  const float psiDeg{fastAcos(cosPsi) * RAD_TO_DEG_F};
+  const float psiDeg{degrees(fastAcos(cosPsi))};
   // The five features the view supplies, in the order the specialized
   // monomials index them. The logarithms, exponentials, and arccosines
   // here are the inline ones from FastMath.h: libm's out-of-line calls
@@ -357,12 +310,16 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
       standardizeSky(4, cosPsi),
       standardizeSky(5, fastExp(psiDeg * (-1.0f / 15.0f))),
       standardizeSky(6, fastLog(psiDeg + 3.0f)),
-      1.0f,
-  };
+      1.0f};
   // The monomials in the canonical order of `SKY_MONOMIALS`, built by
   // the same nested loops so the two cannot drift apart. Every bound is
   // a constant, so this unrolls to straight-line multiplies with no term
   // table to read.
+  //
+  // Zero-initialized because the stride rounds the monomial count up to
+  // the accumulator count and the contraction reads all of it: the pad
+  // lanes multiply all-zero rows of the matrix, so they contribute
+  // nothing, but only as long as they are finite.
   alignas(32) float terms[SKY_TERM_STRIDE]{};
   terms[0] = 1.0f;
   for (size_t i = 0; i < SKY_VIEW_FEATURE_COUNT; i++) terms[1 + i] = zz[i];
@@ -397,75 +354,57 @@ void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
 }
 
 SunSky::SunSky(const SunSkyOptions &options) {
-  // Everything downstream of the fit tables stays in their native
-  // units; the unit conversion rides along with the user's scale on
-  // every radiance output.
-  mScaleFactor = float(NATIVE_TO_W_M2_SR_NM * double(options.scaleFactor));
+  // The fit tables are already in the library's radiance units, so the
+  // user's scale is the whole of it.
+  mScaleFactor = options.scaleFactor;
+  mSunDiskScale = mScaleFactor / SUN_SOLID_ANGLE;
   mSunEnabled = options.enableSun;
-  mVisibility = std::clamp(double(options.visibility), VISIBILITY_MIN_KM,
-                           VISIBILITY_MAX_KM);
-  mWaterVapor = std::clamp(double(options.waterVaporScale), WATER_VAPOR_MIN,
-                           WATER_VAPOR_MAX);
+  const float visibility{
+      std::clamp(options.visibility, VISIBILITY_MIN_KM, VISIBILITY_MAX_KM)};
+  const float waterVapor{
+      std::clamp(options.waterVaporScale, WATER_VAPOR_MIN, WATER_VAPOR_MAX)};
 
   // The effective sun direction: the given azimuth at the clamped
   // zenith, so the disk stays centered on the aureole the sky fit
   // produces.
-  {
-    const float3 given = normalize(options.sunDirection);
-    const double cosZ = std::clamp(double(given.z), -1.0, 1.0);
-    mSunZenithDeg = std::clamp(std::acos(cosZ) / DEG_TO_RAD, SUN_ZENITH_MIN_DEG,
-                               SUN_ZENITH_MAX_DEG);
-    mSunDirHorz = float2(given.x, given.y);
-    const float len = length(mSunDirHorz);
-    mSunDirHorz =
-        len > 1.0e-12f ? mSunDirHorz * (1.0f / len) : float2(1.0f, 0.0f);
-    const double sinZ = std::sin(mSunZenithDeg * DEG_TO_RAD);
-    mSunDir = float3(float(mSunDirHorz.x * sinZ), float(mSunDirHorz.y * sinZ),
-                     float(std::cos(mSunZenithDeg * DEG_TO_RAD)));
-  }
+  const float3 given{normalize(options.sunDirection)};
+  const float sunZenithDeg{
+      std::clamp(degrees(std::acos(std::clamp(given.z, -1.0f, 1.0f))),
+                 SUN_ZENITH_MIN_DEG, SUN_ZENITH_MAX_DEG)};
+  mSunDirHorz = float2(given.x, given.y);
+  const float lenHorz{length(mSunDirHorz)};
+  mSunDirHorz =
+      lenHorz > 1.0e-12f ? mSunDirHorz * (1.0f / lenHorz) : float2(1.0f, 0.0f);
+  mCosSunZenith = std::cos(radians(sunZenithDeg));
+  mSinSunZenith = std::sin(radians(sunZenithDeg));
+  mSunDir = float3(mSunDirHorz.x * mSinSunZenith, mSunDirHorz.y * mSinSunZenith,
+                   mCosSunZenith);
 
-  // The sky fit's standardized features split into a part the options
-  // fix and a part the view direction supplies. Everything fixed is
-  // computed here, so no evaluation repeats it.
-  const double cosSunZenithD{std::cos(mSunZenithDeg * DEG_TO_RAD)};
-  mCosSunZenith = float(cosSunZenithD);
-  mSinSunZenith = float(std::sin(mSunZenithDeg * DEG_TO_RAD));
-  mZSunZenith = standardizeSky(0, cosSunZenithD);
-  mZSunAirmass =
-      standardizeSky(2, std::log(airmass(mSunZenithDeg, cosSunZenithD)));
-  mZVisibility = standardizeSky(7, std::log(mVisibility));
-  mZWaterVapor = standardizeSky(8, std::log(mWaterVapor));
-
-  // Specialize the polynomial to those four: with them fixed, every term
-  // is a constant times a monomial in the five features the view
-  // supplies, so fold the constant in and sum the terms that share a
-  // monomial. The sum runs in double and lands in the float kernel the
-  // evaluation had anyway, so this trades no precision for the terms it
-  // removes.
+  // Specialize the polynomial to the four standardized features no view
+  // direction can change: with them fixed, every term is a constant
+  // times a monomial in the five features the view supplies, so fold the
+  // constant in and sum the terms that share a monomial.
   {
     // The fixed features by their index in the fit's feature vector; the
     // view features stand at one, so a term's product over all of them is
     // exactly its fixed part.
-    double zFixed[rural::SKY_FEATURE_COUNT];
-    for (auto &value : zFixed) value = 1.0;
-    zFixed[0] = mZSunZenith;
-    zFixed[2] = mZSunAirmass;
-    zFixed[7] = mZVisibility;
-    zFixed[8] = mZWaterVapor;
-    double folded[SKY_TERM_STRIDE][SKY_PACK_WIDTH]{};
+    float zFixed[rural::SKY_FEATURE_COUNT];
+    for (auto &value : zFixed) value = 1.0f;
+    zFixed[0] = standardizeSky(0, mCosSunZenith);
+    zFixed[2] =
+        standardizeSky(2, std::log(airmass(sunZenithDeg, mCosSunZenith)));
+    zFixed[7] = standardizeSky(7, std::log(visibility));
+    zFixed[8] = standardizeSky(8, std::log(waterVapor));
     for (size_t q = 0; q < rural::SKY_OUTPUT_COUNT; q++) {
-      for (uint16_t c = rural::SKY_COEFF_OFFSETS[q];
+      for (int c = rural::SKY_COEFF_OFFSETS[q];
            c < rural::SKY_COEFF_OFFSETS[q + 1]; c++) {
-        const size_t t = rural::SKY_COEFFS[c].term;
-        double fixed = double(rural::SKY_COEFFS[c].weight);
+        const size_t t = size_t(rural::SKY_COEFFS[c].term);
+        float fixed = rural::SKY_COEFFS[c].weight;
         for (const int8_t f : rural::SKY_TERM_FEATURES[t])
           if (f >= 0) fixed *= zFixed[size_t(f)];
-        folded[skyMonomialOf(t)][q] += fixed;
+        mSkyMatrix[skyMonomialOf(t)][q] += fixed;
       }
     }
-    for (size_t t = 0; t < SKY_TERM_STRIDE; t++)
-      for (size_t q = 0; q < SKY_PACK_WIDTH; q++)
-        mSkyMatrix[t][q] = float(folded[t][q]);
   }
 
   // Moonlight mode: the per-channel lunar multiplier rides on top of
@@ -473,12 +412,9 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // moon's position. Scattered radiance is linear in the source
   // irradiance, so this is exact for the atmosphere.
   if (options.moon) {
-    const double phaseDeg =
-        std::clamp(double(options.moonPhase), -180.0, 180.0);
-    const double distanceScale =
-        std::max(double(options.moonDistanceScale), 0.0);
-    const auto multiplier =
-        rolo_moon::evaluateMoonMultiplier(phaseDeg, distanceScale);
+    const auto multiplier = rolo_moon::evaluateMoonMultiplier(
+        std::clamp(double(options.moonPhase), -180.0, 180.0),
+        std::max(double(options.moonDistanceScale), 0.0));
     mChannelScale.assign(multiplier.begin(), multiplier.end());
   }
 
@@ -486,15 +422,15 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // so evaluate the whole spectrum once, capped channel-wise at the
   // TOA irradiance exactly as in the fit.
   {
-    double outputs[rural::SUN_OUTPUT_COUNT]{};
-    evalSunOutputs(mSunZenithDeg, mVisibility, mWaterVapor, outputs);
-    const double brightness = std::exp(outputs[0]);
+    float outputs[rural::SUN_OUTPUT_COUNT]{};
+    evalSunOutputs(sunZenithDeg, visibility, waterVapor, outputs);
+    const float brightness = std::exp(outputs[0]);
     mSunIrradiance.resize(rural::WAVELENGTH_COUNT);
     for (size_t i = 0; i < rural::WAVELENGTH_COUNT; ++i) {
-      double shape = double(rural::SUN_MEAN_SHAPE[i]);
+      float shape = rural::SUN_MEAN_SHAPE[i];
       for (size_t m = 0; m < rural::SUN_MODE_COUNT; ++m)
-        shape += outputs[1 + m] * double(rural::SUN_MODES[m][i]);
-      mSunIrradiance[i] = std::min(float(brightness * std::max(shape, 0.0)),
+        shape += outputs[1 + m] * rural::SUN_MODES[m][i];
+      mSunIrradiance[i] = std::min(brightness * std::max(shape, 0.0f),
                                    rural::SOLAR_IRRADIANCE[i]);
       if (!mChannelScale.empty()) mSunIrradiance[i] *= mChannelScale[i];
     }
@@ -507,50 +443,54 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // follow the moonlit spectrum. The per-channel clamp at zero is
   // skipped here, which only perturbs the sampling weights, never the
   // reported pdf, so the estimator is unaffected.
-  double sumMeanShape = 0.0;
-  double sumModes[rural::SKY_MODE_COUNT]{};
+  float sumMeanShape = 0.0f;
+  float sumModes[rural::SKY_MODE_COUNT]{};
   for (size_t i = 0; i < rural::WAVELENGTH_COUNT; ++i) {
-    const double scale = mChannelScale.empty() ? 1.0 : double(mChannelScale[i]);
-    sumMeanShape += scale * double(rural::SKY_MEAN_SHAPE[i]);
+    const float scale = mChannelScale.empty() ? 1.0f : mChannelScale[i];
+    sumMeanShape += scale * rural::SKY_MEAN_SHAPE[i];
     for (size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
-      sumModes[m] += scale * double(rural::SKY_MODES[m][i]);
+      sumModes[m] += scale * rural::SKY_MODES[m][i];
   }
 
-  // Tabulate broadband sky radiance on the lat-long grid.
+  // Tabulate broadband sky radiance on the lat-long grid. Every sum over
+  // the grid runs a row at a time and adds the row subtotals, which is a
+  // two-level pairwise sum over the loop nest that is already here and
+  // holds the error near a part in a million rather than the part in a
+  // hundred thousand a flat sum over 32768 texels would carry.
   auto weights{std::vector<float>{}};
   weights.reserve(size_t(SKY_DISTR_SIZE_X) * SKY_DISTR_SIZE_Y);
-  double radianceSum{};
-  double sinThetaSum{};
-  double skyIntegral{};
-  const double dTheta = double(PI) / SKY_DISTR_SIZE_Y;
-  const double dPhi = 2.0 * double(PI) / SKY_DISTR_SIZE_X;
+  float radianceSum{};
+  float sinThetaSum{};
+  float skyIntegral{};
+  const float dTheta = PI / SKY_DISTR_SIZE_Y;
+  const float dPhi = TWO_PI / SKY_DISTR_SIZE_X;
   for (int iY = 0; iY < SKY_DISTR_SIZE_Y; iY++) {
-    const double theta = dTheta * (iY + 0.5);
-    const double sinTheta = std::sin(theta);
-    const double viewZenithDeg =
-        std::min(theta / DEG_TO_RAD, VIEW_ZENITH_MAX_DEG);
-    const double cosView = std::max(std::cos(theta), COS_VIEW_ZENITH_MAX);
+    const float theta = dTheta * (iY + 0.5f);
+    const float sinTheta = std::sin(theta);
+    const float viewZenithDeg =
+        std::min(degrees(theta), SunSky::VIEW_ZENITH_MAX_DEG);
+    const float cosView = std::max(std::cos(theta), COS_VIEW_ZENITH_MAX);
+    float rowSum{};
     for (int iX = 0; iX < SKY_DISTR_SIZE_X; iX++) {
-      const double phi = dPhi * (iX + 0.5);
-      const double cosRelAz = double(mSunDirHorz.x) * std::cos(phi) +
-                              double(mSunDirHorz.y) * std::sin(phi);
+      const float phi = dPhi * (iX + 0.5f);
+      const float cosRelAz =
+          mSunDirHorz.x * std::cos(phi) + mSunDirHorz.y * std::sin(phi);
       float outputs[SKY_FIT_OUTPUT_COUNT]{};
-      evalSkyFit(float(cosView), float(viewZenithDeg), float(cosRelAz),
-                 outputs);
-      double shapeSum = sumMeanShape;
+      evalSkyFit(cosView, viewZenithDeg, cosRelAz, outputs);
+      float shapeSum = sumMeanShape;
       for (size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
-        shapeSum += double(outputs[1 + m]) * sumModes[m];
-      const double broadband = fastExp(double(outputs[0])) *
-                               std::max(shapeSum, 0.0) /
-                               rural::WAVELENGTH_COUNT;
-      weights.push_back(float(sinTheta * broadband));
-      radianceSum += sinTheta * broadband;
-      sinThetaSum += sinTheta;
-      skyIntegral += broadband * sinTheta * dTheta * dPhi;
+        shapeSum += outputs[1 + m] * sumModes[m];
+      const float broadband = fastExp(outputs[0]) * std::max(shapeSum, 0.0f) /
+                              rural::WAVELENGTH_COUNT;
+      weights.push_back(sinTheta * broadband);
+      rowSum += broadband;
     }
+    radianceSum += sinTheta * rowSum;
+    sinThetaSum += sinTheta * SKY_DISTR_SIZE_X;
+    skyIntegral += rowSum * sinTheta * dTheta * dPhi;
   }
-  const double meanSkyRadiance =
-      sinThetaSum > 0 ? radianceSum / sinThetaSum : 0.0;
+  const float meanSkyRadiance =
+      sinThetaSum > 0 ? radianceSum / sinThetaSum : 0.0f;
 
   // MIS compensation, matching `EnvLight` in smdl-toy: subtract the
   // mean radiance from the tabulated density and clamp at zero,
@@ -558,17 +498,17 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // everything.
   if (options.enableMISCompensation) {
     auto compensated{weights};
-    double compensatedSum{};
+    float compensatedSum{};
     size_t texel{};
     for (int iY = 0; iY < SKY_DISTR_SIZE_Y; iY++) {
-      const double sinTheta = std::sin(dTheta * (iY + 0.5));
+      const float sinTheta = std::sin(dTheta * (iY + 0.5f));
+      float rowSum{};
       for (int iX = 0; iX < SKY_DISTR_SIZE_X; iX++, texel++) {
-        const double value =
-            sinTheta > 0 ? double(weights[texel]) / sinTheta : 0.0;
-        compensated[texel] =
-            float(sinTheta * std::max(value - meanSkyRadiance, 0.0));
-        compensatedSum += compensated[texel];
+        const float value = sinTheta > 0 ? weights[texel] / sinTheta : 0.0f;
+        compensated[texel] = sinTheta * std::max(value - meanSkyRadiance, 0.0f);
+        rowSum += compensated[texel];
       }
+      compensatedSum += rowSum;
     }
     if (compensatedSum > 0) weights = std::move(compensated);
   }
@@ -578,17 +518,16 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // radiance integrated over its solid angle is just the broadband
   // direct irradiance, in the same channel-mean convention as the sky
   // integral.
-  double sunIntegral = 0.0;
+  float sunIntegral = 0.0f;
   for (size_t i = 0; i < rural::WAVELENGTH_COUNT; ++i)
-    sunIntegral += double(mSunIrradiance[i]);
+    sunIntegral += mSunIrradiance[i];
   sunIntegral /= rural::WAVELENGTH_COUNT;
-  if (!mSunEnabled) sunIntegral = 0.0;
+  if (!mSunEnabled) sunIntegral = 0.0f;
   mSunSelectionChance =
       sunIntegral + skyIntegral > 0
-          ? float(std::min(sunIntegral / (sunIntegral + skyIntegral), 0.999))
+          ? std::min(sunIntegral / (sunIntegral + skyIntegral), 0.999f)
           : 0.0f;
-  mMeanRadiance =
-      float((skyIntegral + sunIntegral) / (4.0 * double(PI)) * mScaleFactor);
+  mMeanRadiance = (skyIntegral + sunIntegral) * (0.25f * INV_PI) * mScaleFactor;
 }
 
 void SunSky::resolve(Span<const float> wavelens, SkyBasis &basis) const {
@@ -621,11 +560,10 @@ void SunSky::skyRadiance(const float3 &direction, const SkyBasis &basis,
     std::fill(radiance, radiance + numBands, 0.0f);
     return;
   }
-  const float3 wi = normalize(direction);
   float cosView{};
   float viewZenithDeg{};
   float2 horizontal{};
-  viewGeometry(wi, cosView, viewZenithDeg, horizontal);
+  viewGeometry(direction, cosView, viewZenithDeg, horizontal);
   const float cosRelAz = dot(horizontal, mSunDirHorz);
   float outputs[SKY_FIT_OUTPUT_COUNT]{};
   evalSkyFit(cosView, viewZenithDeg, cosRelAz, outputs);
@@ -650,11 +588,10 @@ void SunSky::radiance(const float3 &direction, const SkyBasis &basis,
                       float *radiance) const {
   skyRadiance(direction, basis, radiance);
   if (mSunEnabled && !mSunIrradiance.empty() &&
-      dot(normalize(direction), mSunDir) >= float(COS_SUN_ANGULAR_RADIUS)) {
-    const float diskScale = float(double(mScaleFactor) / SUN_SOLID_ANGLE);
+      dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS) {
     const float *SMDL_RESTRICT disk{basis.mSunIrradiance.data()};
     float *SMDL_RESTRICT out{radiance};
-    for (int j = 0; j < basis.mNumBands; j++) out[j] += disk[j] * diskScale;
+    for (int j = 0; j < basis.mNumBands; j++) out[j] += disk[j] * mSunDiskScale;
   }
 }
 
@@ -673,12 +610,11 @@ void SunSky::sunRadiance(int numWavelens, const float *wavelens,
     std::fill(radiance, radiance + numWavelens, 0.0f);
     return;
   }
-  const auto diskScale = float(double(mScaleFactor) / SUN_SOLID_ANGLE);
   for (int j = 0; j < numWavelens; j++) {
     const auto lerp = channelOf(wavelens[j]);
     const float value0 = mSunIrradiance[lerp.i0];
     const float value1 = mSunIrradiance[lerp.i1];
-    radiance[j] = (value0 + lerp.frac * (value1 - value0)) * diskScale;
+    radiance[j] = (value0 + lerp.frac * (value1 - value0)) * mSunDiskScale;
   }
 }
 
@@ -686,13 +622,12 @@ void SunSky::radiance(const float3 &direction, int numWavelens,
                       const float *wavelens, float *radiance) const {
   skyRadiance(direction, numWavelens, wavelens, radiance);
   if (mSunEnabled && !mSunIrradiance.empty() &&
-      dot(normalize(direction), mSunDir) >= float(COS_SUN_ANGULAR_RADIUS)) {
-    const auto diskScale = float(double(mScaleFactor) / SUN_SOLID_ANGLE);
+      dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS) {
     for (int j = 0; j < numWavelens; j++) {
       const auto lerp = channelOf(wavelens[j]);
       const float value0 = mSunIrradiance[lerp.i0];
       const float value1 = mSunIrradiance[lerp.i1];
-      radiance[j] += (value0 + lerp.frac * (value1 - value0)) * diskScale;
+      radiance[j] += (value0 + lerp.frac * (value1 - value0)) * mSunDiskScale;
     }
   }
 }
@@ -700,16 +635,6 @@ void SunSky::radiance(const float3 &direction, int numWavelens,
 double SunSky::moonMultiplier(double wavelenNm, double phaseDeg,
                               double distanceScale) {
   return rolo_moon::moonMultiplier(wavelenNm * 1.0e-3, phaseDeg, distanceScale);
-}
-
-float SunSky::cosSunAngularRadius() const noexcept {
-  // TODO Move constant into header and inline this
-  return float(COS_SUN_ANGULAR_RADIUS);
-}
-
-float SunSky::sunSolidAngle() const noexcept {
-  // TODO Move constant into header and inline this
-  return float(SUN_SOLID_ANGLE);
 }
 
 float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
@@ -721,7 +646,7 @@ float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
   if (xi.x < pmfSun) {
     xi.x /= pmfSun; // remap
     const float3 wi = coordinateSystem(mSunDir) *
-                      uniformConeSample(float(COS_SUN_ANGULAR_RADIUS), xi);
+                      uniformConeSample(COS_SUN_ANGULAR_RADIUS, xi);
     if (pdf) *pdf = this->pdf(wi);
     return wi;
   }
@@ -730,19 +655,18 @@ float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
   const float3 wi = mSkyDistr.directionSample(xi, nullptr, &pdfSky);
   if (pdf) {
     *pdf = (1.0f - pmfSun) * pdfSky;
-    if (pmfSun > 0 && dot(wi, mSunDir) >= float(COS_SUN_ANGULAR_RADIUS))
-      *pdf += pmfSun * uniformConePDF(float(COS_SUN_ANGULAR_RADIUS));
+    if (pmfSun > 0 && dot(wi, mSunDir) >= COS_SUN_ANGULAR_RADIUS)
+      *pdf += pmfSun * uniformConePDF(COS_SUN_ANGULAR_RADIUS);
   }
   return wi;
 }
 
 float SunSky::pdf(const float3 &direction) const noexcept {
   if (mSkyDistr.getNumTexelsX() == 0) return 0.0f;
-  const float3 wi = normalize(direction);
-  const float pSun = mSunSelectionChance;
-  float result = (1.0f - pSun) * mSkyDistr.directionPDF(wi);
-  if (pSun > 0 && dot(wi, mSunDir) >= float(COS_SUN_ANGULAR_RADIUS))
-    result += pSun * uniformConePDF(float(COS_SUN_ANGULAR_RADIUS));
+  const float pmfSun = mSunSelectionChance;
+  float result = (1.0f - pmfSun) * mSkyDistr.directionPDF(direction);
+  if (pmfSun > 0 && dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS)
+    result += pmfSun * uniformConePDF(COS_SUN_ANGULAR_RADIUS);
   return result;
 }
 

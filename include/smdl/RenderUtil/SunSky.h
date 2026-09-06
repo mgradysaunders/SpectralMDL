@@ -109,8 +109,8 @@ private:
   /// the per-channel scale folded in.
   std::vector<float> mRows{};
 
-  /// The direct solar irradiance interpolated onto the grid, in the fit
-  /// tables' native units exactly as `SunSky::sunIrradiance`.
+  /// The direct solar irradiance interpolated onto the grid, in the same
+  /// units as `SunSky::mSunIrradiance`.
   std::vector<float> mSunIrradiance{};
 };
 
@@ -151,8 +151,50 @@ public:
   explicit SunSky(const SunSkyOptions &options);
 
 public:
+  /// \name Model constants
+  ///
+  /// The ranges the fit is trained on, which every input clamps to
+  /// because the fit extrapolates rather than fails outside them, and
+  /// the geometry of the sun disk.
+  ///
+  /// \{
+
+  /// The wavelength range of the model grid in nanometers. Wavelengths
+  /// outside it clamp to the end channels.
+  static constexpr float WAVELENGTH_MIN_NM = 400.0f;
+  static constexpr float WAVELENGTH_MAX_NM = 2500.0f;
+
+  /// The trained sun zenith angle range in degrees.
+  static constexpr float SUN_ZENITH_MIN_DEG = 5.0f;
+  static constexpr float SUN_ZENITH_MAX_DEG = 88.0f;
+
+  /// The trained view zenith angle maximum in degrees, with its cosine
+  /// spelled out so that clamping the angle and clamping its cosine
+  /// agree.
+  static constexpr float VIEW_ZENITH_MAX_DEG = 88.0f;
+  static constexpr float COS_VIEW_ZENITH_MAX = 0.0348994955f;
+
+  /// The trained aerosol visibility range in kilometers.
+  static constexpr float VISIBILITY_MIN_KM = 5.0f;
+  static constexpr float VISIBILITY_MAX_KM = 100.0f;
+
+  /// The trained water-vapor column scale range.
+  static constexpr float WATER_VAPOR_MIN = 0.3f;
+  static constexpr float WATER_VAPOR_MAX = 3.0f;
+
+  /// The solar angular radius in degrees, its cosine, and the solid
+  /// angle \f$ 2\pi(1 - \cos\theta) \f$ of the disk it subtends. The
+  /// solid angle is spelled out rather than derived because `1 - cos`
+  /// keeps only three digits of it in single precision.
+  static constexpr float SUN_ANGULAR_RADIUS_DEG = 0.2665f;
+  static constexpr float COS_SUN_ANGULAR_RADIUS = 0.999989212f;
+  static constexpr float SUN_SOLID_ANGLE = 6.79670266e-05f;
+
+  /// \}
+
+public:
   /// The sky-dome spectral radiance toward `direction`, excluding the
-  /// sun disk.
+  /// sun disk. The direction must be normalized.
   ///
   /// The wavelengths in `wavelens` must be in nanometers, need not be
   /// sorted, and clamp to the model grid of 400-2500nm. The resulting
@@ -166,12 +208,14 @@ public:
   void resolve(Span<const float> wavelens, SkyBasis &basis) const;
 
   /// The sky-dome spectral radiance toward `direction` over a resolved
-  /// grid, writing `basis.numBands()` values.
+  /// grid, writing `basis.numBands()` values. The direction must be
+  /// normalized.
   void skyRadiance(const float3 &direction, const SkyBasis &basis,
                    float *radiance) const;
 
   /// The total spectral radiance toward `direction` over a resolved
-  /// grid: the sky plus the sun disk when `direction` is inside it.
+  /// grid: the sky plus the sun disk when `direction` is inside it. The
+  /// direction must be normalized.
   void radiance(const float3 &direction, const SkyBasis &basis,
                 float *radiance) const;
 
@@ -183,7 +227,8 @@ public:
                    float *radiance) const;
 
   /// The total spectral radiance toward `direction`: the sky plus the
-  /// sun disk when `direction` is inside it.
+  /// sun disk when `direction` is inside it. The direction must be
+  /// normalized.
   void radiance(const float3 &direction, int numWavelens, const float *wavelens,
                 float *radiance) const;
 
@@ -194,11 +239,15 @@ public:
   /// Is the sun disk enabled?
   [[nodiscard]] bool hasSun() const noexcept { return mSunEnabled; }
 
-  /// The cosine of the solar angular radius of 0.2665 degrees.
-  [[nodiscard]] float cosSunAngularRadius() const noexcept;
+  /// The cosine of the solar angular radius.
+  [[nodiscard]] static constexpr float cosSunAngularRadius() noexcept {
+    return COS_SUN_ANGULAR_RADIUS;
+  }
 
   /// The solid angle of the sun disk.
-  [[nodiscard]] float sunSolidAngle() const noexcept;
+  [[nodiscard]] static constexpr float sunSolidAngle() noexcept {
+    return SUN_SOLID_ANGLE;
+  }
 
   /// The direction sampling routine, distributed approximately
   /// proportional to broadband radiance: a power-weighted mixture of
@@ -213,7 +262,7 @@ public:
   [[nodiscard]] float3 sample(float2 xi, float *pdf = {}) const noexcept;
 
   /// The solid-angle density `sample()` realizes in `direction`, for
-  /// multiple importance sampling.
+  /// multiple importance sampling. The direction must be normalized.
   [[nodiscard]] float pdf(const float3 &direction) const noexcept;
 
   /// The broadband mean radiance over the sphere of directions
@@ -232,14 +281,24 @@ public:
   /// in `SunSkyOptions::moonDistanceScale`. Magnitude for intuition:
   /// about 2.4e-6 at 550nm at full moon, falling to 6.7e-8 at quarter
   /// phase and exactly zero at new moon.
+  ///
+  /// This is the one part of the model that stays in double: it is a
+  /// generated reference implementation evaluated once per `SunSky`,
+  /// pinned by its doctest against the Python reference to double
+  /// roundoff, and it hands back a per-channel float table from there.
   [[nodiscard]] static double moonMultiplier(double wavelenNm, double phaseDeg,
                                              double distanceScale = 1.0);
 
 private:
-  /// The scale factor applied to every radiance output:
-  /// `SunSkyOptions::scaleFactor` times the conversion from the fit
-  /// tables' native W/(cm^2 sr um) to W/(m^2 sr nm).
+  /// The scale factor applied to every radiance output, which is
+  /// `SunSkyOptions::scaleFactor`: the fit tables are already in
+  /// W/(m^2 sr nm), so nothing else rides along.
   float mScaleFactor{1.0f};
+
+  /// The scale factor applied to the sun disk, which is `scaleFactor`
+  /// over the disk solid angle, so that turning the direct irradiance
+  /// into the disk's uniform radiance is a multiply.
+  float mSunDiskScale{};
 
   /// Is the sun disk enabled?
   bool mSunEnabled{false};
@@ -251,61 +310,28 @@ private:
   /// calculations.
   float2 mSunDirHorz{1.0f, 0.0f};
 
-  /// The clamped sun zenith angle in degrees.
-  double mSunZenithDeg{};
-
-  /// The clamped aerosol visibility in kilometers.
-  double mVisibility{};
-
-  /// The clamped water-vapor column scale factor.
-  double mWaterVapor{};
-
   /// The number of sky fit outputs: the log broadband brightness and one
   /// coefficient per spectral mode. Mirrors `SKY_OUTPUT_COUNT` in the fit
   /// tables, which the implementation static asserts against.
   static constexpr int SKY_FIT_OUTPUT_COUNT = 6;
 
-  /// The number of terms the specialized sky polynomial can have: every
-  /// monomial up to the cubic in the five features a view direction
-  /// supplies, padded to the accumulator count of its kernel. It is a
-  /// bound rather than the count of any one fit, so that a refit which
-  /// evaluates fewer of them does not change the size of this class and
-  /// oblige every consumer to rebuild. The implementation static asserts
-  /// that the fit it carries fits; see `skyMatrix`.
-  static constexpr int SKY_FIT_TERM_COUNT = 56;
+  /// The number of terms in the specialized sky polynomial: every
+  /// monomial up to the fit's degree in the five features a view
+  /// direction supplies, padded to the accumulator count of its kernel.
+  /// The implementation derives the same number from the fit tables and
+  /// static asserts that the two agree, so a refit that changes the
+  /// degree or the feature split changes this number too; see
+  /// `mSkyMatrix`.
+  static constexpr int SKY_FIT_TERM_COUNT = 24;
 
   /// The number of output lanes the kernel carries, which is the output
   /// count rounded up to a vector.
   static constexpr int SKY_FIT_OUTPUT_STRIDE = 8;
 
-  /// \name Sky fit constants
-  ///
-  /// The parts of the sky fit's standardized feature vector that no view
-  /// direction can change. They are computed once here rather than on
-  /// every evaluation, which is where the whole cost of a `std::pow` and
-  /// six other transcendentals used to fall.
-  ///
-  /// \{
-
-  /// The cosine of the clamped sun zenith angle.
+  /// The cosine and sine of the clamped sun zenith angle, which every
+  /// evaluation needs to form the scattering angle.
   float mCosSunZenith{1.0f};
-
-  /// The sine of the clamped sun zenith angle.
   float mSinSunZenith{};
-
-  /// The standardized cosine-of-sun-zenith feature.
-  double mZSunZenith{};
-
-  /// The standardized log-sun-airmass feature.
-  double mZSunAirmass{};
-
-  /// The standardized log-visibility feature.
-  double mZVisibility{};
-
-  /// The standardized log-water-vapor feature.
-  double mZWaterVapor{};
-
-  /// \}
 
   /// Evaluate the sky fit for one view direction, writing the log
   /// broadband brightness and the spectral mode coefficients.
@@ -317,29 +343,29 @@ private:
   void evalSkyFit(float cosView, float viewZenithDeg, float cosRelativeAzimuth,
                   float (&outputs)[SKY_FIT_OUTPUT_COUNT]) const noexcept;
 
-  /// The sky polynomial specialized to these options: the fit is cubic
-  /// in nine standardized features, four of which no view direction can
-  /// change (see the sky fit constants above), so folding those four
-  /// into the coefficients here leaves a polynomial in the five the view
-  /// supplies. It is the same polynomial, evaluated over a quarter as
-  /// many terms.
+  /// The sky polynomial specialized to these options: the fit is a
+  /// polynomial in nine standardized features, four of which no view
+  /// direction can change (the sun zenith, the sun airmass, the
+  /// visibility, and the water vapor), so folding those four into the
+  /// coefficients at construction leaves a polynomial in the five the
+  /// view supplies. It is the same polynomial, evaluated over a quarter
+  /// as many terms.
   ///
   /// Row `t` holds the weight of term `t` in every output, so the
   /// contraction is one vertical multiply-accumulate per term with the
   /// outputs falling out as the lanes of the accumulator.
   alignas(32) float mSkyMatrix[SKY_FIT_TERM_COUNT][SKY_FIT_OUTPUT_STRIDE]{};
 
-  /// The direct solar spectral irradiance on the model grid in the fit
-  /// tables' native W/(cm^2 um), evaluated once at construction (it
-  /// does not depend on the view direction). Unscaled by `scaleFactor`,
-  /// which carries the conversion to output units. In moonlight mode
-  /// this is the direct lunar irradiance, i.e., already multiplied by
-  /// `channelScale`.
+  /// The direct solar spectral irradiance on the model grid in
+  /// W/(m^2 nm), evaluated once at construction (it does not depend on
+  /// the view direction) and unscaled by `scaleFactor`. In moonlight
+  /// mode this is the direct lunar irradiance, i.e., already multiplied
+  /// by `mChannelScale`.
   std::vector<float> mSunIrradiance{};
 
   /// The per-channel spectral scale on the model grid: empty in sun
   /// mode, the ROLO lunar multiplier in moonlight mode. Applies to the
-  /// sky-dome evaluation and the sampling weights; `sunIrradiance` has
+  /// sky-dome evaluation and the sampling weights; `mSunIrradiance` has
   /// it baked in already.
   std::vector<float> mChannelScale{};
 
