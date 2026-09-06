@@ -25,6 +25,21 @@
   return opticalDepth < 87.0f ? smdl::fastExp(-d) : 0.0f;
 }
 
+// The average of the per-band products of `a` and `b`, summed in band
+// order as `Color::average()` sums, each product rounded before it is
+// added: the balance-heuristic normalizers below form this without the
+// product's temporary, and the separate statement keeps the compiler
+// from fusing the multiply into the sum, which would round differently.
+[[nodiscard]] static inline float averageOfProducts(const Color &a,
+                                                    const Color &b) noexcept {
+  float sum{};
+  for (size_t i = 0; i < a.size(); i++) {
+    const float product{a[i] * b[i]};
+    sum += product;
+  }
+  return sum / float(a.size());
+}
+
 // The cap on tentative collisions per segment, a guard against
 // marching forever through unbounded or leaky geometry with a positive
 // majorant. A segment that exhausts it is treated as fully absorbed;
@@ -286,9 +301,12 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
       auto &component{mComponents.emplace_back()};
       component.mat = &mat;
-      component.sigmaA = Color(mat.getAbsorptionCoefficient()) * mUnitScale;
-      component.sigmaS = Color(mat.getScatteringCoefficient()) * mUnitScale;
-      component.emission = Color(mat.getVolumeEmissionIntensity()) * mUnitScale;
+      component.sigmaA = Color(mat.getAbsorptionCoefficient());
+      component.sigmaA *= mUnitScale;
+      component.sigmaS = Color(mat.getScatteringCoefficient());
+      component.sigmaS *= mUnitScale;
+      component.emission = Color(mat.getVolumeEmissionIntensity());
+      component.emission *= mUnitScale;
       mHasEmission |= !mat.getVolumeEmissionIntensity().empty();
       // Heterogeneous (or unproven, which must be treated the same): the
       // per-point queries need majorants to track against, covering every
@@ -298,10 +316,10 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
           warnMissingMajorantOnce(mat.material);
         } else {
           component.heterogeneous = true;
-          component.maxSigmaA =
-              Color(mat.getMaxAbsorptionCoefficient()) * mUnitScale;
-          component.maxSigmaS =
-              Color(mat.getMaxScatteringCoefficient()) * mUnitScale;
+          component.maxSigmaA = Color(mat.getMaxAbsorptionCoefficient());
+          component.maxSigmaA *= mUnitScale;
+          component.maxSigmaS = Color(mat.getMaxScatteringCoefficient());
+          component.maxSigmaS *= mUnitScale;
           component.state = renderState;
           // The queries evaluate in the rigid frame of the instance whose
           // boundary entered the medium, paired with the rigid transform so
@@ -565,11 +583,14 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // The extinction at the collision is the origin spectrum times a
       // factor common to every band, which cancels between the
       // scattering weight and the balance heuristic that normalizes it.
-      beta *= mHazeSigmaC * mHazeAlbedo * Tr / (mHazeSigmaC * Tr).average();
+      const float norm{averageOfProducts(mHazeSigmaC, Tr)};
+      for (size_t i = 0; i < beta.size(); i++)
+        beta[i] *= mHazeSigmaC[i] * mHazeAlbedo[i] * Tr[i] / norm;
       t = smdl::Haze::shapeInverse(mHazeK, sScatter);
       return true;
     }
-    beta *= Tr / Tr.average();
+    const float norm{Tr.average()};
+    for (size_t i = 0; i < beta.size(); i++) beta[i] *= Tr[i] / norm;
     return false;
   }
   if (!mHeterogeneous) {
@@ -607,7 +628,9 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     for (size_t i = 0; i < mu.size(); i++)
       Tr[i] = transmittance(mu[i] * tTravel);
     if (tScatter < tEnd) {
-      beta *= mSigmaS * Tr / (mu * Tr).average();
+      const float norm{averageOfProducts(mu, Tr)};
+      for (size_t i = 0; i < beta.size(); i++)
+        beta[i] *= mSigmaS[i] * Tr[i] / norm;
       // Only an overlap has a phase function to choose; a single
       // medium must not draw here, or every render with a medium moves
       // onto a different sampler dimension.
@@ -616,7 +639,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       t = tScatter;
       return true;
     }
-    beta *= Tr / Tr.average();
+    const float norm{Tr.average()};
+    for (size_t i = 0; i < beta.size(); i++) beta[i] *= Tr[i] / norm;
     return false;
   }
   // Delta tracking against the scalar majorant, generalizing the same
@@ -683,7 +707,11 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // applies, and the common renormalization of 'P' cancels.
       if (SMDL_UNLIKELY(mHasEmission)) {
         const float pdfEmit{m * P.average()};
-        if (pdfEmit > 0.0f) emitted += emission * P / pdfEmit;
+        if (pdfEmit > 0.0f)
+          for (size_t i = 0; i < emitted.size(); i++) {
+            const float added{emission[i] * P[i] / pdfEmit};
+            emitted[i] += added;
+          }
       }
       const Color muT{sigmaA + sigmaS};
       if (rng.generateFloat() * m < muT[hero]) {
@@ -691,12 +719,13 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
         // the mixture density of all heroes having produced this chain;
         // absorption is folded into the weight rather than terminating,
         // exactly like the homogeneous path.
-        const float pdf{(muT * P).average()};
+        const float pdf{averageOfProducts(muT, P)};
         if (SMDL_UNLIKELY(!(pdf > 0.0f))) {
           beta = Color();
           return false;
         }
-        beta *= sigmaS * P / pdf;
+        for (size_t i = 0; i < beta.size(); i++)
+          beta[i] *= sigmaS[i] * P[i] / pdf;
         if (SMDL_UNLIKELY(mComponents.size() > 1))
           pickScatterComponent(rng.generateFloat(), sigmaS, beta);
         t = tCur;
@@ -704,7 +733,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       }
       // A null collision against the local majorant, which the local
       // clamp in 'evaluateCoefficients' keeps non-negative per bin.
-      P *= m - muT;
+      for (size_t i = 0; i < P.size(); i++) P[i] *= m - muT[i];
       const float renormalize{P.maxComponent()};
       if (SMDL_UNLIKELY(!(renormalize > 0.0f))) {
         // Every bin hit the majorant: the chain carries no throughput
@@ -715,7 +744,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       P *= 1.0f / renormalize;
     }
   }
-  beta *= P / P.average();
+  const float norm{P.average()};
+  for (size_t i = 0; i < beta.size(); i++) beta[i] *= P[i] / norm;
   return false;
 }
 
@@ -768,8 +798,13 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
   // the other components stays in the tracked rate at full strength.
   const Color majorantColor{mGridMaxSigma};
   while (spans.next(span)) {
-    if (span.scaleMin > 0.0f)
-      controlDepth += majorantColor * (span.scaleMin * (span.t1 - span.t0));
+    if (span.scaleMin > 0.0f) {
+      const float depth{span.scaleMin * (span.t1 - span.t0)};
+      for (size_t i = 0; i < controlDepth.size(); i++) {
+        const float control{majorantColor[i] * depth};
+        controlDepth[i] += control;
+      }
+    }
     const float m{mMajorantGrid * (span.scale - span.scaleMin) + mMajorantBase};
     if (!(m > 0.0f)) continue;
     float tCur{span.t0};
@@ -791,7 +826,11 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
       // residual at most `m`, so the factor is nonnegative; where the
       // extinction dips below the control the factor exceeds 1, which
       // the estimator identity covers for residuals of either sign.
-      beta *= (m - ((sigmaA + sigmaS) - majorantColor * span.scaleMin)) / m;
+      for (size_t i = 0; i < beta.size(); i++) {
+        const float control{majorantColor[i] * span.scaleMin};
+        const float residual{(sigmaA[i] + sigmaS[i]) - control};
+        beta[i] *= (m - residual) / m;
+      }
       if (SMDL_UNLIKELY(!(beta.maxComponent() > 0.0f))) {
         beta = Color();
         return;

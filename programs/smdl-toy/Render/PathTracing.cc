@@ -814,7 +814,12 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     }
   }
   if (!(measure > 0.0f) || !(offsetDensity > 0.0f)) return {};
-  Color direct{f * Tr * Li * beta * (measure / lightSample.pdf)};
+  // Band by band, the products in the order the color operators would
+  // take them, without their four temporaries.
+  const float transfer{measure / lightSample.pdf};
+  Color direct{};
+  for (size_t b = 0; b < direct.size(); b++)
+    direct[b] = f[b] * Tr[b] * Li[b] * beta[b] * transfer;
   if (claimed || chain[0].isReflect || anyGlossy) {
     // A searched-for connection is claimed exclusively: a reflection was
     // never handed a straight crossing, and a chain with any drawn
@@ -948,7 +953,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
   // wall whose reflection of the light is blocked by another interface
   // converges on every walk and would otherwise spend the whole trial
   // budget on nothing.
-  const Color value{contribution(chain, connection, scale, receiverMask)};
+  Color value{contribution(chain, connection, scale, receiverMask)};
   stats.recordContribution(!value.isAllZero());
   if (value.isAllZero()) return {};
   int trials{};
@@ -959,7 +964,8 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
                            return reseed(chain) && solve(other);
                          })) {
     stats.recordTrials(statKind, trials, false);
-    return inverseProbability * value;
+    value *= inverseProbability;
+    return value;
   }
   stats.recordTrials(statKind, render.mneeOptions.maxTrials, true);
   return {};
@@ -1327,7 +1333,9 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
         return;
       const float continuationPdf{guidedContinuationPdf(
           vertex.dtree, vertex.bsdfFraction, lightSample.wi, fPdf)};
-      Color D{f * Tr * lightSample.Li / lightSample.pdf};
+      Color D{};
+      for (size_t b = 0; b < D.size(); b++)
+        D[b] = f[b] * Tr[b] * lightSample.Li[b] / lightSample.pdf;
       if (D.isAnyNonFinite()) return;
       // A light the continuation cannot reach has MIS weight 1; see
       // `LightSample::reachable`.
@@ -1394,15 +1402,6 @@ void foldArrivalIntoRecord(GuideRecord *record, const Color &beta,
       record->direct[b] += beta[b] / record->beta[b] * Larrival[b];
     record->continuationEmission[b] = Larrival[b];
   }
-}
-
-// What an arrival at a light is worth, per wavelength, as a factor on the
-// throughput times the radiance: the ordinary MIS `weight` on the share
-// nobody claims, and nothing on the claimed share, which is left to the
-// gather that claimed it. The Dirac chain arrival is claimed whole and
-// weighed by re-walk MIS instead; see `addArrival` in `tracePath()`.
-[[nodiscard]] Color arrivalFactor(float weight, const Color &claimedShare) {
-  return (Color(1.0f) - claimedShare) * weight;
 }
 
 // The share of one bounce's throughput the manifold estimators claim,
@@ -1556,33 +1555,59 @@ private:
   // having claimed every drawable target exclusively; otherwise the
   // ordinary MIS `weight` applies to the share of the segment's
   // throughput nobody claims, and a claimed share toward a target its
-  // gather reaches is the gather's outright; see `arrivalFactor()`.
-  // `makeCoverTarget` fills the target the re-walk aims at and returns
-  // the light-sampling density it competes with, negative when there is
-  // no target to re-walk, which keeps the ordinary weight.
+  // gather reaches is the gather's outright. `makeCoverTarget` fills the
+  // target the re-walk aims at and returns the light-sampling density it
+  // competes with, negative when there is no target to re-walk, which
+  // keeps the ordinary weight.
   template <typename MakeCoverTarget>
   void addArrival(const Color &Li, float weight, uint64_t bounces,
                   bool causticTarget, GuideRecord *record,
                   const MakeCoverTarget &makeCoverTarget) {
-    Color factor{};
+    // The factor on the throughput times the radiance, per band: one
+    // weight across the bands for a covered Dirac chain, and otherwise
+    // the ordinary weight on the share of each band nobody claims.
+    float uniform{weight};
+    const Color *share{nullptr};
     if (mCoverage.coversDirac(mRender.mneeOptions)) {
       ManifoldTarget target{};
       const float lightPdf{makeCoverTarget(target)};
       if (lightPdf > 0.0f && mRender.mneeOptions.biasedTrials > 0) return;
-      factor = Color(lightPdf >= 0.0f ? mCoverage.coverWeight(mRender, mPath,
-                                                              target, lightPdf)
-                                      : weight);
-    } else {
-      factor = arrivalFactor(weight, mPrev.shareCausticOnly && !causticTarget
-                                         ? Color(0.0f)
-                                         : mPrev.claimedShare);
+      if (lightPdf >= 0.0f)
+        uniform = mCoverage.coverWeight(mRender, mPath, target, lightPdf);
+    } else if (!(mPrev.shareCausticOnly && !causticTarget)) {
+      share = &mPrev.claimedShare;
     }
-    auto contribution{mBeta * Li * factor};
+    const auto factorAt{[&](size_t b) {
+      return share ? (1.0f - (*share)[b]) * weight : uniform;
+    }};
+    Color contribution{};
+    for (size_t b = 0; b < contribution.size(); b++)
+      contribution[b] = mBeta[b] * Li[b] * factorAt(b);
     if (contribution.isAnyNonFinite()) return;
     const float scale{clampScale(contribution, bounces)};
     if (scale < 1.0f) contribution *= scale;
     mL += contribution;
-    foldArrivalIntoRecord(record, mBeta, Li * factor * scale);
+    if (record) {
+      Color Larrival{};
+      for (size_t b = 0; b < Larrival.size(); b++)
+        Larrival[b] = Li[b] * factorAt(b) * scale;
+      foldArrivalIntoRecord(record, mBeta, Larrival);
+    }
+  }
+
+  // Fold a vertex's gathered direct lighting into the estimate under the
+  // contribution bound, and into its guide record. The throughput
+  // product is formed once: the bound reads it, and it is the
+  // contribution itself whenever the bound leaves the gather alone.
+  void addGathered(Color &direct, GuideRecord *record) {
+    Color contribution{mBeta * direct};
+    if (const float scale{clampScale(contribution, mDepth - 1)}; scale < 1.0f) {
+      direct *= scale;
+      for (size_t b = 0; b < contribution.size(); b++)
+        contribution[b] = mBeta[b] * direct[b];
+    }
+    mL += contribution;
+    if (record) record->direct = direct;
   }
 
   const RenderContext &mRender;
@@ -1699,11 +1724,7 @@ Color PathWalk::trace(const CameraSample &camera) {
             // vertex keeps its null cell and the continuation density
             // the gather weighs against is the phase function alone.
             Color direct{gatherDirect(mRender, mPath, mGatherState, vertex)};
-            if (const float scale{clampScale(mBeta * direct, mDepth - 1)};
-                scale < 1.0f)
-              direct *= scale;
-            mL += mBeta * direct;
-            if (record) record->direct = direct;
+            addGathered(direct, record);
           }
           // Sample the vertex's phase function. It returns the phase
           // value, which is also the solid-angle PDF of having sampled
@@ -1933,11 +1954,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       vertex.armedBehind = wasArmed;
       vertex.receiver = receiver;
       Color direct{gatherDirect(mRender, mPath, mGatherState, vertex)};
-      if (const float scale{clampScale(mBeta * direct, mDepth - 1)};
-          scale < 1.0f)
-        direct *= scale;
-      mL += mBeta * direct;
-      if (record) record->direct = direct;
+      addGathered(direct, record);
     }
 
     float3 wNext{};
@@ -2044,7 +2061,7 @@ Color PathWalk::trace(const CameraSample &camera) {
                                     : Color(0.0f))
                              : claimedShare;
     mPrev.shareCausticOnly = !extendedChain;
-    mBeta *= f / wpdf;
+    for (size_t b = 0; b < mBeta.size(); b++) mBeta[b] *= f[b] / wpdf;
     if (mBeta.isAnyNonFinite()) break;
     if (!rouletteSurvives(dtree)) break;
     if (!isHair)

@@ -80,7 +80,8 @@ Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
   if (iPixel.x >= 0 && iPixel.y >= 0)
     compiler.convertRGBToColor(state, mImage.fetchUnsafe(iPixel.x, iPixel.y),
                                Li.data());
-  return Li * mScaleFactor;
+  Li *= mScaleFactor;
+  return Li;
 }
 
 float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
@@ -1051,7 +1052,7 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
         mInstanceToLight[instIndex] != INVALID_INDEX) {
       area = mAreaLights[mInstanceToLight[instIndex]].totalArea;
     }
-    Le = Le / area;
+    Le /= area;
   }
   return true;
 }
