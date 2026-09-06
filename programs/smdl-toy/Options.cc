@@ -129,76 +129,61 @@ cl::opt<float> optCatEyeRadius{
     cl::init(0.0f), cl::cat(catCamera)};
 //--}
 
-cl::OptionCategory catConfig{"Config Options"};
-//--{ Output Options
-cl::opt<std::string> optOutputRGB{
-    "output-rgb",
-    cl::desc("The tone mapped RGB image filename (default: output.png)"),
-    cl::init(std::string("output.png")), cl::cat(catConfig)};
-cl::opt<std::string> optOutputRGBf{
-    "output-rgbf",
-    cl::desc("Also write linear RGB radiance to this '.exr' or '.hdr' file"),
-    cl::cat(catConfig)};
-cl::opt<std::string> optOutputSpectrum{
-    "output-spectrum",
-    cl::desc("Also write linear spectral radiance to this ENVI file"),
-    cl::cat(catConfig)};
-cl::opt<std::string> optResume{
-    "resume",
-    cl::desc("Resume accumulating from this ENVI file written by a previous "
-             "-output-spectrum"),
-    cl::cat(catConfig)};
-cl::opt<float> optImageExposure{
+cl::OptionCategory catImage{"Image Options"};
+//--{ Image Options
+cl::opt<int2> optResolution{
+    "resolution",
+    cl::desc("The image dimensions in pixels (default: 1280,720)"),
+    cl::init(int2{1280, 720}), cl::cat(catImage)};
+cl::opt<int4> optCropWindow{
+    "crop-window",
+    cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
+             "frame, given as x0,y0,x1,y1 (default: the whole frame)\n"
+             "* the output keeps the full size with the rest black"),
+    cl::init(int4{0, 0, 0, 0}), cl::cat(catImage)};
+cl::opt<float> optExposure{
     "exposure",
     cl::desc("The exposure applied before tone mapping (default: 1)"),
-    cl::init(1.0f), cl::cat(catConfig)};
-cl::opt<std::string> optTonemap{
-    "tonemap", cl::desc(R"(Tone mapping for 8-bit output (default: linear)
-* 'linear' passes the radiance through to the display curve
-* 'log' is shorthand for '-tonemap linear -curve log'
-* 'night' models human vision at absolute luminance and auto-exposes,
-  for physically dim scenes like moonlight)"),
-    cl::init(std::string("linear")), cl::cat(catConfig)};
-cl::opt<float> optTonemapDecades{
-    "tonemap-decades",
-    cl::desc("With -curve=log, how many decades below white reach "
-             "black (default: 4)"),
-    cl::init(4.0f), cl::cat(catConfig)};
-cl::opt<std::string> optCurve{
-    "curve", cl::desc(R"(The display curve for 8-bit output (default: gamma)
-* 'gamma' clamps and gamma-encodes
-* 'log' maps decades below the exposure-scaled white point
-* 'filmic' rolls highlights off toward white instead of clipping them)"),
-    cl::init(std::string("gamma")), cl::cat(catConfig)};
-cl::opt<std::string> optLocal{
-    "local", cl::desc(R"(Local tone mapping for 8-bit output (default: off)
-* 'fusion' by Laplacian pyramid; also auto-exposes, leaving -exposure a relative adjustment)"),
-    cl::init(std::string("off")), cl::cat(catConfig)};
-cl::opt<float> optLocalStrength{
-    "local-strength",
-    cl::desc(
-        "With -local, how much local exposure to keep, 0 to 1 (default: 0.75)"),
-    cl::init(0.75f), cl::cat(catConfig)};
-cl::opt<float> optLocalRange{
-    "local-range",
-    cl::desc("With -local, the total bracket in EV (default: 0 means infer)"),
-    cl::init(0.0f), cl::cat(catConfig)};
-cl::opt<float> optLocalClamp{
-    "local-clamp",
-    cl::desc("With -local, the largest local exposure deviation in EV "
-             "(default: 3)"),
-    cl::init(3.0f), cl::cat(catConfig)};
+    cl::init(1.0f), cl::cat(catImage)};
 cl::opt<bool> optFalseColor{
     "false-color",
     cl::desc("Force false color band mapping for the RGB outputs\n"
              "* engages automatically when wavelength grid does not cover the "
              "visible"),
-    cl::init(false), cl::cat(catConfig)};
-cl::opt<float3> optRGBWaves{
+    cl::init(false), cl::cat(catImage)};
+cl::opt<float3> optRGBWavelengths{
     "rgb-wavelengths",
     cl::desc("With -false-color, the wavelengths in nm mapped to R,G,B "
              "(default: 5/6, 1/2, and 1/6 of the grid span, long to red)"),
-    cl::init(float3{}), cl::cat(catConfig)};
+    cl::init(float3{}), cl::cat(catImage)};
+cl::opt<std::string> optOutputRGB{
+    "output-rgb",
+    cl::desc("The tone mapped RGB image filename (default: output.png)"),
+    cl::init(std::string("output.png")), cl::cat(catImage)};
+cl::opt<std::string> optOutputRGBf{
+    "output-rgbf",
+    cl::desc("Also write linear RGB radiance to this '.exr' or '.hdr' file"),
+    cl::cat(catImage)};
+cl::opt<std::string> optOutputSpectrum{
+    "output-spectrum",
+    cl::desc("Also write linear spectral radiance to this ENVI file"),
+    cl::cat(catImage)};
+cl::opt<std::string> optResume{
+    "resume",
+    cl::desc("Resume accumulating from this ENVI file written by a previous "
+             "-output-spectrum"),
+    cl::cat(catImage)};
+cl::opt<std::string> optTonemap{
+    "tonemap",
+    cl::desc(R"(The tonemap for 8-bit output as stages joined by '+', e.g., 'filmic+fusion', 'night+log:6', 'filmic+fusion:0.5,2' (default: gamma)
+* 'gamma' clamps and gamma-encodes
+* 'log:DECADES' maps the decades below the exposure-scaled white point (default: 4)
+* 'filmic' rolls highlights off toward white instead of clipping them
+* 'night' models vision at absolute luminance and auto-exposes, for physically dim scenes like moonlight
+* 'fusion:STRENGTH,CLAMP,SPAN' auto-exposes locally, leaving -exposure a relative adjustment; how
+  much local exposure to keep from 0 to 1, the largest local deviation in EV, and the bracket's total
+  span in EV or 0 to infer (default: 0.75, 3, 0))"),
+    cl::init(std::string("gamma")), cl::cat(catImage)};
 //--}
 
 cl::OptionCategory catLight{"Light Options"};
@@ -216,9 +201,11 @@ cl::opt<float> optSunAzimuth{
     "sun-azimuth",
     cl::desc("The solar azimuth angle in degrees CCW from +X (default: 135)"),
     cl::init(135.0f), cl::cat(catLight)};
+// TODO Rename `--sky-visibility`
 cl::opt<float> optSkyVisibility{
     "visibility", cl::desc("The aerosol visibility in km, 5-100 (default: 23)"),
     cl::init(23.0f), cl::cat(catLight)};
+// TODO Rename `--sky-water-vapor`
 cl::opt<float> optSkyWaterVapor{
     "water-vapor",
     cl::desc("The water-vapor column scale factor, 0.3-3 (default: 1)"),
@@ -265,16 +252,6 @@ cl::opt<float> optIBLScale{
 
 cl::OptionCategory catRendering{"Rendering Options"};
 //--{ Rendering Options
-cl::opt<int2> optResolution{
-    "resolution",
-    cl::desc("The image dimensions in pixels (default: 1280,720)"),
-    cl::init(int2{1280, 720}), cl::cat(catRendering)};
-cl::opt<int4> optCropWindow{
-    "crop-window",
-    cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
-             "frame, given as x0,y0,x1,y1 (default: the whole frame)\n"
-             "* the output keeps the full size with the rest black"),
-    cl::init(int4{0, 0, 0, 0}), cl::cat(catRendering)};
 cl::opt<unsigned> optSPP{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catRendering)};
@@ -504,16 +481,15 @@ template <typename T> [[nodiscard]] Flag<T> flag(const cl::opt<T> &option) {
 // line expands '@'-prefixed argv tokens as response files before any
 // option sees them. Returns empty when the flag was not given; anything
 // else must be a finite, positive, strictly increasing list.
-[[nodiscard]]
-std::vector<float> parseWavelengthsFlag(const std::string &flagValue) {
+[[nodiscard]] std::vector<float> parseWavelengths(const std::string &flagStr) {
   auto values{std::vector<float>()};
-  if (flagValue.empty()) return values;
-  auto text{flagValue};
-  if (std::ifstream file{flagValue}; file) {
+  if (flagStr.empty()) return values;
+  auto text{flagStr};
+  if (std::ifstream file{flagStr}; file) {
     text.assign(std::istreambuf_iterator<char>(file), {});
     if (text.empty())
       throw smdl::Error(smdl::concat("-wavelengths file ",
-                                     smdl::Quoted(flagValue), " is empty"));
+                                     smdl::Quoted(flagStr), " is empty"));
   }
   const char *ptr{text.c_str()};
   while (*ptr) {
@@ -544,11 +520,10 @@ std::vector<float> parseWavelengthsFlag(const std::string &flagValue) {
 // Parse the '-wavelength-range' flag: 'A,B:N' for N uniform bands
 // spanning A to B nm, with ':N' optional. Returns the default grid when
 // the flag was not given.
-[[nodiscard]]
-WavelengthRange parseWavelengthRangeFlag(const std::string &flagValue) {
+[[nodiscard]] WavelengthRange parseWavelengthRange(const std::string &flagStr) {
   auto result{WavelengthRange{float2{WAVELENGTH_MIN, WAVELENGTH_MAX}, 16U}};
-  if (flagValue.empty()) return result;
-  const char *ptr{flagValue.c_str()};
+  if (flagStr.empty()) return result;
+  const char *ptr{flagStr.c_str()};
   char *numEnd{};
   result.range.x = std::strtof(ptr, &numEnd);
   if (numEnd == ptr || *numEnd != ',')
@@ -579,6 +554,7 @@ WavelengthRange parseWavelengthRangeFlag(const std::string &flagValue) {
     throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
   return result;
 }
+
 } // namespace
 
 Options parseCommandLine(int argc, char **argv) {
@@ -594,8 +570,8 @@ Options parseCommandLine(int argc, char **argv) {
                       ".", OPENSUBDIV_VERSION_PATCH)});
     os << info.toString();
   });
-  cl::HideUnrelatedOptions({&catScene, &catUtility, &catRendering, &catCamera,
-                            &catLight, &catConfig});
+  cl::HideUnrelatedOptions({&catCamera, &catImage, &catLight, &catRendering,
+                            &catScene, &catUtility});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
   // Honors '-print-options' and '-print-all-options', which LLVM
   // registers but leaves to the tool to act on; it prints nothing unless
@@ -625,19 +601,13 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected -autolook-zenith between 1 and 179");
   if (!(float(optAutolookMargin) >= 0 && float(optAutolookMargin) <= 0.5f))
     throw smdl::Error("expected -autolook-margin between 0 and 0.5");
-  if (!(float(optLocalStrength) >= 0) || !(float(optLocalStrength) <= 1))
-    throw smdl::Error("expected -local-strength between 0 and 1");
-  if (!(float(optLocalClamp) > 0))
-    throw smdl::Error("expected -local-clamp to be positive");
-  if (optLocalRange.getNumOccurrences() > 0 && !(float(optLocalRange) > 0))
-    throw smdl::Error("expected -local-range to be positive");
   if (optWavelengths.getNumOccurrences() > 0 &&
       optWavelengthRange.getNumOccurrences() > 0)
     throw smdl::Error("expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
-  if (optRGBWaves.getNumOccurrences() > 0) {
-    const auto waves{float3(optRGBWaves)};
+  if (optRGBWavelengths.getNumOccurrences() > 0) {
+    const auto waves{float3(optRGBWavelengths)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
       throw smdl::Error("expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
@@ -705,9 +675,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
 
   // Parsed here so a typo fails before anything loads.
-  opts.grid.range = parseWavelengthRangeFlag(std::string(optWavelengthRange));
-  opts.grid.explicitWavelengths =
-      parseWavelengthsFlag(std::string(optWavelengths));
+  opts.grid.range = parseWavelengthRange(std::string(optWavelengthRange));
+  opts.grid.explicitWavelengths = parseWavelengths(std::string(optWavelengths));
   opts.grid.given = optWavelengthRange.getNumOccurrences() > 0 ||
                     optWavelengths.getNumOccurrences() > 0;
   opts.grid.jitter = bool(optWavelengthJitter);
@@ -753,26 +722,13 @@ Options parseCommandLine(int argc, char **argv) {
   opts.path.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
 
-  opts.tonemap.mode = parseAppearanceMode(std::string(optTonemap));
-  opts.tonemap.curve = parseDisplayCurveKind(std::string(optCurve));
-  opts.tonemap.local = parseLocalOperator(std::string(optLocal));
-  opts.tonemap.exposure = float(optImageExposure);
-  opts.tonemap.logDecades = float(optTonemapDecades);
-  opts.tonemap.localStrength = float(optLocalStrength);
-  opts.tonemap.localRange = float(optLocalRange);
-  opts.tonemap.localClamp = float(optLocalClamp);
-  // '-tonemap log' is kept as shorthand for '-tonemap linear -curve
-  // log'; allow it, but not while the curve says otherwise.
-  if (opts.tonemap.mode == AppearanceMode::LOG &&
-      optCurve.getNumOccurrences() > 0 &&
-      opts.tonemap.curve != DisplayCurveKind::LOG)
-    throw smdl::Error("expected -curve log with -tonemap log ('-tonemap log' "
-                      "is shorthand for '-tonemap linear -curve log')");
+  opts.tonemap = parseTonemapOptions(std::string(optTonemap));
+  opts.tonemap.exposure = float(optExposure);
 
   opts.rgbPolicy.forceFalseColor =
-      bool(optFalseColor) || optRGBWaves.getNumOccurrences() > 0;
-  if (optRGBWaves.getNumOccurrences() > 0) {
-    const auto waves{float3(optRGBWaves)};
+      bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
+  if (optRGBWavelengths.getNumOccurrences() > 0) {
+    const auto waves{float3(optRGBWavelengths)};
     opts.rgbPolicy.falseColorWaves = {waves.x, waves.y, waves.z};
   }
 

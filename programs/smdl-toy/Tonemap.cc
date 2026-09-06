@@ -1,11 +1,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <string>
 
 #include "Tonemap.h"
 
 #include "smdl/Compiler.h"
+#include "smdl/Support/Error.h"
+#include "smdl/Support/Strings.h"
 
 //--{ Spectral to RGB
 
@@ -254,15 +258,15 @@ static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
 // curve is free to treat color its own way as long as the two agree on
 // grays, which is all the local operator relies on.
 struct DisplayCurve final {
-  DisplayCurveKind kind{DisplayCurveKind::GAMMA};
+  TonemapCurve kind{TonemapCurve::GAMMA};
 
   float logDecades{4.0f};
 
   [[nodiscard]] float apply(float value) const noexcept {
     switch (kind) {
-    case DisplayCurveKind::GAMMA:
+    case TonemapCurve::GAMMA:
       return std::pow(std::clamp(value, 0.0f, 1.0f), 1.0f / 2.2f);
-    case DisplayCurveKind::LOG:
+    case TonemapCurve::LOG:
       return value > 0.0f
                  ? std::clamp(1.0f + std::log10(value) / logDecades, 0.0f, 1.0f)
                  : 0.0f;
@@ -279,9 +283,9 @@ struct DisplayCurve final {
     // exact cutoff matters far less than staying finite.
     display = std::clamp(display, 0.0f, 1.0f - 1e-4f);
     switch (kind) {
-    case DisplayCurveKind::GAMMA:
+    case TonemapCurve::GAMMA:
       return std::pow(display, 2.2f);
-    case DisplayCurveKind::LOG:
+    case TonemapCurve::LOG:
       return std::pow(10.0f, (display - 1.0f) * logDecades);
     default:
       return pbrNeutralGrayInverse(std::pow(display, 2.2f));
@@ -290,10 +294,10 @@ struct DisplayCurve final {
 
   void applyRGB(const float *rgb, float *out) const noexcept {
     switch (kind) {
-    case DisplayCurveKind::GAMMA:
+    case TonemapCurve::GAMMA:
       for (int i = 0; i < 3; i++) out[i] = apply(rgb[i]);
       return;
-    case DisplayCurveKind::LOG: {
+    case TonemapCurve::LOG: {
       // Scale the channels by the luminance ratio so the log curve
       // moves brightness without moving hue. The luminance here is
       // deliberately the channel mean, not the Rec.709 weighting.
@@ -462,7 +466,7 @@ struct Plane final {
 
 //--}
 
-//--{ Local operator: exposure fusion
+//--{ Exposure fusion
 
 // Exposure fusion (Mertens, Kautz, and Van Reeth 2007) over a synthetic
 // bracket of the render itself, reduced to a smooth per-pixel exposure.
@@ -517,7 +521,7 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
   autoExposure = 0.18f / std::sqrt(lumLo * lumHi);
   // Quantize the span to a quarter stop so two renders of the same
   // scene at different sample counts pick the same ladder.
-  float spanInEV{options.localRange > 0.0f ? options.localRange
+  float spanInEV{options.fusionSpan > 0.0f ? options.fusionSpan
                                            : std::log2(lumHi / lumLo)};
   spanInEV = std::round(std::clamp(spanInEV, 2.0f, 16.0f) * 4.0f) / 4.0f;
   const size_t numExposures{
@@ -572,9 +576,9 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
     const float target{curve.applyInverse(fusedDisplay.values[p])};
     float ev{
         std::log2(std::max(target, 1e-30f) / (autoExposure * luminance[p]))};
-    ev = std::clamp(ev, -options.localClamp, options.localClamp);
+    ev = std::clamp(ev, -options.fusionClamp, options.fusionClamp);
     deviation.push_back(ev);
-    gain[p] = std::exp2(options.localStrength * ev);
+    gain[p] = std::exp2(options.fusionStrength * ev);
   }
   const float evLo{nthValue(deviation, 0.05)};
   const float evHi{nthValue(deviation, 0.95)};
@@ -583,8 +587,8 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
                 "fusion tonemap: %.2f EV span over %zu exposures, auto "
                 "exposure %.3g, local exposure %+.2f to %+.2f EV\n",
                 double(spanInEV), numExposures, double(autoExposure),
-                double(options.localStrength * evLo),
-                double(options.localStrength * evHi));
+                double(options.fusionStrength * evLo),
+                double(options.fusionStrength * evHi));
   std::cerr << note;
   return gain;
 }
@@ -729,35 +733,118 @@ applyNightFilter(const std::vector<float> &rgbImage,
 
 //--}
 
-//--{ Option names
+//--{ Command line spec
 
-// The appearance stage, once the name is known to be one of the three.
+// Split on `separator`, keeping empty pieces so that a malformed spec
+// like 'filmic+' is caught by the empty-name check rather than ignored.
+[[nodiscard]] static std::vector<std::string> splitSpec(std::string_view text,
+                                                        char separator) {
+  auto pieces{std::vector<std::string>()};
+  for (size_t pos{};;) {
+    const size_t end{text.find(separator, pos)};
+    if (end == std::string_view::npos) {
+      pieces.emplace_back(text.substr(pos));
+      return pieces;
+    }
+    pieces.emplace_back(text.substr(pos, end - pos));
+    pos = end + 1;
+  }
+}
 
-// These three are the only place a name is spelled out, so validating
-// early and resolving later cannot drift apart.
+// The comma-separated floats after a stage's ':'. Every parameter is
+// positional and optional, so the caller reads back only as many as
+// arrived and leaves the rest at their defaults.
+[[nodiscard]] static std::vector<float>
+parseStageParams(const std::string &stage, const std::string &params,
+                 size_t maxCount) {
+  auto values{std::vector<float>()};
+  for (const auto &piece : splitSpec(params, ',')) {
+    const char *ptr{piece.c_str()};
+    char *numEnd{};
+    const float value{std::strtof(ptr, &numEnd)};
+    if (numEnd == ptr || *numEnd != '\0' || !std::isfinite(value))
+      throw smdl::Error(smdl::concat("cannot parse -tonemap ",
+                                     smdl::Quoted(stage), " parameter ",
+                                     smdl::Quoted(piece)));
+    values.push_back(value);
+  }
+  if (values.size() > maxCount)
+    throw smdl::Error(smdl::concat("expected at most ", maxCount,
+                                   " parameter(s) for -tonemap ",
+                                   smdl::Quoted(stage)));
+  return values;
+}
+
 //--}
 
-AppearanceMode parseAppearanceMode(std::string_view name) {
-  if (name == "linear") return AppearanceMode::LINEAR;
-  if (name == "log") return AppearanceMode::LOG;
-  if (name == "night") return AppearanceMode::NIGHT;
-  throw smdl::Error(smdl::concat("unknown -tonemap mode ", name,
-                                 " (expected 'linear', 'log', or 'night')"));
-}
-
-DisplayCurveKind parseDisplayCurveKind(std::string_view name) {
-  if (name == "gamma") return DisplayCurveKind::GAMMA;
-  if (name == "log") return DisplayCurveKind::LOG;
-  if (name == "filmic") return DisplayCurveKind::FILMIC;
-  throw smdl::Error(smdl::concat("unknown -curve ", name,
-                                 " (expected 'gamma', 'log', or 'filmic')"));
-}
-
-LocalOperator parseLocalOperator(std::string_view name) {
-  if (name == "off") return LocalOperator::OFF;
-  if (name == "fusion") return LocalOperator::FUSION;
-  throw smdl::Error(
-      smdl::concat("unknown -local ", name, " (expected 'off' or 'fusion')"));
+TonemapOptions parseTonemapOptions(std::string_view spec) {
+  auto options{TonemapOptions{}};
+  bool haveNight{};
+  bool haveCurve{};
+  bool haveFusion{};
+  for (const auto &stage : splitSpec(spec, '+')) {
+    auto name{stage};
+    auto params{std::string()};
+    bool hasParams{};
+    if (const size_t colon{stage.find(':')}; colon != std::string::npos) {
+      name = stage.substr(0, colon);
+      params = stage.substr(colon + 1);
+      hasParams = true;
+    }
+    if (name.empty())
+      throw smdl::Error("expected a -tonemap stage name (the stages are "
+                        "joined by '+')");
+    if (name == "night") {
+      if (haveNight)
+        throw smdl::Error("expected at most one 'night' stage in -tonemap");
+      if (hasParams)
+        throw smdl::Error("expected no parameters for -tonemap 'night'");
+      haveNight = true;
+      options.night = true;
+    } else if (name == "gamma" || name == "log" || name == "filmic") {
+      if (haveCurve)
+        throw smdl::Error("expected at most one display curve in -tonemap "
+                          "('gamma', 'log', or 'filmic')");
+      haveCurve = true;
+      options.curve = name == "gamma" ? TonemapCurve::GAMMA
+                      : name == "log" ? TonemapCurve::LOG
+                                      : TonemapCurve::FILMIC;
+      if (hasParams) {
+        if (name != "log")
+          throw smdl::Error(smdl::concat("expected no parameters for -tonemap ",
+                                         smdl::Quoted(name)));
+        options.logDecades = parseStageParams(name, params, 1)[0];
+        if (!(options.logDecades > 0))
+          throw smdl::Error("expected the -tonemap 'log' DECADES to be "
+                            "positive");
+      }
+    } else if (name == "fusion") {
+      if (haveFusion)
+        throw smdl::Error("expected at most one 'fusion' stage in -tonemap");
+      haveFusion = true;
+      options.fusion = true;
+      const auto values{hasParams ? parseStageParams(name, params, 3)
+                                  : std::vector<float>()};
+      if (values.size() > 0) options.fusionStrength = values[0];
+      if (values.size() > 1) options.fusionClamp = values[1];
+      if (values.size() > 2) options.fusionSpan = values[2];
+      if (!(options.fusionStrength >= 0 && options.fusionStrength <= 1))
+        throw smdl::Error("expected the -tonemap 'fusion' STRENGTH between 0 "
+                          "and 1");
+      if (!(options.fusionClamp > 0))
+        throw smdl::Error("expected the -tonemap 'fusion' CLAMP to be "
+                          "positive");
+      if (!(options.fusionSpan >= 0))
+        throw smdl::Error("expected the -tonemap 'fusion' SPAN to be "
+                          "nonnegative (0 infers the bracket)");
+    } else {
+      throw smdl::Error(
+          smdl::concat("unknown -tonemap stage ", smdl::Quoted(name),
+                       " (expected 'night', 'gamma', 'log', 'filmic', or "
+                       "'fusion')"));
+    }
+  }
+  return options;
 }
 
 std::vector<uint8_t> tonemap(const TonemapOptions &options,
@@ -768,18 +855,12 @@ std::vector<uint8_t> tonemap(const TonemapOptions &options,
   const size_t numPixelsY{film.getNumPixelsY()};
   auto curve{DisplayCurve{}};
   curve.kind = options.curve;
-  curve.logDecades = std::max(0.1f, options.logDecades);
-  auto appearance{Appearance{}};
-  if (options.mode == AppearanceMode::NIGHT) {
-    appearance = applyNightFilter(rgbImage, film, wavelengths);
-  } else {
-    appearance = Appearance{rgbImage, 1.0f};
-    // '-tonemap log' is shorthand for '-tonemap linear -curve log'.
-    if (options.mode == AppearanceMode::LOG) curve.kind = DisplayCurveKind::LOG;
-  }
+  curve.logDecades = options.logDecades;
+  auto appearance{options.night ? applyNightFilter(rgbImage, film, wavelengths)
+                                : Appearance{rgbImage, 1.0f}};
   auto gain{std::vector<float>()};
   float autoExposure{1.0f};
-  if (options.local == LocalOperator::FUSION)
+  if (options.fusion)
     gain = computeFusionGain(appearance.image, numPixelsX, numPixelsY, curve,
                              options, autoExposure);
   const float scale{options.exposure * appearance.scale *
