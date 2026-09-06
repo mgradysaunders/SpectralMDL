@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "smdl/RenderUtil/FastMath.h"
+
 // The analytic geometry of the primitive shapes, in one place: the
 // closed-form surface evaluation, the Embree user-geometry callbacks
 // that intersect it, and the uniform-area sampling that lights it. The
@@ -16,7 +18,7 @@ namespace {
 
 // The azimuth parameter of a point in the XY plane, wrapped to [0, 1).
 [[nodiscard]] float azimuthOf(float x, float y) noexcept {
-  float u{std::atan2(y, x) * (1.0f / TWO_PI)};
+  float u{smdl::fastAtan2(y, x) * (1.0f / TWO_PI)};
   return u < 0.0f ? u + 1.0f : u;
 }
 
@@ -139,11 +141,9 @@ public:
 }
 
 // What one accepted intersection reports back to Embree: the distance
-// and the object-space point. `pieceUV()` derives the parameters from
-// the point afterwards, in the closest-hit callback only, because an
-// occlusion query never looks at them and the sphere's cost an
-// arccosine and an arctangent; `Scene::intersect()` derives everything
-// else from the point itself.
+// and the object-space point, from which `Scene::intersect()` derives
+// everything else, the parameters included, once per ray rather than
+// once per candidate the traversal accepts.
 class PieceHit final {
 public:
   float t{};
@@ -279,29 +279,6 @@ template <typename F>
          (spec.shape == PrimitiveSpec::Shape::CONE && primID == CONE_BASE);
 }
 
-// The surface parameters of an accepted intersection, the inverse of
-// `evalPrimitiveSurface()` on its piece.
-[[nodiscard]] float2 pieceUV(const PrimitiveSpec &spec, uint32_t primID,
-                             const PieceHit &hit) {
-  const float3 &p{hit.point};
-  if (spec.shape == PrimitiveSpec::Shape::BOX) {
-    const auto axis{boxFaceAxis(primID)};
-    const auto axisU{(axis + 1) % 3};
-    const auto axisV{(axis + 2) % 3};
-    return float2(p[axisU] / spec.size[axisU] + 0.5f,
-                  p[axisV] / spec.size[axisV] + 0.5f);
-  }
-  if (isCapPiece(spec, primID))
-    return float2(azimuthOf(p.x, p.y),
-                  std::sqrt(p.x * p.x + p.y * p.y) / spec.radius);
-  if (spec.shape == PrimitiveSpec::Shape::SPHERE) {
-    const float3 n{smdl::normalize(p)};
-    return float2(azimuthOf(n.x, n.y),
-                  std::acos(std::clamp(n.z, -1.0f, 1.0f)) * (1.0f / PI));
-  }
-  return float2(azimuthOf(p.x, p.y), p.z / spec.height);
-}
-
 void primitiveBounds(const RTCBoundsFunctionArguments *args) {
   const auto *primitive{static_cast<const Primitive *>(args->geometryUserPtr)};
   const auto &spec{primitive->spec};
@@ -362,12 +339,12 @@ void primitiveIntersect(const RTCIntersectFunctionNArguments *args) {
   // element of the array the traversal came through; regular instances
   // report element 0.
   rayHit->hit.instPrimID[0] = args->context->instPrimID[0];
-  const float2 uv{pieceUV(primitive->spec, args->primID, hit)};
-  rayHit->hit.u = uv.x;
-  rayHit->hit.v = uv.y;
-  // The normal slots carry the object-space point instead: it is what
-  // `Scene::intersect()` builds the surface from, normal included,
-  // without going back through the parameters.
+  // The normal slots carry the object-space point: `Scene::intersect()`
+  // builds the surface from it, normal and parameters included. The
+  // parameter slots are zeroed only so the record holds nothing
+  // indeterminate.
+  rayHit->hit.u = 0.0f;
+  rayHit->hit.v = 0.0f;
   rayHit->hit.Ng_x = hit.point.x;
   rayHit->hit.Ng_y = hit.point.y;
   rayHit->hit.Ng_z = hit.point.z;
@@ -459,28 +436,40 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
   const float phi{TWO_PI * uv.x};
   const float cosPhi{std::cos(phi)};
   const float sinPhi{std::sin(phi)};
+  PrimitiveSurface surface{};
   switch (spec.shape) {
   case PrimitiveSpec::Shape::SPHERE: {
     const float theta{PI * uv.y};
-    return sphereSurface(r, std::cos(theta), std::sin(theta), cosPhi, sinPhi);
+    surface =
+        sphereSurface(r, std::cos(theta), std::sin(theta), cosPhi, sinPhi);
+    break;
   }
   case PrimitiveSpec::Shape::BOX:
-    return boxFaceSurface(spec.size, primID, uv);
+    surface = boxFaceSurface(spec.size, primID, uv);
+    break;
   case PrimitiveSpec::Shape::DISK:
-    return capSurface(r, 0.0f, 1.0f, r * uv.y, cosPhi, sinPhi);
+    surface = capSurface(r, 0.0f, 1.0f, r * uv.y, cosPhi, sinPhi);
+    break;
   case PrimitiveSpec::Shape::CYLINDER:
     if (primID == CYLINDER_BOTTOM)
-      return capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
-    if (primID == CYLINDER_TOP)
-      return capSurface(r, h, 1.0f, r * uv.y, cosPhi, sinPhi);
-    return cylinderSideSurface(r, h, h * uv.y, cosPhi, sinPhi);
+      surface = capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
+    else if (primID == CYLINDER_TOP)
+      surface = capSurface(r, h, 1.0f, r * uv.y, cosPhi, sinPhi);
+    else
+      surface = cylinderSideSurface(r, h, h * uv.y, cosPhi, sinPhi);
+    break;
   case PrimitiveSpec::Shape::CONE:
     if (primID == CONE_BASE)
-      return capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
-    return coneSideSurface(r, h, r * (1.0f - uv.y), h * uv.y, cosPhi, sinPhi);
+      surface = capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
+    else
+      surface =
+          coneSideSurface(r, h, r * (1.0f - uv.y), h * uv.y, cosPhi, sinPhi);
+    break;
   default:
-    return {};
+    break;
   }
+  surface.uv = uv;
+  return surface;
 }
 
 PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
@@ -491,42 +480,63 @@ PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
   float cosPhi{};
   float sinPhi{};
   azimuthTrigOf(point.x, point.y, rho, cosPhi, sinPhi);
+  PrimitiveSurface surface{};
   switch (spec.shape) {
   case PrimitiveSpec::Shape::SPHERE:
     // The zenith trig straight off the point over the radius, so the
     // normal is the point over the radius as the intersection found it.
-    return sphereSurface(r, point.z / r, rho / r, cosPhi, sinPhi);
+    surface = sphereSurface(r, point.z / r, rho / r, cosPhi, sinPhi);
+    break;
   case PrimitiveSpec::Shape::BOX: {
-    // A planar face has nothing that varies over it, so the parameters
-    // are not needed at all: only the point has to land on the plane.
+    // A planar face has nothing that varies over it, so only the point
+    // has to land on the plane.
     const auto axis{boxFaceAxis(primID)};
-    auto surface{boxFaceSurface(spec.size, primID, float2(0.5f, 0.5f))};
+    surface = boxFaceSurface(spec.size, primID, float2(0.5f, 0.5f));
     surface.point = point;
     surface.point[axis] = 0.5f * boxFaceSign(primID) * spec.size[axis];
-    return surface;
+    break;
   }
   case PrimitiveSpec::Shape::DISK:
-    return capSurface(r, 0.0f, 1.0f, rho, cosPhi, sinPhi);
+    surface = capSurface(r, 0.0f, 1.0f, rho, cosPhi, sinPhi);
+    break;
   case PrimitiveSpec::Shape::CYLINDER:
     if (primID == CYLINDER_BOTTOM)
-      return capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
-    if (primID == CYLINDER_TOP)
-      return capSurface(r, h, 1.0f, rho, cosPhi, sinPhi);
-    return cylinderSideSurface(r, h, point.z, cosPhi, sinPhi);
+      surface = capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
+    else if (primID == CYLINDER_TOP)
+      surface = capSurface(r, h, 1.0f, rho, cosPhi, sinPhi);
+    else
+      surface = cylinderSideSurface(r, h, point.z, cosPhi, sinPhi);
+    break;
   case PrimitiveSpec::Shape::CONE:
     if (primID == CONE_BASE)
-      return capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
-    return coneSideSurface(r, h, rho, point.z, cosPhi, sinPhi);
+      surface = capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
+    else
+      surface = coneSideSurface(r, h, rho, point.z, cosPhi, sinPhi);
+    break;
   default:
-    return {};
+    break;
   }
+  surface.uv = primitiveUV(spec, primID, point);
+  return surface;
 }
 
 float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
-                   const float3 &objectPoint) {
-  PieceHit hit{};
-  hit.point = objectPoint;
-  return pieceUV(spec, primID, hit);
+                   const float3 &p) {
+  if (spec.shape == PrimitiveSpec::Shape::BOX) {
+    const auto axis{boxFaceAxis(primID)};
+    const auto axisU{(axis + 1) % 3};
+    const auto axisV{(axis + 2) % 3};
+    return float2(p[axisU] / spec.size[axisU] + 0.5f,
+                  p[axisV] / spec.size[axisV] + 0.5f);
+  }
+  if (isCapPiece(spec, primID))
+    return float2(azimuthOf(p.x, p.y),
+                  std::sqrt(p.x * p.x + p.y * p.y) / spec.radius);
+  if (spec.shape == PrimitiveSpec::Shape::SPHERE)
+    return float2(azimuthOf(p.x, p.y),
+                  smdl::fastAcos(std::clamp(p.z / spec.radius, -1.0f, 1.0f)) *
+                      (1.0f / PI));
+  return float2(azimuthOf(p.x, p.y), p.z / spec.height);
 }
 
 PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
@@ -558,12 +568,10 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
     const float sinTheta{
         std::sqrt(std::max((1.0f - cosTheta) * (1.0f + cosTheta), 0.0f))};
     const float phi{TWO_PI * uv.x};
-    const auto surface{sphereSurface(spec.radius, cosTheta, sinTheta,
-                                     std::cos(phi), std::sin(phi))};
-    uv.y = std::acos(cosTheta) * (1.0f / PI);
-    sample.uv = uv;
-    sample.point = surface.point;
-    sample.normal = surface.normal;
+    sample.surface = sphereSurface(spec.radius, cosTheta, sinTheta,
+                                   std::cos(phi), std::sin(phi));
+    uv.y = smdl::fastAcos(cosTheta) * (1.0f / PI);
+    sample.surface.uv = uv;
     return sample;
   }
   if (isCapPiece(spec, primID)) {
@@ -573,16 +581,14 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
     // apex, i.e. to (1 - v).
     uv.y = 1.0f - std::sqrt(1.0f - xi.y);
   }
-  const auto surface{evalPrimitiveSurface(spec, primID, uv)};
-  sample.uv = uv;
-  sample.point = surface.point;
-  sample.normal = surface.normal;
+  sample.surface = evalPrimitiveSurface(spec, primID, uv);
   return sample;
 }
 
-std::unique_ptr<Primitive>
-makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
-              bool robustIntersection) {
+std::unique_ptr<Primitive> makePrimitive(RTCDevice device,
+                                         const PrimitiveSpec &spec,
+                                         uint32_t matIndex,
+                                         bool robustIntersection) {
   auto primitive{std::make_unique<Primitive>()};
   primitive->spec = spec;
   primitive->matIndex = matIndex;
@@ -597,9 +603,8 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
                                  float2(float(iu) / 8.0f, float(iv) / 3.0f))
                 .point);
   primitive->scene = rtcNewScene(device);
-  rtcSetSceneFlags(primitive->scene, robustIntersection
-                                       ? RTC_SCENE_FLAG_ROBUST
-                                       : RTC_SCENE_FLAG_NONE);
+  rtcSetSceneFlags(primitive->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                        : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(primitive->scene, RTC_BUILD_QUALITY_HIGH);
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER)};
   rtcSetGeometryUserPrimitiveCount(geometry, primitivePieceCount(spec));

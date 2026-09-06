@@ -110,15 +110,6 @@ float2 uniformDiskSample(float2 xi) noexcept {
   return {rad * std::cos(phi), rad * std::sin(phi)};
 }
 
-float3 uniformConeSample(float cosThetaC, float2 xi) noexcept {
-  float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
-  if (cosTheta < -1.0f) cosTheta = -1.0f;
-  if (cosTheta > +1.0f) cosTheta = +1.0f;
-  float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
-  float phi{TWO_PI * xi.y};
-  return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
-}
-
 float2 uniformApertureSample(int numBlades, float bladeAngle,
                              float2 xi) noexcept {
   if (numBlades < 3) return uniformDiskSample(xi);

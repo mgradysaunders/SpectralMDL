@@ -189,6 +189,11 @@ TEST_CASE("Primitive") {
             const auto fromUV{evalPrimitiveSurface(spec, primID, uv)};
             const auto fromPoint{
                 evalPrimitiveSurfaceAt(spec, primID, fromUV.point)};
+            // The parameters come back through the fast inverse
+            // trigonometry, whose bounds are a few float ulps of a
+            // parameter.
+            CHECK(std::fabs(fromUV.uv.x - fromPoint.uv.x) < 2e-6f);
+            CHECK(std::fabs(fromUV.uv.y - fromPoint.uv.y) < 2e-6f);
             CHECK(length(fromUV.point - fromPoint.point) < 1e-5f);
             CHECK(length(fromUV.normal - fromPoint.normal) < 1e-5f);
             CHECK(length(fromUV.dPdu - fromPoint.dPdu) < 1e-4f);
@@ -237,13 +242,13 @@ TEST_CASE("Primitive") {
           const auto sample{samplePrimitiveArea(spec, xi)};
           REQUIRE(sample.primID < pieceCount);
           counts[sample.primID]++;
-          worst = std::max(worst, surfaceResidual(spec, sample.point));
-          // The sample reports the point and normal directly; they must
-          // be the same ones its (piece, u, v) rebuilds.
+          worst = std::max(worst, surfaceResidual(spec, sample.surface.point));
+          // The sample reports its surface directly; the point and
+          // normal must be the same ones its (piece, u, v) rebuilds.
           const auto surface{
-              evalPrimitiveSurface(spec, sample.primID, sample.uv)};
-          CHECK(length(sample.point - surface.point) < 1e-4f);
-          CHECK(length(sample.normal - surface.normal) < 1e-4f);
+              evalPrimitiveSurface(spec, sample.primID, sample.surface.uv)};
+          CHECK(length(sample.surface.point - surface.point) < 1e-4f);
+          CHECK(length(sample.surface.normal - surface.normal) < 1e-4f);
         }
       CHECK(worst < 1e-5f);
       // Each piece takes its share of the draws, which for the box is

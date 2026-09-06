@@ -1469,7 +1469,7 @@ void Scene::buildMeshGeometry(Mesh &mesh) {
 // silently means something else.
 [[nodiscard]] static SMDL_ALWAYS_INLINE RTCRay
 toRTCRay(const Ray &ray) noexcept {
-  RTCRay rtcRay{};
+  RTCRay rtcRay;
   rtcRay.org_x = ray.org.x;
   rtcRay.org_y = ray.org.y;
   rtcRay.org_z = ray.org.z;
@@ -1489,10 +1489,17 @@ toRTCRay(const Ray &ray) noexcept {
 // sentinel identifiers that say nothing has been hit yet.
 [[nodiscard]] static SMDL_ALWAYS_INLINE RTCRayHit
 toRTCRayHit(const Ray &ray) noexcept {
-  RTCRayHit rayHit{};
+  // Only the fields Embree reads, the sentinels it requires and the
+  // primitive id the miss test reads back; the hit fields are outputs,
+  // written on a hit and unread on a miss, so nothing zeroes the struct.
+  RTCRayHit rayHit;
   rayHit.ray = toRTCRay(ray);
-  rayHit.hit.primID = unsigned(-1);
-  rayHit.hit.geomID = unsigned(-1);
+  rayHit.hit.primID = RTC_INVALID_GEOMETRY_ID;
+  rayHit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+  for (unsigned level = 0; level < RTC_MAX_INSTANCE_LEVEL_COUNT; level++) {
+    rayHit.hit.instID[level] = RTC_INVALID_GEOMETRY_ID;
+    rayHit.hit.instPrimID[level] = RTC_INVALID_GEOMETRY_ID;
+  }
   return rayHit;
 }
 
@@ -1506,29 +1513,32 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto objectNg{
       float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
-  hit = meshInstance.isMoving || meshInstance.isDeforming
-            ? makeHitMoving(instIndex, rayHit.hit.primID, rayHit.hit.u,
-                            rayHit.hit.v, objectNg, ray)
-            : makeHit(meshInstance.frame, instIndex, rayHit.hit.primID,
-                      rayHit.hit.u, rayHit.hit.v, objectNg, ray);
+  if (meshInstance.isMoving || meshInstance.isDeforming) {
+    makeHitMoving(instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
+                  objectNg, ray, hit);
+  } else {
+    makeHit(meshInstance.frame, instIndex, rayHit.hit.primID, rayHit.hit.u,
+            rayHit.hit.v, objectNg, ray, hit);
+  }
   return true;
 }
 
-Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
-                         const float3 &objectNg, const Ray &ray) const {
+void Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
+                          const float3 &objectNg, const Ray &ray,
+                          Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
   const auto &frame{meshInstance.frameAt(ray.time, scratch)};
   if (!meshInstance.isDeforming)
-    return makeHit(frame, instIndex, primID, u, v, objectNg, ray);
+    return makeHit(frame, instIndex, primID, u, v, objectNg, ray, hit);
   // Only a mesh deforms, so the barycentric clamp of the body applies.
   const auto bary{baryFromUV(u, v)};
-  return makeHitDeforming(frame, instIndex, primID, bary, ray.time);
+  return makeHitDeforming(frame, instIndex, primID, bary, ray.time, hit);
 }
 
-Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
-                   uint32_t primID, float u, float v, const float3 &objectNg,
-                   const Ray &ray) const {
+void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                    uint32_t primID, float u, float v, const float3 &objectNg,
+                    const Ray &ray, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   // A curve hit needs the ray: the point comes from `tmax`, the tube
   // normal from the object-space `Ng`, and the ribbon normal from the
@@ -1537,17 +1547,16 @@ Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
   // apply (ribbon `v` legitimately spans -1 to +1).
   if (meshInstance.isCurves())
     return makeCurvesHit(frame, instIndex, primID, u, v, ray.time, objectNg,
-                         ray(ray.tmax), ray.dir);
-  const auto bary{baryFromUV(u, v)};
+                         ray(ray.tmax), ray.dir, hit);
   // A primitive reports its object-space point in the normal slots,
-  // and the hit is built from that rather than from the parameters.
+  // and the hit is built from that, parameters included.
   if (meshInstance.isPrimitive()) {
     const auto &primitive{*primitives[meshInstance.primIndex]};
     return makePrimitiveHitFrom(
-        frame, instIndex, primID, bary, ray.time,
-        evalPrimitiveSurfaceAt(primitive.spec, primID, objectNg));
+        frame, instIndex, primID, ray.time,
+        evalPrimitiveSurfaceAt(primitive.spec, primID, objectNg), hit);
   }
-  return makeHit(frame, instIndex, primID, bary, ray.time);
+  return makeHit(frame, instIndex, primID, baryFromUV(u, v), ray.time, hit);
 }
 
 bool Scene::isOccluded(const Ray &ray) const {
@@ -1574,6 +1583,20 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   if (meshInstance.isCurves()) {
     hit.vertex.point = ray(rayHit.ray.tfar);
     hit.vertex.coords = float3(0.0f, rayHit.hit.u, rayHit.hit.v);
+    return true;
+  }
+  // A primitive reports its object-space point in the normal slots,
+  // which is the point itself under the frame and the parameters
+  // through the inverse of the surface.
+  if (meshInstance.isPrimitive()) {
+    const auto &primitive{*primitives[meshInstance.primIndex]};
+    const auto objectPoint{
+        float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
+    const auto uv{primitiveUV(primitive.spec, rayHit.hit.primID, objectPoint)};
+    std::optional<InstanceFrame> scratch{};
+    const auto &frame{meshInstance.frameAt(ray.time, scratch)};
+    hit.vertex.coords = float3(0.0f, uv.x, uv.y);
+    hit.vertex.point = transformPoint(frame.objectToWorld, objectPoint);
     return true;
   }
   const auto bary{baryFromUV(rayHit.hit.u, rayHit.hit.v)};
@@ -1611,12 +1634,6 @@ float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
                                const MeshInstance &meshInstance,
                                uint32_t primID, const float3 &bary) const {
   const auto &objectToWorld{frame.objectToWorld};
-  if (meshInstance.isPrimitive()) {
-    const auto &primitive{*primitives[meshInstance.primIndex]};
-    const auto surface{
-        evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2]))};
-    return transformPoint(objectToWorld, surface.point);
-  }
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   const auto &face{mesh.faces[primID]};
   const auto &vert0{mesh.verts[face[0]]};
@@ -1628,31 +1645,32 @@ float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
-Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
-                   float time) const {
+void Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
+                    float time, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   if (meshInstance.isMoving || meshInstance.isDeforming)
-    return makeHitMoving(instIndex, faceIndex, bary, time);
-  return meshInstance.isPrimitive()
-             ? makePrimitiveHit(meshInstance.frame, instIndex, faceIndex, bary,
-                                time)
-             : makeHit(meshInstance.frame, instIndex, faceIndex, bary, time);
+    return makeHitMoving(instIndex, faceIndex, bary, time, hit);
+  if (meshInstance.isPrimitive())
+    return makePrimitiveHit(meshInstance.frame, instIndex, faceIndex, bary,
+                            time, hit);
+  return makeHit(meshInstance.frame, instIndex, faceIndex, bary, time, hit);
 }
 
-Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
-                         const float3 &bary, float time) const {
+void Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
+                          const float3 &bary, float time, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
   const auto &frame{meshInstance.frameAt(time, scratch)};
   if (meshInstance.isPrimitive())
-    return makePrimitiveHit(frame, instIndex, faceIndex, bary, time);
-  return meshInstance.isDeforming
-             ? makeHitDeforming(frame, instIndex, faceIndex, bary, time)
-             : makeHit(frame, instIndex, faceIndex, bary, time);
+    return makePrimitiveHit(frame, instIndex, faceIndex, bary, time, hit);
+  if (meshInstance.isDeforming)
+    return makeHitDeforming(frame, instIndex, faceIndex, bary, time, hit);
+  return makeHit(frame, instIndex, faceIndex, bary, time, hit);
 }
 
-Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
-                   uint32_t faceIndex, const float3 &bary, float time) const {
+void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                    uint32_t faceIndex, const float3 &bary, float time,
+                    Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   // Curve hits need the ray and only ever come from `intersect()`,
   // which builds them itself; nothing may rebuild one from indices.
@@ -1661,25 +1679,25 @@ Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
   const auto &face{mesh.faces[faceIndex]};
   return makeHitFrom(frame, instIndex, faceIndex, bary, time,
                      mesh.verts[face[0]], mesh.verts[face[1]],
-                     mesh.verts[face[2]]);
+                     mesh.verts[face[2]], hit);
 }
 
-Hit Scene::makeHitDeforming(const InstanceFrame &frame, uint32_t instIndex,
-                            uint32_t faceIndex, const float3 &bary,
-                            float time) const {
+void Scene::makeHitDeforming(const InstanceFrame &frame, uint32_t instIndex,
+                             uint32_t faceIndex, const float3 &bary, float time,
+                             Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   SMDL_SANITY_CHECK(mesh.deforms());
   const auto &face{mesh.faces[faceIndex]};
   return makeHitFrom(frame, instIndex, faceIndex, bary, time,
                      mesh.vertAt(face[0], time), mesh.vertAt(face[1], time),
-                     mesh.vertAt(face[2], time));
+                     mesh.vertAt(face[2], time), hit);
 }
 
-Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
-                       uint32_t faceIndex, const float3 &bary, float time,
-                       const Mesh::Vert &vert0, const Mesh::Vert &vert1,
-                       const Mesh::Vert &vert2) const {
+void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                        uint32_t faceIndex, const float3 &bary, float time,
+                        const Mesh::Vert &vert0, const Mesh::Vert &vert1,
+                        const Mesh::Vert &vert2, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   const auto &face{mesh.faces[faceIndex]};
@@ -1701,7 +1719,6 @@ Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
     return bary[0] * vert0.*member + bary[1] * vert1.*member +
            bary[2] * vert2.*member;
   }};
-  Hit hit{};
   hit.instIndex = instIndex;
   hit.meshIndex = meshInstance.meshIndex;
   hit.faceIndex = faceIndex;
@@ -1730,56 +1747,39 @@ Hit Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.texcoord = barycentric(&Mesh::Vert::texcoord);
   hit.textureDensity = uvTextureDensity(point0, point1, point2, vert0.texcoord,
                                         vert1.texcoord, vert2.texcoord);
+  hit.fiberThickness = 0.0f;
+  hit.textureSpaces = 1;
+  hit.texcoord1 = float2();
   if (!mesh.colors.empty()) {
     hit.vertexColorSets = 1;
     hit.vertexColor = bary[0] * mesh.colors[face[0]] +
                       bary[1] * mesh.colors[face[1]] +
                       bary[2] * mesh.colors[face[2]];
+  } else {
+    hit.vertexColorSets = 0;
+    hit.vertexColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
   }
   hit.instance = &meshInstance;
-  return hit;
 }
 
-Hit Scene::makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
-                            uint32_t primID, const float3 &bary,
-                            float time) const {
+void Scene::makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
+                             uint32_t primID, const float3 &bary, float time,
+                             Hit &hit) const {
   const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
   // The (u, v) ride in the barycentric slots, exactly as
   // `Scene::intersect()` packed them; see `Primitive.h`.
   return makePrimitiveHitFrom(
-      frame, instIndex, primID, bary, time,
-      evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2])));
+      frame, instIndex, primID, time,
+      evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2])),
+      hit);
 }
 
-Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                            const float3 &bary, float time,
-                            const float3 &objectPoint) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  if (meshInstance.isMoving)
-    return makePrimitiveHitMoving(instIndex, primID, bary, time, objectPoint);
-  const auto &primitive{*primitives[meshInstance.primIndex]};
-  return makePrimitiveHitFrom(
-      meshInstance.frame, instIndex, primID, bary, time,
-      evalPrimitiveSurfaceAt(primitive.spec, primID, objectPoint));
-}
-
-Hit Scene::makePrimitiveHitMoving(uint32_t instIndex, uint32_t primID,
-                                  const float3 &bary, float time,
-                                  const float3 &objectPoint) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &primitive{*primitives[meshInstance.primIndex]};
-  std::optional<InstanceFrame> scratch{};
-  return makePrimitiveHitFrom(
-      meshInstance.frameAtMoving(time, scratch), instIndex, primID, bary, time,
-      evalPrimitiveSurfaceAt(primitive.spec, primID, objectPoint));
-}
-
-Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
-                                uint32_t primID, const float3 &bary, float time,
-                                const PrimitiveSurface &surface) const {
+void Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                                 uint32_t primID, float time,
+                                 const PrimitiveSurface &surface,
+                                 Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto &objectToWorld{frame.objectToWorld};
-  Hit hit{};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
@@ -1787,7 +1787,7 @@ Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   SMDL_SANITY_CHECK(hit.matIndex < materials.size());
   hit.material = materials[hit.matIndex];
   hit.time = time;
-  hit.bary = bary;
+  hit.bary = float3(0.0f, surface.uv.x, surface.uv.y);
   hit.point = transformPoint(objectToWorld, surface.point);
   // The analytic normal transforms by the cofactor matrix like any
   // other; a mirroring instance flips its image inward, and the same
@@ -1803,14 +1803,18 @@ Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.tangent =
       smdl::tryNormalize(tangent) ? tangent : smdl::perpendicularTo(hit.normal);
   hit.Tg = hit.tangent;
-  hit.texcoord = float2(bary[1], bary[2]);
+  hit.texcoord = surface.uv;
   // UV area per world area, which is what the ray-cone footprint
   // multiplies into a texture-space filter width: exactly the triangle
   // path's quantity, from the parametric partials instead of the edges.
   const auto patchArea{length(cross(dPduWorld, dPdvWorld))};
   hit.textureDensity = patchArea > 1e-12f ? 1.0f / patchArea : 0.0f;
+  hit.fiberThickness = 0.0f;
+  hit.textureSpaces = 1;
+  hit.texcoord1 = float2();
+  hit.vertexColorSets = 0;
+  hit.vertexColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
   hit.instance = &meshInstance;
-  return hit;
 }
 
 ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
@@ -1954,10 +1958,10 @@ ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
   return geometry;
 }
 
-Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
-                         uint32_t primID, float u, float v, float time,
-                         const float3 &objectNg, const float3 &worldPoint,
-                         const float3 &rayDir) const {
+void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
+                          uint32_t primID, float u, float v, float time,
+                          const float3 &objectNg, const float3 &worldPoint,
+                          const float3 &rayDir, Hit &hit) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto &groom{*curves[meshInstance.curvesIndex]};
   const auto &objectToWorld{frame.objectToWorld};
@@ -2013,7 +2017,6 @@ Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   const auto numSegs{groom.strandFirstSeg[strand + 1] - firstSeg};
   const auto strandU{(float(primID - firstSeg) + u) / float(numSegs)};
   const auto vAcross{ribbon ? 0.5f * (v + 1.0f) : 0.0f};
-  Hit hit{};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
@@ -2040,7 +2043,11 @@ Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   if (!groom.rootUVs.empty()) {
     hit.textureSpaces = 2;
     hit.texcoord1 = groom.rootUVs[strand];
+  } else {
+    hit.textureSpaces = 1;
+    hit.texcoord1 = float2();
   }
+  hit.vertexColorSets = 0;
+  hit.vertexColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
   hit.instance = &meshInstance;
-  return hit;
 }

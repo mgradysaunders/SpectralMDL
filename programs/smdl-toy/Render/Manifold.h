@@ -81,10 +81,9 @@ constexpr float MANIFOLD_NORMAL_STEP_MAX{4e-3f};
 [[nodiscard]] ManifoldVertex vertexOf(const Hit &hit);
 
 /// The hit record a solver vertex stands for, rebuilt through
-/// `Scene::makeHit()` at the shutter fraction `time`; `hit.instance` is
-/// null when the vertex cannot be rebuilt.
-[[nodiscard]] Hit hitOf(const Scene &scene, const ManifoldVertex &vertex,
-                        float time);
+/// `Scene::makeHit()` at the shutter fraction `time` into `hit`.
+void hitOf(const Scene &scene, const ManifoldVertex &vertex, float time,
+           Hit &hit);
 
 /// The scene as the manifold solver's surfaces: projection casts pass
 /// through null interfaces and pin to the vertex's own instance (and

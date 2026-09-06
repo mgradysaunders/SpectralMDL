@@ -25,16 +25,19 @@
 ///
 /// The surface parameterization is the fixed (u, v) each piece defines
 /// (see `evalPrimitiveSurface()`), and it rides through the renderer in
-/// the same slots a triangle's barycentrics do: the intersect callback
-/// reports (u, v), `Scene::intersect()` packs them as `bary[1]` and
-/// `bary[2]`, and `Scene::makeHit()` can rebuild the full differential
-/// geometry from them. Texture coordinates ARE the parameterization.
+/// the last two slots of a triangle's barycentrics: `Scene::intersect()`
+/// packs them as `bary[1]` and `bary[2]`, and `Scene::makeHit()` can
+/// rebuild the full differential geometry from them. Texture
+/// coordinates ARE the parameterization.
 ///
-/// The callback also reports the object-space hit point, in the slots a
-/// triangle's geometric normal would take, and a hit built from a ray
-/// takes its geometry from that point (`evalPrimitiveSurfaceAt()`),
-/// which costs no trigonometry. Only a hit rebuilt from the parameters
-/// alone, as the manifold walk does, pays for the angles.
+/// The intersect callback reports only the object-space hit point, in
+/// the slots a triangle's geometric normal would take, and a hit built
+/// from a ray takes its geometry from that point
+/// (`evalPrimitiveSurfaceAt()`), parameters included: the fast inverse
+/// trigonometry of `FastMath.h`, good to a few float ulps of a
+/// parameter, once per ray rather than the libm pair once per candidate
+/// the traversal accepts. Only a hit rebuilt from the parameters alone,
+/// as the manifold walk does, pays for the forward angles.
 ///
 class Primitive final {
 public:
@@ -60,13 +63,14 @@ public:
 };
 
 /// The differential geometry of a shape at (piece, u, v), in object
-/// space: the point, the outward unit normal, the parametric partials
-/// the texture frame and the ray-cone density come from, and the
-/// parametric partials of the unit normal itself, which the manifold
-/// connection walk differentiates. The caps have constant normals, so
-/// their normal partials are zero.
+/// space: the parameters themselves, the point, the outward unit
+/// normal, the parametric partials the texture frame and the ray-cone
+/// density come from, and the parametric partials of the unit normal
+/// itself, which the manifold connection walk differentiates. The caps
+/// have constant normals, so their normal partials are zero.
 class PrimitiveSurface final {
 public:
+  float2 uv{};
   float3 point{};
   float3 normal{};
   float3 dPdu{};
@@ -76,17 +80,15 @@ public:
 };
 
 /// One uniform-area sample of a shape's whole surface, in object space,
-/// for area lighting: the piece and parameter to rebuild the hit from,
-/// and the point and outward normal directly. The density is uniform
-/// over the OBJECT-space surface, `1 / primitiveObjectArea()`; the
-/// caller converts to world area through the instance's normal
+/// for area lighting: the piece and its surface at the sample, which is
+/// everything `Scene::makePrimitiveHitFrom()` needs. The density is
+/// uniform over the OBJECT-space surface, `1 / primitiveObjectArea()`;
+/// the caller converts to world area through the instance's normal
 /// (cofactor) matrix, which is exact under any affine placement.
 class PrimitiveAreaSample final {
 public:
   uint32_t primID{};
-  float2 uv{};
-  float3 point{};
-  float3 normal{};
+  PrimitiveSurface surface{};
 };
 
 /// Create a primitive: build its user geometry, bounds, and proxy
@@ -111,8 +113,9 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
 /// The differential geometry at an object-space `point` on piece
 /// `primID`, which must lie on it: the same construction as
 /// `evalPrimitiveSurface()` with the trigonometry read off the point, so
-/// a hit or a sample that holds its point need not go through the
-/// parameters and back. The two agree to float rounding.
+/// a hit that holds its point need not go through the parameters and
+/// back, and the parameters themselves by `primitiveUV()`. The two
+/// agree to float rounding.
 [[nodiscard]] PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
                                                       uint32_t primID,
                                                       const float3 &point);
@@ -122,8 +125,8 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
                                                       float2 xi);
 
 /// The surface parameters of an object-space point on piece `primID`,
-/// the inverse of the parametric surface: what a sample taken by some
-/// other route than `samplePrimitiveArea()` hands
-/// `Scene::makePrimitiveHit()`.
+/// the inverse of the parametric surface to a few float ulps: the
+/// azimuth and the sphere's zenith come from the fast inverse
+/// trigonometry of `FastMath.h`, at a fraction of the cost of libm.
 [[nodiscard]] float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
                                  const float3 &objectPoint);

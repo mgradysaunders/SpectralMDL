@@ -17,9 +17,10 @@ ManifoldVertex vertexOf(const Hit &hit) {
   return vertex;
 }
 
-Hit hitOf(const Scene &scene, const ManifoldVertex &vertex, float time) {
-  return scene.makeHit(uint32_t(vertex.surface), uint32_t(vertex.face),
-                       vertex.coords, time);
+void hitOf(const Scene &scene, const ManifoldVertex &vertex, float time,
+           Hit &hit) {
+  scene.makeHit(uint32_t(vertex.surface), uint32_t(vertex.face), vertex.coords,
+                time, hit);
 }
 
 bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
@@ -37,7 +38,8 @@ bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
   // as it always has.
   if (const auto *material{scene.materials[scene.materialIndexOf(instance)]};
       material && material->remapsNormal()) {
-    const Hit hit{hitOf(scene, vertex, time.fraction)};
+    Hit hit{};
+    hitOf(scene, vertex, time.fraction, hit);
     if (!hit.instance) return false;
     if (manifoldHookGeometry(scene, hit, geometry)) return true;
   }
@@ -87,8 +89,8 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
                                        const smdl::JIT::Material &material,
                                        const Hit &seedHit, const float3 &bary,
                                        float3 &normal) {
-  const Hit hit{
-      scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time)};
+  Hit hit{};
+  scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time, hit);
   if (!hit.instance) return false;
   auto state{makeRenderState(gRenderGrid.wavelengths)};
   hit.applyGeometryToState(state, float3());
@@ -237,13 +239,14 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
   // class comment.
   if (caster.primitive.active()) {
     const auto sample{samplePrimitiveArea(caster.primitive, float2(sampler))};
-    hit = scene.makeHit(caster.instIndex, sample.primID,
-                        float3(0.0f, sample.uv.x, sample.uv.y), time);
+    scene.makeHit(caster.instIndex, sample.primID,
+                  float3(0.0f, sample.surface.uv.x, sample.surface.uv.y), time,
+                  hit);
     return hit.instance != nullptr;
   }
   const auto faceIndex{caster.faceDistr.indexSample(float(sampler))};
-  hit = scene.makeHit(caster.instIndex, uint32_t(faceIndex),
-                      smdl::uniformTriangleSample(float2(sampler)), time);
+  scene.makeHit(caster.instIndex, uint32_t(faceIndex),
+                smdl::uniformTriangleSample(float2(sampler)), time, hit);
   return hit.instance != nullptr;
 }
 
@@ -296,8 +299,9 @@ int runMNEETestNormalHook(const Scene &scene) {
       const auto faceIndex{uint32_t((size_t(k) * 2654435761UL) % faceCount)};
       const float u{0.05f + 0.35f * std::fmod(0.618034f * float(k + 1), 1.0f)};
       const float v{0.05f + 0.35f * std::fmod(0.754878f * float(k + 2), 1.0f)};
-      const auto hit{scene.makeHit(instIndex, faceIndex,
-                                   float3(1.0f - u - v, u, v), 0.0f)};
+      Hit hit{};
+      scene.makeHit(instIndex, faceIndex, float3(1.0f - u - v, u, v), 0.0f,
+                    hit);
       if (!hit.instance) continue;
       const auto meshGeometry{scene.manifoldGeometry(hit)};
       ManifoldGeometry hookGeometry{};

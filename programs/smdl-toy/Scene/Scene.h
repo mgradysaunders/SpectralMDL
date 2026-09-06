@@ -93,14 +93,14 @@ public:
   uint32_t faceIndex{INVALID_INDEX};     ///< The face index.
   uint32_t matIndex{INVALID_INDEX};      ///< The material index.
   const smdl::JIT::Material *material{}; ///< The material.
-  float3 bary{};                         ///< The barycentric coordinate.
-  float3 point{};                        ///< The point.
-  float3 normal{};                       ///< The shading normal.
-  float3 tangent{};                      ///< The shading tangent.
-  float3 Ng{};                           ///< The geometry normal.
-  float3 Tg{};                           ///< The geometry tangent.
-  float2 texcoord{};                     ///< The texture coordinate.
-  float textureDensity{};                ///< The UV texture density.
+  float3 bary{};     ///< The barycentric coordinate; (0, u, v) on a primitive.
+  float3 point{};    ///< The point.
+  float3 normal{};   ///< The shading normal.
+  float3 tangent{};  ///< The shading tangent.
+  float3 Ng{};       ///< The geometry normal.
+  float3 Tg{};       ///< The geometry tangent.
+  float2 texcoord{}; ///< The texture coordinate.
+  float textureDensity{}; ///< The UV texture density.
 
   /// The shutter fraction the hit happened at, the ray's `time`; see
   /// `PathTime`.
@@ -829,29 +829,33 @@ public:
   /// twin below reads them through `Mesh::vertAt()` at the hit's time,
   /// the lerp of the two keys, and runs the same tail, so a deforming
   /// mesh's hit sits on the triangle Embree traced.
-  [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
-                            uint32_t faceIndex, const float3 &bary,
-                            float time) const;
+  ///
+  /// Every builder writes every field of `hit`, so a caller hands over
+  /// whatever record it has, a per-block scratch or the one it reuses
+  /// across a walk, and pays neither a default-initialized local nor
+  /// the copy out of a returned value.
+  void makeHit(const InstanceFrame &frame, uint32_t instIndex,
+               uint32_t faceIndex, const float3 &bary, float time,
+               Hit &hit) const;
 
-  [[nodiscard]] SMDL_NO_INLINE Hit makeHitDeforming(const InstanceFrame &frame,
-                                                    uint32_t instIndex,
-                                                    uint32_t faceIndex,
-                                                    const float3 &bary,
-                                                    float time) const;
+  SMDL_NO_INLINE void makeHitDeforming(const InstanceFrame &frame,
+                                       uint32_t instIndex, uint32_t faceIndex,
+                                       const float3 &bary, float time,
+                                       Hit &hit) const;
 
   /// The primitive half of `makeHit()`: rebuild the differential
   /// geometry of `primID`'s piece at the (u, v) packed in `bary[1]` and
   /// `bary[2]`, in world space.
-  [[nodiscard]] Hit makePrimitiveHit(const InstanceFrame &frame,
-                                     uint32_t instIndex, uint32_t primID,
-                                     const float3 &bary, float time) const;
+  void makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
+                        uint32_t primID, const float3 &bary, float time,
+                        Hit &hit) const;
 
-  /// The common tail of both primitive hit builders: the world-space
-  /// record from an object-space surface and the parameters.
-  [[nodiscard]] Hit makePrimitiveHitFrom(const InstanceFrame &frame,
-                                         uint32_t instIndex, uint32_t primID,
-                                         const float3 &bary, float time,
-                                         const PrimitiveSurface &surface) const;
+  /// The common tail of the primitive hit builders: the world-space
+  /// record from an object-space surface, whose parameters become
+  /// `bary[1]`, `bary[2]`, and the texture coordinate.
+  void makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t primID, float time,
+                            const PrimitiveSurface &surface, Hit &hit) const;
 
   [[nodiscard]] ManifoldGeometry
   manifoldGeometry(const InstanceFrame &frame, uint32_t instIndex,
@@ -863,16 +867,11 @@ public:
       const InstanceFrame &frame, uint32_t instIndex, uint32_t faceIndex,
       const float3 &bary, float time) const;
 
-  /// The moving twins of the public builders: the frame queried at
+  /// The moving twin of the public builder: the frame queried at
   /// `time` through the retained handle, then the body.
-  [[nodiscard]] SMDL_NO_INLINE Hit makeHitMoving(uint32_t instIndex,
-                                                 uint32_t faceIndex,
-                                                 const float3 &bary,
-                                                 float time) const;
-
-  [[nodiscard]] SMDL_NO_INLINE Hit makePrimitiveHitMoving(
-      uint32_t instIndex, uint32_t primID, const float3 &bary, float time,
-      const float3 &objectPoint) const;
+  SMDL_NO_INLINE void makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
+                                    const float3 &bary, float time,
+                                    Hit &hit) const;
 
   [[nodiscard]] SMDL_NO_INLINE ManifoldGeometry
   manifoldGeometryMoving(uint32_t instIndex, uint32_t faceIndex,
@@ -887,32 +886,31 @@ public:
   /// hand. That is not a loss, because nothing re-derives curve hits:
   /// grooms never register as area lights. See `Curves.h` for the
   /// state conventions this encodes.
-  [[nodiscard]] Hit makeCurvesHit(const InstanceFrame &frame,
-                                  uint32_t instIndex, uint32_t primID, float u,
-                                  float v, float time, const float3 &objectNg,
-                                  const float3 &worldPoint,
-                                  const float3 &rayDir) const;
+  void makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
+                     uint32_t primID, float u, float v, float time,
+                     const float3 &objectNg, const float3 &worldPoint,
+                     const float3 &rayDir, Hit &hit) const;
 
   /// The hit `intersect()` builds from what Embree reports, under
-  /// `frame`: the curve, primitive, or mesh record for piece `primID` at
-  /// its `(u, v)`, with the object-space `Ng` it reported, on `ray`
-  /// clipped to the hit. `intersect()` runs this under the instance's
+  /// `frame`: the curve or mesh record for piece `primID` at its
+  /// `(u, v)`, with the object-space `Ng` it reported, or the primitive
+  /// record at the object-space point it reported in the `Ng` slots,
+  /// on `ray` clipped to the hit. `intersect()` runs this under the instance's
   /// own frame and calls `makeHitMoving()` otherwise, the split of the
   /// builders above for the same reason.
-  [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
-                            uint32_t primID, float u, float v,
-                            const float3 &objectNg, const Ray &ray) const;
+  void makeHit(const InstanceFrame &frame, uint32_t instIndex, uint32_t primID,
+               float u, float v, const float3 &objectNg, const Ray &ray,
+               Hit &hit) const;
 
-  [[nodiscard]] SMDL_NO_INLINE Hit makeHitMoving(uint32_t instIndex,
-                                                 uint32_t primID, float u,
-                                                 float v,
-                                                 const float3 &objectNg,
-                                                 const Ray &ray) const;
+  SMDL_NO_INLINE void makeHitMoving(uint32_t instIndex, uint32_t primID,
+                                    float u, float v, const float3 &objectNg,
+                                    const Ray &ray, Hit &hit) const;
 
-  /// The world point of the hit Embree reports, under `frame`, which is
-  /// all `intersect(Ray &, ManifoldHit &)` reconstructs; the same split,
-  /// the moving twin also serving a deforming mesh, whose three points
-  /// it lerps to the time.
+  /// The world point of the mesh hit Embree reports, under `frame`,
+  /// which is all `intersect(Ray &, ManifoldHit &)` reconstructs (a
+  /// primitive reports its point outright); the same split, the moving
+  /// twin also serving a deforming mesh, whose three points it lerps to
+  /// the time.
   [[nodiscard]] float3 manifoldHitPoint(const InstanceFrame &frame,
                                         const MeshInstance &meshInstance,
                                         uint32_t primID,
@@ -926,10 +924,12 @@ public:
   /// face's three vertex records, which the static body takes out of
   /// `Mesh::verts` and the deforming one lerps to the time. Inlined into
   /// both, so the static body stays the leaf it was.
-  [[nodiscard]] SMDL_ALWAYS_INLINE Hit makeHitFrom(
-      const InstanceFrame &frame, uint32_t instIndex, uint32_t faceIndex,
-      const float3 &bary, float time, const Mesh::Vert &vert0,
-      const Mesh::Vert &vert1, const Mesh::Vert &vert2) const;
+  SMDL_ALWAYS_INLINE void makeHitFrom(const InstanceFrame &frame,
+                                      uint32_t instIndex, uint32_t faceIndex,
+                                      const float3 &bary, float time,
+                                      const Mesh::Vert &vert0,
+                                      const Mesh::Vert &vert1,
+                                      const Mesh::Vert &vert2, Hit &hit) const;
 
   /// The tail of the mesh manifold geometry builders, likewise.
   [[nodiscard]] SMDL_ALWAYS_INLINE ManifoldGeometry manifoldGeometryFrom(
@@ -967,19 +967,11 @@ public:
   /// drift apart.
   ///
   /// `time` is the shutter fraction the hit is built at (see `PathTime`),
-  /// which the instance's frame is read at and the hit records.
+  /// which the instance's frame is read at and the hit records. The
+  /// record is written whole into `hit`, every field, whatever it held.
   ///
-  [[nodiscard]] Hit makeHit(uint32_t instIndex, uint32_t faceIndex,
-                            const float3 &bary, float time) const;
-
-  /// The hit record of a primitive at a known object-space point on
-  /// piece `primID`, with the parameters packed in `bary` as `makeHit()`
-  /// takes them: what a ray hit and an area sample hold, so the geometry
-  /// comes from the point without the trigonometry of the parametric
-  /// rebuild. Agrees with `makeHit()` to float rounding.
-  [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                                     const float3 &bary, float time,
-                                     const float3 &objectPoint) const;
+  void makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
+               float time, Hit &hit) const;
 
   /// The differential geometry of the shading normal field at a mesh or
   /// primitive hit, for the manifold connection walk. The point and

@@ -251,8 +251,15 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] SMDL_EXPORT float3 uniformConeSample(float cosThetaC,
-                                                   float2 xi) noexcept;
+[[nodiscard]] inline float3 uniformConeSample(float cosThetaC,
+                                              float2 xi) noexcept {
+  float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
+  if (cosTheta < -1.0f) cosTheta = -1.0f;
+  if (cosTheta > +1.0f) cosTheta = +1.0f;
+  float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
+  float phi{TWO_PI * xi.y};
+  return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
 
 /// Uniform aperture sample.
 ///

@@ -724,8 +724,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     if (segWalk.nextBlocker() || !(Tr.maxComponent() > 0.0f)) return {};
     // The solver's vertex is an address, not a hit record; rebuild the
     // hit to evaluate the interface material at the converged crossing.
-    const Hit crossHit{
-        hitOf(render.scene, crossing.vertex, path.time.fraction)};
+    Hit crossHit{};
+    hitOf(render.scene, crossing.vertex, path.time.fraction, crossHit);
     if (!crossHit.instance) return {};
     crossHit.applyGeometryToState(crossState, -crossing.wPrev);
     smdl::JIT::MaterialInstance crossMat{crossState, crossHit.material};
@@ -1666,8 +1666,11 @@ Color PathWalk::trace(const CameraSample &camera) {
   float wpdfRevUnused{};
   // The walk ends by escape, absorption, roulette, or the bounce bound,
   // never by this loop's own condition.
+  // The hit the casts fill, one record for the whole walk: `intersect()`
+  // writes every field where it finds a surface and the walk ends where
+  // it does not, so nothing reads what the last vertex left.
+  Hit hit{};
   while (true) {
-    auto hit{Hit{}};
     bool hitSurface{mRender.scene.intersect(ray, hit)};
     // The stack being empty is the exterior segment, and with no haze
     // it is vacuum, the common case: the view is left alone rather than

@@ -622,8 +622,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         const float x2{float(i) * 0.6180339887f};
         const auto areaSample{samplePrimitiveArea(
             primitive.spec, float2(x1, x2 - std::floor(x2)))};
-        stretchSum +=
-            double(length(instance.frame.normalMatrix * areaSample.normal));
+        stretchSum += double(
+            length(instance.frame.normalMatrix * areaSample.surface.normal));
       }
       light.totalArea = light.objectArea * float(stretchSum / STRETCH_SAMPLES);
       light.invCofactor = inverseCofactorOf(objectToWorld);
@@ -838,7 +838,7 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
   const auto &light{mAreaLights[lightIndex]};
   // The zero selection weight is what keeps an unsampled emitter out.
   SMDL_SANITY_CHECK(light.isSampled);
-  Hit hit{};
+  Hit &hit{lightSample.hit};
   lightSample.isCaustic = light.isCaustic;
   float positionPDF{}; // world-space area density at the sampled point
   float conePDF{};     // solid-angle density instead, when drawn by cone
@@ -864,12 +864,11 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
       // placement, and exactly uniform under a similarity.
       const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
       const float stretch{
-          length(instance.frame.normalMatrix * areaSample.normal)};
+          length(instance.frame.normalMatrix * areaSample.surface.normal)};
       if (!(stretch > 0)) return false;
-      hit = mScene.makePrimitiveHit(
-          light.instIndex, areaSample.primID,
-          float3(0.0f, areaSample.uv.x, areaSample.uv.y), time,
-          areaSample.point);
+      mScene.makePrimitiveHitFrom(instance.frame, light.instIndex,
+                                  areaSample.primID, time, areaSample.surface,
+                                  hit);
       positionPDF = 1.0f / (light.objectArea * stretch);
     }
   } else {
@@ -879,7 +878,7 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
     // in the world, and `Scene::makeHit` reports the point in the same
     // space.
     const auto bary{smdl::uniformTriangleSample(float2(sampler))};
-    hit = mScene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time);
+    mScene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time, hit);
     positionPDF = 1.0f / light.totalArea;
   }
   auto direction{hit.point - point};
@@ -902,7 +901,6 @@ bool LightSampler::sample(const smdl::State &state, const smdl::SkyBasis &basis,
       selectPMF * (conePDF > 0.0f ? conePDF : distSq * positionPDF / cosTheta);
   lightSample.target = hit.point;
   lightSample.normal = hit.Ng;
-  lightSample.hit = hit;
   return true;
 }
 
@@ -949,13 +947,10 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
                          point, time, xi, hit, conePDF))
       return true;
     const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
-    const float stretch{length(frame.normalMatrix * areaSample.normal)};
+    const float stretch{length(frame.normalMatrix * areaSample.surface.normal)};
     if (!(stretch > 0)) return false;
-    hit = mScene.makePrimitiveHitFrom(
-        frame, light.instIndex, areaSample.primID,
-        float3(0.0f, areaSample.uv.x, areaSample.uv.y), time,
-        evalPrimitiveSurfaceAt(primitive.spec, areaSample.primID,
-                               areaSample.point));
+    mScene.makePrimitiveHitFrom(frame, light.instIndex, areaSample.primID, time,
+                                areaSample.surface, hit);
     positionPDF = 1.0f / (light.objectArea * stretch);
     return true;
   }
@@ -964,11 +959,13 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
   // face's share over its world area then.
   const int faceIndex{light.faceDistr.indexSample(float(sampler))};
   const auto bary{smdl::uniformTriangleSample(float2(sampler))};
-  hit = instance.isDeforming
-            ? mScene.makeHitDeforming(frame, light.instIndex,
-                                      uint32_t(faceIndex), bary, time)
-            : mScene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary,
-                             time);
+  if (instance.isDeforming) {
+    mScene.makeHitDeforming(frame, light.instIndex, uint32_t(faceIndex), bary,
+                            time, hit);
+  } else {
+    mScene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary, time,
+                   hit);
+  }
   positionPDF = faceAreaDensity(mScene, light, instance, frame,
                                 uint32_t(faceIndex), time);
   return positionPDF > 0;
@@ -1001,10 +998,9 @@ bool LightSampler::sampleSphereCone(const AreaLight &light,
   const float3 objectNormal{
       normalize(transformDirection(frame.worldToRigid, normal))};
   const float3 objectPoint{primitive.spec.radius * objectNormal};
-  const float2 uv{primitiveUV(primitive.spec, 0, objectPoint)};
-  hit = mScene.makePrimitiveHitFrom(
-      frame, light.instIndex, 0, float3(0.0f, uv.x, uv.y), time,
-      evalPrimitiveSurfaceAt(primitive.spec, 0, objectPoint));
+  mScene.makePrimitiveHitFrom(
+      frame, light.instIndex, 0, time,
+      evalPrimitiveSurfaceAt(primitive.spec, 0, objectPoint), hit);
   pdf = 1.0f / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
   return true;
 }
