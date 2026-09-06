@@ -318,17 +318,19 @@ enum Transport : int {
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
 public:
-  /// Finalize and apply internal space conventions.
+  /// Finalize for evaluation: establish the internal space conventions
+  /// from what the host filled in, repairing what needs it.
   ///
   /// The implementation does the following:
-  /// 1. Orthonormalize the normal and tangent vectors.
-  /// 2. Orthonormalize the geometric normal and tangent vectors.
-  /// 3. Construct the matrix pair for transforming between geometric tangent
-  ///    space and object space.
-  /// 4. Transform every member variable defined in object space to
-  ///    geometric tangent space.
-  /// 5. Orthonormalize the object-to-world matrix, unless it already is,
+  /// 1. Clamp `texture_space_max` and `vertex_color_max` to their limits.
+  /// 2. Orthonormalize the normal and tangent vectors.
+  /// 3. Orthonormalize the geometric normal and tangent vectors.
+  /// 4. Orthonormalize the object-to-world matrix, unless it already is,
   ///    in which case it is left exactly as given.
+  /// 5. Construct the matrix pair for transforming between geometric tangent
+  ///    space and object space.
+  /// 6. Transform every member variable defined in object space to
+  ///    geometric tangent space.
   ///
   /// Afterward,
   /// - `position` is at the origin `float3(0,0,0)`
@@ -336,7 +338,55 @@ public:
   /// - `geometry_tangent_v[0]` is the Y axis `float3(0,1,0)`
   /// - `geometry_normal` is the Z axis `float3(0,0,1)`
   ///
-  void finalizeAndApplyInternalSpaceConventions() noexcept;
+  /// Steps 5 and 6 are `finalizeUnchecked()`, which a host whose inputs
+  /// need none of the rest may call instead.
+  void finalize() noexcept;
+
+  /// Finalize as `finalize()` does, taking the inputs as given: no clamp,
+  /// no normalization, no orthogonalization, and the object-to-world
+  /// matrix left as it is. The host guarantees that `normal` and
+  /// `geometry_normal` are unit, that each tangent pair is orthonormal
+  /// with its normal, that the object-to-world matrix is orthonormal, and
+  /// that the space and color counts are within their limits. A renderer
+  /// that built its frame from unit vectors under a rigid placement has
+  /// all of that already, and pays here only for the matrix and the
+  /// transform into tangent space. Inline so that a host filling the state
+  /// and finalizing it in one place keeps the vectors in registers
+  /// across the two.
+  void finalizeUnchecked() noexcept {
+    tangent_to_object_matrix[0] = float4(geometry_tangent_u[0], 0.0f);
+    tangent_to_object_matrix[1] = float4(geometry_tangent_v[0], 0.0f);
+    tangent_to_object_matrix[2] = float4(geometry_normal, 0.0f);
+    tangent_to_object_matrix[3] = float4(position, 1.0f);
+    // The frame is orthonormal, so the inverse of its linear part is its
+    // transpose and a direction maps to its three dots with the axes,
+    // which is the whole of `affineInverse()` and the 4x4 product for a
+    // vector whose `w` is zero.
+    const auto u{geometry_tangent_u[0]};
+    const auto v{geometry_tangent_v[0]};
+    const auto w{geometry_normal};
+    const auto toTangent{[&](const float3 &d) {
+      return float3(dot(d, u), dot(d, v), dot(d, w));
+    }};
+    position = {};
+    direction = toTangent(direction);
+    motion = toTangent(motion);
+    normal = toTangent(normal);
+    for (int i = 0; i < texture_space_max; i++) {
+      texture_tangent_u[i] = toTangent(texture_tangent_u[i]);
+      texture_tangent_v[i] = toTangent(texture_tangent_v[i]);
+    }
+    for (int i = 1; i < texture_space_max; i++) {
+      geometry_tangent_u[i] = toTangent(geometry_tangent_u[i]);
+      geometry_tangent_v[i] = toTangent(geometry_tangent_v[i]);
+    }
+    // Space 0's geometry frame is the frame itself, so it lands on the
+    // axes exactly rather than within rounding of them, which is what
+    // this function documents.
+    geometry_normal = {0, 0, 1};
+    geometry_tangent_u[0] = {1, 0, 0};
+    geometry_tangent_v[0] = {0, 1, 0};
+  }
 
 public:
   /// The allocator, which must point to thread-local
@@ -393,7 +443,7 @@ public:
 
   /// The normalized direction of propagation of the ray that produced this
   /// evaluation, pointing toward the shading point, in object space (internal
-  /// space after `finalizeAndApplyInternalSpaceConventions()`). In the
+  /// space after `finalize()`). In the
   /// context of an environment lookup, the lookup direction.
   ///
   /// \note
@@ -418,7 +468,7 @@ public:
   /// actually index: a base space and an optional second one, which is as
   /// many as any of the geometry paths fill. A constant index past it is a
   /// compile error in SMDL; `texture_space_max` gates the rest, and
-  /// `finalizeAndApplyInternalSpaceConventions()` clamps it.
+  /// `finalize()` clamps it.
   static constexpr size_t TEXTURE_SPACE_MAX = 2;
 
   /// The number of texture spaces, clamped to `TEXTURE_SPACE_MAX`.
@@ -526,7 +576,7 @@ public:
   /// \note
   /// One: a base RGBA set, which is as many as any geometry path fills. A
   /// constant index past it is a compile error in SMDL; `vertex_color_max`
-  /// gates the rest, and `finalizeAndApplyInternalSpaceConventions()`
+  /// gates the rest, and `finalize()`
   /// clamps it.
   ///
   /// \note This is non-standard!

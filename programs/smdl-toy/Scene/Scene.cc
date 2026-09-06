@@ -1278,7 +1278,7 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
       state.vertex_color_max = 1;
       state.vertex_color[0] = mesh.colors[i];
     }
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto displacement{float3()};
     material->displacementEvaluate(state, displacement);
     // Internal space is the tangent frame, so the vector maps back
@@ -1714,7 +1714,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // them is normalized at all. `Scene::manifoldGeometry()` forms `Ng` by
   // this same expression, so the two agree bit for bit.
   const auto faceNormal{cross(point1 - point0, point2 - point0)};
-  auto edge1{smdl::normalize(point1 - point0)};
+  auto edge1{point1 - point0};
   auto barycentric{[&](auto member) {
     return bary[0] * vert0.*member + bary[1] * vert1.*member +
            bary[2] * vert2.*member;
@@ -1735,14 +1735,29 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // cofactor image of the object-space geometry normal. So both normals
   // pick up the sign of the determinant, and both are flipped back
   // together.
-  hit.normal = normalize(frame.normalMatrix * barycentric(&Mesh::Vert::normal));
-  hit.tangent = normalize(
-      transformDirection(objectToWorld, barycentric(&Mesh::Vert::tangent)));
-  hit.Ng = normalize(faceNormal);
+  auto normal{frame.normalMatrix * barycentric(&Mesh::Vert::normal)};
+  auto Ng{faceNormal};
+  if (!smdl::tryNormalize(Ng)) Ng = float3(0.0f, 0.0f, 1.0f);
+  if (!smdl::tryNormalize(normal)) normal = Ng;
   if (frame.flipsWinding) {
-    hit.normal = -hit.normal;
-    hit.Ng = -hit.Ng;
+    normal = -normal;
+    Ng = -Ng;
   }
+  // The state takes this frame as given (`State::finalizeUnchecked()`),
+  // so every vector leaves unit and every pair orthogonal: the
+  // interpolated vertex tangent is projected off the interpolated normal
+  // before it is normalized, the geometry pair is orthogonal by
+  // construction, the edge lying in the face, and a degenerate vector
+  // falls back to a perpendicular rather than to a repair in the
+  // library.
+  auto tangent{
+      transformDirection(objectToWorld, barycentric(&Mesh::Vert::tangent))};
+  tangent = tangent - dot(tangent, normal) * normal;
+  if (!smdl::tryNormalize(tangent)) tangent = smdl::perpendicularTo(normal);
+  if (!smdl::tryNormalize(edge1)) edge1 = smdl::perpendicularTo(Ng);
+  hit.normal = normal;
+  hit.tangent = tangent;
+  hit.Ng = Ng;
   hit.Tg = edge1;
   hit.texcoord = barycentric(&Mesh::Vert::texcoord);
   hit.textureDensity = uvTextureDensity(point0, point1, point2, vert0.texcoord,
@@ -2007,6 +2022,9 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
     normal = frame.normalMatrix * objectNg;
     if (!smdl::tryNormalize(normal)) normal = -rayDir;
     if (frame.flipsWinding) normal = -normal;
+    // Projected off the normal, which leans along the axis wherever the
+    // radius varies: the state takes the pair as orthonormal.
+    tangent = tangent - dot(tangent, normal) * normal;
     if (!smdl::tryNormalize(tangent)) tangent = smdl::perpendicularTo(normal);
   }
   // The strand parameter: a strand's segments partition it uniformly,

@@ -156,7 +156,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     if (!material) continue;
     auto state{makeRenderState(wavelengths, &allocator)};
     state.texture_space_max = 1;
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto mat{smdl::JIT::MaterialInstance(state, material)};
     // The transmission claim measures the index contrast against the
     // exterior the instance sits in; here that is the vacuum, which is

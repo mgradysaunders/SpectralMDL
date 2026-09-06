@@ -483,7 +483,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
                                      smdl::Quoted(layout.exteriorMediumName),
                                      " has no 'volume'"));
     auto state{makeRenderState(wavelengths, &mMediumAllocator)};
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     exteriorMedium = new (mMediumAllocator) MediumStack{
         nullptr, smdl::JIT::MaterialInstance(state, material), nullptr};
     SMDL_LOG_INFO("Exterior medium: ", smdl::Quoted(layout.exteriorMediumName));

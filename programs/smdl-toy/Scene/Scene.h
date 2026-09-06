@@ -50,15 +50,22 @@ public:
   /// Apply geometry to SMDL state.
   ///
   /// `rayDir` is the normalized direction of propagation of the ray that
-  /// produced the hit, which `finalizeAndApplyInternalSpaceConventions()`
-  /// rotates into internal space. The zero default means "not provided"
-  /// per the `State` conventions.
+  /// produced the hit, which the state rotates into internal space. The
+  /// zero default means "not provided" per the `State` conventions.
   ///
   /// The geometry is handed over in the instance's **rigid frame** rather
   /// than in world space, paired with the instance transform in
   /// `State::object_to_world_matrix`, so that the library reassembles world
   /// space itself. See `InstanceFrame::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
+  ///
+  /// The state is finalized by `State::finalizeUnchecked()`, which takes
+  /// the frame as given: the hit builders leave every vector unit and
+  /// every pair orthogonal (the mesh builder projects the interpolated
+  /// tangent off the interpolated normal, a primitive's tangent is a
+  /// parametric partial, the curve builders project theirs), the rigid
+  /// transform preserves all of that, and the rigid frame's matrix is
+  /// orthonormal by construction. A new builder owes the same.
   ///
   /// One state serves any number of hits: every geometric field and the
   /// vertex color set are overwritten here, and what is left standing
@@ -513,7 +520,7 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
   state.texture_density[0] = textureDensity;
   state.vertex_color_max = vertexColorSets;
   state.vertex_color[0] = vertexColor;
-  state.finalizeAndApplyInternalSpaceConventions();
+  state.finalizeUnchecked();
 }
 
 /// Register the scene data this renderer provides to materials, on a

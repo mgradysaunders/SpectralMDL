@@ -2471,7 +2471,7 @@ TEST_CASE("Compiler enableScatterNormal") {
       wavelengths[i] =
           (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
     }
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto inst{smdl::JIT::MaterialInstance(state, material)};
     const auto xi{smdl::float4(0.25f, 0.5f, 0.5f, 0.5f)};
     auto wm{smdl::float3()};
@@ -2530,7 +2530,7 @@ TEST_CASE("Compiler enableScatterNormal") {
       wavelengths[i] =
           (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
     }
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto normal{smdl::float3()};
     REQUIRE(bool(plain->geometryNormalEvaluate));
     plain->geometryNormalEvaluate(state, normal);
@@ -2584,7 +2584,7 @@ TEST_CASE("Compiler enableScatterNormal") {
       wavelengths[i] =
           (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
     }
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto inherits{smdl::JIT::MaterialInstance(state, inheritsMaterial)};
     auto pinned{smdl::JIT::MaterialInstance(state, pinnedMaterial)};
     // A defaulted layer normal follows the remapped field, so it reports
@@ -2649,7 +2649,7 @@ TEST_CASE("Compiler reports lobe words per side of the interface") {
     wavelengths[i] =
         (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
   }
-  state.finalizeAndApplyInternalSpaceConventions();
+  state.finalize();
   const auto lobes{[](const smdl::JIT::MaterialInstance &mat, bool backface) {
     return mat.getLobes(backface) & smdl::DF_ALL;
   }};
@@ -2729,7 +2729,7 @@ TEST_CASE("Compiler vertex color reaches SMDL and the scene data alias") {
       state.vertex_color_max = 1;
       state.vertex_color[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
     }
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     if (auto error{compiler.runUnitTests(state)}) {
       MESSAGE(error->message);
       CHECK(false);

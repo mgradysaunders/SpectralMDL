@@ -52,16 +52,16 @@ TEST_CASE("State") {
     // the end of them.
     auto state{smdl::State()};
     state.texture_space_max = 16;
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     CHECK(state.texture_space_max == int(smdl::State::TEXTURE_SPACE_MAX));
 
     state = smdl::State();
     state.texture_space_max = -1;
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     CHECK(state.texture_space_max == 0);
 
     state = smdl::State();
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     CHECK(state.texture_space_max == 1);
   }
   SUBCASE("Finalize establishes the internal space conventions") {
@@ -71,7 +71,7 @@ TEST_CASE("State") {
     state.geometry_normal = smdl::float3(0, 1, 1);
     state.geometry_tangent_u[0] = smdl::float3(2, 0, 0);
     state.geometry_tangent_v[0] = smdl::float3(0, 1, 0);
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     CHECK(state.position.x == doctest::Approx(0.0f));
     CHECK(state.position.y == doctest::Approx(0.0f));
     CHECK(state.position.z == doctest::Approx(0.0f));
@@ -82,5 +82,54 @@ TEST_CASE("State") {
         smdl::isAllTrue(state.geometry_tangent_u[0] == smdl::float3(1, 0, 0)));
     CHECK(
         smdl::isAllTrue(state.geometry_tangent_v[0] == smdl::float3(0, 1, 0)));
+  }
+  SUBCASE("Finalize unchecked agrees with finalize on an orthonormal frame") {
+    using smdl::float3;
+    const auto near{[](const float3 &a, const float3 &b) {
+      return smdl::length(a - b) < 1e-6f;
+    }};
+    // A frame no repair step would touch: unit normals, each tangent
+    // pair orthonormal with its normal, and an orthonormal placement.
+    const auto w{smdl::normalize(float3(1, 2, 3))};
+    const auto u{smdl::perpendicularTo(w)};
+    const auto v{smdl::cross(w, u)};
+    const auto n{smdl::normalize(w + 0.25f * u - 0.125f * v)};
+    auto tu{u - smdl::dot(u, n) * n};
+    CHECK(smdl::tryNormalize(tu));
+    const auto tv{smdl::cross(n, tu)};
+    const auto placement{smdl::orthonormalize(
+        smdl::float3x3(float3(2, 1, 0), float3(-1, 3, 1), float3(0, -1, 2)))};
+    auto state{smdl::State()};
+    state.position = float3(3, -1, 2);
+    state.direction = smdl::normalize(float3(-1, 0.5f, -2));
+    state.motion = float3(0.1f, 0.2f, 0.3f);
+    state.normal = n;
+    state.texture_tangent_u[0] = tu;
+    state.texture_tangent_v[0] = tv;
+    state.geometry_normal = w;
+    state.geometry_tangent_u[0] = u;
+    state.geometry_tangent_v[0] = v;
+    state.object_to_world_matrix = smdl::float4x4(
+        smdl::float4(placement[0], 0), smdl::float4(placement[1], 0),
+        smdl::float4(placement[2], 0), smdl::float4(4, 5, 6, 1));
+    auto checked{state};
+    checked.finalize();
+    auto unchecked{state};
+    unchecked.finalizeUnchecked();
+    CHECK(near(checked.position, unchecked.position));
+    CHECK(near(checked.direction, unchecked.direction));
+    CHECK(near(checked.motion, unchecked.motion));
+    CHECK(near(checked.normal, unchecked.normal));
+    CHECK(near(checked.texture_tangent_u[0], unchecked.texture_tangent_u[0]));
+    CHECK(near(checked.texture_tangent_v[0], unchecked.texture_tangent_v[0]));
+    CHECK(smdl::isAllTrue(unchecked.geometry_normal == float3(0, 0, 1)));
+    CHECK(smdl::isAllTrue(unchecked.geometry_tangent_u[0] == float3(1, 0, 0)));
+    CHECK(smdl::isAllTrue(unchecked.geometry_tangent_v[0] == float3(0, 1, 0)));
+    for (int j = 0; j < 4; j++) {
+      CHECK(near(float3(checked.tangent_to_object_matrix[j]),
+                 float3(unchecked.tangent_to_object_matrix[j])));
+      CHECK(near(float3(checked.object_to_world_matrix[j]),
+                 float3(unchecked.object_to_world_matrix[j])));
+    }
   }
 }

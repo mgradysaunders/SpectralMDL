@@ -200,60 +200,26 @@ SourceLocation::operator std::string() const {
   return str;
 }
 
-void State::finalizeAndApplyInternalSpaceConventions() noexcept {
-  // Every loop below indexes the tangent arrays by it, and so does the
+void State::finalize() noexcept {
+  // 1. Every loop below indexes the tangent arrays by it, and so does the
   // generated code that reads them, so a host asking for more spaces than
   // are there is clamped once, here, rather than running off the end.
   texture_space_max = std::clamp(texture_space_max, 0, int(TEXTURE_SPACE_MAX));
   vertex_color_max = std::clamp(vertex_color_max, 0, int(VERTEX_COLOR_MAX));
 
-  // 1. Orthonormalize normal and tangent vectors.
+  // 2. Orthonormalize normal and tangent vectors.
   if (!tryNormalize(normal)) normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++)
     gramSchmidtOrthonormalize(normal, texture_tangent_u[i],
                               texture_tangent_v[i]);
 
-  // 2. Orthonormalize geometry normal and tangent vectors.
+  // 3. Orthonormalize geometry normal and tangent vectors.
   if (!tryNormalize(geometry_normal)) geometry_normal = normal;
   for (int i = 0; i < texture_space_max; i++)
     gramSchmidtOrthonormalize(geometry_normal, geometry_tangent_u[i],
                               geometry_tangent_v[i]);
 
-  // 3. Construct the tangent-to-object matrix.
-  tangent_to_object_matrix[0] = float4(geometry_tangent_u[0], 0.0f);
-  tangent_to_object_matrix[1] = float4(geometry_tangent_v[0], 0.0f);
-  tangent_to_object_matrix[2] = float4(geometry_normal, 0.0f);
-  tangent_to_object_matrix[3] = float4(position, 1.0f);
-
-  // 4. Transform everything from object space to tangent space. The frame
-  // is orthonormal, so the inverse of its linear part is its transpose and
-  // a direction maps to its three dots with the axes, which is the whole of
-  // `affineInverse()` and the 4x4 product for a vector whose `w` is zero.
-  const auto u{geometry_tangent_u[0]}, v{geometry_tangent_v[0]},
-      w{geometry_normal};
-  const auto toTangent{
-      [&](const float3 &d) { return float3(dot(d, u), dot(d, v), dot(d, w)); }};
-  position = {};
-  direction = toTangent(direction);
-  motion = toTangent(motion);
-  normal = toTangent(normal);
-  geometry_normal = {0, 0, 1};
-  for (int i = 0; i < texture_space_max; i++) {
-    texture_tangent_u[i] = toTangent(texture_tangent_u[i]);
-    texture_tangent_v[i] = toTangent(texture_tangent_v[i]);
-    if (i == 0) {
-      // Space 0's geometry tangents are the axes the frame was built from,
-      // so they land on the axes of the frame exactly rather than within
-      // rounding of them, which is what this function documents.
-      geometry_tangent_u[0] = {1, 0, 0};
-      geometry_tangent_v[0] = {0, 1, 0};
-    } else {
-      geometry_tangent_u[i] = toTangent(geometry_tangent_u[i]);
-      geometry_tangent_v[i] = toTangent(geometry_tangent_v[i]);
-    }
-  }
-
-  // 5. Orthonormalize object-to-world matrix. An already orthonormal one
+  // 4. Orthonormalize object-to-world matrix. An already orthonormal one
   // is left exactly as the host set it; otherwise this is `orthonormalize()`
   // of it, which a host can call to predict the answer bit for bit.
   //
@@ -280,6 +246,9 @@ void State::finalizeAndApplyInternalSpaceConventions() noexcept {
     object_to_world_matrix[1] = float4(axes[1], 0.0f);
     object_to_world_matrix[2] = float4(axes[2], 0.0f);
   }
+
+  // 5 and 6.
+  finalizeUnchecked();
 }
 
 } // namespace smdl

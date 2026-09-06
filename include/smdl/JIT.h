@@ -622,10 +622,10 @@ public:
   /// lookup: the caller fills `position` with the query point in the
   /// *object space* of the volume instance (internal space equals
   /// object space here, there being no surface frame; do NOT call
-  /// `State::finalizeAndApplyInternalSpaceConventions()`), along with
-  /// the render-wide fields (`wavelength_base`, ...), and may leave the
-  /// surface-geometry fields defaulted. Volume expressions read the
-  /// point through `state::position()`.
+  /// `State::finalize()`), along with the render-wide fields 
+  /// (`wavelength_base`, ...), and may leave the surface-geometry 
+  /// fields defaulted. Volume expressions read the point through 
+  /// `state::position()`.
   ///
   Function<void(State &state, float *sigma_a, float *sigma_s, float *emission)>
       volumeEvaluate{};

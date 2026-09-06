@@ -448,8 +448,7 @@ template <typename T>
 /// frame stays left-handed. The cross product is the fallback when `v` is
 /// degenerate and so carries no handedness to preserve.
 ///
-/// This is the orthonormalization that
-/// `State::finalizeAndApplyInternalSpaceConventions()` applies, so a host
+/// This is the orthonormalization that `State::finalize()` applies, so a host
 /// that needs to predict what the state will do to a frame should call this
 /// rather than reimplement it.
 ///

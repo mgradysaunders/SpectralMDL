@@ -547,7 +547,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // which case its value here is only a representative selection weight.
     auto state{makeRenderState(wavelengths, &allocator)};
     state.texture_space_max = 1;
-    state.finalizeAndApplyInternalSpaceConventions();
+    state.finalize();
     auto mat{smdl::JIT::MaterialInstance(state, material)};
     if (!mat.hasEmission()) {
       // The mark is scene judgment about an emitter; on anything else it
