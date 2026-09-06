@@ -280,6 +280,13 @@ if(SMDL_ENABLE_PTEX)
   # is no OFF exporter). 'assbin' is Assimp's own container and the only
   # lossless one of the set, which is what makes it a round-trip test
   # fixture rather than a delivery format.
+  #
+  # At some point, it might be nice for smdl-toy to be able to re-export a
+  # mesh it imported after applying subdivision and/or displacement, either
+  # for debugging or to function as part of a procedural geometry toolchain on
+  # the command line using scripted MDL displacement, in which case we would
+  # want to enable the Assimp export capabilities. We set ASSIMP_NO_EXPORT ON 
+  # to save on build time and binary size in the meantime. 
   smdl_fetch_dependency(
     "Assimp"
     REPOSITORY "https://github.com/assimp/assimp"
@@ -290,7 +297,6 @@ if(SMDL_ENABLE_PTEX)
       ASSIMP_BUILD_TESTS OFF
       ASSIMP_BUILD_ZLIB ON
       ASSIMP_INSTALL OFF
-      ASSIMP_NO_EXPORT OFF
       ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF
       ASSIMP_BUILD_ASSBIN_IMPORTER ON
       ASSIMP_BUILD_COLLADA_IMPORTER ON
@@ -301,15 +307,16 @@ if(SMDL_ENABLE_PTEX)
       ASSIMP_BUILD_OPENGEX_IMPORTER ON
       ASSIMP_BUILD_PLY_IMPORTER ON
       ASSIMP_BUILD_STL_IMPORTER ON
-      ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF
-      ASSIMP_BUILD_ASSBIN_EXPORTER ON
-      ASSIMP_BUILD_COLLADA_EXPORTER ON
-      ASSIMP_BUILD_FBX_EXPORTER ON
-      ASSIMP_BUILD_GLTF_EXPORTER ON
-      ASSIMP_BUILD_OBJ_EXPORTER ON
-      ASSIMP_BUILD_OPENGEX_EXPORTER ON
-      ASSIMP_BUILD_PLY_EXPORTER ON
-      ASSIMP_BUILD_STL_EXPORTER ON
+      ASSIMP_NO_EXPORT ON
+      #ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF
+      #ASSIMP_BUILD_ASSBIN_EXPORTER ON
+      #ASSIMP_BUILD_COLLADA_EXPORTER ON
+      #ASSIMP_BUILD_FBX_EXPORTER ON
+      #ASSIMP_BUILD_GLTF_EXPORTER ON
+      #ASSIMP_BUILD_OBJ_EXPORTER ON
+      #ASSIMP_BUILD_OPENGEX_EXPORTER ON
+      #ASSIMP_BUILD_PLY_EXPORTER ON
+      #ASSIMP_BUILD_STL_EXPORTER ON
     )
 endif()
 
