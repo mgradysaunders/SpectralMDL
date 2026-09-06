@@ -15,6 +15,7 @@
 
 #include "smdl/Common.h"
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include "Options.h"
@@ -208,13 +209,12 @@ cl::opt<float> optSunAzimuth{
     "sun-azimuth",
     cl::desc("The solar azimuth angle in degrees CCW from +X (default: 135)"),
     cl::init(135.0f), cl::cat(catLight)};
-// TODO Rename `--sky-visibility`
 cl::opt<float> optSkyVisibility{
-    "visibility", cl::desc("The aerosol visibility in km, 5-100 (default: 23)"),
+    "sky-visibility",
+    cl::desc("The aerosol visibility in km, 5-100 (default: 23)"),
     cl::init(23.0f), cl::cat(catLight)};
-// TODO Rename `--sky-water-vapor`
 cl::opt<float> optSkyWaterVapor{
-    "water-vapor",
+    "sky-water-vapor",
     cl::desc("The water-vapor column scale factor, 0.3-3 (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
 cl::opt<bool> optHaze{
@@ -227,8 +227,8 @@ cl::opt<bool> optNoHaze{
     cl::init(false), cl::cat(catLight)};
 cl::opt<float> optHazeVisibility{
     "haze-visibility",
-    cl::desc("The haze meteorological range in km at 550nm (default: the "
-             "sky's visibility)"),
+    cl::desc("The haze meteorological range in km at 550nm (default: "
+             "-sky-visibility)"),
     cl::init(0.0f), cl::cat(catLight)};
 cl::opt<float> optHazeScaleHeight{
     "haze-scale-height",
@@ -418,6 +418,11 @@ cl::opt<std::string> optFallbackMaterial{
 
 cl::OptionCategory catUtility{"Utility Options"};
 //--{ Utility Options
+cl::opt<std::string> optLogLevel{
+    "log-level",
+    cl::desc("The log level to filter output verbosity, must be "
+             "'debug', 'info', 'warn', or 'error' (default: 'info')"),
+    cl::init(std::string("info")), cl::cat(catUtility)};
 cl::opt<std::string> optDumpPlaces{
     "dump-places",
     cl::desc("Print '.places' buffer as one-line place text, then exit"),
@@ -490,6 +495,17 @@ template <typename T> [[nodiscard]] Flag<T> flag(const cl::opt<T> &option) {
 // line expands '@'-prefixed argv tokens as response files before any
 // option sees them. Returns empty when the flag was not given; anything
 // else must be a finite, positive, strictly increasing list.
+// The '-log-level' name as `smdl::Logger` spells it.
+[[nodiscard]] smdl::LogLevel parseLogLevel(const std::string &flagStr) {
+  if (flagStr == "debug") return smdl::LOG_LEVEL_DEBUG;
+  if (flagStr == "info") return smdl::LOG_LEVEL_INFO;
+  if (flagStr == "warn") return smdl::LOG_LEVEL_WARN;
+  if (flagStr == "error") return smdl::LOG_LEVEL_ERROR;
+  throw smdl::Error(smdl::concat("expected -log-level to be 'debug', 'info', "
+                                 "'warn', or 'error', got ",
+                                 smdl::Quoted(flagStr)));
+}
+
 [[nodiscard]] std::vector<float> parseWavelengths(const std::string &flagStr) {
   auto values{std::vector<float>()};
   if (flagStr.empty()) return values;
@@ -745,6 +761,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.json = bool(optJSON);
   opts.utility.allMaterials = bool(optCompileAllMaterials);
   opts.utility.threads = unsigned(optThreads);
+  opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
   opts.utility.progress.label = "Rendering";
   opts.utility.progress.units = "px";
   opts.utility.progress.style = parseProgressStyle(std::string(optProgress));

@@ -8,15 +8,33 @@
 #include "Output.h"
 #include "Progress.h"
 #include "Render/Guiding.h"
+#include "Render/Light.h"
 #include "Render/Sampler.h"
 #include "Resume.h"
 #include "Stage.h"
 #include "Tonemap.h"
 
+namespace {
+
+/// The spectral radiance the film holds, which is the library-wide
+/// convention; see `smdl::SunSky`.
+constexpr const char *SPECTRAL_RADIANCE_UNITS{"W/(m^2 sr nm)"};
+
+/// The header fields written for a reader rather than for a resume.
+/// `radiance units` is not an ENVI standard field; the three solar ones
+/// are, and carry the units ENVI states them in.
+constexpr const char *ENVI_RADIANCE_UNITS{"radiance units"};
+constexpr const char *ENVI_SUN_AZIMUTH{"sun azimuth"};
+constexpr const char *ENVI_SUN_ELEVATION{"sun elevation"};
+constexpr const char *ENVI_SOLAR_IRRADIANCE{"solar irradiance"};
+
+} // namespace
+
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
-                  const smdl::SpectralFilm &film, ResumedSequence &resumed,
-                  const std::string &outputSpectrum, const STree *sdtree) {
+                  const EnvLight *envLight, const smdl::SpectralFilm &film,
+                  ResumedSequence &resumed, const std::string &outputSpectrum,
+                  const STree *sdtree) {
   const auto &wavelengths{grid.wavelengths};
   const auto numPixelsX{frame.numPixelsX};
   const auto numPixelsY{frame.numPixelsY};
@@ -35,11 +53,6 @@ void writeOutputs(const Options &opts, const Frame &frame,
     }
   }
   if (!outputSpectrum.empty()) {
-    // TODO If using procedural SunSky (and not in moonlight mode), add
-    // the standard ENVI header lines:
-    //   sun azimuth = (degrees)
-    //   sun elevation = (degrees)
-    //   solar irradiance = {...} (W/m2/um)
 
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
@@ -51,13 +64,35 @@ void writeOutputs(const Options &opts, const Frame &frame,
     resumed.header.sampler = SAMPLER_VERSION;
     resumed.header.wavelengthJitter = jitterWavelength;
     resumed.header.args = opts.argsEcho;
+    // What the numbers mean, and where the light came from: written for
+    // whoever opens the file next, and never read back, so none of it
+    // joins the fingerprint a resumed session compares.
+    auto headerLines{resumed.header.headerLines()};
+    headerLines.push_back(
+        smdl::concat(ENVI_RADIANCE_UNITS, " = ", SPECTRAL_RADIANCE_UNITS));
+    {
+      float azimuthDeg{};
+      float elevationDeg{};
+      auto irradiance{std::vector<float>()};
+      // Only the procedural sun says any of this: an image environment
+      // has no sun to place, and moonlight's source is not the sun.
+      if (envLight && envLight->sunMetadata(wavelengths, azimuthDeg,
+                                            elevationDeg, irradiance)) {
+        headerLines.push_back(
+            smdl::concat(ENVI_SUN_AZIMUTH, " = ", azimuthDeg));
+        headerLines.push_back(
+            smdl::concat(ENVI_SUN_ELEVATION, " = ", elevationDeg));
+        auto line{smdl::concat(ENVI_SOLAR_IRRADIANCE, " = {")};
+        for (size_t i = 0; i < irradiance.size(); i++)
+          line += smdl::concat(i > 0 ? ", " : "", irradiance[i]);
+        headerLines.push_back(line + "}");
+      }
+    }
     // The window the recorded count belongs to, which the film itself
     // does not know: a windowed render still carries a full frame of
     // pixels, and the header must not describe the untouched ones as
     // samples.
-    film.writeENVIFile(
-        smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        partName, resumed.header.headerLines(), window);
+    film.writeENVIFile(wavelengths, partName, headerLines, window);
     // Both members of the ENVI pair; `writeENVIFile()` wrote them under
     // the temporary name and its own '.hdr' suffix.
     smdl::renameOnto(partName, outputSpectrum);

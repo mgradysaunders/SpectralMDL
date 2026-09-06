@@ -1633,6 +1633,11 @@ TEST_CASE("Compiler mip levels") {
 
 // Collects log messages mentioning a substring at any level, for
 // asserting on diagnostics that are not warnings.
+//
+// The logger filters by level before any sink is asked, so collecting a
+// message below the default `LOG_LEVEL_INFO` means lowering the minimum
+// too; `collectEveryLevel()` does that, and `Logger::reset()` alone does
+// not put it back.
 class MessageCollector final : public smdl::LogSink {
 public:
   MessageCollector(std::string needle) : needle(std::move(needle)) {}
@@ -1644,6 +1649,25 @@ public:
 
   std::string needle{};
   std::vector<std::string> messages{};
+};
+
+// Collect every message mentioning `needle`, debug included, for as long
+// as the returned guard lives.
+class CollectEveryLevel final {
+public:
+  explicit CollectEveryLevel(std::string needle)
+      : messages(smdl::Logger::get()
+                     .addSink<MessageCollector>(std::move(needle))
+                     .messages) {
+    smdl::Logger::get().setMinLevel(smdl::LOG_LEVEL_DEBUG);
+  }
+
+  ~CollectEveryLevel() {
+    smdl::Logger::get().reset();
+    smdl::Logger::get().setMinLevel(smdl::LOG_LEVEL_INFO);
+  }
+
+  const std::vector<std::string> &messages;
 };
 
 TEST_CASE("Compiler unused image dropping") {
@@ -1688,15 +1712,13 @@ TEST_CASE("Compiler unused image dropping") {
     return std::string();
   }};
   SUBCASE("An unread image is dropped at O2 and a sampled one is kept") {
-    auto &dropped{
-        smdl::Logger::get().addSink<MessageCollector>("Dropping image")};
+    CollectEveryLevel dropped{"Dropping image"};
     CHECK(build(smdl::OPT_LEVEL_O2) == "");
     REQUIRE(dropped.messages.size() == 1);
     CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
     // The declaration goes with the image, so the JIT is never asked to
     // define a symbol for texels that were never loaded.
     CHECK(countImageSymbols(ir) == 1);
-    smdl::Logger::get().reset();
   }
   SUBCASE("The unread image is dropped even at OPT_LEVEL_NONE") {
     // Constant-field elimination bakes the 'texture_2d' struct into the
@@ -1704,13 +1726,11 @@ TEST_CASE("Compiler unused image dropping") {
     // all: the image is provably unused with no optimization running.
     // The size requirement doubles as the guard that the sampled image
     // is never dropped.
-    auto &dropped{
-        smdl::Logger::get().addSink<MessageCollector>("Dropping image")};
+    CollectEveryLevel dropped{"Dropping image"};
     CHECK(build(smdl::OPT_LEVEL_NONE) == "");
     REQUIRE(dropped.messages.size() == 1);
     CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
     CHECK(countImageSymbols(ir) == 1);
-    smdl::Logger::get().reset();
   }
   fs::remove_all(tmpDir);
 }

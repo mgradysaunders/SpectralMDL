@@ -64,8 +64,27 @@ public:
     return true;
   }
 
+  /// Where the sun stands and how hard it shines, for the metadata a
+  /// spectral output advertises to whatever reads it next.
+  ///
+  /// Fills `azimuthDeg` in degrees CCW from +X (the convention
+  /// `-sun-azimuth` states) and `elevationDeg` above the horizon, both
+  /// after the model's own zenith clamp, and one direct solar
+  /// irradiance per entry of `wavelens` in W/(m^2 um), which is the
+  /// unit ENVI's `solar irradiance` field is written in.
+  ///
+  /// False when there is nothing solar to describe: an image
+  /// environment, a sun disk turned off, or moonlight, whose source is
+  /// the moon and whose irradiance is not the sun's.
+  [[nodiscard]] bool sunMetadata(smdl::Span<const float> wavelens,
+                                 float &azimuthDeg, float &elevationDeg,
+                                 std::vector<float> &irradiance) const;
+
 private:
   float mScaleFactor{1.0f};
+
+  /// Is the procedural environment in moonlight mode?
+  bool mIsMoon{};
 
   /// The procedural sun and sky in place of `mImage` when constructed
   /// from `smdl::SunSkyOptions`.

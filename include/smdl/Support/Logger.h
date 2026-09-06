@@ -43,18 +43,23 @@ class SMDL_EXPORT Logger final {
 private:
   Logger() = default;
 
-  Logger(const Logger &) = delete;
-
   ~Logger() { reset(); }
 
 public:
+  Logger(const Logger &) = delete;
+
   /// Get the logger singleton.
   [[nodiscard]] static Logger &get();
+
+  /// Set the minimum level. This is not mutex protected and is understood to be
+  /// set once at program startup and rarely if ever changed. The default level
+  /// is `LOG_LEVEL_INFO`.
+  void setMinLevel(LogLevel minLevel) { mMinLevel = minLevel; }
 
   /// Add a new sink.
   template <typename T, typename... Args> T &addSink(Args &&...args) {
     return static_cast<T &>(
-        *sinks.emplace_back(std::make_unique<T>(std::forward<Args>(args)...)));
+        *mSinks.emplace_back(std::make_unique<T>(std::forward<Args>(args)...)));
   }
 
   /// Flush all sinks.
@@ -71,10 +76,13 @@ public:
 
 private:
   /// The mutex just to be safe.
-  std::mutex mtx{};
+  std::mutex mMtx{};
 
   /// The sinks.
-  std::vector<std::unique_ptr<LogSink>> sinks{};
+  std::vector<std::unique_ptr<LogSink>> mSinks{};
+
+  /// The minimum level, such that every message below this is ignored.
+  LogLevel mMinLevel{LOG_LEVEL_INFO};
 };
 
 /// Log a message with `LOG_LEVEL_DEBUG`.
@@ -96,6 +104,22 @@ private:
 #define SMDL_LOG_ERROR(...)                                 \
   ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_ERROR, \
                                    ::smdl::concat(__VA_ARGS__))
+
+/// The label prefix for the given log level, as printed by the default
+/// log sinks above, with or without ANSI color codes. Empty for
+/// `LOG_LEVEL_INFO`, which is unlabeled.
+///
+/// This is public so that a program with its own sink (a progress bar
+/// that must erase and redraw itself around each message, say) prints
+/// the same labels as the default sinks without redefining them.
+[[nodiscard]] SMDL_EXPORT std::string_view
+logLevelLabel(LogLevel level, bool withColors) noexcept;
+
+/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
+[[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors() noexcept;
+
+/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal.
+[[nodiscard]] SMDL_EXPORT bool coutSupportsANSIColors() noexcept;
 
 /// The default log-sinks for convenience.
 ///
@@ -123,22 +147,6 @@ public:
 };
 
 } // namespace LogSinks
-
-/// The label prefix for the given log level, as printed by the default
-/// log sinks above, with or without ANSI color codes. Empty for
-/// `LOG_LEVEL_INFO`, which is unlabeled.
-///
-/// This is public so that a program with its own sink (a progress bar
-/// that must erase and redraw itself around each message, say) prints
-/// the same labels as the default sinks without redefining them.
-[[nodiscard]] SMDL_EXPORT std::string_view logLevelLabel(LogLevel level,
-                                                         bool withColors);
-
-/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
-[[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors();
-
-/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal.
-[[nodiscard]] SMDL_EXPORT bool coutSupportsANSIColors();
 
 /// \}
 

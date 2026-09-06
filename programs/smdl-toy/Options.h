@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "smdl/Support/Logger.h"
+
 #include "Color.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
@@ -326,6 +328,10 @@ struct UtilityOptions final {
   bool allMaterials{};
 
   unsigned threads{};
+
+  /// The lowest level of log message to print, which `main()` hands the
+  /// logger before anything else can say anything.
+  smdl::LogLevel logLevel{smdl::LOG_LEVEL_INFO};
 
   /// The progress bar, filled with everything the command line decides;
   /// the totals and the summary need the resolved window and budget.

@@ -11,6 +11,7 @@ struct Options;
 struct Frame;
 struct ResolvedGrid;
 struct ResumedSequence;
+class EnvLight;
 class STree;
 
 /// Write everything the command line asked for: the linear RGB floating
@@ -25,7 +26,13 @@ class STree;
 /// `resumed.header` is stamped with this session's fingerprint on the
 /// way out, since the settings a later resume compares itself against
 /// are the ones the samples now in the film were drawn under.
+///
+/// `envLight` is the environment the render used, or null for none: the
+/// spectral header advertises where the sun stood and how hard it shone
+/// when there was a procedural one. That is written for a reader and
+/// never read back, which is why it is not part of `resumed.header`.
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
-                  const smdl::SpectralFilm &film, ResumedSequence &resumed,
-                  const std::string &outputSpectrum, const STree *sdtree);
+                  const EnvLight *envLight, const smdl::SpectralFilm &film,
+                  ResumedSequence &resumed, const std::string &outputSpectrum,
+                  const STree *sdtree);

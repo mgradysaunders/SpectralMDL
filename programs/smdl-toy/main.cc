@@ -30,6 +30,11 @@ int main(int argc, char **argv) try {
   // around a progress bar while one is on screen.
   smdl::Logger::get().addSink<ProgressLogSink>();
   const auto opts{parseCommandLine(argc, argv)};
+  // Before anything is logged: the sink above is already in place, and
+  // the parse itself says nothing, so this is the first point at which a
+  // message could be filtered and the last at which nothing has been
+  // missed.
+  smdl::Logger::get().setMinLevel(opts.utility.logLevel);
   // Before anything parallel: the thread pool is built by whichever
   // parallel operation runs first (the compile's image loads, usually)
   // and cannot be resized afterward. Embree keeps its own pool for
@@ -125,7 +130,8 @@ int main(int argc, char **argv) try {
   auto sdtree{std::unique_ptr<STree>()};
   renderSamples(opts, frame, grid, compiler, staged, resumed, film,
                 outputSpectrum, sdtree);
-  writeOutputs(opts, frame, grid, compiler, film, resumed, outputSpectrum,
+  writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), film,
+               resumed, outputSpectrum,
                savesGuideTree(opts, frame, outputSpectrum) ? sdtree.get()
                                                            : nullptr);
   return EXIT_SUCCESS;

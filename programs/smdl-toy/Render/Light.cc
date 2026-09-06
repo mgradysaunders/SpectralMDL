@@ -54,10 +54,29 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
 }
 
 EnvLight::EnvLight(const smdl::SunSkyOptions &options)
-    : mSunSky(smdl::SunSky(options)) {
+    : mIsMoon(options.moon), mSunSky(smdl::SunSky(options)) {
   // The `SunSky` applies its own scale factor internally, so the mean
   // radiance it reports is final.
   mMeanRadiance = mSunSky->averageRadiance();
+}
+
+bool EnvLight::sunMetadata(smdl::Span<const float> wavelens, float &azimuthDeg,
+                           float &elevationDeg,
+                           std::vector<float> &irradiance) const {
+  if (!mSunSky || !mSunSky->hasSun() || mIsMoon) return false;
+  const auto direction{mSunSky->sunDirection()};
+  constexpr float DEGREES{180.0f / PI};
+  azimuthDeg = DEGREES * std::atan2(direction.y, direction.x);
+  elevationDeg = DEGREES * std::asin(std::clamp(direction.z, -1.0f, 1.0f));
+  // The disk is uniform, so its irradiance is its radiance over the
+  // solid angle it covers; the model works per nanometer and the header
+  // field is per micrometer.
+  irradiance.resize(wavelens.size());
+  mSunSky->sunRadiance(int(wavelens.size()), wavelens.data(),
+                       irradiance.data());
+  const float perMicrometer{1000.0f * mSunSky->sunSolidAngle()};
+  for (auto &value : irradiance) value *= perMicrometer;
+  return true;
 }
 
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
