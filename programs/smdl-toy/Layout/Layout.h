@@ -293,8 +293,8 @@ public:
 
 /// The environment a layout's `sky` directive describes.
 ///
-/// Everything is optional and merged with the command line the same
-/// way `LayoutCamera` works.
+/// Everything is optional: the built-in defaults are the base, the file
+/// overrides those, and explicit command-line flags override the file.
 ///
 class LayoutSky final {
 public:
@@ -882,7 +882,6 @@ public:
 /// line) yields everything it names, an asset resolves through its
 /// manifest, and anything else is a mesh file placed at the origin. A
 /// `.scene` file is an error naming the retirement.
-[[nodiscard]] Layout
-resolveLayoutArgument(const std::string &fileName,
-                      const AssetSearchPath &search = {},
-                      const MotionSampling &sampling = {});
+[[nodiscard]] Layout resolveLayoutArgument(const std::string &fileName,
+                                           const AssetSearchPath &search = {},
+                                           const MotionSampling &sampling = {});

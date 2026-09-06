@@ -349,7 +349,7 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
       "at 1 translate 2 0 0 rotate_z 90 }\n"
       "}\n"
       "group lit { place lamp translate 0 0 5 }\n"
-      "place ball\n" // 0
+      "place ball\n"                                                      // 0
       "place ball motion { at 0 translate 5 0 0 at 1 translate 6 0 0 }\n" // 1
       "place ball motion { at 0 translate 5 0 0 at 1 translate 5 0 0 }\n" // 2
       "place rig motion { at 0 translate 10 0 0 at 1 translate 11 0 0 }\n"

@@ -35,7 +35,7 @@ int main(int argc, char **argv) try {
   // and cannot be resized afterward. Embree keeps its own pool for
   // building acceleration structures, and `Scene` bounds that one from
   // `smdl::getThreadCount()`.
-  smdl::setThreadCount(opts.sampling.threads);
+  smdl::setThreadCount(opts.utility.threads);
   // The '.places' utilities bow out before anything else: they touch
   // nothing but the named files.
   if (!opts.utility.dumpPlaces.empty()) {
@@ -61,10 +61,10 @@ int main(int argc, char **argv) try {
   // initialized. NOTE: The LLVM time-trace instance is thread-local, so
   // entries are only ever begun on this thread; parallel work is timed by
   // hand and reported through logging instead.
-  const bool profiling{opts.output.profiling};
-  const auto profileFileName{opts.output.profile.empty()
+  const bool profiling{opts.utility.profiling};
+  const auto profileFileName{opts.utility.profile.empty()
                                  ? std::string("smdl-toy.trace.json")
-                                 : opts.output.profile};
+                                 : opts.utility.profile};
   if (profiling) smdl::profilerInitialize();
   auto frame{resolveFrame(opts)};
   auto resumed{resumeSequence(opts, frame.resolution, frame.window)};
@@ -102,7 +102,7 @@ int main(int argc, char **argv) try {
   StagedScene staged{opts, frame, grid, compiler};
   // The self-test bows out here rather than after the render setup: it
   // asks the committed scene one question and answers it.
-  if (opts.mneeTestNormalHook) {
+  if (opts.render.mneeTestNormalHook) {
     std::cout << "Checking the geometry-normal hook against the meshes:\n";
     const int failures{runMNEETestNormalHook(*staged.scene)};
     if (failures == 0)
@@ -119,9 +119,9 @@ int main(int argc, char **argv) try {
   // command line re-runs to keep accumulating; an explicitly given
   // -output-spectrum wins verbatim, redirecting or (when empty)
   // suppressing the write.
-  const auto outputSpectrum{opts.output.spectrumGiven || !resumed.requested
-                                ? opts.output.spectrum
-                                : opts.output.resume};
+  const auto outputSpectrum{opts.image.outputSpectrumGiven || !resumed.requested
+                                ? opts.image.outputSpectrum
+                                : opts.image.resume};
   auto sdtree{std::unique_ptr<STree>()};
   renderSamples(opts, frame, grid, compiler, staged, resumed, film,
                 outputSpectrum, sdtree);

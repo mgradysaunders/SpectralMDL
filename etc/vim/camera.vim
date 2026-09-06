@@ -2,10 +2,11 @@
 " Language:    smdl-toy camera
 " Filenames:   *.camera
 "
-" The camera format that `smdl-toy` reads beside a layout: a `camera` block
-" holding the framing and the lens, a `motion` track of `at <seconds>` keys
-" inside it, and a `time` block holding the render clock. Everything about the
-" scene itself is in the `.layout`, which `layout.vim` covers.
+" The camera format that `smdl-toy` reads beside a layout: one `camera` block
+" holding the framing, the lens, and the shutter, with a `motion` track of
+" `at <seconds>` keys inside it. Everything about the scene itself is in the
+" `.layout`, which `layout.vim` covers; which instant to photograph and how
+" big the picture is are the command line's alone.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/Layout/CameraFile.cc`, so the words it knows inside a
 " block are exactly the ones that block accepts, and anything else there is
@@ -91,22 +92,21 @@ syn match cameraBadWord display "\<\h\w*\>"
 "--}
 
 "--{ Directives
-" camera { ... } and time { ... }, merged per field, last one wins.
+" camera { ... }, merged per field, last one wins.
 syn keyword cameraStatement camera nextgroup=cameraBlock skipwhite skipempty
-syn keyword cameraStatement time nextgroup=cameraTimeBlock skipwhite skipempty
 "--}
 
 "--{ Settings
-" The framing and the lens. `distortion_fit` is bare, since the flag it mirrors
-" takes no value either.
-syn keyword cameraSetting contained resolution look_from look_to look_up fovy
+" The framing, the lens, and the shutter. `distortion_fit` is bare, since the
+" flag it mirrors takes no value either.
+syn keyword cameraSetting contained look_from look_to look_up fovy shutter
 syn keyword cameraSetting contained fstop aperture focus blades blade_angle
 syn keyword cameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
 
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
-" on the render clock. A key restates any setting but `resolution`, `blades`,
-" and `distortion_fit`, which are not quantities to interpolate.
+" on the render clock. A key restates any setting but `blades`,
+" `distortion_fit`, and `shutter`, which are not quantities to interpolate.
 syn keyword cameraSetting contained motion
       \ nextgroup=cameraMotionBlock skipwhite skipempty
 syn keyword cameraMotionAt contained at
@@ -114,9 +114,6 @@ syn keyword cameraMotionSetting contained look_from look_to look_up fovy
 syn keyword cameraMotionSetting contained fstop aperture focus blade_angle
 syn keyword cameraMotionSetting contained distortion_k1 distortion_k2
 syn keyword cameraMotionSetting contained vignetting cat_eye cat_eye_radius
-
-" The clock: the instant the picture is taken and how long it is exposed.
-syn keyword cameraTimeSetting contained base shutter
 "--}
 
 "--{ Blocks
@@ -128,9 +125,6 @@ syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
 
 syn region cameraMotionBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraMotionAt,cameraMotionSetting
-
-syn region cameraTimeBlock contained matchgroup=cameraDelim start="{" end="}"
-      \ contains=@cameraCommon,cameraTimeSetting
 "--}
 
 " Blocks nest at most two deep (camera, motion) and are short.
@@ -148,7 +142,6 @@ hi def link cameraMotionAt        Keyword
 
 hi def link cameraSetting         Label
 hi def link cameraMotionSetting   Label
-hi def link cameraTimeSetting     Label
 
 hi def link cameraDelim           Delimiter
 

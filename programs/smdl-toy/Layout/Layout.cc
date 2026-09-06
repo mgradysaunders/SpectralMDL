@@ -421,9 +421,9 @@ private:
     // in both.
     const auto offset{xf.offset + placement.animationOffset.value_or(0.0f)};
     const auto sampling{mSampling.shiftedBy(offset)};
-    const auto placeXf{
-        xf * MotionXf(placement.transform, placement.motion, sampling,
-                      placement.animationOffset.value_or(0.0f))};
+    const auto placeXf{xf * MotionXf(placement.transform, placement.motion,
+                                     sampling,
+                                     placement.animationOffset.value_or(0.0f))};
     if (!placement.motion.empty() &&
         placement.motion.hasKeyBetween(sampling.open, sampling.shut))
       mDiags.warn(placement.motionLoc,

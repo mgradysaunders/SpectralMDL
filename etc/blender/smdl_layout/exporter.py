@@ -1093,22 +1093,6 @@ def frame_seconds(scene):
             render.fps_base / render.fps)
 
 
-def time_block(scene, keys):
-    """The `time` directive: which instant of the scene's timeline this
-    picture takes, and how long it is exposed.
-
-    The base is written whether or not motion blur is on, because a scene
-    keyframed on the clock renders the wrong instant without it; only the
-    shutter waits for blur.
-    """
-    if keys is None:
-        return ["time {", f"  base {frame_seconds(scene):.9g}", "}"]
-    return ["time {",
-            f"  base {keys.base:.9g}",
-            f"  shutter {keys.shutter:.9g}",
-            "}"]
-
-
 def framing_of(matrix):
     """The three framing vectors of a camera matrix: the position, the
     point one unit ahead of it, and the up vector. Blender's camera looks
@@ -1152,6 +1136,10 @@ def camera_block(scene, keys=None):
     panel this add-on does not draw. A setting is written only when it
     differs from the renderer's default, which is what the grammar
     demands: zero is not a value there, it is the absence of one.
+
+    The picture's size and the instant it photographs are not written:
+    they are facts about a render rather than about the camera, and
+    `render_flags()` puts them on the command line instead.
     """
     camera = scene.camera
     if camera is None or camera.type != "CAMERA":
@@ -1167,10 +1155,9 @@ def camera_block(scene, keys=None):
     origin = framing[0]
     forward = framing[1] - origin
     data = camera.data
-    render = scene.render
-    width = int(render.resolution_x * render.resolution_percentage / 100)
-    height = int(render.resolution_y * render.resolution_percentage / 100)
-    lines = ["camera {", f"  resolution {max(width, 1)} {max(height, 1)}"]
+    lines = ["camera {"]
+    if keys is not None:
+        lines.append(f"  shutter {keys.shutter:.9g}")
     if motion is None:
         lines.extend(framing_lines(framing))
     lines.append(f"  fovy {data.angle_y * 180.0 / 3.14159265358979:.9g}")
@@ -1218,24 +1205,37 @@ def camera_block(scene, keys=None):
     return lines
 
 
+def render_flags(scene, keys):
+    """The flags a render of this export needs that neither file carries:
+    the picture's size, and which instant of the scene to photograph."""
+    render = scene.render
+    width = max(int(render.resolution_x * render.resolution_percentage / 100), 1)
+    height = max(int(render.resolution_y * render.resolution_percentage / 100), 1)
+    seconds = keys.base if keys is not None else frame_seconds(scene)
+    flags = [f"-resolution {width},{height}"]
+    # A scene keyframed on the clock renders the wrong instant without
+    # this, so it is written whether or not anything moves.
+    if seconds != 0.0:
+        flags.append(f"-time {seconds:.9g}")
+    return flags
+
+
 def write_camera_file(scene, filepath, keys):
-    """Write the scene camera and the render clock as a `.camera` file,
-    the sibling of the layout that the renderer finds by name.
+    """Write the scene camera as a `.camera` file, the sibling of the
+    layout that the renderer finds by name.
 
     Returns the path, or "" when the scene has no camera to write. The
     camera is a separate file because it is a separate decision: one
     scene takes as many viewpoints as there are files, and neither has to
     restate the other.
     """
+    block = camera_block(scene, keys)
+    if not block:
+        return ""
     lines = ["#smdl camera",
              "# Written by the SpectralMDL layout add-on from "
              f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
              ""]
-    lines.extend(time_block(scene, keys))
-    block = camera_block(scene, keys)
-    if not block:
-        return ""
-    lines.append("")
     lines.extend(block)
     with open(filepath, "w") as stream:
         stream.write("\n".join(lines).rstrip() + "\n")
@@ -1736,6 +1736,8 @@ def write_layout(context, filepath, asset_root, bake, collection,
     named = os.path.basename(material_file) if material_file \
         else "<materials>.mdl"
     hint = f"smdl-toy <this file> {named} -asset-dir <asset root>"
+    for flag in render_flags(context.scene, keys):
+        hint += " " + flag
     exposure = context.scene.smdl_render.exposure
     if exposure != 1.0:
         hint += f" -exposure {exposure:.9g}"
@@ -1744,8 +1746,10 @@ def write_layout(context, filepath, asset_root, bake, collection,
         "# Written by the SpectralMDL layout add-on from "
         f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
         "#",
-        "# The viewpoint and the clock are in the '.camera' beside this file,",
-        "# which the render finds by name; '-camera' points at another.",
+        "# The viewpoint is in the '.camera' beside this file, which the",
+        "# render finds by name; '-camera' points at another. How big the",
+        "# picture is and which instant it takes are neither file's, so the",
+        "# command below carries them.",
         "#",
         "# Render with the asset library on the search path:",
         f"#   {hint}",

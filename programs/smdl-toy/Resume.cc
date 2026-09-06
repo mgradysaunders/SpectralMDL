@@ -97,18 +97,18 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
 ResumedSequence resumeSequence(const Options &opts, int2 resolution,
                                int4 window) {
   auto result{ResumedSequence{}};
-  result.requested = !opts.output.resume.empty();
-  result.sampleIndexBase = opts.sampling.sampleOffset;
+  result.requested = !opts.image.resume.empty();
+  result.sampleIndexBase = opts.render.sampling.sampleOffset;
   // A fresh sequence begins where `-sample-offset` says with an empty
   // tally; a resumed one takes both off the file below.
-  result.header.sampleOffset = opts.sampling.sampleOffset;
+  result.header.sampleOffset = opts.render.sampling.sampleOffset;
   if (result.requested) {
     // A wholly missing data-plus-header pair is not an error: it makes
     // this run the first session of an intended sequence, rendering
     // from scratch and writing the file for the next -resume. Half a
     // pair is a damaged prior session, and starting fresh over it
     // would clobber what is left, so that stays fatal.
-    const auto &resumeName{opts.output.resume};
+    const auto &resumeName{opts.image.resume};
     const bool haveData{smdl::exists(resumeName)};
     const bool haveHeader{smdl::exists(resumeName + ".hdr")};
     if (haveData != haveHeader)
@@ -122,7 +122,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
       // -spp 0 re-runs the output stage, which is meaningless with
       // nothing to load; worse, the 0-sample file it would write has
       // no 'render spp' field and could not itself be resumed.
-      if (opts.sampling.spp == 0)
+      if (opts.render.sampling.spp == 0)
         throw smdl::Error(smdl::concat(
             "cannot resume with '-spp 0': ", smdl::Quoted(resumeName),
             " does not exist, so there is no output stage to re-run"));
@@ -136,7 +136,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
   auto &film{result.film};
   auto &info{result.info};
   auto &header{result.header};
-  info = film.readENVIFile(opts.output.resume);
+  info = film.readENVIFile(opts.image.resume);
   if (film.getNumPixelsX() != size_t(resolution.x) ||
       film.getNumPixelsY() != size_t(resolution.y))
     throw smdl::Error(
@@ -170,7 +170,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
                   "samples are independent of the first session's rather than "
                   "jointly stratified (still unbiased, noise just improves "
                   "more slowly)");
-  if (header.wavelengthJitter != opts.grid.jitter)
+  if (header.wavelengthJitter != opts.render.grid.jitter)
     SMDL_LOG_WARN(
         "resuming across a -wavelength-jitter change: a jittered band "
         "holds the mean radiance over the band and an unjittered one holds "
@@ -184,7 +184,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
                   "mixes two different renders");
   result.sampleIndexBase = header.sampleOffset + info.samplesPerPixel;
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
-                smdl::Quoted(opts.output.resume), " (sample offset ",
+                smdl::Quoted(opts.image.resume), " (sample offset ",
                 header.sampleOffset, ")");
   return result;
 }

@@ -14,6 +14,7 @@ import tempfile
 
 import bpy
 
+from . import exporter
 from .exporter import write_scene
 
 # What the finished preview is loaded into, reused across runs so that an
@@ -58,12 +59,18 @@ def build_command(context, renderer, scene_path, output_path, material="",
     fraction = max(scene.smdl_preview_scale, 1) / 100.0
     width = max(int(render.resolution_x * fraction), 1)
     height = max(int(render.resolution_y * fraction), 1)
-    # The '.camera' beside the layout carries the viewpoint, resolution
-    # included, and the renderer finds it by name, so this overrides only
-    # the size and the framing stays exactly what the export wrote.
+    # The '.camera' beside the layout carries the viewpoint and the
+    # renderer finds it by name, so the framing stays exactly what the
+    # export wrote. The size and the instant are neither file's: the size
+    # is scaled down for a preview, and a scene keyframed on the clock
+    # renders the wrong instant without the time.
     command += ["-resolution", f"{width},{height}",
                 "-spp", str(max(scene.smdl_preview_spp, 1)),
                 "-output-rgb", output_path]
+    keys = exporter.shutter_keys(scene)
+    seconds = keys.base if keys is not None else exporter.frame_seconds(scene)
+    if seconds != 0.0:
+        command += ["-time", f"{seconds:.9g}"]
     # The renderer rewrites the image as it converges and writes its
     # progress where this can read it: the bar on its stderr is drawn for
     # a person at a terminal and deliberately draws nothing into a pipe.

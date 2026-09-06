@@ -5,10 +5,14 @@
 /// A `.camera` file is the second format of the layout family and is
 /// parsed by the same syntax core (`TextParser.h`). The split is a
 /// separation of concerns: a `.layout` says what is in the world and how
-/// it moves, on an absolute clock, and a `.camera` says which instant of
-/// that world to photograph and from where. One scene then takes as many
-/// viewpoints as there are files, and neither file has to restate the
-/// other.
+/// it moves, on an absolute clock, and a `.camera` says what it is
+/// photographed with. One scene then takes as many viewpoints as there
+/// are files, and neither file has to restate the other.
+///
+/// What the file deliberately does not carry: which instant to
+/// photograph (`-time`, so one camera renders every frame of a shot) and
+/// how big the picture is (`-resolution` and `-crop-window`, which are
+/// facts about this render rather than about the camera).
 #pragma once
 
 #include <optional>
@@ -29,11 +33,12 @@ constexpr std::string_view CAMERA_EXTENSION = ".camera";
 constexpr std::string_view CAMERA_MAGIC = "#smdl camera";
 
 /// The camera settings a `motion` key may restate, which is every one
-/// that is a quantity to interpolate.
+/// that is a quantity to interpolate over the life of a shot.
 ///
-/// The three left out are left out because they are not: `resolution`
-/// sizes the film, `blades` counts the aperture's edges, and
-/// `distortion_fit` is a bare flag.
+/// The three left out are left out because they are not: `blades`
+/// counts the aperture's edges, `distortion_fit` is a bare flag, and
+/// `shutter` is the interval a key is sampled over rather than
+/// something sampled within it.
 ///
 class CameraKeyable {
 public:
@@ -74,9 +79,18 @@ public:
 ///
 class CameraSettings final : public CameraKeyable {
 public:
-  std::optional<int2> resolution{};
   std::optional<int> blades{};
   std::optional<bool> distortionFit{};
+
+  /// `shutter`: the seconds from shutter open to shutter shut,
+  /// nonnegative, which `-shutter` overrides. Zero or unset is a shut
+  /// shutter, and every path then renders the one instant `-time`
+  /// names, whatever motion the scene carries.
+  ///
+  /// This is the one exposure quantity the file carries, because it is
+  /// a fact about the camera: how long it stays open. When it opens is
+  /// not, which is why `-time` alone says that.
+  std::optional<float> shutter{};
 
   /// The keys the `motion` block wrote, in ascending time, or empty for
   /// a still camera. See `CameraKey`.
@@ -104,29 +118,6 @@ public:
                                                               float shut) const;
 };
 
-/// The clock a file's `time` directive sets: which instant of the
-/// scene's own timeline this picture takes, in seconds, and how long the
-/// shutter stays open. Everything is optional and merged with the
-/// command line the same way `CameraSettings` is, over the defaults of
-/// zero and zero.
-///
-/// The shutter is open iff `shutter` is positive. Shut, every path
-/// renders at `base` exactly, whatever motion the scene carries.
-///
-/// This lives with the camera rather than with the scene because it is
-/// the exposure, not the world: the layout states where everything is at
-/// every second, and the two numbers here say which slice of that to
-/// integrate.
-///
-class CameraTime final {
-public:
-  /// `base`: `State::animation_time` at shutter open, in seconds.
-  std::optional<float> base{};
-
-  /// `shutter`: the seconds from open to shut, nonnegative.
-  std::optional<float> shutter{};
-};
-
 /// A parsed camera file, as written.
 class CameraDocument final {
 public:
@@ -137,10 +128,6 @@ public:
   /// Whatever the file's `camera` directives named, merged.
   CameraSettings camera{};
   LayoutLocation cameraLoc{};
-
-  /// Whatever the file's `time` directives named, merged.
-  CameraTime time{};
-  LayoutLocation timeLoc{};
 };
 
 /// Parse one camera source into a document.

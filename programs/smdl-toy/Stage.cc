@@ -59,11 +59,13 @@ Frame resolveFrame(const Options &opts) {
       resolveCameraFileName(opts.camera.file, opts.scene.inputSceneFile)};
   const auto cameraDocument{
       cameraFileName.empty() ? CameraDocument() : readCamera(cameraFileName)};
-  // The two clocks, merged from the camera file's 'time' directive and
-  // the flags. The parser has already refused a file value that is not
-  // finite or, for the shutter, negative.
-  gRenderShutter.time = pick(opts.shutter.time, cameraDocument.time.base);
-  gRenderShutter.length = pick(opts.shutter.speed, cameraDocument.time.shutter);
+  // The two clocks. Which instant to photograph is the command line's
+  // alone, so one camera file renders every frame of a shot; how long
+  // the shutter stays open is a fact about the camera, which the file
+  // may state and '-shutter' overrides.
+  gRenderShutter.time = opts.scene.time;
+  gRenderShutter.length =
+      pick(opts.camera.shutter, cameraDocument.camera.shutter);
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
@@ -92,8 +94,7 @@ Frame resolveFrame(const Options &opts) {
   // within one shutter and holds the rest.
   const auto fileCamera{cameraDocument.camera.at(gRenderShutter.time)};
   auto cameraOptions{CameraOptions{}};
-  cameraOptions.resolution =
-      pick(opts.camera.resolution, fileCamera.resolution);
+  cameraOptions.resolution = opts.image.resolution;
   cameraOptions.lookFrom = pick(opts.camera.lookFrom, fileCamera.lookFrom);
   cameraOptions.lookTo = pick(opts.camera.lookTo, fileCamera.lookTo);
   cameraOptions.lookUp = pick(opts.camera.lookUp, fileCamera.lookUp);
@@ -115,7 +116,7 @@ Frame resolveFrame(const Options &opts) {
   cameraOptions.catEye = pick(opts.camera.catEye, fileCamera.catEye);
   cameraOptions.catEyeRadius =
       pick(opts.camera.catEyeRadius, fileCamera.catEyeRadius);
-  cameraOptions.noLOD = opts.sampling.noLOD;
+  cameraOptions.noLOD = opts.render.sampling.noLOD;
   // The same exclusivity the command line checks above, now that the file
   // has had its say: either source can supply either spelling, so only the
   // merged pair can be checked for naming both.
@@ -129,7 +130,7 @@ Frame resolveFrame(const Options &opts) {
   // rather than moving a camera the file never described.
   if (!cameraDocument.camera.motion.empty()) {
     const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
-    const char *framingFlag{opts.autolook.enabled        ? "-autolook"
+    const char *framingFlag{opts.camera.autolook.enabled        ? "-autolook"
                             : opts.camera.lookFrom.given ? "-look-from"
                             : opts.camera.lookTo.given   ? "-look-to"
                             : opts.camera.lookUp.given   ? "-look-up"
@@ -140,7 +141,8 @@ Frame resolveFrame(const Options &opts) {
                     "was written against");
     } else if (!gRenderShutter.isOpen()) {
       SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
-                    "holds its framing at ", gRenderShutter.time, " s");
+                    "holds its framing at ",
+                    gRenderShutter.time, " s");
     } else {
       const auto shutCamera{cameraDocument.camera.at(shutSeconds)};
       cameraOptions.motion = true;
@@ -162,8 +164,7 @@ Frame resolveFrame(const Options &opts) {
                       " vary over the shutter, which only the framing does; "
                       "they hold the value at shutter open");
       }
-      if (cameraDocument.camera.hasKeyBetween(gRenderShutter.time,
-                                              shutSeconds))
+      if (cameraDocument.camera.hasKeyBetween(gRenderShutter.time, shutSeconds))
         SMDL_LOG_INFO("Camera motion: a key sits inside the shutter, so the "
                       "camera moves along the chord of its two ends");
     }
@@ -186,16 +187,16 @@ Frame resolveFrame(const Options &opts) {
   // waits until the solve below. Every other path keeps constructing
   // here, before anything slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
-  if (!opts.autolook.enabled) camera.emplace(cameraOptions);
+  if (!opts.camera.autolook.enabled) camera.emplace(cameraOptions);
   const auto resolution{cameraOptions.resolution};
   const auto numPixelsX{size_t(resolution.x)};
   const auto numPixelsY{size_t(resolution.y)};
-  const auto spp{size_t(opts.sampling.spp)};
+  const auto spp{size_t(opts.render.sampling.spp)};
   // The pixel window to render, the whole frame unless -crop-window
   // narrows it.
   int4 window{0, 0, resolution.x, resolution.y};
-  if (opts.camera.cropWindow.given) {
-    window = opts.camera.cropWindow.value;
+  if (opts.image.cropWindow.given) {
+    window = opts.image.cropWindow.value;
     if (!(0 <= window[0] && window[0] < window[2] &&
           window[2] <= resolution.x && 0 <= window[1] &&
           window[1] < window[3] && window[3] <= resolution.y))
@@ -225,8 +226,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // resuming with no grid flags at all, the grid recorded in the resumed
   // file, so a resumed render needs no grid retyping. The band count
   // seeds every 'Color' constructed from here on.
-  const bool adoptResumedGrid{!opts.grid.given && resumed.loaded};
-  auto gridSpec{opts.grid.explicitWavelengths};
+  const bool adoptResumedGrid{!opts.render.grid.given && resumed.loaded};
+  auto gridSpec{opts.render.grid.explicitWavelengths};
   if (adoptResumedGrid) {
     if (resumed.info.wavelengths.empty())
       throw smdl::Error(
@@ -235,7 +236,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
     gridSpec = resumed.info.wavelengths;
   }
   if (gridSpec.empty()) {
-    const auto &range{opts.grid.range};
+    const auto &range{opts.render.grid.range};
     gridSpec.resize(size_t(range.bandCount));
     for (size_t i = 0; i < gridSpec.size(); i++) {
       const float t{float(i) / float(gridSpec.size() - 1)};
@@ -245,8 +246,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
   gRenderGrid.reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
-                    opts.grid.jitter);
-  if (opts.grid.jitter && gRenderGrid.bandEdges.empty())
+                    opts.render.grid.jitter);
+  if (opts.render.grid.jitter && gRenderGrid.bandEdges.empty())
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
   const auto wavelengths{
@@ -263,7 +264,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
             "cannot resume: the wavelength grid does not match the "
             "renderer's");
   }
-  if (opts.grid.given || adoptResumedGrid)
+  if (opts.render.grid.given || adoptResumedGrid)
     SMDL_LOG_INFO("Wavelength grid: ", wavelengths.size(),
                   adoptResumedGrid ? " bands adopted from the resumed file, "
                                    : " bands, ",
@@ -299,7 +300,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   if (const double gib{
           double(frame.numPixelsX * frame.numPixelsY) *
           (8.0 + 8.0 * double(wavelengths.size()) +
-           (opts.guide.enabled ? 16.0 * double(wavelengths.size()) + 24.0
+           (opts.render.guide.enabled ? 16.0 * double(wavelengths.size()) + 24.0
                                : 0.0)) /
           (1024.0 * 1024.0 * 1024.0)};
       gib > 1.0)
@@ -319,7 +320,7 @@ void setUpCompiler(const Options &opts, const Frame &frame,
   bool anyCaster{false};
   for (const auto &item : frame.layout.items) anyCaster |= item.isCaster;
   compiler.enableScatterNormal =
-      (opts.mneeEnabled && anyCaster) || opts.mneeTestNormalHook;
+      (opts.render.mneeEnabled && anyCaster) || opts.render.mneeTestNormalHook;
   // The built-in stand-in, always available: a scene whose materials
   // have not been written yet still renders, and a name that does not
   // resolve has somewhere to fall back to. It is added even when MDL
@@ -351,7 +352,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // The lowering folds every alias and override into the items
   // themselves, which is what keeps an imported layout's names closed;
   // see `MaterialAssignment::renames`.
-  scene.emplace(compiler, fallbackMaterial, !opts.scene.noRobustIntersection);
+  scene.emplace(compiler, fallbackMaterial, !opts.render.noRobustIntersection);
   for (const auto &item : layout.items) {
     SMDL_PROFILER_ENTRY("Scene::add()", item.fileName.c_str());
     scene->add(item);
@@ -394,7 +395,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // medium are looked up by name later, so they join the list. With no
   // MDL modules there is only the built-in default module, nothing worth
   // filtering, and the unshaded-scene workflow would warn for every name.
-  if (!opts.scene.allMaterials && !opts.scene.inputMDLFiles.empty()) {
+  if (!opts.utility.allMaterials && !opts.scene.inputMDLFiles.empty()) {
     auto desiredMaterials{scene->usedMaterialNames()};
     if (!fallbackMaterial.empty()) desiredMaterials.push_back(fallbackMaterial);
     if (!layout.exteriorMediumName.empty())
@@ -417,20 +418,20 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // so a batch of thumbnails is consistently lit however each one is
   // framed.
   auto autolookSunAzimuth{std::optional<float>()};
-  if (opts.autolook.enabled) {
+  if (opts.camera.autolook.enabled) {
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
-    autolookOptions.zenithDeg = opts.autolook.zenithDeg;
-    if (opts.autolook.azimuthDeg.given) {
-      autolookOptions.azimuthDeg = opts.autolook.azimuthDeg.value;
+    autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;
+    if (opts.camera.autolook.azimuthDeg.given) {
+      autolookOptions.azimuthDeg = opts.camera.autolook.azimuthDeg.value;
     } else if (layout.frontAzimuth) {
       autolookOptions.azimuthDeg = layout.frontAzimuth;
       SMDL_LOG_INFO("Autolook: locked to the manifest's front azimuth ",
                     *layout.frontAzimuth, " degrees");
     }
-    autolookOptions.margin = opts.autolook.margin;
-    autolookOptions.ignoreBackfaces = opts.autolook.ignoreBackfaces;
+    autolookOptions.margin = opts.camera.autolook.margin;
+    autolookOptions.ignoreBackfaces = opts.camera.autolook.ignoreBackfaces;
     autolookOptions.skipInstance = groundInstance;
     const auto autolook{solveAutolook(*scene, autolookOptions)};
     cameraOptions.lookFrom = autolook.lookFrom;
@@ -444,23 +445,23 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // in the same order: the defaults, the layout's 'sky' directive, and
   // whatever the command line explicitly gave.
   const auto &fileSky{layout.sky};
-  const auto iblFileName{pick(opts.sky.iblFileName, fileSky.iblFileName)};
-  const auto moonGiven{opts.sky.moonPhase.given || bool(fileSky.moonPhase)};
+  const auto iblFileName{pick(opts.light.sky.iblFileName, fileSky.iblFileName)};
+  const auto moonGiven{opts.light.sky.moonPhase.given || bool(fileSky.moonPhase)};
   if (!iblFileName.empty()) {
     envLight = std::make_unique<EnvLight>(
-        iblFileName, pick(opts.sky.iblScale, fileSky.iblScale));
+        iblFileName, pick(opts.light.sky.iblScale, fileSky.iblScale));
     if (gridBeyondVisible)
       SMDL_LOG_WARN("-ibl is an RGB image: on this wavelength grid it "
                     "contributes only inside the visible");
-  } else if (!pick(opts.sky.none, fileSky.none)) {
+  } else if (!pick(opts.light.sky.none, fileSky.none)) {
     auto options{smdl::SunSkyOptions{}};
-    float zenith{smdl::radians(pick(opts.sky.sunZenithDeg, fileSky.sunZenith))};
-    float azimuthDeg{pick(opts.sky.sunAzimuthDeg, fileSky.sunAzimuth)};
+    float zenith{smdl::radians(pick(opts.light.sky.sunZenithDeg, fileSky.sunZenith))};
+    float azimuthDeg{pick(opts.light.sky.sunAzimuthDeg, fileSky.sunAzimuth)};
     // Under -autolook with no stated sun azimuth, the key light follows the
     // solved camera: a perfectly framed thumbnail lit from behind is as
     // unreadable as one framed end-on, and this keeps a whole library
     // consistently lit however each asset was framed.
-    if (autolookSunAzimuth && !opts.sky.sunAzimuthDeg.given &&
+    if (autolookSunAzimuth && !opts.light.sky.sunAzimuthDeg.given &&
         !fileSky.sunAzimuth) {
       azimuthDeg = *autolookSunAzimuth;
       SMDL_LOG_INFO("Sun azimuth follows the framed camera: ", azimuthDeg,
@@ -470,14 +471,14 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     options.sunDirection =
         float3(std::sin(zenith) * std::cos(azimuth),
                std::sin(zenith) * std::sin(azimuth), std::cos(zenith));
-    options.visibility = pick(opts.sky.visibility, fileSky.visibility);
-    options.waterVaporScale = pick(opts.sky.waterVapor, fileSky.waterVapor);
-    options.scaleFactor = pick(opts.sky.scale, fileSky.scale);
+    options.visibility = pick(opts.light.sky.visibility, fileSky.visibility);
+    options.waterVaporScale = pick(opts.light.sky.waterVapor, fileSky.waterVapor);
+    options.scaleFactor = pick(opts.light.sky.scale, fileSky.scale);
     if (moonGiven) {
       options.moon = true;
-      options.moonPhase = pick(opts.sky.moonPhase, fileSky.moonPhase);
+      options.moonPhase = pick(opts.light.sky.moonPhase, fileSky.moonPhase);
       options.moonDistanceScale =
-          pick(opts.sky.moonDistance, fileSky.moonDistance);
+          pick(opts.light.sky.moonDistance, fileSky.moonDistance);
     }
     envLight = std::make_unique<EnvLight>(options);
   }
@@ -516,8 +517,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // geometry, which is where the 'medium' directive puts its material
   // too, so the two cannot both be asked for.
   const auto &fileHaze{layout.haze};
-  bool hazeEnabled{opts.haze.on || layout.hasHaze};
-  if (pick(opts.haze.none, fileHaze.none)) hazeEnabled = false;
+  bool hazeEnabled{opts.light.haze.on || layout.hasHaze};
+  if (pick(opts.light.haze.none, fileHaze.none)) hazeEnabled = false;
   if (hazeEnabled) {
     if (exteriorMedium)
       throw smdl::Error("the exterior haze and the 'medium' directive both "
@@ -527,10 +528,10 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     // terrain does not read hazier or clearer than the horizon sky
     // immediately behind it. The two models overlap toward the sky; see
     // `LayoutHaze`.
-    options.visibility = pick(opts.haze.visibility, fileHaze.visibility);
+    options.visibility = pick(opts.light.haze.visibility, fileHaze.visibility);
     if (!(options.visibility > 0.0f))
-      options.visibility = pick(opts.sky.visibility, fileSky.visibility);
-    options.scaleHeight = pick(opts.haze.scaleHeight, fileHaze.scaleHeight);
+      options.visibility = pick(opts.light.sky.visibility, fileSky.visibility);
+    options.scaleHeight = pick(opts.light.haze.scaleHeight, fileHaze.scaleHeight);
     if (fileHaze.baseHeight) options.baseHeight = *fileHaze.baseHeight;
     if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
     haze = std::make_unique<smdl::Haze>(
@@ -544,6 +545,6 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
   lights.emplace(compiler, *scene, envLight.get(), layout.lights, wavelengths,
-                 opts.sky.allLights, !opts.sky.noLightTree);
+                 opts.render.allLights, !opts.render.noLightTree);
   smdl::profilerEntryEnd(profLightSampler);
 }

@@ -11,13 +11,13 @@
 #include <filesystem>
 
 // The camera format's own vocabulary, over the syntax core in
-// `TextParser.h`. Two directives and nothing else: what the picture is
-// taken with, and when.
+// `TextParser.h`. One directive and nothing else: what the picture is
+// taken with.
 
 namespace {
 
 // The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 2> TOP_LEVEL_KEYWORDS{"camera", "time"};
+constexpr std::array<std::string_view, 1> TOP_LEVEL_KEYWORDS{"camera"};
 
 class Parser final : public TextParser {
 public:
@@ -47,8 +47,6 @@ private:
     }
     if (mToken.text == "camera") {
       parseCameraBlock();
-    } else if (mToken.text == "time") {
-      parseTime();
     } else {
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
@@ -57,10 +55,13 @@ private:
           TRANSFORM_OPS.end()) {
         error.note({}, "a camera is framed by 'look_from' and 'look_to', not "
                        "by transform operations");
+      } else if (mToken.text == "time") {
+        error.note({}, "the clock is not the camera's: '-time' names the "
+                       "instant, and 'shutter' inside the 'camera' block "
+                       "says how long it stays open");
       } else {
-        error.note({}, "a camera file holds a 'camera' block and a 'time' "
-                       "block; everything about the scene belongs in the "
-                       "layout");
+        error.note({}, "a camera file holds one 'camera' block; everything "
+                       "about the scene belongs in the layout");
       }
       throw Recover();
     }
@@ -79,15 +80,7 @@ private:
     auto &camera{mDocument.camera};
     parseSettings("a camera setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
-      if (key == "resolution") {
-        auto v{numbers<2>()};
-        if (!(v[0] >= 1 && v[1] >= 1)) {
-          mDiags.error(keyLoc,
-                       "expected two positive integers for 'resolution'");
-          throw Recover();
-        }
-        camera.resolution = int2(int(v[0]), int(v[1]));
-      } else if (key == "look_from") {
+      if (key == "look_from") {
         auto v{numbers<3>()};
         camera.lookFrom = float3(v[0], v[1], v[2]);
       } else if (key == "look_to") {
@@ -122,16 +115,32 @@ private:
         camera.catEye = numbers<1>()[0];
       } else if (key == "cat_eye_radius") {
         camera.catEyeRadius = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "shutter") {
+        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        if (!(value >= 0)) {
+          mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
+                               "(0 or omitted is a shut shutter)");
+          throw Recover();
+        }
+        camera.shutter = value;
+      } else if (key == "resolution") {
+        mDiags
+            .error(keyLoc, "'resolution' is a fact about this render, not "
+                           "about the camera, so it is not in the file")
+            .note({}, "give it with '-resolution', and a sub-rectangle of it "
+                      "with '-crop-window'");
+        throw Recover();
       } else if (key == "motion") {
         parseCameraMotion(camera, keyLoc);
       } else {
         mDiags.error(
             keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
-                         " (expected resolution, look_from, look_to, look_up, "
-                         "fovy, fstop, aperture, focus, blades, blade_angle, "
-                         "distortion_k1, distortion_k2, distortion_fit, "
-                         "vignetting, cat_eye, cat_eye_radius, or motion)"));
+                         " (expected look_from, look_to, look_up, fovy, "
+                         "shutter, fstop, aperture, focus, blades, "
+                         "blade_angle, distortion_k1, distortion_k2, "
+                         "distortion_fit, vignetting, cat_eye, "
+                         "cat_eye_radius, or motion)"));
         throw Recover();
       }
     });
@@ -224,8 +233,8 @@ private:
       key.catEye = numbers<1>()[0];
     } else if (setting == "cat_eye_radius") {
       key.catEyeRadius = positive(settingLoc, setting, numbers<1>()[0]);
-    } else if (setting == "resolution" || setting == "blades" ||
-               setting == "distortion_fit") {
+    } else if (setting == "blades" || setting == "distortion_fit" ||
+               setting == "shutter" || setting == "resolution") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),
@@ -235,40 +244,10 @@ private:
       throw Recover();
     } else {
       mDiags.error(settingLoc,
-                   smdl::concat("unknown camera setting ", smdl::Quoted(setting),
-                                " in a 'motion' key"));
+                   smdl::concat("unknown camera setting ",
+                                smdl::Quoted(setting), " in a 'motion' key"));
       throw Recover();
     }
-  }
-
-  // A `time { ... }` block, merged per field like `camera`.
-  void parseTime() {
-    if (!mDocument.timeLoc) mDocument.timeLoc = location();
-    advance();
-    if (mToken.kind != Token::OPEN) {
-      mDiags.error(location(), "expected '{' after 'time'");
-      throw Recover();
-    }
-    auto &time{mDocument.time};
-    parseSettings("a time setting", [&](const std::string &key,
-                                        const LayoutLocation &keyLoc) {
-      if (key == "base") {
-        time.base = finite(keyLoc, key, numbers<1>()[0]);
-      } else if (key == "shutter") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
-        if (!(value >= 0)) {
-          mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
-                               "(0 or omitted is a shut shutter)");
-          throw Recover();
-        }
-        time.shutter = value;
-      } else {
-        mDiags.error(keyLoc,
-                     smdl::concat("unknown time setting ", smdl::Quoted(key),
-                                  " (expected base or shutter)"));
-        throw Recover();
-      }
-    });
   }
 
   CameraDocument &mDocument;
@@ -280,21 +259,21 @@ private:
 // shutter, and the rest, which it holds at the shutter's open value.
 // Both lists are walked by the key resolution; only the second is
 // reported as held.
-#define CAMERA_FRAMING_SETTINGS(X)                                             \
-  X(lookFrom, "look_from")                                                     \
-  X(lookTo, "look_to")                                                         \
+#define CAMERA_FRAMING_SETTINGS(X) \
+  X(lookFrom, "look_from")         \
+  X(lookTo, "look_to")             \
   X(lookUp, "look_up")
 
-#define CAMERA_HELD_SETTINGS(X)                                                \
-  X(fovYDeg, "fovy")                                                           \
-  X(fStop, "fstop")                                                            \
-  X(aperture, "aperture")                                                      \
-  X(focus, "focus")                                                            \
-  X(bladeAngleDeg, "blade_angle")                                              \
-  X(distortionK1, "distortion_k1")                                             \
-  X(distortionK2, "distortion_k2")                                             \
-  X(vignetting, "vignetting")                                                  \
-  X(catEye, "cat_eye")                                                         \
+#define CAMERA_HELD_SETTINGS(X)    \
+  X(fovYDeg, "fovy")               \
+  X(fStop, "fstop")                \
+  X(aperture, "aperture")          \
+  X(focus, "focus")                \
+  X(bladeAngleDeg, "blade_angle")  \
+  X(distortionK1, "distortion_k1") \
+  X(distortionK2, "distortion_k2") \
+  X(vignetting, "vignetting")      \
+  X(catEye, "cat_eye")             \
   X(catEyeRadius, "cat_eye_radius")
 
 namespace {
@@ -337,7 +316,7 @@ CameraSettings CameraSettings::at(float seconds) const {
   auto result{*this};
   result.motion.clear();
   if (motion.empty()) return result;
-#define X(member, name)                                                        \
+#define X(member, name) \
   result.member = sampleKeyed(motion, &CameraKeyable::member, member, seconds);
   CAMERA_FRAMING_SETTINGS(X)
   CAMERA_HELD_SETTINGS(X)
@@ -357,7 +336,7 @@ CameraSettings::heldOverShutter(float open, float shut) const {
   if (motion.empty()) return held;
   const auto a{at(open)};
   const auto b{at(shut)};
-#define X(member, name)                                                        \
+#define X(member, name) \
   if (differs(a.member, b.member)) held.push_back(name);
   CAMERA_HELD_SETTINGS(X)
 #undef X

@@ -13,72 +13,85 @@ static CameraDocument parseOK(LayoutDiagnostics &diags, std::string text) {
   return document;
 }
 
-TEST_CASE("CameraFile: the time directive") {
+TEST_CASE("CameraFile: the shutter setting") {
   LayoutDiagnostics diags{};
-  SUBCASE("Both settings parse, and the location is the first block's") {
+  SUBCASE("It parses, and the clock's other half is not the file's") {
     const auto document{
-        parseOK(diags, "#smdl camera\ntime { base 2.5 shutter 0.02 }\n")};
-    REQUIRE(document.time.base);
-    REQUIRE(document.time.shutter);
-    CHECK(*document.time.base == doctest::Approx(2.5f));
-    CHECK(*document.time.shutter == doctest::Approx(0.02f));
-    REQUIRE(document.timeLoc);
-    CHECK(document.source->lineAndColumn(document.timeLoc.offset).lineNo == 2);
+        parseOK(diags, "#smdl camera\ncamera { shutter 0.02 }\n")};
+    REQUIRE(document.camera.shutter);
+    CHECK(*document.camera.shutter == doctest::Approx(0.02f));
   }
-  SUBCASE("Absent, both stay unset") {
-    const auto document{parseOK(diags, "#smdl camera\n")};
-    CHECK(!document.time.base);
-    CHECK(!document.time.shutter);
-    CHECK(!document.timeLoc);
+  SUBCASE("Absent, it stays unset") {
+    const auto document{parseOK(diags, "#smdl camera\ncamera { fovy 30 }\n")};
+    CHECK(!document.camera.shutter);
   }
   SUBCASE("Two blocks merge per field, last one wins") {
     const auto document{parseOK(diags, "#smdl camera\n"
-                                       "time { base 1 shutter 0.5 }\n"
-                                       "time { base 2 }\n")};
-    CHECK(*document.time.base == doctest::Approx(2.0f));
-    CHECK(*document.time.shutter == doctest::Approx(0.5f));
+                                       "camera { shutter 0.5 fovy 30 }\n"
+                                       "camera { shutter 0.25 }\n")};
+    CHECK(*document.camera.shutter == doctest::Approx(0.25f));
+    CHECK(*document.camera.fovYDeg == doctest::Approx(30.0f));
   }
   SUBCASE("A zero shutter is a shut shutter, not an error") {
-    const auto document{parseOK(diags, "#smdl camera\ntime { shutter 0 }\n")};
-    CHECK(*document.time.shutter == 0.0f);
+    const auto document{parseOK(diags, "#smdl camera\ncamera { shutter 0 }\n")};
+    CHECK(*document.camera.shutter == 0.0f);
   }
   SUBCASE("A negative shutter is an error") {
     const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ntime { shutter -1 }\n")};
+        diags.addSource("test.camera", "#smdl camera\ncamera { shutter -1 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find(
               "nonnegative number for 'shutter'") != std::string::npos);
   }
-  SUBCASE("A non-numeric base is an error") {
-    const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ntime { base noon }\n")};
+  SUBCASE("A non-finite shutter is an error") {
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ncamera { shutter inf }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("expected a number") !=
+    CHECK(diags.all().front().message.find("finite number for 'shutter'") !=
           std::string::npos);
   }
-  SUBCASE("A non-finite base is an error") {
-    const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ntime { base inf }\n")};
+  SUBCASE("It cannot be keyed, since it is the interval, not a value in it") {
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ncamera { motion { at 0 shutter 1 } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("finite number for 'base'") !=
+    CHECK(diags.all().front().message.find("not a quantity to interpolate") !=
           std::string::npos);
   }
-  SUBCASE("An unknown setting names the two that exist") {
-    const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ntime { fps 24 }\n")};
+}
+
+TEST_CASE("CameraFile: what the file deliberately does not carry") {
+  LayoutDiagnostics diags{};
+  SUBCASE("A 'time' directive names where the clock comes from instead") {
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ntime { base 2 shutter 0.02 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown time setting") != std::string::npos);
-    CHECK(error.message.find("base or shutter") != std::string::npos);
+    CHECK(error.message.find("unknown directive") != std::string::npos);
+    REQUIRE(!error.notes.empty());
+    CHECK(error.notes.front().message.find("'-time' names the instant") !=
+          std::string::npos);
+  }
+  SUBCASE("'resolution' names the flag that sizes the picture") {
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ncamera { resolution 640 480 }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK(error.message.find("fact about this render") != std::string::npos);
+    REQUIRE(!error.notes.empty());
+    CHECK(error.notes.front().message.find("-resolution") !=
+          std::string::npos);
+    CHECK(error.notes.front().message.find("-crop-window") !=
+          std::string::npos);
   }
   SUBCASE("The parse resynchronizes at the next statement") {
     const auto &source{diags.addSource(
         "test.camera",
-        "#smdl camera\ntime { shutter -1 }\ncamera { fovy 30 }\n")};
+        "#smdl camera\ntime { base 2 }\ncamera { fovy 30 }\n")};
     const auto document{parseCamera(diags, source)};
     REQUIRE(diags.errorCount() == 1);
     REQUIRE(document.camera.fovYDeg);
@@ -172,8 +185,8 @@ TEST_CASE("CameraFile: the camera motion block") {
     REQUIRE(!error.notes.empty());
   }
   SUBCASE("An empty block is an error rather than a still camera") {
-    const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ncamera { motion { } }\n")};
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ncamera { motion { } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("at least one") !=
@@ -218,7 +231,6 @@ TEST_CASE("CameraFile: the camera block") {
   LayoutDiagnostics diags{};
   SUBCASE("The framing and the lens parse, and the location is the first") {
     const auto document{parseOK(diags, "#smdl camera\ncamera {\n"
-                                       "  resolution 640 480\n"
                                        "  look_from -6 0 2\n"
                                        "  look_to 0 0 0.5\n"
                                        "  look_up 0 0 1\n"
@@ -226,9 +238,6 @@ TEST_CASE("CameraFile: the camera block") {
                                        "  distortion_fit\n"
                                        "}\n")};
     const auto &camera{document.camera};
-    REQUIRE(camera.resolution);
-    CHECK(camera.resolution->x == 640);
-    CHECK(camera.resolution->y == 480);
     REQUIRE(camera.lookFrom);
     CHECK(camera.lookFrom->x == doctest::Approx(-6.0f));
     REQUIRE(camera.lookTo);
@@ -246,10 +255,9 @@ TEST_CASE("CameraFile: the camera block") {
   }
   SUBCASE("Everything is unset by default, for the merge to fill") {
     const auto document{parseOK(diags, "#smdl camera\n")};
-    CHECK(!document.camera.resolution);
     CHECK(!document.camera.lookFrom);
+    CHECK(!document.camera.shutter);
     CHECK(!document.cameraLoc);
-    CHECK(!document.timeLoc);
   }
   SUBCASE("A zero for a quantity that derives a default is an error") {
     const auto &source{

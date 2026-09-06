@@ -90,7 +90,7 @@ std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
 
 bool savesGuideTree(const Options &opts, const Frame &frame,
                     const std::string &outputSpectrum) {
-  return opts.guide.enabled && frame.spp > 0 && !outputSpectrum.empty();
+  return opts.render.guide.enabled && frame.spp > 0 && !outputSpectrum.empty();
 }
 
 void renderSamples(const Options &opts, const Frame &frame,
@@ -113,17 +113,17 @@ void renderSamples(const Options &opts, const Frame &frame,
   const auto window{frame.window};
   const auto spp{frame.spp};
   const bool savingTree{savesGuideTree(opts, frame, outputSpectrum)};
-  auto progressOptions{opts.progress};
+  auto progressOptions{opts.utility.progress};
   // How many samples per pixel trained the resumed tree, 0 without one:
   // what the pass schedule continues from.
   size_t guideTrainedSpp{0};
-  if (opts.guide.enabled && resumed.loaded) {
+  if (opts.render.guide.enabled && resumed.loaded) {
     // Resume the guide tree saved beside the accumulation, so this
     // session starts guided by everything the sequence has learned. The
     // tree only steers sampling, so a missing or unreadable one is
     // never fatal: retraining from scratch is always safe, just slower
     // to converge.
-    const auto treeName{opts.output.resume + std::string(GUIDE_TREE_EXTENSION)};
+    const auto treeName{opts.image.resume + std::string(GUIDE_TREE_EXTENSION)};
     if (smdl::exists(treeName)) {
       try {
         uint64_t treeSpp{};
@@ -147,7 +147,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                     ", retraining from scratch");
     }
   }
-  if (opts.guide.enabled && !sdtree) {
+  if (opts.render.guide.enabled && !sdtree) {
     // With a ground plane, guide over the actual geometry padded by half
     // its own size, so the plane's enormous backdrop extent does not
     // dilute the spatial resolution; vertices on the far plane clamp
@@ -168,7 +168,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // ADRRS pixel estimates between passes. Null without guiding, where
   // the single pass accumulates straight into `film`.
   auto combiner{std::unique_ptr<PassCombiner>()};
-  if (opts.guide.enabled) {
+  if (opts.render.guide.enabled) {
     combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY, window);
     // Seed with the prior session's accumulation, so resolve() below
     // reproduces the full merged image (the unguided path adds it into
@@ -204,19 +204,19 @@ void renderSamples(const Options &opts, const Frame &frame,
   // with fewer samples behind it, and nothing about the estimator changes.
   // Written beside the output and renamed into place: a watcher polling
   // the path never opens a half-written PNG.
-  const double previewEvery{std::max(double(opts.output.previewEvery), 0.0)};
-  const bool isCheckpointing{previewEvery > 0.0 && !opts.output.rgb.empty()};
+  const double previewEvery{std::max(double(opts.utility.previewEvery), 0.0)};
+  const bool isCheckpointing{previewEvery > 0.0 && !opts.image.outputRGB.empty()};
   const auto writeDisplayImage{[&] {
     // Resolve first, so that a guided preview stands on every pass folded
     // so far, the resumed seed included, instead of the newest pass
     // alone. Guided checkpoints only happen on pass boundaries, where the
     // pass just rendered is already folded in.
     if (combiner) combiner->resolve(film);
-    const auto path{std::filesystem::path(opts.output.rgb)};
+    const auto path{std::filesystem::path(opts.image.outputRGB)};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
-    const auto rgb{resolveRGB(compiler, film, wavelengths, opts.rgbPolicy)};
-    const auto ldr{tonemap(opts.tonemap, rgb, film, wavelengths)};
+    const auto rgb{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+    const auto ldr{tonemap(opts.image.tonemap, rgb, film, wavelengths)};
     if (auto error{smdl::write8bitImage(partPath.string(), //
                                         int(numPixelsX), int(numPixelsY), 3,
                                         ldr.data())}) {
@@ -241,21 +241,21 @@ void renderSamples(const Options &opts, const Frame &frame,
   }};
 
   const auto passes{
-      solveSamplePasses(spp, opts.guide.enabled, guideTrainedSpp)};
+      solveSamplePasses(spp, opts.render.guide.enabled, guideTrainedSpp)};
   // The manifold-NEE chain depth `tracePath()` runs with, 0 when
   // disabled.
-  auto mneeOptions{opts.mnee};
-  ManifoldStats::global().setEnabled(opts.mneeReport);
+  auto mneeOptions{opts.render.mnee};
+  ManifoldStats::global().setEnabled(opts.render.mneeReport);
   // The reflective gather searches this in place of the straight shadow
   // segment, so it is built once per render: the layout's marked casters,
   // with what each claims.
   auto mneeCasters{MNEECasterSet()};
-  if (opts.mneeEnabled) {
+  if (opts.render.mneeEnabled) {
     mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
     mneeOptions.casters = &mneeCasters;
     SMDL_LOG_DEBUG("MNEE casters: ", mneeCasters.casters.size(),
                    " instance(s)");
-    if (opts.mneeSunOnly && envLight)
+    if (opts.render.mneeSunOnly && envLight)
       mneeOptions.sunOnly =
           envLight->sunCone(mneeOptions.sunDirection, mneeOptions.cosSunRadius);
   }
@@ -263,7 +263,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // bound set high enough that clipping it is negligible even for
   // high-albedo transport; giving -max-bounces makes the bound the whole
   // termination rule, so the estimate is the fixed-depth truncation.
-  const auto &pathOptions{opts.path};
+  const auto &pathOptions{opts.render.path};
   // What every path of this render is traced against; see
   // `RenderContext`. Built once, shared by every worker thread.
   const RenderContext render{compiler,    scene, lights,        mneeOptions,
@@ -296,7 +296,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   progressOptions.total = numWindowPixels * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary =
-      opts.camera.cropWindow.given
+      opts.image.cropWindow.given
           ? smdl::concat("Rendered window ", spellVector(window), " of ",
                          numPixelsX, "x", numPixelsY, " at ", spp, " spp")
           : smdl::concat("Rendered ", numPixelsX, "x", numPixelsY, " at ", spp,
@@ -320,14 +320,14 @@ void renderSamples(const Options &opts, const Frame &frame,
   for (size_t passIndex = 0; passIndex < passes.size(); passIndex++) {
     const size_t thisPass{passes[passIndex]};
     const bool isFinal{passIndex + 1 == passes.size()};
-    if (opts.guide.enabled)
+    if (opts.render.guide.enabled)
       progress.setNote(
           smdl::concat("pass ", passIndex + 1, "/", passes.size()));
     // Pre-final passes train the SD-tree; every pass contributes to the
     // output through the pass combination below. When the tree will be
     // saved the final pass trains too: its training is no longer wasted,
     // it is what the next session of the sequence inherits.
-    const bool recordPass{opts.guide.enabled && (!isFinal || savingTree)};
+    const bool recordPass{opts.render.guide.enabled && (!isFinal || savingTree)};
     // The per-thread training mirrors for this pass, absorbed into the
     // tree after the pass renders and before it refines; the tree
     // structure the layout mirrors is frozen in between.
@@ -400,8 +400,8 @@ void renderSamples(const Options &opts, const Frame &frame,
         Guiding guiding{};
         guiding.tree = sdtree.get();
         guiding.bsdfFraction =
-            std::clamp(opts.guide.bsdfFraction.value, 0.0f, 1.0f);
-        guiding.bsdfFractionFixed = opts.guide.bsdfFraction.given;
+            std::clamp(opts.render.guide.bsdfFraction.value, 0.0f, 1.0f);
+        guiding.bsdfFractionFixed = opts.render.guide.bsdfFraction.given;
         // The context and the walker of the block's paths; the time is
         // the open key until each path sets its own.
         PathContext path{allocator,     sampler,          medium,
@@ -423,7 +423,7 @@ void renderSamples(const Options &opts, const Frame &frame,
           Color Lsum{};
           PassCombiner::PixelHalves halves{};
           guiding.pixelEstimate =
-              combiner && opts.guide.adrrs ? combiner->pixelEstimate(i) : 0.0f;
+              combiner && opts.render.guide.adrrs ? combiner->pixelEstimate(i) : 0.0f;
           for (size_t s = 0; s < chunk; s++) {
             const uint32_t sampleIndex =
                 resumed.sampleIndexBase + sppDone + chunkBase + s;
@@ -517,7 +517,7 @@ void renderSamples(const Options &opts, const Frame &frame,
       // Refine: split spatial leaves past c*sqrt(2^k) records (k this
       // pass's index), rebuild the directional quadtrees with the 1% flux
       // threshold.
-      sdtree->refine(uint32_t(double(opts.guide.split) * std::sqrt(thisPass)),
+      sdtree->refine(uint32_t(double(opts.render.guide.split) * std::sqrt(thisPass)),
                      0.01f, 20);
       float minAlpha{}, meanAlpha{};
       sdtree->alphaStats(minAlpha, meanAlpha);
@@ -543,7 +543,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
     resumed.header.sessions++;
   }
-  if (opts.mneeReport) ManifoldStats::global().print(std::cout);
+  if (opts.render.mneeReport) ManifoldStats::global().print(std::cout);
   // Resolve the pass combination back into the film every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.

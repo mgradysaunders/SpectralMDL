@@ -76,10 +76,10 @@ cl::opt<bool> optAutolookIgnoreBackfaces{
     cl::desc("With -autolook, neither avoid nor warn about views of backfacing "
              "geometry"),
     cl::init(false), cl::cat(catCamera)};
-cl::opt<float> optShutterSpeed{
-    "shutter-speed",
-    cl::desc("The seconds the shutter stays open, overriding the layout's "
-             "'time' directive (default: 0, shut)"),
+cl::opt<float> optShutter{
+    "shutter",
+    cl::desc("The seconds the shutter stays open, overriding the camera "
+             "file's 'shutter' (default: 0, shut)"),
     cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
@@ -385,8 +385,10 @@ cl::OptionCategory catScene{"Scene Options"};
 //--{ Scene Options
 cl::opt<float> optTime{
     "time",
-    cl::desc("The animation time in seconds at shutter open, overriding the "
-             "layout's 'time' directive (default: 0)"),
+    cl::desc("The instant to render, as the animation time in seconds at "
+             "shutter open (default: 0)\n"
+             "* the only source: a scene file states when things happen, "
+             "never which instant to photograph"),
     cl::init(0.0f), cl::cat(catScene)};
 cl::list<std::string> optInputMeshFiles{
     "mesh-file", cl::desc("Add another mesh, repeatable"), cl::cat(catScene)};
@@ -619,51 +621,19 @@ Options parseCommandLine(int argc, char **argv) {
       throw smdl::Error("expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
   }
-  if (!(std::isfinite(float(optShutterSpeed)) && float(optShutterSpeed) >= 0))
-    throw smdl::Error("expected -shutter-speed to be finite and nonnegative");
+  if (!(std::isfinite(float(optShutter)) && float(optShutter) >= 0))
+    throw smdl::Error("expected -shutter to be finite and nonnegative");
+  if (!std::isfinite(float(optTime)))
+    throw smdl::Error("expected -time to be finite");
 
   auto opts{Options{}};
-  opts.utility.dumpPlaces = std::string(optDumpPlaces);
-  opts.utility.dumpCurves = std::string(optDumpCurves);
-  opts.utility.packPlaces = std::string(optPackPlaces);
-  opts.utility.outputPlaces = std::string(optOutputPlaces);
-  opts.utility.listMaterials = bool(optListMaterials);
-  opts.utility.listObjects = bool(optListObjects);
-  opts.utility.json = bool(optJSON);
-
-  opts.scene.inputSceneFile = std::string(optInputSceneFile);
-  opts.scene.inputMDLFiles.assign(optInputMDLFiles.begin(),
-                                  optInputMDLFiles.end());
-  opts.scene.inputMeshFiles.assign(optInputMeshFiles.begin(),
-                                   optInputMeshFiles.end());
-  opts.scene.assetDirs.assign(optAssetDirs.begin(), optAssetDirs.end());
-  opts.scene.allMaterials = bool(optCompileAllMaterials);
-  opts.scene.ground = bool(optGround);
-  opts.scene.groundZ = flag(optGroundZ);
-  opts.scene.groundMaterial = std::string(optGroundMaterial);
-  opts.scene.fallbackMaterial = std::string(optFallbackMaterial);
-  opts.scene.noRobustIntersection = bool(optNoRobustIntersection);
-
-  opts.shutter.time = flag(optTime);
-  opts.shutter.speed = flag(optShutterSpeed);
-
-  opts.sampling.spp = unsigned(optSPP);
-  opts.sampling.sampleOffset = unsigned(optSampleOffset);
-  opts.sampling.threads = unsigned(optThreads);
-  opts.sampling.noLOD = bool(optNoLOD);
-
-  opts.guide.enabled = bool(optGuide);
-  opts.guide.adrrs = bool(optGuideADRRS);
-  opts.guide.bsdfFraction = flag(optGuideBSDFFraction);
-  opts.guide.split = float(optGuideSplit);
 
   opts.camera.file = std::string(optCameraFile);
-  opts.camera.resolution = flag(optResolution);
-  opts.camera.cropWindow = flag(optCropWindow);
   opts.camera.lookFrom = flag(optLookFrom);
   opts.camera.lookTo = flag(optLookTo);
   opts.camera.lookUp = flag(optLookUp);
   opts.camera.fovYDeg = flag(optFOV);
+  opts.camera.shutter = flag(optShutter);
   opts.camera.fStop = flag(optFStop);
   opts.camera.aperture = flag(optAperture);
   opts.camera.focus = flag(optFocus);
@@ -675,86 +645,114 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.vignetting = flag(optVignetting);
   opts.camera.catEye = flag(optCatEye);
   opts.camera.catEyeRadius = flag(optCatEyeRadius);
+  opts.camera.autolook.enabled = bool(optAutolook);
+  opts.camera.autolook.azimuthDeg = flag(optAutolookAzimuth);
+  opts.camera.autolook.zenithDeg = float(optAutolookZenith);
+  opts.camera.autolook.margin = float(optAutolookMargin);
+  opts.camera.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
 
-  opts.autolook.enabled = bool(optAutolook);
-  opts.autolook.azimuthDeg = flag(optAutolookAzimuth);
-  opts.autolook.zenithDeg = float(optAutolookZenith);
-  opts.autolook.margin = float(optAutolookMargin);
-  opts.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
+  opts.image.resolution = int2(optResolution);
+  opts.image.cropWindow = flag(optCropWindow);
+  opts.image.rgbPolicy.forceFalseColor =
+      bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
+  if (optRGBWavelengths.getNumOccurrences() > 0) {
+    const auto waves{float3(optRGBWavelengths)};
+    opts.image.rgbPolicy.falseColorWaves = {waves.x, waves.y, waves.z};
+  }
+  opts.image.tonemap = parseTonemapOptions(std::string(optTonemap));
+  opts.image.tonemap.exposure = float(optExposure);
+  opts.image.outputRGB = std::string(optOutputRGB);
+  opts.image.outputRGBFloat = std::string(optOutputRGBf);
+  opts.image.outputSpectrum = std::string(optOutputSpectrum);
+  opts.image.outputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
+  opts.image.resume = std::string(optResume);
 
-  // Parsed here so a typo fails before anything loads.
-  opts.grid.range = parseWavelengthRange(std::string(optWavelengthRange));
-  opts.grid.explicitWavelengths = parseWavelengths(std::string(optWavelengths));
-  opts.grid.given = optWavelengthRange.getNumOccurrences() > 0 ||
-                    optWavelengths.getNumOccurrences() > 0;
-  opts.grid.jitter = bool(optWavelengthJitter);
+  opts.light.sky.none = flag(optNoSunSky);
+  opts.light.sky.sunZenithDeg = flag(optSunZenith);
+  opts.light.sky.sunAzimuthDeg = flag(optSunAzimuth);
+  opts.light.sky.visibility = flag(optSkyVisibility);
+  opts.light.sky.waterVapor = flag(optSkyWaterVapor);
+  opts.light.sky.scale = flag(optSkyScale);
+  opts.light.sky.moonPhase = flag(optMoonPhase);
+  opts.light.sky.moonDistance = flag(optMoonDistance);
+  opts.light.sky.iblFileName = flag(optIBLFilename);
+  opts.light.sky.iblScale = flag(optIBLScale);
+  opts.light.haze.on = bool(optHaze);
+  opts.light.haze.none = flag(optNoHaze);
+  opts.light.haze.visibility = flag(optHazeVisibility);
+  opts.light.haze.scaleHeight = flag(optHazeScaleHeight);
 
-  opts.sky.none = flag(optNoSunSky);
-  opts.sky.sunZenithDeg = flag(optSunZenith);
-  opts.sky.sunAzimuthDeg = flag(optSunAzimuth);
-  opts.sky.visibility = flag(optSkyVisibility);
-  opts.sky.waterVapor = flag(optSkyWaterVapor);
-  opts.sky.scale = flag(optSkyScale);
-  opts.sky.moonPhase = flag(optMoonPhase);
-  opts.sky.moonDistance = flag(optMoonDistance);
-  opts.sky.iblFileName = flag(optIBLFilename);
-  opts.sky.iblScale = flag(optIBLScale);
-  opts.sky.allLights = bool(optMarkAllLights);
-  opts.sky.noLightTree = bool(optNoLightTree);
-
-  opts.haze.on = bool(optHaze);
-  opts.haze.none = flag(optNoHaze);
-  opts.haze.visibility = flag(optHazeVisibility);
-  opts.haze.scaleHeight = flag(optHazeScaleHeight);
-
-  // The manifold estimator, minus what needs a scene.
-  opts.mneeEnabled = bool(optMNEE);
-  opts.mneeReport = bool(optMNEEReport);
-  opts.mneeSunOnly = bool(optMNEESunOnly);
-  opts.mneeTestNormalHook = bool(optMNEETestNormalHook);
-  opts.mnee.depth = optMNEE ? int(std::clamp(unsigned(optMNEEDepth), 1U,
-                                             unsigned(MANIFOLD_MAX_DEPTH)))
-                            : 0;
-  opts.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
-  opts.mnee.biasedTrials = int(unsigned(optMNEEBiased));
-  opts.mnee.maxRoughness = std::max(float(optMNEEMaxRoughness), 0.0f);
-  opts.mnee.minReceiverAlpha = std::max(float(optMNEEReceiverAlpha), 0.0f);
-
+  opts.render.sampling.spp = unsigned(optSPP);
+  opts.render.sampling.sampleOffset = unsigned(optSampleOffset);
+  opts.render.sampling.noLOD = bool(optNoLOD);
   // The default walk is terminated by Russian roulette, with the bounce
   // bound set high enough that clipping it is negligible even for
   // high-albedo transport; giving -max-bounces makes the bound the whole
   // termination rule, so the estimate is the fixed-depth truncation.
-  opts.path.maxBounces = unsigned(optMaxBounces);
-  opts.path.useRoulette = optMaxBounces.getNumOccurrences() == 0;
-  opts.path.maxContribution = std::max(float(optMaxContribution), 0.0f);
-  opts.path.maxContributionBounces =
+  opts.render.path.maxBounces = unsigned(optMaxBounces);
+  opts.render.path.useRoulette = optMaxBounces.getNumOccurrences() == 0;
+  opts.render.path.maxContribution = std::max(float(optMaxContribution), 0.0f);
+  opts.render.path.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
+  opts.render.guide.enabled = bool(optGuide);
+  opts.render.guide.adrrs = bool(optGuideADRRS);
+  opts.render.guide.bsdfFraction = flag(optGuideBSDFFraction);
+  opts.render.guide.split = float(optGuideSplit);
+  // Parsed here so a typo fails before anything loads.
+  opts.render.grid.range = parseWavelengthRange(std::string(optWavelengthRange));
+  opts.render.grid.explicitWavelengths =
+      parseWavelengths(std::string(optWavelengths));
+  opts.render.grid.given = optWavelengthRange.getNumOccurrences() > 0 ||
+                           optWavelengths.getNumOccurrences() > 0;
+  opts.render.grid.jitter = bool(optWavelengthJitter);
+  // The manifold estimator, minus what needs a scene.
+  opts.render.mneeEnabled = bool(optMNEE);
+  opts.render.mneeReport = bool(optMNEEReport);
+  opts.render.mneeSunOnly = bool(optMNEESunOnly);
+  opts.render.mneeTestNormalHook = bool(optMNEETestNormalHook);
+  opts.render.mnee.depth =
+      optMNEE ? int(std::clamp(unsigned(optMNEEDepth), 1U,
+                               unsigned(MANIFOLD_MAX_DEPTH)))
+              : 0;
+  opts.render.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
+  opts.render.mnee.biasedTrials = int(unsigned(optMNEEBiased));
+  opts.render.mnee.maxRoughness = std::max(float(optMNEEMaxRoughness), 0.0f);
+  opts.render.mnee.minReceiverAlpha =
+      std::max(float(optMNEEReceiverAlpha), 0.0f);
+  opts.render.allLights = bool(optMarkAllLights);
+  opts.render.noLightTree = bool(optNoLightTree);
+  opts.render.noRobustIntersection = bool(optNoRobustIntersection);
 
-  opts.tonemap = parseTonemapOptions(std::string(optTonemap));
-  opts.tonemap.exposure = float(optExposure);
+  opts.scene.inputSceneFile = std::string(optInputSceneFile);
+  opts.scene.inputMDLFiles.assign(optInputMDLFiles.begin(),
+                                  optInputMDLFiles.end());
+  opts.scene.inputMeshFiles.assign(optInputMeshFiles.begin(),
+                                   optInputMeshFiles.end());
+  opts.scene.assetDirs.assign(optAssetDirs.begin(), optAssetDirs.end());
+  opts.scene.time = float(optTime);
+  opts.scene.ground = bool(optGround);
+  opts.scene.groundZ = flag(optGroundZ);
+  opts.scene.groundMaterial = std::string(optGroundMaterial);
+  opts.scene.fallbackMaterial = std::string(optFallbackMaterial);
 
-  opts.rgbPolicy.forceFalseColor =
-      bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
-  if (optRGBWavelengths.getNumOccurrences() > 0) {
-    const auto waves{float3(optRGBWavelengths)};
-    opts.rgbPolicy.falseColorWaves = {waves.x, waves.y, waves.z};
-  }
-
-  opts.progress.label = "Rendering";
-  opts.progress.units = "px";
-  opts.progress.style = parseProgressStyle(std::string(optProgress));
-  opts.progress.filePath = std::string(optProgressFile);
-
-  opts.output.rgb = std::string(optOutputRGB);
-  opts.output.rgbFloat = std::string(optOutputRGBf);
-  opts.output.spectrum = std::string(optOutputSpectrum);
-  opts.output.spectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
-  opts.output.resume = std::string(optResume);
-  opts.output.previewEvery = double(optPreviewEvery);
-  opts.output.profile = std::string(optProfile).empty()
-                            ? std::string("smdl-toy.trace.json")
-                            : std::string(optProfile);
-  opts.output.profiling = optProfile.getNumOccurrences() > 0;
+  opts.utility.dumpPlaces = std::string(optDumpPlaces);
+  opts.utility.dumpCurves = std::string(optDumpCurves);
+  opts.utility.packPlaces = std::string(optPackPlaces);
+  opts.utility.outputPlaces = std::string(optOutputPlaces);
+  opts.utility.listMaterials = bool(optListMaterials);
+  opts.utility.listObjects = bool(optListObjects);
+  opts.utility.json = bool(optJSON);
+  opts.utility.allMaterials = bool(optCompileAllMaterials);
+  opts.utility.threads = unsigned(optThreads);
+  opts.utility.progress.label = "Rendering";
+  opts.utility.progress.units = "px";
+  opts.utility.progress.style = parseProgressStyle(std::string(optProgress));
+  opts.utility.progress.filePath = std::string(optProgressFile);
+  opts.utility.previewEvery = double(optPreviewEvery);
+  opts.utility.profile = std::string(optProfile).empty()
+                             ? std::string("smdl-toy.trace.json")
+                             : std::string(optProfile);
+  opts.utility.profiling = optProfile.getNumOccurrences() > 0;
 
   // The command line as it was given, for the spectral output's
   // 'render args' field.

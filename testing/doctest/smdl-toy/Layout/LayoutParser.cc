@@ -323,22 +323,21 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(place.motionLoc);
     // The place's own operations compose outside the track, so the world
     // transform rises from z = 3 to z = 3.2 over half a second.
-    const auto worldAt{[&](float t) {
-      return place.transform * place.motion.at(t);
-    }};
+    const auto worldAt{
+        [&](float t) { return place.transform * place.motion.at(t); }};
     CHECK(worldAt(0.0f)[3].z == doctest::Approx(3.0f));
     CHECK(worldAt(0.5f)[3].z == doctest::Approx(3.2f));
     CHECK(worldAt(0.25f)[3].z == doctest::Approx(3.1f));
   }
   SUBCASE("The block form, beside a rename, with operations in order") {
-    const auto document{parseOK(diags,
-                                "#smdl layout\n"
-                                "asset rock = \"rock.obj\"\n"
-                                "place rock {\n"
-                                "  material a = b\n"
-                                "  translate 1 0 0\n"
-                                "  motion { at 1 translate 2 0 0 rotate_z 90 }\n"
-                                "}\n")};
+    const auto document{
+        parseOK(diags, "#smdl layout\n"
+                       "asset rock = \"rock.obj\"\n"
+                       "place rock {\n"
+                       "  material a = b\n"
+                       "  translate 1 0 0\n"
+                       "  motion { at 1 translate 2 0 0 rotate_z 90 }\n"
+                       "}\n")};
     REQUIRE(document.placements.size() == 1);
     const auto &place{document.placements[0]};
     CHECK(place.overrides.size() == 1);
@@ -388,11 +387,11 @@ TEST_CASE("LayoutParser: the motion block on a place") {
           std::string::npos);
   }
   SUBCASE("An operation before the first key names the spelling") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\n"
-                       "asset ball = sphere { material m }\n"
-                       "place ball motion { translate 1 0 0 }\n"
-                       "place ball\n")};
+    const auto &source{diags.addSource("test.layout",
+                                       "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball motion { translate 1 0 0 }\n"
+                                       "place ball\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
@@ -400,10 +399,10 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     REQUIRE(!error.notes.empty());
   }
   SUBCASE("An empty block is an error rather than a static placement") {
-    const auto &source{diags.addSource(
-        "test.layout", "#smdl layout\n"
-                       "asset ball = sphere { material m }\n"
-                       "place ball motion { }\n")};
+    const auto &source{diags.addSource("test.layout",
+                                       "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball motion { }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("at least one") !=
@@ -440,12 +439,11 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(document.placements.size() == 2);
   }
   SUBCASE("Only transform operations are admitted inside a key") {
-    const auto &source{
-        diags.addSource("test.layout",
-                        "#smdl layout\n"
-                        "asset ball = sphere { material m }\n"
-                        "place ball motion { at 0 material a = b }\n"
-                        "place ball\n")};
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion { at 0 material a = b }\n"
+                       "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
@@ -456,11 +454,11 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("The block needs its brace") {
-    const auto &source{diags.addSource("test.layout",
-                                       "#smdl layout\n"
-                                       "asset ball = sphere { material m }\n"
-                                       "place ball motion at 0 translate 1 0 0\n"
-                                       "place ball\n")};
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion at 0 translate 1 0 0\n"
+                       "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("'{' after 'motion'") !=

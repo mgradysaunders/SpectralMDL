@@ -403,7 +403,8 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     }
     // A record carries a transform and a variant index and nothing
     // else, so a per-place mark has nowhere to go; the asset's mark
-    // covers every record.
+    // covers every record. A `motion` track has nowhere to go either,
+    // and a scatter moves as a whole through the bulk place's own.
     const auto refuseMark{[&](const char *word) {
       throw smdl::Error(smdl::concat(
           "cannot pack ", smdl::QuotedPath(layoutFileName), ": a '", word,
@@ -412,6 +413,11 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     }};
     if (placement.casterOverride) refuseMark("caster");
     if (placement.lightOverride) refuseMark("light");
+    if (!placement.motion.empty())
+      throw smdl::Error(smdl::concat(
+          "cannot pack ", smdl::QuotedPath(layoutFileName),
+          ": a 'motion' track on a place has no record to live in; write it "
+          "on the bulk place instead, where it moves the whole scatter"));
     places.transforms.push_back(placement.transform);
     auto variantIndex{PlacesFile::NO_VARIANT};
     if (!placement.overrides.empty()) {
