@@ -130,7 +130,7 @@ Frame resolveFrame(const Options &opts) {
   // rather than moving a camera the file never described.
   if (!cameraDocument.camera.motion.empty()) {
     const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
-    const char *framingFlag{opts.camera.autolook.enabled        ? "-autolook"
+    const char *framingFlag{opts.camera.autolook.enabled ? "-autolook"
                             : opts.camera.lookFrom.given ? "-look-from"
                             : opts.camera.lookTo.given   ? "-look-to"
                             : opts.camera.lookUp.given   ? "-look-up"
@@ -301,7 +301,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
           double(frame.numPixelsX * frame.numPixelsY) *
           (8.0 + 8.0 * double(wavelengths.size()) +
            (opts.render.guide.enabled ? 16.0 * double(wavelengths.size()) + 24.0
-                               : 0.0)) /
+                                      : 0.0)) /
           (1024.0 * 1024.0 * 1024.0)};
       gib > 1.0)
     SMDL_LOG_INFO("Accumulation buffers: ", gib, " GiB");
@@ -446,7 +446,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // whatever the command line explicitly gave.
   const auto &fileSky{layout.sky};
   const auto iblFileName{pick(opts.light.sky.iblFileName, fileSky.iblFileName)};
-  const auto moonGiven{opts.light.sky.moonPhase.given || bool(fileSky.moonPhase)};
+  const auto moonGiven{opts.light.sky.moonPhase.given ||
+                       bool(fileSky.moonPhase)};
   if (!iblFileName.empty()) {
     envLight = std::make_unique<EnvLight>(
         iblFileName, pick(opts.light.sky.iblScale, fileSky.iblScale));
@@ -455,7 +456,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
                     "contributes only inside the visible");
   } else if (!pick(opts.light.sky.none, fileSky.none)) {
     auto options{smdl::SunSkyOptions{}};
-    float zenith{smdl::radians(pick(opts.light.sky.sunZenithDeg, fileSky.sunZenith))};
+    float zenith{
+        smdl::radians(pick(opts.light.sky.sunZenithDeg, fileSky.sunZenith))};
     float azimuthDeg{pick(opts.light.sky.sunAzimuthDeg, fileSky.sunAzimuth)};
     // Under -autolook with no stated sun azimuth, the key light follows the
     // solved camera: a perfectly framed thumbnail lit from behind is as
@@ -472,7 +474,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
         float3(std::sin(zenith) * std::cos(azimuth),
                std::sin(zenith) * std::sin(azimuth), std::cos(zenith));
     options.visibility = pick(opts.light.sky.visibility, fileSky.visibility);
-    options.waterVaporScale = pick(opts.light.sky.waterVapor, fileSky.waterVapor);
+    options.waterVaporScale =
+        pick(opts.light.sky.waterVapor, fileSky.waterVapor);
     options.scaleFactor = pick(opts.light.sky.scale, fileSky.scale);
     if (moonGiven) {
       options.moon = true;
@@ -531,7 +534,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     options.visibility = pick(opts.light.haze.visibility, fileHaze.visibility);
     if (!(options.visibility > 0.0f))
       options.visibility = pick(opts.light.sky.visibility, fileSky.visibility);
-    options.scaleHeight = pick(opts.light.haze.scaleHeight, fileHaze.scaleHeight);
+    options.scaleHeight =
+        pick(opts.light.haze.scaleHeight, fileHaze.scaleHeight);
     if (fileHaze.baseHeight) options.baseHeight = *fileHaze.baseHeight;
     if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
     haze = std::make_unique<smdl::Haze>(

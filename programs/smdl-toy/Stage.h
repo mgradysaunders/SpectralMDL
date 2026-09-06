@@ -46,7 +46,7 @@ struct Frame final {
   Layout layout{};
 
   /// The camera settings, merged from three sources in increasing order
-  /// of priority: the defaults, the layout's `camera` directive, and
+  /// of priority: the defaults, the camera file's `camera` directive, and
   /// whatever the command line explicitly gave.
   CameraOptions cameraOptions{};
 

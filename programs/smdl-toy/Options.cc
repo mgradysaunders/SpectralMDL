@@ -34,7 +34,7 @@ cl::OptionCategory catCamera{"Camera Options"};
 cl::opt<std::string> optCameraFile{
     "camera",
     cl::desc("The '.camera' file holding the viewpoint, the lens, and the "
-             "clock (default: the '.camera' beside the input layout, if "
+             "shutter (default: the '.camera' beside the input layout, if "
              "there is one)"),
     cl::cat(catCamera)};
 cl::opt<float3> optLookFrom{
@@ -699,7 +699,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.render.guide.bsdfFraction = flag(optGuideBSDFFraction);
   opts.render.guide.split = float(optGuideSplit);
   // Parsed here so a typo fails before anything loads.
-  opts.render.grid.range = parseWavelengthRange(std::string(optWavelengthRange));
+  opts.render.grid.range =
+      parseWavelengthRange(std::string(optWavelengthRange));
   opts.render.grid.explicitWavelengths =
       parseWavelengths(std::string(optWavelengths));
   opts.render.grid.given = optWavelengthRange.getNumOccurrences() > 0 ||
@@ -710,10 +711,10 @@ Options parseCommandLine(int argc, char **argv) {
   opts.render.mneeReport = bool(optMNEEReport);
   opts.render.mneeSunOnly = bool(optMNEESunOnly);
   opts.render.mneeTestNormalHook = bool(optMNEETestNormalHook);
-  opts.render.mnee.depth =
-      optMNEE ? int(std::clamp(unsigned(optMNEEDepth), 1U,
-                               unsigned(MANIFOLD_MAX_DEPTH)))
-              : 0;
+  opts.render.mnee.depth = optMNEE
+                               ? int(std::clamp(unsigned(optMNEEDepth), 1U,
+                                                unsigned(MANIFOLD_MAX_DEPTH)))
+                               : 0;
   opts.render.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
   opts.render.mnee.biasedTrials = int(unsigned(optMNEEBiased));
   opts.render.mnee.maxRoughness = std::max(float(optMNEEMaxRoughness), 0.0f);

@@ -205,7 +205,8 @@ void renderSamples(const Options &opts, const Frame &frame,
   // Written beside the output and renamed into place: a watcher polling
   // the path never opens a half-written PNG.
   const double previewEvery{std::max(double(opts.utility.previewEvery), 0.0)};
-  const bool isCheckpointing{previewEvery > 0.0 && !opts.image.outputRGB.empty()};
+  const bool isCheckpointing{previewEvery > 0.0 &&
+                             !opts.image.outputRGB.empty()};
   const auto writeDisplayImage{[&] {
     // Resolve first, so that a guided preview stands on every pass folded
     // so far, the resumed seed included, instead of the newest pass
@@ -215,7 +216,8 @@ void renderSamples(const Options &opts, const Frame &frame,
     const auto path{std::filesystem::path(opts.image.outputRGB)};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
-    const auto rgb{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+    const auto rgb{
+        resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
     const auto ldr{tonemap(opts.image.tonemap, rgb, film, wavelengths)};
     if (auto error{smdl::write8bitImage(partPath.string(), //
                                         int(numPixelsX), int(numPixelsY), 3,
@@ -327,7 +329,8 @@ void renderSamples(const Options &opts, const Frame &frame,
     // output through the pass combination below. When the tree will be
     // saved the final pass trains too: its training is no longer wasted,
     // it is what the next session of the sequence inherits.
-    const bool recordPass{opts.render.guide.enabled && (!isFinal || savingTree)};
+    const bool recordPass{opts.render.guide.enabled &&
+                          (!isFinal || savingTree)};
     // The per-thread training mirrors for this pass, absorbed into the
     // tree after the pass renders and before it refines; the tree
     // structure the layout mirrors is frozen in between.
@@ -422,8 +425,9 @@ void renderSamples(const Options &opts, const Frame &frame,
           const size_t y{i / numPixelsX};
           Color Lsum{};
           PassCombiner::PixelHalves halves{};
-          guiding.pixelEstimate =
-              combiner && opts.render.guide.adrrs ? combiner->pixelEstimate(i) : 0.0f;
+          guiding.pixelEstimate = combiner && opts.render.guide.adrrs
+                                      ? combiner->pixelEstimate(i)
+                                      : 0.0f;
           for (size_t s = 0; s < chunk; s++) {
             const uint32_t sampleIndex =
                 resumed.sampleIndexBase + sppDone + chunkBase + s;
@@ -517,8 +521,9 @@ void renderSamples(const Options &opts, const Frame &frame,
       // Refine: split spatial leaves past c*sqrt(2^k) records (k this
       // pass's index), rebuild the directional quadtrees with the 1% flux
       // threshold.
-      sdtree->refine(uint32_t(double(opts.render.guide.split) * std::sqrt(thisPass)),
-                     0.01f, 20);
+      sdtree->refine(
+          uint32_t(double(opts.render.guide.split) * std::sqrt(thisPass)),
+          0.01f, 20);
       float minAlpha{}, meanAlpha{};
       sdtree->alphaStats(minAlpha, meanAlpha);
       SMDL_LOG_INFO("Guide pass ", passIndex + 1, "/", passes.size(),

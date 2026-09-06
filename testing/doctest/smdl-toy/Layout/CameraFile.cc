@@ -37,8 +37,8 @@ TEST_CASE("CameraFile: the shutter setting") {
     CHECK(*document.camera.shutter == 0.0f);
   }
   SUBCASE("A negative shutter is an error") {
-    const auto &source{
-        diags.addSource("test.camera", "#smdl camera\ncamera { shutter -1 }\n")};
+    const auto &source{diags.addSource(
+        "test.camera", "#smdl camera\ncamera { shutter -1 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find(
@@ -83,15 +83,13 @@ TEST_CASE("CameraFile: what the file deliberately does not carry") {
     const auto &error{diags.all().front()};
     CHECK(error.message.find("fact about this render") != std::string::npos);
     REQUIRE(!error.notes.empty());
-    CHECK(error.notes.front().message.find("-resolution") !=
-          std::string::npos);
+    CHECK(error.notes.front().message.find("-resolution") != std::string::npos);
     CHECK(error.notes.front().message.find("-crop-window") !=
           std::string::npos);
   }
   SUBCASE("The parse resynchronizes at the next statement") {
     const auto &source{diags.addSource(
-        "test.camera",
-        "#smdl camera\ntime { base 2 }\ncamera { fovy 30 }\n")};
+        "test.camera", "#smdl camera\ntime { base 2 }\ncamera { fovy 30 }\n")};
     const auto document{parseCamera(diags, source)};
     REQUIRE(diags.errorCount() == 1);
     REQUIRE(document.camera.fovYDeg);

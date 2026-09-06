@@ -25,10 +25,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
   const bool jitterWavelength{!gRenderGrid.bandEdges.empty()};
-  const auto rgbImage{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+  const auto rgbImage{
+      resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
   if (!opts.image.outputRGBFloat.empty()) {
-    if (auto error{smdl::writeFloatImage(opts.image.outputRGBFloat, int(numPixelsX),
-                                         int(numPixelsY), 3,
+    if (auto error{smdl::writeFloatImage(opts.image.outputRGBFloat,
+                                         int(numPixelsX), int(numPixelsY), 3,
                                          rgbImage.data())}) {
       error->print();
     }
@@ -79,7 +80,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
         resumed.header.sessions, " session(s)");
   }
   {
-    const auto ldrImage{tonemap(opts.image.tonemap, rgbImage, film, wavelengths)};
+    const auto ldrImage{
+        tonemap(opts.image.tonemap, rgbImage, film, wavelengths)};
     if (auto error{smdl::write8bitImage(opts.image.outputRGB, int(numPixelsX),
                                         int(numPixelsY), 3, ldrImage.data())}) {
       error->print();
