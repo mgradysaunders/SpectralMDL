@@ -23,11 +23,10 @@ constexpr std::array<std::string_view, 9> TOP_LEVEL_KEYWORDS{
     "asset",    "group",  "place", "import", "light",
     "material", "medium", "sky",   "haze"};
 
-// The directives a `.camera` file owns, kept here only so that writing
+// The directive a `.camera` file owns, kept here only so that writing
 // one in a layout is answered with where it belongs rather than with a
 // spelling suggestion.
-constexpr std::array<std::string_view, 2> CAMERA_FILE_KEYWORDS{"camera",
-                                                               "time"};
+constexpr std::string_view CAMERA_FILE_KEYWORD{"camera"};
 
 class Parser final : public TextParser {
 public:
@@ -77,12 +76,13 @@ private:
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
-      if (std::find(CAMERA_FILE_KEYWORDS.begin(), CAMERA_FILE_KEYWORDS.end(),
-                    mToken.text) != CAMERA_FILE_KEYWORDS.end()) {
-        error.note({}, smdl::concat("'", mToken.text,
-                                    "' belongs in a '.camera' file, which the "
-                                    "render finds beside the layout or takes "
-                                    "from '-camera'"));
+      if (mToken.text == CAMERA_FILE_KEYWORD) {
+        error.note({}, "'camera' belongs in a '.camera' file, which the render "
+                       "finds beside the layout or takes from '-camera'");
+      } else if (mToken.text == "time") {
+        error.note({}, "the clock is nobody's file: '-time' names the instant "
+                       "to photograph, and 'shutter' inside a '.camera' file's "
+                       "'camera' block says how long the shutter stays open");
       } else if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(),
                            mToken.text) != TRANSFORM_OPS.end()) {
         error.note({}, "transform operations belong on a 'place' line or "

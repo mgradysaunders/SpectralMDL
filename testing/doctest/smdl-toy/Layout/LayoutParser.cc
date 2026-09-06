@@ -81,6 +81,27 @@ TEST_CASE("LayoutParser: diagnostics") {
     CHECK(where.lineNo == 3);
     CHECK(where.charNo == 3);
   }
+  SUBCASE("A 'camera' directive names the file it belongs in") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ncamera { fovy 30 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    REQUIRE(!error.notes.empty());
+    CHECK(error.notes.front().message.find("'.camera' file") !=
+          std::string::npos);
+  }
+  SUBCASE("A 'time' directive names the flag, since no file holds the clock") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ntime { base 2 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    REQUIRE(!error.notes.empty());
+    // Never the camera file, which rejects a 'time' block of its own.
+    CHECK(error.notes.front().message.find("'-time'") != std::string::npos);
+    CHECK(error.notes.front().message.find("belongs in") == std::string::npos);
+  }
   SUBCASE("The box takes a size, and only the box does") {
     const auto document{parseOK(diags, R"(#smdl layout
 asset crate = box { size 0.5 1.25 2 material wood }
