@@ -265,8 +265,8 @@ static cl::opt<std::string> optWavelengths{
     cl::cat(catCamera)};
 static cl::opt<bool> optWavelengthJitter{
     "wavelength-jitter",
-    cl::desc("Jitter each wavelength within its band, so that every band "
-             "estimates the mean radiance over the band rather than the "
+    cl::desc("Jitter each wavelength within its band, to "
+             "estimate the mean radiance over the band rather than the "
              "radiance at one wavelength\n"
              "* the outermost bands reach half a band past the grid ends"),
     cl::init(false), cl::cat(catCamera)};
