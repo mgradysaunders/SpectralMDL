@@ -90,7 +90,7 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
   const Hit hit{
       scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time)};
   if (!hit.instance) return false;
-  auto state{makeRenderState(renderGrid().wavelengths)};
+  auto state{makeRenderState(gRenderGrid.wavelengths)};
   hit.applyGeometryToState(state, float3());
   auto internalNormal{float3()};
   material.geometryNormalEvaluate(state, internalNormal);

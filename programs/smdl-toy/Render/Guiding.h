@@ -517,11 +517,11 @@ public:
   /// the rectangle actually being rendered.
   PassCombiner(size_t nX, size_t nY, int4 window)
       : mNumPixelsX(nX), mNumPixelsY(nY), mWindow(window),
-        mNumBands(renderGrid().numBands),
-        mHalfImageA(nX * nY * renderGrid().numBands),
-        mHalfImageB(nX * nY * renderGrid().numBands), //
+        mNumBands(gRenderGrid.numBands),
+        mHalfImageA(nX * nY * gRenderGrid.numBands),
+        mHalfImageB(nX * nY * gRenderGrid.numBands), //
         mHalfSquaresA(nX * nY), mHalfSquaresB(nX * nY),
-        mComboNumer(nX * nY * renderGrid().numBands, 0.0),
+        mComboNumer(nX * nY * gRenderGrid.numBands, 0.0),
         mComboDenom(nX * nY, 0.0) {}
 
   /// Seed the combination with a resumed prior session's accumulation,

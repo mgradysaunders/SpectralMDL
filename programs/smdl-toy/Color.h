@@ -121,19 +121,14 @@ struct WavelengthGrid final {
   }
 };
 
-/// The storage behind `renderGrid()`.
+/// The render-wide wavelength grid. See `WavelengthGrid`.
 ///
-/// At namespace scope rather than inside the accessor because a
-/// function-local static is read through a guard, and `Color`'s
+/// A namespace-scope variable rather than a function-local static
+/// because the latter is read through a guard, and `Color`'s
 /// constructor reads this at every path vertex. The cost is that it is
 /// initialized during startup instead of on first use, so nothing may
 /// touch it from another translation unit's static initializer.
-inline WavelengthGrid renderGridStorage{};
-
-/// The render-wide wavelength grid. See `WavelengthGrid`.
-[[nodiscard]] inline WavelengthGrid &renderGrid() noexcept {
-  return renderGridStorage;
-}
+inline WavelengthGrid gRenderGrid{};
 
 /// The render-wide shutter interval.
 ///
@@ -158,18 +153,13 @@ struct Shutter final {
   }
 };
 
-/// The storage behind `renderShutter()`, at namespace scope for the
-/// reason `renderGridStorage` is.
-inline Shutter renderShutterStorage{};
-
-/// The render-wide shutter interval. See `Shutter`.
-[[nodiscard]] inline Shutter &renderShutter() noexcept {
-  return renderShutterStorage;
-}
+/// The render-wide shutter interval, a namespace-scope variable for the
+/// reason `gRenderGrid` is. See `Shutter`.
+inline Shutter gRenderShutter{};
 
 /// When a path happens, on both clocks: the shutter fraction in
 /// `[0, 1]`, which is what the rays trace at and where every motion
-/// key sits, and the seconds `renderShutter().secondsAt(fraction)`,
+/// key sits, and the seconds `gRenderShutter.secondsAt(fraction)`,
 /// which is what the materials, lights, and media see as
 /// `State::animation_time`. The fraction must never reach a state and
 /// the seconds must never reach a ray, which is why the two travel as
@@ -178,7 +168,7 @@ inline Shutter renderShutterStorage{};
 class PathTime final {
 public:
   explicit PathTime(float fraction) noexcept
-      : fraction(fraction), seconds(renderShutter().secondsAt(fraction)) {}
+      : fraction(fraction), seconds(gRenderShutter.secondsAt(fraction)) {}
 
   float fraction{};
   float seconds{};
@@ -190,14 +180,14 @@ public:
 /// band count.
 class Color final : public smdl::SpectralColor {
 public:
-  Color() : SpectralColor(renderGrid().numBands) {}
+  Color() : SpectralColor(gRenderGrid.numBands) {}
 
-  Color(float value) : SpectralColor(renderGrid().numBands, value) {}
+  Color(float value) : SpectralColor(gRenderGrid.numBands, value) {}
 
   /// Construct from however many values are present: a shorter or
   /// empty span (a material coefficient the instance does not have)
   /// leaves the remaining bands zero.
-  Color(smdl::Span<const float> values) : SpectralColor(renderGrid().numBands) {
+  Color(smdl::Span<const float> values) : SpectralColor(gRenderGrid.numBands) {
     const size_t n{values.size() < size() ? values.size() : size()};
     for (size_t i = 0; i < n; i++) (*this)[i] = values[i];
   }
@@ -216,8 +206,8 @@ public:
 [[nodiscard]] inline smdl::State
 makeRenderState(const smdl::SpectralColor &wavelengths,
                 smdl::BumpPtrAllocator *allocator = nullptr,
-                float time = renderShutter().time) noexcept {
-  smdl::State state{renderGrid().stateBase};
+                float time = gRenderShutter.time) noexcept {
+  smdl::State state{gRenderGrid.stateBase};
   state.allocator = allocator;
   state.wavelength_base = wavelengths.data();
   state.animation_time = time;
@@ -235,7 +225,7 @@ makeRenderState(const smdl::SpectralColor &wavelengths,
 /// rigid shift keeps the spectrum of a single sample correlated, which
 /// is what stops the RGB outputs from gaining color noise.
 inline void jitterWavelengths(Color &wavelengths, float xi) noexcept {
-  const auto &edges{renderGrid().bandEdges};
+  const auto &edges{gRenderGrid.bandEdges};
   for (size_t i = 0; i < wavelengths.size(); i++)
     wavelengths[i] = edges[i] + xi * (edges[i + 1] - edges[i]);
 }

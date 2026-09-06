@@ -107,8 +107,8 @@ Frame resolveFrame(const Options &opts) {
   // The two clocks, merged the same way from the layout's 'time'
   // directive. The parser has already refused a file value that is not
   // finite or, for the shutter, negative.
-  renderShutter().time = pick(opts.shutter.time, layout.time.base);
-  renderShutter().length = pick(opts.shutter.speed, layout.time.shutter);
+  gRenderShutter.time = pick(opts.shutter.time, layout.time.base);
+  gRenderShutter.length = pick(opts.shutter.speed, layout.time.shutter);
   // The camera's shut keys. The layout wrote them against its own
   // framing, so a flag that replaces that framing drops them rather
   // than moving a camera the file never described; a key the block
@@ -123,7 +123,7 @@ Frame resolveFrame(const Options &opts) {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
                     " replaces the framing the layout's 'motion' was "
                     "written against");
-    } else if (!renderShutter().isOpen()) {
+    } else if (!gRenderShutter.isOpen()) {
       SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
                     "holds its open framing");
     } else {
@@ -146,7 +146,7 @@ Frame resolveFrame(const Options &opts) {
     for (const auto &light : layout.lights)
       numMovingLights += light.lightToWorldShut.has_value();
     if (numMovingItems + numMovingLights > 0) {
-      if (!renderShutter().isOpen()) {
+      if (!gRenderShutter.isOpen()) {
         for (auto &item : layout.items) {
           item.objectToWorldShut.reset();
           item.batchXfsShut.clear();
@@ -224,9 +224,9 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   }
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
-  renderGrid().reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
-                     opts.grid.jitter);
-  if (opts.grid.jitter && renderGrid().bandEdges.empty())
+  gRenderGrid.reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
+                    opts.grid.jitter);
+  if (opts.grid.jitter && gRenderGrid.bandEdges.empty())
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
   const auto wavelengths{
@@ -251,7 +251,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                   " nm");
   // The spectral extent the render actually reaches, which the jitter
   // widens to the outermost band edges.
-  const auto &bandEdges{renderGrid().bandEdges};
+  const auto &bandEdges{gRenderGrid.bandEdges};
   const float gridLower{bandEdges.empty() ? wavelengths[0] : bandEdges.front()};
   const float gridUpper{bandEdges.empty() ? wavelengths[wavelengths.size() - 1]
                                           : bandEdges.back()};

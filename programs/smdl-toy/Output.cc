@@ -24,7 +24,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   const auto spp{frame.spp};
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
-  const bool jitterWavelength{!renderGrid().bandEdges.empty()};
+  const bool jitterWavelength{!gRenderGrid.bandEdges.empty()};
   const auto rgbImage{resolveRGB(compiler, film, wavelengths, opts.rgbPolicy)};
   if (!opts.output.rgbFloat.empty()) {
     if (auto error{smdl::writeFloatImage(opts.output.rgbFloat, int(numPixelsX),

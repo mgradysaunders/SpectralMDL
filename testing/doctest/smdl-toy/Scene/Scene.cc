@@ -105,7 +105,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
   ~Fixture() { fs::remove_all(dir); }
@@ -326,7 +326,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 
@@ -537,12 +537,12 @@ public:
       MESSAGE(error->message);
       REQUIRE(false);
     }
-    renderShutter().time = base;
-    renderShutter().length = shutter;
+    gRenderShutter.time = base;
+    gRenderShutter.length = shutter;
   }
   ~RigFixture() {
-    renderShutter().time = 0.0f;
-    renderShutter().length = 0.0f;
+    gRenderShutter.time = 0.0f;
+    gRenderShutter.length = 0.0f;
     fs::remove_all(dir);
   }
 
@@ -573,7 +573,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 

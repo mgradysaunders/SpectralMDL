@@ -497,11 +497,11 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   // The node graph at the two keys of the shutter, on the render clock:
   // the authored pose with no clip, and one pose when the shutter is
   // shut, in which case every mesh holds the pose at the base time.
-  const bool shutterOpen{renderShutter().isOpen()};
-  const double ticksOpen{clip ? clipTime(*clip, animation, renderShutter().time)
+  const bool shutterOpen{gRenderShutter.isOpen()};
+  const double ticksOpen{clip ? clipTime(*clip, animation, gRenderShutter.time)
                               : 0.0};
   const double ticksShut{
-      clip ? clipTime(*clip, animation, renderShutter().secondsAt(1.0f)) : 0.0};
+      clip ? clipTime(*clip, animation, gRenderShutter.secondsAt(1.0f)) : 0.0};
   const auto poseOpen{evaluatePose(assScene, clip, ticksOpen)};
   const auto poseShut{clip && shutterOpen ? std::optional(evaluatePose(
                                                 assScene, clip, ticksShut))
@@ -1192,8 +1192,8 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
   // Every pass runs per key over one weld map and one topology, the shut
   // key at the seconds the shutter shuts.
   const auto eachKey{[&](auto &&pass) {
-    pass(mesh.verts, renderShutter().time);
-    if (mesh.deforms()) pass(mesh.vertsShut, renderShutter().secondsAt(1.0f));
+    pass(mesh.verts, gRenderShutter.time);
+    if (mesh.deforms()) pass(mesh.vertsShut, gRenderShutter.secondsAt(1.0f));
   }};
   if (mesh.subdiv.levels > 0) {
     // Smooth refinement carries exact limit normals out of the refiner;

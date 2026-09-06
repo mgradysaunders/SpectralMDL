@@ -79,7 +79,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 
@@ -375,7 +375,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 
@@ -512,7 +512,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
 
@@ -873,7 +873,7 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
   ~MotionFixture() { fs::remove_all(dir); }
@@ -1095,8 +1095,8 @@ public:
       MESSAGE(error->message);
       REQUIRE(false);
     }
-    renderShutter().time = 0.25f;
-    renderShutter().length = 0.5f;
+    gRenderShutter.time = 0.25f;
+    gRenderShutter.length = 0.5f;
     LayoutItem item{};
     item.fileName = files.morph;
     item.materials.all = "glow";
@@ -1115,12 +1115,12 @@ public:
       gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
     wavelengths =
         Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    renderGrid().wavelengths = wavelengths;
+    gRenderGrid.wavelengths = wavelengths;
     scene.commit(wavelengths);
   }
   ~DeformFixture() {
-    renderShutter().time = 0.0f;
-    renderShutter().length = 0.0f;
+    gRenderShutter.time = 0.0f;
+    gRenderShutter.length = 0.0f;
     fs::remove_all(dir);
   }
 

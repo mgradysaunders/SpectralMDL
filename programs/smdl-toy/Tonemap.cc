@@ -636,7 +636,7 @@ applyNightFilter(const std::vector<float> &rgbImage,
   // uniform formula below is what those widths degenerate to on a
   // uniform grid, kept spelled out so the default render is unchanged
   // to the bit.
-  const auto &quadWeights{renderGrid().weights};
+  const auto &quadWeights{gRenderGrid.weights};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};

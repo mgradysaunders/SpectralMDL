@@ -97,7 +97,7 @@ struct ResolvedGrid final {
 /// flags at all, the grid recorded in the file being resumed, so that a
 /// resumed render needs no grid retyping.
 ///
-/// This also installs the render-wide `renderGrid()`, whose band count
+/// This also installs the render-wide `gRenderGrid`, whose band count
 /// sizes every `Color` built from here on, so nothing may construct one
 /// before this runs.
 ///

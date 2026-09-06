@@ -270,7 +270,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                              pathOptions, haze,  exteriorMedium};
   // Whether every sample draws its own wavelength grid; see
   // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
-  const bool jitterWavelength{!renderGrid().bandEdges.empty()};
+  const bool jitterWavelength{!gRenderGrid.bandEdges.empty()};
   // The window row length, which turns a window pixel index into a frame
   // pixel index below.
   const size_t windowWidth{size_t(window[2] - window[0])};
@@ -437,7 +437,7 @@ void renderSamples(const Options &opts, const Frame &frame,
               // a default render's sampler sequence is unchanged; the
               // camera ray is placed in the world only now, at that time.
               float shutterFraction{};
-              if (renderShutter().isOpen()) shutterFraction = float(sampler);
+              if (gRenderShutter.isOpen()) shutterFraction = float(sampler);
               const PathTime time{shutterFraction};
               camera->toWorld(cameraSample, time.fraction);
               gatherState.animation_time = time.seconds;

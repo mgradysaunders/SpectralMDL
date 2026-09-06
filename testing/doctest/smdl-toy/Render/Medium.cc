@@ -131,11 +131,11 @@ private:
   // other cases build materials against the grid they set.
   struct ScopedGrid final {
     ScopedGrid() {
-      renderGrid().reset(smdl::Span<const float>(GRID.data(), GRID.size()),
-                         false);
+      gRenderGrid.reset(smdl::Span<const float>(GRID.data(), GRID.size()),
+                        false);
     }
-    ~ScopedGrid() { renderGrid() = saved; }
-    const WavelengthGrid saved{renderGrid()};
+    ~ScopedGrid() { gRenderGrid = saved; }
+    const WavelengthGrid saved{gRenderGrid};
   } mGrid{};
 
 public:
@@ -187,7 +187,7 @@ public:
   }
 
   // The render basis, as the `Color` the medium's interface takes.
-  const Color wavelengths{renderGrid().wavelengths};
+  const Color wavelengths{gRenderGrid.wavelengths};
 
   smdl::Compiler compiler{uint32_t(GRID.size())};
   smdl::BumpPtrAllocator allocator{};
