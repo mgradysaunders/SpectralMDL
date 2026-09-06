@@ -429,6 +429,10 @@ private:
   int mLightCount{};
 
   bool mHasEnv{};
+
+  /// The environment's share of the flat distribution, read once here
+  /// rather than from the distribution per sample; 0 without one.
+  float mEnvPMF{};
 };
 
 /// The unified light-selection path over every light in the scene: each

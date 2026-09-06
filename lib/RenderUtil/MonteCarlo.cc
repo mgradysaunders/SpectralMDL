@@ -19,7 +19,6 @@ namespace {
 // a million entries the float form loses over a tenth of the PMF, while
 // this form is still good to a part in ten thousand.
 constexpr double CMF_SCALE = 4294967296.0; // 2^32
-constexpr double INV_CMF_SCALE = 1.0 / CMF_SCALE;
 
 // Quantize a CMF value in [0, 1]. Truncating keeps a nondecreasing
 // sequence nondecreasing; the top of the range saturates because 1.0
@@ -53,17 +52,6 @@ Distribution1D::Distribution1D(Span<const float> values) {
     for (size_t i = 0; i < sums.size(); i++)
       cmfs[i] = quantizeCMF(sums[i] / totalSum);
   }
-}
-
-float Distribution1D::indexPMF(int i) const noexcept {
-  if (0 <= i && i < size())
-    return float(INV_CMF_SCALE * double(cmfs[i + 1] - cmfs[i]));
-  return 0.0f;
-}
-
-float Distribution1D::indexCMF(int i) const noexcept {
-  if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs[i]));
-  return i < 0 ? 0.0f : 1.0f;
 }
 
 int Distribution1D::indexSample(float xi, float *xiRemap,

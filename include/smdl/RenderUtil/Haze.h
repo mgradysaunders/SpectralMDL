@@ -1,6 +1,8 @@
 /// \file
 #pragma once
 
+#include <cmath>
+
 #include "smdl/Export.h"
 #include "smdl/RenderUtil/SpectralColor.h"
 #include "smdl/Support/Span.h"
@@ -191,12 +193,31 @@ public:
   }
 
   /// The shared distance shape of the optical depth over `[0, t]`, which
-  /// the per-band extinction at the segment origin scales.
-  [[nodiscard]] static float shape(float k, float t) noexcept;
+  /// the per-band extinction at the segment origin scales. Inline, as
+  /// is `shapeInverse()`: every haze segment evaluates one or both.
+  [[nodiscard]] static float shape(float k, float t) noexcept {
+    // The horizontal ray is not a special case of the formula below but
+    // its removable singularity, and the series is what keeps a shallow
+    // one from evaluating a difference of nearly equal exponentials over
+    // a nearly zero denominator. Branching on `k` first also keeps an
+    // unbounded segment from forming 0 times infinity.
+    if (k == 0.0f) return t;
+    const float kt{k * t};
+    if (std::abs(kt) < 1e-4f) return t * (1.0f - 0.5f * kt);
+    return -std::expm1(-kt) / k;
+  }
 
   /// The distance at which `shape` reaches `s`, or infinity when it
   /// never does, which is an upward ray leaving the atmosphere.
-  [[nodiscard]] static float shapeInverse(float k, float s) noexcept;
+  [[nodiscard]] static float shapeInverse(float k, float s) noexcept {
+    if (!(s > 0.0f)) return 0.0f;
+    if (k == 0.0f) return s;
+    // An upward ray reaches at most `1/k`, the finite zenith shape; past
+    // that there is no collision and the ray leaves the atmosphere.
+    const float ks{k * s};
+    if (!(ks < 1.0f)) return INF;
+    return -std::log1p(-ks) / k;
+  }
 
 private:
   /// The extinction spectrum at `mBaseHeight`, in inverse scene units.

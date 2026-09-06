@@ -485,6 +485,7 @@ LightSelection::LightSelection(smdl::Span<const LightBounds> lights,
   for (const auto &light : lights) weights.push_back(light.phi);
   if (hasEnv) weights.push_back(envWeight);
   mDistr = smdl::Distribution1D(weights);
+  if (hasEnv) mEnvPMF = mDistr.indexPMF(mLightCount);
   if (useTree) mTree.emplace(lights);
 }
 
@@ -494,10 +495,9 @@ int LightSelection::select(const float3 &point, float xi,
   // The environment takes the top of the unit interval, where the flat
   // distribution's last entry puts it, so a scene of one light and the
   // sky draws the same light for the same float either way.
-  const float envPMF{mHasEnv ? mDistr.indexPMF(mLightCount) : 0.0f};
-  const float lightShare{1.0f - envPMF};
+  const float lightShare{1.0f - mEnvPMF};
   if (mHasEnv && xi >= lightShare) {
-    pmf = envPMF;
+    pmf = mEnvPMF;
     return mLightCount;
   }
   if (mTree->empty() || !(lightShare > 0.0f)) {
@@ -513,9 +513,8 @@ int LightSelection::select(const float3 &point, float xi,
 
 float LightSelection::pmf(int lightIndex, const float3 &point) const noexcept {
   if (!mTree) return mDistr.indexPMF(lightIndex);
-  const float envPMF{mHasEnv ? mDistr.indexPMF(mLightCount) : 0.0f};
-  if (mHasEnv && lightIndex == mLightCount) return envPMF;
-  return (1.0f - envPMF) * mTree->pmf(lightIndex, point);
+  if (mHasEnv && lightIndex == mLightCount) return mEnvPMF;
+  return (1.0f - mEnvPMF) * mTree->pmf(lightIndex, point);
 }
 
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,

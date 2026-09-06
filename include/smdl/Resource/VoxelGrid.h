@@ -133,14 +133,21 @@ public:
 
   /// Get the minimum value of the brick at the given brick coordinate,
   /// taken over the brick voxels dilated by one voxel on every side.
-  /// Returns the background outside the brick count.
-  [[nodiscard]] float getBrickMinValue(int bx, int by, int bz) const noexcept;
+  /// Returns the background outside the brick count. Inline, because a
+  /// null-collision tracker reads it once per brick it crosses.
+  [[nodiscard]] float getBrickMinValue(int bx, int by, int bz) const noexcept {
+    if (!isBrickInside(bx, by, bz)) return mBackground;
+    return mBrickMinValues[brickIndex(bx, by, bz)];
+  }
 
   /// Get the maximum value of the brick at the given brick coordinate,
   /// see `getBrickMinValue()`. This bounds every trilinearly
   /// interpolated value whose support touches the brick, so it is
   /// usable as a per-brick majorant.
-  [[nodiscard]] float getBrickMaxValue(int bx, int by, int bz) const noexcept;
+  [[nodiscard]] float getBrickMaxValue(int bx, int by, int bz) const noexcept {
+    if (!isBrickInside(bx, by, bz)) return mBackground;
+    return mBrickMaxValues[brickIndex(bx, by, bz)];
+  }
 
   /// Get the world-space bounding box minimum, from the file's
   /// index-to-world transform. Purely metadata: texture space `[0,1]^3`
@@ -191,6 +198,16 @@ private:
 
   /// The number of bricks per axis.
   int3 mBrickCount{};
+
+  [[nodiscard]] bool isBrickInside(int bx, int by, int bz) const noexcept {
+    return 0 <= bx && bx < mBrickCount.x && //
+           0 <= by && by < mBrickCount.y && //
+           0 <= bz && bz < mBrickCount.z;
+  }
+
+  [[nodiscard]] size_t brickIndex(int bx, int by, int bz) const noexcept {
+    return size_t(bx + mBrickCount.x * (by + int64_t(mBrickCount.y) * bz));
+  }
 
   /// The background value.
   float mBackground{0.0f};

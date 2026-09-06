@@ -571,24 +571,6 @@ VoxelGrid::saveToFile(const std::string &fileName,
   return error;
 }
 
-float VoxelGrid::getBrickMinValue(int bx, int by, int bz) const noexcept {
-  if (bx < 0 || bx >= mBrickCount.x || //
-      by < 0 || by >= mBrickCount.y || //
-      bz < 0 || bz >= mBrickCount.z)
-    return mBackground;
-  return mBrickMinValues[size_t(bx + mBrickCount.x *
-                                         (by + int64_t(mBrickCount.y) * bz))];
-}
-
-float VoxelGrid::getBrickMaxValue(int bx, int by, int bz) const noexcept {
-  if (bx < 0 || bx >= mBrickCount.x || //
-      by < 0 || by >= mBrickCount.y || //
-      bz < 0 || bz >= mBrickCount.z)
-    return mBackground;
-  return mBrickMaxValues[size_t(bx + mBrickCount.x *
-                                         (by + int64_t(mBrickCount.y) * bz))];
-}
-
 float VoxelGrid::fetch(int x, int y, int z) const noexcept {
   if (x < 0 || x >= mExtent.x || //
       y < 0 || y >= mExtent.y || //

@@ -222,26 +222,4 @@ void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {
   for (size_t i = 0; i < sigma.size(); i++) sigma[i] = mSigmaRef[i] * scale;
 }
 
-float Haze::shape(float k, float t) noexcept {
-  // The horizontal ray is not a special case of the formula below but
-  // its removable singularity, and the series is what keeps a shallow
-  // one from evaluating a difference of nearly equal exponentials over
-  // a nearly zero denominator. Branching on `k` first also keeps an
-  // unbounded segment from forming 0 times infinity.
-  if (k == 0.0f) return t;
-  const float kt{k * t};
-  if (std::abs(kt) < 1e-4f) return t * (1.0f - 0.5f * kt);
-  return -std::expm1(-kt) / k;
-}
-
-float Haze::shapeInverse(float k, float s) noexcept {
-  if (!(s > 0.0f)) return 0.0f;
-  if (k == 0.0f) return s;
-  // An upward ray reaches at most `1/k`, the finite zenith shape; past
-  // that there is no collision and the ray leaves the atmosphere.
-  const float ks{k * s};
-  if (!(ks < 1.0f)) return INF;
-  return -std::log1p(-ks) / k;
-}
-
 } // namespace smdl

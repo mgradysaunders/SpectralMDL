@@ -35,11 +35,19 @@ public:
   /// The number of indexes.
   [[nodiscard]] int size() const noexcept { return int(cmfs.size()) - 1; }
 
-  /// The index probability mass function (PMF).
-  [[nodiscard]] float indexPMF(int i) const noexcept;
+  /// The index probability mass function (PMF). Inline, because a
+  /// light sampler asks for it per sample.
+  [[nodiscard]] float indexPMF(int i) const noexcept {
+    if (0 <= i && i < size())
+      return float(INV_CMF_SCALE * double(cmfs[i + 1] - cmfs[i]));
+    return 0.0f;
+  }
 
   /// The index cumulative mass function (CMF).
-  [[nodiscard]] float indexCMF(int i) const noexcept;
+  [[nodiscard]] float indexCMF(int i) const noexcept {
+    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs[i]));
+    return i < 0 ? 0.0f : 1.0f;
+  }
 
   /// The index sampling routine.
   ///
@@ -63,6 +71,9 @@ private:
   /// table of `float` the difference of two entries stays exact, which
   /// is what `indexPMF()` reads.
   std::vector<std::uint32_t> cmfs{};
+
+  /// The unit of `cmfs`, `2^-32`.
+  static constexpr double INV_CMF_SCALE = 1.0 / 4294967296.0;
 };
 
 /// \name Functions (sampling)
