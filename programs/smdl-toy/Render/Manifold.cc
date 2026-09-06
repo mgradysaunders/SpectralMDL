@@ -9,7 +9,7 @@
 static constexpr int MAX_SKIPS{16};
 
 ManifoldVertex vertexOf(const Hit &hit) {
-  ManifoldVertex vertex{};
+  ManifoldVertex vertex;
   vertex.point = hit.point;
   vertex.surface = hit.instIndex;
   vertex.face = hit.faceIndex;
@@ -64,7 +64,7 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
   if (!smdl::tryNormalize(dir)) return false;
   Ray ray{origin, dir, EPS, INF, time.fraction};
   for (int skip = 0; skip < MAX_SKIPS; skip++) {
-    ManifoldHit hit{};
+    ManifoldHit hit;
     if (!scene.intersect(ray, hit)) return false;
     if (hit.vertex.surface == pin.surface && !hit.instance->isCurves()) {
       if (hit.instance->isPrimitive() && hit.vertex.face != pin.face)

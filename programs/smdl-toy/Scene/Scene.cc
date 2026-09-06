@@ -1856,12 +1856,14 @@ void finishManifoldGeometry(const InstanceFrame &frame,
   if (!(rawLength > 0.0f)) {
     // The interpolated normal field collapsed here, which a seam whose
     // vertex normals cancel will do. Fall back to the facet, which is
-    // the flat reading of a field that has no direction to give, and
-    // leave the partials zero: there is nothing left to differentiate.
-    // The alternative is a NaN normal propagating into the walk, and
+    // the flat reading of a field that has no direction to give, with
+    // zero partials: there is nothing left to differentiate. The
+    // alternative is a NaN normal propagating into the walk, and
     // `geometry.Ng` already carries the winding flip, so this returns
     // before the flip below.
     geometry.normal = geometry.Ng;
+    geometry.dNdu = float3();
+    geometry.dNdv = float3();
     return;
   }
   geometry.normal = normalize(rawNormal);
@@ -1899,7 +1901,7 @@ ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
   const auto &primitive{*primitives[meshInstance.primIndex]};
   const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
                                           float2(bary[1], bary[2]))};
-  ManifoldGeometry geometry{};
+  ManifoldGeometry geometry;
   geometry.point = transformPoint(objectToWorld, surface.point);
   geometry.dPdu = transformDirection(objectToWorld, surface.dPdu);
   geometry.dPdv = transformDirection(objectToWorld, surface.dPdv);
@@ -1935,7 +1937,7 @@ ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
   const auto point0{transformPoint(objectToWorld, vert0.point)};
   const auto point1{transformPoint(objectToWorld, vert1.point)};
   const auto point2{transformPoint(objectToWorld, vert2.point)};
-  ManifoldGeometry geometry{};
+  ManifoldGeometry geometry;
   geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
   // The parameterization is the barycentric pair (bary[1], bary[2]).
   geometry.dPdu = point1 - point0;

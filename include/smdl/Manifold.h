@@ -84,21 +84,26 @@ constexpr int MANIFOLD_MAX_TRIALS{64};
 /// rest exists so the renderer can rebuild its own hit record from a
 /// vertex the walk hands back, and means whatever its
 /// `ManifoldSurfaces` implementation says it means.
+///
+/// This and the geometry and connection records below carry no default
+/// values: they are the solver's scratch, declared without braces and
+/// written whole before they are read, and a walk fills thousands of
+/// them per estimate. Value-initialize (`{}`) one that must start zero.
 class ManifoldVertex final {
 public:
   /// The world-space point on the surface.
-  float3 point{};
+  float3 point;
 
   /// The renderer's identity of the surface, e.g. an instance index.
-  uint64_t surface{};
+  uint64_t surface;
 
   /// The renderer's identity of the face or smooth piece within the
   /// surface, e.g. a triangle or primitive-piece index.
-  uint64_t face{};
+  uint64_t face;
 
   /// The face parameterization of the point, e.g. barycentric
   /// coordinates or a local `uv`, up to three components.
-  float3 coords{};
+  float3 coords;
 };
 
 /// The differential shading geometry at a vertex, in world space: the
@@ -108,24 +113,24 @@ public:
 /// surface rather than the interpolated field.
 class ManifoldGeometry final {
 public:
-  float3 point{};
+  float3 point;
 
   /// The shading normal: the field the material's lobes actually
   /// scatter about, which for a material that remaps `geometry.normal`
   /// is the remapped field (see `JIT::Material::geometryNormalEvaluate`).
-  float3 normal{};
+  float3 normal;
 
   /// The position partials over the face parameterization
   /// `ManifoldVertex::coords` steps in.
-  float3 dPdu{};
-  float3 dPdv{};
+  float3 dPdu;
+  float3 dPdv;
 
   /// The shading normal partials over the same parameterization.
-  float3 dNdu{};
-  float3 dNdv{};
+  float3 dNdu;
+  float3 dNdv;
 
   /// The geometric (facet) normal.
-  float3 Ng{};
+  float3 Ng;
 };
 
 /// The surfaces a manifold walk moves on, supplied by the renderer.
@@ -254,7 +259,9 @@ public:
 /// for a refractive connection, a sampled caster point for a reflective one.
 class ManifoldChain final {
 public:
-  [[nodiscard]] size_t size() const noexcept { return static_cast<size_t>(count); }
+  [[nodiscard]] size_t size() const noexcept {
+    return static_cast<size_t>(count);
+  }
 
   [[nodiscard]] auto *begin() noexcept { return vertices.data(); }
 
@@ -288,22 +295,22 @@ public:
 class ManifoldConnectionVertex final {
 public:
   /// The interface vertex the walk converged to.
-  ManifoldVertex vertex{};
+  ManifoldVertex vertex;
 
   /// The differential geometry at the vertex.
-  ManifoldGeometry geometry{};
+  ManifoldGeometry geometry;
 
   /// The unit direction toward the previous vertex (or the receiver).
-  float3 wPrev{};
+  float3 wPrev;
 
   /// The unit direction toward the next vertex (or the light).
-  float3 wNext{};
+  float3 wNext;
 
   /// The cosine of `wPrev` against the shading normal, positive.
-  float cosPrev{};
+  float cosPrev;
 
   /// The cosine of `wNext` against the shading normal, positive.
-  float cosNext{};
+  float cosNext;
 
   /// The measure `|d h / d omega_next|` of this crossing: how much
   /// tangential half vector a unit of outgoing solid angle is worth,
@@ -313,18 +320,18 @@ public:
   /// place of the density a glossy one has, since the Dirac delta that
   /// collapses its two dimensions is expressed in direction and the walk
   /// works in half vectors.
-  float halfVectorJacobian{};
+  float halfVectorJacobian;
 };
 
 /// A converged connection.
 class ManifoldConnection final {
 public:
-  std::array<ManifoldConnectionVertex, MANIFOLD_MAX_DEPTH> vertices{};
+  std::array<ManifoldConnectionVertex, MANIFOLD_MAX_DEPTH> vertices;
 
-  int count{};
+  int count;
 
   /// The unit direction from the receiver toward the first vertex.
-  float3 wr{};
+  float3 wr;
 
   /// The offset Jacobian: the measure of the nested outgoing solid angles
   /// per unit of the variables the connection is drawn in, which are the
@@ -346,7 +353,7 @@ public:
   /// radiance compression `eta^2` that rides with refracted radiance is
   /// deliberately not included, so the caller applies the same
   /// convention the specular BSDF uses.
-  float offsetJacobian{};
+  float offsetJacobian;
 
   /// The connection's measure for the chain it solved: the offset
   /// Jacobian times, at every Dirac crossing, the half-vector measure
@@ -408,9 +415,31 @@ public:
   Failure failure{Failure::NONE};
 };
 
+/// What tells one converged connection from another for
+/// `isSameManifoldSolution()`: where its crossings land, which is all
+/// the comparison reads, so a set of found solutions keeps these rather
+/// than whole connections. Scratch like the connection itself: `set()`
+/// writes the points below `count` and nothing past them.
+class ManifoldSolutionKey final {
+public:
+  void set(const ManifoldConnection &connection) noexcept {
+    count = connection.count;
+    for (int i = 0; i < count; i++)
+      points[i] = connection.vertices[i].vertex.point;
+  }
+
+  std::array<float3, MANIFOLD_MAX_DEPTH> points;
+  int count;
+};
+
 /// Are two converged connections of randomly started walks the same
 /// solution? Compared by where the crossings land, within
 /// `MANIFOLD_SOLUTION_IDENTITY_FRACTION` of the receiver distance.
+[[nodiscard]] SMDL_EXPORT bool
+isSameManifoldSolution(const float3 &receiver, const ManifoldSolutionKey &a,
+                       const ManifoldConnection &b);
+
+/// The same, keyed on the fly.
 [[nodiscard]] SMDL_EXPORT bool
 isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
                        const ManifoldConnection &b);
@@ -466,7 +495,7 @@ manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
                    Retry &&retry) {
   inverseProbability = 1.0f;
   for (trials = 1; trials <= maxTrials; trials++) {
-    ManifoldConnection other{};
+    ManifoldConnection other;
     if (retry(other) && isSameManifoldSolution(receiver, connection, other))
       return true;
     inverseProbability += 1.0f;

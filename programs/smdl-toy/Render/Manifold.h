@@ -212,7 +212,7 @@ public:
     for (int i = 0; i < mCount; i++)
       if (isSameManifoldSolution(receiver, mSolutions[i], connection)) return;
     if (mCount == MAX_SOLUTIONS) return;
-    mSolutions[mCount++] = connection;
+    mSolutions[mCount++].set(connection);
     const Color contribution{value(connection)};
     ManifoldStats::global().recordContribution(!contribution.isAllZero());
     mSum += contribution;
@@ -225,7 +225,9 @@ private:
   /// The most distinct solutions one estimate clusters.
   static constexpr int MAX_SOLUTIONS{32};
 
-  std::array<ManifoldConnection, MAX_SOLUTIONS> mSolutions{};
+  /// The keys of the solutions counted so far, which is all a re-find
+  /// is told apart by; scratch below `mCount`, indeterminate past it.
+  std::array<smdl::ManifoldSolutionKey, MAX_SOLUTIONS> mSolutions;
   int mCount{};
   Color mSum{};
 };

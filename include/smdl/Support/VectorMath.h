@@ -71,12 +71,20 @@ template <typename T>
 /// \}
 
 /// The vector template.
+///
+/// Default construction leaves the components indeterminate, as it
+/// does a scalar's; `float3 v{}` zero-initializes. The default
+/// constructor is trivial so that an array of vectors declared as
+/// scratch costs nothing until it is written, which the manifold solver
+/// relies on, and it is not `constexpr` because a defaulted constructor
+/// that leaves members uninitialized cannot be before C++20; the
+/// component constructors are, which is what a constant needs.
 template <typename T, size_t M> class Vector;
 
 /// The vector template for `N = 2`.
 template <typename T> class alignas(2 * sizeof(T)) Vector<T, 2> {
 public:
-  constexpr Vector() = default;
+  Vector() = default;
 
   constexpr Vector(T x) : Vector(x, x) {}
 
@@ -102,13 +110,13 @@ public:
     return result;
   }
 
-  T x{}, y{};
+  T x, y;
 };
 
 /// The vector template for `N = 3`.
 template <typename T> class alignas(4 * sizeof(T)) Vector<T, 3> {
 public:
-  constexpr Vector() = default;
+  Vector() = default;
 
   constexpr Vector(T x) : Vector(x, x, x) {}
 
@@ -134,13 +142,13 @@ public:
     return result;
   }
 
-  T x{}, y{}, z{};
+  T x, y, z;
 };
 
 /// The vector template for `N = 4`.
 template <typename T> class alignas(4 * sizeof(T)) Vector<T, 4> {
 public:
-  constexpr Vector() = default;
+  Vector() = default;
 
   constexpr Vector(T x) : Vector(x, x, x, x) {}
 
@@ -168,7 +176,7 @@ public:
     return result;
   }
 
-  T x{}, y{}, z{}, w{};
+  T x, y, z, w;
 };
 
 inline namespace vector_type_aliases {

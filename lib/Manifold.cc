@@ -116,23 +116,23 @@ class ManifoldChainState final {
 public:
   // The slice of the iterate at one vertex of the chain.
   struct Vertex final {
-    ManifoldGeometry geometry{};
-    float3 wPrev{}; // Toward the previous vertex, or the receiver.
-    float3 wNext{}; // Toward the next vertex, or the light.
-    float distPrev{};
-    float distNext{}; // 0 for the distant light.
-    float3 hHat{};
-    float hLen{};
+    ManifoldGeometry geometry;
+    float3 wPrev; // Toward the previous vertex, or the receiver.
+    float3 wNext; // Toward the next vertex, or the light.
+    float distPrev;
+    float distNext; // 0 for the distant light.
+    float3 hHat;
+    float hLen;
     // The sign that orients `Hhat` onto the shading normal's side, so that
     // the constraint means a microfacet normal rather than a line through
     // one. Zero offsets do not care, which is why it never mattered before.
-    float hSign{};
+    float hSign;
     // The area element of the parameterization the Jacobian is expressed in,
     // and the half-vector measure of the crossing; see the header.
-    float areaElement{};
-    float halfVectorJacobian{};
-    float3 t1{};
-    float3 t2{};
+    float areaElement;
+    float halfVectorJacobian;
+    float3 t1;
+    float3 t2;
   };
 
   [[nodiscard]] auto &operator[](int i) noexcept { return vertices[i]; }
@@ -145,11 +145,11 @@ public:
   }
 
 public:
-  std::array<Vertex, MANIFOLD_MAX_DEPTH> vertices{};
-  int count{};
+  std::array<Vertex, MANIFOLD_MAX_DEPTH> vertices;
+  int count;
 
-  ConstraintVector C{};
-  ConstraintMatrix J{};
+  ConstraintVector C;
+  ConstraintMatrix J;
 };
 
 // The derivative of a unit direction `w = (q - p)/d` with respect to a
@@ -177,7 +177,7 @@ bool evaluateChain(
   // distance drops the position-derivative term below) or the segment
   // to the finite light point (whose derivative term the shared
   // formula picks up through the real distance).
-  std::array<float, MANIFOLD_MAX_DEPTH> gLen{};
+  std::array<float, MANIFOLD_MAX_DEPTH> gLen;
   for (int i = 0; i < count; i++) {
     auto &sv{chainState[i]};
     const auto &geometry{sv.geometry};
@@ -444,8 +444,11 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   const int count{chain.count};
   if (count < 1 || count > MANIFOLD_MAX_DEPTH)
     return finish(Outcome::DIVERGED, Failure::START);
-  std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> vertices{};
-  std::array<float3, MANIFOLD_MAX_DEPTH> frameSeeds{};
+  // The scratch below is deliberately left uninitialized: every entry
+  // under `count` is written before it is read, nothing past `count` is
+  // touched, and a walk declares it afresh at every trial.
+  std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> vertices;
+  std::array<float3, MANIFOLD_MAX_DEPTH> frameSeeds;
   for (int i = 0; i < count; i++) vertices[i] = chain[i].vertex;
   buildFrameSeeds(surfaces, chain, frameSeeds);
   // Move the starting iterate off the straight-line crossing, if asked. The
@@ -462,7 +465,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
                                t2))
           return finish(Outcome::DIVERGED, Failure::START);
         const float scale{length(vertices[i].point - receiver)};
-        ManifoldVertex moved{};
+        ManifoldVertex moved;
         if (!surfaces.project(chain[i].vertex, origin,
                               vertices[i].point +
                                   scale * (jitter.x * t1 + jitter.y * t2),
@@ -478,7 +481,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   // rebuilds a state per halving nor copies one back on acceptance. The
   // state is a kilobyte and `evaluateChain()` writes every field of it that
   // anything reads, so a trial that fails leaves nothing behind to matter.
-  ManifoldChainState stateBuffers[2]{};
+  ManifoldChainState stateBuffers[2];
   ManifoldChainState *state{&stateBuffers[0]};
   ManifoldChainState *trial{&stateBuffers[1]};
   if (!evaluateChain(surfaces, receiver, target, chain, frameSeeds, vertices,
@@ -491,7 +494,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   bool converged{false};
   // The trial vertices, likewise reused: a step writes every entry the
   // chain has, and a step that fails part way is abandoned unread.
-  std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> stepVertices{};
+  std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> stepVertices;
   for (int iteration = 0; iteration < MAX_ITERATIONS && !converged;
        iteration++) {
     iterationsDone = iteration;
@@ -511,7 +514,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     // cannot fling any vertex across the scene, and measured against the
     // distance to the receiver, which is the scale the arrival side
     // judges the same answer at.
-    std::array<float3, MANIFOLD_MAX_DEPTH> steps{};
+    std::array<float3, MANIFOLD_MAX_DEPTH> steps;
     float maxStepLen{};
     float maxStepFraction{};
     float minDist{(*state)[0].distPrev};
@@ -569,7 +572,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
                          stepVertices, *trial))
         continue;
       if (trial->residual() < residual) {
-        vertices = stepVertices;
+        for (int i = 0; i < count; i++) vertices[i] = stepVertices[i];
         std::swap(state, trial);
         accepted = true;
         break;
@@ -625,7 +628,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
 bool manifoldSeedFrame(const ManifoldSurfaces &surfaces,
                        const ManifoldVertex &vertex, const float3 &frameSeed,
                        float3 &normal, float3 &t1, float3 &t2) {
-  ManifoldGeometry geometry{};
+  ManifoldGeometry geometry;
   if (!surfaces.geometry(vertex, geometry)) return false;
   normal = geometry.normal;
   float3 t{frameSeed - dot(normal, frameSeed) * normal};
@@ -636,24 +639,31 @@ bool manifoldSeedFrame(const ManifoldSurfaces &surfaces,
 
 float3 manifoldFrameSeed(const ManifoldSurfaces &surfaces,
                          const ManifoldVertex &vertex) {
-  ManifoldGeometry geometry{};
+  ManifoldGeometry geometry;
   if (!surfaces.geometry(vertex, geometry)) return {1.0f, 0.0f, 0.0f};
   float3 g{geometry.dPdu -
            dot(geometry.normal, geometry.dPdu) * geometry.normal};
   return tryNormalize(g) ? g : perpendicularTo(geometry.normal);
 }
 
-bool isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
+bool isSameManifoldSolution(const float3 &receiver,
+                            const ManifoldSolutionKey &a,
                             const ManifoldConnection &b) {
   if (a.count != b.count) return false;
   for (int i = 0; i < a.count; i++) {
-    const float scale{
-        std::max(1e-3f, length(a.vertices[i].vertex.point - receiver))};
-    if (!(length(a.vertices[i].vertex.point - b.vertices[i].vertex.point) <
+    const float scale{std::max(1e-3f, length(a.points[i] - receiver))};
+    if (!(length(a.points[i] - b.vertices[i].vertex.point) <
           MANIFOLD_SOLUTION_IDENTITY_FRACTION * scale))
       return false;
   }
   return true;
+}
+
+bool isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
+                            const ManifoldConnection &b) {
+  ManifoldSolutionKey key;
+  key.set(a);
+  return isSameManifoldSolution(receiver, key, b);
 }
 
 ManifoldStats &ManifoldStats::global() noexcept {

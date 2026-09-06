@@ -144,12 +144,14 @@ using ManifoldGeometry = smdl::ManifoldGeometry;
 /// identity, null interface), with none of the shading fields
 /// `makeHit()` derives. The point and coordinates are computed by the
 /// same parametric expressions as `manifoldGeometry()`, so a walk
-/// stepping through these sees the same numbers bit for bit.
+/// stepping through these sees the same numbers bit for bit. Written
+/// whole by `Scene::intersect()` on a hit and carrying no default
+/// values, so a projection cast declares one for free.
 class ManifoldHit final {
 public:
-  smdl::ManifoldVertex vertex{};
-  const MeshInstance *instance{};
-  const smdl::JIT::Material *material{};
+  smdl::ManifoldVertex vertex;
+  const MeshInstance *instance;
+  const smdl::JIT::Material *material;
 };
 
 /// A mesh.

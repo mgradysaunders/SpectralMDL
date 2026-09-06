@@ -598,7 +598,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
           for (int i = 0; i < chain.count; i++)
             chain[i].seedJitter = MANIFOLD_SEED_JITTER *
                                   smdl::uniformDiskSample(float2(path.sampler));
-        ManifoldConnection connection{};
+        ManifoldConnection connection;
         ManifoldWalkReport report{};
         const bool converged{solveManifoldConnection(
             surfaces, vertex.point, target, chain, connection, &report)};
@@ -616,7 +616,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
                          render.mneeOptions.biasedTrials, false);
       result += solutions.sum();
     } else {
-      ManifoldConnection connection{};
+      ManifoldConnection connection;
       ManifoldWalkReport report{};
       const bool converged{solveManifoldConnection(
           surfaces, vertex.point, target, chain, connection, &report)};
@@ -925,7 +925,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
     stats.recordWalk(report);
     return ok;
   }};
-  ManifoldConnection connection{};
+  ManifoldConnection connection;
   const bool firstConverged{solve(connection)};
   stats.recordEstimate(statKind, firstConverged);
   if (render.mneeOptions.biasedTrials > 0) {
@@ -939,7 +939,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
     }};
     if (firstConverged) solutions.consider(vertex.point, connection, value);
     for (int trial = 1; trial < render.mneeOptions.biasedTrials; trial++) {
-      ManifoldConnection other{};
+      ManifoldConnection other;
       if (reseed(chain) && solve(other))
         solutions.consider(vertex.point, other, value);
     }
@@ -1204,7 +1204,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
     origin = hit.point;
   }
   if (!reached || chain.count != chainLength) return 1.0f;
-  ManifoldConnection connection{};
+  ManifoldConnection connection;
   ManifoldWalkReport report{};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   const bool converged{solveManifoldConnection(surfaces, receiver, target,
