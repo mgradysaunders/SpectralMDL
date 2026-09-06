@@ -186,10 +186,11 @@ struct PathContext final {
   ///
   /// Borrowed rather than owned because it holds the component storage a
   /// resolution fills, which is worth buying once for a block of pixels
-  /// instead of once per sample. Reuse across paths is safe because
-  /// `PathWalk` sets the haze at the head of every path, which
-  /// invalidates whatever the last one resolved; nothing may rely on the
-  /// resolution surviving, since the stacks it keyed on are gone.
+  /// instead of once per sample, and because the resolution itself is
+  /// worth keeping from one path to the next when both cross the same
+  /// medium. `PathWalk` calls `Medium::beginPath()` at the head of every
+  /// path, so the last path's stacks, gone with its allocator, are never
+  /// taken for this one's.
   Medium &medium;
 
   /// The sun-sky resolved onto `wavelengths`, which every environment

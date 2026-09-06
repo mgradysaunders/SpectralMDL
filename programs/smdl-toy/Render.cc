@@ -356,10 +356,12 @@ void renderSamples(const Options &opts, const Frame &frame,
         // one, so what a block shares is the memory, never the state.
         smdl::BumpPtrAllocator allocator;
         Sampler sampler;
-        // The medium view every path of the block resolves through. Its
-        // component storage is bought once here rather than once per
-        // sample; every path invalidates it before its first use.
+        // The medium view every path of the block resolves through, with
+        // the haze it stands in for the vacuum set once: its component
+        // storage and its resolution both carry from path to path, see
+        // `PathContext::medium`.
         Medium medium;
+        medium.setHaze(haze);
         // Training records for `trainGuiding()`, one per vertex the walk
         // may reach, sized only on the pre-final guiding passes that fill
         // them: at a runtime band count every record holds sized vectors,

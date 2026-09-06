@@ -1482,7 +1482,7 @@ public:
       : mRender(render), mPath(path), mGatherState(path.gatherState),
         mState(path.walkState), mMediumStack(render.exteriorMedium) {
     path.numRecords = 0;
-    path.medium.setHaze(render.haze);
+    path.medium.beginPath();
   }
 
   // Trace the path the camera sample starts and return its radiance

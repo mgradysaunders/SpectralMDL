@@ -245,7 +245,7 @@ hasUsableDensityGrid(const smdl::JIT::MaterialInstance &mat) {
 void Medium::reset(const MediumStack *stack, const Color &wavelengths,
                    PathTime time, const float3 &org,
                    const float3 &dir) noexcept {
-  if (!mResolved || stack != mStack || time.seconds != mTime)
+  if (!mStackKnown || stack != mStack || time.seconds != mTime)
     resolve(stack, wavelengths, time);
   setSegment(org, dir, time.fraction);
 }
@@ -253,6 +253,66 @@ void Medium::reset(const MediumStack *stack, const Color &wavelengths,
 void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
                      PathTime time) noexcept {
   mStack = stack;
+  mStackKnown = true;
+  if (mResolved && rebind(stack, time)) return;
+  rebuild(stack, wavelengths, time);
+}
+
+bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
+  // The haze stands in for the empty stack and has no components; see
+  // `rebuild()`.
+  if (mIsHaze != (!stack && mHaze != nullptr)) return false;
+  if (!mIsHaze) {
+    size_t count{0};
+    for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
+      const auto &mat{entry->mat};
+      if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
+        if (count == mComponents.size() || !matches(mComponents[count], *entry))
+          return false;
+        mComponents[count++].mat = &mat;
+      }
+      if (!mat.hasAdditiveVolume()) break;
+    }
+    if (count != mComponents.size()) return false;
+    if (count > 0) mScatterInstance = mComponents.front().mat;
+  }
+  if (time.seconds != mTime) {
+    mTime = time.seconds;
+    if (mMoving) {
+      std::optional<InstanceFrame> scratch{};
+      for (auto &component : mComponents)
+        if (component.heterogeneous && component.meshInstance)
+          component.state->object_to_world_matrix =
+              component.meshInstance->frameAt(time.fraction, scratch)
+                  .rigidToWorld;
+    }
+  }
+  return true;
+}
+
+bool Medium::matches(const Component &component,
+                     const MediumStack &entry) const noexcept {
+  const auto &mat{entry.mat};
+  if (component.material != mat.material ||
+      component.presence != presenceOf(mat))
+    return false;
+  if (!component.heterogeneous)
+    return valuesMatch(mat.getAbsorptionCoefficient(), component.sigmaA) &&
+           valuesMatch(mat.getScatteringCoefficient(), component.sigmaS) &&
+           valuesMatch(mat.getVolumeEmissionIntensity(), component.emission);
+  if (component.meshInstance != entry.meshInstance ||
+      !valuesMatch(mat.getMaxAbsorptionCoefficient(), component.maxSigmaA) ||
+      !valuesMatch(mat.getMaxScatteringCoefficient(), component.maxSigmaS))
+    return false;
+  if (!hasUsableDensityGrid(mat)) return component.grid == nullptr;
+  return component.grid == mat.getVolumeDensityGrid() &&
+         smdl::isAllTrue(component.boundMin ==
+                         *mat.getVolumeDensityBoundMin()) &&
+         smdl::isAllTrue(component.boundMax == *mat.getVolumeDensityBoundMax());
+}
+
+void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
+                     PathTime time) noexcept {
   mTime = time.seconds;
   mResolved = true;
   mHasMedium = false;
@@ -301,6 +361,8 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
       auto &component{mComponents.emplace_back()};
       component.mat = &mat;
+      component.material = mat.material;
+      component.presence = presenceOf(mat);
       component.sigmaA = Color(mat.getAbsorptionCoefficient());
       component.sigmaA *= mUnitScale;
       component.sigmaS = Color(mat.getScatteringCoefficient());
@@ -340,6 +402,9 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
           // The density acceleration hint, active only when the material
           // declares all three fields and they are usable.
           if (hasUsableDensityGrid(mat)) {
+            component.grid = mat.getVolumeDensityGrid();
+            component.boundMin = *mat.getVolumeDensityBoundMin();
+            component.boundMax = *mat.getVolumeDensityBoundMax();
             ++gridCandidates;
             mGridComponent = int(mComponents.size()) - 1;
           }
@@ -387,7 +452,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     mMajorantGrid = mGridMaxSigma.maxComponent();
     mMajorantBase = std::max(
         (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
-    setDensityGrid(*component.mat);
+    setDensityGrid(component);
   } else {
     mGridComponent = -1;
     mGridMaxSigma = Color();
@@ -396,17 +461,16 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   }
 }
 
-void Medium::setDensityGrid(const smdl::JIT::MaterialInstance &mat) noexcept {
-  const auto *densityGrid{mat.getVolumeDensityGrid()};
-  const auto *boundMin{mat.getVolumeDensityBoundMin()};
-  const auto *boundMax{mat.getVolumeDensityBoundMax()};
-  mDensityGrid = densityGrid;
-  const auto extent{densityGrid->getExtent()};
-  mBrickBoundMin = *boundMin;
-  mBrickScale = float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
-                       float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
-                       float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
-  mInvMaxValue = 1.0f / densityGrid->getMaxValue();
+void Medium::setDensityGrid(const Component &component) noexcept {
+  const auto &boundMin{component.boundMin};
+  const auto &boundMax{component.boundMax};
+  mDensityGrid = component.grid;
+  const auto extent{component.grid->getExtent()};
+  mBrickBoundMin = boundMin;
+  mBrickScale = float3(float(extent.x) / (16.0f * (boundMax.x - boundMin.x)),
+                       float(extent.y) / (16.0f * (boundMax.y - boundMin.y)),
+                       float(extent.z) / (16.0f * (boundMax.z - boundMin.z)));
+  mInvMaxValue = 1.0f / component.grid->getMaxValue();
 }
 
 void Medium::setSegment(const float3 &org, const float3 &dir,

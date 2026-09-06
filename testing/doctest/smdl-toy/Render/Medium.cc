@@ -603,3 +603,107 @@ TEST_CASE("Medium: additive overlap") {
                MEAN_TOLERANCE, "the mean transmittance of the overlap");
   }
 }
+
+// Are the two the same floating-point numbers band for band? What a
+// resolution kept from one path to the next must reproduce: not close,
+// identical.
+[[nodiscard]] static bool isIdentical(const Color &a, const Color &b) {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); i++)
+    if (a[i] != b[i]) return false;
+  return true;
+}
+
+TEST_CASE("Medium: the resolution carries across paths") {
+  Fixture fixture{};
+  const auto &wavelengths{fixture.wavelengths};
+  const float3 org{0.0f, 0.0f, 0.0f};
+  const float3 dir{1.0f, 0.0f, 0.0f};
+  constexpr float DISTANCE{2.0f};
+  Medium medium{};
+
+  {
+    INFO("the same homogeneous medium on a new stack");
+    // Two stacks over one material, the second seen after `beginPath()`
+    // as the next path would see it: the answers must be the same
+    // floating-point numbers, and every scattering event must name the
+    // new stack's instance, never the old one's.
+    REQUIRE(fixture.isProvablyHomogeneous("fog"));
+    auto &a{fixture.entry("fog")};
+    auto &b{fixture.entry("fog")};
+    const auto first{
+        sampleMeans(medium, &a, wavelengths, org, dir, DISTANCE, &a.mat)};
+    medium.beginPath();
+    const auto second{
+        sampleMeans(medium, &b, wavelengths, org, dir, DISTANCE, &b.mat)};
+    REQUIRE(first.numScattered > 0);
+    CHECK(first.numScattered == second.numScattered);
+    CHECK(isIdentical(first.survived, second.survived));
+    CHECK(isIdentical(first.scattered, second.scattered));
+    CHECK(isIdentical(first.pickedFirst, first.scattered));
+    CHECK(isIdentical(second.pickedFirst, second.scattered));
+  }
+  {
+    INFO("the same tracked medium on a new stack");
+    REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_vol"));
+    auto &a{fixture.entry("ramp_vol")};
+    auto &b{fixture.entry("ramp_vol")};
+    const auto first{
+        sampleMeans(medium, &a, wavelengths, org, dir, DISTANCE, &a.mat)};
+    medium.beginPath();
+    const auto second{
+        sampleMeans(medium, &b, wavelengths, org, dir, DISTANCE, &b.mat)};
+    CHECK(medium.attenuationDraws());
+    REQUIRE(first.numScattered > 0);
+    CHECK(first.numScattered == second.numScattered);
+    CHECK(isIdentical(first.survived, second.survived));
+    CHECK(isIdentical(first.scattered, second.scattered));
+    CHECK(isIdentical(second.pickedFirst, second.scattered));
+  }
+  {
+    INFO("a snapshot captured elsewhere is another medium");
+    // The fallback medium is its captured coefficients, which this
+    // material varies along X: an instance captured at another point
+    // must resolve to its own snapshot, not be taken for the last one.
+    REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
+    const float unitScale{fixture.state->meters_per_scene_unit};
+    auto &a{fixture.entry("ramp_nomax")};
+    fixture.state->position = float3(2.0f, 0.0f, 0.0f);
+    auto &b{fixture.entry("ramp_nomax")};
+    fixture.state->position = float3(0.0f, 0.0f, 0.0f);
+    const auto first{
+        attenuateMean(medium, &a, wavelengths, org, dir, DISTANCE)};
+    medium.beginPath();
+    const auto second{
+        attenuateMean(medium, &b, wavelengths, org, dir, DISTANCE)};
+    CHECK_FALSE(isIdentical(first, second));
+    checkClose(second,
+               beerLambert(coefficientsOf(b, unitScale).extinction(), DISTANCE),
+               1e-3f, "the closed form on the new snapshot");
+  }
+  {
+    INFO("a different medium at a reused address");
+    // The path allocator hands the same addresses out again, so a stack
+    // at the address of the last path's must be seen for what it holds.
+    std::optional<MediumStack> slot{};
+    slot.emplace(
+        MediumStack{nullptr,
+                    smdl::JIT::MaterialInstance(
+                        *fixture.state, fixture.compiler.findMaterial("fog")),
+                    nullptr});
+    const auto fog{
+        attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};
+    slot.emplace(
+        MediumStack{nullptr,
+                    smdl::JIT::MaterialInstance(
+                        *fixture.state, fixture.compiler.findMaterial("fog_a")),
+                    nullptr});
+    medium.beginPath();
+    const auto fogA{
+        attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};
+    Medium fresh{};
+    CHECK_FALSE(isIdentical(fog, fogA));
+    CHECK(isIdentical(
+        fogA, attenuateMean(fresh, &*slot, wavelengths, org, dir, DISTANCE)));
+  }
+}

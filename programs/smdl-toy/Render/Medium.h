@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -177,17 +179,31 @@ public:
   /// keeps a walk that scatters repeatedly inside one medium from
   /// resolving it at every bounce.
   ///
-  /// The resolution is keyed on the address of the stack, so a view
-  /// must not be reused past the lifetime of the stacks it resolved,
-  /// which is one path: the allocator that owns them is reset between
-  /// samples.
+  /// Within a path a repeat is found by the address of the stack.
+  /// Across paths the addresses mean nothing: the allocator that owns
+  /// the stacks is reset between samples and hands the same addresses
+  /// out again, so `beginPath()` drops the key, and the first call after
+  /// it identifies the medium by what the stack carries instead. The
+  /// same run of materials with the same coefficients keeps the
+  /// resolution, with only the instance pointers refreshed; anything
+  /// else rebuilds it. A path that enters the medium the last one did,
+  /// which is every path of a render inside one fog or one plume,
+  /// therefore resolves it once per block rather than once per sample.
   void reset(const MediumStack *stack, const Color &wavelengths, PathTime time,
              const float3 &org, const float3 &dir) noexcept;
 
+  /// Forget the stack the resolution is keyed on, at the head of every
+  /// path: the stacks it resolved are gone with the path's allocator,
+  /// and the addresses it saw are about to be handed out again. The
+  /// resolution itself survives for the next `reset()` to keep or
+  /// rebuild; see there.
+  void beginPath() noexcept { mStackKnown = false; }
+
   /// Set the scene-wide exterior haze that an empty stack resolves to,
-  /// or null for a vacuum exterior. Invalidates whatever is resolved,
-  /// so call it before the first `reset()`.
+  /// or null for a vacuum exterior. A change invalidates whatever is
+  /// resolved; restating the haze already set does nothing.
   void setHaze(const smdl::Haze *haze) noexcept {
+    if (haze == mHaze) return;
     mHaze = haze;
     // The albedo spectrum does not vary with height or segment, so it is
     // resolved once here rather than per segment like the extinction.
@@ -257,8 +273,23 @@ public:
 
 private:
   /// Resolve the active media on `stack` into the members that depend
-  /// on the stack alone, everything `reset()` skips on a repeat.
+  /// on the stack alone, everything `reset()` skips on a repeat: kept
+  /// by `rebind()` when they already describe this medium, built anew
+  /// by `rebuild()` otherwise.
   void resolve(const MediumStack *stack, const Color &wavelengths,
+               PathTime time) noexcept;
+
+  /// Is the resolved medium the one on `stack`? Walks the active run
+  /// of the stack exactly as `rebuild()` does and compares each entry
+  /// with its component (`matches()`). On a match the components take
+  /// the entries' instances, which are the path's, a moving instance's
+  /// frame is read again at the new time, and true is returned with
+  /// everything else as it was; on a mismatch false, and nothing kept
+  /// is to be trusted.
+  [[nodiscard]] bool rebind(const MediumStack *stack, PathTime time) noexcept;
+
+  /// Build the resolution of `stack` from nothing.
+  void rebuild(const MediumStack *stack, const Color &wavelengths,
                PathTime time) noexcept;
 
   /// Project the segment into the rigid frame of every heterogeneous
@@ -274,8 +305,15 @@ private:
   /// read, which are sums over these.
   struct Component final {
     /// The material instance of the stack entry, whose lifetime is the
-    /// path's allocator.
+    /// path's allocator; `rebind()` points it at the entry of the path
+    /// in flight.
     const smdl::JIT::MaterialInstance *mat{};
+
+    /// The material behind `mat`, which outlives every path.
+    const smdl::JIT::Material *material{};
+
+    /// The volume fields the instance carries, see `presenceOf()`.
+    uint8_t presence{};
 
     /// Is this component heterogeneous (or unproven) with usable
     /// majorants? A component missing a majorant falls back to the
@@ -308,6 +346,17 @@ private:
 
     /// See `maxSigmaA`.
     smdl::SpectralColor maxSigmaS{};
+
+    /// The density acceleration hint the instance declared, when it is
+    /// usable (`hasUsableDensityGrid()`), else null: the grid and the
+    /// bound box that maps the rigid frame onto it.
+    const smdl::VoxelGrid *grid{};
+
+    /// See `grid`.
+    float3 boundMin{};
+
+    /// See `grid`.
+    float3 boundMax{};
 
     /// The segment in the rigid frame of this component's instance.
     float3 orgR{};
@@ -369,12 +418,53 @@ private:
             !mat.getMaxScatteringCoefficient().empty());
   }
 
-  /// Take the density acceleration hint from the material whose grid
+  /// Which of the volume fields the instance carries, as a bit set:
+  /// the absorption and scattering coefficients, their majorants, and
+  /// the emission intensity. Presence is what the resolution branches
+  /// on (`hasMedium()`, `hasUsableMajorants()`, whether the medium
+  /// emits), so `matches()` compares it before any value.
+  [[nodiscard]] static uint8_t
+  presenceOf(const smdl::JIT::MaterialInstance &mat) noexcept {
+    uint8_t bits{};
+    if (!mat.getAbsorptionCoefficient().empty()) bits |= 1;
+    if (!mat.getScatteringCoefficient().empty()) bits |= 2;
+    if (!mat.getMaxAbsorptionCoefficient().empty()) bits |= 4;
+    if (!mat.getMaxScatteringCoefficient().empty()) bits |= 8;
+    if (!mat.getVolumeEmissionIntensity().empty()) bits |= 16;
+    return bits;
+  }
+
+  /// Would `values` resolve to `color` again? Each value is put through
+  /// the unit conversion the resolution applied and compared exactly,
+  /// so two instances agree here precisely when they would resolve to
+  /// the same spectrum. An empty span agrees with the zeros it resolves
+  /// to; presence is compared separately.
+  [[nodiscard]] bool
+  valuesMatch(smdl::Span<const float> values,
+              const smdl::SpectralColor &color) const noexcept {
+    const size_t n{std::min(values.size(), color.size())};
+    for (size_t i = 0; i < n; i++)
+      if (values[i] * mUnitScale != color[i]) return false;
+    return true;
+  }
+
+  /// Would `entry` resolve to `component` again? The material and the
+  /// presence of its volume fields decide the path; along it, a
+  /// homogeneous component is its three spectra, and a tracked one is
+  /// its majorants, its instance and its density hint. The snapshot a
+  /// tracked component also captured is never consulted (the
+  /// aggregates it feeds are read only for their size on that path)
+  /// and varies with where the boundary was crossed, so it is not
+  /// compared, and `rebind()` leaves it holding the first path's.
+  [[nodiscard]] bool matches(const Component &component,
+                             const MediumStack &entry) const noexcept;
+
+  /// Take the density acceleration hint of the component whose grid
   /// drives the majorant spans: the hint box spans texture space
   /// `[0,1]^3`, which spans the voxel extent, and bricks are 16 voxels
   /// per axis, which is the map `setSegment()` takes the segment into
   /// brick space with.
-  void setDensityGrid(const smdl::JIT::MaterialInstance &mat) noexcept;
+  void setDensityGrid(const Component &component) noexcept;
 
   /// One component's contribution at distance `t` along the segment,
   /// written into the given spectra: the snapshot of a homogeneous
@@ -536,16 +626,21 @@ private:
 
   /// The stack the resolved members above describe and the time they
   /// were resolved at, which `reset()` compares against to decide
-  /// whether it can keep them, plus whether anything has been resolved
-  /// at all: resolving a null stack, or one carrying no medium, is a
-  /// resolution like any other. This and the members below are what
-  /// `resolve()` needs and the sampling loops never read.
+  /// whether it can keep them outright. This and the members below are
+  /// what `resolve()` needs and the sampling loops never read.
   const MediumStack *mStack{};
 
   /// See `mStack`.
   float mTime{};
 
-  /// See `mStack`.
+  /// Is `mStack` a stack of the path in flight? False before the first
+  /// `reset()` and after `beginPath()`, when the address it holds may
+  /// since have been handed to another stack.
+  bool mStackKnown{};
+
+  /// Has anything been resolved at all, for `rebind()` to compare
+  /// against? Resolving a null stack, or one carrying no medium, is a
+  /// resolution like any other; a haze change is what unsets this.
   bool mResolved{};
 
   /// Does an instance the queries evaluate in move over the shutter, so
