@@ -413,7 +413,8 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   uint32_t primIndex{};
   if (entry == primitiveCache.end()) {
     primIndex = uint32_t(primitives.size());
-    primitives.push_back(makePrimitive(device, spec, internMaterial(baseName)));
+    primitives.push_back(makePrimitive(device, spec, internMaterial(baseName),
+                                       robustIntersection));
     primitiveCache.emplace(std::move(key), primIndex);
     SMDL_LOG_DEBUG("Built ", spec.key(), ": ", primitivePieceCount(spec),
                    " piece(s), area ", primitives.back()->objectArea);
@@ -454,7 +455,7 @@ uint32_t Scene::addCurves(const std::string &fileName,
   if (entry == curvesCache.end()) {
     curvesIndex = uint32_t(curves.size());
     curves.push_back(makeCurves(device, readCurvesFile(fileName), spec,
-                                internMaterial(baseName)));
+                                internMaterial(baseName), robustIntersection));
     curvesCache.emplace(std::move(key), curvesIndex);
     SMDL_LOG_DEBUG(
         "Read ", smdl::QuotedPath(fileName), ": ", curves.back()->strandCount(),
@@ -778,7 +779,8 @@ uint32_t Scene::addGroundPlane(float z, float halfExtent,
                                const std::string &materialName) {
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
-  rtcSetSceneFlags(mesh->scene, RTC_SCENE_FLAG_ROBUST);
+  rtcSetSceneFlags(mesh->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                   : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(mesh->scene, RTC_BUILD_QUALITY_HIGH);
   mesh->matIndex = internMaterial(materialName);
   mesh->verts.resize(4);
@@ -1310,7 +1312,8 @@ void Scene::load(const aiMesh &assMesh,
                  const MeshBake *bakeShut, bool joinCorners) {
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
-  rtcSetSceneFlags(mesh->scene, RTC_SCENE_FLAG_ROBUST);
+  rtcSetSceneFlags(mesh->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                   : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(mesh->scene, RTC_BUILD_QUALITY_HIGH);
   mesh->matIndex = assMesh.mMaterialIndex < materialRemap.size()
                        ? materialRemap[assMesh.mMaterialIndex]

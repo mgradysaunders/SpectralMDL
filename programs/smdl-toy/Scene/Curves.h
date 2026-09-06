@@ -113,4 +113,5 @@ public:
 [[nodiscard]] std::unique_ptr<Curves> makeCurves(RTCDevice device,
                                                  CurvesFile file,
                                                  const CurvesSpec &spec,
-                                                 uint32_t matIndex);
+                                                 uint32_t matIndex,
+                                                bool robustIntersection);

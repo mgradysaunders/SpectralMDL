@@ -83,6 +83,10 @@ struct SceneOptions final {
   std::string groundMaterial{};
 
   std::string fallbackMaterial{};
+
+  /// Build the acceleration structures without Embree's watertight ray
+  /// intersection. See the flag's description.
+  bool noRobustIntersection{};
 };
 
 /// The shutter, which the layout's `time` directive also sets.

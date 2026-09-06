@@ -581,7 +581,8 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
 }
 
 std::unique_ptr<Primitive>
-makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex) {
+makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
+              bool robustIntersection) {
   auto primitive{std::make_unique<Primitive>()};
   primitive->spec = spec;
   primitive->matIndex = matIndex;
@@ -596,7 +597,9 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex) {
                                  float2(float(iu) / 8.0f, float(iv) / 3.0f))
                 .point);
   primitive->scene = rtcNewScene(device);
-  rtcSetSceneFlags(primitive->scene, RTC_SCENE_FLAG_ROBUST);
+  rtcSetSceneFlags(primitive->scene, robustIntersection
+                                       ? RTC_SCENE_FLAG_ROBUST
+                                       : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(primitive->scene, RTC_BUILD_QUALITY_HIGH);
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER)};
   rtcSetGeometryUserPrimitiveCount(geometry, primitivePieceCount(spec));

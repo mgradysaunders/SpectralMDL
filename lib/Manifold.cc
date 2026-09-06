@@ -80,8 +80,11 @@ public:
       for (ConstraintVector &x : b) std::swap(x[c], x[pivot]);
       if (det) *det = -*det;
     }
+    // The pivot is guarded above, so its reciprocal is the standard
+    // elimination form: one division a column instead of one a row.
+    const float invPivot{1.0f / A(c, c)};
     for (int r = c + 1; r < n; r++) {
-      const float m{A(r, c) / A(c, c)};
+      const float m{A(r, c) * invPivot};
       if (m == 0.0f) continue;
       for (int k = c; k < n; k++) A(r, k) -= m * A(c, k);
       for (ConstraintVector &x : b) x[r] -= m * x[c];
