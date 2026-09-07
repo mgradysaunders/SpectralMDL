@@ -35,7 +35,8 @@ export auto min(const auto a, const auto b) = #min(a, b);
 
 /// The value `a` clamped to the range `[min, max]`.
 @(macro)
-export auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
+export auto clamp(const auto a, const auto min, const auto max) =
+  #max(min, #min(a, max));
 
 /// The value `a` clamped to the range `[0, 1]`.
 @(macro)
@@ -227,7 +228,8 @@ export auto average(const auto a) = #sum(a) / #num(a);
 
 /// The linear interpolation from `a` to `b` by factor `l`.
 @(macro)
-export auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
+export auto lerp(const auto a, const auto b, const auto l) =
+  (1.0 - l) * a + l * b;
 
 /// The step function, `0` where `b < a` and `1` elsewhere.
 @(macro)
@@ -278,8 +280,7 @@ export float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
 
 /// The luminance of the spectral color, weighted by the CIE Y curve.
 @(noinline)
-export float luminance(const color a) =
-    _spectralFold(0.0, a, \(const float sum, const float w, const float amp) = sum + _wymanY(w) * amp) / $WAVELENGTH_BASE_MAX;
+export float luminance(const color a) = _spectralFold(0.0, a, \(const float sum, const float w, const float amp) = sum + _wymanY(w) * amp) / $WAVELENGTH_BASE_MAX;
 
 /// The emission `color` of the spectrum given by `wavelengths` in
 /// nanometers paired with linear `amplitudes`.
@@ -291,7 +292,8 @@ export float luminance(const color a) =
 /// piecewise-linear interpolation, exactly like the `color` constructor.
 ///
 @(macro)
-export color emission_color(const float[<N>] wavelengths, const float[<N>] amplitudes) {
+export color emission_color(
+  const float[<N>] wavelengths, const float[<N>] amplitudes) {
   auto ws(wavelengths);
   auto as(amplitudes);
   return _samplesToColor(N, &ws[0], &as[0]);
@@ -327,6 +329,7 @@ export float eval_at_wavelength(color a, float wavelength) {
   if $($WAVELENGTH_BASE_MAX == 1) {
     return a[0];
   } else {
-    return _polylineLerp($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
+    return _polylineLerp(
+             $WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
   }
 }

@@ -53,10 +53,12 @@ export annotation created(int year, int month, int day, string notes);
 export annotation modified(int year, int month, int day, string notes);
 
 /// The version of the annotated module.
-export annotation version(int major, int minor, int patch, string prerelease = "");
+export annotation version(
+  int major, int minor, int patch, string prerelease = "");
 
 /// The version of another module that the annotated module depends on.
-export annotation dependency(string module_name, int major, int minor, int patch, string prerelease = "");
+export annotation dependency(
+  string module_name, int major, int minor, int patch, string prerelease = "");
 
 /// The keywords for search and categorization.
 export annotation key_words(string[] words);

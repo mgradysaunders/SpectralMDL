@@ -102,15 +102,18 @@ export float hash_float(const int key) = float(hash(key) >>> 8) * HASH_TO_FLOAT;
 
 /// The hash of an `int2` as a uniform `float2` in `[0, 1)^2`.
 @(pure macro)
-export float2 hash_float2(const int2 key) = float2(hash(key) >>> 8) * HASH_TO_FLOAT;
+export float2 hash_float2(const int2 key) =
+  float2(hash(key) >>> 8) * HASH_TO_FLOAT;
 
 /// The hash of an `int3` as a uniform `float3` in `[0, 1)^3`.
 @(pure macro)
-export float3 hash_float3(const int3 key) = float3(hash(key) >>> 8) * HASH_TO_FLOAT;
+export float3 hash_float3(const int3 key) =
+  float3(hash(key) >>> 8) * HASH_TO_FLOAT;
 
 /// The hash of an `int4` as a uniform `float4` in `[0, 1)^4`.
 @(pure macro)
-export float4 hash_float4(const int4 key) = float4(hash(key) >>> 8) * HASH_TO_FLOAT;
+export float4 hash_float4(const int4 key) =
+  float4(hash(key) >>> 8) * HASH_TO_FLOAT;
 
 /// The 2D skew factor, `(sqrt(3) - 1) / 2`.
 const float SIMPLEX_SKEW_2D = 0.3660254037844386;
@@ -150,33 +153,35 @@ const float SIMPLEX_SCALE_2D = 99.204;
 const float SIMPLEX_SCALE_3D = 108.730;
 
 /// The 16 evenly spaced unit gradients of the 2D lattice.
-static const auto SIMPLEX_GRADIENT_2D(float2[](float2(+1.00000000, +0.00000000), float2(+0.92387953, +0.38268343), //
-                                               float2(+0.70710678, +0.70710678), float2(+0.38268343, +0.92387953), //
-                                               float2(+0.00000000, +1.00000000), float2(-0.38268343, +0.92387953), //
-                                               float2(-0.70710678, +0.70710678), float2(-0.92387953, +0.38268343), //
-                                               float2(-1.00000000, +0.00000000), float2(-0.92387953, -0.38268343), //
-                                               float2(-0.70710678, -0.70710678), float2(-0.38268343, -0.92387953), //
-                                               float2(+0.00000000, -1.00000000), float2(+0.38268343, -0.92387953), //
-                                               float2(+0.70710678, -0.70710678), float2(+0.92387953, -0.38268343)));
+static const auto SIMPLEX_GRADIENT_2D(float2[](
+  float2(+1.00000000, +0.00000000), float2(+0.92387953, +0.38268343), //
+  float2(+0.70710678, +0.70710678), float2(+0.38268343, +0.92387953), //
+  float2(+0.00000000, +1.00000000), float2(-0.38268343, +0.92387953), //
+  float2(-0.70710678, +0.70710678), float2(-0.92387953, +0.38268343), //
+  float2(-1.00000000, +0.00000000), float2(-0.92387953, -0.38268343), //
+  float2(-0.70710678, -0.70710678), float2(-0.38268343, -0.92387953), //
+  float2(+0.00000000, -1.00000000), float2(+0.38268343, -0.92387953), //
+  float2(+0.70710678, -0.70710678), float2(+0.92387953, -0.38268343)));
 
 /// The unit gradients of the 3D lattice, being the 12 cube edge midpoints
 /// padded to 16 by Perlin's symmetry preserving choice of repeats.
-static const auto SIMPLEX_GRADIENT_3D(float3[](float3(+0.70710678, +0.70710678, +0.00000000), //
-                                               float3(-0.70710678, +0.70710678, +0.00000000), //
-                                               float3(+0.70710678, -0.70710678, +0.00000000), //
-                                               float3(-0.70710678, -0.70710678, +0.00000000), //
-                                               float3(+0.70710678, +0.00000000, +0.70710678), //
-                                               float3(-0.70710678, +0.00000000, +0.70710678), //
-                                               float3(+0.70710678, +0.00000000, -0.70710678), //
-                                               float3(-0.70710678, +0.00000000, -0.70710678), //
-                                               float3(+0.00000000, +0.70710678, +0.70710678), //
-                                               float3(+0.00000000, -0.70710678, +0.70710678), //
-                                               float3(+0.00000000, +0.70710678, -0.70710678), //
-                                               float3(+0.00000000, -0.70710678, -0.70710678), //
-                                               float3(+0.70710678, +0.70710678, +0.00000000), //
-                                               float3(+0.00000000, -0.70710678, +0.70710678), //
-                                               float3(-0.70710678, +0.70710678, +0.00000000), //
-                                               float3(+0.00000000, -0.70710678, -0.70710678)));
+static const auto SIMPLEX_GRADIENT_3D(float3[](
+  float3(+0.70710678, +0.70710678, +0.00000000), //
+  float3(-0.70710678, +0.70710678, +0.00000000), //
+  float3(+0.70710678, -0.70710678, +0.00000000), //
+  float3(-0.70710678, -0.70710678, +0.00000000), //
+  float3(+0.70710678, +0.00000000, +0.70710678), //
+  float3(-0.70710678, +0.00000000, +0.70710678), //
+  float3(+0.70710678, +0.00000000, -0.70710678), //
+  float3(-0.70710678, +0.00000000, -0.70710678), //
+  float3(+0.00000000, +0.70710678, +0.70710678), //
+  float3(+0.00000000, -0.70710678, +0.70710678), //
+  float3(+0.00000000, +0.70710678, -0.70710678), //
+  float3(+0.00000000, -0.70710678, -0.70710678), //
+  float3(+0.70710678, +0.70710678, +0.00000000), //
+  float3(+0.00000000, -0.70710678, +0.70710678), //
+  float3(-0.70710678, +0.70710678, +0.00000000), //
+  float3(+0.00000000, -0.70710678, -0.70710678)));
 
 /// A 2D noise value paired with its analytic derivative.
 export struct noise_deriv_2d {
@@ -195,10 +200,11 @@ export struct noise_deriv_3d {
 /// Accumulates the contribution of one 2D simplex corner.
 @(pure)
 void accumulate2D(const int2 corner, const float2 offset, const int seed, //
-                  const &float value, const &float2 deriv) {
+const &float value, const &float2 deriv) {
   const auto t(SIMPLEX_RADIUS2 - #sum(offset * offset));
   if (t > 0.0) {
-    const auto g(SIMPLEX_GRADIENT_2D[hash(int3(corner.x, corner.y, seed)).x & 15]);
+    const auto g(
+      SIMPLEX_GRADIENT_2D[hash(int3(corner.x, corner.y, seed)).x & 15]);
     const auto gDotX(#sum(g * offset));
     const auto t2(t * t);
     *value += t2 * t2 * gDotX;
@@ -209,10 +215,11 @@ void accumulate2D(const int2 corner, const float2 offset, const int seed, //
 /// Accumulates the contribution of one 3D simplex corner.
 @(pure)
 void accumulate3D(const int3 corner, const float3 offset, const int seed, //
-                  const &float value, const &float3 deriv) {
+const &float value, const &float3 deriv) {
   const auto t(SIMPLEX_RADIUS2 - #sum(offset * offset));
   if (t > 0.0) {
-    const auto g(SIMPLEX_GRADIENT_3D[hash(int4(corner.x, corner.y, corner.z, seed)).x & 15]);
+    const auto g(
+      SIMPLEX_GRADIENT_3D[hash(int4(corner.x, corner.y, corner.z, seed)).x & 15]);
     const auto gDotX(#sum(g * offset));
     const auto t2(t * t);
     *value += t2 * t2 * gDotX;
@@ -227,11 +234,13 @@ void accumulate3D(const int3 corner, const float3 offset, const int seed, //
 /// rather than a difference, so it costs only a few extra operations and
 /// carries no step size to choose.
 @(pure noinline)
-export noise_deriv_2d simplex_noise_deriv(const float2 position, const int seed = 0) {
+export noise_deriv_2d simplex_noise_deriv(
+  const float2 position, const int seed = 0) {
   // Skew into the lattice, find the containing cell, then unskew the cell
   // origin back to obtain the offset to the first corner.
   const auto cell(int2(#floor(position + SIMPLEX_SKEW_2D * #sum(position))));
-  const auto offset0(position - (float2(cell) - SIMPLEX_UNSKEW_2D * float(#sum(cell))));
+  const auto offset0(
+    position - (float2(cell) - SIMPLEX_UNSKEW_2D * float(#sum(cell))));
   // The cell is a rhombus split into two triangles by the diagonal; the
   // larger coordinate identifies which of the two contains the position.
   const auto step(offset0.x > offset0.y ? int2(1, 0) : int2(0, 1));
@@ -242,7 +251,8 @@ export noise_deriv_2d simplex_noise_deriv(const float2 position, const int seed 
   accumulate2D(cell, offset0, seed, &value, &deriv);
   accumulate2D(cell + step, offset1, seed, &value, &deriv);
   accumulate2D(cell + 1, offset2, seed, &value, &deriv);
-  return noise_deriv_2d(value: SIMPLEX_SCALE_2D * value, deriv: SIMPLEX_SCALE_2D * deriv);
+  return noise_deriv_2d(
+           value: SIMPLEX_SCALE_2D * value, deriv: SIMPLEX_SCALE_2D * deriv);
 }
 
 /// The 3D simplex noise at `position` with its analytic derivative.
@@ -251,9 +261,11 @@ export noise_deriv_2d simplex_noise_deriv(const float2 position, const int seed 
 /// value and the derivative are both continuous everywhere and the derivative
 /// is exact.
 @(pure noinline)
-export noise_deriv_3d simplex_noise_deriv(const float3 position, const int seed = 0) {
+export noise_deriv_3d simplex_noise_deriv(
+  const float3 position, const int seed = 0) {
   const auto cell(int3(#floor(position + SIMPLEX_SKEW_3D * #sum(position))));
-  const auto offset0(position - (float3(cell) - SIMPLEX_UNSKEW_3D * float(#sum(cell))));
+  const auto offset0(
+    position - (float3(cell) - SIMPLEX_UNSKEW_3D * float(#sum(cell))));
   // The cell is a rhombohedron split into six tetrahedra by the ordering of
   // the coordinates. Ranking the coordinates against their own rotation
   // yields the two intermediate corners without any branching.
@@ -277,16 +289,19 @@ export noise_deriv_3d simplex_noise_deriv(const float3 position, const int seed 
   accumulate3D(cell + int3(step1), offset1, seed, &value, &deriv);
   accumulate3D(cell + int3(step2), offset2, seed, &value, &deriv);
   accumulate3D(cell + 1, offset3, seed, &value, &deriv);
-  return noise_deriv_3d(value: SIMPLEX_SCALE_3D * value, deriv: SIMPLEX_SCALE_3D * deriv);
+  return noise_deriv_3d(
+           value: SIMPLEX_SCALE_3D * value, deriv: SIMPLEX_SCALE_3D * deriv);
 }
 
 /// The 2D simplex noise at `position`, discarding the derivative.
 @(pure macro)
-export float simplex_noise(const float2 position, const int seed = 0) = simplex_noise_deriv(position, seed).value;
+export float simplex_noise(const float2 position, const int seed = 0) =
+  simplex_noise_deriv(position, seed).value;
 
 /// The 3D simplex noise at `position`, discarding the derivative.
 @(pure macro)
-export float simplex_noise(const float3 position, const int seed = 0) = simplex_noise_deriv(position, seed).value;
+export float simplex_noise(const float3 position, const int seed = 0) =
+  simplex_noise_deriv(position, seed).value;
 
 /// A 2D Worley cellular noise result.
 export struct worley_2d {
@@ -317,7 +332,8 @@ export struct worley_3d {
 /// `jitter` up to about 0.65, above which a nearer point can occasionally
 /// hide in a cell that was not visited.
 @(pure noinline)
-export worley_2d worley_noise(const float2 position, const int seed = 0, const float jitter = 1.0) {
+export worley_2d worley_noise(
+  const float2 position, const int seed = 0, const float jitter = 1.0) {
   const auto cell(int2(#floor(position)));
   const auto frac(position - float2(cell));
   auto result(worley_2d(f1: $INF, f2: $INF));
@@ -325,7 +341,8 @@ export worley_2d worley_noise(const float2 position, const int seed = 0, const f
     for (int i = -1; i <= 1; i++) {
       const auto neighbor(cell + int2(i, j));
       const auto point(hash(int3(neighbor.x, neighbor.y, seed)));
-      const auto center(float2(i, j) + 0.5 + jitter * (float2(point.xy >>> 8) * HASH_TO_FLOAT - 0.5));
+      const auto center(
+        float2(i, j) + 0.5 + jitter * (float2(point.xy >>> 8) * HASH_TO_FLOAT - 0.5));
       const auto offset(center - frac);
       const auto dist(#sqrt(#sum(offset * offset)));
       if (dist < result.f1) {
@@ -346,7 +363,8 @@ export worley_2d worley_noise(const float2 position, const int seed = 0, const f
 /// See the 2D overload. Only the surrounding 3 by 3 by 3 cells are searched,
 /// which is exact for `jitter` up to about 0.46.
 @(pure noinline)
-export worley_3d worley_noise(const float3 position, const int seed = 0, const float jitter = 1.0) {
+export worley_3d worley_noise(
+  const float3 position, const int seed = 0, const float jitter = 1.0) {
   const auto cell(int3(#floor(position)));
   const auto frac(position - float3(cell));
   auto result(worley_3d(f1: $INF, f2: $INF));
@@ -355,7 +373,8 @@ export worley_3d worley_noise(const float3 position, const int seed = 0, const f
       for (int i = -1; i <= 1; i++) {
         const auto neighbor(cell + int3(i, j, k));
         const auto point(hash(int4(neighbor.x, neighbor.y, neighbor.z, seed)));
-        const auto center(float3(i, j, k) + 0.5 + jitter * (float3(point.xyz >>> 8) * HASH_TO_FLOAT - 0.5));
+        const auto center(
+          float3(i, j, k) + 0.5 + jitter * (float3(point.xyz >>> 8) * HASH_TO_FLOAT - 0.5));
         const auto offset(center - frac);
         const auto dist(#sqrt(#sum(offset * offset)));
         if (dist < result.f1) {

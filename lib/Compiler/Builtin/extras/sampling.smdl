@@ -12,15 +12,18 @@ double erf(double x);
 
 /// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
 @(pure macro)
-export float2 next_low_discrepancy(const &float2 xi) = (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
+export float2 next_low_discrepancy(const &float2 xi) =
+  (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
 
 /// Next canonical random vector in quasi-random 3-dimensional low discrepancy sequence.
 @(pure macro)
-export float3 next_low_discrepancy(const &float3 xi) = (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+export float3 next_low_discrepancy(const &float3 xi) =
+  (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
 
 /// Next canonical random vector in quasi-random 4-dimensional low discrepancy sequence.
 @(pure macro)
-export float4 next_low_discrepancy(const &float4 xi) = (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+export float4 next_low_discrepancy(const &float4 xi) =
+  (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 
 /// Bool sample with `chance` probability of returning `true`.
 @(pure macro)
@@ -49,7 +52,8 @@ export float2 uniform_disk_sample(float2 xi) {
   xi = #select(xi == 0, 1e-6, xi);
   const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
   const float rad(#select(cond, xi.x, xi.y));
-  const float phi(#select(cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
+  const float phi(#select(
+    cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
   return rad * float2(#cos(phi), #sin(phi));
 }
 

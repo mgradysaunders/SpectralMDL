@@ -201,16 +201,16 @@ export static const auto REGOLITH_TABLE_CURVES = auto[138](
 ///
 @(noinline)
 export color regolith_albedo(
-  const float base = 0.5,        ///< The overall reflectance level of the parent material. 0 = darkest, 1 = brightest.
-  const float fineness = 0.5,    ///< The particle-size axis. Finer material brightens the VIS/NIR and lowers the SWIR, pivoting near 1.2um.
-  const float organic = 0.5,     ///< The organic-matter load. Darkens at every wavelength, strongest in the visible.
-  const float iron = 0.5,        ///< The iron-oxide pigment load. 0 = neutral gray, 1 = maximally pigmented.
-  const float aridity = 0.5,     ///< The hematite:goethite balance of the pigment. 0 = cool/moist goethite-yellow, 1 = hot/dry hematite-red.
-  const float phyllo = 0.5,      ///< The phyllosilicate (clay mineral) content, carving the 2.2um Al-OH absorption.
-  const float hydrous = 0.5,     ///< The bound-water (hydration) band depth, most visible at 1.4um and 1.9um.
-  const float ferrous = 0.5,     ///< The ferrous-iron (Fe2+) absorption near 1um, typical of unoxidized mafic minerals.
-  const float unstained = 0.5,   ///< The stain-free vs. stained/coated surface axis: lifts the blue end and lowers the red edge, inert past ~700nm.
-  const float moisture = 0.0,    ///< The moisture darkening. 0 = bone dry, 1 = the darkest saturated state in the corpus.
+  const float base = 0.5,                 ///< The overall reflectance level of the parent material. 0 = darkest, 1 = brightest.
+  const float fineness = 0.5,             ///< The particle-size axis. Finer material brightens the VIS/NIR and lowers the SWIR, pivoting near 1.2um.
+  const float organic = 0.5,              ///< The organic-matter load. Darkens at every wavelength, strongest in the visible.
+  const float iron = 0.5,                 ///< The iron-oxide pigment load. 0 = neutral gray, 1 = maximally pigmented.
+  const float aridity = 0.5,              ///< The hematite:goethite balance of the pigment. 0 = cool/moist goethite-yellow, 1 = hot/dry hematite-red.
+  const float phyllo = 0.5,               ///< The phyllosilicate (clay mineral) content, carving the 2.2um Al-OH absorption.
+  const float hydrous = 0.5,              ///< The bound-water (hydration) band depth, most visible at 1.4um and 1.9um.
+  const float ferrous = 0.5,              ///< The ferrous-iron (Fe2+) absorption near 1um, typical of unoxidized mafic minerals.
+  const float unstained = 0.5,            ///< The stain-free vs. stained/coated surface axis: lifts the blue end and lowers the red edge, inert past ~700nm.
+  const float moisture = 0.0,             ///< The moisture darkening. 0 = bone dry, 1 = the darkest saturated state in the corpus.
   const float moisture_sensitivity = 0.5, ///< How strongly moisture darkens this material; acts only through the product with `moisture`.
 ) {
   // Parameter to logit-space weights, each affine on its clamped [0, 1] axis
@@ -228,13 +228,33 @@ export color regolith_albedo(
   const float wFerrous = saturate(ferrous) * 0.57688462;
   const float wUnstained = saturate(unstained) * 0.83533401;
   const float wWater = saturate(moisture) * 1.28826562;
-  const float wSensitivity = -0.392247964 + saturate(moisture_sensitivity) * 0.667877052;
+  const float wSensitivity =
+    -0.392247964 + saturate(moisture_sensitivity) * 0.667877052;
   const auto weights = auto(
-    1.0, wBase, wFineness, wOrganic, pigment * #sin(hue), pigment * #cos(hue),
-    wPhyllo, wHydrous, wFerrous, wUnstained, wWater, wWater * wSensitivity);
+    1.0,
+    wBase,
+    wFineness,
+    wOrganic,
+    pigment * #sin(hue),
+    pigment * #cos(hue),
+    wPhyllo,
+    wHydrous,
+    wFerrous,
+    wUnstained,
+    wWater,
+    wWater * wSensitivity);
   return _spectralLerpInit(
-    \(const float wavelength) = _uniformLerpIndexAndFraction(REGOLITH_TABLE_SIZE, REGOLITH_MIN_WAVELENGTH, REGOLITH_MAX_WAVELENGTH, wavelength),
-    \(const int t0, const float t) = link(dot(lerp(REGOLITH_TABLE_CURVES[t0], REGOLITH_TABLE_CURVES[t0 + 1], t), weights)));
+           \(const float wavelength) = _uniformLerpIndexAndFraction(
+             REGOLITH_TABLE_SIZE,
+             REGOLITH_MIN_WAVELENGTH,
+             REGOLITH_MAX_WAVELENGTH,
+             wavelength),
+           \(const int t0, const float t) =
+             link(
+               dot(
+                 lerp(
+                   REGOLITH_TABLE_CURVES[t0], REGOLITH_TABLE_CURVES[t0 + 1], t),
+                 weights)));
 }
 
 // BEGIN GENERATED PRESETS

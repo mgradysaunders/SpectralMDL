@@ -12,11 +12,13 @@ export struct _UniformLerp {
 };
 
 @(pure macro)
-export auto _uniformLerpIndexAndFraction(const int count, const float xmin, const float xmax, const float x) {
+export auto _uniformLerpIndexAndFraction(
+  const int count, const float xmin, const float xmax, const float x) {
   // The scale onto `[0, count - 1]` rides along in the multiply the
   // normalization already needs, so the whole mapping is one fused
   // multiply-add against constants followed by the clamp.
-  const float t = #max(0.0, #min((count - 1) * (x - xmin) / (xmax - xmin), float(count - 1)));
+  const float t =
+    #max(0.0, #min((count - 1) * (x - xmin) / (xmax - xmin), float(count - 1)));
   // No `#floor` before the truncation: the clamp above leaves `t` at or above
   // zero (a NaN `x` clamps to the top of the range), and truncation toward
   // zero is the floor of anything non-negative.
@@ -41,7 +43,8 @@ export int _lowerBound(int count, const &float xs, const float x) {
 }
 
 @(pure)
-export float _polylineLerp(const int count, const &float xs, const &float ys, const float x) {
+export float _polylineLerp(
+  const int count, const &float xs, const &float ys, const float x) {
   if (count <= 0) {
     return 0.0;
   } else if (count == 1) {
@@ -144,12 +147,12 @@ color nontrivialRGBToColor(float3 rgb) {
   color c(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     const auto lerp = _uniformLerpIndexAndFraction(
-        SRGB_PRIMARIES_NUM_WAVELENGTHS, SRGB_PRIMARIES_MIN_WAVELENGTH,
-        SRGB_PRIMARIES_MAX_WAVELENGTH, $state.wavelength_base[i]);
-    c[i] = #sum(float2(1 - lerp.t, lerp.t) *
-                (rgb.x * float2(&SRGB_PRIMARIES[0][lerp.i]) +
-                 rgb.y * float2(&SRGB_PRIMARIES[1][lerp.i]) +
-                 rgb.z * float2(&SRGB_PRIMARIES[2][lerp.i])));
+      SRGB_PRIMARIES_NUM_WAVELENGTHS,
+      SRGB_PRIMARIES_MIN_WAVELENGTH,
+      SRGB_PRIMARIES_MAX_WAVELENGTH,
+      $state.wavelength_base[i]);
+    c[i] = #sum(
+      float2(1 - lerp.t, lerp.t) * (rgb.x * float2(&SRGB_PRIMARIES[0][lerp.i]) + rgb.y * float2(&SRGB_PRIMARIES[1][lerp.i]) + rgb.z * float2(&SRGB_PRIMARIES[2][lerp.i])));
   }
   return c;
 }
@@ -210,13 +213,15 @@ export auto _spectralFold(const auto init, const color a, const auto f) {
 }
 
 @(noinline)
-export color _samplesToColor(const int count, const &float wavelengths, const &float amplitudes) {
+export color _samplesToColor(
+  const int count, const &float wavelengths, const &float amplitudes) {
   auto c = color(0.0);
   if (count > 0) {
     if (count == 1) {
       c = color(amplitudes[0]);
     } else {
-      c = _spectralInit(\(const float w) = _polylineLerp(count, wavelengths, amplitudes, w));
+      c = _spectralInit(\(const float w) =
+        _polylineLerp(count, wavelengths, amplitudes, w));
     }
   }
   return c;
@@ -275,7 +280,11 @@ export float3 _colorToRgb(const color c) {
   } else {
     // The uniform quadrature: every band weighs
     // `(wavelength_max - wavelength_min) / WAVELENGTH_BASE_MAX`.
-    result = _spectralFold(float3(0.0), c, \(const float3 acc, const float w, const float amp) = acc + _wymanXYZ(w) * amp);
+    result = _spectralFold(
+      float3(0.0),
+      c,
+      \(const float3 acc, const float w, const float amp) =
+        acc + _wymanXYZ(w) * amp);
     result /= $WAVELENGTH_BASE_MAX;
     result *= $state.wavelength_max - $state.wavelength_min;
   }
@@ -372,7 +381,12 @@ export struct texture_2d {
   /// what a prefiltered lookup must not sample. An image holds one
   /// chain, so every texture over one file must ask for the same kind;
   /// asking for both is a compile error naming both requests.
-  texture_2d(const string name, const auto gamma = 0, const bool use_mipmap = false, const bool max_mipmap = false) = #loadTexture2D(name, int(gamma), use_mipmap, max_mipmap);
+  texture_2d(
+    const string name,
+    const auto gamma = 0,
+    const bool use_mipmap = false,
+    const bool max_mipmap = false) =
+    #loadTexture2D(name, int(gamma), use_mipmap, max_mipmap);
 
   /// The tile count.
   const int2 tile_count = int2(1, 1);
@@ -443,7 +457,8 @@ export struct texture_3d {
   /// `selector` must also be compile-time. For NanoVDB files holding
   /// several named grids (`density`, `temperature`, ...) it selects
   /// which one to load; empty selects the first grid in the file.
-  texture_3d(const string name, const auto gamma = 0, const string selector = "") = #loadTexture3D(name, int(gamma), selector);
+  texture_3d(const string name, const auto gamma = 0, const string selector = "") =
+    #loadTexture3D(name, int(gamma), selector);
 
   /// The extent in voxels.
   const int3 extent = int3(0);
@@ -494,7 +509,8 @@ export struct texture_3d {
 
 /// The texture cube structure.
 export struct texture_cube {
-  texture_cube(const string name, const auto gamma = 0) = #loadTextureCube(name, int(gamma));
+  texture_cube(const string name, const auto gamma = 0) =
+    #loadTextureCube(name, int(gamma));
 
   // TODO
   /// The gamma mode.
@@ -503,7 +519,8 @@ export struct texture_cube {
 
 /// The texture ptex structure.
 export struct texture_ptex {
-  texture_ptex(const string name, const auto gamma = 0) = #loadTexturePtex(name, int(gamma));
+  texture_ptex(const string name, const auto gamma = 0) =
+    #loadTexturePtex(name, int(gamma));
 
   /// The pointer to the `smdl::Ptexture`
   const &void ptr = none;
@@ -552,9 +569,11 @@ export struct light_profile {
 export struct spectral_curve {
   spectral_curve(const string name) = #loadSpectralCurve(name);
 
-  spectral_curve(const string name, const int curve_index) = #loadSpectralCurve(name, curve_index);
+  spectral_curve(const string name, const int curve_index) =
+    #loadSpectralCurve(name, curve_index);
 
-  spectral_curve(const string name, const string curve_name) = #loadSpectralCurve(name, curve_name);
+  spectral_curve(const string name, const string curve_name) =
+    #loadSpectralCurve(name, curve_name);
 
   /// The number of wavelengths and values.
   const int count = 0;
@@ -773,7 +792,8 @@ export int _randomInt() = return_from {
 /// Draws the next uniform `float` in `[0, 1)` from the `$state` random
 /// number generator, advancing it. NOTE: This is non-standard!
 @(macro)
-export float _randomFloat() = #min(float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+export float _randomFloat() = #min(
+  float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
 
 /// The helper behind the generated per-material `volumeEvaluate` entry
 /// point: write the volume coefficients of `mat` to the caller
@@ -785,10 +805,20 @@ export float _randomFloat() = #min(float(#uitofp(_randomInt(), double) / 4294967
 /// eliminated, the way `evaluateOpacity` evaluates only the cutout
 /// opacity. NOTE: This is non-standard!
 @(macro)
-export void _volumeEvaluate(const auto mat, const &float sigma_a, const &float sigma_s, const &float emission) {
-  const color sigmaA = #hasField(mat.volume, "absorption_coefficient") ? mat.volume.absorption_coefficient : color(0.0);
-  const color sigmaS = #hasField(mat.volume, "scattering_coefficient") ? mat.volume.scattering_coefficient : color(0.0);
-  const color emitted = #hasField(mat.volume, "emission_intensity") ? mat.volume.emission_intensity : color(0.0);
+export void _volumeEvaluate(
+  const auto mat,
+  const &float sigma_a,
+  const &float sigma_s,
+  const &float emission) {
+  const color sigmaA = #hasField(mat.volume, "absorption_coefficient")
+                       ? mat.volume.absorption_coefficient
+                       : color(0.0);
+  const color sigmaS = #hasField(mat.volume, "scattering_coefficient")
+                       ? mat.volume.scattering_coefficient
+                       : color(0.0);
+  const color emitted = #hasField(mat.volume, "emission_intensity")
+                        ? mat.volume.emission_intensity
+                        : color(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     sigma_a[i] = sigmaA[i];
     sigma_s[i] = sigmaS[i];
@@ -819,54 +849,76 @@ export struct _MaterialInstance {
   float temperature = ptr.temperature;
 
   /// The volume absorption coefficient.
-  &color absorption_coefficient = #hasField(ptr.volume, "absorption_coefficient") ? &ptr.volume.absorption_coefficient : none;
+  &color absorption_coefficient =
+    #hasField(ptr.volume, "absorption_coefficient")
+    ? &ptr.volume.absorption_coefficient
+    : none;
 
   /// The volume scattering coefficient.
-  &color scattering_coefficient = #hasField(ptr.volume, "scattering_coefficient") ? &ptr.volume.scattering_coefficient : none;
+  &color scattering_coefficient =
+    #hasField(ptr.volume, "scattering_coefficient")
+    ? &ptr.volume.scattering_coefficient
+    : none;
 
   /// The volume absorption coefficient majorant.
-  &color max_absorption_coefficient = #hasField(ptr.volume, "max_absorption_coefficient") ? &ptr.volume.max_absorption_coefficient : none;
+  &color max_absorption_coefficient =
+    #hasField(ptr.volume, "max_absorption_coefficient")
+    ? &ptr.volume.max_absorption_coefficient
+    : none;
 
   /// The volume scattering coefficient majorant.
-  &color max_scattering_coefficient = #hasField(ptr.volume, "max_scattering_coefficient") ? &ptr.volume.max_scattering_coefficient : none;
+  &color max_scattering_coefficient =
+    #hasField(ptr.volume, "max_scattering_coefficient")
+    ? &ptr.volume.max_scattering_coefficient
+    : none;
 
   /// The `smdl::VoxelGrid` behind the volume density acceleration
   /// hint, null when the `density` field was left defaulted.
   &void volume_density_resource = ptr.volume.density.resource;
 
   /// The lower corner of the volume density hint box.
-  &float3 volume_density_bound_min = #hasField(ptr.volume, "density_bound_min") ? &ptr.volume.density_bound_min : none;
+  &float3 volume_density_bound_min = #hasField(ptr.volume, "density_bound_min")
+                                     ? &ptr.volume.density_bound_min
+                                     : none;
 
   /// The upper corner of the volume density hint box.
-  &float3 volume_density_bound_max = #hasField(ptr.volume, "density_bound_max") ? &ptr.volume.density_bound_max : none;
+  &float3 volume_density_bound_max = #hasField(ptr.volume, "density_bound_max")
+                                     ? &ptr.volume.density_bound_max
+                                     : none;
 
   /// The volumetric emission coefficient, evaluated at the surface hit;
   /// heterogeneous interiors re-query through `volumeEvaluate`.
-  &color volume_emission_intensity = #hasField(ptr.volume, "emission_intensity") ? &ptr.volume.emission_intensity : none;
+  &color volume_emission_intensity = #hasField(ptr.volume, "emission_intensity")
+                                     ? &ptr.volume.emission_intensity
+                                     : none;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
   /// non-default emission EDF. See `df::_emissionEvaluate()` for how the
   /// `intensity_mode` units are resolved.
-  &color surface_emission_intensity = #isDefault(ptr.surface.emission.emission) ? none : #bump(color(ptr.surface.emission.intensity));
+  &color surface_emission_intensity =
+    #isDefault(ptr.surface.emission.emission) ? none : #bump(color(
+      ptr.surface.emission.intensity));
 
   /// The `backface` emission intensity, or `none` if the `backface` has no
   /// non-default emission EDF.
-  &color backface_emission_intensity = #isDefault(ptr.backface.emission.emission) ? none : #bump(color(ptr.backface.emission.intensity));
+  &color backface_emission_intensity =
+    #isDefault(ptr.backface.emission.emission) ? none : #bump(color(
+      ptr.backface.emission.intensity));
 
   /// The wavelength count.
   int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  int flags = $state.transport                                                                    //
-              | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)                                      //
-              | (!#isDefault(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)                            //
-              | (!#isDefault(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0)                          //
-              | (!#isDefault(ptr.surface.emission.emission) ? MATERIAL_HAS_SURFACE_EMISSION : 0) //
-              | (!#isDefault(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
-              | (!#isDefault(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                              //
-              | (!#isDefault(ptr.hair) ? MATERIAL_HAS_HAIR : 0)                                  //
-              | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0)                    //
-              | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
+  int flags = $state.transport                                                         //
+  | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)                                       //
+  | (!#isDefault(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)                              //
+  | (!#isDefault(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0)                            //
+  | (!#isDefault(ptr.surface.emission.emission) ? MATERIAL_HAS_SURFACE_EMISSION : 0)   //
+  | (!#isDefault(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
+  | (!#isDefault(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                                //
+  | (!#isDefault(ptr.hair) ? MATERIAL_HAS_HAIR : 0)                                    //
+  | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0)                      //
+  | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
 
   /// The df flags for the `surface` component.
   int df_lobes_surface = ptr.surface.scattering.df_lobes;
@@ -877,8 +929,9 @@ export struct _MaterialInstance {
   /// The emission intensity modes: bit 0 is set if the `surface` emission
   /// intensity is `intensity_power` (as opposed to the default
   /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
-  int emission_modes = (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
-                       | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
+  int emission_modes =
+    (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
+    | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
   /// The random seed captured from the `$state` random number generator
   /// (its current raw state, without advancing it), which seeds the
@@ -892,12 +945,13 @@ export struct _MaterialInstance {
 
   /// The tangent-to-world matrix held by the `State` during construction.
   float3x3 tangent_to_world = let {
-                                const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;
-                              } in float3x3(
-                                tangent_to_world_matrix[0].xyz,
-                                tangent_to_world_matrix[1].xyz,
-                                tangent_to_world_matrix[2].xyz,
-                              );
+    const auto tangent_to_world_matrix =
+      $state.object_to_world_matrix * $state.tangent_to_object_matrix;
+  } in float3x3(
+    tangent_to_world_matrix[0].xyz,
+    tangent_to_world_matrix[1].xyz,
+    tangent_to_world_matrix[2].xyz,
+  );
 };
 
 /// Albedo look-up table (LUT) for energy correction.
@@ -950,41 +1004,46 @@ export auto _complexAbs(const complex z) = #sqrt(_complexNorm(z));
 /// Complex inverse.
 @(pure macro)
 export auto _complexInv(const complex z) = let {
-                                              const auto denom = 1.0 / _complexNorm(z);
-                                            } in complex(z.a * denom, -z.b * denom);
+  const auto denom = 1.0 / _complexNorm(z);
+} in complex(z.a * denom, -z.b * denom);
 
 /// Complex addition.
 @(pure macro)
-export auto _complexAdd(const complex z, const complex w) = complex(z.a + w.a, z.b + w.b);
+export auto _complexAdd(const complex z, const complex w) =
+  complex(z.a + w.a, z.b + w.b);
 
 /// Complex subtraction.
 @(pure macro)
-export auto _complexSub(const complex z, const complex w) = complex(z.a - w.a, z.b - w.b);
+export auto _complexSub(const complex z, const complex w) =
+  complex(z.a - w.a, z.b - w.b);
 
 /// Complex multiplication.
 @(pure macro)
-export auto _complexMul(const complex z, const complex w) = complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
+export auto _complexMul(const complex z, const complex w) =
+  complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
 
 /// Complex division.
 @(pure macro)
-export auto _complexDiv(const complex z, const complex w) = _complexMul(z, _complexInv(w));
+export auto _complexDiv(const complex z, const complex w) =
+  _complexMul(z, _complexInv(w));
 
 /// Complex exponential.
 @(pure macro)
 export auto _complexExp(const complex z) = let {
-                                              const auto a = #exp(z.a);
-                                            } in complex(a * #cos(z.b), a * #sin(z.b));
+  const auto a = #exp(z.a);
+} in complex(a * #cos(z.b), a * #sin(z.b));
 
 /// Complex logarithm.
 @(pure macro)
-export auto _complexLog(const complex z) = complex(#log(_complexAbs(z)), #atan2(z.b, z.a));
+export auto _complexLog(const complex z) =
+  complex(#log(_complexAbs(z)), #atan2(z.b, z.a));
 
 /// Complex square root.
 @(pure macro)
 export auto _complexSqrt(const complex z) = let {
-                                               const auto absz = _complexAbs(z);
-                                             } in complex(
-                                               #sqrt(0.5 * (absz + z.a)),
-                                               #sqrt(0.5 * (absz - z.a)) * #sign(z.b),
-                                             );
+  const auto absz = _complexAbs(z);
+} in complex(
+  #sqrt(0.5 * (absz + z.a)),
+  #sqrt(0.5 * (absz - z.a)) * #sign(z.b),
+);
 

@@ -136,5 +136,6 @@ export auto regularized_roughness(
 ) {
   const auto order(#max($state.scattering_order, 1));
   return roughness if (order < start_order);
-  return #max(roughness, #max(0.0, #min(strength * (order - start_order + 1), 1.0)));
+  return #max(
+           roughness, #max(0.0, #min(strength * (order - start_order + 1), 1.0)));
 }

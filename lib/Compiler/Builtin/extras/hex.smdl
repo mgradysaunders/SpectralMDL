@@ -95,12 +95,14 @@ export struct hex_lattice {
 
 /// The inverse of the skew, carrying the triangle lattice back to the UV plane.
 @(pure macro)
-float2 hexUnskew(const float2 p) = float2(HEX_TILE_RADIUS * (p.x + 0.5 * p.y), 0.25 * p.y);
+float2 hexUnskew(const float2 p) =
+  float2(HEX_TILE_RADIUS * (p.x + 0.5 * p.y), 0.25 * p.y);
 
 /// Normalizes blending weights, falling back to a uniform split if they have
 /// all been driven to zero.
 @(pure macro)
-float3 hexNormalize(const float3 w) = (sum := #sum(w)) > 1e-20 ? w * (1.0 / sum) : float3(1.0 / 3.0);
+float3 hexNormalize(const float3 w) =
+  (sum := #sum(w)) > 1e-20 ? w * (1.0 / sum) : float3(1.0 / 3.0);
 
 /// The hex tiling covering `coord`.
 ///
@@ -117,12 +119,15 @@ float3 hexNormalize(const float3 w) = (sum := #sum(w)) > 1e-20 ? w * (1.0 / sum)
 /// normals must be counter-rotated after lookup: use `hex_rotate_inverse()`
 /// with `tiles[k].rotation`, or `hex_lookup_normal()` for a normal map.
 @(pure noinline)
-export hex_lattice hex_lattice_at(const float2 coord, const float rotate = 1.0, const int seed = 0) {
+export hex_lattice hex_lattice_at(
+  const float2 coord, const float rotate = 1.0, const int seed = 0) {
   // Skew into the triangle lattice and split the containing rhombus into the
   // two triangles whose corners are the centers of the three covering tiles.
   // This is done in double so that the fractional part, and hence the tile
   // ids, stay exact however large the coordinate is.
-  const auto skewed(double2(HEX_SKEW_X * double(coord.x) - 2.0d * double(coord.y), 4.0d * double(coord.y)));
+  const auto skewed(double2(
+    HEX_SKEW_X * double(coord.x) - 2.0d * double(coord.y),
+    4.0d * double(coord.y)));
   const auto base(int2(#floor(skewed)));
   const auto f(float2(skewed - double2(base)));
   const auto fz(1.0 - f.x - f.y);
@@ -130,11 +135,13 @@ export hex_lattice hex_lattice_at(const float2 coord, const float rotate = 1.0, 
   const auto i(upper ? 1 : 0);
   const auto s(upper ? 1.0 : 0.0);
   const auto s2(upper ? 1.0 : -1.0);
-  const auto ids(int2[3](base + int2(i, i), base + int2(i, 1 - i), base + int2(1 - i, i)));
-  const auto deltas(float2[3](float2(float(i), float(i)),     //
-                              float2(float(i), float(1 - i)), //
-                              float2(float(1 - i), float(i))));
-  const auto barycentric(#max(float3(0.0), float3(-fz * s2, s - f.y * s2, s - f.x * s2)));
+  const auto ids(int2[3](
+    base + int2(i, i), base + int2(i, 1 - i), base + int2(1 - i, i)));
+  const auto deltas(float2[3](float2(float(i), float(i)), //
+  float2(float(i), float(1 - i)),                         //
+  float2(float(1 - i), float(i))));
+  const auto barycentric(#max(
+    float3(0.0), float3(-fz * s2, s - f.y * s2, s - f.x * s2)));
   auto result(hex_lattice());
   for (int k = 0; k < 3; k++) {
     // The offset from this tile's center comes straight out of the fractional
@@ -147,9 +154,10 @@ export hex_lattice hex_lattice_at(const float2 coord, const float rotate = 1.0, 
       const auto angle((2.0 * h.z - 1.0) * ($PI * rotate));
       rotation = float2(#cos(angle), #sin(angle));
       offset = float2(rotation.x * offset.x - rotation.y * offset.y, //
-                      rotation.y * offset.x + rotation.x * offset.y);
+      rotation.y * offset.x + rotation.x * offset.y);
     }
-    result.tiles[k] = hex_tile(id: ids[k], coord: offset + h.xy, rotation: rotation);
+    result.tiles[k] = hex_tile(
+      id: ids[k], coord: offset + h.xy, rotation: rotation);
   }
   const auto b2(barycentric * barycentric);
   result.weights = hexNormalize(b2 * b2 * b2 * barycentric);
@@ -163,7 +171,7 @@ export hex_lattice hex_lattice_at(const float2 coord, const float rotate = 1.0, 
 @(pure macro)
 export float2 hex_rotate_inverse(const float2 rotation, const float2 direction) {
   return float2(rotation.x * direction.x + rotation.y * direction.y, //
-                rotation.x * direction.y - rotation.y * direction.x);
+         rotation.x * direction.y - rotation.y * direction.x);
 }
 
 /// Modulates blending weights by a per-tile significance metric, renormalizing
@@ -177,7 +185,8 @@ export float2 hex_rotate_inverse(const float2 rotation, const float2 direction) 
 /// the metric matters, so that the effective factor is
 /// `1 - strength + strength * metric`; zero ignores it entirely.
 @(pure)
-export float3 hex_modulate(const float3 w, const float3 metric, const float strength = 0.6) {
+export float3 hex_modulate(
+  const float3 w, const float3 metric, const float strength = 0.6) {
   return hexNormalize(w * (1.0 - strength + strength * #max(metric, 0.0)));
 }
 
@@ -203,29 +212,37 @@ export float3 hex_contrast(const float3 w, const float contrast = 0.5) {
 /// The luminance of three RGB values, being the usual significance metric for
 /// color. See `hex_modulate()`.
 @(pure macro)
-export float3 hex_metric_luminance(const float3 value0, const float3 value1, const float3 value2) {
-  return float3(math::luminance(value0), math::luminance(value1), math::luminance(value2));
+export float3 hex_metric_luminance(
+  const float3 value0, const float3 value1, const float3 value2) {
+  return float3(
+           math::luminance(value0),
+           math::luminance(value1),
+           math::luminance(value2));
 }
 
 /// The sine of the angle between the implied surface normal and the Z-axis for
 /// three height-map derivatives, being the published significance metric for
 /// normal maps. See `hex_modulate()`.
 @(pure macro)
-export float3 hex_metric_slope(const float2 deriv0, const float2 deriv1, const float2 deriv2) {
-  const auto d(#sum(deriv0 * deriv0), #sum(deriv1 * deriv1), #sum(deriv2 * deriv2));
+export float3 hex_metric_slope(
+  const float2 deriv0, const float2 deriv1, const float2 deriv2) {
+  const auto d(
+    #sum(deriv0 * deriv0), #sum(deriv1 * deriv1), #sum(deriv2 * deriv2));
   return #sqrt(d / (1.0 + d));
 }
 
 /// The weighted blend of three values.
 @(pure macro)
-export auto hex_blend(const float3 w, const auto value0, const auto value1, const auto value2) {
+export auto hex_blend(
+  const float3 w, const auto value0, const auto value1, const auto value2) {
   return w.x * value0 + w.y * value1 + w.z * value2;
 }
 
 /// The weighted blend of three values as an array, as `hex_lookup_with()`
 /// produces them.
 @(pure macro)
-export auto hex_blend(const float3 w, const auto[<N>] values) = hex_blend(w, values[0], values[1], values[2]);
+export auto hex_blend(const float3 w, const auto[<N>] values) =
+  hex_blend(w, values[0], values[1], values[2]);
 
 /// The weighted blend of three values, rescaled to preserve the variance of
 /// the source about a known `mean`.
@@ -294,7 +311,8 @@ export struct hex_samples {
 ///     const auto value(hex_blend(hex_contrast(tiling.weights), values));
 ///
 @(macro)
-export auto hex_lookup_with(const hex_lattice tiling, const auto f) = auto[3](f(tiling.tiles[0]), f(tiling.tiles[1]), f(tiling.tiles[2]));
+export auto hex_lookup_with(const hex_lattice tiling, const auto f) =
+  auto[3](f(tiling.tiles[0]), f(tiling.tiles[1]), f(tiling.tiles[2]));
 
 /// Looks up `tex` once per hex tile and shapes the blending weights, leaving
 /// the blend itself to the caller: take the result to `hex_blend()` for the
@@ -313,25 +331,33 @@ export hex_samples hex_lookup(
   const float contrast = 0.75, ///< The S-curve ramp on the weights. See `hex_contrast()`.
   const float strength = 0.6,  ///< The extent of the luminance modulation. See `hex_modulate()`.
 ) {
-  const auto values(hex_lookup_with(tiling, \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord)));
-  const auto weights(hex_modulate(tiling.weights, hex_metric_luminance(values[0].xyz, values[1].xyz, values[2].xyz), strength));
+  const auto values(hex_lookup_with(
+    tiling, \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord)));
+  const auto weights(hex_modulate(
+    tiling.weights,
+    hex_metric_luminance(values[0].xyz, values[1].xyz, values[2].xyz),
+    strength));
   return hex_samples(values: values, weights: hex_contrast(weights, contrast));
 }
 
 /// The blend of the three tile samples.
 @(pure macro)
-export float4 hex_blend(const hex_samples this) = hex_blend(this.weights, this.values[0], this.values[1], this.values[2]);
+export float4 hex_blend(const hex_samples this) =
+  hex_blend(this.weights, this.values[0], this.values[1], this.values[2]);
 
 /// The variance-preserving blend of the three tile samples about `mean`, which
 /// is the average of all texels of the source.
 @(pure macro)
-export float4 hex_blend_variance_preserving(const hex_samples this, const float4 mean) {
-  return hex_blend_variance_preserving(this.weights, this.values[0], this.values[1], this.values[2], mean);
+export float4 hex_blend_variance_preserving(
+  const hex_samples this, const float4 mean) {
+  return hex_blend_variance_preserving(
+           this.weights, this.values[0], this.values[1], this.values[2], mean);
 }
 
 /// One of the three tile samples, chosen stochastically. See `hex_select()`.
 @(pure macro)
-export float4 hex_select(const hex_samples this, const float xi) = this.values[hex_select(this.weights, xi)];
+export float4 hex_select(const hex_samples this, const float xi) =
+  this.values[hex_select(this.weights, xi)];
 
 /// The hex tiled lookup at `coord` as `float4`.
 ///
@@ -346,7 +372,8 @@ export float4 hex_lookup_float4(
   const float contrast = 0.75,
   const float strength = 0.6,
   const int seed = 0,
-) = hex_blend(hex_lookup(tex, hex_lattice_at(coord, rotate, seed), contrast, strength));
+) = hex_blend(hex_lookup(
+  tex, hex_lattice_at(coord, rotate, seed), contrast, strength));
 
 /// The hex tiled lookup at `coord` as `float3`.
 @(pure macro)
@@ -419,7 +446,11 @@ export float4 hex_lookup_float4_stochastic(
   const float rotate = 1.0,
   const float contrast = 0.75,
   const int seed = 0,
-) = hex_select_with(hex_lattice_at(coord, rotate, seed), xi, \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord), contrast);
+) = hex_select_with(
+  hex_lattice_at(coord, rotate, seed),
+  xi,
+  \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord),
+  contrast);
 
 /// The hex tiled lookup at `coord` as `color`, resolved stochastically.
 /// See `hex_lookup_float4_stochastic()`.
@@ -431,7 +462,8 @@ export color hex_lookup_color_stochastic(
   const float rotate = 1.0,
   const float contrast = 0.75,
   const int seed = 0,
-) = color(hex_lookup_float4_stochastic(tex, coord, xi, rotate, contrast, seed).xyz);
+) = color(
+  hex_lookup_float4_stochastic(tex, coord, xi, rotate, contrast, seed).xyz);
 
 /// Looks up a tangent-space normal from one tile, decoded from the usual
 /// `0.5 * normal + 0.5` encoding, counter-rotated, and renormalized.

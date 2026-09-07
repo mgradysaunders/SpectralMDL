@@ -149,7 +149,9 @@ export float2 parallax_offset_with(
   // surface is at its reference level and there is nothing to march.
   float f0(-(1.0 - math::saturate(height_at(coord))));
   return coord if (f0 >= 0.0);
-  const int n(#max(1, int(math::lerp(float(max_steps), float(min_steps), math::saturate(view.z)))));
+  const int n(#max(
+    1,
+    int(math::lerp(float(max_steps), float(min_steps), math::saturate(view.z)))));
   float l0(0.0);
   float l1(0.0);
   float f1(f0);
@@ -222,10 +224,14 @@ export float4 horizon_slopes_with(
     // `max_distance`.
     const float t(max_distance / float(1 << (n - 1 - k)));
     const float rise(scale / t);
-    slopes.x = #max(slopes.x, (math::saturate(height_at(coord + float2(t, 0.0))) - h0) * rise);
-    slopes.y = #max(slopes.y, (math::saturate(height_at(coord - float2(t, 0.0))) - h0) * rise);
-    slopes.z = #max(slopes.z, (math::saturate(height_at(coord + float2(0.0, t))) - h0) * rise);
-    slopes.w = #max(slopes.w, (math::saturate(height_at(coord - float2(0.0, t))) - h0) * rise);
+    slopes.x = #max(
+      slopes.x, (math::saturate(height_at(coord + float2(t, 0.0))) - h0) * rise);
+    slopes.y = #max(
+      slopes.y, (math::saturate(height_at(coord - float2(t, 0.0))) - h0) * rise);
+    slopes.z = #max(
+      slopes.z, (math::saturate(height_at(coord + float2(0.0, t))) - h0) * rise);
+    slopes.w = #max(
+      slopes.w, (math::saturate(height_at(coord - float2(0.0, t))) - h0) * rise);
   }
   return #min(slopes, PARALLAX_MAX_SLOPE);
 }
@@ -234,7 +240,8 @@ export float4 horizon_slopes_with(
 /// tiles the cells, and clamp holds the edge texel outside the image;
 /// the other modes take the layer march.
 @(pure macro)
-export bool marches_wrap(const tex::wrap_mode wrap) = (int(wrap) == int(tex::wrap_repeat)) | (int(wrap) == int(tex::wrap_clamp));
+export bool marches_wrap(const tex::wrap_mode wrap) =
+  (int(wrap) == int(tex::wrap_repeat)) | (int(wrap) == int(tex::wrap_clamp));
 
 /// The first root in `[0, ub]` of `q0 + q1 u + q2 u^2`, given `q0 < 0`,
 /// or -1 if there is none. A root the quadratic formula loses to
@@ -286,10 +293,14 @@ float patchHit(
 ) {
   const float2 pm(p0 + d * (0.5 * (sa + sb)));
   const int2 i0(int2(#floor(pm - 0.5)));
-  const float t00(math::saturate(tex::level_texel_float(height_tex, 0, i0, wrap_u, wrap_v)));
-  const float t10(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(1, 0), wrap_u, wrap_v)));
-  const float t01(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(0, 1), wrap_u, wrap_v)));
-  const float t11(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(1, 1), wrap_u, wrap_v)));
+  const float t00(math::saturate(tex::level_texel_float(
+    height_tex, 0, i0, wrap_u, wrap_v)));
+  const float t10(math::saturate(tex::level_texel_float(
+    height_tex, 0, i0 + int2(1, 0), wrap_u, wrap_v)));
+  const float t01(math::saturate(tex::level_texel_float(
+    height_tex, 0, i0 + int2(0, 1), wrap_u, wrap_v)));
+  const float t11(math::saturate(tex::level_texel_float(
+    height_tex, 0, i0 + int2(1, 1), wrap_u, wrap_v)));
   const float2 xs(p0 + d * sa - float2(i0) - 0.5);
   const float bx(t10 - t00);
   const float by(t01 - t00);
@@ -299,7 +310,8 @@ float patchHit(
   const float h2(bxy * d.x * d.y);
   // The clearance h(u) - (h_start + h_rate (sa + u)) over u in
   // [0, sb - sa], negative above the surface.
-  const float u(firstRoot(h0 - (h_start + h_rate * sa), h1 - h_rate, h2, sb - sa));
+  const float u(
+    firstRoot(h0 - (h_start + h_rate * sa), h1 - h_rate, h2, sb - sa));
   return u < 0.0 ? -1.0 : sa + u;
 }
 
@@ -341,8 +353,11 @@ ReliefHit reliefMarch(
 ) {
   const int2 extent(tex::extent(height_tex));
   const float2 extentF(extent);
-  const int2 clampAxis(int2(int(wrap_u) != int(tex::wrap_repeat) ? 1 : 0, int(wrap_v) != int(tex::wrap_repeat) ? 1 : 0));
-  const float2 nudge(#select(d >= 0.0, PARALLAX_CELL_NUDGE, -PARALLAX_CELL_NUDGE));
+  const int2 clampAxis(int2(
+    int(wrap_u) != int(tex::wrap_repeat) ? 1 : 0,
+    int(wrap_v) != int(tex::wrap_repeat) ? 1 : 0));
+  const float2 nudge(
+    #select(d >= 0.0, PARALLAX_CELL_NUDGE, -PARALLAX_CELL_NUDGE));
   const int top(height_tex.num_levels - 1);
   int level(top);
   float t(0.0);
@@ -366,7 +381,8 @@ ReliefHit reliefMarch(
     const auto above((clampAxis != 0) & (xi >= extent));
     const int2 cell(#select(below, 0, #select(above, levelExtent - 1, c)));
     float2 lo(float2(base + c * cellSize));
-    float2 hi(float2(base + #select(c == levelExtent - 1, extent, (c + 1) * cellSize)));
+    float2 hi(float2(base + #select(
+      c == levelExtent - 1, extent, (c + 1) * cellSize)));
     lo = #select(below, -1.0e30, #select(above, extentF, lo));
     hi = #select(below, 0.0, #select(above, 1.0e30, hi));
     const float2 dSafe(#select(d != 0.0, d, 1.0));
@@ -375,10 +391,12 @@ ReliefHit reliefMarch(
     tExit2 = #select(d < 0.0, (lo - p0) / dSafe, tExit2);
     const float tExit(#min(#min(tExit2.x, tExit2.y), t_end));
     const float parentSize(float(2 * cellSize));
-    const auto leavesParent(#any(#floor((p0 + d * tExit + nudge) / parentSize) != #floor(p / parentSize)));
+    const auto leavesParent(#any(
+      #floor((p0 + d * tExit + nudge) / parentSize) != #floor(p / parentSize)));
     const int levelAfterSkip(leavesParent ? #min(level + 1, top) : level);
     if (level > 0) {
-      const float bound(tex::level_texel_float(height_tex, level, cell, wrap_u, wrap_v));
+      const float bound(tex::level_texel_float(
+        height_tex, level, cell, wrap_u, wrap_v));
       // The ray's lowest height in the cell: at the exit descending, at
       // the entry ascending.
       const float hMin(h_start + h_rate * (h_rate < 0.0 ? tExit : t));
@@ -398,9 +416,12 @@ ReliefHit reliefMarch(
       tc = #select((tc > t) & (tc < tExit), tc, 1.0e30);
       const float tA(#min(tc.x, tc.y));
       const float tB(#max(tc.x, tc.y));
-      float hit(patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, t, #min(tA, tExit)));
-      hit = patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tA, #min(tB, tExit)) if ((hit < 0.0) & (tA < tExit));
-      hit = patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tB, tExit) if ((hit < 0.0) & (tB < tExit));
+      float hit(patchHit(
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, t, #min(tA, tExit)));
+      hit = patchHit(
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tA, #min(tB, tExit)) if ((hit < 0.0) & (tA < tExit));
+      hit = patchHit(
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tB, tExit) if ((hit < 0.0) & (tB < tExit));
       return ReliefHit(true, hit) if (hit >= 0.0);
       t = tExit;
       level = levelAfterSkip;
@@ -455,7 +476,16 @@ export float2 parallax_offset_max(
   // The ray in level-0 texel coordinates, from the un-displaced surface
   // (height 1) down one relief depth per unit parameter.
   const float2 extentF(extent);
-  const auto hit(reliefMarch(height_tex, wrap_u, wrap_v, coord * extentF, -slope * extentF, 1.0, -1.0, 1.0, max_steps));
+  const auto hit(reliefMarch(
+    height_tex,
+    wrap_u,
+    wrap_v,
+    coord * extentF,
+    -slope * extentF,
+    1.0,
+    -1.0,
+    1.0,
+    max_steps));
   return coord - slope * hit.t;
 }
 
@@ -503,12 +533,22 @@ export bool relief_visible(
   const auto slope_len(math::length(slope));
   slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
   slope *= scale;
-  const float start(math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) + bias);
+  const float start(
+    math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) + bias);
   return true if (start >= 1.0);
   // The ray in level-0 texel coordinates, rising one relief depth per
   // unit parameter until it reaches the un-displaced surface.
   const float2 extentF(extent);
-  return !reliefMarch(height_tex, wrap_u, wrap_v, coord * extentF, slope * extentF, start, 1.0, 1.0 - start, max_steps).hit;
+  return !reliefMarch(
+           height_tex,
+           wrap_u,
+           wrap_v,
+           coord * extentF,
+           slope * extentF,
+           start,
+           1.0,
+           1.0 - start,
+           max_steps).hit;
 }
 
 /// The parallax-adjusted UV coordinate for the height texture
@@ -536,9 +576,11 @@ export float2 parallax_uv(
   const float jitter = 0.0 [[anno::unused()]],
   const int refine_steps = 2 [[anno::unused()]],
 ) {
-  return parallax_offset_max(height_tex, coord, view_vector(space), scale, wrap_u, wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
+  return parallax_offset_max(
+           height_tex, coord, view_vector(space), scale, wrap_u, wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
   return parallax_offset_with(
-           \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+           \(const float2 coord) =
+             tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
            coord,
            view_vector(space),
            scale,
@@ -568,10 +610,13 @@ export float3 perturbed_normal_with(
   const int space = 0 [[anno::unused()]],
 ) {
   return state::normal() if (!(delta.x > 0.0) | !(delta.y > 0.0));
-  const float dhdu((height_at(coord + float2(delta.x, 0.0)) - height_at(coord - float2(delta.x, 0.0))) / (2.0 * delta.x));
-  const float dhdv((height_at(coord + float2(0.0, delta.y)) - height_at(coord - float2(0.0, delta.y))) / (2.0 * delta.y));
+  const float dhdu(
+    (height_at(coord + float2(delta.x, 0.0)) - height_at(coord - float2(delta.x, 0.0))) / (2.0 * delta.x));
+  const float dhdv(
+    (height_at(coord + float2(0.0, delta.y)) - height_at(coord - float2(0.0, delta.y))) / (2.0 * delta.y));
   const float3 nt(math::normalize(float3(-scale * dhdu, -scale * dhdv, 1.0)));
-  return math::normalize(nt.x * state::texture_tangent_u(space) + nt.y * state::texture_tangent_v(space) + nt.z * state::normal());
+  return math::normalize(
+           nt.x * state::texture_tangent_u(space) + nt.y * state::texture_tangent_v(space) + nt.z * state::normal());
 }
 
 /// The bump-perturbed shading normal for the height texture `height_tex`
@@ -591,7 +636,8 @@ export float3 perturbed_normal(
   const int2 extent(tex::extent(height_tex));
   return state::normal() if (#any(extent <= 0));
   return perturbed_normal_with(
-           \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+           \(const float2 coord) =
+             tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
            coord,
            scale,
            float2(delta_texels) / float2(extent),

@@ -47,7 +47,8 @@ export rng_t make_rng(const int64_t seed, const int64_t stream) {
 export int32_t generate_int(inline const &rng_t this) {
   const auto state0(state);
   state = state0 * RNG_MULTIPLIER + increment;
-  return #rotr(int32_t(((state0 >>> 18) ^ state0) >>> 27), int32_t(state0 >>> 59));
+  return #rotr(
+           int32_t(((state0 >>> 18) ^ state0) >>> 27), int32_t(state0 >>> 59));
 }
 
 /// Generates a uniform integer in `[0, bound)` by rejection sampling.
@@ -70,20 +71,28 @@ export int32_t generate_int(const &rng_t this, const int32_t bound) {
 /// Generates a uniform `float` in `[0, 1)`.
 @(pure)
 export float generate_float(const &rng_t this) {
-  return #min(float(#uitofp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+  return #min(
+           float(#uitofp(generate_int(this), double) / 4294967296.0d),
+           1.0 - $FLOAT_EPS / 2);
 }
 
 /// Generates a uniform `float2` in `[0, 1)^2`.
 @(pure)
-export float2 generate_float2(const &rng_t this) = float2(generate_float(this), generate_float(this));
+export float2 generate_float2(const &rng_t this) =
+  float2(generate_float(this), generate_float(this));
 
 /// Generates a uniform `float3` in `[0, 1)^3`.
 @(pure)
-export float3 generate_float3(const &rng_t this) = float3(generate_float(this), generate_float(this), generate_float(this));
+export float3 generate_float3(const &rng_t this) =
+  float3(generate_float(this), generate_float(this), generate_float(this));
 
 /// Generates a uniform `float4` in `[0, 1)^4`.
 @(pure)
-export float4 generate_float4(const &rng_t this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
+export float4 generate_float4(const &rng_t this) = float4(
+  generate_float(this),
+  generate_float(this),
+  generate_float(this),
+  generate_float(this));
 
 /// Advances the generator by `n` steps in logarithmic time, as if calling `generate_int(this)` `n` times.
 @(pure)

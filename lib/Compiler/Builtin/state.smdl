@@ -54,11 +54,15 @@ export float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
 
 /// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
-export float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
+export float3x3 tangent_space(const int i) = float3x3(
+  $state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
 /// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
-export float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
+export float3x3 geometry_tangent_space(const int i) = float3x3(
+  $state.geometry_tangent_u[i],
+  $state.geometry_tangent_v[i],
+  $state.geometry_normal);
 
 /// The object ID provided by the renderer.
 @(macro)
@@ -111,7 +115,8 @@ export int scattering_order() = $state.scattering_order;
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export bool directly_visible() = $state.scattering_order <= 1 && $state.transport == 0;
+export bool directly_visible() =
+  $state.scattering_order <= 1 && $state.transport == 0;
 
 /// The accumulated distance in scene units traveled by the path to reach
 /// this shading point. Zero conventionally means "not provided" and implies
@@ -168,7 +173,11 @@ float4x4 affineInverse(const float4x4 matrix) {
            float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
            float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
            float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
-           float4(-#sum(matrix[0] * matrix[3]), -#sum(matrix[1] * matrix[3]), -#sum(matrix[2] * matrix[3]), 1.0),
+           float4(
+             -#sum(matrix[0] * matrix[3]),
+             -#sum(matrix[1] * matrix[3]),
+             -#sum(matrix[2] * matrix[3]),
+             1.0),
          );
 }
 
@@ -188,7 +197,8 @@ export float4x4 transform(const coordinate_space from, const coordinate_space to
   } else if ((from == coordinate_world) & (to == coordinate_object)) {
     return affineInverse($state.object_to_world_matrix);
   } else if ((from == coordinate_world) & (to == coordinate_internal)) {
-    return affineInverse($state.object_to_world_matrix * $state.tangent_to_object_matrix);
+    return affineInverse(
+             $state.object_to_world_matrix * $state.tangent_to_object_matrix);
   } else {
     // Unreachable
     return float4x4(1.0);
@@ -197,25 +207,29 @@ export float4x4 transform(const coordinate_space from, const coordinate_space to
 
 /// Transforms a point from coordinate space `from` to coordinate space `to`.
 @(macro)
-export float3 transform_point(const coordinate_space from, const coordinate_space to, const float3 point) {
+export float3 transform_point(
+  const coordinate_space from, const coordinate_space to, const float3 point) {
   return from == to ? point : (transform(from, to) * float4(point, 1)).xyz;
 }
 
 /// Transforms a vector from coordinate space `from` to coordinate space `to`.
 @(macro)
-export float3 transform_vector(const coordinate_space from, const coordinate_space to, const float3 vector) {
+export float3 transform_vector(
+  const coordinate_space from, const coordinate_space to, const float3 vector) {
   return from == to ? vector : (transform(from, to) * float4(vector, 0)).xyz;
 }
 
 /// Transforms a normal from coordinate space `from` to coordinate space `to`, using the inverse transpose.
 @(macro)
-export float3 transform_normal(const coordinate_space from, const coordinate_space to, const float3 normal) {
+export float3 transform_normal(
+  const coordinate_space from, const coordinate_space to, const float3 normal) {
   return from == to ? normal : (float4(normal, 0) * transform(to, from)).xyz;
 }
 
 /// Transforms a scalar distance from coordinate space `from` to coordinate space `to`. NOTE: Not implemented yet, returns `scale` unchanged.
 @(macro)
-export float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
+export float transform_scale(
+  const coordinate_space from, const coordinate_space to, const float scale) {
   // TODO
   return 1.0 * scale;
 }
