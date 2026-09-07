@@ -300,6 +300,16 @@ public:
 
   /// Want compact?
   bool compact{};
+
+  /// The column past which the formatter prefers to break a line.
+  ///
+  /// This is a preference and not a guarantee. The formatter breaks a
+  /// comma-separated list or continues after a `=` only when doing so
+  /// actually improves the layout, and never rearranges an expression
+  /// just to respect the limit, so a long expression that cannot be
+  /// helped is left alone. Zero disables column awareness entirely,
+  /// as does `compact`.
+  int softColumnLimit{80};
 };
 
 /// \}

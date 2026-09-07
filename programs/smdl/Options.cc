@@ -103,6 +103,11 @@ cl::opt<bool> optFormatKeepDocComments{
 cl::opt<bool> optFormatNoAnnotations{
     "no-annotations", cl::desc("Remove annotations"), cl::init(false),
     cl::sub(subFormat), cl::cat(catFormat)};
+cl::opt<int> optFormatColumns{
+    "columns",
+    cl::desc("The column past which to prefer breaking a line, or 0 to "
+             "never break for width"),
+    cl::init(80), cl::sub(subFormat), cl::cat(catFormat)};
 //--}
 
 cl::OptionCategory catOutput{"Output Options"};
@@ -287,6 +292,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.format.noComments = bool(optFormatNoComments);
   opts.format.keepDocComments = bool(optFormatKeepDocComments);
   opts.format.noAnnotations = bool(optFormatNoAnnotations);
+  opts.format.softColumnLimit = int(optFormatColumns);
 
   opts.output.dumpFormat = smdl::DumpFormat(optDumpFormat);
   opts.output.fileName = flag(optOutput);

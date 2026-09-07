@@ -2,6 +2,8 @@
 /// \file
 #pragma once
 
+#include <utility>
+
 #include "smdl/AST.h"
 
 #include "llvm.h"
@@ -19,6 +21,8 @@ public:
     mIndent = 0;
     mIndentStack.clear();
     mLineCommentsToAlign.clear();
+    mNumTrials = 0;
+    mHasMoreOnLine = false;
     mFormatOff.reset();
     // Write!
     write(node);
@@ -88,6 +92,39 @@ private:
     return column;
   }
 
+  /// The indentation of the line currently being written, which is where
+  /// a block opened part way along that line belongs.
+  [[nodiscard]] int currentLineIndent() const {
+    auto i{mOutputSrc.size()};
+    while (i > 0 && mOutputSrc[i - 1] != '\n') i--;
+    auto column{int(0)};
+    while (i < mOutputSrc.size() && mOutputSrc[i] == ' ') i++, column++;
+    return column;
+  }
+
+  /// Is the layout allowed to depend on how wide the line is?
+  [[nodiscard]] bool isColumnAware() const {
+    return mOptions.softColumnLimit > 0 && !mOptions.compact;
+  }
+
+  /// May `ALIGN_INDENT` align to the given column? Aligning further right
+  /// than half the line leaves too little of it to be worth anything, which
+  /// is how continuations end up crammed against the right margin.
+  [[nodiscard]] bool mayAlignTo(int column) const {
+    return !isColumnAware() || column <= mOptions.softColumnLimit / 2;
+  }
+
+  /// May the layout be decided by trial? A trial may nest one deep, so
+  /// that measuring a broken form accounts for the constructs inside it
+  /// breaking in turn; below that a trial measures its subject as if
+  /// nothing in it broke, which bounds the cost. Also false inside
+  /// `// smdl format off`, where the output is about to be replaced by the
+  /// verbatim input anyway, and false wherever the rest of the line is
+  /// already spoken for.
+  [[nodiscard]] bool mayTrial() const {
+    return isColumnAware() && mNumTrials < 2 && !mFormatOff && !mHasMoreOnLine;
+  }
+
   /// Keep the given comment in the output? False only when removing
   /// comments, which may still preserve `///` and `///<` documentation
   /// comments.
@@ -130,17 +167,138 @@ private:
 
   void writeMinifiedFloat(const AST::LiteralFloat &expr);
 
-  [[nodiscard]] Delim writeStartList(size_t size, bool forceNewLines,
-                                     bool alignIndent = true) {
+  /// Write a comma-separated list, given `writeItems(delim)` which writes
+  /// every item and follows each comma it writes with `delim`. The list
+  /// goes where it is, or on the next line at the incremented indent, or
+  /// one item per line there, whichever is the narrowest layout that is
+  /// worth taking. A trailing comma or an intervening comment forces one
+  /// item per line. `mayBreak` is false for a list that must not move at
+  /// all: one nothing encloses, where a break would leave the keyword
+  /// that introduces it dangling, and one that is pure data.
+  ///
+  /// The caller must have written the opening delimiter and pushed the
+  /// indent the broken forms are relative to.
+  template <typename Items>
+  void writeList(size_t size, bool forceNewLines, bool mayBreak,
+                 Items &&writeItems) {
     if (mOptions.compact && size < 4) forceNewLines = false;
-    bool initialNewLine{forceNewLines || nextCommentForcesNewLine()};
-    if (initialNewLine) {
+    // Everything inside a list of several items written on one line has
+    // text after it on that line, so nothing in there may rearrange itself
+    // over several: the text that follows would land in the middle of the
+    // result.
+    auto writeItemsOnOneLine{[&] {
+      auto hasMoreOnLine{
+          std::exchange(mHasMoreOnLine, mHasMoreOnLine || size > 1)};
+      writeItems(DELIM_UNNECESSARY_SPACE);
+      mHasMoreOnLine = hasMoreOnLine;
+    }};
+    auto writeHere{[&] { write(DELIM_NONE), writeItemsOnOneLine(); }};
+    auto writeOnNextLine{
+        [&] { write(INCREMENT_INDENT, DELIM_NEWLINE), writeItemsOnOneLine(); }};
+    auto writeOnePerLine{[&] {
       write(INCREMENT_INDENT, DELIM_NEWLINE);
-    } else {
-      if (alignIndent) write(ALIGN_INDENT);
-      write(DELIM_NONE);
+      writeItems(DELIM_NEWLINE);
+    }};
+    if (!forceNewLines && !nextCommentForcesNewLine()) {
+      if (mayBreak && mayTrial()) {
+        auto here{measureInPlace(writeHere)};
+        auto onNextLine{measureInPlace(writeOnNextLine)};
+        // Give the list the next line to itself when it fits there, the
+        // opening bracket is still on the page, and the list is wide
+        // enough to be worth a line of its own. Otherwise the break this
+        // list wants belongs further out, and moving it alone only
+        // dribbles it down the right margin.
+        if (!fits(here) && fits(onNextLine) &&
+            currentColumn() <= mOptions.softColumnLimit &&
+            here.maxColumn - currentColumn() >= mOptions.softColumnLimit / 4) {
+          writeOnNextLine();
+          return;
+        }
+        // Otherwise spread it out, but only if that comes out narrower.
+        if (!fits(here) && !fits(onNextLine) &&
+            measureInPlace(writeOnePerLine).maxColumn < here.maxColumn) {
+          writeOnePerLine();
+          return;
+        }
+      }
+      writeHere();
+      return;
     }
-    return forceNewLines ? DELIM_NEWLINE : DELIM_UNNECESSARY_SPACE;
+    writeOnePerLine();
+  }
+
+  /// Write the right-hand side of a `=`, breaking after the `=` and
+  /// continuing at the incremented indent when the right-hand side comes
+  /// out better there. Anything that already fits where it is, a `let`
+  /// block say, stays where it is.
+  template <typename... Ts> void writeAfterEqual(Ts &&...args) {
+    if (mayTrial()) {
+      auto here{
+          measureInPlace([&] { write(DELIM_UNNECESSARY_SPACE, args...); })};
+      auto onNextLine{measureInPlace(
+          [&] { write(INCREMENT_INDENT, DELIM_NEWLINE, args...); })};
+      // The trial on the next line opens with the line break itself, so
+      // one line break is what one line looks like there. Move the
+      // right-hand side when that makes it one line that fits, or when it
+      // fits there and does not here.
+      bool isOneLineHere{fits(here) && here.numNewLines == 0};
+      bool isOneLineThere{fits(onNextLine) && onNextLine.numNewLines == 1};
+      if ((isOneLineThere && !isOneLineHere) ||
+          (fits(onNextLine) && !fits(here))) {
+        write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, args...,
+              POP_INDENT);
+        return;
+      }
+    }
+    write(DELIM_UNNECESSARY_SPACE, args...);
+  }
+
+  /// What a trial layout would look like.
+  struct Measure final {
+    /// The rightmost column any line of it reaches. The first line counts
+    /// the columns already written before it; an empty line counts for
+    /// nothing, so a trial that opens with a line break is not charged for
+    /// the column it started at.
+    int maxColumn{};
+
+    /// The line breaks it takes.
+    int numNewLines{};
+  };
+
+  /// Write `args` knowing that more of the line comes after them, so that
+  /// nothing in them rearranges itself over several lines and leaves that
+  /// text stranded in the middle of the result.
+  template <typename... Ts> void writeWithMoreOnLine(const Ts &...args) {
+    auto hasMoreOnLine{std::exchange(mHasMoreOnLine, true)};
+    write(args...);
+    mHasMoreOnLine = hasMoreOnLine;
+  }
+
+  /// Write whatever `writeTrial` writes, measure it, and undo it.
+  template <typename Trial>
+  [[nodiscard]] Measure measureInPlace(Trial &&writeTrial) {
+    auto state{saveState()};
+    auto startColumn{currentColumn()};
+    ++mNumTrials;
+    writeTrial();
+    --mNumTrials;
+    auto outSrc{llvm::StringRef(mOutputSrc).drop_front(state.outputSrcSize)};
+    auto measure{Measure{0, int(outSrc.count('\n'))}};
+    for (auto column{startColumn}; !outSrc.empty();) {
+      auto [line, rest] = outSrc.split('\n');
+      if (!line.empty())
+        measure.maxColumn =
+            std::max(measure.maxColumn, column + int(line.size()));
+      outSrc = outSrc.size() == line.size() ? llvm::StringRef() : rest;
+      column = 0;
+    }
+    restoreState(state);
+    return measure;
+  }
+
+  /// Does the trial layout stay within the soft column limit?
+  [[nodiscard]] bool fits(const Measure &measure) const {
+    return measure.maxColumn <= mOptions.softColumnLimit;
   }
 
 private:
@@ -174,7 +332,8 @@ private:
       mIndent += 2;
       break;
     case ALIGN_INDENT:
-      if (lastOutput() != '\n') mIndent = currentColumn();
+      if (lastOutput() != '\n')
+        if (auto column{currentColumn()}; mayAlignTo(column)) mIndent = column;
       break;
     case PUSH_INDENT:
       mIndentStack.push_back(mIndent);
@@ -213,11 +372,12 @@ private:
 
   void write(const AST::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{writeStartList(decl.importPathWrappers.size(),
-                              decl.hasTrailingComma())};
-    for (const auto &[importPath, srcComma] : decl.importPathWrappers) {
-      write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
-    }
+    writeList(
+        decl.importPathWrappers.size(), decl.hasTrailingComma(),
+        /*mayBreak=*/false, [&](Delim delim) {
+          for (const auto &[importPath, srcComma] : decl.importPathWrappers)
+            write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+        });
     write(decl.srcSemicolon, POP_INDENT);
   }
 
@@ -253,9 +413,12 @@ private:
   void write(const AST::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{writeStartList(decl.names.size(), decl.hasTrailingComma())};
-    for (const auto &[srcName, srcComma] : decl.names)
-      write(srcName, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+    writeList(decl.names.size(), decl.hasTrailingComma(),
+              /*mayBreak=*/false, [&](Delim delim) {
+                for (const auto &[srcName, srcComma] : decl.names)
+                  write(srcName, srcComma,
+                        srcComma.empty() ? DELIM_NONE : delim);
+              });
     write(decl.srcSemicolon, POP_INDENT);
   }
 
@@ -283,14 +446,16 @@ private:
       // Format approximate comparison syntax
       // `lhs ~== |eps| rhs`, `lhs ~== (eps) rhs`
       // `lhs ~!= |eps| rhs`, `lhs ~!= (eps) rhs`
-      write(expr.exprLhs,                        //
-            DELIM_UNNECESSARY_SPACE, expr.srcOp, //
-            DELIM_UNNECESSARY_SPACE, expr.srcDelimL, expr.exprEps,
-            expr.srcDelimR, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+      writeWithMoreOnLine(expr.exprLhs,                        //
+                          DELIM_UNNECESSARY_SPACE, expr.srcOp, //
+                          DELIM_UNNECESSARY_SPACE, expr.srcDelimL, expr.exprEps,
+                          expr.srcDelimR);
+      write(DELIM_UNNECESSARY_SPACE, expr.exprRhs);
     } else if (expr.op == AST::BINOP_ELSE) {
-      write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
+      writeWithMoreOnLine(expr.exprLhs, DELIM_SPACE, expr.srcOp);
+      write(DELIM_SPACE, expr.exprRhs);
     } else {
-      write(expr.exprLhs);
+      writeWithMoreOnLine(expr.exprLhs);
       // Avoid `+++` and `---` when the left operand ends with `++` or `--`
       bool mustHaveSpaceBefore{
           (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
@@ -348,11 +513,37 @@ private:
   }
 
   void write(const AST::Select &expr) {
-    write(PUSH_INDENT, ALIGN_INDENT,                 //
-          expr.exprCond, DELIM_UNNECESSARY_SPACE,    //
-          expr.srcQuestion, DELIM_UNNECESSARY_SPACE, //
-          expr.exprThen, DELIM_UNNECESSARY_SPACE,    //
-          expr.srcColon, DELIM_UNNECESSARY_SPACE, expr.exprElse, POP_INDENT);
+    auto writeOnOneLine{[&] {
+      writeWithMoreOnLine(expr.exprCond, DELIM_UNNECESSARY_SPACE,    //
+                          expr.srcQuestion, DELIM_UNNECESSARY_SPACE, //
+                          expr.exprThen, DELIM_UNNECESSARY_SPACE,    //
+                          expr.srcColon);
+      write(DELIM_UNNECESSARY_SPACE, expr.exprElse);
+    }};
+    // A conditional that does not fit breaks before both `?` and `:`, which
+    // is the one place an expression is allowed to rearrange itself, because
+    // there the branches line up under one another instead of wrapping
+    // wherever the width happens to run out.
+    auto writeOnThreeLines{[&] {
+      write(expr.exprCond, DELIM_NEWLINE, expr.srcQuestion, DELIM_SPACE,
+            expr.exprThen, DELIM_NEWLINE, expr.srcColon, DELIM_SPACE,
+            expr.exprElse);
+    }};
+    // The branches line up under the condition, or one step in from
+    // whatever the conditional follows when that is too far right. At the
+    // start of a line there is nothing to line up under and the enclosing
+    // construct has already chosen the indent.
+    auto indent{[&] {
+      if (lastOutput() != '\n') write(INCREMENT_INDENT, ALIGN_INDENT);
+    }};
+    write(PUSH_INDENT);
+    if (mayTrial() && !fits(measureInPlace(writeOnOneLine)) &&
+        fits(measureInPlace([&] { indent(), writeOnThreeLines(); }))) {
+      indent(), writeOnThreeLines();
+    } else {
+      writeOnOneLine();
+    }
+    write(POP_INDENT);
   }
 
   void write(const AST::SizeName &expr) {
@@ -434,22 +625,24 @@ private:
 
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
-    auto delim{
-        writeStartList(stmt.exprWrappers.size(), stmt.hasTrailingComma())};
-    for (const auto &[expr, srcComma] : stmt.exprWrappers) {
-      write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
-    }
+    writeList(stmt.exprWrappers.size(), stmt.hasTrailingComma(),
+              /*mayBreak=*/false, [&](Delim delim) {
+                for (const auto &[expr, srcComma] : stmt.exprWrappers)
+                  write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+              });
     write(stmt.srcSemicolon, POP_INDENT);
   }
 
   void write(const AST::Return &stmt) {
-    // This may be empty in abbreviated function definitions!
+    // The keyword may be empty in abbreviated function definitions, where
+    // there is nothing to align under and the indent belongs to whatever
+    // wrote the `=`.
     write(PUSH_INDENT);
     if (!stmt.srcKwReturn.empty()) {
       write(stmt.srcKwReturn);
       if (stmt.expr || stmt.lateIf) write(DELIM_SPACE);
+      write(ALIGN_INDENT);
     }
-    write(ALIGN_INDENT);
     if (stmt.expr) {
       write(stmt.expr);
     }
@@ -552,6 +745,61 @@ private:
   };
 
   std::optional<FormatOff> mFormatOff;
+
+  /// The nesting depth of `measureInPlace()`.
+  int mNumTrials{};
+
+  /// Is the rest of the current line already spoken for?
+  bool mHasMoreOnLine{};
+
+  /// Everything `measureInPlace()` has to put back afterwards.
+  struct State final {
+    size_t outputSrcSize{};
+
+    /// Trailing spaces removed before the trial, so that the trial cannot
+    /// erase output written before it (`writeDelimNewLine()` would).
+    size_t numTrailingSpaces{};
+
+    llvm::StringRef inputSrc{};
+
+    bool hasMoreOnLine{};
+
+    int indent{};
+
+    std::vector<int> indentStack{};
+
+    size_t numLineCommentsToAlign{};
+
+    std::optional<FormatOff> formatOff{};
+  };
+
+  [[nodiscard]] State saveState() {
+    auto state{State{}};
+    while (lastOutput() == ' ') {
+      mOutputSrc.pop_back();
+      state.numTrailingSpaces++;
+    }
+    state.outputSrcSize = mOutputSrc.size();
+    state.inputSrc = mInputSrc;
+    state.hasMoreOnLine = mHasMoreOnLine;
+    state.indent = mIndent;
+    state.indentStack = mIndentStack;
+    state.numLineCommentsToAlign = mLineCommentsToAlign.size();
+    state.formatOff = mFormatOff;
+    return state;
+  }
+
+  void restoreState(const State &state) {
+    SMDL_SANITY_CHECK(mOutputSrc.size() >= state.outputSrcSize);
+    mOutputSrc.resize(state.outputSrcSize);
+    mOutputSrc.append(state.numTrailingSpaces, ' ');
+    mInputSrc = state.inputSrc;
+    mHasMoreOnLine = state.hasMoreOnLine;
+    mIndent = state.indent;
+    mIndentStack = state.indentStack;
+    mLineCommentsToAlign.resize(state.numLineCommentsToAlign);
+    mFormatOff = state.formatOff;
+  }
 
   void applyFormatOff(const char *inputSrcPos) {
     if (mFormatOff) {
