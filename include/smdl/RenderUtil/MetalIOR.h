@@ -56,18 +56,18 @@ extern "C" {
 ///
 /// Returns 1 on success. If `metal` is invalid, zeroes out `metalIOR` and
 /// returns 0. The returned table points to static storage, so it is valid
-/// forever and must not be freed. See `Metal.cc` in the library
+/// forever and must not be freed. See `MetalIOR.cc` in the library
 /// implementation for the data sources.
 SMDL_EXPORT int smdlFindMetalIOR(Metal metal, MetalIOR *metalIOR);
 
 /// Evaluate the complex IOR \f$ n + ik \f$ of the given metal.
 ///
 /// The evaluation linearly interpolates the builtin lookup table of the
-/// given metal. The wavelengths in `wavelens` must be in nanometers and,
-/// like `State::wavelength_base`, must be sorted in increasing order.
-/// Wavelengths outside the table domain clamp to the nearest table entry.
-/// Either of `iorN` and `iorK` may be null to skip that output. If `metal`
-/// is invalid, the outputs are filled with zeros.
+/// given metal. The wavelengths in `wavelens` are in nanometers and need
+/// not be in any particular order. Wavelengths outside the table domain
+/// clamp to the nearest table entry. Either of `iorN` and `iorK` may be
+/// null to skip that output. If `metal` is invalid, the outputs are filled
+/// with zeros.
 SMDL_EXPORT void smdlEvalMetalIOR(Metal metal, int numWavelens,
                                   const float *wavelens, float *iorN,
                                   float *iorK);

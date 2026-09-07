@@ -36,7 +36,7 @@ add_library(
     "Parser.cc"
     "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
-    "RenderUtil/Metal.cc"
+    "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
     "RenderUtil/SpectralFilm.cc"
     "RenderUtil/SunSky.cc"

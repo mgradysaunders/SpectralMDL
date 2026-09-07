@@ -1,6 +1,7 @@
-#include "smdl/RenderUtil/Metal.h"
+#include "smdl/RenderUtil/MetalIOR.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace smdl {
 
@@ -746,6 +747,137 @@ static constexpr MetalIOR METAL_IORS[17] = {
     {&METAL_IOR_TI[0], METAL_IOR_TI_SIZE},
     {&METAL_IOR_ZN[0], METAL_IOR_ZN_SIZE}};
 
+// A uniform bucket grid over the wavelengths a render actually asks about,
+// so that `smdlEvalMetalIOR()` reaches a bracketing pair by arithmetic
+// instead of searching. Each bucket stores the index of the entry bracketing
+// its low edge, and a lookup steps forward from there at most
+// `MAX_BUCKET_SPAN` times. The grid deliberately does not span the whole
+// table domain: a handful of metals carry x-ray and EUV entries below
+// 300nm, which no render touches and which the search path still serves.
+static constexpr float BUCKET_MIN = 300.0f;
+static constexpr float BUCKET_MAX = 14000.0f;
+static constexpr int BUCKET_COUNT = 1024;
+static constexpr float BUCKET_SCALE = BUCKET_COUNT / (BUCKET_MAX - BUCKET_MIN);
+
+// Two is the floor for any bucket count, because copper has an adjacent pair
+// 0.3nm apart at 1010nm that no grid separates.
+static constexpr int MAX_BUCKET_SPAN = 2;
+
+struct BucketIndex final {
+  std::uint8_t start[BUCKET_COUNT]{};
+};
+
+// The low edge of bucket `b`, which is where its stored index is anchored.
+[[nodiscard]] static constexpr float bucketLowEdge(int b) {
+  return BUCKET_MIN + float(b) / BUCKET_SCALE;
+}
+
+// The bracketing convention the search path arrives at: the last entry
+// strictly below `wavelen`, held one short of the end so that `[1]` is always
+// a valid neighbor.
+[[nodiscard]] static constexpr int
+bracketOf(const MetalIORTableEntry *table, int size, int from, float wavelen) {
+  int i{from};
+  while (i + 1 <= size - 2 && table[i + 1].wavelen < wavelen) i++;
+  return i;
+}
+
+[[nodiscard]] static constexpr BucketIndex
+makeBucketIndex(const MetalIORTableEntry *table, int size) {
+  BucketIndex index{};
+  int i{};
+  for (int b{}; b < BUCKET_COUNT; b++) {
+    i = bracketOf(table, size, i, bucketLowEdge(b));
+    index.start[b] = std::uint8_t(i);
+  }
+  return index;
+}
+
+struct BucketIndexes final {
+  BucketIndex byMetal[17]{};
+};
+
+[[nodiscard]] static constexpr BucketIndexes makeBucketIndexes() {
+  BucketIndexes all{};
+  for (int m{}; m < 17; m++)
+    all.byMetal[m] =
+        makeBucketIndex(METAL_IORS[m].table, METAL_IORS[m].tableSize);
+  return all;
+}
+
+static constexpr BucketIndexes METAL_IOR_BUCKETS{makeBucketIndexes()};
+
+// The worst number of forward steps any lookup can need, which the fast path
+// unrolls to exactly. A table edit that widens this fails the build rather
+// than silently returning an IOR read off the wrong pair.
+[[nodiscard]] static constexpr int worstBucketSpan() {
+  int worst{};
+  for (int m{}; m < 17; m++) {
+    const auto *table{METAL_IORS[m].table};
+    const int size{METAL_IORS[m].tableSize};
+    const auto &index{METAL_IOR_BUCKETS.byMetal[m]};
+    for (int b{}; b < BUCKET_COUNT; b++) {
+      const float high{b + 1 < BUCKET_COUNT ? bucketLowEdge(b + 1)
+                                            : BUCKET_MAX};
+      const int span{bracketOf(table, size, index.start[b], high) -
+                     index.start[b]};
+      worst = worst < span ? span : worst;
+    }
+  }
+  return worst;
+}
+
+static_assert(worstBucketSpan() <= MAX_BUCKET_SPAN,
+              "a bucket spans more entries than the fast path steps over; "
+              "raise BUCKET_COUNT or MAX_BUCKET_SPAN");
+
+// Every table index has to survive the round trip through `std::uint8_t`.
+[[nodiscard]] static constexpr int largestTableSize() {
+  int largest{};
+  for (int m{}; m < 17; m++)
+    largest =
+        largest < METAL_IORS[m].tableSize ? METAL_IORS[m].tableSize : largest;
+  return largest;
+}
+
+static_assert(largestTableSize() - 2 <= 255,
+              "a table outgrew the uint8_t bucket index");
+
+// The pair of entries bracketing the given wavelength: the last entry
+// strictly below it, held one short of the end so that `[1]` is a valid
+// neighbor. Wavelengths in the bucket domain arrive by arithmetic; the rest,
+// and NaN, take the search, which is why the range test is spelled so that
+// NaN fails it.
+[[nodiscard]] static const MetalIORTableEntry *
+bracketOfWavelength(const MetalIORTableEntry *tableBegin,
+                    const MetalIORTableEntry *tableEnd,
+                    const BucketIndex &buckets, float wavelen) {
+  if (BUCKET_MIN <= wavelen && wavelen <= BUCKET_MAX) {
+    const int bucket{int((wavelen - BUCKET_MIN) * BUCKET_SCALE)};
+    const MetalIORTableEntry *itr{
+        tableBegin + buckets.start[std::min(bucket, BUCKET_COUNT - 1)]};
+    for (int step = 0; step < MAX_BUCKET_SPAN; step++)
+      if (itr + 2 < tableEnd && itr[1].wavelen < wavelen) ++itr;
+    return itr;
+  }
+  const MetalIORTableEntry *itr{
+      std::lower_bound(tableBegin, tableEnd, wavelen,
+                       [](const MetalIORTableEntry &entry, float wavelen) {
+                         return entry.wavelen < wavelen;
+                       })};
+  if (itr != tableBegin) --itr; // Element immediately before wavelength
+  if (itr == tableEnd - 1)
+    --itr; // Last element, back up so `itr[1]` is still in bounds
+  return itr;
+}
+
+// How many wavelengths are bracketed before any of them is interpolated.
+// Locating a bracket is branchy and interpolating one waits on a divide, so
+// running the two as separate passes over a tile lets each keep the machine
+// busy instead of one stalling behind the other. Sixteen is the default
+// wavelength count, so the usual call is a single tile.
+static constexpr int EVAL_TILE = 16;
+
 } // namespace
 
 int smdlFindMetalIOR(Metal metal, MetalIOR *metalIOR) {
@@ -773,29 +905,23 @@ void smdlEvalMetalIOR(Metal metal, int numWavelens, const float *wavelens,
   // Precondition: the table size is at least two!
   const MetalIORTableEntry *tableBegin{metalIOR.table};
   const MetalIORTableEntry *tableEnd{metalIOR.table + metalIOR.tableSize};
-  for (int i = 0; i < numWavelens; i++) {
-    const float wavelen = wavelens[i];
-    const MetalIORTableEntry *itr =
-        std::lower_bound(tableBegin, tableEnd, wavelen,
-                         [](const MetalIORTableEntry &entry, float wavelen) {
-                           return entry.wavelen < wavelen;
-                         });
-    if (itr != tableBegin) --itr; // Element immediately before wavelength
-    if (itr == tableEnd - 1)
-      --itr; // Last element, back up so `itr[1]` is
-             // still in bounds
-    const MetalIORTableEntry &entry0{itr[0]};
-    const MetalIORTableEntry &entry1{itr[1]};
-    float t = (wavelen - entry0.wavelen) / (entry1.wavelen - entry0.wavelen);
-    t = std::clamp(t, 0.0f, 1.0f); // Clamp outside the table domain
-    float2 ior = (1 - t) * entry0.ior + t * entry1.ior;
-    if (iorN) iorN[i] = ior[0];
-    if (iorK) iorK[i] = ior[1];
-    // The wavelengths must be in increasing order, so we know the next
-    // wavelength will be greater than the current wavelength, so we can
-    // shift the `tableBegin` pointer to the position immediately before the
-    // wavelength we just evaluated.
-    tableBegin = itr;
+  const BucketIndex &buckets{METAL_IOR_BUCKETS.byMetal[int(metal)]};
+  const MetalIORTableEntry *brackets[EVAL_TILE];
+  for (int base = 0; base < numWavelens; base += EVAL_TILE) {
+    const int count{std::min(EVAL_TILE, numWavelens - base)};
+    for (int i = 0; i < count; i++)
+      brackets[i] = bracketOfWavelength(tableBegin, tableEnd, buckets,
+                                        wavelens[base + i]);
+    for (int i = 0; i < count; i++) {
+      const float wavelen{wavelens[base + i]};
+      const MetalIORTableEntry &entry0{brackets[i][0]};
+      const MetalIORTableEntry &entry1{brackets[i][1]};
+      float t = (wavelen - entry0.wavelen) / (entry1.wavelen - entry0.wavelen);
+      t = std::clamp(t, 0.0f, 1.0f); // Clamp outside the table domain
+      float2 ior = (1 - t) * entry0.ior + t * entry1.ior;
+      if (iorN) iorN[base + i] = ior[0];
+      if (iorK) iorK[base + i] = ior[1];
+    }
   }
 }
 

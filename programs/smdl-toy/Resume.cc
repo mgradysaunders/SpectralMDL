@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-#include "CommandLine.h"
+#include "../CommandLine.h"
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"

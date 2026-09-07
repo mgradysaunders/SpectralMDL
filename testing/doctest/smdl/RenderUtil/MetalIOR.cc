@@ -1,8 +1,11 @@
 #include "doctest.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <vector>
 
-#include "smdl/RenderUtil/Metal.h"
+#include "smdl/RenderUtil/MetalIOR.h"
 
 static smdl::float2 evalMetalIOR(smdl::Metal metal, float wavelen) {
   float n{}, k{};
@@ -14,6 +17,61 @@ static smdl::float2 evalMetalIOR(smdl::Metal metal, float wavelen) {
 static float reflectance(smdl::float2 ior) {
   const float n{ior[0]}, k{ior[1]};
   return ((n - 1) * (n - 1) + k * k) / ((n + 1) * (n + 1) + k * k);
+}
+
+// The straightforward search this module used before it gained the bucket
+// index, kept here so the fast path can be held to returning the same bits.
+static void searchEvalMetalIOR(smdl::Metal metal, int numWavelens,
+                               const float *wavelens, float *iorN,
+                               float *iorK) {
+  smdl::MetalIOR metalIOR{};
+  if (!smdl::smdlFindMetalIOR(metal, &metalIOR)) return;
+  const smdl::MetalIORTableEntry *tableBegin{metalIOR.table};
+  const smdl::MetalIORTableEntry *tableEnd{metalIOR.table + metalIOR.tableSize};
+  for (int i = 0; i < numWavelens; i++) {
+    const float wavelen{wavelens[i]};
+    const smdl::MetalIORTableEntry *itr{std::lower_bound(
+        tableBegin, tableEnd, wavelen,
+        [](const smdl::MetalIORTableEntry &entry, float wavelen) {
+          return entry.wavelen < wavelen;
+        })};
+    if (itr != tableBegin) --itr;
+    if (itr == tableEnd - 1) --itr;
+    float t{(wavelen - itr[0].wavelen) / (itr[1].wavelen - itr[0].wavelen)};
+    t = std::clamp(t, 0.0f, 1.0f);
+    const smdl::float2 ior{(1 - t) * itr[0].ior + t * itr[1].ior};
+    iorN[i] = ior[0], iorK[i] = ior[1];
+  }
+}
+
+// Bit-identical, and NaN compares equal to NaN so the out-of-domain results
+// are held to the same bits as everything else.
+static bool sameBits(float a, float b) {
+  return (std::isnan(a) && std::isnan(b)) || a == b;
+}
+
+// Every wavelength worth asking about: each table entry and its two nearest
+// neighbors, every interval midpoint, a sweep across and well past the bucket
+// domain, and the exceptional values.
+static std::vector<float> probeWavelengths(const smdl::MetalIOR &metalIOR) {
+  std::vector<float> wavelens{};
+  for (int i = 0; i < metalIOR.tableSize; i++) {
+    const float wavelen{metalIOR.table[i].wavelen};
+    wavelens.push_back(wavelen);
+    wavelens.push_back(std::nextafter(wavelen, 0.0f));
+    wavelens.push_back(std::nextafter(wavelen, 1e30f));
+    if (i + 1 < metalIOR.tableSize)
+      wavelens.push_back(0.5f * (wavelen + metalIOR.table[i + 1].wavelen));
+  }
+  for (double wavelen = 1.0; wavelen < 20000.0; wavelen *= 1.0005)
+    wavelens.push_back(float(wavelen));
+  const float inf{std::numeric_limits<float>::infinity()};
+  for (float wavelen : {0.0f, -1.0f, -1e30f, 299.0f, 299.999f, 300.0f, 300.001f,
+                        13999.9f, 14000.0f, 14000.1f, 1e6f, inf, -inf,
+                        std::numeric_limits<float>::quiet_NaN()})
+    wavelens.push_back(wavelen);
+  std::sort(wavelens.begin(), wavelens.end());
+  return wavelens;
 }
 
 TEST_CASE("MetalIOR") {
@@ -149,6 +207,62 @@ TEST_CASE("MetalIOR") {
       CHECK(ior[1] > ior[0]);
       CHECK(reflectance(ior) > 0.65f);
       CHECK(reflectance(ior) < 0.9f);
+    }
+  }
+
+  SUBCASE("smdlEvalMetalIOR matches the search it replaced") {
+    // The bucket index is an acceleration, not a re-derivation: it must land
+    // on the same bracketing pair the search does, so the interpolation is
+    // the same arithmetic on the same two entries and the result agrees to
+    // the bit. Anything less would shift rendered appearance.
+    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+      const auto metal{smdl::Metal(i)};
+      smdl::MetalIOR metalIOR{};
+      REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);
+      const auto wavelens{probeWavelengths(metalIOR)};
+      const int numWavelens(wavelens.size());
+      std::vector<float> iorN(numWavelens), iorK(numWavelens);
+      std::vector<float> expectN(numWavelens), expectK(numWavelens);
+      searchEvalMetalIOR(metal, numWavelens, wavelens.data(), expectN.data(),
+                         expectK.data());
+      smdl::smdlEvalMetalIOR(metal, numWavelens, wavelens.data(), iorN.data(),
+                             iorK.data());
+      int numMismatched{};
+      for (int j = 0; j < numWavelens; j++)
+        if (!sameBits(iorN[j], expectN[j]) || !sameBits(iorK[j], expectK[j]))
+          numMismatched++;
+      CHECK(numMismatched == 0);
+    }
+  }
+
+  SUBCASE("smdlEvalMetalIOR does not depend on wavelength order") {
+    // The search used to carry its lower bound forward from the previous
+    // wavelength, which quietly returned wrong values for unsorted input
+    // rather than merely being slower. The bucket index reaches each
+    // wavelength independently, so order cannot matter.
+    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+      const auto metal{smdl::Metal(i)};
+      smdl::MetalIOR metalIOR{};
+      REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);
+      auto wavelens{probeWavelengths(metalIOR)};
+      wavelens.erase(std::remove_if(wavelens.begin(), wavelens.end(),
+                                    [](float w) { return std::isnan(w); }),
+                     wavelens.end());
+      const int numWavelens(wavelens.size());
+      std::vector<float> iorN(numWavelens), iorK(numWavelens);
+      smdl::smdlEvalMetalIOR(metal, numWavelens, wavelens.data(), iorN.data(),
+                             iorK.data());
+      auto reversed{wavelens};
+      std::reverse(reversed.begin(), reversed.end());
+      std::vector<float> reversedN(numWavelens), reversedK(numWavelens);
+      smdl::smdlEvalMetalIOR(metal, numWavelens, reversed.data(),
+                             reversedN.data(), reversedK.data());
+      int numMismatched{};
+      for (int j = 0; j < numWavelens; j++)
+        if (!sameBits(iorN[j], reversedN[numWavelens - 1 - j]) ||
+            !sameBits(iorK[j], reversedK[numWavelens - 1 - j]))
+          numMismatched++;
+      CHECK(numMismatched == 0);
     }
   }
 }

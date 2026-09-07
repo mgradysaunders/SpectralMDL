@@ -13,10 +13,6 @@
 
 #include "Common.h"
 
-/// The default wavelength range in nanometers, spanning the visible.
-constexpr float WAVELENGTH_MIN = 380.0f;
-constexpr float WAVELENGTH_MAX = 720.0f;
-
 /// The jitter band edges of the wavelength grid `wavelens`, as
 /// `WavelengthGrid::bandEdges` describes them, or empty for a grid of
 /// fewer than 2 wavelengths, which has no band width to speak of.

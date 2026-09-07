@@ -114,10 +114,10 @@ public:
   uint32_t instIndex{INVALID_INDEX};
 
   /// Does light selection aim at it? From the instance's `light` mark
-  /// (see `LayoutAssetDecl::light`) or the `-all-lights` switch. An
-  /// unsampled emitter is registered for `totalArea` alone, which the
-  /// `intensity_power` normalization of its path hits needs, and gets
-  /// no selection weight: `sample()` never draws it, `solidAnglePDF()`
+  /// (see `LayoutAssetDecl::light`) or the `-mark-all-lights` switch.
+  /// An unsampled emitter is registered for `totalArea` alone, which
+  /// the `intensity_power` normalization of its path hits needs, and
+  /// gets no selection weight: `sample()` never draws it, `solidAnglePDF()`
   /// reports zero for it, and it is never a caustic target, so its
   /// arrivals keep their full weight.
   bool isSampled{};
@@ -266,14 +266,24 @@ public:
   /// `incidencePoint`, the baked radiance when that point is on the
   /// emitting side of the plane and zero behind it.
   [[nodiscard]] Color Le(const float3 &lightPoint, const float3 &incidencePoint,
-                         float time) const noexcept;
+                         float time) const noexcept {
+    return dot(incidencePoint - lightPoint, normal(time)) > 0
+               ? Color(mIntensity)
+               : Color(0.0f);
+  }
 
   /// Shapes: the unit normal of the emitting side.
-  [[nodiscard]] float3 normal(float time) const noexcept;
+  [[nodiscard]] float3 normal(float time) const noexcept {
+    std::optional<Placement> scratch{};
+    return placementAt(time, scratch).normal;
+  }
 
   /// The position in world space: the point itself, or the center of a
   /// shape.
-  [[nodiscard]] float3 position(float time) const noexcept;
+  [[nodiscard]] float3 position(float time) const noexcept {
+    std::optional<Placement> scratch{};
+    return placementAt(time, scratch).position;
+  }
 
   /// The world-space box: the point itself, or a shape's corners, at
   /// both keys of a moving light, which is a hull, since a lerped corner
@@ -463,7 +473,7 @@ private:
 class LightSampler final {
 public:
   /// `allLights` samples every emissive instance whether or not it is
-  /// marked: the `-all-lights` switch, and what a render without a
+  /// marked: the `-mark-all-lights` switch, and what a render without a
   /// layout to carry marks wants. `useTree` selects through the
   /// `LightTree` rather than the flat distribution, which is what
   /// `-no-light-tree` asks for; see `LightSelection`.

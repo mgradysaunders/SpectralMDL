@@ -6,9 +6,9 @@
 /// knows a command line was involved. That is what lets the render
 /// stages be read, and called, without one.
 ///
-/// The six groups below are the six `cl::OptionCategory` groups the help
-/// text prints, one struct apiece, so that where a setting lives here
-/// and where a user finds it are the same question. Anything finer is a
+/// The groups below are the `cl::OptionCategory` groups the help text
+/// prints, one struct apiece, so that where a setting lives here and
+/// where a user finds it are the same question. Anything finer is a
 /// struct nested inside its category.
 #pragma once
 
@@ -16,42 +16,24 @@
 #include <string>
 #include <vector>
 
+#include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
 
+#include "../CommandLine.h"
 #include "Color.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
 #include "Tonemap.h"
 
-/// A command line value, and whether the command line actually gave it.
-///
-/// `given` is the whole point: the value alone cannot distinguish "the
-/// user asked for 50" from "50 is what it defaults to". That matters
-/// wherever a flag left at its default must not override a scene file
-/// that spoke, and wherever a flag's own default is not a value at all.
-template <typename T> struct Flag final {
-  /// The value, which is the flag's own default when `given` is false.
-  T value{};
+//--{ Compile Options
+/// What the MDL compiler bakes into the material code. No scene file has
+/// a say in any of it.
+struct CompileOptions final {
+  smdl::OptLevel optLevel{smdl::OPT_LEVEL_O2};
 
-  /// Did the command line actually give it?
-  bool given{};
+  bool enableDebug{};
 };
-
-/// Resolve one of the merged settings: the command line if it spoke,
-/// else the scene file if it did, else the flag's own default.
-template <typename T, typename U>
-[[nodiscard]] T pick(const Flag<T> &cli, const std::optional<U> &file) {
-  return !cli.given && file ? T(*file) : cli.value;
-}
-
-/// A uniform wavelength grid, as `-wavelength-range` spells one.
-struct WavelengthRange final {
-  /// The endpoints in nanometers, inclusive.
-  float2 range{};
-
-  /// The number of bands spanning them.
-  unsigned bandCount{};
-};
+//--}
 
 //--{ Camera Options
 /// Framing the camera from the scene bounds instead of stating it.
@@ -350,6 +332,8 @@ struct UtilityOptions final {
 /// Everything the command line asked for, grouped as the help text
 /// groups it.
 struct Options final {
+  CompileOptions compile{};
+
   CameraFlags camera{};
 
   ImageOptions image{};

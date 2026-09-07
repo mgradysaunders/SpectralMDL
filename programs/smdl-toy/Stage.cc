@@ -8,7 +8,7 @@
 #include "smdl/Support/Profiler.h"
 #include "smdl/Support/Strings.h"
 
-#include "CommandLine.h"
+#include "../CommandLine.h"
 
 #include "Layout/CameraFile.h"
 #include "Layout/LayoutTables.h"
@@ -311,7 +311,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
 void setUpCompiler(const Options &opts, const Frame &frame,
                    const ResolvedGrid &grid, smdl::Compiler &compiler) {
   compiler.wavelengthBaseMax = uint32_t(grid.wavelengths.size());
-  compiler.enableDebug = false;
+  compiler.enableDebug = opts.compile.enableDebug;
   compiler.enableUnitTests = false;
   registerSceneData(compiler);
   // The normal distribution entry points are what a glossy manifold
@@ -407,7 +407,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
                            desiredMaterials.end());
     compiler.setDesiredMaterials(std::move(desiredMaterials));
   }
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) error->printAndExit();
+  if (auto error{compiler.compile(opts.compile.optLevel)})
+    error->printAndExit();
   if (auto error{compiler.jitCompile()}) error->printAndExit();
   {
     SMDL_PROFILER_ENTRY("Scene::commit()");

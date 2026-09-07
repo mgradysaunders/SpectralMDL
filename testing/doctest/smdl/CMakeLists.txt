@@ -13,7 +13,7 @@ smdl_add_doctest(
     "RenderUtil/FastMath.cc"
     "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
-    "RenderUtil/Metal.cc"
+    "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
     "RenderUtil/SpectralFilm.cc"
     "RenderUtil/SunSky.cc"

@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "CommandLine.h"
+#include "../CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 
 #include "IO/PlacesFile.h"
@@ -67,9 +67,7 @@ int main(int argc, char **argv) try {
   // entries are only ever begun on this thread; parallel work is timed by
   // hand and reported through logging instead.
   const bool profiling{opts.utility.profiling};
-  const auto profileFileName{opts.utility.profile.empty()
-                                 ? std::string("smdl-toy.trace.json")
-                                 : opts.utility.profile};
+  const auto &profileFileName{opts.utility.profile};
   if (profiling) smdl::profilerInitialize();
   auto frame{resolveFrame(opts)};
   auto resumed{resumeSequence(opts, frame.resolution, frame.window)};
@@ -92,7 +90,7 @@ int main(int argc, char **argv) try {
     // compile() alone is enough.
     const smdl::Compiler *compilerOrNull{};
     if (!opts.scene.inputMDLFiles.empty()) {
-      if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)})
+      if (auto error{compiler.compile(opts.compile.optLevel)})
         error->printAndExit();
       compilerOrNull = &compiler;
     }

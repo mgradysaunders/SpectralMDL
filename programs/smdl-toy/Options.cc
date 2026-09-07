@@ -10,7 +10,7 @@
 #include "embree4/rtcore_config.h"
 #include "opensubdiv/version.h"
 
-#include "CommandLine.h"
+#include "../CommandLine.h"
 #include "llvm/Support/WithColor.h"
 
 #include "smdl/Common.h"
@@ -134,6 +134,26 @@ cl::opt<float> optCatEyeRadius{
     cl::desc("With -cat-eye, the barrel rim radius in scene units (default: "
              "the aperture radius, i.e., wide-open)"),
     cl::init(0.0f), cl::cat(catCamera)};
+//--}
+
+cl::OptionCategory catCompile{"Compile Options"};
+//--{ Compile Options
+cl::opt<unsigned> optOptLevel{"O",
+                              cl::desc("The optimization level (default: 2)"),
+                              cl::Prefix, cl::init(2U), cl::cat(catCompile)};
+cl::opt<bool> optDebug{"g", cl::desc("Enable debugging"), cl::init(false),
+                       cl::cat(catCompile)};
+cl::opt<std::string> optWavelengthRange{
+    "wavelength-range",
+    cl::desc("Wavelengths spanning A to B nm with N bands, "
+             "format 'A,B:N' where ':N' is optional (default: 380,720:16)"),
+    cl::cat(catCompile)};
+cl::opt<std::string> optWavelengths{
+    "wavelengths",
+    cl::desc("Wavelengths in nm, comma-separated or a text file of "
+             "whitespace-separated values (mutually exclusive with "
+             "-wavelength-range)"),
+    cl::cat(catCompile)};
 //--}
 
 cl::OptionCategory catImage{"Image Options"};
@@ -362,17 +382,6 @@ cl::opt<bool> optNoRobustIntersection{
     cl::desc("Trace against the faster ray-triangle test instead of the "
              "watertight one"),
     cl::init(false), cl::cat(catRendering)};
-cl::opt<std::string> optWavelengthRange{
-    "wavelength-range",
-    cl::desc("Wavelengths spanning A to B nm with N bands, "
-             "format 'A,B:N' where ':N' is optional (default: 380,720:16)"),
-    cl::cat(catRendering)};
-cl::opt<std::string> optWavelengths{
-    "wavelengths",
-    cl::desc("Wavelengths in nm, comma-separated or a text file of "
-             "whitespace-separated values (mutually exclusive with "
-             "-wavelength-range)"),
-    cl::cat(catRendering)};
 cl::opt<bool> optWavelengthJitter{
     "wavelength-jitter",
     cl::desc("Jitter each wavelength to estimate the mean radiance over the "
@@ -418,6 +427,13 @@ cl::opt<std::string> optFallbackMaterial{
 
 cl::OptionCategory catUtility{"Utility Options"};
 //--{ Utility Options
+// NOTE: There is deliberately no '-color' here, though 'smdl' has one.
+// LLVM registers a '--color' of its own for `WithColor`, lazily from
+// `HideUnrelatedOptions()`, and `cl` aborts outright on a duplicate
+// name. 'smdl' gets away with one only because it scopes it to
+// subcommands, which are searched ahead of the top level; this program
+// has no subcommands, so the name is simply taken. Coloring here stays
+// autodetected, and LLVM's own '--color' drives nothing but `WithColor`.
 cl::opt<std::string> optLogLevel{
     "log-level",
     cl::desc("The log level to filter output verbosity, must be "
@@ -484,102 +500,6 @@ cl::opt<double> optPreviewEvery{
     cl::init(0.0), cl::cat(catUtility)};
 //--}
 
-// A `cl::opt` lowered: the value, and whether the command line gave it.
-template <typename T> [[nodiscard]] Flag<T> flag(const cl::opt<T> &option) {
-  return Flag<T>{T(option), option.getNumOccurrences() > 0};
-}
-
-// Parse the '-wavelengths' flag: wavelengths in nanometers separated by
-// commas or whitespace, or the name of a text file of the same, which
-// wins whenever the value opens as a file. NOT '@file': LLVM's command
-// line expands '@'-prefixed argv tokens as response files before any
-// option sees them. Returns empty when the flag was not given; anything
-// else must be a finite, positive, strictly increasing list.
-// The '-log-level' name as `smdl::Logger` spells it.
-[[nodiscard]] smdl::LogLevel parseLogLevel(const std::string &flagStr) {
-  if (flagStr == "debug") return smdl::LOG_LEVEL_DEBUG;
-  if (flagStr == "info") return smdl::LOG_LEVEL_INFO;
-  if (flagStr == "warn") return smdl::LOG_LEVEL_WARN;
-  if (flagStr == "error") return smdl::LOG_LEVEL_ERROR;
-  throw smdl::Error(smdl::concat("expected -log-level to be 'debug', 'info', "
-                                 "'warn', or 'error', got ",
-                                 smdl::Quoted(flagStr)));
-}
-
-[[nodiscard]] std::vector<float> parseWavelengths(const std::string &flagStr) {
-  auto values{std::vector<float>()};
-  if (flagStr.empty()) return values;
-  auto text{flagStr};
-  if (std::ifstream file{flagStr}; file) {
-    text.assign(std::istreambuf_iterator<char>(file), {});
-    if (text.empty())
-      throw smdl::Error(smdl::concat("-wavelengths file ",
-                                     smdl::Quoted(flagStr), " is empty"));
-  }
-  const char *ptr{text.c_str()};
-  while (*ptr) {
-    if (*ptr == ',' || std::isspace(static_cast<unsigned char>(*ptr))) {
-      ptr++;
-      continue;
-    }
-    char *numEnd{};
-    const float value{std::strtof(ptr, &numEnd)};
-    if (numEnd == ptr)
-      throw smdl::Error(smdl::concat("cannot parse -wavelengths near ",
-                                     smdl::Quoted(std::string(ptr, 0, 12))));
-    ptr = numEnd;
-    values.push_back(value);
-  }
-  if (values.empty())
-    throw smdl::Error("expected -wavelengths to name at least 1 wavelength");
-  for (size_t i = 0; i < values.size(); i++) {
-    if (!(std::isfinite(values[i]) && values[i] > 0))
-      throw smdl::Error(
-          "expected every -wavelengths value to be positive and finite");
-    if (i > 0 && !(values[i] > values[i - 1]))
-      throw smdl::Error("expected -wavelengths to be strictly increasing");
-  }
-  return values;
-}
-
-// Parse the '-wavelength-range' flag: 'A,B:N' for N uniform bands
-// spanning A to B nm, with ':N' optional. Returns the default grid when
-// the flag was not given.
-[[nodiscard]] WavelengthRange parseWavelengthRange(const std::string &flagStr) {
-  auto result{WavelengthRange{float2{WAVELENGTH_MIN, WAVELENGTH_MAX}, 16U}};
-  if (flagStr.empty()) return result;
-  const char *ptr{flagStr.c_str()};
-  char *numEnd{};
-  result.range.x = std::strtof(ptr, &numEnd);
-  if (numEnd == ptr || *numEnd != ',')
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
-  ptr = numEnd + 1;
-  result.range.y = std::strtof(ptr, &numEnd);
-  if (numEnd == ptr)
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
-  ptr = numEnd;
-  if (*ptr == ':') {
-    ptr++;
-    if (!std::isdigit(static_cast<unsigned char>(*ptr)))
-      throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
-                                     smdl::Quoted(std::string(ptr, 0, 12))));
-    result.bandCount = unsigned(std::strtoul(ptr, &numEnd, 10));
-    ptr = numEnd;
-  }
-  if (*ptr != '\0')
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
-  if (!(std::isfinite(result.range.x) && std::isfinite(result.range.y) &&
-        result.range.x > 0 && result.range.x < result.range.y))
-    throw smdl::Error(
-        "expected -wavelength-range 'A,B' to be positive and increasing");
-  if (result.bandCount < 2)
-    throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
-  return result;
-}
-
 } // namespace
 
 Options parseCommandLine(int argc, char **argv) {
@@ -595,8 +515,8 @@ Options parseCommandLine(int argc, char **argv) {
                       ".", OPENSUBDIV_VERSION_PATCH)});
     os << info.toString();
   });
-  cl::HideUnrelatedOptions({&catCamera, &catImage, &catLight, &catRendering,
-                            &catScene, &catUtility});
+  cl::HideUnrelatedOptions({&catCamera, &catCompile, &catImage, &catLight,
+                            &catRendering, &catScene, &catUtility});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
   // Honors '-print-options' and '-print-all-options', which LLVM
   // registers but leaves to the tool to act on; it prints nothing unless
@@ -631,6 +551,10 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
+  // The shared parser admits a single band; a render wants a band width
+  // to jitter and to integrate over, so it does not.
+  if (parseWavelengthRange(std::string(optWavelengthRange)).bandCount < 2)
+    throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
   if (optRGBWavelengths.getNumOccurrences() > 0) {
     const auto waves{float3(optRGBWavelengths)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
@@ -643,6 +567,9 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected -time to be finite");
 
   auto opts{Options{}};
+
+  opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
+  opts.compile.enableDebug = bool(optDebug);
 
   opts.camera.file = std::string(optCameraFile);
   opts.camera.lookFrom = flag(optLookFrom);

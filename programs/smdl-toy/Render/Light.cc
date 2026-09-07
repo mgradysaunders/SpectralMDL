@@ -424,7 +424,8 @@ float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
     local = float2((2.0f * xi.x - 1.0f) * mHalfExtent.x,
                    (2.0f * xi.y - 1.0f) * mHalfExtent.y);
   }
-  const float3 point{placed.position + local.x * placed.axisU +
+  const float3 point{placed.position +        //
+                     local.x * placed.axisU + //
                      local.y * placed.axisV};
   const float3 direction{point - receiver};
   const float distSq{lengthSquared(direction)};
@@ -435,46 +436,19 @@ float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
   return point;
 }
 
-// One minus the cosine of a cone's half angle from its squared sine, by
-// the series when the angle is too small for the difference to survive
-// float rounding.
-[[nodiscard]] static float coneOneMinusCos(float sinThetaSq,
-                                           float cosTheta) noexcept {
-  return sinThetaSq < 0.00068523f * 0.00068523f ? 0.5f * sinThetaSq
-                                                : 1.0f - cosTheta;
-}
-
 // The inverse of the cofactor matrix of a placement's linear part,
 // directly: inv(cof(M)) is transpose(M) over det(M). What turns a WORLD
 // unit normal back into the local area stretch; see
 // `AreaLight::invCofactor`.
-[[nodiscard]] static float3x3
-inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
+[[nodiscard]]
+static float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
   const auto column0{float3(objectToWorld[0])};
   const auto column1{float3(objectToWorld[1])};
   const auto column2{float3(objectToWorld[2])};
   const float det{dot(column0, cross(column1, column2))};
-  return float3x3(float3(column0.x, column1.x, column2.x) / det,
-                  float3(column0.y, column1.y, column2.y) / det,
-                  float3(column0.z, column1.z, column2.z) / det);
-}
-
-Color AnalyticLight::Le(const float3 &lightPoint, const float3 &incidencePoint,
-                        float time) const noexcept {
-  std::optional<Placement> scratch{};
-  const auto &placed{placementAt(time, scratch)};
-  return dot(incidencePoint - lightPoint, placed.normal) > 0 ? Color(mIntensity)
-                                                             : Color(0.0f);
-}
-
-float3 AnalyticLight::normal(float time) const noexcept {
-  std::optional<Placement> scratch{};
-  return placementAt(time, scratch).normal;
-}
-
-float3 AnalyticLight::position(float time) const noexcept {
-  std::optional<Placement> scratch{};
-  return placementAt(time, scratch).position;
+  return {float3(column0.x, column1.x, column2.x) / det,
+          float3(column0.y, column1.y, column2.y) / det,
+          float3(column0.z, column1.z, column2.z) / det};
 }
 
 BoundBox3 AnalyticLight::bounds() const noexcept {
@@ -775,7 +749,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
   if (numSampledArea == 0 && numUnsampledArea > 0)
     SMDL_LOG_INFO("No emitter is marked 'light': ", numUnsampledArea,
                   " emissive instance(s) render through path hits alone; "
-                  "mark them in the layout, or pass -all-lights.");
+                  "mark them in the layout, or pass -mark-all-lights.");
   SMDL_LOG_DEBUG("Light sampler: ", numSampledArea, " area light(s), ",
                  numUnsampledArea, " unsampled emitter(s), ",
                  mAnalyticLights.size(), " analytic light(s)",
@@ -861,11 +835,11 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   float positionPDF{}; // world-space area density at the sampled point
   float conePDF{};     // solid-angle density instead, when drawn by cone
   const auto &instance{mScene.meshInstances[light.instIndex]};
-  if (instance.isMoving || instance.isDeforming) {
+  if (SMDL_UNLIKELY(instance.isMoving || instance.isDeforming)) {
     if (!sampleAreaMoving(light, instance, sampler, point, time, keepDark, hit,
                           positionPDF, conePDF))
       return false;
-  } else if (light.isPrimitive) {
+  } else if (SMDL_LIKELY(light.isPrimitive)) {
     const auto &primitive{*mScene.primitives[instance.primIndex]};
     const float2 xi{sampler};
     // A sphere is drawn by its cone from the receiver, except for a
@@ -899,7 +873,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     mScene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time, hit);
     positionPDF = 1.0f / light.totalArea;
   }
-  auto direction{hit.point - point};
+  float3 direction{hit.point - point};
   float distSq{lengthSquared(direction)};
   if (!(distSq > 0)) return false;
   lightSample.wi = normalize(direction);
@@ -922,17 +896,18 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   return true;
 }
 
+namespace {
+
 // The world-space area density of a moving or deforming mesh light's
 // draw: the face's share of the object area at the open key over its
 // world area at the time, the world triangle being the one under the
 // frame at the time, lerped to the time when the mesh deforms. For a
 // rigid mover this is the object area times the frame's stretch, written
 // the one way that also serves a deforming face.
-[[nodiscard]] static float faceAreaDensity(const Scene &scene,
-                                           const AreaLight &light,
-                                           const MeshInstance &instance,
-                                           const InstanceFrame &frame,
-                                           uint32_t faceIndex, float time) {
+[[nodiscard]]
+float faceAreaDensity(const Scene &scene, const AreaLight &light,
+                      const MeshInstance &instance, const InstanceFrame &frame,
+                      uint32_t faceIndex, float time) {
   const auto &mesh{*scene.meshes[instance.meshIndex]};
   const auto &face{mesh.faces[faceIndex]};
   const auto worldPoint{[&](uint32_t index) {
@@ -947,6 +922,81 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   if (!(worldArea > 0)) return 0.0f;
   return light.faceDistr.indexPMF(int(faceIndex)) / worldArea;
 }
+
+// One minus the cosine of a cone's half angle from its squared sine, by
+// the series when the angle is too small for the difference to survive
+// float rounding.
+[[nodiscard]]
+SMDL_ALWAYS_INLINE float coneOneMinusCos(float sinThetaSq,
+                                         float cosTheta) noexcept {
+  return sinThetaSq < 0.00068523f * 0.00068523f ? 0.5f * sinThetaSq
+                                                : 1.0f - cosTheta;
+}
+
+// The solid-angle density of a cone draw toward the sphere a spherical
+// light subtends at `point`, or nothing when the receiver stands inside
+// the sphere and the draw was by area after all. A receiver behind the
+// cap the cone covers has density zero rather than none.
+[[nodiscard]]
+SMDL_ALWAYS_INLINE std::optional<float>
+sphereConePDF(const float3 &center, float radius, const float3 &lightPoint,
+              const float3 &lightNormal, const float3 &point, float selectPMF) {
+  const float distSqCenter{lengthSquared(center - point)};
+  const float radiusSq{radius * radius};
+  if (!(distSqCenter > radiusSq)) return std::nullopt;
+  // The cone covers the cap facing the receiver and nothing else.
+  if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
+  const float sinThetaMaxSq{radiusSq / distSqCenter};
+  const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
+  return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
+}
+
+// The solid-angle density at `point` of a draw whose density on the
+// light is `positionPDF` per unit world area: the area density carried
+// over the segment by its length and the foreshortening at the light.
+[[nodiscard]]
+SMDL_ALWAYS_INLINE float
+areaToSolidAngle(const float3 &lightPoint, const float3 &lightNormal,
+                 const float3 &point, float positionPDF, float selectPMF) {
+  const float3 direction{lightPoint - point};
+  const float distSq{lengthSquared(direction)};
+  if (!(distSq > 0)) return 0.0f;
+  const float cosTheta{absDot(lightNormal, normalize(direction))};
+  if (!(cosTheta > 0)) return 0.0f;
+  return selectPMF * distSq * positionPDF / cosTheta;
+}
+
+// The solid-angle density of a moving or deforming light's draw, the
+// geometry read from the frame at the hit's time: a primitive's sphere
+// center and radius from the frame's columns and its area stretch
+// through the inverse cofactor, a mesh light's face share over the
+// face's world area at the time. The static path below reads the same
+// geometry off the cached fields instead, and this stays out of line so
+// that it keeps its leaf shape.
+[[nodiscard]]
+SMDL_NO_INLINE float solidAnglePDFMoving(
+    const Scene &scene, const AreaLight &light, const MeshInstance &instance,
+    uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
+    const float3 &point, bool areaSampled, float time, float selectPMF) {
+  std::optional<InstanceFrame> scratch{};
+  const auto &frame{instance.frameAt(time, scratch)};
+  const auto &objectToWorld{frame.objectToWorld};
+  if (light.sphereObjectRadius > 0.0f && !areaSampled)
+    if (auto conePDF{sphereConePDF(float3(objectToWorld[3]),
+                                   light.sphereObjectRadius *
+                                       length(float3(objectToWorld[0])),
+                                   lightPoint, lightNormal, point, selectPMF)})
+      return *conePDF;
+  const float positionPDF{
+      light.isPrimitive
+          ? length(inverseCofactorOf(objectToWorld) * lightNormal) /
+                light.objectArea
+          : faceAreaDensity(scene, light, instance, frame, faceIndex, time)};
+  return areaToSolidAngle(lightPoint, lightNormal, point, positionPDF,
+                          selectPMF);
+}
+
+} // namespace
 
 bool LightSampler::sampleAreaMoving(const AreaLight &light,
                                     const MeshInstance &instance,
@@ -976,7 +1026,7 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
   // within the face as it stands at the time, and the density as the
   // face's share over its world area then.
   const int faceIndex{light.faceDistr.indexSample(float(sampler))};
-  const auto bary{smdl::uniformTriangleSample(float2(sampler))};
+  const float3 bary{smdl::uniformTriangleSample(float2(sampler))};
   if (instance.isDeforming) {
     mScene.makeHitDeforming(frame, light.instIndex, uint32_t(faceIndex), bary,
                             time, hit);
@@ -1029,22 +1079,22 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
                                  float time) const {
   if (lightSample.isInfinite) return lightSample.Li;
   if (lightSample.analyticIndex != INVALID_INDEX) {
-    if (lightSample.analyticIndex >= mAnalyticLights.size()) return Color(0.0f);
+    if (lightSample.analyticIndex >= mAnalyticLights.size()) return 0.0f;
     const auto &light{mAnalyticLights[lightSample.analyticIndex]};
     return light.isDirac() ? light.Li(point, incidencePoint,
                                       state.meters_per_scene_unit, time)
                            : light.Le(lightSample.target, incidencePoint, time);
   }
   const auto &hit{lightSample.hit};
-  if (!hit.material) return Color(0.0f);
+  if (!hit.material) return 0.0f;
   auto wEmit{incidencePoint - hit.point};
-  if (!smdl::tryNormalize(wEmit)) return Color(0.0f);
+  if (!smdl::tryNormalize(wEmit)) return 0.0f;
   // The arriving ray travels the other way down the same segment, which
   // is the sense `sample()` applies the geometry in.
   hit.applyGeometryToState(state, -wEmit);
   auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
   Color Le{};
-  if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return Color(0.0f);
+  if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return 0.0f;
   return Le;
 }
 
@@ -1070,73 +1120,13 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
   return true;
 }
 
-// The solid-angle density of a cone draw toward the sphere a spherical
-// light subtends at `point`, or nothing when the receiver stands inside
-// the sphere and the draw was by area after all. A receiver behind the
-// cap the cone covers has density zero rather than none.
-[[nodiscard]] static SMDL_ALWAYS_INLINE std::optional<float>
-sphereConePDF(const float3 &center, float radius, const float3 &lightPoint,
-              const float3 &lightNormal, const float3 &point, float selectPMF) {
-  const float distSqCenter{lengthSquared(center - point)};
-  const float radiusSq{radius * radius};
-  if (!(distSqCenter > radiusSq)) return std::nullopt;
-  // The cone covers the cap facing the receiver and nothing else.
-  if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
-  const float sinThetaMaxSq{radiusSq / distSqCenter};
-  const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
-  return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
-}
-
-// The solid-angle density at `point` of a draw whose density on the
-// light is `positionPDF` per unit world area: the area density carried
-// over the segment by its length and the foreshortening at the light.
-[[nodiscard]] static SMDL_ALWAYS_INLINE float
-areaToSolidAngle(const float3 &lightPoint, const float3 &lightNormal,
-                 const float3 &point, float positionPDF, float selectPMF) {
-  const float3 direction{lightPoint - point};
-  const float distSq{lengthSquared(direction)};
-  if (!(distSq > 0)) return 0.0f;
-  const float cosTheta{absDot(lightNormal, normalize(direction))};
-  if (!(cosTheta > 0)) return 0.0f;
-  return selectPMF * distSq * positionPDF / cosTheta;
-}
-
-// The solid-angle density of a moving or deforming light's draw, the
-// geometry read from the frame at the hit's time: a primitive's sphere
-// center and radius from the frame's columns and its area stretch
-// through the inverse cofactor, a mesh light's face share over the
-// face's world area at the time. The static path below reads the same
-// geometry off the cached fields instead, and this stays out of line so
-// that it keeps its leaf shape.
-[[nodiscard]] static SMDL_NO_INLINE float solidAnglePDFMoving(
-    const Scene &scene, const AreaLight &light, const MeshInstance &instance,
-    uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
-    const float3 &point, bool areaSampled, float time, float selectPMF) {
-  std::optional<InstanceFrame> scratch{};
-  const auto &frame{instance.frameAt(time, scratch)};
-  const auto &objectToWorld{frame.objectToWorld};
-  if (light.sphereObjectRadius > 0.0f && !areaSampled)
-    if (auto conePDF{sphereConePDF(float3(objectToWorld[3]),
-                                   light.sphereObjectRadius *
-                                       length(float3(objectToWorld[0])),
-                                   lightPoint, lightNormal, point, selectPMF)})
-      return *conePDF;
-  const float positionPDF{
-      light.isPrimitive
-          ? length(inverseCofactorOf(objectToWorld) * lightNormal) /
-                light.objectArea
-          : faceAreaDensity(scene, light, instance, frame, faceIndex, time)};
-  return areaToSolidAngle(lightPoint, lightNormal, point, positionPDF,
-                          selectPMF);
-}
-
 float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                                   const float3 &lightPoint,
                                   const float3 &lightNormal,
                                   const float3 &point, bool areaSampled,
                                   float time) const {
-  if (empty() || instIndex >= mInstanceToLight.size() ||
-      mInstanceToLight[instIndex] == INVALID_INDEX) {
+  if (SMDL_UNLIKELY(empty() || instIndex >= mInstanceToLight.size() ||
+                    mInstanceToLight[instIndex] == INVALID_INDEX)) {
     return 0.0f;
   }
   auto lightIndex{mInstanceToLight[instIndex]};
@@ -1144,7 +1134,7 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
   if (!light.isSampled) return 0.0f;
   const float selectPMF{mSelection.pmf(int(lightIndex), point)};
   if (const auto &instance{mScene.meshInstances[light.instIndex]};
-      instance.isMoving || instance.isDeforming)
+      SMDL_UNLIKELY(instance.isMoving || instance.isDeforming))
     return solidAnglePDFMoving(mScene, light, instance, faceIndex, lightPoint,
                                lightNormal, point, areaSampled, time,
                                selectPMF);

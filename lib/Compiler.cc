@@ -1182,10 +1182,10 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
   SMDL_SANITY_CHECK(out != nullptr);
   std::fill_n(out, num, 0.0f);
 #if SMDL_HAS_PTEX
+  thread_local ThreadLocalPtexFilters filters{};
+  const auto &smdlState{*static_cast<const smdl::State *>(state)};
   if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
-    thread_local ThreadLocalPtexFilters filters{};
-    const auto &smdlState{*static_cast<const smdl::State *>(state)};
     filters.get(*ptex)->eval(out, first, num, smdlState.ptex_face_id,
                              smdlState.ptex_face_uv.x, smdlState.ptex_face_uv.y,
                              /*uw1=*/0.0f, /*vw1=*/0.0f,
