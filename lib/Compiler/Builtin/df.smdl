@@ -579,6 +579,21 @@ struct ScatterEvaluateParameters {
 
   float shadingNormalCorrection = 1;
 
+  // The memoized result of `recalculateTangentSpace()`, keyed on the pair
+  // the tangent frame is built from. Every output that call writes is a
+  // pure function of that pair together with `wo0`, `wi0` and
+  // `isImportance`, which are fixed once these parameters are constructed,
+  // so a leaf sharing the pair with the leaf before it restores the result
+  // instead of rebuilding the frame. Anything that comes to vary `wo0`,
+  // `wi0` or `isImportance` mid-query has to join the key.
+  bool _memoValid = false;
+  float3 _memoNormal = float3(0.0);
+  float3 _memoTangent = float3(0.0);
+  float3 _memoWo = float3(0.0);
+  float3 _memoWi = float3(0.0);
+  float _memoCorrection = 1;
+  bool _memoResult = false;
+
   finalize {
     // If we hit the backface, flip everything so that `wo`
     // is always in the upper hemisphere.
@@ -614,17 +629,26 @@ struct ScatterEvaluateResult {
 /// the effective tangent space.
 @(pure noinline)
 bool recalculateTangentSpace(inline const &ScatterEvaluateParameters params) {
-  auto tbn(calculateTangentSpace(bendShadingNormal(normal, wo0, wi0), tangent_u));
-  wo = normalize(wo0 * tbn);
-  wi = normalize(wi0 * tbn);
-  if (isImportance) {
-    const auto numer = wo.z * wi0.z;
-    const auto denom = wi.z * wo0.z;
-    shadingNormalCorrection = (denom == 0 ? 1 : #abs(numer / denom));
-  } else {
-    shadingNormalCorrection = 1;
+  if (!(_memoValid & #all(normal == _memoNormal) & #all(tangent_u == _memoTangent))) {
+    const auto tbn(calculateTangentSpace(bendShadingNormal(normal, wo0, wi0), tangent_u));
+    _memoWo = normalize(wo0 * tbn);
+    _memoWi = normalize(wi0 * tbn);
+    if (isImportance) {
+      const auto numer = _memoWo.z * wi0.z;
+      const auto denom = _memoWi.z * wo0.z;
+      _memoCorrection = (denom == 0 ? 1 : #abs(numer / denom));
+    } else {
+      _memoCorrection = 1;
+    }
+    _memoResult = ((_memoWo.z < 0) == (wo0.z < 0)) & ((_memoWi.z < 0) == (wi0.z < 0));
+    _memoNormal = normal;
+    _memoTangent = tangent_u;
+    _memoValid = true;
   }
-  return ((wo.z < 0) == (wo0.z < 0)) & ((wi.z < 0) == (wi0.z < 0));
+  wo = _memoWo;
+  wi = _memoWi;
+  shadingNormalCorrection = _memoCorrection;
+  return _memoResult;
 }
 
 @(pure)
@@ -2158,10 +2182,17 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   }
 };
 
+// Does the tangent direction affect the distribution? An isotropic lobe is
+// indifferent to it and so leaves whatever tangent the surrounding frame
+// carries in place, which is what lets the tangent frame memo hit across
+// the leaves of a tree.
+@(pure macro)
+bool isAnisotropic(const &ward_geisler_moroder_bsdf this) = this.roughness_u != this.roughness_v;
+
 @(pure noinline)
 auto scatterEvaluate(const &ward_geisler_moroder_bsdf this, inline const &ScatterEvaluateParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   if (mode == scatter_reflect && recalculateTangentSpace(params)) {
     const auto cosThetao(#abs(wo.z));
     const auto cosThetai(#abs(wi.z));
@@ -2202,7 +2233,7 @@ float2 wardAlpha(const auto this) {
 @(pure noinline)
 auto normalSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterNormalParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   auto tbn(recalculateTangentSpace(params));
   return ScatterNormalSampleResult() if (!tbn);
   const auto alpha(wardAlpha(this));
@@ -2218,7 +2249,7 @@ auto normalSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterNo
 @(pure noinline)
 float normalEvaluate(const &ward_geisler_moroder_bsdf this, inline const &ScatterNormalParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   return 0.0 if (!recalculateTangentSpace(params));
   const auto wmLocal(normalize(wm));
   return 0.0 if (!(wmLocal.z > MIN_COS_THETA));
@@ -2230,7 +2261,7 @@ float normalEvaluate(const &ward_geisler_moroder_bsdf this, inline const &Scatte
 @(pure noinline)
 auto scatterSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterSampleParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   if ((tbn := recalculateTangentSpace(params))) {
     // Sample multiscatter.
     if (result := ScatterSampleResultWithMultiscatter(this, params, DF_GLOSSY_BRDF, DF_SMOOTH_BRDF, *tbn)) {
@@ -2624,12 +2655,16 @@ struct microfacet_bsdf: bsdf {
   const int df_lobes = modeLobes(int(mode), DF_GLOSSY) | multiscatterLobes(multiscatter_tint, int(mode));
 };
 
+// See `isAnisotropic(const &ward_geisler_moroder_bsdf)`.
+@(pure macro)
+bool isAnisotropic(const &microfacet_bsdf this) = this.alpha.x != this.alpha.y;
+
 @(pure noinline)
 auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateParameters params) {
   // The query's domain, restricted to what the mask leaves this leaf.
   auto effectiveMode(this.mode & mode & scatter_mode(maskedModeBits(lobeMask & this.df_lobes)));
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params) || effectiveMode == scatter_none);
   // If thin walled and the effective mode is to transmit, flip wi into the upper
   // hemisphere and pretend like the effective mode is to reflect.
@@ -2854,7 +2889,7 @@ float microfacetNormalPdf(const auto this, const float3 wm) {
 @(pure noinline)
 auto normalSample(const &microfacet_bsdf this, inline const &ScatterNormalParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   auto tbn(recalculateTangentSpace(params));
   return ScatterNormalSampleResult() if (!tbn);
   const auto wmLocal(microfacetNormalSample(this, xi.xy, float3(0, 0, 1), /*visible=*/false));
@@ -2865,7 +2900,7 @@ auto normalSample(const &microfacet_bsdf this, inline const &ScatterNormalParame
 @(pure noinline)
 float normalEvaluate(const &microfacet_bsdf this, inline const &ScatterNormalParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   return 0.0 if (!recalculateTangentSpace(params));
   return microfacetNormalPdf(this, normalize(wm));
 }
@@ -2873,7 +2908,7 @@ float normalEvaluate(const &microfacet_bsdf this, inline const &ScatterNormalPar
 @(pure noinline)
 auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParameters params) {
   preserve tangent_u;
-  tangent_u = this.tangent_u;
+  tangent_u = this.tangent_u if (isAnisotropic(this));
   auto tbn(recalculateTangentSpace(params));
   if (!tbn)
     return ScatterSampleResult();
