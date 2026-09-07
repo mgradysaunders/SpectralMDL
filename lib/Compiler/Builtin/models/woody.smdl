@@ -231,10 +231,9 @@ export color woody_albedo(
   const float wGreen = warp(epiphyte, WARP_EPIPHYTE) * 0.422861915;
   const float wWater = warp(water, WARP_WATER) * 1.28826562;
   const auto weights = auto(1.0, wLightness, wChroma, wFibre, wGreen, wWater);
-  return _spectralInit(\(const float wavelength) {
-    const auto {t0, t} = _uniformLerpIndexAndFraction(WOODY_TABLE_SIZE, WOODY_MIN_WAVELENGTH, WOODY_MAX_WAVELENGTH, wavelength);
-    return link(dot(lerp(WOODY_TABLE_CURVES[t0], WOODY_TABLE_CURVES[t0 + 1], t), weights));
-  });
+  return _spectralLerpInit(
+    \(const float wavelength) = _uniformLerpIndexAndFraction(WOODY_TABLE_SIZE, WOODY_MIN_WAVELENGTH, WOODY_MAX_WAVELENGTH, wavelength),
+    \(const int t0, const float t) = link(dot(lerp(WOODY_TABLE_CURVES[t0], WOODY_TABLE_CURVES[t0 + 1], t), weights)));
 }
 
 // BEGIN GENERATED PRESETS

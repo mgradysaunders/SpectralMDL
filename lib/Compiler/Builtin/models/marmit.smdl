@@ -154,10 +154,9 @@ export marmit_result marmit(
     return ior;
   };
   // alpha_w, absorption coefficient of water in cm^-1
-  color alpha = _spectralInit(\(const float wavelength) {
-    const auto {w0, w} = _uniformLerpIndexAndFraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, wavelength);
-    return lerp(MARMIT_TABLE_ALPHA[w0], MARMIT_TABLE_ALPHA[w0 + 1], w);
-  });
+  color alpha = _spectralLerpInit(
+    \(const float wavelength) = _uniformLerpIndexAndFraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, wavelength),
+    \(const int w0, const float w) = lerp(MARMIT_TABLE_ALPHA[w0], MARMIT_TABLE_ALPHA[w0 + 1], w));
   // Effective medium the light travels through, by MARMIT-2's volume mixing of
   // the complex permittivities of water and of the suspended particles. With no
   // suspension this reduces exactly to water, so the branch is skippable.

@@ -16,7 +16,8 @@
 /// The jitter band edges of the wavelength grid `wavelens`, as
 /// `WavelengthGrid::bandEdges` describes them, or empty for a grid of
 /// fewer than 2 wavelengths, which has no band width to speak of.
-[[nodiscard]] inline std::vector<float>
+[[nodiscard]]
+inline std::vector<float>
 wavelengthBandEdges(smdl::Span<const float> wavelens) {
   const size_t numBands{wavelens.size()};
   if (numBands < 2) return {};

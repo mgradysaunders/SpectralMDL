@@ -232,10 +232,9 @@ export color regolith_albedo(
   const auto weights = auto(
     1.0, wBase, wFineness, wOrganic, pigment * #sin(hue), pigment * #cos(hue),
     wPhyllo, wHydrous, wFerrous, wUnstained, wWater, wWater * wSensitivity);
-  return _spectralInit(\(const float wavelength) {
-    const auto {t0, t} = _uniformLerpIndexAndFraction(REGOLITH_TABLE_SIZE, REGOLITH_MIN_WAVELENGTH, REGOLITH_MAX_WAVELENGTH, wavelength);
-    return link(dot(lerp(REGOLITH_TABLE_CURVES[t0], REGOLITH_TABLE_CURVES[t0 + 1], t), weights));
-  });
+  return _spectralLerpInit(
+    \(const float wavelength) = _uniformLerpIndexAndFraction(REGOLITH_TABLE_SIZE, REGOLITH_MIN_WAVELENGTH, REGOLITH_MAX_WAVELENGTH, wavelength),
+    \(const int t0, const float t) = link(dot(lerp(REGOLITH_TABLE_CURVES[t0], REGOLITH_TABLE_CURVES[t0 + 1], t), weights)));
 }
 
 // BEGIN GENERATED PRESETS

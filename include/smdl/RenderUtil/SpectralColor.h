@@ -92,7 +92,7 @@ public:
   SpectralColor(const SpectralColor &other) {
     std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     mSize = other.mSize;
-    if (SMDL_UNLIKELY(!isInline())) allocateHeapCopy(other.mHeap);
+    if (SMDL_UNLIKELY(!isInline())) allocateHeapCopy(other.mPtr);
   }
 
   SpectralColor(SpectralColor &&other) noexcept { steal(other); }
@@ -124,10 +124,10 @@ public:
 public:
   [[nodiscard]] size_t size() const noexcept { return mSize; }
 
-  [[nodiscard]] float *data() noexcept { return mHeap ? mHeap : mBuf; }
+  [[nodiscard]] float *data() noexcept { return mPtr ? mPtr : mBuf; }
 
   [[nodiscard]] const float *data() const noexcept {
-    return mHeap ? mHeap : mBuf;
+    return mPtr ? mPtr : mBuf;
   }
 
   [[nodiscard]] float &operator[](size_t i) noexcept { return data()[i]; }
@@ -142,7 +142,7 @@ public:
     // do, so that the common case is two vector stores and no branch.
     for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
     if (SMDL_UNLIKELY(!isInline()))
-      for (size_t i = 0; i < mSize; i++) mHeap[i] = value;
+      for (size_t i = 0; i < mSize; i++) mPtr[i] = value;
   }
 
 public:
@@ -363,7 +363,7 @@ public:
       return (bits & liveLanes()) == 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (!(std::abs(mHeap[i]) <= thresh)) return false;
+      if (!(std::abs(mPtr[i]) <= thresh)) return false;
     return true;
   }
 
@@ -376,7 +376,7 @@ public:
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (std::isinf(mHeap[i])) return true;
+      if (std::isinf(mPtr[i])) return true;
     return false;
   }
 
@@ -389,7 +389,7 @@ public:
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (std::isnan(mHeap[i])) return true;
+      if (std::isnan(mPtr[i])) return true;
     return false;
   }
 
@@ -402,7 +402,7 @@ public:
       return (bits & liveLanes()) != 0;
     }
     for (size_t i = 0; i < mSize; i++)
-      if (!std::isfinite(mHeap[i])) return true;
+      if (!std::isfinite(mPtr[i])) return true;
     return false;
   }
 
@@ -515,9 +515,9 @@ private:
   void steal(SpectralColor &other) noexcept {
     std::memcpy(mBuf, other.mBuf, sizeof(mBuf));
     mSize = other.mSize;
-    mHeap = other.mHeap;
+    mPtr = other.mPtr;
     other.mSize = 0;
-    other.mHeap = nullptr;
+    other.mPtr = nullptr;
   }
 
   /// Point the storage at `size` bands, uninitialized beyond the
@@ -532,42 +532,42 @@ private:
   }
 
   // The heap paths, out of line so that no caller inlines them.
-  SMDL_NO_INLINE void allocateHeap() { mHeap = new float[mSize]; }
+  SMDL_NO_INLINE void allocateHeap() { mPtr = new float[mSize]; }
 
   SMDL_NO_INLINE void allocateHeapFilled(float value) {
     allocateHeap();
-    for (size_t i = 0; i < mSize; i++) mHeap[i] = value;
+    for (size_t i = 0; i < mSize; i++) mPtr[i] = value;
   }
 
   SMDL_NO_INLINE void allocateHeapCopy(const float *values) {
     allocateHeap();
-    std::memcpy(mHeap, values, mSize * sizeof(float));
+    std::memcpy(mPtr, values, mSize * sizeof(float));
   }
 
   SMDL_NO_INLINE void freeHeap() noexcept {
-    delete[] mHeap;
-    mHeap = nullptr;
+    delete[] mPtr;
+    mPtr = nullptr;
   }
 
   /// Copy-assign when either side is on the heap; the caller has
   /// already copied the inline buffer.
   SMDL_NO_INLINE void assignSlow(const SpectralColor &other) {
     resize(other.mSize);
-    if (!isInline()) std::memcpy(mHeap, other.mHeap, mSize * sizeof(float));
+    if (!isInline()) std::memcpy(mPtr, other.mPtr, mSize * sizeof(float));
   }
 
   template <typename Op>
   SMDL_NO_INLINE void applyHeap(const SpectralColor &rhs, Op op) noexcept {
-    for (size_t i = 0; i < mSize; i++) mHeap[i] = op(mHeap[i], rhs.mHeap[i]);
+    for (size_t i = 0; i < mSize; i++) mPtr[i] = op(mPtr[i], rhs.mPtr[i]);
   }
 
   template <typename Op>
   SMDL_NO_INLINE void applyHeap(float rhs, Op op) noexcept {
-    for (size_t i = 0; i < mSize; i++) mHeap[i] = op(mHeap[i], rhs);
+    for (size_t i = 0; i < mSize; i++) mPtr[i] = op(mPtr[i], rhs);
   }
 
   template <typename Op> SMDL_NO_INLINE void mapHeap(Op op) noexcept {
-    for (size_t i = 0; i < mSize; i++) mHeap[i] = op(mHeap[i]);
+    for (size_t i = 0; i < mSize; i++) mPtr[i] = op(mPtr[i]);
   }
 
   /// The number of bands. The storage follows from it alone: the
@@ -581,7 +581,7 @@ private:
   /// through a null-tested pointer as it did through the old pointer
   /// member, and a select on the size defeats it, which turned every
   /// such loop scalar.
-  float *mHeap{};
+  float *mPtr{};
 
   /// The inline storage, which every constructor fills in full whether
   /// or not it is the storage in use, so that the fixed-length fast

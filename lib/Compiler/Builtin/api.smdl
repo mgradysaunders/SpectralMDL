@@ -4,9 +4,11 @@
 /// helpers shared by the other builtin modules.
 #smdl
 
+/// The index of the table entry a lookup lands in and the fraction of the
+/// way from it to the next.
 export struct _UniformLerp {
-  int i;
-  float t;
+  int i = 0;
+  float t = 0.0;
 };
 
 @(pure macro)
@@ -169,6 +171,29 @@ export color _spectralInit(const auto f) {
   color c(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     c[i] = f($state.wavelength_base[i]);
+  }
+  return c;
+}
+
+/// Construct a `color` by looking up each wavelength of the active spectral
+/// basis in a table, locating every wavelength before fetching any of them.
+///
+/// `locate` maps a wavelength to the index and fraction of the entry pair
+/// bracketing it, and `fetch` turns that pair into the value at that
+/// wavelength. They run as separate passes because locating is arithmetic
+/// that ends in an address and fetching is the loads waiting on it, so
+/// interleaved every wavelength's loads stall behind its own index. The
+/// arithmetic is the one `_spectralInit` performs, in the same order per
+/// wavelength, so the result is identical.
+@(macro)
+export color _spectralLerpInit(const auto locate, const auto fetch) {
+  _UniformLerp[$WAVELENGTH_BASE_MAX] keys;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    keys[i] = locate($state.wavelength_base[i]);
+  }
+  color c(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    c[i] = fetch(keys[i].i, keys[i].t);
   }
   return c;
 }
