@@ -113,7 +113,8 @@ public:
     // The box upper corner is the fractional brick extent, so partial
     // bricks at the high boundary are covered exactly.
     const auto extent{mGrid->getExtent()};
-    const float3 boxMax{extent.x / 16.0f, extent.y / 16.0f, extent.z / 16.0f};
+    const float3 boxMax{float(extent.x) / 16.0f, float(extent.y) / 16.0f,
+                        float(extent.z) / 16.0f};
     float tEnter{0.0f};
     float tExit{tEnd};
     for (int axis = 0; axis < 3 && tEnter <= tExit; axis++) {
@@ -280,11 +281,10 @@ bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
     mTime = time.seconds;
     if (mMoving) {
       std::optional<InstanceFrame> scratch{};
-      for (auto &component : mComponents)
-        if (component.heterogeneous && component.meshInstance)
-          component.state->object_to_world_matrix =
-              component.meshInstance->frameAt(time.fraction, scratch)
-                  .rigidToWorld;
+      for (auto &comp : mComponents)
+        if (comp.heterogeneous && comp.meshInstance)
+          comp.state->object_to_world_matrix =
+              comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
     }
   }
   return true;
@@ -423,20 +423,18 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   mSigmaA = Color();
   mSigmaS = Color();
   mEmission = Color();
-  for (const auto &component : mComponents) {
-    mSigmaA += component.sigmaA;
-    mSigmaS += component.sigmaS;
-    mEmission += component.emission;
-    mHeterogeneous |= component.heterogeneous;
+  for (const auto &comp : mComponents) {
+    mSigmaA += comp.sigmaA;
+    mSigmaS += comp.sigmaS;
+    mEmission += comp.emission;
+    mHeterogeneous |= comp.heterogeneous;
   }
   if (!mHeterogeneous) return;
   mMaxSigmaA = Color();
   mMaxSigmaS = Color();
-  for (const auto &component : mComponents) {
-    mMaxSigmaA +=
-        component.heterogeneous ? component.maxSigmaA : component.sigmaA;
-    mMaxSigmaS +=
-        component.heterogeneous ? component.maxSigmaS : component.sigmaS;
+  for (const auto &comp : mComponents) {
+    mMaxSigmaA += comp.heterogeneous ? comp.maxSigmaA : comp.sigmaA;
+    mMaxSigmaS += comp.heterogeneous ? comp.maxSigmaS : comp.sigmaS;
   }
   mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
   // The density-hint spans can drive the walk only when exactly one
@@ -446,13 +444,13 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   // bound the iterator reports as zero, so the control below goes
   // unread.
   if (gridCandidates == 1) {
-    auto &component{mComponents[size_t(mGridComponent)]};
-    component.scaledByGrid = true;
-    mGridMaxSigma = component.maxSigmaA + component.maxSigmaS;
+    auto &comp{mComponents[size_t(mGridComponent)]};
+    comp.scaledByGrid = true;
+    mGridMaxSigma = comp.maxSigmaA + comp.maxSigmaS;
     mMajorantGrid = mGridMaxSigma.maxComponent();
     mMajorantBase = std::max(
         (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
-    setDensityGrid(component);
+    setDensityGrid(comp);
   } else {
     mGridComponent = -1;
     mGridMaxSigma = Color();
