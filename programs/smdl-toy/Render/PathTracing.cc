@@ -1348,7 +1348,7 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       direct += D;
     }};
     if (!runManifold) {
-      if (Color Tr{Color(1.0f)};
+      if (Color Tr{1.0f};
           neeMask != 0 &&
           testVisibility(render, path, vertex.mediumStack, vertex.point,
                          lightSample.target, Tr, lightSample.isInfinite)) {

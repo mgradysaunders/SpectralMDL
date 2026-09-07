@@ -32,12 +32,15 @@
 // from fusing the multiply into the sum, which would round differently.
 [[nodiscard]] static inline float averageOfProducts(const Color &a,
                                                     const Color &b) noexcept {
+  const float *SMDL_RESTRICT pA{a.data()};
+  const float *SMDL_RESTRICT pB{b.data()};
+  const size_t n{a.size()};
   float sum{};
-  for (size_t i = 0; i < a.size(); i++) {
-    const float product{a[i] * b[i]};
+  for (size_t i = 0; i < n; i++) {
+    const float product{pA[i] * pB[i]};
     sum += product;
   }
-  return sum / float(a.size());
+  return sum / float(n);
 }
 
 // The cap on tentative collisions per segment, a guard against
@@ -606,10 +609,11 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
   // bin with zero total scattering has zero throughput already; keep
   // it zero rather than forming 0/0.
   const auto &pickedSigmaS{componentSigmaS(*picked)};
+  float *SMDL_RESTRICT pBeta{beta.data()};
+  const float *SMDL_RESTRICT pS{sigmaS.data()};
+  const float *SMDL_RESTRICT pPickedS{pickedSigmaS.data()};
   for (size_t i = 0; i < beta.size(); i++)
-    beta[i] *= sigmaS[i] > 0.0f
-                   ? pickedSigmaS[i] / sigmaS[i] / pickedProbability
-                   : 0.0f;
+    pBeta[i] *= pS[i] > 0.0f ? pPickedS[i] / pS[i] / pickedProbability : 0.0f;
 }
 
 bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
@@ -639,20 +643,24 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     const bool scattered{sScatter < sEnd};
     const float depth{scattered ? sScatter : sEnd};
     Color Tr{};
-    for (size_t i = 0; i < Tr.size(); i++)
-      Tr[i] = transmittance(mHazeSigmaC[i] * depth);
+    const size_t n{Tr.size()};
+    float *SMDL_RESTRICT pBeta{beta.data()};
+    float *SMDL_RESTRICT pTr{Tr.data()};
+    const float *SMDL_RESTRICT pSigmaC{mHazeSigmaC.data()};
+    for (size_t i = 0; i < n; i++) pTr[i] = transmittance(pSigmaC[i] * depth);
     if (scattered) {
       // The extinction at the collision is the origin spectrum times a
       // factor common to every band, which cancels between the
       // scattering weight and the balance heuristic that normalizes it.
       const float norm{averageOfProducts(mHazeSigmaC, Tr)};
-      for (size_t i = 0; i < beta.size(); i++)
-        beta[i] *= mHazeSigmaC[i] * mHazeAlbedo[i] * Tr[i] / norm;
+      const float *SMDL_RESTRICT pAlbedo{mHazeAlbedo.data()};
+      for (size_t i = 0; i < n; i++)
+        pBeta[i] *= pSigmaC[i] * pAlbedo[i] * pTr[i] / norm;
       t = smdl::Haze::shapeInverse(mHazeK, sScatter);
       return true;
     }
     const float norm{Tr.average()};
-    for (size_t i = 0; i < beta.size(); i++) beta[i] *= Tr[i] / norm;
+    for (size_t i = 0; i < n; i++) pBeta[i] *= pTr[i] / norm;
     return false;
   }
   if (!mHeterogeneous) {
@@ -668,12 +676,17 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // computed it, and the two ulp `transmittance()` carries are enough
     // to turn this integral negative there.
     const Color mu{mSigmaA + mSigmaS};
+    const size_t n{mu.size()};
+    const float *SMDL_RESTRICT pMu{mu.data()};
+    float *SMDL_RESTRICT pBeta{beta.data()};
     if (SMDL_UNLIKELY(mHasEmission)) {
       const float tEmit{std::min(tEnd, 1e8f)};
-      for (size_t i = 0; i < mu.size(); i++)
-        emitted[i] +=
-            mEmission[i] * (mu[i] > 1e-12f
-                                ? (1.0f - std::exp(-mu[i] * tEmit)) / mu[i]
+      float *SMDL_RESTRICT pEmitted{emitted.data()};
+      const float *SMDL_RESTRICT pEmission{mEmission.data()};
+      for (size_t i = 0; i < n; i++)
+        pEmitted[i] +=
+            pEmission[i] * (pMu[i] > 1e-12f
+                                ? (1.0f - std::exp(-pMu[i] * tEmit)) / pMu[i]
                                 : tEmit);
     }
     // The closed-form homogeneous estimator: sample the free-flight
@@ -683,16 +696,16 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // transmittance 1 through the min against FLT_MAX.
     const float xi{float(sampler)};
     const int hero{sampler.index(int(mu.size()))};
-    const float tScatter{-std::log1p(-xi) / mu[hero]};
+    const float tScatter{-std::log1p(-xi) / pMu[hero]};
     Color Tr{};
+    float *SMDL_RESTRICT pTr{Tr.data()};
     const float tTravel{
         std::min({tScatter, tEnd, std::numeric_limits<float>::max()})};
-    for (size_t i = 0; i < mu.size(); i++)
-      Tr[i] = transmittance(mu[i] * tTravel);
+    for (size_t i = 0; i < n; i++) pTr[i] = transmittance(pMu[i] * tTravel);
     if (tScatter < tEnd) {
       const float norm{averageOfProducts(mu, Tr)};
-      for (size_t i = 0; i < beta.size(); i++)
-        beta[i] *= mSigmaS[i] * Tr[i] / norm;
+      const float *SMDL_RESTRICT pSigmaS{mSigmaS.data()};
+      for (size_t i = 0; i < n; i++) pBeta[i] *= pSigmaS[i] * pTr[i] / norm;
       // Only an overlap has a phase function to choose; a single
       // medium must not draw here, or every render with a medium moves
       // onto a different sampler dimension.
@@ -702,7 +715,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       return true;
     }
     const float norm{Tr.average()};
-    for (size_t i = 0; i < beta.size(); i++) beta[i] *= Tr[i] / norm;
+    for (size_t i = 0; i < n; i++) pBeta[i] *= pTr[i] / norm;
     return false;
   }
   // Delta tracking against the scalar majorant, generalizing the same
@@ -733,6 +746,17 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
   // rather than sized anew at each: `evaluateCoefficients()` overwrites
   // every band of all three.
   Color sigmaA{}, sigmaS{}, emission{};
+  // The null-collision weights, whose storage the loop rewrites at every
+  // tentative collision. Hoisting the pointer past the opaque
+  // `evaluateCoefficients()` keeps the optimizer from re-deriving it each
+  // time and, the part that costs, from guarding the per-band loop with a
+  // runtime overlap check against the other bands and keeping a scalar
+  // copy of the loop for the case the check fails. Only this one is
+  // hoisted: the other per-band loops below run once per call at most, and
+  // holding their pointers live across the call spends more registers than
+  // deriving them where they are used.
+  const size_t n{beta.size()};
+  float *SMDL_RESTRICT pP{P.data()};
   auto spans{MajorantSpanIterator(mDensityGrid, mBrickOrg, mBrickDir,
                                   mInvMaxValue, tEnd)};
   MajorantSpan span{};
@@ -769,14 +793,18 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // applies, and the common renormalization of 'P' cancels.
       if (SMDL_UNLIKELY(mHasEmission)) {
         const float pdfEmit{m * P.average()};
-        if (pdfEmit > 0.0f)
-          for (size_t i = 0; i < emitted.size(); i++) {
-            const float added{emission[i] * P[i] / pdfEmit};
-            emitted[i] += added;
+        if (pdfEmit > 0.0f) {
+          float *SMDL_RESTRICT pEmitted{emitted.data()};
+          const float *SMDL_RESTRICT pEmission{emission.data()};
+          for (size_t i = 0; i < n; i++) {
+            const float added{pEmission[i] * pP[i] / pdfEmit};
+            pEmitted[i] += added;
           }
+        }
       }
       const Color muT{sigmaA + sigmaS};
-      if (rng.generateFloat() * m < muT[hero]) {
+      const float *SMDL_RESTRICT pMuT{muT.data()};
+      if (rng.generateFloat() * m < pMuT[hero]) {
         // A real collision. Weight by the scattering coefficient over
         // the mixture density of all heroes having produced this chain;
         // absorption is folded into the weight rather than terminating,
@@ -786,8 +814,9 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
           beta = Color();
           return false;
         }
-        for (size_t i = 0; i < beta.size(); i++)
-          beta[i] *= sigmaS[i] * P[i] / pdf;
+        float *SMDL_RESTRICT pBeta{beta.data()};
+        const float *SMDL_RESTRICT pS{sigmaS.data()};
+        for (size_t i = 0; i < n; i++) pBeta[i] *= pS[i] * pP[i] / pdf;
         if (SMDL_UNLIKELY(mComponents.size() > 1))
           pickScatterComponent(rng.generateFloat(), sigmaS, beta);
         t = tCur;
@@ -795,7 +824,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       }
       // A null collision against the local majorant, which the local
       // clamp in 'evaluateCoefficients' keeps non-negative per bin.
-      for (size_t i = 0; i < P.size(); i++) P[i] *= m - muT[i];
+      for (size_t i = 0; i < n; i++) pP[i] *= m - pMuT[i];
       const float renormalize{P.maxComponent()};
       if (SMDL_UNLIKELY(!(renormalize > 0.0f))) {
         // Every bin hit the majorant: the chain carries no throughput
@@ -807,7 +836,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     }
   }
   const float norm{P.average()};
-  for (size_t i = 0; i < beta.size(); i++) beta[i] *= P[i] / norm;
+  float *SMDL_RESTRICT pBeta{beta.data()};
+  for (size_t i = 0; i < n; i++) pBeta[i] *= pP[i] / norm;
   return false;
 }
 
@@ -821,8 +851,10 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
     const float depth{
         std::min(smdl::Haze::shape(mHazeK, unbounded ? INF : tEnd),
                  std::numeric_limits<float>::max())};
+    float *SMDL_RESTRICT pBeta{beta.data()};
+    const float *SMDL_RESTRICT pSigmaC{mHazeSigmaC.data()};
     for (size_t i = 0; i < beta.size(); i++)
-      beta[i] *= transmittance(mHazeSigmaC[i] * depth);
+      pBeta[i] *= transmittance(pSigmaC[i] * depth);
     return;
   }
   if (!mHeterogeneous) {
@@ -830,8 +862,10 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
     // wavelengths with zero extinction keep transmittance 1 instead of
     // producing 0 times infinity.
     const Color mu{mSigmaA + mSigmaS};
+    float *SMDL_RESTRICT pBeta{beta.data()};
+    const float *SMDL_RESTRICT pMu{mu.data()};
     for (size_t i = 0; i < mu.size(); i++)
-      beta[i] *= transmittance(mu[i] * tEnd);
+      pBeta[i] *= transmittance(pMu[i] * tEnd);
     return;
   }
   // Residual ratio tracking (Novak et al. 2014): per span, the
@@ -859,12 +893,23 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
   // component's majorant alone; with overlap the base contribution of
   // the other components stays in the tracked rate at full strength.
   const Color majorantColor{mGridMaxSigma};
+  // The band storage of everything the tracking loop touches, hoisted for
+  // the reason given in `sampleDistance()`; here every one of them is read
+  // at every tentative collision, so all of them are worth holding. They
+  // are distinct objects: only `beta` comes from the caller, and it is the
+  // path throughput, never a coefficient of this medium.
+  const size_t n{beta.size()};
+  float *SMDL_RESTRICT pBeta{beta.data()};
+  float *SMDL_RESTRICT pControlDepth{controlDepth.data()};
+  const float *SMDL_RESTRICT pMajorant{majorantColor.data()};
+  const float *SMDL_RESTRICT pA{sigmaA.data()};
+  const float *SMDL_RESTRICT pS{sigmaS.data()};
   while (spans.next(span)) {
     if (span.scaleMin > 0.0f) {
       const float depth{span.scaleMin * (span.t1 - span.t0)};
-      for (size_t i = 0; i < controlDepth.size(); i++) {
-        const float control{majorantColor[i] * depth};
-        controlDepth[i] += control;
+      for (size_t i = 0; i < n; i++) {
+        const float control{pMajorant[i] * depth};
+        pControlDepth[i] += control;
       }
     }
     const float m{mMajorantGrid * (span.scale - span.scaleMin) + mMajorantBase};
@@ -888,10 +933,11 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
       // residual at most `m`, so the factor is nonnegative; where the
       // extinction dips below the control the factor exceeds 1, which
       // the estimator identity covers for residuals of either sign.
-      for (size_t i = 0; i < beta.size(); i++) {
-        const float control{majorantColor[i] * span.scaleMin};
-        const float residual{(sigmaA[i] + sigmaS[i]) - control};
-        beta[i] *= (m - residual) / m;
+      const float scaleMin{span.scaleMin};
+      for (size_t i = 0; i < n; i++) {
+        const float control{pMajorant[i] * scaleMin};
+        const float residual{(pA[i] + pS[i]) - control};
+        pBeta[i] *= (m - residual) / m;
       }
       if (SMDL_UNLIKELY(!(beta.maxComponent() > 0.0f))) {
         beta = Color();
@@ -900,6 +946,5 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
     }
   }
   // The analytic control transmittance, one exponential per segment.
-  for (size_t i = 0; i < beta.size(); i++)
-    beta[i] *= transmittance(controlDepth[i]);
+  for (size_t i = 0; i < n; i++) pBeta[i] *= transmittance(pControlDepth[i]);
 }
