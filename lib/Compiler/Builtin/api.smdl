@@ -11,8 +11,14 @@ export struct _UniformLerp {
 
 @(pure macro)
 export auto _uniformLerpIndexAndFraction(const int count, const float xmin, const float xmax, const float x) {
-  const float t = (count - 1) * #max(0.0, #min((x - xmin) / (xmax - xmin), 1.0));
-  const int i = #min(int(#floor(t)), count - 2);
+  // The scale onto `[0, count - 1]` rides along in the multiply the
+  // normalization already needs, so the whole mapping is one fused
+  // multiply-add against constants followed by the clamp.
+  const float t = #max(0.0, #min((count - 1) * (x - xmin) / (xmax - xmin), float(count - 1)));
+  // No `#floor` before the truncation: the clamp above leaves `t` at or above
+  // zero (a NaN `x` clamps to the top of the range), and truncation toward
+  // zero is the floor of anything non-negative.
+  const int i = #min(int(t), count - 2);
   return _UniformLerp(i, t - i);
 }
 
@@ -383,7 +389,7 @@ export struct texture_2d {
   /// | entry        | meaning                                      |
   /// |--------------|----------------------------------------------|
   /// | `e`, `e + 1` | the level 0 extent in x and y                |
-  /// | `e + 2 + l`  | level `l`'s texel offset in `tile_buffers[i]` |
+  /// | `e + 2 + l`  | level `l` texel offset in `tile_buffers[i]`  |
   ///
   /// The offsets are tabulated rather than summed per fetch, because
   /// the sum is serial in the level and the hierarchical relief march
