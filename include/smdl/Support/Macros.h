@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -52,6 +53,29 @@ namespace smdl {
 #define SMDL_RESTRICT __restrict
 #else
 #define SMDL_RESTRICT
+#endif
+
+/// Promise that a pointer is aligned to the given power of two, and give
+/// back the pointer with its type intact.
+///
+/// The promise travels with the returned pointer rather than with the
+/// argument, so the result is what must be used (`p = SMDL_ASSUME_ALIGNED(p,
+/// 32)`); as a bare statement this does nothing. Its use is to let the
+/// vectorizer emit aligned moves and drop the scalar prologue that otherwise
+/// walks a pointer of unknown alignment up to a vector boundary. It is a
+/// promise the compiler cannot verify, and a pointer that is not actually so
+/// aligned is undefined behavior. Pass a plain pointer variable: the argument
+/// may be expanded more than once, and the unary plus is there to strip the
+/// reference that `decltype` would otherwise deduce from a parenthesized one.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMDL_ASSUME_ALIGNED(ptr, align) \
+  ((decltype(+(ptr)))__builtin_assume_aligned((ptr), (align)))
+#elif defined(_MSC_VER)
+#define SMDL_ASSUME_ALIGNED(ptr, align)                                    \
+  (__assume((reinterpret_cast<std::uintptr_t>(ptr) & ((align) - 1)) == 0), \
+   (ptr))
+#else
+#define SMDL_ASSUME_ALIGNED(ptr, align) (ptr)
 #endif
 
 /// Mark a branch condition as almost always true (`SMDL_LIKELY`) or
