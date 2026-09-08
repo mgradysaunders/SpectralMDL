@@ -140,7 +140,7 @@ export marmit_result marmit(
   // common pure-water case these are the effective medium directly; a
   // suspension mixes them into an effective (n, alpha) further below. `s` is
   // the wavelength remapped to [-1, 1] for the index polynomial.
-  const color s = 2.0 * saturate((color(&$state.wavelength_base[0]) - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) - 1.0;
+  const color s = 2.0 * saturate((color(&$state.wavelengthBase[0]) - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) - 1.0;
   // Real refractive index of water (Segelstein), degree-6 polynomial fit in the
   // remapped wavelength s. Max abs error 1.2e-3 over 400..2500 nm, below the
   // r12 fit's own error.

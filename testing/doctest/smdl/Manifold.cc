@@ -16,8 +16,9 @@ namespace {
 
 class PlaneSurfaces final : public smdl::ManifoldSurfaces {
 public:
-  [[nodiscard]] bool geometry(const smdl::ManifoldVertex &vertex,
-                              smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool
+  evaluateGeometry(const smdl::ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
     geometry.point = vertex.point;
     geometry.normal = float3(0.0f, 0.0f, 1.0f);
@@ -44,8 +45,9 @@ public:
 
 class SphereSurfaces final : public smdl::ManifoldSurfaces {
 public:
-  [[nodiscard]] bool geometry(const smdl::ManifoldVertex &vertex,
-                              smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool
+  evaluateGeometry(const smdl::ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
     geometry.point = vertex.point;
     geometry.normal = normalize(vertex.point);
@@ -67,7 +69,7 @@ public:
     if (!smdl::tryNormalize(dir)) return false;
     // The first sphere hit along the ray, like a ray tracer would report.
     const float b{dot(origin, dir)};
-    const float c{dot(origin, origin) - 1.0f};
+    const float c{lengthSquared(origin) - 1.0f};
     const float disc{b * b - c};
     if (!(disc > 0.0f)) return false;
     const float sqrtDisc{std::sqrt(disc)};

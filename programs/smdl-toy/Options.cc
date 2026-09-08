@@ -569,7 +569,7 @@ Options parseCommandLine(int argc, char **argv) {
   auto opts{Options{}};
 
   opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
-  opts.compile.enableDebug = bool(optDebug);
+  opts.compile.isDebugEnabled = bool(optDebug);
 
   opts.camera.file = std::string(optCameraFile);
   opts.camera.lookFrom = flag(optLookFrom);
@@ -584,11 +584,11 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.bladeAngleDeg = flag(optBladeAngle);
   opts.camera.distortionK1 = flag(optDistortionK1);
   opts.camera.distortionK2 = flag(optDistortionK2);
-  opts.camera.distortionFit = flag(optDistortionFit);
+  opts.camera.shouldFitDistortion = flag(optDistortionFit);
   opts.camera.vignetting = flag(optVignetting);
   opts.camera.catEye = flag(optCatEye);
   opts.camera.catEyeRadius = flag(optCatEyeRadius);
-  opts.camera.autolook.enabled = bool(optAutolook);
+  opts.camera.autolook.isEnabled = bool(optAutolook);
   opts.camera.autolook.azimuthDeg = flag(optAutolookAzimuth);
   opts.camera.autolook.zenithDeg = float(optAutolookZenith);
   opts.camera.autolook.margin = float(optAutolookMargin);
@@ -596,7 +596,7 @@ Options parseCommandLine(int argc, char **argv) {
 
   opts.image.resolution = int2(optResolution);
   opts.image.cropWindow = flag(optCropWindow);
-  opts.image.rgbPolicy.forceFalseColor =
+  opts.image.rgbPolicy.shouldForceFalseColor =
       bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
   if (optRGBWavelengths.getNumOccurrences() > 0) {
     const auto waves{float3(optRGBWavelengths)};
@@ -607,7 +607,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.outputRGB = std::string(optOutputRGB);
   opts.image.outputRGBFloat = std::string(optOutputRGBf);
   opts.image.outputSpectrum = std::string(optOutputSpectrum);
-  opts.image.outputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
+  opts.image.wasOutputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
   opts.image.resume = std::string(optResume);
 
   opts.light.sky.none = flag(optNoSunSky);
@@ -620,7 +620,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.light.sky.moonDistance = flag(optMoonDistance);
   opts.light.sky.iblFileName = flag(optIBLFilename);
   opts.light.sky.iblScale = flag(optIBLScale);
-  opts.light.haze.on = bool(optHaze);
+  opts.light.haze.isOn = bool(optHaze);
   opts.light.haze.none = flag(optNoHaze);
   opts.light.haze.visibility = flag(optHazeVisibility);
   opts.light.haze.scaleHeight = flag(optHazeScaleHeight);
@@ -637,8 +637,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.render.path.maxContribution = std::max(float(optMaxContribution), 0.0f);
   opts.render.path.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
-  opts.render.guide.enabled = bool(optGuide);
-  opts.render.guide.adrrs = bool(optGuideADRRS);
+  opts.render.guide.isEnabled = bool(optGuide);
+  opts.render.guide.useADRRS = bool(optGuideADRRS);
   opts.render.guide.bsdfFraction = flag(optGuideBSDFFraction);
   opts.render.guide.split = float(optGuideSplit);
   // Parsed here so a typo fails before anything loads.
@@ -646,14 +646,14 @@ Options parseCommandLine(int argc, char **argv) {
       parseWavelengthRange(std::string(optWavelengthRange));
   opts.render.grid.explicitWavelengths =
       parseWavelengths(std::string(optWavelengths));
-  opts.render.grid.given = optWavelengthRange.getNumOccurrences() > 0 ||
-                           optWavelengths.getNumOccurrences() > 0;
-  opts.render.grid.jitter = bool(optWavelengthJitter);
+  opts.render.grid.wasGiven = optWavelengthRange.getNumOccurrences() > 0 ||
+                              optWavelengths.getNumOccurrences() > 0;
+  opts.render.grid.shouldJitter = bool(optWavelengthJitter);
   // The manifold estimator, minus what needs a scene.
-  opts.render.mneeEnabled = bool(optMNEE);
-  opts.render.mneeReport = bool(optMNEEReport);
-  opts.render.mneeSunOnly = bool(optMNEESunOnly);
-  opts.render.mneeTestNormalHook = bool(optMNEETestNormalHook);
+  opts.render.useMNEE = bool(optMNEE);
+  opts.render.shouldReportMNEE = bool(optMNEEReport);
+  opts.render.useMNEESunOnly = bool(optMNEESunOnly);
+  opts.render.shouldTestMNEENormalHook = bool(optMNEETestNormalHook);
   opts.render.mnee.depth = optMNEE
                                ? int(std::clamp(unsigned(optMNEEDepth), 1U,
                                                 unsigned(MANIFOLD_MAX_DEPTH)))
@@ -674,7 +674,7 @@ Options parseCommandLine(int argc, char **argv) {
                                    optInputMeshFiles.end());
   opts.scene.assetDirs.assign(optAssetDirs.begin(), optAssetDirs.end());
   opts.scene.time = float(optTime);
-  opts.scene.ground = bool(optGround);
+  opts.scene.hasGround = bool(optGround);
   opts.scene.groundZ = flag(optGroundZ);
   opts.scene.groundMaterial = std::string(optGroundMaterial);
   opts.scene.fallbackMaterial = std::string(optFallbackMaterial);
@@ -683,9 +683,9 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.dumpCurves = std::string(optDumpCurves);
   opts.utility.packPlaces = std::string(optPackPlaces);
   opts.utility.outputPlaces = std::string(optOutputPlaces);
-  opts.utility.listMaterials = bool(optListMaterials);
-  opts.utility.listObjects = bool(optListObjects);
-  opts.utility.json = bool(optJSON);
+  opts.utility.shouldListMaterials = bool(optListMaterials);
+  opts.utility.shouldListObjects = bool(optListObjects);
+  opts.utility.useJSON = bool(optJSON);
   opts.utility.allMaterials = bool(optCompileAllMaterials);
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
@@ -697,7 +697,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl-toy.trace.json")
                              : std::string(optProfile);
-  opts.utility.profiling = optProfile.getNumOccurrences() > 0;
+  opts.utility.isProfiling = optProfile.getNumOccurrences() > 0;
 
   // The command line as it was given, for the spectral output's
   // 'render args' field.

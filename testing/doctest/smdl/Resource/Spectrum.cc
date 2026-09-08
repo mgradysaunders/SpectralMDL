@@ -8,18 +8,19 @@
 
 namespace fs = std::filesystem;
 
-static void writeText(const fs::path &fileName, const std::string &text) {
+namespace {
+void writeText(const fs::path &fileName, const std::string &text) {
   std::ofstream(fileName) << text;
 }
 
 // Load `text` as a spectrum and return the view, requiring success.
-static smdl::SpectrumView loadText(smdl::Spectrum &spectrum,
-                                   const fs::path &fileName,
-                                   const std::string &text) {
+smdl::SpectrumView loadText(smdl::Spectrum &spectrum, const fs::path &fileName,
+                            const std::string &text) {
   writeText(fileName, text);
   REQUIRE(!spectrum.loadFromFile(fileName.string()));
   return spectrum;
 }
+} // namespace
 
 TEST_CASE("Spectrum") {
   auto tmpDir{fs::temp_directory_path() / "smdl-spectrum-test"};

@@ -14,7 +14,7 @@ struct EvaluateResult {
 
 EvaluateResult evaluate(const hair_bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(hair: scattering);
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -32,7 +32,7 @@ struct SampleResult {
 
 SampleResult sample(const hair_bsdf scattering, const float4 xi, float3 wo) {
   auto mat = material(hair: scattering);
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;

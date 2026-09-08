@@ -5,8 +5,10 @@
 
 #include "smdl/Support/Logger.h"
 
+namespace {
 // A cap on the null-interface hops the projection casts skip.
-static constexpr int MAX_SKIPS{16};
+constexpr int MAX_SKIPS{16};
+} // namespace
 
 ManifoldVertex vertexOf(const Hit &hit) {
   ManifoldVertex vertex;
@@ -23,25 +25,26 @@ void hitOf(const Scene &scene, const ManifoldVertex &vertex, float time,
                 time, hit);
 }
 
-bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
-                                     smdl::ManifoldGeometry &geometry) const {
+bool SceneManifoldSurfaces::evaluateGeometry(
+    const ManifoldVertex &vertex, smdl::ManifoldGeometry &geometry) const {
   const auto &instance{scene.meshInstances[vertex.surface]};
   if (instance.isCurves()) return false;
   // Only the remapped-normal hook needs the full hit record; the mesh
   // field goes straight to the fused derivation, skipping the shading
   // fields `makeHit()` computes that the walk never reads. This runs
   // once per vertex per Newton iteration, so it is the hot path of the
-  // whole solver. 'remapsNormal()' is conservative: unproven reads as
+  // whole solver. 'canRemapNormal()' is conservative: unproven reads as
   // remapped, and the hook then reports the same field the mesh
   // carries, at the cost of the query; the mesh path is the fallback
   // either way, so a material without the hook solves the mesh field
   // as it always has.
-  if (const auto *material{scene.materials[scene.materialIndexOf(instance)]};
-      material && material->remapsNormal()) {
+  if (const auto *materialDef{
+          scene.materialDefs[scene.materialIndexOf(instance)]};
+      materialDef && materialDef->canRemapNormal()) {
     Hit hit{};
     hitOf(scene, vertex, time.fraction, hit);
     if (!hit.instance) return false;
-    if (manifoldHookGeometry(scene, hit, geometry)) return true;
+    if (evaluateManifoldHookGeometry(scene, hit, geometry)) return true;
   }
   geometry =
       scene.manifoldGeometry(uint32_t(vertex.surface), uint32_t(vertex.face),
@@ -74,38 +77,40 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
       moved = hit.vertex;
       return true;
     }
-    if (!hit.material->isNullInterface()) return false;
+    if (!hit.materialDef->isNullInterface()) return false;
     ray = Ray{hit.vertex.point, dir, EPS, INF, time.fraction};
   }
   return false;
 }
 
+namespace {
 // The hook's normal at a face parameter, in world space: build the
 // shading state exactly as a render hit would, ask the material for
 // `geometry.normal`, and carry the answer back out through the
 // internal-to-object and object-to-world frames the state itself holds
 // after finalization.
-[[nodiscard]] static bool hookNormalAt(const Scene &scene,
-                                       const smdl::JIT::Material &material,
-                                       const Hit &seedHit, const float3 &bary,
-                                       float3 &normal) {
+[[nodiscard]] bool hookNormalAt(const Scene &scene,
+                                const smdl::JIT::MaterialDef &materialDef,
+                                const Hit &seedHit, const float3 &bary,
+                                float3 &normal) {
   Hit hit{};
   scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time, hit);
   if (!hit.instance) return false;
   auto state{makeRenderState(gRenderGrid.wavelengths)};
   hit.applyGeometryToState(state, float3());
   auto internalNormal{float3()};
-  material.geometryNormalEvaluate(state, internalNormal);
+  materialDef.geometryNormalEvaluate(state, internalNormal);
   const auto objectNormal{
-      transformDirection(state.tangent_to_object_matrix, internalNormal)};
-  normal = transformDirection(state.object_to_world_matrix, objectNormal);
+      transformDirection(state.tangentToObject, internalNormal)};
+  normal = transformDirection(state.objectToWorld, objectNormal);
   return smdl::tryNormalize(normal);
 }
+} // namespace
 
-bool manifoldHookGeometry(const Scene &scene, const Hit &hit,
-                          ManifoldGeometry &geometry) {
-  const auto *material{hit.material};
-  if (!material || !material->geometryNormalEvaluate ||
+bool evaluateManifoldHookGeometry(const Scene &scene, const Hit &hit,
+                                  ManifoldGeometry &geometry) {
+  const auto *materialDef{hit.materialDef};
+  if (!materialDef || !materialDef->geometryNormalEvaluate ||
       hit.instance->isCurves())
     return false;
   geometry = scene.manifoldGeometry(hit);
@@ -120,7 +125,7 @@ bool manifoldHookGeometry(const Scene &scene, const Hit &hit,
   // parameterization) degrades to a zero partial rather than failing
   // the whole query.
   float3 normal{};
-  if (!hookNormalAt(scene, *material, hit, baryAt(0.0f, 0.0f), normal))
+  if (!hookNormalAt(scene, *materialDef, hit, baryAt(0.0f, 0.0f), normal))
     return false;
   geometry.normal = normal;
   geometry.dNdu = float3();
@@ -131,13 +136,13 @@ bool manifoldHookGeometry(const Scene &scene, const Hit &hit,
                                          MANIFOLD_NORMAL_STEP_MAX)
                             : MANIFOLD_NORMAL_STEP_MAX};
   float3 nPu{}, nMu{}, nPv{}, nMv{};
-  if (hookNormalAt(scene, *material, hit, baryAt(+h, 0.0f), nPu) &&
-      hookNormalAt(scene, *material, hit, baryAt(-h, 0.0f), nMu)) {
+  if (hookNormalAt(scene, *materialDef, hit, baryAt(+h, 0.0f), nPu) &&
+      hookNormalAt(scene, *materialDef, hit, baryAt(-h, 0.0f), nMu)) {
     const float3 d{(nPu - nMu) / (2.0f * h)};
     geometry.dNdu = d - dot(d, normal) * normal;
   }
-  if (hookNormalAt(scene, *material, hit, baryAt(0.0f, +h), nPv) &&
-      hookNormalAt(scene, *material, hit, baryAt(0.0f, -h), nMv)) {
+  if (hookNormalAt(scene, *materialDef, hit, baryAt(0.0f, +h), nPv) &&
+      hookNormalAt(scene, *materialDef, hit, baryAt(0.0f, -h), nMv)) {
     const float3 d{(nPv - nMv) / (2.0f * h)};
     geometry.dNdv = d - dot(d, normal) * normal;
   }
@@ -152,22 +157,24 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     const auto &instance{scene.meshInstances[instIndex]};
     if (!instance.isCausticCaster || instance.isCurves()) continue;
     const auto matIndex{scene.materialIndexOf(instance)};
-    const auto *material{scene.materials[matIndex]};
-    if (!material) continue;
+    const auto *materialDef{scene.materialDefs[matIndex]};
+    if (!materialDef) continue;
     auto state{makeRenderState(wavelengths, &allocator)};
-    state.texture_space_max = 1;
+    state.textureSpaceCount = 1;
     state.finalize();
-    auto mat{smdl::JIT::MaterialInstance(state, material)};
+    auto material{smdl::JIT::Material(state, materialDef)};
     // The transmission claim measures the index contrast against the
     // exterior the instance sits in; here that is the vacuum, which is
     // what an unplaced material sees, and the per-hit claim measures it
     // against the medium the path is actually in.
-    mat.setExteriorIOR(ExteriorIOR(nullptr, mat, float3(0.0f, 0.0f, 1.0f)));
+    material.setExteriorIOR(
+        ExteriorIOR(nullptr, material, float3(0.0f, 0.0f, 1.0f)));
     // Either side of the instance: a reflective walk's starts land
     // wherever the caster faces, and the masked query at the converged
     // crossing settles which side actually scatters.
-    const auto claim{manifoldClaim(mat, /*marked=*/true, maxGlossyAlpha)};
-    const int dfLobes{mat.getLobes()};
+    const auto claim{
+        manifoldClaim(material, /*isMarked=*/true, maxGlossyAlpha)};
+    const int dfLobes{material.getLobes()};
     allocator.reset();
     if (claim.empty()) {
       const char *reason{") claims nothing: the material has no Dirac or "
@@ -178,14 +185,14 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
                  "which the manifold walk cannot solve against; leave it "
                  "defaulted to inherit 'geometry.normal', else the mark is "
                  "ignored";
-      else if (mat.material->remapsNormal() &&
+      else if (material.materialDef->canRemapNormal() &&
                (dfLobes & smdl::DF_CAN_SET_NORMAL) != 0)
         reason = ") claims nothing: the material remaps 'geometry.normal' "
                  "while a df node was given a normal of its own, which "
                  "detaches it from the remapped field, so the mark is "
                  "ignored";
       else if (maxGlossyAlpha > 0.0f &&
-               !manifoldClaim(mat, /*marked=*/true).empty())
+               !manifoldClaim(material, /*isMarked=*/true).empty())
         reason = ") claims nothing under '-mnee-max-roughness': every "
                  "claimable lobe is wider, so the mark is ignored and the "
                  "transport stays with ordinary sampling";
@@ -237,7 +244,7 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
                                 Hit &hit) const {
   // By area within the caster. This density is never divided out; see the
   // class comment.
-  if (caster.primitive.active()) {
+  if (caster.primitive.isActive()) {
     const auto sample{samplePrimitiveArea(caster.primitive, float2(sampler))};
     scene.makeHit(caster.instIndex, sample.primID,
                   float3(0.0f, sample.surface.uv.x, sample.surface.uv.y), time,
@@ -250,24 +257,23 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
   return hit.instance != nullptr;
 }
 
-bool makeManifoldSeed(const MediumStack *medium,
-                      smdl::JIT::MaterialInstance &mat, const Hit &hit,
-                      const float3 &wl, float maxGlossyAlpha,
+bool makeManifoldSeed(const MediumStack *medium, smdl::JIT::Material &material,
+                      const Hit &hit, const float3 &wl, float maxGlossyAlpha,
                       ManifoldVertexSeed &seed) {
   const float3 woStraight{-wl};
-  mat.setExteriorIOR(ExteriorIOR(medium, mat, woStraight));
+  material.setExteriorIOR(ExteriorIOR(medium, material, woStraight));
   // The side the straight segment arrives on, which is both the side
   // whose scattering tree the claim may speak for and the side whose
   // index is the previous one.
-  const bool prevInterior{mat.isInterior(woStraight)};
+  const bool isPrevInterior{material.isInterior(woStraight)};
   const auto claim{manifoldClaim(
-      mat, prevInterior, hit.instance->isCausticCaster, maxGlossyAlpha)};
+      material, isPrevInterior, hit.instance->isCausticCaster, maxGlossyAlpha)};
   if (claim.refractLobes == 0) return false;
   seed.claimedLobes = claim.refractLobes;
   seed.isGlossy = false;
   seed.vertex = vertexOf(hit);
-  seed.etaPrev = prevInterior ? mat.getIOR() : mat.getExteriorIOR();
-  seed.etaNext = prevInterior ? mat.getExteriorIOR() : mat.getIOR();
+  seed.etaPrev = isPrevInterior ? material.getIOR() : material.getExteriorIOR();
+  seed.etaNext = isPrevInterior ? material.getExteriorIOR() : material.getIOR();
   seed.sideSign = dot(wl, hit.normal) < 0 ? -1.0f : 1.0f;
   return true;
 }
@@ -281,14 +287,14 @@ int runMNEETestNormalHook(const Scene &scene) {
     const auto &instance{scene.meshInstances[instIndex]};
     if (instance.isCurves()) continue;
     const auto matIndex{scene.materialIndexOf(instance)};
-    const auto *material{scene.materials[matIndex]};
-    if (!material || !material->geometryNormalEvaluate) continue;
+    const auto *materialDef{scene.materialDefs[matIndex]};
+    if (!materialDef || !materialDef->geometryNormalEvaluate) continue;
     const size_t faceCount{
         instance.isPrimitive()
             ? size_t(1)
             : scene.meshes[instance.meshIndex]->faces.size()};
     if (faceCount == 0) continue;
-    const bool remapped{material->remapsNormal()};
+    const bool wasRemapped{materialDef->canRemapNormal()};
     float maxNormalDot{-1.0f};
     float minNormalDot{+1.0f};
     float maxPartialErr{0.0f};
@@ -305,7 +311,7 @@ int runMNEETestNormalHook(const Scene &scene) {
       if (!hit.instance) continue;
       const auto meshGeometry{scene.manifoldGeometry(hit)};
       ManifoldGeometry hookGeometry{};
-      if (!manifoldHookGeometry(scene, hit, hookGeometry)) continue;
+      if (!evaluateManifoldHookGeometry(scene, hit, hookGeometry)) continue;
       samples++;
       const float normalDot{dot(meshGeometry.normal, hookGeometry.normal)};
       maxNormalDot = std::max(maxNormalDot, normalDot);
@@ -319,7 +325,7 @@ int runMNEETestNormalHook(const Scene &scene) {
       }
     }
     if (samples == 0) continue;
-    if (remapped) {
+    if (wasRemapped) {
       std::cout << "  " << scene.fileNames[instIndex] << " (material "
                 << scene.materialNames[matIndex]
                 << "): remapped, max bend from mesh normal "
@@ -328,13 +334,14 @@ int runMNEETestNormalHook(const Scene &scene) {
                 << " deg over " << samples << " samples\n";
       continue;
     }
-    const bool ok{minNormalDot > 1.0f - TOLERANCE &&
-                  maxPartialErr <= TOLERANCE};
-    if (!ok) failures++;
+    const bool isWithinTolerance{minNormalDot > 1.0f - TOLERANCE &&
+                                 maxPartialErr <= TOLERANCE};
+    if (!isWithinTolerance) failures++;
     std::cout << "  " << scene.fileNames[instIndex] << " (material "
               << scene.materialNames[matIndex]
-              << "): " << (ok ? "OK" : "MISMATCH") << ", max relative dN error "
-              << maxPartialErr << " over " << samples << " samples\n";
+              << "): " << (isWithinTolerance ? "OK" : "MISMATCH")
+              << ", max relative dN error " << maxPartialErr << " over "
+              << samples << " samples\n";
   }
   return failures;
 }

@@ -278,7 +278,7 @@ public:
 public:
   /// Get the common type of the given types.
   [[nodiscard]] Type *getCommonType(llvm::ArrayRef<Type *> types,
-                                    bool defaultToUnion = true,
+                                    bool shouldDefaultToUnion = true,
                                     const SourceLocation &srcLoc = {});
 
   /// Get the conversion rule for converting `typeA` to `typeB`.

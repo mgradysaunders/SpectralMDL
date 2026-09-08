@@ -40,7 +40,7 @@ struct RenderHeader final {
   uint64_t sampleOffset{};
 
   /// Whether the samples were drawn with `-wavelength-jitter`.
-  bool wavelengthJitter{};
+  bool hasWavelengthJitter{};
 
   /// The command line that started the first session.
   std::string args{};

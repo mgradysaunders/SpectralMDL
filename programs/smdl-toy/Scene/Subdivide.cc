@@ -157,7 +157,7 @@ bool subdivideMesh(Mesh &mesh) {
   // into quads identically and differ only in where they put the
   // vertices, so bilinear *is* the unsmoothed quad scheme. Loop has no
   // such counterpart, and stays Loop for the unsmoothed triangle split;
-  // `varyingPoints` below is what takes the smoothing back out of it.
+  // `hasVaryingPoints` below is what takes the smoothing back out of it.
   const auto sdcScheme{isLoop          ? Sdc::SCHEME_LOOP
                        : spec.isSmooth ? Sdc::SCHEME_CATMARK
                                        : Sdc::SCHEME_BILINEAR};
@@ -182,7 +182,7 @@ bool subdivideMesh(Mesh &mesh) {
   // whatever topology the scheme refined. The quad half of the 2x2 does
   // not need this, because SCHEME_BILINEAR already applies those very
   // masks as its own.
-  const bool varyingPoints{isLoop && !spec.isSmooth};
+  const bool hasVaryingPoints{isLoop && !spec.isSmooth};
   // Interpolate positions level by level through one flat buffer, the
   // last level's block last; the shut key of a deforming mesh goes
   // through the same refiner, so the two keys share every index.
@@ -193,7 +193,7 @@ bool subdivideMesh(Mesh &mesh) {
     auto *src{buffer.data()};
     for (int level = 1; level <= int(spec.levels); level++) {
       auto *dst{src + refiner->GetLevel(level - 1).GetNumVertices()};
-      if (varyingPoints) {
+      if (hasVaryingPoints) {
         primvar.InterpolateVarying(level, src, dst);
       } else {
         primvar.Interpolate(level, src, dst);
@@ -239,7 +239,7 @@ bool subdivideMesh(Mesh &mesh) {
   auto limitOpen{LimitKey()};
   auto limitShut{LimitKey()};
   auto limitCorners{std::vector<OsdCorner>()};
-  auto haveLimitNormals{false};
+  auto hasLimitNormals{false};
   if (spec.isSmooth) {
     const auto limitKey{[&](OsdPoint *&src, LimitKey &limit) {
       limit.points.resize(numFineVerts);
@@ -253,7 +253,7 @@ bool subdivideMesh(Mesh &mesh) {
     }};
     limitKey(srcPoint, limitOpen);
     if (hasShut) limitKey(srcPointShut, limitShut);
-    haveLimitNormals = true;
+    hasLimitNormals = true;
     if (hasCorners) {
       limitCorners.resize(size_t(lastLevel.GetNumFVarValues(0)));
       auto *dstCorners{limitCorners.data()};
@@ -273,7 +273,7 @@ bool subdivideMesh(Mesh &mesh) {
                           const LimitKey &limit, int vertex, int corner) {
     vert.point = src[vertex].value;
     if (corner >= 0) vert.texcoord = srcCorner[corner].uv;
-    if (haveLimitNormals) {
+    if (hasLimitNormals) {
       const auto normal{smdl::cross(limit.du[size_t(vertex)].value,
                                     limit.dv[size_t(vertex)].value)};
       const auto len{smdl::length(normal)};
@@ -283,7 +283,7 @@ bool subdivideMesh(Mesh &mesh) {
       if (len > 0) {
         vert.normal = normal / len;
       } else {
-        haveLimitNormals = false;
+        hasLimitNormals = false;
       }
     }
   }};
@@ -316,5 +316,5 @@ bool subdivideMesh(Mesh &mesh) {
     for (int j = 2; j < fVerts.size(); j++)
       mesh.faces.push_back({vertexOf(0), vertexOf(j - 1), vertexOf(j)});
   }
-  return haveLimitNormals;
+  return hasLimitNormals;
 }

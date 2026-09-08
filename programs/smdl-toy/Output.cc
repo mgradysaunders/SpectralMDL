@@ -42,7 +42,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   const auto spp{frame.spp};
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
-  const bool jitterWavelength{!gRenderGrid.bandEdges.empty()};
+  const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
   const auto rgbImage{
       resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
   if (!opts.image.outputRGBFloat.empty()) {
@@ -62,7 +62,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // is this session's: the settings a later resume compares itself
     // against are the ones the samples now in the film were drawn under.
     resumed.header.sampler = SAMPLER_VERSION;
-    resumed.header.wavelengthJitter = jitterWavelength;
+    resumed.header.hasWavelengthJitter = shouldJitterWavelength;
     resumed.header.args = opts.argsEcho;
     // What the numbers mean, and where the light came from: written for
     // whoever opens the file next, and never read back, so none of it

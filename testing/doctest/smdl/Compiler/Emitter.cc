@@ -10,26 +10,25 @@
 
 namespace fs = std::filesystem;
 
+namespace {
 // Compile one module of source and return the error message, or the
 // empty string on success. Compile-time diagnostics are what this file
 // tests, so it deliberately stops before 'jitCompile()'.
-static std::string compileSource(const fs::path &tmpDir,
-                                 std::string_view sourceCode) {
+std::string compileSource(const fs::path &tmpDir, std::string_view sourceCode) {
   auto path{tmpDir / "main.smdl"};
   fs::create_directories(tmpDir);
   std::ofstream(path) << sourceCode;
   smdl::Compiler compiler{};
   // Without this, 'unit_test' bodies are never emitted, so nothing below
   // would be diagnosed at all.
-  compiler.enableUnitTests = true;
+  compiler.shouldEmitUnitTests = true;
   if (auto error{compiler.add(path.string())}) return error->message;
   if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return error->message;
   return {};
 }
 
 // Compile one module of source and return its unoptimized LLVM-IR.
-static std::string compileToIR(const fs::path &tmpDir,
-                               std::string_view sourceCode) {
+std::string compileToIR(const fs::path &tmpDir, std::string_view sourceCode) {
   auto path{tmpDir / "main.smdl"};
   fs::create_directories(tmpDir);
   std::ofstream(path) << sourceCode;
@@ -43,7 +42,7 @@ static std::string compileToIR(const fs::path &tmpDir,
 
 // The parameter list of the LLVM definition of 'name', i.e. the text
 // between the parentheses of its 'define' line.
-static std::string llvmParamsOf(const std::string &ir, std::string_view name) {
+std::string llvmParamsOf(const std::string &ir, std::string_view name) {
   auto marker{std::string("@") + std::string(name) + "("};
   auto i{ir.find("define")};
   while (i != std::string::npos) {
@@ -61,6 +60,7 @@ static std::string llvmParamsOf(const std::string &ir, std::string_view name) {
   FAIL("no LLVM definition of " << name << " in:\n" << ir);
   return {};
 }
+} // namespace
 
 TEST_CASE("Emitter voided fields") {
   auto tmpDir{fs::temp_directory_path() / "smdl-emitter-test"};
@@ -199,7 +199,7 @@ TEST_CASE("Emitter mip chain kinds") {
     auto error{compileSource(
         tmpDir, "#smdl\n"
                 "import ::tex::*;\n"
-                "unit_test \"t\" { bool b = $state.wavelength_min > 0.0; "
+                "unit_test \"t\" { bool b = $state.wavelengthMin > 0.0; "
                 "auto t = texture_2d(\"height.png\", tex::gamma_linear, "
                 "max_mipmap: b); }\n")};
     CHECK(error.find("compile-time") != std::string::npos);

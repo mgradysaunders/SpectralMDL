@@ -37,8 +37,8 @@ namespace {
 // Template-stripped silver.
 //
 // Downsampled from 499 entries covering 270nm to 14000nm.
-static constexpr int METAL_IOR_AG_SIZE = 51;
-static constexpr MetalIORTableEntry METAL_IOR_AG[51] = {
+constexpr int METAL_IOR_AG_SIZE = 51;
+constexpr MetalIORTableEntry METAL_IOR_AG[51] = {
     {270.0f, {1.364f, 1.318f}},   {280.0f, {1.477f, 1.24f}},
     {290.0f, {1.531f, 1.168f}},   {300.0f, {1.609f, 0.9126f}},
     {310.0f, {1.373f, 0.5192f}},  {320.0f, {0.8191f, 0.3334f}},
@@ -75,8 +75,8 @@ static constexpr MetalIORTableEntry METAL_IOR_AG[51] = {
 // Kramers-Kronig consistent analysis of evaporated aluminum films.
 //
 // Downsampled from 186 entries covering 0.124nm to 14000nm.
-static constexpr int METAL_IOR_AL_SIZE = 121;
-static constexpr MetalIORTableEntry METAL_IOR_AL[121] = {
+constexpr int METAL_IOR_AL_SIZE = 121;
+constexpr MetalIORTableEntry METAL_IOR_AL[121] = {
     {0.124f, {0.999995f, 8.241e-08f}},  {0.7927f, {0.9999f, 8.5418e-05f}},
     {0.7999f, {0.99989f, 6.0484e-06f}}, {1.1271f, {0.99961f, 2.1586e-05f}},
     {1.7712f, {0.99898f, 0.00011811f}}, {2.4797f, {0.99797f, 0.00043503f}},
@@ -148,8 +148,8 @@ static constexpr MetalIORTableEntry METAL_IOR_AL[121] = {
 // Evaporated gold film.
 //
 // Downsampled from 428 entries covering 300nm to 14000nm.
-static constexpr int METAL_IOR_AU_SIZE = 64;
-static constexpr MetalIORTableEntry METAL_IOR_AU[64] = {
+constexpr int METAL_IOR_AU_SIZE = 64;
+constexpr MetalIORTableEntry METAL_IOR_AU[64] = {
     {300.0f, {1.596f, 1.888f}},   {310.0f, {1.649f, 1.895f}},
     {320.0f, {1.685f, 1.881f}},   {330.0f, {1.701f, 1.858f}},
     {340.0f, {1.695f, 1.835f}},   {350.0f, {1.671f, 1.821f}},
@@ -199,8 +199,8 @@ static constexpr MetalIORTableEntry METAL_IOR_AU[64] = {
 // of the table.
 //
 // Downsampled from 50 entries covering 188nm to 2479.68nm.
-static constexpr int METAL_IOR_CO_SIZE = 32;
-static constexpr MetalIORTableEntry METAL_IOR_CO[32] = {
+constexpr int METAL_IOR_CO_SIZE = 32;
+constexpr MetalIORTableEntry METAL_IOR_CO[32] = {
     {188.0f, {1.16f, 1.59f}},  {192.0f, {1.21f, 1.63f}},
     {195.0f, {1.26f, 1.67f}},  {203.0f, {1.32f, 1.75f}},
     {207.0f, {1.36f, 1.78f}},  {212.0f, {1.38f, 1.82f}},
@@ -226,8 +226,8 @@ static constexpr MetalIORTableEntry METAL_IOR_CO[32] = {
 // Copper ingot.
 //
 // Downsampled from 558 entries covering 210nm to 14000nm.
-static constexpr int METAL_IOR_CU_SIZE = 75;
-static constexpr MetalIORTableEntry METAL_IOR_CU[75] = {
+constexpr int METAL_IOR_CU_SIZE = 75;
+constexpr MetalIORTableEntry METAL_IOR_CU[75] = {
     {210.0f, {1.243f, 1.376f}},      {220.0f, {1.315f, 1.439f}},
     {230.0f, {1.404f, 1.49f}},       {240.0f, {1.497f, 1.5f}},
     {250.0f, {1.567f, 1.474f}},      {260.0f, {1.6f, 1.431f}},
@@ -275,8 +275,8 @@ static constexpr MetalIORTableEntry METAL_IOR_CU[75] = {
 // Brass alloy of 70% copper and 30% zinc.
 //
 // Downsampled from 558 entries covering 210nm to 14000nm.
-static constexpr int METAL_IOR_CUZN_SIZE = 70;
-static constexpr MetalIORTableEntry METAL_IOR_CUZN[70] = {
+constexpr int METAL_IOR_CUZN_SIZE = 70;
+constexpr MetalIORTableEntry METAL_IOR_CUZN[70] = {
     {210.0f, {1.14f, 1.314f}},      {220.0f, {1.179f, 1.381f}},
     {230.0f, {1.227f, 1.442f}},     {240.0f, {1.271f, 1.482f}},
     {250.0f, {1.301f, 1.512f}},     {260.0f, {1.315f, 1.544f}},
@@ -319,8 +319,8 @@ static constexpr MetalIORTableEntry METAL_IOR_CUZN[70] = {
 // https://refractiveindex.info/?shelf=main&book=Fe&page=Querry
 //
 // Downsampled from 558 entries covering 210nm to 14000nm.
-static constexpr int METAL_IOR_FE_SIZE = 45;
-static constexpr MetalIORTableEntry METAL_IOR_FE[45] = {
+constexpr int METAL_IOR_FE_SIZE = 45;
+constexpr MetalIORTableEntry METAL_IOR_FE[45] = {
     {210.0f, {1.141f, 1.305f}},      {220.0f, {1.125f, 1.347f}},
     {240.0f, {1.104f, 1.48f}},       {250.0f, {1.109f, 1.553f}},
     {280.0f, {1.134f, 1.757f}},      {310.0f, {1.164f, 1.976f}},
@@ -353,8 +353,8 @@ static constexpr MetalIORTableEntry METAL_IOR_FE[45] = {
 // Liquid mercury at room temperature.
 //
 // Downsampled from 76 entries covering 63.58nm to 6199.21nm.
-static constexpr int METAL_IOR_HG_SIZE = 55;
-static constexpr MetalIORTableEntry METAL_IOR_HG[55] = {
+constexpr int METAL_IOR_HG_SIZE = 55;
+constexpr MetalIORTableEntry METAL_IOR_HG[55] = {
     {63.58f, {1.20846f, 0.36385f}},  {67.02f, {1.19493f, 0.36722f}},
     {77.49f, {1.15865f, 0.36806f}},  {79.99f, {1.1463f, 0.37416f}},
     {88.56f, {1.1153f, 0.40361f}},   {99.19f, {1.07841f, 0.44505f}},
@@ -398,8 +398,8 @@ static constexpr MetalIORTableEntry METAL_IOR_HG[55] = {
 // decaying to zero at the end of the table.
 //
 // Downsampled from 65 entries covering 326.3nm to 8266nm.
-static constexpr int METAL_IOR_LI_SIZE = 32;
-static constexpr MetalIORTableEntry METAL_IOR_LI[32] = {
+constexpr int METAL_IOR_LI_SIZE = 32;
+constexpr MetalIORTableEntry METAL_IOR_LI[32] = {
     {326.27f, {0.34301f, 1.38479f}},  {330.62f, {0.3382f, 1.41929f}},
     {339.68f, {0.33051f, 1.45232f}},  {344.4f, {0.32328f, 1.48476f}},
     {354.24f, {0.31649f, 1.51663f}},  {370.1f, {0.29531f, 1.60848f}},
@@ -424,8 +424,8 @@ static constexpr MetalIORTableEntry METAL_IOR_LI[32] = {
 // https://refractiveindex.info/?shelf=main&book=Mg&page=Hagemann
 //
 // Downsampled from 140 entries covering 0.0248nm to 14000nm.
-static constexpr int METAL_IOR_MG_SIZE = 112;
-static constexpr MetalIORTableEntry METAL_IOR_MG[112] = {
+constexpr int METAL_IOR_MG_SIZE = 112;
+constexpr MetalIORTableEntry METAL_IOR_MG[112] = {
     {0.0248f, {1.0f, 5.38e-11f}},  {1.24f, {0.9999f, 1.86e-05f}},
     {2.066f, {0.999f, 0.000139f}}, {3.1f, {0.9977f, 0.000542f}},
     {4.133f, {0.9963f, 0.00125f}}, {4.959f, {0.9948f, 0.00215f}},
@@ -489,8 +489,8 @@ static constexpr MetalIORTableEntry METAL_IOR_MG[112] = {
 // https://refractiveindex.info/?shelf=main&book=Na&page=Smith
 //
 // Downsampled from 23 entries covering 312.5nm to 2237.98nm.
-static constexpr int METAL_IOR_NA_SIZE = 22;
-static constexpr MetalIORTableEntry METAL_IOR_NA[22] = {
+constexpr int METAL_IOR_NA_SIZE = 22;
+constexpr MetalIORTableEntry METAL_IOR_NA[22] = {
     {312.539f, {0.049195f, 1.00619f}},  {334.099f, {0.05522f, 1.13183f}},
     {386.967f, {0.06512f, 1.47419f}},   {404.648f, {0.06896f, 1.53713f}},
     {420.001f, {0.067744f, 1.63113f}},  {439.972f, {0.068302f, 1.75689f}},
@@ -513,8 +513,8 @@ static constexpr MetalIORTableEntry METAL_IOR_NA[22] = {
 // sources.
 //
 // Downsampled from 200 entries covering 248nm to 6199.2nm.
-static constexpr int METAL_IOR_NI_SIZE = 30;
-static constexpr MetalIORTableEntry METAL_IOR_NI[30] = {
+constexpr int METAL_IOR_NI_SIZE = 30;
+constexpr MetalIORTableEntry METAL_IOR_NI[30] = {
     {247.97f, {1.4724f, 2.0065f}}, {260.3f, {1.5737f, 2.0373f}},
     {273.24f, {1.6585f, 2.0378f}}, {282.22f, {1.6987f, 2.0275f}},
     {296.26f, {1.7299f, 2.0088f}}, {306.0f, {1.7321f, 2.0015f}},
@@ -541,8 +541,8 @@ static constexpr MetalIORTableEntry METAL_IOR_NI[30] = {
 // spectroscopy (REELS).
 //
 // Downsampled from 150 entries covering 17.59nm to 2479.68nm.
-static constexpr int METAL_IOR_PB_SIZE = 101;
-static constexpr MetalIORTableEntry METAL_IOR_PB[101] = {
+constexpr int METAL_IOR_PB_SIZE = 101;
+constexpr MetalIORTableEntry METAL_IOR_PB[101] = {
     {17.586f, {0.8573f, 0.0951f}},    {17.969f, {0.8543f, 0.1089f}},
     {18.644f, {0.8547f, 0.1363f}},    {19.373f, {0.8656f, 0.1652f}},
     {19.837f, {0.8777f, 0.18f}},      {20.16f, {0.8873f, 0.1877f}},
@@ -605,8 +605,8 @@ static constexpr MetalIORTableEntry METAL_IOR_PB[101] = {
 // sources.
 //
 // Downsampled from 200 entries covering 248nm to 12398nm.
-static constexpr int METAL_IOR_PT_SIZE = 45;
-static constexpr MetalIORTableEntry METAL_IOR_PT[45] = {
+constexpr int METAL_IOR_PT_SIZE = 45;
+constexpr MetalIORTableEntry METAL_IOR_PT[45] = {
     {247.97f, {1.4979f, 1.681f}},  {257.91f, {1.4657f, 1.772f}},
     {268.25f, {1.4484f, 1.8711f}}, {279.01f, {1.4452f, 1.974f}},
     {290.2f, {1.4543f, 2.0776f}},  {307.83f, {1.486f, 2.2299f}},
@@ -643,8 +643,8 @@ static constexpr MetalIORTableEntry METAL_IOR_PT[45] = {
 // until measured data replaces it.
 //
 // Downsampled from 58 entries covering 380nm to 12000nm.
-static constexpr int METAL_IOR_SN_SIZE = 26;
-static constexpr MetalIORTableEntry METAL_IOR_SN[26] = {
+constexpr int METAL_IOR_SN_SIZE = 26;
+constexpr MetalIORTableEntry METAL_IOR_SN[26] = {
     {380.0f, {0.95519f, 3.17202f}}, {420.0f, {1.09038f, 3.61438f}},
     {470.0f, {1.26858f, 4.13264f}}, {540.0f, {1.5241f, 4.80285f}},
     {650.0f, {1.91051f, 5.74242f}}, {730.0f, {2.16f, 6.35f}},
@@ -669,8 +669,8 @@ static constexpr MetalIORTableEntry METAL_IOR_SN[26] = {
 // sources.
 //
 // Downsampled from 836 entries covering 248nm to 14000nm.
-static constexpr int METAL_IOR_TI_SIZE = 36;
-static constexpr MetalIORTableEntry METAL_IOR_TI[36] = {
+constexpr int METAL_IOR_TI_SIZE = 36;
+constexpr MetalIORTableEntry METAL_IOR_TI[36] = {
     {247.97f, {0.44635f, 1.5069f}}, {260.25f, {0.48257f, 1.6049f}},
     {274.46f, {0.52738f, 1.715f}},  {288.05f, {0.57313f, 1.8172f}},
     {305.25f, {0.63517f, 1.9426f}}, {325.04f, {0.71246f, 2.0812f}},
@@ -700,8 +700,8 @@ static constexpr MetalIORTableEntry METAL_IOR_TI[36] = {
 // spectroscopy (REELS).
 //
 // Downsampled from 150 entries covering 17.59nm to 2479.68nm.
-static constexpr int METAL_IOR_ZN_SIZE = 49;
-static constexpr MetalIORTableEntry METAL_IOR_ZN[49] = {
+constexpr int METAL_IOR_ZN_SIZE = 49;
+constexpr MetalIORTableEntry METAL_IOR_ZN[49] = {
     {17.586f, {0.9522f, 0.0688f}},    {18.505f, {0.951f, 0.0741f}},
     {19.525f, {0.9495f, 0.0811f}},    {24.311f, {0.9441f, 0.1112f}},
     {28.502f, {0.9416f, 0.1365f}},    {33.509f, {0.9388f, 0.1651f}},
@@ -728,24 +728,23 @@ static constexpr MetalIORTableEntry METAL_IOR_ZN[49] = {
     {1239.842f, {3.5417f, 10.2617f}}, {1653.123f, {5.3318f, 12.5605f}},
     {2479.684f, {8.6709f, 15.947f}}};
 
-static constexpr MetalIOR METAL_IORS[17] = {
-    {&METAL_IOR_AG[0], METAL_IOR_AG_SIZE},
-    {&METAL_IOR_AL[0], METAL_IOR_AL_SIZE},
-    {&METAL_IOR_AU[0], METAL_IOR_AU_SIZE},
-    {&METAL_IOR_CO[0], METAL_IOR_CO_SIZE},
-    {&METAL_IOR_CU[0], METAL_IOR_CU_SIZE},
-    {&METAL_IOR_CUZN[0], METAL_IOR_CUZN_SIZE},
-    {&METAL_IOR_FE[0], METAL_IOR_FE_SIZE},
-    {&METAL_IOR_HG[0], METAL_IOR_HG_SIZE},
-    {&METAL_IOR_LI[0], METAL_IOR_LI_SIZE},
-    {&METAL_IOR_MG[0], METAL_IOR_MG_SIZE},
-    {&METAL_IOR_NA[0], METAL_IOR_NA_SIZE},
-    {&METAL_IOR_NI[0], METAL_IOR_NI_SIZE},
-    {&METAL_IOR_PB[0], METAL_IOR_PB_SIZE},
-    {&METAL_IOR_PT[0], METAL_IOR_PT_SIZE},
-    {&METAL_IOR_SN[0], METAL_IOR_SN_SIZE},
-    {&METAL_IOR_TI[0], METAL_IOR_TI_SIZE},
-    {&METAL_IOR_ZN[0], METAL_IOR_ZN_SIZE}};
+constexpr MetalIOR METAL_IORS[17] = {{&METAL_IOR_AG[0], METAL_IOR_AG_SIZE},
+                                     {&METAL_IOR_AL[0], METAL_IOR_AL_SIZE},
+                                     {&METAL_IOR_AU[0], METAL_IOR_AU_SIZE},
+                                     {&METAL_IOR_CO[0], METAL_IOR_CO_SIZE},
+                                     {&METAL_IOR_CU[0], METAL_IOR_CU_SIZE},
+                                     {&METAL_IOR_CUZN[0], METAL_IOR_CUZN_SIZE},
+                                     {&METAL_IOR_FE[0], METAL_IOR_FE_SIZE},
+                                     {&METAL_IOR_HG[0], METAL_IOR_HG_SIZE},
+                                     {&METAL_IOR_LI[0], METAL_IOR_LI_SIZE},
+                                     {&METAL_IOR_MG[0], METAL_IOR_MG_SIZE},
+                                     {&METAL_IOR_NA[0], METAL_IOR_NA_SIZE},
+                                     {&METAL_IOR_NI[0], METAL_IOR_NI_SIZE},
+                                     {&METAL_IOR_PB[0], METAL_IOR_PB_SIZE},
+                                     {&METAL_IOR_PT[0], METAL_IOR_PT_SIZE},
+                                     {&METAL_IOR_SN[0], METAL_IOR_SN_SIZE},
+                                     {&METAL_IOR_TI[0], METAL_IOR_TI_SIZE},
+                                     {&METAL_IOR_ZN[0], METAL_IOR_ZN_SIZE}};
 
 // A uniform bucket grid over the wavelengths a render actually asks about,
 // so that `smdlEvalMetalIOR()` reaches a bracketing pair by arithmetic
@@ -754,35 +753,35 @@ static constexpr MetalIOR METAL_IORS[17] = {
 // `MAX_BUCKET_SPAN` times. The grid deliberately does not span the whole
 // table domain: a handful of metals carry x-ray and EUV entries below
 // 300nm, which no render touches and which the search path still serves.
-static constexpr float BUCKET_MIN = 300.0f;
-static constexpr float BUCKET_MAX = 14000.0f;
-static constexpr int BUCKET_COUNT = 1024;
-static constexpr float BUCKET_SCALE = BUCKET_COUNT / (BUCKET_MAX - BUCKET_MIN);
+constexpr float BUCKET_MIN = 300.0f;
+constexpr float BUCKET_MAX = 14000.0f;
+constexpr int BUCKET_COUNT = 1024;
+constexpr float BUCKET_SCALE = BUCKET_COUNT / (BUCKET_MAX - BUCKET_MIN);
 
 // Two is the floor for any bucket count, because copper has an adjacent pair
 // 0.3nm apart at 1010nm that no grid separates.
-static constexpr int MAX_BUCKET_SPAN = 2;
+constexpr int MAX_BUCKET_SPAN = 2;
 
 struct BucketIndex final {
   std::uint8_t start[BUCKET_COUNT]{};
 };
 
 // The low edge of bucket `b`, which is where its stored index is anchored.
-[[nodiscard]] static constexpr float bucketLowEdge(int b) {
+[[nodiscard]] constexpr float bucketLowEdge(int b) {
   return BUCKET_MIN + float(b) / BUCKET_SCALE;
 }
 
 // The bracketing convention the search path arrives at: the last entry
 // strictly below `wavelen`, held one short of the end so that `[1]` is always
 // a valid neighbor.
-[[nodiscard]] static constexpr int
-bracketOf(const MetalIORTableEntry *table, int size, int from, float wavelen) {
+[[nodiscard]] constexpr int bracketOf(const MetalIORTableEntry *table, int size,
+                                      int from, float wavelen) {
   int i{from};
   while (i + 1 <= size - 2 && table[i + 1].wavelen < wavelen) i++;
   return i;
 }
 
-[[nodiscard]] static constexpr BucketIndex
+[[nodiscard]] constexpr BucketIndex
 makeBucketIndex(const MetalIORTableEntry *table, int size) {
   BucketIndex index{};
   int i{};
@@ -797,7 +796,7 @@ struct BucketIndexes final {
   BucketIndex byMetal[17]{};
 };
 
-[[nodiscard]] static constexpr BucketIndexes makeBucketIndexes() {
+[[nodiscard]] constexpr BucketIndexes makeBucketIndexes() {
   BucketIndexes all{};
   for (int m{}; m < 17; m++)
     all.byMetal[m] =
@@ -805,12 +804,12 @@ struct BucketIndexes final {
   return all;
 }
 
-static constexpr BucketIndexes METAL_IOR_BUCKETS{makeBucketIndexes()};
+constexpr BucketIndexes METAL_IOR_BUCKETS{makeBucketIndexes()};
 
 // The worst number of forward steps any lookup can need, which the fast path
 // unrolls to exactly. A table edit that widens this fails the build rather
 // than silently returning an IOR read off the wrong pair.
-[[nodiscard]] static constexpr int worstBucketSpan() {
+[[nodiscard]] constexpr int worstBucketSpan() {
   int worst{};
   for (int m{}; m < 17; m++) {
     const auto *table{METAL_IORS[m].table};
@@ -832,7 +831,7 @@ static_assert(worstBucketSpan() <= MAX_BUCKET_SPAN,
               "raise BUCKET_COUNT or MAX_BUCKET_SPAN");
 
 // Every table index has to survive the round trip through `std::uint8_t`.
-[[nodiscard]] static constexpr int largestTableSize() {
+[[nodiscard]] constexpr int largestTableSize() {
   int largest{};
   for (int m{}; m < 17; m++)
     largest =
@@ -848,7 +847,7 @@ static_assert(largestTableSize() - 2 <= 255,
 // neighbor. Wavelengths in the bucket domain arrive by arithmetic; the rest,
 // and NaN, take the search, which is why the range test is spelled so that
 // NaN fails it.
-[[nodiscard]] static const MetalIORTableEntry *
+[[nodiscard]] const MetalIORTableEntry *
 bracketOfWavelength(const MetalIORTableEntry *tableBegin,
                     const MetalIORTableEntry *tableEnd,
                     const BucketIndex &buckets, float wavelen) {
@@ -876,7 +875,7 @@ bracketOfWavelength(const MetalIORTableEntry *tableBegin,
 // running the two as separate passes over a tile lets each keep the machine
 // busy instead of one stalling behind the other. Sixteen is the default
 // wavelength count, so the usual call is a single tile.
-static constexpr int EVAL_TILE = 16;
+constexpr int EVAL_TILE = 16;
 
 } // namespace
 

@@ -120,22 +120,22 @@ constexpr std::string_view ANSI_GREEN = "\033[1;32m";
 
 // One diagnostic or note, without recursing into its notes.
 void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
-               bool colored) {
+               bool useColors) {
   const auto &location{diagnostic.location};
-  if (colored) result += ANSI_BOLD;
+  if (useColors) result += ANSI_BOLD;
   if (location) {
     const auto [lineNo,
                 charNo]{location.source->lineAndColumn(location.offset)};
     result +=
         smdl::concat(location.source->fileName, ":", lineNo, ":", charNo, ": ");
   }
-  if (colored) result += kindColor(diagnostic.kind);
+  if (useColors) result += kindColor(diagnostic.kind);
   result += kindLabel(diagnostic.kind);
   result += ':';
-  if (colored) result += ANSI_RESET, result += ANSI_BOLD;
+  if (useColors) result += ANSI_RESET, result += ANSI_BOLD;
   result += ' ';
   result += diagnostic.message;
-  if (colored) result += ANSI_RESET;
+  if (useColors) result += ANSI_RESET;
   result += '\n';
   if (!location) return;
   // The excerpt: the marked line verbatim, then the marker under it. The
@@ -149,35 +149,35 @@ void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
   const auto column{size_t(charNo) - 1};
   for (size_t i = 0; i < column; i++)
     result += i < line.size() && line[i] == '\t' ? '\t' : ' ';
-  if (colored) result += ANSI_GREEN;
+  if (useColors) result += ANSI_GREEN;
   result += '^';
   if (location.length > 1 && column < line.size()) {
     const auto available{line.size() - column - 1};
     const auto tildes{std::min(size_t(location.length) - 1, available)};
     result.append(tildes, '~');
   }
-  if (colored) result += ANSI_RESET;
+  if (useColors) result += ANSI_RESET;
   result += '\n';
 }
 
 } // namespace
 
 std::string LayoutDiagnostics::render(const LayoutDiagnostic &diagnostic,
-                                      bool colored) {
+                                      bool useColors) {
   auto result{std::string()};
-  renderOne(result, diagnostic, colored);
-  for (const auto &note : diagnostic.notes) renderOne(result, note, colored);
+  renderOne(result, diagnostic, useColors);
+  for (const auto &note : diagnostic.notes) renderOne(result, note, useColors);
   return result;
 }
 
-std::string LayoutDiagnostics::renderAll(bool colored) const {
+std::string LayoutDiagnostics::renderAll(bool useColors) const {
   auto result{std::string()};
   for (const auto &diagnostic : mDiagnostics)
-    result += render(diagnostic, colored);
+    result += render(diagnostic, useColors);
   if (!mDiagnostics.empty()) {
-    if (colored) result += ANSI_BOLD;
+    if (useColors) result += ANSI_BOLD;
     result += summary();
-    if (colored) result += ANSI_RESET;
+    if (useColors) result += ANSI_RESET;
     result += '\n';
   }
   return result;
@@ -197,6 +197,6 @@ std::string LayoutDiagnostics::summary() const {
   return result;
 }
 
-void LayoutDiagnostics::printAll(bool colored) const {
-  std::cerr << renderAll(colored);
+void LayoutDiagnostics::printAll(bool useColors) const {
+  std::cerr << renderAll(useColors);
 }

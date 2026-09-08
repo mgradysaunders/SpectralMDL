@@ -89,7 +89,7 @@ struct ResolvedGrid final {
   /// Does the grid reach outside the visible? Everything RGB-sourced
   /// degrades there, so several later stages say so once rather than
   /// rendering a mysteriously dark image.
-  bool beyondVisible{};
+  bool isBeyondVisible{};
 };
 
 /// Resolve the grid, in priority order: explicit `-wavelengths`,
@@ -173,7 +173,7 @@ public:
   ///
   /// \{
   BoundBox3 guideBound{};
-  bool guideBoundsValid{};
+  bool hasValidGuideBounds{};
   /// \}
 
 private:

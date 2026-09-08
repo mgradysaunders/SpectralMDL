@@ -33,17 +33,17 @@ float[$WAVELENGTH_BASE_MAX] flat_base(const float w) {
 // The conversion of `rgb` at the single wavelength `w`.
 float convert_at(const float3 rgb, const float w) {
   auto ws = flat_base(w);
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   return color(rgb)[0];
 }
 
 unit_test "The primaries partition unity from 300 nm to 14 um" {
   auto ws = wide_base();
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   const color sum = color(1.0, 0.0, 0.0) + color(0.0, 1.0, 0.0) + color(0.0, 0.0, 1.0);
   const color white = color(1.0, 1.0, 1.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -56,9 +56,9 @@ unit_test "The primaries partition unity from 300 nm to 14 um" {
 
 unit_test "Gray is exactly flat" {
   auto ws = wide_base();
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   const color gray = color(0.3, 0.3, 0.3);
   const color black = color(0.0, 0.0, 0.0);
   const color computed = color(float3(0.25) * 2.0);
@@ -71,9 +71,9 @@ unit_test "Gray is exactly flat" {
 
 unit_test "The sRGB cube maps into [0, 1]" {
   auto ws = wide_base();
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   // smdl format off
   const auto corners = auto[](
     float3(0.0, 0.0, 0.0), float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, 1.0),
@@ -91,9 +91,9 @@ unit_test "The sRGB cube maps into [0, 1]" {
 
 unit_test "The conversion is linear in RGB" {
   auto ws = wide_base();
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   const float3 a = float3(0.8, 0.5, 0.2);
   const float3 b = float3(0.1, 0.3, 0.6);
   const color sum = color(a) + color(b);
@@ -116,9 +116,9 @@ unit_test "Beyond the table the conversion is flat, not zero" {
   #assert(convert_at(rgb, 1000.0) == at_780);
   #assert(convert_at(rgb, 14000.0) == at_780);
   auto ws = wide_base();
-  const auto saved = $state.wavelength_base;
-  $state.wavelength_base = &ws[0];
-  defer $state.wavelength_base = saved;
+  const auto saved = $state.wavelengthBase;
+  $state.wavelengthBase = &ws[0];
+  defer $state.wavelengthBase = saved;
   const color c = color(rgb);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     if (ws[i] < 380.0) {
@@ -145,6 +145,6 @@ unit_test "Each primary peaks in its own band" {
 }
 
 unit_test "The runner's base is restored" {
-  #assert($state.wavelength_base[0] == $state.wavelength_min);
-  #assert($state.wavelength_base[$WAVELENGTH_BASE_MAX - 1] == $state.wavelength_max);
+  #assert($state.wavelengthBase[0] == $state.wavelengthMin);
+  #assert($state.wavelengthBase[$WAVELENGTH_BASE_MAX - 1] == $state.wavelengthMax);
 }

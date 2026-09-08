@@ -12,8 +12,7 @@
 " block are exactly the ones that block accepts, and anything else there is
 " flagged the way the parser flags it.
 "
-" A layout file is identified by `#smdl layout` on its first line. The
-" `.layout` extension is advisory, so detecting the magic catches the rest.
+" A layout file is identified by its `.layout` extension.
 "
 " Install (drop-in, single file):
 "
@@ -22,11 +21,7 @@
 "   echo 'au BufRead,BufNewFile *.layout setf layout' > ~/.vim/ftdetect/layout.vim
 "   echo 'au BufRead,BufNewFile *.camera setf camera' > ~/.vim/ftdetect/camera.vim
 "
-" For Neovim, use ~/.config/nvim/syntax and ~/.config/nvim/ftdetect instead. To
-" catch layout files whatever they are named, detect the magic as well:
-"
-"   au BufRead,BufNewFile * if getline(1) =~# '^#smdl layout\>' | setf layout | endif
-"   au BufRead,BufNewFile * if getline(1) =~# '^#smdl camera\>' | setf camera | endif
+" For Neovim, use ~/.config/nvim/syntax and ~/.config/nvim/ftdetect instead.
 "
 " Options:
 "
@@ -87,11 +82,6 @@ syn keyword layoutTodo contained TODO FIXME XXX HACK NOTE BUG
 " A comment runs to the end of the line, and also ends the bare word in front
 " of it, so `rock#note` is the word `rock` and a comment.
 syn match layoutComment display "#.*$" contains=layoutTodo,@Spell
-
-" The magic that identifies a layout file, which must be spelled exactly and
-" must begin the file. To the grammar it is only a comment, so it is defined
-" after one and wins the tie.
-syn match layoutMagic display "\%^#smdl layout\%(\s.*\)\=$"
 "--}
 
 "--{ Literals
@@ -304,7 +294,6 @@ syn sync minlines=200
 "--{ Highlight links
 hi def link layoutTodo            Todo
 hi def link layoutComment         Comment
-hi def link layoutMagic           PreProc
 
 hi def link layoutString          String
 hi def link layoutAssetPath       String

@@ -662,23 +662,23 @@ std::string DocDatabase::printJSON() const {
 
 //--{ Print: Markdown
 
+namespace {
 // Is this the kind of member that documents inline as a bullet rather
 // than as a section of its own, i.e., a struct field or an enumerator?
-[[nodiscard]] static bool isMarkdownBullet(const DocEntry &member) {
+[[nodiscard]] bool isMarkdownBullet(const DocEntry &member) {
   return member.kind == "field" || member.kind == "enumerator";
 }
 
 // Write a `- \`signature\` — documentation` bullet, for a `DocParam` or
 // an inline `DocEntry` member, both of which document this way.
 template <typename Item>
-static void printMarkdownBullet(std::string &out, const Item &item) {
+void printMarkdownBullet(std::string &out, const Item &item) {
   out += "- `" + item.signature + "`";
   if (!item.docText.empty()) out += " — " + item.docText;
   out += '\n';
 }
 
-static void printMarkdownEntry(std::string &out, const DocEntry &entry,
-                               int level) {
+void printMarkdownEntry(std::string &out, const DocEntry &entry, int level) {
   out.append(size_t(std::min(level, 6)), '#');
   out += " `" + entry.qualifiedName + "`\n\n";
   out += "*" + entry.kind + "* (line " + std::to_string(entry.lineNo) + ")\n\n";
@@ -698,6 +698,7 @@ static void printMarkdownEntry(std::string &out, const DocEntry &entry,
   if (!entry.members.empty() && isMarkdownBullet(entry.members.front()))
     out += '\n';
 }
+} // namespace
 
 std::string DocDatabase::printMarkdown() const {
   auto out{std::string{}};

@@ -97,7 +97,7 @@ public:
 /// returned object, so it must not be relocated afterward.
 [[nodiscard]] std::unique_ptr<Primitive>
 makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex,
-              bool robustIntersection);
+              bool useRobustIntersection);
 
 /// The number of sub-surface pieces of a shape, which is the user
 /// geometry's primitive count.

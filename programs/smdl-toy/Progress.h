@@ -183,24 +183,24 @@ private:
   double mRemaining{-1.0};
 
   /// Is stderr an interactive terminal, and is drawing therefore on?
-  bool mEnabled{};
+  bool mIsEnabled{};
 
   /// Is there a file to write progress into?
-  bool mReporting{};
+  bool mIsReporting{};
 
   /// Does the environment claim UTF-8, and are the block drawing
   /// characters therefore safe?
-  bool mUnicode{};
+  bool mUseUnicode{};
 
   /// Is there currently a bar on the line to erase?
-  bool mOnScreen{};
+  bool mIsOnScreen{};
 
   /// Has `finish()` run?
-  bool mFinished{};
+  bool mIsFinished{};
 };
 
 /// The stderr log sink `smdl-toy` installs in place of
-/// `smdl::LogSinks::print_to_cerr`.
+/// `smdl::LogSinks::PrintToCerr`.
 ///
 /// Identical to it when no bar is on screen. When there is one, the
 /// message is printed through the bar, which is what keeps a warning

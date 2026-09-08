@@ -66,7 +66,7 @@ namespace {
 // up front rather than as the loop runs so that the progress bar can say
 // which pass of how many.
 [[nodiscard]]
-std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
+std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
                                       size_t trainedSpp) {
   // The geometric warmup exists to bound the samples spent while the
   // tree is immature, so a session that resumed a saved tree skips it:
@@ -74,12 +74,12 @@ std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
   // already trained the tree, and the refine threshold keeps scaling
   // with the pass size.
   size_t firstPass{1};
-  while (guide && firstPass * 2 <= trainedSpp) firstPass *= 2;
+  while (useGuiding && firstPass * 2 <= trainedSpp) firstPass *= 2;
   auto passes{std::vector<size_t>()};
   for (size_t sppDone{0}; sppDone < spp;) {
-    size_t thisPass{guide ? std::min(firstPass << passes.size(), spp - sppDone)
-                          : spp};
-    if (guide && (spp - sppDone) < 2 * thisPass) thisPass = spp - sppDone;
+    size_t thisPass{
+        useGuiding ? std::min(firstPass << passes.size(), spp - sppDone) : spp};
+    if (useGuiding && (spp - sppDone) < 2 * thisPass) thisPass = spp - sppDone;
     passes.push_back(thisPass);
     sppDone += thisPass;
   }
@@ -90,7 +90,8 @@ std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
 
 bool savesGuideTree(const Options &opts, const Frame &frame,
                     const std::string &outputSpectrum) {
-  return opts.render.guide.enabled && frame.spp > 0 && !outputSpectrum.empty();
+  return opts.render.guide.isEnabled && frame.spp > 0 &&
+         !outputSpectrum.empty();
 }
 
 void renderSamples(const Options &opts, const Frame &frame,
@@ -105,19 +106,19 @@ void renderSamples(const Options &opts, const Frame &frame,
   const auto *haze{staged.haze.get()};
   const auto *exteriorMedium{staged.exteriorMedium};
   const auto &guideBound{staged.guideBound};
-  const bool guideBoundsValid{staged.guideBoundsValid};
+  const bool hasValidGuideBounds{staged.hasValidGuideBounds};
   const auto &camera{frame.camera};
   const auto numPixelsX{frame.numPixelsX};
   const auto numPixelsY{frame.numPixelsY};
   const auto numWindowPixels{frame.numWindowPixels};
   const auto window{frame.window};
   const auto spp{frame.spp};
-  const bool savingTree{savesGuideTree(opts, frame, outputSpectrum)};
+  const bool isSavingTree{savesGuideTree(opts, frame, outputSpectrum)};
   auto progressOptions{opts.utility.progress};
   // How many samples per pixel trained the resumed tree, 0 without one:
   // what the pass schedule continues from.
   size_t guideTrainedSpp{0};
-  if (opts.render.guide.enabled && resumed.loaded) {
+  if (opts.render.guide.isEnabled && resumed.wasLoaded) {
     // Resume the guide tree saved beside the accumulation, so this
     // session starts guided by everything the sequence has learned. The
     // tree only steers sampling, so a missing or unreadable one is
@@ -147,7 +148,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                     ", retraining from scratch");
     }
   }
-  if (opts.render.guide.enabled && !sdtree) {
+  if (opts.render.guide.isEnabled && !sdtree) {
     // With a ground plane, guide over the actual geometry padded by half
     // its own size, so the plane's enormous backdrop extent does not
     // dilute the spatial resolution; vertices on the far plane clamp
@@ -155,7 +156,7 @@ void renderSamples(const Options &opts, const Frame &frame,
     // anyway. Without one, the scene bounds are the geometry bounds.
     auto center{scene.boundCenter};
     auto r{scene.boundRadius};
-    if (guideBoundsValid) {
+    if (hasValidGuideBounds) {
       center = guideBound.center();
       r = 0.75f * smdl::length(guideBound.extent());
     }
@@ -168,13 +169,13 @@ void renderSamples(const Options &opts, const Frame &frame,
   // ADRRS pixel estimates between passes. Null without guiding, where
   // the single pass accumulates straight into `film`.
   auto combiner{std::unique_ptr<PassCombiner>()};
-  if (opts.render.guide.enabled) {
+  if (opts.render.guide.isEnabled) {
     combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY, window);
     // Seed with the prior session's accumulation, so resolve() below
     // reproduces the full merged image (the unguided path adds it into
     // the accumulation instead, just below) and the first pass's ADRRS
     // starts from the resumed estimates rather than zero.
-    if (resumed.loaded) {
+    if (resumed.wasLoaded) {
       combiner->seed(resumed.film);
       combiner->rebuildPixelEstimates();
     }
@@ -185,7 +186,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // is. One image-level add, which is exactly the merge the
   // sums-plus-count invariant makes safe; every read below divides by
   // the combined count.
-  if (resumed.loaded && !combiner) film.add(resumed.film);
+  if (resumed.wasLoaded && !combiner) film.add(resumed.film);
   // Nothing reads it again, and it is the same size as the film being
   // rendered into.
   resumed.film.clear();
@@ -243,22 +244,22 @@ void renderSamples(const Options &opts, const Frame &frame,
   }};
 
   const auto passes{
-      solveSamplePasses(spp, opts.render.guide.enabled, guideTrainedSpp)};
+      solveSamplePasses(spp, opts.render.guide.isEnabled, guideTrainedSpp)};
   // The manifold-NEE chain depth `tracePath()` runs with, 0 when
   // disabled.
   auto mneeOptions{opts.render.mnee};
-  ManifoldStats::global().setEnabled(opts.render.mneeReport);
+  ManifoldStats::global().setEnabled(opts.render.shouldReportMNEE);
   // The reflective gather searches this in place of the straight shadow
   // segment, so it is built once per render: the layout's marked casters,
   // with what each claims.
   auto mneeCasters{MNEECasterSet()};
-  if (opts.render.mneeEnabled) {
+  if (opts.render.useMNEE) {
     mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
     mneeOptions.casters = &mneeCasters;
     SMDL_LOG_DEBUG("MNEE casters: ", mneeCasters.casters.size(),
                    " instance(s)");
-    if (opts.render.mneeSunOnly && envLight)
-      mneeOptions.sunOnly =
+    if (opts.render.useMNEESunOnly && envLight)
+      mneeOptions.isSunOnly =
           envLight->sunCone(mneeOptions.sunDirection, mneeOptions.cosSunRadius);
   }
   // The default walk is terminated by Russian roulette, with the bounce
@@ -272,7 +273,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                              pathOptions, haze,  exteriorMedium};
   // Whether every sample draws its own wavelength grid; see
   // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
-  const bool jitterWavelength{!gRenderGrid.bandEdges.empty()};
+  const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
   // The window row length, which turns a window pixel index into a frame
   // pixel index below.
   const size_t windowWidth{size_t(window[2] - window[0])};
@@ -298,7 +299,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   progressOptions.total = numWindowPixels * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary =
-      opts.image.cropWindow.given
+      opts.image.cropWindow.wasGiven
           ? smdl::concat("Rendered window ", spellVector(window), " of ",
                          numPixelsX, "x", numPixelsY, " at ", spp, " spp")
           : smdl::concat("Rendered ", numPixelsX, "x", numPixelsY, " at ", spp,
@@ -312,7 +313,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // threads start. A jittering render cannot use it: its grid moves with
   // every sample, so each block resolves its own below.
   smdl::SkyBasis renderSkyBasis;
-  if (!jitterWavelength && lights.env())
+  if (!shouldJitterWavelength && lights.env())
     lights.env()->resolve(wavelengths, renderSkyBasis);
   const auto renderStartWall{std::chrono::steady_clock::now()};
   const double renderStartCompute{cpuTimeSeconds()};
@@ -322,20 +323,20 @@ void renderSamples(const Options &opts, const Frame &frame,
   for (size_t passIndex = 0; passIndex < passes.size(); passIndex++) {
     const size_t thisPass{passes[passIndex]};
     const bool isFinal{passIndex + 1 == passes.size()};
-    if (opts.render.guide.enabled)
+    if (opts.render.guide.isEnabled)
       progress.setNote(
           smdl::concat("pass ", passIndex + 1, "/", passes.size()));
     // Pre-final passes train the SD-tree; every pass contributes to the
     // output through the pass combination below. When the tree will be
     // saved the final pass trains too: its training is no longer wasted,
     // it is what the next session of the sequence inherits.
-    const bool recordPass{opts.render.guide.enabled &&
-                          (!isFinal || savingTree)};
+    const bool shouldRecordPass{opts.render.guide.isEnabled &&
+                                (!isFinal || isSavingTree)};
     // The per-thread training mirrors for this pass, absorbed into the
     // tree after the pass renders and before it refines; the tree
     // structure the layout mirrors is frozen in between.
     auto guideAccumulator{std::unique_ptr<GuideAccumulator>()};
-    if (recordPass)
+    if (shouldRecordPass)
       guideAccumulator = std::make_unique<GuideAccumulator>(*sdtree);
     // Without guiding the whole budget is one pass, so checkpointing has
     // to split it; the chunk starts at one sample, so the first image
@@ -371,28 +372,29 @@ void renderSamples(const Options &opts, const Frame &frame,
         // too much to pay per pixel of a non-guiding render. The walk
         // resets every record it appends, so one buffer serves the block.
         std::vector<GuideRecord> guideRecords;
-        if (recordPass) guideRecords.resize(pathOptions.maxBounces + 1);
-        GuideRecord *const records{recordPass ? guideRecords.data() : nullptr};
+        if (shouldRecordPass) guideRecords.resize(pathOptions.maxBounces + 1);
+        GuideRecord *const records{shouldRecordPass ? guideRecords.data()
+                                                    : nullptr};
         // The sample's own wavelength grid, rewritten in place once per
         // sample: a `Color` past `SpectralColor::INLINE_CAPACITY` bands
         // heaps, and every state built from it holds the pointer rather
         // than a copy, so one buffer serves the block.
         std::optional<Color> jittered;
-        if (jitterWavelength) jittered.emplace(wavelengths);
+        if (shouldJitterWavelength) jittered.emplace(wavelengths);
         // The sun-sky resolved onto this sample's own grid, rewritten
         // below once per sample, which still amortizes over the many
         // evaluations one sample makes. Empty and unused when the
         // wavelengths hold still, where `renderSkyBasis` serves instead.
         smdl::SkyBasis jitteredSkyBasis;
-        const smdl::SkyBasis &skyBasis{jitterWavelength ? jitteredSkyBasis
-                                                        : renderSkyBasis};
+        const smdl::SkyBasis &skyBasis{shouldJitterWavelength ? jitteredSkyBasis
+                                                              : renderSkyBasis};
         // The four states every path of the block works in, built here
         // rather than per path: only the animation time below tells one
         // path's from another's, and the jittered grid is rewritten in
         // place, so the wavelength pointer holds still too. See
         // `PathContext`.
-        const Color &blockWavelengths{jitterWavelength ? *jittered
-                                                       : wavelengths};
+        const Color &blockWavelengths{shouldJitterWavelength ? *jittered
+                                                             : wavelengths};
         smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
@@ -404,7 +406,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         guiding.tree = sdtree.get();
         guiding.bsdfFraction =
             std::clamp(opts.render.guide.bsdfFraction.value, 0.0f, 1.0f);
-        guiding.bsdfFractionFixed = opts.render.guide.bsdfFraction.given;
+        guiding.isBSDFFractionFixed = opts.render.guide.bsdfFraction.wasGiven;
         // The context and the walker of the block's paths; the time is
         // the open key until each path sets its own.
         PathContext path{allocator,     sampler,          medium,
@@ -425,14 +427,14 @@ void renderSamples(const Options &opts, const Frame &frame,
           const size_t y{i / numPixelsX};
           Color Lsum{};
           PassCombiner::PixelHalves halves{};
-          guiding.pixelEstimate = combiner && opts.render.guide.adrrs
+          guiding.pixelEstimate = combiner && opts.render.guide.useADRRS
                                       ? combiner->pixelEstimate(i)
                                       : 0.0f;
           for (size_t s = 0; s < chunk; s++) {
             const uint32_t sampleIndex =
                 resumed.sampleIndexBase + sppDone + chunkBase + s;
             sampler.startPixelSample(uint32_t(i), sampleIndex);
-            if (jitterWavelength) {
+            if (shouldJitterWavelength) {
               jitterWavelengths(
                   *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
               if (render.lights.env())
@@ -453,16 +455,16 @@ void renderSamples(const Options &opts, const Frame &frame,
               if (gRenderShutter.isOpen()) shutterFraction = float(sampler);
               const PathTime time{shutterFraction};
               camera->toWorld(cameraSample, time.fraction);
-              gatherState.animation_time = time.seconds;
-              walkState.animation_time = time.seconds;
-              shadeState.animation_time = time.seconds;
-              lightState.animation_time = time.seconds;
+              gatherState.animationTime = time.seconds;
+              walkState.animationTime = time.seconds;
+              shadeState.animationTime = time.seconds;
+              lightState.animationTime = time.seconds;
               path.time = time;
               Lsample = tracePath(*walk, cameraSample);
               numRecords = path.numRecords;
             }
             // Train the SD-tree on the records the walk retained.
-            if (recordPass && numRecords > 0)
+            if (shouldRecordPass && numRecords > 0)
               trainGuiding(*sdtree, *guideAccumulator, sampler,
                            guideRecords.data(), numRecords);
             Lsum += Lsample;
@@ -515,7 +517,7 @@ void renderSamples(const Options &opts, const Frame &frame,
       }
     }
     if (combiner) combiner->foldPass(thisPass);
-    if (recordPass) {
+    if (shouldRecordPass) {
       guideAccumulator->absorbInto(*sdtree);
       combiner->rebuildPixelEstimates();
       // Refine: split spatial leaves past c*sqrt(2^k) records (k this
@@ -548,7 +550,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
     resumed.header.sessions++;
   }
-  if (opts.render.mneeReport) ManifoldStats::global().print(std::cout);
+  if (opts.render.shouldReportMNEE) ManifoldStats::global().print(std::cout);
   // Resolve the pass combination back into the film every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.

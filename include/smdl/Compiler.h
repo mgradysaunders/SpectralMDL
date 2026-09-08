@@ -295,7 +295,7 @@ private:
 
   /// Load image.
   ///
-  /// If `withMipLevels` is true, this reference asks for a mip chain
+  /// If `useMipLevels` is true, this reference asks for a mip chain
   /// (see `Image::requestMipLevels()`). The request is shared with every
   /// other reference to the same file, so an image is mipped if anything
   /// ever asks: passing false means only that this reference does not
@@ -315,7 +315,7 @@ private:
   /// allocation to the levels asked for by then.
   [[nodiscard]] const Image &
   loadImage(const std::string &fileName, const SourceLocation &srcLoc,
-            bool withMipLevels = false,
+            bool useMipLevels = false,
             Image::MipFilter filter = Image::MIP_MEAN);
 
   /// Load ptex texture.
@@ -381,7 +381,7 @@ private:
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
   template <typename T> void jitLookup(JIT::Function<T> &func) {
-    func.func = reinterpret_cast<typename JIT::Function<T>::function_pointer>(
+    func.func = reinterpret_cast<typename JIT::Function<T>::FunctionPointer>(
         jitLookup(func.name));
     if (!func.func)
       throw Error(concat("cannot resolve JIT function ", Quoted(func.name)));
@@ -409,14 +409,14 @@ public:
   /// suffix to disambiguate, or use `findMaterials()` to get all
   /// candidates.
   ///
-  [[nodiscard]] const JIT::Material *
+  [[nodiscard]] const JIT::MaterialDef *
   findMaterial(std::string_view materialName) const noexcept;
 
   /// Find all JIT-compiled materials matching `materialName`, by the
   /// same matching rules as `findMaterial()`. This is useful for
   /// tooling, and for disambiguating the candidates when
   /// `findMaterial()` reports an ambiguity.
-  [[nodiscard]] std::vector<const JIT::Material *>
+  [[nodiscard]] std::vector<const JIT::MaterialDef *>
   findMaterials(std::string_view materialName) const;
 
   /// Match `materialName` against a material's qualified name by the
@@ -439,7 +439,7 @@ public:
 
   /// Get all JIT-compiled materials, including materials in shadowed
   /// modules.
-  [[nodiscard]] Span<const JIT::Material> getMaterials() const noexcept {
+  [[nodiscard]] Span<const JIT::MaterialDef> getMaterials() const noexcept {
     return mMaterials;
   }
 
@@ -447,9 +447,9 @@ public:
   ///
   /// \param[in] state
   /// The state. Must have the wavelength parameters set:
-  /// - `state.wavelength_base`
-  /// - `state.wavelength_min`
-  /// - `state.wavelength_max`
+  /// - `state.wavelengthBase`
+  /// - `state.wavelengthMin`
+  /// - `state.wavelengthMax`
   ///
   /// \param[in] color
   /// The pointer to the color spectrum.
@@ -461,9 +461,9 @@ public:
   ///
   /// \param[in] state
   /// The state. Must have the wavelength parameters set:
-  /// - `state.wavelength_base`
-  /// - `state.wavelength_min`
-  /// - `state.wavelength_max`
+  /// - `state.wavelengthBase`
+  /// - `state.wavelengthMin`
+  /// - `state.wavelengthMax`
   ///
   /// \param[in] rgb
   /// The RGB triple.
@@ -490,10 +490,10 @@ public:
   FileLocator fileLocator{};
 
   /// Enable debugging?
-  bool enableDebug{false};
+  bool isDebugEnabled{false};
 
   /// Enable unit tests?
-  bool enableUnitTests{false};
+  bool shouldEmitUnitTests{false};
 
   /// Colorize the unit test results printed by `runUnitTests()`?
   ColorMode colorMode{COLOR_MODE_AUTO};
@@ -513,13 +513,13 @@ public:
   /// or normal-remapped interface or to do something else with a half
   /// vector. When false they are never emitted, so they cost no codegen,
   /// no optimizer time and no JIT compilation, and
-  /// `JIT::Material::scatterNormalSample` stays null;
-  /// `JIT::MaterialInstance` aborts with a message naming this flag if
+  /// `JIT::MaterialDef::scatterNormalSample` stays null;
+  /// `JIT::Material` aborts with a message naming this flag if
   /// called anyway.
   ///
   /// This is read while `compile()` lowers each material, so set it
   /// beforehand. Changing it means recompiling.
-  bool enableScatterNormal{false};
+  bool shouldEmitScatterNormal{false};
 
 private:
   /// The allocator.
@@ -684,7 +684,7 @@ private:
   std::vector<std::string> mSkippedMaterialNames;
 
   /// The JIT-compiled materials.
-  std::vector<JIT::Material> mMaterials;
+  std::vector<JIT::MaterialDef> mMaterials;
 
   /// The JIT-compiled unit tests.
   std::vector<JIT::UnitTest> mUnitTests;

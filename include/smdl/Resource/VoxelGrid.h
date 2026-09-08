@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <algorithm>
 #include <vector>
 
 #include "smdl/Common.h"
@@ -25,12 +26,19 @@ namespace smdl {
 /// the brick table. There is no mirroring anywhere: unlike 2D texture
 /// space, 3D texture space needs no v-flip, so `w` of 0 is `z` of 0.
 ///
-/// The grid remembers the value bounds that make unbiased volume
+/// The grid also carries the value bounds that make unbiased volume
 /// rendering practical: the global minimum and maximum over the whole
-/// field, and per-brick minimums and maximums taken over the brick
-/// voxels dilated by one voxel on every side, so that the per-brick
-/// maximum bounds every trilinearly interpolated value whose support
-/// touches the brick. Renderers use these as majorants.
+/// field, and a *majorant grid* of local minimums and maximums over
+/// cells of `MAJORANT_EXTENT` voxels per axis, dilated by one voxel on
+/// every side so that a cell's maximum bounds every trilinearly
+/// interpolated value whose support touches it. A null-collision
+/// tracker steps this grid and tracks against those local bounds
+/// instead of against the global maximum.
+///
+/// The majorant cell is deliberately not the brick. The brick is sized
+/// for the density lookup and the sparse storage; the cell is sized for
+/// how tightly it bounds the field, which is a different question with
+/// a different answer, and the two are free to move independently.
 ///
 /// \note
 /// The in-memory layout of the brick table and brick data is
@@ -39,8 +47,34 @@ namespace smdl {
 ///
 class SMDL_EXPORT VoxelGrid final {
 public:
-  /// The number of voxels per axis in a brick.
+  /// The number of voxels per axis in a brick, which is a unit of
+  /// storage. See `getMajorantExtent()` for the unit of majorant
+  /// bounds.
   static constexpr int BRICK_EXTENT = 16;
+
+  /// The most majorant cells the grid is divided into along its
+  /// longest axis, which `majorantExtentFor()` sizes the cell to hit.
+  ///
+  /// Tighter cells cost a null-collision tracker fewer wasted queries
+  /// and more traversal steps, and where the balance falls is a
+  /// property of the traversal, so measure before moving this. What it
+  /// must not become is a fixed voxels-per-cell: that ties the majorant
+  /// granularity to the field's resolution, so the same medium
+  /// resampled finer gets a finer majorant grid it does not want and
+  /// drowns in traversal steps. Bounding the cell count instead bounds
+  /// both the steps per ray and the side table, at 8 bytes per cell.
+  static constexpr int MAJORANT_TARGET_CELLS = 64;
+
+  /// The number of voxels per axis in a majorant cell of a grid with
+  /// the given extent: the smallest power of two that keeps every axis
+  /// within `MAJORANT_TARGET_CELLS` cells.
+  [[nodiscard]] static int majorantExtentFor(int3 extent) noexcept {
+    const int longest{
+        std::max(std::max(extent.x, extent.y), std::max(extent.z, 1))};
+    int result{1};
+    while ((longest + result - 1) / result > MAJORANT_TARGET_CELLS) result *= 2;
+    return result;
+  }
 
   VoxelGrid() = default;
 
@@ -121,6 +155,18 @@ public:
   /// `BRICK_EXTENT` rounded up.
   [[nodiscard]] int3 getBrickCount() const noexcept { return mBrickCount; }
 
+  /// Get the number of voxels per axis in a majorant cell, which
+  /// `majorantExtentFor()` chose from the extent at load.
+  [[nodiscard]] int getMajorantExtent() const noexcept {
+    return mMajorantExtent;
+  }
+
+  /// Get the number of majorant cells per axis, i.e., the extent
+  /// divided by `getMajorantExtent()` rounded up.
+  [[nodiscard]] int3 getMajorantCount() const noexcept {
+    return mMajorantCount;
+  }
+
   /// Get the background value, which fills empty bricks and everything
   /// outside the extent.
   [[nodiscard]] float getBackground() const noexcept { return mBackground; }
@@ -131,22 +177,30 @@ public:
   /// Get the global maximum value.
   [[nodiscard]] float getMaxValue() const noexcept { return mMaxValue; }
 
-  /// Get the minimum value of the brick at the given brick coordinate,
-  /// taken over the brick voxels dilated by one voxel on every side.
-  /// Returns the background outside the brick count. Inline, because a
-  /// null-collision tracker reads it once per brick it crosses.
-  [[nodiscard]] float getBrickMinValue(int bx, int by, int bz) const noexcept {
-    if (!isBrickInside(bx, by, bz)) return mBackground;
-    return mBrickMinValues[brickIndex(bx, by, bz)];
+  /// Get the minimum and maximum value, in that order, of the majorant
+  /// cell at the given cell coordinate, taken over the cell voxels
+  /// dilated by one voxel on every side. The maximum bounds every
+  /// trilinearly interpolated value whose support touches the cell, so
+  /// it is usable as a local majorant, and the minimum lower bounds the
+  /// same set, which is what residual ratio tracking wants as its
+  /// analytic control. Returns the background twice outside the cell
+  /// count.
+  ///
+  /// The pair comes back together, and is stored together, because a
+  /// tracker crossing a cell wants both and would otherwise pay for the
+  /// bounds check, the index arithmetic, and the cache miss twice.
+  [[nodiscard]] float2 getMajorantBounds(int cx, int cy,
+                                         int cz) const noexcept {
+    if (!isMajorantCellInside(cx, cy, cz)) return float2(mBackground);
+    return mMajorantBounds[majorantIndex(cx, cy, cz)];
   }
 
-  /// Get the maximum value of the brick at the given brick coordinate,
-  /// see `getBrickMinValue()`. This bounds every trilinearly
-  /// interpolated value whose support touches the brick, so it is
-  /// usable as a per-brick majorant.
-  [[nodiscard]] float getBrickMaxValue(int bx, int by, int bz) const noexcept {
-    if (!isBrickInside(bx, by, bz)) return mBackground;
-    return mBrickMaxValues[brickIndex(bx, by, bz)];
+  /// Get the whole majorant cell table, `getMajorantCount()` cells with
+  /// `x` fastest, for a tracker that steps a flat index through the
+  /// cells it crosses instead of re-deriving it per cell. Empty until
+  /// a grid is loaded.
+  [[nodiscard]] Span<const float2> getMajorantTable() const noexcept {
+    return {mMajorantBounds.data(), mMajorantBounds.size()};
   }
 
   /// Get the world-space bounding box minimum, from the file's
@@ -199,6 +253,12 @@ private:
   /// The number of bricks per axis.
   int3 mBrickCount{};
 
+  /// The number of voxels per axis in a majorant cell.
+  int mMajorantExtent{1};
+
+  /// The number of majorant cells per axis.
+  int3 mMajorantCount{};
+
   [[nodiscard]] bool isBrickInside(int bx, int by, int bz) const noexcept {
     return 0 <= bx && bx < mBrickCount.x && //
            0 <= by && by < mBrickCount.y && //
@@ -207,6 +267,18 @@ private:
 
   [[nodiscard]] size_t brickIndex(int bx, int by, int bz) const noexcept {
     return size_t(bx + mBrickCount.x * (by + int64_t(mBrickCount.y) * bz));
+  }
+
+  [[nodiscard]] bool isMajorantCellInside(int cx, int cy,
+                                          int cz) const noexcept {
+    return 0 <= cx && cx < mMajorantCount.x && //
+           0 <= cy && cy < mMajorantCount.y && //
+           0 <= cz && cz < mMajorantCount.z;
+  }
+
+  [[nodiscard]] size_t majorantIndex(int cx, int cy, int cz) const noexcept {
+    return size_t(cx +
+                  mMajorantCount.x * (cy + int64_t(mMajorantCount.y) * cz));
   }
 
   /// The background value.
@@ -233,11 +305,9 @@ private:
   /// the brick table.
   std::vector<float> mBrickData{};
 
-  /// The per-brick minimum values, dilated, see `getBrickMinValue()`.
-  std::vector<float> mBrickMinValues{};
-
-  /// The per-brick maximum values, dilated, see `getBrickMaxValue()`.
-  std::vector<float> mBrickMaxValues{};
+  /// The per-cell dilated minimum and maximum, in that order, see
+  /// `getMajorantBounds()`.
+  std::vector<float2> mMajorantBounds{};
 };
 
 /// \}

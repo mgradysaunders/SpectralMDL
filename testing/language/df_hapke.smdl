@@ -16,7 +16,7 @@ struct EvaluateResult {
 
 EvaluateResult evaluate(const bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(surface: material_surface(scattering: scattering));
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);

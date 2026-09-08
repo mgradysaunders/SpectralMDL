@@ -2,17 +2,19 @@
 
 #include <algorithm>
 #include <mutex>
-#include <set>
+#include <unordered_set>
 
 #include "smdl/RenderUtil/FastMath.h"
-#include "smdl/Resource/VoxelGrid.h"
+#include "smdl/RenderUtil/MajorantWalk.h"
 #include "smdl/Support/Logger.h"
 
+namespace {
+
+//--{ Band kernels
 // The Beer-Lambert transmittance of one band, exp(-d): exactly 1 for a
 // negative depth, exactly 0 past 87, and 0 for a depth that is not a
 // number. Inline because the per-band loops call it once per band and
-// libm's expf neither inlines nor vectorizes, which left it at 7 percent
-// of a scene rendered through a homogeneous medium.
+// libm's expf neither inlines nor vectorizes.
 //
 // The cutoff at 87 is a termination threshold, not a domain guard, and
 // is deliberately below `fastExp`'s own floor of -87.33: over the sliver
@@ -20,47 +22,291 @@
 // flush-to-zero does NOT flush, so dropping the cutoff would leave every
 // fully absorbed segment carrying 1e-38 of throughput past the
 // `maxComponent() > 0` checks that are supposed to retire it.
-[[nodiscard]] static inline float transmittance(float opticalDepth) noexcept {
-  const float d{opticalDepth > 0.0f ? opticalDepth : 0.0f};
-  return opticalDepth < 87.0f ? smdl::fastExp(-d) : 0.0f;
+[[nodiscard]]
+SMDL_ALWAYS_INLINE float transmittance(float opticalDepth) noexcept {
+  return opticalDepth < 87.0f ? smdl::fastExp(-std::max(opticalDepth, 0.0f))
+                              : 0.0f;
 }
 
-// The average of the per-band products of `a` and `b`, summed in band
-// order as `Color::average()` sums, each product rounded before it is
-// added: the balance-heuristic normalizers below form this without the
-// product's temporary, and the separate statement keeps the compiler
-// from fusing the multiply into the sum, which would round differently.
-[[nodiscard]] static inline float averageOfProducts(const Color &a,
-                                                    const Color &b) noexcept {
-  const float *SMDL_RESTRICT pA{a.data()};
-  const float *SMDL_RESTRICT pB{b.data()};
-  const size_t n{a.size()};
-  float sum{};
-  for (size_t i = 0; i < n; i++) {
-    const float product{pA[i] * pB[i]};
-    sum += product;
+// The per-band kernels of the estimators below.
+//
+// A color at or under `INLINE_CAPACITY` bands is inline, and an inline
+// buffer always holds `INLINE_CAPACITY` initialized floats, so a kernel
+// runs the fixed lane count whenever its output is inline: a fixed trip
+// count compiles to whole vectors, and the lanes past the size hold junk
+// the container's own operators tolerate the same way. Every kernel
+// updates its output lane by lane in place, which is vectorizable
+// however the operands alias, and the loop pragmas say so rather than
+// leave the vectorizer to prove it: the band pointers are storage
+// selects, and the full unroller would sink that select into every lane
+// and hand the vectorizer a gather. The reductions take the tree form
+// only at the full inline width, where every lane is live.
+
+constexpr size_t LANES = smdl::SpectralColor::INLINE_CAPACITY;
+static_assert(LANES == 16, "the reductions below split the lanes 16-8-4");
+
+// body(i) over the bands of a color of `n` bands.
+template <typename Body>
+SMDL_ALWAYS_INLINE void forBands(size_t n, Body body) noexcept {
+  if (SMDL_LIKELY(n <= LANES)) {
+#pragma clang loop vectorize(assume_safety) unroll(disable)
+    for (size_t i = 0; i < LANES; i++) body(i);
+  } else {
+    // The heap path, scalar: a render past the inline width is rare and
+    // the vector form would double every kernel's code for it.
+#pragma clang loop vectorize(disable) unroll(disable)
+    for (size_t i = 0; i < n; i++) body(i);
   }
-  return sum / float(n);
 }
 
+// The sum of lane(i) over `n` bands: a pairwise tree at the inline width.
+template <typename Lane>
+[[nodiscard]] SMDL_ALWAYS_INLINE float sumBands(size_t n, Lane lane) noexcept {
+  if (SMDL_LIKELY(n == LANES)) {
+    float s8[8];
+#pragma clang loop vectorize(assume_safety) unroll(disable)
+    for (size_t i = 0; i < 8; i++) s8[i] = lane(i) + lane(i + 8);
+    float s4[4];
+    for (size_t i = 0; i < 4; i++) s4[i] = s8[i] + s8[i + 4];
+    return (s4[0] + s4[2]) + (s4[1] + s4[3]);
+  }
+  float sum{};
+#pragma clang loop vectorize(disable) unroll(disable)
+  for (size_t i = 0; i < n; i++) sum += lane(i);
+  return sum;
+}
+
+// The maximum of lane(i) over `n` bands, likewise.
+template <typename Lane>
+[[nodiscard]] SMDL_ALWAYS_INLINE float maxBands(size_t n, Lane lane) noexcept {
+  if (SMDL_LIKELY(n == LANES)) {
+    float s8[8];
+#pragma clang loop vectorize(assume_safety) unroll(disable)
+    for (size_t i = 0; i < 8; i++) s8[i] = std::max(lane(i), lane(i + 8));
+    float s4[4];
+    for (size_t i = 0; i < 4; i++) s4[i] = std::max(s8[i], s8[i + 4]);
+    return std::max(std::max(s4[0], s4[2]), std::max(s4[1], s4[3]));
+  }
+  float result{lane(0)};
+#pragma clang loop vectorize(disable) unroll(disable)
+  for (size_t i = 1; i < n; i++) result = std::max(result, lane(i));
+  return result;
+}
+
+// The average of the per-band products of `a` and `b`: the balance
+// heuristic normalizers below.
+[[nodiscard]] SMDL_ALWAYS_INLINE float
+averageOfProducts(const smdl::SpectralColor &a,
+                  const smdl::SpectralColor &b) noexcept {
+  const size_t n{a.size()};
+  const float *pA{a.data()};
+  const float *pB{b.data()};
+  return sumBands(n, [=](size_t i) { return pA[i] * pB[i]; }) / float(n);
+}
+
+// The average of the per-band products of the extinction `a + s` with `b`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float
+averageOfExtinctionProducts(const smdl::SpectralColor &a,
+                            const smdl::SpectralColor &s,
+                            const smdl::SpectralColor &b) noexcept {
+  const size_t n{a.size()};
+  const float *pA{a.data()};
+  const float *pS{s.data()};
+  const float *pB{b.data()};
+  return sumBands(n, [=](size_t i) { return (pA[i] + pS[i]) * pB[i]; }) /
+         float(n);
+}
+
+// Tr = exp(-sigma * depth), the per-band transmittance of one segment.
+SMDL_ALWAYS_INLINE void fillTransmittance(smdl::SpectralColor &Tr,
+                                          const smdl::SpectralColor &sigma,
+                                          float depth) noexcept {
+  float *pTr{Tr.data()};
+  const float *pSigma{sigma.data()};
+  forBands(Tr.size(),
+           [=](size_t i) { pTr[i] = transmittance(pSigma[i] * depth); });
+}
+
+// beta *= exp(-sigma * depth), the closed-form Beer-Lambert attenuation.
+SMDL_ALWAYS_INLINE void attenuateBy(smdl::SpectralColor &beta,
+                                    const smdl::SpectralColor &sigma,
+                                    float depth) noexcept {
+  float *pB{beta.data()};
+  const float *pSigma{sigma.data()};
+  forBands(beta.size(),
+           [=](size_t i) { pB[i] *= transmittance(pSigma[i] * depth); });
+}
+
+// beta *= weight * invNorm, the normalized weight of a segment that
+// survived to its end.
+SMDL_ALWAYS_INLINE void applySurvivalWeight(smdl::SpectralColor &beta,
+                                            const smdl::SpectralColor &weight,
+                                            float invNorm) noexcept {
+  float *pB{beta.data()};
+  const float *pW{weight.data()};
+  forBands(beta.size(), [=](size_t i) { pB[i] *= pW[i] * invNorm; });
+}
+
+// beta *= sigmaS * weight * invNorm, the normalized weight of a real
+// collision, `weight` being the transmittance of the closed forms or the
+// null-collision product of the tracking chain.
+SMDL_ALWAYS_INLINE void applyScatterWeight(smdl::SpectralColor &beta,
+                                           const smdl::SpectralColor &sigmaS,
+                                           const smdl::SpectralColor &weight,
+                                           float invNorm) noexcept {
+  float *pB{beta.data()};
+  const float *pS{sigmaS.data()};
+  const float *pW{weight.data()};
+  forBands(beta.size(), [=](size_t i) { pB[i] *= pS[i] * pW[i] * invNorm; });
+}
+
+// beta *= sigma * albedo * Tr * invNorm, the haze's real-collision weight,
+// whose scattering coefficient is the extinction times the albedo.
+SMDL_ALWAYS_INLINE void
+applyHazeScatterWeight(smdl::SpectralColor &beta,
+                       const smdl::SpectralColor &sigma,
+                       const smdl::SpectralColor &albedo,
+                       const smdl::SpectralColor &Tr, float invNorm) noexcept {
+  float *pB{beta.data()};
+  const float *pSigma{sigma.data()};
+  const float *pAlbedo{albedo.data()};
+  const float *pTr{Tr.data()};
+  forBands(beta.size(), [=](size_t i) {
+    pB[i] *= pSigma[i] * pAlbedo[i] * pTr[i] * invNorm;
+  });
+}
+
+// emitted += emission times the integral of transmittance over
+// `[0, tEmit]`, whose extinction-free limit is linear in the distance.
+// `std::exp` rather than `fastExp`: at small optical depth the difference
+// against one cancels down to the error of whatever computed it.
+SMDL_ALWAYS_INLINE void accumulateHomogeneousEmission(
+    smdl::SpectralColor &emitted, const smdl::SpectralColor &emission,
+    const smdl::SpectralColor &mu, float tEmit) noexcept {
+  float *pEmitted{emitted.data()};
+  const float *pE{emission.data()};
+  const float *pMu{mu.data()};
+  forBands(emitted.size(), [=](size_t i) {
+    pEmitted[i] +=
+        pE[i] *
+        (pMu[i] > 1e-12f ? (1.0f - std::exp(-pMu[i] * tEmit)) / pMu[i] : tEmit);
+  });
+}
+
+// emitted += emission * P * invPdf at one tentative collision of the chain.
+SMDL_ALWAYS_INLINE void
+accumulateTrackedEmission(smdl::SpectralColor &emitted,
+                          const smdl::SpectralColor &emission,
+                          const smdl::SpectralColor &P, float invPdf) noexcept {
+  float *pEmitted{emitted.data()};
+  const float *pE{emission.data()};
+  const float *pP{P.data()};
+  forBands(emitted.size(),
+           [=](size_t i) { pEmitted[i] += pE[i] * pP[i] * invPdf; });
+}
+
+// P *= m - (a + s), the per-band factor of a null collision against the
+// local majorant, which the local clamp keeps non-negative; returns the
+// maximum over the bands, the chain's renormalizer.
+[[nodiscard]] SMDL_ALWAYS_INLINE float
+applyNullWeight(smdl::SpectralColor &P, const smdl::SpectralColor &a,
+                const smdl::SpectralColor &s, float m) noexcept {
+  float *pP{P.data()};
+  const float *pA{a.data()};
+  const float *pS{s.data()};
+  forBands(P.size(), [=](size_t i) { pP[i] *= m - (pA[i] + pS[i]); });
+  return maxBands(P.size(), [=](size_t i) { return pP[i]; });
+}
+
+// controlDepth += majorant * depth, the analytic control of one span.
+SMDL_ALWAYS_INLINE void
+accumulateControlDepth(smdl::SpectralColor &controlDepth,
+                       const smdl::SpectralColor &majorant,
+                       float depth) noexcept {
+  float *pC{controlDepth.data()};
+  const float *pM{majorant.data()};
+  forBands(controlDepth.size(), [=](size_t i) { pC[i] += pM[i] * depth; });
+}
+
+// beta *= (m - residual) / m at one tentative collision of residual ratio
+// tracking, the residual being the extinction less the span's control.
+// The local clamp keeps the residual at most `m`, so the factor is
+// nonnegative; where the extinction dips below the control the factor
+// exceeds 1, which the estimator identity covers for residuals of either
+// sign.
+SMDL_ALWAYS_INLINE void applyResidualWeight(smdl::SpectralColor &beta,
+                                            const smdl::SpectralColor &a,
+                                            const smdl::SpectralColor &s,
+                                            const smdl::SpectralColor &majorant,
+                                            float scaleMin, float m,
+                                            float invM) noexcept {
+  float *pB{beta.data()};
+  const float *pA{a.data()};
+  const float *pS{s.data()};
+  const float *pM{majorant.data()};
+  forBands(beta.size(), [=](size_t i) {
+    const float residual{(pA[i] + pS[i]) - pM[i] * scaleMin};
+    pB[i] *= (m - residual) * invM;
+  });
+}
+
+// beta *= the picked component's per-band share of the scattering
+// coefficient over the scalar probability it was picked with. A band with
+// no scattering carries no throughput already; keep it zero rather than
+// forming 0/0.
+SMDL_ALWAYS_INLINE void
+applySpectralShare(smdl::SpectralColor &beta, const smdl::SpectralColor &sigmaS,
+                   const smdl::SpectralColor &pickedSigmaS,
+                   float invProbability) noexcept {
+  float *pB{beta.data()};
+  const float *pS{sigmaS.data()};
+  const float *pPicked{pickedSigmaS.data()};
+  forBands(beta.size(), [=](size_t i) {
+    pB[i] = pS[i] > 0.0f ? pB[i] * (pPicked[i] / pS[i] * invProbability) : 0.0f;
+  });
+}
+
+// Clamp one component's query to the declared majorants at the local
+// scale, and the emission nonnegative. The majorants are nonnegative
+// (the resolution clamps them), so the ranges cannot invert.
+SMDL_ALWAYS_INLINE void clampCoefficients(smdl::SpectralColor &sigmaA,
+                                          smdl::SpectralColor &sigmaS,
+                                          smdl::SpectralColor &emission,
+                                          const smdl::SpectralColor &maxSigmaA,
+                                          const smdl::SpectralColor &maxSigmaS,
+                                          float scale) noexcept {
+  float *pA{sigmaA.data()};
+  float *pS{sigmaS.data()};
+  float *pE{emission.data()};
+  const float *pMaxA{maxSigmaA.data()};
+  const float *pMaxS{maxSigmaS.data()};
+  forBands(sigmaA.size(), [=](size_t i) {
+    pA[i] = std::clamp(pA[i], 0.0f, pMaxA[i] * scale);
+    pS[i] = std::clamp(pS[i], 0.0f, pMaxS[i] * scale);
+    pE[i] = std::max(pE[i], 0.0f);
+  });
+}
+//--}
+
+//--{ Resolution helpers
 // The cap on tentative collisions per segment, a guard against
 // marching forever through unbounded or leaky geometry with a positive
 // majorant. A segment that exhausts it is treated as fully absorbed;
 // reaching the cap honestly would mean an optical depth in the tens of
 // thousands.
-static constexpr int MAX_TENTATIVE_COLLISIONS{65536};
+constexpr int MAX_TENTATIVE_COLLISIONS{65536};
 
 // Warn once per material about a heterogeneous volume that fails to
 // declare a majorant for a coefficient it uses, and therefore falls
 // back to the homogeneous treatment.
-static void warnMissingMajorantOnce(const smdl::JIT::Material *material) {
+void warnMissingMajorantOnce(const smdl::JIT::MaterialDef *materialDef) {
   static std::mutex mutex{};
-  static std::set<const smdl::JIT::Material *> warned{};
-  const auto lock{std::lock_guard(mutex)};
-  if (warned.insert(material).second)
+  static std::unordered_set<const smdl::JIT::MaterialDef *> warned{};
+  const auto lock{std::scoped_lock(mutex)};
+  if (warned.insert(materialDef).second)
     SMDL_LOG_WARN(
-        "material ", smdl::Quoted(material->materialName),
-        " has a heterogeneous volume but no majorant for every "
+        "material ", smdl::Quoted(materialDef->materialName),
+        " has a isHeterogeneous volume but no majorant for every "
         "coefficient it uses (see "
         "'material_volume.max_absorption_coefficient' and "
         "'max_scattering_coefficient'); treating the volume as "
@@ -72,357 +318,221 @@ static void warnMissingMajorantOnce(const smdl::JIT::Material *material) {
 // instance's rigid frame, which is the only frame in which the direction
 // stays unit length and distances stay in scene units, so the boundary is
 // deformed while the interior is not.
-static void warnDeformedVolumeOnce(const smdl::JIT::Material *material) {
+void warnDeformedVolumeOnce(const smdl::JIT::MaterialDef *materialDef) {
   static std::mutex mutex{};
-  static std::set<const smdl::JIT::Material *> warned{};
-  const auto lock{std::lock_guard(mutex)};
-  if (warned.insert(material).second)
-    SMDL_LOG_WARN("material ", smdl::Quoted(material->materialName),
+  static std::unordered_set<const smdl::JIT::MaterialDef *> warned{};
+  const auto lock{std::scoped_lock(mutex)};
+  if (warned.insert(materialDef).second)
+    SMDL_LOG_WARN("material ", smdl::Quoted(materialDef->materialName),
                   " has a spatially varying volume inside an instance that "
                   "shears or scales non-uniformly; the surface is deformed "
                   "but the volume it encloses is not");
 }
 
-// One majorant span of a segment: over `[t0, t1)` in scene units the
-// tracking majorant is the declared majorant scaled by `scale`, and the
-// declared majorant scaled by `scaleMin` is a lower bound of the
-// extinction over the span, which residual ratio tracking uses as an
-// analytic control. Without the density hint the bounds are the
-// trivial 1 and 0.
-struct MajorantSpan final {
-  float t0{};
-  float t1{};
-  float scale{};
-  float scaleMin{};
-};
-
-// Iterates the majorant spans of one segment. Without a density hint
-// there is a single span at the global scale of 1. With the hint, an
-// Amanatides-Woo walk over the grid bricks inside the hint box yields
-// one span per brick at the brick's dilated-maximum-over-global-maximum
-// scale (empty bricks yield zero-scale spans the tracking loops skip),
-// and the portions of the segment outside the hint box are conservative
-// global-scale spans, since clamp-wrapped coefficients out there hold
-// edge values the per-brick maxima do not bound.
-class MajorantSpanIterator final {
-public:
-  MajorantSpanIterator(const smdl::VoxelGrid *grid, const float3 &brickOrg,
-                       const float3 &brickDir, float invMaxValue,
-                       float tEnd) noexcept
-      : mGrid(grid), mBrickOrg(brickOrg), mBrickDir(brickDir),
-        mInvMaxValue(invMaxValue), mTEnd(tEnd) {
-    if (!mGrid) return;
-    // Clip the segment against the brick-space box with the slab test.
-    // The box upper corner is the fractional brick extent, so partial
-    // bricks at the high boundary are covered exactly.
-    const auto extent{mGrid->getExtent()};
-    const float3 boxMax{float(extent.x) / 16.0f, float(extent.y) / 16.0f,
-                        float(extent.z) / 16.0f};
-    float tEnter{0.0f};
-    float tExit{tEnd};
-    for (int axis = 0; axis < 3 && tEnter <= tExit; axis++) {
-      const float o{mBrickOrg[axis]};
-      const float v{mBrickDir[axis]};
-      if (SMDL_LIKELY(v != 0.0f)) {
-        const float tA{(0.0f - o) / v};
-        const float tB{(boxMax[axis] - o) / v};
-        tEnter = std::max(tEnter, std::min(tA, tB));
-        tExit = std::min(tExit, std::max(tA, tB));
-      } else if (o < 0.0f || o > boxMax[axis]) {
-        tEnter = tEnd;
-        tExit = 0.0f;
-      }
-    }
-    if (!(tEnter < tExit)) {
-      // The segment never enters the hint box: one global span.
-      mGrid = nullptr;
-      return;
-    }
-    mTEnter = tEnter;
-    mTExit = tExit;
-    // Set up the brick walk at the entry point.
-    const auto brickCount{mGrid->getBrickCount()};
-    const float3 pEnter{mBrickOrg + tEnter * mBrickDir};
-    for (int axis = 0; axis < 3; axis++) {
-      mCell[axis] =
-          std::clamp(int(std::floor(pEnter[axis])), 0, brickCount[axis] - 1);
-      if (mBrickDir[axis] > 0.0f) {
-        mStep[axis] = 1;
-        mTNext[axis] =
-            (float(mCell[axis] + 1) - mBrickOrg[axis]) / mBrickDir[axis];
-        mTDelta[axis] = 1.0f / mBrickDir[axis];
-      } else if (mBrickDir[axis] < 0.0f) {
-        mStep[axis] = -1;
-        mTNext[axis] = (float(mCell[axis]) - mBrickOrg[axis]) / mBrickDir[axis];
-        mTDelta[axis] = -1.0f / mBrickDir[axis];
-      } else {
-        mStep[axis] = 0;
-        mTNext[axis] = INF;
-        mTDelta[axis] = INF;
-      }
-    }
-  }
-
-  // The next span, or false when the segment is exhausted.
-  [[nodiscard]] bool next(MajorantSpan &span) noexcept {
-    if (!mGrid) {
-      // No hint (or the segment misses the hint box): one global span.
-      if (mDone) return false;
-      mDone = true;
-      span = {0.0f, mTEnd, 1.0f};
-      return mTEnd > 0.0f;
-    }
-    if (mPhase == 0) {
-      // The stretch before the hint box, at the global scale.
-      mPhase = 1;
-      mTCur = mTEnter;
-      if (mTEnter > 0.0f) {
-        span = {0.0f, mTEnter, 1.0f};
-        return true;
-      }
-    }
-    if (mPhase == 1) {
-      // One span per brick.
-      if (mTCur < mTExit) {
-        const int axis{mTNext[0] < mTNext[1] ? (mTNext[0] < mTNext[2] ? 0 : 2)
-                                             : (mTNext[1] < mTNext[2] ? 1 : 2)};
-        const float tCellEnd{std::min(mTNext[axis], mTExit)};
-        const float scale{
-            std::min(mGrid->getBrickMaxValue(mCell[0], mCell[1], mCell[2]) *
-                         mInvMaxValue,
-                     1.0f)};
-        // The dilated brick minimum lower-bounds every trilinear value
-        // in the brick the same way the dilated maximum upper-bounds
-        // it. Clamped into `[0, scale]` defensively: a grid holding
-        // negative values must not produce a negative control.
-        const float scaleMin{
-            std::clamp(mGrid->getBrickMinValue(mCell[0], mCell[1], mCell[2]) *
-                           mInvMaxValue,
-                       0.0f, scale)};
-        span = {mTCur, tCellEnd, scale, scaleMin};
-        mTCur = tCellEnd;
-        mCell[axis] += mStep[axis];
-        mTNext[axis] += mTDelta[axis];
-        return true;
-      }
-      mPhase = 2;
-      // The stretch after the hint box, at the global scale.
-      if (mTExit < mTEnd) {
-        span = {mTExit, mTEnd, 1.0f};
-        return true;
-      }
-    }
-    return false;
-  }
-
-private:
-  const smdl::VoxelGrid *mGrid{};
-  float3 mBrickOrg{};
-  float3 mBrickDir{};
-  float mInvMaxValue{};
-  float mTEnd{};
-  float mTEnter{};
-  float mTExit{};
-  float mTCur{};
-  int mCell[3]{};
-  int mStep[3]{};
-  float mTNext[3]{};
-  float mTDelta[3]{};
-  int mPhase{};
-  bool mDone{};
-};
-
 // Is the density acceleration hint of the given instance usable? The
 // material must declare all three fields and they must be coherent.
-[[nodiscard]] static bool
-hasUsableDensityGrid(const smdl::JIT::MaterialInstance &mat) {
-  const auto *densityGrid{mat.getVolumeDensityGrid()};
-  const auto *boundMin{mat.getVolumeDensityBoundMin()};
-  const auto *boundMax{mat.getVolumeDensityBoundMax()};
+[[nodiscard]] bool hasUsableDensityGrid(const smdl::JIT::Material &material) {
+  const auto *densityGrid{material.getVolumeDensityGrid()};
+  const auto *boundMin{material.getVolumeDensityBoundMin()};
+  const auto *boundMax{material.getVolumeDensityBoundMax()};
   return densityGrid && boundMin && boundMax && densityGrid->isValid() &&
          densityGrid->getMaxValue() > 0.0f && //
          boundMax->x > boundMin->x &&         //
          boundMax->y > boundMin->y &&         //
          boundMax->z > boundMin->z;
 }
+//--}
+
+} // namespace
+
+//--{ Resolution
+void Medium::setHaze(const smdl::Haze *haze) noexcept {
+  if (haze == mHaze.haze) return;
+  mHaze.haze = haze;
+  if (haze)
+    haze->albedo(smdl::Span<float>(mHaze.albedo.data(), mHaze.albedo.size()));
+  mKey.isResolved = false;
+}
 
 void Medium::reset(const MediumStack *stack, const Color &wavelengths,
                    PathTime time, const float3 &org,
                    const float3 &dir) noexcept {
-  if (!mStackKnown || stack != mStack || time.seconds != mTime)
+  if (!mKey.isKnown || stack != mKey.stack || time.seconds != mKey.time)
     resolve(stack, wavelengths, time);
   setSegment(org, dir, time.fraction);
 }
 
 void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
                      PathTime time) noexcept {
-  mStack = stack;
-  mStackKnown = true;
-  if (mResolved && rebind(stack, time)) return;
+  mKey.stack = stack;
+  mKey.isKnown = true;
+  if (mKey.isResolved && rebind(stack, time)) return;
   rebuild(stack, wavelengths, time);
 }
 
 bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
   // The haze stands in for the empty stack and has no components; see
   // `rebuild()`.
-  if (mIsHaze != (!stack && mHaze != nullptr)) return false;
+  if (mIsHaze != (!stack && mHaze.haze != nullptr)) return false;
   if (!mIsHaze) {
     size_t count{0};
     for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-      const auto &mat{entry->mat};
-      if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
+      const auto &material{*entry->material};
+      if (material.hasMedium() ||
+          !material.getVolumeEmissionIntensity().empty()) {
         if (count == mComponents.size() || !matches(mComponents[count], *entry))
           return false;
-        mComponents[count++].mat = &mat;
+        mComponents[count++].material = &material;
       }
-      if (!mat.hasAdditiveVolume()) break;
+      if (!material.hasAdditiveVolume()) break;
     }
     if (count != mComponents.size()) return false;
-    if (count > 0) mScatterInstance = mComponents.front().mat;
+    if (count > 0) mScatterInstance = mComponents.front().material;
   }
-  if (time.seconds != mTime) {
-    mTime = time.seconds;
-    if (mMoving) {
+  if (time.seconds != mKey.time) {
+    mKey.time = time.seconds;
+    if (mIsMoving) {
       std::optional<InstanceFrame> scratch{};
       for (auto &comp : mComponents)
-        if (comp.heterogeneous && comp.meshInstance)
-          comp.state->object_to_world_matrix =
+        if (comp.isHeterogeneous && comp.meshInstance)
+          comp.state->objectToWorld =
               comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
     }
   }
   return true;
 }
 
-bool Medium::matches(const Component &component,
+bool Medium::matches(const Component &comp,
                      const MediumStack &entry) const noexcept {
-  const auto &mat{entry.mat};
-  if (component.material != mat.material ||
-      component.presence != presenceOf(mat))
+  // The cheap fields first, the spectra last: a mismatch is usually a
+  // different material, and the compare runs once per path.
+  const auto &material{*entry.material};
+  if (comp.materialDef != material.materialDef) return false;
+  if (comp.presence != presenceOf(material)) return false;
+  if (!comp.isHeterogeneous)
+    return valuesMatch(material.getAbsorptionCoefficient(), comp.sigmaA) &&
+           valuesMatch(material.getScatteringCoefficient(), comp.sigmaS) &&
+           valuesMatch(material.getVolumeEmissionIntensity(), comp.emission);
+  if (comp.meshInstance != entry.meshInstance) return false;
+  const auto *grid{hasUsableDensityGrid(material)
+                       ? material.getVolumeDensityGrid()
+                       : nullptr};
+  if (comp.grid != grid) return false;
+  if (grid &&
+      (!smdl::isAllTrue(comp.boundMin ==
+                        *material.getVolumeDensityBoundMin()) ||
+       !smdl::isAllTrue(comp.boundMax == *material.getVolumeDensityBoundMax())))
     return false;
-  if (!component.heterogeneous)
-    return valuesMatch(mat.getAbsorptionCoefficient(), component.sigmaA) &&
-           valuesMatch(mat.getScatteringCoefficient(), component.sigmaS) &&
-           valuesMatch(mat.getVolumeEmissionIntensity(), component.emission);
-  if (component.meshInstance != entry.meshInstance ||
-      !valuesMatch(mat.getMaxAbsorptionCoefficient(), component.maxSigmaA) ||
-      !valuesMatch(mat.getMaxScatteringCoefficient(), component.maxSigmaS))
-    return false;
-  if (!hasUsableDensityGrid(mat)) return component.grid == nullptr;
-  return component.grid == mat.getVolumeDensityGrid() &&
-         smdl::isAllTrue(component.boundMin ==
-                         *mat.getVolumeDensityBoundMin()) &&
-         smdl::isAllTrue(component.boundMax == *mat.getVolumeDensityBoundMax());
+  return valuesMatch(material.getMaxAbsorptionCoefficient(), comp.maxSigmaA) &&
+         valuesMatch(material.getMaxScatteringCoefficient(), comp.maxSigmaS);
 }
 
 void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
                      PathTime time) noexcept {
-  mTime = time.seconds;
-  mResolved = true;
+  mKey.time = time.seconds;
+  mKey.isResolved = true;
   mHasMedium = false;
-  mHeterogeneous = false;
-  mMoving = false;
+  mIsHeterogeneous = false;
+  mIsMoving = false;
   mIsHaze = false;
   mHasEmission = false;
+  mHasOverlap = false;
   mMajorant = 0.0f;
   mMajorantBase = 0.0f;
   mMajorantGrid = 0.0f;
-  mDensityGrid = nullptr;
-  mGridComponent = -1;
-  mInvMaxValue = 0.0f;
-  mUnitScale = 1.0f;
+  mHint = Hint{};
   mComponents.clear();
   mScatterInstance = nullptr;
   // The coefficient spectra are left holding whatever the last
-  // resolution put there: every read of them is guarded by
-  // `mHasMedium`/`mHeterogeneous`, under which the branches below
-  // assign them.
+  // resolution put there: every read of them is behind `mHasMedium` or
+  // `mIsHeterogeneous`, under which the branches below assign them.
 
   // The exterior haze stands in for the empty stack, that being where
   // the atmosphere is: a walk inside an object is inside whatever the
   // object encloses instead. Nothing else here applies to it, since it
   // is neither a material nor tracked against a majorant.
-  if (!stack && mHaze) {
+  if (!stack && mHaze.haze) {
     mHasMedium = true;
     mIsHaze = true;
     return;
   }
 
   const auto renderState{makeRenderState(wavelengths, nullptr, time.seconds)};
-  // Coefficients are in inverse meters per the MDL specification;
-  // distances here are in scene units. smdl-toy renders with the
-  // default meters-per-scene-unit of 1, so this is the identity, but
-  // the conversion is where a unit-aware scene flag would land.
-  mUnitScale = renderState.meters_per_scene_unit;
+  // Coefficients are in inverse meters per the MDL specification, and
+  // the toy's scene unit is the meter, so they are in inverse scene
+  // units as they come.
+  SMDL_SANITY_CHECK(renderState.metersPerSceneUnit == 1.0f);
   // Collect the active media: the run of additive entries from the top
   // of the stack plus the first non-additive entry, which replaces
   // everything below it. Entries that carry no coefficients and no
   // emission (e.g., clear glass interiors) contribute nothing but
   // still terminate the walk when non-additive.
-  int gridCandidates{0};
+  int hintCandidates{0};
   for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-    const auto &mat{entry->mat};
-    if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
-      auto &component{mComponents.emplace_back()};
-      component.mat = &mat;
-      component.material = mat.material;
-      component.presence = presenceOf(mat);
-      component.sigmaA = Color(mat.getAbsorptionCoefficient());
-      component.sigmaA *= mUnitScale;
-      component.sigmaS = Color(mat.getScatteringCoefficient());
-      component.sigmaS *= mUnitScale;
-      component.emission = Color(mat.getVolumeEmissionIntensity());
-      component.emission *= mUnitScale;
-      mHasEmission |= !mat.getVolumeEmissionIntensity().empty();
+    const auto &material{*entry->material};
+    if (material.hasMedium() ||
+        !material.getVolumeEmissionIntensity().empty()) {
+      auto &comp{mComponents.emplace_back()};
+      comp.material = &material;
+      comp.materialDef = material.materialDef;
+      comp.presence = presenceOf(material);
+      comp.sigmaA = Color(material.getAbsorptionCoefficient());
+      comp.sigmaS = Color(material.getScatteringCoefficient());
+      comp.emission = Color(material.getVolumeEmissionIntensity());
+      mHasEmission |= !material.getVolumeEmissionIntensity().empty();
       // Heterogeneous (or unproven, which must be treated the same): the
       // per-point queries need majorants to track against, covering every
       // coefficient the material actually has.
-      if (!mat.material->hasHomogeneousVolume()) {
-        if (!hasUsableMajorants(mat)) {
-          warnMissingMajorantOnce(mat.material);
+      if (!material.materialDef->hasHomogeneousVolume()) {
+        if (!hasUsableMajorants(material)) {
+          warnMissingMajorantOnce(material.materialDef);
         } else {
-          component.heterogeneous = true;
-          component.maxSigmaA = Color(mat.getMaxAbsorptionCoefficient());
-          component.maxSigmaA *= mUnitScale;
-          component.maxSigmaS = Color(mat.getMaxScatteringCoefficient());
-          component.maxSigmaS *= mUnitScale;
-          component.state = renderState;
+          comp.isHeterogeneous = true;
+          // Clamped nonnegative, so that a misdeclared negative majorant
+          // bounds the coefficient at zero instead of inverting the
+          // per-collision clamp.
+          comp.maxSigmaA = Color(material.getMaxAbsorptionCoefficient());
+          comp.maxSigmaA.setNonPositiveToZero();
+          comp.maxSigmaS = Color(material.getMaxScatteringCoefficient());
+          comp.maxSigmaS.setNonPositiveToZero();
+          comp.state = renderState;
           // The queries evaluate in the rigid frame of the instance whose
-          // boundary entered the medium, paired with the rigid transform so
-          // world reassembly inside the material is exact. The rigid transform
-          // has no scale, so the direction stays unit length and distances
-          // stay in scene units. A medium with no geometry queries in world
-          // space directly.
-          component.meshInstance = entry->meshInstance;
-          if (component.meshInstance) {
-            mMoving |= component.meshInstance->isMoving;
-            if (component.meshInstance->frame.isDeformed)
-              warnDeformedVolumeOnce(mat.material);
+          // boundary entered the medium, paired with the rigid transform
+          // so world reassembly inside the material is exact. The rigid
+          // transform has no scale, so the direction stays unit length
+          // and distances stay in scene units. A medium with no geometry
+          // queries in world space directly.
+          comp.meshInstance = entry->meshInstance;
+          if (comp.meshInstance) {
+            mIsMoving |= comp.meshInstance->isMoving;
+            if (comp.meshInstance->frame.isDeformed)
+              warnDeformedVolumeOnce(material.materialDef);
             std::optional<InstanceFrame> scratch{};
-            component.state->object_to_world_matrix =
-                component.meshInstance->frameAt(time.fraction, scratch)
-                    .rigidToWorld;
+            comp.state->objectToWorld =
+                comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
           }
-          // The density acceleration hint, active only when the material
-          // declares all three fields and they are usable.
-          if (hasUsableDensityGrid(mat)) {
-            component.grid = mat.getVolumeDensityGrid();
-            component.boundMin = *mat.getVolumeDensityBoundMin();
-            component.boundMax = *mat.getVolumeDensityBoundMax();
-            ++gridCandidates;
-            mGridComponent = int(mComponents.size()) - 1;
+          if (hasUsableDensityGrid(material)) {
+            comp.grid = material.getVolumeDensityGrid();
+            comp.boundMin = *material.getVolumeDensityBoundMin();
+            comp.boundMax = *material.getVolumeDensityBoundMax();
+            ++hintCandidates;
+            mHint.component = int(mComponents.size()) - 1;
           }
         }
       }
     }
-    if (!mat.hasAdditiveVolume()) break;
+    if (!material.hasAdditiveVolume()) break;
   }
   if (mComponents.empty()) return;
   mHasMedium = true;
-  mScatterInstance = mComponents.front().mat;
+  mHasOverlap = mComponents.size() > 1;
+  mScatterInstance = mComponents.front().material;
   // The aggregates. The homogeneous closed form runs on the summed
   // snapshots when every component is homogeneous; otherwise the
   // tracking loops run against the summed majorants, a homogeneous
-  // component contributing its exact spectrum as its own bound.
+  // component contributing its exact spectrum as its own bound. Assigned
+  // rather than filled: the members are sized here, being empty until a
+  // medium resolves.
   mSigmaA = Color();
   mSigmaS = Color();
   mEmission = Color();
@@ -430,75 +540,76 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
     mSigmaA += comp.sigmaA;
     mSigmaS += comp.sigmaS;
     mEmission += comp.emission;
-    mHeterogeneous |= comp.heterogeneous;
+    mIsHeterogeneous |= comp.isHeterogeneous;
   }
-  if (!mHeterogeneous) return;
+  mSigmaT = mSigmaA + mSigmaS;
+  if (!mIsHeterogeneous) return;
   mMaxSigmaA = Color();
   mMaxSigmaS = Color();
   for (const auto &comp : mComponents) {
-    mMaxSigmaA += comp.heterogeneous ? comp.maxSigmaA : comp.sigmaA;
-    mMaxSigmaS += comp.heterogeneous ? comp.maxSigmaS : comp.sigmaS;
+    mMaxSigmaA += comp.isHeterogeneous ? comp.maxSigmaA : comp.sigmaA;
+    mMaxSigmaS += comp.isHeterogeneous ? comp.maxSigmaS : comp.sigmaS;
   }
   mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
-  // The density-hint spans can drive the walk only when exactly one
-  // component has a usable grid: its contribution scales per span, and
-  // everything else is the constant base. With competing grids (or
-  // none) the whole majorant is the constant global span, whose lower
-  // bound the iterator reports as zero, so the control below goes
-  // unread.
-  if (gridCandidates == 1) {
-    auto &comp{mComponents[size_t(mGridComponent)]};
-    comp.scaledByGrid = true;
-    mGridMaxSigma = comp.maxSigmaA + comp.maxSigmaS;
-    mMajorantGrid = mGridMaxSigma.maxComponent();
+  // The density hint can drive the walk only when exactly one component
+  // has a usable grid: its contribution scales per span, and everything
+  // else is the constant base. With competing grids (or none) the whole
+  // majorant is the constant global span, whose lower bound the walk
+  // reports as zero, so the control goes unread.
+  if (hintCandidates == 1) {
+    auto &comp{mComponents[size_t(mHint.component)]};
+    comp.isScaledByGrid = true;
+    mHint.majorant = comp.maxSigmaA + comp.maxSigmaS;
+    mMajorantGrid = mHint.majorant.maxComponent();
     mMajorantBase = std::max(
-        (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
-    setDensityGrid(comp);
+        (mMaxSigmaA + mMaxSigmaS - mHint.majorant).maxComponent(), 0.0f);
+    setHint(comp);
   } else {
-    mGridComponent = -1;
-    mGridMaxSigma = Color();
+    mHint.component = -1;
+    mHint.majorant = Color();
     mMajorantGrid = mMajorant;
     mMajorantBase = 0.0f;
   }
 }
 
-void Medium::setDensityGrid(const Component &component) noexcept {
-  const auto &boundMin{component.boundMin};
-  const auto &boundMax{component.boundMax};
-  mDensityGrid = component.grid;
-  const auto extent{component.grid->getExtent()};
-  mBrickBoundMin = boundMin;
-  mBrickScale = float3(float(extent.x) / (16.0f * (boundMax.x - boundMin.x)),
-                       float(extent.y) / (16.0f * (boundMax.y - boundMin.y)),
-                       float(extent.z) / (16.0f * (boundMax.z - boundMin.z)));
-  mInvMaxValue = 1.0f / component.grid->getMaxValue();
+void Medium::setHint(const Component &comp) noexcept {
+  const auto &boundMin{comp.boundMin};
+  const auto &boundMax{comp.boundMax};
+  const auto extent{comp.grid->getExtent()};
+  const float cellExtent{float(comp.grid->getMajorantExtent())};
+  mHint.grid = comp.grid;
+  mHint.boundMin = boundMin;
+  mHint.cellScale =
+      float3(float(extent.x) / (cellExtent * (boundMax.x - boundMin.x)),
+             float(extent.y) / (cellExtent * (boundMax.y - boundMin.y)),
+             float(extent.z) / (cellExtent * (boundMax.z - boundMin.z)));
+  mHint.invMaxValue = 1.0f / comp.grid->getMaxValue();
 }
+//--}
 
+//--{ Segment
 void Medium::setSegment(const float3 &org, const float3 &dir,
                         float time) noexcept {
-  // The haze varies with world height alone, so the segment reduces to
-  // the extinction where it starts and the rate the height changes at.
   if (mIsHaze) {
-    mHaze->extinctionAt(
-        org.z, smdl::Span<float>(mHazeSigmaC.data(), mHazeSigmaC.size()));
-    mHazeK = mHaze->shapeExponent(dir.z);
+    mHaze.haze->extinctionAt(
+        org.z, smdl::Span<float>(mHaze.sigmaC.data(), mHaze.sigmaC.size()));
+    mHaze.k = mHaze.haze->shapeExponent(dir.z);
     return;
   }
   // A homogeneous medium has the same coefficients everywhere, so it
   // never queries and has no segment to place.
-  if (!mHeterogeneous) return;
-  if (SMDL_UNLIKELY(mMoving)) {
+  if (!mIsHeterogeneous) return;
+  if (SMDL_UNLIKELY(mIsMoving)) {
     projectSegmentMoving(org, dir, time);
   } else {
     projectSegment(org, dir);
   }
-  if (mDensityGrid) {
-    // The grid's own component is the one whose segment maps.
-    const auto &component{mComponents[size_t(mGridComponent)]};
+  if (mHint.grid) {
+    const auto &comp{mComponents[size_t(mHint.component)]};
     for (int axis = 0; axis < 3; axis++) {
-      mBrickOrg[axis] =
-          (component.orgR[axis] - mBrickBoundMin[axis]) * mBrickScale[axis];
-      mBrickDir[axis] = component.dirR[axis] * mBrickScale[axis];
+      mHint.cellOrg[axis] =
+          (comp.orgR[axis] - mHint.boundMin[axis]) * mHint.cellScale[axis];
+      mHint.cellDir[axis] = comp.dirR[axis] * mHint.cellScale[axis];
     }
   }
 }
@@ -520,60 +631,52 @@ void Medium::projectSegmentMoving(const float3 &org, const float3 &dir,
                        return instance.frameAt(time, scratch).worldToRigid;
                      });
 }
+//--}
 
-SMDL_ALWAYS_INLINE void Medium::queryComponent(const Component &component,
-                                               float t, float majorantScale,
-                                               bool stash, Color &sigmaA,
-                                               Color &sigmaS,
-                                               Color &emission) const {
-  if (!component.heterogeneous) {
-    sigmaA = component.sigmaA;
-    sigmaS = component.sigmaS;
-    emission = component.emission;
+//--{ Queries
+SMDL_ALWAYS_INLINE void Medium::query(const Component &comp, float t,
+                                      float majorantScale, bool shouldStash,
+                                      Color &sigmaA, Color &sigmaS,
+                                      Color &emission) const {
+  if (!comp.isHeterogeneous) {
+    sigmaA = comp.sigmaA;
+    sigmaS = comp.sigmaS;
+    emission = comp.emission;
     return;
   }
-  component.state->position = component.orgR + t * component.dirR;
-  component.mat->material->volumeEvaluate(*component.state, sigmaA.data(),
-                                          sigmaS.data(), emission.data());
-  // Convert to inverse scene units and clamp to the declared majorants
-  // at the local scale, so a lying majorant or density hint renders a
-  // clamped medium instead of accumulating negative-weight bias. The
-  // density-hint scale applies only to the component whose own grid
-  // drives the spans. The emission coefficient has no majorant and only
-  // clamps nonnegative: it never gates sampling, so no bound is needed
-  // for unbiasedness. Not `std::clamp`: the majorant is what the
-  // material declared, and a misdeclared negative one must not invert
-  // the bounds.
-  const float scale{component.scaledByGrid ? majorantScale : 1.0f};
-  float *SMDL_RESTRICT pA{sigmaA.data()};
-  float *SMDL_RESTRICT pS{sigmaS.data()};
-  float *SMDL_RESTRICT pE{emission.data()};
-  const float *SMDL_RESTRICT pMaxA{component.maxSigmaA.data()};
-  const float *SMDL_RESTRICT pMaxS{component.maxSigmaS.data()};
-  const size_t n{sigmaA.size()};
-  for (size_t i = 0; i < n; i++) {
-    pA[i] = std::min(std::max(pA[i] * mUnitScale, 0.0f), pMaxA[i] * scale);
-    pS[i] = std::min(std::max(pS[i] * mUnitScale, 0.0f), pMaxS[i] * scale);
-    pE[i] = std::max(pE[i] * mUnitScale, 0.0f);
-  }
-  if (stash) component.lastSigmaS = sigmaS;
+  comp.state->position = comp.orgR + t * comp.dirR;
+  comp.material->materialDef->volumeEvaluate(*comp.state, sigmaA.data(),
+                                             sigmaS.data(), emission.data());
+  // Clamp so a lying majorant or density hint renders a clamped medium
+  // instead of accumulating negative-weight bias. The emission
+  // coefficient never gates sampling, so it needs no bound for
+  // unbiasedness and only clamps nonnegative.
+  clampCoefficients(sigmaA, sigmaS, emission, comp.maxSigmaA, comp.maxSigmaS,
+                    comp.isScaledByGrid ? majorantScale : 1.0f);
+  if (shouldStash) comp.lastSigmaS = sigmaS;
 }
 
-void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
-                                  Color &sigmaS, Color &emission) const {
-  // The first component writes the sums and the rest add into them, so
-  // that the single-medium segment, which is the overwhelmingly common
-  // one, writes its coefficients exactly once and never touches the
-  // scratch below.
-  const bool overlapping{mComponents.size() > 1};
-  queryComponent(mComponents.front(), t, majorantScale, overlapping, sigmaA,
-                 sigmaS, emission);
-  if (SMDL_LIKELY(!overlapping)) return;
-  // One component's query, reused down the rest: `queryComponent()`
-  // overwrites every band of all three.
+SMDL_ALWAYS_INLINE void
+Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
+                             Color &sigmaS, Color &emission) const {
+  if (SMDL_LIKELY(!mHasOverlap)) {
+    query(mComponents.front(), t, majorantScale, false, sigmaA, sigmaS,
+          emission);
+    return;
+  }
+  evaluateOverlap(t, majorantScale, sigmaA, sigmaS, emission);
+}
+
+SMDL_NO_INLINE void Medium::evaluateOverlap(float t, float majorantScale,
+                                            Color &sigmaA, Color &sigmaS,
+                                            Color &emission) const {
+  // The first component writes the sums and the rest add into them, one
+  // component's query reused down the rest: `query()` overwrites every
+  // band of all three.
+  query(mComponents.front(), t, majorantScale, true, sigmaA, sigmaS, emission);
   Color a{}, s{}, e{};
   for (size_t i = 1; i < mComponents.size(); i++) {
-    queryComponent(mComponents[i], t, majorantScale, true, a, s, e);
+    query(mComponents[i], t, majorantScale, true, a, s, e);
     sigmaA += a;
     sigmaS += s;
     emission += e;
@@ -587,364 +690,301 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
   // total scattering (a pure-absorption collision) leaves `beta` all
   // zero already; default to the first component so the caller always
   // has a phase function.
-  mScatterInstance = mComponents.front().mat;
+  mScatterInstance = mComponents.front().material;
   float totalAverage{};
-  for (const auto &component : mComponents)
-    totalAverage += componentSigmaS(component).average();
+  for (const auto &comp : mComponents)
+    totalAverage += componentSigmaS(comp).average();
   if (!(totalAverage > 0.0f)) return;
   const Component *picked{};
-  float pickedProbability{};
+  float pickedChance{};
   float cdf{};
-  for (const auto &component : mComponents) {
-    const float average{componentSigmaS(component).average()};
+  for (const auto &comp : mComponents) {
+    const float average{componentSigmaS(comp).average()};
     if (!(average > 0.0f)) continue;
-    picked = &component;
-    pickedProbability = average / totalAverage;
-    cdf += pickedProbability;
+    picked = &comp;
+    pickedChance = average / totalAverage;
+    cdf += pickedChance;
     if (xi < cdf) break;
   }
-  mScatterInstance = picked->mat;
-  // The per-bin spectral share over the scalar pick probability, so
-  // the expectation per bin is the sigma_s-weighted phase mixture. A
-  // bin with zero total scattering has zero throughput already; keep
-  // it zero rather than forming 0/0.
-  const auto &pickedSigmaS{componentSigmaS(*picked)};
-  float *SMDL_RESTRICT pBeta{beta.data()};
-  const float *SMDL_RESTRICT pS{sigmaS.data()};
-  const float *SMDL_RESTRICT pPickedS{pickedSigmaS.data()};
-  for (size_t i = 0; i < beta.size(); i++)
-    pBeta[i] *= pS[i] > 0.0f ? pPickedS[i] / pS[i] / pickedProbability : 0.0f;
+  mScatterInstance = picked->material;
+  applySpectralShare(beta, sigmaS, componentSigmaS(*picked),
+                     1.0f / pickedChance);
 }
+//--}
 
+//--{ Tracking
+template <typename MajorantOf, typename Collide>
+Medium::Outcome Medium::track(smdl::RNG &rng, float tEnd, MajorantOf majorantOf,
+                              Collide collide) const {
+  smdl::MajorantSpanWalk spans{mHint.grid,    mHint.cellOrg,
+                               mHint.cellDir, mHint.invMaxValue,
+                               tEnd,          !(mMajorantBase > 0.0f)};
+  smdl::MajorantSpan span{};
+  int iter{0};
+  float tau{-smdl::fastLog(rng.generateFloat())};
+  while (spans.next(span)) {
+    // A zero majorant only reaches here when a component that does not
+    // scale with the grid kept the walk from skipping the cell itself.
+    const float m{majorantOf(span)};
+    if (!(m > 0.0f)) continue;
+    float tCur{span.t0};
+    while (true) {
+      if (const float dTau{m * (span.t1 - tCur)}; tau >= dTau) {
+        tau -= dTau;
+        break;
+      }
+      if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS))
+        return Outcome::DEAD;
+      tCur += tau / m;
+      if (const Outcome outcome{collide(tCur, span, m, tau)};
+          outcome != Outcome::CONTINUE)
+        return outcome;
+    }
+  }
+  return Outcome::SURVIVED;
+}
+//--}
+
+//--{ Distance sampling
 bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
                             Color &emitted) const {
   if (SMDL_UNLIKELY(!mHasMedium)) return false;
-  if (SMDL_UNLIKELY(mIsHaze)) {
-    // The analytic exponential-height medium. The optical depth is the
-    // extinction at the segment origin times one distance shape shared
-    // by every band, so the free-flight distance inverts in closed form
-    // against the hero band and the other bands' transmittance follows
-    // from the same shape. Nothing is tracked, nothing is clamped, and
-    // the spectral weighting is the homogeneous estimator's with
-    // `shape(t)` in place of `t`. The haze does not emit.
-    const float xi{float(sampler)};
-    const int hero{sampler.index(int(mHazeSigmaC.size()))};
-    // Both the collision and the segment end are placed by their shape
-    // rather than their distance. The shape is monotone, so the two
-    // orders agree, and settling it here means only a collision pays
-    // the inversion, while the depth it carries is the shape that was
-    // sampled instead of a round trip back out through the logarithm.
-    // The end is clamped because an unbounded segment that never turns
-    // upward has infinite depth, and infinity times a band whose
-    // extinction has underflowed to zero is not a number.
-    const float sScatter{-std::log1p(-xi) / mHazeSigmaC[size_t(hero)]};
-    const float sEnd{std::min(smdl::Haze::shape(mHazeK, tEnd),
-                              std::numeric_limits<float>::max())};
-    const bool scattered{sScatter < sEnd};
-    const float depth{scattered ? sScatter : sEnd};
-    Color Tr{};
-    const size_t n{Tr.size()};
-    float *SMDL_RESTRICT pBeta{beta.data()};
-    float *SMDL_RESTRICT pTr{Tr.data()};
-    const float *SMDL_RESTRICT pSigmaC{mHazeSigmaC.data()};
-    for (size_t i = 0; i < n; i++) pTr[i] = transmittance(pSigmaC[i] * depth);
-    if (scattered) {
-      // The extinction at the collision is the origin spectrum times a
-      // factor common to every band, which cancels between the
-      // scattering weight and the balance heuristic that normalizes it.
-      const float norm{averageOfProducts(mHazeSigmaC, Tr)};
-      const float *SMDL_RESTRICT pAlbedo{mHazeAlbedo.data()};
-      for (size_t i = 0; i < n; i++)
-        pBeta[i] *= pSigmaC[i] * pAlbedo[i] * pTr[i] / norm;
-      t = smdl::Haze::shapeInverse(mHazeK, sScatter);
-      return true;
-    }
-    const float norm{Tr.average()};
-    for (size_t i = 0; i < n; i++) pBeta[i] *= pTr[i] / norm;
-    return false;
-  }
-  if (!mHeterogeneous) {
-    // The emitted radiance along the segment is deterministic for a
-    // homogeneous medium: the integral of transmittance times the
-    // emission coefficient to the segment end, per bin, regardless of
-    // where scattering is sampled below. The extinction-free limit is
-    // linear in distance, so an unbounded segment through an emissive
-    // vacuum is clamped rather than infinite.
-    //
-    // The one place that keeps `std::exp`: at small optical depth the
-    // difference against one cancels down to the error of whatever
-    // computed it, and the two ulp `transmittance()` carries are enough
-    // to turn this integral negative there.
-    const Color mu{mSigmaA + mSigmaS};
-    const size_t n{mu.size()};
-    const float *SMDL_RESTRICT pMu{mu.data()};
-    float *SMDL_RESTRICT pBeta{beta.data()};
-    if (SMDL_UNLIKELY(mHasEmission)) {
-      const float tEmit{std::min(tEnd, 1e8f)};
-      float *SMDL_RESTRICT pEmitted{emitted.data()};
-      const float *SMDL_RESTRICT pEmission{mEmission.data()};
-      for (size_t i = 0; i < n; i++)
-        pEmitted[i] +=
-            pEmission[i] * (pMu[i] > 1e-12f
-                                ? (1.0f - std::exp(-pMu[i] * tEmit)) / pMu[i]
-                                : tEmit);
-    }
-    // The closed-form homogeneous estimator: sample the free-flight
-    // distance against one uniformly drawn hero wavelength and weight
-    // by the single-sample MIS balance heuristic over all bins. The
-    // caller clamps nothing: wavelengths with zero extinction keep
-    // transmittance 1 through the min against FLT_MAX.
-    const float xi{float(sampler)};
-    const int hero{sampler.index(int(mu.size()))};
-    const float tScatter{-std::log1p(-xi) / pMu[hero]};
-    Color Tr{};
-    float *SMDL_RESTRICT pTr{Tr.data()};
-    const float tTravel{
-        std::min({tScatter, tEnd, std::numeric_limits<float>::max()})};
-    for (size_t i = 0; i < n; i++) pTr[i] = transmittance(pMu[i] * tTravel);
-    if (tScatter < tEnd) {
-      const float norm{averageOfProducts(mu, Tr)};
-      const float *SMDL_RESTRICT pSigmaS{mSigmaS.data()};
-      for (size_t i = 0; i < n; i++) pBeta[i] *= pSigmaS[i] * pTr[i] / norm;
-      // Only an overlap has a phase function to choose; a single
-      // medium must not draw here, or every render with a medium moves
-      // onto a different sampler dimension.
-      if (SMDL_UNLIKELY(mComponents.size() > 1))
-        pickScatterComponent(float(sampler), mSigmaS, beta);
-      t = tScatter;
-      return true;
-    }
-    const float norm{Tr.average()};
-    for (size_t i = 0; i < n; i++) pBeta[i] *= pTr[i] / norm;
-    return false;
-  }
-  // Delta tracking against the scalar majorant, generalizing the same
-  // spectral strategy: the hero wavelength drives the real-or-null
-  // classification, and the per-bin products of null factors carry the
-  // balance-heuristic weight through the chain. 'P' is meaningful only
-  // up to a common scale, which cancels in every weight, so it is
-  // renormalized as it goes to keep the products from underflowing.
+  if (SMDL_UNLIKELY(mIsHaze)) return sampleDistanceHaze(sampler, tEnd, t, beta);
+  if (!mIsHeterogeneous)
+    return sampleDistanceHomogeneous(sampler, tEnd, t, beta, emitted);
+  return sampleDistanceTracked(sampler, tEnd, t, beta, emitted);
+}
+
+SMDL_NO_INLINE bool Medium::sampleDistanceHaze(Sampler &sampler, float tEnd,
+                                               float &t, Color &beta) const {
+  // The analytic exponential-height medium. The optical depth is the
+  // extinction at the segment origin times one distance shape shared
+  // by every band, so the free-flight distance inverts in closed form
+  // against the hero band and the other bands' transmittance follows
+  // from the same shape: the homogeneous estimator with `shape(t)` in
+  // place of `t`. The haze does not emit.
   //
-  // The renormalization is not obsolete under flush-to-zero; it is more
-  // necessary. A product that underflows reaches exactly zero at the
-  // smallest NORMAL float rather than creeping down to 1e-45 first, so
-  // the chain loses its whole weight sooner and the divisions below
-  // would see a zero denominator.
-  //
-  // The tracking loop draws from a plain generator seeded by the
-  // sampler rather than from the sampler itself, so that this call
-  // consumes a FIXED number of low-discrepancy dimensions: burning a
-  // variable number here would push every draw after the medium onto
-  // different dimensions from sample to sample, destroying the
-  // stratification of the rest of the path.
-  if (SMDL_UNLIKELY(!(mMajorant > 0.0f))) return false;
-  const int hero{sampler.index(int(mSigmaA.size()))};
-  auto rng{smdl::RNG(nextSeed64(sampler))};
-  Color P{1.0f};
-  int iter{0};
-  // The coefficients of one tentative collision, held across the loop
-  // rather than sized anew at each: `evaluateCoefficients()` overwrites
-  // every band of all three.
-  Color sigmaA{}, sigmaS{}, emission{};
-  // The null-collision weights, whose storage the loop rewrites at every
-  // tentative collision. Hoisting the pointer past the opaque
-  // `evaluateCoefficients()` keeps the optimizer from re-deriving it each
-  // time and, the part that costs, from guarding the per-band loop with a
-  // runtime overlap check against the other bands and keeping a scalar
-  // copy of the loop for the case the check fails. Only this one is
-  // hoisted: the other per-band loops below run once per call at most, and
-  // holding their pointers live across the call spends more registers than
-  // deriving them where they are used.
-  const size_t n{beta.size()};
-  float *SMDL_RESTRICT pP{P.data()};
-  auto spans{MajorantSpanIterator(mDensityGrid, mBrickOrg, mBrickDir,
-                                  mInvMaxValue, tEnd)};
-  MajorantSpan span{};
-  while (spans.next(span)) {
-    // The local tracking majorant of this span: the constant base plus
-    // the grid part at the span's scale (a single medium is all grid
-    // part, so this is plain scaling). A zero span is an empty brick
-    // with no base: skipped outright, at no cost of any kind. The
-    // exponential restart at each span boundary is unbiased by
-    // memorylessness.
-    const float m{mMajorantBase + mMajorantGrid * span.scale};
-    if (!(m > 0.0f)) continue;
-    float tCur{span.t0};
-    const float invM{1.0f / m};
-    while (true) {
-      // The free flight off the canonical draw itself rather than off
-      // its complement: the two are equidistributed, and taking the
-      // logarithm of the draw keeps full precision where the flight is
-      // long, which is the tail that decides how many steps this loop
-      // runs.
-      tCur += -smdl::fastLog(rng.generateFloat()) * invM;
-      if (!(tCur < span.t1)) break;
-      if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
-        beta = Color();
-        return false;
-      }
-      evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emission);
-      // Accumulate the medium's own emission at every tentative
-      // collision, before classification: the chain-survival density
-      // times the per-bin null-product weight integrates, in
-      // expectation, transmittance times the emission coefficient over
-      // the whole segment, at no extra 'volumeEvaluate' cost. The same
-      // balance-heuristic normalization as the terminal weights
-      // applies, and the common renormalization of 'P' cancels.
-      if (SMDL_UNLIKELY(mHasEmission)) {
-        const float pdfEmit{m * P.average()};
-        if (pdfEmit > 0.0f) {
-          float *SMDL_RESTRICT pEmitted{emitted.data()};
-          const float *SMDL_RESTRICT pEmission{emission.data()};
-          for (size_t i = 0; i < n; i++) {
-            const float added{pEmission[i] * pP[i] / pdfEmit};
-            pEmitted[i] += added;
-          }
-        }
-      }
-      const Color muT{sigmaA + sigmaS};
-      const float *SMDL_RESTRICT pMuT{muT.data()};
-      if (rng.generateFloat() * m < pMuT[hero]) {
-        // A real collision. Weight by the scattering coefficient over
-        // the mixture density of all heroes having produced this chain;
-        // absorption is folded into the weight rather than terminating,
-        // exactly like the homogeneous path.
-        const float pdf{averageOfProducts(muT, P)};
-        if (SMDL_UNLIKELY(!(pdf > 0.0f))) {
-          beta = Color();
-          return false;
-        }
-        float *SMDL_RESTRICT pBeta{beta.data()};
-        const float *SMDL_RESTRICT pS{sigmaS.data()};
-        for (size_t i = 0; i < n; i++) pBeta[i] *= pS[i] * pP[i] / pdf;
-        if (SMDL_UNLIKELY(mComponents.size() > 1))
-          pickScatterComponent(rng.generateFloat(), sigmaS, beta);
-        t = tCur;
-        return true;
-      }
-      // A null collision against the local majorant, which the local
-      // clamp in 'evaluateCoefficients' keeps non-negative per bin.
-      for (size_t i = 0; i < n; i++) pP[i] *= m - pMuT[i];
-      const float renormalize{P.maxComponent()};
-      if (SMDL_UNLIKELY(!(renormalize > 0.0f))) {
-        // Every bin hit the majorant: the chain carries no throughput
-        // in any wavelength, so the path is dead.
-        beta = Color();
-        return false;
-      }
-      P *= 1.0f / renormalize;
-    }
+  // One pair for the free-flight draw and the hero band together, so the
+  // segment costs the sampler one pair rather than two.
+  const float2 u{float2(sampler)};
+  const float xi{u.x};
+  const int hero{Sampler::indexOf(u.y, int(mHaze.sigmaC.size()))};
+  // Both the collision and the segment end are placed by their shape
+  // rather than their distance. The shape is monotone, so the two
+  // orders agree, and only a collision pays the inversion. The end is
+  // clamped because an unbounded segment that never turns upward has
+  // infinite depth, and infinity times a band whose extinction has
+  // underflowed to zero is not a number.
+  const float sScatter{-smdl::fastLog(1.0f - xi) / mHaze.sigmaC[size_t(hero)]};
+  const float sEnd{std::min(smdl::Haze::shape(mHaze.k, tEnd), FLOAT_MAX)};
+  const bool hasScattered{sScatter < sEnd};
+  const float depth{hasScattered ? sScatter : sEnd};
+  Color Tr{};
+  fillTransmittance(Tr, mHaze.sigmaC, depth);
+  if (hasScattered) {
+    // The extinction at the collision is the origin spectrum times a
+    // factor common to every band, which cancels between the
+    // scattering weight and the balance heuristic that normalizes it.
+    const float invNorm{1.0f / averageOfProducts(mHaze.sigmaC, Tr)};
+    applyHazeScatterWeight(beta, mHaze.sigmaC, mHaze.albedo, Tr, invNorm);
+    t = smdl::Haze::shapeInverse(mHaze.k, sScatter);
+    return true;
   }
-  const float norm{P.average()};
-  float *SMDL_RESTRICT pBeta{beta.data()};
-  for (size_t i = 0; i < n; i++) pBeta[i] *= pP[i] / norm;
+  applySurvivalWeight(beta, Tr, 1.0f / Tr.average());
   return false;
 }
 
+SMDL_NO_INLINE bool Medium::sampleDistanceHomogeneous(Sampler &sampler,
+                                                      float tEnd, float &t,
+                                                      Color &beta,
+                                                      Color &emitted) const {
+  // The emitted radiance along the segment is deterministic for a
+  // homogeneous medium: the integral of transmittance times the
+  // emission coefficient to the segment end, per bin, regardless of
+  // where scattering is sampled below. The extinction-free limit is
+  // linear in distance, so an unbounded segment through an emissive
+  // vacuum is clamped rather than infinite.
+  const auto &mu{mSigmaT};
+  if (SMDL_UNLIKELY(mHasEmission))
+    accumulateHomogeneousEmission(emitted, mEmission, mu, std::min(tEnd, 1e8f));
+  // The closed-form estimator: the free-flight distance against one
+  // uniformly drawn hero wavelength, weighted by the single-sample MIS
+  // balance heuristic over all bins. Wavelengths with zero extinction
+  // keep transmittance 1 through the min against FLT_MAX. One pair for
+  // the draw and the hero band together, and the free flight off the
+  // complement of the canonical draw, which is in (0, 1): the same
+  // exponential, without the libm call.
+  const float2 u{float2(sampler)};
+  const float xi{u.x};
+  const int hero{Sampler::indexOf(u.y, int(mu.size()))};
+  const float tScatter{-smdl::fastLog(1.0f - xi) / mu[size_t(hero)]};
+  Color Tr{};
+  fillTransmittance(Tr, mu, std::min({tScatter, tEnd, FLOAT_MAX}));
+  if (tScatter < tEnd) {
+    applyScatterWeight(beta, mSigmaS, Tr, 1.0f / averageOfProducts(mu, Tr));
+    // Only an overlap has a phase function to choose; a single medium
+    // must not draw here, or every render with a medium moves onto a
+    // different sampler dimension.
+    if (SMDL_UNLIKELY(mHasOverlap))
+      pickScatterComponent(float(sampler), mSigmaS, beta);
+    t = tScatter;
+    return true;
+  }
+  applySurvivalWeight(beta, Tr, 1.0f / Tr.average());
+  return false;
+}
+
+SMDL_NO_INLINE bool Medium::sampleDistanceTracked(Sampler &sampler, float tEnd,
+                                                  float &t, Color &beta,
+                                                  Color &emitted) const {
+  // Delta tracking against the scalar majorant, generalizing the same
+  // spectral strategy: the hero wavelength drives the real-or-null
+  // classification, and the per-bin products of null factors carry the
+  // balance-heuristic weight through the chain. `P` is meaningful only
+  // up to a common scale, which cancels in every weight, so it is
+  // renormalized as it goes to keep the products from underflowing,
+  // which flush-to-zero makes more necessary, not less: a product that
+  // underflows reaches exactly zero at the smallest normal float.
+  //
+  // The chain draws from a plain generator seeded by the sampler rather
+  // than from the sampler itself, so that this call consumes a FIXED
+  // number of low-discrepancy dimensions: a variable number here would
+  // push every draw after the medium onto different dimensions from
+  // sample to sample, destroying the stratification of the rest of the
+  // path.
+  if (SMDL_UNLIKELY(!(mMajorant > 0.0f))) return false;
+  const int hero{sampler.index(int(mSigmaA.size()))};
+  smdl::RNG rng{nextSeed64(sampler)};
+  Color P{1.0f};
+  // The coefficients of one tentative collision, held across the chain:
+  // `evaluateCoefficients()` overwrites every band of all three.
+  Color sigmaA{}, sigmaS{}, emission{};
+  const auto majorantOf{[&](const smdl::MajorantSpan &span) {
+    // The constant base plus the grid part at the span's scale; a single
+    // medium is all grid part, so this is plain scaling.
+    return mMajorantBase + mMajorantGrid * span.scale;
+  }};
+  const auto collide{
+      [&](float tCur, const smdl::MajorantSpan &span, float m, float &tau) {
+        evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emission);
+        // The medium's own emission accumulates at every tentative
+        // collision, before classification: the chain-survival density
+        // times the per-bin null-product weight integrates, in expectation,
+        // transmittance times the emission coefficient over the whole
+        // segment, at no extra query. The same balance-heuristic
+        // normalization as the terminal weights applies, and the common
+        // renormalization of `P` cancels.
+        if (SMDL_UNLIKELY(mHasEmission)) {
+          if (const float pdfEmit{m * P.average()}; pdfEmit > 0.0f)
+            accumulateTrackedEmission(emitted, emission, P, 1.0f / pdfEmit);
+        }
+        const float muTHero{sigmaA[size_t(hero)] + sigmaS[size_t(hero)]};
+        if (rng.generateFloat() * m < muTHero) {
+          // A real collision: weight by the scattering coefficient over the
+          // mixture density of all heroes having produced this chain, the
+          // absorption folded into the weight rather than terminating, as
+          // in the homogeneous path.
+          const float pdf{averageOfExtinctionProducts(sigmaA, sigmaS, P)};
+          if (SMDL_UNLIKELY(!(pdf > 0.0f))) return Outcome::DEAD;
+          applyScatterWeight(beta, sigmaS, P, 1.0f / pdf);
+          if (SMDL_UNLIKELY(mHasOverlap))
+            pickScatterComponent(rng.generateFloat(), sigmaS, beta);
+          t = tCur;
+          return Outcome::SCATTERED;
+        }
+        // A null collision, and the next flight drawn before the chain is
+        // renormalized, so the logarithm overlaps the reduction. Every bin
+        // at the majorant means the chain carries no throughput in any
+        // wavelength: the path is dead.
+        const float renormalize{applyNullWeight(P, sigmaA, sigmaS, m)};
+        tau = -smdl::fastLog(rng.generateFloat());
+        if (SMDL_UNLIKELY(!(renormalize > 0.0f))) return Outcome::DEAD;
+        P *= 1.0f / renormalize;
+        return Outcome::CONTINUE;
+      }};
+  switch (track(rng, tEnd, majorantOf, collide)) {
+  case Outcome::SCATTERED:
+    return true;
+  case Outcome::DEAD:
+    beta.fill(0.0f);
+    return false;
+  default:
+    applySurvivalWeight(beta, P, 1.0f / P.average());
+    return false;
+  }
+}
+//--}
+
+//--{ Transmittance
 void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
-                       bool unbounded) const {
+                       bool isUnbounded) const {
   if (SMDL_UNLIKELY(!mHasMedium)) return;
   if (SMDL_UNLIKELY(mIsHaze)) {
-    // Closed-form Beer-Lambert against the analytic optical depth: a
-    // shadow ray through the haze is exact and draws nothing, which is
-    // the whole reason not to track it.
-    const float depth{
-        std::min(smdl::Haze::shape(mHazeK, unbounded ? INF : tEnd),
-                 std::numeric_limits<float>::max())};
-    float *SMDL_RESTRICT pBeta{beta.data()};
-    const float *SMDL_RESTRICT pSigmaC{mHazeSigmaC.data()};
-    for (size_t i = 0; i < beta.size(); i++)
-      pBeta[i] *= transmittance(pSigmaC[i] * depth);
-    return;
-  }
-  if (!mHeterogeneous) {
-    // Closed-form Beer-Lambert. The caller clamps 'tEnd' finite, so
+    attenuateHaze(tEnd, beta, isUnbounded);
+  } else if (!mIsHeterogeneous) {
+    // Closed-form Beer-Lambert. The caller clamps `tEnd` finite, so
     // wavelengths with zero extinction keep transmittance 1 instead of
     // producing 0 times infinity.
-    const Color mu{mSigmaA + mSigmaS};
-    float *SMDL_RESTRICT pBeta{beta.data()};
-    const float *SMDL_RESTRICT pMu{mu.data()};
-    for (size_t i = 0; i < mu.size(); i++)
-      pBeta[i] *= transmittance(pMu[i] * tEnd);
-    return;
+    attenuateBy(beta, mSigmaT, tEnd);
+  } else {
+    attenuateTracked(sampler, tEnd, beta);
   }
+}
+
+SMDL_NO_INLINE void Medium::attenuateHaze(float tEnd, Color &beta,
+                                          bool isUnbounded) const {
+  // Closed-form Beer-Lambert against the analytic optical depth: a
+  // shadow ray through the haze is exact and draws nothing, which is
+  // the whole reason not to track it.
+  attenuateBy(beta, mHaze.sigmaC,
+              std::min(smdl::Haze::shape(mHaze.k, isUnbounded ? INF : tEnd),
+                       FLOAT_MAX));
+}
+
+SMDL_NO_INLINE void Medium::attenuateTracked(Sampler &sampler, float tEnd,
+                                             Color &beta) const {
   // Residual ratio tracking (Novak et al. 2014): per span, the
   // extinction splits into a piecewise-constant control (the declared
   // majorant scaled by the span's lower bound) plus a residual. The
   // control transmittance is analytic, accumulated as an optical depth
   // and exponentiated once at the end; only the residual is ratio
   // tracked, at rate proportional to the majorant-minus-control gap. A
-  // brick whose bounds coincide costs no collisions at all; without a
+  // cell whose bounds coincide costs no collisions at all; without a
   // density hint the control is zero and this reduces to plain ratio
   // tracking. The per-bin expectation is exactly the transmittance for
   // residuals of either sign, so no hero selection or MIS weighting is
-  // involved. The loop draws from a seeded generator for the same
-  // fixed-dimension-count reason as in 'sampleDistance'.
+  // involved. The chain draws from a seeded generator for the same
+  // fixed-dimension-count reason as `sampleDistanceTracked()`.
   if (SMDL_UNLIKELY(!(mMajorant > 0.0f))) return;
-  auto rng{smdl::RNG(nextSeed64(sampler))};
-  int iter{0};
-  // See `sampleDistance()`; the emission this one asks for goes unread.
+  smdl::RNG rng{nextSeed64(sampler)};
   Color sigmaA{}, sigmaS{}, emissionUnused{};
-  auto spans{MajorantSpanIterator(mDensityGrid, mBrickOrg, mBrickDir,
-                                  mInvMaxValue, tEnd)};
-  MajorantSpan span{};
   Color controlDepth{};
-  // The control that `span.scaleMin` lower bounds is the grid
+  // The control that `span.scaleMin` lower bounds is the hinted
   // component's majorant alone; with overlap the base contribution of
   // the other components stays in the tracked rate at full strength.
-  const Color majorantColor{mGridMaxSigma};
-  // The band storage of everything the tracking loop touches, hoisted for
-  // the reason given in `sampleDistance()`; here every one of them is read
-  // at every tentative collision, so all of them are worth holding. They
-  // are distinct objects: only `beta` comes from the caller, and it is the
-  // path throughput, never a coefficient of this medium.
-  const size_t n{beta.size()};
-  float *SMDL_RESTRICT pBeta{beta.data()};
-  float *SMDL_RESTRICT pControlDepth{controlDepth.data()};
-  const float *SMDL_RESTRICT pMajorant{majorantColor.data()};
-  const float *SMDL_RESTRICT pA{sigmaA.data()};
-  const float *SMDL_RESTRICT pS{sigmaS.data()};
-  while (spans.next(span)) {
-    if (span.scaleMin > 0.0f) {
-      const float depth{span.scaleMin * (span.t1 - span.t0)};
-      for (size_t i = 0; i < n; i++) {
-        const float control{pMajorant[i] * depth};
-        pControlDepth[i] += control;
-      }
-    }
+  const Color control{mHint.majorant};
+  float invM{};
+  const auto majorantOf{[&](const smdl::MajorantSpan &span) {
+    if (span.scaleMin > 0.0f)
+      accumulateControlDepth(controlDepth, control,
+                             span.scaleMin * (span.t1 - span.t0));
     const float m{mMajorantGrid * (span.scale - span.scaleMin) + mMajorantBase};
-    if (!(m > 0.0f)) continue;
-    float tCur{span.t0};
-    const float invM{1.0f / m};
-    while (true) {
-      // The free flight off the canonical draw itself rather than off
-      // its complement: the two are equidistributed, and taking the
-      // logarithm of the draw keeps full precision where the flight is
-      // long, which is the tail that decides how many steps this loop
-      // runs.
-      tCur += -smdl::fastLog(rng.generateFloat()) * invM;
-      if (!(tCur < span.t1)) break;
-      if (SMDL_UNLIKELY(++iter > MAX_TENTATIVE_COLLISIONS)) {
-        beta = Color();
-        return;
-      }
-      evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emissionUnused);
-      // The residual factor per bin. The local clamp keeps the
-      // residual at most `m`, so the factor is nonnegative; where the
-      // extinction dips below the control the factor exceeds 1, which
-      // the estimator identity covers for residuals of either sign.
-      const float scaleMin{span.scaleMin};
-      for (size_t i = 0; i < n; i++) {
-        const float control{pMajorant[i] * scaleMin};
-        const float residual{(pA[i] + pS[i]) - control};
-        pBeta[i] *= (m - residual) / m;
-      }
-      if (SMDL_UNLIKELY(!(beta.maxComponent() > 0.0f))) {
-        beta = Color();
-        return;
-      }
-    }
+    invM = 1.0f / m;
+    return m;
+  }};
+  const auto collide{[&](float tCur, const smdl::MajorantSpan &span, float m,
+                         float &tau) {
+    evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emissionUnused);
+    applyResidualWeight(beta, sigmaA, sigmaS, control, span.scaleMin, m, invM);
+    tau = -smdl::fastLog(rng.generateFloat());
+    return SMDL_UNLIKELY(!(beta.maxComponent() > 0.0f)) ? Outcome::DEAD
+                                                        : Outcome::CONTINUE;
+  }};
+  if (track(rng, tEnd, majorantOf, collide) == Outcome::DEAD) {
+    beta.fill(0.0f);
+    return;
   }
   // The analytic control transmittance, one exponential per segment.
-  for (size_t i = 0; i < n; i++) pBeta[i] *= transmittance(pControlDepth[i]);
+  attenuateBy(beta, controlDepth, 1.0f);
 }
+//--}

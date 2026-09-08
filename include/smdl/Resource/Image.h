@@ -157,8 +157,8 @@ public:
   bool requestMipLevels(MipFilter filter = MIP_MEAN) noexcept {
     SMDL_SANITY_CHECK_MSG(!mTexels,
                           "mip levels must be requested before 'finishLoad()'");
-    if (mMipLevelsRequested && mMipFilter != filter) return false;
-    mMipLevelsRequested = true;
+    if (mHasRequestedMipLevels && mMipFilter != filter) return false;
+    mHasRequestedMipLevels = true;
     mMipFilter = filter;
     return true;
   }
@@ -207,7 +207,7 @@ public:
   /// 1 for each doubling of the maximum extent, so the last level is
   /// always 1x1.
   [[nodiscard]] int getNumLevels() const noexcept {
-    return mMipLevelsRequested ? mNumLevels : 1;
+    return mHasRequestedMipLevels ? mNumLevels : 1;
   }
 
   /// Get the texel size in bytes.
@@ -315,7 +315,7 @@ private:
   /// Unlike `getNumLevels()`, this waits for the generation itself, so
   /// it is what the routines that walk the storage must ask.
   [[nodiscard]] int getNumLevelsInMemory() const noexcept {
-    return mMipLevelsGenerated ? mNumLevels : 1;
+    return mHasGeneratedMipLevels ? mNumLevels : 1;
   }
 
   /// The format.
@@ -338,13 +338,13 @@ private:
   int mNumLevels{1};
 
   /// Are mip levels requested? Sticky, see `requestMipLevels()`.
-  bool mMipLevelsRequested{false};
+  bool mHasRequestedMipLevels{false};
 
   /// The filter of the requested chain, see `requestMipLevels()`.
   MipFilter mMipFilter{MIP_MEAN};
 
   /// Are mip levels generated? I.e., do levels 1 and up hold texels?
-  bool mMipLevelsGenerated{false};
+  bool mHasGeneratedMipLevels{false};
 
   /// The byte offset of each mip level in `mTexels`. Has one entry per
   /// allocated level, and entry 0 is always 0.

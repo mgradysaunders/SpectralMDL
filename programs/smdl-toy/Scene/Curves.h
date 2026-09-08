@@ -25,21 +25,21 @@
 ///
 /// **State conventions** (the fiber answer to `Primitive.h`'s):
 ///
-/// - `texture_coordinate[0]` is `(strandU, v)`: `strandU` runs 0 at the
+/// - `textureCoordinate[0]` is `(strandU, v)`: `strandU` runs 0 at the
 ///   root to 1 at the tip, uniformly by segment count; `v` runs across
 ///   the ribbon's width mapped to [0, 1], and is 0 on a tube, where
 ///   Embree defines no across-parameter.
-/// - `texture_tangent_u[0]` is the fiber tangent, root toward tip: the
+/// - `textureTangentU[0]` is the fiber tangent, root toward tip: the
 ///   axis a hair BSDF's azimuth is measured around.
 /// - The shading and geometry normal of a **tube** is the true swept
 ///   surface normal; of a **ribbon**, the camera-facing normal (the ray
 ///   direction reversed and made perpendicular to the fiber), which is
 ///   the standard flat-hair approximation and the reason ribbons are
 ///   the fast-and-far mode rather than the closeup mode.
-/// - `texture_coordinate[1]` is the strand's root UV when the file
-///   carries the column (`texture_space_max` becomes 2), so a scalp
+/// - `textureCoordinate[1]` is the strand's root UV when the file
+///   carries the column (`textureSpaceCount` becomes 2), so a scalp
 ///   texture drives per-strand color without per-strand materials.
-/// - `texture_density` stays 0: fibers opt out of the ray-cone LOD
+/// - `textureDensity` stays 0: fibers opt out of the ray-cone LOD
 ///   machinery, honoring the zero-means-off convention.
 ///
 /// Curves do not register as area lights; an emissive material bound to
@@ -110,8 +110,6 @@ public:
 /// points, and commit its scene. The caller interns `matIndex` and
 /// owns the result; the geometry shares the point buffer, so the result
 /// must not be relocated afterward.
-[[nodiscard]] std::unique_ptr<Curves> makeCurves(RTCDevice device,
-                                                 CurvesFile file,
-                                                 const CurvesSpec &spec,
-                                                 uint32_t matIndex,
-                                                bool robustIntersection);
+[[nodiscard]] std::unique_ptr<Curves>
+makeCurves(RTCDevice device, CurvesFile file, const CurvesSpec &spec,
+           uint32_t matIndex, bool useRobustIntersection);

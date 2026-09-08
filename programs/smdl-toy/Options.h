@@ -31,14 +31,14 @@
 struct CompileOptions final {
   smdl::OptLevel optLevel{smdl::OPT_LEVEL_O2};
 
-  bool enableDebug{};
+  bool isDebugEnabled{};
 };
 //--}
 
 //--{ Camera Options
 /// Framing the camera from the scene bounds instead of stating it.
 struct AutolookFlags final {
-  bool enabled{};
+  bool isEnabled{};
 
   /// The azimuth, whose default an asset manifest's front azimuth gets
   /// to supply when the flag is silent.
@@ -88,7 +88,7 @@ struct CameraFlags final {
 
   Flag<float> distortionK2{};
 
-  Flag<bool> distortionFit{};
+  Flag<bool> shouldFitDistortion{};
 
   Flag<float> vignetting{};
 
@@ -125,7 +125,7 @@ struct ImageOptions final {
   /// to the file being resumed.
   std::string outputSpectrum{};
 
-  bool outputSpectrumGiven{};
+  bool wasOutputSpectrumGiven{};
 
   std::string resume{};
 };
@@ -163,7 +163,7 @@ struct SkyFlags final {
 
 /// The exterior haze, which the layout's `haze` directive also sets.
 struct HazeFlags final {
-  bool on{};
+  bool isOn{};
 
   /// No haze, whichever source asked for it.
   Flag<bool> none{};
@@ -193,9 +193,9 @@ struct SamplingOptions final {
 
 /// SD-tree path guiding.
 struct GuideOptions final {
-  bool enabled{};
+  bool isEnabled{};
 
-  bool adrrs{};
+  bool useADRRS{};
 
   /// The fraction of samples drawn from the BSDF rather than the guide.
   Flag<float> bsdfFraction{};
@@ -215,10 +215,10 @@ struct GridOptions final {
 
   /// Did either grid flag speak? A resumed render with neither adopts
   /// the grid recorded in the file it resumes from.
-  bool given{};
+  bool wasGiven{};
 
   /// Draw each sample's own grid from within the bands.
-  bool jitter{};
+  bool shouldJitter{};
 };
 
 /// How the picture is computed: the budget, the estimators, and the
@@ -237,13 +237,13 @@ struct RenderFlags final {
   /// filled by the staging.
   MNEEOptions mnee{};
 
-  bool mneeEnabled{};
+  bool useMNEE{};
 
-  bool mneeReport{};
+  bool shouldReportMNEE{};
 
-  bool mneeSunOnly{};
+  bool useMNEESunOnly{};
 
-  bool mneeTestNormalHook{};
+  bool shouldTestMNEENormalHook{};
 
   /// Aim light selection at every emitter, whatever the layout marks.
   bool allLights{};
@@ -269,13 +269,13 @@ struct SceneOptions final {
 
   std::vector<std::string> assetDirs{};
 
-  /// `State::animation_time` at shutter open, in seconds: which instant
+  /// `State::animationTime` at shutter open, in seconds: which instant
   /// of the scene's own timeline this render photographs. The command
   /// line is its only source, so one `.camera` file renders every frame
   /// of a shot and a layout that spans seconds is a sequence.
   float time{};
 
-  bool ground{};
+  bool hasGround{};
 
   /// The ground plane's height. Giving it implies `ground`.
   Flag<float> groundZ{};
@@ -299,11 +299,11 @@ struct UtilityOptions final {
 
   std::string outputPlaces{};
 
-  bool listMaterials{};
+  bool shouldListMaterials{};
 
-  bool listObjects{};
+  bool shouldListObjects{};
 
-  bool json{};
+  bool useJSON{};
 
   /// Compile every material the MDL files declare, not only the ones
   /// the scene asks for.
@@ -325,7 +325,7 @@ struct UtilityOptions final {
   /// since it takes an optional value.
   std::string profile{};
 
-  bool profiling{};
+  bool isProfiling{};
 };
 //--}
 

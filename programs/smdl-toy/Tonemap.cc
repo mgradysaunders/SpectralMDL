@@ -13,6 +13,7 @@
 
 //--{ Spectral to RGB
 
+namespace {
 // The value at `fraction` of the way through `values`, by partial sort:
 // the whole of what the auto exposure and the fused-deviation report
 // need, and cheaper than sorting for one order statistic.
@@ -22,8 +23,7 @@
 // array, which is correct because every call re-partitions around its
 // own index. Zero for an empty vector, which is the answer every caller
 // wants for "no pixels to look at".
-[[nodiscard]] static float nthValue(std::vector<float> &values,
-                                    double fraction) {
+[[nodiscard]] float nthValue(std::vector<float> &values, double fraction) {
   if (values.empty()) return 0.0f;
   const size_t i{std::min(size_t(fraction * double(values.size() - 1)),
                           values.size() - 1)};
@@ -39,12 +39,12 @@
 // Both are unit-peak here; the 683 and 1700 lm/W the night filter
 // weighs them by are its own, and deciding whether the grid can see
 // color at all needs only the shape.
-[[nodiscard]] static double photopicV(double lambda) {
+[[nodiscard]] double photopicV(double lambda) {
   const double um{lambda * 1.0e-3};
   return 1.019 * std::exp(-285.4 * (um - 0.5590) * (um - 0.5590));
 }
 
-[[nodiscard]] static double scotopicV(double lambda) {
+[[nodiscard]] double scotopicV(double lambda) {
   const double um{lambda * 1.0e-3};
   return 0.992 * std::exp(-321.9 * (um - 0.5030) * (um - 0.5030));
 }
@@ -53,7 +53,7 @@
 // see: a fine sweep of the visible, crediting the mass wherever some
 // band lies within 30nm. This decides whether the CIE projection of
 // the film means anything as a picture.
-[[nodiscard]] static double visibleCoverage(const Color &wavelengths) {
+[[nodiscard]] double visibleCoverage(const Color &wavelengths) {
   double total{};
   double covered{};
   for (double lambda = 380.0; lambda <= 780.0; lambda += 5.0) {
@@ -70,8 +70,7 @@
 }
 
 // The band nearest a wavelength in nm.
-[[nodiscard]] static size_t nearestBand(const Color &wavelengths,
-                                        float lambda) {
+[[nodiscard]] size_t nearestBand(const Color &wavelengths, float lambda) {
   size_t best{0};
   for (size_t i = 1; i < wavelengths.size(); i++)
     if (std::abs(wavelengths[i] - lambda) <
@@ -83,11 +82,12 @@
 // The film mean of one band, with a non-finite value (a pixel some
 // material poisoned) read as black, so that everything downstream can
 // assume finite input and use plain min and max.
-[[nodiscard]] static double filmMean(const smdl::SpectralFilm &film, size_t x,
-                                     size_t y, size_t i) noexcept {
+[[nodiscard]] double filmMean(const smdl::SpectralFilm &film, size_t x,
+                              size_t y, size_t i) noexcept {
   const double value{film.mean(x, y, i)};
   return std::isfinite(value) ? value : 0.0;
 }
+} // namespace
 
 std::vector<float> resolveRGB(smdl::Compiler &compiler,
                               const smdl::SpectralFilm &film,
@@ -109,7 +109,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   auto mode{Mode::TRUE_COLOR};
   if (numBands < 3) {
     mode = Mode::GRAYSCALE;
-  } else if (policy.forceFalseColor || coverage < 0.35) {
+  } else if (policy.shouldForceFalseColor || coverage < 0.35) {
     mode = Mode::FALSE_COLOR;
   }
   if (mode == Mode::GRAYSCALE) {
@@ -148,7 +148,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
     std::snprintf(note, sizeof(note),
                   "spectral to RGB: false color%s, R=%.0fnm G=%.0fnm "
                   "B=%.0fnm (the grid covers %.0f%% of the visible)\n",
-                  policy.forceFalseColor ? " (forced)" : "",
+                  policy.shouldForceFalseColor ? " (forced)" : "",
                   double(wavelengths[bandR]), double(wavelengths[bandG]),
                   double(wavelengths[bandB]), 100.0 * coverage);
     std::cerr << note;
@@ -202,11 +202,12 @@ constexpr float PBR_NEUTRAL_OFFSET{0.04f};
 constexpr float PBR_NEUTRAL_START{0.8f - PBR_NEUTRAL_OFFSET};
 constexpr float PBR_NEUTRAL_DESATURATION{0.15f};
 
+namespace {
 // The achromatic action of the tone mapper: what it does to a gray,
 // which is the scalar curve the local operator needs to invert. The
 // color path agrees with this on grays by construction, because the mix
 // toward the peak is a no-op when every channel is the peak.
-[[nodiscard]] static float pbrNeutralGray(float value) noexcept {
+[[nodiscard]] float pbrNeutralGray(float value) noexcept {
   const float peak{value < PBR_NEUTRAL_TOE_END ? 6.25f * value * value
                                                : value - PBR_NEUTRAL_OFFSET};
   if (peak < PBR_NEUTRAL_START) return peak;
@@ -214,7 +215,7 @@ constexpr float PBR_NEUTRAL_DESATURATION{0.15f};
   return 1.0f - d * d / (peak + d - PBR_NEUTRAL_START);
 }
 
-[[nodiscard]] static float pbrNeutralGrayInverse(float display) noexcept {
+[[nodiscard]] float pbrNeutralGrayInverse(float display) noexcept {
   if (!(display > 0.0f)) return 0.0f;
   if (display < PBR_NEUTRAL_OFFSET) return std::sqrt(display / 6.25f);
   if (display < PBR_NEUTRAL_START) return display + PBR_NEUTRAL_OFFSET;
@@ -222,7 +223,7 @@ constexpr float PBR_NEUTRAL_DESATURATION{0.15f};
   return d * d / (1.0f - display) - d + PBR_NEUTRAL_START + PBR_NEUTRAL_OFFSET;
 }
 
-static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
+void pbrNeutralRGB(const float *rgb, float *out) noexcept {
   std::array<float, 3> color = {std::max(rgb[0], 0.0f), std::max(rgb[1], 0.0f),
                                 std::max(rgb[2], 0.0f)};
   // Subtracting the offset from every channel, tapering to zero as the
@@ -249,6 +250,7 @@ static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
   for (auto &channel : color) channel += mix * (newPeak - channel);
   out[0] = color[0], out[1] = color[1], out[2] = color[2];
 }
+} // namespace
 
 // A display curve: a monotone map from a linear display-referred value
 // to the [0, 1] display range, with an inverse.
@@ -340,15 +342,16 @@ struct Plane final {
   }
 };
 
+namespace {
 // Clamp a possibly out-of-bounds tap back into the image, so edges
 // repeat rather than darken.
-[[nodiscard]] static size_t clampIndex(long i, size_t size) noexcept {
+[[nodiscard]] size_t clampIndex(long i, size_t size) noexcept {
   return size_t(std::clamp<long>(i, 0, long(size) - 1));
 }
 
 // Burt-Adelson reduce: the separable [1 4 6 4 1]/16 kernel, then keep
 // the even samples.
-[[nodiscard]] static Plane pyramidDown(const Plane &src) {
+[[nodiscard]] Plane pyramidDown(const Plane &src) {
   constexpr float K[5]{1.0f / 16, 4.0f / 16, 6.0f / 16, 4.0f / 16, 1.0f / 16};
   const size_t sizeX{std::max<size_t>((src.sizeX + 1) / 2, 1)};
   const size_t sizeY{std::max<size_t>((src.sizeY + 1) / 2, 1)};
@@ -381,8 +384,7 @@ struct Plane final {
 // and the collapse agree, but the proper kernel is what keeps each
 // Laplacian level band-passed, and fusion reweights those levels
 // against each other.
-[[nodiscard]] static Plane pyramidUp(const Plane &src, size_t sizeX,
-                                     size_t sizeY) {
+[[nodiscard]] Plane pyramidUp(const Plane &src, size_t sizeX, size_t sizeY) {
   auto tap{
       [](const Plane &plane, size_t x, size_t y, long offsetX, long offsetY) {
         return plane.at(clampIndex(long(x) + offsetX, plane.sizeX),
@@ -414,15 +416,14 @@ struct Plane final {
 // How many pyramid levels an image of this size supports, stopping
 // before any dimension reaches zero. Fusion wants the full depth: the
 // coarsest level is what carries the large-scale exposure decisions.
-[[nodiscard]] static size_t pyramidDepth(size_t sizeX, size_t sizeY) noexcept {
+[[nodiscard]] size_t pyramidDepth(size_t sizeX, size_t sizeY) noexcept {
   size_t depth{1};
   for (size_t size = std::min(sizeX, sizeY); size > 1; size = (size + 1) / 2)
     depth++;
   return depth;
 }
 
-[[nodiscard]] static std::vector<Plane> buildGaussian(Plane image,
-                                                      size_t numLevels) {
+[[nodiscard]] std::vector<Plane> buildGaussian(Plane image, size_t numLevels) {
   auto levels{std::vector<Plane>()};
   levels.reserve(numLevels);
   for (size_t l = 0; l + 1 < numLevels; l++) {
@@ -437,8 +438,7 @@ struct Plane final {
 // The Laplacian pyramid: level l holds the detail lost in reducing
 // level l, and the last level is the residual that everything is
 // rebuilt on top of.
-[[nodiscard]] static std::vector<Plane> buildLaplacian(Plane image,
-                                                       size_t numLevels) {
+[[nodiscard]] std::vector<Plane> buildLaplacian(Plane image, size_t numLevels) {
   auto levels{std::vector<Plane>()};
   levels.reserve(numLevels);
   for (size_t l = 0; l + 1 < numLevels; l++) {
@@ -453,7 +453,7 @@ struct Plane final {
   return levels;
 }
 
-[[nodiscard]] static Plane collapseLaplacian(const std::vector<Plane> &levels) {
+[[nodiscard]] Plane collapseLaplacian(const std::vector<Plane> &levels) {
   auto image{levels.back()};
   for (size_t l = levels.size() - 1; l-- > 0;) {
     auto expanded{pyramidUp(image, levels[l].sizeX, levels[l].sizeY)};
@@ -463,11 +463,13 @@ struct Plane final {
   }
   return image;
 }
+} // namespace
 
 //--}
 
 //--{ Exposure fusion
 
+namespace {
 // Exposure fusion (Mertens, Kautz, and Van Reeth 2007) over a synthetic
 // bracket of the render itself, reduced to a smooth per-pixel exposure.
 // The renderer knows the scene's whole dynamic range, so the "bracket"
@@ -485,7 +487,7 @@ struct Plane final {
 //
 // Returns an empty vector when the image has too little to work with,
 // which the caller reads as "no local exposure".
-[[nodiscard]] static std::vector<float>
+[[nodiscard]] std::vector<float>
 computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
                   size_t numPixelsY, const DisplayCurve &curve,
                   const TonemapOptions &options, float &autoExposure) {
@@ -592,6 +594,7 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
   std::cerr << note;
   return gain;
 }
+} // namespace
 
 //--}
 
@@ -610,6 +613,7 @@ struct Appearance final {
   float scale{1.0f};
 };
 
+namespace {
 // Perceptual low-light reproduction in the spirit of Jensen et
 // al. 2000 and Kirk & O'Brien 2011. The film gives the
 // absolute photopic and scotopic luminances of every pixel; the
@@ -621,9 +625,9 @@ struct Appearance final {
 // visible at any absolute level: moonlight comes out dim-looking,
 // desaturated, and blue, while a daylight render passes through
 // as ordinary auto-exposed color.
-[[nodiscard]] static Appearance
-applyNightFilter(const std::vector<float> &rgbImage,
-                 const smdl::SpectralFilm &film, const Color &wavelengths) {
+[[nodiscard]] Appearance applyNightFilter(const std::vector<float> &rgbImage,
+                                          const smdl::SpectralFilm &film,
+                                          const Color &wavelengths) {
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
   // The luminous efficiency curves at their photometric peaks, 683 lm/W
@@ -730,15 +734,17 @@ applyNightFilter(const std::vector<float> &rgbImage,
   std::cerr << note;
   return Appearance{std::move(nightImage), float(0.4 + 0.6 * meanConeWeight)};
 }
+} // namespace
 
 //--}
 
 //--{ Command line spec
 
+namespace {
 // Split on `separator`, keeping empty pieces so that a malformed spec
 // like 'filmic+' is caught by the empty-name check rather than ignored.
-[[nodiscard]] static std::vector<std::string> splitSpec(std::string_view text,
-                                                        char separator) {
+[[nodiscard]] std::vector<std::string> splitSpec(std::string_view text,
+                                                 char separator) {
   auto pieces{std::vector<std::string>()};
   for (size_t pos{};;) {
     const size_t end{text.find(separator, pos)};
@@ -754,9 +760,9 @@ applyNightFilter(const std::vector<float> &rgbImage,
 // The comma-separated floats after a stage's ':'. Every parameter is
 // positional and optional, so the caller reads back only as many as
 // arrived and leaves the rest at their defaults.
-[[nodiscard]] static std::vector<float>
-parseStageParams(const std::string &stage, const std::string &params,
-                 size_t maxCount) {
+[[nodiscard]] std::vector<float> parseStageParams(const std::string &stage,
+                                                  const std::string &params,
+                                                  size_t maxCount) {
   auto values{std::vector<float>()};
   for (const auto &piece : splitSpec(params, ',')) {
     const char *ptr{piece.c_str()};
@@ -774,14 +780,15 @@ parseStageParams(const std::string &stage, const std::string &params,
                                    smdl::Quoted(stage)));
   return values;
 }
+} // namespace
 
 //--}
 
 TonemapOptions parseTonemapOptions(std::string_view spec) {
   auto options{TonemapOptions{}};
-  bool haveNight{};
-  bool haveCurve{};
-  bool haveFusion{};
+  bool hasNight{};
+  bool hasCurve{};
+  bool hasFusion{};
   for (const auto &stage : splitSpec(spec, '+')) {
     auto name{stage};
     auto params{std::string()};
@@ -795,17 +802,17 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
       throw smdl::Error("expected a -tonemap stage name (the stages are "
                         "joined by '+')");
     if (name == "night") {
-      if (haveNight)
+      if (hasNight)
         throw smdl::Error("expected at most one 'night' stage in -tonemap");
       if (hasParams)
         throw smdl::Error("expected no parameters for -tonemap 'night'");
-      haveNight = true;
-      options.night = true;
+      hasNight = true;
+      options.isNight = true;
     } else if (name == "gamma" || name == "log" || name == "filmic") {
-      if (haveCurve)
+      if (hasCurve)
         throw smdl::Error("expected at most one display curve in -tonemap "
                           "('gamma', 'log', or 'filmic')");
-      haveCurve = true;
+      hasCurve = true;
       options.curve = name == "gamma" ? TonemapCurve::GAMMA
                       : name == "log" ? TonemapCurve::LOG
                                       : TonemapCurve::FILMIC;
@@ -819,10 +826,10 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
                             "positive");
       }
     } else if (name == "fusion") {
-      if (haveFusion)
+      if (hasFusion)
         throw smdl::Error("expected at most one 'fusion' stage in -tonemap");
-      haveFusion = true;
-      options.fusion = true;
+      hasFusion = true;
+      options.useFusion = true;
       const auto values{hasParams ? parseStageParams(name, params, 3)
                                   : std::vector<float>()};
       if (values.size() > 0) options.fusionStrength = values[0];
@@ -856,11 +863,12 @@ std::vector<uint8_t> tonemap(const TonemapOptions &options,
   auto curve{DisplayCurve{}};
   curve.kind = options.curve;
   curve.logDecades = options.logDecades;
-  auto appearance{options.night ? applyNightFilter(rgbImage, film, wavelengths)
-                                : Appearance{rgbImage, 1.0f}};
+  auto appearance{options.isNight
+                      ? applyNightFilter(rgbImage, film, wavelengths)
+                      : Appearance{rgbImage, 1.0f}};
   auto gain{std::vector<float>()};
   float autoExposure{1.0f};
-  if (options.fusion)
+  if (options.useFusion)
     gain = computeFusionGain(appearance.image, numPixelsX, numPixelsY, curve,
                              options, autoExposure);
   const float scale{options.exposure * appearance.scale *

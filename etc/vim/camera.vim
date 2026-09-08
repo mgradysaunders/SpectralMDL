@@ -12,8 +12,7 @@
 " block are exactly the ones that block accepts, and anything else there is
 " flagged the way the parser flags it.
 "
-" A camera file is identified by `#smdl camera` on its first line. The
-" `.camera` extension is advisory, so detecting the magic catches the rest.
+" A camera file is identified by its `.camera` extension.
 "
 " Install: see the header of `layout.vim`, which covers both files.
 "
@@ -72,11 +71,6 @@ endif
 syn keyword cameraTodo contained TODO FIXME XXX HACK NOTE BUG
 
 syn match cameraComment display "#.*$" contains=cameraTodo,@Spell
-
-" The magic that identifies a camera file, which must be spelled exactly and
-" must begin the file. To the grammar it is only a comment, so it is defined
-" after one and wins the tie.
-syn match cameraMagic display "\%^#smdl camera\%(\s.*\)\=$"
 "--}
 
 "--{ Literals
@@ -133,7 +127,6 @@ syn sync minlines=100
 "--{ Highlight links
 hi def link cameraTodo            Todo
 hi def link cameraComment         Comment
-hi def link cameraMagic           PreProc
 
 hi def link cameraNumber          Number
 

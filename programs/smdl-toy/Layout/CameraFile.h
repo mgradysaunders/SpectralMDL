@@ -24,13 +24,9 @@
 
 #include "Layout/LayoutDiagnostics.h"
 
-/// The extension that conventionally marks a camera file. Advisory: the
-/// `#smdl camera` first line is what actually decides.
+/// The extension that marks a camera file, which is how the render finds
+/// the one beside a layout.
 constexpr std::string_view CAMERA_EXTENSION = ".camera";
-
-/// The magic that must begin the first line of a camera file, spelled
-/// the way `LAYOUT_MAGIC` is.
-constexpr std::string_view CAMERA_MAGIC = "#smdl camera";
 
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
@@ -80,7 +76,7 @@ public:
 class CameraSettings final : public CameraKeyable {
 public:
   std::optional<int> blades{};
-  std::optional<bool> distortionFit{};
+  std::optional<bool> shouldFitDistortion{};
 
   /// `shutter`: the seconds from shutter open to shutter shut,
   /// nonnegative, which `-shutter` overrides. Zero or unset is a shut

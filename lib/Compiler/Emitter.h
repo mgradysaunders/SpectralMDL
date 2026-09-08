@@ -76,15 +76,15 @@ public:
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
     builder.setFastMathFlags(fmf);
-    scope = pushScope(/*transparent=*/false); // The module root scope
+    scope = pushScope(/*isTransparent=*/false); // The module root scope
   }
 
   /// Push a new scope whose parent is the current scope. The caller is
   /// responsible for restoring `scope` (typically via `SMDL_PRESERVE`).
-  [[nodiscard]] Scope *pushScope(bool transparent) {
+  [[nodiscard]] Scope *pushScope(bool isTransparent) {
     auto newScope{context.makeScope()};
     newScope->parent = scope;
-    newScope->transparent = transparent;
+    newScope->isTransparent = isTransparent;
     return newScope;
   }
 
@@ -493,9 +493,9 @@ public:
   void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                    Func &&func) {
     SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak, labelContinue,
-                  inDefer, currentModule);
+                  isInDefer, currentModule);
     const auto depth0{unwindStack.size()};
-    scope = pushScope(/*transparent=*/false);
+    scope = pushScope(/*isTransparent=*/false);
     if (blockStart) {
       llvmMoveBlockToEnd(blockStart);
       builder.SetInsertPoint(blockStart);
@@ -525,7 +525,7 @@ public:
     handleScope(blockStart, blockAfterBody, [&] {
       labelBreak = {unwindStack.size(), blockBreak};
       labelContinue = {unwindStack.size(), blockContinue};
-      inDefer = false;
+      isInDefer = false;
       std::invoke(std::forward<Func>(func));
     });
   }
@@ -673,7 +673,7 @@ public:
     SMDL_PRESERVE(scope, context.currentNamespacePath);
     for (auto &element : decl.identifier->elements)
       context.currentNamespacePath.push_back(element.name.srcName);
-    scope = pushScope(/*transparent=*/true);
+    scope = pushScope(/*isTransparent=*/true);
     decl.scope = scope;
     for (auto &each : decl.decls) emit(each);
     return Value();
@@ -772,7 +772,7 @@ public:
     // the enclosing scope.
     SMDL_PRESERVE(scope);
     const auto depth0{unwindStack.size()};
-    scope = pushScope(/*transparent=*/false);
+    scope = pushScope(/*isTransparent=*/false);
     for (auto &decl : expr.decls) emit(decl);
     auto value{rvalue(emit(expr.expr))};
     unwind(depth0);
@@ -884,8 +884,8 @@ public:
   Value emit(AST::Break &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelBreak)
-      stmt.srcLoc.throwError(inDefer ? "cannot 'break' from 'defer'"
-                                     : "nowhere to 'break'");
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'break' from 'defer'"
+                                       : "nowhere to 'break'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelBreak.depth);
       builder.CreateBr(labelBreak.block);
@@ -900,8 +900,8 @@ public:
   Value emit(AST::Continue &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelContinue)
-      stmt.srcLoc.throwError(inDefer ? "cannot 'continue' from 'defer'"
-                                     : "nowhere to 'continue'");
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'continue' from 'defer'"
+                                       : "nowhere to 'continue'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelContinue.depth);
       builder.CreateBr(labelContinue.block);
@@ -952,8 +952,8 @@ public:
   Value emit(AST::Return &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelReturn)
-      stmt.srcLoc.throwError(inDefer ? "cannot 'return' from 'defer'"
-                                     : "nowhere to 'return'");
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'return' from 'defer'"
+                                       : "nowhere to 'return'");
     emitLateIf(stmt.lateIf, [&] {
       Value value{};
       if (stmt.expr) value = rvalue(emit(stmt.expr));
@@ -1119,7 +1119,7 @@ public:
 
   /// Emit print.
   void emitPrint(Value file, Value value, const SourceLocation &srcLoc,
-                 bool quoteStrings = false);
+                 bool shouldQuoteStrings = false);
 
   void emitPrint(Value file, std::string_view value,
                  const SourceLocation &srcLoc) {
@@ -1170,7 +1170,7 @@ public:
   /// Resolve identifier to value.
   [[nodiscard]] Value resolveIdentifier(Span<const std::string_view> names,
                                         const SourceLocation &srcLoc,
-                                        bool voidByDefault = false);
+                                        bool shouldDefaultToVoid = false);
 
   /// The return structure of `resolveArguments()`.
   struct ResolvedArguments final {
@@ -1198,16 +1198,16 @@ public:
     }
 
     [[nodiscard]] std::optional<ArgumentList> getImpliedVisitArguments() const {
-      bool impliedVisit{false};
+      bool hasImpliedVisit{false};
       auto impliedVisitArgs{args};
       for (size_t i = 0; i < args.size(); i++) {
         if (argParams[i] != nullptr && //
             argParams[i]->type->isAbstract() &&
             args[i].value.type->isUnionOrPointerToUnion()) {
-          impliedVisitArgs[i].impliedVisit = impliedVisit = true;
+          impliedVisitArgs[i].hasImpliedVisit = hasImpliedVisit = true;
         }
       }
-      if (!impliedVisit) return std::nullopt;
+      if (!hasImpliedVisit) return std::nullopt;
       return std::move(impliedVisitArgs);
     }
 
@@ -1236,12 +1236,12 @@ public:
   /// \param[in] srcLoc
   /// The source location if applicable.
   ///
-  /// \param[in] dontEmit
+  /// \param[in] shouldSkipEmit
   /// Do not emit anything? If true and resolution is successful,
   /// do not actually emit the code for converting the arguments
   /// into the types and order of the parameters.
   ///
-  /// \param[in] passAggregatesIndirectly
+  /// \param[in] shouldPassAggregatesIndirectly
   /// Leave resolved values for parameters selected by `passesIndirectly()`
   /// memory-resident (lvalues) instead of loading them into SSA registers?
   /// Set by `FunctionType::invoke()` when emitting a real call that uses
@@ -1251,8 +1251,8 @@ public:
   ///
   [[nodiscard]] ResolvedArguments
   resolveArguments(const ParameterList &params, const ArgumentList &args,
-                   const SourceLocation &srcLoc, bool dontEmit = false,
-                   bool passAggregatesIndirectly = false);
+                   const SourceLocation &srcLoc, bool shouldSkipEmit = false,
+                   bool shouldPassAggregatesIndirectly = false);
 
   /// Can resolve arguments?
   ///
@@ -1268,7 +1268,7 @@ public:
                                          const ArgumentList &args,
                                          const SourceLocation &srcLoc,
                                          std::string *whyNot = nullptr) try {
-    auto res{resolveArguments(params, args, srcLoc, /*dontEmit=*/true)};
+    auto res{resolveArguments(params, args, srcLoc, /*shouldSkipEmit=*/true)};
     return true;
   } catch (const Error &error) {
     // Only resolution failures mean "no"; anything else propagates.
@@ -1367,7 +1367,7 @@ public:
   /// Is currently in defer statement? This allows for more specific error
   /// messages if the user tries to defer a `break`, `continue`, or `return`
   /// statement.
-  bool inDefer{};
+  bool isInDefer{};
 
   /// The pending results.
   llvm::SmallVector<Result> returns{};

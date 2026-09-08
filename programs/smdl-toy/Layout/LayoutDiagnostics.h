@@ -153,18 +153,18 @@ public:
   /// same way. Tabs in the source line are preserved in the marker
   /// prefix so the caret stays aligned however tabs display.
   [[nodiscard]] static std::string render(const LayoutDiagnostic &diagnostic,
-                                          bool colored);
+                                          bool useColors);
 
   /// Render every accumulated diagnostic, followed by `summary()` on its
   /// own line if there is anything to summarize.
-  [[nodiscard]] std::string renderAll(bool colored) const;
+  [[nodiscard]] std::string renderAll(bool useColors) const;
 
   /// The count line, e.g. `3 errors` or `1 error, 2 warnings`. Empty if
   /// nothing has been reported.
   [[nodiscard]] std::string summary() const;
 
   /// Print `renderAll()` to standard error.
-  void printAll(bool colored) const;
+  void printAll(bool useColors) const;
 
 private:
   std::deque<LayoutSource> mSources{};

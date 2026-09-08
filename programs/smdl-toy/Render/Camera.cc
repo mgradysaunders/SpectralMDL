@@ -6,15 +6,16 @@
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
 
+namespace {
 // Apply radial lens distortion to a sensor point, returning the ideal
 // image point to build the ray from. The model maps sensor to ideal, so
 // this is one polynomial evaluation with nothing to invert. `coneScale`
 // receives the change in this pixel's angular footprint, which seeds
 // the ray cone. Both are the identity when the coefficients are zero.
-[[nodiscard]] static float2 distortSensorPoint(float2 image, float k1, float k2,
-                                               float fitScale, float rCorner,
-                                               float focalLength,
-                                               float &coneScale) noexcept {
+[[nodiscard]] float2 distortSensorPoint(float2 image, float k1, float k2,
+                                        float fitScale, float rCorner,
+                                        float focalLength,
+                                        float &coneScale) noexcept {
   const float s2{lengthSquared(image) / (rCorner * rCorner)};
   const float scale{fitScale * (1 + s2 * (k1 + s2 * k2))};
   const float radial{fitScale * (1 + s2 * (3 * k1 + s2 * 5 * k2))};
@@ -29,6 +30,7 @@
       std::sqrt(std::max(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
   return imageIdeal;
 }
+} // namespace
 
 Camera::Camera(const CameraOptions &options) {
   if (options.blades != 0 && options.blades < 3)
@@ -72,13 +74,13 @@ Camera::Camera(const CameraOptions &options) {
   mLookFrom = options.lookFrom;
   mLookTo = options.lookTo;
   mLookUp = options.lookUp;
-  if (options.motion) {
+  if (options.hasMotion) {
     mLookFromShut = options.lookFromShut;
     mLookToShut = options.lookToShut;
     mLookUpShut = options.lookUpShut;
-    mMoving = !(smdl::isAllTrue(mLookFromShut == mLookFrom) &&
-                smdl::isAllTrue(mLookToShut == mLookTo) &&
-                smdl::isAllTrue(mLookUpShut == mLookUp));
+    mIsMoving = !(smdl::isAllTrue(mLookFromShut == mLookFrom) &&
+                  smdl::isAllTrue(mLookToShut == mLookTo) &&
+                  smdl::isAllTrue(mLookUpShut == mLookUp));
   }
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
@@ -86,8 +88,9 @@ Camera::Camera(const CameraOptions &options) {
   mDistortionK1 = options.distortionK1;
   mDistortionK2 = options.distortionK2;
   mHasDistortion = mDistortionK1 != 0 || mDistortionK2 != 0;
-  mDistortionScale =
-      options.distortionFit ? 1 / (1 + mDistortionK1 + mDistortionK2) : 1.0f;
+  mDistortionScale = options.shouldFitDistortion
+                         ? 1 / (1 + mDistortionK1 + mDistortionK2)
+                         : 1.0f;
   if (mHasDistortion) {
     SMDL_LOG_INFO(
         "Lens distortion: corner displacement ",
@@ -138,12 +141,12 @@ Camera::Camera(const CameraOptions &options) {
                   ", displaced ", options.catEye * mRimRadius,
                   " at the frame corner");
   }
-  if (mMoving) {
+  if (mIsMoving) {
     SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
                   length(mLookFromShut - mLookFrom),
                   " scene units and the target moves ",
                   length(mLookToShut - mLookTo));
-  } else if (options.motion) {
+  } else if (options.hasMotion) {
     SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
                   "rendering still");
   }

@@ -6,11 +6,12 @@
 
 #include "smdl/Resource/BSDFMeasurement.h"
 
+namespace {
 // Build an MBSDF file in memory. The data must contain
 // `numTheta * numTheta * numPhi` entries of 1 float (`TYPE_FLOAT`) or
 // 3 floats (`TYPE_FLOAT3`) in `(iThetao, iThetai, iPhi)` order.
-static std::string makeMBSDF(uint32_t type, uint32_t numTheta, uint32_t numPhi,
-                             const std::vector<float> &data) {
+std::string makeMBSDF(uint32_t type, uint32_t numTheta, uint32_t numPhi,
+                      const std::vector<float> &data) {
   std::string s{"NVIDIA ARC MBSDF V1\n"};
   s += "description=\"synthetic test data\"\n";
   s += "MBSDF_DATA=\n";
@@ -33,14 +34,14 @@ static std::string makeMBSDF(uint32_t type, uint32_t numTheta, uint32_t numPhi,
 
 // A smooth positive test value, symmetric in `(iThetao, iThetai)` so the
 // synthetic BSDF is reciprocal, and varying on all three axes.
-static float testValue(int iO, int iI, int iP) {
+float testValue(int iO, int iI, int iP) {
   return 0.1f + 0.05f * float(iO + iI) + 0.025f * float(iP);
 }
 
-static const int N_THETA{4};
-static const int N_PHI{4};
+const int N_THETA{4};
+const int N_PHI{4};
 
-static std::vector<float> testValuesFloat() {
+std::vector<float> testValuesFloat() {
   auto data{std::vector<float>()};
   for (int iO = 0; iO < N_THETA; iO++)
     for (int iI = 0; iI < N_THETA; iI++)
@@ -49,7 +50,7 @@ static std::vector<float> testValuesFloat() {
   return data;
 }
 
-static std::vector<float> testValuesFloat3() {
+std::vector<float> testValuesFloat3() {
   auto data{std::vector<float>()};
   for (int iO = 0; iO < N_THETA; iO++)
     for (int iI = 0; iI < N_THETA; iI++)
@@ -62,14 +63,12 @@ static std::vector<float> testValuesFloat3() {
 }
 
 // The zenith cell-center angle for the given index.
-static float thetaCenter(int i) {
+float thetaCenter(int i) {
   return 0.5f * smdl::PI * (float(i) + 0.5f) / float(N_THETA);
 }
 
 // The azimuth-difference cell-center angle for the given index.
-static float phiCenter(int i) {
-  return smdl::PI * (float(i) + 0.5f) / float(N_PHI);
-}
+float phiCenter(int i) { return smdl::PI * (float(i) + 0.5f) / float(N_PHI); }
 
 // Check that `directionPDF` and `directionSample` are consistent with each
 // other and with `interpolate` for the given outgoing direction:
@@ -78,8 +77,8 @@ static float phiCenter(int i) {
 //    sampled direction.
 // 3. Importance sampling must reproduce the projected-solid-angle integral
 //    of the measurement computed by independent quadrature.
-static void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
-                                         smdl::float3 wo) {
+void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
+                                  smdl::float3 wo) {
   double pdfIntegral{};
   double valueIntegral{};
   const int nY{128};
@@ -122,6 +121,7 @@ static void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
   CHECK(numInvalid == 0);
   CHECK(mcIntegral / n == doctest::Approx(valueIntegral).epsilon(0.02));
 }
+} // namespace
 
 TEST_CASE("BSDFMeasurement") {
   SUBCASE("Invalid measurement") {

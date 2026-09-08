@@ -1232,8 +1232,7 @@ def write_camera_file(scene, filepath, keys):
     block = camera_block(scene, keys)
     if not block:
         return ""
-    lines = ["#smdl camera",
-             "# Written by the SpectralMDL layout add-on from "
+    lines = ["# Written by the SpectralMDL layout add-on from "
              f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
              ""]
     lines.extend(block)
@@ -1742,7 +1741,6 @@ def write_layout(context, filepath, asset_root, bake, collection,
     if exposure != 1.0:
         hint += f" -exposure {exposure:.9g}"
     lines = [
-        "#smdl layout",
         "# Written by the SpectralMDL layout add-on from "
         f"{os.path.basename(bpy.data.filepath) or 'an unsaved file'}.",
         "#",

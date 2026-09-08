@@ -317,7 +317,7 @@ private:
   /// a static light.
   Placement mPlacement{};
 
-  /// The two keys, read only under `mMoving`.
+  /// The two keys, read only under `mIsMoving`.
   bool mIsMoving{};
   float4x4 mLightToWorld{float4x4(1.0f)};
   float4x4 mLightToWorldShut{float4x4(1.0f)};
@@ -360,7 +360,7 @@ struct LightSample final {
   float pdf{};
 
   /// The unoccluded incident radiance along the straight segment; zero
-  /// for a sample kept by `keepDark`.
+  /// for a sample kept by `shouldKeepDark`.
   Color Li{};
 
   /// Is the directional density a Dirac delta? True for a punctual
@@ -504,9 +504,9 @@ public:
   /// whatever the last sample left, to construct the emitting material
   /// instance there, and the other kinds only read it. Returns `false`
   /// on a zero probability sample, and on a zero radiance one unless
-  /// `keepDark`.
+  /// `shouldKeepDark`.
   ///
-  /// `keepDark` keeps an area or punctual sample that radiates nothing
+  /// `shouldKeepDark` keeps an area or punctual sample that radiates nothing
   /// toward `point`, with `Li` zero and the measure untouched. A manifold
   /// connection arrives at the light from its last crossing, not from
   /// `point`, and re-evaluates the radiance from there: a point on a lamp
@@ -514,7 +514,7 @@ public:
   /// the glass, is a legitimate target for it, and refusing such samples
   /// loses their transport outright, since the path tracer is barred from
   /// the same paths on the strength of the gather producing them. For
-  /// the same reason a `keepDark` draw of a sphere is uniform over its
+  /// the same reason a `shouldKeepDark` draw of a sphere is uniform over its
   /// whole area, where a plain draw is uniform over the cone the sphere
   /// subtends at `point` and never lands on the far side.
   ///
@@ -527,7 +527,7 @@ public:
   [[nodiscard]] bool sample(smdl::State &state, const smdl::SkyBasis &basis,
                             Sampler &sampler, const float3 &point, float time,
                             LightSample &lightSample,
-                            bool keepDark = false) const;
+                            bool shouldKeepDark = false) const;
 
   /// Re-evaluate a sample's incident radiance for a segment that
   /// arrives at the light from `incidencePoint` rather than from
@@ -563,7 +563,7 @@ public:
   /// direction `wi` pointing away from the emitting surface, with the
   /// `intensity_power` area normalization applied. Returns `false` if the
   /// instance does not emit in `wi`.
-  [[nodiscard]] bool emittedRadiance(const smdl::JIT::MaterialInstance &mat,
+  [[nodiscard]] bool emittedRadiance(const smdl::JIT::Material &material,
                                      uint32_t instIndex, const float3 &wi,
                                      Color &Le) const;
 
@@ -581,12 +581,12 @@ public:
   }
 
   /// Is an environment escape a caustic target's; see `isCausticLight()`.
-  [[nodiscard]] bool isCausticEnv() const noexcept { return mEnvCaustic; }
+  [[nodiscard]] bool isCausticEnv() const noexcept { return mHasEnvCaustic; }
 
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on face `faceIndex` of the given mesh instance, for
-  /// MIS when a BSDF sample happens to hit an emitter. `areaSampled`
-  /// says the gather at `point` drew by area, as a `keepDark` draw
+  /// MIS when a BSDF sample happens to hit an emitter. `isAreaSampled`
+  /// says the gather at `point` drew by area, as a `shouldKeepDark` draw
   /// does, rather than by a sphere's cone. `time` is the hit's shutter
   /// fraction, which a moving or deforming light's geometry is read at;
   /// the face is what a moving or deforming mesh light's density is
@@ -597,7 +597,7 @@ public:
   [[nodiscard]] float solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
-                                    const float3 &point, bool areaSampled,
+                                    const float3 &point, bool isAreaSampled,
                                     float time) const;
 
 private:
@@ -624,7 +624,7 @@ private:
   [[nodiscard]] bool sampleAreaMoving(const AreaLight &light,
                                       const MeshInstance &instance,
                                       Sampler &sampler, const float3 &point,
-                                      float time, bool keepDark, Hit &hit,
+                                      float time, bool shouldKeepDark, Hit &hit,
                                       float &positionPDF, float &conePDF) const;
 
   smdl::Compiler &mCompiler;
@@ -648,5 +648,5 @@ private:
   // TODO Revisit this?
   /// Is the environment a caustic target: true exactly while no light
   /// carries a mark, since the environment cannot be marked.
-  bool mEnvCaustic{true};
+  bool mHasEnvCaustic{true};
 };

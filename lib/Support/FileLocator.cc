@@ -27,7 +27,7 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
       add(parentPathOf(fileOrDir));
     }
   }
-  if (mSearchPwd) {
+  if (mShouldSearchPwd) {
     auto ec{std::error_code()};
     if (auto pwd{std::filesystem::current_path(ec)}; !ec) {
       add(pwd.string());

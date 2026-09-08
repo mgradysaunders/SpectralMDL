@@ -468,11 +468,11 @@ export color lookup_color(
   color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v, frame).xyz);
 
 /// The voxel value at integer `coord`, without gamma, filtering, or
-/// wrapping. This is the one place that knows the brick layout of
-/// `texture_3d`: resolve the brick through the brick table, then index
-/// the dense 16x16x16 block, where empty bricks and out-of-extent
-/// coordinates resolve to the uniform background value. Nothing is
-/// mirrored: 3D texture space needs no v-flip.
+/// wrapping. This and `voxelCorners()` are the two places that know the
+/// brick layout of `texture_3d`: resolve the brick through the brick
+/// table, then index the dense 16x16x16 block, where empty bricks and
+/// out-of-extent coordinates resolve to the uniform background value.
+/// Nothing is mirrored: 3D texture space needs no v-flip.
 @(pure)
 float voxelFetch(const texture_3d tex, const int3 coord) {
   return tex.background if (!tex.brick_table | #any(
@@ -483,6 +483,66 @@ float voxelFetch(const texture_3d tex, const int3 coord) {
   return tex.background if (brickIndex < 0);
   const int3 localCoord(coord % 16);
   return tex.brick_buffer[4096 * brickIndex + localCoord.x + 16 * (localCoord.y + 16 * localCoord.z)];
+}
+
+/// The eight corner voxels of a trilinear lookup, `v000` through `v111`
+/// with the digits in x, y, z order: corner `xyz` reads `ic0` on each
+/// axis whose digit is 0 and `ic1` on each axis whose digit is 1.
+struct VoxelCorners {
+  float v000;
+  float v100;
+  float v010;
+  float v110;
+  float v001;
+  float v101;
+  float v011;
+  float v111;
+};
+
+/// The corner voxels of the lookup between `ic0` and `ic1`, for a
+/// texture whose brick table the caller has checked. When both corners
+/// lie in one brick, which they do unless the lookup straddles a brick
+/// boundary, the brick resolves once and the corners are eight loads at
+/// offsets from the `ic0` voxel, signed because a wrapped or clamped
+/// `ic1` need not be `ic0 + 1`. Otherwise every corner goes through
+/// `voxelFetch()`, which handles the empty bricks and the out-of-extent
+/// coordinates on its own.
+@(pure)
+VoxelCorners voxelCorners(const texture_3d tex, const int3 ic0, const int3 ic1) {
+  const int3 lo(#min(ic0, ic1));
+  const int3 hi(#max(ic0, ic1));
+  if (#all((lo >= 0) & (hi < tex.extent) & ((lo >> 4) == (hi >> 4)))) {
+    const int3 brickCoord(lo >> 4);
+    const int brickIndex(
+      tex.brick_table[brickCoord.x + tex.brick_count.x * (brickCoord.y + tex.brick_count.y * brickCoord.z)]);
+    return VoxelCorners(
+      tex.background, tex.background, tex.background, tex.background,
+      tex.background, tex.background, tex.background, tex.background) if (brickIndex < 0);
+    const int3 local0(ic0 & 15);
+    const int3 step(ic1 - ic0);
+    const int base(4096 * brickIndex + local0.x + 16 * (local0.y + 16 * local0.z));
+    const int dx(step.x);
+    const int dy(16 * step.y);
+    const int dz(256 * step.z);
+    return VoxelCorners(
+      tex.brick_buffer[base],
+      tex.brick_buffer[base + dx],
+      tex.brick_buffer[base + dy],
+      tex.brick_buffer[base + dx + dy],
+      tex.brick_buffer[base + dz],
+      tex.brick_buffer[base + dx + dz],
+      tex.brick_buffer[base + dy + dz],
+      tex.brick_buffer[base + dx + dy + dz]);
+  }
+  return VoxelCorners(
+    voxelFetch(tex, int3(ic0.x, ic0.y, ic0.z)),
+    voxelFetch(tex, int3(ic1.x, ic0.y, ic0.z)),
+    voxelFetch(tex, int3(ic0.x, ic1.y, ic0.z)),
+    voxelFetch(tex, int3(ic1.x, ic1.y, ic0.z)),
+    voxelFetch(tex, int3(ic0.x, ic0.y, ic1.z)),
+    voxelFetch(tex, int3(ic1.x, ic0.y, ic1.z)),
+    voxelFetch(tex, int3(ic0.x, ic1.y, ic1.z)),
+    voxelFetch(tex, int3(ic1.x, ic1.y, ic1.z)));
 }
 
 /// The trilinearly filtered lookup at `coord` as `float4`, honoring the
@@ -519,26 +579,16 @@ export float4 lookup_float4(
   const auto ic0(iCorner0 + applyWrap(wrap, subextent, ic));
   const auto ic1(iCorner0 + applyWrap(wrap, subextent, ic + 1));
   coord -= ic;
-  // Eight corner fetches: unlike the 2D path there is no single dense
-  // buffer to index, and the wrapped corners may resolve to different
-  // bricks, so each corner goes through 'voxelFetch()'.
-  const auto v000(voxelFetch(tex, int3(ic0.x, ic0.y, ic0.z)));
-  const auto v100(voxelFetch(tex, int3(ic1.x, ic0.y, ic0.z)));
-  const auto v010(voxelFetch(tex, int3(ic0.x, ic1.y, ic0.z)));
-  const auto v110(voxelFetch(tex, int3(ic1.x, ic1.y, ic0.z)));
-  const auto v001(voxelFetch(tex, int3(ic0.x, ic0.y, ic1.z)));
-  const auto v101(voxelFetch(tex, int3(ic1.x, ic0.y, ic1.z)));
-  const auto v011(voxelFetch(tex, int3(ic0.x, ic1.y, ic1.z)));
-  const auto v111(voxelFetch(tex, int3(ic1.x, ic1.y, ic1.z)));
+  const auto v(voxelCorners(tex, ic0, ic1));
   const auto value(
     math::lerp(
       math::lerp(
-        math::lerp(v000, v100, coord.x),
-        math::lerp(v010, v110, coord.x),
+        math::lerp(v.v000, v.v100, coord.x),
+        math::lerp(v.v010, v.v110, coord.x),
         coord.y),
       math::lerp(
-        math::lerp(v001, v101, coord.x),
-        math::lerp(v011, v111, coord.x),
+        math::lerp(v.v001, v.v101, coord.x),
+        math::lerp(v.v011, v.v111, coord.x),
         coord.y),
       coord.z));
   return applyGamma(tex.gamma, #unpackFloat4(value));

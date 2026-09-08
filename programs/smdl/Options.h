@@ -38,7 +38,7 @@ enum class Subcommand {
 struct CompileOptions final {
   smdl::OptLevel optLevel{smdl::OPT_LEVEL_O2};
 
-  bool enableDebug{};
+  bool isDebugEnabled{};
 
   /// The wavelength grid the material code is compiled for, whose size
   /// is `Compiler::wavelengthBaseMax`. Resolved from
@@ -68,7 +68,7 @@ struct DocOptions final {
 
   /// Show declarations not marked `export` and those named with a
   /// leading underscore.
-  bool includeHidden{};
+  bool shouldIncludeHidden{};
 
   /// Document every builtin module, rather than only those a query
   /// names.
@@ -122,7 +122,7 @@ struct UtilityOptions final {
   /// since it takes an optional value.
   std::string profile{};
 
-  bool profiling{};
+  bool isProfiling{};
 };
 //--}
 

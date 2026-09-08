@@ -1,5 +1,5 @@
 /// CIE standard illuminants as spectral `color` values evaluated at the
-/// current wavelengths in `$state.wavelength_base`: the daylight D series,
+/// current wavelengths in `$state.wavelengthBase`: the daylight D series,
 /// reconstructed for any chromaticity on the daylight locus from the CIE
 /// S0/S1/S2 components tabulated over 300..830nm, plus the lamp series
 /// tabulated over 380..780nm: the fluorescent F series F1 through F12, the
@@ -44,7 +44,7 @@ export color illuminant_D(float2 xy) {
   color illuminant = color(0);
   smdlEvalIlluminantD(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     &xy);
   return illuminant;
@@ -91,7 +91,7 @@ export color illuminant_F(const int number = 1) {
   color illuminant = color(0);
   smdlEvalIlluminantF(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     number);
   return illuminant;
@@ -109,7 +109,7 @@ export color illuminant_HP(const int number = 1) {
   color illuminant = color(0);
   smdlEvalIlluminantHP(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     number);
   return illuminant;
@@ -125,7 +125,7 @@ export color illuminant_LED_B(const int number = 1) {
   color illuminant = color(0);
   smdlEvalIlluminantLED(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     (1 <= number && number <= 5) ? number : 0);
   return illuminant;
@@ -139,7 +139,7 @@ export color illuminant_LED_V(const int number = 1) {
   color illuminant = color(0);
   smdlEvalIlluminantLED(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     (1 <= number && number <= 2) ? number + 7 : 0);
   return illuminant;
@@ -152,7 +152,7 @@ export color illuminant_LED_BH1() {
   color illuminant = color(0);
   smdlEvalIlluminantLED(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     6);
   return illuminant;
@@ -165,7 +165,7 @@ export color illuminant_LED_RGB1() {
   color illuminant = color(0);
   smdlEvalIlluminantLED(
     $WAVELENGTH_BASE_MAX,
-    &$state.wavelength_base[0],
+    &$state.wavelengthBase[0],
     cast<&float>(&illuminant),
     7);
   return illuminant;

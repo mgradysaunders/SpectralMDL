@@ -17,7 +17,8 @@
 
 namespace smdl {
 
-[[nodiscard]] static std::string
+namespace {
+[[nodiscard]] std::string
 decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
   auto result{std::string(sourceCode.uncompressedSize, '\0')};
   auto resultSize{mz_ulong(sourceCode.uncompressedSize)};
@@ -28,6 +29,7 @@ decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
     throw Error("cannot decompress builtin module source code");
   return result;
 }
+} // namespace
 
 Context::Context(Compiler &compiler) : compiler(compiler) {
   // Initialize keywords.
@@ -70,7 +72,7 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"int4", getComptimeMetaType(getIntType(Extent(4)))},
       {"string", getComptimeMetaType(getStringType())},
       {"void", getComptimeMetaType(getVoidType())},
-      {"$DEBUG", getComptimeBool(compiler.enableDebug)},
+      {"$DEBUG", getComptimeBool(compiler.isDebugEnabled)},
       {"$HAS_NANOVDB", getComptimeBool(bool(SMDL_HAS_NANOVDB))},
       {"$HAS_PTEX", getComptimeBool(bool(SMDL_HAS_PTEX))},
       {"$DOUBLE_EPS",
@@ -84,9 +86,9 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"$INT_MAX", getComptimeInt(std::numeric_limits<int>::max())},
       {"$INF", getComptimeFloat(std::numeric_limits<float>::infinity())},
       {"$NAN", getComptimeFloat(std::numeric_limits<float>::quiet_NaN())},
-      {"$PI", getComptimeFloat(3.14159265359f)},
-      {"$HALF_PI", getComptimeFloat(0.5f * 3.14159265359f)},
-      {"$TWO_PI", getComptimeFloat(2 * 3.14159265359f)},
+      {"$PI", getComptimeFloat(PI)},
+      {"$HALF_PI", getComptimeFloat(0.5f * PI)},
+      {"$TWO_PI", getComptimeFloat(TWO_PI)},
       {"$SCENE_DATA",
        getComptimePtr(getVoidPointerType(), &compiler.sceneData)},
       {"$WAVELENGTH_BASE_MAX",
@@ -282,7 +284,8 @@ ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
   return type.get();
 }
 
-Type *Context::getCommonType(llvm::ArrayRef<Type *> types, bool defaultToUnion,
+Type *Context::getCommonType(llvm::ArrayRef<Type *> types,
+                             bool shouldDefaultToUnion,
                              const SourceLocation &srcLoc) {
   if (types.empty()) return getVoidType();
   if (types.size() == 1) return types[0];
@@ -304,7 +307,7 @@ Type *Context::getCommonType(llvm::ArrayRef<Type *> types, bool defaultToUnion,
     if ((typeA->isArithmeticScalar() && typeB->isColor()) ||
         (typeB->isArithmeticScalar() && typeA->isColor()))
       return getColorType();
-    if (!defaultToUnion || typeA->isAbstract() || typeB->isAbstract())
+    if (!shouldDefaultToUnion || typeA->isAbstract() || typeB->isAbstract())
       srcLoc.throwError("no common type between ", Quoted(typeA->displayName),
                         " and ", Quoted(typeB->displayName));
     return getUnionType({typeA, typeB});

@@ -85,7 +85,7 @@ unit_test "Regolith monotonicity" {
   // so in the SWIR window it must be exactly a no-op. In the visible it is
   // mixed-sign (lifts the blue end, lowers the red edge) and deliberately
   // not pinned per-lane.
-  if ($state.wavelength_min >= 710.0) {
+  if ($state.wavelengthMin >= 710.0) {
     const auto stained = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
     const auto scrubbed = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 0.0, 0.5);
     for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -120,8 +120,8 @@ unit_test "Regolith golden values" {
 
   // Note that lane 0 of the default state sits at 380 nm, below the 400 nm
   // floor of the table, so these also pin the clamp there.
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 720.0) < 1e-3) {
     const auto REF_MID = float[16](
       0.118134, 0.118083, 0.121067, 0.136785,
       0.153968, 0.166732, 0.183403, 0.200398,
@@ -175,8 +175,8 @@ unit_test "Regolith golden values" {
   //
   //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/regolith.smdl
   //
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 2400.0) < 1e-3) {
     const auto REF_SWIR_MID = float[16](
       0.392615, 0.408044, 0.451248, 0.495725,
       0.527023, 0.560280, 0.592839, 0.604953,
@@ -309,8 +309,8 @@ unit_test "Regolith presets" {
   // 380 nm, below the table's 400 nm floor, so these pin the
   // clamp there too.
   if ($WAVELENGTH_BASE_MAX == 16 &&
-      math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+      math::abs($state.wavelengthBase[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 720.0) < 1e-3) {
     // bright saturated red clay over karst: the steepest visible slope in
     // the roster, so the worst case for the table's 15.2 nm spacing.
     const auto REF_TERRA_ROSSA = float[16](

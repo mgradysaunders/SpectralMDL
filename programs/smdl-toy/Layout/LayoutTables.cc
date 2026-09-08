@@ -105,7 +105,7 @@ void printObjectTableJSON(const Layout &layout) {
         // Primitives and curves offer nothing to 'select', and this JSON
         // is what the mesh preparation tooling reads, so neither appears
         // here.
-        if (item.primitive.active() || item.curves.active) continue;
+        if (item.primitive.isActive() || item.curves.isActive) continue;
         if (!seenFiles.insert(item.fileName).second) continue;
         auto info{ObjectFileInfo()};
         const auto usage{importObjectUsage(item.fileName, &info)};
@@ -120,11 +120,11 @@ void printObjectTable(const Layout &layout) {
   auto &os{llvm::outs()};
   auto seenFiles{std::set<std::string, std::less<>>()};
   for (const auto &item : layout.items) {
-    if (item.primitive.active()) continue;
+    if (item.primitive.isActive()) continue;
     if (!seenFiles.insert(item.fileName).second) continue;
     // A groom has nothing to 'select', but silence would read as a
     // hole, so it gets its one-line summary.
-    if (item.curves.active) {
+    if (item.curves.isActive) {
       const auto file{readCurvesFile(item.fileName)};
       os << smdl::concat(item.fileName, ": curves, ", file.strandCount(),
                          " strand(s), ", file.points.size(), " point(s), ",
@@ -156,6 +156,7 @@ void printObjectTable(const Layout &layout) {
         "  place thing { translate 1 0 0 }\n";
 }
 
+namespace {
 // Merge the material usage by name across the layout, since that is how
 // the scene resolves them: one MDL material serves every file that names
 // it. A file is read once per (selection, assignment) key: its material
@@ -167,7 +168,7 @@ void printObjectTable(const Layout &layout) {
 // times the layout asks for the item.
 //
 [[nodiscard]]
-static std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
+std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
   auto importKey{[](const LayoutItem &item) {
     return std::pair(item.fileName + "|" + item.primitive.key() + "|" +
                          item.curves.key(),
@@ -186,7 +187,7 @@ static std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
     // A primitive or a groom is one implicit mesh with the one name its
     // asset assigned; there is no file to ask.
     auto itemUsage{std::vector<MaterialUsage>()};
-    if (item.primitive.active() || item.curves.active) {
+    if (item.primitive.isActive() || item.curves.isActive) {
       auto &entry{itemUsage.emplace_back()};
       entry.name = "";
       entry.meshCount = 1;
@@ -210,6 +211,7 @@ static std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
   }
   return usage;
 }
+} // namespace
 
 void printMaterialTableJSON(const smdl::Compiler *compiler,
                             const Layout &layout) {

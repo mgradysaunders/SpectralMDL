@@ -230,7 +230,7 @@ unit_test "Inline expansion at module scope" {
 unit_test "Visit statement leaves the visited variable alive" {
   // Non-union: the ternary promotes int to float, so 'u' is a plain
   // float variable and the binding aliases its alloca directly.
-  auto u = ($state.wavelength_min > 0.0) ? float(3.5) : int(7);
+  auto u = ($state.wavelengthMin > 0.0) ? float(3.5) : int(7);
   float sum = 0.0;
   visit v in u {
     sum = sum + v;
@@ -242,7 +242,7 @@ unit_test "Visit statement leaves the visited variable alive" {
 
   // Genuine optional union, visited twice and reused after: the case
   // pointer is derived storage either way, but pin the behavior.
-  auto w = ($state.wavelength_min > 0.0) ? float(2.5) : none;
+  auto w = ($state.wavelengthMin > 0.0) ? float(2.5) : none;
   float sum2 = 0.0;
   visit v in w {
     if $(!#isVoid(v)) {

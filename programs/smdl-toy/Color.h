@@ -53,7 +53,7 @@ struct WavelengthGrid final {
   /// The per-band quadrature weights in nanometers, empty for a
   /// uniformly spaced grid.
   ///
-  /// Empty keeps `State::wavelength_weight` null, which the library
+  /// Empty keeps `State::wavelengthWeight` null, which the library
   /// treats as uniform quadrature; a non-uniform `-wavelengths` grid
   /// fills this with trapezoid band widths, which both the JIT
   /// color-to-RGB conversion and the night tonemap integrate against.
@@ -82,20 +82,20 @@ struct WavelengthGrid final {
 
   /// Set all four members from one grid, which is the only way they are
   /// guaranteed to describe the same one.
-  void reset(smdl::Span<const float> grid, bool jitter) {
+  void reset(smdl::Span<const float> grid, bool shouldJitter) {
     numBands = grid.size();
     wavelengths = smdl::SpectralColor(grid);
     // Trapezoid band widths for a non-uniform grid. A uniform grid keeps
-    // the weights empty and `State::wavelength_weight` null, which the
+    // the weights empty and `State::wavelengthWeight` null, which the
     // library treats as uniform quadrature, so the default render is
     // unchanged to the bit.
     weights.clear();
-    bool uniform{true};
+    bool isUniform{true};
     for (size_t i = 2; i < grid.size(); i++)
       if (std::abs((grid[i] - grid[i - 1]) - (grid[1] - grid[0])) >
           1e-3f * (grid[1] - grid[0]))
-        uniform = false;
-    if (!uniform) {
+        isUniform = false;
+    if (!isUniform) {
       weights.resize(grid.size());
       for (size_t i = 0; i < grid.size(); i++) {
         const float lo{i > 0 ? grid[i - 1] : grid[0]};
@@ -104,7 +104,7 @@ struct WavelengthGrid final {
         weights[i] = 0.5f * (hi - lo);
       }
     }
-    bandEdges = jitter ? wavelengthBandEdges(grid) : std::vector<float>{};
+    bandEdges = shouldJitter ? wavelengthBandEdges(grid) : std::vector<float>{};
     // The endpoints come from the nominal grid rather than from the
     // wavelengths an evaluation carries, which under
     // `-wavelength-jitter` is the sample's own perturbed grid:
@@ -112,9 +112,9 @@ struct WavelengthGrid final {
     // constants, and the library's uniform quadrature falls back on
     // their difference, which must not wobble per sample.
     stateBase = smdl::State{};
-    stateBase.wavelength_min = grid[0];
-    stateBase.wavelength_max = grid[grid.size() - 1];
-    stateBase.wavelength_weight = weights.empty() ? nullptr : weights.data();
+    stateBase.wavelengthMin = grid[0];
+    stateBase.wavelengthMax = grid[grid.size() - 1];
+    stateBase.wavelengthWeight = weights.empty() ? nullptr : weights.data();
   }
 };
 
@@ -158,7 +158,7 @@ inline Shutter gRenderShutter{};
 /// `[0, 1]`, which is what the rays trace at and where every motion
 /// key sits, and the seconds `gRenderShutter.secondsAt(fraction)`,
 /// which is what the materials, lights, and media see as
-/// `State::animation_time`. The fraction must never reach a state and
+/// `State::animationTime`. The fraction must never reach a state and
 /// the seconds must never reach a ray, which is why the two travel as
 /// one value. There is no default: a zero pair is right only when the
 /// base time is zero.
@@ -206,8 +206,8 @@ makeRenderState(const smdl::SpectralColor &wavelengths,
                 float time = gRenderShutter.time) noexcept {
   smdl::State state{gRenderGrid.stateBase};
   state.allocator = allocator;
-  state.wavelength_base = wavelengths.data();
-  state.animation_time = time;
+  state.wavelengthBase = wavelengths.data();
+  state.animationTime = time;
   return state;
 }
 

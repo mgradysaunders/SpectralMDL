@@ -183,10 +183,10 @@ constexpr size_t SKY_MONOMIAL_COUNT = SKY_MONOMIALS.count;
     if (const int slot = skyViewSlot(rural::SKY_TERM_FEATURES[t][i]); slot >= 0)
       view[width++] = uint8_t(slot);
   for (size_t m = 0; m < SKY_MONOMIAL_COUNT; m++) {
-    bool same{true};
+    bool isSame{true};
     for (size_t i = 0; i < 3; i++)
-      same = same && SKY_MONOMIALS.features[m][i] == view[i];
-    if (same) return uint8_t(m);
+      isSame = isSame && SKY_MONOMIALS.features[m][i] == view[i];
+    if (isSame) return uint8_t(m);
   }
   return 0; // unreachable: the monomials above are every one of degree 3
 }
@@ -358,7 +358,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // user's scale is the whole of it.
   mScaleFactor = options.scaleFactor;
   mSunDiskScale = mScaleFactor / SUN_SOLID_ANGLE;
-  mSunEnabled = options.enableSun;
+  mIsSunEnabled = options.isSunEnabled;
   const float visibility{
       std::clamp(options.visibility, VISIBILITY_MIN_KM, VISIBILITY_MAX_KM)};
   const float waterVapor{
@@ -411,7 +411,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // both fits, which otherwise run identically with the source at the
   // moon's position. Scattered radiance is linear in the source
   // irradiance, so this is exact for the atmosphere.
-  if (options.moon) {
+  if (options.isMoon) {
     const auto multiplier = rolo_moon::evaluateMoonMultiplier(
         std::clamp(double(options.moonPhase), -180.0, 180.0),
         std::max(double(options.moonDistanceScale), 0.0));
@@ -496,7 +496,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // mean radiance from the tabulated density and clamp at zero,
   // falling back to the uncompensated weights if compensation removes
   // everything.
-  if (options.enableMISCompensation) {
+  if (options.isMISCompensationEnabled) {
     auto compensated{weights};
     float compensatedSum{};
     size_t texel{};
@@ -522,7 +522,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   for (size_t i = 0; i < rural::WAVELENGTH_COUNT; ++i)
     sunIntegral += mSunIrradiance[i];
   sunIntegral /= rural::WAVELENGTH_COUNT;
-  if (!mSunEnabled) sunIntegral = 0.0f;
+  if (!mIsSunEnabled) sunIntegral = 0.0f;
   mSunSelectionChance =
       sunIntegral + skyIntegral > 0
           ? std::min(sunIntegral / (sunIntegral + skyIntegral), 0.999f)
@@ -553,6 +553,28 @@ void SunSky::resolve(Span<const float> wavelens, SkyBasis &basis) const {
   }
 }
 
+namespace {
+// One contraction over the sky modes, band by band: the mean shape row
+// plus each mode row weighted by its fit output, floored at zero and
+// scaled. The rows are `restrict` against the output because a caller
+// passing a band buffer that overlaps them would otherwise cost a runtime
+// overlap check per row in front of a loop this short. They are
+// parameters rather than locals because clang derives no-alias metadata
+// only from the former.
+SMDL_ALWAYS_INLINE void contractSkyModes(float *SMDL_RESTRICT out,
+                                         const float *SMDL_RESTRICT rows,
+                                         const float *SMDL_RESTRICT outputs,
+                                         int numBands,
+                                         float brightnessScale) noexcept {
+  for (int j = 0; j < numBands; j++) {
+    float shape{rows[j]};
+    for (size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
+      shape += outputs[1 + m] * rows[(1 + m) * size_t(numBands) + j];
+    out[j] = std::max(shape, 0.0f) * brightnessScale;
+  }
+}
+} // namespace
+
 void SunSky::skyRadiance(const float3 &direction, const SkyBasis &basis,
                          float *radiance) const {
   const int numBands{basis.mNumBands};
@@ -568,30 +590,27 @@ void SunSky::skyRadiance(const float3 &direction, const SkyBasis &basis,
   float outputs[SKY_FIT_OUTPUT_COUNT]{};
   evalSkyFit(cosView, viewZenithDeg, cosRelAz, outputs);
   const float brightnessScale = fastExp(outputs[0]) * mScaleFactor;
-  // One contraction over the modes, band by band. The rows are
-  // `restrict` against the output because a caller passing a band buffer
-  // that overlaps them would otherwise cost a runtime overlap check per
-  // row in front of a loop this short.
-  const float *SMDL_RESTRICT rows[1 + rural::SKY_MODE_COUNT];
-  for (size_t m = 0; m < 1 + rural::SKY_MODE_COUNT; ++m)
-    rows[m] = basis.mRows.data() + m * size_t(numBands);
-  float *SMDL_RESTRICT out{radiance};
-  for (int j = 0; j < numBands; j++) {
-    float shape{rows[0][j]};
-    for (size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
-      shape += outputs[1 + m] * rows[1 + m][j];
-    out[j] = std::max(shape, 0.0f) * brightnessScale;
-  }
+  contractSkyModes(radiance, basis.mRows.data(), outputs, numBands,
+                   brightnessScale);
 }
+
+namespace {
+// The sun disk added onto the sky, see `contractSkyModes` for why the
+// pointers are parameters.
+SMDL_ALWAYS_INLINE void addSunDisk(float *SMDL_RESTRICT out,
+                                   const float *SMDL_RESTRICT disk,
+                                   int numBands, float scale) noexcept {
+  for (int j = 0; j < numBands; j++) out[j] += disk[j] * scale;
+}
+} // namespace
 
 void SunSky::radiance(const float3 &direction, const SkyBasis &basis,
                       float *radiance) const {
   skyRadiance(direction, basis, radiance);
-  if (mSunEnabled && !mSunIrradiance.empty() &&
+  if (mIsSunEnabled && !mSunIrradiance.empty() &&
       dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS) {
-    const float *SMDL_RESTRICT disk{basis.mSunIrradiance.data()};
-    float *SMDL_RESTRICT out{radiance};
-    for (int j = 0; j < basis.mNumBands; j++) out[j] += disk[j] * mSunDiskScale;
+    addSunDisk(radiance, basis.mSunIrradiance.data(), basis.mNumBands,
+               mSunDiskScale);
   }
 }
 
@@ -606,7 +625,7 @@ void SunSky::skyRadiance(const float3 &direction, int numWavelens,
 
 void SunSky::sunRadiance(int numWavelens, const float *wavelens,
                          float *radiance) const {
-  if (!mSunEnabled || mSunIrradiance.empty()) {
+  if (!mIsSunEnabled || mSunIrradiance.empty()) {
     std::fill(radiance, radiance + numWavelens, 0.0f);
     return;
   }
@@ -621,7 +640,7 @@ void SunSky::sunRadiance(int numWavelens, const float *wavelens,
 void SunSky::radiance(const float3 &direction, int numWavelens,
                       const float *wavelens, float *radiance) const {
   skyRadiance(direction, numWavelens, wavelens, radiance);
-  if (mSunEnabled && !mSunIrradiance.empty() &&
+  if (mIsSunEnabled && !mSunIrradiance.empty() &&
       dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS) {
     for (int j = 0; j < numWavelens; j++) {
       const auto lerp = channelOf(wavelens[j]);

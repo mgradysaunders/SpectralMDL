@@ -9,20 +9,21 @@
 
 namespace smdl {
 
+namespace {
 // The Koschmieder constant: the meteorological range is the distance at
 // which a black target against the horizon falls to the 2 percent
 // contrast threshold, so the extinction it names is -ln(0.02) over it.
-static constexpr float KOSCHMIEDER{3.912f};
+constexpr float KOSCHMIEDER{3.912f};
 
 // The 550nm Rayleigh scattering coefficient in inverse meters, which is
 // the share of the Koschmieder extinction that is not aerosol.
-static constexpr float RAYLEIGH_REFERENCE{float(hazeRural::RAYLEIGH_550) /
-                                          1000.0f};
+constexpr float RAYLEIGH_REFERENCE{float(hazeRural::RAYLEIGH_550) / 1000.0f};
 
 // The largest exponent `extinctionAt` will raise the reference
 // extinction by, which bounds a scene whose origin sits far below the
 // reference height instead of letting it become an opaque wall.
-static constexpr float MAX_EXPONENT{30.0f};
+constexpr float MAX_EXPONENT{30.0f};
+} // namespace
 
 MiePhase::MiePhase(float dropletSize) {
   // The piecewise diameter-to-parameter fits, supplemental sections 3.1
@@ -64,8 +65,9 @@ MiePhase::MiePhase(float dropletSize) {
   mWD = std::clamp(mWD, 0.0f, 1.0f);
 }
 
+namespace {
 // The Henyey-Greenstein phase function of the deflection cosine `u`.
-[[nodiscard]] static float hgPhase(float g, float u) noexcept {
+[[nodiscard]] float hgPhase(float g, float u) noexcept {
   const float denom{1.0f + g * g - 2.0f * g * u};
   return denom > 0.0f ? (1.0f - g * g) / (4.0f * PI * denom * std::sqrt(denom))
                       : 0.0f;
@@ -73,14 +75,14 @@ MiePhase::MiePhase(float dropletSize) {
 
 // The Draine phase function of the deflection cosine `u`, which is the
 // Henyey-Greenstein lobe reshaped by `a` and renormalized.
-[[nodiscard]] static float drainePhase(float g, float a, float u) noexcept {
+[[nodiscard]] float drainePhase(float g, float a, float u) noexcept {
   return hgPhase(g, u) * (1.0f + a * u * u) /
          (1.0f + a * (1.0f + 2.0f * g * g) / 3.0f);
 }
 
 // Sample the deflection cosine of the Henyey-Greenstein phase function
 // by analytic CDF inversion.
-[[nodiscard]] static float hgSample(float g, float xi) noexcept {
+[[nodiscard]] float hgSample(float g, float xi) noexcept {
   if (std::abs(g) < 1e-3f) return 1.0f - 2.0f * xi;
   const float t{(1.0f - g * g) / (1.0f - g + 2.0f * g * xi)};
   return (1.0f + g * g - t * t) / (2.0f * g);
@@ -91,8 +93,7 @@ MiePhase::MiePhase(float dropletSize) {
 // supplemental, in the numerically robust factoring the builtin
 // `df::_fogDraineSample` carries, evaluated in double because the
 // factoring cancels heavily.
-[[nodiscard]] static float draineSample(float gf, float af,
-                                        float xif) noexcept {
+[[nodiscard]] float draineSample(float gf, float af, float xif) noexcept {
   // Degenerates to Henyey-Greenstein as `alpha` vanishes, where the
   // quartic terms divide by zero.
   if (af < 1e-3f) return hgSample(gf, xif);
@@ -134,6 +135,7 @@ MiePhase::MiePhase(float dropletSize) {
   const double s{std::sqrt(std::max(t7, 0.0)) - std::sqrt(std::max(t5, 0.0))};
   return float(std::clamp((1.0 + g2 - 0.25 * s * s) / (2.0 * g), -1.0, 1.0));
 }
+} // namespace
 
 float MiePhase::evaluate(float u) const noexcept {
   return (1.0f - mWD) * hgPhase(mGHG, u) + mWD * drainePhase(mGD, mAlpha, u);
@@ -158,7 +160,8 @@ struct ChannelLerp final {
   int i0{}, i1{};
   float frac{};
 };
-[[nodiscard]] static ChannelLerp channelOf(float wavelenNm) noexcept {
+namespace {
+[[nodiscard]] ChannelLerp channelOf(float wavelenNm) noexcept {
   float t{(wavelenNm - float(hazeRural::WAVELENGTH_MIN)) /
           float(hazeRural::WAVELENGTH_DELTA)};
   if (!(t > 0.0f)) t = 0.0f;
@@ -171,10 +174,11 @@ struct ChannelLerp final {
   return lerp;
 }
 
-[[nodiscard]] static float lookup(const float *table,
-                                  const ChannelLerp &lerp) noexcept {
+[[nodiscard]] float lookup(const float *table,
+                           const ChannelLerp &lerp) noexcept {
   return table[lerp.i0] + lerp.frac * (table[lerp.i1] - table[lerp.i0]);
 }
+} // namespace
 
 Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
            float metersPerSceneUnit)

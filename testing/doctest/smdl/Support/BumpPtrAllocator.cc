@@ -64,9 +64,9 @@ TEST_CASE("BumpPtrAllocator") {
     // occasional request too big for the slab it would land in.
     size_t total{};
     while (total < 8 * smdl::BumpPtrAllocator::MIN_SLAB_SIZE) {
-      const bool huge{rng.generateInt(32) == 0};
-      const size_t size{huge ? size_t(rng.generateInt(200000) + 1)
-                             : size_t(rng.generateInt(300) + 1)};
+      const bool isHuge{rng.generateInt(32) == 0};
+      const size_t size{isHuge ? size_t(rng.generateInt(200000) + 1)
+                               : size_t(rng.generateInt(300) + 1)};
       const size_t align{size_t(1) << rng.generateInt(7)};
       auto *ptr{static_cast<unsigned char *>(allocator.allocate(size, align))};
       REQUIRE(ptr != nullptr);
@@ -78,11 +78,11 @@ TEST_CASE("BumpPtrAllocator") {
     }
     // Every block still reads back what it was filled with, so no two
     // overlapped and no slab was released early.
-    bool intact{true};
+    bool isIntact{true};
     for (const auto &block : blocks)
       for (size_t i = 0; i < block.size; i++)
-        intact &= block.ptr[i] == block.fill;
-    CHECK(intact);
+        isIntact &= block.ptr[i] == block.fill;
+    CHECK(isIntact);
     CHECK(blocks.size() > 1);
   }
   SUBCASE("reset rewinds into the first slab") {
@@ -116,9 +116,9 @@ TEST_CASE("BumpPtrAllocator") {
     void *after{allocator.allocate(16, 16)};
     REQUIRE(after != nullptr);
     CHECK(isAlignedTo(after, 16));
-    bool intact{true};
-    for (size_t i = 0; i < size; i++) intact &= ptr[i] == 0xAB;
-    CHECK(intact);
+    bool isIntact{true};
+    for (size_t i = 0; i < size; i++) isIntact &= ptr[i] == 0xAB;
+    CHECK(isIntact);
   }
   SUBCASE("typed allocation") {
     auto allocator{smdl::BumpPtrAllocator()};

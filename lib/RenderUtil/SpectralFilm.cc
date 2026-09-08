@@ -294,7 +294,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   file.ignore(std::streamsize(headerOffset));
   resize(nBands, nX, nY);
   addSamples(count);
-  const bool swapBytes{byteOrder != hostByteOrder()};
+  const bool shouldSwapBytes{byteOrder != hostByteOrder()};
   auto values{std::vector<double>(nBands)};
   for (size_t iY = 0; iY < nY; iY++) {
     for (size_t iX = 0; iX < nX; iX++) {
@@ -304,7 +304,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
         if (!file.read(bytes, 8))
           throw Error(concat("cannot load ", Quoted(fileName),
                              ": unexpected end of file"));
-        if (swapBytes) std::reverse(bytes, bytes + 8);
+        if (shouldSwapBytes) std::reverse(bytes, bytes + 8);
         double mean{};
         std::memcpy(&mean, bytes, 8);
         values[i] = mean * double(count);

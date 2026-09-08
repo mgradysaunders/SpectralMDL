@@ -125,13 +125,14 @@ TEST_CASE("SpectralColor reductions and predicates") {
   CHECK(c[3] == 6.0f);
 }
 
+namespace {
 // A color of `values` whose inline lanes past the size hold `past`, the
 // garbage the fixed-length arithmetic is allowed to leave there: the
 // span constructor leaves those lanes zero and a fill sets every lane,
 // so dividing, multiplying and subtracting the two plants whatever a
 // reduction has to ignore.
-static SpectralColor withLanesPastSize(std::initializer_list<float> values,
-                                       float past) {
+SpectralColor withLanesPastSize(std::initializer_list<float> values,
+                                float past) {
   const size_t n{values.size()};
   const std::vector<float> ones(n, 1.0f);
   const SpectralColor within{smdl::Span<const float>(ones.data(), n)};
@@ -151,6 +152,7 @@ static SpectralColor withLanesPastSize(std::initializer_list<float> values,
   result += given;
   return result;
 }
+} // namespace
 
 TEST_CASE("SpectralColor reductions ignore the inline lanes past the size") {
   const float nan{std::numeric_limits<float>::quiet_NaN()};
@@ -203,13 +205,16 @@ TEST_CASE("SpectralColor reductions ignore the inline lanes past the size") {
     CHECK(e[1] == 0.0f);
     CHECK(e[2] == 3.0f);
   }
-  SUBCASE("The average keeps the sequential summation order") {
+  SUBCASE("The average promises no summation order") {
+    // A cancelling series: every order loses a different unit of the
+    // large terms, so the answer is pinned only to that rounding, and
+    // the lanes past the size (NaN here) must stay out of it.
     const std::initializer_list<float> values{1e8f,  1.0f, -1e8f, 1.0f,
                                               0.25f, 3.0f, -7.0f};
     const SpectralColor c{withLanesPastSize(values, nan)};
-    float sum{};
-    for (float v : values) sum += v;
-    CHECK(c.average() == sum / 7.0f);
+    const float exact{-2.75f / 7.0f};
+    CHECK(std::abs(c.average() - exact) <= 16.0f / 7.0f);
+    CHECK(!std::isnan(c.average()));
   }
   SUBCASE("A full inline buffer and a heap buffer") {
     SpectralColor f{16, 2.0f};

@@ -20,12 +20,12 @@ struct Options;
 /// That is the whole reason a sequence can be paused at all.
 struct ResumedSequence final {
   /// Was `-resume` given?
-  bool requested{};
+  bool wasRequested{};
 
   /// Was a sequence actually loaded? False both when `-resume` was not
   /// given and when it named a file that does not exist yet, which is
   /// how a sequence is started rather than an error.
-  bool loaded{};
+  bool wasLoaded{};
 
   /// What the prior sessions accumulated, empty unless `loaded`. It is
   /// merged into the render's own film before the first sample, so that

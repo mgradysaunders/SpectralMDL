@@ -68,22 +68,21 @@ public:
 
   /// Construct empty.
   SpectralColor() noexcept {
-    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = 0.0f;
+    for (float &v : mBuf) v = 0.0f;
   }
 
   /// Construct with `size` bands of `value`.
   explicit SpectralColor(size_t size, float value = 0.0f) {
     // Whether or not the buffer ends up being the storage, so that the
     // common case writes it exactly once.
-    // NOLINTNEXTLINE
-    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
+    for (auto &v : mBuf) v = value;
     mSize = uint32_t(size);
     if (SMDL_UNLIKELY(!isInline())) allocateHeapFilled(value);
   }
 
   /// Construct with `values.size()` bands copied from `values`.
   explicit SpectralColor(Span<const float> values) {
-    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = 0.0f;
+    for (float &v : mBuf) v = 0.0f;
     mSize = uint32_t(values.size());
     if (SMDL_UNLIKELY(!isInline())) allocateHeap();
     if (mSize > 0) std::memcpy(data(), values.data(), mSize * sizeof(float));
@@ -140,7 +139,7 @@ public:
   void fill(float value) noexcept {
     // The buffer whether or not it is the storage, as the constructors
     // do, so that the common case is two vector stores and no branch.
-    for (size_t i = 0; i < INLINE_CAPACITY; i++) mBuf[i] = value;
+    for (float &v : mBuf) v = value;
     if (SMDL_UNLIKELY(!isInline()))
       for (size_t i = 0; i < mSize; i++) mPtr[i] = value;
   }
@@ -428,13 +427,14 @@ public:
     }
   }
 
-  /// Calculate the average.
+  /// Calculate the average. The summation order is not a contract: a
+  /// caller that wants a particular rounding forms its own sum. The
+  /// sequential loop stays because it unrolls straight at a short band
+  /// count, where a split accumulator over the runtime size vectorized
+  /// into a loop with a remainder and measured no faster.
   [[nodiscard]] float average() const noexcept {
     SMDL_DEBUG_CHECK(mSize > 0);
-    // Sequential, unlike the extrema below: the summation order is the
-    // documented contract, and splitting the accumulator would reassociate
-    // it. A band count this short cannot pay for that anyway.
-    const float *SMDL_RESTRICT p{data()};
+    const float *p{data()};
     float result{};
     for (size_t i = 0; i < mSize; i++) result += p[i];
     return result / float(mSize);
@@ -443,7 +443,7 @@ public:
   /// Find the maximum component.
   [[nodiscard]] float maxComponent() const noexcept {
     SMDL_DEBUG_CHECK(mSize > 0);
-    const float *SMDL_RESTRICT p{data()};
+    const float *p{data()};
     float r0{p[0]}, r1{r0}, r2{r0}, r3{r0};
     size_t i{1};
     for (; i + 3 < mSize; i += 4) {
@@ -460,7 +460,7 @@ public:
   /// Find the minimum component.
   [[nodiscard]] float minComponent() const noexcept {
     SMDL_DEBUG_CHECK(mSize > 0);
-    const float *SMDL_RESTRICT p{data()};
+    const float *p{data()};
     float r0{p[0]}, r1{r0}, r2{r0}, r3{r0};
     size_t i{1};
     for (; i + 3 < mSize; i += 4) {
@@ -502,10 +502,11 @@ private:
     return (uint32_t(1) << mSize) - 1u;
   }
 
-  /// `value` where `keep`, else zero, by an integer mask.
+  /// `value` where `shouldKeep`, else zero, by an integer mask.
   [[nodiscard]] SMDL_ALWAYS_INLINE static float
-  maskedFloat(float value, bool keep) noexcept {
-    return bitCast<float>(bitCast<uint32_t>(value) & (0u - uint32_t(keep)));
+  maskedFloat(float value, bool shouldKeep) noexcept {
+    return bitCast<float>(bitCast<uint32_t>(value) &
+                          (0u - uint32_t(shouldKeep)));
   }
 
   /// Move-construct the representation: take the heap allocation if

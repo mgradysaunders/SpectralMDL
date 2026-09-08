@@ -66,7 +66,7 @@ public:
 
     /// Was the scalar double-quoted? A quoted scalar is a string even when
     /// it spells a number.
-    bool quoted{};
+    bool isQuoted{};
 
     /// The items of a list, each a `SCALAR` or a `LIST` of scalars.
     std::vector<Node> items{};

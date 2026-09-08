@@ -4,10 +4,11 @@
 
 #include "smdl/Resource/LightProfile.h"
 
+namespace {
 // An axially symmetric Type C profile, brightest toward +Z and dimming
 // toward -Z. Candela values are multiples of 683 so the parsed
 // radiometric intensities are 1.0, 0.8, 0.6, 0.4, 0.2 W/sr.
-static const char *axialIES = //
+const char *axialIES = //
     "IESNA:LM-63-1995\n"
     "[TEST] Synthetic axially symmetric\n"
     "TILT=NONE\n"
@@ -19,7 +20,7 @@ static const char *axialIES = //
 
 // A quadrant symmetric Type C profile that varies in both the vertical
 // and horizontal angles, with no emission below the horizon.
-static const char *quadrantIES = //
+const char *quadrantIES = //
     "IESNA:LM-63-1995\n"
     "[TEST] Synthetic quadrant symmetric\n"
     "TILT=NONE\n"
@@ -38,7 +39,7 @@ static const char *quadrantIES = //
 //    sampled direction.
 // 3. Importance sampling `interpolate` must reproduce the intensity
 //    integral computed by independent quadrature.
-static void checkDistributionConsistency(const smdl::LightProfile &profile) {
+void checkDistributionConsistency(const smdl::LightProfile &profile) {
   double pdfIntegral{};
   double intensityIntegral{};
   const int nY{256};
@@ -81,6 +82,7 @@ static void checkDistributionConsistency(const smdl::LightProfile &profile) {
   CHECK(numInvalid == 0);
   CHECK(mcIntegral / n == doctest::Approx(intensityIntegral).epsilon(0.02));
 }
+} // namespace
 
 TEST_CASE("LightProfile") {
   SUBCASE("Invalid profile") {

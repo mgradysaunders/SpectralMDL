@@ -87,11 +87,12 @@ float4x4 composeTransform(const TransformDecomposition &parts) noexcept {
       float4(parts.translation.x, parts.translation.y, parts.translation.z, 1)};
 }
 
+namespace {
 // The shorter arc between two unit quaternions, falling back to a
 // normalized lerp when they are near enough that the sine divisor is
 // worth avoiding. The same shape as Embree's own slerp, which is what
 // carries the interpolation the rest of the way through the shutter.
-[[nodiscard]] static float4 slerp(const float4 &a, float4 b, float t) noexcept {
+[[nodiscard]] float4 slerp(const float4 &a, float4 b, float t) noexcept {
   float cosine{dot(a, b)};
   if (cosine < 0.0f) {
     b = -b;
@@ -107,6 +108,7 @@ float4x4 composeTransform(const TransformDecomposition &parts) noexcept {
   return (std::sin((1.0f - t) * theta) / sine) * a +
          (std::sin(t * theta) / sine) * b;
 }
+} // namespace
 
 float4x4 interpolateTransform(const float4x4 &a, const float4x4 &b,
                               float t) noexcept {

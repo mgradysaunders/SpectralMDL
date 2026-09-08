@@ -258,7 +258,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
 } // namespace
 
 std::string AnimationSpec::key() const {
-  if (off) return "off";
+  if (isOff) return "off";
   auto parts{std::vector<std::string>()};
   if (!clipName.empty())
     parts.push_back(smdl::concat("clip ", smdl::Quoted(clipName)));
@@ -267,7 +267,7 @@ std::string AnimationSpec::key() const {
   if (offset != 0)
     parts.push_back(smdl::concat("offset ", smdl::Precise(offset)));
   if (speed != 1) parts.push_back(smdl::concat("speed ", smdl::Precise(speed)));
-  if (once) parts.push_back("once");
+  if (shouldPlayOnce) parts.push_back("once");
   auto result{std::string()};
   for (const auto &part : parts) {
     if (!result.empty()) result += ' ';
@@ -293,7 +293,7 @@ std::vector<ClipInfo> listClips(const aiScene &assScene) {
 const aiAnimation *resolveClip(const aiScene &assScene,
                                const AnimationSpec &spec,
                                std::string_view fileName) {
-  if (spec.off) return nullptr;
+  if (spec.isOff) return nullptr;
   if (assScene.mNumAnimations == 0) {
     if (spec.hasClip())
       throw smdl::Error(smdl::concat("'animation' names a clip, but ",
@@ -344,7 +344,7 @@ double clipTime(const aiAnimation &clip, const AnimationSpec &spec,
   const double duration{clip.mDuration / tps};
   if (!(duration > 0)) return 0.0;
   double tau{double(spec.offset) + double(spec.speed) * seconds};
-  if (spec.once) {
+  if (spec.shouldPlayOnce) {
     tau = std::clamp(tau, 0.0, duration);
   } else {
     tau = std::fmod(tau, duration);

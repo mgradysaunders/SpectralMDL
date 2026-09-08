@@ -92,7 +92,7 @@ Declaration *Declaration::findThroughImport(Context &context,
 Declaration *Declaration::resolveInScope(Context &context,
                                          Span<const std::string_view> name,
                                          llvm::Function *llvmFunc, Scope *scope,
-                                         bool ignoreIfNotExported,
+                                         bool shouldIgnoreIfNotExported,
                                          uint64_t seqLimit,
                                          Declaration **unusableMatch) {
   if (!scope || name.empty()) return nullptr;
@@ -119,7 +119,7 @@ Declaration *Declaration::resolveInScope(Context &context,
               });
   for (const auto &[c, prefixSize] : candidates) {
     if (c->seq > seqLimit) continue;
-    if (ignoreIfNotExported && !c->isExported()) continue;
+    if (shouldIgnoreIfNotExported && !c->isExported()) continue;
     if (prefixSize == name.size()) {
       if (!c->value.isUsableInLLVMFunction(llvmFunc)) {
         if (unusableMatch && !*unusableMatch) *unusableMatch = c;
@@ -135,7 +135,7 @@ Declaration *Declaration::resolveInScope(Context &context,
       if (astNamespace->scope)
         if (auto found{
                 resolveInScope(context, name.subspan(prefixSize), llvmFunc,
-                               astNamespace->scope, ignoreIfNotExported,
+                               astNamespace->scope, shouldIgnoreIfNotExported,
                                std::numeric_limits<uint64_t>::max(), nullptr)})
           return found;
     }
@@ -146,7 +146,7 @@ Declaration *Declaration::resolveInScope(Context &context,
   for (auto itr{scope->imports.rbegin()}; itr != scope->imports.rend(); ++itr) {
     auto importDeclaration{*itr};
     if (importDeclaration->seq > seqLimit) continue;
-    if (ignoreIfNotExported && !importDeclaration->isExported()) continue;
+    if (shouldIgnoreIfNotExported && !importDeclaration->isExported()) continue;
     if (auto found{
             findThroughImport(context, name, llvmFunc, importDeclaration)})
       return found;
@@ -158,9 +158,9 @@ Declaration *Declaration::findInModule(Context &context,
                                        Span<const std::string_view> name,
                                        llvm::Function *llvmFunc,
                                        Module *module_,
-                                       bool ignoreIfNotExported) {
+                                       bool shouldIgnoreIfNotExported) {
   return resolveInScope(context, name, llvmFunc, module_->mRootScope,
-                        ignoreIfNotExported,
+                        shouldIgnoreIfNotExported,
                         std::numeric_limits<uint64_t>::max(), nullptr);
 }
 
@@ -223,7 +223,7 @@ bool ParameterList::getLookupSequence(std::string_view name,
 }
 
 bool Argument::isVisited() const {
-  return ((astArg && astArg->isVisited()) || impliedVisit) &&
+  return ((astArg && astArg->isVisited()) || hasImpliedVisit) &&
          value.type->isUnionOrPointerToUnion();
 }
 

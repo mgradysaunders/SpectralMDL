@@ -26,7 +26,8 @@ namespace fs = std::filesystem;
 // the sampler's registration can supply, is checked against the
 // radiant-exitance material it must agree with.
 
-static const char *MATERIALS{
+namespace {
+const char *MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
     "export material glow() = material(\n"
@@ -39,10 +40,11 @@ static const char *MATERIALS{
     "export material dull() = material(\n"
     "  surface: material_surface(scattering: "
     "df::diffuse_reflection_bsdf()));\n"};
+} // namespace
 
 namespace {
 // These fixtures carry no environment, so no sky is resolved for them.
-static const smdl::SkyBasis NO_SKY{};
+const smdl::SkyBasis NO_SKY{};
 
 // The scene the test cases share: built once per test case, since the
 // compiler must outlive everything evaluated through it.
@@ -113,7 +115,7 @@ public:
                                                 int numDraws) {
   auto allocator{smdl::BumpPtrAllocator()};
   auto state{makeRenderState(fixture.wavelengths, &allocator)};
-  auto drawn{std::set<uint32_t>()};
+  auto wasDrawn{std::set<uint32_t>()};
   Sampler sampler{};
   for (int i = 0; i < numDraws; i++) {
     sampler.startPixelSample(0, uint32_t(i));
@@ -122,11 +124,11 @@ public:
                       lightSample)) {
       CHECK(!lightSample.isDirac);
       CHECK(!lightSample.isInfinite);
-      drawn.insert(lightSample.hit.instIndex);
+      wasDrawn.insert(lightSample.hit.instIndex);
     }
     allocator.reset();
   }
-  return drawn;
+  return wasDrawn;
 }
 
 } // namespace
@@ -146,15 +148,15 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
                                          hit.point, hit.Ng, Fixture::RECEIVER,
                                          false, 0.0f)};
-    const bool sampled{i == 0 || i == 4};
-    CHECK((pdf > 0.0f) == sampled);
-    CHECK(lights.isCausticLight(hit.instIndex) == sampled);
+    const bool wasSampled{i == 0 || i == 4};
+    CHECK((pdf > 0.0f) == wasSampled);
+    CHECK(lights.isCausticLight(hit.instIndex) == wasSampled);
     allocator.reset();
   }
   // Over many draws the unmarked emitters never come up and both marked
   // ones do.
-  const auto drawn{drawnInstances(lights, fixture, 512)};
-  CHECK(drawn == std::set<uint32_t>{0, 4});
+  const auto wasDrawn{drawnInstances(lights, fixture, 512)};
+  CHECK(wasDrawn == std::set<uint32_t>{0, 4});
 }
 
 TEST_CASE("LightSampler: an unsampled emitter still normalizes by area") {
@@ -171,10 +173,11 @@ TEST_CASE("LightSampler: an unsampled emitter still normalizes by area") {
     CAPTURE(i);
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
-    const auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+    const auto material{smdl::JIT::Material(state, hit.materialDef)};
     const float3 wi{normalize(Fixture::RECEIVER - hit.point)};
-    const bool emits{lights.emittedRadiance(mat, hit.instIndex, wi, Le[i])};
-    CHECK(emits == (i != 2));
+    const bool doesEmit{
+        lights.emittedRadiance(material, hit.instIndex, wi, Le[i])};
+    CHECK(doesEmit == (i != 2));
     allocator.reset();
   }
   const float area{4.0f * PI * Fixture::RADIUS * Fixture::RADIUS};
@@ -199,13 +202,13 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
                                          hit.point, hit.Ng, Fixture::RECEIVER,
                                          false, 0.0f)};
-    const bool emitter{i != 2};
-    CHECK((pdf > 0.0f) == emitter);
-    CHECK(lights.isCausticLight(hit.instIndex) == emitter);
+    const bool isEmitter{i != 2};
+    CHECK((pdf > 0.0f) == isEmitter);
+    CHECK(lights.isCausticLight(hit.instIndex) == isEmitter);
     allocator.reset();
   }
-  const auto drawn{drawnInstances(lights, fixture, 512)};
-  CHECK(drawn == std::set<uint32_t>{0, 1, 3, 4});
+  const auto wasDrawn{drawnInstances(lights, fixture, 512)};
+  CHECK(wasDrawn == std::set<uint32_t>{0, 1, 3, 4});
 }
 
 TEST_CASE("LightSampler: what each kind of sample says") {
@@ -217,7 +220,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   LayoutLight lamp{};
   lamp.decl.kind = LayoutLightDecl::Kind::POINT;
   lamp.decl.power = 20.0f;
-  lamp.decl.powerSet = true;
+  lamp.decl.isPowerSet = true;
   lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
@@ -240,7 +243,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       numPunctual++;
       CHECK(!sample.isReachable);
       CHECK(sample.analyticIndex == 0);
-      CHECK(sample.hit.material == nullptr);
+      CHECK(sample.hit.materialDef == nullptr);
       CHECK(lengthSquared(sample.normal) == 0.0f);
       // A point light has no directional factor, so re-evaluating toward
       // any other point leaves the radiance alone.
@@ -252,7 +255,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       numArea++;
       CHECK(sample.isReachable);
       CHECK(sample.analyticIndex == INVALID_INDEX);
-      CHECK(sample.hit.material != nullptr);
+      CHECK(sample.hit.materialDef != nullptr);
       CHECK(lengthSquared(sample.normal - sample.hit.Ng) == 0.0f);
       // Toward the receiver it was sampled from, the re-evaluation is the
       // sample's own radiance; toward the sphere's center, behind the
@@ -281,7 +284,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   LayoutLight lamp{};
   lamp.decl.kind = LayoutLightDecl::Kind::POINT;
   lamp.decl.power = 2.0f * PI * 320.0f;
-  lamp.decl.powerSet = true;
+  lamp.decl.isPowerSet = true;
   lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
@@ -411,11 +414,11 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
   int num[2][2]{};
   for (int i = 0; i < NUM_DRAWS; i++) {
     for (int pass = 0; pass < 2; pass++) {
-      const bool keepDark{pass == 1};
+      const bool shouldKeepDark{pass == 1};
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
       if (!lights.sample(state, NO_SKY, sampler, ConeFixture::RECEIVER, 0.0f,
-                         sample, keepDark)) {
+                         sample, shouldKeepDark)) {
         allocator.reset();
         continue;
       }
@@ -433,14 +436,14 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
       CHECK(length(sample.target - ConeFixture::center(k)) ==
             doctest::Approx(ConeFixture::RADIUS).epsilon(1.0e-4));
       CHECK(sample.pdf ==
-            doctest::Approx(
-                lights.solidAnglePDF(uint32_t(k), sample.hit.faceIndex,
-                                     sample.target, sample.normal,
-                                     ConeFixture::RECEIVER, keepDark, 0.0f))
+            doctest::Approx(lights.solidAnglePDF(
+                                uint32_t(k), sample.hit.faceIndex,
+                                sample.target, sample.normal,
+                                ConeFixture::RECEIVER, shouldKeepDark, 0.0f))
                 .epsilon(1.0e-4));
       const double estimate{double(sample.Li[0]) * dot(sample.wi, axis) /
                             sample.pdf};
-      if (!keepDark) {
+      if (!shouldKeepDark) {
         // Inside the cone, facing the receiver, lit, at the cone's density.
         CHECK(dot(sample.wi, axis) >= cosThetaMax * (1.0f - 1.0e-5f));
         CHECK(dot(sample.normal, -sample.wi) > 0.0f);
@@ -524,7 +527,7 @@ public:
     light.decl.kind = LayoutLightDecl::Kind::DISK;
     light.decl.radius = RADIUS;
     light.decl.power = power;
-    light.decl.powerSet = true;
+    light.decl.isPowerSet = true;
     float4x4 lift{1.0f};
     lift[3] = float4(0.0f, 0.0f, HEIGHT, 1.0f);
     light.lightToWorld = lift * xf;
@@ -604,7 +607,7 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
       numShape++;
       sumShape += estimate;
       CHECK(!sample.isReachable);
-      CHECK(sample.hit.material == nullptr);
+      CHECK(sample.hit.materialDef == nullptr);
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(sample.Li[k] == doctest::Approx(LampFixture::RADIANCE));
       if (pmfShape < 0.0f) pmfShape = pmf;
@@ -692,7 +695,7 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     panel.decl.kind = LayoutLightDecl::Kind::RECT;
     panel.decl.size = float2(2.0f, 1.0f);
     panel.decl.power = LampFixture::POWER;
-    panel.decl.powerSet = true;
+    panel.decl.isPowerSet = true;
     panel.lightToWorld[0] = float4(3.0f, 0.0f, 0.0f, 0.0f);
     panel.lightToWorld[1] = float4(0.0f, 2.0f, 0.0f, 0.0f);
     panel.lightToWorld[3] = float4(0.0f, 0.0f, LampFixture::HEIGHT, 1.0f);
@@ -748,14 +751,14 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
                               fixture.wavelengths};
     int numDark{};
     for (int i = 0; i < 64; i++) {
-      // From above, a plain draw of the light fails, a `keepDark` draw
+      // From above, a plain draw of the light fails, a `shouldKeepDark` draw
       // keeps it with nothing arriving, and re-evaluating toward the
       // receiver below finds the radiance again.
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool drawn{
+      const bool wasDrawn{
           lights.sample(state, NO_SKY, sampler, above, 0.0f, sample)};
-      if (drawn) CHECK(sample.analyticIndex == INVALID_INDEX);
+      if (wasDrawn) CHECK(sample.analyticIndex == INVALID_INDEX);
       sampler.startPixelSample(0, uint32_t(i));
       if (!lights.sample(state, NO_SKY, sampler, above, 0.0f, sample, true) ||
           sample.analyticIndex != 0) {
@@ -764,7 +767,7 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       }
       CAPTURE(i);
       numDark++;
-      CHECK(!drawn);
+      CHECK(!wasDrawn);
       CHECK(sample.Li.isAllZero());
       CHECK(sample.normal.z == doctest::Approx(-1.0f));
       const Color below{lights.reevaluateLi(sample, state, above,
@@ -914,10 +917,10 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool drawn{lights.sample(state, NO_SKY, sampler,
-                                       MotionFixture::RECEIVER, u, sample)};
+        const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+                                          MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
-        if (!drawn || sample.hit.instIndex != 0) continue;
+        if (!wasDrawn || sample.hit.instIndex != 0) continue;
         numDrawn++;
         CAPTURE(i);
         CHECK(sample.hit.time == u);
@@ -948,10 +951,10 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool drawn{lights.sample(state, NO_SKY, sampler,
-                                       MotionFixture::RECEIVER, u, sample)};
+        const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+                                          MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
-        if (!drawn || sample.hit.instIndex != 3) continue;
+        if (!wasDrawn || sample.hit.instIndex != 3) continue;
         numDrawn++;
         CAPTURE(i);
         // On the quad as scaled at the time.
@@ -1155,10 +1158,10 @@ TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool drawn{lights.sample(state, NO_SKY, sampler,
-                                     DeformFixture::RECEIVER, u, sample)};
+      const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+                                        DeformFixture::RECEIVER, u, sample)};
       allocator.reset();
-      if (!drawn) continue;
+      if (!wasDrawn) continue;
       numDrawn++;
       CAPTURE(i);
       CHECK(sample.hit.time == u);
@@ -1172,7 +1175,7 @@ TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
       // its object area, the two being equal, and pays its own world
       // area then, so the density is one over the whole area.
       const float3 direction{sample.target - DeformFixture::RECEIVER};
-      const float distSq{smdl::dot(direction, direction)};
+      const float distSq{smdl::lengthSquared(direction)};
       const float cosTheta{
           std::fabs(smdl::dot(sample.normal, smdl::normalize(direction)))};
       CHECK(sample.pdf ==

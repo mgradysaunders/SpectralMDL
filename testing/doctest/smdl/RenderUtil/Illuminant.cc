@@ -4,40 +4,40 @@
 
 #include "smdl/RenderUtil/Illuminant.h"
 
+namespace {
 // Piecewise-Gaussian fits of the CIE 1931 XYZ color matching functions by
 // Wyman et al, used to integrate spectra to chromaticities independently of
 // the illuminant tables under test.
-static double wymanGaussian(double w, double mu, double invSigmaL,
-                            double invSigmaR) {
+double wymanGaussian(double w, double mu, double invSigmaL, double invSigmaR) {
   double t{(w - mu) * (w < mu ? invSigmaL : invSigmaR)};
   return std::exp(-0.5 * t * t);
 }
 
-static smdl::float2 kelvinToChromaticity(float kelvin) {
+smdl::float2 kelvinToChromaticity(float kelvin) {
   smdl::float2 xy{};
   smdl::smdlKelvinToChromaticity(kelvin, &xy);
   return xy;
 }
 
-static float evalIlluminantD(const smdl::float2 &xy, float wavelen) {
+float evalIlluminantD(const smdl::float2 &xy, float wavelen) {
   float illum{};
   smdl::smdlEvalIlluminantD(1, &wavelen, &illum, xy);
   return illum;
 }
 
-static float evalIlluminantF(int number, float wavelen) {
+float evalIlluminantF(int number, float wavelen) {
   float illum{};
   smdl::smdlEvalIlluminantF(1, &wavelen, &illum, number);
   return illum;
 }
 
-static float evalIlluminantHP(int number, float wavelen) {
+float evalIlluminantHP(int number, float wavelen) {
   float illum{};
   smdl::smdlEvalIlluminantHP(1, &wavelen, &illum, number);
   return illum;
 }
 
-static float evalIlluminantLED(int number, float wavelen) {
+float evalIlluminantLED(int number, float wavelen) {
   float illum{};
   smdl::smdlEvalIlluminantLED(1, &wavelen, &illum, number);
   return illum;
@@ -45,7 +45,7 @@ static float evalIlluminantLED(int number, float wavelen) {
 
 // Integrate the given spectral power distribution against the CIE 1931
 // color matching functions and return the resulting chromaticity.
-template <typename Spd> static smdl::float2 integrateChromaticity(Spd &&spd) {
+template <typename Spd> smdl::float2 integrateChromaticity(Spd &&spd) {
   double sumX{}, sumY{}, sumZ{};
   for (int w = 300; w <= 830; w++) {
     double illum{spd(float(w))};
@@ -60,6 +60,7 @@ template <typename Spd> static smdl::float2 integrateChromaticity(Spd &&spd) {
   double sum{sumX + sumY + sumZ};
   return {float(sumX / sum), float(sumY / sum)};
 }
+} // namespace
 
 TEST_CASE("Illuminant") {
   SUBCASE("smdlKelvinToChromaticity") {

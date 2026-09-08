@@ -9,15 +9,17 @@
 
 namespace fs = std::filesystem;
 
-static void writeText(const fs::path &path, const char *text) {
+namespace {
+void writeText(const fs::path &path, const char *text) {
   std::ofstream(path, std::ios::trunc) << text;
 }
 
-[[nodiscard]] static std::string readText(const fs::path &path) {
+[[nodiscard]] std::string readText(const fs::path &path) {
   auto stream{std::ifstream(path)};
   return std::string((std::istreambuf_iterator<char>(stream)),
                      std::istreambuf_iterator<char>());
 }
+} // namespace
 
 TEST_CASE("Filesystem") {
   auto tmpDir{fs::temp_directory_path() / "smdl-filesystem-test"};

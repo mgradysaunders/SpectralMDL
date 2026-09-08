@@ -55,7 +55,7 @@ public:
   ///
   /// The geometry is handed over in the instance's **rigid frame** rather
   /// than in world space, paired with the instance transform in
-  /// `State::object_to_world_matrix`, so that the library reassembles world
+  /// `State::objectToWorld`, so that the library reassembles world
   /// space itself. See `InstanceFrame::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
   ///
@@ -69,10 +69,10 @@ public:
   ///
   /// One state serves any number of hits: every geometric field and the
   /// vertex color set are overwritten here, and what is left standing
-  /// (`motion`, the texture spaces past what `texture_space_max` admits,
+  /// (`motion`, the texture spaces past what `textureSpaceCount` admits,
   /// `rng`, `transport` and the level-of-detail fields) is the caller's to
   /// set or leave at zero.
-  /// A `JIT::MaterialInstance` built from the state keeps no pointer back
+  /// A `JIT::Material` built from the state keeps no pointer back
   /// into it, so it outlives the next hit applied over it.
   ///
   void applyGeometryToState(smdl::State &state,
@@ -99,7 +99,7 @@ public:
   uint32_t meshIndex{INVALID_INDEX};     ///< The mesh index.
   uint32_t faceIndex{INVALID_INDEX};     ///< The face index.
   uint32_t matIndex{INVALID_INDEX};      ///< The material index.
-  const smdl::JIT::Material *material{}; ///< The material.
+  const smdl::JIT::MaterialDef *materialDef{}; ///< The material definition.
   float3 bary{};     ///< The barycentric coordinate; (0, u, v) on a primitive.
   float3 point{};    ///< The point.
   float3 normal{};   ///< The shading normal.
@@ -114,7 +114,7 @@ public:
   float time{};
 
   /// The world-space fiber diameter at a curves hit, 0 otherwise. Feeds
-  /// `texture_coordinate[0].z` per the MDL hair texturing convention.
+  /// `textureCoordinate[0].z` per the MDL hair texturing convention.
   float fiberThickness{};
 
   /// The number of texture spaces the hit fills, 1 for everything but a
@@ -158,7 +158,24 @@ class ManifoldHit final {
 public:
   smdl::ManifoldVertex vertex;
   const MeshInstance *instance;
-  const smdl::JIT::Material *material;
+  const smdl::JIT::MaterialDef *materialDef;
+};
+
+/// What Embree reports for a closest hit before any record is built
+/// from it: the instance, the piece and its parameters, and the
+/// object-space geometry normal. `Scene::intersect(Ray &, Hit &)` is
+/// this cast followed by `Scene::makeHit()`; a walk that will not
+/// shade what it hit, a shadow ray leaving a medium through its null
+/// interface, reads the side off `Scene::hitNg()` instead and pays for
+/// nothing else. Written whole on a hit and carrying no default
+/// values, like `ManifoldHit`.
+class RawHit final {
+public:
+  uint32_t instIndex; ///< The mesh instance index.
+  uint32_t primID;    ///< The piece: a face, a curve segment, or a primitive.
+  float u;            ///< The first parameter Embree reports.
+  float v;            ///< The second parameter Embree reports.
+  float3 objectNg;    ///< The object-space geometry normal Embree reports.
 };
 
 /// A mesh.
@@ -268,9 +285,9 @@ struct WeldMap final {
 };
 
 /// The UV texture density of a triangle: UV area per world-space area, so
-/// `State::cone_width * sqrt(density)` is a UV-space filter width. Returns
+/// `State::coneWidth * sqrt(density)` is a UV-space filter width. Returns
 /// 0 for degenerate triangles (never infinity or NaN), honoring the
-/// zero-means-off convention of `State::texture_density`. The points must
+/// zero-means-off convention of `State::textureDensity`. The points must
 /// be in world space, so that a scaled instance reports the density its
 /// scaled triangles actually have.
 [[nodiscard]] inline float
@@ -312,7 +329,7 @@ public:
   ///
   /// This is the frame the shading point is expressed in, and it is what
   /// `applyGeometryToState()` hands the library as
-  /// `State::object_to_world_matrix`. The round trip is therefore exact
+  /// `State::objectToWorld`. The round trip is therefore exact
   /// rather than merely close: the library recognizes an already
   /// orthonormal frame and leaves it alone, so what it multiplies by on
   /// the way out is bit for bit what `worldToRigid` undoes here.
@@ -480,7 +497,7 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
                                       smdl::State &state,
                                       const float3 &rayDir) const noexcept {
   // World space to the instance's rigid frame. The library multiplies by
-  // `object_to_world_matrix` on the way back out, which lands on world
+  // `objectToWorld` on the way back out, which lands on world
   // space again exactly, because that is the very matrix `worldToRigid`
   // inverts and the library leaves an orthonormal one untouched.
   const auto &toRigid{frame.worldToRigid};
@@ -490,32 +507,32 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
   auto tangentR{transformDirection(toRigid, tangent)};
   auto NgR{transformDirection(toRigid, Ng)};
   auto TgR{transformDirection(toRigid, Tg)};
-  state.object_to_world_matrix = frame.rigidToWorld;
+  state.objectToWorld = frame.rigidToWorld;
   state.position = pointR;
   state.direction = rayDirR;
   state.normal = normalR;
-  state.texture_space_max = textureSpaces;
-  state.texture_coordinate[0] = {texcoord.x, texcoord.y, fiberThickness};
-  state.texture_tangent_u[0] = tangentR;
-  state.texture_tangent_v[0] = smdl::cross(normalR, tangentR);
+  state.textureSpaceCount = textureSpaces;
+  state.textureCoordinate[0] = {texcoord.x, texcoord.y, fiberThickness};
+  state.textureTangentU[0] = tangentR;
+  state.textureTangentV[0] = smdl::cross(normalR, tangentR);
   if (textureSpaces > 1) {
-    state.texture_coordinate[1] = {texcoord1.x, texcoord1.y, 0};
-    state.texture_tangent_u[1] = tangentR;
-    state.texture_tangent_v[1] = state.texture_tangent_v[0];
+    state.textureCoordinate[1] = {texcoord1.x, texcoord1.y, 0};
+    state.textureTangentU[1] = tangentR;
+    state.textureTangentV[1] = state.textureTangentV[0];
   }
-  state.geometry_normal = NgR;
-  state.geometry_tangent_u[0] = TgR;
-  state.geometry_tangent_v[0] = smdl::cross(NgR, TgR);
+  state.geometryNormal = NgR;
+  state.geometryTangentU[0] = TgR;
+  state.geometryTangentV[0] = smdl::cross(NgR, TgR);
   if (textureSpaces > 1) {
-    state.geometry_tangent_u[1] = state.geometry_tangent_u[0];
-    state.geometry_tangent_v[1] = state.geometry_tangent_v[0];
+    state.geometryTangentU[1] = state.geometryTangentU[0];
+    state.geometryTangentV[1] = state.geometryTangentV[0];
   }
-  state.object_id = int(instIndex);
-  state.ptex_face_id = int(faceIndex);
-  state.ptex_face_uv = {bary[1], bary[2]};
-  state.texture_density[0] = textureDensity;
-  state.vertex_color_max = vertexColorSets;
-  state.vertex_color[0] = vertexColor;
+  state.objectId = int(instIndex);
+  state.ptexFaceId = int(faceIndex);
+  state.ptexFaceUV = {bary[1], bary[2]};
+  state.textureDensity[0] = textureDensity;
+  state.vertexColorCount = vertexColorSets;
+  state.vertexColor[0] = vertexColor;
   state.finalizeUnchecked();
 }
 
@@ -524,7 +541,7 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
 /// state, under the name `"vertex_color"` an MDL-conformant material
 /// looks it up by (`scene::data_lookup_float4`, `_float3`, or `_color`,
 /// which uplifts the RGB at the state's wavelengths), present exactly
-/// where the geometry carries a set. See `State::vertex_color` and
+/// where the geometry carries a set. See `State::vertexColor` and
 /// `Hit::applyGeometryToState()`.
 void registerSceneData(smdl::Compiler &compiler);
 
@@ -541,15 +558,15 @@ public:
   /// The material to substitute for scene material names that do not
   /// resolve. If empty, an unresolved name is an error instead.
   ///
-  /// \param[in] robustIntersection
+  /// \param[in] useRobustIntersection
   /// Build the acceleration structures for watertight ray intersection.
-  /// See `robustIntersection`.
+  /// See `useRobustIntersection`.
   ///
   explicit Scene(const smdl::Compiler &compiler,
                  std::string_view fallbackMaterialName = {},
-                 bool robustIntersection = true)
+                 bool useRobustIntersection = true)
       : compiler(compiler), fallbackMaterialName(fallbackMaterialName),
-        robustIntersection(robustIntersection),
+        useRobustIntersection(useRobustIntersection),
         device(rtcNewDevice(
             smdl::concat("verbose=0,threads=", smdl::getThreadCount())
                 .c_str())),
@@ -566,12 +583,12 @@ public:
   /// parse and one set of acceleration structures.
   ///
   /// Material names are shared across files: two files that both name a
-  /// material `wood` resolve to one entry in `materials`, and so to one
+  /// material `wood` resolve to one entry in `materialDefs`, and so to one
   /// MDL material. Names are resolved by `commit()`, not here, so that
   /// every unresolvable name in the whole composition is reported at once.
   /// `materials` renames this import's slots on the way in, which is how
   /// two files that both call their material `MatID_1` can be shaded
-  /// differently; the name that lands in `materials` is the renamed one,
+  /// differently; the name that lands in `materialNames` is the renamed one,
   /// so everything downstream, the file-wide aliases included, sees the
   /// name the import asked for.
   ///
@@ -695,20 +712,19 @@ private:
   /// Load every mesh of a read file and flatten its node graph. `clip`
   /// is the clip the spec resolved, or null; the poses at the two keys
   /// come from it, each deforming mesh is baked at both, and the node
-  /// keys are written from the poses. `joinCorners` says the read held
+  /// keys are written from the poses. `shouldJoinCorners` says the read held
   /// assimp's vertex join back, so the meshes weld their own corners.
-  [[nodiscard]] ImportFile load(const aiScene &assScene,
-                                const SubdivSpec &subdiv,
-                                const MaterialAssignment &materials,
-                                const aiAnimation *clip,
-                                const AnimationSpec &animation,
-                                bool joinCorners, std::string_view fileName);
+  [[nodiscard]] ImportFile
+  load(const aiScene &assScene, const SubdivSpec &subdiv,
+       const MaterialAssignment &materials, const aiAnimation *clip,
+       const AnimationSpec &animation, bool shouldJoinCorners,
+       std::string_view fileName);
   /// Load one mesh, from its bakes at the two keys when it deforms
   /// (`bakeShut` null under a shut shutter) and from the file's own
   /// arrays otherwise.
   void load(const aiMesh &assMesh, const std::vector<uint32_t> &materialRemap,
             const SubdivSpec &subdiv, const MeshBake *bakeOpen,
-            const MeshBake *bakeShut, bool joinCorners);
+            const MeshBake *bakeShut, bool shouldJoinCorners);
   /// The batch-capable body of `add()`: every entry of `worldXfs` is
   /// one placement of the file. One entry becomes an ordinary instance;
   /// several become one Embree instance array per instantiated mesh,
@@ -755,11 +771,11 @@ private:
                             std::string_view fileName,
                             uint32_t matIndex = INVALID_INDEX);
 
-  /// The index of `name` in `materials`, appending it if this is the first
-  /// file to mention it.
+  /// The shared index of `name` in `materialNames` and `materialDefs`,
+  /// appending it if this is the first file to mention it.
   [[nodiscard]] uint32_t internMaterial(std::string name);
 
-  /// Whether each entry of `materials` is shaded with by some instance,
+  /// Whether each entry of `materialDefs` is shaded with by some instance,
   /// via `materialIndexOf()`. Shared by `usedMaterialNames()` and
   /// `resolveMaterials()` so the desired set and the demanded set
   /// cannot drift.
@@ -788,11 +804,12 @@ private:
   /// pool, which is only correct (and only useful) when the caller is
   /// not itself running meshes in parallel.
   ///
-  bool finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread);
+  bool finalizeMesh(Mesh &mesh, const Color &wavelengths,
+                    bool shouldSpreadWork);
 
   /// Apply the material `geometry.displacement` to one key of the final
   /// vertices (`verts` is `mesh.verts` or `mesh.vertsShut`), in the
-  /// mesh's own space, with `State::animation_time` at `seconds`.
+  /// mesh's own space, with `State::animationTime` at `seconds`.
   /// Offsets are evaluated once per position-welded vertex, averaging
   /// over split copies whose UVs disagree (texture seams), and applied
   /// to every copy, so the displaced surface cannot crack along seams.
@@ -806,7 +823,8 @@ private:
   /// be welded after refinement replaces its vertices; it is by the open
   /// key's positions and serves both keys.
   bool displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts, float seconds,
-                    const Color &wavelengths, bool spread, const WeldMap &weld);
+                    const Color &wavelengths, bool shouldSpreadWork,
+                    const WeldMap &weld);
 
   /// Build and commit the Embree triangle geometry for `mesh.verts` and
   /// `mesh.faces` into `mesh.scene`, with `mesh.vertsShut` as a second
@@ -923,6 +941,11 @@ public:
   manifoldHitPointMoving(const MeshInstance &meshInstance, uint32_t primID,
                          const float3 &bary, float time) const;
 
+  /// The moving twin of `hitNg()`: the frame at the time, and the
+  /// vertex records at the time where the mesh deforms.
+  [[nodiscard]] SMDL_NO_INLINE float3 hitNgMoving(const RawHit &raw,
+                                                  float time) const;
+
   /// The tail of the mesh hit builders: the world-space record from the
   /// face's three vertex records, which the static body takes out of
   /// `Mesh::verts` and the deforming one lerps to the time. Inlined into
@@ -940,7 +963,25 @@ public:
       const Mesh::Vert &vert1, const Mesh::Vert &vert2) const;
 
 public:
+  /// The closest hit as a shading record: `intersect(Ray &, RawHit &)`
+  /// followed by `makeHit()`.
   [[nodiscard]] bool intersect(Ray &ray, Hit &hit) const;
+
+  /// The closest hit as Embree reports it, see `RawHit`, with `ray.tmax`
+  /// narrowed to the hit parameter.
+  [[nodiscard]] bool intersect(Ray &ray, RawHit &raw) const;
+
+  /// The shading record of `raw`, on `ray` clipped to it: what
+  /// `intersect(Ray &, Hit &)` builds after its cast, for a caller that
+  /// cast for a `RawHit` and then found it wants the record after all.
+  void makeHit(const RawHit &raw, const Ray &ray, Hit &hit) const;
+
+  /// The geometry normal of the mesh face `raw` reports, in world space
+  /// with the winding flip applied: the `Ng` its record would carry,
+  /// bit for bit, for a side test that needs nothing else of the
+  /// record. Mesh hits only: a curve or a primitive owes its normal to
+  /// the ray or to the surface evaluation the record builder runs.
+  [[nodiscard]] float3 hitNg(const RawHit &raw, float time) const;
 
   /// The projection-cast intersect behind
   /// `SceneManifoldSurfaces::project()`: `intersect()` without the `Hit`
@@ -950,7 +991,7 @@ public:
 
   /// Is anything in the way over `[tmin, tmax]`? An Embree occlusion
   /// query, which early-outs on any hit instead of ordering them; only
-  /// meaningful as a visibility answer where `opaqueShadows` holds, since
+  /// meaningful as a visibility answer where `useOpaqueShadows` holds, since
   /// it cannot say what was hit.
   [[nodiscard]] bool isOccluded(const Ray &ray) const;
 
@@ -1010,7 +1051,7 @@ public:
     return instanceBaseByGeomID[geomID] + instPrimID;
   }
 
-  /// The index in `materials` the instance actually shades with: its
+  /// The index in `materialDefs` the instance actually shades with: its
   /// own binding if it has one, else its mesh's, primitive's, or
   /// groom's. Every consumer that turns an instance into a material
   /// goes through here, so that an instance-level override and a
@@ -1038,7 +1079,7 @@ public:
   /// Set on the mesh, curve and primitive scenes, which hold the
   /// primitives a ray is tested against. The instance scene above them
   /// carries no primitives of its own.
-  bool robustIntersection{true};
+  bool useRobustIntersection{true};
 
   RTCDevice device{};   ///< The Embree device.
   RTCScene scene{};     ///< The Embree scene.
@@ -1057,16 +1098,17 @@ public:
   /// shadow test exactly as a wall does (the cutout is statically 1),
   /// and a walk in such a scene can never cross a boundary, so its
   /// starting medium is its only medium.
-  bool opaqueShadows{};
+  bool useOpaqueShadows{};
   std::vector<std::string> fileNames{};        ///< The files that were added.
   std::vector<std::unique_ptr<Mesh>> meshes{}; ///< The meshes.
   std::vector<std::unique_ptr<Primitive>> primitives{}; ///< The primitives.
   std::vector<std::unique_ptr<Curves>> curves{};        ///< The grooms.
   std::vector<MeshInstance> meshInstances{};            ///< The mesh instances.
-  std::vector<const smdl::JIT::Material *> materials{}; ///< The materials.
-  std::vector<std::string> materialNames{}; ///< Parallel to `materials`.
+  std::vector<const smdl::JIT::MaterialDef *>
+      materialDefs{};                       ///< The material definitions.
+  std::vector<std::string> materialNames{}; ///< Parallel to `materialDefs`.
 
-  /// The index in `materials` of each material name, so that a name shared
+  /// The index in `materialDefs` of each material name, so that a name shared
   /// between files resolves to one material.
   std::map<std::string, uint32_t, std::less<>> materialIndexByName{};
 

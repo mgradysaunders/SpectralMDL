@@ -34,9 +34,9 @@
 /// a warning. Bump this whenever the sequence changes.
 constexpr const char *SAMPLER_VERSION =
 #if SMDL_TOY_SAMPLER_PCG32
-    "pcg32-1";
+    "pcg32-2";
 #else
-    "owen-sobol-1";
+    "owen-sobol-2";
 #endif
 
 /// The rendering sampler: the draw policy around the library's
@@ -109,9 +109,13 @@ public:
     return {xy.x, xy.y, zw.x, zw.y};
   }
 
-  [[nodiscard]] int index(int n) {
+  [[nodiscard]] int index(int n) { return indexOf(float(*this), n); }
+
+  /// The index in `[0, n)` that the canonical sample `u` selects, for a
+  /// caller that draws `u` as one component of a pair.
+  [[nodiscard]] static int indexOf(float u, int n) noexcept {
     SMDL_SANITY_CHECK(n > 0);
-    return std::clamp(int(std::floor(float(n) * float(*this))), 0, n - 1);
+    return std::clamp(int(std::floor(float(n) * u)), 0, n - 1);
   }
 
   /// The next sample as raw bits.

@@ -10,12 +10,14 @@
 
 namespace fs = std::filesystem;
 
+namespace {
 // The library the tests write: three named curves over four wavelengths
 // given out of order, so loading must sort them and permute every curve
 // alongside. Each curve is the wavelength in micrometers times its scale,
 // which makes the expected values obvious after the sort.
-static const float WAVELENGTHS_UM[4] = {0.7f, 0.4f, 0.6f, 0.5f};
-static const float CURVE_SCALES[3] = {10.0f, 100.0f, 1.0f};
+const float WAVELENGTHS_UM[4] = {0.7f, 0.4f, 0.6f, 0.5f};
+const float CURVE_SCALES[3] = {10.0f, 100.0f, 1.0f};
+} // namespace
 
 struct LibraryOptions final {
   const char *fileType{"ENVI Spectral Library"};
@@ -26,21 +28,22 @@ struct LibraryOptions final {
   int bands{1};
   const char *wavelengthUnits{"Micrometers"};
   float wavelengthScale{1.0f};
-  bool withNames{true};
-  bool truncated{false};
+  bool useNames{true};
+  bool isTruncated{false};
 };
 
+namespace {
 // Append the bytes of `bits` in the given order, independent of the
 // host's own.
 template <typename Bits>
-static void appendBits(std::string &out, Bits bits, bool bigEndian) {
+void appendBits(std::string &out, Bits bits, bool isBigEndian) {
   for (size_t k = 0; k < sizeof(Bits); k++) {
-    const size_t shift{8 * (bigEndian ? sizeof(Bits) - 1 - k : k)};
+    const size_t shift{8 * (isBigEndian ? sizeof(Bits) - 1 - k : k)};
     out += char((bits >> shift) & 0xff);
   }
 }
 
-static void writeLibrary(const fs::path &fileName, const LibraryOptions &opts) {
+void writeLibrary(const fs::path &fileName, const LibraryOptions &opts) {
   std::string hdr{"ENVI\n"};
   hdr += "description = {Synthetic test library}\n";
   hdr += "samples = " + std::to_string(opts.samples) + "\n";
@@ -59,11 +62,11 @@ static void writeLibrary(const fs::path &fileName, const LibraryOptions &opts) {
     hdr += std::to_string(opts.wavelengthScale * WAVELENGTHS_UM[i]);
   }
   hdr += "}\n";
-  if (opts.withNames) hdr += "spectra names = {Alpha, Beta, Gamma}\n";
+  if (opts.useNames) hdr += "spectra names = {Alpha, Beta, Gamma}\n";
   std::ofstream(fileName.string() + ".hdr") << hdr;
   // The binary: junk the offset must skip, then the curves back to back.
   std::string bin(size_t(opts.headerOffset), '\xAB');
-  const bool bigEndian{opts.byteOrder != 0};
+  const bool isBigEndian{opts.byteOrder != 0};
   for (float scale : CURVE_SCALES) {
     for (float wavelengthUm : WAVELENGTHS_UM) {
       const float value{scale * wavelengthUm};
@@ -71,20 +74,20 @@ static void writeLibrary(const fs::path &fileName, const LibraryOptions &opts) {
         const double valueD{value};
         uint64_t bits{};
         std::memcpy(&bits, &valueD, 8);
-        appendBits(bin, bits, bigEndian);
+        appendBits(bin, bits, isBigEndian);
       } else {
         uint32_t bits{};
         std::memcpy(&bits, &value, 4);
-        appendBits(bin, bits, bigEndian);
+        appendBits(bin, bits, isBigEndian);
       }
     }
   }
-  if (opts.truncated) bin.resize(bin.size() - 1);
+  if (opts.isTruncated) bin.resize(bin.size() - 1);
   std::ofstream(fileName, std::ios::binary) << bin;
 }
 
 // Is `view` the curve of the given scale, sorted by wavelength?
-static void checkCurve(smdl::SpectrumView view, float scale) {
+void checkCurve(smdl::SpectrumView view, float scale) {
   REQUIRE(view.wavelengths.size() == 4);
   REQUIRE(view.curveValues.size() == 4);
   const float sortedUm[4] = {0.4f, 0.5f, 0.6f, 0.7f};
@@ -93,6 +96,7 @@ static void checkCurve(smdl::SpectrumView view, float scale) {
     CHECK(view.curveValues.data()[i] == doctest::Approx(scale * sortedUm[i]));
   }
 }
+} // namespace
 
 TEST_CASE("SpectrumLibrary") {
   auto tmpDir{fs::temp_directory_path() / "smdl-spectrum-library-test"};
@@ -129,7 +133,7 @@ TEST_CASE("SpectrumLibrary") {
   }
   SUBCASE("Without spectra names") {
     LibraryOptions opts{};
-    opts.withNames = false;
+    opts.useNames = false;
     auto fileName{(tmpDir / "unnamed.sli").string()};
     writeLibrary(fileName, opts);
     REQUIRE(!library.loadFromFile(fileName));
@@ -165,7 +169,7 @@ TEST_CASE("SpectrumLibrary") {
     opts.wavelengthUnits = "Furlongs";
     reject("units.sli", opts);
     opts = {};
-    opts.truncated = true;
+    opts.isTruncated = true;
     reject("truncated.sli", opts);
     // No header file at all.
     std::ofstream((tmpDir / "headerless.sli").string()) << "";

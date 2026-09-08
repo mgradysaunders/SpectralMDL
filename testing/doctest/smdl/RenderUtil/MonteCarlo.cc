@@ -74,11 +74,12 @@ TEST_CASE("MonteCarlo") {
   }
 }
 
+namespace {
 // Checks that every elementary interval of area 2^-m contains exactly one
 // of the 2^m points, for every split of m between the two axes. This is
 // the defining property of a (0,2)-net in base 2.
-static void checkNet(const std::vector<uint32_t> &X,
-                     const std::vector<uint32_t> &Y, int m) {
+void checkNet(const std::vector<uint32_t> &X, const std::vector<uint32_t> &Y,
+              int m) {
   REQUIRE(X.size() == size_t(1) << m);
   REQUIRE(Y.size() == size_t(1) << m);
   for (int k1 = 0; k1 <= m; k1++) {
@@ -89,11 +90,12 @@ static void checkNet(const std::vector<uint32_t> &X,
       const uint32_t cellY{k2 == 0 ? 0U : Y[i] >> (32 - k2)};
       counts[(cellX << k2) | cellY]++;
     }
-    bool onePerCell{true};
-    for (int count : counts) onePerCell &= count == 1;
-    CHECK(onePerCell);
+    bool isOnePerCell{true};
+    for (int count : counts) isOnePerCell &= count == 1;
+    CHECK(isOnePerCell);
   }
 }
+} // namespace
 
 TEST_CASE("Canonical samples") {
   SUBCASE("canonicalFromBits excludes both endpoints") {
@@ -125,17 +127,17 @@ TEST_CASE("Canonical samples") {
   }
   SUBCASE("uniformTriangleSample stays in the triangle") {
     std::mt19937 prng{};
-    bool inside{true};
+    bool isInside{true};
     smdl::float3 mean{};
     constexpr int NUM_SAMPLES{100'000};
     for (int iter = 0; iter < NUM_SAMPLES; iter++) {
       const auto bary{
           smdl::uniformTriangleSample(smdl::generateCanonical2(prng))};
-      inside &= bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f;
-      inside &= std::abs(bary.x + bary.y + bary.z - 1.0f) < 1e-5f;
+      isInside &= bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f;
+      isInside &= std::abs(bary.x + bary.y + bary.z - 1.0f) < 1e-5f;
       mean = mean + bary * (1.0f / float(NUM_SAMPLES));
     }
-    CHECK(inside);
+    CHECK(isInside);
     // Uniform over the triangle puts the mean at the centroid.
     CHECK(mean.x == doctest::Approx(1.0 / 3.0).epsilon(1e-2));
     CHECK(mean.y == doctest::Approx(1.0 / 3.0).epsilon(1e-2));
@@ -152,12 +154,12 @@ TEST_CASE("QMC helpers") {
     CHECK(smdl::reverseBits(0x00000001U) == 0x80000000U);
     CHECK(smdl::reverseBits(0x12345678U) == 0x1E6A2C48U);
     std::mt19937 prng{};
-    bool involution{true};
+    bool isInvolution{true};
     for (int iter = 0; iter < 1000; iter++) {
       const auto x{uint32_t(prng())};
-      involution &= smdl::reverseBits(smdl::reverseBits(x)) == x;
+      isInvolution &= smdl::reverseBits(smdl::reverseBits(x)) == x;
     }
-    CHECK(involution);
+    CHECK(isInvolution);
   }
   SUBCASE("mixBits") {
     static_assert(
@@ -180,7 +182,7 @@ TEST_CASE("QMC helpers") {
     // their top k bits map to outputs agreeing in their top k bits, for
     // every k, which is what preserves net structure.
     std::mt19937 prng{};
-    bool nested{true};
+    bool isNested{true};
     for (int iter = 0; iter < 10000; iter++) {
       const auto x{uint32_t(prng())};
       const auto low{uint32_t(prng())};
@@ -188,11 +190,11 @@ TEST_CASE("QMC helpers") {
       const auto k{int(prng() % 33U)};
       const uint32_t mask{k == 0 ? 0U : ~uint32_t(0) << (32 - k)};
       const uint32_t x1{(x & mask) | (low & ~mask)};
-      nested &= ((smdl::nestedUniformScramble(x, seed) ^
-                  smdl::nestedUniformScramble(x1, seed)) &
-                 mask) == 0U;
+      isNested &= ((smdl::nestedUniformScramble(x, seed) ^
+                    smdl::nestedUniformScramble(x1, seed)) &
+                   mask) == 0U;
     }
-    CHECK(nested);
+    CHECK(isNested);
   }
   SUBCASE("nestedUniformScramble is a permutation") {
     // Round-trip through the inverse: subtraction inverts the seed
@@ -249,15 +251,15 @@ TEST_CASE("QMC helpers") {
         X ^= DIRECTIONS[bit] & (0U - ((index >> bit) & 1U));
       return X;
     }};
-    bool agrees{true};
+    bool doesAgree{true};
     for (int bit = 0; bit < 32; bit++)
-      agrees &= smdl::sobolDim1(uint32_t(1) << bit) == DIRECTIONS[bit];
+      doesAgree &= smdl::sobolDim1(uint32_t(1) << bit) == DIRECTIONS[bit];
     std::mt19937 prng{};
     for (int iter = 0; iter < 100000; iter++) {
       const auto index{uint32_t(prng())};
-      agrees &= smdl::sobolDim1(index) == byTable(index);
+      doesAgree &= smdl::sobolDim1(index) == byTable(index);
     }
-    CHECK(agrees);
+    CHECK(doesAgree);
   }
 }
 
@@ -285,18 +287,18 @@ TEST_CASE("OwenSobolSampler") {
   }
   SUBCASE("draws in strict (0,1)") {
     auto sampler{smdl::OwenSobolSampler()};
-    bool inRange{true};
+    bool isInRange{true};
     for (uint32_t index = 0; index < 256; index++) {
       sampler.start(0x51U, index);
       for (int d = 0; d < 16; d++) {
         const float xi{sampler.generateFloat()};
-        inRange &= xi > 0.0f && xi < 1.0f;
+        isInRange &= xi > 0.0f && xi < 1.0f;
       }
       const auto xi4{sampler.generateFloat4()};
-      inRange &= xi4.x > 0.0f && xi4.x < 1.0f;
-      inRange &= xi4.w > 0.0f && xi4.w < 1.0f;
+      isInRange &= xi4.x > 0.0f && xi4.x < 1.0f;
+      isInRange &= xi4.w > 0.0f && xi4.w < 1.0f;
     }
-    CHECK(inRange);
+    CHECK(isInRange);
   }
   SUBCASE("scrambling preserves the net") {
     // The index shuffle maps the first 2^m indexes among themselves (a

@@ -186,7 +186,7 @@ export static const auto REGOLITH_TABLE_CURVES = auto[138](
 /// to a reflectance spectrum.
 ///
 /// The 12 component curves in `REGOLITH_TABLE_CURVES` are interpolated onto
-/// `$state.wavelength_base` and combined with weights derived from the
+/// `$state.wavelengthBase` and combined with weights derived from the
 /// parameters: iron and aridity are polar coordinates onto the two pigment
 /// curves, and moisture sensitivity acts only through its product with
 /// moisture. The logistic link keeps every output strictly in (0, 1),

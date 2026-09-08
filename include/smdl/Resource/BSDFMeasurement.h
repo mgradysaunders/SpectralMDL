@@ -21,7 +21,7 @@ public:
   enum Type { TYPE_FLOAT, TYPE_FLOAT3 };
 
   // TODO One-line brief doc
-  [[nodiscard]] static constexpr size_t size_of(Type type) noexcept {
+  [[nodiscard]] static constexpr size_t sizeOf(Type type) noexcept {
     switch (type) {
     case TYPE_FLOAT:
       static_assert(sizeof(float) == 4);

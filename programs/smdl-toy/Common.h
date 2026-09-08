@@ -17,6 +17,7 @@ using namespace smdl::matrix_type_aliases;
 
 // The math constants the programs spell unqualified. They live in the
 // library so that host and library agree on them by construction.
+using smdl::FLOAT_MAX;
 using smdl::INF;
 using smdl::ONE_MINUS_EPS;
 using smdl::PI;

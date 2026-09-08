@@ -109,8 +109,8 @@ Frame resolveFrame(const Options &opts) {
       pick(opts.camera.distortionK1, fileCamera.distortionK1);
   cameraOptions.distortionK2 =
       pick(opts.camera.distortionK2, fileCamera.distortionK2);
-  cameraOptions.distortionFit =
-      pick(opts.camera.distortionFit, fileCamera.distortionFit);
+  cameraOptions.shouldFitDistortion =
+      pick(opts.camera.shouldFitDistortion, fileCamera.shouldFitDistortion);
   cameraOptions.vignetting =
       pick(opts.camera.vignetting, fileCamera.vignetting);
   cameraOptions.catEye = pick(opts.camera.catEye, fileCamera.catEye);
@@ -130,11 +130,11 @@ Frame resolveFrame(const Options &opts) {
   // rather than moving a camera the file never described.
   if (!cameraDocument.camera.motion.empty()) {
     const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
-    const char *framingFlag{opts.camera.autolook.enabled ? "-autolook"
-                            : opts.camera.lookFrom.given ? "-look-from"
-                            : opts.camera.lookTo.given   ? "-look-to"
-                            : opts.camera.lookUp.given   ? "-look-up"
-                                                         : nullptr};
+    const char *framingFlag{opts.camera.autolook.isEnabled  ? "-autolook"
+                            : opts.camera.lookFrom.wasGiven ? "-look-from"
+                            : opts.camera.lookTo.wasGiven   ? "-look-to"
+                            : opts.camera.lookUp.wasGiven   ? "-look-up"
+                                                            : nullptr};
     if (framingFlag) {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
                     " replaces the framing the camera file's 'motion' "
@@ -145,7 +145,7 @@ Frame resolveFrame(const Options &opts) {
                     gRenderShutter.time, " s");
     } else {
       const auto shutCamera{cameraDocument.camera.at(shutSeconds)};
-      cameraOptions.motion = true;
+      cameraOptions.hasMotion = true;
       cameraOptions.lookFromShut =
           pick(opts.camera.lookFrom, shutCamera.lookFrom);
       cameraOptions.lookToShut = pick(opts.camera.lookTo, shutCamera.lookTo);
@@ -187,7 +187,7 @@ Frame resolveFrame(const Options &opts) {
   // waits until the solve below. Every other path keeps constructing
   // here, before anything slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
-  if (!opts.camera.autolook.enabled) camera.emplace(cameraOptions);
+  if (!opts.camera.autolook.isEnabled) camera.emplace(cameraOptions);
   const auto resolution{cameraOptions.resolution};
   const auto numPixelsX{size_t(resolution.x)};
   const auto numPixelsY{size_t(resolution.y)};
@@ -195,7 +195,7 @@ Frame resolveFrame(const Options &opts) {
   // The pixel window to render, the whole frame unless -crop-window
   // narrows it.
   int4 window{0, 0, resolution.x, resolution.y};
-  if (opts.image.cropWindow.given) {
+  if (opts.image.cropWindow.wasGiven) {
     window = opts.image.cropWindow.value;
     if (!(0 <= window[0] && window[0] < window[2] &&
           window[2] <= resolution.x && 0 <= window[1] &&
@@ -226,9 +226,10 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // resuming with no grid flags at all, the grid recorded in the resumed
   // file, so a resumed render needs no grid retyping. The band count
   // seeds every 'Color' constructed from here on.
-  const bool adoptResumedGrid{!opts.render.grid.given && resumed.loaded};
+  const bool shouldAdoptResumedGrid{!opts.render.grid.wasGiven &&
+                                    resumed.wasLoaded};
   auto gridSpec{opts.render.grid.explicitWavelengths};
-  if (adoptResumedGrid) {
+  if (shouldAdoptResumedGrid) {
     if (resumed.info.wavelengths.empty())
       throw smdl::Error(
           "cannot resume: the file carries no wavelengths to adopt, give "
@@ -246,13 +247,13 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
   gRenderGrid.reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
-                    opts.render.grid.jitter);
-  if (opts.render.grid.jitter && gRenderGrid.bandEdges.empty())
+                    opts.render.grid.shouldJitter);
+  if (opts.render.grid.shouldJitter && gRenderGrid.bandEdges.empty())
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
   const auto wavelengths{
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
-  if (resumed.loaded) {
+  if (resumed.wasLoaded) {
     if (resumed.film.getNumBands() != wavelengths.size())
       throw smdl::Error(smdl::concat(
           "cannot resume: the file has ", resumed.film.getNumBands(),
@@ -264,12 +265,12 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
             "cannot resume: the wavelength grid does not match the "
             "renderer's");
   }
-  if (opts.render.grid.given || adoptResumedGrid)
-    SMDL_LOG_INFO("Wavelength grid: ", wavelengths.size(),
-                  adoptResumedGrid ? " bands adopted from the resumed file, "
-                                   : " bands, ",
-                  wavelengths[0], "-", wavelengths[wavelengths.size() - 1],
-                  " nm");
+  if (opts.render.grid.wasGiven || shouldAdoptResumedGrid)
+    SMDL_LOG_INFO(
+        "Wavelength grid: ", wavelengths.size(),
+        shouldAdoptResumedGrid ? " bands adopted from the resumed file, "
+                               : " bands, ",
+        wavelengths[0], "-", wavelengths[wavelengths.size() - 1], " nm");
   // The spectral extent the render actually reaches, which the jitter
   // widens to the outermost band edges.
   const auto &bandEdges{gRenderGrid.bandEdges};
@@ -286,8 +287,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                   "render");
   // Everything RGB-sourced degrades outside the visible; say so once
   // rather than rendering a mysteriously dark image.
-  const bool beyondVisible{gridLower < 379.0f || gridUpper > 781.0f};
-  if (beyondVisible)
+  const bool isBeyondVisible{gridLower < 379.0f || gridUpper > 781.0f};
+  if (isBeyondVisible)
     SMDL_LOG_WARN(
         "the wavelength grid leaves the visible (380-780nm): colored RGB "
         "textures and images contribute nothing outside it (gray extends "
@@ -297,30 +298,30 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
-  if (const double gib{
-          double(frame.numPixelsX * frame.numPixelsY) *
-          (8.0 + 8.0 * double(wavelengths.size()) +
-           (opts.render.guide.enabled ? 16.0 * double(wavelengths.size()) + 24.0
-                                      : 0.0)) /
-          (1024.0 * 1024.0 * 1024.0)};
+  if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
+                       (8.0 + 8.0 * double(wavelengths.size()) +
+                        (opts.render.guide.isEnabled
+                             ? 16.0 * double(wavelengths.size()) + 24.0
+                             : 0.0)) /
+                       (1024.0 * 1024.0 * 1024.0)};
       gib > 1.0)
     SMDL_LOG_INFO("Accumulation buffers: ", gib, " GiB");
-  return ResolvedGrid{wavelengths, beyondVisible};
+  return ResolvedGrid{wavelengths, isBeyondVisible};
 }
 
 void setUpCompiler(const Options &opts, const Frame &frame,
                    const ResolvedGrid &grid, smdl::Compiler &compiler) {
   compiler.wavelengthBaseMax = uint32_t(grid.wavelengths.size());
-  compiler.enableDebug = opts.compile.enableDebug;
-  compiler.enableUnitTests = false;
+  compiler.isDebugEnabled = opts.compile.isDebugEnabled;
+  compiler.shouldEmitUnitTests = false;
   registerSceneData(compiler);
   // The normal distribution entry points are what a glossy manifold
   // crossing draws its half vector from, and nothing else here asks for
   // them, so they are emitted only when that is on.
   bool anyCaster{false};
   for (const auto &item : frame.layout.items) anyCaster |= item.isCaster;
-  compiler.enableScatterNormal =
-      (opts.render.mneeEnabled && anyCaster) || opts.render.mneeTestNormalHook;
+  compiler.shouldEmitScatterNormal = (opts.render.useMNEE && anyCaster) ||
+                                     opts.render.shouldTestMNEENormalHook;
   // The built-in stand-in, always available: a scene whose materials
   // have not been written yet still renders, and a name that does not
   // resolve has somewhere to fall back to. It is added even when MDL
@@ -338,7 +339,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
                          const ResolvedGrid &grid, smdl::Compiler &compiler) {
   const auto &layout{frame.layout};
   const auto &wavelengths{grid.wavelengths};
-  const bool gridBeyondVisible{grid.beyondVisible};
+  const bool isGridBeyondVisible{grid.isBeyondVisible};
   auto &cameraOptions{frame.cameraOptions};
   auto &camera{frame.camera};
   const auto resolution{frame.resolution};
@@ -367,14 +368,14 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // must NOT be sized by the ground plane: the plane is a backdrop three
   // orders of magnitude wider than the subject, and cubifying over it
   // spends every spatial refinement level zooming back in.
-  if (opts.scene.ground || opts.scene.groundZ.given) {
+  if (opts.scene.hasGround || opts.scene.groundZ.wasGiven) {
     guideBound = scene->preCommitBounds();
-    guideBoundsValid = true;
+    hasValidGuideBounds = true;
     if (guideBound.isEmpty())
       throw smdl::Error("cannot -ground: the scene has no geometry to "
                         "put a plane under");
-    const float z{opts.scene.groundZ.given ? opts.scene.groundZ.value
-                                           : guideBound.lower.z};
+    const float z{opts.scene.groundZ.wasGiven ? opts.scene.groundZ.value
+                                              : guideBound.lower.z};
     // Large enough that at autolook elevations the plane's edge lands at
     // the visual horizon, small enough to stay in float precision.
     const float halfExtent{std::clamp(
@@ -419,12 +420,12 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // so a batch of thumbnails is consistently lit however each one is
   // framed.
   auto autolookSunAzimuth{std::optional<float>()};
-  if (opts.camera.autolook.enabled) {
+  if (opts.camera.autolook.isEnabled) {
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
     autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;
-    if (opts.camera.autolook.azimuthDeg.given) {
+    if (opts.camera.autolook.azimuthDeg.wasGiven) {
       autolookOptions.azimuthDeg = opts.camera.autolook.azimuthDeg.value;
     } else if (layout.frontAzimuth) {
       autolookOptions.azimuthDeg = layout.frontAzimuth;
@@ -447,12 +448,12 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // whatever the command line explicitly gave.
   const auto &fileSky{layout.sky};
   const auto iblFileName{pick(opts.light.sky.iblFileName, fileSky.iblFileName)};
-  const auto moonGiven{opts.light.sky.moonPhase.given ||
+  const auto moonGiven{opts.light.sky.moonPhase.wasGiven ||
                        bool(fileSky.moonPhase)};
   if (!iblFileName.empty()) {
     envLight = std::make_unique<EnvLight>(
         iblFileName, pick(opts.light.sky.iblScale, fileSky.iblScale));
-    if (gridBeyondVisible)
+    if (isGridBeyondVisible)
       SMDL_LOG_WARN("-ibl is an RGB image: on this wavelength grid it "
                     "contributes only inside the visible");
   } else if (!pick(opts.light.sky.none, fileSky.none)) {
@@ -464,7 +465,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     // solved camera: a perfectly framed thumbnail lit from behind is as
     // unreadable as one framed end-on, and this keeps a whole library
     // consistently lit however each asset was framed.
-    if (autolookSunAzimuth && !opts.light.sky.sunAzimuthDeg.given &&
+    if (autolookSunAzimuth && !opts.light.sky.sunAzimuthDeg.wasGiven &&
         !fileSky.sunAzimuth) {
       azimuthDeg = *autolookSunAzimuth;
       SMDL_LOG_INFO("Sun azimuth follows the framed camera: ", azimuthDeg,
@@ -479,7 +480,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
         pick(opts.light.sky.waterVapor, fileSky.waterVapor);
     options.scaleFactor = pick(opts.light.sky.scale, fileSky.scale);
     if (moonGiven) {
-      options.moon = true;
+      options.isMoon = true;
       options.moonPhase = pick(opts.light.sky.moonPhase, fileSky.moonPhase);
       options.moonDistanceScale =
           pick(opts.light.sky.moonDistance, fileSky.moonDistance);
@@ -496,21 +497,23 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // coefficients (per-point heterogeneous queries still see the path
   // time).
   if (!layout.exteriorMediumName.empty()) {
-    const auto *material{compiler.findMaterial(layout.exteriorMediumName)};
-    if (!material)
+    const auto *materialDef{compiler.findMaterial(layout.exteriorMediumName)};
+    if (!materialDef)
       throw smdl::Error(smdl::concat(
           "cannot resolve 'medium' directive material ",
           smdl::Quoted(layout.exteriorMediumName),
           opts.scene.inputMDLFiles.empty() ? " (no MDL modules were given)"
                                            : ""));
-    if (!material->hasVolume())
+    if (!materialDef->hasVolume())
       throw smdl::Error(smdl::concat("'medium' directive material ",
                                      smdl::Quoted(layout.exteriorMediumName),
                                      " has no 'volume'"));
     auto state{makeRenderState(wavelengths, &mMediumAllocator)};
     state.finalize();
     exteriorMedium = new (mMediumAllocator) MediumStack{
-        nullptr, smdl::JIT::MaterialInstance(state, material), nullptr};
+        nullptr,
+        mMediumAllocator.allocate<smdl::JIT::Material>(state, materialDef),
+        nullptr};
     SMDL_LOG_INFO("Exterior medium: ", smdl::Quoted(layout.exteriorMediumName));
   }
 
@@ -521,9 +524,9 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // geometry, which is where the 'medium' directive puts its material
   // too, so the two cannot both be asked for.
   const auto &fileHaze{layout.haze};
-  bool hazeEnabled{opts.light.haze.on || layout.hasHaze};
-  if (pick(opts.light.haze.none, fileHaze.none)) hazeEnabled = false;
-  if (hazeEnabled) {
+  bool isHazeEnabled{opts.light.haze.isOn || layout.hasHaze};
+  if (pick(opts.light.haze.none, fileHaze.none)) isHazeEnabled = false;
+  if (isHazeEnabled) {
     if (exteriorMedium)
       throw smdl::Error("the exterior haze and the 'medium' directive both "
                         "describe the medium outside all geometry; keep one");
@@ -542,7 +545,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     haze = std::make_unique<smdl::Haze>(
         options,
         smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        makeRenderState(wavelengths).meters_per_scene_unit);
+        makeRenderState(wavelengths).metersPerSceneUnit);
     SMDL_LOG_INFO("Exterior haze: visibility ", options.visibility,
                   " km, scale height ", options.scaleHeight, " m");
   }

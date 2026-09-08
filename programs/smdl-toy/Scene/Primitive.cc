@@ -108,9 +108,9 @@ enum : uint32_t {
 // axis; +X on the axis itself, where `azimuthOf()` reports zero too.
 void azimuthTrigOf(float x, float y, float &rho, float &cosPhi, float &sinPhi) {
   rho = std::sqrt(x * x + y * y);
-  const bool onAxis{!(rho > 0.0f)};
-  cosPhi = onAxis ? 1.0f : x / rho;
-  sinPhi = onAxis ? 0.0f : y / rho;
+  const bool isOnAxis{!(rho > 0.0f)};
+  cosPhi = isOnAxis ? 1.0f : x / rho;
+  sinPhi = isOnAxis ? 0.0f : y / rho;
 }
 
 // The real roots of a quadratic, in increasing order.
@@ -211,9 +211,9 @@ template <typename F>
   case PrimitiveSpec::Shape::BOX:
     return intersectBoxFace(spec.size, primID, org, dir, tnear, tfar, hit);
   case PrimitiveSpec::Shape::SPHERE: {
-    const auto roots{solveQuadratic(smdl::dot(dir, dir),
+    const auto roots{solveQuadratic(smdl::lengthSquared(dir),
                                     2.0f * smdl::dot(org, dir),
-                                    smdl::dot(org, org) - r * r)};
+                                    smdl::lengthSquared(org) - r * r)};
     return acceptRoot(roots, tnear, tfar, [&](float t) {
       const auto point{org + t * dir};
       hit.t = t;
@@ -409,13 +409,13 @@ float primitiveObjectArea(const PrimitiveSpec &spec) {
   return area;
 }
 
+namespace {
 // The sphere's surface from the zenith and azimuth trig directly, so
 // that a sampler holding the zenith cosine need not go through the
 // angle and back.
-[[nodiscard]] static PrimitiveSurface sphereSurface(float r, float cosTheta,
-                                                    float sinTheta,
-                                                    float cosPhi,
-                                                    float sinPhi) {
+[[nodiscard]] PrimitiveSurface sphereSurface(float r, float cosTheta,
+                                             float sinTheta, float cosPhi,
+                                             float sinPhi) {
   PrimitiveSurface surface{};
   surface.normal = float3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
   surface.point = r * surface.normal;
@@ -428,6 +428,7 @@ float primitiveObjectArea(const PrimitiveSpec &spec) {
   surface.dNdv = surface.dPdv / r;
   return surface;
 }
+} // namespace
 
 PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
                                       uint32_t primID, float2 uv) {
@@ -588,7 +589,7 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
 std::unique_ptr<Primitive> makePrimitive(RTCDevice device,
                                          const PrimitiveSpec &spec,
                                          uint32_t matIndex,
-                                         bool robustIntersection) {
+                                         bool useRobustIntersection) {
   auto primitive{std::make_unique<Primitive>()};
   primitive->spec = spec;
   primitive->matIndex = matIndex;
@@ -603,8 +604,9 @@ std::unique_ptr<Primitive> makePrimitive(RTCDevice device,
                                  float2(float(iu) / 8.0f, float(iv) / 3.0f))
                 .point);
   primitive->scene = rtcNewScene(device);
-  rtcSetSceneFlags(primitive->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
-                                                        : RTC_SCENE_FLAG_NONE);
+  rtcSetSceneFlags(primitive->scene, useRobustIntersection
+                                         ? RTC_SCENE_FLAG_ROBUST
+                                         : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(primitive->scene, RTC_BUILD_QUALITY_HIGH);
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER)};
   rtcSetGeometryUserPrimitiveCount(geometry, primitivePieceCount(spec));

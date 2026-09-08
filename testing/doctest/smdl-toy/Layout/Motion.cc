@@ -9,8 +9,8 @@
 namespace {
 
 // Are two matrices equal within `tolerance`?
-[[nodiscard]] bool nearMatrix(const float4x4 &a, const float4x4 &b,
-                              float tolerance) {
+[[nodiscard]] bool isNearMatrix(const float4x4 &a, const float4x4 &b,
+                                float tolerance) {
   for (int j = 0; j < 4; j++)
     for (int i = 0; i < 4; i++)
       if (std::abs(a[j][i] - b[j][i]) > tolerance) return false;
@@ -18,7 +18,7 @@ namespace {
 }
 
 // Are two matrices equal to the bit?
-[[nodiscard]] bool sameMatrix(const float4x4 &a, const float4x4 &b) {
+[[nodiscard]] bool isSameMatrix(const float4x4 &a, const float4x4 &b) {
   for (int j = 0; j < 4; j++)
     for (int i = 0; i < 4; i++)
       if (!(a[j][i] == b[j][i])) return false;
@@ -52,7 +52,7 @@ TEST_CASE("Motion: the decomposition reassembles the transform") {
     const char *name{entry.first};
     CAPTURE(name);
     const auto parts{decomposeTransform(entry.second)};
-    CHECK(nearMatrix(composeTransform(parts), entry.second, 2.0e-6f));
+    CHECK(isNearMatrix(composeTransform(parts), entry.second, 2.0e-6f));
     CHECK(parts.translation.x == entry.second[3].x);
     CHECK(parts.scale.x > 0.0f);
     CHECK(parts.scale.y > 0.0f);
@@ -66,16 +66,16 @@ TEST_CASE("Motion: the decomposition reassembles the transform") {
 TEST_CASE("Motion: the ends of an interpolation are the keys themselves") {
   const auto a{translation(1, 2, 3)};
   const auto b{rotationZ(90.0f)};
-  CHECK(sameMatrix(interpolateTransform(a, b, 0.0f), a));
-  CHECK(sameMatrix(interpolateTransform(a, b, 1.0f), b));
-  CHECK(sameMatrix(interpolateTransform(a, b, -1.0f), a));
-  CHECK(sameMatrix(interpolateTransform(a, b, 2.0f), b));
+  CHECK(isSameMatrix(interpolateTransform(a, b, 0.0f), a));
+  CHECK(isSameMatrix(interpolateTransform(a, b, 1.0f), b));
+  CHECK(isSameMatrix(interpolateTransform(a, b, -1.0f), a));
+  CHECK(isSameMatrix(interpolateTransform(a, b, 2.0f), b));
 }
 
 TEST_CASE("Motion: a turn slerps, so halfway through 90 degrees is 45") {
   const auto half{
       interpolateTransform(rotationZ(0.0f), rotationZ(90.0f), 0.5f)};
-  CHECK(nearMatrix(half, rotationZ(45.0f), 1.0e-5f));
+  CHECK(isNearMatrix(half, rotationZ(45.0f), 1.0e-5f));
   // The chord a componentwise lerp would take is shorter than the arc,
   // so the object it places is smaller than the one the keys state.
   const float3 axis{float3(half[0])};
@@ -85,7 +85,7 @@ TEST_CASE("Motion: a turn slerps, so halfway through 90 degrees is 45") {
 TEST_CASE("MotionTrack: an empty track says nothing") {
   const MotionTrack track{};
   CHECK(track.empty());
-  CHECK(sameMatrix(track.at(0.0f), float4x4(1.0f)));
+  CHECK(isSameMatrix(track.at(0.0f), float4x4(1.0f)));
   CHECK(!track.hasKeyBetween(0.0f, 1.0f));
 }
 
@@ -97,17 +97,17 @@ TEST_CASE("MotionTrack: a key's own time reproduces the key") {
   // Bit for bit, not merely close: this is what keeps a two-key track
   // sampled at the shutter's own instants rendering what the keys say.
   for (const auto &key : track.keys)
-    CHECK(sameMatrix(track.at(key.time), key.transform));
+    CHECK(isSameMatrix(track.at(key.time), key.transform));
 }
 
 TEST_CASE("MotionTrack: outside the keys the track clamps") {
   MotionTrack track{};
   track.keys.push_back({1.0f, translation(1, 0, 0)});
   track.keys.push_back({2.0f, translation(2, 0, 0)});
-  CHECK(sameMatrix(track.at(-5.0f), track.keys.front().transform));
-  CHECK(sameMatrix(track.at(0.999f), track.keys.front().transform));
-  CHECK(sameMatrix(track.at(2.001f), track.keys.back().transform));
-  CHECK(sameMatrix(track.at(100.0f), track.keys.back().transform));
+  CHECK(isSameMatrix(track.at(-5.0f), track.keys.front().transform));
+  CHECK(isSameMatrix(track.at(0.999f), track.keys.front().transform));
+  CHECK(isSameMatrix(track.at(2.001f), track.keys.back().transform));
+  CHECK(isSameMatrix(track.at(100.0f), track.keys.back().transform));
 }
 
 TEST_CASE("MotionTrack: between keys the track interpolates") {
@@ -126,9 +126,9 @@ TEST_CASE("MotionTrack: between keys the track interpolates") {
 TEST_CASE("MotionTrack: one key is a constant") {
   MotionTrack track{};
   track.keys.push_back({7.0f, translation(1, 2, 3)});
-  CHECK(sameMatrix(track.at(-1.0f), track.keys[0].transform));
-  CHECK(sameMatrix(track.at(7.0f), track.keys[0].transform));
-  CHECK(sameMatrix(track.at(99.0f), track.keys[0].transform));
+  CHECK(isSameMatrix(track.at(-1.0f), track.keys[0].transform));
+  CHECK(isSameMatrix(track.at(7.0f), track.keys[0].transform));
+  CHECK(isSameMatrix(track.at(99.0f), track.keys[0].transform));
 }
 
 TEST_CASE("MotionTrack: a key inside the shutter is reported") {

@@ -110,7 +110,7 @@ unit_test "Lambda through nested macros" {
 float apply_statey(const auto f) = f();
 
 unit_test "Lambda reads $state in non-pure context" {
-  const auto get_wavelength = \() = $state.wavelength_base[0];
+  const auto get_wavelength = \() = $state.wavelengthBase[0];
   #assert(apply_statey(get_wavelength) > 0.0);
 }
 

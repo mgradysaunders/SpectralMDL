@@ -41,22 +41,9 @@ using RenameMap = std::map<std::string, std::string, std::less<>>;
   return result;
 }
 
-// Does the file begin with the `#smdl layout` magic? Reads just enough
-// bytes to decide, so calling it on a large binary mesh costs nothing.
-[[nodiscard]] bool sniffLayoutMagic(const std::filesystem::path &path) {
-  auto stream{std::ifstream(path, std::ios::binary)};
-  if (!stream) return false;
-  std::array<char, 16> buffer{};
-  stream.read(buffer.data(), sizeof(buffer));
-  const auto text{std::string_view(buffer.data(), size_t(stream.gcount()))};
-  const auto magic{LAYOUT_MAGIC};
-  return smdl::startsWith(text, magic) &&
-         (text.size() == magic.size() || text[magic.size()] == '\n' ||
-          text[magic.size()] == '\r' || text[magic.size()] == ' ');
-}
-
-// Does the file begin with the `.curves` magic? The binary sibling of
-// `sniffLayoutMagic()`, so that the extension stays advisory here too.
+// Does the file begin with the `.curves` magic? Reads just enough bytes
+// to decide, so calling it on a large binary mesh costs nothing, and it
+// is what keeps the `.curves` extension advisory.
 [[nodiscard]] bool sniffCurvesMagic(const std::filesystem::path &path) {
   auto stream{std::ifstream(path, std::ios::binary)};
   if (!stream) return false;
@@ -76,9 +63,9 @@ class SkipPlacement final {};
 // that a word refused further down can point back at it.
 class MarkOverrides final {
 public:
-  std::optional<bool> caster{};
+  std::optional<bool> isCaster{};
   LayoutLocation casterLoc{};
-  std::optional<bool> light{};
+  std::optional<bool> isLight{};
   LayoutLocation lightLoc{};
 
   // These words under `placement`'s own: the innermost explicit word
@@ -86,11 +73,11 @@ public:
   [[nodiscard]] MarkOverrides over(const LayoutPlacement &placement) const {
     auto result{*this};
     if (placement.casterOverride) {
-      result.caster = placement.casterOverride;
+      result.isCaster = placement.casterOverride;
       result.casterLoc = placement.casterLoc;
     }
     if (placement.lightOverride) {
-      result.light = placement.lightOverride;
+      result.isLight = placement.lightOverride;
       result.lightLoc = placement.lightLoc;
     }
     return result;
@@ -134,8 +121,8 @@ public:
   // sits on, which is the offsets of every place above it.
   MotionXf(const float4x4 &xf, const MotionTrack &track,
            const MotionSampling &sampling, float offset)
-      : open(xf), shut(xf), moving(!track.empty()), offset(offset) {
-    if (moving) {
+      : open(xf), shut(xf), isMoving(!track.empty()), offset(offset) {
+    if (isMoving) {
       open = xf * track.at(sampling.open);
       shut = xf * track.at(sampling.shut);
     }
@@ -145,7 +132,7 @@ public:
     auto result{MotionXf()};
     result.open = open * other.open;
     result.shut = shut * other.shut;
-    result.moving = moving || other.moving;
+    result.isMoving = isMoving || other.isMoving;
     result.offset = offset + other.offset;
     return result;
   }
@@ -156,7 +143,7 @@ public:
   // shutter, or a key pair that restates one transform) lowers to a
   // static placement.
   [[nodiscard]] std::optional<float4x4> shutKey() const {
-    if (!moving) return std::nullopt;
+    if (!isMoving) return std::nullopt;
     for (size_t j = 0; j < 4; j++)
       for (size_t i = 0; i < 4; i++)
         if (open[j][i] != shut[j][i]) return shut;
@@ -165,32 +152,32 @@ public:
 
   float4x4 open{float4x4(1.0f)};
   float4x4 shut{float4x4(1.0f)};
-  bool moving{};
+  bool isMoving{};
   float offset{};
 };
 
 // The clip an item lowered from `decl` plays, with the path's offsets
 // added to the asset's own.
-[[nodiscard]] static AnimationSpec animationOf(const LayoutAssetDecl &decl,
-                                               const MotionXf &xf) {
+[[nodiscard]] AnimationSpec animationOf(const LayoutAssetDecl &decl,
+                                        const MotionXf &xf) {
   auto spec{decl.animation};
   spec.offset += xf.offset;
   return spec;
 }
 
-static void placeItem(LayoutItem &item, const MotionXf &xf) {
+void placeItem(LayoutItem &item, const MotionXf &xf) {
   item.objectToWorld = xf.open;
   item.objectToWorldShut = xf.shutKey();
 }
 
 // A batch moves as a whole or not at all, so the shut keys are written
 // for every record or for none.
-static void placeBatch(LayoutItem &item, const std::vector<MotionXf> &xfs) {
+void placeBatch(LayoutItem &item, const std::vector<MotionXf> &xfs) {
   item.batchXfs.reserve(xfs.size());
   for (const auto &xf : xfs) item.batchXfs.push_back(xf.open);
-  bool moving{};
-  for (const auto &xf : xfs) moving |= xf.shutKey().has_value();
-  if (!moving) return;
+  bool isMoving{};
+  for (const auto &xf : xfs) isMoving |= xf.shutKey().has_value();
+  if (!isMoving) return;
   item.batchXfsShut.reserve(xfs.size());
   for (const auto &xf : xfs) item.batchXfsShut.push_back(xf.shut);
 }
@@ -210,10 +197,10 @@ public:
     for (const auto &frame : mOpenFiles)
       if (frame.canonical == canonical) {
         auto message{std::string("import cycle:")};
-        auto inCycle{false};
+        auto isInCycle{false};
         for (const auto &open : mOpenFiles) {
-          if (open.canonical == canonical) inCycle = true;
-          if (inCycle) message += smdl::concat(" ", open.fileName, " ->");
+          if (open.canonical == canonical) isInCycle = true;
+          if (isInCycle) message += smdl::concat(" ", open.fileName, " ->");
         }
         message += smdl::concat(" ", fileName);
         auto &error{mDiags.error(importSite, message)};
@@ -484,10 +471,10 @@ private:
       auto target{Target()};
       const auto batchable{
           decl != nullptr &&
-          (decl->primitive.active() ||
+          (decl->primitive.isActive() ||
            (target = resolveTarget(document, decl->path, decl->pathLoc)).kind !=
                Target::Kind::LAYOUT)};
-      if (batchable && !decl->primitive.active())
+      if (batchable && !decl->primitive.isActive())
         checkAssetTargetKind(*decl, target);
       if (!batchable) {
         for (size_t i = 0; i < places.transforms.size(); i++)
@@ -509,22 +496,23 @@ private:
             classSlots.try_emplace(variantIndex, batches.size())};
         if (isNew) batches.emplace_back(variantIndex, std::vector<MotionXf>());
         batches[slot->second].second.push_back(
-            decl->primitive.active() ? recordXf(i) * MotionXf(decl->transform)
-                                     : recordXf(i) * MotionXf(decl->transform) *
-                                           MotionXf(target.correction));
+            decl->primitive.isActive()
+                ? recordXf(i) * MotionXf(decl->transform)
+                : recordXf(i) * MotionXf(decl->transform) *
+                      MotionXf(target.correction));
       }
       // The marks are resolved before any item exists, so a refused
       // mark leaves nothing half-built behind its diagnostic.
-      const bool caster{casterOf(*decl, effectiveMarks, &target)};
-      const bool lightMark{lightOf(*decl, effectiveMarks, &target)};
+      const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
+      const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
       for (auto &[variantIndex, xfs] : batches) {
         auto &item{mResult.items.emplace_back()};
-        if (decl->primitive.active()) {
+        if (decl->primitive.isActive()) {
           item.primitive = decl->primitive;
         } else if (target.kind == Target::Kind::CURVES) {
           item.fileName = target.path;
           item.curves = decl->curves;
-          item.curves.active = true;
+          item.curves.isActive = true;
         } else {
           item.fileName = target.path;
           item.selection = decl->selection;
@@ -536,8 +524,8 @@ private:
             document.materialAliases, variantIndex == PlacesFile::NO_VARIANT
                                           ? baseOuter
                                           : outerByVariant[variantIndex]);
-        item.isCaster = caster;
-        item.isLight = lightMark;
+        item.isCaster = isCaster;
+        item.isLight = hasLightMark;
         item.isCausticLight = decl->isCaustic;
         item.placeName = placeName;
         if (xfs.size() == 1) {
@@ -581,10 +569,11 @@ private:
       for (const auto &frame : groupStack)
         if (frame.group == group) {
           auto message{std::string("group cycle:")};
-          auto inCycle{false};
+          auto isInCycle{false};
           for (const auto &open : groupStack) {
-            if (open.group == group) inCycle = true;
-            if (inCycle) message += smdl::concat(" ", open.group->name, " ->");
+            if (open.group == group) isInCycle = true;
+            if (isInCycle)
+              message += smdl::concat(" ", open.group->name, " ->");
           }
           message += smdl::concat(" ", group->name);
           auto &error{mDiags.error(nameLoc, message)};
@@ -601,17 +590,17 @@ private:
     }
     // A primitive is pure geometry by construction: no path to resolve,
     // no file to read, and the parser already guaranteed the assignment.
-    if (decl->primitive.active()) {
-      const bool caster{casterOf(*decl, effectiveMarks, nullptr)};
-      const bool lightMark{lightOf(*decl, effectiveMarks, nullptr)};
+    if (decl->primitive.isActive()) {
+      const bool isCaster{isCasterOf(*decl, effectiveMarks, nullptr)};
+      const bool hasLightMark{isLightOf(*decl, effectiveMarks, nullptr)};
       auto &item{mResult.items.emplace_back()};
       item.primitive = decl->primitive;
       placeItem(item, combinedXf * MotionXf(decl->transform));
       item.materials = decl->materials;
       item.materials.renames =
           composeRename(document.materialAliases, effectiveOuter);
-      item.isCaster = caster;
-      item.isLight = lightMark;
+      item.isCaster = isCaster;
+      item.isLight = hasLightMark;
       item.isCausticLight = decl->isCaustic;
       item.placeName = placeName;
       return;
@@ -622,14 +611,14 @@ private:
       // The asset's own marks pass down like overrides, since there is
       // no one item for them to mark; the checks still run here, so
       // that `light off` under `caustic` is refused wherever it is said.
-      (void)lightOf(*decl, effectiveMarks, nullptr);
+      (void)isLightOf(*decl, effectiveMarks, nullptr);
       auto passed{effectiveMarks};
-      if (!passed.caster && decl->isCaster) {
-        passed.caster = true;
+      if (!passed.isCaster && decl->isCaster) {
+        passed.isCaster = true;
         passed.casterLoc = decl->casterLoc;
       }
-      if (!passed.light && (decl->isLight || decl->isCaustic)) {
-        passed.light = true;
+      if (!passed.isLight && (decl->isLight || decl->isCaustic)) {
+        passed.isLight = true;
         passed.lightLoc = decl->lightLoc ? decl->lightLoc : decl->nameLoc;
       }
       lowerFile(target.path, combinedXf * MotionXf(decl->transform),
@@ -638,15 +627,15 @@ private:
                 passed, false, decl->pathLoc);
       return;
     }
-    const bool caster{casterOf(*decl, effectiveMarks, &target)};
-    const bool lightMark{lightOf(*decl, effectiveMarks, &target)};
+    const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
+    const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     placeItem(item, combinedXf * MotionXf(decl->transform) *
                         MotionXf(target.correction));
     if (target.kind == Target::Kind::CURVES) {
       item.curves = decl->curves;
-      item.curves.active = true;
+      item.curves.isActive = true;
     } else {
       item.selection = decl->selection;
       item.subdiv = decl->subdiv;
@@ -655,8 +644,8 @@ private:
     item.materials = decl->materials;
     item.materials.renames =
         composeRename(document.materialAliases, effectiveOuter);
-    item.isCaster = caster;
-    item.isLight = lightMark;
+    item.isCaster = isCaster;
+    item.isLight = hasLightMark;
     item.isCausticLight = decl->isCaustic;
     item.placeName = placeName;
   }
@@ -665,11 +654,11 @@ private:
   // target of known kind or through no target at all (a shape): a groom
   // cannot carry it, since the manifold walk has no smooth surface to
   // run on there.
-  [[nodiscard]] bool casterOf(const LayoutAssetDecl &decl,
-                              const MarkOverrides &marks,
-                              const Target *target) {
-    const bool caster{marks.caster.value_or(decl.isCaster)};
-    if (caster && target && target->kind == Target::Kind::CURVES) {
+  [[nodiscard]] bool isCasterOf(const LayoutAssetDecl &decl,
+                                const MarkOverrides &marks,
+                                const Target *target) {
+    const bool isCaster{marks.isCaster.value_or(decl.isCaster)};
+    if (isCaster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
                    smdl::concat("'caster' applies to a mesh file or a shape, "
                                 "but ",
@@ -677,15 +666,16 @@ private:
                                 " is a curves file"));
       throw SkipPlacement();
     }
-    return caster;
+    return isCaster;
   }
 
   // The composed light mark, likewise: `caustic` implies it and cannot
   // be turned off underneath, and a groom cannot carry it, since light
   // selection has no way to sample a fiber.
-  [[nodiscard]] bool lightOf(const LayoutAssetDecl &decl,
-                             const MarkOverrides &marks, const Target *target) {
-    if (decl.isCaustic && marks.light == std::optional<bool>(false)) {
+  [[nodiscard]] bool isLightOf(const LayoutAssetDecl &decl,
+                               const MarkOverrides &marks,
+                               const Target *target) {
+    if (decl.isCaustic && marks.isLight == std::optional<bool>(false)) {
       mDiags
           .error(marks.lightLoc,
                  smdl::concat("'light off' cannot apply to ",
@@ -694,8 +684,8 @@ private:
           .note(decl.nameLoc, "declared 'caustic' here");
       throw SkipPlacement();
     }
-    const bool light{marks.light.value_or(decl.isLight) || decl.isCaustic};
-    if (light && target && target->kind == Target::Kind::CURVES) {
+    const bool isLight{marks.isLight.value_or(decl.isLight) || decl.isCaustic};
+    if (isLight && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
                    smdl::concat("'light' applies to a mesh file or a shape, "
                                 "but ",
@@ -703,7 +693,7 @@ private:
                                 " is a curves file"));
       throw SkipPlacement();
     }
-    return light;
+    return isLight;
   }
 
   // The kind-specific properties an asset block can write, cross-checked
@@ -714,8 +704,8 @@ private:
   // author means; say so instead of silently ignoring it.
   void checkAssetTargetKind(const LayoutAssetDecl &decl, const Target &target) {
     if (target.kind != Target::Kind::MESH &&
-        (!decl.selection.patterns.empty() || decl.selection.recenter ||
-         decl.subdiv.active())) {
+        (!decl.selection.patterns.empty() || decl.selection.shouldRecenter ||
+         decl.subdiv.isActive())) {
       mDiags.error(decl.pathLoc,
                    smdl::concat("'select', 'recenter', 'subdivide', and "
                                 "'displace' apply to a mesh file, but ",
@@ -780,9 +770,9 @@ private:
                                   " is a curves file"));
         throw SkipPlacement();
       }};
-      if (effectiveMarks.caster.value_or(false))
+      if (effectiveMarks.isCaster.value_or(false))
         refuseMark(effectiveMarks.casterLoc, "caster");
-      if (effectiveMarks.light.value_or(false))
+      if (effectiveMarks.isLight.value_or(false))
         refuseMark(effectiveMarks.lightLoc, "light");
     }
     if (target.kind == Target::Kind::CURVES) {
@@ -806,15 +796,15 @@ private:
     }
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
-    item.curves.active = target.kind == Target::Kind::CURVES;
+    item.curves.isActive = target.kind == Target::Kind::CURVES;
     if (target.kind == Target::Kind::MESH) item.animation.offset = xf.offset;
     placeItem(item,
               xf * MotionXf(placement.transform) * MotionXf(target.correction));
     item.materials = placement.importMaterials;
     item.materials.renames =
         composeRename(document.materialAliases, outerRenames);
-    item.isCaster = effectiveMarks.caster.value_or(false);
-    item.isLight = effectiveMarks.light.value_or(false);
+    item.isCaster = effectiveMarks.isCaster.value_or(false);
+    item.isLight = effectiveMarks.isLight.value_or(false);
   }
 
   // The `material` assignments written against a layout target, turned
@@ -882,8 +872,7 @@ private:
     }
     if (resolved.extension() == CURVES_EXTENSION || sniffCurvesMagic(resolved))
       target.kind = Target::Kind::CURVES;
-    else if (resolved.extension() == LAYOUT_EXTENSION ||
-             sniffLayoutMagic(resolved))
+    else if (resolved.extension() == LAYOUT_EXTENSION)
       target.kind = Target::Kind::LAYOUT;
     target.path = resolved.string();
     return target;
@@ -895,7 +884,7 @@ private:
   // reporting if `skip` is false; throws `SkipPlacement` otherwise.
   [[nodiscard]] std::filesystem::path
   resolvePath(const LayoutDocument &document, const std::string &path,
-              const LayoutLocation &location, bool skip) {
+              const LayoutLocation &location, bool shouldSkip) {
     auto written{std::filesystem::path(path)};
     auto candidates{std::vector<std::filesystem::path>()};
     if (written.is_absolute()) {
@@ -916,7 +905,7 @@ private:
     if (mSearch.empty() && !written.is_absolute())
       message += "\n  (pass -asset-dir to say where the asset library is)";
     mDiags.error(location, message);
-    if (skip) throw SkipPlacement();
+    if (shouldSkip) throw SkipPlacement();
     return {};
   }
 
@@ -999,17 +988,17 @@ Layout resolveLayoutArgument(const std::string &fileName,
     const auto asset{readAssetFile(path.string())};
     auto &item{result.items.emplace_back()};
     item.fileName = asset.renderFileName;
-    item.curves.active = classifyCurves(asset.renderFileName);
+    item.curves.isActive = classifyCurves(asset.renderFileName);
     item.objectToWorld = asset.correction;
-    item.isLight = !item.curves.active;
+    item.isLight = !item.curves.isActive;
     result.frontAzimuth = asset.front;
     return result;
   }
-  if (path.extension() == LAYOUT_EXTENSION || sniffLayoutMagic(path))
+  if (path.extension() == LAYOUT_EXTENSION)
     return readLayout(fileName, search, sampling);
   auto &item{result.items.emplace_back()};
   item.fileName = path.string();
-  item.curves.active = classifyCurves(path);
-  item.isLight = !item.curves.active;
+  item.curves.isActive = classifyCurves(path);
+  item.isLight = !item.curves.isActive;
   return result;
 }

@@ -24,6 +24,7 @@
 
 namespace smdl {
 
+namespace {
 // Fold the result PHI of an inline expansion whose incoming values are all
 // the same constant.
 //
@@ -31,7 +32,7 @@ namespace smdl {
 // leaves collapsing it to the optimizer. That is fine inside a function, but
 // an expansion at module scope has to come out as a constant here and now,
 // with no optimizer to run and no function to keep the PHI in.
-static llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
+llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
   auto phiInst{llvm::dyn_cast_if_present<llvm::PHINode>(llvmValue)};
   if (!phiInst || phiInst->getNumIncomingValues() == 0) return llvmValue;
   auto llvmConst{llvm::dyn_cast<llvm::Constant>(phiInst->getIncomingValue(0))};
@@ -40,6 +41,7 @@ static llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
     if (phiInst->getIncomingValue(i) != llvmConst) return llvmValue;
   return llvmConst;
 }
+} // namespace
 
 Value Emitter::createFunctionImplementation(
     std::string_view name, bool isPure, Type *returnType,
@@ -81,7 +83,7 @@ Value Emitter::createFunctionImplementation(
   auto declarationsToWarnAboutSize{declarationsToWarnAbout.size()};
   handleScope(nullptr, nullptr, [&] {
     labelBreak = labelContinue = {}; // Invalidate
-    inDefer = false;
+    isInDefer = false;
     for (size_t i = 0; i < params.size(); ++i)
       declareParameter(params[i], paramValues[i]);
     callback();
@@ -468,7 +470,7 @@ Emitter::findSameScopeDeclaration(Span<const std::string_view> name) {
     if (auto itr{s->decls.find(internedName.data())}; itr != s->decls.end())
       for (auto c{itr->second}; c; c = c->prevSameNameInScope)
         if (!c->isSameScopeShadowExempt()) return c;
-    if (!s->transparent) break;
+    if (!s->isTransparent) break;
   }
   return nullptr;
 }
@@ -492,9 +494,9 @@ Declaration *Emitter::probeName(Span<const std::string_view> name,
   for (auto s{scope}; s; s = s->parent) {
     for (const auto &[anchorScope, anchorSeq] : anchors)
       if (s == anchorScope) seqLimit = std::min(seqLimit, anchorSeq);
-    if (auto found{Declaration::resolveInScope(context, name, llvmFunc, s,
-                                               /*ignoreIfNotExported=*/false,
-                                               seqLimit, unusableMatch)})
+    if (auto found{Declaration::resolveInScope(
+            context, name, llvmFunc, s,
+            /*shouldIgnoreIfNotExported=*/false, seqLimit, unusableMatch)})
       return found;
   }
   return nullptr;
@@ -546,7 +548,7 @@ void Emitter::unwind(size_t depth) {
         labelReturn = {};   // Invalidate!
         labelBreak = {};    // Invalidate!
         labelContinue = {}; // Invalidate!
-        inDefer = true;     // More specific error messages
+        isInDefer = true;   // More specific error messages
         // The body must not see declarations made after the defer
         // statement, so push an anchor at the innermost live scope
         // ('scope->parent': 'scope' itself is the defer body's own
@@ -576,8 +578,8 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     for (auto &result : results)
       resultTypes.push_back(result.value.type ? result.value.type
                                               : context.getVoidType());
-    auto resultType{
-        context.getCommonType(resultTypes, /*defaultToUnion=*/true, srcLoc)};
+    auto resultType{context.getCommonType(
+        resultTypes, /*shouldDefaultToUnion=*/true, srcLoc)};
     if (context.getConversionRule(resultType, type) ==
         CONVERSION_RULE_NOT_ALLOWED)
       srcLoc.throwError("inferred result type ",
@@ -674,7 +676,7 @@ Value Emitter::emit(AST::Exec &decl) {
 }
 
 Value Emitter::emit(AST::UnitTest &decl) {
-  if (context.compiler.enableUnitTests) {
+  if (context.compiler.shouldEmitUnitTests) {
     auto returnType{context.getVoidType()};
     auto llvmFunc{createFunction(".unit_test", /*isPure=*/false, returnType,
                                  ParameterList(), decl.srcLoc,
@@ -732,7 +734,7 @@ Value Emitter::emit(AST::Variable &decl) {
     // The initializer's bindings (e.g. ':=') go out of scope below, before
     // the declared variable itself enters the enclosing scope, hence a
     // transparent scope whose entries pop with the initializer region.
-    scope = pushScope(/*transparent=*/true);
+    scope = pushScope(/*isTransparent=*/true);
     auto args{[&]() -> ArgumentList {
       if (declarator.exprInit) {
         return emit(*declarator.exprInit);
@@ -912,7 +914,7 @@ Value Emitter::emit(AST::Binary &expr) {
         // whether ':=' in the rhs is visible afterward must not depend on
         // whether the lhs constant-folded.
         SMDL_PRESERVE(scope);
-        scope = pushScope(/*transparent=*/true);
+        scope = pushScope(/*isTransparent=*/true);
         return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
       }
       return valueLhs;
@@ -942,7 +944,7 @@ Value Emitter::emit(AST::Binary &expr) {
       if (valueLhsCond.getComptimeInt()) return valueLhs;
       // Contain rhs declarations, matching the runtime two-arm merge.
       SMDL_PRESERVE(scope);
-      scope = pushScope(/*transparent=*/true);
+      scope = pushScope(/*isTransparent=*/true);
       return emit(expr.exprRhs);
     } else {
       return emitTwoArmMerge(
@@ -1026,7 +1028,7 @@ Value Emitter::emit(AST::Select &expr) {
     // Contain arm declarations, matching the runtime two-arm merge. (A ':='
     // in the condition still leaks, in both paths; it dominates the merge.)
     SMDL_PRESERVE(scope);
-    scope = pushScope(/*transparent=*/true);
+    scope = pushScope(/*isTransparent=*/true);
     return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
   }
   return emitTwoArmMerge(
@@ -1052,42 +1054,44 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
       createBlocks<3>(name, {".then", ".else", ".end"});
   builder.CreateCondBr(cond, blockArm0, blockArm1);
   builder.SetInsertPoint(blockArm0);
-  scope = pushScope(/*transparent=*/true);
+  scope = pushScope(/*isTransparent=*/true);
   auto value0{emitArm0()};
   auto value0IP{builder.saveIP()};
   scope = scope0;
   llvmMoveBlockToEnd(blockArm1);
   builder.SetInsertPoint(blockArm1);
-  scope = pushScope(/*transparent=*/true);
+  scope = pushScope(/*isTransparent=*/true);
   auto value1{emitArm1()};
   auto value1IP{builder.saveIP()};
   auto commonType{context.getCommonType({value0.type, value1.type},
-                                        /*defaultToUnion=*/true, srcLoc)};
+                                        /*shouldDefaultToUnion=*/true, srcLoc)};
   // If both arms are already lvalues of the common type, merge the
   // pointers and stay an lvalue (mirroring 'createResult') so large
   // values (unions, structs) are not loaded into SSA just to be merged.
-  const bool mergeAsLValues{value0.isLValue() && value1.isLValue() &&
-                            value0.type == commonType &&
-                            value1.type == commonType};
+  const bool shouldMergeAsLValues{value0.isLValue() && value1.isLValue() &&
+                                  value0.type == commonType &&
+                                  value1.type == commonType};
   builder.restoreIP(value0IP);
-  if (!mergeAsLValues) value0 = rvalue(invoke(commonType, value0, srcLoc0));
+  if (!shouldMergeAsLValues)
+    value0 = rvalue(invoke(commonType, value0, srcLoc0));
   blockArm0 = getInsertBlock();
   builder.CreateBr(blockEnd);
   builder.restoreIP(value1IP);
-  if (!mergeAsLValues) value1 = rvalue(invoke(commonType, value1, srcLoc1));
+  if (!shouldMergeAsLValues)
+    value1 = rvalue(invoke(commonType, value1, srcLoc1));
   blockArm1 = getInsertBlock();
   builder.CreateBr(blockEnd);
   // Create PHI instruction.
   llvmMoveBlockToEnd(blockEnd);
   builder.SetInsertPoint(blockEnd);
   auto phiInst{builder.CreatePHI(
-      mergeAsLValues ? context.getPointerType(commonType)->llvmType
-                     : commonType->llvmType,
+      shouldMergeAsLValues ? context.getPointerType(commonType)->llvmType
+                           : commonType->llvmType,
       2)};
   phiInst->addIncoming(value0, blockArm0);
   phiInst->addIncoming(value1, blockArm1);
-  return mergeAsLValues ? LValue(commonType, phiInst)
-                        : RValue(commonType, phiInst);
+  return shouldMergeAsLValues ? LValue(commonType, phiInst)
+                              : RValue(commonType, phiInst);
 }
 //--}
 
@@ -1126,7 +1130,7 @@ Value Emitter::emit(AST::For &stmt) {
   // shadow an 'i' in the enclosing scope.
   SMDL_PRESERVE(scope);
   const auto depth0{unwindStack.size()};
-  scope = pushScope(/*transparent=*/false);
+  scope = pushScope(/*isTransparent=*/false);
   auto [blockCond, blockLoop, blockNext, blockEnd] =
       createBlocks<4>("for", {".cond", ".loop", ".next", ".end"});
   if (stmt.stmtInit) emit(stmt.stmtInit);
@@ -1372,7 +1376,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
 //--}
 
 //--{ Helper: llvmArithOp
-[[nodiscard]] static std::optional<llvm::Instruction::BinaryOps>
+namespace {
+[[nodiscard]] std::optional<llvm::Instruction::BinaryOps>
 llvmArithOp(Scalar::Intent intent, AST::BinaryOp op) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
@@ -1419,14 +1424,16 @@ llvmArithOp(Scalar::Intent intent, AST::BinaryOp op) {
   }
   return std::nullopt;
 }
+} // namespace
 //--}
 
 //--{ Helper: throwIfDividingByZero
+namespace {
 // LLVM makes integer division and remainder by zero poison, which silently
 // corrupts the program instead of failing it. A constant divisor is the case
 // the compiler can see for itself, so refuse it here.
-static void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
-                                  const SourceLocation &srcLoc) {
+void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
+                           const SourceLocation &srcLoc) {
   if (op != BINOP_DIV && op != BINOP_REM) return;
   auto constant{llvm::dyn_cast_if_present<llvm::Constant>(rhs)};
   if (!constant) return;
@@ -1446,10 +1453,12 @@ static void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
     srcLoc.throwError(op == BINOP_DIV ? "integer division by zero"
                                       : "integer remainder by zero");
 }
+} // namespace
 //--}
 
 //--{ Helper: llvmCmpOp
-[[nodiscard]] static std::optional<llvm::CmpInst::Predicate>
+namespace {
+[[nodiscard]] std::optional<llvm::CmpInst::Predicate>
 llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
@@ -1488,6 +1497,7 @@ llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
   }
   return std::nullopt;
 }
+} // namespace
 //--}
 
 //--{ emitOp (AST::BinaryOp)
@@ -1735,12 +1745,13 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
 }
 //--}
 
+namespace {
 // Round an alignment request up to something every aligned allocator
 // accepts: a power of two that is at least 'sizeof(void *)'. Over-aligning
 // is always safe for the caller, who asked for *at least* this alignment,
 // and '#alloc(size, align)' takes both arguments straight from user source,
 // so neither is guaranteed to be sane on the way in.
-[[nodiscard]] static size_t normalizeAlignment(size_t align) noexcept {
+[[nodiscard]] size_t normalizeAlignment(size_t align) noexcept {
   auto result{sizeof(void *)};
   while (result < align) result <<= 1;
   return result;
@@ -1751,7 +1762,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
 // Apple only declares it for deployment targets of macOS 10.15 or later,
 // and C11 additionally requires the size to be an integral multiple of the
 // alignment, which nothing here guarantees.
-[[nodiscard]] static void *alignedAllocate(size_t size, size_t align) noexcept {
+[[nodiscard]] void *alignedAllocate(size_t size, size_t align) noexcept {
 #if defined(_WIN32)
   return _aligned_malloc(size, align);
 #else
@@ -1760,13 +1771,14 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
 #endif // #if defined(_WIN32)
 }
 
-static void alignedFree(void *ptr) noexcept {
+void alignedFree(void *ptr) noexcept {
 #if defined(_WIN32)
   _aligned_free(ptr);
 #else
   std::free(ptr);
 #endif // #if defined(_WIN32)
 }
+} // namespace
 
 extern "C" {
 
@@ -1795,12 +1807,12 @@ SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
 // TODO This is a specific solution to a specific problem of calculating
 // tabulated albedos conveniently and efficiently. There might be a more
 // general way of addressing this in the future.
-SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
-                                    int num_roughness, const void *func) {
-  SMDL_SANITY_CHECK(num_cos_theta > 1);
-  SMDL_SANITY_CHECK(num_roughness > 1);
+SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int numCosTheta,
+                                    int numRoughness, const void *func) {
+  SMDL_SANITY_CHECK(numCosTheta > 1);
+  SMDL_SANITY_CHECK(numRoughness > 1);
   SMDL_SANITY_CHECK(func);
-  auto numCalculationsTodo{size_t(num_cos_theta) * size_t(num_roughness)};
+  auto numCalculationsTodo{size_t(numCosTheta) * size_t(numRoughness)};
   auto numCalculationsDone{std::atomic_int(0)};
   auto directionalAlbedo{std::vector<float>(numCalculationsTodo, 0.0f)};
   // The JIT'd function may throw (e.g. '#panic'), and an exception must
@@ -1808,14 +1820,14 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
   // it on the calling thread.
   auto firstException{std::exception_ptr{}};
   auto firstExceptionMutex{std::mutex{}};
-  parallelFor(0, num_cos_theta, [&](size_t i) {
+  parallelFor(0, numCosTheta, [&](size_t i) {
     try {
-      float cos_theta{float(i) / float(num_cos_theta - 1)};
-      for (int j = 0; j < num_roughness; j++) {
-        float roughness{float(j) / float(num_roughness - 1)};
-        directionalAlbedo[i * size_t(num_roughness) + size_t(j)] =
+      float cosTheta{float(i) / float(numCosTheta - 1)};
+      for (int j = 0; j < numRoughness; j++) {
+        float roughness{float(j) / float(numRoughness - 1)};
+        directionalAlbedo[i * size_t(numRoughness) + size_t(j)] =
             reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
-                cos_theta, roughness);
+                cosTheta, roughness);
         llvm::errs() << llvm::format(
             "\rTabulating '%s': %2.1f%%", name,
             float(double(++numCalculationsDone) * 100.0 /
@@ -1839,24 +1851,24 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
     }
     outputFile << llvm::format(
         "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
-        num_cos_theta, num_roughness, name);
-    for (int i = 0; i < num_cos_theta; i++) {
-      for (int j = 0; j < num_roughness; j++) {
+        numCosTheta, numRoughness, name);
+    for (int i = 0; i < numCosTheta; i++) {
+      for (int j = 0; j < numRoughness; j++) {
         outputFile << llvm::format("%1.7ef, ",
-                                   directionalAlbedo[i * num_roughness + j]);
+                                   directionalAlbedo[i * numRoughness + j]);
       }
       outputFile << '\n';
     }
     outputFile << "};\n";
     outputFile << llvm::format(
         "static const std::array<float, %d> %s_average_albedo = {\n",
-        num_roughness, name);
-    for (int j = 0; j < num_roughness; j++) {
+        numRoughness, name);
+    for (int j = 0; j < numRoughness; j++) {
       double numer = 0.0;
       double denom = 0.0;
-      for (int i = 0; i < num_cos_theta; i++) {
-        float cos_theta{float(i) / float(num_cos_theta - 1)};
-        numer += 2 * cos_theta * directionalAlbedo[i * num_roughness + j];
+      for (int i = 0; i < numCosTheta; i++) {
+        float cosTheta{float(i) / float(numCosTheta - 1)};
+        numer += 2 * cosTheta * directionalAlbedo[i * numRoughness + j];
         denom += 1;
       }
       outputFile << llvm::format("%1.7ef, ", numer / denom);
@@ -1865,16 +1877,16 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
     outputFile << llvm::format(
         "static const AlbedoLUT %s = {%d, %d, %s_directional_albedo.data(), "
         "%s_average_albedo.data()};\n",
-        name, num_cos_theta, num_roughness, name, name);
+        name, numCosTheta, numRoughness, name, name);
   }
   {
     std::error_code ec{};
     auto outputFileName{std::string(name) + ".txt"};
     auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
-    for (int i = 0; i < num_cos_theta; i++) {
-      for (int j = 0; j < num_roughness; j++) {
+    for (int i = 0; i < numCosTheta; i++) {
+      for (int j = 0; j < numRoughness; j++) {
         outputFile << llvm::format("%1.7e ",
-                                   directionalAlbedo[i * num_roughness + j]);
+                                   directionalAlbedo[i * numRoughness + j]);
       }
       outputFile << '\n';
     }
@@ -2115,7 +2127,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
       srcLoc.throwError("intrinsic 'atan2' expects 2 vectorized arguments");
     auto commonType{context.getCommonType(
         {args[0].value.type, args[1].value.type, context.getFloatType()},
-        /*defaultToUnion=*/false, srcLoc)};
+        /*shouldDefaultToUnion=*/false, srcLoc)};
     SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint() ||
                       commonType->isColor());
     auto value0{invoke(commonType, args[0].value, srcLoc)};
@@ -2137,16 +2149,16 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
           " that does not identify any known look-up table at compile time");
     auto floatPtrType{context.getPointerType(context.getFloatType())};
     auto lutArgs{ArgumentList{}};
-    lutArgs.emplace_back("num_cos_theta",
-                         context.getComptimeInt(lut->num_cos_theta));
-    lutArgs.emplace_back("num_roughness",
-                         context.getComptimeInt(lut->num_roughness));
+    lutArgs.emplace_back("numCosTheta",
+                         context.getComptimeInt(lut->numCosTheta));
+    lutArgs.emplace_back("numRoughness",
+                         context.getComptimeInt(lut->numRoughness));
     lutArgs.emplace_back(
-        "directional_albedo",
-        context.getComptimePtr(floatPtrType, lut->directional_albedo));
+        "directionalAlbedo",
+        context.getComptimePtr(floatPtrType, lut->directionalAlbedo));
     lutArgs.emplace_back(
-        "average_albedo",
-        context.getComptimePtr(floatPtrType, lut->average_albedo));
+        "averageAlbedo",
+        context.getComptimePtr(floatPtrType, lut->averageAlbedo));
     return invoke(lutType, lutArgs, srcLoc);
   }
   case IntrinsicID::BitCast: {
@@ -2439,7 +2451,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     auto value0{args[0].value};
     auto value1{args[1].value};
     auto type{context.getCommonType({value0.type, value1.type},
-                                    /*defaultToUnion=*/false, srcLoc)};
+                                    /*shouldDefaultToUnion=*/false, srcLoc)};
     value0 = invoke(type, value0, srcLoc);
     value1 = invoke(type, value1, srcLoc);
     auto intrID{intrinsicID == IntrinsicID::Max
@@ -2501,7 +2513,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     }
     auto resultType{context.getCommonType(
         {value0.type, value1.type, context.getFloatType()},
-        /*defaultToUnion=*/false, srcLoc)};
+        /*shouldDefaultToUnion=*/false, srcLoc)};
     value0 = invoke(resultType, value0, srcLoc);
     return RValue(
         resultType,
@@ -2528,7 +2540,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                         " expects 2 integer or vectorized integer arguments");
     }
     auto intType{context.getCommonType({args[0].value.type, args[1].value.type},
-                                       /*defaultToUnion=*/false, srcLoc)};
+                                       /*shouldDefaultToUnion=*/false, srcLoc)};
     auto value0{invoke(intType, args[0].value, srcLoc)};
     auto value1{invoke(intType, args[1].value, srcLoc)};
     auto llvmIntrID{intrinsicID == IntrinsicID::Rotl ? llvm::Intrinsic::fshl
@@ -2587,7 +2599,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                                        valueCond.type->isArithmeticVector()
                                    ? valueCond.type
                                    : nullptr},
-                              /*defaultToUnion=*/false, srcLoc)};
+                              /*shouldDefaultToUnion=*/false, srcLoc)};
     // The common type no longer sees the condition in every case, so the
     // component counts must be reconciled here instead of falling out of it.
     if (valueCond.type->isArithmeticVector() &&
@@ -2995,7 +3007,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto texture2DType{context.getTexture2DType()};
     auto [fileName, valueGammaAsInt, useMipmap, maxMipmap] =
         expectOneComptimeStringOneIntAndTwoComptimeBools();
-    const bool withMipLevels{useMipmap || maxMipmap};
+    const bool useMipLevels{useMipmap || maxMipmap};
     const auto mipFilter{maxMipmap ? Image::MIP_MAX : Image::MIP_MEAN};
     auto resolvedImagePaths{context.locateImages(fileName)};
     if (resolvedImagePaths.empty()) {
@@ -3013,7 +3025,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       // The user's call site, not the builtin constructor's: the load
       // errors and the mip chain requests are reported against it.
       images.push_back(&context.compiler.loadImage(
-          filePath, resourceSourceLocation(srcLoc), withMipLevels, mipFilter));
+          filePath, resourceSourceLocation(srcLoc), useMipLevels, mipFilter));
       if (images.back()->getFormat() != images.front()->getFormat() ||
           images.back()->getNumChannels() != images.front()->getNumChannels()) {
         context.compiler.logResourceWarningOnce(
@@ -3033,7 +3045,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     // that opted out of mip levels bakes 1 here and never reads past
     // level 0, whatever the images behind it happen to hold.
     auto numLevels{1};
-    if (withMipLevels)
+    if (useMipLevels)
       for (auto &image : images)
         numLevels = std::max(numLevels, image->getNumLevels());
     auto valueTileBuffers{Value::zero(
@@ -3512,7 +3524,7 @@ SMDL_EXPORT void smdlPrintPointer(void *ptr, const void *value) {
 } // extern "C"
 
 void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
-                        bool quoteStrings) {
+                        bool shouldQuoteStrings) {
   SMDL_SANITY_CHECK(file.type->isPointer());
   file = rvalue(file);
   if (value.isComptimeMetaType(context)) {
@@ -3525,10 +3537,11 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
         context.getBuiltinCallee("smdlPrintPointer", &smdlPrintPointer),
         {file.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->isString()) {
-    auto call{quoteStrings ? context.getBuiltinCallee("smdlPrintQuotedString",
-                                                      &smdlPrintQuotedString)
-                           : context.getBuiltinCallee("smdlPrintString",
-                                                      &smdlPrintString)};
+    auto call{
+        shouldQuoteStrings
+            ? context.getBuiltinCallee("smdlPrintQuotedString",
+                                       &smdlPrintQuotedString)
+            : context.getBuiltinCallee("smdlPrintString", &smdlPrintString)};
     builder.CreateCall(call, {file.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->isEnum()) {
     emitPrint(file, invoke(context.getStringType(), value, srcLoc), srcLoc);
@@ -3572,7 +3585,7 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
     emitPrint(file, "[", srcLoc);
     for (uint32_t i = 0; i < arrayType->size; i++) {
       emitPrint(file, accessIndex(value, i, srcLoc), srcLoc,
-                /*quoteStrings=*/true);
+                /*shouldQuoteStrings=*/true);
       if (i + 1 < arrayType->size) emitPrint(file, ", ", srcLoc);
     }
     emitPrint(file, "]", srcLoc);
@@ -3589,13 +3602,13 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
       auto paramName{std::string(structType->params[i].name)};
       emitPrint(file, paramName + ": ", srcLoc);
       emitPrint(file, accessField(value, paramName, srcLoc), srcLoc,
-                /*quoteStrings=*/true);
+                /*shouldQuoteStrings=*/true);
       if (i + 1 < structType->params.size()) emitPrint(file, ", ", srcLoc);
     }
     emitPrint(file, ")", srcLoc);
   } else if (value.type->isUnion()) {
     emitVisit(value, srcLoc, [&](Value value) {
-      emitPrint(file, value, srcLoc, quoteStrings);
+      emitPrint(file, value, srcLoc, shouldQuoteStrings);
       return Value();
     });
   }
@@ -3724,7 +3737,7 @@ Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
 
 Value Emitter::resolveIdentifier(Span<const std::string_view> names,
                                  const SourceLocation &srcLoc,
-                                 bool voidByDefault) {
+                                 bool shouldDefaultToVoid) {
   SMDL_SANITY_CHECK(!names.empty());
   // Interning the lookup makes the full-name comparisons in the scope
   // index pointer comparisons against interned declaration names.
@@ -3757,7 +3770,7 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
       return value;
     }
   }
-  if (voidByDefault) {
+  if (shouldDefaultToVoid) {
     return RValue(context.getVoidType(), nullptr);
   }
   srcLoc.throwError("cannot resolve identifier ", Quoted(join(names, "::")),
@@ -3767,8 +3780,8 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
 
 Emitter::ResolvedArguments
 Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
-                          const SourceLocation &srcLoc, bool dontEmit,
-                          bool passAggregatesIndirectly) {
+                          const SourceLocation &srcLoc, bool shouldSkipEmit,
+                          bool shouldPassAggregatesIndirectly) {
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
   if (args.size() > params.size() && !params.isVariadic) {
@@ -3897,7 +3910,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   // of resolved arguments should equal the number of arguments.
   SMDL_SANITY_CHECK(resolvedArgsCount == std::min(args.size(), params.size()));
 
-  if (!dontEmit) {
+  if (!shouldSkipEmit) {
     SMDL_PRESERVE(scope, anchors);
     restoreResolutionAnchor(params);
     handleScope(nullptr, nullptr, [&] {
@@ -3939,8 +3952,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         // fails regardless and both sides agree to skip the convention;
         // this only keeps the failure the one module scope already
         // produces rather than an alloca sanity check from here.
-        const auto indirect{passAggregatesIndirectly && getLLVMFunction() &&
-                            passesIndirectly(value.type)};
+        const auto indirect{shouldPassAggregatesIndirectly &&
+                            getLLVMFunction() && passesIndirectly(value.type)};
         // 'lvalue()' passes an existing lvalue through, so an argument that
         // is already memory-resident is passed without a copy; 'byval'
         // makes that safe by giving the callee its own copy regardless.

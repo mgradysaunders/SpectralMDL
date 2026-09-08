@@ -31,7 +31,7 @@ struct CameraOptions final {
   /// fraction `u` sees the framing vectors interpolated linearly
   /// between the two. Field of view, focus, aperture, and distortion
   /// hold over the shutter.
-  bool motion{};
+  bool hasMotion{};
 
   /// The position to look from at shutter shut.
   float3 lookFromShut{};
@@ -70,7 +70,7 @@ struct CameraOptions final {
   float distortionK2{};
 
   /// Refit so frame corner directions hold constant under distortion.
-  bool distortionFit{};
+  bool shouldFitDistortion{};
 
   /// The strength of cos^4 falloff: 0 is off, 1 is the physical law.
   float vignetting{};
@@ -140,7 +140,7 @@ public:
   /// whatever `u` is, here; a moving camera builds its frame at `u` out
   /// of line, in `toWorldMoving()`.
   void toWorld(CameraSample &sample, float u) const noexcept {
-    if (mMoving) return toWorldMoving(sample, u);
+    if (mIsMoving) return toWorldMoving(sample, u);
     sample.ray.transform(mCameraToWorld);
     sample.ray.dir = normalize(sample.ray.dir);
     sample.ray.time = u;
@@ -172,10 +172,10 @@ private:
   /// Does the camera move over the shutter? False when the shut keys
   /// equal the open keys, so a still camera exported under motion blur
   /// renders bit for bit what it renders exported without.
-  bool mMoving{};
+  bool mIsMoving{};
 
   /// The framing at shutter open and at shutter shut, read only when
-  /// `mMoving`. The frame at fraction `u` is the look-at of the vectors
+  /// `mIsMoving`. The frame at fraction `u` is the look-at of the vectors
   /// interpolated as `(1 - u) * open + u * shut`, spelled so that the
   /// two ends reproduce the keys exactly. The view direction is then
   /// the normalized chord, whose angular rate differs from a slerp's by
@@ -194,7 +194,7 @@ private:
   /// Is either distortion coefficient nonzero?
   bool mHasDistortion{};
 
-  /// Under `distortionFit` the whole map is divided by its value at
+  /// Under `shouldFitDistortion` the whole map is divided by its value at
   /// the corner, so only the interior warps. The monotonicity scan in
   /// the constructor guarantees the divisor is positive.
   float mDistortionScale{1};

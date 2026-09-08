@@ -51,37 +51,35 @@ TEST_CASE("State") {
     // loops here, or the generated code that reads the same arrays, off
     // the end of them.
     auto state{smdl::State()};
-    state.texture_space_max = 16;
+    state.textureSpaceCount = 16;
     state.finalize();
-    CHECK(state.texture_space_max == int(smdl::State::TEXTURE_SPACE_MAX));
+    CHECK(state.textureSpaceCount == int(smdl::State::TEXTURE_SPACE_MAX));
 
     state = smdl::State();
-    state.texture_space_max = -1;
+    state.textureSpaceCount = -1;
     state.finalize();
-    CHECK(state.texture_space_max == 0);
+    CHECK(state.textureSpaceCount == 0);
 
     state = smdl::State();
     state.finalize();
-    CHECK(state.texture_space_max == 1);
+    CHECK(state.textureSpaceCount == 1);
   }
   SUBCASE("Finalize establishes the internal space conventions") {
     auto state{smdl::State()};
     state.position = smdl::float3(3, -1, 2);
     state.normal = smdl::float3(0, 1, 1);
-    state.geometry_normal = smdl::float3(0, 1, 1);
-    state.geometry_tangent_u[0] = smdl::float3(2, 0, 0);
-    state.geometry_tangent_v[0] = smdl::float3(0, 1, 0);
+    state.geometryNormal = smdl::float3(0, 1, 1);
+    state.geometryTangentU[0] = smdl::float3(2, 0, 0);
+    state.geometryTangentV[0] = smdl::float3(0, 1, 0);
     state.finalize();
     CHECK(state.position.x == doctest::Approx(0.0f));
     CHECK(state.position.y == doctest::Approx(0.0f));
     CHECK(state.position.z == doctest::Approx(0.0f));
     // Space 0's frame lands on the axes exactly, not merely close: the
     // transform is skipped for the vectors the frame was built from.
-    CHECK(smdl::isAllTrue(state.geometry_normal == smdl::float3(0, 0, 1)));
-    CHECK(
-        smdl::isAllTrue(state.geometry_tangent_u[0] == smdl::float3(1, 0, 0)));
-    CHECK(
-        smdl::isAllTrue(state.geometry_tangent_v[0] == smdl::float3(0, 1, 0)));
+    CHECK(smdl::isAllTrue(state.geometryNormal == smdl::float3(0, 0, 1)));
+    CHECK(smdl::isAllTrue(state.geometryTangentU[0] == smdl::float3(1, 0, 0)));
+    CHECK(smdl::isAllTrue(state.geometryTangentV[0] == smdl::float3(0, 1, 0)));
   }
   SUBCASE("Finalize unchecked agrees with finalize on an orthonormal frame") {
     using smdl::float3;
@@ -104,12 +102,12 @@ TEST_CASE("State") {
     state.direction = smdl::normalize(float3(-1, 0.5f, -2));
     state.motion = float3(0.1f, 0.2f, 0.3f);
     state.normal = n;
-    state.texture_tangent_u[0] = tu;
-    state.texture_tangent_v[0] = tv;
-    state.geometry_normal = w;
-    state.geometry_tangent_u[0] = u;
-    state.geometry_tangent_v[0] = v;
-    state.object_to_world_matrix = smdl::float4x4(
+    state.textureTangentU[0] = tu;
+    state.textureTangentV[0] = tv;
+    state.geometryNormal = w;
+    state.geometryTangentU[0] = u;
+    state.geometryTangentV[0] = v;
+    state.objectToWorld = smdl::float4x4(
         smdl::float4(placement[0], 0), smdl::float4(placement[1], 0),
         smdl::float4(placement[2], 0), smdl::float4(4, 5, 6, 1));
     auto checked{state};
@@ -120,16 +118,16 @@ TEST_CASE("State") {
     CHECK(near(checked.direction, unchecked.direction));
     CHECK(near(checked.motion, unchecked.motion));
     CHECK(near(checked.normal, unchecked.normal));
-    CHECK(near(checked.texture_tangent_u[0], unchecked.texture_tangent_u[0]));
-    CHECK(near(checked.texture_tangent_v[0], unchecked.texture_tangent_v[0]));
-    CHECK(smdl::isAllTrue(unchecked.geometry_normal == float3(0, 0, 1)));
-    CHECK(smdl::isAllTrue(unchecked.geometry_tangent_u[0] == float3(1, 0, 0)));
-    CHECK(smdl::isAllTrue(unchecked.geometry_tangent_v[0] == float3(0, 1, 0)));
+    CHECK(near(checked.textureTangentU[0], unchecked.textureTangentU[0]));
+    CHECK(near(checked.textureTangentV[0], unchecked.textureTangentV[0]));
+    CHECK(smdl::isAllTrue(unchecked.geometryNormal == float3(0, 0, 1)));
+    CHECK(smdl::isAllTrue(unchecked.geometryTangentU[0] == float3(1, 0, 0)));
+    CHECK(smdl::isAllTrue(unchecked.geometryTangentV[0] == float3(0, 1, 0)));
     for (int j = 0; j < 4; j++) {
-      CHECK(near(float3(checked.tangent_to_object_matrix[j]),
-                 float3(unchecked.tangent_to_object_matrix[j])));
-      CHECK(near(float3(checked.object_to_world_matrix[j]),
-                 float3(unchecked.object_to_world_matrix[j])));
+      CHECK(near(float3(checked.tangentToObject[j]),
+                 float3(unchecked.tangentToObject[j])));
+      CHECK(near(float3(checked.objectToWorld[j]),
+                 float3(unchecked.objectToWorld[j])));
     }
   }
 }

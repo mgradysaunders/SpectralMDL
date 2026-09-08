@@ -38,9 +38,9 @@ EvaluateResult evaluate(
     surface: material_surface(scattering: scattering),
     geometry: material_geometry(normal: normal),
   );
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exterior_ior = 1.0;
+  instance.exteriorIOR = 1.0;
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -219,8 +219,8 @@ unit_test "A micrograin layer samples its base in the inherited frame" {
       filling_factor: 0.05, // Small, so the pores dominate the selection
       base: df::specular_bsdf(mode: df::scatter_reflect),
       normal: TILTED)));
-  auto instance = _MaterialInstance(&mat);
-  instance.exterior_ior = 1.0;
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = 1.0;
   float3 wo = math::normalize(float3(0.3, 0.1, 1.0));
   float4 xi = float4(0.3, 0.7, 0.05, 0.5); // xi.z low: take the base branch
   float3 wi = float3(0.0);
@@ -248,8 +248,8 @@ unit_test "Shading normal bend recovers sampling below the shading horizon" {
     surface: material_surface(scattering: df::diffuse_reflection_bsdf(tint: 1.0)),
     geometry: material_geometry(normal: TILTED),
   );
-  auto instance = _MaterialInstance(&mat);
-  instance.exterior_ior = 1.0;
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = 1.0;
   float4 xi = float4(0.3, 0.7, 0.5, 0.5);
   float3 wo = float3(-0.9, 0.0, 0.436);
   float3 wi = float3(0.0);

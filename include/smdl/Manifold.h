@@ -30,7 +30,7 @@ namespace smdl {
 /// \{
 
 /// The most interfaces a connection may cross.
-constexpr int MANIFOLD_MAX_DEPTH{4};
+inline constexpr int MANIFOLD_MAX_DEPTH{4};
 
 /// How far a converged crossing may sit from the one a path actually
 /// took and still count as the same solution, as a fraction of the
@@ -43,7 +43,7 @@ constexpr int MANIFOLD_MAX_DEPTH{4};
 /// side can be more precise than the other needs. It used to be a
 /// literal on the arrival side facing an unrelated residual tolerance in
 /// the walk, and the two disagreeing is what made coverage unreliable.
-constexpr float MANIFOLD_IDENTITY_FRACTION{1e-2f};
+inline constexpr float MANIFOLD_IDENTITY_FRACTION{1e-2f};
 
 /// How far two converged crossings of randomly started walks may sit
 /// apart and still count as the same solution, as a fraction of the
@@ -56,14 +56,14 @@ constexpr float MANIFOLD_IDENTITY_FRACTION{1e-2f};
 /// one solution reliably lands inside it; at 1e-2 they did not have to,
 /// and re-hits that fell outside inflated the trial count and hid most
 /// of that loss.
-constexpr float MANIFOLD_SOLUTION_IDENTITY_FRACTION{1e-3f};
+inline constexpr float MANIFOLD_SOLUTION_IDENTITY_FRACTION{1e-3f};
 
 /// The constraint residual a randomly started walk converges to, on top
 /// of the position test, so that its solutions are pinned well inside
 /// `MANIFOLD_SOLUTION_IDENTITY_FRACTION`; the reference implementation's
 /// solver threshold. A glossy chain tightens this further to a fraction
 /// of its lobe, see `ManifoldChain::residualTolerance`.
-constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
+inline constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
 
 /// How many fresh starts a reciprocal estimate may draw before giving up
 /// and dropping the sample, by default.
@@ -76,7 +76,7 @@ constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
 /// many solutions per receiver (a wavy sheet has tens) re-finds each one
 /// rarely and needs the cap raised well past their count to keep its
 /// energy.
-constexpr int MANIFOLD_MAX_TRIALS{64};
+inline constexpr int MANIFOLD_MAX_TRIALS{64};
 
 /// A point pinned to one of the renderer's surfaces: where it is, and
 /// the renderer's own addressing of the surface, the face, and the face
@@ -117,7 +117,7 @@ public:
 
   /// The shading normal: the field the material's lobes actually
   /// scatter about, which for a material that remaps `geometry.normal`
-  /// is the remapped field (see `JIT::Material::geometryNormalEvaluate`).
+  /// is the remapped field (see `JIT::MaterialDef::geometryNormalEvaluate`).
   float3 normal;
 
   /// The position partials over the face parameterization
@@ -141,11 +141,11 @@ public:
 /// smooth piece (a mesh's faces tile one smooth surface; a shape's
 /// pieces, like a cylinder's side and caps, do not), and whatever
 /// pass-through policy the renderer has for null interfaces or cutouts
-/// is its own. Second, the shading field `geometry()` reports must be
+/// is its own. Second, the shading field `evaluateGeometry()` reports must be
 /// the field the material's lobes actually scatter about, differentiated
 /// consistently with the position partials; a renderer whose material
 /// remaps the shading normal reads the remapped field back through
-/// `JIT::Material::geometryNormalEvaluate` and differences it.
+/// `JIT::MaterialDef::geometryNormalEvaluate` and differences it.
 class SMDL_EXPORT ManifoldSurfaces {
 public:
   ManifoldSurfaces() = default;
@@ -154,8 +154,9 @@ public:
 
   /// The differential shading geometry at `vertex`. False when the
   /// vertex cannot be evaluated, which fails the walk iterate cleanly.
-  [[nodiscard]] virtual bool geometry(const ManifoldVertex &vertex,
-                                      ManifoldGeometry &geometry) const = 0;
+  [[nodiscard]] virtual bool
+  evaluateGeometry(const ManifoldVertex &vertex,
+                   ManifoldGeometry &geometry) const = 0;
 
   /// Re-anchor a stepped position onto the real surface: cast from
   /// `origin` toward `target` and accept the first hit on the same
@@ -450,9 +451,9 @@ isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
 /// iterate. Fails when the vertex cannot be evaluated or the seed is
 /// degenerate against the normal.
 [[nodiscard]] SMDL_EXPORT bool
-manifoldSeedFrame(const ManifoldSurfaces &surfaces,
-                  const ManifoldVertex &vertex, const float3 &frameSeed,
-                  float3 &normal, float3 &t1, float3 &t2);
+buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
+                       const ManifoldVertex &vertex, const float3 &frameSeed,
+                       float3 &normal, float3 &t1, float3 &t2);
 
 /// A frame seed for a vertex whose seed has none: the vertex's own
 /// position tangent, or any perpendicular when that is degenerate
@@ -543,11 +544,11 @@ public:
   }
 };
 
-/// The claim at an instance whose material instance is `mat`, with its
+/// The claim at an instance whose evaluated material is `material`, with its
 /// exterior IOR already resolved (for the index contrast), on the side
 /// `backface` names, which is the side the scattering functions
-/// dispatch on and a caller spells `JIT::MaterialInstance::isInterior(wo)`,
-/// `marked` being the renderer's caster mark on the instance.
+/// dispatch on and a caller spells `JIT::Material::isInterior(wo)`,
+/// `isMarked` being the renderer's caster mark on the instance.
 ///
 /// The side is asked because a two-sided material scatters by a
 /// different tree on each of them. Claiming the union bars the path
@@ -556,7 +557,7 @@ public:
 /// two.
 ///
 /// A material that remaps `geometry.normal` (statically, see
-/// `JIT::Material::remapsNormal()`) claims only when the walk can
+/// `JIT::MaterialDef::canRemapNormal()`) claims only when the walk can
 /// solve against the remapped field, which needs the geometry-normal
 /// hook compiled and a tree whose lobes all follow that field: a df
 /// node given its own live normal (`DF_SETS_NORMAL`) detaches its lobes
@@ -578,7 +579,7 @@ public:
 /// material that is the lobe's own width exactly. Dirac kinds are never
 /// gated, having no width.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
-manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
+manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked,
               float maxGlossyAlpha = 0.0f);
 
 /// The claim on either side, the union of the two: what a caller with no
@@ -587,9 +588,9 @@ manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
 /// instance and the masked query at the converged crossing settles which
 /// one actually scatters.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim manifoldClaim(
-    const JIT::MaterialInstance &mat, bool marked, float maxGlossyAlpha = 0.0f);
+    const JIT::Material &material, bool isMarked, float maxGlossyAlpha = 0.0f);
 
-/// Is a vertex whose material instance is `mat` one the manifold
+/// Is a vertex whose evaluated material is `material` one the manifold
 /// gathers run from and claim for? A receiver's BSDF is evaluated at
 /// whatever bent direction a connection lands on, so a narrow lobe
 /// there makes an estimator that is zero almost always and enormous
@@ -606,7 +607,7 @@ manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
 /// reflect-transmit leaf reports the same lobe either way, and a
 /// layering that differs by domain answers for its reflection side,
 /// which is the side the receiver's own gather evaluates. Without the
-/// hook (see `Compiler::enableScatterNormal`), every vertex with a
+/// hook (see `Compiler::shouldEmitScatterNormal`), every vertex with a
 /// finite lobe receives, as the Dirac estimator always has.
 ///
 /// The right threshold is the lobe's angular width against the light's
@@ -617,20 +618,21 @@ manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
 /// consulted only on the path that actually draws, so a renderer's
 /// deterministic sampler advances exactly when a lobe is proposed.
 template <typename DrawXi>
-[[nodiscard]] inline bool isManifoldReceiver(const JIT::MaterialInstance &mat,
-                                             bool backface, DrawXi &&drawXi,
+[[nodiscard]] inline bool isManifoldReceiver(const JIT::Material &material,
+                                             bool isBackface, DrawXi &&drawXi,
                                              float minAlpha) {
-  const int dfLobes{mat.getLobes(backface)};
+  const int dfLobes{material.getLobes(isBackface)};
   if ((dfLobes & DF_FINITE) == 0) return false;
   if ((dfLobes & DF_SMOOTH) != 0) return true;
-  if (!(minAlpha > 0.0f) || !mat.material->scatterNormalSample) return true;
+  if (!(minAlpha > 0.0f) || !material.materialDef->scatterNormalSample)
+    return true;
   // One glossy kind, per the hook's contract; see above.
   const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
                                                  : DF_GLOSSY_BTDF};
   float3 wm{};
   float pdf{};
   float2 alpha{};
-  if (!mat.scatterNormalSample(drawXi(), backface, wm, pdf, alpha, kind))
+  if (!material.scatterNormalSample(drawXi(), isBackface, wm, pdf, alpha, kind))
     return false;
   return std::sqrt(alpha.x * alpha.y) >= minAlpha;
 }
@@ -656,11 +658,11 @@ public:
 
   /// Enable or disable recording. Set once before render threads start;
   /// while disabled, every record call below is a no-op.
-  void setEnabled(bool enabled) noexcept { mEnabled = enabled; }
+  void setEnabled(bool isEnabled) noexcept { mIsEnabled = isEnabled; }
 
   /// A gather that reached its first walk, and whether that walk
   /// converged.
-  void recordEstimate(Kind kind, bool firstWalkConverged) noexcept;
+  void recordEstimate(Kind kind, bool isFirstWalkConverged) noexcept;
 
   /// One walk of a gather, first or trial.
   void recordWalk(const ManifoldWalkReport &report) noexcept;
@@ -672,15 +674,15 @@ public:
   /// re-walk reproduced the crossings the path took. The unmatched rest
   /// keeps weight 1, so the matched fraction is the share of covered
   /// arrivals any single-seed gather can ever claim.
-  void recordCover(bool matched) noexcept;
+  void recordCover(bool isMatched) noexcept;
 
   /// The reciprocal estimate of one gather, run only for a first solution
   /// that carried transport: how many trials it took to re-find the
   /// solution, or that it ran out and dropped the sample.
-  void recordTrials(Kind kind, int trials, bool dropped) noexcept;
+  void recordTrials(Kind kind, int trials, bool wasDropped) noexcept;
 
   /// A converged connection weighed, and whether anything came of it.
-  void recordContribution(bool nonZero) noexcept;
+  void recordContribution(bool isNonZero) noexcept;
 
   void print(std::ostream &out) const;
 
@@ -690,7 +692,7 @@ private:
   static void addMax(std::atomic<T> &value, T other) noexcept;
   static void addSum(std::atomic<double> &sum, double value) noexcept;
 
-  bool mEnabled{};
+  bool mIsEnabled{};
 
   std::array<Counter, NUM_KINDS> mEstimates{};
   std::array<Counter, NUM_KINDS> mFirstWalkConverged{};

@@ -32,7 +32,7 @@ TEST_CASE("SceneData") {
     // present everywhere. With one: whatever it says of the state.
     smdl::State present{};
     smdl::State absent{};
-    present.vertex_color_max = 1;
+    present.vertexColorCount = 1;
     CHECK(!sceneData.exists("nothing", &present));
     sceneData.setFloat("everywhere", 1.0f);
     CHECK(sceneData.exists("everywhere", &present));
@@ -44,14 +44,14 @@ TEST_CASE("SceneData") {
            void *out) {
           if (kind == smdl::SceneData::Kind::Float && size <= 4)
             for (int i = 0; i < size; i++)
-              static_cast<float *>(out)[i] = state->vertex_color[0][i];
+              static_cast<float *>(out)[i] = state->vertexColor[0][i];
         },
-        [](const smdl::State *state) { return state->vertex_color_max > 0; });
+        [](const smdl::State *state) { return state->vertexColorCount > 0; });
     CHECK(sceneData.exists("vertex_color", &present));
     CHECK(!sceneData.exists("vertex_color", &absent));
     auto *getter{sceneData.get("vertex_color")};
     REQUIRE(getter);
-    present.vertex_color[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
+    present.vertexColor[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
     std::array<float, 4> out{};
     (*getter)(&present, smdl::SceneData::Kind::Float, 4, out.data());
     CHECK(out[0] == 0.25f);

@@ -37,10 +37,10 @@ struct TonemapOptions final {
 
   /// Model human vision at absolute luminance and auto-expose, for
   /// physically dim scenes like moonlight.
-  bool night{};
+  bool isNight{};
 
   /// Redistribute the exposure locally by Laplacian pyramid.
-  bool fusion{};
+  bool useFusion{};
 
   /// The exposure applied before the display curve.
   float exposure{1.0f};
@@ -80,7 +80,7 @@ struct TonemapOptions final {
 struct RGBPolicy final {
   /// Force the false-color band mapping even when the grid could carry
   /// true color.
-  bool forceFalseColor{};
+  bool shouldForceFalseColor{};
 
   /// With false color, the wavelengths in nm mapped to R, G, and B, or
   /// empty to pick the bands at 5/6, 1/2, and 1/6 of the grid span,
@@ -97,7 +97,7 @@ struct RGBPolicy final {
 /// wavelength grid can see. A grid that covers the photopic luminous
 /// mass projects through the CIE observer as always; a grid that covers
 /// part of it still does, with a note that the picture is band-limited;
-/// a grid that misses the visible (or `policy.forceFalseColor`) maps
+/// a grid that misses the visible (or `policy.shouldForceFalseColor`) maps
 /// three bands to R, G, and B instead, and fewer than three bands write
 /// the grayscale mean radiance. Every non-true-color choice is
 /// announced on stderr; the spectral ENVI output is always the

@@ -22,7 +22,7 @@ export float3 normal() = $state.normal;
 
 /// The true geometric surface normal.
 @(macro)
-export float3 geometry_normal() = $state.geometry_normal;
+export float3 geometry_normal() = $state.geometryNormal;
 
 /// The motion vector of the shading point.
 @(macro)
@@ -30,43 +30,43 @@ export float3 motion() = $state.motion;
 
 /// The number of available texture spaces.
 @(macro)
-export int texture_space_max() = $state.texture_space_max;
+export int texture_space_max() = $state.textureSpaceCount;
 
 /// The texture coordinates of texture space `i`.
 @(macro)
-export float3 texture_coordinate(const int i) = $state.texture_coordinate[i];
+export float3 texture_coordinate(const int i) = $state.textureCoordinate[i];
 
 /// The tangent in the direction of increasing U in texture space `i`.
 @(macro)
-export float3 texture_tangent_u(const int i) = $state.texture_tangent_u[i];
+export float3 texture_tangent_u(const int i) = $state.textureTangentU[i];
 
 /// The tangent in the direction of increasing V in texture space `i`.
 @(macro)
-export float3 texture_tangent_v(const int i) = $state.texture_tangent_v[i];
+export float3 texture_tangent_v(const int i) = $state.textureTangentV[i];
 
 /// The geometric tangent in the direction of increasing U in texture space `i`.
 @(macro)
-export float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
+export float3 geometry_tangent_u(const int i) = $state.geometryTangentU[i];
 
 /// The geometric tangent in the direction of increasing V in texture space `i`.
 @(macro)
-export float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
+export float3 geometry_tangent_v(const int i) = $state.geometryTangentV[i];
 
 /// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 tangent_space(const int i) = float3x3(
-  $state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
+  $state.textureTangentU[i], $state.textureTangentV[i], $state.normal);
 
 /// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 geometry_tangent_space(const int i) = float3x3(
-  $state.geometry_tangent_u[i],
-  $state.geometry_tangent_v[i],
-  $state.geometry_normal);
+  $state.geometryTangentU[i],
+  $state.geometryTangentV[i],
+  $state.geometryNormal);
 
 /// The object ID provided by the renderer.
 @(macro)
-export int object_id() = $state.object_id;
+export int object_id() = $state.objectId;
 
 /// The lookup direction in environment lookups. At surface shading points
 /// this is, non-standardly, the direction of propagation of the ray that
@@ -78,30 +78,30 @@ export float3 direction() = $state.direction;
 
 /// The animation time of the current sample.
 @(macro)
-export float animation_time() = $state.animation_time;
+export float animation_time() = $state.animationTime;
 
 /// The compile-time number of wavelengths in spectral calculations.
 export const int WAVELENGTH_BASE_MAX = $WAVELENGTH_BASE_MAX;
 
 /// The minimum supported wavelength in nanometers.
 @(macro)
-export float wavelength_min() = $state.wavelength_min;
+export float wavelength_min() = $state.wavelengthMin;
 
 /// The maximum supported wavelength in nanometers.
 @(macro)
-export float wavelength_max() = $state.wavelength_max;
+export float wavelength_max() = $state.wavelengthMax;
 
 /// The wavelengths in nanometers that spectral `color` values are sampled at.
 @(macro)
-export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
+export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelengthBase;
 
 /// The conversion factor from scene units to meters.
 @(macro)
-export float meters_per_scene_unit() = $state.meters_per_scene_unit;
+export float meters_per_scene_unit() = $state.metersPerSceneUnit;
 
 /// The conversion factor from meters to scene units.
 @(macro)
-export float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
+export float scene_units_per_meter() = 1.0 / $state.metersPerSceneUnit;
 
 /// The number of path segments traversed to reach this shading point, so 1
 /// at a primary hit. Zero means "not provided", which must be treated
@@ -109,14 +109,14 @@ export float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export int scattering_order() = $state.scattering_order;
+export int scattering_order() = $state.scatteringOrder;
 
 /// Is directly visible shading point?
 ///
 /// NOTE: This is non-standard!
 @(macro)
 export bool directly_visible() =
-  $state.scattering_order <= 1 && $state.transport == 0;
+  $state.scatteringOrder <= 1 && $state.transport == 0;
 
 /// The accumulated distance in scene units traveled by the path to reach
 /// this shading point. Zero conventionally means "not provided" and implies
@@ -124,7 +124,7 @@ export bool directly_visible() =
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export float travel_distance() = $state.travel_distance;
+export float travel_distance() = $state.travelDistance;
 
 /// The pixel ray cone spread angle in radians, using the small-angle
 /// convention that the cone width grows by `cone_angle` per unit distance.
@@ -132,14 +132,14 @@ export float travel_distance() = $state.travel_distance;
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export float cone_angle() = $state.cone_angle;
+export float cone_angle() = $state.coneAngle;
 
 /// The pixel ray cone width in scene units at the shading point. Zero means
 /// "no footprint", i.e., level-of-detail off.
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export float cone_width() = $state.cone_width;
+export float cone_width() = $state.coneWidth;
 
 /// The UV texture density of texture space `i`: UV area per world-space
 /// area of the geometry, so `cone_width() * #sqrt(texture_density(i))` is
@@ -147,14 +147,14 @@ export float cone_width() = $state.cone_width;
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export float texture_density(const int i) = $state.texture_density[i];
+export float texture_density(const int i) = $state.textureDensity[i];
 
 /// The number of vertex color sets the geometry carries, zero when it
 /// carries none.
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export int vertex_color_max() = $state.vertex_color_max;
+export int vertex_color_max() = $state.vertexColorCount;
 
 /// The vertex color of set `i`: RGBA as the geometry stores it, interpolated
 /// to the shading point, with no color management applied. White when the
@@ -165,7 +165,7 @@ export int vertex_color_max() = $state.vertex_color_max;
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export float4 vertex_color(const int i = 0) = $state.vertex_color[i];
+export float4 vertex_color(const int i = 0) = $state.vertexColor[i];
 
 @(pure macro)
 float4x4 affineInverse(const float4x4 matrix) {
@@ -187,18 +187,18 @@ export float4x4 transform(const coordinate_space from, const coordinate_space to
   if (from == to) {
     return float4x4(1.0);
   } else if ((from == coordinate_internal) & (to == coordinate_object)) {
-    return $state.tangent_to_object_matrix;
+    return $state.tangentToObject;
   } else if ((from == coordinate_internal) & (to == coordinate_world)) {
-    return $state.object_to_world_matrix * $state.tangent_to_object_matrix;
+    return $state.objectToWorld * $state.tangentToObject;
   } else if ((from == coordinate_object) & (to == coordinate_world)) {
-    return $state.object_to_world_matrix;
+    return $state.objectToWorld;
   } else if ((from == coordinate_object) & (to == coordinate_internal)) {
-    return affineInverse($state.tangent_to_object_matrix);
+    return affineInverse($state.tangentToObject);
   } else if ((from == coordinate_world) & (to == coordinate_object)) {
-    return affineInverse($state.object_to_world_matrix);
+    return affineInverse($state.objectToWorld);
   } else if ((from == coordinate_world) & (to == coordinate_internal)) {
     return affineInverse(
-             $state.object_to_world_matrix * $state.tangent_to_object_matrix);
+             $state.objectToWorld * $state.tangentToObject);
   } else {
     // Unreachable
     return float4x4(1.0);

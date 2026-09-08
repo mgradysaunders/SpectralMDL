@@ -9,12 +9,13 @@
 
 namespace fs = std::filesystem;
 
-static void writeFile(const fs::path &path, std::string_view text) {
+namespace {
+void writeFile(const fs::path &path, std::string_view text) {
   fs::create_directories(path.parent_path());
   std::ofstream(path) << text;
 }
 
-static std::string readFile(const fs::path &path) {
+std::string readFile(const fs::path &path) {
   auto stream{std::ifstream(path)};
   return std::string((std::istreambuf_iterator<char>(stream)),
                      std::istreambuf_iterator<char>());
@@ -22,14 +23,15 @@ static std::string readFile(const fs::path &path) {
 
 // Write, load, and parse a module. Returns the parse error message, or
 // the empty string on success, with the parsed module in 'module_'.
-static std::string parseModule(const fs::path &path, std::string_view text,
-                               std::unique_ptr<smdl::Module> &module_,
-                               smdl::BumpPtrAllocator &allocator) {
+std::string parseModule(const fs::path &path, std::string_view text,
+                        std::unique_ptr<smdl::Module> &module_,
+                        smdl::BumpPtrAllocator &allocator) {
   writeFile(path, text);
   module_ = smdl::Module::loadFromFile(path.string());
   if (auto error{module_->parse(allocator)}) return error->message;
   return {};
 }
+} // namespace
 
 TEST_CASE("Module search dirs") {
   auto tmpDir{fs::temp_directory_path() / "smdl-module-test"};
@@ -116,7 +118,7 @@ TEST_CASE("Module search dirs") {
                                    "#search_dir\t\"$HOME\"\n");
     module_ = smdl::Module::loadFromFile((tmpDir / "mod.smdl").string());
     auto formatOptions{smdl::FormatOptions{}};
-    formatOptions.inPlace = true;
+    formatOptions.isInPlace = true;
     CHECK(!module_->formatSourceFiles(formatOptions));
     auto formatted{readFile(tmpDir / "mod.smdl")};
     CHECK(formatted.find("#search_dir \"./data/\"") != std::string::npos);

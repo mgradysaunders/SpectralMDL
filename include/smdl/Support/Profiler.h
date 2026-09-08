@@ -31,14 +31,14 @@ profilerFinalize(const char *outputFilename = "profiler_output.json");
 class ProfilerEntryScope final {
 public:
   ProfilerEntryScope(const char *name, const char *detail = "")
-      : entry(profilerEntryBegin(name, detail)) {}
+      : mEntry(profilerEntryBegin(name, detail)) {}
 
   ProfilerEntryScope(const ProfilerEntryScope &) = delete;
 
-  ~ProfilerEntryScope() { profilerEntryEnd(entry); }
+  ~ProfilerEntryScope() { profilerEntryEnd(mEntry); }
 
 private:
-  ProfilerEntry *entry{};
+  ProfilerEntry *mEntry{};
 };
 
 #define SMDL_PROFILER_ENTRY(...)                   \

@@ -67,9 +67,9 @@ EvaluateResult evaluate(
   const float ior = 1.4,
 ) {
   auto mat = material(ior: ior, surface: material_surface(scattering: scattering));
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exterior_ior = 1.0;
+  instance.exteriorIOR = 1.0;
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -91,8 +91,8 @@ struct SampleResult {
 
 SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
   auto mat = material(ior: 1.4, surface: material_surface(scattering: scattering));
-  auto instance = _MaterialInstance(&mat);
-  instance.exterior_ior = 1.0;
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = 1.0;
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;

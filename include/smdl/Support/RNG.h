@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 
 #include "smdl/Support/VectorMath.h"
 
@@ -72,23 +71,22 @@ public:
     return 0;
   }
 
-  /// Generates a uniform `float` in `[0, 1)`.
+  /// Generates a uniform `float` in `(0, 1)`.
   constexpr float generateFloat() noexcept {
-    return std::min(float(double(generate()) / 4294967296.0),
-                    1.0f - std::numeric_limits<float>::epsilon() / 2);
+    return std::clamp(float(generate()) * 0x1p-32f, FLOAT_MIN, ONE_MINUS_EPS);
   }
 
-  /// Generates a uniform `float2` in `[0, 1)^2`.
+  /// Generates a uniform `float2` in `(0, 1)^2`.
   constexpr float2 generateFloat2() noexcept {
     return {generateFloat(), generateFloat()};
   }
 
-  /// Generates a uniform `float3` in `[0, 1)^3`.
+  /// Generates a uniform `float3` in `(0, 1)^3`.
   constexpr float3 generateFloat3() noexcept {
     return {generateFloat(), generateFloat(), generateFloat()};
   }
 
-  /// Generates a uniform `float4` in `[0, 1)^4`.
+  /// Generates a uniform `float4` in `(0, 1)^4`.
   constexpr float4 generateFloat4() noexcept {
     return {generateFloat(), generateFloat(), generateFloat(),
             generateFloat()};

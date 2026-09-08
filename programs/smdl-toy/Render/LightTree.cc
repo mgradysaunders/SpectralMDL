@@ -2,9 +2,11 @@
 
 #include "smdl/Support/Macros.h"
 
-[[nodiscard]] static float halfDiagonalSq(const BoundBox3 &box) noexcept {
+namespace {
+[[nodiscard]] float halfDiagonalSq(const BoundBox3 &box) noexcept {
   return box.isEmpty() ? 0.0f : lengthSquared(0.5f * box.extent());
 }
+} // namespace
 
 LightTree::LightTree(smdl::Span<const LightBounds> lights, int maxDepth) {
   mTrails.assign(lights.size(), INVALID_INDEX);

@@ -26,10 +26,12 @@
 
 namespace smdl {
 
-static constexpr int B{VoxelGrid::BRICK_EXTENT};
+namespace {
+constexpr int B{VoxelGrid::BRICK_EXTENT};
 
 // The number of voxels in a brick.
-static constexpr int64_t BRICK_VOLUME{int64_t(B) * B * B};
+constexpr int64_t BRICK_VOLUME{int64_t(B) * B * B};
+} // namespace
 
 // The flattened form every loader produces, moved into the `VoxelGrid`
 // members on success so that a failed load leaves the grid cleared.
@@ -45,13 +47,14 @@ struct FlatGrid final {
   std::vector<float> brickData{};
 };
 
-[[nodiscard]] static int64_t brickTableSize(const int3 &brickCount) {
+namespace {
+[[nodiscard]] int64_t brickTableSize(const int3 &brickCount) {
   return int64_t(brickCount.x) * brickCount.y * brickCount.z;
 }
 
 // Initialize the extent-derived fields of `flat` and the all-empty
 // brick table.
-static void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
+void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
   if (!(extent.x > 0 && extent.y > 0 && extent.z > 0))
     throw Error(concat("invalid voxel grid extent (", extent.x, ", ", extent.y,
                        ", ", extent.z, ")"));
@@ -67,7 +70,7 @@ static void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
 // table indices in x-fastest brick order. Every block starts out
 // filled with the background, which is what the padding voxels of
 // partial bricks at the high boundary must hold anyway.
-static void allocateBricks(FlatGrid &flat, const std::vector<char> &occupied) {
+void allocateBricks(FlatGrid &flat, const std::vector<char> &occupied) {
   int32_t numOccupied{0};
   for (size_t i = 0; i < flat.brickTable.size(); i++)
     if (occupied[i]) flat.brickTable[i] = numOccupied++;
@@ -77,7 +80,7 @@ static void allocateBricks(FlatGrid &flat, const std::vector<char> &occupied) {
 // Finalize the global value bounds: `fillValue` has been called for
 // every in-extent voxel of every occupied brick, so all that is left
 // is folding in the background if any empty brick remains.
-static void finalizeValueBounds(FlatGrid &flat, bool sawAnyValue) {
+void finalizeValueBounds(FlatGrid &flat, bool sawAnyValue) {
   const bool anyEmptyBrick{std::find(flat.brickTable.begin(),
                                      flat.brickTable.end(),
                                      -1) != flat.brickTable.end()};
@@ -88,15 +91,17 @@ static void finalizeValueBounds(FlatGrid &flat, bool sawAnyValue) {
     flat.maxValue = std::max(flat.maxValue, flat.background);
   }
 }
+} // namespace
 
 //--{ NanoVDB loading
+namespace {
 // Mark every brick overlapping the voxel range `[lo, lo + span)` as
 // occupied, clamping the range against the extent. The range is in
 // grid-local voxel coordinates and may hang off either end, because
 // NanoVDB node origins are aligned in index space while the local
 // origin is the corner of the active bounding box.
-static void markRange(const FlatGrid &flat, std::vector<char> &occupied,
-                      int3 lo, int span) {
+void markRange(const FlatGrid &flat, std::vector<char> &occupied, int3 lo,
+               int span) {
   const int3 hi{std::min(lo.x + span, flat.extent.x),
                 std::min(lo.y + span, flat.extent.y),
                 std::min(lo.z + span, flat.extent.z)};
@@ -107,14 +112,16 @@ static void markRange(const FlatGrid &flat, std::vector<char> &occupied,
         occupied[size_t(bx + flat.brickCount.x *
                                  (by + int64_t(flat.brickCount.y) * bz))] = 1;
 }
+} // namespace
 
 #if SMDL_HAS_NANOVDB
 
+namespace {
 // Flatten the NanoVDB grid in `handle` if its build type is `BuildT`,
 // widening values to `float`. Returns false if the build type does not
 // match, so the caller can try the next one.
 template <typename BuildT>
-[[nodiscard]] static bool
+[[nodiscard]] bool
 tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
                    FlatGrid &flat) {
   const auto *grid{handle.template grid<BuildT>()};
@@ -195,11 +202,13 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   finalizeValueBounds(flat, sawAnyValue);
   return true;
 }
+} // namespace
 
 #endif // #if SMDL_HAS_NANOVDB
 
-static void loadNanoVDB(const std::string &fileName,
-                        const std::string &gridName, FlatGrid &flat) {
+namespace {
+void loadNanoVDB(const std::string &fileName, const std::string &gridName,
+                 FlatGrid &flat) {
 #if SMDL_HAS_NANOVDB
   auto handle{
       gridName.empty()
@@ -221,16 +230,18 @@ static void loadNanoVDB(const std::string &fileName,
   throw Error("built without NanoVDB!");
 #endif // #if SMDL_HAS_NANOVDB
 }
+} // namespace
 //--}
 
 //--{ NanoVDB saving
 #if SMDL_HAS_NANOVDB
 
+namespace {
 // Build a NanoVDB grid from the brick storage. Only the voxels that
 // differ from the background are set, which is what leaves the result
 // sparse, and the index-to-world map is recovered from the extent and
 // the world bounds.
-[[nodiscard]] static nanovdb::GridHandle<nanovdb::HostBuffer>
+[[nodiscard]] nanovdb::GridHandle<nanovdb::HostBuffer>
 buildNanoGrid(const VoxelGrid &voxelGrid, const std::string &gridName) {
   const auto extent{voxelGrid.getExtent()};
   const auto background{voxelGrid.getBackground()};
@@ -276,12 +287,14 @@ buildNanoGrid(const VoxelGrid &voxelGrid, const std::string &gridName) {
   }
   return nanovdb::tools::createNanoGrid(srcGrid);
 }
+} // namespace
 
 #endif // #if SMDL_HAS_NANOVDB
 
-static void saveNanoVDB(const std::string &fileName,
-                        const std::vector<const VoxelGrid *> &voxelGrids,
-                        const std::vector<std::string> &gridNames) {
+namespace {
+void saveNanoVDB(const std::string &fileName,
+                 const std::vector<const VoxelGrid *> &voxelGrids,
+                 const std::vector<std::string> &gridNames) {
 #if SMDL_HAS_NANOVDB
   // Declared without braces on purpose: `GridHandle` has a greedy
   // constructor template, so a braced initializer resolves to the
@@ -300,14 +313,16 @@ static void saveNanoVDB(const std::string &fileName,
   throw Error("built without NanoVDB!");
 #endif // #if SMDL_HAS_NANOVDB
 }
+} // namespace
 //--}
 
 //--{ Mitsuba volume loading
+namespace {
 // Load a Mitsuba `.vol` volume: a 48-byte header of magic `VOL`,
 // version 3, the encoding, the extent, the channel count, and a
 // world-space bounding box, followed by the values x-fastest. Only the
 // single-channel `float32` encoding is supported.
-static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
+void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
   const auto file{readOrThrow(fileName)};
   const auto mem{llvm::StringRef(file)};
   if (!(mem.size() >= 48 && mem.starts_with("VOL") && mem[3] == 3))
@@ -355,12 +370,12 @@ static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
         const int3 hi{std::min(lo.x + B, flat.extent.x),
                       std::min(lo.y + B, flat.extent.y),
                       std::min(lo.z + B, flat.extent.z)};
-        bool uniform{true};
+        bool isUniform{true};
         for (int z = lo.z; z < hi.z; z++)
           for (int y = lo.y; y < hi.y; y++)
             for (int x = lo.x; x < hi.x; x++) {
               const float value{fetchDense(x, y, z)};
-              uniform &= value == flat.background;
+              isUniform &= value == flat.background;
               if (!sawAnyValue) {
                 flat.minValue = flat.maxValue = value;
                 sawAnyValue = true;
@@ -371,7 +386,7 @@ static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
             }
         occupied[size_t(bx + flat.brickCount.x *
                                  (by + int64_t(flat.brickCount.y) * bz))] =
-            uniform ? 0 : 1;
+            isUniform ? 0 : 1;
       }
   allocateBricks(flat, occupied);
   for (int bz = 0; bz < flat.brickCount.z; bz++)
@@ -394,15 +409,16 @@ static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
       }
   finalizeValueBounds(flat, sawAnyValue);
 }
+} // namespace
 //--}
 
 //--{ Mitsuba volume saving
+namespace {
 // Save a Mitsuba `.vol` volume, the exact form `loadMitsubaVol()` reads
 // back: the 48-byte header, then every voxel of the extent x-fastest.
 // The format is dense and has no background, so an empty brick is
 // written out in full as the background value.
-static void saveMitsubaVol(const std::string &fileName,
-                           const VoxelGrid &voxelGrid) {
+void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
   auto stream{openOrThrow(fileName, std::ios::out | std::ios::binary)};
   const auto extent{voxelGrid.getExtent()};
   const auto boundMin{voxelGrid.getWorldBoundMin()};
@@ -442,6 +458,7 @@ static void saveMitsubaVol(const std::string &fileName,
     throw Error(concat("cannot write ", QuotedPath(fileName), ": ",
                        std::strerror(errno)));
 }
+} // namespace
 //--}
 
 void VoxelGrid::clear() noexcept {
@@ -452,10 +469,11 @@ void VoxelGrid::clear() noexcept {
   mMaxValue = 0.0f;
   mWorldBoundMin = float3();
   mWorldBoundMax = float3();
+  mMajorantExtent = 1;
+  mMajorantCount = int3();
   mBrickTable.clear();
   mBrickData.clear();
-  mBrickMinValues.clear();
-  mBrickMaxValues.clear();
+  mMajorantBounds.clear();
 }
 
 std::optional<Error>
@@ -485,29 +503,31 @@ VoxelGrid::loadFromFile(const std::string &fileName,
     mWorldBoundMax = flat.worldBoundMax;
     mBrickTable = std::move(flat.brickTable);
     mBrickData = std::move(flat.brickData);
-    // Compute the per-brick value bounds over the brick voxels dilated
-    // by one on every side, so that the per-brick maximum bounds every
-    // trilinear interpolation whose support touches the brick. This
-    // goes through 'fetch()', which already resolves empty bricks and
-    // out-of-extent coordinates to the background.
-    mBrickMinValues.assign(mBrickTable.size(), mBackground);
-    mBrickMaxValues.assign(mBrickTable.size(), mBackground);
-    for (int bz = 0; bz < mBrickCount.z; bz++)
-      for (int by = 0; by < mBrickCount.y; by++)
-        for (int bx = 0; bx < mBrickCount.x; bx++) {
-          float brickMin{fetch(bx * B - 1, by * B - 1, bz * B - 1)};
-          float brickMax{brickMin};
-          for (int z = bz * B - 1; z <= bz * B + B; z++)
-            for (int y = by * B - 1; y <= by * B + B; y++)
-              for (int x = bx * B - 1; x <= bx * B + B; x++) {
+    // Compute the majorant grid over the cell voxels dilated by one on
+    // every side, so that a cell's maximum bounds every trilinear
+    // interpolation whose support touches it. This goes through
+    // 'fetch()', which already resolves empty bricks and out-of-extent
+    // coordinates to the background.
+    const int M{majorantExtentFor(mExtent)};
+    mMajorantExtent = M;
+    mMajorantCount = int3((mExtent.x + M - 1) / M, (mExtent.y + M - 1) / M,
+                          (mExtent.z + M - 1) / M);
+    mMajorantBounds.assign(size_t(mMajorantCount.x) * size_t(mMajorantCount.y) *
+                               size_t(mMajorantCount.z),
+                           float2(mBackground));
+    for (int cz = 0; cz < mMajorantCount.z; cz++)
+      for (int cy = 0; cy < mMajorantCount.y; cy++)
+        for (int cx = 0; cx < mMajorantCount.x; cx++) {
+          float cellMin{fetch(cx * M - 1, cy * M - 1, cz * M - 1)};
+          float cellMax{cellMin};
+          for (int z = cz * M - 1; z <= cz * M + M; z++)
+            for (int y = cy * M - 1; y <= cy * M + M; y++)
+              for (int x = cx * M - 1; x <= cx * M + M; x++) {
                 const float value{fetch(x, y, z)};
-                brickMin = std::min(brickMin, value);
-                brickMax = std::max(brickMax, value);
+                cellMin = std::min(cellMin, value);
+                cellMax = std::max(cellMax, value);
               }
-          const auto tableIndex{
-              size_t(bx + mBrickCount.x * (by + int64_t(mBrickCount.y) * bz))};
-          mBrickMinValues[tableIndex] = brickMin;
-          mBrickMaxValues[tableIndex] = brickMax;
+          mMajorantBounds[majorantIndex(cx, cy, cz)] = float2(cellMin, cellMax);
         }
   })};
   if (error) {

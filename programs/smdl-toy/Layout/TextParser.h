@@ -65,29 +65,21 @@ constexpr std::array<std::string_view, 7> TRANSFORM_OPS{
 /// that speaks about the language rather than about one format's
 /// vocabulary.
 ///
-/// A derived parser supplies its magic line, the noun its diagnostic
-/// spells, and its top-level keywords (the synchronization points), then
-/// writes one `parseStatement()` over the helpers here.
+/// A derived parser supplies its top-level keywords (the synchronization
+/// points), then writes one `parseStatement()` over the helpers here.
 ///
 class TextParser {
 public:
-  /// `magic` is the first line the format requires and `noun` names the
-  /// format in the diagnostic when it is missing, e.g. "layout file".
   /// `keywords` are the statement keywords `synchronize()` resumes at,
   /// and must outlive the parser.
   TextParser(LayoutDiagnostics &diags, const LayoutSource &source,
-             std::string_view magic, std::string_view noun,
              smdl::Span<const std::string_view> keywords)
-      : mDiags(diags), mSource(source), mLexer(diags, source), mMagic(magic),
-        mNoun(noun), mKeywords(keywords) {
+      : mDiags(diags), mSource(source), mLexer(diags, source),
+        mKeywords(keywords) {
     mToken = mLexer.next();
   }
 
 protected:
-  /// The magic first line, checked against the raw text rather than the
-  /// token stream, because to the grammar it is only a comment.
-  void checkMagic();
-
   /// Skip to the next top-level keyword, tracking brace depth so that a
   /// keyword inside the abandoned statement's block does not fool the
   /// loop into starting mid-block. An error raised after a line's last
@@ -205,7 +197,5 @@ protected:
   Token mToken{};
 
 private:
-  std::string_view mMagic{};
-  std::string_view mNoun{};
   smdl::Span<const std::string_view> mKeywords{};
 };

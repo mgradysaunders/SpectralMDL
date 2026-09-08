@@ -45,18 +45,6 @@ Token Lexer::next() {
   return {Token::WORD, std::move(content), start, position() - start};
 }
 
-void TextParser::checkMagic() {
-  const auto &text{mSource.text};
-  const bool present{
-      smdl::startsWith(text, mMagic) &&
-      (text.size() == mMagic.size() || text[mMagic.size()] == '\n' ||
-       text[mMagic.size()] == '\r' || text[mMagic.size()] == ' ')};
-  if (!present)
-    mDiags.error({&mSource, 0, 1},
-                 smdl::concat("expected ", smdl::Quoted(mMagic),
-                              " on the first line of a ", mNoun));
-}
-
 void TextParser::synchronize() {
   size_t depth{mToken.kind == Token::OPEN ? size_t(1) : size_t(0)};
   if (depth == 0 && isTopLevelKeyword(mToken) &&

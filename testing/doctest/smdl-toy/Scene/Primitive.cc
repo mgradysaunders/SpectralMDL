@@ -16,11 +16,13 @@
 // the box alone, so the four that predate it are covered by the same
 // cases.
 
-static const char *MATERIALS{"#smdl\n"
-                             "import ::df::*;\n"
-                             "export material dull() = material(\n"
-                             "  surface: material_surface(scattering: "
-                             "df::diffuse_reflection_bsdf()));\n"};
+namespace {
+const char *MATERIALS{"#smdl\n"
+                      "import ::df::*;\n"
+                      "export material dull() = material(\n"
+                      "  surface: material_surface(scattering: "
+                      "df::diffuse_reflection_bsdf()));\n"};
+} // namespace
 
 namespace {
 

@@ -21,9 +21,10 @@
 // measure must agree with. The library suite runs the solver over
 // analytic surfaces; this exercises `SceneManifoldSurfaces` end to end.
 
+namespace {
 // Flat mirrors and dielectric interfaces, on which the walk converges
 // from anywhere and the measure has independent ground truth.
-static const char *SELFTEST_MATERIALS{
+const char *SELFTEST_MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
     "export material self_mirror() = material(\n"
@@ -35,18 +36,19 @@ static const char *SELFTEST_MATERIALS{
     "    df::specular_bsdf(mode: df::scatter_reflect_transmit)));\n"};
 
 // The first surface hit casting from `from` toward `toward`.
-[[nodiscard]] static Hit castOnto(const Scene &scene, const float3 &from,
-                                  const float3 &toward) {
+[[nodiscard]] Hit castOnto(const Scene &scene, const float3 &from,
+                           const float3 &toward) {
   Ray ray{from, toward - from, EPS, INF};
   Hit hit{};
   if (!scene.intersect(ray, hit)) return Hit{};
   return hit;
 }
+} // namespace
 
 namespace {
 
 struct Solve final {
-  bool ok{};
+  bool hasSolution{};
   float3 wr{};
   float measure{};
 };
@@ -86,7 +88,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
   const auto center{solveOnce(surfaces, receiver, target, chain, &report)};
   {
     INFO("the walk did not converge: ", describe(report));
-    REQUIRE(center.ok);
+    REQUIRE(center.hasSolution);
   }
   constexpr float STEP{2e-3f};
   constexpr float TOLERANCE{0.02f};
@@ -111,7 +113,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
           solveOnce(surfaces, receiver, perturbed, chain, &perturbedReport)};
       {
         INFO("a perturbed walk did not converge: ", describe(perturbedReport));
-        REQUIRE(solved.ok);
+        REQUIRE(solved.hasSolution);
       }
       (side == 0 ? wrPlus : wrMinus) = solved.wr;
     }

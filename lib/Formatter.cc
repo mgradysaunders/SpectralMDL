@@ -117,7 +117,7 @@ void Formatter::writeDelimNewLine() {
       writeComment(comment), writeMoreComments();
     }
   }
-  if (mOptions.compact && lastOutput(-1) == '\n' && lastOutput(-2) == '\n') {
+  if (mOptions.isCompact && lastOutput(-1) == '\n' && lastOutput(-2) == '\n') {
     mOutputSrc.pop_back();
   }
 }
@@ -175,7 +175,7 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
     // cannot see past it and the next `writeToken()` silently discards
     // whatever comments remain in the gap!
     auto numNewLines{consumeInputSpace().count('\n')};
-    if (!mOptions.compact && numNewLines > 0) {
+    if (!mOptions.isCompact && numNewLines > 0) {
       // Preserve up to 1 extra newline
       mOutputSrc += '\n';
     } else if (inSrc.starts_with("/*")) {
@@ -198,14 +198,15 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   }
 }
 
-[[nodiscard]] static bool isFloatSuffix(char ch) {
+namespace {
+[[nodiscard]] bool isFloatSuffix(char ch) {
   return ch == 'j' || ch == 'J' || ch == 'd' || ch == 'D' || //
          ch == 'f' || ch == 'F';
 }
 
 // Does the spelling parse back to exactly the given value? NOTE: This must use
 // the same conversion as the parser, or else the guarantee is worthless!
-[[nodiscard]] static bool roundTripsTo(llvm::StringRef spelling, double value) {
+[[nodiscard]] bool roundTripsTo(llvm::StringRef spelling, double value) {
   llvm::APFloat parsedValue(llvm::APFloat::IEEEdouble());
   auto opStatus{parsedValue.convertFromString(
       spelling, llvm::APFloat::rmNearestTiesToEven)};
@@ -219,8 +220,8 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
 // Find the shortest spelling of the floating point literal `srcValue` that
 // still parses to exactly `value`. If there is no shorter spelling, return
 // `srcValue` itself.
-[[nodiscard]] static std::string minifyFloatSpelling(llvm::StringRef srcValue,
-                                                     double value) {
+[[nodiscard]] std::string minifyFloatSpelling(llvm::StringRef srcValue,
+                                              double value) {
   // Give up on anything that has no spelling as a literal at all. Infinity
   // is reachable because the parser only warns about overflow, and negative
   // values should be unreachable because negation is a unary expression,
@@ -298,6 +299,7 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
     return srcValue.str();
   return result;
 }
+} // namespace
 
 void Formatter::writeMinifiedFloat(const AST::LiteralFloat &expr) {
   writeToken(expr.srcValue, minifyFloatSpelling(expr.srcValue, expr.value));
@@ -320,7 +322,7 @@ void Formatter::write(const AST::File &file) {
     write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
           DELIM_NEWLINE);
   }
-  if (!file.srcKwModule.empty() && !mOptions.noAnnotations) {
+  if (!file.srcKwModule.empty() && !mOptions.shouldDropAnnotations) {
     // If removing annotations, skip the entire `module [[ ... ]];` because
     // the parser rejects `module;` without an annotation block!
     write(file.srcKwModule, file.moduleAnnotations,
@@ -345,10 +347,10 @@ void Formatter::write(const AST::Enum &decl) {
   write(decl.srcKwEnum, DELIM_SPACE, decl.name, decl.annotations,
         DELIM_UNNECESSARY_SPACE, decl.srcBraceL, DELIM_UNNECESSARY_SPACE,
         PUSH_INDENT);
-  writeList(decl.declarators.size(), decl.hasTrailingComma(), /*mayBreak=*/true,
+  writeList(decl.declarators.size(), decl.hasTrailingComma(), /*canBreak=*/true,
             [&](Delim delim) {
               for (const auto &each : decl.declarators) {
-                if (!mOptions.noAnnotations && each.annotations)
+                if (!mOptions.shouldDropAnnotations && each.annotations)
                   write(DELIM_NEWLINE);
                 write(each.name);
                 if (each.exprInit) {
@@ -359,7 +361,7 @@ void Formatter::write(const AST::Enum &decl) {
                 }
                 write(each.annotations, each.srcComma,
                       each.srcComma.empty() ? DELIM_NONE : delim);
-                if (!mOptions.noAnnotations && each.annotations)
+                if (!mOptions.shouldDropAnnotations && each.annotations)
                   write(DELIM_NEWLINE);
               }
               write(delim);
@@ -389,7 +391,7 @@ void Formatter::write(const AST::Struct &decl) {
   if (!decl.srcColonBeforeTags.empty()) {
     write(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
     writeList(decl.tags.size(), decl.hasTrailingCommaOnTags(),
-              /*mayBreak=*/false, [&](Delim delim) {
+              /*canBreak=*/false, [&](Delim delim) {
                 for (const auto &tag : decl.tags)
                   write(tag.srcKwDefault,
                         tag.srcKwDefault.empty() ? DELIM_UNNECESSARY_SPACE
@@ -428,9 +430,10 @@ void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
   auto moreThanOne{decl.declarators.size() > 1};
   writeList(decl.declarators.size(), decl.hasTrailingComma(),
-            /*mayBreak=*/false, [&](Delim delim) {
+            /*canBreak=*/false, [&](Delim delim) {
               for (const auto &each : decl.declarators) {
-                if (!mOptions.noAnnotations && each.annotations && moreThanOne)
+                if (!mOptions.shouldDropAnnotations && each.annotations &&
+                    moreThanOne)
                   write(DELIM_NEWLINE);
                 if (!each.srcBraceL.empty()) write(DELIM_UNNECESSARY_SPACE);
                 write(each.srcBraceL);
@@ -447,7 +450,8 @@ void Formatter::write(const AST::Variable &decl) {
                 }
                 write(each.annotations, each.srcComma,
                       each.srcComma.empty() ? DELIM_NONE : delim);
-                if (!mOptions.noAnnotations && each.annotations && moreThanOne)
+                if (!mOptions.shouldDropAnnotations && each.annotations &&
+                    moreThanOne)
                   write(DELIM_NEWLINE);
               }
             });
@@ -559,10 +563,10 @@ void Formatter::write(const AST::Switch &stmt) {
 //--}
 
 void Formatter::write(const AST::AnnotationBlock &annos) {
-  if (!mOptions.noAnnotations) {
+  if (!mOptions.shouldDropAnnotations) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
           annos.srcDoubleBrackL, PUSH_INDENT);
-    writeList(annos.size(), annos.hasTrailingComma(), /*mayBreak=*/true,
+    writeList(annos.size(), annos.hasTrailingComma(), /*canBreak=*/true,
               [&](Delim delim) {
                 for (const auto &[identifier, args, srcComma] : annos)
                   write(identifier, args, srcComma,
@@ -572,8 +576,9 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
   }
 }
 
+namespace {
 // Is the expression a literal constant, possibly signed?
-[[nodiscard]] static bool isLiteral(const AST::Expr &expr) {
+[[nodiscard]] bool isLiteral(const AST::Expr &expr) {
   if (auto unary{llvm::dyn_cast<AST::Unary>(&expr)};
       unary && (unary->op == AST::UNOP_POS || unary->op == AST::UNOP_NEG))
     return isLiteral(*unary->expr);
@@ -584,16 +589,17 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
 // Is the argument list nothing but literal constants? Such a list is data,
 // and how data is laid out belongs to whoever wrote it, so the formatter
 // never breaks one to fit. A table of rows stays a table of rows.
-[[nodiscard]] static bool isDataList(const AST::ArgumentList &args) {
+[[nodiscard]] bool isDataList(const AST::ArgumentList &args) {
   return args.size() > 0 && llvm::all_of(args, [](const AST::Argument &arg) {
            return arg.isPositional() && arg.expr && isLiteral(*arg.expr);
          });
 }
+} // namespace
 
 void Formatter::write(const AST::ArgumentList &args) {
   write(args.srcParenL, PUSH_INDENT);
   writeList(args.size(), args.hasTrailingComma(),
-            /*mayBreak=*/!isDataList(args), [&](Delim delim) {
+            /*canBreak=*/!isDataList(args), [&](Delim delim) {
               for (const auto &arg : args) {
                 if (arg.isVisited()) write(arg.srcKwVisit, DELIM_SPACE);
                 if (arg.isInlined()) write(arg.srcKwInline, DELIM_SPACE);
@@ -611,7 +617,7 @@ void Formatter::write(const AST::ParameterList &params) {
   if (params.isVariant()) {
     write(params.srcStar);
   } else {
-    writeList(params.size(), params.hasTrailingComma(), /*mayBreak=*/true,
+    writeList(params.size(), params.hasTrailingComma(), /*canBreak=*/true,
               [&](Delim delim) {
                 for (const auto &param : params) {
                   write(param.type, DELIM_SPACE, param.name);

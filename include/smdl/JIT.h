@@ -16,20 +16,20 @@ class VoxelGrid;
 /// \{
 
 /// Indicates that the material is transporting importance.
-static constexpr int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);
+inline constexpr int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);
 
 /// Indicates that the material is thin-walled.
-static constexpr int MATERIAL_THIN_WALLED = (1 << 1);
+inline constexpr int MATERIAL_THIN_WALLED = (1 << 1);
 
 /// Indicates that the material has a non-default `surface` initializer.
-static constexpr int MATERIAL_HAS_SURFACE = (1 << 2);
+inline constexpr int MATERIAL_HAS_SURFACE = (1 << 2);
 
 /// Indicates that the material has a non-default `backface` initializer.
-static constexpr int MATERIAL_HAS_BACKFACE = (1 << 3);
+inline constexpr int MATERIAL_HAS_BACKFACE = (1 << 3);
 
 /// Indicates that the material has a non-default emission EDF in the
 /// `surface` initializer.
-static constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
+inline constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
 
 /// Indicates that the material has a non-default emission EDF in the
 /// `backface` initializer.
@@ -37,64 +37,63 @@ static constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
 /// \note
 /// The back side only actually emits if the material is also thin-walled,
 /// which may only be knowable at runtime. See
-/// `JIT::Material::emissionEvaluate`.
+/// `JIT::MaterialDef::emissionEvaluate`.
 ///
-static constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
+inline constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
 
 /// Indicates that the material has a non-default `volume` initializer.
-static constexpr int MATERIAL_HAS_VOLUME = (1 << 6);
+inline constexpr int MATERIAL_HAS_VOLUME = (1 << 6);
 
 /// Indicates that the material has a non-default `hair` initializer.
-static constexpr int MATERIAL_HAS_HAIR = (1 << 7);
+inline constexpr int MATERIAL_HAS_HAIR = (1 << 7);
 
 /// Indicates that the material has a cutout opacity less than one.
 ///
 /// \note
 /// These constants are mirrored by hand in the builtin `api.smdl`
-/// (`_MaterialInstance.flags`); a new flag must be added in both places.
+/// (`_MaterialEval.flags`); a new flag must be added in both places.
 ///
-static constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
+inline constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 
 /// Indicates that the material volume coefficients vary with position.
 ///
 /// \note
-/// This bit only ever appears in `JIT::Material::staticFlags`: position
+/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: position
 /// dependence is not observable at instance evaluation time, so
-/// `JIT::Instance::flags` never sets it. Like `MATERIAL_HAS_CUTOUT` it is
-/// derived after optimization and degrades to unknown at
-/// `OPT_LEVEL_NONE`; see `JIT::Material::hasHomogeneousVolume()` for the
-/// conservative reading.
+/// `JIT::MaterialDef::Eval::flags` never sets it. Like `MATERIAL_HAS_CUTOUT` it
+/// is derived after optimization and degrades to unknown at `OPT_LEVEL_NONE`;
+/// see `JIT::MaterialDef::hasHomogeneousVolume()` for the conservative reading.
 ///
-static constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
+inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 
 /// Indicates that the material has a non-zero `geometry.displacement`.
 ///
 /// \note
-/// This bit only ever appears in `JIT::Material::staticFlags`: it is derived
+/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is derived
 /// after optimization from whether the displacement expression folds to
 /// a constant, so it degrades to unknown at `OPT_LEVEL_NONE`, and
-/// `JIT::Instance::flags` never sets it. See
-/// `JIT::Material::hasZeroDisplacement()` for the conservative reading.
-static constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
+/// `JIT::MaterialDef::Eval::flags` never sets it. See
+/// `JIT::MaterialDef::hasZeroDisplacement()` for the conservative reading.
+inline constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
 /// Indicates that the material volume is declared additive (the SMDL
 /// extension field `material_volume.additive`): it overlaps rather than
 /// displaces the medium that encloses it, so hosts tracking nested media
 /// should add its coefficients to the enclosing medium's over the shared
 /// interior instead of replacing them.
-static constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
+inline constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
 /// Indicates that the material remaps `geometry.normal` away from the
 /// state's shading normal.
 ///
 /// \note
 /// Like `MATERIAL_HAS_DISPLACEMENT`, this bit only ever appears in
-/// `JIT::Material::staticFlags`: it is derived after optimization from
+/// `JIT::MaterialDef::staticFlags`: it is derived after optimization from
 /// whether `geometry.normal - $state.normal` folds to the constant zero
 /// vector, so it degrades to unknown at `OPT_LEVEL_NONE`, and
-/// `JIT::Instance::flags` never sets it. See `JIT::Material::remapsNormal()`
-/// for the conservative reading.
-static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
+/// `JIT::MaterialDef::Eval::flags` never sets it. See
+/// `JIT::MaterialDef::canRemapNormal()` for the conservative reading.
+inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 
 /// \}
 
@@ -114,8 +113,8 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// one word.
 ///
 /// The pairs rather than the two axes separately are what a material
-/// reports, because `JIT::Instance::df_lobes_surface` unions over a whole
-/// BSDF tree. Two axes OR'd together lose which domain went with which
+/// reports, because `JIT::MaterialDef::Eval::surfaceLobes` unions over a
+/// whole BSDF tree. Two axes OR'd together lose which domain went with which
 /// kind: a Dirac reflection over a diffuse transmission and a Dirac
 /// transmission over a diffuse reflection would report identical words,
 /// and only the second has a Dirac transmission to refract through.
@@ -128,13 +127,13 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// The energy-compensation lobe of a rough BSDF is one of these, so a
 /// glossy BSDF that carries one reports both kinds and a mask cuts
 /// between them. See `DF_GLOSSY_BRDF`.
-static constexpr int DF_SMOOTH_BRDF = (1 << 0);
+inline constexpr int DF_SMOOTH_BRDF = (1 << 0);
 
 /// \copydoc DF_SMOOTH_BRDF
-static constexpr int DF_SMOOTH_BTDF = (1 << 3);
+inline constexpr int DF_SMOOTH_BTDF = (1 << 3);
 
 /// Every smooth lobe of either domain.
-static constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
+inline constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 
 /// A reflective lobe with a sampleable normal distribution, so a half
 /// vector is a meaningful quantity of it and a manifold constraint can be
@@ -151,38 +150,38 @@ static constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 /// that mixes one with something else, or whose half vector nothing would
 /// ever want to constrain, belongs in `DF_SMOOTH_BRDF`; the micrograin
 /// layer is both and is classified there.
-static constexpr int DF_GLOSSY_BRDF = (1 << 1);
+inline constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
 /// \copydoc DF_GLOSSY_BRDF
-static constexpr int DF_GLOSSY_BTDF = (1 << 4);
+inline constexpr int DF_GLOSSY_BTDF = (1 << 4);
 
 /// Every normal-distribution lobe of either domain.
-static constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
+inline constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
 
 /// A reflective Dirac delta lobe, which has no density and whose half
 /// vector is fixed by the geometry.
-static constexpr int DF_DIRAC_BRDF = (1 << 2);
+inline constexpr int DF_DIRAC_BRDF = (1 << 2);
 
 /// \copydoc DF_DIRAC_BRDF
-static constexpr int DF_DIRAC_BTDF = (1 << 5);
+inline constexpr int DF_DIRAC_BTDF = (1 << 5);
 
 /// Every Dirac lobe of either domain.
-static constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
+inline constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 
 /// Every lobe with a density, which is every lobe but the Dirac ones.
 /// This is the question a caller asks to find out whether a vertex can
 /// scatter a direction that another strategy could also have produced.
-static constexpr int DF_FINITE = DF_SMOOTH | DF_GLOSSY;
+inline constexpr int DF_FINITE = DF_SMOOTH | DF_GLOSSY;
 
 /// Every reflective lobe.
-static constexpr int DF_BRDF = DF_SMOOTH_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
+inline constexpr int DF_BRDF = DF_SMOOTH_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
 
 /// Every transmissive lobe.
-static constexpr int DF_BTDF = DF_SMOOTH_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
+inline constexpr int DF_BTDF = DF_SMOOTH_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
 
 /// Every lobe, which is the lobe mask of a caller that wants the whole
 /// distribution.
-static constexpr int DF_ALL = DF_BRDF | DF_BTDF;
+inline constexpr int DF_ALL = DF_BRDF | DF_BTDF;
 
 /// Property bit riding above the lobes in the same word: some node in
 /// the scattering tree was given a `normal` that is, at the instance
@@ -197,9 +196,9 @@ static constexpr int DF_ALL = DF_BRDF | DF_BTDF;
 /// this bit nor `DF_CAN_SET_NORMAL`.
 ///
 /// NOT a lobe and NOT in `DF_ALL`: a lobe mask never names it, so it
-/// cannot select anything, and it survives only in `df_lobes_surface`
-/// and `df_lobes_backface`.
-static constexpr int DF_SETS_NORMAL = (1 << 6);
+/// cannot select anything, and it survives only in `surfaceLobes`
+/// and `backfaceLobes`.
+inline constexpr int DF_SETS_NORMAL = (1 << 6);
 
 /// Property bit like `DF_SETS_NORMAL`: some node in the tree was given a
 /// `normal` at all, whether or not it currently differs from the state's
@@ -207,7 +206,7 @@ static constexpr int DF_SETS_NORMAL = (1 << 6);
 /// detaches its node from a REMAPPED `geometry.normal`, so when a
 /// material also remaps the field (see `MATERIAL_REMAPS_NORMAL`) an
 /// estimator refuses that combination by this bit.
-static constexpr int DF_CAN_SET_NORMAL = (1 << 7);
+inline constexpr int DF_CAN_SET_NORMAL = (1 << 7);
 
 /// \}
 
@@ -221,7 +220,7 @@ template <typename Result, typename... Args>
 struct Function<Result(Args...)> final {
 public:
   /// The function pointer type.
-  using function_pointer = Result (*)(Args...);
+  using FunctionPointer = Result (*)(Args...);
 
   Function() = default;
 
@@ -237,11 +236,14 @@ public:
   std::string name{};
 
   /// The function pointer.
-  function_pointer func{};
+  FunctionPointer func{};
 };
 
-/// A just-in-time SMDL material.
-struct Material final {
+/// A just-in-time compiled SMDL material definition: what the material
+/// was compiled to, being its entry points and what is statically known
+/// about it. The `Compiler` owns it and the next `compile()` invalidates
+/// it. Evaluating one at a shading point yields a `Material`.
+struct MaterialDef final {
 public:
   /// The module name.
   std::string moduleName{};
@@ -276,7 +278,7 @@ public:
   /// The values of the flag bits that are compile-time constants for
   /// every possible instance of this material. This is a subset of
   /// `staticFlagsKnown`; for every instance,
-  /// `(instance.flags & staticFlagsKnown) == staticFlags`.
+  /// `(eval.flags & staticFlagsKnown) == staticFlags`.
   int staticFlags{};
 
   /// The mask of flag bits whose values are compile-time constants.
@@ -327,12 +329,12 @@ public:
 
   /// Provably homogeneous: the volume coefficients are independent of
   /// the evaluation point, so the coefficient spectra captured by the
-  /// `Instance` at the surface hit are exact everywhere in the interior
+  /// `Eval` at the surface hit are exact everywhere in the interior
   /// and `volumeEvaluate` never needs to be called. When this returns
   /// false the volume is heterogeneous *or unproven*, and hosts must
   /// treat it as heterogeneous: sample the interior through
   /// `volumeEvaluate` against the majorants (see
-  /// `Instance::max_scattering_coefficient`).
+  /// `Eval::maxScatteringCoefficient`).
   [[nodiscard]] bool hasHomogeneousVolume() const noexcept {
     return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_VOLUME) != 0 &&
            (staticFlags & MATERIAL_HAS_HETEROGENEOUS_VOLUME) == 0;
@@ -354,13 +356,16 @@ public:
   /// normal field must read the field itself through
   /// `geometryNormalEvaluate`; reading it for a material that turns out
   /// not to remap returns the state normal and costs only the query.
-  [[nodiscard]] bool remapsNormal() const noexcept {
+  [[nodiscard]] bool canRemapNormal() const noexcept {
     return (staticFlagsKnown & MATERIAL_REMAPS_NORMAL) == 0 ||
            (staticFlags & MATERIAL_REMAPS_NORMAL) != 0;
   }
 
-  /// An instance of the material.
-  struct Instance final {
+  /// The definition evaluated at one shading point: the record the JIT
+  /// writes through `evaluate`, laid out to match the builtin
+  /// `_MaterialEval` struct field for field. Hosts hold a `Material`
+  /// rather than reaching in here.
+  struct Eval final {
   public:
     /// Is null?
     [[nodiscard]] bool operator!() const noexcept { return ptr == nullptr; }
@@ -376,19 +381,19 @@ public:
     ///
     const void *ptr{};
 
-    struct material_geometry final {
+    struct Geometry final {
       /// The displacement vector.
       const float3 displacement{};
 
       /// The cutout opacity.
-      const float cutout_opacity{};
+      const float cutoutOpacity{};
 
       /// The normal.
       const float3 normal{};
     };
 
     /// The geometry.
-    const material_geometry *geometry{};
+    const Geometry *geometry{};
 
     /// The index of refraction.
     float ior{};
@@ -397,56 +402,56 @@ public:
     /// medium on the front side of the geometry. Initialized to 1 by
     /// `evaluate` and meant to be overwritten by hosts that track nested
     /// dielectrics. The relative ratio the scattering calculations refract
-    /// with is `exterior_ior / ior`.
-    float exterior_ior{};
+    /// with is `exteriorIOR / ior`.
+    float exteriorIOR{};
 
     /// The temperature in Kelvin or -1 if undefined.
     float temperature{};
 
     /// The volume absorption coefficient if applicable, in units of
     /// inverse meters per the MDL specification: hosts working in scene
-    /// units convert distances with `State::meters_per_scene_unit`
+    /// units convert distances with `State::metersPerSceneUnit`
     /// before exponentiating.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     /// The value is whatever the coefficient expression evaluated to at
     /// instance time; for heterogeneous volumes (see
-    /// `Material::hasHomogeneousVolume()`) that is merely the
+    /// `MaterialDef::hasHomogeneousVolume()`) that is merely the
     /// coefficient at the surface hit, and interior sampling must go
-    /// through `Material::volumeEvaluate` instead.
+    /// through `MaterialDef::volumeEvaluate` instead.
     ///
-    const float *absorption_coefficient{};
+    const float *absorptionCoefficient{};
 
     /// The volume scattering coefficient if applicable, in units of
-    /// inverse meters. See `absorption_coefficient` for the
+    /// inverse meters. See `absorptionCoefficient` for the
     /// heterogeneous-volume caveat.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *scattering_coefficient{};
+    const float *scatteringCoefficient{};
 
     /// The volume absorption coefficient majorant if declared, in units
     /// of inverse meters: an author-declared, position-independent
-    /// upper bound of `absorption_coefficient` over the whole interior
+    /// upper bound of `absorptionCoefficient` over the whole interior
     /// (the SMDL extension field
     /// `material_volume.max_absorption_coefficient`).
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *max_absorption_coefficient{};
+    const float *maxAbsorptionCoefficient{};
 
     /// The volume scattering coefficient majorant if declared, in units
-    /// of inverse meters, see `max_absorption_coefficient`. This is
+    /// of inverse meters, see `maxAbsorptionCoefficient`. This is
     /// what null-collision tracking through a heterogeneous interior
     /// runs against.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *max_scattering_coefficient{};
+    const float *maxScatteringCoefficient{};
 
     /// The `smdl::VoxelGrid` behind the volume density acceleration
     /// hint if declared (the SMDL extension field
@@ -455,47 +460,47 @@ public:
     /// are bounded by the majorants scaled by the grid's trilinear
     /// value there over its maximum, so renderers may track against
     /// per-region majorants from the grid's per-brick bounds and skip
-    /// empty regions. See `MaterialInstance::getVolumeDensityGrid()`.
-    const void *volume_density_resource{};
+    /// empty regions. See `Material::getVolumeDensityGrid()`.
+    const void *volumeDensityResource{};
 
     /// The object-space lower corner of the box that the density
     /// hint's texture space spans, if declared. If non-null, points to
     /// one `float3`.
-    const float3 *volume_density_bound_min{};
+    const float3 *volumeDensityBoundMin{};
 
-    /// The object-space upper corner, see `volume_density_bound_min`.
-    const float3 *volume_density_bound_max{};
+    /// The object-space upper corner, see `volumeDensityBoundMin`.
+    const float3 *volumeDensityBoundMax{};
 
     /// The volumetric emission coefficient if declared (MDL 1.8
     /// `material_volume.emission_intensity`): the radiance the medium
     /// adds per unit length, in `W/(m^2 sr nm)` per meter, converted
-    /// with `State::meters_per_scene_unit` like the scattering
+    /// with `State::metersPerSceneUnit` like the scattering
     /// coefficients. Evaluated at the surface hit; heterogeneous
     /// interiors re-query per point through `volumeEvaluate`.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *volume_emission_intensity{};
+    const float *volumeEmissionIntensity{};
 
     /// The `surface` emission intensity, or null if the `surface` has no
     /// non-default emission EDF.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *surface_emission_intensity{};
+    const float *surfaceEmissionIntensity{};
 
     /// The `backface` emission intensity, or null if the `backface` has no
     /// non-default emission EDF.
     ///
     /// \note
-    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// If non-null, this necessarily points to `wavelengthCount` values.
     ///
-    const float *backface_emission_intensity{};
+    const float *backfaceEmissionIntensity{};
 
     /// The wavelength count.
-    int wavelength_base_max{};
+    int wavelengthCount{};
 
     /// The flags.
     int flags{};
@@ -506,7 +511,7 @@ public:
     /// This is a union over the tree, so it answers "could this material
     /// do that" and never "will this query do that". It is exact about
     /// which domain goes with which kind, which is what makes
-    /// `df_lobes_surface & DF_DIRAC_BTDF` a sound test for an interface
+    /// `surfaceLobes & DF_DIRAC_BTDF` a sound test for an interface
     /// a manifold walk can refract through.
     ///
     /// One distribution can contribute more than one bit: a rough BSDF
@@ -517,15 +522,15 @@ public:
     /// The word also carries the normal property bits `DF_SETS_NORMAL`
     /// and `DF_CAN_SET_NORMAL`, which are not lobes; mask with `DF_ALL`
     /// where only the lobes are wanted.
-    int df_lobes_surface{};
+    int surfaceLobes{};
 
-    /// \copydoc df_lobes_surface
-    int df_lobes_backface{};
+    /// \copydoc surfaceLobes
+    int backfaceLobes{};
 
     /// The emission intensity modes: bit 0 is set if the `surface` emission
     /// intensity is `intensity_power` (as opposed to the default
     /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
-    int emission_modes{};
+    int emissionModes{};
 
     /// The random seed captured from the raw state of `State::rng` when
     /// constructing the instance, which seeds the generator for
@@ -534,7 +539,7 @@ public:
 
     /// The tangent-to-world space matrix present when constructing the
     /// instance.
-    float3x3 tangent_to_world_space{};
+    float3x3 tangentToWorld{};
   };
 
   /// The evaluate function.
@@ -542,17 +547,17 @@ public:
   /// \param[inout] state
   /// The state.
   ///
-  /// \param[out] instance
+  /// \param[out] eval
   /// The instance.
   ///
-  /// This uses the `state.allocator` to allocate an `Instance`
+  /// This uses the `state.allocator` to allocate an `Eval`
   /// that must be passed to all other scattering calculations.
   ///
   /// \note
-  /// After the user obtains an `Instance`, the `State` can be
+  /// After the user obtains an `Eval`, the `State` can be
   /// dropped.
   ///
-  Function<void(State &state, Instance &instance)> evaluate{};
+  Function<void(State &state, Eval &eval)> evaluate{};
 
   /// The evaluate opacity function.
   ///
@@ -584,7 +589,7 @@ public:
   /// displacement is dead-code eliminated, the way `evaluateOpacity`
   /// evaluates only the cutout opacity. This is the per-vertex query
   /// for hosts that apply displacement to geometry at load time; see
-  /// `Material::hasZeroDisplacement()` for skipping materials that
+  /// `MaterialDef::hasZeroDisplacement()` for skipping materials that
   /// provably never displace.
   Function<void(State &state, float3 &displacement)> displacementEvaluate{};
 
@@ -593,11 +598,11 @@ public:
   /// \param[inout] state
   /// The state, which identifies the interior point being queried.
   ///
-  /// \param[out] sigma_a
+  /// \param[out] sigmaA
   /// The absorption coefficient spectrum in units of inverse meters.
   /// This must point to `wavelengthBaseMax` floats!
   ///
-  /// \param[out] sigma_s
+  /// \param[out] sigmaS
   /// The scattering coefficient spectrum in units of inverse meters.
   /// This must point to `wavelengthBaseMax` floats!
   ///
@@ -614,7 +619,7 @@ public:
   /// opacity. This is the per-point query that null-collision tracking
   /// calls at every tentative collision inside a heterogeneous medium;
   /// for provably homogeneous materials
-  /// (`Material::hasHomogeneousVolume()`) the instance coefficient
+  /// (`MaterialDef::hasHomogeneousVolume()`) the instance coefficient
   /// pointers answer the same question with no call at all.
   ///
   /// \note
@@ -622,18 +627,18 @@ public:
   /// lookup: the caller fills `position` with the query point in the
   /// *object space* of the volume instance (internal space equals
   /// object space here, there being no surface frame; do NOT call
-  /// `State::finalize()`), along with the render-wide fields 
-  /// (`wavelength_base`, ...), and may leave the surface-geometry 
-  /// fields defaulted. Volume expressions read the point through 
+  /// `State::finalize()`), along with the render-wide fields
+  /// (`wavelengthBase`, ...), and may leave the surface-geometry
+  /// fields defaulted. Volume expressions read the point through
   /// `state::position()`.
   ///
-  Function<void(State &state, float *sigma_a, float *sigma_s, float *emission)>
+  Function<void(State &state, float *sigmaA, float *sigmaS, float *emission)>
       volumeEvaluate{};
 
   /// The scatter evaluate function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] wo
   /// The outgoing direction in world space.
@@ -656,14 +661,14 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
+  Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
                int lobeMask, float &pdfFwd, float &pdfRev, float *f)>
       scatterEvaluate{};
 
   /// The scatter sample function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -703,7 +708,7 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
+  Function<int(const Eval &eval, const float4 &xi, const float3 &wo,
                int lobeMask, float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &sampledLobe, float &lobeChance)>
       scatterSample{};
@@ -719,11 +724,11 @@ public:
   /// constraint resolves to.
   ///
   /// \note
-  /// Null unless `Compiler::enableScatterNormal` was set before
+  /// Null unless `Compiler::shouldEmitScatterNormal` was set before
   /// `compile()`. A host that never asks pays nothing for these.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -743,7 +748,7 @@ public:
   /// exactly one kind, `DF_GLOSSY_BRDF` or `DF_GLOSSY_BTDF`: a two-domain
   /// mask reports the mixture of the distributions on both sides of the
   /// interface, which is not a distribution any single crossing scatters
-  /// by, and the `MaterialInstance` wrapper refuses it.
+  /// by, and the `Material` wrapper refuses it.
   ///
   /// \param[out] wm
   /// The microfacet normal in world space, on the requested side. This
@@ -770,18 +775,18 @@ public:
   /// \return
   /// Returns `true` if a lobe with a normal distribution was reached.
   ///
-  Function<int(const Instance &instance, const float4 &xi, int backface,
-               int lobeMask, float3 &wm, float &pdf, float2 &alpha)>
+  Function<int(const Eval &eval, const float4 &xi, int isBackface, int lobeMask,
+               float3 &wm, float &pdf, float2 &alpha)>
       scatterNormalSample{};
 
   /// The normal distribution evaluate function.
   ///
   /// The density with which `scatterNormalSample` draws `wm` on the same
-  /// side. See it for the contract; see `Compiler::enableScatterNormal`
+  /// side. See it for the contract; see `Compiler::shouldEmitScatterNormal`
   /// for why this may be null.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] backface
   /// Nonzero to ask on the geometric backface side, as in
@@ -799,8 +804,8 @@ public:
   /// \return
   /// Returns `true` if the density is non-zero.
   ///
-  Function<int(const Instance &instance, int backface, const float3 &wm,
-               int lobeMask, float &pdf)>
+  Function<int(const Eval &eval, int isBackface, const float3 &wm, int lobeMask,
+               float &pdf)>
       scatterNormalEvaluate{};
 
   /// The geometry normal evaluate function.
@@ -813,20 +818,20 @@ public:
   ///
   /// This is the query for a host that must read or differentiate the
   /// shading normal field a material remaps (see
-  /// `Material::remapsNormal()`), a manifold walk over a normal-mapped
+  /// `MaterialDef::canRemapNormal()`), a manifold walk over a normal-mapped
   /// caster being the motivating case: the compiler does not
   /// differentiate materials, so such a host evaluates the field at
   /// perturbed surface parameterizations and differences it.
   ///
   /// \note
-  /// Null unless `Compiler::enableScatterNormal` was set before
+  /// Null unless `Compiler::shouldEmitScatterNormal` was set before
   /// `compile()`, like the two normal distribution hooks above.
   Function<void(State &state, float3 &normal)> geometryNormalEvaluate{};
 
   /// The emission evaluate function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] wi
   /// The emission direction in world space, pointing away from the
@@ -845,7 +850,7 @@ public:
   /// The radiance is `material_emission.intensity` times the normalized
   /// EDF, which is the physical radiance when the intensity mode is
   /// `intensity_radiant_exitance`. When the mode is `intensity_power`
-  /// (see `Instance::emission_modes`), the host must additionally divide
+  /// (see `Eval::emissionModes`), the host must additionally divide
   /// by the total emitting surface area.
   ///
   /// \note
@@ -854,14 +859,13 @@ public:
   /// `backface.emission`, if the backface is non-default, on the back
   /// side, else `surface.emission` mirrored.
   ///
-  Function<int(const Instance &instance, const float3 &wi, float &pdf,
-               float *Le)>
+  Function<int(const Eval &eval, const float3 &wi, float &pdf, float *Le)>
       emissionEvaluate{};
 
   /// The emission sample function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -878,14 +882,14 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  Function<int(const Instance &instance, const float4 &xi, float3 &wi,
-               float &pdf, float *Le)>
+  Function<int(const Eval &eval, const float4 &xi, float3 &wi, float &pdf,
+               float *Le)>
       emissionSample{};
 
   /// The volume scatter evaluate function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] wo
   /// The outgoing direction in world space.
@@ -898,13 +902,13 @@ public:
   /// so is also the solid-angle PDF of `volumeScatterSample`. Returns zero
   /// if the material has no volume scattering.
   ///
-  Function<float(const Instance &instance, const float3 &wo, const float3 &wi)>
+  Function<float(const Eval &eval, const float3 &wo, const float3 &wi)>
       volumeScatterEvaluate{};
 
   /// The volume scatter sample function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -920,14 +924,14 @@ public:
   /// PDF of having sampled it, so the implied throughput weight is
   /// always 1. Returns zero if the material has no volume scattering.
   ///
-  Function<float(const Instance &instance, const float4 &xi, const float3 &wo,
+  Function<float(const Eval &eval, const float4 &xi, const float3 &wo,
                  float3 &wi)>
       volumeScatterSample{};
 
   /// The hair scatter evaluate function, dispatching `material.hair`.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] wo
   /// The outgoing direction in world space.
@@ -950,7 +954,7 @@ public:
   /// \note
   /// The state contract at a hair hit: `State::normal` must be the
   /// shading normal on the fiber surface (the true normal of a tube;
-  /// ribbon geometry must synthesize it) and `State::texture_tangent_u[0]`
+  /// ribbon geometry must synthesize it) and `State::textureTangentU[0]`
   /// must be the fiber tangent pointing root to tip. The BSDF implies the
   /// cross-section offset from the normal as `h = sin(gamma_o)` and reads
   /// no texture coordinate. Per the MDL specification, the material `ior`,
@@ -960,14 +964,14 @@ public:
   /// gate calls on `hasHair()`; calling anyway is safe because the
   /// default `hair_bsdf()` reports black.
   ///
-  Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
+  Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
                float &pdfFwd, float &pdfRev, float *f)>
       hairScatterEvaluate{};
 
   /// The hair scatter sample function.
   ///
-  /// \param[in] instance
-  /// The instance obtained from the `evaluate` function.
+  /// \param[in] eval
+  /// The evaluated material obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -995,57 +999,59 @@ public:
   /// are no Dirac hair distributions and no lobe taxonomy for hair, so this
   /// reports neither a sampled lobe nor a Dirac flag.
   ///
-  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
-               float3 &wi, float &pdfFwd, float &pdfRev, float *f)>
+  Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
+               float &pdfFwd, float &pdfRev, float *f)>
       hairScatterSample{};
 };
 
-/// A just-in-time SMDL material pointer and an instance of the material.
-struct MaterialInstance final {
+/// A material definition together with an evaluation of it at one shading
+/// point, which is what a host holds and asks the scattering, emission, and
+/// volume questions of.
+struct Material final {
 public:
-  MaterialInstance() = default;
+  Material() = default;
 
   /// Allocate and initialize from the given state and material.
-  explicit MaterialInstance(State &state, const Material *material)
-      : material(material) {
-    SMDL_SANITY_CHECK(material);
-    material->evaluate(state, instance);
+  explicit Material(State &state, const MaterialDef *materialDef)
+      : materialDef(materialDef) {
+    SMDL_SANITY_CHECK(materialDef);
+    materialDef->evaluate(state, eval);
   }
 
   /// The cutout opacity.
   [[nodiscard]] float getCutoutOpacity() const noexcept {
-    return instance.geometry->cutout_opacity;
+    return eval.geometry->cutoutOpacity;
   }
 
   /// Is thin walled?
   [[nodiscard]] bool isThinWalled() const noexcept {
-    return (instance.flags & MATERIAL_THIN_WALLED) != 0;
+    return (eval.flags & MATERIAL_THIN_WALLED) != 0;
   }
 
   /// Has medium properties?
   [[nodiscard]] bool hasMedium() const noexcept {
-    return (instance.absorption_coefficient != nullptr ||
-            instance.scattering_coefficient != nullptr);
+    return (eval.absorptionCoefficient != nullptr ||
+            eval.scatteringCoefficient != nullptr);
   }
 
   /// Is the volume declared additive? See `MATERIAL_ADDITIVE_VOLUME`.
   [[nodiscard]] bool hasAdditiveVolume() const noexcept {
-    return (instance.flags & MATERIAL_ADDITIVE_VOLUME) != 0;
+    return (eval.flags & MATERIAL_ADDITIVE_VOLUME) != 0;
   }
 
   /// Has a non-default `hair` initializer?
   [[nodiscard]] bool hasHair() const noexcept {
-    return (instance.flags & MATERIAL_HAS_HAIR) != 0;
+    return (eval.flags & MATERIAL_HAS_HAIR) != 0;
   }
 
   /// Has a non-default emission EDF in the `surface` initializer?
   [[nodiscard]] bool hasSurfaceEmission() const noexcept {
-    return (instance.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0;
+    return (eval.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0;
   }
 
   /// Has a non-default emission EDF in the `backface` initializer?
   [[nodiscard]] bool hasBackfaceEmission() const noexcept {
-    return (instance.flags & MATERIAL_HAS_BACKFACE_EMISSION) != 0;
+    return (eval.flags & MATERIAL_HAS_BACKFACE_EMISSION) != 0;
   }
 
   /// Has a non-default emission EDF at all?
@@ -1057,96 +1063,94 @@ public:
   /// non-default emission EDF.
   [[nodiscard]]
   Span<const float> getSurfaceEmissionIntensity() const noexcept {
-    return Span<const float>(instance.surface_emission_intensity,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.surfaceEmissionIntensity,
+                             eval.wavelengthCount);
   }
 
   /// The `backface` emission intensity, or empty if the `backface` has no
   /// non-default emission EDF.
   [[nodiscard]]
   Span<const float> getBackfaceEmissionIntensity() const noexcept {
-    return Span<const float>(instance.backface_emission_intensity,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.backfaceEmissionIntensity,
+                             eval.wavelengthCount);
   }
 
   /// Is the `surface` emission intensity in units of power (watts) as
   /// opposed to radiant exitance (watts per square meter)? If so, the host
   /// must divide emitted radiance by the total emitting surface area.
   [[nodiscard]] bool isSurfaceEmissionPower() const noexcept {
-    return (instance.emission_modes & 1) != 0;
+    return (eval.emissionModes & 1) != 0;
   }
 
   /// Is the `backface` emission intensity in units of power (watts) as
   /// opposed to radiant exitance (watts per square meter)?
   [[nodiscard]] bool isBackfaceEmissionPower() const noexcept {
-    return (instance.emission_modes & 2) != 0;
+    return (eval.emissionModes & 2) != 0;
   }
 
   /// The index of refraction.
-  [[nodiscard]] float getIOR() const noexcept { return instance.ior; }
+  [[nodiscard]] float getIOR() const noexcept { return eval.ior; }
 
   /// The exterior index of refraction, i.e., of the medium surrounding
   /// the object on the front side of the geometry. Defaults to 1.
   [[nodiscard]] float getExteriorIOR() const noexcept {
-    return instance.exterior_ior;
+    return eval.exteriorIOR;
   }
 
   /// Set the exterior index of refraction. Hosts that track nested
   /// dielectrics call this after construction and before the scattering
   /// functions, passing the index of the medium surrounding the object.
   void setExteriorIOR(float exteriorIOR) noexcept {
-    instance.exterior_ior = exteriorIOR;
+    eval.exteriorIOR = exteriorIOR;
   }
 
   /// The absorption coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> getAbsorptionCoefficient() const noexcept {
-    return Span<const float>(instance.absorption_coefficient,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.absorptionCoefficient, eval.wavelengthCount);
   }
 
   /// The scattering coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> getScatteringCoefficient() const noexcept {
-    return Span<const float>(instance.scattering_coefficient,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.scatteringCoefficient, eval.wavelengthCount);
   }
 
   /// The declared absorption coefficient majorant, or empty if none.
   [[nodiscard]] Span<const float> getMaxAbsorptionCoefficient() const noexcept {
-    return Span<const float>(instance.max_absorption_coefficient,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.maxAbsorptionCoefficient,
+                             eval.wavelengthCount);
   }
 
   /// The declared scattering coefficient majorant, or empty if none.
   [[nodiscard]] Span<const float> getMaxScatteringCoefficient() const noexcept {
-    return Span<const float>(instance.max_scattering_coefficient,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.maxScatteringCoefficient,
+                             eval.wavelengthCount);
   }
 
   /// The volume density acceleration hint grid, or null if not
-  /// declared. See `Instance::volume_density_resource`.
+  /// declared. See `Eval::volumeDensityResource`.
   [[nodiscard]] const VoxelGrid *getVolumeDensityGrid() const noexcept {
-    return static_cast<const VoxelGrid *>(instance.volume_density_resource);
+    return static_cast<const VoxelGrid *>(eval.volumeDensityResource);
   }
 
   /// The lower corner of the density hint box, or null if not declared.
   [[nodiscard]] const float3 *getVolumeDensityBoundMin() const noexcept {
-    return instance.volume_density_bound_min;
+    return eval.volumeDensityBoundMin;
   }
 
   /// The upper corner of the density hint box, or null if not declared.
   [[nodiscard]] const float3 *getVolumeDensityBoundMax() const noexcept {
-    return instance.volume_density_bound_max;
+    return eval.volumeDensityBoundMax;
   }
 
   /// The volumetric emission coefficient, or empty if none.
   [[nodiscard]] Span<const float> getVolumeEmissionIntensity() const noexcept {
-    return Span<const float>(instance.volume_emission_intensity,
-                             instance.wavelength_base_max);
+    return Span<const float>(eval.volumeEmissionIntensity,
+                             eval.wavelengthCount);
   }
 
   /// The geometry normal in world space.
   [[nodiscard]] float3 getGeometryNormal() const noexcept {
-    return instance.tangent_to_world_space[2];
+    return eval.tangentToWorld[2];
   }
 
   /// Is the given direction on the exterior side of the geometry?
@@ -1173,7 +1177,7 @@ public:
   /// side never reaches. Carries the normal property bits as well as the
   /// lobes; mask with `DF_ALL` where only the lobes are wanted.
   [[nodiscard]] int getLobes() const noexcept {
-    return instance.df_lobes_surface | instance.df_lobes_backface;
+    return eval.surfaceLobes | eval.backfaceLobes;
   }
 
   /// The lobes on one side of the interface: the `backface` scattering
@@ -1187,10 +1191,10 @@ public:
   /// `backface` initializer scatters by its `surface` from both sides, so
   /// both sides report one word and only a two-sided material
   /// distinguishes.
-  [[nodiscard]] int getLobes(bool backface) const noexcept {
-    return backface && (instance.flags & MATERIAL_HAS_BACKFACE) != 0
-               ? instance.df_lobes_backface
-               : instance.df_lobes_surface;
+  [[nodiscard]] int getLobes(bool isBackface) const noexcept {
+    return isBackface && (eval.flags & MATERIAL_HAS_BACKFACE) != 0
+               ? eval.backfaceLobes
+               : eval.surfaceLobes;
   }
 
   /// The scatter evaluate function.
@@ -1217,10 +1221,10 @@ public:
                                      float &pdfFwd, float &pdfRev,
                                      Span<float> f,
                                      int lobeMask = DF_ALL) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    return material->scatterEvaluate(instance, wo, wi, lobeMask, pdfFwd, pdfRev,
-                                     f.data());
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(f.size() == size_t(eval.wavelengthCount));
+    return materialDef->scatterEvaluate(eval, wo, wi, lobeMask, pdfFwd, pdfRev,
+                                        f.data());
   }
 
   /// The scatter sample function.
@@ -1245,7 +1249,7 @@ public:
   ///
   /// \param[out] sampledLobe
   /// The single lobe the sample was drawn from, `0` if none. See
-  /// `Material::scatterSample`; `sampledLobe & DF_DIRAC` is the Dirac test.
+  /// `MaterialDef::scatterSample`; `sampledLobe & DF_DIRAC` is the Dirac test.
   ///
   /// \return
   /// Returns `true` if the result is non-zero.
@@ -1255,25 +1259,25 @@ public:
                                    Span<float> f, int &sampledLobe,
                                    int lobeMask = DF_ALL,
                                    float *lobeChance = nullptr) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(f.size() == size_t(eval.wavelengthCount));
     float lobeChanceLocal{1};
-    return material->scatterSample(instance, xi, wo, lobeMask, wi, pdfFwd,
-                                   pdfRev, f.data(), sampledLobe,
-                                   lobeChance ? *lobeChance : lobeChanceLocal);
+    return materialDef->scatterSample(
+        eval, xi, wo, lobeMask, wi, pdfFwd, pdfRev, f.data(), sampledLobe,
+        lobeChance ? *lobeChance : lobeChanceLocal);
   }
 
   /// The normal distribution sample function.
   ///
-  /// See `Material::scatterNormalSample` for the contract. Aborts if the
+  /// See `MaterialDef::scatterNormalSample` for the contract. Aborts if the
   /// entry point was not emitted, which is the case unless
-  /// `Compiler::enableScatterNormal` was set before `compile()`.
-  [[nodiscard]] bool scatterNormalSample(const float4 &xi, bool backface,
+  /// `Compiler::shouldEmitScatterNormal` was set before `compile()`.
+  [[nodiscard]] bool scatterNormalSample(const float4 &xi, bool isBackface,
                                          float3 &wm, float &pdf, float2 &alpha,
                                          int lobeMask) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalSample),
-                          "set 'Compiler::enableScatterNormal' before "
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK_MSG(bool(materialDef->scatterNormalSample),
+                          "set 'Compiler::shouldEmitScatterNormal' before "
                           "'compile()' to emit the normal distribution "
                           "entry points");
     // The mask must name exactly one glossy kind: the mixture over both
@@ -1285,19 +1289,19 @@ public:
       alpha = {};
       return false;
     }
-    return material->scatterNormalSample(instance, xi, backface, lobeMask, wm,
-                                         pdf, alpha);
+    return materialDef->scatterNormalSample(eval, xi, isBackface, lobeMask, wm,
+                                            pdf, alpha);
   }
 
   /// The normal distribution evaluate function.
   ///
-  /// See `Material::scatterNormalEvaluate` for the contract. Aborts if the
+  /// See `MaterialDef::scatterNormalEvaluate` for the contract. Aborts if the
   /// entry point was not emitted, as above.
-  [[nodiscard]] bool scatterNormalEvaluate(bool backface, const float3 &wm,
+  [[nodiscard]] bool scatterNormalEvaluate(bool isBackface, const float3 &wm,
                                            float &pdf, int lobeMask) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalEvaluate),
-                          "set 'Compiler::enableScatterNormal' before "
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK_MSG(bool(materialDef->scatterNormalEvaluate),
+                          "set 'Compiler::shouldEmitScatterNormal' before "
                           "'compile()' to emit the normal distribution "
                           "entry points");
     // As in `scatterNormalSample`: exactly one glossy kind.
@@ -1305,8 +1309,8 @@ public:
       pdf = 0.0f;
       return false;
     }
-    return material->scatterNormalEvaluate(instance, int(backface), wm,
-                                           lobeMask, pdf);
+    return materialDef->scatterNormalEvaluate(eval, int(isBackface), wm,
+                                              lobeMask, pdf);
   }
 
   /// The emission evaluate function.
@@ -1325,14 +1329,14 @@ public:
   /// Returns `true` if the result is non-zero.
   ///
   /// \note
-  /// See `Material::emissionEvaluate` for the unit conventions and for
+  /// See `MaterialDef::emissionEvaluate` for the unit conventions and for
   /// which side of the geometry emits.
   ///
   [[nodiscard]] bool emissionEvaluate(const float3 &wi, float &pdf,
                                       Span<float> Le) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(Le.size() == size_t(instance.wavelength_base_max));
-    return material->emissionEvaluate(instance, wi, pdf, Le.data());
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(Le.size() == size_t(eval.wavelengthCount));
+    return materialDef->emissionEvaluate(eval, wi, pdf, Le.data());
   }
 
   /// The emission sample function.
@@ -1354,9 +1358,9 @@ public:
   ///
   [[nodiscard]] bool emissionSample(const float4 &xi, float3 &wi, float &pdf,
                                     Span<float> Le) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(Le.size() == size_t(instance.wavelength_base_max));
-    return material->emissionSample(instance, xi, wi, pdf, Le.data());
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(Le.size() == size_t(eval.wavelengthCount));
+    return materialDef->emissionSample(eval, xi, wi, pdf, Le.data());
   }
 
   /// The volume scatter evaluate function.
@@ -1373,8 +1377,8 @@ public:
   ///
   [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
                                             const float3 &wi) const {
-    SMDL_SANITY_CHECK(material && instance);
-    return material->volumeScatterEvaluate(instance, wo, wi);
+    SMDL_SANITY_CHECK(materialDef && eval);
+    return materialDef->volumeScatterEvaluate(eval, wo, wi);
   }
 
   /// The volume scatter sample function.
@@ -1395,12 +1399,12 @@ public:
   ///
   [[nodiscard]] float volumeScatterSample(const float4 &xi, const float3 &wo,
                                           float3 &wi) const {
-    SMDL_SANITY_CHECK(material && instance);
-    return material->volumeScatterSample(instance, xi, wo, wi);
+    SMDL_SANITY_CHECK(materialDef && eval);
+    return materialDef->volumeScatterSample(eval, xi, wo, wi);
   }
 
   /// The hair scatter evaluate function. See
-  /// `Material::hairScatterEvaluate` for the state contract at a hair
+  /// `MaterialDef::hairScatterEvaluate` for the state contract at a hair
   /// hit.
   ///
   /// \param[in] wo
@@ -1424,10 +1428,10 @@ public:
   [[nodiscard]] bool hairScatterEvaluate(const float3 &wo, const float3 &wi,
                                          float &pdfFwd, float &pdfRev,
                                          Span<float> f) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    return material->hairScatterEvaluate(instance, wo, wi, pdfFwd, pdfRev,
-                                         f.data());
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(f.size() == size_t(eval.wavelengthCount));
+    return materialDef->hairScatterEvaluate(eval, wo, wi, pdfFwd, pdfRev,
+                                            f.data());
   }
 
   /// The hair scatter sample function. There are no Dirac hair
@@ -1457,18 +1461,18 @@ public:
   [[nodiscard]] bool hairScatterSample(const float4 &xi, const float3 &wo,
                                        float3 &wi, float &pdfFwd, float &pdfRev,
                                        Span<float> f) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    return material->hairScatterSample(instance, xi, wo, wi, pdfFwd, pdfRev,
-                                       f.data());
+    SMDL_SANITY_CHECK(materialDef && eval);
+    SMDL_SANITY_CHECK(f.size() == size_t(eval.wavelengthCount));
+    return materialDef->hairScatterSample(eval, xi, wo, wi, pdfFwd, pdfRev,
+                                          f.data());
   }
 
 public:
-  /// The material.
-  const Material *material{};
+  /// The definition.
+  const MaterialDef *materialDef{};
 
-  /// The instance.
-  Material::Instance instance{};
+  /// The evaluation.
+  MaterialDef::Eval eval{};
 };
 
 /// A just-in-time SMDL unit test.

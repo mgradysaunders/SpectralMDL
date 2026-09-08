@@ -74,9 +74,9 @@ public:
   /// transport BSDF sampling resolves at weight 1 anyway. Glossy chains
   /// stay ungated, since their claimed share is dropped at arrivals
   /// toward every light regardless of target.
-  bool sunOnly{};
+  bool isSunOnly{};
 
-  /// With `sunOnly`, the unit direction toward the sun-disk center and
+  /// With `isSunOnly`, the unit direction toward the sun-disk center and
   /// the cosine of its angular radius.
   float3 sunDirection{};
   float cosSunRadius{1.0f};
@@ -84,7 +84,7 @@ public:
   /// Does the Dirac-chain machinery treat this environment target
   /// direction as one of its own?
   [[nodiscard]] bool isEnvTarget(const float3 &wi) const noexcept {
-    return !sunOnly || dot(wi, sunDirection) >= cosSunRadius;
+    return !isSunOnly || dot(wi, sunDirection) >= cosSunRadius;
   }
 
   /// Does the manifold estimator run at all? The MNEE coverage only
@@ -209,7 +209,7 @@ struct PathContext final {
   /// of the block rather than the path, and every field a vertex varies
   /// is overwritten at the vertex, so building them per path is half a
   /// kilobyte of copy each for two fields' worth of difference. The
-  /// caller sets `animation_time` on all four at the head of the path.
+  /// caller sets `animationTime` on all four at the head of the path.
   ///
   /// \{
 
@@ -253,7 +253,7 @@ struct PathContext final {
 
   /// The path's time, which the caller sets at the head of each path:
   /// its seconds reach every material, light and medium evaluation
-  /// along it as `State::animation_time`, and its shutter fraction
+  /// along it as `State::animationTime`, and its shutter fraction
   /// every ray the path and its gathers trace.
   PathTime time;
 

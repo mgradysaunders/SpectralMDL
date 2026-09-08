@@ -194,7 +194,7 @@ TEST_CASE("SunSky") {
     sunSky.sunRadiance(2, wavelens, radiance);
     CHECK(radiance[0] < 0.01f * radiance[1]);
     // Disabling the sun zeroes the disk but not the sky.
-    options.enableSun = false;
+    options.isSunEnabled = false;
     const auto skyOnly{smdl::SunSky(options)};
     skyOnly.sunRadiance(2, wavelens, radiance);
     CHECK(radiance[0] == 0.0f);
@@ -246,7 +246,7 @@ TEST_CASE("SunSky") {
     smdl::SunSkyOptions options{};
     options.sunDirection = makeDirection(35.0, 40.0);
     const auto sunSky{smdl::SunSky(options)};
-    options.moon = true;
+    options.isMoon = true;
     options.moonPhase = 30.0f;
     options.moonDistanceScale = 1.1f;
     const auto moonSky{smdl::SunSky(options)};
@@ -305,7 +305,7 @@ TEST_CASE("SunSky") {
     for (const bool compensation : {true, false}) {
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(40.0, 25.0);
-      options.enableMISCompensation = compensation;
+      options.isMISCompensationEnabled = compensation;
       const auto sunSky{smdl::SunSky(options)};
       const float wavelens[3] = {550.0f, 1000.0f, 1650.0f};
 

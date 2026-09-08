@@ -192,14 +192,15 @@ float LightProfile::power() const noexcept {
   return distribution.unnormalizedSum() * 2.0f * PI * PI /
          (float(nX) * float(nY));
 }
+namespace {
 [[nodiscard]]
-static float atan2Degrees(float y, float x) {
+float atan2Degrees(float y, float x) {
   float theta{degrees(std::atan2(y, x))};
   return std::clamp(theta, -180.0f, +180.0f);
 }
 
 [[nodiscard]]
-static float atan2DegreesPositive(float y, float x) {
+float atan2DegreesPositive(float y, float x) {
   // By default, STL atan2 returns a value in radians between
   // negative and positive pi. The implementation here scales
   // to a value in degrees between negative and positive 180,
@@ -209,6 +210,7 @@ static float atan2DegreesPositive(float y, float x) {
   if (theta < 0.0f) theta += 360.0f;
   return std::clamp(theta, 0.0f, 360.0f);
 }
+} // namespace
 
 float LightProfile::interpolate(float3 wo) const noexcept {
   wo = normalize(wo);
@@ -410,8 +412,9 @@ struct LerpLookup final {
   float fraction{};
 };
 
-[[nodiscard]] static LerpLookup lerpLookup(const std::vector<float> &values,
-                                           float value) {
+namespace {
+[[nodiscard]] LerpLookup lerpLookup(const std::vector<float> &values,
+                                    float value) {
   auto itr1{std::lower_bound(values.begin(), values.end(), value)};
   if (itr1 == values.end()) {
     return {int(values.size()) - 1, int(values.size()) - 1, 0.0f};
@@ -428,10 +431,7 @@ struct LerpLookup final {
           int(itr1 - values.begin()), //
           fraction};
 }
-
-[[nodiscard]] static float lerp(float fraction, float value0, float value1) {
-  return (1 - fraction) * value0 + fraction * value1;
-}
+} // namespace
 
 float LightProfile::interpolate(float vertAngle,
                                 float horzAngle) const noexcept {
@@ -441,9 +441,9 @@ float LightProfile::interpolate(float vertAngle,
   }
   if (horzAngles.size() <= 1) {
     auto vertLookup{lerpLookup(vertAngles, vertAngle)};
-    return lerp(vertLookup.fraction,                //
-                intensityValues[vertLookup.index0], //
-                intensityValues[vertLookup.index1]);
+    return lerp(intensityValues[vertLookup.index0], //
+                intensityValues[vertLookup.index1], //
+                vertLookup.fraction);
   } else {
     if (!(horzAngles.front() <= horzAngle && horzAngle <= horzAngles.back())) {
       return 0;
@@ -454,13 +454,13 @@ float LightProfile::interpolate(float vertAngle,
                        vertAngles.size() * horzLookup.index0};
     auto intensityRow1{&intensityValues[0] +
                        vertAngles.size() * horzLookup.index1};
-    return lerp(horzLookup.fraction,
-                lerp(vertLookup.fraction, //
-                     intensityRow0[vertLookup.index0],
-                     intensityRow0[vertLookup.index1]),
-                lerp(vertLookup.fraction, //
-                     intensityRow1[vertLookup.index0],
-                     intensityRow1[vertLookup.index1]));
+    return lerp(lerp(intensityRow0[vertLookup.index0],
+                     intensityRow0[vertLookup.index1], //
+                     vertLookup.fraction),
+                lerp(intensityRow1[vertLookup.index0],
+                     intensityRow1[vertLookup.index1], //
+                     vertLookup.fraction),
+                horzLookup.fraction);
   }
 }
 

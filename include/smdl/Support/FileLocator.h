@@ -25,7 +25,9 @@ public:
 public:
   /// Set whether or not the locator should search the present working
   /// directory.
-  void setSearchPwd(bool yes) { mSearchPwd = yes; }
+  void setSearchPwd(bool shouldSearchPwd) {
+    mShouldSearchPwd = shouldSearchPwd;
+  }
 
   /// Add search directory.
   ///
@@ -197,7 +199,7 @@ public:
 
 private:
   /// Always search the present working directory?
-  bool mSearchPwd{true};
+  bool mShouldSearchPwd{true};
 
   /// A search directory.
   class SearchDir final {

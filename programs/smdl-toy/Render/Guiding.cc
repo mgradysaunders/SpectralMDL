@@ -8,21 +8,22 @@
 #include <atomic>
 #include <fstream>
 
+namespace {
 // The fixed-point unit for a counter's next pass, from the total it
 // reached in the previous one: 2^30 units across the previous total is
 // resolution to spare, leaves 2^33 growth headroom in 64 bits, and puts
 // the per-record cap three decades above the whole previous total,
 // where only a genuinely absurd firefly clamps. The floor covers a
 // fresh tree with no total yet. See `DTree::fluxUnit`.
-[[nodiscard]] static float nextUnit(float total) noexcept {
+[[nodiscard]] float nextUnit(float total) noexcept {
   return std::max(total * 0x1p-30f, 0x1p-20f);
 }
 
 // One record's value as fixed-point units: the fraction rounds
 // stochastically so the expected value survives any scale, in double so
 // the fraction is meaningful across the whole capped range.
-[[nodiscard]] static uint64_t unitsOf(Sampler &sampler, float value,
-                                      float unit) noexcept {
+[[nodiscard]] uint64_t unitsOf(Sampler &sampler, float value,
+                               float unit) noexcept {
   if (!(value > 0.0f)) return 0;
   const double u{std::min(double(value) / double(unit), 0x1p40)};
   const auto lo{uint64_t(u)};
@@ -31,7 +32,7 @@
 
 // The quadrant of `uv`, rescaling `uv` to the quadrant's own unit
 // square. Bit 0 is the upper half in `u`, bit 1 the upper half in `v`.
-[[nodiscard]] static int descendQuadrant(float2 &uv) noexcept {
+[[nodiscard]] int descendQuadrant(float2 &uv) noexcept {
   int q{};
   if (uv.x >= 0.5f) {
     q |= 1;
@@ -47,6 +48,7 @@
   }
   return q;
 }
+} // namespace
 
 void DTree::record(float2 uv, uint64_t units, uint64_t *flux) const noexcept {
   uint32_t n{0};
@@ -139,7 +141,7 @@ void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
   struct Item final {
     uint32_t dst{};       //< The node being filled in.
     uint32_t prev{};      //< The corresponding previous node.
-    bool prevValid{};     //< Is there a corresponding previous node?
+    bool isPrevValid{};   //< Is there a corresponding previous node?
     uint64_t synthFlux{}; //< The flux to split equally if not.
     int depth{};
   };
@@ -148,16 +150,16 @@ void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
     Item item{stack.back()};
     stack.pop_back();
     for (int q = 0; q < 4; q++) {
-      uint64_t flux{item.prevValid ? uint64_t(prev.mNodes[item.prev].flux[q])
-                                   : item.synthFlux / 4};
+      uint64_t flux{item.isPrevValid ? uint64_t(prev.mNodes[item.prev].flux[q])
+                                     : item.synthFlux / 4};
       mNodes[item.dst].flux[q] = flux;
       if (flux > threshold && item.depth < maxDepth) {
         uint32_t c{uint32_t(mNodes.size())};
         mNodes.emplace_back();
         mNodes[item.dst].child[q] = c;
-        uint32_t prevChild{item.prevValid ? prev.mNodes[item.prev].child[q]
-                                          : 0};
-        stack.push_back(Item{c, prevChild, item.prevValid && prevChild != 0,
+        uint32_t prevChild{item.isPrevValid ? prev.mNodes[item.prev].child[q]
+                                            : 0};
+        stack.push_back(Item{c, prevChild, item.isPrevValid && prevChild != 0,
                              flux, item.depth + 1});
       }
     }
@@ -510,15 +512,17 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
   return tree;
 }
 
+namespace {
 // The calling thread's mirror slot, claimed once per thread for the
 // life of the process. Only the render pool and the main thread ever
 // record, so the slots stay within `getThreadCount() + 1`.
-[[nodiscard]] static unsigned threadMirrorSlot() noexcept {
+[[nodiscard]] unsigned threadMirrorSlot() noexcept {
   static std::atomic<unsigned> nextSlot{};
   static thread_local unsigned slot{
       nextSlot.fetch_add(1, std::memory_order_relaxed)};
   return slot;
 }
+} // namespace
 
 GuideAccumulator::GuideAccumulator(const STree &tree)
     : mTree(tree), mMirrors(smdl::getThreadCount() + 1) {}
@@ -610,11 +614,11 @@ void trainGuiding(const STree &tree, GuideAccumulator &accumulator,
   }
 }
 
+namespace {
 // In-place 3x3 box blur over a single-channel image, confined to the
 // window: outside it there are no samples and no estimate, so averaging
 // that in would only drag the border pixels' estimates toward black.
-static void boxBlur3(std::vector<float> &image, size_t numPixelsX,
-                     int4 window) {
+void boxBlur3(std::vector<float> &image, size_t numPixelsX, int4 window) {
   auto source{image};
   for (int y = window[1]; y < window[3]; y++) {
     for (int x = window[0]; x < window[2]; x++) {
@@ -635,6 +639,7 @@ static void boxBlur3(std::vector<float> &image, size_t numPixelsX,
     }
   }
 }
+} // namespace
 
 void PassCombiner::seed(const smdl::SpectralFilm &film) {
   const auto samplesPerPixel{film.getNumSamples()};

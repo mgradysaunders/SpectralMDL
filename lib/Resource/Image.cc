@@ -66,21 +66,22 @@ extern "C" {
 
 namespace tinyexr {
 
-[[nodiscard]] static const EXRChannelInfo *FindChannel(const EXRHeader &header,
-                                                       std::string_view name) {
+namespace {
+[[nodiscard]] const EXRChannelInfo *FindChannel(const EXRHeader &header,
+                                                std::string_view name) {
   for (int iC = 0; iC < header.num_channels; iC++)
     if (header.channels[iC].name == name) return &header.channels[iC];
   return nullptr;
 }
 
-[[nodiscard]] static size_t GetPixelSize(const EXRChannelInfo &info) {
+[[nodiscard]] size_t GetPixelSize(const EXRChannelInfo &info) {
   return info.pixel_type == TINYEXR_PIXELTYPE_HALF ? 2 : 4;
 }
 
-static void
-ForEachPixel(const EXRHeader &header, const EXRImage &image,
-             const std::function<void(int iX, int iY, int iC, const void *pixel,
-                                      size_t pixelSize)> &callback) {
+void ForEachPixel(
+    const EXRHeader &header, const EXRImage &image,
+    const std::function<void(int iX, int iY, int iC, const void *pixel,
+                             size_t pixelSize)> &callback) {
   if (header.tiled) {
     size_t nTileX{size_t(header.tile_size_x)};
     size_t nTileY{size_t(header.tile_size_y)};
@@ -120,6 +121,7 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
     }
   }
 }
+} // namespace
 
 } // namespace tinyexr
 
@@ -166,8 +168,8 @@ void Image::clear() {
   mNumChannels = 1;
   mTexelSize = 1;
   mNumLevels = 1;
-  mMipLevelsRequested = false;
-  mMipLevelsGenerated = false;
+  mHasRequestedMipLevels = false;
+  mHasGeneratedMipLevels = false;
   mMipFilter = MIP_MEAN;
   mLevelOffsets.assign(1, 0);
   mSizeInBytes = 0;
@@ -425,9 +427,9 @@ void Image::finishLoad() {
     std::memset(mTexels.get(), 0, mSizeInBytes);
     throw;
   }
-  if (mMipLevelsRequested) {
+  if (mHasRequestedMipLevels) {
     generateMipLevels();
-    mMipLevelsGenerated = true;
+    mHasGeneratedMipLevels = true;
   }
 }
 

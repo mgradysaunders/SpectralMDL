@@ -39,7 +39,7 @@ export enum metal {
 };
 
 /// Evaluate the complex IOR of the given metal, linearly interpolating its
-/// table at the current wavelengths in `$state.wavelength_base`.
+/// table at the current wavelengths in `$state.wavelengthBase`.
 ///
 /// The result is a `complex` with `color` coefficients: `.a` is the real
 /// index of refraction n and `.b` is the extinction coefficient k, ready to
@@ -50,6 +50,6 @@ export auto metal_ior(const metal metal) {
   auto ior = complex(color(0), color(0));
   const &float iorN = cast<&float>(&ior.a);
   const &float iorK = cast<&float>(&ior.b);
-  smdlEvalMetalIOR(cast<int>(metal), $WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], iorN, iorK);
+  smdlEvalMetalIOR(cast<int>(metal), $WAVELENGTH_BASE_MAX, &$state.wavelengthBase[0], iorN, iorK);
   return ior;
 }

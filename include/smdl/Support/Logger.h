@@ -113,7 +113,7 @@ private:
 /// that must erase and redraw itself around each message, say) prints
 /// the same labels as the default sinks without redefining them.
 [[nodiscard]] SMDL_EXPORT std::string_view
-logLevelLabel(LogLevel level, bool withColors) noexcept;
+logLevelLabel(LogLevel level, bool useColors) noexcept;
 
 /// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
 [[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors() noexcept;
@@ -133,13 +133,13 @@ logLevelLabel(LogLevel level, bool withColors) noexcept;
 namespace LogSinks {
 
 /// A default log sink to print to `std::cerr`.
-class SMDL_EXPORT print_to_cerr final : public LogSink {
+class SMDL_EXPORT PrintToCerr final : public LogSink {
 public:
   void logMessage(LogLevel level, std::string_view message) final;
 };
 
 /// A default log sink to print to `std::cout`.
-class SMDL_EXPORT print_to_cout final : public LogSink {
+class SMDL_EXPORT PrintToCout final : public LogSink {
 public:
   void logMessage(LogLevel level, std::string_view message) final;
 

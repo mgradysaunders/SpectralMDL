@@ -29,30 +29,31 @@ namespace {
 // The parser: a line lexer followed by a structure pass over the lines.
 class Parser final {
 public:
-  Parser(FlatYAML &doc, std::string_view source) : doc(doc), source(source) {}
+  Parser(FlatYAML &doc, std::string_view source) : mDoc(doc), mSource(source) {}
 
   void parse() {
     lexLines();
     size_t i{0};
-    doc.root = parseMap(i, 0);
-    if (i < lines.size()) doc.fail(lines[i].lineNo, "unexpected indentation");
+    mDoc.root = parseMap(i, 0);
+    if (i < mLines.size())
+      mDoc.fail(mLines[i].lineNo, "unexpected indentation");
   }
 
 private:
   // One content line, comments stripped, split at the first ':'. For a
-  // sequence item, 'dash' is set, 'indent' is the column of the dash, and
+  // sequence item, 'hasDash' is set, 'indent' is the column of the dash, and
   // 'keyColumn' is the column of the key after it.
   struct Line final {
     int lineNo{};
     int indent{};
     int keyColumn{};
-    bool dash{};
+    bool hasDash{};
     std::string_view key{};
     std::string_view value{};
   };
 
   void lexLines() {
-    auto remainder{source};
+    auto remainder{mSource};
     if (startsWith(remainder, "\xEF\xBB\xBF")) remainder.remove_prefix(3);
     int lineNo{0};
     while (!remainder.empty()) {
@@ -66,7 +67,7 @@ private:
       size_t indent{0};
       while (indent < text.size() && text[indent] == ' ') indent++;
       if (indent < text.size() && text[indent] == '\t')
-        doc.fail(lineNo, "tab in indentation (use spaces)");
+        mDoc.fail(lineNo, "tab in indentation (use spaces)");
       auto content{trimRight(stripComment(text.substr(indent)))};
       if (content.empty()) continue;
       Line line{};
@@ -74,43 +75,43 @@ private:
       line.indent = int(indent);
       line.keyColumn = int(indent);
       if (content == "-" || startsWith(content, "- ")) {
-        line.dash = true;
+        line.hasDash = true;
         auto afterDash{content.substr(1)};
         auto stripped{trimLeft(afterDash)};
         line.keyColumn = int(indent + 1 + (afterDash.size() - stripped.size()));
         content = stripped;
         if (content.empty())
-          doc.fail(lineNo, "expected 'key: value' after '-'");
+          mDoc.fail(lineNo, "expected 'key: value' after '-'");
       }
       auto colon{content.find(':')};
       if (colon == std::string_view::npos)
-        doc.fail(lineNo, "expected 'key: value'");
+        mDoc.fail(lineNo, "expected 'key: value'");
       auto key{trimRight(content.substr(0, colon))};
       auto after{content.substr(colon + 1)};
-      if (key.empty()) doc.fail(lineNo, "expected 'key: value'");
+      if (key.empty()) mDoc.fail(lineNo, "expected 'key: value'");
       if (!after.empty() && after[0] != ' ')
-        doc.fail(lineNo, "expected a space after ':'");
+        mDoc.fail(lineNo, "expected a space after ':'");
       line.key = key;
       line.value = trim(after);
-      lines.push_back(line);
+      mLines.push_back(line);
     }
   }
 
   // Strip a full-line or trailing comment, respecting double quotes.
   [[nodiscard]] std::string_view stripComment(std::string_view text) {
-    bool inQuotes{false};
-    bool inEscape{false};
+    bool isInQuotes{false};
+    bool isInEscape{false};
     for (size_t i = 0; i < text.size(); i++) {
       char ch{text[i]};
-      if (inQuotes) {
-        if (inEscape)
-          inEscape = false;
+      if (isInQuotes) {
+        if (isInEscape)
+          isInEscape = false;
         else if (ch == '\\')
-          inEscape = true;
+          isInEscape = true;
         else if (ch == '"')
-          inQuotes = false;
+          isInQuotes = false;
       } else if (ch == '"') {
-        inQuotes = true;
+        isInQuotes = true;
       } else if (ch == '#' &&
                  (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\t')) {
         return text.substr(0, i);
@@ -123,8 +124,8 @@ private:
                       std::string_view key, int lineNo) {
     auto [itr, inserted] = seen.try_emplace(std::string(key), lineNo);
     if (!inserted)
-      doc.fail(lineNo, concat("duplicate key ", Quoted(key),
-                              " (already on line ", itr->second, ")"));
+      mDoc.fail(lineNo, concat("duplicate key ", Quoted(key),
+                               " (already on line ", itr->second, ")"));
   }
 
   // Parse the block map whose entries sit at exactly 'indent', starting at
@@ -132,14 +133,14 @@ private:
   [[nodiscard]] FlatYAML::Map parseMap(size_t &i, int indent) {
     auto map{FlatYAML::Map{}};
     auto seen{std::map<std::string, int, std::less<>>{}};
-    while (i < lines.size()) {
-      const auto &line{lines[i]};
+    while (i < mLines.size()) {
+      const auto &line{mLines[i]};
       if (line.indent < indent) break;
       if (line.indent > indent)
-        doc.fail(line.lineNo, indent > 0 ? "inconsistent indentation"
-                                         : "unexpected indentation");
-      if (line.dash)
-        doc.fail(line.lineNo, "unexpected '-' (not inside a sequence)");
+        mDoc.fail(line.lineNo, indent > 0 ? "inconsistent indentation"
+                                          : "unexpected indentation");
+      if (line.hasDash)
+        mDoc.fail(line.lineNo, "unexpected '-' (not inside a sequence)");
       checkDuplicate(seen, line.key, line.lineNo);
       auto &entry{map.emplace_back()};
       entry.key = std::string(line.key);
@@ -148,20 +149,20 @@ private:
       if (!line.value.empty()) {
         entry.value = parseInline(line.lineNo, line.value);
       } else {
-        if (i >= lines.size() || lines[i].indent <= indent)
-          doc.fail(line.lineNo,
-                   concat("expected a value or an indented block after ",
-                          Quoted(line.key), ":"));
+        if (i >= mLines.size() || mLines[i].indent <= indent)
+          mDoc.fail(line.lineNo,
+                    concat("expected a value or an indented block after ",
+                           Quoted(line.key), ":"));
         if (indent > 0)
-          doc.fail(lines[i].lineNo,
-                   "nested blocks are only supported one level deep");
+          mDoc.fail(mLines[i].lineNo,
+                    "nested blocks are only supported one level deep");
         entry.value.lineNo = line.lineNo;
-        if (lines[i].dash) {
+        if (mLines[i].hasDash) {
           entry.value.kind = FlatYAML::Node::SEQUENCE;
-          entry.value.sequence = parseSequence(i, lines[i].indent);
+          entry.value.sequence = parseSequence(i, mLines[i].indent);
         } else {
           entry.value.kind = FlatYAML::Node::MAP;
-          entry.value.map = parseMap(i, lines[i].indent);
+          entry.value.map = parseMap(i, mLines[i].indent);
         }
       }
     }
@@ -172,16 +173,16 @@ private:
   [[nodiscard]] std::vector<FlatYAML::Map> parseSequence(size_t &i,
                                                          int dashIndent) {
     auto sequence{std::vector<FlatYAML::Map>{}};
-    while (i < lines.size() && lines[i].indent >= dashIndent) {
-      const auto &first{lines[i]};
-      if (!first.dash || first.indent != dashIndent)
-        doc.fail(first.lineNo, "expected '- ' to start a sequence item");
+    while (i < mLines.size() && mLines[i].indent >= dashIndent) {
+      const auto &first{mLines[i]};
+      if (!first.hasDash || first.indent != dashIndent)
+        mDoc.fail(first.lineNo, "expected '- ' to start a sequence item");
       auto seen{std::map<std::string, int, std::less<>>{}};
       auto &item{sequence.emplace_back()};
       auto addEntry{[&](const Line &line) {
         if (line.value.empty())
-          doc.fail(line.lineNo,
-                   "nested blocks are not supported inside sequence items");
+          mDoc.fail(line.lineNo,
+                    "nested blocks are not supported inside sequence items");
         checkDuplicate(seen, line.key, line.lineNo);
         auto &entry{item.emplace_back()};
         entry.key = std::string(line.key);
@@ -190,11 +191,11 @@ private:
       }};
       addEntry(first);
       i++;
-      while (i < lines.size() && !lines[i].dash &&
-             lines[i].indent > dashIndent) {
-        if (lines[i].indent != first.keyColumn)
-          doc.fail(lines[i].lineNo, "inconsistent indentation");
-        addEntry(lines[i]);
+      while (i < mLines.size() && !mLines[i].hasDash &&
+             mLines[i].indent > dashIndent) {
+        if (mLines[i].indent != first.keyColumn)
+          mDoc.fail(mLines[i].lineNo, "inconsistent indentation");
+        addEntry(mLines[i]);
         i++;
       }
     }
@@ -207,13 +208,13 @@ private:
     node.lineNo = lineNo;
     if (startsWith(value, "[")) {
       if (value.back() != ']')
-        doc.fail(lineNo, "expected ']' to close the inline list");
+        mDoc.fail(lineNo, "expected ']' to close the inline list");
       node.kind = FlatYAML::Node::LIST;
       node.items = parseListItems(lineNo, value.substr(1, value.size() - 2),
-                                  /*allowNested=*/true);
+                                  /*canNest=*/true);
     } else {
       node.kind = FlatYAML::Node::SCALAR;
-      node.text = parseScalar(lineNo, value, node.quoted);
+      node.text = parseScalar(lineNo, value, node.isQuoted);
     }
     return node;
   }
@@ -221,91 +222,91 @@ private:
   // Split the inside of an inline list at the commas outside quotes and
   // outside one level of nested brackets.
   [[nodiscard]] std::vector<FlatYAML::Node>
-  parseListItems(int lineNo, std::string_view inside, bool allowNested) {
+  parseListItems(int lineNo, std::string_view inside, bool canNest) {
     auto items{std::vector<FlatYAML::Node>{}};
     if (trim(inside).empty()) return items;
     size_t start{0};
     int depth{0};
-    bool inQuotes{false};
-    bool inEscape{false};
+    bool isInQuotes{false};
+    bool isInEscape{false};
     auto flush{[&](size_t end) {
       auto text{trim(inside.substr(start, end - start))};
-      if (text.empty()) doc.fail(lineNo, "empty list item");
+      if (text.empty()) mDoc.fail(lineNo, "empty list item");
       FlatYAML::Node item{};
       item.lineNo = lineNo;
       if (startsWith(text, "[")) {
-        if (!allowNested) doc.fail(lineNo, "lists nest only one level deep");
+        if (!canNest) mDoc.fail(lineNo, "lists nest only one level deep");
         if (text.back() != ']')
-          doc.fail(lineNo, "expected ']' to close the inline list");
+          mDoc.fail(lineNo, "expected ']' to close the inline list");
         item.kind = FlatYAML::Node::LIST;
         item.items = parseListItems(lineNo, text.substr(1, text.size() - 2),
-                                    /*allowNested=*/false);
+                                    /*canNest=*/false);
       } else {
         item.kind = FlatYAML::Node::SCALAR;
-        item.text = parseScalar(lineNo, text, item.quoted);
+        item.text = parseScalar(lineNo, text, item.isQuoted);
       }
       items.push_back(std::move(item));
       start = end + 1;
     }};
     for (size_t i = 0; i < inside.size(); i++) {
       char ch{inside[i]};
-      if (inQuotes) {
-        if (inEscape)
-          inEscape = false;
+      if (isInQuotes) {
+        if (isInEscape)
+          isInEscape = false;
         else if (ch == '\\')
-          inEscape = true;
+          isInEscape = true;
         else if (ch == '"')
-          inQuotes = false;
+          isInQuotes = false;
       } else if (ch == '"') {
-        inQuotes = true;
+        isInQuotes = true;
       } else if (ch == '[') {
         depth++;
       } else if (ch == ']') {
-        if (depth == 0) doc.fail(lineNo, "unexpected ']' in the inline list");
+        if (depth == 0) mDoc.fail(lineNo, "unexpected ']' in the inline list");
         depth--;
       } else if (ch == ',' && depth == 0) {
         flush(i);
       }
     }
-    if (depth != 0) doc.fail(lineNo, "expected ']' to close the inline list");
+    if (depth != 0) mDoc.fail(lineNo, "expected ']' to close the inline list");
     flush(inside.size());
     return items;
   }
 
   // Unescape a double-quoted scalar, or pass a bare one through.
   [[nodiscard]] std::string parseScalar(int lineNo, std::string_view value,
-                                        bool &quoted) {
-    quoted = false;
+                                        bool &isQuoted) {
+    isQuoted = false;
     if (value.empty() || value.front() != '"') return std::string(value);
-    quoted = true;
+    isQuoted = true;
     auto result{std::string{}};
-    bool inEscape{false};
+    bool isInEscape{false};
     for (size_t i = 1; i < value.size(); i++) {
       char ch{value[i]};
-      if (inEscape) {
+      if (isInEscape) {
         if (ch != '"' && ch != '\\')
-          doc.fail(lineNo, "invalid escape (only '\\\"' and '\\\\')");
+          mDoc.fail(lineNo, "invalid escape (only '\\\"' and '\\\\')");
         result += ch;
-        inEscape = false;
+        isInEscape = false;
       } else if (ch == '\\') {
-        inEscape = true;
+        isInEscape = true;
       } else if (ch == '"') {
         if (i + 1 != value.size())
-          doc.fail(lineNo, "unexpected text after string");
+          mDoc.fail(lineNo, "unexpected text after string");
         return result;
       } else {
         result += ch;
       }
     }
-    doc.fail(lineNo, "unterminated string");
+    mDoc.fail(lineNo, "unterminated string");
   }
 
 private:
-  FlatYAML &doc;
+  FlatYAML &mDoc;
 
-  std::string_view source{};
+  std::string_view mSource{};
 
-  std::vector<Line> lines{};
+  std::vector<Line> mLines{};
 };
 
 } // namespace
@@ -332,13 +333,13 @@ float FlatYAML::toFloat(const Entry &entry) const {
 }
 
 float FlatYAML::toFloat(const Entry &entry, const Node &item) const {
-  if (item.kind == Node::SCALAR && !item.quoted)
+  if (item.kind == Node::SCALAR && !item.isQuoted)
     if (auto number{parseNumber(item.text)}) return float(*number);
   fail(entry, concat("expected a real number for ", Quoted(entry.key)));
 }
 
 long FlatYAML::toInt(const Entry &entry) const {
-  if (entry.value.kind == Node::SCALAR && !entry.value.quoted) {
+  if (entry.value.kind == Node::SCALAR && !entry.value.isQuoted) {
     const auto &text{entry.value.text};
     char *end{};
     auto result{std::strtol(text.c_str(), &end, 10)};
@@ -358,7 +359,7 @@ std::vector<float> FlatYAML::toFloats(const Entry &entry, size_t count) const {
   auto result{std::vector<float>{}};
   if (entry.value.kind == Node::LIST && entry.value.items.size() == count) {
     for (const auto &item : entry.value.items) {
-      if (item.kind != Node::SCALAR || item.quoted) break;
+      if (item.kind != Node::SCALAR || item.isQuoted) break;
       auto number{parseNumber(item.text)};
       if (!number) break;
       result.push_back(float(*number));

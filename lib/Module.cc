@@ -30,12 +30,12 @@ Module::Module(std::string name, std::string sourceCode)
 
 Module::~Module() {}
 
+namespace {
 // Derive the qualified module name, e.g., `::vendor::metals::steel`
 // for `<searchRoot>/vendor/metals/steel.mdl`. Falls back to the bare
 // `::stem` if the file name is not lexically under the search root.
-[[nodiscard]] static std::string
-deriveQualifiedName(const std::string &fileName,
-                    const std::string &searchRoot) {
+[[nodiscard]] std::string deriveQualifiedName(const std::string &fileName,
+                                              const std::string &searchRoot) {
   auto filePath{std::filesystem::path(fileName)};
   auto relative{filePath.lexically_relative(searchRoot)};
   if (relative.empty() || *relative.begin() == "..") {
@@ -49,6 +49,7 @@ deriveQualifiedName(const std::string &fileName,
   }
   return name;
 }
+} // namespace
 
 std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
                                              const std::string &searchRoot) {
@@ -207,7 +208,7 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
     SMDL_PROFILER_ENTRY("Module::formatSourceFiles()", mDisplayName.c_str());
     auto formatter{Formatter{formatOptions}};
     auto formatted{formatter.format(mSourceCode, *mRoot)};
-    if (formatOptions.inPlace) {
+    if (formatOptions.isInPlace) {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("cannot format module extracted from archive in-place ",

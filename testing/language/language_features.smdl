@@ -444,7 +444,7 @@ unit_test "Comptime assert" {
 
   // Still an ordinary runtime assertion when the condition is not
   // compile-time.
-  #assert(checked_positive($state.wavelength_max > 0.0 ? 3 : 5) > 0);
+  #assert(checked_positive($state.wavelengthMax > 0.0 ? 3 : 5) > 0);
 }
 
 struct Destructurable {

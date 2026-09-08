@@ -61,16 +61,16 @@ TEST_CASE("FastMath") {
     CHECK(std::isfinite(smdl::fastExp(709.0)));
     CHECK(std::isinf(smdl::fastExp(709.5)));
     CHECK(std::isinf(smdl::fastExp(1000.0)));
-    bool sane{true};
+    bool isSane{true};
     sweep(-1e4f, 1e4f, [&](float x) {
       const float y{smdl::fastExp(x)};
-      sane = sane && !std::isnan(y) && y >= 0.0f;
+      isSane = isSane && !std::isnan(y) && y >= 0.0f;
     });
     sweep(-1e4, 1e4, [&](double x) {
       const double y{smdl::fastExp(x)};
-      sane = sane && !std::isnan(y) && y >= 0.0;
+      isSane = isSane && !std::isnan(y) && y >= 0.0;
     });
-    CHECK(sane);
+    CHECK(isSane);
   }
   SUBCASE("log float, over every binade") {
     // The bound is relative to ln(x) away from 1 and absolute near it.

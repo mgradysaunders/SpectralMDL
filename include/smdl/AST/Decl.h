@@ -132,7 +132,7 @@ public:
 
   /// Has warning been issued about this parameter yet? Used to prevent
   /// the same warning being logged over and over again.
-  bool warningIssued{};
+  bool wasWarningIssued{};
 };
 
 /// A parameter list.
@@ -210,7 +210,7 @@ public:
     BumpPtr<LiteralString> literalString;
 
     /// Is literal string and not a simple name?
-    [[nodiscard]] bool is_literal_string() const { return literalString; }
+    [[nodiscard]] bool isLiteralString() const { return literalString; }
   };
 
   ImportPath() = default;
@@ -218,7 +218,7 @@ public:
   explicit ImportPath(std::vector<Element> elems) : elements(std::move(elems)) {
     elementViews.resize(elements.size());
     for (size_t i = 0; i < elements.size(); i++)
-      elementViews[i] = elements[i].is_literal_string()
+      elementViews[i] = elements[i].isLiteralString()
                             ? std::string_view(elements[i].literalString->value)
                             : elements[i].srcName;
   }
@@ -329,7 +329,7 @@ public:
 
     /// Has warning been issued about this declarator yet? Used to prevent
     /// the same warning being logged over and over again.
-    bool warningIssued{};
+    bool wasWarningIssued{};
   };
 
   explicit Enum(std::string_view srcKwEnum, Name name,
@@ -835,7 +835,7 @@ public:
 
     /// Has warning been issued about this variable yet? Used to prevent
     /// the same warning being logged over and over again.
-    bool warningIssued{};
+    bool wasWarningIssued{};
   };
 
   explicit Variable(BumpPtr<Type> type, std::vector<Declarator> declarators,

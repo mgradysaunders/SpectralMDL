@@ -2,7 +2,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <random>
 
@@ -28,24 +27,24 @@ public:
 public:
   /// Clear.
   void clear() noexcept {
-    totalSum = 0;
-    cmfs.clear();
+    mTotalSum = 0;
+    mCMFs.clear();
   }
 
   /// The number of indexes.
-  [[nodiscard]] int size() const noexcept { return int(cmfs.size()) - 1; }
+  [[nodiscard]] int size() const noexcept { return int(mCMFs.size()) - 1; }
 
   /// The index probability mass function (PMF). Inline, because a
   /// light sampler asks for it per sample.
   [[nodiscard]] float indexPMF(int i) const noexcept {
     if (0 <= i && i < size())
-      return float(INV_CMF_SCALE * double(cmfs[i + 1] - cmfs[i]));
+      return float(INV_CMF_SCALE * double(mCMFs[i + 1] - mCMFs[i]));
     return 0.0f;
   }
 
   /// The index cumulative mass function (CMF).
   [[nodiscard]] float indexCMF(int i) const noexcept {
-    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs[i]));
+    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(mCMFs[i]));
     return i < 0 ? 0.0f : 1.0f;
   }
 
@@ -60,19 +59,19 @@ public:
 
   /// The unnormalized sum.
   [[nodiscard]] float unnormalizedSum() const noexcept {
-    return static_cast<float>(totalSum);
+    return static_cast<float>(mTotalSum);
   }
 
 private:
-  double totalSum{};
+  double mTotalSum{};
 
   /// The cumulative mass function over the unit interval, as 32-bit
   /// fixed point: half the size of a table of `double`, and unlike a
   /// table of `float` the difference of two entries stays exact, which
   /// is what `indexPMF()` reads.
-  std::vector<std::uint32_t> cmfs{};
+  std::vector<std::uint32_t> mCMFs{};
 
-  /// The unit of `cmfs`, `2^-32`.
+  /// The unit of `mCMFs`, `2^-32`.
   static constexpr double INV_CMF_SCALE = 1.0 / 4294967296.0;
 };
 
@@ -86,7 +85,7 @@ private:
 /// rather than against any particular magnitude: the bound is the
 /// smallest normal float only because nothing here needs a smaller one.
 [[nodiscard]] SMDL_ALWAYS_INLINE float canonicalize(float xi) noexcept {
-  return std::clamp(xi, std::numeric_limits<float>::min(), ONE_MINUS_EPS);
+  return std::clamp(xi, FLOAT_MIN, ONE_MINUS_EPS);
 }
 
 /// The canonical random sample in \f$ (0,1) \f$ that `bits` names: the
@@ -328,27 +327,27 @@ public:
 public:
   /// Clear.
   void clear() noexcept {
-    numTexelsX = 0;
-    numTexelsY = 0;
-    conditionals.clear();
-    marginal.clear();
+    mNumTexelsX = 0;
+    mNumTexelsY = 0;
+    mConditionals.clear();
+    mMarginal.clear();
   }
 
   /// The number of pixels in X.
-  [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX; }
+  [[nodiscard]] int getNumTexelsX() const noexcept { return mNumTexelsX; }
 
   /// The number of pixels in Y.
-  [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY; }
+  [[nodiscard]] int getNumTexelsY() const noexcept { return mNumTexelsY; }
 
   /// The unnormalized sum over all values.
   [[nodiscard]] float unnormalizedSum() const noexcept {
-    return marginal.unnormalizedSum();
+    return mMarginal.unnormalizedSum();
   }
 
   /// The pixel probability mass function (PMF).
   [[nodiscard]] float pixelPMF(int2 i) const noexcept {
-    if (0 <= i.y && i.y < numTexelsY)
-      return marginal.indexPMF(i.y) * conditionals[i.y].indexPMF(i.x);
+    if (0 <= i.y && i.y < mNumTexelsY)
+      return mMarginal.indexPMF(i.y) * mConditionals[i.y].indexPMF(i.x);
     return 0.0f;
   }
 
@@ -392,10 +391,10 @@ public:
                                        float *pdf = {}) const noexcept;
 
 private:
-  int numTexelsX{};
-  int numTexelsY{};
-  std::vector<Distribution1D> conditionals{};
-  Distribution1D marginal{};
+  int mNumTexelsX{};
+  int mNumTexelsY{};
+  std::vector<Distribution1D> mConditionals{};
+  Distribution1D mMarginal{};
 };
 
 /// \name Functions (quasi-Monte Carlo)

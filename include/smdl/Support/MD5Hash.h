@@ -119,10 +119,10 @@ private:
   /// paths deduplicate to one entry. Unreadable files hash to zero and are
   /// keyed by canonical file name instead (the second pair element, empty
   /// otherwise).
-  std::map<std::pair<MD5Hash, std::string>, MD5FileHash> fileHashes{};
+  std::map<std::pair<MD5Hash, std::string>, MD5FileHash> mFileHashes{};
 
-  /// Canonical file name to entry in `fileHashes`.
-  std::map<std::string, const MD5FileHash *> fileHashesByName{};
+  /// Canonical file name to entry in `mFileHashes`.
+  std::map<std::string, const MD5FileHash *> mFileHashesByName{};
 };
 
 /// \}

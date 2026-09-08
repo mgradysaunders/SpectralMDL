@@ -7,7 +7,8 @@
 // way at every shutter fraction, and a moving camera reproduces its
 // keys at the two ends and the interpolation of them between.
 
-static CameraOptions openOptions() {
+namespace {
+CameraOptions openOptions() {
   auto options{CameraOptions{}};
   options.resolution = int2(64, 48);
   options.lookFrom = float3(-6.0f, 0.0f, 2.0f);
@@ -16,13 +17,13 @@ static CameraOptions openOptions() {
   return options;
 }
 
-static const float3 LOOK_FROM_SHUT{-5.0f, 1.0f, 2.5f};
-static const float3 LOOK_TO_SHUT{0.5f, 0.2f, 0.4f};
-static const float3 LOOK_UP_SHUT{0.1f, 0.0f, 1.0f};
+const float3 LOOK_FROM_SHUT{-5.0f, 1.0f, 2.5f};
+const float3 LOOK_TO_SHUT{0.5f, 0.2f, 0.4f};
+const float3 LOOK_UP_SHUT{0.1f, 0.0f, 1.0f};
 
-static CameraOptions movingOptions() {
+CameraOptions movingOptions() {
   auto options{openOptions()};
-  options.motion = true;
+  options.hasMotion = true;
   options.lookFromShut = LOOK_FROM_SHUT;
   options.lookToShut = LOOK_TO_SHUT;
   options.lookUpShut = LOOK_UP_SHUT;
@@ -31,7 +32,7 @@ static CameraOptions movingOptions() {
 
 // The same pixel and the same sampler state every time, so that two
 // cameras differ only by what they do with the draw.
-static CameraSample rayAt(const Camera &camera, float u) {
+CameraSample rayAt(const Camera &camera, float u) {
   Sampler sampler{};
   sampler.startPixelSample(1234, 5);
   auto sample{camera.sample(17, 9, sampler)};
@@ -39,14 +40,15 @@ static CameraSample rayAt(const Camera &camera, float u) {
   return sample;
 }
 
-static bool sameVector(const float3 &a, const float3 &b) {
+bool isSameVector(const float3 &a, const float3 &b) {
   return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
-static bool sameRay(const Ray &a, const Ray &b) {
-  return sameVector(a.org, b.org) && sameVector(a.dir, b.dir) &&
+bool isSameRay(const Ray &a, const Ray &b) {
+  return isSameVector(a.org, b.org) && isSameVector(a.dir, b.dir) &&
          a.tmin == b.tmin && a.tmax == b.tmax;
 }
+} // namespace
 
 TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
   auto options{openOptions()};
@@ -56,8 +58,8 @@ TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
   const auto r0{rayAt(camera, 0.0f)};
   const auto r1{rayAt(camera, 0.3f)};
   const auto r2{rayAt(camera, 1.0f)};
-  CHECK(sameRay(r0.ray, r1.ray));
-  CHECK(sameRay(r0.ray, r2.ray));
+  CHECK(isSameRay(r0.ray, r1.ray));
+  CHECK(isSameRay(r0.ray, r2.ray));
   CHECK(r0.ray.time == 0.0f);
   CHECK(r1.ray.time == 0.3f);
   CHECK(r2.ray.time == 1.0f);
@@ -72,10 +74,10 @@ TEST_CASE("Camera: a moving camera reproduces its keys at the shutter ends") {
   shutOptions.lookTo = LOOK_TO_SHUT;
   shutOptions.lookUp = LOOK_UP_SHUT;
   const Camera stillShut{shutOptions};
-  CHECK(sameRay(rayAt(moving, 0.0f).ray, rayAt(stillOpen, 0.0f).ray));
-  CHECK(sameRay(rayAt(moving, 1.0f).ray, rayAt(stillShut, 1.0f).ray));
+  CHECK(isSameRay(rayAt(moving, 0.0f).ray, rayAt(stillOpen, 0.0f).ray));
+  CHECK(isSameRay(rayAt(moving, 1.0f).ray, rayAt(stillShut, 1.0f).ray));
   // The keys differ, so the two ends do.
-  CHECK(!sameRay(rayAt(moving, 0.0f).ray, rayAt(moving, 1.0f).ray));
+  CHECK(!isSameRay(rayAt(moving, 0.0f).ray, rayAt(moving, 1.0f).ray));
 }
 
 TEST_CASE("Camera: halfway through the shutter is the camera of the mid keys") {
@@ -99,7 +101,7 @@ TEST_CASE("Camera: halfway through the shutter is the camera of the mid keys") {
 
 TEST_CASE("Camera: a motion equal to the open keys is still") {
   auto options{openOptions()};
-  options.motion = true;
+  options.hasMotion = true;
   options.lookFromShut = options.lookFrom;
   options.lookToShut = options.lookTo;
   options.lookUpShut = options.lookUp;
@@ -107,6 +109,6 @@ TEST_CASE("Camera: a motion equal to the open keys is still") {
   const Camera notMoving{options};
   const auto a{rayAt(still, 0.3f)};
   const auto b{rayAt(notMoving, 0.3f)};
-  CHECK(sameRay(a.ray, b.ray));
+  CHECK(isSameRay(a.ray, b.ray));
   CHECK(b.ray.time == 0.3f);
 }

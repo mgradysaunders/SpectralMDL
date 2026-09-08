@@ -28,10 +28,11 @@ namespace smdl {
 Compiler::Compiler(uint32_t wavelengthBaseMax)
     : wavelengthBaseMax(wavelengthBaseMax) {}
 
+namespace {
 // Sort JIT handle records by module display name, then line number.
 // The display name rather than the file name, because a module that
 // has no file has no file name to be distinguished by.
-template <typename T> static void sortByModuleAndLine(std::vector<T> &elems) {
+template <typename T> void sortByModuleAndLine(std::vector<T> &elems) {
   std::sort(elems.begin(), elems.end(), [](const auto &lhs, const auto &rhs) {
     return std::pair(std::string_view(lhs.moduleDisplayName), lhs.lineNo) <
            std::pair(std::string_view(rhs.moduleDisplayName), rhs.lineNo);
@@ -41,8 +42,7 @@ template <typename T> static void sortByModuleAndLine(std::vector<T> &elems) {
 // Visit `[itrFirst, itrLast)` runs of records that share a module,
 // assuming the records are sorted by `sortByModuleAndLine`.
 template <typename Iterator, typename Visitor>
-static void forEachModuleGroup(Iterator itr, Iterator itrEnd,
-                               Visitor &&visitor) {
+void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
   while (itr != itrEnd) {
     auto itrLast{itr};
     while (itrLast != itrEnd &&
@@ -52,6 +52,7 @@ static void forEachModuleGroup(Iterator itr, Iterator itrEnd,
     itr = itrLast;
   }
 }
+} // namespace
 
 Compiler::~Compiler() = default;
 
@@ -66,11 +67,12 @@ void Ptexture::release() noexcept {
   alphaIndex = -1;
 }
 
+namespace {
 // Parse the dot-separated package prefix encoded by an MDL archive
 // file name per the MDL specification, e.g., `vendor.metals.mdr`
 // encodes `{"vendor", "metals"}`. Throws on empty components.
 [[nodiscard]]
-static std::vector<std::string>
+std::vector<std::string>
 parseArchivePackagePrefix(const std::string &fileName) {
   auto stem{std::filesystem::path(fileName).stem().string()};
   auto components{llvm::SmallVector<llvm::StringRef>{}};
@@ -91,8 +93,8 @@ parseArchivePackagePrefix(const std::string &fileName) {
 // `{"vendor", "metals"}`) or anywhere under the enclosed package
 // directory (`vendor/metals/...`).
 [[nodiscard]]
-static bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
-                                     const std::string &entryName) {
+bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
+                              const std::string &entryName) {
   auto components{llvm::SmallVector<llvm::StringRef>{}};
   llvm::StringRef(entryName).split(components, '/');
   if (components.size() == prefix.size())
@@ -105,8 +107,7 @@ static bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
 // Is `parent` a lexical ancestor directory of `child`? Assumes both
 // paths are already canonical. Equal paths do not count.
 [[nodiscard]]
-static bool isLexicalSubPath(const std::string &parent,
-                             const std::string &child) {
+bool isLexicalSubPath(const std::string &parent, const std::string &child) {
   auto parentPath{std::filesystem::path(parent)};
   auto childPath{std::filesystem::path(child)};
   auto [parentItr, childItr] =
@@ -114,6 +115,7 @@ static bool isLexicalSubPath(const std::string &parent,
                     childPath.begin(), childPath.end());
   return parentItr == parentPath.end() && childItr != childPath.end();
 }
+} // namespace
 
 void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
                               std::vector<std::string> *addedModuleNames) {
@@ -138,12 +140,13 @@ void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
   }
 }
 
+namespace {
 // Normalize a host-supplied module name to an absolute qualified name,
 // or throw an `Error` explaining why it is not a legal module name. It
 // must be spellable in an `import`, so every component is an ordinary
 // identifier.
 [[nodiscard]]
-static std::string normalizeModuleName(const std::string &moduleName) {
+std::string normalizeModuleName(const std::string &moduleName) {
   const auto isIdentifier{[](std::string_view component) {
     const auto isLetter{[](char ch) {
       return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
@@ -165,6 +168,7 @@ static std::string normalizeModuleName(const std::string &moduleName) {
   }
   return joinQualifiedName(components);
 }
+} // namespace
 
 std::optional<Error> Compiler::addCode(std::string moduleName,
                                        std::string sourceCode,
@@ -416,6 +420,7 @@ Compiler::add(std::string fileOrDirName,
   });
 }
 
+namespace {
 // Derive the value-dependent static material flags after optimization.
 //
 // `FunctionType::initializeMaterialFunctions` fills the type-level
@@ -426,8 +431,8 @@ Compiler::add(std::string fileOrDirName,
 // corresponding flag bit for every possible instance, so it is marked
 // known here; a body that stays runtime (or an unoptimized module) just
 // leaves the bit unknown, which hosts must treat conservatively.
-static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
-                                      std::vector<JIT::Material> &materials) {
+void deriveStaticMaterialFlags(llvm::Module &llvmModule,
+                               std::vector<JIT::MaterialDef> &materials) {
   // If every 'ret' in the named function returns one identical constant,
   // return it, else null.
   auto foldedReturnValue{[&](std::string_view name) -> const llvm::Constant * {
@@ -459,10 +464,10 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
         jitMaterial.staticFlags |= MATERIAL_HAS_CUTOUT;
     }
     auto thinWalledProbeName{concat(symbolBase, ".thinWalledProbe")};
-    if (auto thinWalled{llvm::dyn_cast_if_present<llvm::ConstantInt>(
+    if (auto isThinWalled{llvm::dyn_cast_if_present<llvm::ConstantInt>(
             foldedReturnValue(thinWalledProbeName))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_THIN_WALLED;
-      if (!thinWalled->isZero())
+      if (!isThinWalled->isZero())
         jitMaterial.staticFlags |= MATERIAL_THIN_WALLED;
     }
     // The displacement probe returns 'geometry.displacement' itself, so
@@ -471,7 +476,7 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // not the zero vector (-0.0 counts as zero).
     // A body that did not fold leaves the bit unknown, which hosts
     // treat as possibly displacing. See
-    // 'JIT::Material::hasZeroDisplacement()'.
+    // 'JIT::MaterialDef::hasZeroDisplacement()'.
     auto displacementProbeName{concat(symbolBase, ".displacementProbe")};
     if (auto displacement{foldedReturnValue(displacementProbeName)}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_DISPLACEMENT;
@@ -482,7 +487,7 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // folds to the constant zero vector exactly when the material
     // leaves the shading normal alone, settling
     // 'MATERIAL_REMAPS_NORMAL' the way the displacement probe settles
-    // its flag. See 'JIT::Material::remapsNormal()'.
+    // its flag. See 'JIT::MaterialDef::canRemapNormal()'.
     auto normalProbeName{concat(symbolBase, ".normalProbe")};
     if (auto normalDelta{foldedReturnValue(normalProbeName)}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_REMAPS_NORMAL;
@@ -500,7 +505,7 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // 'OPT_LEVEL_NONE', or an un-removable side-effecting call such as
     // a scene-data lookup anywhere in the material body); hosts treat
     // unknown as heterogeneous, which is the conservative direction.
-    // See 'JIT::Material::hasHomogeneousVolume()'.
+    // See 'JIT::MaterialDef::hasHomogeneousVolume()'.
     auto volumeEvaluateFunc{
         llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
@@ -519,6 +524,7 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
       probeFunc->eraseFromParent();
   }
 }
+} // namespace
 
 // An image enters the IR as exactly one external symbol (see
 // `Context::getImageTexelBase()`), so liveness is exactly whether that
@@ -722,15 +728,15 @@ llvm::Module &Compiler::getLLVMModule() {
   return *mLLVMModule;
 }
 
+namespace {
 // Look up the resource for the given key in `resources`, running `loader`
 // exactly once per distinct key. The key is the content hash of the file,
 // possibly extended with load parameters (see `mImages`). A load failure
 // is a warning, not an error: the resource stays default-constructed and
 // rendering continues.
 template <typename K, typename T, typename Hash, typename Eq, typename Loader>
-static T &
-loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
-             const K &key, const SourceLocation &srcLoc, Loader &&loader) {
+T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
+                const K &key, const SourceLocation &srcLoc, Loader &&loader) {
   auto [itr, inserted] = resources.try_emplace(key);
   if (inserted) {
     itr->second = std::make_unique<T>();
@@ -740,6 +746,7 @@ loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
   }
   return *itr->second;
 }
+} // namespace
 
 void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
                                       const std::string &fileName,
@@ -749,7 +756,7 @@ void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc,
-                                 bool withMipLevels, Image::MipFilter filter) {
+                                 bool useMipLevels, Image::MipFilter filter) {
   auto fileHash{mFileHasher[fileName]};
   auto &image{loadResource(mImages, fileHash, srcLoc, [&](Image &image) {
     SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
@@ -766,7 +773,7 @@ const Image &Compiler::loadImage(const std::string &fileName,
   // decoded the image, so that it does not matter which reference comes
   // first: the mip levels are generated at the end of the compile, by
   // which point every reference has been seen.
-  if (withMipLevels) {
+  if (useMipLevels) {
     auto [itr, inserted] = mImageMipRequesters.try_emplace(&image, srcLoc);
     if (!image.requestMipLevels(filter)) {
       auto filterName{[](Image::MipFilter f) {
@@ -939,7 +946,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookup(jitMaterial.scatterEvaluate);
       jitLookup(jitMaterial.scatterSample);
       // Emitted only when the host asked for them; see
-      // 'Compiler::enableScatterNormal'.
+      // 'Compiler::shouldEmitScatterNormal'.
       if (!jitMaterial.scatterNormalSample.name.empty()) {
         jitLookup(jitMaterial.scatterNormalSample);
         jitLookup(jitMaterial.scatterNormalEvaluate);
@@ -973,7 +980,7 @@ void *Compiler::jitLookup(std::string_view name) {
   return symbol->toPtr<void *>();
 }
 
-const JIT::Material *
+const JIT::MaterialDef *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{findMaterials(materialName)};
   if (results.empty()) {
@@ -1007,9 +1014,9 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
   return nullptr;
 }
 
-std::vector<const JIT::Material *>
+std::vector<const JIT::MaterialDef *>
 Compiler::findMaterials(std::string_view materialName) const {
-  auto results{std::vector<const JIT::Material *>()};
+  auto results{std::vector<const JIT::MaterialDef *>()};
   for (const auto &jitMaterial : mMaterials) {
     if (!jitMaterial.moduleIsShadowed &&
         matchesMaterialName(materialName, jitMaterial.qualifiedName))
@@ -1028,7 +1035,7 @@ bool Compiler::matchesMaterialName(std::string_view materialName,
 float3 Compiler::convertColorToRGB(const State &state,
                                    const float *color) const noexcept {
   SMDL_SANITY_CHECK(mColorToRGB && color);
-  SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
+  SMDL_SANITY_CHECK(state.wavelengthBase != nullptr);
   float3 rgb{};
   mColorToRGB(state, color, rgb);
   return rgb;
@@ -1037,19 +1044,21 @@ float3 Compiler::convertColorToRGB(const State &state,
 void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
                                  float *color) const noexcept {
   SMDL_SANITY_CHECK(mRGBToColor && color);
-  SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
+  SMDL_SANITY_CHECK(state.wavelengthBase != nullptr);
   mRGBToColor(state, rgb, color);
 }
 
+namespace {
 // The color scheme of the unit test results, sharing the vocabulary of
 // the `doc` subcommand's text printer: identity in blue, the name being
 // reported in cyan, and metadata in grey, plus green and red for the
 // results themselves.
-static constexpr auto testColorFile{llvm::HighlightColor::Tag};
-static constexpr auto testColorName{llvm::HighlightColor::Attribute};
-static constexpr auto testColorMetadata{llvm::HighlightColor::Note};
-static constexpr auto testColorSuccess{llvm::HighlightColor::String};
-static constexpr auto testColorFailure{llvm::HighlightColor::Error};
+constexpr auto testColorFile{llvm::HighlightColor::Tag};
+constexpr auto testColorName{llvm::HighlightColor::Attribute};
+constexpr auto testColorMetadata{llvm::HighlightColor::Note};
+constexpr auto testColorSuccess{llvm::HighlightColor::String};
+constexpr auto testColorFailure{llvm::HighlightColor::Error};
+} // namespace
 
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
@@ -1113,7 +1122,7 @@ std::string Compiler::printMaterialSummary() const {
   // Summarize the statically known, shadow-relevant flags: the cutout
   // opacity status ('opaque' proven, 'cutout' proven, 'cutout?' only
   // knowable at runtime), plus 'volume' and 'emissive' when present.
-  auto printStaticFlags{[](const JIT::Material &jitMaterial) {
+  auto printStaticFlags{[](const JIT::MaterialDef &jitMaterial) {
     auto flags{std::string()};
     if ((jitMaterial.staticFlagsKnown & MATERIAL_HAS_CUTOUT) == 0)
       flags += " [cutout?";
@@ -1186,8 +1195,8 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
   const auto &smdlState{*static_cast<const smdl::State *>(state)};
   if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
-    filters.get(*ptex)->eval(out, first, num, smdlState.ptex_face_id,
-                             smdlState.ptex_face_uv.x, smdlState.ptex_face_uv.y,
+    filters.get(*ptex)->eval(out, first, num, smdlState.ptexFaceId,
+                             smdlState.ptexFaceUV.x, smdlState.ptexFaceUV.y,
                              /*uw1=*/0.0f, /*vw1=*/0.0f,
                              /*uw2=*/0.0f, /*vw2=*/0.0f,
                              /*width=*/1.0f, /*blur=*/0.0f);

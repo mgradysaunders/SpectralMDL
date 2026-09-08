@@ -110,7 +110,7 @@ TEST_CASE("CurvesFile: round trip") {
   SUBCASE("A file that is not a groom is refused") {
     {
       std::ofstream file(fileName, std::ios::binary | std::ios::trunc);
-      file << "#smdl layout\n";
+      file << "place rock\n";
     }
     CHECK_THROWS_AS((void)readCurvesFile(fileName), smdl::Error);
   }

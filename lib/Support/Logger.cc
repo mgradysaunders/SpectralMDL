@@ -46,13 +46,13 @@ void Logger::logMessage(LogLevel level, std::string_view message) {
   }
 }
 
-std::string_view logLevelLabel(LogLevel level, bool withColors) noexcept {
+std::string_view logLevelLabel(LogLevel level, bool useColors) noexcept {
   // NOLINTNEXTLINE
   static constexpr const char *labels[2][4] = {
       {"[debug] ", "", "[warn] ", "[error] "},
       {"\033[36m[debug]\033[0m ", "", "\033[33m[warn]\033[0m ",
        "\033[91m[error]\033[0m "}};
-  return labels[int(withColors)][std::clamp(int(level), 0, 3)];
+  return labels[int(useColors)][std::clamp(int(level), 0, 3)];
 }
 
 bool cerrSupportsANSIColors() noexcept {
@@ -73,17 +73,17 @@ bool coutSupportsANSIColors() noexcept {
 
 namespace LogSinks {
 
-void print_to_cerr::logMessage(LogLevel level, std::string_view message) {
-  static const bool withColors{cerrSupportsANSIColors()};
-  std::cerr << logLevelLabel(level, withColors) << message << '\n';
+void PrintToCerr::logMessage(LogLevel level, std::string_view message) {
+  static const bool useColors{cerrSupportsANSIColors()};
+  std::cerr << logLevelLabel(level, useColors) << message << '\n';
 }
 
-void print_to_cout::logMessage(LogLevel level, std::string_view message) {
-  static const bool withColors{coutSupportsANSIColors()};
-  std::cout << logLevelLabel(level, withColors) << message << std::endl;
+void PrintToCout::logMessage(LogLevel level, std::string_view message) {
+  static const bool useColors{coutSupportsANSIColors()};
+  std::cout << logLevelLabel(level, useColors) << message << std::endl;
 }
 
-void print_to_cout::flush() { std::cout.flush(); }
+void PrintToCout::flush() { std::cout.flush(); }
 
 } // namespace LogSinks
 

@@ -205,7 +205,7 @@ public:
   [[nodiscard]] static Declaration *
   resolveInScope(Context &context, Span<const std::string_view> name,
                  llvm::Function *llvmFunc, Scope *scope,
-                 bool ignoreIfNotExported, uint64_t seqLimit,
+                 bool shouldIgnoreIfNotExported, uint64_t seqLimit,
                  Declaration **unusableMatch);
 
   /// Resolve the given name against a module's root scope (see
@@ -213,7 +213,7 @@ public:
   [[nodiscard]] static Declaration *
   findInModule(Context &context, Span<const std::string_view> name,
                llvm::Function *llvmFunc, Module *module_,
-               bool ignoreIfNotExported = true);
+               bool shouldIgnoreIfNotExported = true);
 
   /// Get the source location if applicable.
   [[nodiscard]] SourceLocation getSourceLocation() const {
@@ -264,21 +264,21 @@ public:
     if (isUsed == 0 && name.size() == 1) {
       if (llvm::isa_and_present<AST::Parameter>(node)) {
         auto astParam{static_cast<AST::Parameter *>(node)};
-        if (!astParam->warningIssued &&
+        if (!astParam->wasWarningIssued &&
             !astParam->type->hasQualifier("inline") &&
             !(astParam->annotations &&
               astParam->annotations->isMarkedUnused())) {
-          astParam->warningIssued = true;
+          astParam->wasWarningIssued = true;
           getSourceLocation().logWarn(
               concat("unused parameter ", Quoted(name[0])));
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
         auto declarator{static_cast<AST::Variable::Declarator *>(node)};
-        if (!declarator->warningIssued &&
+        if (!declarator->wasWarningIssued &&
             !(declarator->annotations &&
               declarator->annotations->isMarkedUnused())) {
-          declarator->warningIssued = true;
+          declarator->wasWarningIssued = true;
           getSourceLocation().logWarn(
               concat("unused variable ", Quoted(name[0])));
         }
@@ -326,7 +326,7 @@ public:
   /// initializers, namespace and struct-initialize interiors). It bounds
   /// the lifetime of its map entries without acting as a shadow boundary:
   /// the same-scope probe continues into the parent.
-  bool transparent{};
+  bool isTransparent{};
 
   /// The named declarations in this scope, keyed by the interned name
   /// array (see `Context::internName`), newest first through
@@ -375,8 +375,8 @@ public:
   /// Is marked with the keyword `const`?
   [[nodiscard]] bool isConst() const {
     if (auto astType{getASTType()})
-      return astType->hasQualifier("const") || builtinConst;
-    return builtinConst;
+      return astType->hasQualifier("const") || isBuiltinConst;
+    return isBuiltinConst;
   }
 
   /// Is eliminated into a baked compile-time constant? Only ever true for
@@ -415,7 +415,7 @@ public:
   std::optional<Value> builtinDefaultValue{};
 
   /// Force const-ness?
-  bool builtinConst{};
+  bool isBuiltinConst{};
 
   /// The compile-time constant a baked field reads as, or null if the
   /// field occupies storage. See `isBaked()`.
@@ -540,7 +540,7 @@ public:
   AST::Argument *astArg{};
 
   /// Is implied visit? This is determined by `Emitter::ResolvedArguments`.
-  bool impliedVisit{};
+  bool hasImpliedVisit{};
 };
 
 /// An argument list.

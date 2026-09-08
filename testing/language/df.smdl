@@ -121,9 +121,9 @@ EvaluateResult evaluate(
   const int lobeMask = df::DF_ALL,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exterior_ior = exterior_ior;
+  instance.exteriorIOR = exterior_ior;
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -157,9 +157,9 @@ SampleResult sample(
   const int lobeMask = df::DF_ALL,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
-  auto instance = _MaterialInstance(&mat);
+  auto instance = _MaterialEval(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exterior_ior = exterior_ior;
+  instance.exteriorIOR = exterior_ior;
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;
@@ -189,8 +189,8 @@ NormalSampleResult normalSample(
   const int lobeMask = df::DF_GLOSSY,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
-  auto instance = _MaterialInstance(&mat);
-  instance.exterior_ior = exterior_ior;
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = exterior_ior;
   float4 xi1 = xi;
   float3 wm = float3(0);
   float pdf = 0;
@@ -210,8 +210,8 @@ float normalEvaluate(
   const int lobeMask = df::DF_GLOSSY,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
-  auto instance = _MaterialInstance(&mat);
-  instance.exterior_ior = exterior_ior;
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = exterior_ior;
   float pdf = 0;
   df::_scatterNormalEvaluate(&instance, int(backface), &wm, lobeMask, &pdf);
   return pdf;
@@ -227,10 +227,10 @@ float normalEvaluate(
 // them; those have their own test.
 int surfaceLobes(const bsdf scattering) {
   auto mat = material(ior: 1.5, surface: material_surface(scattering: scattering));
-  return _MaterialInstance(&mat).df_lobes_surface & df::DF_ALL;
+  return _MaterialEval(&mat).surfaceLobes & df::DF_ALL;
 }
 
-// `df_lobes` unions over a whole BSDF tree, so a flag word has to keep each
+// `_lobes` unions over a whole BSDF tree, so a flag word has to keep each
 // lobe's domain attached to its kind. Two axes OR'd together do not: these
 // two trees have the same domains and the same kinds, and only the second
 // has a Dirac lobe that transmits. A host deciding whether an interface is
@@ -291,30 +291,30 @@ unit_test "Normal property bits ride above the lobes" {
   const auto leafR = df::specular_bsdf(mode: df::scatter_reflect);
   const auto leafD = df::diffuse_reflection_bsdf(tint: 0.8);
   // A leaf has no normal parameter and reports neither bit.
-  #assert((leafD.df_lobes & bits) == 0);
+  #assert((leafD._lobes & bits) == 0);
   // A layer node left defaulted inherits the active normal, so it detaches
   // from nothing and reports neither bit either.
   const auto defaulted = df::weighted_layer(weight: 0.5, layer: leafR, base: leafD);
-  #assert((defaulted.df_lobes & bits) == 0);
+  #assert((defaulted._lobes & bits) == 0);
   // A layer node that was GIVEN a normal CAN set it, whatever the value;
   // it SETS it only when the value differs from the state normal.
   const auto explicitSame = df::weighted_layer(
     weight: 0.5, layer: leafR, base: leafD, normal: $state.normal);
-  #assert((explicitSame.df_lobes & bits) == df::DF_CAN_SET_NORMAL);
+  #assert((explicitSame._lobes & bits) == df::DF_CAN_SET_NORMAL);
   const auto tilted = df::weighted_layer(
     weight: 0.5, layer: leafR, base: leafD,
     normal: math::normalize(float3(0.2, 0.0, 1.0)));
-  #assert((tilted.df_lobes & bits) == bits);
+  #assert((tilted._lobes & bits) == bits);
   // A coated material's fresnel_layer keeps its default, so it follows
   // whatever `geometry.normal` the material set and reports nothing.
   const auto coated = df::fresnel_layer(ior: 1.5, layer: leafR, base: leafD);
-  #assert((coated.df_lobes & bits) == 0);
+  #assert((coated._lobes & bits) == 0);
   // The bits union through plain wrappers exactly as the lobes do.
   const auto wrapped = df::tint(color(0.5), tilted);
-  #assert((wrapped.df_lobes & bits) == bits);
+  #assert((wrapped._lobes & bits) == bits);
   // And they surface on the instance's own lobe word.
   auto mat = material(surface: material_surface(scattering: tilted));
-  #assert((_MaterialInstance(&mat).df_lobes_surface & bits) == bits);
+  #assert((_MaterialEval(&mat).surfaceLobes & bits) == bits);
 }
 
 unit_test "Lobe mask domain axis" {
@@ -1079,7 +1079,7 @@ unit_test "Specular Dirac shading normal correction" {
     #assert(imp.success && imp.isDirac);
     #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(rad.wi.z < 0.0);
-    #assert(#all(rad.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4)))); // Material IOR defaults to 1.4
+    #assert(#all(rad.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4)))); // MaterialDef IOR defaults to 1.4
     const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
     #assert(#all(imp.f ~== |1e-5| color(corr)));
   }
@@ -1676,7 +1676,7 @@ unit_test "Thin film" {
   const auto wz = float3(0, 0, 1);
   const auto resultz = evaluate(base, wz, wz);
   const int k = $WAVELENGTH_BASE_MAX / 2;
-  const auto lambda = $state.wavelength_base[k];
+  const auto lambda = $state.wavelengthBase[k];
   // A half-wave film is invisible at its design wavelength.
   {
     const auto result1 = evaluate(df::thin_film(thickness: lambda / (2 * 1.5), ior: 1.5, base: base), wz, wz);
@@ -1774,7 +1774,7 @@ unit_test "Measured curve layer" {
 
 unit_test "Mixers" {
   // Every mixer must compile and execute through both entry points --
-  // 'unbounded_mix' shipped with a broken field path ('component.df_lobes')
+  // 'unbounded_mix' shipped with a broken field path ('component._lobes')
   // that no test exercised.
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
   const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
@@ -1828,7 +1828,7 @@ unit_test "Mixers" {
     const auto rC = evaluate(df::clamped_mix(components), wo, wi);
     #assert(#all(rC.f ~== |1e-5| 0.7 * fA + 0.3 * fB));
     #assert(#all(rC.pdf ~== |1e-5| (0.7 * pA + 0.5 * pB) / 1.2));
-    #assert(df::clamped_mix(components).df_lobes == df::normalized_mix(components).df_lobes);
+    #assert(df::clamped_mix(components)._lobes == df::normalized_mix(components)._lobes);
   }
 }
 
@@ -1895,8 +1895,8 @@ unit_test "Tinted VDF" {
   auto wi = math::normalize(float3(-0.3, 0.5, -0.8));
   auto matPlain = material(volume: material_volume(scattering: df::anisotropic_vdf(directional_bias: 0.4)));
   auto matTinted = material(volume: material_volume(scattering: df::tint(tint: color(0.5), base: df::anisotropic_vdf(directional_bias: 0.4))));
-  auto instPlain = _MaterialInstance(&matPlain);
-  auto instTinted = _MaterialInstance(&matTinted);
+  auto instPlain = _MaterialEval(&matPlain);
+  auto instTinted = _MaterialEval(&matTinted);
   const auto pPlain = df::_volumeScatterEvaluate(&instPlain, &wo, &wi);
   const auto pTinted = df::_volumeScatterEvaluate(&instTinted, &wo, &wi);
   #assert(pPlain > 0.0);
@@ -1912,8 +1912,8 @@ unit_test "Additive volume flag" {
   // The declaration reaches the instance flags, mirroring
   // 'smdl::MATERIAL_ADDITIVE_VOLUME'.
   const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
-  auto instDefault = _MaterialInstance(&matDefault);
-  auto instAdditive = _MaterialInstance(&matAdditive);
+  auto instDefault = _MaterialEval(&matDefault);
+  auto instAdditive = _MaterialEval(&matAdditive);
   #assert((instDefault.flags & MATERIAL_ADDITIVE_VOLUME) == 0);
   #assert((instAdditive.flags & MATERIAL_ADDITIVE_VOLUME) != 0);
 }

@@ -26,7 +26,7 @@
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
-  // Prints exactly like 'print_to_cerr', except that it knows to step
+  // Prints exactly like 'PrintToCerr', except that it knows to step
   // around a progress bar while one is on screen.
   smdl::Logger::get().addSink<ProgressLogSink>();
   const auto opts{parseCommandLine(argc, argv)};
@@ -66,9 +66,9 @@ int main(int argc, char **argv) try {
   // initialized. NOTE: The LLVM time-trace instance is thread-local, so
   // entries are only ever begun on this thread; parallel work is timed by
   // hand and reported through logging instead.
-  const bool profiling{opts.utility.profiling};
+  const bool isProfiling{opts.utility.isProfiling};
   const auto &profileFileName{opts.utility.profile};
-  if (profiling) smdl::profilerInitialize();
+  if (isProfiling) smdl::profilerInitialize();
   auto frame{resolveFrame(opts)};
   auto resumed{resumeSequence(opts, frame.resolution, frame.window)};
   const auto grid{resolveWavelengthGrid(opts, frame, resumed)};
@@ -76,15 +76,15 @@ int main(int argc, char **argv) try {
   // material code embeds absolute pointers into the data it owns.
   auto compiler{smdl::Compiler{}};
   setUpCompiler(opts, frame, grid, compiler);
-  if (opts.utility.listObjects) {
-    if (opts.utility.json) {
+  if (opts.utility.shouldListObjects) {
+    if (opts.utility.useJSON) {
       printObjectTableJSON(frame.layout);
     } else {
       printObjectTable(frame.layout);
     }
-    if (profiling) smdl::profilerFinalize(profileFileName.c_str());
+    if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
     return EXIT_SUCCESS;
-  } else if (opts.utility.listMaterials) {
+  } else if (opts.utility.shouldListMaterials) {
     // The table reports how every name resolves, so it must see the
     // unfiltered material list; and it never calls JIT'd code, so
     // compile() alone is enough.
@@ -94,18 +94,18 @@ int main(int argc, char **argv) try {
         error->printAndExit();
       compilerOrNull = &compiler;
     }
-    if (opts.utility.json) {
+    if (opts.utility.useJSON) {
       printMaterialTableJSON(compilerOrNull, frame.layout);
     } else {
       printMaterialTable(compilerOrNull, frame.layout);
     }
-    if (profiling) smdl::profilerFinalize(profileFileName.c_str());
+    if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
     return EXIT_SUCCESS;
   }
   StagedScene staged{opts, frame, grid, compiler};
   // The self-test bows out here rather than after the render setup: it
   // asks the committed scene one question and answers it.
-  if (opts.render.mneeTestNormalHook) {
+  if (opts.render.shouldTestMNEENormalHook) {
     std::cout << "Checking the geometry-normal hook against the meshes:\n";
     const int failures{runMNEETestNormalHook(*staged.scene)};
     if (failures == 0)
@@ -115,14 +115,15 @@ int main(int argc, char **argv) try {
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
   // The render loop is deliberately outside the trace; see -profile.
-  if (profiling) smdl::profilerFinalize(profileFileName.c_str());
+  if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
   auto film{smdl::SpectralFilm(grid.wavelengths.size(), frame.numPixelsX,
                                frame.numPixelsY)};
   // -resume implies writing back to the file being resumed, so one
   // command line re-runs to keep accumulating; an explicitly given
   // -output-spectrum wins verbatim, redirecting or (when empty)
   // suppressing the write.
-  const auto outputSpectrum{opts.image.outputSpectrumGiven || !resumed.requested
+  const auto outputSpectrum{opts.image.wasOutputSpectrumGiven ||
+                                    !resumed.wasRequested
                                 ? opts.image.outputSpectrum
                                 : opts.image.resume};
   auto sdtree{std::unique_ptr<STree>()};

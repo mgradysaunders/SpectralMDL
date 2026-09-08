@@ -35,13 +35,13 @@ private:
   Module mModule;
 };
 
-[[nodiscard]] static std::string docText(std::string_view srcDocComment) {
+[[nodiscard]] std::string docText(std::string_view srcDocComment) {
   return AST::getDocCommentText(srcDocComment);
 }
 
 // Parse source code that is expected to fail and return the error message,
 // which is prefixed by the source location '[<string ::test>:LINE:COLUMN]'.
-[[nodiscard]] static std::string parseError(std::string sourceCode) {
+[[nodiscard]] std::string parseError(std::string sourceCode) {
   auto allocator{BumpPtrAllocator{}};
   auto module{Module("test", std::move(sourceCode))};
   auto error{module.parse(allocator)};
@@ -49,7 +49,7 @@ private:
   return error->message;
 }
 
-[[nodiscard]] static bool contains(std::string_view str, std::string_view sub) {
+[[nodiscard]] bool contains(std::string_view str, std::string_view sub) {
   return str.find(sub) != str.npos;
 }
 

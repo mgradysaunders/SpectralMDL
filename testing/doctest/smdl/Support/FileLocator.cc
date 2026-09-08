@@ -9,7 +9,9 @@
 
 namespace fs = std::filesystem;
 
-static void touch(const fs::path &path) { std::ofstream(path) << '\n'; }
+namespace {
+void touch(const fs::path &path) { std::ofstream(path) << '\n'; }
+} // namespace
 
 TEST_CASE("FileLocator") {
   auto tmpDir{fs::temp_directory_path() / "smdl-filelocator-test"};

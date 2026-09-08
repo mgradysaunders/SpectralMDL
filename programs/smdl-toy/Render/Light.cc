@@ -54,7 +54,7 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
 }
 
 EnvLight::EnvLight(const smdl::SunSkyOptions &options)
-    : mIsMoon(options.moon), mSunSky(smdl::SunSky(options)) {
+    : mIsMoon(options.isMoon), mSunSky(smdl::SunSky(options)) {
   // The `SunSky` applies its own scale factor internally, so the mean
   // radiance it reports is final.
   mMeanRadiance = mSunSky->averageRadiance();
@@ -65,9 +65,8 @@ bool EnvLight::sunMetadata(smdl::Span<const float> wavelens, float &azimuthDeg,
                            std::vector<float> &irradiance) const {
   if (!mSunSky || !mSunSky->hasSun() || mIsMoon) return false;
   const auto direction{mSunSky->sunDirection()};
-  constexpr float DEGREES{180.0f / PI};
-  azimuthDeg = DEGREES * std::atan2(direction.y, direction.x);
-  elevationDeg = DEGREES * std::asin(std::clamp(direction.z, -1.0f, 1.0f));
+  azimuthDeg = smdl::degrees(std::atan2(direction.y, direction.x));
+  elevationDeg = smdl::degrees(std::asin(std::clamp(direction.z, -1.0f, 1.0f)));
   // The disk is uniform, so its irradiance is its radiance over the
   // solid angle it covers; the model works per nanometer and the header
   // field is per micrometer.
@@ -127,12 +126,13 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   return wi;
 }
 
+namespace {
 // The quadrature width of each wavelength band in nanometers, for
 // normalizing a spectral shape to unit integral over the render band:
 // the render-wide trapezoid weights when the grid is non-uniform, the
 // uniform spacing otherwise, and 1 for a single-band render, where
 // "per nanometer" degenerates to a plain per-band value.
-[[nodiscard]] static std::vector<float> bandWidths(const Color &wavelengths) {
+[[nodiscard]] std::vector<float> bandWidths(const Color &wavelengths) {
   if (const auto &weights{gRenderGrid.weights}; !weights.empty())
     return weights;
   auto widths{std::vector<float>(wavelengths.size(), 1.0f)};
@@ -143,6 +143,7 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   }
   return widths;
 }
+} // namespace
 
 AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                              const Color &wavelengths, const LayoutLight &light,
@@ -213,7 +214,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
     // The profile's intensities are already broadband W/sr, so the
     // scale is per unit, renormalized to `power` watts when given.
     intensityScale = decl.scale;
-    if (decl.powerSet) {
+    if (decl.isPowerSet) {
       const float profilePower{mProfile->power()};
       if (profilePower > 0) intensityScale = decl.power / profilePower;
     }
@@ -230,7 +231,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
     }
     // One-sided Lambertian: the radiance is the power over pi times the
     // area in square meters, at the open key.
-    const float metersPerSceneUnit{state.meters_per_scene_unit};
+    const float metersPerSceneUnit{state.metersPerSceneUnit};
     intensityScale = decl.power / (PI * mPlacement.worldArea *
                                    metersPerSceneUnit * metersPerSceneUnit);
     break;
@@ -324,16 +325,18 @@ Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
   return Li;
 }
 
+namespace {
 // A uniform point over the spherical rectangle that the rectangle with
 // corner `s` and orthogonal edges `ex`, `ey` subtends at `receiver`
 // (Urena, Fajardo, and King 2013, as pbrt-v4 spells it), with its solid
 // angle. Returns false when the solid angle is degenerate or outside the
 // range the parametrization is accurate in, the caller then drawing by
 // area.
-[[nodiscard]] static bool
-sampleSphericalRectangle(const float3 &receiver, const float3 &s,
-                         const float3 &ex, const float3 &ey, float2 u,
-                         float3 &point, float &solidAngle) noexcept {
+[[nodiscard]] bool sampleSphericalRectangle(const float3 &receiver,
+                                            const float3 &s, const float3 &ex,
+                                            const float3 &ey, float2 u,
+                                            float3 &point,
+                                            float &solidAngle) noexcept {
   const float exl{length(ex)};
   const float eyl{length(ey)};
   if (!(exl > 0.0f) || !(eyl > 0.0f)) return false;
@@ -392,6 +395,7 @@ sampleSphericalRectangle(const float3 &receiver, const float3 &s,
   point = receiver + xu * x + yv * y + z0 * z;
   return true;
 }
+} // namespace
 
 float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
                                   float time) const noexcept {
@@ -436,12 +440,13 @@ float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
   return point;
 }
 
+namespace {
 // The inverse of the cofactor matrix of a placement's linear part,
 // directly: inv(cof(M)) is transpose(M) over det(M). What turns a WORLD
 // unit normal back into the local area stretch; see
 // `AreaLight::invCofactor`.
 [[nodiscard]]
-static float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
+float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
   const auto column0{float3(objectToWorld[0])};
   const auto column1{float3(objectToWorld[1])};
   const auto column2{float3(objectToWorld[2])};
@@ -450,6 +455,7 @@ static float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
           float3(column0.y, column1.y, column2.y) / det,
           float3(column0.z, column1.z, column2.z) / det};
 }
+} // namespace
 
 BoundBox3 AnalyticLight::bounds() const noexcept {
   auto box{BoundBox3()};
@@ -530,18 +536,18 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // plain material to an emissive one is an emitter, and one that maps
     // an emissive material away is not.
     const auto matIndex{scene.materialIndexOf(instance)};
-    const auto *material{scene.materials[matIndex]};
-    if (!material) continue;
+    const auto *materialDef{scene.materialDefs[matIndex]};
+    if (!materialDef) continue;
     // Evaluate the material once with a placeholder state to read the
     // structural emission flags and a representative intensity. The flags
     // are decided by whether the emission EDF is non-default, so they do
     // not depend on the state; the intensity may be spatially varying, in
     // which case its value here is only a representative selection weight.
     auto state{makeRenderState(wavelengths, &allocator)};
-    state.texture_space_max = 1;
+    state.textureSpaceCount = 1;
     state.finalize();
-    auto mat{smdl::JIT::MaterialInstance(state, material)};
-    if (!mat.hasEmission()) {
+    auto material{smdl::JIT::Material(state, materialDef)};
+    if (!material.hasEmission()) {
       // The mark is scene judgment about an emitter; on anything else it
       // is a mistake worth one line, as the caster mark's is.
       if (instance.isLight && warnedMarkMaterials.insert(matIndex).second)
@@ -586,7 +592,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     std::optional<InstanceFrame> shutScratch{};
     const InstanceFrame *shutFrame{
         instance.isMoving ? &instance.frameAt(1.0f, shutScratch) : nullptr};
-    const bool movingLike{instance.isMoving || instance.isDeforming};
+    const bool isMovingLike{instance.isMoving || instance.isDeforming};
     auto box{BoundBox3()};
     if (instance.isPrimitive()) {
       const auto &primitive{*scene.primitives[instance.primIndex]};
@@ -632,7 +638,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       auto faceAreas{std::vector<float>()};
       auto objectFaceAreas{std::vector<float>()};
       if (light.isSampled) faceAreas.reserve(mesh.faces.size());
-      if (movingLike) objectFaceAreas.reserve(mesh.faces.size());
+      if (isMovingLike) objectFaceAreas.reserve(mesh.faces.size());
       const auto &shutXf{shutFrame ? shutFrame->objectToWorld : objectToWorld};
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
@@ -644,7 +650,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         auto area{triangleArea(point0, point1, point2)};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
-        if (movingLike) {
+        if (isMovingLike) {
           const auto &object0{mesh.verts[face[0]].point};
           const auto &object1{mesh.verts[face[1]].point};
           const auto &object2{mesh.verts[face[2]].point};
@@ -661,7 +667,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       }
       if (light.isSampled && light.totalArea > 0)
         light.faceDistr =
-            smdl::Distribution1D(movingLike ? objectFaceAreas : faceAreas);
+            smdl::Distribution1D(isMovingLike ? objectFaceAreas : faceAreas);
     }
     if (!(light.totalArea > 0)) {
       allocator.reset();
@@ -677,14 +683,15 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       return values.empty() ? 0.0f : sum / values.size();
     }};
     float weight{};
-    if (float intensity{average(mat.getSurfaceEmissionIntensity())};
+    if (float intensity{average(material.getSurfaceEmissionIntensity())};
         intensity > 0)
-      weight += mat.isSurfaceEmissionPower() ? intensity
-                                             : intensity * light.totalArea;
-    if (float intensity{average(mat.getBackfaceEmissionIntensity())};
+      weight += material.isSurfaceEmissionPower() ? intensity
+                                                  : intensity * light.totalArea;
+    if (float intensity{average(material.getBackfaceEmissionIntensity())};
         intensity > 0)
-      weight += mat.isBackfaceEmissionPower() ? intensity
-                                              : intensity * light.totalArea;
+      weight += material.isBackfaceEmissionPower()
+                    ? intensity
+                    : intensity * light.totalArea;
     mInstanceToLight[instIndex] = uint32_t(mAreaLights.size());
     (light.isSampled ? numSampledArea : numUnsampledArea)++;
     bounds.push_back({box, light.isSampled ? weight : 0.0f});
@@ -741,7 +748,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       for (auto &light : mAreaLights) light.isCaustic = light.isSampled;
       for (auto &light : mAnalyticLights) light.isCaustic = true;
     }
-    mEnvCaustic = !anyMark;
+    mHasEnvCaustic = !anyMark;
   }
   // Leaving an emitter unmarked is a choice the layout makes silently;
   // leaving every emitter unmarked is far more often a layout that has
@@ -761,7 +768,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
 
 bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
                           Sampler &sampler, const float3 &point, float time,
-                          LightSample &lightSample, bool keepDark) const {
+                          LightSample &lightSample, bool shouldKeepDark) const {
   if (empty()) return false;
   float selectPMF{};
   const int lightIndex{mSelection.select(point, float(sampler), selectPMF)};
@@ -786,7 +793,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * mScene.boundRadius * lightSample.wi;
     lightSample.isInfinite = true;
-    lightSample.isCaustic = mEnvCaustic;
+    lightSample.isCaustic = mHasEnvCaustic;
     return true;
   }
   if (lightIndex >= int(mAreaLights.size())) {
@@ -802,8 +809,8 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
       const float3 position{light.position(time)};
       auto direction{position - point};
       if (!(lengthSquared(direction) > 0)) return false;
-      lightSample.Li = light.Li(point, state.meters_per_scene_unit, time);
-      if (lightSample.Li.isAllZero() && !keepDark) return false;
+      lightSample.Li = light.Li(point, state.metersPerSceneUnit, time);
+      if (lightSample.Li.isAllZero() && !shouldKeepDark) return false;
       lightSample.wi = normalize(direction);
       lightSample.pdf = selectPMF;
       lightSample.target = position;
@@ -821,7 +828,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     if (!(lengthSquared(direction) > 0.0f)) return false;
     lightSample.wi = normalize(direction);
     lightSample.Li = light.Le(lightPoint, point, time);
-    if (lightSample.Li.isAllZero() && !keepDark) return false;
+    if (lightSample.Li.isAllZero() && !shouldKeepDark) return false;
     lightSample.pdf = selectPMF * shapePDF;
     lightSample.target = lightPoint;
     lightSample.normal = light.normal(time);
@@ -836,8 +843,8 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   float conePDF{};     // solid-angle density instead, when drawn by cone
   const auto &instance{mScene.meshInstances[light.instIndex]};
   if (SMDL_UNLIKELY(instance.isMoving || instance.isDeforming)) {
-    if (!sampleAreaMoving(light, instance, sampler, point, time, keepDark, hit,
-                          positionPDF, conePDF))
+    if (!sampleAreaMoving(light, instance, sampler, point, time, shouldKeepDark,
+                          hit, positionPDF, conePDF))
       return false;
   } else if (SMDL_LIKELY(light.isPrimitive)) {
     const auto &primitive{*mScene.primitives[instance.primIndex]};
@@ -847,7 +854,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     // reaches the far side, where the lamp point of a reflective
     // connection can lie. The alternative is the cone everywhere,
     // leaving those arrivals to the path tracer at weight 1.
-    if (!(light.sphereRadius > 0.0f && !keepDark &&
+    if (!(light.sphereRadius > 0.0f && !shouldKeepDark &&
           sampleSphereCone(light, instance.frame, light.sphereCenter,
                            light.sphereRadius, point, time, xi, hit,
                            conePDF))) {
@@ -883,9 +890,10 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   // are the caller's, zero by its contract, so emission evaluates at
   // full fidelity.
   hit.applyGeometryToState(state, lightSample.wi);
-  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
-  if (!emittedRadiance(mat, light.instIndex, -lightSample.wi, lightSample.Li)) {
-    if (!keepDark) return false;
+  auto material{smdl::JIT::Material(state, hit.materialDef)};
+  if (!emittedRadiance(material, light.instIndex, -lightSample.wi,
+                       lightSample.Li)) {
+    if (!shouldKeepDark) return false;
     lightSample.Li = Color(0.0f);
   }
   // Convert the position density to solid angle at the receiver.
@@ -977,11 +985,11 @@ areaToSolidAngle(const float3 &lightPoint, const float3 &lightNormal,
 SMDL_NO_INLINE float solidAnglePDFMoving(
     const Scene &scene, const AreaLight &light, const MeshInstance &instance,
     uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
-    const float3 &point, bool areaSampled, float time, float selectPMF) {
+    const float3 &point, bool isAreaSampled, float time, float selectPMF) {
   std::optional<InstanceFrame> scratch{};
   const auto &frame{instance.frameAt(time, scratch)};
   const auto &objectToWorld{frame.objectToWorld};
-  if (light.sphereObjectRadius > 0.0f && !areaSampled)
+  if (light.sphereObjectRadius > 0.0f && !isAreaSampled)
     if (auto conePDF{sphereConePDF(float3(objectToWorld[3]),
                                    light.sphereObjectRadius *
                                        length(float3(objectToWorld[0])),
@@ -1001,14 +1009,14 @@ SMDL_NO_INLINE float solidAnglePDFMoving(
 bool LightSampler::sampleAreaMoving(const AreaLight &light,
                                     const MeshInstance &instance,
                                     Sampler &sampler, const float3 &point,
-                                    float time, bool keepDark, Hit &hit,
+                                    float time, bool shouldKeepDark, Hit &hit,
                                     float &positionPDF, float &conePDF) const {
   std::optional<InstanceFrame> scratch{};
   const auto &frame{instance.frameAt(time, scratch)};
   if (light.isPrimitive) {
     const auto &primitive{*mScene.primitives[instance.primIndex]};
     const float2 xi{sampler};
-    if (light.sphereObjectRadius > 0.0f && !keepDark &&
+    if (light.sphereObjectRadius > 0.0f && !shouldKeepDark &&
         sampleSphereCone(light, frame, float3(frame.objectToWorld[3]),
                          light.sphereObjectRadius *
                              length(float3(frame.objectToWorld[0])),
@@ -1081,34 +1089,35 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
   if (lightSample.analyticIndex != INVALID_INDEX) {
     if (lightSample.analyticIndex >= mAnalyticLights.size()) return 0.0f;
     const auto &light{mAnalyticLights[lightSample.analyticIndex]};
-    return light.isDirac() ? light.Li(point, incidencePoint,
-                                      state.meters_per_scene_unit, time)
-                           : light.Le(lightSample.target, incidencePoint, time);
+    return light.isDirac()
+               ? light.Li(point, incidencePoint, state.metersPerSceneUnit, time)
+               : light.Le(lightSample.target, incidencePoint, time);
   }
   const auto &hit{lightSample.hit};
-  if (!hit.material) return 0.0f;
+  if (!hit.materialDef) return 0.0f;
   auto wEmit{incidencePoint - hit.point};
   if (!smdl::tryNormalize(wEmit)) return 0.0f;
   // The arriving ray travels the other way down the same segment, which
   // is the sense `sample()` applies the geometry in.
   hit.applyGeometryToState(state, -wEmit);
-  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+  auto material{smdl::JIT::Material(state, hit.materialDef)};
   Color Le{};
-  if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return 0.0f;
+  if (!emittedRadiance(material, hit.instIndex, wEmit, Le)) return 0.0f;
   return Le;
 }
 
-bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
+bool LightSampler::emittedRadiance(const smdl::JIT::Material &material,
                                    uint32_t instIndex, const float3 &wi,
                                    Color &Le) const {
   float edfPDF{};
-  if (!mat.emissionEvaluate(wi, edfPDF, Le)) return false;
+  if (!material.emissionEvaluate(wi, edfPDF, Le)) return false;
   // `intensity_power` leaves the host to divide by the total emitting
-  // surface area; see `JIT::Material::emissionEvaluate`. The mode is per
+  // surface area; see `JIT::MaterialDef::emissionEvaluate`. The mode is per
   // side, so pick the side actually emitting toward `wi`.
-  bool isPower{mat.isExterior(wi)          ? mat.isSurfaceEmissionPower()
-               : mat.hasBackfaceEmission() ? mat.isBackfaceEmissionPower()
-                                           : mat.isSurfaceEmissionPower()};
+  bool isPower{material.isExterior(wi) ? material.isSurfaceEmissionPower()
+               : material.hasBackfaceEmission()
+                   ? material.isBackfaceEmissionPower()
+                   : material.isSurfaceEmissionPower()};
   if (isPower) {
     float area{1.0f};
     if (instIndex < mInstanceToLight.size() &&
@@ -1123,7 +1132,7 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
 float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                                   const float3 &lightPoint,
                                   const float3 &lightNormal,
-                                  const float3 &point, bool areaSampled,
+                                  const float3 &point, bool isAreaSampled,
                                   float time) const {
   if (SMDL_UNLIKELY(empty() || instIndex >= mInstanceToLight.size() ||
                     mInstanceToLight[instIndex] == INVALID_INDEX)) {
@@ -1136,9 +1145,9 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
   if (const auto &instance{mScene.meshInstances[light.instIndex]};
       SMDL_UNLIKELY(instance.isMoving || instance.isDeforming))
     return solidAnglePDFMoving(mScene, light, instance, faceIndex, lightPoint,
-                               lightNormal, point, areaSampled, time,
+                               lightNormal, point, isAreaSampled, time,
                                selectPMF);
-  if (light.sphereRadius > 0.0f && !areaSampled)
+  if (light.sphereRadius > 0.0f && !isAreaSampled)
     if (auto conePDF{sphereConePDF(light.sphereCenter, light.sphereRadius,
                                    lightPoint, lightNormal, point, selectPMF)})
       return *conePDF;

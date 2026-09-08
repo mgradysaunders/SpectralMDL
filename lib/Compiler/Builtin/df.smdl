@@ -47,7 +47,7 @@ float scatterReflectChance(const scatter_mode mode) {
 //
 // One bit per lobe, a lobe being a domain (which side of the surface it
 // sends light to) paired with a kind (what structure it has to sample). A
-// lobe word is the SET of lobes present, so `df_lobes` unions over a
+// lobe word is the SET of lobes present, so `_lobes` unions over a
 // subtree without losing which domain went with which kind, and a lobe mask
 // is a set of lobes in the same vocabulary: `|` unions, `&` intersects, and
 // a lobe is live iff the two sets share a bit.
@@ -94,7 +94,7 @@ export const int DF_ALL = DF_BRDF | DF_BTDF;
 
 // Property bits riding above the lobes in the same word, NOT lobes and NOT
 // in `DF_ALL`: a lobe mask never names them, so every `&` against a mask
-// drops them, and unioning `df_lobes` over a subtree propagates them for
+// drops them, and unioning `_lobes` over a subtree propagates them for
 // free through every layer, mix, factor, and union.
 //
 // `DF_CAN_SET_NORMAL`: the subtree contains a node that was GIVEN a
@@ -125,7 +125,7 @@ int modeLobes(const int mode, const int kinds) {
 }
 
 // The domains a mask leaves alive, as `scatter_mode` bits. Leaves pass
-// `lobeMask & this.df_lobes`: the mask names lobes, so the domains a leaf
+// `lobeMask & this._lobes`: the mask names lobes, so the domains a leaf
 // keeps are those its own kinds survive under, never a domain kept alive
 // by a kind the leaf does not have.
 @(pure macro)
@@ -220,7 +220,7 @@ const float MULTISCATTER_MIN_DEFICIT = 1e-4;
 // it is a runtime spectrum and the lobe costs nothing when it is black.
 //
 // Takes the tint rather than the distribution, so the same question can be
-// asked from a `df_lobes` initializer, where there is no `this` yet.
+// asked from a `_lobes` initializer, where there is no `this` yet.
 @(pure macro)
 bool hasMultiscatter(const auto multiscatterTint) {
   return false if (#typeOf(multiscatterTint) == void);
@@ -249,7 +249,7 @@ int multiscatterLobes(
 }
 
 // The property bits a node's `normal` parameter contributes to its
-// `df_lobes`; see `DF_SETS_NORMAL`. A defaulted normal is `void`, which
+// `_lobes`; see `DF_SETS_NORMAL`. A defaulted normal is `void`, which
 // reports nothing and folds the whole thing away: the node inherits, and
 // there is nothing for an estimator to be told about.
 @(macro)
@@ -299,13 +299,13 @@ auto clampChance(const auto chance) = #select(
 
 // Every user-facing IOR is the ABSOLUTE index of the denser medium. Plastic
 // is 1.4, never 1/1.4. The exterior medium defaults to 1 and may be overridden
-// per instance by the host through `_MaterialInstance.exterior_ior` for nested
+// per instance by the host through `_MaterialEval.exteriorIOR` for nested
 // dielectric tracking.
 //
 // The scatter parameter structs instead carry the RELATIVE ratio
 // `ior = n(wo) / n(wt)` of the current frame. The entry points
 // `_scatterEvaluate` and `_scatterSample` construct it as
-// `exterior_ior / instance.ior` (entering), and the `finalize` blocks
+// `instance.exteriorIOR / instance.ior` (entering), and the `finalize` blocks
 // reciprocate it on backface hits of solid materials, so that `wo` is
 // always in the upper hemisphere and the ratio is always oriented with it.
 // Thin-walled materials never reciprocate: both sides face the exterior,
@@ -889,10 +889,10 @@ float sampleShadingNormalCorrection(
 @(pure macro)
 float fetchDirectionalAlbedo(
   const auto lut, const float cosTheta, const int j, const float t) {
-  float s((lut.num_cos_theta - 1) * #min(cosTheta, 1));
-  const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
-  const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
-  const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
+  float s((lut.numCosTheta - 1) * #min(cosTheta, 1));
+  const int i(#min(int(#floor(s)), lut.numCosTheta - 2));
+  const &float ptr0(&lut.directionalAlbedo[lut.numRoughness * (i + 0) + j]);
+  const &float ptr1(&lut.directionalAlbedo[lut.numRoughness * (i + 1) + j]);
   s = s - i;
   return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
 }
@@ -928,13 +928,13 @@ auto ScatterEvaluateResultWithMultiscatter(
     cosThetao = #abs(cosThetao);
     cosThetai = #abs(cosThetai);
     const auto lut(#albedoLUT(lutName));
-    float t((lut.num_roughness - 1) * saturate(roughness));
-    const int j(#min(int(#floor(t)), lut.num_roughness - 2));
+    float t((lut.numRoughness - 1) * saturate(roughness));
+    const int j(#min(int(#floor(t)), lut.numRoughness - 2));
     t = t - j;
     const float Ewo(fetchDirectionalAlbedo(lut, cosThetao, j, t));
     const float Ewi(fetchDirectionalAlbedo(lut, cosThetai, j, t));
     const float Eav =
-      #min(1.0, lerp(lut.average_albedo[j], lut.average_albedo[j + 1], t));
+      #min(1.0, lerp(lut.averageAlbedo[j], lut.averageAlbedo[j + 1], t));
     const auto msDeficit = 1 - Eav;
     const auto ms_f = msDeficit > MULTISCATTER_MIN_DEFICIT
                       ? cosThetai / $PI * (1 - Ewo) * (1 - Ewi) / msDeficit
@@ -1142,7 +1142,7 @@ auto scatterSample(
 auto scatterEvaluateMasked(
   const auto this, inline const &ScatterEvaluateParameters params) {
   return ScatterEvaluateResult(isBlack: true) if (!isLobeLive(
-             this.df_lobes, lobeMask));
+             this._lobes, lobeMask));
   return scatterEvaluate(this, params);
 }
 
@@ -1153,17 +1153,17 @@ auto scatterEvaluateMasked(
 @(macro)
 auto scatterSampleMasked(
   const auto this, inline const &ScatterSampleParameters params) {
-  return ScatterSampleResult() if (!isLobeLive(this.df_lobes, lobeMask));
+  return ScatterSampleResult() if (!isLobeLive(this._lobes, lobeMask));
   // Only the subtree the selection actually enters reaches here, so
   // intersecting narrows along the taken path and nowhere else. A
   // distribution declaring nothing (every volume one) narrows nothing.
-  sampledLobe &= this.df_lobes if (this.df_lobes != 0);
+  sampledLobe &= this._lobes if (this._lobes != 0);
   return scatterSample(this, params);
 }
 
 // Everything with no normal distribution behind it: every SMOOTH and DIRAC
 // leaf, every emission and volume node, and every empty default. The
-// dispatchers below prune these by `df_lobes` before they are reached, so
+// dispatchers below prune these by `_lobes` before they are reached, so
 // this is what makes the overload set total rather than what does the work.
 @(pure macro)
 auto normalSample(
@@ -1186,14 +1186,14 @@ float normalEvaluate(
 auto normalSampleMasked(
   const auto this, inline const &ScatterNormalParameters params) {
   return ScatterNormalSampleResult() if (!hasNormalDistribution(
-                                          this.df_lobes, lobeMask));
+                                          this._lobes, lobeMask));
   return normalSample(this, params);
 }
 
 @(macro)
 float normalEvaluateMasked(
   const auto this, inline const &ScatterNormalParameters params) {
-  return 0.0 if (!hasNormalDistribution(this.df_lobes, lobeMask));
+  return 0.0 if (!hasNormalDistribution(this._lobes, lobeMask));
   return normalEvaluate(this, params);
 }
 
@@ -1318,7 +1318,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   const $(?(color | float)) multiscatter_tint = none;
 
   /// The flags.
-  static const int df_lobes = DF_SMOOTH_BRDF;
+  static const int _lobes = DF_SMOOTH_BRDF;
 };
 
 @(pure)
@@ -1423,7 +1423,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_SMOOTH_BTDF;
+  static const int _lobes = DF_SMOOTH_BTDF;
 };
 
 @(pure)
@@ -1482,7 +1482,7 @@ export struct specular_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  const int df_lobes = modeLobes(int(mode), DF_DIRAC);
+  const int _lobes = modeLobes(int(mode), DF_DIRAC);
 };
 
 @(pure macro)
@@ -1515,7 +1515,7 @@ auto scatterSample(
     // is taken with certainty and the ratio below reduces to the bare
     // Fresnel weight.
     const auto enabledMode(scatter_mode(int(this.mode) & maskedModeBits(
-      lobeMask & this.df_lobes)));
+      lobeMask & this._lobes)));
     return ScatterSampleResult() if (enabledMode == scatter_none);
     const auto reflectChance(enabledMode == this.mode
                              ? rawReflectChance
@@ -1613,10 +1613,10 @@ export struct measured_bsdf: bsdf {
   /// The flags. `DF_SMOOTH` rather than `DF_GLOSSY` because tabulated
   /// data has no normal distribution behind it to sample a half vector
   /// from, which is the distinction the flag draws.
-  const int df_lobes = modeLobes(int(mode) & measurement.mode, DF_SMOOTH);
+  const int _lobes = modeLobes(int(mode) & measurement.mode, DF_SMOOTH);
 
   /// The primaries the RGB the measurement yields is upsampled against.
-  /// Captured rather than accepted, like `df_lobes`; see `RGBPrimaries`.
+  /// Captured rather than accepted, like `_lobes`; see `RGBPrimaries`.
   const RGBPrimaries primaries = RGBPrimaries();
 };
 
@@ -1625,7 +1625,7 @@ auto scatterEvaluate(
   const &measured_bsdf this, inline const &ScatterEvaluateParameters params) {
   const auto enabledMode(
     int(this.mode) & this.measurement.mode & maskedModeBits(
-      lobeMask & this.df_lobes));
+      lobeMask & this._lobes));
   return ScatterEvaluateResult(isBlack: true) if (!bool(this.measurement.ptr) || (int(mode) & enabledMode) == 0);
   return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params));
   // The measurement table is hemisphere-agnostic, so look up with the incoming
@@ -1651,7 +1651,7 @@ auto scatterSample(
   const &measured_bsdf this, inline const &ScatterSampleParameters params) {
   const auto enabledMode(
     int(this.mode) & this.measurement.mode & maskedModeBits(
-      lobeMask & this.df_lobes));
+      lobeMask & this._lobes));
   return ScatterSampleResult() if (!bool(this.measurement.ptr) || enabledMode == 0);
   if ((tbn := recalculateTangentSpace(params))) {
     auto xi2(xi.xy);
@@ -2176,7 +2176,7 @@ export struct sheen_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_SMOOTH_BRDF;
+  static const int _lobes = DF_SMOOTH_BRDF;
 
   finalize {
     roughness = saturate(roughness);
@@ -2316,13 +2316,13 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   $(?(color | float)) multiscatter_tint = none;
 
   /// The tangent in U.
-  float3 tangent_u = $state.texture_tangent_u[0];
+  float3 tangent_u = $state.textureTangentU[0];
 
   /// The handle.
   void handle = "";
 
   /// The flags.
-  const int df_lobes =
+  const int _lobes =
     DF_GLOSSY_BRDF | multiscatterLobes(multiscatter_tint, int(scatter_reflect));
 
   finalize {
@@ -2836,7 +2836,7 @@ struct microfacet_bsdf: bsdf {
   $(?(color | float)) multiscatter_tint = none;
 
   /// The tangent direction for orienting anistropic roughness.
-  float3 tangent_u = $state.texture_tangent_u[0];
+  float3 tangent_u = $state.textureTangentU[0];
 
   /// The scatter mode. With `scatter_reflect_transmit`, the reflect and
   /// transmit lobes are weighted by the dielectric Fresnel term, forming a
@@ -2850,7 +2850,7 @@ struct microfacet_bsdf: bsdf {
   const microfacet::shadowing shadowing = microfacet::shadowing();
 
   /// The flags.
-  const int df_lobes = modeLobes(int(mode), DF_GLOSSY) | multiscatterLobes(
+  const int _lobes = modeLobes(int(mode), DF_GLOSSY) | multiscatterLobes(
     multiscatter_tint, int(mode));
 };
 
@@ -2863,7 +2863,7 @@ auto scatterEvaluate(
   const &microfacet_bsdf this, inline const &ScatterEvaluateParameters params) {
   // The query's domain, restricted to what the mask leaves this leaf.
   auto effectiveMode(this.mode & mode & scatter_mode(maskedModeBits(
-    lobeMask & this.df_lobes)));
+    lobeMask & this._lobes)));
   preserve tangent_u;
   tangent_u = this.tangent_u if (isAnisotropic(this));
   return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params) || effectiveMode == scatter_none);
@@ -2924,7 +2924,7 @@ auto scatterEvaluate(
     // The physical weight at the half vector is unchanged by a mask, but
     // the density is: a mask leaving this leaf one domain makes the
     // sampler take it with certainty, so the selection weight drops out.
-    pdfWeight = float2(1.0) if ((int(this.mode) & maskedModeBits(lobeMask & this.df_lobes)) != int(scatter_reflect_transmit));
+    pdfWeight = float2(1.0) if ((int(this.mode) & maskedModeBits(lobeMask & this._lobes)) != int(scatter_reflect_transmit));
   }
   if $(this.distribution <: microfacet::blinn) {
     const auto e(#min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
@@ -3178,7 +3178,7 @@ auto scatterSample(
   // re-evaluates under the same mask, and `scatterEvaluate` drops the
   // selection weight from its density to match.
   const auto enabledMode(scatter_mode(int(this.mode) & maskedModeBits(
-    lobeMask & this.df_lobes)));
+    lobeMask & this._lobes)));
   return ScatterSampleResult() if (enabledMode == scatter_none);
   const auto reflectChance(enabledMode == this.mode
                            ? rawReflectChance
@@ -3228,7 +3228,7 @@ auto makeMicrofacetBSDF(
   const float roughness_v = roughness_u,
   const $(color | float) tint = 1.0,
   const $(?(color | float)) multiscatter_tint = none,
-  const float3 tangent_u = $state.texture_tangent_u[0],
+  const float3 tangent_u = $state.textureTangentU[0],
   const scatter_mode mode = scatter_reflect,
   const string handle = "" [[anno::unused()]],
   const microfacet::distribution distribution = microfacet::distribution(),
@@ -3510,7 +3510,7 @@ export struct micrograin_layer: bsdf {
   $(?float3) normal = none;
 
   /// The tangent direction for orienting anisotropic micrograins.
-  float3 tangent_u = $state.texture_tangent_u[0];
+  float3 tangent_u = $state.textureTangentU[0];
 
   /// The lobes.
   ///
@@ -3523,7 +3523,7 @@ export struct micrograin_layer: bsdf {
   /// for the normal distribution behind it would be handed a draw that half
   /// the time has nothing to do with one. `sheen_bsdf`, which it resembles,
   /// is SMOOTH for the same reason.
-  const int df_lobes = DF_SMOOTH_BRDF | base.df_lobes | normalParamLobes(normal);
+  const int _lobes = DF_SMOOTH_BRDF | base._lobes | normalParamLobes(normal);
 
   finalize {
     filling_factor = micrograin::clamp_filling_factor(filling_factor);
@@ -3575,7 +3575,7 @@ auto scatterEvaluate(
       float2(
         micrograin::base_chance(tau0, woT.z),
         micrograin::base_chance(tau0, wiT.z)),
-      this.base.df_lobes,
+      this.base._lobes,
       DF_SMOOTH_BRDF,
       lobeMask));
   // The micrograin term is this layer's own lobe, so it answers to the
@@ -3678,7 +3678,7 @@ auto scatterSample(
   const float rawChanceBase(micrograin::base_chance(
     tau0, micrograin::beta_transform(beta, wo).z));
   const float chanceBase(maskedChance(
-    rawChanceBase, this.base.df_lobes, DF_SMOOTH_BRDF, lobeMask));
+    rawChanceBase, this.base._lobes, DF_SMOOTH_BRDF, lobeMask));
   if (sampling::bool_sample(&xi.z, chanceBase)) {
     lobeChance *= rawChanceBase;
     // The base answers in the inherited frame, which is where
@@ -3963,7 +3963,7 @@ export struct hapke_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = DF_SMOOTH_BRDF;
+  static const int _lobes = DF_SMOOTH_BRDF;
 
   finalize {
     // The slope override enters as the roughness it corresponds to, so that
@@ -4380,7 +4380,7 @@ export struct chiang_hair_bsdf: hair_bsdf {
   /// The flags. `DF_GLOSSY` is deliberately absent: hair scatters about
   /// a fiber axis rather than a surface half vector, so there is no
   /// normal distribution to sample.
-  static const int df_lobes = DF_SMOOTH;
+  static const int _lobes = DF_SMOOTH;
 };
 
 // The one-sided Chiang evaluation: the value and the density of sampling
@@ -4491,7 +4491,7 @@ auto scatterEvaluate(
   // domains by kind while the whole-material gate keeps that domain
   // alive through kinds of other distributions.
   return ScatterEvaluateResult(isBlack: true) //
-           if ((int(params.mode) & maskedModeBits(params.lobeMask & this.df_lobes)) == 0);
+           if ((int(params.mode) & maskedModeBits(params.lobeMask & this._lobes)) == 0);
   // Work directly on the reference directions: the shading normal
   // machinery does not apply because `material.geometry` does not
   // influence hair shading.
@@ -4588,7 +4588,7 @@ export struct diffuse_edf: edf {
 
   /// The flags. Always zero: the `DF_` flags describe how a surface
   /// scatters, and emission does not scatter.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 @(pure)
@@ -4659,7 +4659,7 @@ export struct spot_edf: edf {
 
   /// The flags. Always zero: the `DF_` flags describe how a surface
   /// scatters, and emission does not scatter.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 
   finalize {
     exponent = #max(exponent, 0.0);
@@ -4783,7 +4783,7 @@ export struct measured_edf: edf {
   void global_frame = float3x3(1.0);
 
   /// The tangent direction, orienting the horizontal angle of the profile.
-  float3 tangent_u = $state.texture_tangent_u[0];
+  float3 tangent_u = $state.textureTangentU[0];
 
   /// The handle.
   void handle = "";
@@ -4796,7 +4796,7 @@ export struct measured_edf: edf {
 
   /// The flags. Always zero: the `DF_` flags describe how a surface
   /// scatters, and emission does not scatter.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 @(pure)
@@ -4846,7 +4846,7 @@ struct tint1: bsdf, edf, vdf, hair_bsdf {
   auto base;
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 /// A 2-value tint.
@@ -4861,7 +4861,7 @@ struct tint2: bsdf {
   bsdf base;
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 /// Construct 1-value tint of the given `bsdf`.
@@ -5002,7 +5002,7 @@ export struct weighted_layer: bsdf {
   float chance = average(weight);
 
   /// The flags.
-  const int df_lobes = layer.df_lobes | base.df_lobes | normalParamLobes(normal);
+  const int _lobes = layer._lobes | base._lobes | normalParamLobes(normal);
 
   finalize {
     weight = saturate(weight);
@@ -5021,7 +5021,7 @@ auto scatterEvaluate(
   // density is the density of the sampler under that mask, which takes a
   // side with certainty once the mask has removed the other.
   const float chance(maskedChance(
-    this.chance, this.layer.df_lobes, this.base.df_lobes, lobeMask));
+    this.chance, this.layer._lobes, this.base._lobes, lobeMask));
   return ScatterEvaluateResult(
            f: lerp(result0.f, result1.f, this.weight),
            pdf: lerp(result0.pdf, result1.pdf, chance),
@@ -5034,7 +5034,7 @@ auto normalSample(
   if (sampling::bool_sample(
         &xi.w,
         maskedNormalChance(
-          this.chance, this.layer.df_lobes, this.base.df_lobes, lobeMask))) {
+          this.chance, this.layer._lobes, this.base._lobes, lobeMask))) {
     preserve normal;
     normal = layerNormal(this.normal, normal);
     return normalSampleMasked(visit &this.layer, params);
@@ -5047,7 +5047,7 @@ auto normalSample(
 float normalEvaluate(
   const &weighted_layer this, inline const &ScatterNormalParameters params) {
   const float chance(maskedNormalChance(
-    this.chance, this.layer.df_lobes, this.base.df_lobes, lobeMask));
+    this.chance, this.layer._lobes, this.base._lobes, lobeMask));
   const float densityBase(normalEvaluateMasked(visit &this.base, params));
   preserve normal;
   normal = layerNormal(this.normal, normal);
@@ -5059,7 +5059,7 @@ float normalEvaluate(
 auto scatterSample(
   const &weighted_layer this, inline const &ScatterSampleParameters params) {
   const float chance(maskedChance(
-    this.chance, this.layer.df_lobes, this.base.df_lobes, lobeMask));
+    this.chance, this.layer._lobes, this.base._lobes, lobeMask));
   if (sampling::bool_sample(&xi.w, chance)) {
     preserve normal;
     normal = layerNormal(this.normal, normal);
@@ -5133,13 +5133,13 @@ export struct thin_film: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 
   /// The wavelengths this instance was constructed at, in nanometers.
   /// The interference phase is spectral, so the factor needs them, and
   /// the scattering entry points are pure and cannot read `$state`;
-  /// captured rather than accepted, like `df_lobes`.
-  const color wavelengths = color($state.wavelength_base);
+  /// captured rather than accepted, like `_lobes`.
+  const color wavelengths = color($state.wavelengthBase);
 };
 
 /// The maximum amplification `thinFilmFactor` may apply to the base BSDF,
@@ -5283,7 +5283,7 @@ export struct fresnel_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 @(macro)
@@ -5349,7 +5349,7 @@ export struct directional_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 @(macro)
@@ -5405,7 +5405,7 @@ export struct measured_curve_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 /// Evaluate the reflectivity of a measured curve at `cosAlpha`, the cosine of the
@@ -5490,7 +5490,7 @@ export struct horizon_shadow_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 
   finalize {
     softness = saturate(softness);
@@ -5601,7 +5601,7 @@ export struct relief_shadow_factor: bsdf {
   /// The UV coordinate of the shading point in the height field: the
   /// offset UV from `::extras::parallax::parallax_uv()`, so the shadow ray
   /// starts where the view ray landed.
-  float2 coord = $state.texture_coordinate[0].xy;
+  float2 coord = $state.textureCoordinate[0].xy;
 
   /// The relief depth in UV units, the `scale` of the march.
   float scale = 0.0;
@@ -5621,7 +5621,7 @@ export struct relief_shadow_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 };
 
 /// The visibility of the natural-tangent-frame direction `wi` as a
@@ -5700,10 +5700,10 @@ export struct measured_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int df_lobes = base.df_lobes;
+  const int _lobes = base._lobes;
 
   /// The primaries the texture's RGB is upsampled against. Captured
-  /// rather than accepted, like `df_lobes`; see `RGBPrimaries`.
+  /// rather than accepted, like `_lobes`; see `RGBPrimaries`.
   const RGBPrimaries primaries = RGBPrimaries();
 };
 
@@ -5811,8 +5811,8 @@ auto layerScatterEvaluate(
     // to the mask.
     const auto chance(maskedChance(
       clampChance(this._averageWeight * curveChance(cosThetao, cosThetai)),
-      this.layer.df_lobes,
-      this.base.df_lobes,
+      this.layer._lobes,
+      this.base._lobes,
       lobeMask));
     return ScatterEvaluateResult(
              f: lerp(
@@ -5837,8 +5837,8 @@ auto layerNormalSample(
   const auto layerIOR) {
   const auto chance(maskedNormalChance(
     clampChance(this._averageWeight),
-    this.layer.df_lobes,
-    this.base.df_lobes,
+    this.layer._lobes,
+    this.base._lobes,
     lobeMask));
   if (sampling::bool_sample(&xi.z, chance)) {
     preserve normal, ior;
@@ -5856,8 +5856,8 @@ float layerNormalEvaluate(
   const auto layerIOR) {
   const auto chance(maskedNormalChance(
     clampChance(this._averageWeight),
-    this.layer.df_lobes,
-    this.base.df_lobes,
+    this.layer._lobes,
+    this.base._lobes,
     lobeMask));
   const float densityBase(normalEvaluateMasked(visit &this.base, params));
   preserve normal, ior;
@@ -5881,7 +5881,7 @@ auto layerScatterSample(
     return ScatterSampleResult();
   const auto rawChance(clampChance(this._averageWeight * curveChance(cosTheta)));
   const auto chance(maskedChance(
-    rawChance, this.layer.df_lobes, this.base.df_lobes, lobeMask));
+    rawChance, this.layer._lobes, this.base._lobes, lobeMask));
   if (sampling::bool_sample(&xi.z, chance)) {
     lobeChance *= rawChance;
     preserve normal, ior;
@@ -5941,7 +5941,7 @@ export struct fresnel_layer: bsdf {
   float _averageWeight = 1.0;
 
   /// The flags.
-  const int df_lobes = layer.df_lobes | base.df_lobes | normalParamLobes(normal);
+  const int _lobes = layer._lobes | base._lobes | normalParamLobes(normal);
 
   finalize {
     // The specification restricts the weight to [0,1]; enforcing it here
@@ -6051,7 +6051,7 @@ export struct custom_curve_layer: bsdf {
   float _averageWeight = 1.0;
 
   /// The flags.
-  const int df_lobes = layer.df_lobes | base.df_lobes | normalParamLobes(normal);
+  const int _lobes = layer._lobes | base._lobes | normalParamLobes(normal);
 
   finalize {
     // The specification restricts the reflectivities and the weight to
@@ -6159,7 +6159,7 @@ export struct measured_curve_layer: bsdf {
   float _averageWeight = 1.0;
 
   /// The flags.
-  const int df_lobes = layer.df_lobes | base.df_lobes | normalParamLobes(normal);
+  const int _lobes = layer._lobes | base._lobes | normalParamLobes(normal);
 
   finalize {
     // The specification restricts the weight to [0,1]; enforcing it here
@@ -6244,14 +6244,14 @@ export typedef vdf_component color_vdf_component;
 struct component_mix: bsdf, edf, vdf {
   component[] components;
 
-  int df_lobes = 0;
+  int _lobes = 0;
 };
 
 /// Constructs a mixture of the given components, normalizing the weights
 /// when they sum to more than 1, componentwise for `color` weights.
 @(macro)
 export auto normalized_mix(component[<N>] components) {
-  int df_lobes(0);
+  int _lobes(0);
   auto total_weight(0.0 * components[0].weight);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -6260,7 +6260,7 @@ export auto normalized_mix(component[<N>] components) {
     component.chance = #max(component.chance, 0.0);
     total_weight += component.weight;
     total_chance += component.chance;
-    df_lobes |= component.component.df_lobes;
+    _lobes |= component.component._lobes;
   }
   // Divide out the total wherever it exceeds 1 and leave the weights
   // alone wherever it does not; for `color` weights this is per channel.
@@ -6271,7 +6271,7 @@ export auto normalized_mix(component[<N>] components) {
     component.weight *= weight_scale;
     component.chance *= total_chance;
   }
-  return component_mix(components, df_lobes);
+  return component_mix(components, _lobes);
 }
 
 /// Constructs a mixture of the given components, clamping the running
@@ -6279,7 +6279,7 @@ export auto normalized_mix(component[<N>] components) {
 /// weights.
 @(macro)
 export auto clamped_mix(component[<N>] components) {
-  int df_lobes(0);
+  int _lobes(0);
   auto total_weight(0.0 * components[0].weight);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -6300,34 +6300,34 @@ export auto clamped_mix(component[<N>] components) {
       component.chance = #max(component.chance, 0.0);
       total_weight += component.weight;
       total_chance += component.chance;
-      df_lobes |= component.component.df_lobes;
+      _lobes |= component.component._lobes;
     }
   }
   total_chance = 1.0 / total_chance if (total_chance > 0.0);
   for (int i = 0; i < N; i++) {
     components[i].chance *= total_chance;
   }
-  return component_mix(components, df_lobes);
+  return component_mix(components, _lobes);
 }
 
 /// Constructs a mixture of the given components without normalizing or
 /// clamping the weights.
 @(macro)
 export auto unbounded_mix(component[<N>] components) {
-  int df_lobes(0);
+  int _lobes(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
     auto component(&components[i]);
     component.weight = #max(component.weight, 0.0);
     component.chance = #max(component.chance, 0.0);
     total_chance += component.chance;
-    df_lobes |= component.component.df_lobes;
+    _lobes |= component.component._lobes;
   }
   total_chance = 1.0 / total_chance if (total_chance > 0.0);
   for (int i = 0; i < N; i++) {
     components[i].chance *= total_chance;
   }
-  return component_mix(components, df_lobes);
+  return component_mix(components, _lobes);
 }
 
 /// The `color_normalized_mix` is also implemented by the `normalized_mix`.
@@ -6362,7 +6362,7 @@ auto scatterEvaluate(
       // `#any` because the weight may be a `color`.
       if (#any(component.weight > 0.0) | (component.chance > 0.0)) {
         liveChance += component.chance if (isLobeLive(
-            component.component.df_lobes, params.lobeMask));
+            component.component._lobes, params.lobeMask));
         auto component_result(scatterEvaluateMasked(
           visit &component.component, params));
         if (!component_result.isBlack) {
@@ -6386,7 +6386,7 @@ auto normalSample(
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] {
       liveChance += component.chance if (hasNormalDistribution(
-                                          component.component.df_lobes, lobeMask));
+                                          component.component._lobes, lobeMask));
     }
   }
   return ScatterNormalSampleResult() if (!(liveChance > 0.0));
@@ -6395,7 +6395,7 @@ auto normalSample(
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
       const float chance(
-        hasNormalDistribution(component.component.df_lobes, lobeMask)
+        hasNormalDistribution(component.component._lobes, lobeMask)
         ? component.chance
         : 0.0);
       if (!(*xi < chance)) {
@@ -6416,7 +6416,7 @@ float normalEvaluate(
   float density(0.0);
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
-      if (hasNormalDistribution(component.component.df_lobes, lobeMask)) {
+      if (hasNormalDistribution(component.component._lobes, lobeMask)) {
         liveChance += component.chance;
         density += component.chance * normalEvaluateMasked(
           visit &component.component, params);
@@ -6436,7 +6436,7 @@ auto scatterSample(
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] {
       liveChance += component.chance if (isLobeLive(
-                                          component.component.df_lobes, lobeMask));
+                                          component.component._lobes, lobeMask));
     }
   }
   return ScatterSampleResult() if (!(liveChance > 0.0));
@@ -6449,7 +6449,7 @@ auto scatterSample(
     visit component in this.components[i] { // In general this is a union!
       // A dead component has no chance of being taken, and the walk steps
       // over it without consuming any of the sample.
-      const float chance(isLobeLive(component.component.df_lobes, lobeMask)
+      const float chance(isLobeLive(component.component._lobes, lobeMask)
                          ? component.chance
                          : 0.0);
       if (!(*xi < chance)) {
@@ -6524,7 +6524,7 @@ export struct anisotropic_vdf: vdf {
   void handle = "";
 
   /// The flags.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 
   finalize {
     directional_bias = #max(directional_bias, -0.999);
@@ -6576,9 +6576,6 @@ export struct fog_vdf: vdf {
   /// The handle.
   void handle = "";
 
-  /// The flags.
-  static const int df_lobes = 0;
-
   /// The fitted Henyey-Greenstein lobe anisotropy. This and the three
   /// fields below are computed by `finalize` from `particle_size`;
   /// anything passed for them is overwritten.
@@ -6592,6 +6589,9 @@ export struct fog_vdf: vdf {
 
   /// The fitted Draine lobe mixture weight in `[0, 1]`.
   float fit_w_d = 0.0;
+
+  /// The flags.
+  static const int _lobes = 0;
 
   finalize {
     // The piecewise diameter-to-parameter fits: supplemental sections
@@ -6726,7 +6726,7 @@ auto scatterSample(
 
 @(macro)
 export int _scatterEvaluate(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
   const int lobeMask,    ///< Which lobes to evaluate, `DF_ALL` for every one
@@ -6734,13 +6734,13 @@ export int _scatterEvaluate(
   const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
   const &float f,        ///< output: The scattering function
 ) {
-  const auto wo0(normalize((*woWorld) * instance.tangent_to_world));
-  const auto wi0(normalize((*wiWorld) * instance.tangent_to_world));
+  const auto wo0(normalize((*woWorld) * instance.tangentToWorld));
+  const auto wi0(normalize((*wiWorld) * instance.tangentToWorld));
   auto params = ScatterEvaluateParameters(
     isImportance: (instance.flags & 1) != 0,
     rng: make_rng(instance.seed, directionPairHash(wo0, wi0)),
-    ior: instance.exterior_ior / instance.ior,
-    exterior_ior: instance.exterior_ior,
+    ior: instance.exteriorIOR / instance.ior,
+    exterior_ior: instance.exteriorIOR,
     wo0: wo0,
     wi0: wi0,
     normal: normalize(instance.geometry.normal),
@@ -6782,7 +6782,7 @@ export int _scatterEvaluate(
 
 @(macro)
 export int _scatterSample(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float4 xi,        ///< The canonical random sample in `[0,1]^4`
   const &float3 woWorld,   ///< The outgoing direction in world space
   const int lobeMask,      ///< Which lobes to sample among, `DF_ALL` for every one
@@ -6793,13 +6793,13 @@ export int _scatterSample(
   const &int sampledLobe,  ///< output: The single lobe drawn from, 0 if none
   const &float lobeChance, ///< output: The unmasked chance of the same selection
 ) {
-  auto wo = normalize((*woWorld) * instance.tangent_to_world);
+  auto wo = normalize((*woWorld) * instance.tangentToWorld);
   auto params = ScatterSampleParameters(
     isImportance: (instance.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
-    ior: instance.exterior_ior / instance.ior,
-    exterior_ior: instance.exterior_ior,
+    ior: instance.exteriorIOR / instance.ior,
+    exterior_ior: instance.exteriorIOR,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
     lobeMask: lobeMask,
@@ -6821,7 +6821,7 @@ export int _scatterSample(
         f[i] = 0.0;
       return false;
     }
-    *wiWorld = normalize(instance.tangent_to_world * wi);
+    *wiWorld = normalize(instance.tangentToWorld * wi);
     // The descent narrowed to what the leaf can produce; the mode it
     // returned names the domain, and one domain of one leaf is one lobe.
     *sampledLobe = params.sampledLobe & modeLobes(int(result.mode), DF_ALL);
@@ -6847,7 +6847,7 @@ export int _scatterSample(
 /// keeps that could have produced it.
 @(macro)
 export int _scatterNormalEvaluate(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const int backface,    ///< Ask on the geometric backface side?
   const &float3 wmWorld, ///< The microfacet normal in world space
   const int lobeMask,    ///< Which lobes to consider, `DF_GLOSSY` for every one
@@ -6855,9 +6855,9 @@ export int _scatterNormalEvaluate(
 ) {
   auto params = ScatterNormalParameters(
     hitBackface: bool(backface),
-    wm0: normalize((*wmWorld) * instance.tangent_to_world),
-    ior: instance.exterior_ior / instance.ior,
-    exterior_ior: instance.exterior_ior,
+    wm0: normalize((*wmWorld) * instance.tangentToWorld),
+    ior: instance.exteriorIOR / instance.ior,
+    exterior_ior: instance.exteriorIOR,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
     lobeMask: lobeMask,
@@ -6878,7 +6878,7 @@ export int _scatterNormalEvaluate(
 /// `_scatterSample` takes a non-Dirac density from `_scatterEvaluate`.
 @(macro)
 export int _scatterNormalSample(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const int backface,    ///< Ask on the geometric backface side?
   const int lobeMask,    ///< Which lobes to consider, `DF_GLOSSY` for every one
@@ -6889,8 +6889,8 @@ export int _scatterNormalSample(
   auto params = ScatterNormalParameters(
     xi: *xi,
     hitBackface: bool(backface),
-    ior: instance.exterior_ior / instance.ior,
-    exterior_ior: instance.exterior_ior,
+    ior: instance.exteriorIOR / instance.ior,
+    exterior_ior: instance.exteriorIOR,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
     lobeMask: lobeMask,
@@ -6904,7 +6904,7 @@ export int _scatterNormalSample(
     return false;
   // Undo the backface flip the parameters applied, exactly as the scattering
   // sampler does, so the world-space normal comes back on the requested side.
-  *wmWorld = normalize(instance.tangent_to_world * #select(
+  *wmWorld = normalize(instance.tangentToWorld * #select(
     params.hitBackface, -result.wm, +result.wm));
   *alpha = result.alpha;
   return _scatterNormalEvaluate(instance, backface, wmWorld, lobeMask, pdf);
@@ -6912,7 +6912,7 @@ export int _scatterNormalSample(
 
 @(macro)
 export float _volumeScatterEvaluate(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
 ) {
@@ -6932,7 +6932,7 @@ export float _volumeScatterEvaluate(
 
 @(macro)
 export float _volumeScatterSample(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
@@ -6959,7 +6959,7 @@ export float _volumeScatterSample(
 ///
 /// The host contract at a hair hit: `$state.normal` must be the shading
 /// normal on the fiber surface (the true normal of a tube; ribbon
-/// geometry must synthesize it) and `$state.texture_tangent_u[0]` must be
+/// geometry must synthesize it) and `$state.textureTangentU[0]` must be
 /// the fiber tangent pointing root to tip. The cross-section offset is
 /// implied by the normal as `h = sin(gamma_o)`, so no texture coordinate
 /// is consulted here. Per the MDL specification, the material `ior`,
@@ -6970,7 +6970,7 @@ export float _volumeScatterSample(
 /// `hair_bsdf()` reports black.
 @(macro)
 export int _hairScatterEvaluate(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
   const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
@@ -6979,8 +6979,8 @@ export int _hairScatterEvaluate(
 ) {
   auto params = ScatterEvaluateParameters(
     isImportance: (instance.flags & 1) != 0,
-    wo0: normalize((*woWorld) * instance.tangent_to_world),
-    wi0: normalize((*wiWorld) * instance.tangent_to_world),
+    wo0: normalize((*woWorld) * instance.tangentToWorld),
+    wi0: normalize((*wiWorld) * instance.tangentToWorld),
     hitBackface: false, // Not applicable for hair scattering
     ior: 1.0,           // Not applicable for hair scattering
   );
@@ -7015,7 +7015,7 @@ export int _hairScatterEvaluate(
 /// `mode == scatter_none` alone.
 @(macro)
 export int _hairScatterSample(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
@@ -7026,7 +7026,7 @@ export int _hairScatterSample(
   auto params = ScatterSampleParameters(
     isImportance: (instance.flags & 1) != 0,
     xi: *xi,
-    wo0: normalize((*woWorld) * instance.tangent_to_world),
+    wo0: normalize((*woWorld) * instance.tangentToWorld),
     hitBackface: false, // Not applicable for hair scattering
     ior: 1.0,           // Not applicable for hair scattering
   );
@@ -7039,7 +7039,7 @@ export int _hairScatterSample(
         f[i] = 0.0;
       return false;
     }
-    *wiWorld = normalize(instance.tangent_to_world * result.wi);
+    *wiWorld = normalize(instance.tangentToWorld * result.wi);
     return _hairScatterEvaluate(instance, woWorld, wiWorld, pdfFwd, pdfRev, f);
   }
 }
@@ -7060,7 +7060,7 @@ export int _hairScatterSample(
 
 /// Calculate the average emission intensities of the front and back sides.
 @(macro)
-float2 _emissionSideWeights(const &_MaterialInstance instance) {
+float2 _emissionSideWeights(const &_MaterialEval instance) {
   float frontWeight = 0.0;
   float backWeight = 0.0;
   if $(!#isDefault(instance.ptr.surface.emission.emission)) {
@@ -7103,7 +7103,7 @@ int _emissionEvaluateSide(
 
 @(macro)
 export int _emissionEvaluate(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float3 wiWorld, ///< The emission direction in world space
   const &float pdf,      ///< output: The PDF of sampling `wiWorld`
   const &float Le,       ///< output: The emitted radiance
@@ -7116,7 +7116,7 @@ export int _emissionEvaluate(
   if (!(totalWeight > 0.0))
     return false;
   auto params = EmissionEvaluateParameters(
-    wi0: normalize((*wiWorld) * instance.tangent_to_world),
+    wi0: normalize((*wiWorld) * instance.tangentToWorld),
     normal: normalize(instance.geometry.normal),
   );
   if (!params.hitBackface) {
@@ -7137,7 +7137,7 @@ export int _emissionEvaluate(
 
 @(macro)
 export int _emissionSample(
-  const &_MaterialInstance instance,
+  const &_MaterialEval instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const &float3 wiWorld, ///< output: The emission direction in world space
   const &float pdf,      ///< output: The PDF of sampling `wiWorld`
@@ -7174,7 +7174,7 @@ export int _emissionSample(
     if (!result.isValid || !(result.wi.z > 0.0))
       return false;
     const auto wiNatural = sampleFront ? result.wi : -result.wi;
-    *wiWorld = normalize(instance.tangent_to_world * wiNatural);
+    *wiWorld = normalize(instance.tangentToWorld * wiNatural);
     return _emissionEvaluate(instance, wiWorld, pdf, Le);
   }
 }

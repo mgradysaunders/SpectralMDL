@@ -25,7 +25,8 @@ namespace fs = std::filesystem;
 // state receives, and what the material instance carries are checked
 // against each other and against the corner values.
 
-static const char *MATERIALS{
+namespace {
+const char *MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
     "import ::scene::*;\n"
@@ -45,18 +46,19 @@ static const char *MATERIALS{
 
 // A unit quad in the XY plane facing +Z, with or without a color per
 // corner: red, green, blue, white counterclockwise from (-1, -1).
-static const char *QUAD_COLORS{"o quad\n"
-                               "v -1 -1 0 1 0 0\n"
-                               "v 1 -1 0 0 1 0\n"
-                               "v 1 1 0 0 0 1\n"
-                               "v -1 1 0 1 1 1\n"
-                               "f 1 2 3 4\n"};
-static const char *QUAD_PLAIN{"o quad\n"
-                              "v -1 -1 0\n"
-                              "v 1 -1 0\n"
-                              "v 1 1 0\n"
-                              "v -1 1 0\n"
-                              "f 1 2 3 4\n"};
+const char *QUAD_COLORS{"o quad\n"
+                        "v -1 -1 0 1 0 0\n"
+                        "v 1 -1 0 0 1 0\n"
+                        "v 1 1 0 0 0 1\n"
+                        "v -1 1 0 1 1 1\n"
+                        "f 1 2 3 4\n"};
+const char *QUAD_PLAIN{"o quad\n"
+                       "v -1 -1 0\n"
+                       "v 1 -1 0\n"
+                       "v 1 1 0\n"
+                       "v -1 1 0\n"
+                       "f 1 2 3 4\n"};
+} // namespace
 
 namespace {
 
@@ -132,8 +134,8 @@ public:
     auto allocator{smdl::BumpPtrAllocator()};
     auto state{makeRenderState(wavelengths, &allocator)};
     hit.applyGeometryToState(state, float3(0.0f, 0.0f, -1.0f));
-    const auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
-    const auto values{mat.getSurfaceEmissionIntensity()};
+    const auto material{smdl::JIT::Material(state, hit.materialDef)};
+    const auto values{material.getSurfaceEmissionIntensity()};
     REQUIRE(!values.empty());
     float sum{};
     for (float value : values) sum += value;
@@ -189,10 +191,10 @@ TEST_CASE("Scene: vertex colors from file to state") {
     // And the state receives exactly that.
     auto state{makeRenderState(fixture.wavelengths)};
     hit.applyGeometryToState(state);
-    CHECK(state.vertex_color_max == 1);
+    CHECK(state.vertexColorCount == 1);
     for (int k = 0; k < 4; k++) {
       CAPTURE(k);
-      CHECK(state.vertex_color[0][k] == hit.vertexColor[k]);
+      CHECK(state.vertexColor[0][k] == hit.vertexColor[k]);
     }
   }
   SUBCASE("A colorless mesh carries no set") {
@@ -202,8 +204,8 @@ TEST_CASE("Scene: vertex colors from file to state") {
     CHECK(hit.vertexColor.w == 1.0f);
     auto state{makeRenderState(fixture.wavelengths)};
     hit.applyGeometryToState(state);
-    CHECK(state.vertex_color_max == 0);
-    CHECK(state.vertex_color[0].x == 1.0f);
+    CHECK(state.vertexColorCount == 0);
+    CHECK(state.vertexColor[0].x == 1.0f);
   }
   SUBCASE("Subdivision refines the colors") {
     for (int i : {5, 6}) {
@@ -342,7 +344,7 @@ public:
   return xf;
 }
 
-[[nodiscard]] bool sameMatrix(const float4x4 &a, const float4x4 &b) {
+[[nodiscard]] bool isSameMatrix(const float4x4 &a, const float4x4 &b) {
   for (int j = 0; j < 4; j++)
     for (int i = 0; i < 4; i++)
       if (a[j][i] != b[j][i]) return false;
@@ -353,8 +355,8 @@ public:
 // is what the read-back of a decomposed key can promise: the
 // quaternion round trip rounds at the last bit, so a bitwise match is
 // not on offer.
-[[nodiscard]] bool nearMatrix(const float4x4 &a, const float4x4 &b,
-                              float tolerance) {
+[[nodiscard]] bool isNearMatrix(const float4x4 &a, const float4x4 &b,
+                                float tolerance) {
   for (int j = 0; j < 4; j++)
     for (int i = 0; i < 4; i++)
       if (!(std::fabs(a[j][i] - b[j][i]) <= tolerance)) return false;
@@ -387,6 +389,39 @@ public:
 
 } // namespace
 
+TEST_CASE("Scene: a raw hit rebuilds its record and reads its side") {
+  Fixture fixture{};
+  // Placement 3 is the plain quad in the z = 0 plane, facing +Z. Cast
+  // straight down onto it and straight up through it: the raw cast must
+  // stop where the record's cast does, rebuild the same record, and
+  // carry the record's geometry normal, which puts the downward ray on
+  // the exterior side and the upward one on the interior side.
+  for (const float dirZ : {-1.0f, 1.0f}) {
+    CAPTURE(dirZ);
+    Ray ray{float3(12.5f, 0.25f, -5.0f * dirZ), float3(0.0f, 0.0f, dirZ), EPS,
+            INF};
+    Ray rawRay{ray};
+    Hit hit{};
+    REQUIRE(fixture.scene.intersect(ray, hit));
+    RawHit raw{};
+    REQUIRE(fixture.scene.intersect(rawRay, raw));
+    CHECK(rawRay.tmax == ray.tmax);
+    CHECK(raw.instIndex == hit.instIndex);
+    CHECK(raw.primID == hit.faceIndex);
+    Hit rebuilt{};
+    fixture.scene.makeHit(raw, rawRay, rebuilt);
+    CHECK(rebuilt.materialDef == hit.materialDef);
+    for (int i = 0; i < 3; i++) {
+      CHECK(rebuilt.point[i] == hit.point[i]);
+      CHECK(rebuilt.normal[i] == hit.normal[i]);
+      CHECK(rebuilt.Ng[i] == hit.Ng[i]);
+    }
+    const auto Ng{fixture.scene.hitNg(raw, rawRay.time)};
+    for (int i = 0; i < 3; i++) CHECK(Ng[i] == hit.Ng[i]);
+    CHECK((smdl::dot(Ng, ray.dir) > 0.0f) == (dirZ > 0.0f));
+  }
+}
+
 TEST_CASE("Scene: the quaternion decomposition reassembles the key") {
   const float4x4 shear{
       float4(1.0f, 0.2f, 0.0f, 0.0f), float4(0.3f, 1.5f, 0.1f, 0.0f),
@@ -400,7 +435,7 @@ TEST_CASE("Scene: the quaternion decomposition reassembles the key") {
     const auto &key{entry.second};
     CAPTURE(name);
     const auto qd{quaternionDecompositionOf(key)};
-    CHECK(nearMatrix(reassemble(qd), key, 2.0e-6f));
+    CHECK(isNearMatrix(reassemble(qd), key, 2.0e-6f));
     CHECK(qd.shift_x == 0.0f);
     CHECK(qd.shift_y == 0.0f);
     CHECK(qd.shift_z == 0.0f);
@@ -430,8 +465,8 @@ TEST_CASE("Scene: the frame at a time through the retained handle") {
     std::optional<InstanceFrame> scratch{};
     CHECK(&instance.frameAt(0.3f, scratch) == &instance.frame);
     CHECK(!scratch);
-    CHECK(sameMatrix(readBack(instance, 0.0f), instance.frame.objectToWorld));
-    CHECK(sameMatrix(readBack(instance, 1.0f), instance.frame.objectToWorld));
+    CHECK(isSameMatrix(readBack(instance, 0.0f), instance.frame.objectToWorld));
+    CHECK(isSameMatrix(readBack(instance, 1.0f), instance.frame.objectToWorld));
   }
   // One handle for the regular instance, one shared by the array's
   // elements, addressed by their index; then one per moving item.
@@ -443,8 +478,8 @@ TEST_CASE("Scene: the frame at a time through the retained handle") {
   CHECK(instances[1].geometry == instances[3].geometry);
   CHECK(fixture.scene.instanceGeometries.size() == 6);
   // The elements really do differ, so the array read is per element.
-  CHECK(!sameMatrix(instances[1].frame.objectToWorld,
-                    instances[3].frame.objectToWorld));
+  CHECK(!isSameMatrix(instances[1].frame.objectToWorld,
+                      instances[3].frame.objectToWorld));
 }
 
 TEST_CASE("Scene: a moving instance reads back its keys") {
@@ -457,14 +492,14 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
     CHECK(sphere.isMoving);
     // The stored frame is the authored open key; the query fills the
     // scratch and answers with it.
-    CHECK(sameMatrix(sphere.frame.objectToWorld,
-                     instances[0].frame.objectToWorld));
+    CHECK(isSameMatrix(sphere.frame.objectToWorld,
+                       instances[0].frame.objectToWorld));
     std::optional<InstanceFrame> scratch{};
     const auto &frame{sphere.frameAt(0.3f, scratch)};
     REQUIRE(scratch);
     CHECK(&frame == &*scratch);
-    CHECK(nearMatrix(readBack(sphere, 0.0f), sphere.frame.objectToWorld,
-                     TOLERANCE));
+    CHECK(isNearMatrix(readBack(sphere, 0.0f), sphere.frame.objectToWorld,
+                       TOLERANCE));
     auto shut{instances[0].frame.objectToWorld};
     shut = float4x4{float4(0.0f, 1.0f, 0.0f, 0.0f),
                     float4(-1.0f, 0.0f, 0.0f, 0.0f),
@@ -472,9 +507,9 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
                     float4(0.0f, 0.0f, 0.0f, 1.0f)} *
            shut;
     shut[3] = float4(3.0f, 4.0f, 5.0f, 1.0f);
-    CHECK(nearMatrix(readBack(sphere, 1.0f), shut, TOLERANCE));
-    CHECK(nearMatrix(sphere.frameAt(1.0f, scratch).objectToWorld, shut,
-                     TOLERANCE));
+    CHECK(isNearMatrix(readBack(sphere, 1.0f), shut, TOLERANCE));
+    CHECK(isNearMatrix(sphere.frameAt(1.0f, scratch).objectToWorld, shut,
+                       TOLERANCE));
   }
   SUBCASE("An array: every element reads back its own pair") {
     for (size_t i = 5; i < 8; i++) {
@@ -486,8 +521,8 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
       const auto &open{instances[i - 4].frame.objectToWorld};
       auto shut{open};
       shut[3].z += 5.0f;
-      CHECK(nearMatrix(readBack(element, 0.0f), open, TOLERANCE));
-      CHECK(nearMatrix(readBack(element, 1.0f), shut, TOLERANCE));
+      CHECK(isNearMatrix(readBack(element, 0.0f), open, TOLERANCE));
+      CHECK(isNearMatrix(readBack(element, 1.0f), shut, TOLERANCE));
     }
   }
   SUBCASE("A turn slerps: halfway through 90 degrees is 45, not the lerp") {
@@ -508,7 +543,7 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
     CHECK(!insideOut.isMoving);
     std::optional<InstanceFrame> scratch{};
     CHECK(&insideOut.frameAt(1.0f, scratch) == &insideOut.frame);
-    CHECK(sameMatrix(readBack(insideOut, 1.0f), float4x4(1.0f)));
+    CHECK(isSameMatrix(readBack(insideOut, 1.0f), float4x4(1.0f)));
   }
 }
 
@@ -516,7 +551,8 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
 // under a clock, checked for what the read bakes, welds, and hands the
 // instances, before any hit is built.
 
-static const char *RIG_MATERIALS{
+namespace {
+const char *RIG_MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
     "export material paint() = material(\n"
@@ -524,6 +560,7 @@ static const char *RIG_MATERIALS{
     "    emission: df::diffuse_edf(), intensity: 1.0)));\n"
     "export material bump() = material(\n"
     "  geometry: material_geometry(displacement: float3(0.0, 0.0, 0.1)));\n"};
+} // namespace
 
 namespace {
 
@@ -588,7 +625,8 @@ public:
   Color wavelengths{};
 };
 
-[[nodiscard]] bool near3(const float3 &a, const float3 &b, float tol = 1e-4f) {
+[[nodiscard]] bool isNear3(const float3 &a, const float3 &b,
+                           float tol = 1e-4f) {
   return std::fabs(a.x - b.x) < tol && std::fabs(a.y - b.y) < tol &&
          std::fabs(a.z - b.z) < tol;
 }
@@ -615,7 +653,7 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
   const float3 tipOpen{1 + std::cos(open), std::sin(open), 0};
   const float3 tipShut{1 + std::cos(shut), std::sin(shut), 0};
   AnimationSpec off{};
-  off.off = true;
+  off.isOff = true;
   AnimationSpec swing{};
   swing.clipName = "swing";
   AnimationSpec phase{};
@@ -654,14 +692,14 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
     REQUIRE(mesh.vertsShut.size() == 7);
     // The tip has turned 22.5 degrees at open and 67.5 at shut.
     const auto tip{nearestVert(mesh, tipOpen)};
-    CHECK(near3(mesh.verts[tip].point, tipOpen));
-    CHECK(near3(mesh.vertsShut[tip].point, tipShut));
-    CHECK(near3(mesh.vertsShut[tip].normal, float3(0, 0, 1)));
+    CHECK(isNear3(mesh.verts[tip].point, tipOpen));
+    CHECK(isNear3(mesh.vertsShut[tip].point, tipShut));
+    CHECK(isNear3(mesh.vertsShut[tip].normal, float3(0, 0, 1)));
     const auto base{nearestVert(mesh, float3(0, 0, 0))};
-    CHECK(near3(mesh.vertsShut[base].point, float3(0, 0, 0)));
+    CHECK(isNear3(mesh.vertsShut[base].point, float3(0, 0, 0)));
     const auto loose{nearestVert(mesh, float3(5, 5, 0))};
-    CHECK(near3(mesh.verts[loose].point, float3(5, 5, 0)));
-    CHECK(near3(mesh.vertsShut[loose].point, float3(5, 5, 0)));
+    CHECK(isNear3(mesh.verts[loose].point, float3(5, 5, 0)));
+    CHECK(isNear3(mesh.vertsShut[loose].point, float3(5, 5, 0)));
     // The placing node's five units up never reach a skinned mesh.
     for (const auto &vert : mesh.verts)
       CHECK(vert.point.z == doctest::Approx(0));
@@ -675,8 +713,8 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
     CHECK(!mesh.deforms());
     CHECK(!fixture.scene.meshInstances[stillInst].isDeforming);
     CHECK(mesh.verts.size() == 7);
-    CHECK(near3(mesh.verts[nearestVert(mesh, float3(2, 0, 0))].point,
-                float3(2, 0, 0)));
+    CHECK(isNear3(mesh.verts[nearestVert(mesh, float3(2, 0, 0))].point,
+                  float3(2, 0, 0)));
     // The bind pose sits under the node's transform, as a still file does.
     CHECK(fixture.scene.meshInstances[stillInst].frame.objectToWorld[3].z ==
           doctest::Approx(5));
@@ -686,7 +724,7 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
     CHECK(&mesh != &fixture.meshOf(waveInst));
     // 0.5 s into the clip at open: forty-five degrees.
     const float3 expected{1 + rig::SIN45, rig::SIN45, 0};
-    CHECK(near3(mesh.verts[nearestVert(mesh, expected)].point, expected));
+    CHECK(isNear3(mesh.verts[nearestVert(mesh, expected)].point, expected));
   }
   SUBCASE("A clip that moves a node moves the instance") {
     const auto &inst{fixture.scene.meshInstances[armInst]};
@@ -694,10 +732,10 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
     CHECK(!inst.isDeforming);
     CHECK(!fixture.meshOf(armInst).deforms());
     std::optional<InstanceFrame> scratch{};
-    CHECK(near3(float3(inst.frame.objectToWorld[0]),
-                float3(std::cos(open), std::sin(open), 0)));
-    CHECK(near3(float3(inst.frameAt(1.0f, scratch).objectToWorld[0]),
-                float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
+    CHECK(isNear3(float3(inst.frame.objectToWorld[0]),
+                  float3(std::cos(open), std::sin(open), 0)));
+    CHECK(isNear3(float3(inst.frameAt(1.0f, scratch).objectToWorld[0]),
+                  float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
   }
   SUBCASE("A batch carries the same keys per element") {
     for (uint32_t i = 0; i < 2; i++) {
@@ -710,11 +748,11 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
       CHECK(arm.isMoving);
       CHECK(!arm.isDeforming);
       std::optional<InstanceFrame> scratch{};
-      CHECK(near3(float3(arm.frame.objectToWorld[0]),
-                  float3(std::cos(open), std::sin(open), 0)));
+      CHECK(isNear3(float3(arm.frame.objectToWorld[0]),
+                    float3(std::cos(open), std::sin(open), 0)));
       const auto &shutFrame{arm.frameAt(1.0f, scratch)};
-      CHECK(near3(float3(shutFrame.objectToWorld[0]),
-                  float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
+      CHECK(isNear3(float3(shutFrame.objectToWorld[0]),
+                    float3(std::cos(shut), std::sin(shut), 0), 1e-3f));
       CHECK(shutFrame.objectToWorld[3].x == doctest::Approx(10.0f * i));
     }
   }
@@ -733,11 +771,11 @@ TEST_CASE("Scene: a shut shutter holds the pose at the base time") {
   CHECK(mesh.vertsShut.empty());
   CHECK(!fixture.scene.meshInstances[waveInst].isDeforming);
   const float3 tip{1 + rig::SIN45, rig::SIN45, 0};
-  CHECK(near3(mesh.verts[nearestVert(mesh, tip)].point, tip));
+  CHECK(isNear3(mesh.verts[nearestVert(mesh, tip)].point, tip));
   const auto &arm{fixture.scene.meshInstances[armInst]};
   CHECK(!arm.isMoving);
-  CHECK(near3(float3(arm.frame.objectToWorld[0]),
-              float3(rig::SIN45, rig::SIN45, 0)));
+  CHECK(isNear3(float3(arm.frame.objectToWorld[0]),
+                float3(rig::SIN45, rig::SIN45, 0)));
 }
 
 TEST_CASE("Scene: subdivision and displacement carry the shut key") {
@@ -790,9 +828,9 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
     const float open{0.25f * PI / 2}, shut{0.75f * PI / 2};
     const float3 tip{1 + std::cos(open), std::sin(open), 0.1f};
     const auto index{nearestVert(mesh, tip)};
-    CHECK(near3(mesh.verts[index].point, tip));
-    CHECK(near3(mesh.vertsShut[index].point,
-                float3(1 + std::cos(shut), std::sin(shut), 0.1f)));
+    CHECK(isNear3(mesh.verts[index].point, tip));
+    CHECK(isNear3(mesh.vertsShut[index].point,
+                  float3(1 + std::cos(shut), std::sin(shut), 0.1f)));
   }
 }
 
@@ -832,10 +870,10 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
       CHECK(hit.instIndex == flatInst);
       CHECK(hit.time == u);
       CHECK(hit.point.z == doctest::Approx(z).epsilon(1e-4));
-      CHECK(near3(hit.Ng, float3(0, 0, 1)));
+      CHECK(isNear3(hit.Ng, float3(0, 0, 1)));
       const auto expected{smdl::normalize((1.0f - u) * normalAt(0.125f) +
                                           u * normalAt(0.375f))};
-      CHECK(near3(hit.normal, expected, 1e-4f));
+      CHECK(isNear3(hit.normal, expected, 1e-4f));
     }
   }
   SUBCASE("The manifold geometry and the projection hit reproduce it") {
@@ -853,6 +891,20 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
     CHECK(projected.vertex.face == hit.faceIndex);
     for (int i = 0; i < 3; i++)
       CHECK(projected.vertex.point[i] == hit.point[i]);
+  }
+  SUBCASE("The raw hit's normal is the record's on the moving instance") {
+    Ray ray{float3(3.5f, 0.5f, 5.0f), float3(0.0f, 0.0f, -1.0f), EPS, INF};
+    ray.time = 0.5f;
+    RawHit raw{};
+    REQUIRE(fixture.scene.intersect(ray, raw));
+    CHECK(raw.instIndex == risingInst);
+    Hit hit{};
+    fixture.scene.makeHit(raw, ray, hit);
+    CHECK(hit.instIndex == risingInst);
+    CHECK(hit.time == 0.5f);
+    const auto Ng{fixture.scene.hitNg(raw, ray.time)};
+    for (int i = 0; i < 3; i++) CHECK(Ng[i] == hit.Ng[i]);
+    CHECK(smdl::dot(Ng, ray.dir) < 0.0f);
   }
   SUBCASE("Deformation composes with the placement's motion") {
     const auto &inst{fixture.scene.meshInstances[risingInst]};

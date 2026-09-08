@@ -286,20 +286,20 @@ public:
 class SMDL_EXPORT FormatOptions final {
 public:
   /// Format files in-place. If false, prints formatted source code to `stdout`.
-  bool inPlace{};
+  bool isInPlace{};
 
   /// Remove comments from formatted source code.
-  bool noComments{};
+  bool shouldDropComments{};
 
   /// Keep `///` and `///<` documentation comments even when
-  /// `noComments` is true.
-  bool keepDocComments{};
+  /// `shouldDropComments` is true.
+  bool shouldKeepDocComments{};
 
   /// Remove annotations from formatted source code.
-  bool noAnnotations{};
+  bool shouldDropAnnotations{};
 
   /// Want compact?
-  bool compact{};
+  bool isCompact{};
 
   /// The column past which the formatter prefers to break a line.
   ///
@@ -332,7 +332,7 @@ public:
   /// from what the host filled in, repairing what needs it.
   ///
   /// The implementation does the following:
-  /// 1. Clamp `texture_space_max` and `vertex_color_max` to their limits.
+  /// 1. Clamp `textureSpaceCount` and `vertexColorCount` to their limits.
   /// 2. Orthonormalize the normal and tangent vectors.
   /// 3. Orthonormalize the geometric normal and tangent vectors.
   /// 4. Orthonormalize the object-to-world matrix, unless it already is,
@@ -344,9 +344,9 @@ public:
   ///
   /// Afterward,
   /// - `position` is at the origin `float3(0,0,0)`
-  /// - `geometry_tangent_u[0]` is the X axis `float3(1,0,0)`
-  /// - `geometry_tangent_v[0]` is the Y axis `float3(0,1,0)`
-  /// - `geometry_normal` is the Z axis `float3(0,0,1)`
+  /// - `geometryTangentU[0]` is the X axis `float3(1,0,0)`
+  /// - `geometryTangentV[0]` is the Y axis `float3(0,1,0)`
+  /// - `geometryNormal` is the Z axis `float3(0,0,1)`
   ///
   /// Steps 5 and 6 are `finalizeUnchecked()`, which a host whose inputs
   /// need none of the rest may call instead.
@@ -355,7 +355,7 @@ public:
   /// Finalize as `finalize()` does, taking the inputs as given: no clamp,
   /// no normalization, no orthogonalization, and the object-to-world
   /// matrix left as it is. The host guarantees that `normal` and
-  /// `geometry_normal` are unit, that each tangent pair is orthonormal
+  /// `geometryNormal` are unit, that each tangent pair is orthonormal
   /// with its normal, that the object-to-world matrix is orthonormal, and
   /// that the space and color counts are within their limits. A renderer
   /// that built its frame from unit vectors under a rigid placement has
@@ -364,17 +364,17 @@ public:
   /// and finalizing it in one place keeps the vectors in registers
   /// across the two.
   void finalizeUnchecked() noexcept {
-    tangent_to_object_matrix[0] = float4(geometry_tangent_u[0], 0.0f);
-    tangent_to_object_matrix[1] = float4(geometry_tangent_v[0], 0.0f);
-    tangent_to_object_matrix[2] = float4(geometry_normal, 0.0f);
-    tangent_to_object_matrix[3] = float4(position, 1.0f);
+    tangentToObject[0] = float4(geometryTangentU[0], 0.0f);
+    tangentToObject[1] = float4(geometryTangentV[0], 0.0f);
+    tangentToObject[2] = float4(geometryNormal, 0.0f);
+    tangentToObject[3] = float4(position, 1.0f);
     // The frame is orthonormal, so the inverse of its linear part is its
     // transpose and a direction maps to its three dots with the axes,
     // which is the whole of `affineInverse()` and the 4x4 product for a
     // vector whose `w` is zero.
-    const auto u{geometry_tangent_u[0]};
-    const auto v{geometry_tangent_v[0]};
-    const auto w{geometry_normal};
+    const auto u{geometryTangentU[0]};
+    const auto v{geometryTangentV[0]};
+    const auto w{geometryNormal};
     const auto toTangent{[&](const float3 &d) {
       return float3(dot(d, u), dot(d, v), dot(d, w));
     }};
@@ -382,20 +382,20 @@ public:
     direction = toTangent(direction);
     motion = toTangent(motion);
     normal = toTangent(normal);
-    for (int i = 0; i < texture_space_max; i++) {
-      texture_tangent_u[i] = toTangent(texture_tangent_u[i]);
-      texture_tangent_v[i] = toTangent(texture_tangent_v[i]);
+    for (int i = 0; i < textureSpaceCount; i++) {
+      textureTangentU[i] = toTangent(textureTangentU[i]);
+      textureTangentV[i] = toTangent(textureTangentV[i]);
     }
-    for (int i = 1; i < texture_space_max; i++) {
-      geometry_tangent_u[i] = toTangent(geometry_tangent_u[i]);
-      geometry_tangent_v[i] = toTangent(geometry_tangent_v[i]);
+    for (int i = 1; i < textureSpaceCount; i++) {
+      geometryTangentU[i] = toTangent(geometryTangentU[i]);
+      geometryTangentV[i] = toTangent(geometryTangentV[i]);
     }
     // Space 0's geometry frame is the frame itself, so it lands on the
     // axes exactly rather than within rounding of them, which is what
     // this function documents.
-    geometry_normal = {0, 0, 1};
-    geometry_tangent_u[0] = {1, 0, 0};
-    geometry_tangent_v[0] = {0, 1, 0};
+    geometryNormal = {0, 0, 1};
+    geometryTangentU[0] = {1, 0, 0};
+    geometryTangentV[0] = {0, 1, 0};
   }
 
 public:
@@ -414,39 +414,39 @@ public:
   /// \note
   /// The host is responsible for the lifetime of whatever this points to. It
   /// must remain valid for at least as long as the `State` that refers to it.
-  void *user_data{};
+  void *userData{};
 
   /// The wavelengths in nanometers, must be sorted in increasing order!
-  const float *wavelength_base{};
+  const float *wavelengthBase{};
 
   /// The minimum wavelength in nanometers.
-  float wavelength_min{};
+  float wavelengthMin{};
 
   /// The maximum wavelength in nanometers.
-  float wavelength_max{};
+  float wavelengthMax{};
 
   /// If non-null, this necessarily points to `wavelengthBaseMax`
   /// per-band quadrature weights in nanometers: the effective width of
   /// each band, for integrating spectral quantities over a non-uniform
   /// wavelength grid. Null means the uniform default of
-  /// `(wavelength_max - wavelength_min) / wavelengthBaseMax` per band,
+  /// `(wavelengthMax - wavelengthMin) / wavelengthBaseMax` per band,
   /// which is what color-to-RGB conversion has always assumed.
-  const float *wavelength_weight{};
+  const float *wavelengthWeight{};
 
   /// The meters per scene unit.
-  float meters_per_scene_unit{1.0f};
+  float metersPerSceneUnit{1.0f};
 
   /// The animation time.
-  float animation_time{0.0f};
+  float animationTime{0.0f};
 
   /// The object ID.
-  int object_id{};
+  int objectId{};
 
   /// If applicable, the Ptex face ID.
-  int ptex_face_id{};
+  int ptexFaceId{};
 
   /// If applicable, the Ptex face UV.
-  float2 ptex_face_uv{};
+  float2 ptexFaceUV{};
 
   /// The position or ray intersection point in object space.
   float3 position{};
@@ -469,39 +469,40 @@ public:
   float3 normal{0, 0, 1};
 
   /// The geometry normal in object space.
-  float3 geometry_normal{0, 0, 1};
+  float3 geometryNormal{0, 0, 1};
 
+  // TODO Lift to `namespace smdl { }` scope?
   /// The max supported number of texture spaces.
   ///
   /// \note
   /// Half of `State` scales with this, so it is set to what materials
   /// actually index: a base space and an optional second one, which is as
   /// many as any of the geometry paths fill. A constant index past it is a
-  /// compile error in SMDL; `texture_space_max` gates the rest, and
+  /// compile error in SMDL; `textureSpaceCount` gates the rest, and
   /// `finalize()` clamps it.
   static constexpr size_t TEXTURE_SPACE_MAX = 2;
 
   /// The number of texture spaces, clamped to `TEXTURE_SPACE_MAX`.
-  int texture_space_max{1};
+  int textureSpaceCount{1};
 
   /// The texture coordinates.
-  float3 texture_coordinate[TEXTURE_SPACE_MAX]{};
+  float3 textureCoordinate[TEXTURE_SPACE_MAX]{};
 
   /// The texture tangent U vector(s) in object space.
-  float3 texture_tangent_u[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
-                                                 float3{1, 0, 0}};
+  float3 textureTangentU[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
+                                               float3{1, 0, 0}};
 
   /// The texture tangent V vector(s) in object space.
-  float3 texture_tangent_v[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
-                                                 float3{0, 1, 0}};
+  float3 textureTangentV[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
+                                               float3{0, 1, 0}};
 
   /// The geometry tangent U vector(s) in object space.
-  float3 geometry_tangent_u[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
-                                                  float3{1, 0, 0}};
+  float3 geometryTangentU[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
+                                                float3{1, 0, 0}};
 
   /// The geometry tangent V vector(s) in object space.
-  float3 geometry_tangent_v[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
-                                                  float3{0, 1, 0}};
+  float3 geometryTangentV[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
+                                                float3{0, 1, 0}};
 
   /// The tangent-to-object matrix.
   ///
@@ -513,14 +514,14 @@ public:
   ///
   /// Do not populate this!
   ///
-  /// Instead call `finalize_and_apply_internal_space_conventions()`
-  /// to compute this from `geometry_tangent_u[0]`, `geometry_tangent_v[0]`,
-  /// `geometry_normal`, and `position`.
+  /// Instead call `finalize()` to compute this from
+  /// `geometryTangentU[0]`, `geometryTangentV[0]`, `geometryNormal`, and
+  /// `position`.
   ///
-  float4x4 tangent_to_object_matrix{float4x4(1.0f)};
+  float4x4 tangentToObject{float4x4(1.0f)};
 
   /// The object-to-world matrix.
-  float4x4 object_to_world_matrix{float4x4(1.0f)};
+  float4x4 objectToWorld{float4x4(1.0f)};
 
   /// The random number generator for stochastic evaluation.
   ///
@@ -550,42 +551,42 @@ public:
   /// exactly like 1, i.e., highest fidelity.
   ///
   /// NOTE: This is non-standard!
-  int scattering_order{};
+  int scatteringOrder{};
 
   /// The accumulated distance in scene units traveled by the path to reach
   /// this shading point. Zero conventionally means "not provided" and implies
   /// highest fidelity.
   ///
   /// \note This is non-standard!
-  float travel_distance{};
+  float travelDistance{};
 
   /// The pixel ray cone spread angle in radians, using the small-angle
-  /// convention that the cone width grows by `cone_angle` per unit
+  /// convention that the cone width grows by `coneAngle` per unit
   /// distance. Zero means "no cone", i.e., level-of-detail off.
   ///
   /// \note This is non-standard!
-  float cone_angle{};
+  float coneAngle{};
 
   /// The pixel ray cone width in scene units at the shading point. Zero means
   /// "no footprint", i.e., level-of-detail off.
   ///
   /// \note This is non-standard!
-  float cone_width{};
+  float coneWidth{};
 
   /// The UV texture density of each texture space: UV area per world-space
-  /// area of the underlying geometry, so `cone_width * sqrt(texture_density)`
+  /// area of the underlying geometry, so `coneWidth * sqrt(textureDensity)`
   /// is a UV-space filter width. Zero means "unknown", i.e., no filtering.
   /// Renderers must guard the defining division against degenerate geometry:
   /// a degenerate triangle must produce 0, never infinity.
   ///
   /// \note This is non-standard!
-  float texture_density[TEXTURE_SPACE_MAX]{};
+  float textureDensity[TEXTURE_SPACE_MAX]{};
 
   /// The max supported number of vertex color sets.
   ///
   /// \note
   /// One: a base RGBA set, which is as many as any geometry path fills. A
-  /// constant index past it is a compile error in SMDL; `vertex_color_max`
+  /// constant index past it is a compile error in SMDL; `vertexColorCount`
   /// gates the rest, and `finalize()`
   /// clamps it.
   ///
@@ -596,38 +597,39 @@ public:
   /// `VERTEX_COLOR_MAX`. Zero means "not provided".
   ///
   /// \note This is non-standard!
-  int vertex_color_max{};
+  int vertexColorCount{};
 
+  // TODO Lift to `namespace smdl { }` scope?
   /// The vertex colors: RGBA as the geometry stores them, interpolated to
   /// the shading point, with no color management and no premultiplication.
   /// White where no set is present, so an ungated read still behaves.
   ///
   /// \note This is non-standard!
-  float4 vertex_color[VERTEX_COLOR_MAX] = {float4{1, 1, 1, 1}};
+  float4 vertexColor[VERTEX_COLOR_MAX] = {float4{1, 1, 1, 1}};
 };
 
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.
 class SMDL_EXPORT AlbedoLUT final {
 public:
   /// The number of samples of the cosine of the viewing angle.
-  const int num_cos_theta = 0;
+  const int numCosTheta = 0;
 
   /// The number of samples of the roughness parameter.
-  const int num_roughness = 0;
+  const int numRoughness = 0;
 
   /// The directional albedo.
   ///
   /// \note
-  /// This must point to `num_cos_theta` rows by `num_roughness` values.
+  /// This must point to `numCosTheta` rows by `numRoughness` values.
   ///
-  const float *const directional_albedo = nullptr;
+  const float *const directionalAlbedo = nullptr;
 
   /// The average albedo.
   ///
   /// \note
-  /// This must point to `num_roughness` values.
+  /// This must point to `numRoughness` values.
   ///
-  const float *const average_albedo = nullptr;
+  const float *const averageAlbedo = nullptr;
 };
 
 /// \}

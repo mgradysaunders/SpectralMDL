@@ -205,7 +205,7 @@ export float min_value_wavelength(const color a) {
       imin = i;
     }
   }
-  return $state.wavelength_base[imin];
+  return $state.wavelengthBase[imin];
 }
 
 /// The wavelength in nanometers at which the color attains its largest component.
@@ -219,7 +219,7 @@ export float max_value_wavelength(const color a) {
       imax = i;
     }
   }
-  return $state.wavelength_base[imax];
+  return $state.wavelengthBase[imax];
 }
 
 /// The average of all components of the value.
@@ -310,7 +310,7 @@ export color emission_color(const color value) = value;
 export color blackbody(const float temperature) {
   // A series expansion of Planck's law, avoiding the `#pow` and `#exp` of
   // the direct form.
-  const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
+  const auto t(color($state.wavelengthBase) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
   res = 1 + 3 * t * res;
   res = 1 + 4 * t * res;
@@ -330,6 +330,6 @@ export float eval_at_wavelength(color a, float wavelength) {
     return a[0];
   } else {
     return _polylineLerp(
-             $WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
+             $WAVELENGTH_BASE_MAX, &$state.wavelengthBase[0], &a[0], wavelength);
   }
 }

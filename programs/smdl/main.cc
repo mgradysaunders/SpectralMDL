@@ -17,7 +17,7 @@
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
-  smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
+  smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>();
   const auto opts{parseCommandLine(argc, argv)};
   // Before anything is logged: the sink above is already in place, and
   // the parse itself says nothing, so this is the first point at which a
@@ -34,7 +34,7 @@ int main(int argc, char **argv) try {
     runVolume(opts);
     return EXIT_SUCCESS;
   }
-  if (opts.utility.profiling) smdl::profilerInitialize();
+  if (opts.utility.isProfiling) smdl::profilerInitialize();
   // The compiler outlives every use of the code it emits, because the
   // JIT'd material code embeds absolute pointers into the data it owns.
   auto compiler{smdl::Compiler{}};
@@ -62,7 +62,7 @@ int main(int argc, char **argv) try {
   case Subcommand::VOLUME:
     break; // Handled above
   }
-  if (opts.utility.profiling)
+  if (opts.utility.isProfiling)
     smdl::profilerFinalize(opts.utility.profile.c_str());
   return EXIT_SUCCESS;
 } catch (const smdl::Error &error) {

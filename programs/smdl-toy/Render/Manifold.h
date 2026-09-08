@@ -20,6 +20,7 @@
 
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.
+using smdl::buildManifoldSeedFrame;
 using smdl::isManifoldReceiver;
 using smdl::isSameManifoldSolution;
 using smdl::MANIFOLD_IDENTITY_FRACTION;
@@ -34,7 +35,6 @@ using smdl::ManifoldConnection;
 using smdl::ManifoldConnectionVertex;
 using smdl::manifoldFrameSeed;
 using smdl::manifoldReciprocal;
-using smdl::manifoldSeedFrame;
 using smdl::ManifoldStats;
 using smdl::ManifoldSurfaces;
 using smdl::ManifoldTarget;
@@ -101,8 +101,9 @@ public:
   SceneManifoldSurfaces(const Scene &scene, PathTime time) noexcept
       : scene(scene), time(time) {}
 
-  [[nodiscard]] bool geometry(const ManifoldVertex &vertex,
-                              smdl::ManifoldGeometry &geometry) const override;
+  [[nodiscard]] bool
+  evaluateGeometry(const ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override;
 
   [[nodiscard]] bool project(const ManifoldVertex &pin, const float3 &origin,
                              const float3 &target,
@@ -119,11 +120,12 @@ public:
 /// `MANIFOLD_NORMAL_STEP_WORLD` target picks, and
 /// the positions and position partials from the mesh unchanged. False
 /// when the hook was not compiled or the hook's normal is degenerate.
-/// `SceneManifoldSurfaces::geometry()` is the caller; this is exposed
+/// `SceneManifoldSurfaces::evaluateGeometry()` is the caller; this is exposed
 /// on its own so a host check can difference an unmapped material's
 /// field against the analytic mesh geometry.
-[[nodiscard]] bool manifoldHookGeometry(const Scene &scene, const Hit &hit,
-                                        ManifoldGeometry &geometry);
+[[nodiscard]] bool evaluateManifoldHookGeometry(const Scene &scene,
+                                                const Hit &hit,
+                                                ManifoldGeometry &geometry);
 
 /// One instance a reflective connection may bounce off: a marked mesh
 /// or shape, with the reflection lobes it claims and the area-weighted
@@ -245,11 +247,11 @@ private:
 /// assignment deliberately have exactly one implementation.
 ///
 /// `wl` is the direction of travel along the straight segment, toward
-/// the light. `mat` is modified in place by the exterior IOR
+/// the light. `material` is modified in place by the exterior IOR
 /// resolution; `maxGlossyAlpha` is the claim's width gate, passed
 /// through so both halves of the estimator gate identically.
 [[nodiscard]] bool makeManifoldSeed(const MediumStack *medium,
-                                    smdl::JIT::MaterialInstance &mat,
+                                    smdl::JIT::Material &material,
                                     const Hit &hit, const float3 &wl,
                                     float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);

@@ -201,7 +201,7 @@ float warp(const float p, const float2 c) {
 /// reflectance spectrum.
 ///
 /// The 6 component curves in `WOODY_TABLE_CURVES` are interpolated onto
-/// `$state.wavelength_base` and combined with weights derived from the
+/// `$state.wavelengthBase` and combined with weights derived from the
 /// parameters, each passing through a monotone cubic warp and an affine map
 /// onto its fit coordinate. The logistic link keeps every output strictly in
 /// (0, 1) at every point of the parameter box. RMSE ~1e-3 against the

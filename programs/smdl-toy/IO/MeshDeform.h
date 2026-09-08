@@ -57,10 +57,10 @@ public:
   float speed{1.0f};
 
   /// Clamp to the clip's ends instead of looping.
-  bool once{};
+  bool shouldPlayOnce{};
 
   /// `animation off`: never evaluate, whatever the file carries.
-  bool off{};
+  bool isOff{};
 
   /// Was a clip named or indexed at all?
   [[nodiscard]] bool hasClip() const noexcept {

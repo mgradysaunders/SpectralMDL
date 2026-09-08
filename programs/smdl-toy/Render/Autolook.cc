@@ -37,11 +37,12 @@ public:
 
 } // namespace
 
+namespace {
 // Every framed vertex in world space, gathered once so the per-candidate
 // passes are pure arithmetic, plus the axis-aligned bounds that `lookTo`
 // centers on. Runs after `commit()`, so refinement and displacement are
 // already in the vertices.
-[[nodiscard]] static std::vector<float3>
+[[nodiscard]] std::vector<float3>
 gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
   auto points{std::vector<float3>()};
   for (size_t i = 0; i < scene.meshInstances.size(); i++) {
@@ -80,9 +81,9 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
 // frustum plane is a linear constraint on the position, so four min
 // reductions decide it. The binding axis ends tangent to the geometry;
 // the slack axis is centered independently of the distance.
-[[nodiscard]] static float3 solvePosition(const std::vector<float3> &points,
-                                          const AutolookBasis &basis,
-                                          float tanX, float tanY) {
+[[nodiscard]] float3 solvePosition(const std::vector<float3> &points,
+                                   const AutolookBasis &basis, float tanX,
+                                   float tanY) {
   float A{+INF}, B{+INF}, C{+INF}, D{+INF};
   for (const auto &q : points) {
     const float x{smdl::dot(q, basis.right)};
@@ -97,6 +98,7 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
   return 0.5f * (B - A) * basis.right + 0.5f * (D - C) * basis.up +
          pz * basis.forward;
 }
+} // namespace
 
 namespace {
 
@@ -127,10 +129,11 @@ public:
 
 } // namespace
 
-[[nodiscard]] static ProbeResult probeFrame(const Scene &scene,
-                                            const AutolookBasis &basis,
-                                            const float3 &position, float tanX,
-                                            float tanY, uint32_t skipInstance) {
+namespace {
+[[nodiscard]] ProbeResult probeFrame(const Scene &scene,
+                                     const AutolookBasis &basis,
+                                     const float3 &position, float tanX,
+                                     float tanY, uint32_t skipInstance) {
   constexpr int RESOLUTION = 96;
   // The solid angle one probe pixel stands for, taken as uniform across
   // the frame: the off-axis error is identical across candidates, and
@@ -154,15 +157,15 @@ public:
       numHits++;
       visibleArea += ray.tmax * ray.tmax * pixelSolidAngle /
                      std::max(std::abs(smdl::dot(hit.Ng, ray.dir)), 0.05f);
-      if (hit.material) {
+      if (hit.materialDef) {
         // A statically thin-walled material, or one declaring a backface
         // surface, legitimately shows its back (foliage cards); an
         // unknown thin-walled bit stays conservative and counts.
-        const bool thinWalled{
-            (hit.material->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) &&
-            (hit.material->staticFlags & smdl::MATERIAL_THIN_WALLED)};
-        if (thinWalled ||
-            (hit.material->staticFlags & smdl::MATERIAL_HAS_BACKFACE))
+        const bool isThinWalled{
+            (hit.materialDef->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) &&
+            (hit.materialDef->staticFlags & smdl::MATERIAL_THIN_WALLED)};
+        if (isThinWalled ||
+            (hit.materialDef->staticFlags & smdl::MATERIAL_HAS_BACKFACE))
           continue;
       }
       if (smdl::dot(hit.Ng, ray.dir) > 0) numBackfacing++;
@@ -175,6 +178,7 @@ public:
       numHits > 0 ? float(numBackfacing) / float(numHits) : 0.0f;
   return result;
 }
+} // namespace
 
 AutolookResult solveAutolook(const Scene &scene,
                              const AutolookOptions &options) {
@@ -217,15 +221,15 @@ AutolookResult solveAutolook(const Scene &scene,
     float minFraction{+INF};
     for (const auto &candidate : candidates)
       minFraction = std::min(minFraction, candidate.backfaceFraction);
-    const bool cull{!options.ignoreBackfaces && minFraction <= 0.1f};
-    if (!options.ignoreBackfaces && !cull)
+    const bool shouldCull{!options.ignoreBackfaces && minFraction <= 0.1f};
+    if (!options.ignoreBackfaces && !shouldCull)
       SMDL_LOG_INFO("Autolook: every view shows at least ",
                     100.0f * minFraction,
                     "% backfaces, so they are treated as two-sided "
                     "geometry rather than as a wrong side");
     float bestArea{-INF};
     for (size_t i = 0; i < candidates.size(); i++) {
-      if (cull &&
+      if (shouldCull &&
           candidates[i].backfaceFraction > minFraction + BACKFACE_TOLERANCE)
         continue;
       if (candidates[i].visibleArea > bestArea) {

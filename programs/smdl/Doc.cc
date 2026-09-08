@@ -31,8 +31,9 @@ constexpr auto docColorMetadata{llvm::HighlightColor::Note};
 class DocTextPrinter final {
 public:
   DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
-                 bool includeHidden)
-      : mOS(os), mColorMode(colorMode), mIncludeHidden(includeHidden) {}
+                 bool shouldIncludeHidden)
+      : mOS(os), mColorMode(colorMode),
+        mShouldIncludeHidden(shouldIncludeHidden) {}
 
   // Print a module as its documentation text plus a listing of the
   // declarations in it.
@@ -74,7 +75,7 @@ public:
 
 private:
   [[nodiscard]] bool isHidden(const smdl::DocEntry &entry) const {
-    return entry.isHidden() && !mIncludeHidden;
+    return entry.isHidden() && !mShouldIncludeHidden;
   }
 
   void emit(std::string_view text, std::optional<llvm::HighlightColor> color) {
@@ -135,13 +136,13 @@ private:
       anyParamDocs |= !param.docText.empty();
     if (!anyParamDocs) return;
     mOS << '\n';
-    auto afterDocText{false};
+    auto isAfterDocText{false};
     for (const auto &param : entry.params) {
       if (param.docText.empty()) continue;
-      if (afterDocText) mOS << '\n';
+      if (isAfterDocText) mOS << '\n';
       emitIndented(param.name + ":", 2, docColorName);
       emitIndented(param.docText, 4, std::nullopt);
-      afterDocText = true;
+      isAfterDocText = true;
     }
   }
 
@@ -150,19 +151,19 @@ private:
   // that multi-line texts do not run into the next signature.
   void printMembers(const smdl::DocEntry &entry) {
     auto anyMembers{false};
-    auto afterDocText{false};
+    auto isAfterDocText{false};
     for (const auto &member : entry.members) {
       if (isHidden(member)) continue;
       if (!anyMembers) {
         mOS << '\n';
         anyMembers = true;
-      } else if (afterDocText) {
+      } else if (isAfterDocText) {
         mOS << '\n';
       }
       emitSignature(member, 2);
       if (!member.docText.empty())
         emitIndented(member.docText, 4, std::nullopt);
-      afterDocText = !member.docText.empty();
+      isAfterDocText = !member.docText.empty();
     }
   }
 
@@ -170,7 +171,7 @@ private:
 
   llvm::ColorMode mColorMode;
 
-  bool mIncludeHidden;
+  bool mShouldIncludeHidden;
 };
 
 // Add the builtin modules named by the queries, or all of them, to the
@@ -210,7 +211,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   // which a `std::string` cannot carry.
   auto errorCode{std::error_code{}};
   auto outputFile{std::optional<llvm::raw_fd_ostream>{}};
-  if (opts.output.fileName.given) {
+  if (opts.output.fileName.wasGiven) {
     outputFile.emplace(opts.output.fileName.value, errorCode);
     if (errorCode)
       throw smdl::Error(smdl::concat("cannot open ",
@@ -233,11 +234,11 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {
     // Whole-database output. Symbol queries only participate by loading
     // the builtin modules they name.
-    if (!opts.doc.includeHidden) docs.removeHidden();
+    if (!opts.doc.shouldIncludeHidden) docs.removeHidden();
     os << (opts.doc.format == DocFormat::JSON ? docs.printJSON()
                                               : docs.printMarkdown());
   } else {
-    auto printer{DocTextPrinter(os, colorMode, opts.doc.includeHidden)};
+    auto printer{DocTextPrinter(os, colorMode, opts.doc.shouldIncludeHidden)};
     for (const auto &query : opts.docQueries) {
       const smdl::DocModule *moduleMatch{};
       for (const auto &mod : docs.modules)

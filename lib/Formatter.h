@@ -104,13 +104,13 @@ private:
 
   /// Is the layout allowed to depend on how wide the line is?
   [[nodiscard]] bool isColumnAware() const {
-    return mOptions.softColumnLimit > 0 && !mOptions.compact;
+    return mOptions.softColumnLimit > 0 && !mOptions.isCompact;
   }
 
   /// May `ALIGN_INDENT` align to the given column? Aligning further right
   /// than half the line leaves too little of it to be worth anything, which
   /// is how continuations end up crammed against the right margin.
-  [[nodiscard]] bool mayAlignTo(int column) const {
+  [[nodiscard]] bool canAlignTo(int column) const {
     return !isColumnAware() || column <= mOptions.softColumnLimit / 2;
   }
 
@@ -121,7 +121,7 @@ private:
   /// `// smdl format off`, where the output is about to be replaced by the
   /// verbatim input anyway, and false wherever the rest of the line is
   /// already spoken for.
-  [[nodiscard]] bool mayTrial() const {
+  [[nodiscard]] bool canTrial() const {
     return isColumnAware() && mNumTrials < 2 && !mFormatOff && !mHasMoreOnLine;
   }
 
@@ -129,8 +129,8 @@ private:
   /// comments, which may still preserve `///` and `///<` documentation
   /// comments.
   [[nodiscard]] bool keepComment(llvm::StringRef inSrc) const {
-    return !mOptions.noComments ||
-           (mOptions.keepDocComments && inSrc.starts_with("///"));
+    return !mOptions.shouldDropComments ||
+           (mOptions.shouldKeepDocComments && inSrc.starts_with("///"));
   }
 
   [[nodiscard]] bool nextCommentForcesNewLine() const;
@@ -142,7 +142,7 @@ private:
   void writeDelimNewLine();
 
   void writeIndentIfNewLine() {
-    if (lastOutput() == '\n' && !mOptions.compact)
+    if (lastOutput() == '\n' && !mOptions.isCompact)
       for (int i = 0; i < mIndent; i++) mOutputSrc += ' ';
   }
 
@@ -172,16 +172,16 @@ private:
   /// goes where it is, or on the next line at the incremented indent, or
   /// one item per line there, whichever is the narrowest layout that is
   /// worth taking. A trailing comma or an intervening comment forces one
-  /// item per line. `mayBreak` is false for a list that must not move at
+  /// item per line. `canBreak` is false for a list that must not move at
   /// all: one nothing encloses, where a break would leave the keyword
   /// that introduces it dangling, and one that is pure data.
   ///
   /// The caller must have written the opening delimiter and pushed the
   /// indent the broken forms are relative to.
   template <typename Items>
-  void writeList(size_t size, bool forceNewLines, bool mayBreak,
+  void writeList(size_t size, bool shouldForceNewLines, bool canBreak,
                  Items &&writeItems) {
-    if (mOptions.compact && size < 4) forceNewLines = false;
+    if (mOptions.isCompact && size < 4) shouldForceNewLines = false;
     // Everything inside a list of several items written on one line has
     // text after it on that line, so nothing in there may rearrange itself
     // over several: the text that follows would land in the middle of the
@@ -199,8 +199,8 @@ private:
       write(INCREMENT_INDENT, DELIM_NEWLINE);
       writeItems(DELIM_NEWLINE);
     }};
-    if (!forceNewLines && !nextCommentForcesNewLine()) {
-      if (mayBreak && mayTrial()) {
+    if (!shouldForceNewLines && !nextCommentForcesNewLine()) {
+      if (canBreak && canTrial()) {
         auto here{measureInPlace(writeHere)};
         auto onNextLine{measureInPlace(writeOnNextLine)};
         // Give the list the next line to itself when it fits there, the
@@ -232,7 +232,7 @@ private:
   /// out better there. Anything that already fits where it is, a `let`
   /// block say, stays where it is.
   template <typename... Ts> void writeAfterEqual(Ts &&...args) {
-    if (mayTrial()) {
+    if (canTrial()) {
       auto here{
           measureInPlace([&] { write(DELIM_UNNECESSARY_SPACE, args...); })};
       auto onNextLine{measureInPlace(
@@ -313,7 +313,7 @@ private:
       writeDelimSpace();
       break;
     case DELIM_UNNECESSARY_SPACE:
-      if (mOptions.compact)
+      if (mOptions.isCompact)
         writeDelimNone();
       else
         writeDelimSpace();
@@ -333,7 +333,7 @@ private:
       break;
     case ALIGN_INDENT:
       if (lastOutput() != '\n')
-        if (auto column{currentColumn()}; mayAlignTo(column)) mIndent = column;
+        if (auto column{currentColumn()}; canAlignTo(column)) mIndent = column;
       break;
     case PUSH_INDENT:
       mIndentStack.push_back(mIndent);
@@ -374,7 +374,7 @@ private:
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
     writeList(
         decl.importPathWrappers.size(), decl.hasTrailingComma(),
-        /*mayBreak=*/false, [&](Delim delim) {
+        /*canBreak=*/false, [&](Delim delim) {
           for (const auto &[importPath, srcComma] : decl.importPathWrappers)
             write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
         });
@@ -414,7 +414,7 @@ private:
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
     writeList(decl.names.size(), decl.hasTrailingComma(),
-              /*mayBreak=*/false, [&](Delim delim) {
+              /*canBreak=*/false, [&](Delim delim) {
                 for (const auto &[srcName, srcComma] : decl.names)
                   write(srcName, srcComma,
                         srcComma.empty() ? DELIM_NONE : delim);
@@ -457,11 +457,11 @@ private:
     } else {
       writeWithMoreOnLine(expr.exprLhs);
       // Avoid `+++` and `---` when the left operand ends with `++` or `--`
-      bool mustHaveSpaceBefore{
+      bool needsSpaceBefore{
           (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
           (expr.op == AST::BINOP_SUB && lastOutput() == '-')};
       write(expr.op == AST::BINOP_COMMA ? DELIM_NONE
-            : mustHaveSpaceBefore       ? DELIM_SPACE
+            : needsSpaceBefore          ? DELIM_SPACE
                                         : DELIM_UNNECESSARY_SPACE,
             expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
     }
@@ -486,7 +486,7 @@ private:
   void write(const AST::LiteralFloat &expr) {
     // Only minify the spelling in compact mode! Otherwise preserve
     // however the author wrote it.
-    if (mOptions.compact) {
+    if (mOptions.isCompact) {
       writeMinifiedFloat(expr);
     } else {
       write(expr.srcValue);
@@ -537,7 +537,7 @@ private:
       if (lastOutput() != '\n') write(INCREMENT_INDENT, ALIGN_INDENT);
     }};
     write(PUSH_INDENT);
-    if (mayTrial() && !fits(measureInPlace(writeOnOneLine)) &&
+    if (canTrial() && !fits(measureInPlace(writeOnOneLine)) &&
         fits(measureInPlace([&] { indent(), writeOnThreeLines(); }))) {
       indent(), writeOnThreeLines();
     } else {
@@ -566,7 +566,7 @@ private:
       write(expr.expr, expr.srcOp);
     } else {
       // Don't write unnecessary plus in compact mode
-      if (expr.op == AST::UNOP_POS && mOptions.compact) {
+      if (expr.op == AST::UNOP_POS && mOptions.isCompact) {
         write(DELIM_NONE);
         consumeInput(expr.srcOp.size());
         write(expr.expr);
@@ -626,7 +626,7 @@ private:
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
     writeList(stmt.exprWrappers.size(), stmt.hasTrailingComma(),
-              /*mayBreak=*/false, [&](Delim delim) {
+              /*canBreak=*/false, [&](Delim delim) {
                 for (const auto &[expr, srcComma] : stmt.exprWrappers)
                   write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
               });

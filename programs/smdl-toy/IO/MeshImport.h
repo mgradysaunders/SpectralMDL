@@ -51,12 +51,12 @@ public:
   /// transform, keeping its rotation and scale, so that an object
   /// authored in place arrives at the origin ready to be put somewhere
   /// else. With no patterns this recenters the file as a whole.
-  bool recenter{};
+  bool shouldRecenter{};
 
   /// A key that distinguishes two selections of the same file, for
   /// callers that cache or merge by (file, selection).
   [[nodiscard]] std::string key() const {
-    auto result{std::string(recenter ? "recenter" : "")};
+    auto result{std::string(shouldRecenter ? "recenter" : "")};
     for (const auto &pattern : patterns) result += '\n', result += pattern;
     return result;
   }

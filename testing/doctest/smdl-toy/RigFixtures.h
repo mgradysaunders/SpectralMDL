@@ -24,18 +24,18 @@ constexpr float SIN45 = 0.70710678f;
 /// buffer, and the scene-specific members supplied by the caller.
 class GltfBuilder final {
 public:
-  explicit GltfBuilder(std::string binName) : binName(std::move(binName)) {}
+  explicit GltfBuilder(std::string binName) : mBinName(std::move(binName)) {}
 
   /// Append float data as an accessor of `type` with `components` per
   /// element; returns the accessor index. `bounds` writes `min` and `max`,
   /// which the format requires for positions.
   uint32_t floats(const std::vector<float> &data, const char *type,
-                  size_t components, bool bounds = false) {
+                  size_t components, bool shouldEmitBounds = false) {
     const auto view{addView(data.data(), data.size() * sizeof(float), 4)};
     auto accessor{smdl::concat(
         "{\"bufferView\":", view, ",\"componentType\":5126,\"count\":",
         data.size() / components, ",\"type\":\"", type, "\"")};
-    if (bounds) {
+    if (shouldEmitBounds) {
       auto lower{std::vector<float>(components, +1e30f)};
       auto upper{std::vector<float>(components, -1e30f)};
       for (size_t i = 0; i < data.size(); i++) {
@@ -44,26 +44,26 @@ public:
       }
       accessor += ",\"min\":" + numbers(lower) + ",\"max\":" + numbers(upper);
     }
-    accessors.push_back(accessor + "}");
-    return uint32_t(accessors.size() - 1);
+    mAccessors.push_back(accessor + "}");
+    return uint32_t(mAccessors.size() - 1);
   }
 
   /// Append unsigned short data; returns the accessor index.
   uint32_t ushorts(const std::vector<uint16_t> &data, const char *type,
                    size_t components) {
     const auto view{addView(data.data(), data.size() * sizeof(uint16_t), 2)};
-    accessors.push_back(smdl::concat(
+    mAccessors.push_back(smdl::concat(
         "{\"bufferView\":", view, ",\"componentType\":5123,\"count\":",
         data.size() / components, ",\"type\":\"", type, "\"}"));
-    return uint32_t(accessors.size() - 1);
+    return uint32_t(mAccessors.size() - 1);
   }
 
   /// The whole document around `body`, the scene-specific members.
   [[nodiscard]] std::string json(const std::string &body) const {
     return smdl::concat(
-        "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\"", binName,
+        "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\"", mBinName,
         "\",\"byteLength\":", bytes.size(), "}],\"bufferViews\":[",
-        join(bufferViews), "],\"accessors\":[", join(accessors), "],", body,
+        join(mBufferViews), "],\"accessors\":[", join(mAccessors), "],", body,
         "}");
   }
 
@@ -84,9 +84,9 @@ private:
     while (bytes.size() % alignment != 0) bytes.push_back('\0');
     const auto offset{bytes.size()};
     bytes.append(static_cast<const char *>(data), size);
-    bufferViews.push_back(smdl::concat("{\"buffer\":0,\"byteOffset\":", offset,
-                                       ",\"byteLength\":", size, "}"));
-    return uint32_t(bufferViews.size() - 1);
+    mBufferViews.push_back(smdl::concat("{\"buffer\":0,\"byteOffset\":", offset,
+                                        ",\"byteLength\":", size, "}"));
+    return uint32_t(mBufferViews.size() - 1);
   }
 
   [[nodiscard]] static std::string join(const std::vector<std::string> &parts) {
@@ -96,9 +96,9 @@ private:
     return text;
   }
 
-  std::string binName{};
-  std::vector<std::string> bufferViews{};
-  std::vector<std::string> accessors{};
+  std::string mBinName{};
+  std::vector<std::string> mBufferViews{};
+  std::vector<std::string> mAccessors{};
 };
 
 /// The unit quad in the XY plane, facing +Z.

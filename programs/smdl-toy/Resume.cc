@@ -63,7 +63,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
   for (size_t i = 0; i < tokens.size(); i++) {
     const auto &token{tokens[i]};
     bool isSessionOnly{false};
-    bool takesValue{false};
+    bool doesTakeValue{false};
     bool hasAttachedValue{false};
     if (!token.empty() && token[0] == '-') {
       auto name{token.substr(token.find_first_not_of('-'))};
@@ -73,7 +73,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
       for (const auto *sessionOnlyName : SESSION_ONLY_VALUES)
         if (name == sessionOnlyName) {
           isSessionOnly = true;
-          takesValue = true;
+          doesTakeValue = true;
           break;
         }
       if (!isSessionOnly)
@@ -84,7 +84,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
           }
     }
     if (isSessionOnly) {
-      if (takesValue && !hasAttachedValue && i + 1 < tokens.size()) i++;
+      if (doesTakeValue && !hasAttachedValue && i + 1 < tokens.size()) i++;
       continue;
     }
     result.push_back(token);
@@ -97,28 +97,28 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
 ResumedSequence resumeSequence(const Options &opts, int2 resolution,
                                int4 window) {
   auto result{ResumedSequence{}};
-  result.requested = !opts.image.resume.empty();
+  result.wasRequested = !opts.image.resume.empty();
   result.sampleIndexBase = opts.render.sampling.sampleOffset;
   // A fresh sequence begins where `-sample-offset` says with an empty
   // tally; a resumed one takes both off the file below.
   result.header.sampleOffset = opts.render.sampling.sampleOffset;
-  if (result.requested) {
+  if (result.wasRequested) {
     // A wholly missing data-plus-header pair is not an error: it makes
     // this run the first session of an intended sequence, rendering
     // from scratch and writing the file for the next -resume. Half a
     // pair is a damaged prior session, and starting fresh over it
     // would clobber what is left, so that stays fatal.
     const auto &resumeName{opts.image.resume};
-    const bool haveData{smdl::exists(resumeName)};
-    const bool haveHeader{smdl::exists(resumeName + ".hdr")};
-    if (haveData != haveHeader)
+    const bool hasData{smdl::exists(resumeName)};
+    const bool hasHeader{smdl::exists(resumeName + ".hdr")};
+    if (hasData != hasHeader)
       throw smdl::Error(smdl::concat(
           "cannot resume: ",
-          smdl::Quoted(haveData ? resumeName : resumeName + ".hdr"),
+          smdl::Quoted(hasData ? resumeName : resumeName + ".hdr"),
           " exists but ",
-          smdl::Quoted(haveData ? resumeName + ".hdr" : resumeName),
+          smdl::Quoted(hasData ? resumeName + ".hdr" : resumeName),
           " does not; refusing to start fresh over a damaged session"));
-    if (!haveData) {
+    if (!hasData) {
       // -spp 0 re-runs the output stage, which is meaningless with
       // nothing to load; worse, the 0-sample file it would write has
       // no 'render spp' field and could not itself be resumed.
@@ -130,9 +130,9 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
           "Starting a new render sequence: ", smdl::Quoted(resumeName),
           " does not exist yet, this session writes it");
     }
-    result.loaded = haveData;
+    result.wasLoaded = hasData;
   }
-  if (!result.loaded) return result;
+  if (!result.wasLoaded) return result;
   auto &film{result.film};
   auto &info{result.info};
   auto &header{result.header};
@@ -170,7 +170,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
                   "samples are independent of the first session's rather than "
                   "jointly stratified (still unbiased, noise just improves "
                   "more slowly)");
-  if (header.wavelengthJitter != opts.render.grid.jitter)
+  if (header.hasWavelengthJitter != opts.render.grid.shouldJitter)
     SMDL_LOG_WARN(
         "resuming across a -wavelength-jitter change: a jittered band "
         "holds the mean radiance over the band and an unjittered one holds "

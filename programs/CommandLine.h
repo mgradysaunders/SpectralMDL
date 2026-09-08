@@ -41,14 +41,14 @@ template <typename T> struct Flag final {
   T value{};
 
   /// Did the command line actually give it?
-  bool given{};
+  bool wasGiven{};
 };
 
 /// Resolve one of the merged settings: the command line if it spoke,
 /// else the scene file if it did, else the flag's own default.
 template <typename T, typename U>
 [[nodiscard]] T pick(const Flag<T> &cli, const std::optional<U> &file) {
-  return !cli.given && file ? T(*file) : cli.value;
+  return !cli.wasGiven && file ? T(*file) : cli.value;
 }
 
 /// A `cl::opt` lowered: the value, and whether the command line gave it.
@@ -84,22 +84,22 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
     return *this;
   }
 
-  [[nodiscard]] bool hasValue() const { return mValid; }
+  [[nodiscard]] bool hasValue() const { return mIsValid; }
 
   [[nodiscard]] const smdl::Vector<T, N> &getValue() const {
-    assert(mValid && "invalid option value");
+    assert(mIsValid && "invalid option value");
     return mValue;
   }
 
   void setValue(const smdl::Vector<T, N> &value) {
     mValue = value;
-    mValid = true;
+    mIsValid = true;
   }
 
   /// Does this hold `value`? Compared component by component, since the
   /// vector `operator==` returns a vector of results.
   [[nodiscard]] bool compare(const smdl::Vector<T, N> &value) const {
-    if (!mValid) return false;
+    if (!mIsValid) return false;
     for (size_t i{}; i < N; i++)
       if (!(mValue[i] == value[i])) return false;
     return true;
@@ -112,7 +112,7 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
 
 private:
   smdl::Vector<T, N> mValue{};
-  bool mValid{};
+  bool mIsValid{};
 };
 
 /// A vector in the comma-separated syntax an option is typed in, so that

@@ -274,7 +274,7 @@ Options parseCommandLine(int argc, char **argv) {
   // Parsed here so a typo fails before anything loads.
   const auto range{parseWavelengthRange(std::string(optWavelengthRange))};
   opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
-  opts.compile.enableDebug = bool(optDebug);
+  opts.compile.isDebugEnabled = bool(optDebug);
   opts.compile.wavelengths =
       resolveWavelengths(range, parseWavelengths(std::string(optWavelengths)));
   opts.compile.wavelengthRange =
@@ -284,14 +284,14 @@ Options parseCommandLine(int argc, char **argv) {
           : range.range;
 
   opts.doc.format = DocFormat(optDocFormat);
-  opts.doc.includeHidden = bool(optDocAll);
+  opts.doc.shouldIncludeHidden = bool(optDocAll);
   opts.doc.allBuiltins = bool(optDocBuiltins);
 
-  opts.format.inPlace = bool(optFormatInPlace);
-  opts.format.compact = bool(optFormatCompact);
-  opts.format.noComments = bool(optFormatNoComments);
-  opts.format.keepDocComments = bool(optFormatKeepDocComments);
-  opts.format.noAnnotations = bool(optFormatNoAnnotations);
+  opts.format.isInPlace = bool(optFormatInPlace);
+  opts.format.isCompact = bool(optFormatCompact);
+  opts.format.shouldDropComments = bool(optFormatNoComments);
+  opts.format.shouldKeepDocComments = bool(optFormatKeepDocComments);
+  opts.format.shouldDropAnnotations = bool(optFormatNoAnnotations);
   opts.format.softColumnLimit = int(optFormatColumns);
 
   opts.output.dumpFormat = smdl::DumpFormat(optDumpFormat);
@@ -312,7 +312,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl.trace.json")
                              : std::string(optProfile);
-  opts.utility.profiling = optProfile.getNumOccurrences() > 0;
+  opts.utility.isProfiling = optProfile.getNumOccurrences() > 0;
 
   opts.volume.gridNames.assign(optVolumeGrids.begin(), optVolumeGrids.end());
   opts.volume.fileName = std::string(optVolumeOutput);

@@ -8,8 +8,8 @@
 #include "Session.h"
 
 void setUpCompiler(const Options &opts, smdl::Compiler &compiler) {
-  compiler.enableDebug = opts.compile.enableDebug;
-  compiler.enableUnitTests = true;
+  compiler.isDebugEnabled = opts.compile.isDebugEnabled;
+  compiler.shouldEmitUnitTests = true;
   compiler.colorMode = opts.utility.colorMode;
   compiler.wavelengthBaseMax = uint32_t(opts.compile.wavelengths.size());
   for (const auto &input : opts.inputs)
@@ -17,7 +17,7 @@ void setUpCompiler(const Options &opts, smdl::Compiler &compiler) {
 }
 
 void writeOutput(const Options &opts, std::string_view text) {
-  if (!opts.output.fileName.given) {
+  if (!opts.output.fileName.wasGiven) {
     std::cout << text;
     std::cout.flush();
     return;

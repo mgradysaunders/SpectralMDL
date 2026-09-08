@@ -44,7 +44,7 @@ void visitFields(Self &self, Visitor &&visit) {
   visit("cpu seconds", self.cpuSeconds);
   visit("sampler", self.sampler);
   visit("sample offset", self.sampleOffset);
-  visit("wavelength jitter", self.wavelengthJitter);
+  visit("wavelength jitter", self.hasWavelengthJitter);
   visit("args", self.args);
 }
 

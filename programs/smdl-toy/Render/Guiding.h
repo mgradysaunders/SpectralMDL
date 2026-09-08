@@ -384,13 +384,13 @@ struct Guiding final {
 
   /// The probability of drawing the bounce direction from the BSDF
   /// rather than the SD-tree (the one-sample-MIS mixture weight, alpha
-  /// in the paper), used when `bsdfFractionFixed` or when the cell has
+  /// in the paper), used when `isBSDFFractionFixed` or when the cell has
   /// not learned its own weight yet.
   float bsdfFraction{0.5f};
 
   /// Ignore the per-cell learned mixture weights and use `bsdfFraction`
   /// everywhere, for experiments.
-  bool bsdfFractionFixed{};
+  bool isBSDFFractionFixed{};
 };
 
 /// The one-sample-MIS mixture density of a finite continuation
@@ -432,7 +432,7 @@ struct Guiding final {
 /// guiding at all.
 [[nodiscard]] inline float bsdfFractionAt(const Guiding *guiding,
                                           const DTree *dtree) noexcept {
-  return !dtree || guiding->bsdfFractionFixed
+  return !dtree || guiding->isBSDFFractionFixed
              ? guiding ? guiding->bsdfFraction : 1.0f
              : dtree->mixtureAlpha;
 }

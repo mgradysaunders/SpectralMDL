@@ -75,7 +75,7 @@ unit_test "Math" {
     color c(0);
     c[0] = 0.617;
     c[1] = 0.243;
-    float w(0.5 * ($state.wavelength_base[0] + $state.wavelength_base[1]));
+    float w(0.5 * ($state.wavelengthBase[0] + $state.wavelengthBase[1]));
     #assert(math::eval_at_wavelength(c, w) ~== |1e-5| 0.43);
   }
 }

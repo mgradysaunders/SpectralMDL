@@ -76,7 +76,7 @@ unit_test "Woody monotonicity" {
   //
   //   smdl test -wavelength-min 1310 -wavelength-max 2400 testing/language/woody.smdl
   //
-  if ($state.wavelength_min >= 1310.0) {
+  if ($state.wavelengthMin >= 1310.0) {
     const auto plain = wd(0.5, 0.0, 0.5, 0.5, 0.0);
     const auto tannic = wd(0.5, 1.0, 0.5, 0.5, 0.0);
     for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -110,8 +110,8 @@ unit_test "Woody golden values" {
 
   // Note that lane 0 of the default state sits at 380 nm, below the 400 nm
   // floor of the table, so these also pin the clamp there.
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 720.0) < 1e-3) {
     const auto REF_MID = float[16](
       0.146770, 0.148657, 0.165152, 0.180509,
       0.192276, 0.205296, 0.224414, 0.243632,
@@ -158,8 +158,8 @@ unit_test "Woody golden values" {
   //
   //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/woody.smdl
   //
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 2400.0) < 1e-3) {
     const auto REF_SWIR_MID = float[16](
       0.583138, 0.649004, 0.712732, 0.720870,
       0.768741, 0.739602, 0.686255, 0.698592,
@@ -240,8 +240,8 @@ unit_test "Woody presets" {
   // Lane 0 sits at 380 nm, below the table's 400 nm floor, so
   // these pin the clamp there too.
   if ($WAVELENGTH_BASE_MAX == 16 &&
-      math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+      math::abs($state.wavelengthBase[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 720.0) < 1e-3) {
     // sanded pine plywood face: the most saturated surface in the roster,
     // so the worst case for the table's 17.1 nm spacing.
     const auto REF_PLYWOOD = float[16](

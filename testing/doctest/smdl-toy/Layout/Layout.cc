@@ -45,11 +45,12 @@ public:
   fs::path root{fs::temp_directory_path() / "smdl-toy-layout-test"};
 };
 
+namespace {
 // Lower the entry file and require no errors. `sampling` is the two
 // instants the file's `motion` tracks are read at; the default pair is
 // one instant, which lowers every track static.
-static Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName,
-                      const MotionSampling &sampling = {}) {
+Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName,
+               const MotionSampling &sampling = {}) {
   auto layout{lowerLayout(diags, fileName, {}, sampling)};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
@@ -57,15 +58,15 @@ static Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName,
 }
 
 // Is there a diagnostic of `kind` whose message contains `fragment`?
-static bool hasDiagnostic(const LayoutDiagnostics &diags,
-                          LayoutDiagnostic::Kind kind,
-                          const std::string &fragment) {
+bool hasDiagnostic(const LayoutDiagnostics &diags, LayoutDiagnostic::Kind kind,
+                   const std::string &fragment) {
   for (const auto &diagnostic : diags.all())
     if (diagnostic.kind == kind &&
         diagnostic.message.find(fragment) != std::string::npos)
       return true;
   return false;
 }
+} // namespace
 
 // The two marks compose by the same rules, so one document exercises
 // both, spelled side by side: the asset's word is the default, a site's
@@ -73,15 +74,12 @@ static bool hasDiagnostic(const LayoutDiagnostics &diags,
 // word down, and the innermost explicit word wins.
 TEST_CASE("Layout lowering: the marks compose") {
   LayoutDir dir{};
-  dir.write("sub.layout", "#smdl layout\n"
-                          "asset inner = sphere { radius 1 material m }\n"
+  dir.write("sub.layout", "asset inner = sphere { radius 1 material m }\n"
                           "place inner\n");
-  dir.write("sub2.layout", "#smdl layout\n"
-                           "asset inner = sphere { radius 1 material m }\n"
+  dir.write("sub2.layout", "asset inner = sphere { radius 1 material m }\n"
                            "place inner caster light\n");
   const auto entry{dir.write(
       "entry.layout",
-      "#smdl layout\n"
       "asset ball = sphere { radius 1 material m caster light }\n"
       "asset plain = sphere { radius 1 material m }\n"
       "asset lamp = sphere { radius 1 material m caustic }\n"
@@ -133,13 +131,11 @@ TEST_CASE("Layout lowering: the marks compose") {
 
 TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
   LayoutDir dir{};
-  dir.write("sub.layout", "#smdl layout\n"
-                          "asset inner = sphere { radius 1 material m }\n"
+  dir.write("sub.layout", "asset inner = sphere { radius 1 material m }\n"
                           "place inner\n");
   SUBCASE("At the place") {
     const auto entry{dir.write(
-        "entry.layout", "#smdl layout\n"
-                        "asset lamp = sphere { radius 1 material m caustic }\n"
+        "entry.layout", "asset lamp = sphere { radius 1 material m caustic }\n"
                         "place lamp light off\n")};
     LayoutDiagnostics diags{};
     const auto layout{lowerLayout(diags, entry)};
@@ -153,15 +149,14 @@ TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
     CHECK(error.notes[0].message.find("declared 'caustic' here") !=
           std::string::npos);
     CHECK(error.location.source->lineAndColumn(error.location.offset).lineNo ==
-          3);
+          2);
     CHECK(error.notes[0]
               .location.source->lineAndColumn(error.notes[0].location.offset)
-              .lineNo == 2);
+              .lineNo == 1);
   }
   SUBCASE("Passed down from a group placement") {
     const auto entry{dir.write(
-        "entry.layout", "#smdl layout\n"
-                        "asset lamp = sphere { radius 1 material m caustic }\n"
+        "entry.layout", "asset lamp = sphere { radius 1 material m caustic }\n"
                         "group g { place lamp }\n"
                         "place g light off\n")};
     LayoutDiagnostics diags{};
@@ -173,7 +168,6 @@ TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
   }
   SUBCASE("On a layout target") {
     const auto entry{dir.write("entry.layout",
-                               "#smdl layout\n"
                                "asset sub = \"sub.layout\" { caustic }\n"
                                "place sub light off\n")};
     LayoutDiagnostics diags{};
@@ -195,8 +189,7 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
                        "' applies to a mesh file or a shape"};
     SUBCASE("On the asset") {
       const auto entry{dir.write("entry.layout",
-                                 std::string("#smdl layout\n"
-                                             "asset hair = \"hair.curves\" { "
+                                 std::string("asset hair = \"hair.curves\" { "
                                              "material m ") +
                                      word + " }\nplace hair\n")};
       LayoutDiagnostics diags{};
@@ -207,9 +200,8 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
     }
     SUBCASE("On the import") {
       const auto entry{dir.write(
-          "entry.layout", std::string("#smdl layout\n"
-                                      "import \"hair.curves\" { material m ") +
-                              word + " }\n")};
+          "entry.layout",
+          std::string("import \"hair.curves\" { material m ") + word + " }\n")};
       LayoutDiagnostics diags{};
       const auto layout{lowerLayout(diags, entry)};
       CHECK(layout.items.empty());
@@ -219,13 +211,12 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
   }
   SUBCASE("Unmarked, the groom lowers") {
     const auto entry{dir.write("entry.layout",
-                               "#smdl layout\n"
                                "asset hair = \"hair.curves\" { material m }\n"
                                "place hair\n")};
     LayoutDiagnostics diags{};
     const auto layout{lowerOK(diags, entry)};
     REQUIRE(layout.items.size() == 1);
-    CHECK(layout.items[0].curves.active);
+    CHECK(layout.items[0].curves.isActive);
     CHECK(!layout.items[0].isCaster);
     CHECK(!layout.items[0].isLight);
     CHECK(layout.items[0].materials.all == "m");
@@ -234,8 +225,7 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
 
 TEST_CASE("Layout lowering: marks on a light placement warn") {
   LayoutDir dir{};
-  const auto entry{dir.write("entry.layout", "#smdl layout\n"
-                                             "light lamp = point\n"
+  const auto entry{dir.write("entry.layout", "light lamp = point\n"
                                              "place lamp caster light\n")};
   LayoutDiagnostics diags{};
   const auto layout{lowerOK(diags, entry)};
@@ -256,8 +246,7 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
   for (const char *word : words) {
     CAPTURE(word);
     const auto entry{dir.write(
-        "entry.layout", std::string("#smdl layout\n"
-                                    "asset ball = sphere { radius 1 material m "
+        "entry.layout", std::string("asset ball = sphere { radius 1 material m "
                                     "}\nplace ball ") +
                             word + " off\n")};
     try {
@@ -272,7 +261,6 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
   }
   // Without a mark the same place packs.
   const auto entry{dir.write("entry.layout",
-                             "#smdl layout\n"
                              "asset ball = sphere { radius 1 material m }\n"
                              "place ball translate 1 2 3\n")};
   packPlaces(entry, output);
@@ -282,7 +270,6 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
 TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
   LayoutDir dir{};
   const auto entry{dir.write("entry.layout",
-                             "#smdl layout\n"
                              "light panel = rect { size 2 1 }\n"
                              "place panel scale 3 2 1 translate 0 0 5\n")};
   LayoutDiagnostics diags{};
@@ -303,8 +290,7 @@ TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
 
 TEST_CASE("Layout lowering: a camera directive names where it belongs") {
   LayoutDir dir{};
-  const auto entry{dir.write("entry.layout", "#smdl layout\n"
-                                             "camera { fovy 30 }\n"
+  const auto entry{dir.write("entry.layout", "camera { fovy 30 }\n"
                                              "asset ball = sphere { "
                                              "material m }\n"
                                              "place ball\n")};
@@ -320,8 +306,7 @@ TEST_CASE("Layout lowering: a camera directive names where it belongs") {
 
 TEST_CASE("Layout lowering: motion tracks compose pairwise") {
   LayoutDir dir{};
-  dir.write("sub.layout", "#smdl layout\n"
-                          "asset inner = sphere { material m }\n"
+  dir.write("sub.layout", "asset inner = sphere { material m }\n"
                           "place inner translate 0 0 1\n");
   {
     // Two records, one unit apart along y.
@@ -339,7 +324,6 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
   // spans exactly the second they span, so each sample lands on a key.
   const auto entry{dir.write(
       "entry.layout",
-      "#smdl layout\n"
       "asset ball = sphere { radius 1 material m translate 0 0 1 }\n"
       "light lamp = point { power 10 }\n"
       "asset sub = \"sub.layout\"\n"
@@ -411,15 +395,14 @@ TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
   LayoutDir dir{};
   const auto entry{dir.write(
       "entry.layout",
-      "#smdl layout\n"
       "asset ball = sphere { material m }\n"
       "place ball motion { at 1 translate 0 0 0 at 3 translate 20 0 0 }\n")};
-  const auto xOf{[&](const MotionSampling &sampling, bool shut = false) {
+  const auto xOf{[&](const MotionSampling &sampling, bool isShut = false) {
     LayoutDiagnostics diags{};
     const auto layout{lowerOK(diags, entry, sampling)};
     REQUIRE(layout.items.size() == 1);
     const auto &item{layout.items[0]};
-    if (!shut) return item.objectToWorld[3].x;
+    if (!isShut) return item.objectToWorld[3].x;
     REQUIRE(item.objectToWorldShut);
     return (*item.objectToWorldShut)[3].x;
   }};
@@ -454,8 +437,7 @@ TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
 TEST_CASE("Layout lowering: a place's operations compose outside its track") {
   LayoutDir dir{};
   const auto entry{dir.write(
-      "entry.layout", "#smdl layout\n"
-                      "asset ball = sphere { material m }\n"
+      "entry.layout", "asset ball = sphere { material m }\n"
                       "place ball translate 0 0 7 motion { at 0 translate "
                       "0 0 0 at 1 translate 4 0 0 }\n")};
   LayoutDiagnostics diags{};
@@ -472,13 +454,11 @@ TEST_CASE("Layout lowering: a place's operations compose outside its track") {
 
 TEST_CASE("Layout lowering: an offset shifts the clock a track is read on") {
   LayoutDir dir{};
-  dir.write("member.layout", "#smdl layout\n"
-                             "asset ball = sphere { material m }\n"
+  dir.write("member.layout", "asset ball = sphere { material m }\n"
                              "place ball motion { at 0 translate 0 0 0 "
                              "at 4 translate 40 0 0 }\n");
   const auto entry{dir.write(
-      "entry.layout", "#smdl layout\n"
-                      "asset sub = \"member.layout\"\n"
+      "entry.layout", "asset sub = \"member.layout\"\n"
                       "asset ball = sphere { material m }\n"
                       "place sub\n"
                       "place sub offset 2\n"
@@ -503,10 +483,9 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
   LayoutDir dir{};
   dir.write("hero.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
   dir.write("sub.layout",
-            "#smdl layout\n"
             "asset inner = \"hero.obj\" { animation \"walk\" offset 0.5 }\n"
             "place inner offset 0.25\n");
-  dir.write("sub2.layout", "#smdl layout\nimport \"hero.obj\"\n");
+  dir.write("sub2.layout", "import \"hero.obj\"\n");
   {
     auto places{PlacesFile()};
     places.transforms = {float4x4(1.0f), float4x4(1.0f)};
@@ -515,7 +494,6 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
   }
   const auto entry{
       dir.write("entry.layout",
-                "#smdl layout\n"
                 "asset hero = \"hero.obj\" { animation \"walk\" offset 0.25 }\n"
                 "asset plain = \"hero.obj\"\n"
                 "asset still = \"hero.obj\" { animation off }\n"
@@ -550,7 +528,7 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
   CHECK(offsetOf(3) == doctest::Approx(2.0f));
   CHECK(layout.items[3].animation.key() == "offset 2");
   // 4: off stays off whatever the path adds.
-  CHECK(layout.items[4].animation.off);
+  CHECK(layout.items[4].animation.isOff);
   CHECK(layout.items[4].animation.key() == "off");
   // 5: a layout target passes the offset down to the meshes inside.
   CHECK(layout.items[5].animation.clipName == "walk");
@@ -570,13 +548,11 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
 TEST_CASE("Layout lowering: 'animation' is refused on a groom and a layout") {
   LayoutDir dir{};
   dir.writeCurves("fur.curves");
-  dir.write("sub.layout", "#smdl layout\n"
-                          "asset inner = sphere { material m }\n"
+  dir.write("sub.layout", "asset inner = sphere { material m }\n"
                           "place inner\n");
   SUBCASE("On a groom") {
     const auto entry{dir.write(
-        "entry.layout", "#smdl layout\n"
-                        "asset fur = \"fur.curves\" { material m animation "
+        "entry.layout", "asset fur = \"fur.curves\" { material m animation "
                         "\"x\" }\n"
                         "place fur\n")};
     LayoutDiagnostics diags{};
@@ -587,7 +563,6 @@ TEST_CASE("Layout lowering: 'animation' is refused on a groom and a layout") {
   }
   SUBCASE("On a layout") {
     const auto entry{dir.write("entry.layout",
-                               "#smdl layout\n"
                                "asset sub = \"sub.layout\" { animation 0 }\n"
                                "place sub\n")};
     LayoutDiagnostics diags{};

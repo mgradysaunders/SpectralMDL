@@ -23,12 +23,9 @@ class Parser final : public TextParser {
 public:
   Parser(LayoutDiagnostics &diags, const LayoutSource &source,
          CameraDocument &document)
-      : TextParser(diags, source, CAMERA_MAGIC, "camera file",
-                   TOP_LEVEL_KEYWORDS),
-        mDocument(document) {}
+      : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    checkMagic();
     while (mToken.kind != Token::END) {
       try {
         parseStatement();
@@ -108,7 +105,7 @@ private:
       } else if (key == "distortion_fit") {
         // A bare keyword, since the flag it mirrors takes no value
         // either.
-        camera.distortionFit = true;
+        camera.shouldFitDistortion = true;
       } else if (key == "vignetting") {
         camera.vignetting = numbers<1>()[0];
       } else if (key == "cat_eye") {

@@ -39,25 +39,25 @@ TEST_CASE("RNG") {
   SUBCASE("generateInt") {
     auto rng{smdl::RNG(123)};
     std::array<int, 7> hits{};
-    bool inBounds{true};
+    bool isInBounds{true};
     for (int i = 0; i < 10000; i++) {
       const int x{rng.generateInt(7)};
-      inBounds &= 0 <= x && x < 7;
+      isInBounds &= 0 <= x && x < 7;
       hits[x % 7]++;
     }
-    CHECK(inBounds);
+    CHECK(isInBounds);
     for (int count : hits) CHECK(count > 0);
     CHECK(rng.generateInt(1) == 0);
     CHECK(rng.generateInt(0) == 0);
   }
   SUBCASE("generateFloat range") {
     auto rng{smdl::RNG(5)};
-    bool inRange{true};
+    bool isInRange{true};
     for (int i = 0; i < 10000; i++) {
       const float x{rng.generateFloat()};
-      inRange &= 0.0f <= x && x < 1.0f;
+      isInRange &= 0.0f <= x && x < 1.0f;
     }
-    CHECK(inRange);
+    CHECK(isInRange);
   }
   SUBCASE("streams are distinct") {
     auto rng0{smdl::RNG(42, 1)};

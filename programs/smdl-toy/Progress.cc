@@ -111,20 +111,20 @@ constexpr const char *COLOR_OFF{"\033[0m"};
 
 // The bar itself, drawn to half a cell, colored.
 [[nodiscard]] std::string renderBar(double fraction, size_t width,
-                                    bool unicode) {
+                                    bool useUnicode) {
   // The ASCII form spends two of its columns on the brackets that give it
   // an edge to fill up to; the Unicode form draws the unfilled run as a
   // dim rule instead, so all of its columns are bar.
-  const size_t cells{unicode ? width : width - 2};
+  const size_t cells{useUnicode ? width : width - 2};
   const double filled{std::clamp(fraction, 0.0, 1.0) * double(cells)};
   const auto full{std::min(size_t(filled), cells)};
-  const bool half{filled - double(full) >= 0.5 && full < cells};
-  const auto empty{cells - full - size_t(half)};
+  const bool hasHalfCell{filled - double(full) >= 0.5 && full < cells};
+  const auto empty{cells - full - size_t(hasHalfCell)};
   auto str{std::string()};
-  if (unicode) {
+  if (useUnicode) {
     str += COLOR_BAR;
     for (size_t i = 0; i < full; i++) str += "━";
-    if (half) str += "╸";
+    if (hasHalfCell) str += "╸";
     str += COLOR_OFF;
     str += COLOR_DIM;
     for (size_t i = 0; i < empty; i++) str += "━";
@@ -133,7 +133,7 @@ constexpr const char *COLOR_OFF{"\033[0m"};
     str += '[';
     str += COLOR_BAR;
     str.append(full, '#');
-    if (half) str += '>';
+    if (hasHalfCell) str += '>';
     str += COLOR_OFF;
     str.append(empty, ' ');
     str += ']';
@@ -178,15 +178,15 @@ ProgressStyle parseProgressStyle(std::string_view name) {
 ProgressBar::ProgressBar(ProgressOptions options)
     : mOptions(std::move(options)), mStartTime(Clock::now()) {
   mOptions.displayScale = std::max<uint64_t>(mOptions.displayScale, 1);
-  mEnabled = mOptions.total > 0 && mOptions.style != ProgressStyle::NONE &&
-             stderrIsInteractive();
-  mUnicode = mOptions.style == ProgressStyle::AUTO && localeIsUTF8();
-  mReporting = !mOptions.filePath.empty() && mOptions.total > 0;
-  if (mReporting) {
+  mIsEnabled = mOptions.total > 0 && mOptions.style != ProgressStyle::NONE &&
+               stderrIsInteractive();
+  mUseUnicode = mOptions.style == ProgressStyle::AUTO && localeIsUTF8();
+  mIsReporting = !mOptions.filePath.empty() && mOptions.total > 0;
+  if (mIsReporting) {
     std::lock_guard<std::mutex> guard{mMutex};
     reportLocked(0);
   }
-  if (!mEnabled) return;
+  if (!mIsEnabled) return;
   sActive.store(this, std::memory_order_release);
   // Draw the empty bar immediately, so that the terminal says something
   // is happening before the first unit of work completes, which for one
@@ -201,7 +201,7 @@ ProgressBar::~ProgressBar() { finish(); }
 
 void ProgressBar::advance(uint64_t amount) {
   mDone.fetch_add(amount, std::memory_order_relaxed);
-  if (!mEnabled && !mReporting) return;
+  if (!mIsEnabled && !mIsReporting) return;
   const int64_t now{Clock::now().time_since_epoch().count()};
   int64_t nextDraw{mNextDraw.load(std::memory_order_relaxed)};
   if (now < nextDraw) return;
@@ -218,7 +218,7 @@ void ProgressBar::advance(uint64_t amount) {
 }
 
 void ProgressBar::setNote(std::string note) {
-  if (!mEnabled && !mReporting) return;
+  if (!mIsEnabled && !mIsReporting) return;
   std::lock_guard<std::mutex> guard{mMutex};
   mNote = std::move(note);
   redrawLocked();
@@ -229,18 +229,18 @@ void ProgressBar::finish() {
   auto summary{std::string()};
   {
     std::lock_guard<std::mutex> guard{mMutex};
-    if (mFinished) return;
-    mFinished = true;
+    if (mIsFinished) return;
+    mIsFinished = true;
     // The last word to whatever is watching the file, so that a reader
     // polling it sees the run land rather than inferring it from silence.
     reportLocked(mDone.load(std::memory_order_relaxed));
-    if (mEnabled) {
+    if (mIsEnabled) {
       // The last state is drawn rather than a forced 100%: on the way out
       // of an exception this is the honest number, and on the way out of
       // a completed loop it is 100% anyway.
       drawLocked(mDone.load(std::memory_order_relaxed));
       std::cerr << '\n';
-      mOnScreen = false;
+      mIsOnScreen = false;
       sActive.store(nullptr, std::memory_order_release);
     } else if (mOptions.total > 0 && !mOptions.summary.empty()) {
       summary = smdl::concat(mOptions.summary, " in ",
@@ -259,13 +259,13 @@ ProgressBar *ProgressBar::active() {
 }
 
 void ProgressBar::redrawLocked() {
-  if (!mFinished) drawLocked(mDone.load(std::memory_order_relaxed));
+  if (!mIsFinished) drawLocked(mDone.load(std::memory_order_relaxed));
 }
 
 void ProgressBar::eraseLocked() {
-  if (!mOnScreen) return;
+  if (!mIsOnScreen) return;
   std::cerr << "\r\033[K";
-  mOnScreen = false;
+  mIsOnScreen = false;
 }
 
 double ProgressBar::secondsRemainingLocked(uint64_t done, double elapsedSeconds,
@@ -300,7 +300,7 @@ std::string ProgressBar::etaLocked(uint64_t done, double elapsedSeconds,
 }
 
 void ProgressBar::reportLocked(uint64_t done) {
-  if (!mReporting) return;
+  if (!mIsReporting) return;
   done = std::min(done, mOptions.total);
   const auto now{Clock::now()};
   const double elapsed{std::chrono::duration<double>(now - mStartTime).count()};
@@ -322,7 +322,7 @@ void ProgressBar::reportLocked(uint64_t done) {
 }
 
 void ProgressBar::drawLocked(uint64_t done) {
-  if (!mEnabled) return;
+  if (!mIsEnabled) return;
   done = std::min(done, mOptions.total);
   const double fraction{double(done) / double(mOptions.total)};
   auto label{mOptions.label};
@@ -353,10 +353,11 @@ void ProgressBar::drawLocked(uint64_t done) {
   // Fields drop in order of what a person can most afford to lose, and
   // the bar keeps a floor, so that a narrow window degrades instead of
   // wrapping.
-  bool showLabel{true}, showCounts{true}, showElapsed{true}, showETA{true};
+  bool shouldShowLabel{true}, showCounts{true}, showElapsed{true},
+      showETA{true};
   const auto solveBarWidth{[&]() -> size_t {
     size_t used{percent.size() + SEPARATOR_WIDTH};
-    if (showLabel) used += label.size() + SEPARATOR_WIDTH;
+    if (shouldShowLabel) used += label.size() + SEPARATOR_WIDTH;
     if (showCounts) used += counts.size() + SEPARATOR_WIDTH;
     if (showElapsed) used += elapsed.size() + SEPARATOR_WIDTH;
     if (showETA && !eta.empty()) used += eta.size() + SEPARATOR_WIDTH;
@@ -376,14 +377,14 @@ void ProgressBar::drawLocked(uint64_t done) {
     barWidth = solveBarWidth();
   }
   if (barWidth == 0) {
-    showLabel = false;
+    shouldShowLabel = false;
     barWidth = solveBarWidth();
   }
   barWidth = std::min(barWidth, MAX_BAR_WIDTH);
   auto line{std::string("\r")};
   if (barWidth > 0) {
-    if (showLabel) line += label + "  ";
-    line += renderBar(fraction, barWidth, mUnicode);
+    if (shouldShowLabel) line += label + "  ";
+    line += renderBar(fraction, barWidth, mUseUnicode);
     line += "  ";
   } else if (budget < percent.size()) {
     // Narrower than "100%". Nothing legible fits, so leave the line to
@@ -403,14 +404,14 @@ void ProgressBar::drawLocked(uint64_t done) {
   // of the previous one behind.
   line += "\033[K";
   std::cerr << line;
-  mOnScreen = true;
+  mIsOnScreen = true;
 }
 
 void ProgressLogSink::logMessage(smdl::LogLevel level,
                                  std::string_view message) {
-  static const bool WithColors{smdl::cerrSupportsANSIColors()};
+  static const bool useColors{smdl::cerrSupportsANSIColors()};
   const auto write{[&] {
-    std::cerr << smdl::logLevelLabel(level, WithColors) << message << '\n';
+    std::cerr << smdl::logLevelLabel(level, useColors) << message << '\n';
   }};
   if (auto *bar{ProgressBar::active()}) {
     bar->printThrough(write);

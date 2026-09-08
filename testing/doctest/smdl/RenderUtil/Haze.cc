@@ -35,10 +35,10 @@ smdl::float3 makeDirection(float dz) {
 // The deflection cosine `MiePhase::sample` produced, with the lobe
 // forced: a third component of 0 always picks the Draine lobe and 1
 // always picks the Henyey-Greenstein one.
-float sampleDeflection(const smdl::MiePhase &phase, float xi, bool draine) {
+float sampleDeflection(const smdl::MiePhase &phase, float xi, bool useDraine) {
   const smdl::float3 wo{0.0f, 0.0f, 1.0f};
   smdl::float3 wi{};
-  (void)phase.sample({xi, 0.25f, draine ? 0.0f : 1.0f}, wo, wi);
+  (void)phase.sample({xi, 0.25f, useDraine ? 0.0f : 1.0f}, wo, wi);
   return -dot(wo, wi);
 }
 
@@ -126,7 +126,7 @@ TEST_CASE("MiePhase") {
     // where the goldens' explicit parameters came from.
     struct Case final {
       float diameter, xi, expected;
-      bool draine;
+      bool useDraine;
     };
     const Case cases[]{
         {8.0f, 0.1f, 0.35738498f, true},   {8.0f, 0.5f, 0.87946407f, true},
@@ -137,9 +137,9 @@ TEST_CASE("MiePhase") {
     for (const auto &c : cases) {
       CAPTURE(c.diameter);
       CAPTURE(c.xi);
-      CAPTURE(c.draine);
+      CAPTURE(c.useDraine);
       const auto phase{smdl::MiePhase(c.diameter)};
-      CHECK(std::abs(sampleDeflection(phase, c.xi, c.draine) - c.expected) <
+      CHECK(std::abs(sampleDeflection(phase, c.xi, c.useDraine) - c.expected) <
             1e-5f);
     }
     // The near-isotropic Cardano branch, which the fitted anisotropy
@@ -164,14 +164,14 @@ TEST_CASE("MiePhase") {
       // of a radian wide.
       constexpr int STEPS{1000000};
       std::vector<double> cdf(STEPS + 1, 0.0);
-      bool negative{false};
+      bool isNegative{false};
       for (int i = 0; i < STEPS; i++) {
         const double p{
             phase.evaluate(-1.0f + 2.0f * (float(i) + 0.5f) / STEPS)};
-        if (p < 0.0) negative = true;
+        if (p < 0.0) isNegative = true;
         cdf[size_t(i) + 1] = cdf[size_t(i)] + p * (2.0 * smdl::TWO_PI / STEPS);
       }
-      CHECK_FALSE(negative);
+      CHECK_FALSE(isNegative);
       CHECK(std::abs(cdf[STEPS] - 1.0) < 2e-3);
       // The sampler against that reference. The two lobes are drawn
       // separately and recombined at the exact mixture weight rather

@@ -32,12 +32,9 @@ class Parser final : public TextParser {
 public:
   Parser(LayoutDiagnostics &diags, const LayoutSource &source,
          LayoutDocument &document)
-      : TextParser(diags, source, LAYOUT_MAGIC, "layout file",
-                   TOP_LEVEL_KEYWORDS),
-        mDocument(document) {}
+      : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    checkMagic();
     while (mToken.kind != Token::END) {
       try {
         parseStatement();
@@ -147,7 +144,7 @@ private:
     if (mToken.kind == Token::OPEN) parseAssetBody(decl);
     // A primitive has no mesh slots: whole-asset 'material <name>' is
     // required, and per-slot assignment is impossible.
-    if (decl.primitive.active()) {
+    if (decl.primitive.isActive()) {
       if (decl.materials.all.empty())
         mDiags.error(decl.nameLoc,
                      smdl::concat("the ", decl.primitive.name(), " asset ",
@@ -167,7 +164,7 @@ private:
           op == "displace") {
         // Analytic shapes have no objects to pick, no polygons to refine,
         // and displacement would need vertices to move.
-        if (decl.primitive.active()) {
+        if (decl.primitive.isActive()) {
           mDiags.error(opLoc, smdl::concat(smdl::Quoted(op),
                                            " applies to a mesh file, but this "
                                            "asset is a ",
@@ -178,14 +175,14 @@ private:
           decl.selection.patterns.push_back(
               expect(Token::STRING, "a quoted object name after 'select'"));
         } else if (op == "recenter") {
-          decl.selection.recenter = true;
+          decl.selection.shouldRecenter = true;
         } else if (op == "subdivide") {
           parseSubdivide(decl.subdiv, opLoc);
         } else {
           decl.subdiv.isDisplaced = true;
         }
       } else if (op == "radius" || op == "height" || op == "size") {
-        if (!decl.primitive.active()) {
+        if (!decl.primitive.isActive()) {
           mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
                                     " is a shape parameter, and this asset "
@@ -214,7 +211,7 @@ private:
         // Whether the path names a curves file is the lowering's to
         // discover; what the parser can already reject is a shape,
         // which is never one.
-        if (decl.primitive.active()) {
+        if (decl.primitive.isActive()) {
           mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
                                     " applies to a curves file, but this "
@@ -228,14 +225,14 @@ private:
         } else {
           // One word decides the cross-section, so a second is either
           // a repeat or a contradiction, and both are conflicts.
-          if (decl.curves.modeSet) {
+          if (decl.curves.isModeSet) {
             mDiags.error(opLoc, "'tube' or 'ribbon' appears twice in "
                                 "one asset");
             throw Recover();
           }
           decl.curves.mode = op == "ribbon" ? CurvesSpec::Mode::RIBBON
                                             : CurvesSpec::Mode::TUBE;
-          decl.curves.modeSet = true;
+          decl.curves.isModeSet = true;
         }
       } else if (op == "animation") {
         parseAssetAnimation(decl, opLoc);
@@ -258,7 +255,7 @@ private:
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         mDiags.error(opLoc,
                      smdl::concat("unknown asset operation ", smdl::Quoted(op),
-                                  decl.primitive.active()
+                                  decl.primitive.isActive()
                                       ? " (expected radius, height, size, "
                                         "material, caster, light, translate, "
                                         "scale, rotate, rotate_x, rotate_y, "
@@ -280,7 +277,7 @@ private:
   // word that is none of these, which is the next asset operation, so
   // `animation` alone is legal and means the file's only clip.
   void parseAssetAnimation(LayoutAssetDecl &decl, const LayoutLocation &opLoc) {
-    if (decl.primitive.active()) {
+    if (decl.primitive.isActive()) {
       mDiags.error(opLoc, smdl::concat("'animation' applies to a mesh file, "
                                        "but this asset is a ",
                                        decl.primitive.name()));
@@ -337,10 +334,10 @@ private:
                                    "settings");
           throw Recover();
         }
-        spec.off = true;
+        spec.isOff = true;
         return;
       } else if (mToken.text == "once") {
-        spec.once = true;
+        spec.shouldPlayOnce = true;
         advance();
       } else {
         const auto setting{mToken.text};
@@ -422,7 +419,7 @@ private:
                                          const LayoutLocation &opLoc) {
       if (op == "power") {
         decl.power = positive(opLoc, op, numbers<1>()[0]);
-        decl.powerSet = true;
+        decl.isPowerSet = true;
       } else if (op == "temperature") {
         decl.temperature = positive(opLoc, op, numbers<1>()[0]);
       } else if (op == "color") {
@@ -1001,11 +998,11 @@ private:
     // other: 'loop' selects the triangle split, and 'linear' turns
     // smoothing off. Operation names are never numbers, and no operation
     // is called 'loop' or 'linear', so peeking is unambiguous.
-    auto sawLoop{false};
-    auto sawLinear{false};
+    auto hasSeenLoop{false};
+    auto hasSeenLinear{false};
     while (mToken.kind == Token::WORD &&
            (mToken.text == "loop" || mToken.text == "linear")) {
-      auto &saw{mToken.text == "loop" ? sawLoop : sawLinear};
+      auto &saw{mToken.text == "loop" ? hasSeenLoop : hasSeenLinear};
       if (saw) {
         mDiags.error(location(),
                      smdl::concat(smdl::Quoted(mToken.text),
@@ -1015,8 +1012,8 @@ private:
       saw = true;
       advance();
     }
-    if (sawLoop) subdiv.scheme = SubdivSpec::Scheme::LOOP;
-    if (sawLinear) subdiv.isSmooth = false;
+    if (hasSeenLoop) subdiv.scheme = SubdivSpec::Scheme::LOOP;
+    if (hasSeenLinear) subdiv.isSmooth = false;
   }
 
   void parseAlias() {

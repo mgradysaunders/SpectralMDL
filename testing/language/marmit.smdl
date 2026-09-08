@@ -255,8 +255,8 @@ unit_test "MARMIT" {
   //
   // Note that lane 0 of the default state sits at 380 nm, below the 400 nm floor
   // of the optical constants, so these also pin the clamp there.
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 720.0) < 1e-3) {
     // A thin film (0.01 cm), fully wetted and 40% wetted. Water is almost
     // transparent across the visible, so these isolate the diffuse Fresnel terms
     // and the areal mixing from the layer transmittance.
@@ -311,8 +311,8 @@ unit_test "MARMIT" {
   //
   //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/marmit.smdl
   //
-  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
-      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelengthBase[15] - 2400.0) < 1e-3) {
     // Lanes land every 100 nm, straddling the 1450, 1940 and 2200 nm bands.
     const auto REF_SWIR = float[16](
       0.173553, 0.171352, 0.173554, 0.165775,

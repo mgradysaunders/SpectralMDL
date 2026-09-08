@@ -171,7 +171,8 @@ bool evaluateChain(
   const auto count{chain.count};
   chainState.count = count;
   for (int i = 0; i < count; i++)
-    if (!surfaces.geometry(vertices[i], chainState[i].geometry)) return false;
+    if (!surfaces.evaluateGeometry(vertices[i], chainState[i].geometry))
+      return false;
   // Segment directions, half vectors, frames, and constraints. The last
   // vertex's next segment is the distant light direction (whose zero
   // distance drops the position-derivative term below) or the segment
@@ -368,11 +369,11 @@ void buildFrameSeeds(const ManifoldSurfaces &surfaces,
 
 } // namespace
 
-ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
-                            bool marked, float maxGlossyAlpha) {
+ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
+                            bool isMarked, float maxGlossyAlpha) {
   ManifoldClaim claim{};
-  if (mat.hasEmission()) return claim;
-  const int dfLobes{mat.getLobes(backface)};
+  if (material.hasEmission()) return claim;
+  const int dfLobes{material.getLobes(isBackface)};
   // A df node scattering about a normal it was given is a field the walk
   // does not solve for, and under a remapped `geometry.normal` even a
   // given normal equal to the state normal detaches, that not being the
@@ -380,26 +381,28 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
   // nothing. A remap without the hook has no field to read at all. See
   // the header.
   if ((dfLobes & DF_SETS_NORMAL) != 0) return claim;
-  if (mat.material->remapsNormal() && (!mat.material->geometryNormalEvaluate ||
-                                       (dfLobes & DF_CAN_SET_NORMAL) != 0))
+  if (material.materialDef->canRemapNormal() &&
+      (!material.materialDef->geometryNormalEvaluate ||
+       (dfLobes & DF_CAN_SET_NORMAL) != 0))
     return claim;
-  const bool bends{!mat.isThinWalled() &&
-                   std::abs(mat.getIOR() - mat.getExteriorIOR()) > 1e-4f};
+  const bool bends{!material.isThinWalled() &&
+                   std::abs(material.getIOR() - material.getExteriorIOR()) >
+                       1e-4f};
   if (bends)
     claim.refractLobes =
-        dfLobes & (DF_DIRAC_BTDF | (marked ? DF_GLOSSY_BTDF : 0));
-  if (marked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSSY_BRDF);
+        dfLobes & (DF_DIRAC_BTDF | (isMarked ? DF_GLOSSY_BTDF : 0));
+  if (isMarked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSSY_BRDF);
   // The width gate, at a FIXED center draw so every evaluation of the
   // claim on this side answers the same however the two halves of the
   // estimator reached it; see the header.
-  if (maxGlossyAlpha > 0.0f && mat.material->scatterNormalSample &&
+  if (maxGlossyAlpha > 0.0f && material.materialDef->scatterNormalSample &&
       (claim.lobes() & DF_GLOSSY) != 0) {
     auto tooWide{[&](int kind) {
       float3 wm{};
       float pdf{};
       float2 alpha{};
-      if (!mat.scatterNormalSample(float4(0.5f, 0.5f, 0.5f, 0.5f), backface, wm,
-                                   pdf, alpha, kind))
+      if (!material.scatterNormalSample(float4(0.5f, 0.5f, 0.5f, 0.5f),
+                                        isBackface, wm, pdf, alpha, kind))
         return false;
       return std::min(alpha.x, alpha.y) > maxGlossyAlpha;
     }};
@@ -411,12 +414,12 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
   return claim;
 }
 
-ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
+ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked,
                             float maxGlossyAlpha) {
   ManifoldClaim claim{
-      manifoldClaim(mat, /*backface=*/false, marked, maxGlossyAlpha)};
+      manifoldClaim(material, /*isBackface=*/false, isMarked, maxGlossyAlpha)};
   const ManifoldClaim back{
-      manifoldClaim(mat, /*backface=*/true, marked, maxGlossyAlpha)};
+      manifoldClaim(material, /*isBackface=*/true, isMarked, maxGlossyAlpha)};
   claim.reflectLobes |= back.reflectLobes;
   claim.refractLobes |= back.refractLobes;
   return claim;
@@ -459,10 +462,10 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     float3 origin{receiver};
     for (int i = 0; i < count; i++) {
       const auto &jitter{chain[i].seedJitter};
-      if (dot(jitter, jitter) > 0.0f) {
+      if (lengthSquared(jitter) > 0.0f) {
         float3 normal{}, t1{}, t2{};
-        if (!manifoldSeedFrame(surfaces, vertices[i], frameSeeds[i], normal, t1,
-                               t2))
+        if (!buildManifoldSeedFrame(surfaces, vertices[i], frameSeeds[i],
+                                    normal, t1, t2))
           return finish(Outcome::DIVERGED, Failure::START);
         const float scale{length(vertices[i].point - receiver)};
         ManifoldVertex moved;
@@ -491,11 +494,11 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       chain.residualTolerance > 0.0f
           ? std::min(chain.residualTolerance, RESIDUAL_SANITY)
           : RESIDUAL_SANITY};
-  bool converged{false};
+  bool hasConverged{false};
   // The trial vertices, likewise reused: a step writes every entry the
   // chain has, and a step that fails part way is abandoned unread.
   std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> stepVertices;
-  for (int iteration = 0; iteration < MAX_ITERATIONS && !converged;
+  for (int iteration = 0; iteration < MAX_ITERATIONS && !hasConverged;
        iteration++) {
     iterationsDone = iteration;
     residual = state->residual();
@@ -542,7 +545,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     // earlier and gave up before the residual had come down.
     if (maxStepFraction < MANIFOLD_IDENTITY_FRACTION &&
         residual < residualTolerance) {
-      converged = true;
+      hasConverged = true;
       break;
     }
     if (!(maxStepLen > 0.0f))
@@ -552,21 +555,21 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     // Damped Newton: re-anchor each stepped vertex by casting from its
     // updated predecessor, and halve the step until the residual
     // decreases.
-    bool accepted{false};
+    bool isAccepted{false};
     bool anyProjected{false};
     for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5f) {
       float3 origin{receiver};
-      bool projected{true};
+      bool isProjected{true};
       for (int i = 0; i < count; i++) {
         if (!surfaces.project(chain[i].vertex, origin,
                               (*state)[i].geometry.point + beta * steps[i],
                               stepVertices[i])) {
-          projected = false;
+          isProjected = false;
           break;
         }
         origin = stepVertices[i].point;
       }
-      if (!projected) continue;
+      if (!isProjected) continue;
       anyProjected = true;
       if (!evaluateChain(surfaces, receiver, target, chain, frameSeeds,
                          stepVertices, *trial))
@@ -574,15 +577,15 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       if (trial->residual() < residual) {
         for (int i = 0; i < count; i++) vertices[i] = stepVertices[i];
         std::swap(state, trial);
-        accepted = true;
+        isAccepted = true;
         break;
       }
     }
-    if (!accepted)
+    if (!isAccepted)
       return finish(Outcome::DIVERGED,
                     anyProjected ? Failure::STALLED : Failure::PROJECTION);
   }
-  if (!converged) {
+  if (!hasConverged) {
     iterationsDone = MAX_ITERATIONS;
     residual = state->residual();
     return finish(Outcome::DIVERGED, Failure::ITERATIONS);
@@ -600,14 +603,14 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     const auto &sv{(*state)[i]};
     const float sidePrev{dot(sv.wPrev, sv.geometry.normal)};
     const float sideNext{dot(sv.wNext, sv.geometry.normal)};
-    const bool crossing{chain[i].isReflect
-                            ? sidePrev * sideNext > 0.0f &&
-                                  dot(sv.wPrev, sv.geometry.Ng) *
-                                          dot(sv.wNext, sv.geometry.Ng) >
-                                      0.0f
-                            : sidePrev * sideNext < 0.0f &&
-                                  -sidePrev * chain[i].sideSign > 0.0f};
-    if (!crossing) return finish(Outcome::REJECTED);
+    const bool isCrossing{chain[i].isReflect
+                              ? sidePrev * sideNext > 0.0f &&
+                                    dot(sv.wPrev, sv.geometry.Ng) *
+                                            dot(sv.wNext, sv.geometry.Ng) >
+                                        0.0f
+                              : sidePrev * sideNext < 0.0f &&
+                                    -sidePrev * chain[i].sideSign > 0.0f};
+    if (!isCrossing) return finish(Outcome::REJECTED);
     auto &vertex{connection.vertices[i]};
     vertex.vertex = vertices[i];
     vertex.geometry = sv.geometry;
@@ -625,11 +628,12 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   return finish(Outcome::CONVERGED);
 }
 
-bool manifoldSeedFrame(const ManifoldSurfaces &surfaces,
-                       const ManifoldVertex &vertex, const float3 &frameSeed,
-                       float3 &normal, float3 &t1, float3 &t2) {
+bool buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
+                            const ManifoldVertex &vertex,
+                            const float3 &frameSeed, float3 &normal, float3 &t1,
+                            float3 &t2) {
   ManifoldGeometry geometry;
-  if (!surfaces.geometry(vertex, geometry)) return false;
+  if (!surfaces.evaluateGeometry(vertex, geometry)) return false;
   normal = geometry.normal;
   float3 t{frameSeed - dot(normal, frameSeed) * normal};
   if (!tryNormalize(t)) return false;
@@ -640,7 +644,7 @@ bool manifoldSeedFrame(const ManifoldSurfaces &surfaces,
 float3 manifoldFrameSeed(const ManifoldSurfaces &surfaces,
                          const ManifoldVertex &vertex) {
   ManifoldGeometry geometry;
-  if (!surfaces.geometry(vertex, geometry)) return {1.0f, 0.0f, 0.0f};
+  if (!surfaces.evaluateGeometry(vertex, geometry)) return {1.0f, 0.0f, 0.0f};
   float3 g{geometry.dPdu -
            dot(geometry.normal, geometry.dPdu) * geometry.normal};
   return tryNormalize(g) ? g : perpendicularTo(geometry.normal);
@@ -687,15 +691,15 @@ void ManifoldStats::addSum(std::atomic<double> &sum, double value) noexcept {
 }
 
 void ManifoldStats::recordEstimate(Kind kind,
-                                   bool firstWalkConverged) noexcept {
-  if (!mEnabled) return;
+                                   bool isFirstWalkConverged) noexcept {
+  if (!mIsEnabled) return;
   mEstimates[kind].fetch_add(1, std::memory_order_relaxed);
-  if (firstWalkConverged)
+  if (isFirstWalkConverged)
     mFirstWalkConverged[kind].fetch_add(1, std::memory_order_relaxed);
 }
 
 void ManifoldStats::recordWalk(const ManifoldWalkReport &report) noexcept {
-  if (!mEnabled) return;
+  if (!mIsEnabled) return;
   mWalks.fetch_add(1, std::memory_order_relaxed);
   mWalkIterations.fetch_add(uint64_t(std::max(report.iterations, 0)),
                             std::memory_order_relaxed);
@@ -716,31 +720,32 @@ void ManifoldStats::recordWalk(const ManifoldWalkReport &report) noexcept {
 }
 
 void ManifoldStats::recordRewalk(const ManifoldWalkReport &report) noexcept {
-  if (!mEnabled) return;
+  if (!mIsEnabled) return;
   mRewalks.fetch_add(1, std::memory_order_relaxed);
   if (report.outcome == ManifoldWalkReport::Outcome::CONVERGED)
     mRewalksConverged.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ManifoldStats::recordCover(bool matched) noexcept {
-  if (!mEnabled) return;
+void ManifoldStats::recordCover(bool isMatched) noexcept {
+  if (!mIsEnabled) return;
   mCoverArrivals.fetch_add(1, std::memory_order_relaxed);
-  if (matched) mCoverMatched.fetch_add(1, std::memory_order_relaxed);
+  if (isMatched) mCoverMatched.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ManifoldStats::recordTrials(Kind kind, int trials, bool dropped) noexcept {
-  if (!mEnabled) return;
+void ManifoldStats::recordTrials(Kind kind, int trials,
+                                 bool wasDropped) noexcept {
+  if (!mIsEnabled) return;
   mTrialEstimates[kind].fetch_add(1, std::memory_order_relaxed);
   mTrials[kind].fetch_add(uint64_t(std::max(trials, 0)),
                           std::memory_order_relaxed);
   addMax(mTrialsMax[kind], uint64_t(std::max(trials, 0)));
-  if (dropped) mCapDrops[kind].fetch_add(1, std::memory_order_relaxed);
+  if (wasDropped) mCapDrops[kind].fetch_add(1, std::memory_order_relaxed);
 }
 
-void ManifoldStats::recordContribution(bool nonZero) noexcept {
-  if (!mEnabled) return;
+void ManifoldStats::recordContribution(bool isNonZero) noexcept {
+  if (!mIsEnabled) return;
   mContributions.fetch_add(1, std::memory_order_relaxed);
-  if (nonZero) mContributionsNonZero.fetch_add(1, std::memory_order_relaxed);
+  if (isNonZero) mContributionsNonZero.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ManifoldStats::print(std::ostream &out) const {
@@ -835,10 +840,10 @@ void ManifoldStats::print(std::ostream &out) const {
       << std::setw(5) << percent(coverMatched, coverArrivals)
       << "%) matched by the re-walk\n";
   const uint64_t contributions{load(mContributions)};
-  const uint64_t nonZero{load(mContributionsNonZero)};
+  const uint64_t isNonZero{load(mContributionsNonZero)};
   out << std::left << std::setw(20) << "Contributions" << std::right
-      << std::setw(12) << contributions << std::setw(11) << nonZero << " ("
-      << std::setw(5) << percent(nonZero, contributions) << "%) non-zero\n";
+      << std::setw(12) << contributions << std::setw(11) << isNonZero << " ("
+      << std::setw(5) << percent(isNonZero, contributions) << "%) non-zero\n";
   out << "----------------------------------------------------------\n";
 }
 

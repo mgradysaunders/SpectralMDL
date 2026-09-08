@@ -29,7 +29,7 @@ asFields(const std::vector<std::string> &lines) {
   header.cpuSeconds = 9876.25;
   header.sampler = "owen-sobol-1";
   header.sampleOffset = 4096;
-  header.wavelengthJitter = true;
+  header.hasWavelengthJitter = true;
   header.args = "scene.layout -spp 64 -resume out.envi";
   return header;
 }
@@ -47,7 +47,7 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.cpuSeconds == doctest::Approx(written.cpuSeconds));
     CHECK(read.sampler == written.sampler);
     CHECK(read.sampleOffset == written.sampleOffset);
-    CHECK(read.wavelengthJitter == written.wavelengthJitter);
+    CHECK(read.hasWavelengthJitter == written.hasWavelengthJitter);
     CHECK(read.args == written.args);
   }
   SUBCASE("Every field is written, under the 'render' prefix") {
@@ -82,9 +82,9 @@ TEST_CASE("RenderHeader: round trip") {
   SUBCASE("The jitter flag is the file's '0' or '1'") {
     auto read{RenderHeader()};
     read.readFrom({{"render wavelength jitter", "0"}});
-    CHECK(!read.wavelengthJitter);
+    CHECK(!read.hasWavelengthJitter);
     read.readFrom({{"render wavelength jitter", "1"}});
-    CHECK(read.wavelengthJitter);
+    CHECK(read.hasWavelengthJitter);
   }
   SUBCASE("An empty header writes lines a reader takes as defaults") {
     auto read{makeHeader()};
@@ -93,7 +93,7 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.seconds == 0.0);
     CHECK(read.sampler.empty());
     CHECK(read.sampleOffset == 0);
-    CHECK(!read.wavelengthJitter);
+    CHECK(!read.hasWavelengthJitter);
     CHECK(read.args.empty());
   }
 }

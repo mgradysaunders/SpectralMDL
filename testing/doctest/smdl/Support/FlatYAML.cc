@@ -6,8 +6,9 @@
 
 using smdl::FlatYAML;
 
+namespace {
 // Parse and require success.
-static FlatYAML parseOK(const std::string &source) {
+FlatYAML parseOK(const std::string &source) {
   FlatYAML doc{};
   try {
     doc = FlatYAML::parse(source, "test.yaml");
@@ -20,8 +21,8 @@ static FlatYAML parseOK(const std::string &source) {
 
 // Parse, require failure, and require the message to name the line and
 // contain the expected fragment.
-static void parseFail(const std::string &source, int lineNo,
-                      const std::string &fragment) {
+void parseFail(const std::string &source, int lineNo,
+               const std::string &fragment) {
   try {
     (void)FlatYAML::parse(source, "test.yaml");
     FAIL("expected a parse error containing '" << fragment << "'");
@@ -33,12 +34,12 @@ static void parseFail(const std::string &source, int lineNo,
   }
 }
 
-static const FlatYAML::Entry &entryOf(const FlatYAML &doc,
-                                      const std::string &key) {
+const FlatYAML::Entry &entryOf(const FlatYAML &doc, const std::string &key) {
   auto entry{FlatYAML::find(doc.root, key)};
   REQUIRE(entry);
   return *entry;
 }
+} // namespace
 
 TEST_CASE("FlatYAML") {
   SUBCASE("Scalars, comments, quotes, blank lines, CRLF, BOM") {
@@ -55,8 +56,8 @@ TEST_CASE("FlatYAML") {
     CHECK(doc.toString(entryOf(doc, "name")) == "Forest Ground");
     CHECK(doc.toString(entryOf(doc, "hash")) == "a # b");
     CHECK(doc.toString(entryOf(doc, "quoted")) == "say \"hi\" \\ done");
-    CHECK(entryOf(doc, "quoted").value.quoted);
-    CHECK(!entryOf(doc, "number").value.quoted);
+    CHECK(entryOf(doc, "quoted").value.isQuoted);
+    CHECK(!entryOf(doc, "number").value.isQuoted);
     CHECK(doc.toFloat(entryOf(doc, "number")) == doctest::Approx(1.5f));
     CHECK(doc.toInt(entryOf(doc, "count")) == 42);
     CHECK(entryOf(doc, "name").lineNo == 3);
@@ -94,7 +95,7 @@ TEST_CASE("FlatYAML") {
     REQUIRE(words.size() == 3);
     CHECK(words[0].text == "a");
     CHECK(words[1].text == "b, c");
-    CHECK(words[1].quoted);
+    CHECK(words[1].isQuoted);
     CHECK(words[2].text == "d");
     const auto &nested{doc.toList(entryOf(doc, "nested"))};
     REQUIRE(nested.size() == 2);

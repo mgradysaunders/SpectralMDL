@@ -35,7 +35,7 @@ namespace {
 //   `mMaterialIndex`, discarding the names this renderer keys on.
 // - `aiProcess_LimitBoneWeights` is pointless once bone weights are gone.
 // - `aiProcess_SplitLargeMeshes` shatters one authored object into
-//   several mesh instances and so into several `State::object_id`
+//   several mesh instances and so into several `State::objectId`
 //   values, so a material that varies by object ID would vary within
 //   the object.
 // - `aiProcess_OptimizeMeshes` merges meshes that share a material, which
@@ -43,7 +43,7 @@ namespace {
 //
 // `aiProcess_FindInstances` IS enabled: it replaces duplicated mesh data
 // with shared meshes under distinct node transforms while leaving one
-// instance, and so one `State::object_id`, per placement, which is what
+// instance, and so one `State::objectId`, per placement, which is what
 // distinguishes it from `aiProcess_OptimizeMeshes`.
 constexpr unsigned POSTPROCESS_FLAGS =
     aiProcess_Triangulate | aiProcess_RemoveComponent | aiProcess_SortByPType |
@@ -85,8 +85,8 @@ void registerSceneData(smdl::Compiler &compiler) {
       "vertex_color",
       [&compiler](smdl::State *state, smdl::SceneData::Kind kind, int size,
                   void *out) {
-        if (state->vertex_color_max == 0) return;
-        const auto &rgba{state->vertex_color[0]};
+        if (state->vertexColorCount == 0) return;
+        const auto &rgba{state->vertexColor[0]};
         if (kind == smdl::SceneData::Kind::Float && (size == 3 || size == 4)) {
           for (int i = 0; i < size; i++) static_cast<float *>(out)[i] = rgba[i];
         } else if (kind == smdl::SceneData::Kind::Color) {
@@ -94,7 +94,7 @@ void registerSceneData(smdl::Compiler &compiler) {
                                      static_cast<float *>(out));
         }
       },
-      [](const smdl::State *state) { return state->vertex_color_max > 0; });
+      [](const smdl::State *state) { return state->vertexColorCount > 0; });
 }
 
 InstanceFrame::InstanceFrame(const float4x4 &xf) noexcept {
@@ -121,7 +121,7 @@ InstanceFrame::InstanceFrame(const float4x4 &xf) noexcept {
                float4(rigidAxes[2], 0.0f), xf[3]};
   // Rigid, so the transpose-and-negate inverse is exact -- the same
   // reasoning by which `state.smdl`'s `affine_inverse()` is allowed to
-  // invert `object_to_world_matrix` that way.
+  // invert `objectToWorld` that way.
   worldToRigid = smdl::affineInverse(rigidToWorld);
   // Is anything actually deformed? Measure against the nearest
   // similarity, which is the same test as asking whether the axes are
@@ -180,12 +180,14 @@ void Scene::add(const std::string &fileName, const float4x4 &objectToWorld,
           selection, subdiv, materials, animation);
 }
 
+namespace {
 // The one shut key of a single placement, or nothing for a static one.
-[[nodiscard]] static std::optional<float4x4>
+[[nodiscard]] std::optional<float4x4>
 firstKey(smdl::Span<const float4x4> keys) {
   if (keys.empty()) return std::nullopt;
   return keys[0];
 }
+} // namespace
 
 void Scene::addMesh(const std::string &fileName,
                     smdl::Span<const float4x4> worldXfs,
@@ -214,13 +216,13 @@ void Scene::addMesh(const std::string &fileName,
   // at commit, so under `subdiv.displace` the renames stay in the key
   // and the meshes genuinely differ.
   auto meshLevel{materials};
-  const bool renamesPerInstance{!subdiv.isDisplaced &&
-                                !meshLevel.renames.empty()};
-  if (renamesPerInstance) meshLevel.renames.clear();
+  const bool hasRenamesPerInstance{!subdiv.isDisplaced &&
+                                   !meshLevel.renames.empty()};
+  if (hasRenamesPerInstance) meshLevel.renames.clear();
   std::error_code ignored{};
   auto key{std::filesystem::weakly_canonical(fileName, ignored).string()};
   if (key.empty()) key = fileName;
-  if (subdiv.active()) key += "|" + subdiv.key();
+  if (subdiv.isActive()) key += "|" + subdiv.key();
   if (!meshLevel.empty()) key += "|" + meshLevel.key();
   // The pose a file is baked in is part of what its meshes are: two
   // phases of one asset are two mesh sets and two BVHs.
@@ -244,7 +246,7 @@ void Scene::addMesh(const std::string &fileName,
     // the bind pose's attributes alone and drops the joined duplicate's
     // bone weights and morph entries, so a mesh this read is about to
     // bake must never go through it, and welds its own corners over both
-    // keys instead (`joinCorners()`). Assimp runs its steps in a fixed
+    // keys instead (`shouldJoinCorners()`). Assimp runs its steps in a fixed
     // registry order whatever the flags say, and both held-back steps
     // come after every other step asked for here, so finishing them in a
     // second pass is the same sequence over the same data as one read.
@@ -292,7 +294,7 @@ void Scene::addMesh(const std::string &fileName,
   // `INVALID_INDEX` where the renames have nothing to say.
   auto overrideForMesh{std::map<uint32_t, uint32_t>()};
   auto instanceMaterial{[&](uint32_t meshIndex) {
-    if (!renamesPerInstance) return INVALID_INDEX;
+    if (!hasRenamesPerInstance) return INVALID_INDEX;
     auto [entry2, isNew]{overrideForMesh.try_emplace(meshIndex, INVALID_INDEX)};
     if (isNew) {
       const auto &baseName{materialNames[meshes[meshIndex]->matIndex]};
@@ -321,8 +323,8 @@ void Scene::addMesh(const std::string &fileName,
     // identity, at both keys.
     auto nodeXf{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFile};
     auto nodeXfShut{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFileShut};
-    const bool nodeMoves{!mesh.isSkinned && node.moves};
-    if (selection.recenter) {
+    const bool doesNodeMove{!mesh.isSkinned && node.moves};
+    if (selection.shouldRecenter) {
       // Left-multiplying by the inverse translation of the subtree root
       // subtracts it from the translation column and leaves the linear part
       // alone, which is exactly what recentering means. Every placement in
@@ -339,7 +341,7 @@ void Scene::addMesh(const std::string &fileName,
       auto shutXf{firstKey(worldXfsShut)};
       if (shutXf) {
         *shutXf = *shutXf * nodeXfShut;
-      } else if (nodeMoves) {
+      } else if (doesNodeMove) {
         shutXf = worldXfs[0] * nodeXfShut;
       }
       addInstance(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
@@ -349,8 +351,8 @@ void Scene::addMesh(const std::string &fileName,
     } else {
       addInstanceArray(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
                        worldXfs, worldXfsShut, nodeXf,
-                       nodeMoves ? std::optional<float4x4>(nodeXfShut)
-                                 : std::nullopt,
+                       doesNodeMove ? std::optional<float4x4>(nodeXfShut)
+                                    : std::nullopt,
                        fileName, instanceMaterial(placement.meshIndex));
       numInstances += uint32_t(worldXfs.size());
     }
@@ -378,9 +380,9 @@ void Scene::add(const LayoutItem &item) {
           : smdl::Span<const float4x4>(item.batchXfsShut.data(),
                                        item.batchXfsShut.size())};
   const auto firstInstance{meshInstances.size()};
-  if (item.primitive.active()) {
+  if (item.primitive.isActive()) {
     addPrimitive(item.primitive, worldXfs, worldXfsShut, item.materials);
-  } else if (item.curves.active) {
+  } else if (item.curves.isActive) {
     addCurves(item.fileName, worldXfs, worldXfsShut, item.curves,
               item.materials);
   } else {
@@ -389,13 +391,13 @@ void Scene::add(const LayoutItem &item) {
   }
   // Every instance the item produced carries its mark; the lowering has
   // already refused it on a groom.
-  if (item.isCaster && !item.curves.active)
+  if (item.isCaster && !item.curves.isActive)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].isCausticCaster = true;
-  if (item.isCausticLight && !item.curves.active)
+  if (item.isCausticLight && !item.curves.isActive)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].isCausticLight = true;
-  if (item.isLight && !item.curves.active)
+  if (item.isLight && !item.curves.isActive)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].isLight = true;
 }
@@ -416,7 +418,7 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   if (entry == primitiveCache.end()) {
     primIndex = uint32_t(primitives.size());
     primitives.push_back(makePrimitive(device, spec, internMaterial(baseName),
-                                       robustIntersection));
+                                       useRobustIntersection));
     primitiveCache.emplace(std::move(key), primIndex);
     SMDL_LOG_DEBUG("Built ", spec.key(), ": ", primitivePieceCount(spec),
                    " piece(s), area ", primitives.back()->objectArea);
@@ -457,7 +459,8 @@ uint32_t Scene::addCurves(const std::string &fileName,
   if (entry == curvesCache.end()) {
     curvesIndex = uint32_t(curves.size());
     curves.push_back(makeCurves(device, readCurvesFile(fileName), spec,
-                                internMaterial(baseName), robustIntersection));
+                                internMaterial(baseName),
+                                useRobustIntersection));
     curvesCache.emplace(std::move(key), curvesIndex);
     SMDL_LOG_DEBUG(
         "Read ", smdl::QuotedPath(fileName), ": ", curves.back()->strandCount(),
@@ -485,7 +488,7 @@ uint32_t Scene::addCurves(const std::string &fileName,
 ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
                        const MaterialAssignment &materials,
                        const aiAnimation *clip, const AnimationSpec &animation,
-                       bool joinCorners, std::string_view fileName) {
+                       bool shouldJoinCorners, std::string_view fileName) {
   // Material names are global to the composition, so a file's own material
   // indices have to be remapped as its meshes come in. The import's own
   // assignment applies here, at the one point where the file's names are
@@ -500,15 +503,15 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   // The node graph at the two keys of the shutter, on the render clock:
   // the authored pose with no clip, and one pose when the shutter is
   // shut, in which case every mesh holds the pose at the base time.
-  const bool shutterOpen{gRenderShutter.isOpen()};
+  const bool isShutterOpen{gRenderShutter.isOpen()};
   const double ticksOpen{clip ? clipTime(*clip, animation, gRenderShutter.time)
                               : 0.0};
   const double ticksShut{
       clip ? clipTime(*clip, animation, gRenderShutter.secondsAt(1.0f)) : 0.0};
   const auto poseOpen{evaluatePose(assScene, clip, ticksOpen)};
-  const auto poseShut{clip && shutterOpen ? std::optional(evaluatePose(
-                                                assScene, clip, ticksShut))
-                                          : std::nullopt};
+  const auto poseShut{clip && isShutterOpen ? std::optional(evaluatePose(
+                                                  assScene, clip, ticksShut))
+                                            : std::nullopt};
   const auto meshBase{uint32_t(meshes.size())};
   uint32_t numDeforming{};
   for (unsigned int i = 0; i < assScene.mNumMeshes; i++) {
@@ -522,7 +525,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
     }
     load(*assScene.mMeshes[i], materialRemap, subdiv,
          bakeOpen ? &*bakeOpen : nullptr, bakeShut ? &*bakeShut : nullptr,
-         joinCorners);
+         shouldJoinCorners);
   }
   auto file{ImportFile()};
   flattenNodes(*assScene.mRootNode, float4x4(1.0f), INVALID_INDEX, {}, meshBase,
@@ -546,7 +549,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   if (poseShut) {
     SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " plays ",
                   smdl::Quoted(clip->mName.C_Str()), " at ", at, " s (",
-                  animation.once ? "once" : "looping", ", ", duration,
+                  animation.shouldPlayOnce ? "once" : "looping", ", ", duration,
                   " s long): ", numDeforming, " mesh(es) deform and ",
                   numMoving, " node(s) move over the shutter");
   } else {
@@ -575,13 +578,13 @@ quaternionDecompositionOf(const float4x4 &xf) noexcept {
   return qd;
 }
 
+namespace {
 // Can Embree interpolate between the two keys? A pair whose
 // determinants differ in sign passes through a collapsed object
 // mid-shutter, which no interpolation renders; such an instance is
 // warned about and holds its open key.
-[[nodiscard]] static bool keysInterpolate(const float4x4 &xf,
-                                          const float4x4 &xfShut,
-                                          std::string_view fileName) {
+[[nodiscard]] bool keysInterpolate(const float4x4 &xf, const float4x4 &xfShut,
+                                   std::string_view fileName) {
   const auto det{[](const float4x4 &m) {
     return dot(float3(m[0]), cross(float3(m[1]), float3(m[2])));
   }};
@@ -593,6 +596,7 @@ quaternionDecompositionOf(const float4x4 &xf) noexcept {
   }
   return true;
 }
+} // namespace
 
 uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex, const float4x4 &xf,
@@ -671,23 +675,23 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   // interpolated holds the whole array at its open keys. The shut key of
   // an element is the place's shut key (or its open key, for a still
   // place under a moving node) over the node's.
-  bool moving{!worldXfsShut.empty() || nodeXfShut.has_value()};
+  bool isMoving{!worldXfsShut.empty() || nodeXfShut.has_value()};
   const float4x4 shutNodeXf{nodeXfShut ? *nodeXfShut : nodeXf};
   const auto shutOf{[&](size_t i) {
     return (worldXfsShut.empty() ? worldXfs[i] : worldXfsShut[i]) * shutNodeXf;
   }};
-  for (size_t i = 0; moving && i < worldXfs.size(); i++)
-    moving = keysInterpolate(worldXfs[i] * nodeXf, shutOf(i), fileName);
+  for (size_t i = 0; isMoving && i < worldXfs.size(); i++)
+    isMoving = keysInterpolate(worldXfs[i] * nodeXf, shutOf(i), fileName);
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY)};
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
-  rtcSetGeometryTimeStepCount(geometry, moving ? 2 : 1);
+  rtcSetGeometryTimeStepCount(geometry, isMoving ? 2 : 1);
   rtcSetGeometryInstancedScene(
       geometry, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
                 : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
                                              : meshes[meshIndex]->scene);
   float *transforms{};
   RTCQuaternionDecomposition *keys[2]{};
-  if (!moving) {
+  if (!isMoving) {
     transforms = static_cast<float *>(rtcSetNewGeometryBuffer(
         geometry, RTC_BUFFER_TYPE_TRANSFORM, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
         sizeof(float) * 12, worldXfs.size()));
@@ -702,7 +706,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   const auto base{uint32_t(meshInstances.size())};
   for (size_t i = 0; i < worldXfs.size(); i++) {
     const auto xf{worldXfs[i] * nodeXf};
-    if (!moving) {
+    if (!isMoving) {
       for (int row = 0; row < 3; row++)
         for (int column = 0; column < 4; column++)
           transforms[12 * i + 4 * row + column] = xf[column][row];
@@ -720,7 +724,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
         meshIndex != INVALID_INDEX && meshes[meshIndex]->deforms();
     instance.geometry = geometry;
     instance.instPrimID = unsigned(i);
-    instance.isMoving = moving;
+    instance.isMoving = isMoving;
     meshInstances.push_back(instance);
   }
   rtcCommitGeometry(geometry);
@@ -730,7 +734,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
   instanceBaseByGeomID[geomID] = base;
   SMDL_LOG_DEBUG("Instance array: ", worldXfs.size(), " element(s) of ",
-                 fileName, moving ? ", moving" : "");
+                 fileName, isMoving ? ", moving" : "");
   return base;
 }
 
@@ -738,8 +742,8 @@ uint32_t Scene::addGroundPlane(float z, float halfExtent,
                                const std::string &materialName) {
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
-  rtcSetSceneFlags(mesh->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
-                                                   : RTC_SCENE_FLAG_NONE);
+  rtcSetSceneFlags(mesh->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                      : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(mesh->scene, RTC_BUILD_QUALITY_HIGH);
   mesh->matIndex = internMaterial(materialName);
   mesh->verts.resize(4);
@@ -792,10 +796,10 @@ BoundBox3 Scene::preCommitBounds() const {
 
 uint32_t Scene::internMaterial(std::string name) {
   auto [entry, isNew]{
-      materialIndexByName.try_emplace(name, uint32_t(materials.size()))};
+      materialIndexByName.try_emplace(name, uint32_t(materialDefs.size()))};
   if (isNew) {
     materialNames.push_back(std::move(name));
-    materials.push_back(nullptr); // Resolved by `commit()`.
+    materialDefs.push_back(nullptr); // Resolved by `commit()`.
   }
   return entry->second;
 }
@@ -809,12 +813,12 @@ void Scene::commit(const Color &wavelengths) {
   // hit, which is what turns a visibility walk into a boolean occlusion
   // query.
   {
-    opaqueShadows = true;
+    useOpaqueShadows = true;
     const auto used{computeUsedMaterials()};
-    for (size_t i = 0; i < materials.size(); i++) {
-      if (!used[i] || !materials[i]) continue;
-      if (!materials[i]->isAlwaysOpaque()) {
-        opaqueShadows = false;
+    for (size_t i = 0; i < materialDefs.size(); i++) {
+      if (!used[i] || !materialDefs[i]) continue;
+      if (!materialDefs[i]->isAlwaysOpaque()) {
+        useOpaqueShadows = false;
         break;
       }
     }
@@ -832,14 +836,14 @@ void Scene::commit(const Color &wavelengths) {
   SMDL_LOG_DEBUG("Committed ", fileNames.size(), " file(s): ", meshes.size(),
                  " meshes, ", primitives.size(), " primitives, ", curves.size(),
                  " grooms, ", meshInstances.size(), " instances, ",
-                 materials.size(), " materials, ", numTriangles,
+                 materialDefs.size(), " materials, ", numTriangles,
                  " triangles, center (", boundCenter.x, ", ", boundCenter.y,
                  ", ", boundCenter.z, ") radius ", boundRadius,
-                 opaqueShadows ? ", boolean shadows" : "");
+                 useOpaqueShadows ? ", boolean shadows" : "");
 }
 
 std::vector<bool> Scene::computeUsedMaterials() const {
-  auto isUsed{std::vector<bool>(materials.size(), false)};
+  auto isUsed{std::vector<bool>(materialDefs.size(), false)};
   for (const auto &meshInstance : meshInstances)
     isUsed[materialIndexOf(meshInstance)] = true;
   return isUsed;
@@ -854,7 +858,7 @@ std::vector<std::string> Scene::usedMaterialNames() const {
 }
 
 void Scene::resolveMaterials() {
-  const smdl::JIT::Material *fallback{};
+  const smdl::JIT::MaterialDef *fallback{};
   if (!fallbackMaterialName.empty()) {
     fallback = compiler.findMaterial(fallbackMaterialName);
     if (!fallback)
@@ -870,14 +874,14 @@ void Scene::resolveMaterials() {
   // material, which `findMaterial()` reports as a loud error.
   const auto isUsed{computeUsedMaterials()};
   auto unresolved{std::vector<std::string>()};
-  for (size_t i = 0; i < materials.size(); i++) {
+  for (size_t i = 0; i < materialDefs.size(); i++) {
     if (!isUsed[i]) continue;
-    materials[i] = compiler.findMaterial(materialNames[i]);
-    if (!materials[i]) {
+    materialDefs[i] = compiler.findMaterial(materialNames[i]);
+    if (!materialDefs[i]) {
       // `findMaterial()` also returns null when more than one material
       // matches, having logged the candidates itself.
       if (fallback) {
-        materials[i] = fallback;
+        materialDefs[i] = fallback;
       } else {
         unresolved.push_back(materialNames[i]);
       }
@@ -937,7 +941,7 @@ void appendBits(std::string &key, const Mesh::Vert &vert) {
 // the sharing the join gives a still file, and cannot merge two corners
 // that move apart, which the join would, since it looks at the bind pose
 // alone. Output indices number in first-encounter order.
-void joinCorners(Mesh &mesh) {
+void shouldJoinCorners(Mesh &mesh) {
   const auto numCorners{mesh.verts.size()};
   auto indexOf{std::unordered_map<std::string, uint32_t>()};
   indexOf.reserve(numCorners);
@@ -1007,8 +1011,8 @@ void joinBaseCorners(Mesh &mesh) {
 
 // Do two keys agree bit for bit? A shut key that restates the open one
 // is no key: the mesh renders through the static path.
-[[nodiscard]] bool sameKeys(const std::vector<Mesh::Vert> &a,
-                            const std::vector<Mesh::Vert> &b) {
+[[nodiscard]] bool hasSameKeys(const std::vector<Mesh::Vert> &a,
+                               const std::vector<Mesh::Vert> &b) {
   auto keyA{std::string()}, keyB{std::string()};
   for (size_t i = 0; i < a.size(); i++) {
     keyA.clear(), keyB.clear();
@@ -1019,8 +1023,8 @@ void joinBaseCorners(Mesh &mesh) {
   return true;
 }
 
-[[nodiscard]] bool sameKeys(const std::vector<float3> &a,
-                            const std::vector<float3> &b) {
+[[nodiscard]] bool hasSameKeys(const std::vector<float3> &a,
+                               const std::vector<float3> &b) {
   for (size_t i = 0; i < a.size(); i++)
     if (positionKey(a[i]) != positionKey(b[i])) return false;
   return true;
@@ -1131,16 +1135,17 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
                 numDisplaced.load(), " displaced, in ", seconds, "s");
   // 'displace' with nothing to displace usually means the scene resolved
   // to materials other than the ones the author had in mind.
-  bool displaceRequested{};
-  for (auto i : pending) displaceRequested |= meshes[i]->subdiv.isDisplaced;
-  if (displaceRequested && numDisplaced.load() == 0)
+  bool wasDisplaceRequested{};
+  for (auto i : pending) wasDisplaceRequested |= meshes[i]->subdiv.isDisplaced;
+  if (wasDisplaceRequested && numDisplaced.load() == 0)
     SMDL_LOG_WARN(
         "'displace' was requested but every material involved has provably "
         "zero 'geometry.displacement'; check that the scene resolves to the "
         "materials you meant (run with -list-materials).");
 }
 
-bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
+bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths,
+                         bool shouldSpreadWork) {
   // The one welding every pass below shares, built on first use: it costs
   // about as much as displacing the mesh does, and a smoothly subdivided
   // mesh that is never displaced needs none at all. Subdivision replaces
@@ -1168,13 +1173,14 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
       recomputeTangents(verts, mesh.faces);
     });
   }
-  auto displaced{false};
+  auto isDisplaced{false};
   if (mesh.subdiv.isDisplaced) {
     eachKey([&](std::vector<Mesh::Vert> &verts, float seconds) {
-      if (!displaceMesh(mesh, verts, seconds, wavelengths, spread, weldOnce()))
+      if (!displaceMesh(mesh, verts, seconds, wavelengths, shouldSpreadWork,
+                        weldOnce()))
         return;
       // The surface changed; the shading frame must follow it.
-      displaced = true;
+      isDisplaced = true;
       recomputeNormals(verts, mesh.faces, weldOnce());
       recomputeTangents(verts, mesh.faces);
     });
@@ -1187,15 +1193,15 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
   mesh.baseColors = {};
   mesh.baseFaceCounts = {};
   mesh.baseIndices = {};
-  return displaced;
+  return isDisplaced;
 }
 
 bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
-                         float seconds, const Color &wavelengths, bool spread,
-                         const WeldMap &weld) {
-  SMDL_SANITY_CHECK(mesh.matIndex < materials.size());
-  const auto *material{materials[mesh.matIndex]};
-  if (!material || material->hasZeroDisplacement()) return false;
+                         float seconds, const Color &wavelengths,
+                         bool shouldSpreadWork, const WeldMap &weld) {
+  SMDL_SANITY_CHECK(mesh.matIndex < materialDefs.size());
+  const auto *materialDef{materialDefs[mesh.matIndex]};
+  if (!materialDef || materialDef->hasZeroDisplacement()) return false;
   // One offset per position-welded vertex, averaged over the split
   // copies (whose UVs may disagree along texture seams) and applied to
   // every copy, so the displaced surface cannot crack. Well-authored
@@ -1227,25 +1233,25 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
     auto state{makeRenderState(wavelengths, nullptr, seconds)};
     state.position = vert.point;
     state.normal = normal;
-    state.geometry_normal = normal;
-    state.texture_coordinate[0] = float3(vert.texcoord.x, vert.texcoord.y, 0);
-    state.texture_tangent_u[0] = tangent;
-    state.texture_tangent_v[0] = bitangent;
-    state.geometry_tangent_u[0] = tangent;
-    state.geometry_tangent_v[0] = bitangent;
+    state.geometryNormal = normal;
+    state.textureCoordinate[0] = float3(vert.texcoord.x, vert.texcoord.y, 0);
+    state.textureTangentU[0] = tangent;
+    state.textureTangentV[0] = bitangent;
+    state.geometryTangentU[0] = tangent;
+    state.geometryTangentV[0] = bitangent;
     if (!mesh.colors.empty()) {
-      state.vertex_color_max = 1;
-      state.vertex_color[0] = mesh.colors[i];
+      state.vertexColorCount = 1;
+      state.vertexColor[0] = mesh.colors[i];
     }
     state.finalize();
     auto displacement{float3()};
-    material->displacementEvaluate(state, displacement);
+    materialDef->displacementEvaluate(state, displacement);
     // Internal space is the tangent frame, so the vector maps back
     // through it: `d.x` along U, `d.y` along V, `d.z` along the normal.
     vertOffsets[i] = displacement.x * tangent + displacement.y * bitangent +
                      displacement.z * normal;
   }};
-  if (spread) {
+  if (shouldSpreadWork) {
     smdl::parallelFor(0, verts.size(), evaluate);
   } else {
     for (size_t i = 0; i < verts.size(); i++) evaluate(i);
@@ -1268,11 +1274,11 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
 void Scene::load(const aiMesh &assMesh,
                  const std::vector<uint32_t> &materialRemap,
                  const SubdivSpec &subdiv, const MeshBake *bakeOpen,
-                 const MeshBake *bakeShut, bool joinCorners) {
+                 const MeshBake *bakeShut, bool shouldJoinCorners) {
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
-  rtcSetSceneFlags(mesh->scene, robustIntersection ? RTC_SCENE_FLAG_ROBUST
-                                                   : RTC_SCENE_FLAG_NONE);
+  rtcSetSceneFlags(mesh->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                      : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(mesh->scene, RTC_BUILD_QUALITY_HIGH);
   mesh->matIndex = assMesh.mMaterialIndex < materialRemap.size()
                        ? materialRemap[assMesh.mMaterialIndex]
@@ -1324,9 +1330,9 @@ void Scene::load(const aiMesh &assMesh,
         mesh->baseIndices.push_back(face.mIndices[j]);
     }
     if (!mesh->basePointsShut.empty() &&
-        sameKeys(mesh->basePoints, mesh->basePointsShut))
+        hasSameKeys(mesh->basePoints, mesh->basePointsShut))
       mesh->basePointsShut.clear();
-    if (joinCorners) joinBaseCorners(*mesh);
+    if (shouldJoinCorners) joinBaseCorners(*mesh);
     mesh->needsFinalize = true;
     return;
   }
@@ -1382,9 +1388,9 @@ void Scene::load(const aiMesh &assMesh,
     mesh->faces[i] = {uint32_t(assMesh.mFaces[i].mIndices[0]),
                       uint32_t(assMesh.mFaces[i].mIndices[1]),
                       uint32_t(assMesh.mFaces[i].mIndices[2])};
-  if (!mesh->vertsShut.empty() && sameKeys(mesh->verts, mesh->vertsShut))
+  if (!mesh->vertsShut.empty() && hasSameKeys(mesh->verts, mesh->vertsShut))
     mesh->vertsShut.clear();
-  if (joinCorners) ::joinCorners(*mesh);
+  if (shouldJoinCorners) ::shouldJoinCorners(*mesh);
   if (subdiv.isDisplaced) {
     // Displacement without subdivision: the triangles are final but the
     // vertices are not, and moving them needs the materials `commit()`
@@ -1423,11 +1429,11 @@ void Scene::buildMeshGeometry(Mesh &mesh) {
   rtcReleaseGeometry(geometry);
 }
 
+namespace {
 // The Embree query struct of a ray. Written once and shared by all three
 // query entry points, since a field left unset here is a query that
 // silently means something else.
-[[nodiscard]] static SMDL_ALWAYS_INLINE RTCRay
-toRTCRay(const Ray &ray) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE RTCRay toRTCRay(const Ray &ray) noexcept {
   RTCRay rtcRay;
   rtcRay.org_x = ray.org.x;
   rtcRay.org_y = ray.org.y;
@@ -1446,7 +1452,7 @@ toRTCRay(const Ray &ray) noexcept {
 
 // The Embree query struct of a closest-hit query: the ray, plus the
 // sentinel identifiers that say nothing has been hit yet.
-[[nodiscard]] static SMDL_ALWAYS_INLINE RTCRayHit
+[[nodiscard]] SMDL_ALWAYS_INLINE RTCRayHit
 toRTCRayHit(const Ray &ray) noexcept {
   // Only the fields Embree reads, the sentinels it requires and the
   // primitive id the miss test reads back; the hit fields are outputs,
@@ -1461,25 +1467,38 @@ toRTCRayHit(const Ray &ray) noexcept {
   }
   return rayHit;
 }
+} // namespace
 
 bool Scene::intersect(Ray &ray, Hit &hit) const {
+  RawHit raw;
+  if (!intersect(ray, raw)) return false;
+  makeHit(raw, ray, hit);
+  return true;
+}
+
+bool Scene::intersect(Ray &ray, RawHit &raw) const {
   auto rayHit{toRTCRayHit(ray)};
   rtcIntersect1(scene, &rayHit, nullptr);
   if (rayHit.hit.primID == unsigned(-1)) return false;
   ray.tmax = rayHit.ray.tfar;
-  const auto instIndex{
-      instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto objectNg{
-      float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
-  if (meshInstance.isMoving || meshInstance.isDeforming) {
-    makeHitMoving(instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
-                  objectNg, ray, hit);
-  } else {
-    makeHit(meshInstance.frame, instIndex, rayHit.hit.primID, rayHit.hit.u,
-            rayHit.hit.v, objectNg, ray, hit);
-  }
+  raw.instIndex =
+      instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0]);
+  raw.primID = rayHit.hit.primID;
+  raw.u = rayHit.hit.u;
+  raw.v = rayHit.hit.v;
+  raw.objectNg = float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z);
   return true;
+}
+
+void Scene::makeHit(const RawHit &raw, const Ray &ray, Hit &hit) const {
+  const auto &meshInstance{meshInstances[raw.instIndex]};
+  if (meshInstance.isMoving || meshInstance.isDeforming) {
+    makeHitMoving(raw.instIndex, raw.primID, raw.u, raw.v, raw.objectNg, ray,
+                  hit);
+  } else {
+    makeHit(meshInstance.frame, raw.instIndex, raw.primID, raw.u, raw.v,
+            raw.objectNg, ray, hit);
+  }
 }
 
 void Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
@@ -1533,7 +1552,7 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
       instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
   const auto &meshInstance{meshInstances[instIndex]};
   hit.instance = &meshInstance;
-  hit.material = materials[materialIndexOf(meshInstance)];
+  hit.materialDef = materialDefs[materialIndexOf(meshInstance)];
   hit.vertex.surface = instIndex;
   hit.vertex.face = rayHit.hit.primID;
   // The projection rejects curve pins, so a curve hit only ever
@@ -1602,6 +1621,49 @@ float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
   const auto point1{transformPoint(objectToWorld, vert1.point)};
   const auto point2{transformPoint(objectToWorld, vert2.point)};
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+}
+
+namespace {
+
+// The face's `Ng` by the expressions `makeHitFrom()` forms it with,
+// the cross of the transformed edges normalized and flipped with the
+// winding, so that the record and this agree bit for bit.
+[[nodiscard]] float3 faceNg(const InstanceFrame &frame, const Mesh::Vert &vert0,
+                            const Mesh::Vert &vert1,
+                            const Mesh::Vert &vert2) noexcept {
+  const auto &objectToWorld{frame.objectToWorld};
+  const auto point0{transformPoint(objectToWorld, vert0.point)};
+  const auto point1{transformPoint(objectToWorld, vert1.point)};
+  const auto point2{transformPoint(objectToWorld, vert2.point)};
+  auto Ng{cross(point1 - point0, point2 - point0)};
+  if (!smdl::tryNormalize(Ng)) Ng = float3(0.0f, 0.0f, 1.0f);
+  return frame.flipsWinding ? -Ng : Ng;
+}
+
+} // namespace
+
+float3 Scene::hitNg(const RawHit &raw, float time) const {
+  const auto &meshInstance{meshInstances[raw.instIndex]};
+  SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
+  if (meshInstance.isMoving || meshInstance.isDeforming)
+    return hitNgMoving(raw, time);
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const auto &face{mesh.faces[raw.primID]};
+  return faceNg(meshInstance.frame, mesh.verts[face[0]], mesh.verts[face[1]],
+                mesh.verts[face[2]]);
+}
+
+float3 Scene::hitNgMoving(const RawHit &raw, float time) const {
+  const auto &meshInstance{meshInstances[raw.instIndex]};
+  std::optional<InstanceFrame> scratch{};
+  const auto &frame{meshInstance.frameAt(time, scratch)};
+  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const auto &face{mesh.faces[raw.primID]};
+  if (!meshInstance.isDeforming)
+    return faceNg(frame, mesh.verts[face[0]], mesh.verts[face[1]],
+                  mesh.verts[face[2]]);
+  return faceNg(frame, mesh.vertAt(face[0], time), mesh.vertAt(face[1], time),
+                mesh.vertAt(face[2], time));
 }
 
 void Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
@@ -1683,8 +1745,8 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.faceIndex = faceIndex;
   hit.matIndex = materialIndexOf(meshInstance);
   hit.time = time;
-  SMDL_SANITY_CHECK(hit.matIndex < materials.size());
-  hit.material = materials[hit.matIndex];
+  SMDL_SANITY_CHECK(hit.matIndex < materialDefs.size());
+  hit.materialDef = materialDefs[hit.matIndex];
   hit.bary = bary;
   hit.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
   // Normals transform by the cofactor matrix and tangents by the linear
@@ -1758,8 +1820,8 @@ void Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
   hit.matIndex = materialIndexOf(meshInstance);
-  SMDL_SANITY_CHECK(hit.matIndex < materials.size());
-  hit.material = materials[hit.matIndex];
+  SMDL_SANITY_CHECK(hit.matIndex < materialDefs.size());
+  hit.materialDef = materialDefs[hit.matIndex];
   hit.time = time;
   hit.bary = float3(0.0f, surface.uv.x, surface.uv.y);
   hit.point = transformPoint(objectToWorld, surface.point);
@@ -1940,17 +2002,17 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   const auto &groom{*curves[meshInstance.curvesIndex]};
   const auto &objectToWorld{frame.objectToWorld};
   const auto matIndex{materialIndexOf(meshInstance)};
-  SMDL_SANITY_CHECK(matIndex < materials.size());
-  const auto *material{materials[matIndex]};
+  SMDL_SANITY_CHECK(matIndex < materialDefs.size());
+  const auto *materialDef{materialDefs[matIndex]};
   // The fiber tangent, root toward tip: the axis derivative transforms
   // by the linear part like any tangent. Degenerate windows (repeated
   // control points) fall back to any perpendicular so the frame stays a
   // frame.
   const auto axis{groom.axisAt(primID, u)};
   auto tangent{transformDirection(objectToWorld, axis.tangent)};
-  const bool ribbon{groom.spec.mode == CurvesSpec::Mode::RIBBON};
+  const bool isRibbon{groom.spec.mode == CurvesSpec::Mode::RIBBON};
   auto normal{float3()};
-  if (ribbon) {
+  if (isRibbon) {
     // The camera-facing ribbon normal: the ray direction reversed and
     // made perpendicular to the fiber. Embree's flat-curve `Ng` is the
     // curve tangent rather than a surface normal, so it is not used.
@@ -1964,7 +2026,7 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
     // direction from the geometry pins its sign with no dependence on
     // Embree's across-axis convention. Gated on the material so ribbon
     // grooms with surface materials render exactly as before.
-    if (material->hasHair()) {
+    if (materialDef->hasHair()) {
       const float sinGamma{std::min(std::fabs(v), 1.0f)};
       auto widthDir{worldPoint - transformPoint(objectToWorld, axis.point)};
       widthDir = widthDir - dot(widthDir, tangent) * tangent;
@@ -1993,12 +2055,12 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   const auto firstSeg{groom.strandFirstSeg[strand]};
   const auto numSegs{groom.strandFirstSeg[strand + 1] - firstSeg};
   const auto strandU{(float(primID - firstSeg) + u) / float(numSegs)};
-  const auto vAcross{ribbon ? 0.5f * (v + 1.0f) : 0.0f};
+  const auto vAcross{isRibbon ? 0.5f * (v + 1.0f) : 0.0f};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
   hit.matIndex = matIndex;
-  hit.material = material;
+  hit.materialDef = materialDef;
   hit.time = time;
   hit.bary = float3(0.0f, u, vAcross);
   hit.point = worldPoint;

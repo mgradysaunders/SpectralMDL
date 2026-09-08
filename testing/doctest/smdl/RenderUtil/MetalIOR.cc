@@ -7,23 +7,23 @@
 
 #include "smdl/RenderUtil/MetalIOR.h"
 
-static smdl::float2 evalMetalIOR(smdl::Metal metal, float wavelen) {
+namespace {
+smdl::float2 evalMetalIOR(smdl::Metal metal, float wavelen) {
   float n{}, k{};
   smdl::smdlEvalMetalIOR(metal, 1, &wavelen, &n, &k);
   return {n, k};
 }
 
 // The normal-incidence Fresnel reflectance.
-static float reflectance(smdl::float2 ior) {
+float reflectance(smdl::float2 ior) {
   const float n{ior[0]}, k{ior[1]};
   return ((n - 1) * (n - 1) + k * k) / ((n + 1) * (n + 1) + k * k);
 }
 
 // The straightforward search this module used before it gained the bucket
 // index, kept here so the fast path can be held to returning the same bits.
-static void searchEvalMetalIOR(smdl::Metal metal, int numWavelens,
-                               const float *wavelens, float *iorN,
-                               float *iorK) {
+void searchEvalMetalIOR(smdl::Metal metal, int numWavelens,
+                        const float *wavelens, float *iorN, float *iorK) {
   smdl::MetalIOR metalIOR{};
   if (!smdl::smdlFindMetalIOR(metal, &metalIOR)) return;
   const smdl::MetalIORTableEntry *tableBegin{metalIOR.table};
@@ -46,14 +46,14 @@ static void searchEvalMetalIOR(smdl::Metal metal, int numWavelens,
 
 // Bit-identical, and NaN compares equal to NaN so the out-of-domain results
 // are held to the same bits as everything else.
-static bool sameBits(float a, float b) {
+bool hasSameBits(float a, float b) {
   return (std::isnan(a) && std::isnan(b)) || a == b;
 }
 
 // Every wavelength worth asking about: each table entry and its two nearest
 // neighbors, every interval midpoint, a sweep across and well past the bucket
 // domain, and the exceptional values.
-static std::vector<float> probeWavelengths(const smdl::MetalIOR &metalIOR) {
+std::vector<float> probeWavelengths(const smdl::MetalIOR &metalIOR) {
   std::vector<float> wavelens{};
   for (int i = 0; i < metalIOR.tableSize; i++) {
     const float wavelen{metalIOR.table[i].wavelen};
@@ -73,6 +73,7 @@ static std::vector<float> probeWavelengths(const smdl::MetalIOR &metalIOR) {
   std::sort(wavelens.begin(), wavelens.end());
   return wavelens;
 }
+} // namespace
 
 TEST_CASE("MetalIOR") {
   SUBCASE("smdlFindMetalIOR") {
@@ -229,7 +230,8 @@ TEST_CASE("MetalIOR") {
                              iorK.data());
       int numMismatched{};
       for (int j = 0; j < numWavelens; j++)
-        if (!sameBits(iorN[j], expectN[j]) || !sameBits(iorK[j], expectK[j]))
+        if (!hasSameBits(iorN[j], expectN[j]) ||
+            !hasSameBits(iorK[j], expectK[j]))
           numMismatched++;
       CHECK(numMismatched == 0);
     }
@@ -259,8 +261,8 @@ TEST_CASE("MetalIOR") {
                              reversedN.data(), reversedK.data());
       int numMismatched{};
       for (int j = 0; j < numWavelens; j++)
-        if (!sameBits(iorN[j], reversedN[numWavelens - 1 - j]) ||
-            !sameBits(iorK[j], reversedK[numWavelens - 1 - j]))
+        if (!hasSameBits(iorN[j], reversedN[numWavelens - 1 - j]) ||
+            !hasSameBits(iorK[j], reversedK[numWavelens - 1 - j]))
           numMismatched++;
       CHECK(numMismatched == 0);
     }

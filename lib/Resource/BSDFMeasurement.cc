@@ -67,7 +67,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
     numTheta = llvm::support::endian::read32le(mem.data() + 4);
     numPhi = llvm::support::endian::read32le(mem.data() + 8);
     buffer =
-        llvm::allocate_buffer(numTheta * numTheta * numPhi * size_of(type), 16);
+        llvm::allocate_buffer(numTheta * numTheta * numPhi * sizeOf(type), 16);
     mem = mem.substr(12);
     auto num{numTheta * numTheta * numPhi};
     auto srcPtr{reinterpret_cast<const uint32_t *>(mem.data())};
@@ -143,11 +143,13 @@ struct CellLookup final {
   float fraction{};
 };
 
-[[nodiscard]] static CellLookup cellLookup(float t, int n) noexcept {
+namespace {
+[[nodiscard]] CellLookup cellLookup(float t, int n) noexcept {
   t = std::clamp(t - 0.5f, 0.0f, float(n - 1));
   const int i0{std::min(int(t), n - 1)};
   return {i0, std::min(i0 + 1, n - 1), t - float(i0)};
 }
+} // namespace
 
 float3 BSDFMeasurement::interpolate(float thetao, float thetai,
                                     float phi) const noexcept {
@@ -173,14 +175,16 @@ float3 BSDFMeasurement::interpolate(float thetao, float thetai,
               o.fraction);
 }
 
+namespace {
 // Calculate the azimuth difference angle in `[0, pi]`.
-[[nodiscard]] static float azimuthDifference(const float3 &wo,
-                                             const float3 &wi) noexcept {
+[[nodiscard]] float azimuthDifference(const float3 &wo,
+                                      const float3 &wi) noexcept {
   float phi{std::atan2(wi.y, wi.x) - std::atan2(wo.y, wo.x)};
   if (phi < -PI) phi += 2.0f * PI;
   if (phi > +PI) phi -= 2.0f * PI;
   return std::abs(phi);
 }
+} // namespace
 
 float3 BSDFMeasurement::interpolate(float3 wo, float3 wi) const noexcept {
   wo = normalize(wo);
@@ -268,8 +272,8 @@ BSDFMeasurement::loadFromFile(const std::string &fileName) noexcept {
 
 void BSDFMeasurement::clear() noexcept {
   if (buffer)
-    llvm::deallocate_buffer(buffer,
-                            numTheta * numTheta * numPhi * size_of(type), 16);
+    llvm::deallocate_buffer(buffer, numTheta * numTheta * numPhi * sizeOf(type),
+                            16);
   numTheta = 0;
   numPhi = 0;
   buffer = nullptr;

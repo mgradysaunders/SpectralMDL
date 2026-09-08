@@ -313,8 +313,7 @@ def render_thumbnails(args, smdl_toy, manifest_path, asset):
         output = os.path.join(directory, thumbnail_name(stem, select, multi))
         with tempfile.TemporaryDirectory(prefix="smdl-thumb-") as scratch:
             layout = os.path.join(scratch, "thumb.layout")
-            lines = ["#smdl layout",
-                     f'asset thing = "{os.path.basename(manifest_path)}" {{']
+            lines = [f'asset thing = "{os.path.basename(manifest_path)}" {{']
             if select:
                 lines.append(f'  select "{select}"')
                 lines.append("  recenter")

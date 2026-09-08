@@ -36,7 +36,7 @@ struct SunSkyOptions final {
 
   /// Include the direct sun disk in `radiance()`, `sample()`, `pdf()`,
   /// and `averageRadiance()`? The sky dome is unaffected either way.
-  bool enableSun{true};
+  bool isSunEnabled{true};
 
   /// Apply MIS compensation to the sky sampling distribution? The mean
   /// sky radiance is subtracted from the tabulated density (clamped at
@@ -44,7 +44,7 @@ struct SunSkyOptions final {
   /// sampling already covers well (Karlík et al., SIGGRAPH Asia 2019).
   /// The pdf reported by `sample()` and `pdf()` is the true density
   /// actually sampled from, so the estimator stays unbiased.
-  bool enableMISCompensation{true};
+  bool isMISCompensationEnabled{true};
 
   /// Moonlight mode: treat the source as the moon instead of the sun.
   /// `sunDirection` positions the moon, and every radiance output
@@ -55,7 +55,7 @@ struct SunSkyOptions final {
   /// at the moon's position times the multiplier. The disk keeps the
   /// solar angular radius of 0.2665 degrees (the moon's mean is
   /// 0.259), so its radiance is ~5% dim while its irradiance is exact.
-  bool moon{false};
+  bool isMoon{false};
 
   /// The signed lunar phase angle in degrees for moonlight mode,
   /// clamped to [-180, 180]: 0 is full moon, +/-180 new moon (where
@@ -221,7 +221,7 @@ public:
 
   /// The sun-disk spectral radiance, uniform over the disk: the direct
   /// solar irradiance divided by `sunSolidAngle()`. Filled with zeros
-  /// if the `enableSun` option is off. Same wavelength and unit
+  /// if the `isSunEnabled` option is off. Same wavelength and unit
   /// conventions as `skyRadiance()`.
   void sunRadiance(int numWavelens, const float *wavelens,
                    float *radiance) const;
@@ -237,7 +237,7 @@ public:
   [[nodiscard]] float3 sunDirection() const noexcept { return mSunDir; }
 
   /// Is the sun disk enabled?
-  [[nodiscard]] bool hasSun() const noexcept { return mSunEnabled; }
+  [[nodiscard]] bool hasSun() const noexcept { return mIsSunEnabled; }
 
   /// The cosine of the solar angular radius.
   [[nodiscard]] static constexpr float cosSunAngularRadius() noexcept {
@@ -301,7 +301,7 @@ private:
   float mSunDiskScale{};
 
   /// Is the sun disk enabled?
-  bool mSunEnabled{false};
+  bool mIsSunEnabled{false};
 
   /// The effective unit direction toward the sun, zenith clamped.
   float3 mSunDir{0.0f, 0.0f, 1.0f};
@@ -373,7 +373,7 @@ private:
   float mSunSelectionChance{};
 
   /// The sampling distribution over the sky dome, possibly
-  /// MIS-compensated, see `SunSkyOptions::enableMISCompensation`.
+  /// MIS-compensated, see `SunSkyOptions::isMISCompensationEnabled`.
   Distribution2D mSkyDistr{};
 
   /// The broadband mean radiance over the sphere, sun included, times

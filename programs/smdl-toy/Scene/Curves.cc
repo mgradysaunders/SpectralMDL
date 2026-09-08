@@ -9,7 +9,7 @@
 
 std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
                                    const CurvesSpec &spec, uint32_t matIndex,
-                                       bool robustIntersection) {
+                                   bool useRobustIntersection) {
   auto curves{std::make_unique<Curves>()};
   curves->spec = spec;
   curves->basis = file.basis;
@@ -93,9 +93,8 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
     break;
   }
   curves->scene = rtcNewScene(device);
-  rtcSetSceneFlags(curves->scene, robustIntersection
-                                    ? RTC_SCENE_FLAG_ROBUST
-                                    : RTC_SCENE_FLAG_NONE);
+  rtcSetSceneFlags(curves->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
+                                                        : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(curves->scene, RTC_BUILD_QUALITY_HIGH);
   auto geometry{rtcNewGeometry(device, geometryType)};
   // The point vector is exactly Embree's FLOAT4 vertex layout, and a

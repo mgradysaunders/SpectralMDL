@@ -14,26 +14,30 @@ namespace smdl {
 /// \{
 
 /// The constant `PI`.
-constexpr float PI = 3.141592653589793f;
+inline constexpr float PI = 3.141592653589793f;
 
 /// The constant `2 PI`.
-constexpr float TWO_PI = 6.283185307179586f;
+inline constexpr float TWO_PI = 6.283185307179586f;
 
 /// The constant `1 / PI`, for the hot paths that would otherwise divide:
 /// neither this nor `INV_TWO_PI` is exact, so the compiler will not fold
 /// the division into a multiply on its own.
-constexpr float INV_PI = 0.3183098861837907f;
+inline constexpr float INV_PI = 0.3183098861837907f;
 
 /// The constant `1 / (2 PI)`. See `INV_PI`.
-constexpr float INV_TWO_PI = 0.15915494309189535f;
+inline constexpr float INV_TWO_PI = 0.15915494309189535f;
 
 /// Positive infinity, the canonical unbounded ray parameter.
-constexpr float INF = std::numeric_limits<float>::infinity();
+inline constexpr float INF = std::numeric_limits<float>::infinity();
+
+inline constexpr float FLOAT_MIN = std::numeric_limits<float>::min();
+
+inline constexpr float FLOAT_MAX = std::numeric_limits<float>::max();
 
 /// The largest `float` strictly less than 1, which is what a canonical
 /// random sample in `[0, 1)` and a texture or quadtree coordinate that
 /// must not land on the far edge clamp to.
-constexpr float ONE_MINUS_EPS =
+inline constexpr float ONE_MINUS_EPS =
     1.0f - std::numeric_limits<float>::epsilon() / 2;
 
 /// \name Functions (scalar math)

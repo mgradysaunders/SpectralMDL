@@ -143,14 +143,14 @@ const static auto SRGB_PRIMARIES = auto[](
 /// perfect absorber in the SWIR and LWIR.
 @(hot noinline)
 color nontrivialRGBToColor(float3 rgb) {
-  #assert(bool($state.wavelength_base));
+  #assert(bool($state.wavelengthBase));
   color c(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     const auto lerp = _uniformLerpIndexAndFraction(
       SRGB_PRIMARIES_NUM_WAVELENGTHS,
       SRGB_PRIMARIES_MIN_WAVELENGTH,
       SRGB_PRIMARIES_MAX_WAVELENGTH,
-      $state.wavelength_base[i]);
+      $state.wavelengthBase[i]);
     c[i] = #sum(
       float2(1 - lerp.t, lerp.t) * (rgb.x * float2(&SRGB_PRIMARIES[0][lerp.i]) + rgb.y * float2(&SRGB_PRIMARIES[1][lerp.i]) + rgb.z * float2(&SRGB_PRIMARIES[2][lerp.i])));
   }
@@ -168,12 +168,12 @@ export color _rgbToColor(const float3 rgb) {
 }
 
 /// Construct a `color` by evaluating `f` at each wavelength of the active
-/// spectral basis `$state.wavelength_base`.
+/// spectral basis `$state.wavelengthBase`.
 @(macro)
 export color _spectralInit(const auto f) {
   color c(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    c[i] = f($state.wavelength_base[i]);
+    c[i] = f($state.wavelengthBase[i]);
   }
   return c;
 }
@@ -192,7 +192,7 @@ export color _spectralInit(const auto f) {
 export color _spectralLerpInit(const auto locate, const auto fetch) {
   _UniformLerp[$WAVELENGTH_BASE_MAX] keys;
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    keys[i] = locate($state.wavelength_base[i]);
+    keys[i] = locate($state.wavelengthBase[i]);
   }
   color c(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -207,7 +207,7 @@ export color _spectralLerpInit(const auto locate, const auto fetch) {
 export auto _spectralFold(const auto init, const color a, const auto f) {
   auto result(init);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    result = f(result, $state.wavelength_base[i], a[i]);
+    result = f(result, $state.wavelengthBase[i], a[i]);
   }
   return result;
 }
@@ -271,11 +271,11 @@ export float _wymanY(const float w) {
 @(hot noinline)
 export float3 _colorToRgb(const color c) {
   float3 result = float3(0.0);
-  if (bool($state.wavelength_weight)) {
+  if (bool($state.wavelengthWeight)) {
     // Per-band quadrature weights in nanometers, for grids whose bands
     // are not uniformly spaced.
     for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-      result += $state.wavelength_weight[i] * _wymanXYZ($state.wavelength_base[i]) * c[i];
+      result += $state.wavelengthWeight[i] * _wymanXYZ($state.wavelengthBase[i]) * c[i];
     }
   } else {
     // The uniform quadrature: every band weighs
@@ -286,7 +286,7 @@ export float3 _colorToRgb(const color c) {
       \(const float3 acc, const float w, const float amp) =
         acc + _wymanXYZ(w) * amp);
     result /= $WAVELENGTH_BASE_MAX;
-    result *= $state.wavelength_max - $state.wavelength_min;
+    result *= $state.wavelengthMax - $state.wavelengthMin;
   }
   return float3x3(
            float3(+3.240450, -0.969266, 0.0556434),
@@ -331,25 +331,25 @@ export tag hair_bsdf;
 /// The default BSDF is just an empty struct!
 export struct _default_bsdf: default bsdf {
   /// The flags.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 /// The default VDF is just an empty struct!
 export struct _default_vdf: default vdf {
   /// The flags.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 /// The default EDF is just an empty struct!
 export struct _default_edf: default edf {
   /// The flags.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 /// The default hair BSDF is just an empty struct!
 export struct _default_hair_bsdf: default hair_bsdf {
   /// The flags.
-  static const int df_lobes = 0;
+  static const int _lobes = 0;
 };
 
 /// The texture 2D structure.
@@ -826,9 +826,9 @@ export void _volumeEvaluate(
   }
 }
 
-/// An instance of a material corresponding to `smdl::JIT::Material::Instance`
+/// An instance of a material corresponding to `smdl::JIT::MaterialDef::Eval`
 /// in the C++ API.
-export struct _MaterialInstance {
+export struct _MaterialEval {
   /// The material deep copied with `#bump()`.
   &material ptr;
 
@@ -842,71 +842,71 @@ export struct _MaterialInstance {
   /// medium on the front side of the geometry. This defaults to 1 and is
   /// meant to be overwritten between instance evaluation and scattering
   /// by renderers that track nested dielectrics. The relative ratio the
-  /// scattering calculations refract with is `exterior_ior / ior`.
-  float exterior_ior = 1.0;
+  /// scattering calculations refract with is `exteriorIOR / ior`.
+  float exteriorIOR = 1.0;
 
   /// The temperature.
   float temperature = ptr.temperature;
 
   /// The volume absorption coefficient.
-  &color absorption_coefficient =
+  &color absorptionCoefficient =
     #hasField(ptr.volume, "absorption_coefficient")
     ? &ptr.volume.absorption_coefficient
     : none;
 
   /// The volume scattering coefficient.
-  &color scattering_coefficient =
+  &color scatteringCoefficient =
     #hasField(ptr.volume, "scattering_coefficient")
     ? &ptr.volume.scattering_coefficient
     : none;
 
   /// The volume absorption coefficient majorant.
-  &color max_absorption_coefficient =
+  &color maxAbsorptionCoefficient =
     #hasField(ptr.volume, "max_absorption_coefficient")
     ? &ptr.volume.max_absorption_coefficient
     : none;
 
   /// The volume scattering coefficient majorant.
-  &color max_scattering_coefficient =
+  &color maxScatteringCoefficient =
     #hasField(ptr.volume, "max_scattering_coefficient")
     ? &ptr.volume.max_scattering_coefficient
     : none;
 
   /// The `smdl::VoxelGrid` behind the volume density acceleration
   /// hint, null when the `density` field was left defaulted.
-  &void volume_density_resource = ptr.volume.density.resource;
+  &void volumeDensityResource = ptr.volume.density.resource;
 
   /// The lower corner of the volume density hint box.
-  &float3 volume_density_bound_min = #hasField(ptr.volume, "density_bound_min")
+  &float3 volumeDensityBoundMin = #hasField(ptr.volume, "density_bound_min")
                                      ? &ptr.volume.density_bound_min
                                      : none;
 
   /// The upper corner of the volume density hint box.
-  &float3 volume_density_bound_max = #hasField(ptr.volume, "density_bound_max")
+  &float3 volumeDensityBoundMax = #hasField(ptr.volume, "density_bound_max")
                                      ? &ptr.volume.density_bound_max
                                      : none;
 
   /// The volumetric emission coefficient, evaluated at the surface hit;
   /// heterogeneous interiors re-query through `volumeEvaluate`.
-  &color volume_emission_intensity = #hasField(ptr.volume, "emission_intensity")
+  &color volumeEmissionIntensity = #hasField(ptr.volume, "emission_intensity")
                                      ? &ptr.volume.emission_intensity
                                      : none;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
   /// non-default emission EDF. See `df::_emissionEvaluate()` for how the
   /// `intensity_mode` units are resolved.
-  &color surface_emission_intensity =
+  &color surfaceEmissionIntensity =
     #isDefault(ptr.surface.emission.emission) ? none : #bump(color(
       ptr.surface.emission.intensity));
 
   /// The `backface` emission intensity, or `none` if the `backface` has no
   /// non-default emission EDF.
-  &color backface_emission_intensity =
+  &color backfaceEmissionIntensity =
     #isDefault(ptr.backface.emission.emission) ? none : #bump(color(
       ptr.backface.emission.intensity));
 
   /// The wavelength count.
-  int wavelength_base_max = $WAVELENGTH_BASE_MAX;
+  int wavelengthCount = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
   int flags = $state.transport                                                         //
@@ -921,15 +921,15 @@ export struct _MaterialInstance {
   | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
 
   /// The df flags for the `surface` component.
-  int df_lobes_surface = ptr.surface.scattering.df_lobes;
+  int surfaceLobes = ptr.surface.scattering._lobes;
 
   /// The df flags for the `backface` component.
-  int df_lobes_backface = ptr.backface.scattering.df_lobes;
+  int backfaceLobes = ptr.backface.scattering._lobes;
 
   /// The emission intensity modes: bit 0 is set if the `surface` emission
   /// intensity is `intensity_power` (as opposed to the default
   /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
-  int emission_modes =
+  int emissionModes =
     (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
     | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
@@ -944,36 +944,36 @@ export struct _MaterialInstance {
   int64_t seed = $state.rng[0];
 
   /// The tangent-to-world matrix held by the `State` during construction.
-  float3x3 tangent_to_world = let {
-    const auto tangent_to_world_matrix =
-      $state.object_to_world_matrix * $state.tangent_to_object_matrix;
+  float3x3 tangentToWorld = let {
+    const auto tangentToWorldMatrix =
+      $state.objectToWorld * $state.tangentToObject;
   } in float3x3(
-    tangent_to_world_matrix[0].xyz,
-    tangent_to_world_matrix[1].xyz,
-    tangent_to_world_matrix[2].xyz,
+    tangentToWorldMatrix[0].xyz,
+    tangentToWorldMatrix[1].xyz,
+    tangentToWorldMatrix[2].xyz,
   );
 };
 
 /// Albedo look-up table (LUT) for energy correction.
 export struct _AlbedoLUT {
   /// The number of samples of view angle cosine.
-  const int num_cos_theta = 0;
+  const int numCosTheta = 0;
 
   /// The number of samples of roughness.
-  const int num_roughness = 0;
+  const int numRoughness = 0;
 
   /// The directional albedo.
   ///
-  /// NOTE: This must point to `num_cos_theta` rows by `num_roughness`
+  /// NOTE: This must point to `numCosTheta` rows by `numRoughness`
   /// values.
   ///
-  const &float directional_albedo = none;
+  const &float directionalAlbedo = none;
 
   /// The average albedo.
   ///
-  /// NOTE: This must point to `num_roughness` values.
+  /// NOTE: This must point to `numRoughness` values.
   ///
-  const &float average_albedo = none;
+  const &float averageAlbedo = none;
 };
 
 /// A complex value.

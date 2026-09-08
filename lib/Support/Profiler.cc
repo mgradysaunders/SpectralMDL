@@ -6,7 +6,9 @@
 
 namespace smdl {
 
-static bool isProfilerRunning{};
+namespace {
+bool isProfilerRunning{};
+} // namespace
 
 void profilerInitialize(unsigned granularityMicroseconds,
                         const char *processName) {

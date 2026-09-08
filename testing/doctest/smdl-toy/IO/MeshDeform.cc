@@ -55,7 +55,7 @@ public:
   std::string plain{};
 };
 
-[[nodiscard]] bool near(const float3 &a, const float3 &b, float tol = 1e-5f) {
+[[nodiscard]] bool isNear(const float3 &a, const float3 &b, float tol = 1e-5f) {
   return std::fabs(a.x - b.x) < tol && std::fabs(a.y - b.y) < tol &&
          std::fabs(a.z - b.z) < tol;
 }
@@ -66,9 +66,9 @@ public:
 /// renumbers vertices by first use.
 [[nodiscard]] unsigned vertexAt(const aiMesh &assMesh, const float3 &point) {
   for (unsigned i = 0; i < assMesh.mNumVertices; i++)
-    if (near(float3(assMesh.mVertices[i].x, assMesh.mVertices[i].y,
-                    assMesh.mVertices[i].z),
-             point))
+    if (isNear(float3(assMesh.mVertices[i].x, assMesh.mVertices[i].y,
+                      assMesh.mVertices[i].z),
+               point))
       return i;
   REQUIRE(false);
   return 0;
@@ -80,7 +80,7 @@ TEST_CASE("MeshDeform: the spec's key") {
   AnimationSpec spec{};
   CHECK(spec.key() == "");
   CHECK(!spec.hasClip());
-  spec.off = true;
+  spec.isOff = true;
   CHECK(spec.key() == "off");
   spec = {};
   spec.clipName = "walk";
@@ -90,7 +90,7 @@ TEST_CASE("MeshDeform: the spec's key") {
   spec = {};
   spec.clipIndex = 2;
   spec.speed = 2.0f;
-  spec.once = true;
+  spec.shouldPlayOnce = true;
   CHECK(spec.key() == "clip 2 speed 2 once");
 }
 
@@ -107,7 +107,7 @@ TEST_CASE("MeshDeform: clip time and the tick rate") {
     CHECK(clipTime(clip, spec, -0.5) == doctest::Approx(37.5));
   }
   SUBCASE("Once clamps") {
-    spec.once = true;
+    spec.shouldPlayOnce = true;
     CHECK(clipTime(clip, spec, 3.0) == doctest::Approx(50.0));
     CHECK(clipTime(clip, spec, -0.5) == doctest::Approx(0.0));
   }
@@ -141,7 +141,7 @@ TEST_CASE("MeshDeform: resolving a clip") {
     const auto *clip{resolveClip(*assScene, spec, fixture.wave)};
     REQUIRE(clip);
     CHECK(clip->mName == aiString("wave"));
-    spec.off = true;
+    spec.isOff = true;
     CHECK(resolveClip(*assScene, spec, fixture.wave) == nullptr);
     spec = {};
     spec.clipName = "nope";
@@ -198,13 +198,13 @@ TEST_CASE("MeshDeform: the pose of the node graph") {
     const auto at{[&](double ticks) {
       return evaluatePose(*assScene, swing, ticks).nodeToFile[arm];
     }};
-    CHECK(near(float3(at(0.0)[0]), float3(1, 0, 0)));
-    CHECK(near(float3(at(500.0)[0]), float3(rig::SIN45, rig::SIN45, 0)));
-    CHECK(near(float3(at(1000.0)[0]), float3(0, 1, 0)));
-    CHECK(near(float3(at(-100.0)[0]), float3(1, 0, 0)));
-    CHECK(near(float3(at(2000.0)[0]), float3(0, 1, 0)));
+    CHECK(isNear(float3(at(0.0)[0]), float3(1, 0, 0)));
+    CHECK(isNear(float3(at(500.0)[0]), float3(rig::SIN45, rig::SIN45, 0)));
+    CHECK(isNear(float3(at(1000.0)[0]), float3(0, 1, 0)));
+    CHECK(isNear(float3(at(-100.0)[0]), float3(1, 0, 0)));
+    CHECK(isNear(float3(at(2000.0)[0]), float3(0, 1, 0)));
     // A component the channel has no keys for stays authored.
-    CHECK(near(translationOf(at(500.0)), float3(0, 0, 0)));
+    CHECK(isNear(translationOf(at(500.0)), float3(0, 0, 0)));
   }
   SUBCASE("A step channel holds its key") {
     const auto *hop{assScene->mAnimations[1]};
@@ -212,10 +212,10 @@ TEST_CASE("MeshDeform: the pose of the node graph") {
     const auto at{[&](double ticks) {
       return translationOf(evaluatePose(*assScene, hop, ticks).nodeToFile[arm]);
     }};
-    CHECK(near(at(0.0), float3(0, 0, 0)));
-    CHECK(near(at(500.0), float3(0, 0, 0)));
-    CHECK(near(at(999.0), float3(0, 0, 0)));
-    CHECK(near(at(1000.0), float3(0, 0, 1)));
+    CHECK(isNear(at(0.0), float3(0, 0, 0)));
+    CHECK(isNear(at(500.0), float3(0, 0, 0)));
+    CHECK(isNear(at(999.0), float3(0, 0, 0)));
+    CHECK(isNear(at(1000.0), float3(0, 0, 1)));
   }
   SUBCASE("A cubic spline channel with zero tangents eases") {
     const auto *ease{assScene->mAnimations[2]};
@@ -224,17 +224,17 @@ TEST_CASE("MeshDeform: the pose of the node graph") {
       return translationOf(
           evaluatePose(*assScene, ease, ticks).nodeToFile[arm]);
     }};
-    CHECK(near(at(0.0), float3(0, 0, 0)));
-    CHECK(near(at(250.0), float3(0, 0, 0.15625f)));
-    CHECK(near(at(500.0), float3(0, 0, 0.5f)));
-    CHECK(near(at(1000.0), float3(0, 0, 1)));
+    CHECK(isNear(at(0.0), float3(0, 0, 0)));
+    CHECK(isNear(at(250.0), float3(0, 0, 0.15625f)));
+    CHECK(isNear(at(500.0), float3(0, 0, 0.5f)));
+    CHECK(isNear(at(1000.0), float3(0, 0, 1)));
   }
   SUBCASE("No clip is the authored pose") {
     const auto pose{evaluatePose(*assScene, nullptr, 0.0)};
     REQUIRE(pose.nodeToFile.size() == 2);
     CHECK(pose.find("arm") == 1);
     CHECK(pose.find("elsewhere") == INVALID_INDEX);
-    CHECK(near(float3(pose.nodeToFile[1][0]), float3(1, 0, 0)));
+    CHECK(isNear(float3(pose.nodeToFile[1][0]), float3(1, 0, 0)));
   }
 }
 
@@ -261,34 +261,34 @@ TEST_CASE("MeshDeform: a skinned bake") {
     const auto pose{evaluatePose(*assScene, clip, 0.0)};
     const auto strip{pose.find("strip")};
     REQUIRE(strip != INVALID_INDEX);
-    CHECK(near(translationOf(pose.nodeToFile[strip]), float3(0, 0, 5)));
+    CHECK(isNear(translationOf(pose.nodeToFile[strip]), float3(0, 0, 5)));
     const auto bake{bakeAt(0.0)};
     CHECK(bake.isSkinned);
     REQUIRE(bake.points.size() == 7);
     REQUIRE(bake.normals.size() == 7);
-    CHECK(near(landed(bake, float3(0, 0, 0)), float3(0, 0, 0)));
-    CHECK(near(landed(bake, float3(2, 0, 0)), float3(2, 0, 0)));
-    CHECK(near(landed(bake, float3(5, 5, 0)), float3(5, 5, 0)));
-    CHECK(near(bake.normals[vertexAt(assMesh, float3(2, 0, 0))],
-               float3(0, 0, 1)));
+    CHECK(isNear(landed(bake, float3(0, 0, 0)), float3(0, 0, 0)));
+    CHECK(isNear(landed(bake, float3(2, 0, 0)), float3(2, 0, 0)));
+    CHECK(isNear(landed(bake, float3(5, 5, 0)), float3(5, 5, 0)));
+    CHECK(isNear(bake.normals[vertexAt(assMesh, float3(2, 0, 0))],
+                 float3(0, 0, 1)));
   }
   SUBCASE("The quarter turn") {
     const auto bake{bakeAt(1000.0)};
-    CHECK(near(landed(bake, float3(0, 0, 0)), float3(0, 0, 0)));
-    CHECK(near(landed(bake, float3(0, 1, 0)), float3(0, 1, 0)));
-    CHECK(near(landed(bake, float3(1, 0, 0)), float3(1, 0, 0)));
-    CHECK(near(landed(bake, float3(1, 1, 0)), float3(0.5f, 0.5f, 0)));
-    CHECK(near(landed(bake, float3(2, 0, 0)), float3(1, 1, 0)));
-    CHECK(near(landed(bake, float3(2, 1, 0)), float3(0, 1, 0)));
-    CHECK(near(landed(bake, float3(5, 5, 0)), float3(5, 5, 0)));
+    CHECK(isNear(landed(bake, float3(0, 0, 0)), float3(0, 0, 0)));
+    CHECK(isNear(landed(bake, float3(0, 1, 0)), float3(0, 1, 0)));
+    CHECK(isNear(landed(bake, float3(1, 0, 0)), float3(1, 0, 0)));
+    CHECK(isNear(landed(bake, float3(1, 1, 0)), float3(0.5f, 0.5f, 0)));
+    CHECK(isNear(landed(bake, float3(2, 0, 0)), float3(1, 1, 0)));
+    CHECK(isNear(landed(bake, float3(2, 1, 0)), float3(0, 1, 0)));
+    CHECK(isNear(landed(bake, float3(5, 5, 0)), float3(5, 5, 0)));
     for (const auto &normal : bake.normals)
-      CHECK(near(normal, float3(0, 0, 1)));
+      CHECK(isNear(normal, float3(0, 0, 1)));
   }
   SUBCASE("Halfway, the tip is at forty-five degrees") {
     const auto bake{bakeAt(500.0)};
-    CHECK(near(landed(bake, float3(2, 0, 0)),
-               float3(1 + rig::SIN45, rig::SIN45, 0)));
-    CHECK(near(landed(bake, float3(2, 1, 0)), float3(1, rig::SIN45 * 2, 0)));
+    CHECK(isNear(landed(bake, float3(2, 0, 0)),
+                 float3(1 + rig::SIN45, rig::SIN45, 0)));
+    CHECK(isNear(landed(bake, float3(2, 1, 0)), float3(1, rig::SIN45 * 2, 0)));
   }
 }
 
@@ -311,8 +311,8 @@ TEST_CASE("MeshDeform: a morphed bake") {
     // The duplicated corner is still two vertices here: the evaluator
     // bakes what the reader gives it, and the scene welds afterwards.
     REQUIRE(bake.points.size() == 5);
-    CHECK(near(bake.points[corner], float3(1, 0, 0.25f)));
-    CHECK(near(bake.normals[corner], float3(0, 0, 1)));
+    CHECK(isNear(bake.points[corner], float3(1, 0, 0.25f)));
+    CHECK(isNear(bake.normals[corner], float3(0, 0, 1)));
   }
   SUBCASE("The channel drives both targets") {
     CHECK(meshDeforms(*assScene, 0, clip));
@@ -321,14 +321,15 @@ TEST_CASE("MeshDeform: a morphed bake") {
       return bakeMesh(*assScene, 0, pose, clip, ticks, fixture.morph);
     }};
     const auto start{bakeAt(0.0)};
-    CHECK(near(start.points[corner], float3(1, 0, 0)));
+    CHECK(isNear(start.points[corner], float3(1, 0, 0)));
     const auto half{bakeAt(500.0)};
-    CHECK(near(half.points[origin], float3(0, 0, 0.5f)));
-    CHECK(near(half.points[corner], float3(1.25f, 0, 0.5f)));
-    CHECK(near(half.normals[corner], smdl::normalize(float3(0.25f, 0, 0.75f))));
+    CHECK(isNear(half.points[origin], float3(0, 0, 0.5f)));
+    CHECK(isNear(half.points[corner], float3(1.25f, 0, 0.5f)));
+    CHECK(
+        isNear(half.normals[corner], smdl::normalize(float3(0.25f, 0, 0.75f))));
     const auto end{bakeAt(1000.0)};
-    CHECK(near(end.points[corner], float3(1.5f, 0, 1)));
-    CHECK(near(end.normals[corner], float3(rig::SIN45, 0, rig::SIN45)));
+    CHECK(isNear(end.points[corner], float3(1.5f, 0, 1)));
+    CHECK(isNear(end.normals[corner], float3(rig::SIN45, 0, rig::SIN45)));
   }
 }
 

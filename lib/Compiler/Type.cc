@@ -14,11 +14,12 @@
 namespace smdl {
 
 //--{ Diagnostic helpers
+namespace {
 // Render a candidate signature like `Foo(int a, float b)` for a diagnostic
 // note. Shared by every "which candidate was this?" note so that overloads
 // and struct constructors describe themselves the same way.
-static std::string toSignatureString(std::string_view name,
-                                     const ParameterList &params) {
+std::string toSignatureString(std::string_view name,
+                              const ParameterList &params) {
   auto str{std::string(name)};
   str += '(';
   for (size_t i = 0; i < params.size(); i++) {
@@ -39,8 +40,8 @@ static std::string toSignatureString(std::string_view name,
 // thrown at `srcLoc`. Every candidate is probed against the same call site,
 // so repeating it on every note only obscures the candidate's own location.
 // This is a no-op if the message does not begin with that prefix.
-static std::string dropSourceLocation(std::string message,
-                                      const SourceLocation &srcLoc) {
+std::string dropSourceLocation(std::string message,
+                               const SourceLocation &srcLoc) {
   auto prefix{std::string(srcLoc)};
   if (!prefix.empty()) {
     prefix += ' ';
@@ -53,11 +54,10 @@ static std::string dropSourceLocation(std::string message,
 // One "candidate rejected" note. The candidate names itself and says where
 // it is declared, because the reason it was rejected is always about the one
 // call site that every candidate was probed against.
-static void appendCandidateNote(std::string &notes, std::string_view kind,
-                                std::string_view name,
-                                const ParameterList &params,
-                                const SourceLocation &declSrcLoc,
-                                std::string_view reason) {
+void appendCandidateNote(std::string &notes, std::string_view kind,
+                         std::string_view name, const ParameterList &params,
+                         const SourceLocation &declSrcLoc,
+                         std::string_view reason) {
   notes += "\n  candidate rejected: ";
   if (!kind.empty()) {
     notes += kind;
@@ -71,6 +71,7 @@ static void appendCandidateNote(std::string &notes, std::string_view kind,
   notes += ": ";
   notes += reason;
 }
+} // namespace
 //--}
 
 //--{ Type
@@ -222,13 +223,14 @@ std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
   return std::nullopt;
 }
 
+namespace {
 // Materialize `value` in memory, apply `access` to it, and load the result
 // back out as an rvalue.
 //
 // The slot is cached per value by `spillToMemory()`, so indexing the same
 // aggregate several times costs one copy rather than one copy per access.
 template <typename Access>
-static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
+Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
   return emitter.rvalue(
       std::invoke(std::forward<Access>(access), emitter.spillToMemory(value)));
 }
@@ -236,10 +238,9 @@ static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
 // If `value` is a pointer to `pointeeType`, construct `resultType` by
 // loading through the pointer. Assume the pointer is only as aligned as
 // the pointee type itself!
-static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
-                                                    Type *resultType,
-                                                    Type *pointeeType,
-                                                    const Value &value) {
+std::optional<Value> tryConstructFromPointer(Emitter &emitter, Type *resultType,
+                                             Type *pointeeType,
+                                             const Value &value) {
   if (value.type->isPointer() && value.type->getPointeeType() == pointeeType)
     return RValue(resultType,
                   emitter.builder.CreateAlignedLoad(
@@ -247,6 +248,7 @@ static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
                       llvm::Align(emitter.context.getAlignOf(pointeeType))));
   return std::nullopt;
 }
+} // namespace
 
 Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
@@ -636,7 +638,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isAllPositional() && args.size() == size) {
     if (isAbstract()) {
       auto argElemType{emitter.context.getCommonType(
-          args.getTypes(), /*defaultToUnion=*/true, srcLoc)};
+          args.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
       if (!emitter.context.isPerfectlyConvertible(argElemType, elemType))
         srcLoc.throwError("cannot construct abstract array ",
                           Quoted(displayName), " from element ",
@@ -1026,22 +1028,24 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
 //--}
 
 //--{ FunctionType
+namespace {
 // Reject duplicate parameter names, e.g., `foo(int a, float a)`. The
 // `owner` phrase names the offending declaration in the diagnostic.
-static void rejectDuplicateParameterNames(const ParameterList &params,
-                                          std::string_view owner) {
+void rejectDuplicateParameterNames(const ParameterList &params,
+                                   std::string_view owner) {
   auto uniqueNames{llvm::StringSet<>()};
   for (auto &param : params)
     if (!uniqueNames.insert(param.name).second)
       param.getSourceLocation().throwError("duplicate parameter name ",
                                            Quoted(param.name), " in ", owner);
 }
+} // namespace
 
 void FunctionType::initialize(Emitter &emitter) {
   auto &context{emitter.context};
   // Find previous overload.
   if (auto prev{emitter.resolveIdentifier(decl.name, decl.srcLoc,
-                                          /*voidByDefault=*/true)};
+                                          /*shouldDefaultToVoid=*/true)};
       !prev.isVoid()) {
     auto prevType{prev.isComptimeMetaType(context)
                       ? prev.getComptimeMetaType(context, decl.srcLoc)
@@ -1201,8 +1205,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     return result;
   }
   auto resolvedArgs{emitter.resolveArguments(
-      func->params, args, srcLoc, /*dontEmit=*/false,
-      /*passAggregatesIndirectly=*/func->usesIndirectParams())};
+      func->params, args, srcLoc, /*shouldSkipEmit=*/false,
+      /*shouldPassAggregatesIndirectly=*/func->usesIndirectParams())};
   if (auto impliedVisitArgs{resolvedArgs.getImpliedVisitArguments()})
     return emitter.emitCall(emitter.context.getComptimeMetaType(this),
                             *impliedVisitArgs, srcLoc);
@@ -1300,7 +1304,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     try {
       SMDL_SANITY_CHECK(!func->isVariant());
       auto resolvedArgs{emitter.resolveArguments(func->params, args, srcLoc,
-                                                 /*dontEmit=*/true)};
+                                                 /*shouldSkipEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
       appendCandidateNote(overloadErrors, {}, func->declName, func->params,
@@ -1447,62 +1451,57 @@ FunctionType::getInstance(Emitter &emitter,
   return inst;
 }
 
-// Verify that the C++ `JIT::Material::Instance` layout matches the api
-// `_MaterialInstance` struct emitted by the compiler. The JIT boundary
+namespace {
+// Verify that the C++ `JIT::MaterialDef::Eval` layout matches the api
+// `_MaterialEval` struct emitted by the compiler. The JIT boundary
 // reinterprets one as the other, so any drift is silent undefined
 // behavior at render time; fail the compile loudly instead.
-static void verifyMaterialInstanceLayout(Context &context, Type *type,
-                                         const SourceLocation &srcLoc) {
+void verifyMaterialEvalLayout(Context &context, Type *type,
+                              const SourceLocation &srcLoc) {
   auto llvmStructType{
       llvm::dyn_cast_if_present<llvm::StructType>(type->llvmType)};
   if (!llvmStructType)
-    srcLoc.throwError("'_MaterialInstance' is not a struct type");
-  using Instance = JIT::Material::Instance;
+    srcLoc.throwError("'_MaterialEval' is not a struct type");
+  using Eval = JIT::MaterialDef::Eval;
   const std::pair<std::string_view, uint64_t> fields[]{
-      {"ptr", offsetof(Instance, ptr)},
-      {"geometry", offsetof(Instance, geometry)},
-      {"ior", offsetof(Instance, ior)},
-      {"exterior_ior", offsetof(Instance, exterior_ior)},
-      {"temperature", offsetof(Instance, temperature)},
-      {"absorption_coefficient", offsetof(Instance, absorption_coefficient)},
-      {"scattering_coefficient", offsetof(Instance, scattering_coefficient)},
-      {"max_absorption_coefficient",
-       offsetof(Instance, max_absorption_coefficient)},
-      {"max_scattering_coefficient",
-       offsetof(Instance, max_scattering_coefficient)},
-      {"volume_density_resource", offsetof(Instance, volume_density_resource)},
-      {"volume_density_bound_min",
-       offsetof(Instance, volume_density_bound_min)},
-      {"volume_density_bound_max",
-       offsetof(Instance, volume_density_bound_max)},
-      {"volume_emission_intensity",
-       offsetof(Instance, volume_emission_intensity)},
-      {"surface_emission_intensity",
-       offsetof(Instance, surface_emission_intensity)},
-      {"backface_emission_intensity",
-       offsetof(Instance, backface_emission_intensity)},
-      {"wavelength_base_max", offsetof(Instance, wavelength_base_max)},
-      {"flags", offsetof(Instance, flags)},
-      {"df_lobes_surface", offsetof(Instance, df_lobes_surface)},
-      {"df_lobes_backface", offsetof(Instance, df_lobes_backface)},
-      {"emission_modes", offsetof(Instance, emission_modes)},
-      {"seed", offsetof(Instance, seed)},
-      {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
+      {"ptr", offsetof(Eval, ptr)},
+      {"geometry", offsetof(Eval, geometry)},
+      {"ior", offsetof(Eval, ior)},
+      {"exteriorIOR", offsetof(Eval, exteriorIOR)},
+      {"temperature", offsetof(Eval, temperature)},
+      {"absorptionCoefficient", offsetof(Eval, absorptionCoefficient)},
+      {"scatteringCoefficient", offsetof(Eval, scatteringCoefficient)},
+      {"maxAbsorptionCoefficient", offsetof(Eval, maxAbsorptionCoefficient)},
+      {"maxScatteringCoefficient", offsetof(Eval, maxScatteringCoefficient)},
+      {"volumeDensityResource", offsetof(Eval, volumeDensityResource)},
+      {"volumeDensityBoundMin", offsetof(Eval, volumeDensityBoundMin)},
+      {"volumeDensityBoundMax", offsetof(Eval, volumeDensityBoundMax)},
+      {"volumeEmissionIntensity", offsetof(Eval, volumeEmissionIntensity)},
+      {"surfaceEmissionIntensity", offsetof(Eval, surfaceEmissionIntensity)},
+      {"backfaceEmissionIntensity", offsetof(Eval, backfaceEmissionIntensity)},
+      {"wavelengthCount", offsetof(Eval, wavelengthCount)},
+      {"flags", offsetof(Eval, flags)},
+      {"surfaceLobes", offsetof(Eval, surfaceLobes)},
+      {"backfaceLobes", offsetof(Eval, backfaceLobes)},
+      {"emissionModes", offsetof(Eval, emissionModes)},
+      {"seed", offsetof(Eval, seed)},
+      {"tangentToWorld", offsetof(Eval, tangentToWorld)},
   };
   auto llvmLayout{context.llvmLayout.getStructLayout(llvmStructType)};
   if (llvmStructType->getNumElements() != std::size(fields) ||
-      uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Instance))
-    srcLoc.throwError("mismatch between C++ 'JIT::Material::Instance' and "
-                      "SMDL '_MaterialInstance' structures");
+      uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Eval))
+    srcLoc.throwError("mismatch between C++ 'JIT::MaterialDef::Eval' and "
+                      "SMDL '_MaterialEval' structures");
   for (size_t i = 0; i < std::size(fields); i++) {
     const auto &[fieldName, fieldOffset] = fields[i];
     if (uint64_t(llvmLayout->getElementOffset(i)) != fieldOffset)
       srcLoc.throwError(
-          concat("mismatch between C++ 'JIT::Material::Instance' and SMDL "
-                 "'_MaterialInstance' structures (field ",
+          concat("mismatch between C++ 'JIT::MaterialDef::Eval' and SMDL "
+                 "'_MaterialEval' structures (field ",
                  Quoted(fieldName), " is misaligned)"));
   }
 }
+} // namespace
 
 void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
@@ -1571,15 +1570,15 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   auto dfModule{context.getBuiltinModule("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialType{};
-  Type *materialInstanceType{};
-  Type *materialInstancePtrType{};
+  Type *materialEvalType{};
+  Type *materialEvalPtrType{};
   Type *float3PtrType{context.getPointerType(context.getFloatType(3))};
   Type *floatPtrType{context.getPointerType(context.getFloatType())};
   auto constParameter{[](Type *type, std::string_view name) {
-    return Parameter{type, name, {}, {}, {}, /*builtinConst=*/true};
+    return Parameter{type, name, {}, {}, {}, /*isBuiltinConst=*/true};
   }};
   // The '@(visible)' entry points are called by the renderer through the
-  // C++ 'JIT::Material' API, which passes distinct, sufficiently aligned,
+  // C++ 'JIT::MaterialDef' API, which passes distinct, sufficiently aligned,
   // dereferenceable pointers (see 'include/smdl/JIT.h'). LLVM cannot infer
   // caller-side contracts for externally visible functions, so state them
   // explicitly.
@@ -1598,7 +1597,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.evaluate"(&auto out) {
-    //   *out = _MaterialInstance(#bump(material_name()));
+    //   *out = _MaterialEval(#bump(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{context.getVoidType()};
@@ -1608,32 +1607,31 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         [&] {
           auto materialValue{invoke(emitter, {}, decl.srcLoc)};
           materialType = materialValue.type;
-          auto materialInstance{emitter.emitCall(
-              context.getKeyword("_MaterialInstance"),
+          auto materialEval{emitter.emitCall(
+              context.getKeyword("_MaterialEval"),
               emitter.emitIntrinsic("bump", materialValue, decl.srcLoc),
               decl.srcLoc)};
-          materialInstanceType = materialInstance.type;
-          materialInstancePtrType =
-              context.getPointerType(materialInstanceType);
+          materialEvalType = materialEval.type;
+          materialEvalPtrType = context.getPointerType(materialEvalType);
           auto out{
               emitter.rvalue(emitter.resolveIdentifier("out"sv, decl.srcLoc))};
-          emitter.createStore(materialInstance, out);
+          emitter.createStore(materialEval, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     // '%state' is deliberately not 'noalias': the bump arena written
     // during evaluation is reachable through 'state.allocator'.
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
-    markPointerParam(func, 1, materialInstanceType);
+    markPointerParam(func, 1, materialEvalType);
     jitMaterial.evaluate.name = func->getName().str();
   }
-  verifyMaterialInstanceLayout(context, materialInstanceType, decl.srcLoc);
+  verifyMaterialEvalLayout(context, materialEvalType, decl.srcLoc);
   // Generate the scatter and emission entry points, which all have the
   // same shape: a '@(pure visible)' wrapper that forwards the material
   // instance and its remaining parameters to the like-named function in
   // the 'df' module:
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // @(pure visible) int "material_name.scatterEvaluate"(
-  //     &_MaterialInstance instance,
+  //     &_MaterialEval instance,
   //     &float3 wo,
   //     &float3 wi,
   //     int lobeMask,
@@ -1645,7 +1643,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // A wrapper parameter passes by pointer unless it is marked
-  // 'byValue'. Pointers are the default because the aggregates and the
+  // 'isByValue'. Pointers are the default because the aggregates and the
   // SIMD vectors have no stable by-value ABI across the JIT boundary and
   // the outputs have to be written through; a scalar input has neither
   // problem and passes in a register.
@@ -1653,17 +1651,17 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     std::string_view name{};
     Type *type{};
     uint64_t count{1};
-    bool byValue{};
+    bool isByValue{};
   };
   auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
                          Type *funcReturnType,
                          std::initializer_list<WrapperParam> wrapperParams) {
     auto params{ParameterList{}};
-    params.push_back(constParameter(materialInstancePtrType, "instance"));
+    params.push_back(constParameter(materialEvalPtrType, "instance"));
     for (const auto &wrapperParam : wrapperParams)
       params.push_back(constParameter(
-          wrapperParam.byValue ? wrapperParam.type
-                               : context.getPointerType(wrapperParam.type),
+          wrapperParam.isByValue ? wrapperParam.type
+                                 : context.getPointerType(wrapperParam.type),
           wrapperParam.name));
     auto func{emitter.createFunction(
         concat(symbolBase, ".", suffix), /*isPure=*/true, funcReturnType,
@@ -1671,7 +1669,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           const auto dfName{concat("_", suffix)};
           auto dfFunc{Declaration::findInModule(
               context, std::string_view(dfName), nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
+              /*shouldIgnoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           auto callArgs{llvm::SmallVector<Value>{}};
           for (const auto &param : params)
@@ -1683,10 +1681,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                              decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 0, materialEvalType);
     auto argIndex{1U};
     for (const auto &wrapperParam : wrapperParams) {
-      if (!wrapperParam.byValue)
+      if (!wrapperParam.isByValue)
         markPointerParam(func, argIndex, wrapperParam.type, wrapperParam.count);
       argIndex++;
     }
@@ -1701,14 +1699,14 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
-                 {"lobeMask", intType, 1, /*byValue=*/true},
+                 {"lobeMask", intType, 1, /*isByValue=*/true},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize}});
   makeDfWrapper(jitMaterial.scatterSample, "scatterSample", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
-                 {"lobeMask", intType, 1, /*byValue=*/true},
+                 {"lobeMask", intType, 1, /*isByValue=*/true},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
@@ -1717,22 +1715,22 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"lobeChance", floatType}});
   // The normal distribution entry points are opt-in: a host that never
   // constrains a half vector should not pay to emit and optimize two more
-  // whole-tree descents per material. See 'Compiler::enableScatterNormal',
+  // whole-tree descents per material. See 'Compiler::shouldEmitScatterNormal',
   // and the matching skip in 'Compiler::jitCompile()'.
-  if (compiler.enableScatterNormal) {
+  if (compiler.shouldEmitScatterNormal) {
     makeDfWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
                   intType,
                   {{"xi", float4Type},
-                   {"backface", intType, 1, /*byValue=*/true},
-                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"backface", intType, 1, /*isByValue=*/true},
+                   {"lobeMask", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
                    {"pdf", floatType},
                    {"alpha", float2Type}});
     makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
                   intType,
-                  {{"backface", intType, 1, /*byValue=*/true},
+                  {{"backface", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
-                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"lobeMask", intType, 1, /*isByValue=*/true},
                    {"pdf", floatType}});
   }
   makeDfWrapper(
@@ -1768,7 +1766,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     //   return material_name().geometry.cutout_opacity;
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // This evaluates only the cutout opacity: no '_MaterialInstance' and
+    // This evaluates only the cutout opacity: no '_MaterialEval' and
     // no '#bump', so 'state.allocator' may be null and everything not
     // feeding the opacity is dead-code eliminated. After optimization,
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' also inspects whether
@@ -1798,7 +1796,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Like 'evaluateOpacity', this evaluates only the displacement: no
-    // '_MaterialInstance' and no '#bump', so 'state.allocator' may be
+    // '_MaterialEval' and no '#bump', so 'state.allocator' may be
     // null and everything not feeding 'geometry.displacement' is
     // dead-code eliminated. This is the per-vertex query for hosts
     // that apply displacement to geometry at load time.
@@ -1820,7 +1818,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     markPointerParam(func, 1, context.getFloatType(3)); // displacement
     jitMaterial.displacementEvaluate.name = func->getName().str();
   }
-  if (compiler.enableScatterNormal) {
+  if (compiler.shouldEmitScatterNormal) {
     // Generate the geometry normal evaluate function, in the mold of
     // 'displacementEvaluate': it evaluates only 'geometry.normal', so
     // 'state.allocator' may be null and everything not feeding the
@@ -1849,43 +1847,43 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // Generate the volume evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.volumeEvaluate"(
-    //     &float sigma_a,
-    //     &float sigma_s,
+    //     &float sigmaA,
+    //     &float sigmaS,
     //     &float emission) {
-    //   _volumeEvaluate(material_name(), sigma_a, sigma_s, emission);
+    //   _volumeEvaluate(material_name(), sigmaA, sigmaS, emission);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Like 'evaluateOpacity', this evaluates only the volume
-    // coefficient expressions: no '_MaterialInstance' and no '#bump',
+    // coefficient expressions: no '_MaterialEval' and no '#bump',
     // so 'state.allocator' may be null and everything not feeding the
     // coefficients is dead-code eliminated. Unlike instance
     // evaluation, renderers call this at arbitrary points inside a
     // heterogeneous medium with a partial object-space state (see
-    // 'JIT::Material::volumeEvaluate'). After optimization,
+    // 'JIT::MaterialDef::volumeEvaluate'). After optimization,
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects whether
     // the body still reads the state to derive the static
     // 'MATERIAL_HAS_HETEROGENEOUS_VOLUME' flag.
     auto funcReturnType{context.getVoidType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,
-        {constParameter(floatPtrType, "sigma_a"),
-         constParameter(floatPtrType, "sigma_s"),
+        {constParameter(floatPtrType, "sigmaA"),
+         constParameter(floatPtrType, "sigmaS"),
          constParameter(floatPtrType, "emission")},
         decl.srcLoc, [&] {
           emitter.emitCall(
               context.getKeyword("_volumeEvaluate"),
               llvm::ArrayRef<Value>{
                   invoke(emitter, {}, decl.srcLoc),
-                  emitter.resolveIdentifier("sigma_a"sv, decl.srcLoc),
-                  emitter.resolveIdentifier("sigma_s"sv, decl.srcLoc),
+                  emitter.resolveIdentifier("sigmaA"sv, decl.srcLoc),
+                  emitter.resolveIdentifier("sigmaS"sv, decl.srcLoc),
                   emitter.resolveIdentifier("emission"sv, decl.srcLoc)},
               decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
-    markPointerParam(func, 1, context.getFloatType(), // sigma_a
+    markPointerParam(func, 1, context.getFloatType(), // sigmaA
                      context.getColorType()->wavelengthBaseMax);
-    markPointerParam(func, 2, context.getFloatType(), // sigma_s
+    markPointerParam(func, 2, context.getFloatType(), // sigmaS
                      context.getColorType()->wavelengthBaseMax);
     markPointerParam(func, 3, context.getFloatType(), // emission
                      context.getColorType()->wavelengthBaseMax);
@@ -1964,7 +1962,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   {
     // Compute the structural static flags, which are type-level facts:
     // 'Type::isDefault()' is the same definition the '#isDefault'
-    // intrinsic uses in the api '_MaterialInstance.flags' initializer,
+    // intrinsic uses in the api '_MaterialEval.flags' initializer,
     // so the invariant '(instance.flags & staticFlagsKnown) ==
     // staticFlags' holds by construction. The value-dependent bits
     // ('MATERIAL_THIN_WALLED', 'MATERIAL_HAS_CUTOUT') are filled in
@@ -2101,7 +2099,7 @@ Value MetaType::accessField(Emitter &emitter, Value value,
     auto namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
     if (auto declaration{Declaration::resolveInScope(
             context, name, emitter.getLLVMFunction(), namespace_->scope,
-            /*ignoreIfNotExported=*/
+            /*shouldIgnoreIfNotExported=*/
             namespace_->srcLoc.module_ != emitter.currentModule,
             std::numeric_limits<uint64_t>::max(), nullptr)})
       return declaration->value;
@@ -2191,38 +2189,38 @@ StateType::StateType(Context &context) {
   mFields.push_back(    \
       {context.getType(&State::name), #name, uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
-  ADD_FIELD(user_data);
-  ADD_FIELD(wavelength_base);
-  ADD_FIELD(wavelength_min);
-  ADD_FIELD(wavelength_max);
-  ADD_FIELD(wavelength_weight);
-  ADD_FIELD(meters_per_scene_unit);
-  ADD_FIELD(animation_time);
-  ADD_FIELD(object_id);
-  ADD_FIELD(ptex_face_id);
-  ADD_FIELD(ptex_face_uv);
+  ADD_FIELD(userData);
+  ADD_FIELD(wavelengthBase);
+  ADD_FIELD(wavelengthMin);
+  ADD_FIELD(wavelengthMax);
+  ADD_FIELD(wavelengthWeight);
+  ADD_FIELD(metersPerSceneUnit);
+  ADD_FIELD(animationTime);
+  ADD_FIELD(objectId);
+  ADD_FIELD(ptexFaceId);
+  ADD_FIELD(ptexFaceUV);
   ADD_FIELD(position);
   ADD_FIELD(direction);
   ADD_FIELD(motion);
   ADD_FIELD(normal);
-  ADD_FIELD(geometry_normal);
-  ADD_FIELD(texture_space_max);
-  ADD_FIELD(texture_coordinate);
-  ADD_FIELD(texture_tangent_u);
-  ADD_FIELD(texture_tangent_v);
-  ADD_FIELD(geometry_tangent_u);
-  ADD_FIELD(geometry_tangent_v);
-  ADD_FIELD(tangent_to_object_matrix);
-  ADD_FIELD(object_to_world_matrix);
+  ADD_FIELD(geometryNormal);
+  ADD_FIELD(textureSpaceCount);
+  ADD_FIELD(textureCoordinate);
+  ADD_FIELD(textureTangentU);
+  ADD_FIELD(textureTangentV);
+  ADD_FIELD(geometryTangentU);
+  ADD_FIELD(geometryTangentV);
+  ADD_FIELD(tangentToObject);
+  ADD_FIELD(objectToWorld);
   ADD_FIELD(rng);
   ADD_FIELD(transport);
-  ADD_FIELD(scattering_order);
-  ADD_FIELD(travel_distance);
-  ADD_FIELD(cone_angle);
-  ADD_FIELD(cone_width);
-  ADD_FIELD(texture_density);
-  ADD_FIELD(vertex_color_max);
-  ADD_FIELD(vertex_color);
+  ADD_FIELD(scatteringOrder);
+  ADD_FIELD(travelDistance);
+  ADD_FIELD(coneAngle);
+  ADD_FIELD(coneWidth);
+  ADD_FIELD(textureDensity);
+  ADD_FIELD(vertexColorCount);
+  ADD_FIELD(vertexColor);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
   for (auto &field : mFields) {
@@ -2316,7 +2314,7 @@ void StructType::initialize(Emitter &emitter) {
   // types) are popped from the chain on exit; the transparent scope pops
   // their map entries with them.
   SMDL_PRESERVE(emitter.scope);
-  emitter.scope = emitter.pushScope(/*transparent=*/true);
+  emitter.scope = emitter.pushScope(/*isTransparent=*/true);
   // Initialize tags.
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
@@ -2653,13 +2651,13 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
         emitter.setCurrentModule(decl.srcLoc);
-        const auto inPlace{result.isLValue()};
+        const auto isInPlace{result.isLValue()};
         auto lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declare(param.name, &decl,
                           emitter.accessField(lv, param.name, srcLoc));
         emitter.emit(decl.stmtFinalize);
-        if (inPlace) {
+        if (isInPlace) {
           result = lv;
         } else {
           result = emitter.rvalue(lv);

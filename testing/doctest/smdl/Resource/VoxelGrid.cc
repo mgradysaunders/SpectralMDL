@@ -14,16 +14,14 @@ namespace fs = std::filesystem;
 
 using smdl::float3;
 
+namespace {
 // Is NanoVDB in this build? The macro is private to the library, so the
 // suite asks the same question the '--version' banner answers.
-static bool hasNanoVDB() {
-  return smdl::BuildInfo::get().withNanoVDB != nullptr;
-}
+bool hasNanoVDB() { return smdl::BuildInfo::get().withNanoVDB != nullptr; }
 
 // Do two grids agree everywhere: extent, background, value bounds,
 // world bounds, and every voxel of the extent?
-static bool sameGrid(const smdl::VoxelGrid &grid0,
-                     const smdl::VoxelGrid &grid1) {
+bool isSameGrid(const smdl::VoxelGrid &grid0, const smdl::VoxelGrid &grid1) {
   const auto extent{grid0.getExtent()};
   if (!(extent.x == grid1.getExtent().x && extent.y == grid1.getExtent().y &&
         extent.z == grid1.getExtent().z))
@@ -47,9 +45,9 @@ static bool sameGrid(const smdl::VoxelGrid &grid0,
 // Write a version-3 Mitsuba volume: the 48-byte header, then the
 // single-channel float32 values x-fastest. Assumes a little-endian
 // host, like the loader's own test fixtures elsewhere.
-static void writeVol(const std::string &fileName, int nx, int ny, int nz,
-                     const std::vector<float> &values, int32_t encoding = 1,
-                     int32_t numChannels = 1) {
+void writeVol(const std::string &fileName, int nx, int ny, int nz,
+              const std::vector<float> &values, int32_t encoding = 1,
+              int32_t numChannels = 1) {
   std::ofstream file(fileName, std::ios::binary);
   file.write("VOL", 3);
   const char version{3};
@@ -61,6 +59,7 @@ static void writeVol(const std::string &fileName, int nx, int ny, int nz,
   file.write(reinterpret_cast<const char *>(values.data()),
              std::streamsize(values.size() * sizeof(float)));
 }
+} // namespace
 
 TEST_CASE("VoxelGrid") {
   auto tmpDir{fs::temp_directory_path() / "smdl-voxel-grid-test"};
@@ -118,47 +117,88 @@ TEST_CASE("VoxelGrid") {
     CHECK(grid.sample(float3(2.0f, 2.0f, 2.0f)) ==
           grid.sample(float3(1.0f, 1.0f, 1.0f)));
   }
-  SUBCASE("Sparsity and per-brick bounds") {
-    // A 48x16x16 field that is zero except over x in [24, 40), so brick
-    // (0,0,0) is empty even after its one-voxel dilation, brick (1,0,0)
-    // sees the nonzero region through dilation and content, and brick
-    // (2,0,0) holds the tail.
-    const int NX{48}, NY{16}, NZ{16};
+  SUBCASE("Sparsity") {
+    // A field three bricks wide in x that is zero except over the middle
+    // brick and half of the last, so brick (0,0,0) is empty outright.
+    const int B{smdl::VoxelGrid::BRICK_EXTENT};
+    const int NX{3 * B}, NY{B}, NZ{B};
+    const int lo{3 * B / 2}, hi{5 * B / 2};
     auto values{std::vector<float>()};
     for (int z = 0; z < NZ; z++)
       for (int y = 0; y < NY; y++)
         for (int x = 0; x < NX; x++)
-          values.push_back(x >= 24 && x < 40 ? 2.0f + float(x - 24) : 0.0f);
+          values.push_back(x >= lo && x < hi ? 2.0f + float(x - lo) : 0.0f);
     auto fileName{(tmpDir / "sparse.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
     REQUIRE(!grid.loadFromFile(fileName));
     CHECK(grid.getBrickCount().x == 3);
-    // Brick 0 covers x in [0,16), its dilation reaches x of 16, still
-    // zero: the empty-brick bound is the background.
-    CHECK(grid.getBrickMinValue(0, 0, 0) == 0.0f);
-    CHECK(grid.getBrickMaxValue(0, 0, 0) == 0.0f);
-    // Brick 1 covers x in [16,32), dilated to [15,32]: the maximum in
-    // that window is at x of 32.
-    CHECK(grid.getBrickMaxValue(1, 0, 0) == 2.0f + 8.0f);
-    // Brick 2 covers x in [32,48): the maximum of the whole field.
-    CHECK(grid.getBrickMaxValue(2, 0, 0) == 2.0f + 15.0f);
-    CHECK(grid.getMaxValue() == 2.0f + 15.0f);
-    // An empty brick exists, so the global minimum folds in the
-    // background.
+    // The empty brick reads back as the background, and folds it into
+    // the global minimum.
+    CHECK(grid.fetch(0, 0, 0) == 0.0f);
+    CHECK(grid.fetch(B - 1, B - 1, B - 1) == 0.0f);
     CHECK(grid.getMinValue() == 0.0f);
-    // Out-of-count brick queries resolve to the background.
-    CHECK(grid.getBrickMaxValue(3, 0, 0) == 0.0f);
-    CHECK(grid.getBrickMaxValue(-1, 0, 0) == 0.0f);
-    // The per-brick maximum must bound every trilinear sample whose
-    // support touches the brick; spot check against a sweep through the
-    // brick that owns the discontinuity.
-    bool bounded{true};
+    CHECK(grid.getMaxValue() == 2.0f + float(B - 1));
+    // Out-of-extent coordinates resolve to the background.
+    CHECK(grid.fetch(NX, 0, 0) == 0.0f);
+    CHECK(grid.fetch(-1, 0, 0) == 0.0f);
+  }
+  SUBCASE("Majorant cell bounds") {
+    // Three times the target cell count in x, which puts the derived
+    // cell at four voxels whatever the target is, and one cell in the
+    // other axes so the sweep at the end stays inside the cell it
+    // checks. The field is zero except over x in [3E/2, 5E/2), so cell
+    // 0 is empty even after its one-voxel dilation, cell 1 sees the
+    // nonzero region through dilation and content, and cell 2 holds the
+    // tail.
+    const int NX{3 * smdl::VoxelGrid::MAJORANT_TARGET_CELLS};
+    const int E{smdl::VoxelGrid::majorantExtentFor(smdl::int3(NX, 1, 1))};
+    REQUIRE(E == 4);
+    const int NY{E}, NZ{E};
+    const int lo{3 * E / 2}, hi{5 * E / 2};
+    auto values{std::vector<float>()};
+    for (int z = 0; z < NZ; z++)
+      for (int y = 0; y < NY; y++)
+        for (int x = 0; x < NX; x++)
+          values.push_back(x >= lo && x < hi ? 2.0f + float(x - lo) : 0.0f);
+    auto fileName{(tmpDir / "cells.vol").string()};
+    writeVol(fileName, NX, NY, NZ, values);
+    smdl::VoxelGrid grid{};
+    REQUIRE(!grid.loadFromFile(fileName));
+    CHECK(grid.getMajorantExtent() == E);
+    CHECK(grid.getMajorantCount().x == NX / E);
+    CHECK(grid.getMajorantCount().y == 1);
+    CHECK(grid.getMajorantCount().z == 1);
+    // Cell 0 covers x in [0,E), its dilation reaches x of E, still
+    // zero: the empty-cell bound is the background, twice.
+    CHECK(grid.getMajorantBounds(0, 0, 0).x == 0.0f);
+    CHECK(grid.getMajorantBounds(0, 0, 0).y == 0.0f);
+    // Cell 1 covers x in [E,2E), dilated to [E-1,2E]: the maximum in
+    // that window is at x of 2E, and the minimum is the zero it still
+    // reaches at x of E-1.
+    CHECK(grid.getMajorantBounds(1, 0, 0).y == 2.0f + float(E / 2));
+    CHECK(grid.getMajorantBounds(1, 0, 0).x == 0.0f);
+    // Cell 2 covers x in [2E,3E): the maximum of the whole field.
+    CHECK(grid.getMajorantBounds(2, 0, 0).y == 2.0f + float(E - 1));
+    CHECK(grid.getMaxValue() == 2.0f + float(E - 1));
+    // Cell 3 is past the tail, and out-of-count cell queries resolve to
+    // the background.
+    CHECK(grid.getMajorantBounds(3, 0, 0).y == 0.0f);
+    CHECK(grid.getMajorantBounds(NX / E, 0, 0).y == 0.0f);
+    CHECK(grid.getMajorantBounds(-1, 0, 0).y == 0.0f);
+    // The per-cell maximum must bound every trilinear sample whose
+    // support touches the cell, and the minimum must fall under every
+    // one; spot check against a sweep through the cell that owns the
+    // discontinuity.
+    bool isBounded{true};
+    const auto bounds{grid.getMajorantBounds(1, 0, 0)};
     for (int i = 0; i < 1000; i++) {
-      const float3 coord{(16.0f + 16.0f * float(i) / 999.0f) / NX, 0.4f, 0.6f};
-      bounded &= grid.sample(coord) <= grid.getBrickMaxValue(1, 0, 0);
+      const float3 coord{(float(E) + float(E) * float(i) / 999.0f) / float(NX),
+                         0.4f, 0.6f};
+      const float value{grid.sample(coord)};
+      isBounded &= bounds.x <= value && value <= bounds.y;
     }
-    CHECK(bounded);
+    CHECK(isBounded);
   }
   SUBCASE("Saving") {
     // A 20x24x28 field with structure in every axis, so a transposed or
@@ -178,7 +218,7 @@ TEST_CASE("VoxelGrid") {
       REQUIRE(!source.saveToFile(fileName));
       smdl::VoxelGrid grid{};
       REQUIRE(!grid.loadFromFile(fileName));
-      CHECK(sameGrid(source, grid));
+      CHECK(isSameGrid(source, grid));
     }
     SUBCASE("NanoVDB") {
       if (!hasNanoVDB()) return;
@@ -187,14 +227,14 @@ TEST_CASE("VoxelGrid") {
       smdl::VoxelGrid grid{};
       // The default name is what an unnamed save writes.
       REQUIRE(!grid.loadFromFile(fileName, "density"));
-      CHECK(sameGrid(source, grid));
+      CHECK(isSameGrid(source, grid));
       // And back again, so the whole conversion the CLI performs is
       // covered in both directions.
       auto backName{(tmpDir / "back.vol").string()};
       REQUIRE(!grid.saveToFile(backName));
       smdl::VoxelGrid back{};
       REQUIRE(!back.loadFromFile(backName));
-      CHECK(sameGrid(source, back));
+      CHECK(isSameGrid(source, back));
     }
     SUBCASE("NanoVDB keeps the extent") {
       if (!hasNanoVDB()) return;
@@ -218,13 +258,15 @@ TEST_CASE("VoxelGrid") {
       smdl::VoxelGrid grid{};
       REQUIRE(!grid.loadFromFile(fileName, "density"));
       CHECK(grid.getExtent().x == MX);
-      CHECK(sameGrid(border, grid));
+      CHECK(isSameGrid(border, grid));
       // The anchor changes no value: the corner it pins still holds the
-      // background, and the per-brick bounds are what they were.
+      // background, and the majorant bounds are what they were.
       CHECK(grid.fetch(0, 0, 0) == 0.0f);
       CHECK(grid.fetch(MX - 1, MY - 1, MZ - 1) == 0.0f);
-      CHECK(grid.getBrickMinValue(0, 0, 0) == border.getBrickMinValue(0, 0, 0));
-      CHECK(grid.getBrickMaxValue(0, 0, 0) == border.getBrickMaxValue(0, 0, 0));
+      CHECK(grid.getMajorantBounds(0, 0, 0).x ==
+            border.getMajorantBounds(0, 0, 0).x);
+      CHECK(grid.getMajorantBounds(0, 0, 0).y ==
+            border.getMajorantBounds(0, 0, 0).y);
     }
     SUBCASE("Several named grids in one NanoVDB file") {
       if (!hasNanoVDB()) return;
@@ -240,9 +282,9 @@ TEST_CASE("VoxelGrid") {
                                            {"density", "temperature"}));
       smdl::VoxelGrid grid{};
       REQUIRE(!grid.loadFromFile(fileName, "density"));
-      CHECK(sameGrid(source, grid));
+      CHECK(isSameGrid(source, grid));
       REQUIRE(!grid.loadFromFile(fileName, "temperature"));
-      CHECK(sameGrid(temperature, grid));
+      CHECK(isSameGrid(temperature, grid));
       // A name the file does not carry is an error, not the first grid.
       CHECK(grid.loadFromFile(fileName, "flame").has_value());
     }

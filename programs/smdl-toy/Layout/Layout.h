@@ -31,14 +31,10 @@
 ///
 using AssetSearchPath = std::vector<std::string>;
 
-/// The extension that conventionally marks a layout file. Advisory: the
-/// `#smdl layout` first line is what actually decides.
+/// The extension that marks a layout file. Nothing inside the file
+/// identifies it, so where a path could name a mesh or a layout, the
+/// extension decides.
 constexpr std::string_view LAYOUT_EXTENSION = ".layout";
-
-/// The magic that must begin the first line of a layout file. It starts
-/// with `#`, so it reads as a comment to the grammar and as an identity
-/// to everything else, exactly as `#smdl` marks an SMDL file.
-constexpr std::string_view LAYOUT_MAGIC = "#smdl layout";
 
 /// How an asset wants its meshes refined at load time. See the
 /// `subdivide` and `displace` operations in the layout grammar.
@@ -74,7 +70,7 @@ public:
   bool isDisplaced{};
 
   /// Anything to do at all?
-  [[nodiscard]] bool active() const noexcept {
+  [[nodiscard]] bool isActive() const noexcept {
     return levels > 0 || isDisplaced;
   }
 
@@ -82,7 +78,7 @@ public:
   /// (file, spec). Empty for the inactive default, so a file placed
   /// without the feature keeps its historical cache key.
   [[nodiscard]] std::string key() const {
-    if (!active()) return {};
+    if (!isActive()) return {};
     auto result{std::string("subdivide ") + std::to_string(levels)};
     if (scheme == Scheme::LOOP) result += " loop";
     if (!isSmooth) result += " linear";
@@ -131,11 +127,11 @@ public:
   float3 size{1.0f};
 
   /// Is a primitive at all?
-  [[nodiscard]] bool active() const noexcept { return shape != Shape::NONE; }
+  [[nodiscard]] bool isActive() const noexcept { return shape != Shape::NONE; }
 
   /// Does the shape have a `radius` to speak of?
   [[nodiscard]] bool hasRadius() const noexcept {
-    return active() && shape != Shape::BOX;
+    return isActive() && shape != Shape::BOX;
   }
 
   /// Does the shape have a `height` to speak of?
@@ -166,7 +162,7 @@ public:
 
   /// A key that distinguishes two specs, for callers that cache by it.
   [[nodiscard]] std::string key() const {
-    if (!active()) return {};
+    if (!isActive()) return {};
     auto result{std::string(name())};
     if (hasRadius()) result += " r=" + std::to_string(radius);
     if (hasHeight()) result += " h=" + std::to_string(height);
@@ -198,7 +194,7 @@ public:
   /// Is a curves item at all? The parser never sets this (it cannot
   /// know what a path names); the lowering sets it when the target
   /// classifies as a `.curves` file.
-  bool active{};
+  bool isActive{};
 
   /// The cross-section rendered around the stored points.
   Mode mode{Mode::TUBE};
@@ -206,7 +202,7 @@ public:
   /// Did the declaration say `tube` or `ribbon` explicitly? Kept so the
   /// lowering can reject the ops on a target that turns out not to be
   /// curves.
-  bool modeSet{};
+  bool isModeSet{};
 
   /// A uniform multiplier on every stored radius, applied at load. This
   /// earns its place because no placement transform can express it: a
@@ -216,13 +212,13 @@ public:
 
   /// Did the declaration write any curves operation at all?
   [[nodiscard]] bool anyOps() const noexcept {
-    return modeSet || radiusScale != 1.0f;
+    return isModeSet || radiusScale != 1.0f;
   }
 
   /// A key that distinguishes two specs, for callers that cache by
   /// (file, spec).
   [[nodiscard]] std::string key() const {
-    if (!active) return {};
+    if (!isActive) return {};
     auto result{
         std::string(mode == Mode::RIBBON ? "curves ribbon" : "curves tube")};
     if (radiusScale != 1.0f) result += " x" + std::to_string(radiusScale);
@@ -496,9 +492,9 @@ public:
   LayoutLocation profilePathLoc{};
 
   /// The total radiant power in watts. For PROFILE, applied only when
-  /// written (`powerSet`), renormalizing the profile's own total.
+  /// written (`isPowerSet`), renormalizing the profile's own total.
   float power{1.0f};
-  bool powerSet{};
+  bool isPowerSet{};
 
   /// The blackbody temperature in kelvin shaping the spectrum, or 0 for
   /// a flat spectrum across the render band.
@@ -878,10 +874,10 @@ public:
                                 const MotionSampling &sampling = {});
 
 /// Resolve one command-line scene argument into the items it stands
-/// for: a layout file (by extension or by its `#smdl layout` first
-/// line) yields everything it names, an asset resolves through its
-/// manifest, and anything else is a mesh file placed at the origin. A
-/// `.scene` file is an error naming the retirement.
+/// for: a layout file (by extension) yields everything it names, an
+/// asset resolves through its manifest, and anything else is a mesh file
+/// placed at the origin. A `.scene` file is an error naming the
+/// retirement.
 [[nodiscard]] Layout resolveLayoutArgument(const std::string &fileName,
                                            const AssetSearchPath &search = {},
                                            const MotionSampling &sampling = {});

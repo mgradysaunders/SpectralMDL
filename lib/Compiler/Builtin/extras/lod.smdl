@@ -45,7 +45,7 @@ import ::tex::max_extent;
 export float filter_width(
   const int space = 0,
   const auto uv_scale = 1.0,
-) = $state.cone_width * #sqrt(#max($state.texture_density[space], 0.0)) * #maxValue(#abs(float2(uv_scale)));
+) = $state.coneWidth * #sqrt(#max($state.textureDensity[space], 0.0)) * #maxValue(#abs(float2(uv_scale)));
 
 /// The filter width of the pixel ray cone footprint in texels of `tex`,
 /// using the larger image dimension. Zero for invalid textures.
@@ -134,7 +134,7 @@ export auto regularized_roughness(
   const float strength = 0.1,
   const int start_order = 2,
 ) {
-  const auto order(#max($state.scattering_order, 1));
+  const auto order(#max($state.scatteringOrder, 1));
   return roughness if (order < start_order);
   return #max(
            roughness, #max(0.0, #min(strength * (order - start_order + 1), 1.0)));
