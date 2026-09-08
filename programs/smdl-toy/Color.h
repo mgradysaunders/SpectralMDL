@@ -198,7 +198,7 @@ public:
 /// An `smdl::State` carrying the render-wide fields every evaluation
 /// needs: the wavelength grid and, when material construction is involved,
 /// the allocator. The geometric fields are applied afterward by
-/// `Hit::apply_geometry_to_state()`. The time defaults to the render-wide
+/// `Hit::applyGeometryToState()`. The time defaults to the render-wide
 /// base time; per-path callers pass the path's own.
 [[nodiscard]] inline smdl::State
 makeRenderState(const smdl::SpectralColor &wavelengths,

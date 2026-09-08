@@ -883,7 +883,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     // density toward the bent direction, carried through the chain by the
     // discrete Fresnel transmissions and the transfer Jacobian. A light
     // the continuation cannot reach has MIS weight 1, matching the plain
-    // branch; see `LightSample::reachable`.
+    // branch; see `LightSample::isReachable`.
     if (lightSample.isReachable) {
       float escapePdf{guidedContinuationPdf(vertex.dtree, vertex.bsdfFraction,
                                             connection.wr, fPdf) *
@@ -1391,7 +1391,7 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
         D[b] = f[b] * Tr[b] * lightSample.Li[b] / lightSample.pdf;
       if (D.isAnyNonFinite()) return;
       // A light the continuation cannot reach has MIS weight 1; see
-      // `LightSample::reachable`.
+      // `LightSample::isReachable`.
       if (lightSample.isReachable)
         D *= smdl::powerHeuristic(lightSample.pdf, continuationPdf);
       direct += D;

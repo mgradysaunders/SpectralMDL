@@ -113,7 +113,7 @@ bool Type::isComplex(Context &context) const {
 }
 
 bool Type::isOptionalUnion() const {
-  // NOTE: `Union::canonicalize_types()` always places `void` at the end!
+  // NOTE: `UnionType::canonicalizeTypes()` always places `void` at the end!
   return isUnion() &&
          static_cast<const UnionType *>(this)->caseTypes.back()->isVoid();
 }

@@ -596,7 +596,7 @@ public:
     return accessIndex(value, context.getComptimeInt(int(i)), srcLoc);
   }
 
-  /// Wraps `Type::access_index()` for every index.
+  /// Wraps `Type::accessIndex()` for every index.
   [[nodiscard]] std::vector<Value>
   accessEveryIndex(Value value, unsigned n, const SourceLocation &srcLoc,
                    const std::function<Value(unsigned, Value)> &pred = {}) {

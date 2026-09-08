@@ -530,7 +530,7 @@ private:
   /// The union types.
   ///
   /// Each `UnionType` is keyed by its canonical case types. See
-  /// `UnionType::canonicalize_types()`.
+  /// `UnionType::canonicalizeTypes()`.
   std::map<llvm::SmallVector<Type *>, BumpPtr<UnionType>> mUnionTypes;
 
   /// The union index maps for remapping the union index when
