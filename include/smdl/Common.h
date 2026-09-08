@@ -471,7 +471,6 @@ public:
   /// The geometry normal in object space.
   float3 geometryNormal{0, 0, 1};
 
-  // TODO Lift to `namespace smdl { }` scope?
   /// The max supported number of texture spaces.
   ///
   /// \note
@@ -599,7 +598,6 @@ public:
   /// \note This is non-standard!
   int vertexColorCount{};
 
-  // TODO Lift to `namespace smdl { }` scope?
   /// The vertex colors: RGBA as the geometry stores them, interpolated to
   /// the shading point, with no color management and no premultiplication.
   /// White where no set is present, so an ungated read still behaves.
