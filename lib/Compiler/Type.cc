@@ -1760,9 +1760,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize}});
   {
-    // Generate the evaluate opacity function:
+    // Generate the opacity evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) float "material_name.evaluateOpacity"() {
+    // @(visible) float "material_name.opacityEvaluate"() {
     //   return material_name().geometry.cutout_opacity;
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1774,7 +1774,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'MATERIAL_HAS_CUTOUT' flag.
     auto funcReturnType{context.getFloatType()};
     auto func{emitter.createFunction(
-        concat(symbolBase, ".evaluateOpacity"), /*isPure=*/false,
+        concat(symbolBase, ".opacityEvaluate"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
           emitter.emitReturn(
               emitter.accessField(
@@ -1795,7 +1795,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     //   *displacement = material_name().geometry.displacement;
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // Like 'evaluateOpacity', this evaluates only the displacement: no
+    // Like 'opacityEvaluate', this evaluates only the displacement: no
     // '_MaterialEval' and no '#bump', so 'state.allocator' may be
     // null and everything not feeding 'geometry.displacement' is
     // dead-code eliminated. This is the per-vertex query for hosts
@@ -1853,7 +1853,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     //   _volumeEvaluate(material_name(), sigmaA, sigmaS, emission);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // Like 'evaluateOpacity', this evaluates only the volume
+    // Like 'opacityEvaluate', this evaluates only the volume
     // coefficient expressions: no '_MaterialEval' and no '#bump',
     // so 'state.allocator' may be null and everything not feeding the
     // coefficients is dead-code eliminated. Unlike instance

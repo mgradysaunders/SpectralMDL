@@ -300,7 +300,7 @@ public:
   /// Provably opaque: the cutout opacity is the compile-time constant 1
   /// and the material is not a null interface, so a hit on it blocks a
   /// shadow query outright, with no material work. Nothing to sample,
-  /// nothing to pass through: neither `evaluateOpacity` nor an instance
+  /// nothing to pass through: neither `opacityEvaluate` nor an instance
   /// is ever needed at it. This is a statement about hits, not
   /// interiors: a shadow segment that STARTS inside this material's
   /// volume still integrates that medium, and `hasVolume()` is that
@@ -586,7 +586,7 @@ public:
   /// Evaluates only `geometry.displacement` and nothing else: no
   /// instance is constructed and no allocation happens, so
   /// `state.allocator` may be null, and everything not feeding the
-  /// displacement is dead-code eliminated, the way `evaluateOpacity`
+  /// displacement is dead-code eliminated, the way `opacityEvaluate`
   /// evaluates only the cutout opacity. This is the per-vertex query
   /// for hosts that apply displacement to geometry at load time; see
   /// `MaterialDef::hasZeroDisplacement()` for skipping materials that
@@ -615,7 +615,7 @@ public:
   /// at `state`, resolving an absent coefficient to zero: no instance
   /// is constructed and no allocation happens, so `state.allocator` may
   /// be null, and everything not feeding the coefficients is dead-code
-  /// eliminated, the way `evaluateOpacity` evaluates only the cutout
+  /// eliminated, the way `opacityEvaluate` evaluates only the cutout
   /// opacity. This is the per-point query that null-collision tracking
   /// calls at every tentative collision inside a heterogeneous medium;
   /// for provably homogeneous materials

@@ -2977,7 +2977,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   // The warning goes through 'logMissingFileOnce' rather than
   // 'srcLoc.logWarn' because this runs at emission time and a material
   // body is emitted three times (see 'Type.cc': the 'evaluate',
-  // 'evaluateOpacity' and 'thinWalledProbe' functions each inline it),
+  // 'opacityEvaluate' and 'thinWalledProbe' functions each inline it),
   // which would otherwise report the same missing file three times over.
   // Resources that are found but fail to load already report once,
   // memoized by file hash in 'loadResource'.

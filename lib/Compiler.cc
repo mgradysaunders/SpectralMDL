@@ -425,7 +425,7 @@ namespace {
 //
 // `FunctionType::initializeMaterialFunctions` fills the type-level
 // (`#isDefault`-derived) bits of `staticFlags`/`staticFlagsKnown` at
-// emit time and also emits, per material, the `.evaluateOpacity` entry
+// emit time and also emits, per material, the `.opacityEvaluate` entry
 // point and a `.thinWalledProbe` scaffolding function. After the
 // optimizer runs, a body that reduces to returning a constant proves the
 // corresponding flag bit for every possible instance, so it is marked
@@ -452,11 +452,11 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   }};
   for (auto &jitMaterial : materials) {
     // Recover the symbol base from the evaluate-opacity entry point name,
-    // '<symbolBase>.evaluateOpacity'.
+    // '<symbolBase>.opacityEvaluate'.
     auto symbolBase{std::string_view(jitMaterial.opacityEvaluate.name)};
     SMDL_SANITY_CHECK(
-        llvm::StringRef(symbolBase).ends_with(".evaluateOpacity"));
-    symbolBase.remove_suffix(std::string_view(".evaluateOpacity").size());
+        llvm::StringRef(symbolBase).ends_with(".opacityEvaluate"));
+    symbolBase.remove_suffix(std::string_view(".opacityEvaluate").size());
     if (auto opacity{llvm::dyn_cast_if_present<llvm::ConstantFP>(
             foldedReturnValue(jitMaterial.opacityEvaluate.name))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_CUTOUT;

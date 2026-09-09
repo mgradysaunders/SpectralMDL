@@ -802,7 +802,7 @@ export float _randomFloat() = #min(
 /// `$state` the entry point was called with, so coefficients that read
 /// `state::position()` make this a per-point query; everything in the
 /// material that does not feed the coefficients is dead-code
-/// eliminated, the way `evaluateOpacity` evaluates only the cutout
+/// eliminated, the way `opacityEvaluate` evaluates only the cutout
 /// opacity. NOTE: This is non-standard!
 @(macro)
 export void _volumeEvaluate(

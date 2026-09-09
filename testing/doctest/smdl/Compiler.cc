@@ -904,7 +904,7 @@ TEST_CASE("Compiler static material flags") {
       CHECK((materialEval.eval.flags & materialDef.staticFlagsKnown) ==
             materialDef.staticFlags);
     }
-    // 'evaluateOpacity' agrees with the full evaluation and requires no
+    // 'opacityEvaluate' agrees with the full evaluation and requires no
     // allocator.
     auto stateNoAlloc{state};
     stateNoAlloc.allocator = nullptr;
@@ -1546,7 +1546,7 @@ TEST_CASE("Compiler missing resource warnings") {
   fs::remove_all(tmpDir);
   // A missing texture is a warning, not an error, and the texture reads
   // black -- so the interesting question is how many times it is reported.
-  // A material body is emitted three times ('evaluate', 'evaluateOpacity'
+  // A material body is emitted three times ('evaluate', 'opacityEvaluate'
   // and 'thinWalledProbe' in 'Type.cc'), and the not-found path cannot be
   // memoized by file hash the way an actual load failure is, so without
   // 'Compiler::logResourceWarningOnce' it would be reported three times.

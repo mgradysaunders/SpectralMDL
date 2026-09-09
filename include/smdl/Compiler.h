@@ -274,7 +274,7 @@ private:
   ///
   /// This is for diagnostics raised while emitting a `#load_*` intrinsic,
   /// which is not once per mention in the source: a material body is
-  /// emitted three times (once each for the `evaluate`, `evaluateOpacity`
+  /// emitted three times (once each for the `evaluate`, `opacityEvaluate`
   /// and `thinWalledProbe` functions that `Type.cc` generates), so a
   /// `texture_2d("missing.png")` in a material would otherwise report the
   /// same warning three times over.
