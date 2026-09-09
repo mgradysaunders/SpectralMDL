@@ -559,7 +559,7 @@ public:
   ///
   Function<void(State &state, Eval &eval)> evaluate{};
 
-  /// The evaluate opacity function.
+  /// The opacity evaluate function.
   ///
   /// \param[in] state
   /// The state.
@@ -572,7 +572,7 @@ public:
   /// `isAlwaysOpaque()` (a null interface needs no opacity either, it
   /// passes through unconditionally).
   ///
-  Function<float(State &state)> evaluateOpacity{};
+  Function<float(State &state)> opacityEvaluate{};
 
   /// The displacement evaluate function.
   ///
@@ -1005,8 +1005,8 @@ public:
 };
 
 /// A material definition together with an evaluation of it at one shading
-/// point, which is what a host holds and asks the scattering, emission, and
-/// volume questions of.
+/// point, which is what the user holds and queries for scattering, volume,
+/// emission, etc.
 struct Material final {
 public:
   Material() = default;

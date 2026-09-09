@@ -1785,7 +1785,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
-    jitMaterial.evaluateOpacity.name = func->getName().str();
+    jitMaterial.opacityEvaluate.name = func->getName().str();
   }
   {
     // Generate the displacement evaluate function:

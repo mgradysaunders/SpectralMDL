@@ -910,11 +910,11 @@ TEST_CASE("Compiler static material flags") {
     stateNoAlloc.allocator = nullptr;
     for (const auto &materialDef : compiler.getMaterials()) {
       auto materialEval{smdl::JIT::Material(state, &materialDef)};
-      CHECK(materialDef.evaluateOpacity(stateNoAlloc) ==
+      CHECK(materialDef.opacityEvaluate(stateNoAlloc) ==
             materialEval.getCutoutOpacity());
     }
-    CHECK(get("mat_default")->evaluateOpacity(stateNoAlloc) == 1.0f);
-    CHECK(get("mat_cutout_const")->evaluateOpacity(stateNoAlloc) == 0.5f);
+    CHECK(get("mat_default")->opacityEvaluate(stateNoAlloc) == 1.0f);
+    CHECK(get("mat_cutout_const")->opacityEvaluate(stateNoAlloc) == 0.5f);
     // The additive-volume declaration reaches the instance flags.
     auto instAdditive{smdl::JIT::Material(state, get("mat_volume_additive"))};
     CHECK(instAdditive.hasAdditiveVolume());

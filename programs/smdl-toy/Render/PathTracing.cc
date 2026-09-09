@@ -268,7 +268,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     // opacity evaluates at full fidelity, the conservative choice for
     // shadow rays.
     auto &state{mPath.shadeHit(found, mShadowDir)};
-    if (float opacity{found.materialDef->evaluateOpacity(state)};
+    if (float opacity{found.materialDef->opacityEvaluate(state)};
         opacity == 1 || float(mPath.sampler) < opacity) {
       return true; // Blocks visibility!
     }

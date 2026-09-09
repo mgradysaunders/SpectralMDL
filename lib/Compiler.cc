@@ -453,12 +453,12 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   for (auto &jitMaterial : materials) {
     // Recover the symbol base from the evaluate-opacity entry point name,
     // '<symbolBase>.evaluateOpacity'.
-    auto symbolBase{std::string_view(jitMaterial.evaluateOpacity.name)};
+    auto symbolBase{std::string_view(jitMaterial.opacityEvaluate.name)};
     SMDL_SANITY_CHECK(
         llvm::StringRef(symbolBase).ends_with(".evaluateOpacity"));
     symbolBase.remove_suffix(std::string_view(".evaluateOpacity").size());
     if (auto opacity{llvm::dyn_cast_if_present<llvm::ConstantFP>(
-            foldedReturnValue(jitMaterial.evaluateOpacity.name))}) {
+            foldedReturnValue(jitMaterial.opacityEvaluate.name))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_CUTOUT;
       if (opacity->getValueAPF().convertToFloat() < 1.0f)
         jitMaterial.staticFlags |= MATERIAL_HAS_CUTOUT;
@@ -940,7 +940,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     jitLookup(mRGBToColor);
     for (auto &jitMaterial : mMaterials) {
       jitLookup(jitMaterial.evaluate);
-      jitLookup(jitMaterial.evaluateOpacity);
+      jitLookup(jitMaterial.opacityEvaluate);
       jitLookup(jitMaterial.displacementEvaluate);
       jitLookup(jitMaterial.volumeEvaluate);
       jitLookup(jitMaterial.scatterEvaluate);
