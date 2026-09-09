@@ -1,10 +1,10 @@
 /// \file
 #pragma once
 
-#include <map>
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "smdl/Doc.h"
 #include "smdl/JIT.h"
@@ -548,7 +548,7 @@ private:
   /// keyed on `MD5FileHash` like the resource tables below, because the
   /// usual reason to warn is that the file does not exist, and a file that
   /// does not exist has nothing to hash.
-  std::set<std::string, std::less<>> mWarnedResourceFileNames;
+  std::unordered_set<std::string> mWarnedResourceFileNames;
 
   /// The images used by textures, keyed by content hash alone: one
   /// decoded image per file, however its references differ in gamma or
@@ -602,15 +602,15 @@ private:
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.
-  std::map<std::string, Module *> mModuleFileNames;
+  std::unordered_map<std::string, Module *> mModuleFileNames;
 
   /// The MDL modules by qualified name, e.g., `::vendor::metals::steel`.
   /// On collisions across search roots, the module under the earliest
   /// added root wins and later modules are marked shadowed.
-  std::map<std::string, Module *> mModulesByQualifiedName;
+  std::unordered_map<std::string, Module *> mModulesByQualifiedName;
 
   /// The MDL module directory names.
-  std::set<std::string> mModuleDirNames;
+  std::unordered_set<std::string> mModuleDirNames;
 
   /// The MDL module directory search paths.
   ///
@@ -656,7 +656,7 @@ private:
   /// are defined as absolute symbols in the JIT so resolution does not
   /// depend on the host process exporting them (e.g. a statically linked
   /// host without `--export-dynamic`).
-  std::map<std::string, const void *, std::less<>> mBuiltinCalleeAddresses;
+  std::unordered_map<std::string, const void *> mBuiltinCalleeAddresses;
 
   /// The LLVM JIT.
   std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
