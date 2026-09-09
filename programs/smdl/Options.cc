@@ -17,9 +17,8 @@ cl::SubCommand subRun{"run", "Run execs"};
 cl::SubCommand subTest{"test", "Run execs and unit tests"};
 cl::SubCommand subFormat{"format", "Format source code"};
 cl::SubCommand subDoc{"doc", "Show documentation"};
-cl::SubCommand subVolume{
-    "volume", "Convert voxel grid files between '.vol' and '.nvdb', or "
-              "describe what one holds"};
+cl::SubCommand subVolume{"volume",
+                         "Convert voxel grids between '.vol' and '.nvdb'"};
 cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                            &subTest};
 cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
