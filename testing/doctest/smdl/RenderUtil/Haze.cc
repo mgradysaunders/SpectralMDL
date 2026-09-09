@@ -61,7 +61,7 @@ float referenceDepth(const smdl::Haze &haze, const smdl::float3 &org,
 } // namespace
 
 TEST_CASE("MiePhase") {
-  // The goldens below are the ones 'testing/language/df_fog.smdl'
+  // The goldens below are the ones 'testing/language/builtin/df/volume.smdl'
   // asserts against the builtin 'df::fog_vdf', produced by an
   // independent Python transcription of the paper's fits and of the
   // analytic Draine cumulative inversion. Sharing them is what ties the

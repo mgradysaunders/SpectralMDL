@@ -1,0 +1,156 @@
+/// The type system.
+///
+/// A type is an ordinary compile-time value here. It can be bound to a
+/// `const`, passed to an intrinsic, compared, and computed: `#getVectorType`
+/// builds one out of an element type and a count, `#typeOf` recovers one
+/// from a value, and `#sizeOf` and `#alignOf` report the layout it will
+/// have. The C++ analogue is a template parameter, except that nothing
+/// about the syntax changes when a type moves into a value position.
+///
+/// `<:` asks whether the left type is the right one or derives from it, so
+/// it answers for a struct against its tag and for a union against a member.
+/// `#hasField` asks whether a name is a live field of a value, which is the
+/// question a generic body needs when a field may have been voided away.
+#smdl
+
+struct Empty {};
+
+unit_test "A type is a compile-time value that <: compares" {
+  auto empty = Empty();
+  #assert(2 <: int);
+  #assert(2.0f <: float);
+  #assert(2.0d <: double);
+  #assert("Hi!" <: string);
+  #assert(empty <: Empty);
+  #assert(#sizeOf(int8_t) == 1);
+  #assert(#sizeOf(int16_t) == 2);
+  #assert(#sizeOf(int32_t) == 4);
+  #assert(#sizeOf(int64_t) == 8);
+  #assert(#alignOf(int8_t) == 1);
+  #assert(#alignOf(int32_t) == 4);
+  #assert(#alignOf(double) == 8);
+}
+
+unit_test "The type constructors build a type from its parts" {
+  // The scalar constructors accept any bit width LLVM can represent, and the
+  // familiar spellings are aliases for the usual widths.
+  #assert(#getIntType(1) == bool);
+  #assert(#getIntType(32) == int);
+  #assert(#getFloatType(32) == float);
+  #assert(#getFloatType(64) == double);
+  #assert(#sizeOf(#getIntType(11)) == 2);
+  #assert(#getVectorType(float, 3) == float3);
+  #assert(#getVectorType(int, 2) == int2);
+  #assert(#getMatrixType(float, 4, 3) == float4x3);
+  #assert(#numCols(float4x3) == 4);
+  #assert(#numRows(float4x3) == 3);
+  // Every type has a name, and the name of a type without a familiar spelling
+  // is the constructor call that names it.
+  #assert(#typeName(int) == "int");
+  #assert(#typeName(float3) == "float3");
+  #assert(#typeName(#getIntType(11)) == "#getIntType(11)");
+}
+
+unit_test "The complex type carries the intrinsics over" {
+  auto z = complex(0.884, -0.318);
+  #assert(#real(z) ~== |1e-6| 0.884);
+  #assert(#imag(z) ~== |1e-6| -0.318);
+  #assert(#norm(z) ~== |1e-6| #real(#conj(z) * z));
+  #assert(#abs(z) ~== |1e-6| #sqrt(#norm(z)));
+
+  const auto sqrt_z = #sqrt(z);
+  #assert(#real(sqrt_z * sqrt_z) ~== |1e-6| #real(z));
+  #assert(#imag(sqrt_z * sqrt_z) ~== |1e-6| #imag(z));
+
+  const auto log_z = #log(z);
+  #assert(#real(#exp(log_z)) ~== |1e-6| #real(z));
+  #assert(#imag(#exp(log_z)) ~== |1e-6| #imag(z));
+
+  // Literal imaginary
+  #assert(#real(#exp(0.558j)) ~== |1e-6| #cos(0.558));
+  #assert(#imag(#exp(0.558j)) ~== |1e-6| #sin(0.558));
+
+  // Intrinsics behave as expected on real numbers
+  #assert(#real(2.4) == 2.4);
+  #assert(#imag(2.4) == 0.0);
+  #assert(#conj(2.4) == 2.4);
+  #assert(#norm(2.4) ~== |1e-6| 2.4 * 2.4);
+}
+
+struct HasFieldProbe {
+  int always = 1;
+
+  // Voided by its initializer.
+  auto voided = void();
+
+  // Comptime-generic: the instantiated field type is whatever it is
+  // constructed with, and `void` when it is left at `none`.
+  $(?color) generic = none;
+
+  // A genuine optional union, which is present either way. Whether it
+  // holds a color is a runtime question, not a compile-time one.
+  ?color optional = none;
+
+  static const int static_field = 3;
+};
+
+// `#hasField` folds to a constant with no instructions, so it is legal
+// at module scope.
+const bool PROBE_HAS_ALWAYS = #hasField(HasFieldProbe(), "always");
+
+unit_test "#hasField answers for live, voided, and absent fields" {
+  const auto probe = HasFieldProbe();
+  #assert(#hasField(probe, "always"));
+  #assert(!#hasField(probe, "voided"));
+  #assert(!#hasField(probe, "generic"));
+  #assert(#hasField(probe, "optional"));
+
+  // Static fields count, just as they do for field access.
+  #assert(#hasField(probe, "static_field"));
+
+  // A field that is not declared at all is simply absent, rather than
+  // the error that spelling this `!#isVoid(probe.nonexistent)` would be.
+  #assert(!#hasField(probe, "nonexistent"));
+
+  // A compile-time type asks about instances of that type, so that the
+  // two spellings agree.
+  #assert(#hasField(#typeOf(probe), "always"));
+  #assert(!#hasField(#typeOf(probe), "voided"));
+
+  // Pointers forward to the pointee, matching field access through them.
+  auto addressable = HasFieldProbe();
+  #assert(#hasField(&addressable, "always"));
+  #assert(!#hasField(&addressable, "voided"));
+
+  // Builtin pseudo-fields count too.
+  #assert(#hasField(float3(), "xy"));
+  #assert(!#hasField(float3(), "w"));
+  #assert(#hasField($state, "normal"));
+
+  // Types with no fields at all, including void itself.
+  #assert(!#hasField(probe.always, "anything"));
+  #assert(!#hasField(void(), "anything"));
+
+  #assert(PROBE_HAS_ALWAYS);
+}
+
+unit_test "#hasField follows a generic instantiation" {
+  // The same struct, constructed so the generic field resolves to
+  // `color` instead of collapsing to `void`.
+  const auto probe = HasFieldProbe(generic: color(0.5));
+  #assert(#hasField(probe, "generic"));
+  #assert(#typeOf(probe.generic) == color);
+
+  // The optional is unchanged: it is present in both instantiations.
+  #assert(#hasField(probe, "optional"));
+}
+
+// constructing an array from a pointer to its element type compared the
+// pointer type against the element type instead of the pointee, so the
+// feature never fired.
+unit_test "An array constructs from a pointer to its element" {
+  float[2] src = float[2](3.0, 4.0);
+  auto p = &src[0];
+  float[2] dst = float[2](p);
+  #assert(dst[0] == 3.0 && dst[1] == 4.0);
+}

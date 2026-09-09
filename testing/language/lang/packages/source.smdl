@@ -1,0 +1,4 @@
+/// The module `nested/reexport.smdl` re-exports from, one package level up.
+#smdl
+
+export const string message = "Hellope";

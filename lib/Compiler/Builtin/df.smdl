@@ -3115,9 +3115,10 @@ float3 microfacetNormalSample(
 }
 
 // Its solid-angle density at `visible` false, which is the distribution's own
-// and so does not depend on `wo` at all. `testing/language/df.smdl` asserts
-// that it integrates to one and that it is the plain form rather than the
-// visible one, which is the property that would silently regress.
+// and so does not depend on `wo` at all. `builtin/df/normals.smdl` in the
+// language suite asserts that it integrates to one and that it is the plain
+// form rather than the visible one, which is the property that would
+// silently regress.
 @(pure macro)
 float microfacetNormalPdf(const auto this, const float3 wm) {
   return 0.0 if (!(wm.z > 0.0));

@@ -1,0 +1,29 @@
+/// `#search_dir` adds a directory that resource lookups search ahead of
+/// the module's own directory. The fixtures are here rather than in
+/// `fixtures/` because where a file sits is what these tests are about:
+/// `4x4.png` beside this module is the 4x4 image, and `elsewhere/`
+/// holds an 8x8 image under the same name.
+#smdl
+#search_dir "elsewhere"
+
+import ::tex::*;
+
+unit_test "A resource outside the module directory resolves" {
+  // '4x4_only_here.png' exists only in 'elsewhere/', so it can only
+  // resolve through '#search_dir'.
+  const auto t = texture_2d("4x4_only_here.png", tex::gamma_linear);
+  #assert(tex::texture_isvalid(t));
+  #assert(tex::width(t) == 4);
+  #assert(tex::height(t) == 4);
+}
+
+unit_test "A search directory takes priority over the module directory" {
+  // Both directories hold a '4x4.png' and the search directory's 8x8
+  // image must win. Conversely, the 4x4 asserts in
+  // 'builtin/tex/texture_2d.smdl' prove '#search_dir' stays scoped to
+  // the module that declares it.
+  const auto t = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(tex::texture_isvalid(t));
+  #assert(tex::width(t) == 8);
+  #assert(tex::height(t) == 8);
+}

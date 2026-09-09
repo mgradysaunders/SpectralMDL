@@ -1,0 +1,9 @@
+/// Helpers for keeping the optimizer out of a test's way.
+#smdl
+
+/// The identity, out of line, so that a value the test wants at run time
+/// cannot fold at compile time. Both `noinline` and the absence of `macro`
+/// are load-bearing: a macro would expand at the call site and fold
+/// straight through.
+@(pure noinline)
+export auto opaque(const auto x) = x;

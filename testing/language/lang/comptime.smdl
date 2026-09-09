@@ -1,0 +1,223 @@
+/// Compile-time evaluation.
+///
+/// Code here runs at one of three times. Most of it runs when a material is
+/// evaluated. An `exec` block runs once when the host loads the module.
+/// Everything else in this file runs while the module is being compiled, and
+/// the point of the tests is that it demonstrably does.
+///
+/// Folding is not an optimization the tests hope for. `static const`
+/// requires it, a module-scope initializer requires it because there is no
+/// function around it to hold run-time code, `#assert` becomes a compile
+/// error rather than a panic when its condition folds, and a late `if` whose
+/// condition folds prunes the statements after it -- which is what makes it
+/// legal for those statements to be ill-formed for the other branch.
+///
+/// `$HAS_NANOVDB` and `$HAS_PTEX` are compile-time constants for the same
+/// reason: a material has to be able to ask what the build supports and have
+/// the answer disappear.
+#smdl
+#search_dir "../fixtures"
+
+import ::math::*;
+import ::tex::*;
+
+// Intrinsic calls on constant operands fold at emit time, so they can
+// appear anywhere a compile-time constant is required, including at
+// module scope.
+const float MODULE_SCOPE_SQRT2 = #sqrt(2.0);
+
+unit_test "The unary float intrinsics fold" {
+  static const float SQRT4 = #sqrt(4.0);
+  static const float FLOOR = #floor(2.75);
+  static const float CEIL = #ceil(2.25);
+  static const float TRUNC = #trunc(-2.75);
+  static const float EXP0 = #exp(0.0);
+  static const float EXP2_3 = #exp2(3.0);
+  static const float LOG1 = #log(1.0);
+  static const float COS0 = #cos(0.0);
+  #assert(SQRT4 == 2.0);
+  #assert(FLOOR == 2.0);
+  #assert(CEIL == 3.0);
+  #assert(TRUNC == -2.0);
+  #assert(EXP0 == 1.0);
+  #assert(EXP2_3 == 8.0);
+  #assert(LOG1 == 0.0);
+  #assert(COS0 == 1.0);
+  #assert(MODULE_SCOPE_SQRT2 == #sqrt(2.0));
+  static const float2 SQRTV = #sqrt(float2(4.0, 9.0));
+  #assert(#all(SQRTV == float2(2.0, 3.0)));
+}
+
+unit_test "The binary intrinsics fold" {
+  static const float POWF = #pow(2.0, 8.0);
+  static const float POWI = #pow(2.0, 8);
+  static const float ABSF = #abs(-2.5);
+  static const int ABSI = #abs(-5);
+  static const float SIGNF = #sign(-2.5);
+  static const int ROT = #rotl(8, 1);
+  static const int POP = #ctpop(255);
+  #assert(POWF == 256.0);
+  #assert(POWI == 256.0);
+  #assert(ABSF == 2.5);
+  #assert(ABSI == 5);
+  #assert(SIGNF == -1.0);
+  #assert(ROT == 16);
+  #assert(POP == 8);
+  static const float2 CLAMPED = #max(float2(0.05), #min(float2(0.2, 1.7), float2(1.0)));
+  #assert(#all(CLAMPED == float2(0.2, 1.0)));
+}
+
+unit_test "The reductions fold" {
+  static const float PROD = #prod(float2(0.25, 0.5));
+  static const float SUM = #sum(float2(0.25, 0.5));
+  static const float MAXV = #maxValue(float3(-1.0, 3.5, 2.0));
+  static const float MINV = #minValue(float3(-1.0, 3.5, 2.0));
+  static const int SUMI = #sum(int3(1, 2, 3));
+  static const int PRODI = #prod(int3(2, 3, 4));
+  static const bool ANY = #any(bool2(false, true));
+  static const bool ALL = #all(bool2(false, true));
+  #assert(PROD == 0.125);
+  #assert(SUM == 0.75);
+  #assert(MAXV == 3.5);
+  #assert(MINV == -1.0);
+  #assert(SUMI == 6);
+  #assert(PRODI == 24);
+  #assert(ANY);
+  #assert(!ALL);
+  static const float CMAX = #maxValue(color(0.5));
+  #assert(CMAX == 0.5);
+}
+
+unit_test "A chain of derived defaults folds through a macro" {
+  // The 'microfacet_bsdf' derived-default pattern: 'clamp' is a macro over
+  // '#max'/'#min', and 'roughness0' chains '#sqrt' onto '#prod'.
+  static const float2 ALPHA = math::clamp(float2(0.2, 0.7) * float2(0.2, 0.7), 0.001, 1.0);
+  static const float R0 = #sqrt(#prod(float2(0.25, 0.25)));
+  #assert(#all(ALPHA == float2(0.2, 0.7) * float2(0.2, 0.7)));
+  #assert(R0 == 0.25);
+}
+
+// A `#assert` whose condition folds is decided at compile time: a true
+// one emits nothing, and a false one is a compile-time error rather
+// than a panic that has to be reached to report. So this macro is
+// checked at every expansion, even the ones folded into compile-time
+// constants where no runtime panic could ever have fired.
+@(pure macro) int checked_positive(const int n) {
+  #assert(n > 0, "expected a positive value");
+  return n;
+}
+
+const int CHECKED_AT_MODULE_SCOPE = checked_positive(7);
+
+unit_test "#assert folds when its condition folds" {
+  // Folds to nothing. Every `#assert` above with a compile-time
+  // condition is in the same boat.
+  #assert(1 + 1 == 2);
+  #assert(#typeOf(CHECKED_AT_MODULE_SCOPE) == int);
+  #assert(CHECKED_AT_MODULE_SCOPE == 7);
+
+  // Still an ordinary runtime assertion when the condition is not
+  // compile-time.
+  #assert(checked_positive($state.wavelengthMax > 0.0 ? 3 : 5) > 0);
+}
+
+@(pure macro)
+float select_lane(const int lane, const float4 v) {
+  return v.x if (lane < 0);
+  return v[lane];
+}
+
+unit_test "A comptime-true late if prunes what follows" {
+  // A comptime-true late 'if' must prune the statements after it, or
+  // 'v[lane]' would be rejected for its constant out-of-bounds index.
+  #assert(select_lane(-1, float4(1, 2, 3, 4)) == 1);
+  // And a comptime-false late 'if' must skip the guarded statement.
+  #assert(select_lane(2, float4(1, 2, 3, 4)) == 3);
+}
+
+// The build configuration constants fold at compile time, so they are
+// usable where only a constant is: at module scope, and as the condition
+// of an `if $(...)` that compiles just the branch that applies.
+const bool HAS_NANOVDB_AT_MODULE_SCOPE = $HAS_NANOVDB;
+const bool HAS_PTEX_AT_MODULE_SCOPE = $HAS_PTEX;
+
+unit_test "The build configuration is a compile-time constant" {
+  #assert(#typeOf($HAS_NANOVDB) == bool);
+  #assert(#typeOf($HAS_PTEX) == bool);
+  #assert($HAS_NANOVDB == HAS_NANOVDB_AT_MODULE_SCOPE);
+  #assert($HAS_PTEX == HAS_PTEX_AT_MODULE_SCOPE);
+  // The branch not taken is never emitted, which is what lets a gated
+  // block name resources that an unconfigured build cannot load.
+  if $($HAS_NANOVDB) {
+    #assert($HAS_NANOVDB);
+  } else {
+    #assert(!$HAS_NANOVDB);
+  }
+  if $($HAS_PTEX) {
+    #assert($HAS_PTEX);
+  } else {
+    #assert(!$HAS_PTEX);
+  }
+}
+
+// The third time: an `exec` block runs once when the host loads the
+// module, which is neither compile time nor a material evaluation. It is
+// emitted pure, matching the C++ `JIT::Function<void()>` the host calls it
+// through, so it can take no state.
+exec {
+  #assert(1 + 1 == 2);
+}
+
+// A module-scope initializer has nowhere to put run-time code: there is no
+// function around it to hold basic blocks. It is emitted on the
+// understanding that it folds away entirely, which a macro call, a declared
+// constructor, and a `texture_2d(...)` all do -- and the last of those is
+// the natural way to declare a texture shared between materials, so it has
+// to.
+//
+// The expansion happens in a scratch function that is discarded once the
+// result is confirmed to be a compile-time constant, so what must hold is
+// that the body folds away completely. A body that needs memory to do its
+// work, such as a 'return_from' that mutates a local, does not, and is
+// reported as an
+// error rather than crashing.
+@(pure macro)
+int module_scope_macro(const int x) = x + 1;
+
+@(pure macro)
+int module_scope_macro_branching(const int x) {
+  if (x > 0) {
+    return x;
+  } else {
+    return -x;
+  }
+}
+
+// NOTE: Two parameters, so that this cannot be confused with the field-wise
+// constructor and the declared one is genuinely the overload selected.
+struct module_scope_ctor {
+  module_scope_ctor(const int x, const int y) = module_scope_ctor(value: x * y);
+
+  int value = 0;
+};
+
+const auto MODULE_SCOPE_MACRO = module_scope_macro(1);
+const auto MODULE_SCOPE_BRANCHING = module_scope_macro_branching(-3);
+const auto MODULE_SCOPE_CTOR = module_scope_ctor(6, 7);
+const auto MODULE_SCOPE_TEXTURE = texture_2d("4x4.png", tex::gamma_linear);
+
+unit_test "A macro, a constructor, and a texture expand at module scope" {
+  #assert(MODULE_SCOPE_MACRO == 2);
+  #assert(MODULE_SCOPE_BRANCHING == 3);
+  #assert(MODULE_SCOPE_CTOR.value == 42);
+
+  // The texture must be genuinely loaded, not merely constructed without
+  // crashing, and must behave the same as one built inside a function.
+  #assert(tex::texture_isvalid(MODULE_SCOPE_TEXTURE));
+  #assert(tex::width(MODULE_SCOPE_TEXTURE) == 4);
+  #assert(tex::height(MODULE_SCOPE_TEXTURE) == 4);
+  const auto local(texture_2d("4x4.png", tex::gamma_linear));
+  for (int x = 0; x < 4; x++)
+    for (int y = 0; y < 4; y++)
+      #assert(#all(tex::texel_float4(MODULE_SCOPE_TEXTURE, int2(x, y)) ~== |1e-6| tex::texel_float4(local, int2(x, y))));
+}

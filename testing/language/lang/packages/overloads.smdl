@@ -1,0 +1,10 @@
+/// An exported overload set for `shadowing.smdl` to declare over and for
+/// `modules.smdl` to reach by its qualified name. The union parameter type
+/// is what makes the test decisive: `int` converts implicitly to
+/// `(int | float)` but not the other way, so a privately declared
+/// `overload_target(int)` leaking into this set would deterministically win
+/// resolution for an integer argument instead of tying or being rejected.
+#smdl
+
+@(pure)
+export int overload_target((int | float) v [[anno::unused()]]) = 1;

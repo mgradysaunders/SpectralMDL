@@ -1,0 +1,269 @@
+/// Functions.
+///
+/// Overload resolution ranks by the arguments, not by declaration order,
+/// which matters most where two parameter types convert to each other. A
+/// variant, `f(*) = g(a: 1)`, declares a function whose parameters are
+/// another function's with some already bound. `@(macro)` marks a function
+/// that expands at its call site rather than being emitted once, which is
+/// what lets a parameter be a type, a lambda, or a size.
+///
+/// Two parameter forms are the dialect's own. A voided parameter drops out
+/// of the signature entirely, so a generic body can accept an argument that
+/// is not there without paying for it. An inferred size, `float[<N>]`, binds
+/// `N` from the argument and makes `N` available in the body and in the
+/// later defaults, which instantiates the function once per size the way a
+/// template would.
+///
+/// Finally, a body is resolved where it is written, not where it is called:
+/// a macro expansion, a function instance, and a default argument all see
+/// the declarations that preceded them and nothing of the caller.
+#smdl
+
+// A voided parameter drops out of the LLVM signature the same way a
+// voided field drops out of a struct layout. Each of these puts the
+// voided parameter somewhere that a mistake in the index bookkeeping
+// would show up: the caller and the callee have to agree about which
+// positions disappeared.
+// Voided in the middle of the list.
+int voided_between(int a, auto x [[anno::unused()]], int b) = a + b;
+
+// Every parameter voided, so the function takes nothing at all.
+int voided_all(auto x [[anno::unused()]], auto y [[anno::unused()]]) = 42;
+
+// Voided by a generic default rather than by deduction, and referenced in
+// the body, which is the reason a voided parameter still has to bind.
+float voided_used($(?float) k = none, float v = 1.0) {
+  return #isVoid(k) ? v : v * k;
+}
+
+// Impure, so the state pointer leads the signature and must not shift.
+float voided_with_state(auto x [[anno::unused()]], float v) = v + $state.position.x;
+
+// Larger than the 64-byte threshold, so it travels as an indirect
+// ('byval') parameter whose index must survive the dropped ones.
+struct VoidParamBig {
+  double a = 1.0;
+  double b = 2.0;
+  double c = 3.0;
+  double d = 4.0;
+  double e = 5.0;
+  double f = 6.0;
+  double g = 7.0;
+  double h = 8.0;
+  double i = 9.0;
+};
+
+double voided_around_indirect(auto x [[anno::unused()]], VoidParamBig p, auto y [[anno::unused()]], double s) = p.a + p.i + s;
+
+// Returned indirectly, which rebuilds the function with a leading result
+// slot and shifts every parameter index by one.
+VoidParamBig voided_with_indirect_return(auto x [[anno::unused()]], double a, auto y [[anno::unused()]]) {
+  auto result = VoidParamBig();
+  result.a = a;
+  return result;
+}
+
+// Recursive, so the call is emitted against the by-value placeholder and
+// rewritten afterwards.
+int voided_recursive(auto x [[anno::unused()]], int n) = n <= 0 ? 0 : 1 + voided_recursive(void(), n - 1);
+
+@(macro)
+int voided_macro(auto x [[anno::unused()]], int n) = n * 2;
+
+unit_test "A voided parameter leaves the signature" {
+  #assert(voided_between(3, void(), 4) == 7);
+  #assert(voided_all(void(), void()) == 42);
+  #assert(voided_used(v: 4.0) == 4.0);
+  #assert(voided_used(k: 0.5, v: 4.0) == 2.0);
+  #assert(voided_with_state(void(), 2.0) == 2.0 + $state.position.x);
+  #assert(voided_around_indirect(void(), VoidParamBig(), void(), 0.5) == 10.5);
+  #assert(voided_recursive(void(), 5) == 5);
+  #assert(voided_macro(void(), 21) == 42);
+
+  const auto big = voided_with_indirect_return(void(), 11.0, void());
+  #assert(big.a == 11.0);
+  #assert(big.i == 9.0);
+}
+
+int add3(int a, int b, int c) = a + b + c;
+
+// A function variant may be expressed in two ways. The first is simply
+// a call expression with named arguments that will operate as defaults
+// if not explicitly set in the variant call.
+int add3_variant(*) = add3(a: 2);
+
+// The second is a let expression followed by a call expression with
+// a call expression with named arguments. This allows the user to
+// define arbitrary helper variables conveniently. The let variables go
+// unused in instantiations that pass 'c' explicitly (the default they
+// feed is skipped), so they are marked to quiet the warning.
+int add3_variant_of_variant(*) = let {
+                                   int f = 7 [[anno::unused()]];
+                                   int g = 11 [[anno::unused()]];
+                                 } in add3_variant(c: f * g + 1);
+
+unit_test "A function variant binds arguments of the function it names" {
+  #assert(add3_variant(4, 7) == 2 + 4 + 7);
+  #assert(add3_variant_of_variant(8) == 2 + 8 + (7 * 11 + 1));
+  #assert(add3_variant_of_variant(8, c: 1) == 2 + 8 + 1);
+}
+
+// This is a concrete run-time function. This must not return auto!
+@(pure)
+int factorial(int n) {
+  return 1 if (n <= 1);
+  switch (n) {
+  case 2: return 2;
+  case 3: return 3 * 2;
+  default: break;
+  }
+  return n * factorial(n - 1);
+}
+
+// This is a macro that expands inline at compile-time. If you
+// pass in a compile-time constant it evaluates at compile-time,
+// otherwise there is a recursion-depth-exceeded error!
+@(pure macro)
+auto factorial_macro(const auto n) {
+  if (n <= 1)
+    return 1;
+  else
+    return n * factorial_macro(n - 1);
+}
+
+unit_test "A function may recurse at run time and a macro at compile time" {
+  #assert(factorial(0) == 1);
+  #assert(factorial(4) == 4 * 3 * 2 * 1);
+  #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
+  #assert(factorial_macro(5) == 5 * 4 * 3 * 2 * 1);
+}
+
+int get_array_dim(auto[<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
+
+int get_array_dim_rows(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return M;
+}
+
+int get_array_dim_cols(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
+
+unit_test "An inferred size is deduced in one and two dimensions" {
+  auto arr1 = int[3](4, 5, 6);
+  auto arr2 = int[4][2](
+    int[2](1, 2),
+    int[2](3, 4),
+    int[2](5, 6),
+    int[2](7, 8),
+  );
+  #assert(get_array_dim(arr1) == 3);
+  #assert(get_array_dim_rows(arr2) == 4);
+  #assert(get_array_dim_cols(arr2) == 2);
+}
+
+// A non-macro @(pure) function with an inferred-size parameter, which must
+// instantiate once per concrete size like a template.
+@(pure)
+float arraySum(const float[<N>] w) {
+  float s(0.0);
+  for (int i = 0; i < N; i++)
+    s += w[i];
+  return s;
+}
+
+// Overloads: an exact concrete size must beat the generic size, and the
+// generic size must catch everything else.
+@(pure macro)
+int pickOverload(const float[3] w [[anno::unused()]]) = 1;
+@(pure macro)
+int pickOverload(const float[<N>] w [[anno::unused()]]) = 2;
+
+// A default argument may reference the size name bound by an earlier
+// parameter.
+@(pure macro)
+int defaultSeesSize(const float[<N>] w [[anno::unused()]], const int m = N) = m;
+
+// The same size name in nested calls binds independently: the inner call's
+// 'N' must not clobber the outer call's 'N'.
+@(pure macro)
+int innerSize(const float[<N>] w [[anno::unused()]]) = N;
+@(pure macro)
+int outerSize(const float[<N>] w [[anno::unused()]]) = innerSize(float[2](0.0, 0.0)) + 10 * N;
+
+// Two parameters sharing one size name accept arguments of equal size.
+// NOTE: Mismatched sizes must be rejected at overload resolution, and a
+// size name must neither silently rebind nor silently shadow a same-scope
+// declaration; those are compile errors, tested from the doctest side in
+// 'testing/doctest/Compiler.cc'.
+@(pure macro)
+float dotShared(const float[<N>] a, const float[<N>] b) {
+  float s(0.0);
+  for (int i = 0; i < N; i++)
+    s += a[i] * b[i];
+  return s;
+}
+
+unit_test "An inferred size binds per call and reaches the defaults" {
+  #assert(arraySum(float[3](1.0, 2.0, 3.0)) == 6.0);
+  #assert(arraySum(float[5](1.0, 1.0, 1.0, 1.0, 1.0)) == 5.0);
+  #assert(pickOverload(float[3](0.0, 0.0, 0.0)) == 1, "concrete overload must win");
+  #assert(pickOverload(float[4](0.0, 0.0, 0.0, 0.0)) == 2, "generic overload must catch other sizes");
+  #assert(defaultSeesSize(float[7](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)) == 7, "default must see N");
+  #assert(outerSize(float[3](0.0, 0.0, 0.0)) == 32, "inner N must not clobber outer N");
+  #assert(dotShared(float[2](1.0, 2.0), float[2](3.0, 4.0)) == 11.0, "shared size name must accept equal sizes");
+}
+
+// Overload ranking consults the arguments, not the declaration order. The
+// two parameter types here convert implicitly to each other, so a ranking
+// that did not look at the arguments would simply take the first
+// declaration; the `float` overload is declared first on purpose, so that
+// picking by order would give the wrong answer for the integer call.
+@(pure)
+int overload_rank(float x) {
+  x; // Silence unused parameter warning
+  return 1;
+}
+
+@(pure)
+int overload_rank(int x) {
+  x; // Silence unused parameter warning
+  return 2;
+}
+
+unit_test "Exact overload match beats implicit conversion" {
+  #assert(overload_rank(5) == 2);
+  #assert(overload_rank(1.5) == 1);
+}
+
+// Declaration-order visibility: lazily emitted bodies (macro expansions,
+// function instances, and default parameter initializers) resolve in
+// their definition-site environment. They see earlier module declarations
+// but not the caller's locals (and not later module declarations, which is
+// a compile error verified out of tree).
+const int decl_mv = 1;
+
+@(pure macro)
+int decl_read_mv_macro() = decl_mv;
+
+@(pure noinline)
+int decl_read_mv_fn() {
+  return decl_mv;
+}
+
+@(pure)
+int decl_read_mv_default(int arg = decl_mv) {
+  return arg;
+}
+
+unit_test "Lazy bodies resolve in definition scope" {
+  int decl_mv = 999;
+  #assert(decl_read_mv_macro() == 1);
+  #assert(decl_read_mv_fn() == 1);
+  #assert(decl_read_mv_default() == 1);
+  #assert(decl_mv == 999);
+}

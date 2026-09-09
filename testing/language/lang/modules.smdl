@@ -1,0 +1,98 @@
+/// The module system: how a name gets from one file to another, and what
+/// `export` does and does not gate.
+///
+/// A module is a file. Its qualified name comes from its path relative to
+/// the search root the compiler was given, so `lang/packages/one.smdl`
+/// under this suite's root is `::lang::packages::one`. A leading `.::`
+/// spells a path relative to the importing module's own package and `..::`
+/// one level up, exactly as `.` and `..` do in a filesystem path.
+///
+/// There are two ways to bring a module in, and they are not the same:
+///
+/// - `import X::*;` makes the module's exported names reachable *through
+///   the qualifier* `X::`. The C++ analogue is a namespace alias: the
+///   names are available but you still say where they came from.
+/// - `using X import *;` opens the module, so its names resolve
+///   unqualified as well. This is `using namespace X;`.
+///
+/// The rest of the suite uses the first form on purpose, so that every call
+/// site says which module it reached into.
+#smdl
+
+// A module alias. The quoted form resolves like a one-component import,
+// against the importing module's own directory first, which is why
+// `sibling.smdl` sits beside this file rather than under `packages/`.
+using quoted = "sibling";
+using reexported = .::packages::nested::reexport;
+
+import quoted::*;
+import reexported::*;
+import .::packages::one::*;
+import .::packages::overloads::*;
+// Importing `shadowing` guarantees it compiles before the tests below are
+// emitted: its private `overload_target(int)` declaration is exactly what
+// the cross-module leak test needs to have happened already.
+import .::packages::shadowing::*;
+import .::packages::conformant::*;
+
+// A universal using-import, which opens the module for unqualified lookup.
+// The second one is three components deep, which the lookup has to carry.
+using .::packages::two import *;
+using .::packages::nested::reexport import *;
+using .::packages::namespaces import *;
+
+unit_test "A module alias reaches its module through the alias" {
+  #assert(quoted::message == "Hello, world!");
+  #assert(reexported::message == "Hellope");
+}
+
+unit_test "A universal using-import does not hijack qualified names" {
+  // Each module keeps its own `shadowed`, whatever else is opened.
+  #assert(packages::one::shadowed == 1);
+  #assert(packages::two::shadowed == 2);
+  // Unqualified lookup legitimately resolves through the using-import.
+  #assert(shadowed == 2);
+}
+
+unit_test "A universal using-import works at any path depth" {
+  // The opened module is three components deep, and the name it exports
+  // arrived there from one level further up through a re-export, so this
+  // reads a name two modules away from where it was declared.
+  #assert(message == "Hellope");
+  #assert(reexported::message == "Hellope");
+}
+
+unit_test "A private overload does not leak across modules" {
+  // `packages/shadowing.smdl` declares a private `overload_target(int)`
+  // over the name it imports from here. That declaration must not join
+  // this overload set: `int` converts implicitly to `(int | float)` but not
+  // the other way, so a leaked overload would deterministically win both
+  // calls below and return 2.
+  #assert(packages::overloads::overload_target(5) == 1);
+  #assert(packages::overloads::overload_target(1.5) == 1);
+}
+
+// `export` gates access to a namespace member across module boundaries
+// only. Within the declaring module, qualified access works without it.
+namespace local_ns {
+  const int hidden = 5;
+  export const int shown = 6;
+  namespace inner {
+    const int deep = 7;
+  }
+}
+
+unit_test "export gates a namespace member across modules, not within one" {
+  #assert(local_ns::shown == 6);
+  #assert(local_ns::hidden == 5);
+  #assert(local_ns::inner::deep == 7);
+  // From another module, only the exported member is reachable.
+  #assert(shielded::visible == 1);
+}
+
+unit_test "A conformant module resolves like any other" {
+  // `packages/conformant.mdl` declares `mdl 1.8;` and has no `#smdl`
+  // marker, so none of the dialect is available inside it. Nothing about
+  // importing it differs.
+  #assert(packages::conformant::conformant_answer == 42);
+}

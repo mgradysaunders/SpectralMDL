@@ -1,0 +1,102 @@
+/// The microfacet normal distributions and the densities their sampling
+/// routines report: the Smith slope and normal distributions integrate to
+/// one, and every routine's reported density integrates to its own
+/// acceptance rate.
+#smdl
+
+import ::df::*;
+import ::math::*;
+using sampling = ::extras::sampling;
+import sampling::*;
+using scatter = ::support::scatter;
+import scatter::*;
+
+// Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
+// into the entire plane `(-inf, inf)^2`.
+@(pure)
+float integrateSmithSlopePDF(const df::microfacet::distribution distr) {
+  double fSum = 0;
+  const int n = 512;
+  for (int ix = 0; ix < n; ix++) {
+    const float tx = math::lerp(-0.99999, 0.99999, ix / float(n - 1));
+    const float mx = tx / (1 - tx * tx);
+    double ftmp = 0;
+    for (int iy = 0; iy < n; iy++) {
+      const float ty = math::lerp(-0.99999, 0.99999, iy / float(n - 1));
+      const float my = ty / (1 - ty * ty);
+      ftmp += 2 * (1 + ty * ty) / #pow(1 - ty * ty, 2) * df::microfacet::smith_slope_pdf(distr, float2(mx, my));
+    }
+    fSum += 2 * (1 + tx * tx) / #pow(1 - tx * tx, 2) * ftmp / n;
+  }
+  return fSum / n;
+}
+
+// Integrate Smith normal PDF by cosine-weighted hemisphere sampling.
+@(pure)
+float integrateSmithNormalPDF(const df::microfacet::distribution distr, const float2 alpha) {
+  double fSum = 0;
+  const int n = 512 * 512;
+  float2 xi = float2(0.228, 0.712);
+  for (int i = 0; i < n; i++, sampling::next_low_discrepancy(&xi)) {
+    fSum += df::microfacet::smith_normal_pdf(distr, alpha, sampling::cosine_hemisphere_sample(xi));
+  }
+  return $PI * fSum / n;
+}
+
+unit_test "The Smith slope and normal distributions integrate to one" {
+  #assert(integrateSmithSlopePDF(df::microfacet::ggx()) ~== |1e-2| 1.0);
+  #assert(integrateSmithSlopePDF(df::microfacet::beckmann()) ~== |1e-2| 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::ggx(), float2(0.8, 1.2)) ~== |1e-2| 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::beckmann(), float2(1.1, 0.7)) ~== |1e-2| 1.0);
+}
+
+unit_test "A transmit-only density matches its acceptance" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  scatter::checkDensityAgainstAcceptance(df::simple_glossy_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  scatter::checkDensityAgainstAcceptance(df::simple_glossy_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_smith_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+}
+
+unit_test "The EON CLTC density matches its acceptance" {
+  // The CLTC + uniform mixture density reported by evaluation must match
+  // the sampling routine, including at grazing views where the CLTC lobe
+  // leans below the horizon.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.15));
+  scatter::checkDensityAgainstAcceptance(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.5), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 1.0), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 1.0), woG, 1.0);
+}
+
+unit_test "The bounded VNDF density matches its acceptance" {
+  // The tightened densities reported for reflection-only GGX lobes must
+  // match the bounded spherical-cap sampling routine.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.2));
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, tint: 1.0), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_smith_bsdf(roughness_u: 0.9, tint: 1.0), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_smith_bsdf(roughness_u: 0.9, roughness_v: 0.3, tint: 1.0), woG, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::microfacet_ggx_vcavities_bsdf(roughness_u: 0.7, tint: 1.0), wo, 1.0);
+  // With a compensation lobe in the mixture, each restricted density has to
+  // integrate to its OWN sampler's acceptance rate rather than the mixture's,
+  // which is what makes a masked value over a masked density an estimator of
+  // the masked part.
+  const auto ms = df::microfacet_ggx_smith_bsdf(roughness_u: 0.8, tint: 1.0, multiscatter_tint: color(1.0));
+  scatter::checkDensityAgainstAcceptance(ms, wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(ms, wo, 1.0, df::DF_GLOSSY);
+  scatter::checkDensityAgainstAcceptance(ms, wo, 1.0, df::DF_SMOOTH);
+}
+
+unit_test "The Ward density matches its acceptance" {
+  // The anisotropic Ward-Geisler-Moroder sampling routine must match the
+  // density evaluation reports. The multiscatter variant selects its
+  // diffuse lobe stochastically, so it needs the low-discrepancy checker.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.2));
+  scatter::checkDensityAgainstAcceptance(df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0), wo, 1.0);
+  // The grazing view keeps the roughness high enough for the checker's
+  // grid to resolve the lobe, as in "Bounded VNDF sampling PDF".
+  scatter::checkDensityAgainstAcceptance(df::ward_geisler_moroder_bsdf(roughness_u: 0.7, roughness_v: 0.3, tint: 1.0), woG, 1.0);
+  scatter::checkDensityAgainstAcceptance(df::ward_geisler_moroder_bsdf(roughness_u: 0.5, roughness_v: 0.3, tint: 1.0, multiscatter_tint: 1.0), wo, 1.0, isStochastic: true);
+}

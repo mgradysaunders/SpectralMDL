@@ -1,0 +1,6 @@
+/// A parent-relative re-export: the name arrives here from `..::source` and
+/// leaves again for whoever imports this module, so an importer three
+/// components deep reads it as if it were declared here.
+#smdl
+
+export using ..::source import message;

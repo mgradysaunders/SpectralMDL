@@ -1,4 +1,0 @@
-#smdl
-
-export using ..::package2::bar import message;
-

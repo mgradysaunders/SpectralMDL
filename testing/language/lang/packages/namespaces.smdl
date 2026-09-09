@@ -1,0 +1,14 @@
+/// `export` on a namespace member gates access across module boundaries
+/// only, which is what makes an unexported member reachable here and
+/// unreachable from `modules.smdl`.
+#smdl
+
+export namespace shielded {
+  export const int visible = 1;
+  const int hidden = 2;
+}
+
+unit_test "An unexported namespace member is visible in its own module" {
+  #assert(shielded::visible == 1);
+  #assert(shielded::hidden == 2);
+}

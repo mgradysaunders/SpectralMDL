@@ -1,0 +1,116 @@
+/// The operators the dialect adds, or gives a meaning the specification
+/// does not.
+///
+/// Two are worth reading before the tests. The approximate comparison
+/// `~==` takes its tolerance between the operator and the right operand:
+/// `|eps|` for an absolute tolerance and `(eps)` for a relative one, and
+/// `~!=` negates each. The binary `else` yields its left operand unless
+/// that operand is empty, which is what makes an optional value usable
+/// without a branch.
+///
+/// The short-circuit operators and `#select` are here because both decide
+/// what gets evaluated: `&&` and `||` must not evaluate their right operand
+/// when the left settles the answer, and `#select` takes its extent from
+/// the condition rather than from the values it chooses between.
+#smdl
+
+unit_test "The approximate comparison takes an absolute or a relative tolerance" {
+  // Absolute tolerance `|eps|` means `#abs(lhs - rhs) <= eps`, so zero
+  // tolerance is exact equality.
+  #assert(3.7 ~== |0.0| 3.7);
+  #assert(0.3 ~== |1e-6| 0.1 + 0.2);
+  #assert(1.0 ~!= |1e-6| 1.001);
+
+  // The epsilon may be any unary expression, including parenthesized.
+  #assert(1.0 ~== |(0.5 * 1e-5)| 1.0);
+
+  // Relative tolerance `(eps)` means
+  // `#abs(lhs - rhs) <= eps * #max(#abs(lhs), #abs(rhs))`, so it is
+  // magnitude-independent where absolute tolerance is not.
+  #assert(1.0e6 ~== (1e-5) 1.000001e6);
+  #assert(1.0e6 ~!= |1e-5| 1.000001e6);
+  #assert(1.0e-6 ~== (1e-5) 1.000001e-6);
+  #assert(1.0 ~!= (1e-3) 1.1);
+
+  // The epsilon may be any expression inside the parentheses.
+  #assert(1.0e6 ~== (0.5 * 2e-5) 1.000001e6);
+
+  // Relative tolerance is symmetric in the operands.
+  #assert(1.000001e6 ~== (1e-5) 1.0e6);
+
+  // Relative tolerance against zero only accepts exact zero.
+  #assert(0.0 ~== (0.5) 0.0);
+  #assert(1e-8 ~!= (0.5) 0.0);
+
+  // Vector operands broadcast a scalar epsilon elementwise.
+  #assert(#all(float2(1.0, -1.0) ~== |1e-6| float2(1.0, -1.0)));
+  #assert(#all(float2(1.0e6, 1.0e-3) ~== (1e-5) float2(1.000001e6, 1.0e-3)));
+}
+
+@(pure)
+&int first_nonnull(
+  const &int a,
+  const &int b,
+  const &int c,
+) = a else b else c;
+
+unit_test "The binary else yields its left operand unless it is empty" {
+  int a = 7;
+  int b = 1;
+  int c = 9;
+  #assert(first_nonnull(&a, &b, &c) == &a);
+  #assert(first_nonnull(none, &b, &c) == &b);
+  #assert(first_nonnull(none, none, &c) == &c);
+}
+
+unit_test "#select takes its extent from the condition" {
+  auto c = color(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    c[i] = float(i);
+  // A boolean vector condition, which is what comparing two colors yields,
+  // selects componentwise and keeps the result a color.
+  const auto both = #select(c < 8.0, color(-1.0), c);
+  #assert(#typeOf(both) == color);
+  // A scalar selection argument alongside a color one is broadcast, as is a
+  // scalar condition.
+  const auto mixed = #select(c < 8.0, -1.0, c);
+  #assert(#typeOf(mixed) == color);
+  const auto scalarCond = #select(true, color(-1.0), c);
+  #assert(#typeOf(scalarCond) == color);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const auto expect = i < 8 ? -1.0 : float(i);
+    #assert(both[i] == expect);
+    #assert(mixed[i] == expect);
+    #assert(scalarCond[i] == -1.0);
+  }
+  // Two scalars still take their extent from the condition.
+  #assert(#typeOf(#select(float3(1.0) < 2.0, 0.0, 1.0)) == float3);
+}
+
+// string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
+// equal to a longer string (and the comparison was asymmetric).
+unit_test "String comparison is not prefix-based" {
+  #assert(!("abc" == "abcdef"));
+  #assert(!("abcdef" == "abc"));
+  #assert("abc" == "abc");
+  #assert("abc" != "abcd");
+  #assert(!("" == "x"));
+  #assert("" == "");
+}
+
+// The short-circuit logic operators are emitted through the shared
+// two-arm-merge helper; guard both the truth table and the guarantee that
+// the right-hand side does not evaluate when the left-hand side decides.
+unit_test "The logic operators short circuit" {
+  int n = 0;
+  bool f = false;
+  bool r0 = f && ((n = n + 1) > 0);
+  #assert(!r0 && n == 0);
+  bool t = true;
+  bool r1 = t || ((n = n + 1) > 0);
+  #assert(r1 && n == 0);
+  bool r2 = t && ((n = n + 1) > 0);
+  #assert(r2 && n == 1);
+  bool r3 = f || ((n = n + 1) > 1);
+  #assert(r3 && n == 2);
+}

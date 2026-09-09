@@ -1354,7 +1354,8 @@ TEST_CASE("Compiler lambda expressions") {
   fs::remove_all(tmpDir);
   // Compile a single module and return the first error message, or the
   // empty string on success. The positive behavior of lambdas is covered
-  // by 'testing/smdl/lambda.smdl'; these subcases pin the error paths.
+  // by 'testing/language/lang/lambdas.smdl'; these subcases pin the error
+  // paths.
   auto build{[&](std::string_view text) {
     writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);
     smdl::Compiler compiler{};
@@ -1464,7 +1465,7 @@ TEST_CASE("Compiler inline call-site arguments") {
   fs::remove_all(tmpDir);
   // Compile a single module and return the first error message, or the
   // empty string on success. The positive behavior of call-site 'inline'
-  // is covered by 'testing/smdl/inline_args.smdl'; these subcases pin the
+  // is covered by 'testing/language/lang/structs.smdl'; these subcases pin the
   // error paths.
   auto build{[&](std::string_view text) {
     writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);

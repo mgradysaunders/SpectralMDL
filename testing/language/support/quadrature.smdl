@@ -1,0 +1,51 @@
+/// Numerical integration over directions, shared by the scattering,
+/// emission, and volume tests. Every estimator here is deterministic:
+/// a stratified grid, or a low-discrepancy sequence from a fixed start,
+/// so a tolerance that holds once holds every run.
+#smdl
+
+using sampling = ::extras::sampling;
+import sampling::*;
+
+/// Integrate `f(wi)` over the whole sphere with an `n` by `n`
+/// stratified grid of uniform directions.
+@(macro)
+export double integrateSphere(const int n, const auto f) {
+  double sum = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto xi = float2((i + 0.5) / n, (j + 0.5) / n);
+      const auto wi = sampling::uniform_sphere_sample(xi);
+      sum += double(f(wi));
+    }
+  }
+  return sum * (2 * $TWO_PI) / (n * n);
+}
+
+/// Integrate `f(wi)` over the hemisphere on the `zSign` side of the
+/// tangent plane with an `n` by `n` stratified grid.
+@(macro)
+export double integrateHemisphere(const int n, const float zSign, const auto f) {
+  double sum = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto xi = float2((i + 0.5) / n, (j + 0.5) / n);
+      const auto wi = sampling::uniform_hemisphere_sample(xi) * float3(1, 1, zSign);
+      sum += double(f(wi));
+    }
+  }
+  return sum * $TWO_PI / (n * n);
+}
+
+/// The mean of `f(xi)` over `n` low-discrepancy draws, the first of
+/// which is `xi0` itself. The dimension follows `xi0`, so the same
+/// estimator serves a 2D and a 4D integrand.
+@(macro)
+export double meanOverLowDiscrepancy(const int n, const auto xi0, const auto f) {
+  auto xi = xi0;
+  double sum = 0;
+  for (int i = 0; i < n; i++, sampling::next_low_discrepancy(&xi)) {
+    sum += double(f(xi));
+  }
+  return sum / n;
+}

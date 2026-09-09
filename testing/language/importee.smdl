@@ -1,3 +1,0 @@
-#smdl
-
-export const string message = "Hello, world!";

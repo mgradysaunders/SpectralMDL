@@ -1,0 +1,410 @@
+/// Structs, and what the compiler does to their layout.
+///
+/// A field default may read the fields declared before it, and it is
+/// evaluated per construction rather than stored, so `r2 = r * r` stays
+/// true when `r` is given. `finalize { ... }` runs after the constructor to
+/// derive whatever the fields imply, and does not run again for a copy.
+///
+/// Three things change the layout. A `static` field is shared by every
+/// instance and takes no storage. A field of type `void()` takes no storage
+/// either, which is how a generic struct drops what an instantiation does
+/// not need. And a `const` field whose value folds at compile time is baked
+/// into the type itself: two instances that disagree about one are two
+/// types, and merging them demotes the field back to storage.
+///
+/// The last pair of tests is about call sites rather than layout. `inline`
+/// on an argument expands an aggregate into the parameter list: a vector
+/// expands positionally, a struct by field name.
+#smdl
+
+import ::math::*;
+
+struct Defaults {
+  int x = 2;
+  int y = 3 + x;
+  int z = 4 - 2 * y + x;
+};
+
+unit_test "A field default may read the fields before it" {
+  // Variables with same names as the struct fields to make sure nothing
+  // shadows!
+  int x = 102 [[anno::unused()]];
+  int y = 103 [[anno::unused()]];
+  int z = 104 [[anno::unused()]];
+  auto foo0 = Defaults();
+  #assert(foo0.x == 2);
+  #assert(foo0.y == 3 + 2);
+  #assert(foo0.z == 4 - 2 * (3 + 2) + 2);
+
+  auto foo1 = Defaults(x: 5);
+  #assert(foo1.x == 5);
+  #assert(foo1.y == 3 + 5);
+  #assert(foo1.z == 4 - 2 * (3 + 5) + 5);
+}
+
+struct Finalizable {
+  int bar = 4;
+  int baz = 2 * bar - 3;
+
+  // The finalize block has the opportunity to check or modify
+  // the fields immediately after the constructor. NOTE: Does not
+  // run after the copy constructor!
+  finalize {
+    bar = #min(bar, 11);
+    baz = #min(baz, 17);
+  }
+};
+
+unit_test "finalize runs after the constructor, not after a copy" {
+  auto foo = Finalizable(bar: 13);
+  #assert(foo.bar == 11); // Clamped at 11!
+  #assert(foo.baz == 17); // Clamped at 17!
+
+  foo.bar = 13;
+  foo.baz = 2 * 13 - 3;
+  foo = Finalizable(foo); // Copying does NOT run finalize!
+  #assert(foo.bar == 13);
+  #assert(foo.baz == 23);
+}
+
+struct CtorPrecedence {
+  // The parameter name 'value' deliberately collides with the field name,
+  // so 'CtorPrecedence(value: ...)' resolves both as this constructor and
+  // as field-wise construction. Explicit constructors are applied first!
+  CtorPrecedence(const int value) = CtorPrecedence(field_wise: false, value: 10 * value);
+
+  bool field_wise = true;
+
+  int value = 0;
+};
+
+unit_test "A declared constructor beats the field-wise one" {
+  // Both the constructor and field-wise construction can resolve this,
+  // and the constructor must win.
+  auto foo0 = CtorPrecedence(value: 7);
+  #assert(!foo0.field_wise);
+  #assert(foo0.value == 70);
+
+  // Naming a field the constructor does not know forces field-wise
+  // construction.
+  auto foo1 = CtorPrecedence(value: 7, field_wise: true);
+  #assert(foo1.field_wise);
+  #assert(foo1.value == 7);
+}
+
+struct StaticFields {
+  // Static fields are visible in ordinary field initializers, even
+  // if declared after the ordinary field. This is because the ordinary
+  // field initializer is not invoked until an instance of the struct
+  // is constructed.
+  int v = 2 * bar - baz;
+
+  // Static fields must have initializers that evaluate to compile-time
+  // constants.
+  static const int bar = 11;
+
+  // Static field initializers may reference static fields declared
+  // above in the same struct.
+  static const int baz = 3 * bar - 9;
+};
+
+unit_test "A static field takes no storage" {
+  // Static fields may be accessed either thru instances of the
+  // struct or through the struct type itself
+  auto foo = StaticFields();
+  #assert(StaticFields.bar == 11);
+  #assert(StaticFields.baz == 33 - 9);
+  #assert(#typeOf(foo) == StaticFields);
+  #assert(#typeOf(foo).bar == foo.bar);
+  #assert(#typeOf(foo).baz == foo.baz);
+  #assert(foo.v == 22 - 33 + 9);
+
+  // Static fields are not stored on instances of the struct
+  // and therefore do not contribute to the `#sizeOf(StaticFields)`
+  #assert(#sizeOf(StaticFields) == #sizeOf(int));
+}
+
+struct VoidFields {
+  auto bar;
+  auto baz;
+};
+
+// The same live fields as `Interleaved` below, and nothing else, so that
+// the two sizes can be compared directly.
+struct Interleaved2 {
+  int a = 1;
+  float b = 2.0;
+};
+
+// Voided fields both between and after the live ones. The interleaving is
+// what catches a field-index-to-element-index mapping that is off by one.
+struct Interleaved {
+  int a = 1;
+  auto v = void();
+  float b = 2.0;
+  auto w = void();
+};
+
+unit_test "A voided field takes no storage and leaves the layout packed" {
+  // Void-ing fields is legal!
+  auto foo = VoidFields(bar: void(), baz: void());
+
+  // Accessing these fields returns `void`.
+  #assert(foo.bar <: void);
+  #assert(foo.baz <: void);
+
+  // Voided fields occupy no storage at all: they are absent from the
+  // struct layout, not reduced to a placeholder byte. A struct of nothing
+  // but voided fields is therefore empty.
+  #assert(#sizeOf(#typeOf(foo)) == 0);
+
+  // And the live fields around them lay out exactly as they would if the
+  // voided ones were not written at all.
+  auto bar = Interleaved();
+  #assert(#sizeOf(#typeOf(bar)) == #sizeOf(Interleaved2));
+
+  // The live fields still read back correctly on both sides of a voided
+  // one, by default construction, ...
+  #assert(bar.a == 1);
+  #assert(bar.b == 2.0);
+  #assert(#isVoid(bar.v));
+  #assert(#isVoid(bar.w));
+
+  // ... naming every field explicitly, including the voided ones, ...
+  auto baz = Interleaved(a: 3, v: void(), b: 4.0, w: void());
+  #assert(baz.a == 3);
+  #assert(baz.b == 4.0);
+
+  // ... and copying the whole struct.
+  auto qux = baz;
+  #assert(qux.a == 3);
+  #assert(qux.b == 4.0);
+
+  // Taking the address of a voided field is a compile error, so the way
+  // to write generic code over a field that may or may not be voided is
+  // to guard with `#hasField`. The dead branch of a compile-time `?:` is
+  // never emitted, so the guard is what makes this legal.
+  const auto ptr_v = #hasField(bar, "v") ? &bar.v : none;
+  const auto ptr_b = #hasField(bar, "b") ? &bar.b : none;
+  #assert(#isVoid(ptr_v));
+  #assert(*ptr_b == 2.0);
+}
+
+struct Destructurable {
+  int bar = 2;
+  int baz = 3;
+};
+
+unit_test "A struct destructures into its fields" {
+  const auto foo = Destructurable(bar: 7, baz: 5);
+  const auto {bar, baz} = foo;
+  #assert(bar == 7);
+  #assert(baz == 5);
+  auto {bar2, baz2} = foo; // No const
+  bar2 = 8;
+  baz2 = 11;
+  #assert(bar2 == 8);
+  #assert(baz2 == 11);
+}
+
+// An abstract struct: 'payload' forces instantiation through
+// 'StructType::getInstance', where 'const' fields whose values fold at
+// compile time are baked into the type and eliminated from storage.
+struct wrap {
+  auto payload;
+  const float r = 0.5;
+  const float r2 = r * r;
+  float mut = 0.0;
+};
+
+@(pure)
+float wrap_r(const &wrap w) = w.r + w.r2;
+
+unit_test "A comptime-constant field is baked into the type" {
+  auto a = wrap(payload: 1, r: 0.25);
+  #assert(a.r == 0.25);
+  #assert(a.r2 == 0.0625);
+  #assert(a.mut == 0.0);
+  // 'r' and 'r2' are baked away: only 'payload' and 'mut' have storage.
+  #assert(#sizeOf(#typeOf(a)) == #sizeOf(int) + #sizeOf(float));
+  // Identical constants share one instance; different constants are
+  // distinct types.
+  auto b = wrap(payload: 2, r: 0.25);
+  #assert(#typeOf(b) == #typeOf(a));
+  auto c = wrap(payload: 1, r: 0.75);
+  #assert(#typeOf(c) != #typeOf(a));
+  // A runtime value keeps its storage, and the derived default computed
+  // from it stays stored as well.
+  float rt = 0.25;
+  auto d = wrap(payload: 1, r: rt);
+  #assert(d.r == 0.25);
+  #assert(d.r2 == 0.0625);
+  #assert(#typeOf(d) != #typeOf(a));
+  #assert(#sizeOf(#typeOf(d)) == #sizeOf(int) + 3 * #sizeOf(float));
+  // Baked fields read correctly through pointers and functions, which
+  // monomorphize per instance type.
+  #assert(wrap_r(&a) == 0.25 + 0.0625);
+  #assert(wrap_r(&d) == 0.25 + 0.0625);
+  // Re-invoking the instance type accepts the identical constant.
+  auto e = #typeOf(a)(payload: 3, r: 0.25);
+  #assert(#typeOf(e) == #typeOf(a));
+  #assert(e.r == 0.25 && e.payload == 3);
+}
+
+unit_test "Two arms that disagree on a constant field demote it to storage" {
+  int k = 1;
+  bool cond = k > 0;
+  // Arms differing only in a baked constant merge to one struct type
+  // with the constant demoted to storage, not to a union: the merged
+  // type is exactly the instance a runtime-valued construction produces.
+  auto m = cond ? wrap(payload: 1, r: 0.25) : wrap(payload: 1, r: 0.75);
+  float rt = 0.25;
+  #assert(#typeOf(m) == #typeOf(wrap(payload: 1, r: rt)));
+  #assert(m.r == 0.25);
+  #assert(m.r2 == 0.0625);
+  #assert(m.mut == 0.0);
+  // Arms agreeing on the constants keep them baked.
+  auto m2 = cond ? wrap(payload: 1, r: 0.25, mut: 1.0)
+                 : wrap(payload: 1, r: 0.25, mut: 2.0);
+  #assert(#typeOf(m2) == #typeOf(wrap(payload: 1, r: 0.25)));
+  #assert(m2.r == 0.25);
+  #assert(m2.mut == 1.0);
+  // Arrays of disagreeing constructions demote element-wise.
+  auto arr = wrap[2](wrap(payload: 1, r: 0.25), wrap(payload: 2, r: 0.75));
+  #assert(arr[0].r == 0.25);
+  #assert(arr[0].r2 == 0.0625);
+  #assert(arr[1].r == 0.75);
+  #assert(arr[1].payload == 2);
+}
+
+struct tinted {
+  const $(color | float) tint = 1.0;
+};
+
+unit_test "A comptime union field eliminates entirely" {
+  auto t1 = tinted(tint: 0.5);
+  auto t2 = tinted(tint: color(0.5));
+  #assert(t1.tint == 0.5);
+  #assert(#all(t2.tint == color(0.5)));
+  // Both eliminate entirely: the instances have no storage at all.
+  #assert(#sizeOf(#typeOf(t1)) == 0);
+  #assert(#sizeOf(#typeOf(t2)) == 0);
+  #assert(#typeOf(t1) != #typeOf(t2));
+  float rt = 0.5;
+  auto t3 = tinted(tint: rt);
+  #assert(t3.tint == 0.5);
+  #assert(#sizeOf(#typeOf(t3)) == #sizeOf(float));
+  #assert(#typeOf(t3) != #typeOf(t1));
+}
+
+// The motivating case for call-site `inline`: a model with many scalar
+// parameters, stored as one vector so that two settings of it can be mixed
+// barycentrically, and then expanded back into the call. Two such settings,
+// as 11-component vectors.
+//
+// `eleven` stands in for the real thing. A language test should not depend
+// on one of the `::models` modules, and the distinct weights are what
+// matter here: any permutation of the arguments gives a different answer,
+// so the equivalence below is a real claim about the expansion.
+@(pure)
+color eleven(const float p0, const float p1, const float p2, const float p3,
+             const float p4, const float p5, const float p6, const float p7,
+             const float p8, const float p9, const float p10) =
+  color(p0 + 2.0 * p1 + 3.0 * p2 + 5.0 * p3 + 7.0 * p4 + 11.0 * p5 +
+        13.0 * p6 + 17.0 * p7 + 19.0 * p8 + 23.0 * p9 + 29.0 * p10);
+
+const auto SOIL_A = auto(0.51, 0.57, 0.63, 0.55, 0.19, 0.05, 0.34, 0.04, 1.0, 0.25, 0.0);
+const auto SOIL_B = auto(0.32, 0.82, 0.51, 0.57, 0.90, 0.06, 0.12, 0.00, 0.0, 0.16, 0.8);
+
+// A small helper whose parameters are distinguishable by position, with a
+// trailing defaulted parameter to exercise inline-then-named call shapes.
+float weighted(const float a, const float b, const float c,
+               const float scale = 1.0) = scale * (a + 2.0 * b + 3.0 * c);
+
+// Structs for the named expansion: 'Shuffled' declares the same field names
+// as 'weighted's parameters but in a different order, so only name-driven
+// matching can get it right.
+struct WeightedArgs {
+  float a = 0.0;
+  float b = 0.0;
+  float c = 0.0;
+};
+struct Shuffled {
+  float scale = 2.0;
+  float b = 5.0;
+};
+
+unit_test "An inline vector argument expands positionally" {
+  // Expansion is exactly the spelled-out call: same values, same defaults,
+  // bit-for-bit.
+  const auto viaInline = eleven(inline SOIL_A);
+  const auto viaManual = eleven(
+    SOIL_A[0], SOIL_A[1], SOIL_A[2], SOIL_A[3], SOIL_A[4], SOIL_A[5],
+    SOIL_A[6], SOIL_A[7], SOIL_A[8], SOIL_A[9], SOIL_A[10]);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(viaInline[i] == viaManual[i]);
+
+  // The same through a runtime barycentric mix.
+  for (int k = 0; k <= 4; k++) {
+    const auto mixed = math::lerp(SOIL_A, SOIL_B, 0.25 * k);
+    const auto m0 = eleven(inline mixed);
+    const auto m1 = eleven(
+      mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed[5],
+      mixed[6], mixed[7], mixed[8], mixed[9], mixed[10]);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+      #assert(m0[i] == m1[i]);
+  }
+
+  // Expanded elements are ordinary positional arguments: they may follow
+  // leading positionals and precede named arguments, and an inlined
+  // temporary works as well as a variable.
+  #assert(weighted(1.0, inline auto(2.0, 3.0)) == 1.0 + 4.0 + 9.0);
+  #assert(weighted(1.0, inline auto(2.0, 3.0), scale: 2.0) == 2.0 * 14.0);
+  #assert(weighted(inline auto(1.0, 2.0, 3.0), scale: 0.5) == 0.5 * 14.0);
+
+  // Static-size arrays expand positionally too.
+  const auto arr = float[3](1.0, 2.0, 3.0);
+  #assert(weighted(inline arr) == 14.0);
+
+  // Intrinsic argument lists share the same expansion path; pin it.
+  #assert(#min(inline auto(3.0, 1.0)) == 1.0);
+}
+
+unit_test "An inline struct argument expands by name" {
+  // A struct expands as keyword arguments: field names drive the matching.
+  auto full = WeightedArgs(a: 1.0, b: 2.0, c: 3.0);
+  #assert(weighted(inline full) == weighted(a: 1.0, b: 2.0, c: 3.0));
+
+  // Field declaration order does not matter, unmatched parameters keep
+  // their defaults, and explicit arguments may precede the expansion.
+  auto shuffled = Shuffled();
+  #assert(weighted(a: 1.0, c: 0.0, inline shuffled) == 2.0 * (1.0 + 10.0));
+
+  // Struct construction goes through the same argument path, so a struct
+  // can be built from another struct's matching fields.
+  auto rebuilt = WeightedArgs(inline full);
+  #assert(rebuilt.a == full.a && rebuilt.b == full.b && rebuilt.c == full.c);
+}
+
+// referencing another function's run-time local is an
+// impossible-capture error rather than a silent bind to something farther
+// up the chain (verified out of tree: constructing the escaped type below
+// with its default 'a = k' from another function is a compile error citing
+// both locations). In-function defaults and escaped construction with
+// explicit arguments remain legal.
+@(pure noinline)
+auto decl_make() {
+  int k = 5;
+  struct DeclLocalS {
+    int a = k;
+  };
+  return DeclLocalS();
+}
+
+unit_test "Local struct type escapes, defaults bind in-function" {
+  auto s = decl_make();
+  #assert(s.a == 5);
+  // Explicit arguments emit no default, so no foreign-local reference.
+  auto t = #typeOf(s)(a: 7);
+  #assert(t.a == 7);
+}

@@ -1,0 +1,7 @@
+/// The module that `modules.smdl`'s quoted alias resolves to. It sits
+/// beside that file rather than under `packages/` because resolving against
+/// the importing module's own directory is precisely what the quoted form
+/// does.
+#smdl
+
+export const string message = "Hello, world!";

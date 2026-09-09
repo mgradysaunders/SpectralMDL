@@ -1,0 +1,18 @@
+/// A private declaration over an imported name, which must shadow the
+/// import rather than join its overload set: overloading would mutate the
+/// imported function's type and leak this declaration into every other
+/// importer's overload resolution.
+#smdl
+
+using .::overloads import overload_target;
+
+@(pure)
+int overload_target(int v [[anno::unused()]]) = 2;
+
+unit_test "A local declaration shadows an imported name" {
+  // The local declaration wins unqualified lookup.
+  #assert(overload_target(5) == 2);
+  // The imported function is still reachable by its qualified name, and
+  // resolves against the exporting module's overloads only.
+  #assert(overloads::overload_target(1.5) == 1);
+}

@@ -1,0 +1,315 @@
+/// The harness every `::df` scattering test evaluates through: one
+/// material around a `bsdf`, one call into a `df::_scatter*` entry
+/// point, and the results in a struct. Also the contracts that hold for
+/// every distribution, so a new lobe inherits them by being passed to a
+/// `check`.
+#smdl
+
+import ::df::*;
+import ::math::*;
+using sampling = ::extras::sampling;
+import sampling::*;
+using quadrature = ::support::quadrature;
+import quadrature::*;
+
+//--{ Evaluation
+
+export struct EvaluateResult {
+  color f = color(0);
+  float2 pdf = float2(0);
+  bool success = false;
+};
+
+export EvaluateResult evaluate(
+  const bsdf scattering,
+  float3 wo,
+  float3 wi,
+  const bool isImportance = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_ALL,
+) {
+  auto mat = material(
+    thin_walled: thin_walled,
+    ior: ior,
+    surface: material_surface(scattering: scattering),
+    geometry: material_geometry(normal: normal));
+  auto instance = _MaterialEval(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exteriorIOR = exterior_ior;
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  if (df::_scatterEvaluate(
+        &instance, &wo, &wi, lobeMask, &pdfFwd, &pdfRev, cast<&float>(&f)))
+    return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
+  return EvaluateResult();
+}
+
+//--}
+
+//--{ Sampling
+
+export struct SampleResult {
+  float3 wi = float3(0);
+  color f = color(0);
+  float2 pdf = float2(0);
+  int sampledLobe = 0;
+  bool success = false;
+  float lobeChance = 1.0;
+
+  /// The Dirac test the entry point reports through the sampled lobe.
+  bool isDirac = (sampledLobe & df::DF_DIRAC) != 0;
+};
+
+export SampleResult sample(
+  const bsdf scattering,
+  const float4 xi,
+  float3 wo,
+  const bool isImportance = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_ALL,
+) {
+  auto mat = material(
+    thin_walled: thin_walled,
+    ior: ior,
+    surface: material_surface(scattering: scattering),
+    geometry: material_geometry(normal: normal));
+  auto instance = _MaterialEval(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exteriorIOR = exterior_ior;
+  float4 xi1 = xi;
+  float3 wi = float3(0);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  int sampledLobe = 0;
+  float lobeChanceOut = 1.0;
+  const auto success = df::_scatterSample(
+    &instance,
+    &xi1,
+    &wo,
+    lobeMask,
+    &wi,
+    &pdfFwd,
+    &pdfRev,
+    cast<&float>(&f),
+    &sampledLobe,
+    &lobeChanceOut);
+  return SampleResult(
+           wi,
+           f,
+           float2(pdfFwd, pdfRev),
+           sampledLobe,
+           bool(success),
+           lobeChanceOut);
+}
+
+//--}
+
+//--{ The scatter-NDF hooks
+
+export struct NormalSampleResult {
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  bool success = false;
+};
+
+export NormalSampleResult normalSample(
+  const bsdf scattering,
+  const float4 xi,
+  const bool backface = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(
+    thin_walled: thin_walled,
+    ior: ior,
+    surface: material_surface(scattering: scattering),
+    geometry: material_geometry(normal: normal));
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = exterior_ior;
+  float4 xi1 = xi;
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  const auto success = df::_scatterNormalSample(
+    &instance, &xi1, int(backface), lobeMask, &wm, &pdf, &alpha);
+  return NormalSampleResult(wm, pdf, alpha, bool(success));
+}
+
+export float normalEvaluate(
+  const bsdf scattering,
+  float3 wm,
+  const bool backface = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(
+    thin_walled: thin_walled,
+    ior: ior,
+    surface: material_surface(scattering: scattering),
+    geometry: material_geometry(normal: normal));
+  auto instance = _MaterialEval(&mat);
+  instance.exteriorIOR = exterior_ior;
+  float pdf = 0;
+  df::_scatterNormalEvaluate(&instance, int(backface), &wm, lobeMask, &pdf);
+  return pdf;
+}
+
+//--}
+
+//--{ Contracts
+
+// Compare within `absTol + relTol * max(|a|, |b|)`, elementwise. The
+/// two tolerances together cover both regimes the tests need: an
+/// absolute bound where the values are of order one, and a relative one
+/// where a near-specular density is enormous but finite.
+bool isNear(const auto a, const auto b, const float absTol, const float relTol) =
+  #all(#abs(a - b) <= absTol + relTol * #max(#abs(a), #abs(b)));
+
+/// The two bidirectional identities every distribution must satisfy:
+///
+/// 1. The forward and reverse densities swap when the directions swap.
+/// 2. Importance transport is the adjoint of radiance transport,
+///    `fImp(wo -> wi) / |cos(wi, ng)| == fRad(wi -> wo) / |cos(wo, ng)|`
+///    against the geometric normal `ng`, so the identity holds whether
+///    or not the shading normal agrees with it.
+export void checkBidirectionalConsistency(
+  const bsdf scattering,
+  const float3 wo,
+  const float3 wi,
+  const float3 normal = float3(0, 0, 1),
+  const float absTol = 1e-5,
+  const float relTol = 0.0,
+) {
+  const auto rad01 = evaluate(scattering, wo, wi, false, normal);
+  const auto rad10 = evaluate(scattering, wi, wo, false, normal);
+  const auto imp01 = evaluate(scattering, wo, wi, true, normal);
+  const auto imp10 = evaluate(scattering, wi, wo, true, normal);
+  #assert(#any(rad01.f > 0.0)); // Else the checks pass vacuously
+  #assert(isNear(rad01.pdf, rad10.pdf.yx, absTol, relTol));
+  #assert(isNear(imp01.pdf, imp10.pdf.yx, absTol, relTol));
+  #assert(isNear(imp01.f * #abs(wo.z), rad10.f * #abs(wi.z), absTol, relTol));
+  #assert(isNear(imp10.f * #abs(wi.z), rad01.f * #abs(wo.z), absTol, relTol));
+}
+
+/// The reported density must integrate over the hemisphere `zSign`
+/// selects to the fraction of samples the sampling routine accepts,
+/// which is what confirms the change of variables from whatever the
+/// routine draws internally to an incoming direction.
+///
+/// `isStochastic` drives the sampling routine with a full 4D
+/// low-discrepancy sequence instead of a grid, which is required
+/// wherever a stochastic lobe selection must be explored in proportion,
+/// as for layer-versus-base chances with different acceptance rates.
+export void checkDensityAgainstAcceptance(
+  const bsdf scattering,
+  const float3 wo,
+  const float zSign,
+  const int lobeMask = df::DF_ALL,
+  const bool isStochastic = false,
+) {
+  const int n = 128;
+  const auto pdfIntegral =
+    quadrature::integrateHemisphere(
+      n,
+      zSign,
+      \(const float3 wi) =
+        evaluate(scattering, wo, wi, lobeMask: lobeMask).pdf[0]);
+  int accepted = 0;
+  if (isStochastic) {
+    float4 xi = float4(0.19, 0.53, 0.83, 0.44);
+    for (int i = 0; i < n * n; i++, sampling::next_low_discrepancy(&xi)) {
+      const auto r = sample(scattering, xi, wo, lobeMask: lobeMask);
+      accepted += #select(r.success & (r.wi.z * zSign > 0.0), 1, 0);
+    }
+  } else {
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++) {
+        const auto xi = float4((i + 0.5) / n, (j + 0.5) / n, 0.83, 0.44);
+        accepted += #select(
+          sample(scattering, xi, wo, lobeMask: lobeMask).success, 1, 0);
+      }
+    }
+  }
+  #assert(#abs(pdfIntegral - accepted / double(n * n)) < 0.015);
+}
+
+/// The reported normal density must integrate to one over the
+/// hemisphere, or it is not the density of anything.
+export void checkNormalDensityIntegral(
+  const bsdf scattering, const float3 normal = float3(0, 0, 1)) {
+  const auto integral = quadrature::integrateHemisphere(
+    400,
+    1.0,
+    \(const float3 wm) = normalEvaluate(scattering, wm, normal: normal));
+  #assert(float(integral) ~== |2e-2| 1.0);
+}
+
+/// The single-scattering albedo: the distribution integrated over the
+/// full sphere of incoming directions under importance transport, which
+/// carries no solid-angle compression.
+export float furnaceIntegral(const bsdf scattering, const float3 wo) {
+  return float(quadrature::integrateSphere(
+           100, \(const float3 wi) = evaluate(scattering, wo, wi, true).f[0]));
+}
+
+/// The lobes a material reports, without the property bits riding above
+/// them; those have their own test.
+export int surfaceLobes(const bsdf scattering) {
+  auto mat =
+    material(ior: 1.5, surface: material_surface(scattering: scattering));
+  auto instance = _MaterialEval(&mat);
+  return instance.surfaceLobes & df::DF_ALL;
+}
+
+/// A direction with azimuth `d` (need not be normalized) and elevation
+/// slope `l` (the tangent of the angle up from the tangent plane), the
+/// natural parameterization of a horizon test.
+export float3 dirAt(const float2 d, const float l) =
+  math::normalize(float3(math::normalize(d), l));
+
+/// The three transports a directional shadowing factor must pass through
+/// untouched: importance transport, which has no incoming direction to
+/// shadow; a backface reflection; and transmission, whose downward
+/// direction is outside such a factor's domain whatever its mode.
+/// `applyFactor` wraps the distribution it is handed in the factor under
+/// test, set as oppressively as the caller likes.
+@(macro)
+export void checkFactorPassesThrough(
+  const auto applyFactor,
+  const float3 wo,
+  const float3 wi,
+  const float3 woDown,
+  const float3 wiDown,
+) {
+  const auto base = df::diffuse_reflection_bsdf(tint: 0.8);
+  const auto imp = evaluate(applyFactor(base), wo, wi, isImportance: true);
+  const auto impBase = evaluate(base, wo, wi, isImportance: true);
+  #assert(#any(impBase.f > 0.0));
+  #assert(#all(imp.f == impBase.f));
+  const auto back = evaluate(applyFactor(base), woDown, wiDown);
+  const auto backBase = evaluate(base, woDown, wiDown);
+  #assert(#any(backBase.f > 0.0));
+  #assert(#all(back.f == backBase.f));
+  const auto trans = df::diffuse_transmission_bsdf(tint: 0.7);
+  const auto a = evaluate(applyFactor(trans), wo, wiDown);
+  const auto b = evaluate(trans, wo, wiDown);
+  #assert(#any(b.f > 0.0));
+  #assert(#all(a.f == b.f));
+}
+
+//--}

@@ -1,0 +1,284 @@
+/// The Dirac lobes and the dielectric interface: the specular half vectors
+/// invert, the Dirac weights carry the shading-normal correction and the
+/// squared relative IOR, and a Fresnel layer defines the interface that a
+/// nested dielectric refracts through. Evaluation goes through
+/// `::support::scatter`.
+#smdl
+
+import ::df::*;
+import ::math::*;
+using sampling = ::extras::sampling;
+import sampling::*;
+using scatter = ::support::scatter;
+import scatter::*;
+
+unit_test "The reflection half vector round trips both ways" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
+  const auto wi = math::normalize(float3(+0.1, -0.7, 0.4));
+  const auto wm = math::normalize(df::specular::reflection_half_vector(wo, wi));
+  #assert(#all(df::specular::reflect(wo, wm) ~== |1e-5| wi));
+  #assert(#all(df::specular::reflect(wi, wm) ~== |1e-5| wo));
+}
+
+unit_test "The refraction half vector round trips at the reciprocal IOR" {
+  const auto ior = 1 / 1.4;
+  const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
+  const auto wi = math::normalize(float3(+0.1, -0.7, -0.4));
+  const auto wm = math::normalize(df::specular::refraction_half_vector(wo, wi, ior));
+  #assert(#all(df::specular::refract(wo, wm, ior) ~== |1e-5| wi));
+  #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== |1e-5| wo));
+}
+
+unit_test "Entering and exiting a dielectric cancels" {
+  // Enter a solid dielectric through the front face, then send the ray back
+  // out through the same interface from inside: the exit direction must undo
+  // the entry refraction exactly, and the `ior * ior` radiance compressions
+  // must cancel. This exercises the backface reciprocation of the relative
+  // IOR through the full sampling machinery.
+  const auto bsdfT = df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit);
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto wo = math::normalize(float3(0.6, -0.2, 0.9));
+  const auto rIn = scatter::sample(bsdfT, xi, wo);
+  #assert(rIn.success && rIn.isDirac);
+  #assert(rIn.wi.z < 0.0);
+  const auto rOut = scatter::sample(bsdfT, xi, rIn.wi);
+  #assert(rOut.success && rOut.isDirac);
+  #assert(#all(rOut.wi ~== |1e-5| wo));
+  #assert(#all(rIn.f * rOut.f ~== |1e-5| color(1.0)));
+}
+
+unit_test "A thin-walled transmission passes straight through" {
+  // Thin-walled surfaces enclose no volume: specular transmission passes
+  // straight through, with no refraction and no radiance compression.
+  const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
+  const auto r = scatter::sample(df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit), float4(0.8, 0.4, 0.5, 0.6), wo, false, float3(0, 0, 1), true);
+  #assert(r.success && r.isDirac);
+  #assert(#all(r.wi ~== |1e-6| -wo));
+  #assert(#all(r.f ~== |1e-6| color(1.0)));
+}
+
+unit_test "A backface past the critical angle reflects everything" {
+  // From inside a solid (a backface hit), the layer weight must use the
+  // dense-to-rare ratio, which reaches total internal reflection.
+  const auto wo = math::normalize(float3(+0.866, 0.1, -0.5));
+  const auto wi = math::normalize(float3(-0.866, 0.1, -0.5));
+  const auto layerB = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto rLayer = scatter::evaluate(layerB, wo, wi);
+  #assert(#any(rLayer.f > 0.0));
+  // Beyond the critical angle the Fresnel weight is exactly 1, so the
+  // layered result equals the bare layer.
+  const auto rBack = scatter::evaluate(df::fresnel_layer(ior: 1.5, layer: layerB), wo, wi);
+  #assert(#all(rBack.f ~== |1e-5| rLayer.f));
+  // The mirrored front-face geometry is nowhere near total: the weight is
+  // the ordinary dielectric reflectance, well below 1.
+  const auto rFront = scatter::evaluate(df::fresnel_layer(ior: 1.5, layer: layerB), -wo, -wi);
+  #assert(#all(rFront.f < 0.5 * rLayer.f));
+}
+
+unit_test "A Fresnel layer's density is its chance times its layer's" {
+  // The nested layer refracts with the fresnel_layer IOR rather than the
+  // material IOR, and the PDF weight equals the dielectric Fresnel selection
+  // chance exactly, so the layered PDF must be the bare-layer PDF (evaluated
+  // in a material whose IOR matches the layer interface) scaled by the
+  // chance. The incidence grazes enough that the chance sits inside the
+  // `MIN_CHANCE` clamp bounds, where selection follows the Fresnel term
+  // exactly.
+  const auto wo = math::normalize(float3(-0.6, 0.7, 0.35));
+  const auto layerB = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_transmit);
+  const auto layered = df::fresnel_layer(ior: 1.8, layer: layerB);
+  const auto chance = df::specular::dielectric_fresnel(wo.z, 1 / 1.8);
+  auto xi2 = float2(0.3, 0.7);
+  for (int k = 0; k < 16; k++, sampling::next_low_discrepancy(&xi2)) {
+    const auto wi = sampling::uniform_hemisphere_sample(xi2) * float3(1, 1, -1.0);
+    const auto rBare = scatter::evaluate(layerB, wo, wi, false, float3(0, 0, 1), false, 1.8);
+    const auto rLayered = scatter::evaluate(layered, wo, wi, false, float3(0, 0, 1), false, 1.8);
+    #assert(rLayered.pdf[0] ~== |1e-5| chance * rBare.pdf[0]);
+  }
+  // The layered transmission must also satisfy the full bidirectional
+  // consistency identities even when the layer interface disagrees with the
+  // material IOR, which requires the Fresnel weight to see the same half
+  // vector from both directions.
+  const auto wt = math::normalize(float3(0.18, -0.24, -0.95));
+  scatter::checkBidirectionalConsistency(layered, wo, wt);
+}
+
+unit_test "An exterior IOR is the relative IOR in vacuum" {
+  // A glass interface (IOR 1.5) submerged in water (IOR 4/3) must behave
+  // exactly like an interface with the equivalent relative IOR 1.5/(4/3)
+  // in vacuum: same refraction direction, same radiance compression, same
+  // Fresnel weights.
+  const auto nWater = 4.0 / 3.0;
+  const auto nGlass = 1.5;
+  const auto bsdfT = df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit);
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto wo = math::normalize(float3(0.6, -0.2, 0.9));
+  const auto r1 = scatter::sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass, nWater);
+  const auto r2 = scatter::sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
+  #assert(r1.success && r2.success);
+  #assert(#all(r1.wi ~== |1e-5| r2.wi));
+  #assert(#all(r1.f ~== |1e-5| r2.f));
+  #assert(#all(r1.f ~== |1e-5| color(#pow(nWater / nGlass, 2))));
+  // Exiting back out through the interface restores the direction and
+  // cancels the radiance compression.
+  const auto rOut = scatter::sample(bsdfT, xi, r1.wi, false, float3(0, 0, 1), false, nGlass, nWater);
+  #assert(rOut.success);
+  #assert(#all(rOut.wi ~== |1e-5| wo));
+  #assert(#all(r1.f * rOut.f ~== |1e-5| color(1.0)));
+  // Modifiers convert their absolute IOR against the same exterior: a
+  // fresnel_layer in water equals the equivalent relative layer in vacuum.
+  const auto wiR = math::normalize(float3(-0.5, 0.1, 0.8));
+  const auto layerB = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto e1 = scatter::evaluate(df::fresnel_layer(ior: nGlass, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass, nWater);
+  const auto e2 = scatter::evaluate(df::fresnel_layer(ior: nGlass / nWater, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
+  #assert(#any(e1.f > 0.0));
+  #assert(#all(e1.f ~== |1e-5| e2.f));
+  #assert(#all(e1.pdf ~== |1e-5| e2.pdf));
+}
+
+// The reflect-transmit selection chance carried by the PDF lanes: the
+// dielectric Fresnel term clamped into the selection floor. Mirrors
+// `MIN_CHANCE` in the df builtin.
+float selectionChance(const float F) = math::clamp(F, 0.1, 0.9);
+
+unit_test "The Fresnel-weighted lobe decomposes into reflection and transmission" {
+  // With `scatter_reflect_transmit`, the microfacet lobe must be the pure
+  // reflect and transmit lobes weighted by the dielectric Fresnel term: the
+  // scattering function by the term at the half vector, and the PDFs by the
+  // selection chance at the macro normal (forward lane from the wo side,
+  // reverse lane from the wi side), which is the Fresnel term clamped into
+  // the selection floor.
+  const auto eta = 1 / 1.4; // Entering relative ratio at the default material IOR
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wiR = math::normalize(float3(+0.5, 0.2, 0.9));
+  const auto wiT = math::normalize(float3(0.2, -0.3, -0.9));
+  const auto bR = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_reflect);
+  const auto bT = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_transmit);
+  const auto bRT = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_reflect_transmit);
+  const auto Fo = df::specular::dielectric_fresnel(wo.z, eta);
+  // Reflection pair.
+  {
+    const auto r1 = scatter::evaluate(bR, wo, wiR);
+    const auto r2 = scatter::evaluate(bRT, wo, wiR);
+    const auto h = math::normalize(wo + wiR);
+    const auto Fh = df::specular::dielectric_fresnel(math::dot(wo, h), eta);
+    const auto Fi = df::specular::dielectric_fresnel(wiR.z, eta);
+    #assert(#any(r1.f > 0.0));
+    #assert(#all(r2.f ~== |1e-5| Fh * r1.f));
+    // The pure reflect lobe reports bounded-VNDF densities (Eto and
+    // Tokuyoshi 2023) while the reflect-transmit lobe samples the full
+    // spherical cap, so undo the bound before comparing the PDFs.
+    const auto alpha = float2(0.5 * 0.5);
+    const auto kO = df::microfacet::ggx_bounded_cap_factor(alpha, wo);
+    const auto kI = df::microfacet::ggx_bounded_cap_factor(alpha, wiR);
+    const auto tO = math::length(float3(alpha.x * wo.x, alpha.y * wo.y, wo.z));
+    const auto tI = math::length(float3(alpha.x * wiR.x, alpha.y * wiR.y, wiR.z));
+    const auto unbound = float2((kO * wo.z + tO) / (wo.z + tO), (kI * wiR.z + tI) / (wiR.z + tI));
+    #assert(#all(r2.pdf ~== |1e-5| float2(selectionChance(Fo), selectionChance(Fi)) * r1.pdf * unbound));
+  }
+  // Transmission pair. The reverse PDF lane sees the reciprocal ratio.
+  {
+    const auto r1 = scatter::evaluate(bT, wo, wiT);
+    const auto r2 = scatter::evaluate(bRT, wo, wiT);
+    const auto h = math::normalize(df::specular::refraction_half_vector(wo, wiT, eta));
+    const auto Fh = df::specular::dielectric_fresnel(math::dot(wo, h), eta);
+    const auto Fi = df::specular::dielectric_fresnel(-wiT.z, 1 / eta);
+    #assert(#any(r1.f > 0.0));
+    #assert(#all(r2.f ~== |1e-5| (1 - Fh) * r1.f));
+    #assert(#all(r2.pdf ~== |1e-5| (1 - float2(selectionChance(Fo), selectionChance(Fi))) * r1.pdf));
+  }
+}
+
+unit_test "The Fresnel-weighted dielectric conserves energy in a white furnace" {
+  // The one-shot Fresnel-weighted `scatter_reflect_transmit` lobe must
+  // (approximately) conserve energy: the full-sphere integral is the
+  // single-scattering albedo, bounded by 1 and close to it for moderate
+  // roughness. From inside beyond the critical angle, transmission shuts
+  // off and reflection must pick up the energy -- the pre-Fresnel 50/50
+  // split lost half of it there.
+  const auto bRT = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_reflect_transmit);
+  const auto Eout = scatter::furnaceIntegral(bRT, math::normalize(float3(0.5, 0.2, 0.9)));
+  #assert((0.80 < Eout) & (Eout < 1.01));
+  const auto Ein = scatter::furnaceIntegral(bRT, math::normalize(float3(0.8, 0.1, -0.6)));
+  #assert((0.70 < Ein) & (Ein < 1.01));
+}
+
+unit_test "The Dirac dielectric weights divide by their selection chance" {
+  const auto bRT = df::specular_bsdf(tint: 1.0, mode: df::scatter_reflect_transmit);
+  const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
+  const auto F = df::specular::dielectric_fresnel(wo.z, 1 / 1.4);
+  const auto chance = selectionChance(F);
+  // Entering: a random number below the clamped selection chance reflects
+  // and carries the Fresnel weight over the chance; above it refracts with
+  // the complementary ratio and the `ior * ior` compression.
+  {
+    const auto r = scatter::sample(bRT, float4(0.9 * chance, 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDirac);
+    #assert(r.wi.z > 0.0);
+    #assert(#all(r.f ~== |1e-5| color(F / chance)));
+  }
+  {
+    const auto r = scatter::sample(bRT, float4(chance + 0.9 * (1 - chance), 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDirac);
+    #assert(r.wi.z < 0.0);
+    #assert(#all(r.f ~== |1e-5| color((1 - F) / (1 - chance) * (1.0 / 1.4) * (1.0 / 1.4))));
+  }
+  // From inside beyond the critical angle the Fresnel term is 1, so every
+  // sample reflects: total internal reflection wastes nothing. A fixed
+  // 50/50 split between the two lobes would reject half of them.
+  const auto woIn = math::normalize(float3(0.8, 0.1, -0.6));
+  for (int k = 0; k < 8; k++) {
+    const auto r = scatter::sample(bRT, float4((k + 0.5) / 8, 0.4, 0.5, 0.6), woIn);
+    #assert(r.success && r.isDirac);
+    #assert(r.wi.z < 0.0); // Reflection stays on the incident side
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
+  }
+}
+
+unit_test "A thin film cancels the band its thickness selects" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto base = df::diffuse_reflection_bsdf(tint: 0.8);
+  const auto result0 = scatter::evaluate(base, wo, wi);
+  // Zero thickness is the identity, for both float and color film IOR.
+  {
+    const auto result1 = scatter::evaluate(df::thin_film(thickness: 0.0, ior: 1.5, base: base), wo, wi);
+    #assert(#all(result1.f ~== |1e-5| result0.f));
+    #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
+  }
+  {
+    const auto result1 = scatter::evaluate(df::thin_film(thickness: 0.0, ior: color(1.5), base: base), wo, wi);
+    #assert(#all(result1.f ~== |1e-5| result0.f));
+  }
+  // The same identity holds on the Dirac sampling path.
+  {
+    const auto r = scatter::sample(df::thin_film(thickness: 0.0, ior: 1.5, base: df::specular_bsdf(tint: 1.0)), float4(0.3, 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDirac);
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
+  }
+  // At normal incidence with the default material IOR of 1.4. The design
+  // band is the middle of the grid (band 8 on the default 16-band grid),
+  // so these checks stay in bounds and meaningful at any
+  // 'WAVELENGTH_BASE_MAX'.
+  const auto wz = float3(0, 0, 1);
+  const auto resultz = scatter::evaluate(base, wz, wz);
+  const int k = $WAVELENGTH_BASE_MAX / 2;
+  const auto lambda = $state.wavelengthBase[k];
+  // A half-wave film is invisible at its design wavelength.
+  {
+    const auto result1 = scatter::evaluate(df::thin_film(thickness: lambda / (2 * 1.5), ior: 1.5, base: base), wz, wz);
+    #assert(result1.f[k] ~== |1e-4| resultz.f[k]);
+  }
+  // A quarter-wave film with the ideal anti-reflection IOR `sqrt(1.4)` blacks out
+  // the interface at its design wavelength, but not at distant wavelengths.
+  {
+    const auto arIOR = #sqrt(1.4);
+    const auto result1 = scatter::evaluate(df::thin_film(thickness: lambda / (4 * arIOR), ior: arIOR, base: base), wz, wz);
+    #assert(result1.f[k] ~== |1e-4| 0.0);
+    // Band 0 sits an octave-ish below the mid-grid design wavelength on
+    // the default 380-720nm range, far enough that reflectivity has
+    // recovered. A 1-band grid has no distant band to check.
+    if ($WAVELENGTH_BASE_MAX > 1) {
+      #assert(result1.f[0] > 0.01);
+    }
+  }
+}

@@ -138,7 +138,7 @@ TEST_CASE("Emitter voided fields") {
 TEST_CASE("Emitter voided parameters") {
   auto tmpDir{fs::temp_directory_path() / "smdl-emitter-param-test"};
   fs::remove_all(tmpDir);
-  // Behavior is covered end to end by 'testing/smdl/language_features.smdl';
+  // Behavior is covered end to end by 'testing/language/lang/functions.smdl';
   // what only the IR can show is that the voided parameter is *absent*
   // from the signature rather than passed as an undefined placeholder,
   // which is the whole point of the change and which no '#assert' could

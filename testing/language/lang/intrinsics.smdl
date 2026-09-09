@@ -1,0 +1,93 @@
+/// The `#` intrinsics that are neither type reflection nor compile-time
+/// machinery: bit manipulation, allocation, and the clock.
+///
+/// `#bitCast` reinterprets bytes where a conversion would convert, which is
+/// how a float's IEEE-754 encoding becomes an integer. The allocation
+/// intrinsics are what a material uses when it genuinely needs memory:
+/// `#heapAllocate` and `#heapFree` for a pair the caller balances, and
+/// `#bumpAllocate` for storage the host reclaims wholesale after the
+/// evaluation. Both must honor an alignment that is not a power of two
+/// times the size.
+///
+/// Every one of these takes a `color` wherever it takes a vector, because a
+/// `color` is a vector of spectral samples.
+#smdl
+
+unit_test "#bitCast reinterprets without converting" {
+  // '#bitCast' reinterprets the bytes, so the exponent and mantissa of 1.0f
+  // land in the IEEE-754 single precision bit pattern.
+  #assert(#bitCast(int, 1.0f) == 0x3F800000);
+  #assert(#bitCast(float, 0x3F800000) == 1.0f);
+  // Round tripping through an equally sized type is the identity.
+  const auto v = float2(1.25, -3.5);
+  #assert(#all(#bitCast(float2, #bitCast(int2, v)) == v));
+}
+
+unit_test "The bit-counting intrinsics count" {
+  // '#bitReverse' reverses the bit order within the width of the type, so the
+  // low bit of an int32 becomes the high bit.
+  #assert(#bitReverse(int32_t(1)) == int32_t(0x80000000));
+  #assert(#bitReverse(#bitReverse(int32_t(0x0F0F1234))) == int32_t(0x0F0F1234));
+  #assert(#ctpop(int32_t(0b1011)) == 3);
+  #assert(#ctlz(int32_t(1)) == 31);
+  #assert(#cttz(int32_t(0b1000)) == 3);
+}
+
+unit_test "#heapAllocate honors an odd alignment and size" {
+  auto p = #heapAllocate(64, 16);
+  #assert(bool(p));
+  #heapFree(p);
+  // Both arguments come straight from source, so neither is guaranteed to
+  // be sane on the way in: the alignment need not be a power of two or a
+  // multiple of the pointer size, and the size need not be a multiple of
+  // the alignment. Every one of these must still allocate.
+  auto p0 = #heapAllocate(1, 1);
+  auto p1 = #heapAllocate(12, 3);
+  auto p2 = #heapAllocate(100, 64);
+  #assert(bool(p0));
+  #assert(bool(p1));
+  #assert(bool(p2));
+  #heapFree(p0);
+  #heapFree(p1);
+  #heapFree(p2);
+}
+
+unit_test "#bumpAllocate returns distinct storage" {
+  auto p0 = #bumpAllocate(64, 16);
+  auto p1 = #bumpAllocate(64, 16);
+  #assert(bool(p0));
+  #assert(bool(p1));
+  #assert(p0 != p1);
+  auto v = #bump(float4(1, 2, 3, 4));
+  #assert(#all(*v == float4(1, 2, 3, 4)));
+}
+
+unit_test "#clock is monotonic" {
+  const auto t0 = #clock();
+  const auto t1 = #clock();
+  #assert(#typeOf(t0) == #getIntType(64));
+  // The counter is monotonic, so consecutive reads must not decrease. On
+  // targets without a cycle counter both reads are 0 and this still holds.
+  #assert(t1 >= t0);
+}
+
+// A `color` is a vector of $WAVELENGTH_BASE_MAX floats, so every intrinsic
+// that takes a vector takes one, including the ones whose second argument
+// is not a float.
+unit_test "The classification and two-argument intrinsics accept a color" {
+  // 96 = negative zero | positive zero, 256 = positive normal
+  // '#any'/'#all' rather than '[0]' so the checks stay well-formed at
+  // 'WAVELENGTH_BASE_MAX = 1', where the result is a scalar bool.
+  #assert(!#any(#testFPClass(color(0.5), 96)));
+  #assert(#all(#testFPClass(color(0.5), 256)));
+  color c = #atan2(color(1.0), color(1.0));
+  #assert(c[0] > 0.78 && c[0] < 0.79); // ~pi/4
+}
+
+// '#unpackFloat4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
+// texel types, producing an infinite scale factor.
+unit_test "#unpackFloat4 of a 64-bit texel is finite" {
+  auto u = #unpackFloat4(#getIntType(64)(3));
+  #assert(u.x >= 0.0 && u.x < 1.0);
+  #assert(u.w == 1.0);
+}

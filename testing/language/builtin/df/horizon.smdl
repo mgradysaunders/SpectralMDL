@@ -1,0 +1,149 @@
+#smdl
+
+import ::df::*;
+import ::math::*;
+using scatter = ::support::scatter;
+import scatter::*;
+
+// `df::horizon_shadow_factor`: first-order relief self-shadowing captured
+// as four horizon slopes at material evaluation time and applied to the
+// incoming direction inside the BSDF, so NEE, BSDF sampling, and MIS stay
+// consistent.
+//
+// Evaluation goes through `::support::scatter`. The default test state
+// has an identity tangent frame, so the directions below read directly as
+// natural-tangent-frame vectors.
+
+const auto BASE = df::diffuse_reflection_bsdf(tint: 0.8);
+
+@(pure macro)
+float3 WO() = math::normalize(float3(0.2, -0.3, 1.0));
+
+unit_test "No slopes is an exact passthrough" {
+  // All-non-positive slopes are the documented exact passthrough: same f
+  // (bit for bit -- the term multiplies by literal 1.0) and same pdf.
+  for (int k = 0; k < 2; k++) {
+    const auto shadowed = df::horizon_shadow_factor(
+      slopes: k == 0 ? float4(0.0) : float4(-1.0, -0.5, 0.0, -2.0),
+      base: BASE);
+    const auto wi = scatter::dirAt(float2(1.0, 0.4), 0.3);
+    const auto a = scatter::evaluate(shadowed, WO(), wi);
+    const auto b = scatter::evaluate(BASE, WO(), wi);
+    #assert(a.success & b.success);
+    #assert(#all(a.f == b.f));
+    #assert(#all(a.pdf == b.pdf));
+  }
+}
+
+unit_test "The visibility ramp is exact at both ends and half at the midpoint" {
+  // A 45-degree horizon all around (slope 1) with the default softness
+  // 0.25: fully visible at or above slope 1, fully shadowed at or below
+  // slope 0.75, Hermite in between.
+  const auto shadowed = df::horizon_shadow_factor(slopes: float4(1.0), base: BASE);
+  const float2 azimuth = float2(1.0, 0.0);
+
+  // Above the horizon: exact passthrough.
+  const auto above = scatter::evaluate(shadowed, WO(), scatter::dirAt(azimuth, 2.0));
+  const auto aboveBase = scatter::evaluate(BASE, WO(), scatter::dirAt(azimuth, 2.0));
+  #assert(#all(above.f == aboveBase.f));
+  // At the horizon: still fully visible (the boundary belongs to 1).
+  const auto at = scatter::evaluate(shadowed, WO(), scatter::dirAt(azimuth, 1.0));
+  const auto atBase = scatter::evaluate(BASE, WO(), scatter::dirAt(azimuth, 1.0));
+  #assert(#all(at.f == atBase.f));
+  // Below the penumbra: exactly zero.
+  const auto below = scatter::evaluate(shadowed, WO(), scatter::dirAt(azimuth, 0.5));
+  #assert(#all(below.f == color(0.0)));
+  // The ramp midpoint: S = 1/2 exactly (Hermite of t = 1/2).
+  const auto mid = scatter::evaluate(shadowed, WO(), scatter::dirAt(azimuth, 0.875));
+  const auto midBase = scatter::evaluate(BASE, WO(), scatter::dirAt(azimuth, 0.875));
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(mid.f[i] ~== |1e-6| 0.5 * midBase.f[i]);
+  // PDFs are untouched everywhere, including in full shadow.
+  #assert(#all(below.pdf == scatter::evaluate(BASE, WO(), scatter::dirAt(azimuth, 0.5)).pdf));
+
+  // Monotone, non-decreasing visibility as the light rises.
+  float prev = -1.0;
+  for (int k = 0; k <= 20; k++) {
+    const auto r = scatter::evaluate(shadowed, WO(), scatter::dirAt(azimuth, 0.5 + 0.05 * k));
+    #assert(r.f[0] >= prev);
+    prev = r.f[0];
+  }
+}
+
+unit_test "The quadrants interpolate in cos squared of the azimuth" {
+  // A horizon only toward +U. Light from -U or +-V is unshadowed; light
+  // from +U at low elevation is shadowed.
+  const auto shadowed = df::horizon_shadow_factor(slopes: float4(1.0, 0.0, 0.0, 0.0), base: BASE);
+  const float l = 0.3; // below the +U penumbra base of 0.75
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(-1.0, 0.0), l)).f == scatter::evaluate(BASE, WO(), scatter::dirAt(float2(-1.0, 0.0), l)).f));
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(0.0, 1.0), l)).f == scatter::evaluate(BASE, WO(), scatter::dirAt(float2(0.0, 1.0), l)).f));
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(0.0, -1.0), l)).f == scatter::evaluate(BASE, WO(), scatter::dirAt(float2(0.0, -1.0), l)).f));
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(1.0, 0.0), l)).f == color(0.0)));
+  // Halfway between +U and +V the horizon is cos^2(45) * 1 = 0.5: light
+  // slope 0.3 is below its penumbra base 0.375, slope 0.6 is above it.
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(1.0, 1.0), 0.3)).f == color(0.0)));
+  #assert(#all(scatter::evaluate(shadowed, WO(), scatter::dirAt(float2(1.0, 1.0), 0.6)).f == scatter::evaluate(BASE, WO(), scatter::dirAt(float2(1.0, 1.0), 0.6)).f));
+
+  // Continuity across an axis with four distinct slopes: the switching
+  // term's weight is sin^2 of the azimuth offset, so the visibility gap
+  // across the +U axis is O(epsilon^2).
+  const auto mixed = df::horizon_shadow_factor(slopes: float4(1.0, 0.9, 0.4, 0.7), base: BASE);
+  const auto lo = scatter::evaluate(mixed, WO(), scatter::dirAt(float2(1.0, +0.01), 0.9));
+  const auto hi = scatter::evaluate(mixed, WO(), scatter::dirAt(float2(1.0, -0.01), 0.9));
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(math::abs(lo.f[i] - hi.f[i]) < 1e-4);
+}
+
+unit_test "Importance, backface, and transmission pass through" {
+  const auto slopes = float4(10.0); // an oppressive horizon everywhere
+  const auto wi = scatter::dirAt(float2(1.0, 0.0), 0.3);
+  scatter::checkFactorPassesThrough(
+    \(const bsdf base) = df::horizon_shadow_factor(slopes: slopes, base: base),
+    WO(), wi, math::normalize(float3(0.2, -0.3, -1.0)), math::normalize(float3(1.0, 0.0, -0.3)));
+}
+
+unit_test "A Dirac weight passes through or goes to zero" {
+  // A mirror at 45 degrees: `wo = normalize(1, 0, 1)` reflects to
+  // `wi = normalize(-1, 0, 1)`, whose azimuth is -U and light slope is 1.
+  const auto mirror = df::specular_bsdf(tint: 0.9);
+  const auto wo = math::normalize(float3(1.0, 0.0, 1.0));
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto bare = scatter::sample(mirror, xi, wo);
+  #assert(bare.success & bare.isDirac);
+  #assert(#any(bare.f > 0.0));
+
+  // No horizon toward -U: exact passthrough of the Dirac weight.
+  const auto open = scatter::sample(df::horizon_shadow_factor(slopes: float4(0.0, 0.5, 0.0, 0.0), base: mirror), xi, wo);
+  #assert(open.success & open.isDirac);
+  #assert(#all(open.wi ~== |1e-6| bare.wi));
+  #assert(#all(open.f == bare.f));
+
+  // A hard horizon above the mirror direction: the Dirac weight goes to 0
+  // (the sample itself still succeeds; only its carried f is shadowed).
+  const auto blocked = scatter::sample(df::horizon_shadow_factor(slopes: float4(0.0, 2.0, 0.0, 0.0), softness: 0.0, base: mirror), xi, wo);
+  #assert(blocked.success);
+  #assert(#all(blocked.f == color(0.0)));
+
+  // The penumbra: slopes.y = 1.6 and softness 0.5 put the mirror slope 1
+  // at t = (1/1.6 - 0.5) / 0.5 = 0.25, S = 0.15625 exactly.
+  const auto penumbra = scatter::sample(df::horizon_shadow_factor(slopes: float4(0.0, 1.6, 0.0, 0.0), softness: 0.5, base: mirror), xi, wo);
+  #assert(penumbra.success);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(penumbra.f[i] ~== |1e-5| 0.15625 * bare.f[i]);
+}
+
+unit_test "The factor only removes energy" {
+  // S <= 1 everywhere: the shadowed f never exceeds the base f, over a
+  // grid of azimuths and elevations against asymmetric slopes.
+  const auto shadowed = df::horizon_shadow_factor(slopes: float4(0.8, 0.1, 1.5, 0.0), softness: 0.4, base: BASE);
+  for (int a = 0; a < 8; a++) {
+    for (int e = 1; e <= 6; e++) {
+      const float phi = 2.0 * $PI * a / 8.0;
+      const auto wi = scatter::dirAt(float2(math::cos(phi), math::sin(phi)), 0.3 * e);
+      const auto s = scatter::evaluate(shadowed, WO(), wi);
+      const auto b = scatter::evaluate(BASE, WO(), wi);
+      for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+        #assert(s.f[i] <= b.f[i] * (1.0 + 1e-6));
+    }
+  }
+}
