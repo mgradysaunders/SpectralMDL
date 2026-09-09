@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 
 #include "llvm/Support/Process.h"
 
@@ -51,8 +52,24 @@ constexpr double ETA_MIN_ELAPSED{1.0};
 constexpr double ETA_MIN_FRACTION{0.02};
 
 constexpr const char *COLOR_BAR{"\033[36m"};
+constexpr const char *COLOR_DONE{"\033[32m"};
 constexpr const char *COLOR_DIM{"\033[2m"};
 constexpr const char *COLOR_OFF{"\033[0m"};
+
+// The spinner at the head of the line, one column wide in either
+// alphabet. Its frame is derived from the elapsed time rather than from
+// a counter, so that it turns at one steady rate however the redraws
+// come: a burst of log messages through `printThrough()` does not whirl
+// it, and a slow pass does not stall it between samples.
+constexpr double SPINNER_FRAME_SECONDS{0.1};
+constexpr const char *SPINNER_FRAMES_UNICODE[]{"⠋", "⠙", "⠹", "⠸", "⠼",
+                                               "⠴", "⠦", "⠧", "⠇", "⠏"};
+constexpr const char *SPINNER_FRAMES_ASCII[]{"|", "/", "-", "\\"};
+constexpr const char *DONE_GLYPH_UNICODE{"✔"};
+constexpr const char *DONE_GLYPH_ASCII{"*"};
+
+// The spinner's column and the space after it.
+constexpr size_t SPINNER_WIDTH{2};
 
 // Is stderr a terminal that can act on carriage returns and ANSI escape
 // codes? `cerrSupportsANSIColors()` is the `isatty()` test; `TERM` rules
@@ -138,6 +155,27 @@ constexpr const char *COLOR_OFF{"\033[0m"};
     str.append(empty, ' ');
     str += ']';
   }
+  return str;
+}
+
+// The spinner's current frame, or the done glyph once the work is
+// complete, colored.
+[[nodiscard]] std::string renderSpinner(double elapsedSeconds, bool isDone,
+                                        bool useUnicode) {
+  auto str{std::string()};
+  if (isDone) {
+    str += COLOR_DONE;
+    str += useUnicode ? DONE_GLYPH_UNICODE : DONE_GLYPH_ASCII;
+  } else {
+    const auto tick{
+        uint64_t(std::max(elapsedSeconds, 0.0) / SPINNER_FRAME_SECONDS)};
+    str += COLOR_BAR;
+    str +=
+        useUnicode
+            ? SPINNER_FRAMES_UNICODE[tick % std::size(SPINNER_FRAMES_UNICODE)]
+            : SPINNER_FRAMES_ASCII[tick % std::size(SPINNER_FRAMES_ASCII)];
+  }
+  str += COLOR_OFF;
   return str;
 }
 
@@ -356,7 +394,7 @@ void ProgressBar::drawLocked(uint64_t done) {
   bool shouldShowLabel{true}, showCounts{true}, showElapsed{true},
       showETA{true};
   const auto solveBarWidth{[&]() -> size_t {
-    size_t used{percent.size() + SEPARATOR_WIDTH};
+    size_t used{SPINNER_WIDTH + percent.size() + SEPARATOR_WIDTH};
     if (shouldShowLabel) used += label.size() + SEPARATOR_WIDTH;
     if (showCounts) used += counts.size() + SEPARATOR_WIDTH;
     if (showElapsed) used += elapsed.size() + SEPARATOR_WIDTH;
@@ -382,15 +420,24 @@ void ProgressBar::drawLocked(uint64_t done) {
   }
   barWidth = std::min(barWidth, MAX_BAR_WIDTH);
   auto line{std::string("\r")};
+  if (barWidth == 0 && budget < SPINNER_WIDTH + percent.size()) {
+    // Narrower than "100%" and its spinner. Nothing legible fits, so
+    // leave the line to whatever else wants it.
+    eraseLocked();
+    return;
+  }
+  // The spinner is what says the process is alive, which is the one
+  // thing a bar that has not moved in a minute cannot, so it is the
+  // field that never drops. The done glyph is drawn only for the whole
+  // count: `finish()` on the way out of an exception draws an honest
+  // partial bar, and that bar keeps its last frame.
+  line += renderSpinner(elapsedSeconds, mIsFinished && done >= mOptions.total,
+                        mUseUnicode);
+  line += ' ';
   if (barWidth > 0) {
     if (shouldShowLabel) line += label + "  ";
     line += renderBar(fraction, barWidth, mUseUnicode);
     line += "  ";
-  } else if (budget < percent.size()) {
-    // Narrower than "100%". Nothing legible fits, so leave the line to
-    // whatever else wants it.
-    eraseLocked();
-    return;
   }
   line += percent;
   const auto dim{[&](const std::string &field) {

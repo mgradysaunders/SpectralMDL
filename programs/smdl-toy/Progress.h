@@ -11,12 +11,14 @@
 
 /// How a `ProgressBar` draws.
 enum class ProgressStyle {
-  /// Draw the block drawing characters when the environment claims
-  /// UTF-8, and the ASCII bar when it does not.
+  /// Draw the block drawing characters and the braille spinner when the
+  /// environment claims UTF-8, and the ASCII bar and spinner when it
+  /// does not.
   AUTO,
 
-  /// Always draw the ASCII bar. The escape hatch for a terminal that
-  /// claims UTF-8 and then draws the block characters as boxes.
+  /// Always draw the ASCII bar and spinner. The escape hatch for a
+  /// terminal that claims UTF-8 and then draws the block characters as
+  /// boxes.
   PLAIN,
 
   /// Never draw at all.
@@ -70,7 +72,8 @@ struct ProgressOptions final {
 [[nodiscard]] std::string formatDuration(double seconds);
 
 /// A progress bar drawn in place on stderr, in the style of a package
-/// manager's download bar.
+/// manager's download bar: a spinner that turns while the work runs and
+/// becomes a check mark when it completes, the bar, and the counters.
 ///
 /// The bar is only ever for a person watching a terminal, so it draws
 /// nothing at all unless stderr is one (and the style asks for it). That
