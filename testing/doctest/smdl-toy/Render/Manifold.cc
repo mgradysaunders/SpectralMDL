@@ -293,22 +293,28 @@ TEST_CASE("Manifold solution set: distinct solutions counted once") {
   }};
   SUBCASE("a re-find is valued and summed once") {
     ManifoldSolutionSet solutions{};
-    solutions.consider(receiver, solutionAt(0), value);
-    solutions.consider(receiver, solutionAt(0), value);
-    solutions.consider(receiver, solutionAt(1), value);
-    solutions.consider(receiver, solutionAt(0), value);
+    solutions.consider(receiver, solutionAt(0), value, nullptr);
+    solutions.consider(receiver, solutionAt(0), value, nullptr);
+    solutions.consider(receiver, solutionAt(1), value, nullptr);
+    solutions.consider(receiver, solutionAt(0), value, nullptr);
     CHECK(valued == 2);
     CHECK(solutions.sum()[0] == doctest::Approx(2.0f));
+    // A tally counts each distinct solution once, the re-finds never.
+    MNEEStats stats{};
+    solutions.consider(receiver, solutionAt(2), value, &stats);
+    solutions.consider(receiver, solutionAt(2), value, &stats);
+    CHECK(stats.contributionCount == 1);
+    CHECK(stats.contributionNonZeroCount == 1);
   }
   SUBCASE("a distinct solution past the cap is dropped, not summed") {
     ManifoldSolutionSet solutions{};
     for (int i = 0; i < 64; i++)
-      solutions.consider(receiver, solutionAt(i), value);
+      solutions.consider(receiver, solutionAt(i), value, nullptr);
     // The cap is what the sum stops at, and nothing past it is valued.
     CHECK(valued == int(solutions.sum()[0]));
     CHECK(valued < 64);
     // A re-find of one already counted still costs nothing.
-    solutions.consider(receiver, solutionAt(0), value);
+    solutions.consider(receiver, solutionAt(0), value, nullptr);
     CHECK(valued == int(solutions.sum()[0]));
   }
 }

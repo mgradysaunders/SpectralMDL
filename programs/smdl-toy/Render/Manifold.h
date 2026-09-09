@@ -14,6 +14,7 @@
 
 #include "Layout/Layout.h"
 #include "Render/Medium.h"
+#include "Render/PathStats.h"
 #include "Render/Sampler.h"
 #include "smdl/Manifold.h"
 #include "smdl/RenderUtil/MonteCarlo.h"
@@ -35,7 +36,6 @@ using smdl::ManifoldConnection;
 using smdl::ManifoldConnectionVertex;
 using smdl::manifoldFrameSeed;
 using smdl::manifoldReciprocal;
-using smdl::ManifoldStats;
 using smdl::ManifoldSurfaces;
 using smdl::ManifoldTarget;
 using smdl::ManifoldVertex;
@@ -201,7 +201,7 @@ class ManifoldSolutionSet final {
 public:
   /// Count `connection` unless it is a re-find of one already counted,
   /// valuing a genuinely new solution with `value` and adding that to
-  /// the sum.
+  /// the sum, and tallying it into `stats` when there is one.
   ///
   /// A distinct solution past the cap is dropped rather than summed
   /// unclustered, so a re-find can never double-count; a surface with
@@ -209,13 +209,13 @@ public:
   /// far past it anyway.
   template <typename Value>
   void consider(const float3 &receiver, const ManifoldConnection &connection,
-                const Value &value) {
+                const Value &value, MNEEStats *stats) {
     for (int i = 0; i < mCount; i++)
       if (isSameManifoldSolution(receiver, mSolutions[i], connection)) return;
     if (mCount == MAX_SOLUTIONS) return;
     mSolutions[mCount++].set(connection);
     const Color contribution{value(connection)};
-    ManifoldStats::global().recordContribution(!contribution.isAllZero());
+    if (stats) stats->recordContribution(!contribution.isAllZero());
     mSum += contribution;
   }
 

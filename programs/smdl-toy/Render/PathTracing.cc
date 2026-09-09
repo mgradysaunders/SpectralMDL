@@ -3,6 +3,7 @@
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Manifold.h"
+#include "Render/PathStats.h"
 
 #include <algorithm>
 #include <optional>
@@ -468,7 +469,7 @@ private:
   template <typename Reseed>
   [[nodiscard]]
   Color reciprocalEstimate(const ManifoldTarget &target, ManifoldChain &chain,
-                           ManifoldStats::Kind statKind, int receiverMask,
+                           MNEEStats::Kind statKind, int receiverMask,
                            float scale, const Reseed &reseed) const;
 };
 
@@ -528,8 +529,8 @@ Color MNEEGather::gatherReflection() const {
                                      smdl::DF_GLOSSY_BRDF, seed))
       continue;
     chain.residualTolerance = reciprocalResidualTolerance(chain);
-    const auto statKind{seed.isGlossy ? ManifoldStats::GLOSSY_REFLECT
-                                      : ManifoldStats::DIRAC_REFLECT};
+    const auto statKind{seed.isGlossy ? MNEEStats::GLOSSY_REFLECT
+                                      : MNEEStats::DIRAC_REFLECT};
     // The first walk starts at the hit the offset was drawn at, which is a
     // start like any other: the offset's density cancels pointwise
     // whichever start it was drawn at, so nothing is gained by discarding
@@ -619,7 +620,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   if (walk.hasPassedCutout()) return {};
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
-  auto &stats{ManifoldStats::global()};
+  MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
   Color result{};
   // One estimate per kind the whole chain claims: the Dirac chain,
   // deterministic and weighed against the path tracer by re-walk MIS, and
@@ -643,29 +644,32 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
         ManifoldWalkReport report{};
         const bool hasConverged{solveManifoldConnection(
             surfaces, vertex.point, target, chain, connection, &report)};
-        stats.recordWalk(report);
-        if (trial == 0)
-          stats.recordEstimate(ManifoldStats::DIRAC_REFRACT, hasConverged);
+        if (stats) stats->recordWalk(report);
+        if (trial == 0 && stats)
+          stats->recordEstimate(MNEEStats::DIRAC_REFRACT, hasConverged);
         if (hasConverged)
           solutions.consider(
-              vertex.point, connection, [&](const ManifoldConnection &other) {
+              vertex.point, connection,
+              [&](const ManifoldConnection &other) {
                 return contribution(chain, other, 1.0f, receiverMask,
                                     /*isClaimed=*/true);
-              });
+              },
+              stats);
       }
-      stats.recordTrials(ManifoldStats::DIRAC_REFRACT,
-                         render.mneeOptions.biasedTrials, false);
+      if (stats)
+        stats->recordTrials(MNEEStats::DIRAC_REFRACT,
+                            render.mneeOptions.biasedTrials, false);
       result += solutions.sum();
     } else {
       ManifoldConnection connection;
       ManifoldWalkReport report{};
       const bool hasConverged{solveManifoldConnection(
           surfaces, vertex.point, target, chain, connection, &report)};
-      stats.recordWalk(report);
-      stats.recordEstimate(ManifoldStats::DIRAC_REFRACT, hasConverged);
+      if (stats) stats->recordWalk(report);
+      if (stats) stats->recordEstimate(MNEEStats::DIRAC_REFRACT, hasConverged);
       if (hasConverged) {
         const Color value{contribution(chain, connection, 1.0f, receiverMask)};
-        stats.recordContribution(!value.isAllZero());
+        if (stats) stats->recordContribution(!value.isAllZero());
         result += value;
       }
     }
@@ -695,7 +699,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   // start, so the first walk is jittered like every trial or the
   // deterministic start would be over-counted.
   (void)jitter(chain);
-  result += reciprocalEstimate(target, chain, ManifoldStats::GLOSSY_REFRACT,
+  result += reciprocalEstimate(target, chain, MNEEStats::GLOSSY_REFRACT,
                                receiverMask, 1.0f, jitter);
   return result;
 }
@@ -959,21 +963,20 @@ bool MNEEGather::drawOffset(const ManifoldSurfaces &surfaces, const Hit &hit,
 template <typename Reseed>
 Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
                                      ManifoldChain &chain,
-                                     ManifoldStats::Kind statKind,
-                                     int receiverMask, float scale,
-                                     const Reseed &reseed) const {
+                                     MNEEStats::Kind statKind, int receiverMask,
+                                     float scale, const Reseed &reseed) const {
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
-  auto &stats{ManifoldStats::global()};
+  MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
   auto solve{[&](ManifoldConnection &connection) {
     ManifoldWalkReport report{};
     const bool hasSolution{solveManifoldConnection(
         surfaces, vertex.point, target, chain, connection, &report)};
-    stats.recordWalk(report);
+    if (stats) stats->recordWalk(report);
     return hasSolution;
   }};
   ManifoldConnection connection;
   const bool hasFirstConverged{solve(connection)};
-  stats.recordEstimate(statKind, hasFirstConverged);
+  if (stats) stats->recordEstimate(statKind, hasFirstConverged);
   if (render.mneeOptions.biasedTrials > 0) {
     // The biased variant: exactly `biasedTrials` walks, the first on
     // the chain as handed over and the rest reseeded, clustering the
@@ -983,13 +986,15 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
     const auto value{[&](const ManifoldConnection &other) {
       return contribution(chain, other, scale, receiverMask);
     }};
-    if (hasFirstConverged) solutions.consider(vertex.point, connection, value);
+    if (hasFirstConverged)
+      solutions.consider(vertex.point, connection, value, stats);
     for (int trial = 1; trial < render.mneeOptions.biasedTrials; trial++) {
       ManifoldConnection other;
       if (reseed(chain) && solve(other))
-        solutions.consider(vertex.point, other, value);
+        solutions.consider(vertex.point, other, value, stats);
     }
-    stats.recordTrials(statKind, render.mneeOptions.biasedTrials, false);
+    if (stats)
+      stats->recordTrials(statKind, render.mneeOptions.biasedTrials, false);
     return solutions.sum();
   }
   if (!hasFirstConverged) return {};
@@ -1000,7 +1005,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
   // converges on every walk and would otherwise spend the whole trial
   // budget on nothing.
   Color value{contribution(chain, connection, scale, receiverMask)};
-  stats.recordContribution(!value.isAllZero());
+  if (stats) stats->recordContribution(!value.isAllZero());
   if (value.isAllZero()) return {};
   int trials{};
   float inverseProbability{};
@@ -1009,11 +1014,11 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
                          [&](ManifoldConnection &other) {
                            return reseed(chain) && solve(other);
                          })) {
-    stats.recordTrials(statKind, trials, false);
+    if (stats) stats->recordTrials(statKind, trials, false);
     value *= inverseProbability;
     return value;
   }
-  stats.recordTrials(statKind, render.mneeOptions.maxTrials, true);
+  if (stats) stats->recordTrials(statKind, render.mneeOptions.maxTrials, true);
   return {};
 }
 
@@ -1188,7 +1193,9 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   // other exit keeps the arrival at weight 1, so the matched fraction
   // is the share of covered arrivals the gather can ever claim.
   bool isMatched{false};
-  SMDL_DEFER([&] { ManifoldStats::global().recordCover(isMatched); });
+  SMDL_DEFER([&] {
+    if (path.stats) path.stats->mnee().recordCover(isMatched);
+  });
   // A light the sampler cannot draw is covered by this arrival alone.
   if (!(lightPdf > 0.0f)) return 1.0f;
   // Build the seed chain along the straight cast, mirroring the
@@ -1260,7 +1267,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   const bool hasConverged{solveManifoldConnection(surfaces, isReceiver, target,
                                                   chain, connection, &report)};
-  ManifoldStats::global().recordRewalk(report);
+  if (path.stats) path.stats->mnee().recordRewalk(report);
   if (!hasConverged) return 1.0f;
   for (int i = 0; i < chainLength; i++) {
     const float scale{std::max(1e-3f, length(chainHits[i].point - isReceiver))};
@@ -1648,8 +1655,12 @@ private:
     for (size_t b = 0; b < contribution.size(); b++)
       contribution[b] = mBeta[b] * Li[b] * factorAt(b);
     if (contribution.isAnyNonFinite()) return;
+    if (mPath.stats) mPath.stats->recordContribution(bounces, contribution);
     const float scale{clampScale(contribution, bounces)};
-    if (scale < 1.0f) contribution *= scale;
+    if (scale < 1.0f) {
+      if (mPath.stats) mPath.stats->recordClamp(bounces, contribution, scale);
+      contribution *= scale;
+    }
     mL += contribution;
     if (record) {
       Color Larrival{};
@@ -1665,7 +1676,10 @@ private:
   // contribution itself whenever the bound leaves the gather alone.
   void addGathered(Color &direct, GuideRecord *record) {
     Color contribution{mBeta * direct};
-    if (const float scale{clampScale(contribution, mDepth - 1)}; scale < 1.0f) {
+    const uint64_t bounces{mDepth - 1};
+    if (mPath.stats) mPath.stats->recordContribution(bounces, contribution);
+    if (const float scale{clampScale(contribution, bounces)}; scale < 1.0f) {
+      if (mPath.stats) mPath.stats->recordClamp(bounces, contribution, scale);
       direct *= scale;
       for (size_t b = 0; b < contribution.size(); b++)
         contribution[b] = mBeta[b] * direct[b];
@@ -1746,6 +1760,8 @@ Color PathWalk::trace(const CameraSample &camera) {
   // writes every field where it finds a surface and the walk ends where
   // it does not, so nothing reads what the last vertex left.
   Hit hit{};
+  // Why the walk ended, for the tally.
+  PathEnd end{};
   while (true) {
     bool hasHitSurface{mRender.scene.intersect(ray, hit)};
     // The stack being empty is the exterior segment, and with no haze
@@ -1773,7 +1789,10 @@ Color PathWalk::trace(const CameraSample &camera) {
           hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
                                                      mBeta, emitted);
           const Color Lemit{betaStart * emitted};
-          if (!Lemit.isAnyNonFinite()) mL += Lemit;
+          if (!Lemit.isAnyNonFinite()) {
+            mL += Lemit;
+            if (mPath.stats) mPath.stats->recordMediumEmission(Lemit);
+          }
         } else {
           hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
                                                      mBeta, emitted);
@@ -1793,7 +1812,10 @@ Color PathWalk::trace(const CameraSample &camera) {
             record->point = point;
             record->beta = mBeta;
           }
-          if (isAtMaxBounces()) break;
+          if (isAtMaxBounces()) {
+            end = PathEnd::BOUND;
+            break;
+          }
           // The phase function of the vertex: the haze's own, the
           // medium's, or with additive overlap the component the
           // collision picked. Whatever it names outlives the view, so
@@ -1818,7 +1840,10 @@ Color PathWalk::trace(const CameraSample &camera) {
           float3 wNext{};
           float phaseValue{
               phase.volumeScatterSample(float4(mPath.sampler), wo, wNext)};
-          if (!(phaseValue > 0)) break;
+          if (!(phaseValue > 0)) {
+            end = PathEnd::ABSORBED;
+            break;
+          }
           if (record) {
             record->wNext = wNext;
             record->wNextPdf = phaseValue;
@@ -1836,7 +1861,10 @@ Color PathWalk::trace(const CameraSample &camera) {
           mSpread = std::min(mSpread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
           // No SD-tree steers a volume vertex, so the throughput is the
           // only thing the roulette can weigh here.
-          if (!rouletteSurvives(/*dtree=*/nullptr, ROULETTE_VOLUME_GATE)) break;
+          if (!rouletteSurvives(/*dtree=*/nullptr, ROULETTE_VOLUME_GATE)) {
+            end = PathEnd::ROULETTE;
+            break;
+          }
           ray = Ray{point, wNext, EPS, INF, mPath.time.fraction};
           continue;
         }
@@ -1885,6 +1913,7 @@ Color PathWalk::trace(const CameraSample &camera) {
         mPath.records[mPath.numRecords].isInfiniteLight = true;
         ++mPath.numRecords;
       }
+      end = PathEnd::ESCAPED;
       break;
     }
 
@@ -2007,7 +2036,10 @@ Color PathWalk::trace(const CameraSample &camera) {
                    });
       }
     }
-    if (isAtMaxBounces()) break;
+    if (isAtMaxBounces()) {
+      end = PathEnd::BOUND;
+      break;
+    }
     // With guiding active, non-Dirac surface bounces one-sample-MIS the
     // SD-tree against the BSDF. Materials whose scattering is purely a
     // Dirac delta bypass guiding entirely: the tree cannot produce their
@@ -2070,6 +2102,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       // is a finite-density direction.
       if (!material.hairScatterSample(float4(mPath.sampler), wo, wNext, wpdf,
                                       wpdfRevUnused, f)) {
+        end = PathEnd::ABSORBED;
         break;
       }
     } else if (dtree) {
@@ -2080,6 +2113,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       if (float(mPath.sampler) < bsdfFraction) {
         if (!material.scatterSample(float4(mPath.sampler), wo, wNext, bsdfPdf,
                                     wpdfRevUnused, f, sampledLobe)) {
+          end = PathEnd::ABSORBED;
           break;
         }
         if (isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0; !isDiracBounce)
@@ -2087,8 +2121,10 @@ Color PathWalk::trace(const CameraSample &camera) {
       } else {
         if (wNext = dtree->sampleDirection(mPath.sampler, guidePdf);
             !(guidePdf > 0) ||
-            !material.scatterEvaluate(wo, wNext, bsdfPdf, wpdfRevUnused, f))
+            !material.scatterEvaluate(wo, wNext, bsdfPdf, wpdfRevUnused, f)) {
+          end = PathEnd::ABSORBED;
           break;
+        }
       }
       if (isDiracBounce) {
         // The Dirac lobe folds its density into `f` (unit PDF by
@@ -2108,6 +2144,7 @@ Color PathWalk::trace(const CameraSample &camera) {
                                       wpdfRevUnused, f, sampledLobe)) {
       isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0;
     } else {
+      end = PathEnd::ABSORBED;
       break;
     }
     // Grow the ray cone for the bounce. Dirac bounces leave the spread
@@ -2168,13 +2205,25 @@ Color PathWalk::trace(const CameraSample &camera) {
                              : claimedShare;
     mPrev.shouldShareCausticOnly = !hasExtendedChain;
     for (size_t b = 0; b < mBeta.size(); b++) mBeta[b] *= f[b] / wpdf;
-    if (mBeta.isAnyNonFinite()) break;
-    if (!rouletteSurvives(dtree)) break;
+    if (mBeta.isAnyNonFinite()) {
+      end = PathEnd::FAILED;
+      break;
+    }
+    if (!rouletteSurvives(dtree)) {
+      end = PathEnd::ROULETTE;
+      break;
+    }
     if (!isHair)
       MediumStack::Update(mMediumStack, mPath.allocator, &material,
                           hit.instance, wo, wNext);
     ray = Ray{hit.point, wNext, EPS, INF, mPath.time.fraction};
   }
+  // The bounce count of the deepest contribution the path could have
+  // made: at the bound the walk folded one more vertex's arrival in
+  // and stopped short of its gather.
+  if (mPath.stats)
+    mPath.stats->recordPath(end == PathEnd::BOUND ? mDepth - 2 : mDepth - 1,
+                            end);
   return mL;
 }
 

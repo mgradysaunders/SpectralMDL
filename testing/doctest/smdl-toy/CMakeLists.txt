@@ -17,6 +17,7 @@ smdl_add_doctest(
     "Render/LightTree.cc"
     "Render/Manifold.cc"
     "Render/Medium.cc"
+    "Render/PathStats.cc"
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
   LINK

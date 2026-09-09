@@ -354,9 +354,12 @@ cl::opt<bool> optMNEESunOnly{
     cl::desc("With -mnee and procedural sun-sky, restrict the Dirac-chain "
              "machinery to the sun disk"),
     cl::init(false), cl::cat(catRendering)};
-cl::opt<bool> optMNEEReport{
-    "mnee-report",
-    cl::desc("With -mnee, print the manifold estimator stats after the render"),
+cl::opt<bool> optReport{
+    "report",
+    cl::desc("Print path and contribution statistics after the render, to "
+             "choose -max-bounces and -max-contribution from data\n"
+             "* with -mnee, the manifold estimator statistics as well\n"
+             "* with -json, print them as one JSON document instead"),
     cl::init(false), cl::cat(catRendering)};
 cl::opt<bool> optMNEETestNormalHook{
     "mnee-test-normalhook",
@@ -463,11 +466,10 @@ cl::opt<bool> optListObjects{
     "list-objects",
     cl::desc("List objects present in each scene file and exit"),
     cl::init(false), cl::cat(catUtility)};
-cl::opt<bool> optJSON{
-    "json",
-    cl::desc(
-        "With -list-objects or -list-materials, print JSON instead of a table"),
-    cl::init(false), cl::cat(catUtility)};
+cl::opt<bool> optJSON{"json",
+                      cl::desc("With -list-objects, -list-materials, or "
+                               "-report, print JSON instead of a table"),
+                      cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optCompileAllMaterials{
     "compile-all-materials",
     cl::desc("Compile every material in the given MDL modules unconditionally"),
@@ -651,7 +653,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.render.grid.shouldJitter = bool(optWavelengthJitter);
   // The manifold estimator, minus what needs a scene.
   opts.render.useMNEE = bool(optMNEE);
-  opts.render.shouldReportMNEE = bool(optMNEEReport);
+  opts.render.shouldReportStats = bool(optReport);
   opts.render.useMNEESunOnly = bool(optMNEESunOnly);
   opts.render.shouldTestMNEENormalHook = bool(optMNEETestNormalHook);
   opts.render.mnee.depth = optMNEE

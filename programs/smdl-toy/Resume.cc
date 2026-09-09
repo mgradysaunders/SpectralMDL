@@ -49,9 +49,9 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "mnee-receiver-alpha",
                                                          "sample-offset",
                                                          "threads"};
-  static constexpr auto SESSION_ONLY_FLAGS =
-      std::array{"guide",         "guide-adrrs", "mnee",
-                 "mnee-sun-only", "mnee-report", "mnee-test-normalhook"};
+  static constexpr auto SESSION_ONLY_FLAGS = std::array{
+      "guide",  "guide-adrrs", "mnee", "mnee-sun-only", "mnee-test-normalhook",
+      "report", "json"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};

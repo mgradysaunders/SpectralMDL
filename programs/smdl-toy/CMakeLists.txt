@@ -54,6 +54,7 @@ target_sources(
     "Render/LightTree.cc"
     "Render/Manifold.cc"
     "Render/Medium.cc"
+    "Render/PathStats.cc"
     "Render/PathTracing.cc"
   )
 set_target_properties(

@@ -3,12 +3,14 @@
 #include <cmath>
 #include <ctime>
 #include <filesystem>
-#include <iostream>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "../CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "smdl/Support/Denormals.h"
 #include "smdl/Support/Filesystem.h"
@@ -21,6 +23,7 @@
 #include "Render.h"
 #include "Render/Guiding.h"
 #include "Render/Manifold.h"
+#include "Render/PathStats.h"
 #include "Render/PathTracing.h"
 #include "Render/Sampler.h"
 #include "Resume.h"
@@ -248,7 +251,6 @@ void renderSamples(const Options &opts, const Frame &frame,
   // The manifold-NEE chain depth `tracePath()` runs with, 0 when
   // disabled.
   auto mneeOptions{opts.render.mnee};
-  ManifoldStats::global().setEnabled(opts.render.shouldReportMNEE);
   // The reflective gather searches this in place of the straight shadow
   // segment, so it is built once per render: the layout's marked casters,
   // with what each claims.
@@ -271,6 +273,12 @@ void renderSamples(const Options &opts, const Frame &frame,
   // `RenderContext`. Built once, shared by every worker thread.
   const RenderContext render{compiler,    scene, lights,        mneeOptions,
                              pathOptions, haze,  exteriorMedium};
+  // The tally behind -report: every block adds its own into this one at
+  // the block's end, under the mutex, so the walk itself never shares
+  // a write. Empty when nobody asked, and then no block tallies at all.
+  std::optional<PathStats> stats;
+  std::mutex statsMutex;
+  if (opts.render.shouldReportStats) stats.emplace();
   // Whether every sample draws its own wavelength grid; see
   // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
   const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
@@ -414,6 +422,13 @@ void renderSamples(const Options &opts, const Frame &frame,
                          shadeState,    lightState,       gatherSample,
                          gatherBlocker, blockWavelengths, PathTime{0.0f},
                          &guiding,      records};
+        // The block's own tally, which the walk fills and the end of the
+        // block folds into the render's.
+        std::optional<PathStats> blockStats;
+        if (stats) {
+          blockStats.emplace();
+          path.stats = &*blockStats;
+        }
         const auto walk{makePathWalk(render, path)};
         const size_t kBegin{block * blockSize};
         const size_t kEnd{std::min(numWindowPixels, kBegin + blockSize)};
@@ -490,6 +505,11 @@ void renderSamples(const Options &opts, const Frame &frame,
             film.addTotals(x, y, Lsum.data());
           }
         }
+        if (blockStats) {
+          blockStats->addSamples(chunk * (kEnd - kBegin));
+          const std::lock_guard<std::mutex> lock{statsMutex};
+          stats->add(*blockStats);
+        }
         // Counted where the work is finished rather than where it starts,
         // which at thumbnail sizes is a whole pool's worth of pixels.
         progress.advance(chunk * (kEnd - kBegin));
@@ -550,7 +570,14 @@ void renderSamples(const Options &opts, const Frame &frame,
         std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
     resumed.header.sessions++;
   }
-  if (opts.render.shouldReportMNEE) ManifoldStats::global().print(std::cout);
+  if (stats) {
+    const PathStatsSession session{window, spp, resumed.sampleIndexBase};
+    if (opts.utility.useJSON)
+      stats->printJSON(llvm::outs(), session, pathOptions, mneeOptions);
+    else
+      stats->print(llvm::outs(), session, pathOptions, mneeOptions);
+    llvm::outs().flush();
+  }
   // Resolve the pass combination back into the film every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.

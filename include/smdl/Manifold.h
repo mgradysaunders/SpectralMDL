@@ -18,9 +18,7 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cmath>
-#include <ostream>
 
 #include "smdl/JIT.h"
 
@@ -636,91 +634,6 @@ template <typename DrawXi>
     return false;
   return std::sqrt(alpha.x * alpha.y) >= minAlpha;
 }
-
-/// Counters over every manifold estimate of a render, printed on request.
-/// Relaxed atomics on one process-wide instance, disabled by default: the
-/// counters share cache lines across every render thread, and on wide
-/// machines that contention costs a measurable share of the render, so
-/// the record calls are no-ops until the renderer that will print the
-/// counters calls `setEnabled(true)`.
-class SMDL_EXPORT ManifoldStats final {
-public:
-  /// Which gather and kind an estimate belongs to.
-  enum Kind : int {
-    DIRAC_REFRACT,
-    GLOSSY_REFRACT,
-    DIRAC_REFLECT,
-    GLOSSY_REFLECT,
-    NUM_KINDS
-  };
-
-  [[nodiscard]] static ManifoldStats &global() noexcept;
-
-  /// Enable or disable recording. Set once before render threads start;
-  /// while disabled, every record call below is a no-op.
-  void setEnabled(bool isEnabled) noexcept { mIsEnabled = isEnabled; }
-
-  /// A gather that reached its first walk, and whether that walk
-  /// converged.
-  void recordEstimate(Kind kind, bool isFirstWalkConverged) noexcept;
-
-  /// One walk of a gather, first or trial.
-  void recordWalk(const ManifoldWalkReport &report) noexcept;
-
-  /// One re-walk the arrival side ran for MIS.
-  void recordRewalk(const ManifoldWalkReport &report) noexcept;
-
-  /// One Dirac-chain arrival weighed by re-walk MIS, and whether the
-  /// re-walk reproduced the crossings the path took. The unmatched rest
-  /// keeps weight 1, so the matched fraction is the share of covered
-  /// arrivals any single-seed gather can ever claim.
-  void recordCover(bool isMatched) noexcept;
-
-  /// The reciprocal estimate of one gather, run only for a first solution
-  /// that carried transport: how many trials it took to re-find the
-  /// solution, or that it ran out and dropped the sample.
-  void recordTrials(Kind kind, int trials, bool wasDropped) noexcept;
-
-  /// A converged connection weighed, and whether anything came of it.
-  void recordContribution(bool isNonZero) noexcept;
-
-  void print(std::ostream &out) const;
-
-private:
-  using Counter = std::atomic<uint64_t>;
-  template <typename T>
-  static void addMax(std::atomic<T> &value, T other) noexcept;
-  static void addSum(std::atomic<double> &sum, double value) noexcept;
-
-  bool mIsEnabled{};
-
-  std::array<Counter, NUM_KINDS> mEstimates{};
-  std::array<Counter, NUM_KINDS> mFirstWalkConverged{};
-  std::array<Counter, NUM_KINDS> mTrialEstimates{};
-  std::array<Counter, NUM_KINDS> mTrials{};
-  std::array<Counter, NUM_KINDS> mTrialsMax{};
-  std::array<Counter, NUM_KINDS> mCapDrops{};
-  Counter mWalks{};
-  Counter mWalksConverged{};
-  Counter mWalksRejected{};
-  std::array<Counter, int(ManifoldWalkReport::Failure::NUM_FAILURES)>
-      mWalkFailures{};
-  Counter mWalkIterations{};
-  Counter mWalkIterationsMax{};
-  /// Iterations of the walks that reached convergence (the rejected
-  /// ones included: they converged first), bucketed by count, which is
-  /// what sizing the iteration budget needs; the average above mixes in
-  /// the early failures.
-  std::array<Counter, 65> mConvergedIterations{};
-  std::atomic<double> mWalkResidual{};
-  std::atomic<double> mWalkResidualMax{};
-  Counter mRewalks{};
-  Counter mRewalksConverged{};
-  Counter mCoverArrivals{};
-  Counter mCoverMatched{};
-  Counter mContributions{};
-  Counter mContributionsNonZero{};
-};
 
 /// \}
 

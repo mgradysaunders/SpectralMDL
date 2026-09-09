@@ -239,7 +239,9 @@ struct RenderFlags final {
 
   bool useMNEE{};
 
-  bool shouldReportMNEE{};
+  /// Print the path and contribution statistics after the render; see
+  /// `PathStats`.
+  bool shouldReportStats{};
 
   bool useMNEESunOnly{};
 

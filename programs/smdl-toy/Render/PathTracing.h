@@ -12,6 +12,7 @@ class SkyBasis;
 
 class LightSampler;
 class MNEECasterSet;
+class PathStats;
 
 struct LightSample;
 
@@ -270,6 +271,10 @@ struct PathContext final {
 
   /// How many of `records` the walk filled in.
   uint64_t numRecords{};
+
+  /// Where to tally what the walk adds and where it ends, or null to
+  /// tally nothing; see `PathStats`.
+  PathStats *stats{};
 
   /// The shading state of `hit`, reached along the direction of
   /// propagation `wState`, which is the shared state with this hit's
