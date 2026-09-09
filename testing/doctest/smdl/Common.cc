@@ -1,11 +1,11 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cstring>
 #include <string>
 
 #include "smdl/Common.h"
 
-TEST_CASE("BuildInfo") {
+TEST_CASE("BuildInfo: what the banner reports about this build") {
   auto info{smdl::BuildInfo::get()};
   SUBCASE("Fields documented as never null are never null") {
     CHECK(info.gitBranch != nullptr);
@@ -31,21 +31,21 @@ TEST_CASE("BuildInfo") {
     auto str{info.toString()};
     auto version{std::to_string(info.major) + "." + std::to_string(info.minor) +
                  "." + std::to_string(info.patch)};
-    CHECK(str.find(version) != std::string::npos);
-    CHECK(str.find(info.gitCommit) != std::string::npos);
-    CHECK(str.find(info.llvmVersion) != std::string::npos);
+    CHECK_CONTAINS(str, version);
+    CHECK_CONTAINS(str, info.gitCommit);
+    CHECK_CONTAINS(str, info.llvmVersion);
   }
   SUBCASE("String summary lists every third-party dependency") {
     CHECK(!info.thirdparty.empty());
     auto str{info.toString()};
     for (const auto &dep : info.thirdparty) {
       CHECK(!dep.version.empty());
-      CHECK(str.find(dep.name + " " + dep.version) != std::string::npos);
+      CHECK_CONTAINS(str, dep.name + " " + dep.version);
     }
   }
 }
 
-TEST_CASE("State") {
+TEST_CASE("State: what finalize establishes") {
   SUBCASE("Finalize clamps the texture space count") {
     // A host that asks for more spaces than there are must not send the
     // loops here, or the generated code that reads the same arrays, off

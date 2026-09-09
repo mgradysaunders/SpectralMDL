@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <string>
 
@@ -28,9 +28,8 @@ void parseFail(const std::string &source, int lineNo,
     FAIL("expected a parse error containing '" << fragment << "'");
   } catch (const smdl::Error &error) {
     CAPTURE(error.message);
-    CHECK(error.message.find(fragment) != std::string::npos);
-    CHECK(error.message.find("line " + std::to_string(lineNo) + ":") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.message, fragment);
+    CHECK_CONTAINS(error.message, "line " + std::to_string(lineNo) + ":");
   }
 }
 
@@ -41,7 +40,7 @@ const FlatYAML::Entry &entryOf(const FlatYAML &doc, const std::string &key) {
 }
 } // namespace
 
-TEST_CASE("FlatYAML") {
+TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
   SUBCASE("Scalars, comments, quotes, blank lines, CRLF, BOM") {
     auto doc{parseOK("\xEF\xBB\xBF# A comment\r\n"
                      "\r\n"
@@ -83,7 +82,7 @@ TEST_CASE("FlatYAML") {
                          smdl::Error);
   }
 
-  SUBCASE("Inline lists") {
+  SUBCASE("An inline list parses to its elements") {
     auto doc{parseOK("empty: []\n"
                      "reals: [1, 2.5, -3e2]\n"
                      "words: [ a , \"b, c\" , d ]\n"
@@ -119,7 +118,7 @@ TEST_CASE("FlatYAML") {
     parseFail("a: [1]]\n", 1, "unexpected ']'");
   }
 
-  SUBCASE("Block maps") {
+  SUBCASE("A block map parses to its entries") {
     auto doc{parseOK("normal:\n"
                      "  file: n.png\n"
                      "  range: [0, 1]\n"
@@ -142,7 +141,7 @@ TEST_CASE("FlatYAML") {
     parseFail("\tname: x\n", 1, "tab in indentation");
   }
 
-  SUBCASE("Block sequences of maps") {
+  SUBCASE("A block sequence of maps parses to its entries") {
     auto doc{parseOK("objects:\n"
                      "  - select: rock_03\n"
                      "    materials: [rock, moss]\n"
@@ -172,7 +171,7 @@ TEST_CASE("FlatYAML") {
     parseFail("objects:\n  -\n", 2, "expected 'key: value' after '-'");
   }
 
-  SUBCASE("Keys and structure errors") {
+  SUBCASE("A malformed key or structure is refused") {
     parseFail("just some text\n", 1, "expected 'key: value'");
     parseFail("basecolor:a.png\n", 1, "expected a space after ':'");
     parseFail(": x\n", 1, "expected 'key: value'");
@@ -183,7 +182,7 @@ TEST_CASE("FlatYAML") {
     parseFail("name: \"bad \\n escape\"\n", 1, "invalid escape");
   }
 
-  SUBCASE("Numbers") {
+  SUBCASE("A number parses in every spelling the format admits") {
     CHECK(FlatYAML::parseNumber("1.5") == doctest::Approx(1.5));
     CHECK(FlatYAML::parseNumber("-2") == doctest::Approx(-2.0));
     CHECK(FlatYAML::parseNumber("1e3") == doctest::Approx(1000.0));

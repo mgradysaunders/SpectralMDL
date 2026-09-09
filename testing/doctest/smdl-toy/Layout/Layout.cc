@@ -1,7 +1,6 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -14,20 +13,11 @@
 
 namespace fs = std::filesystem;
 
-// A scratch directory of layout files, removed on destruction.
+// A scratch directory of layout files.
 class LayoutDir final {
 public:
-  LayoutDir() {
-    fs::remove_all(root);
-    fs::create_directories(root);
-  }
-  ~LayoutDir() { fs::remove_all(root); }
-
   std::string write(const std::string &name, const std::string &text) const {
-    const auto path{(root / name).string()};
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    file << text;
-    return path;
+    return root.write(name, text).string();
   }
 
   /// A minimal linear groom: one strand of two points.
@@ -42,7 +32,7 @@ public:
     return path;
   }
 
-  fs::path root{fs::temp_directory_path() / "smdl-toy-layout-test"};
+  TempDir root{"toy-layout"};
 };
 
 namespace {
@@ -142,12 +132,10 @@ TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
     CHECK(layout.items.empty());
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("'light off' cannot apply to ") !=
-          std::string::npos);
-    CHECK(error.message.find("lamp") != std::string::npos);
+    CHECK_CONTAINS(error.message, "'light off' cannot apply to ");
+    CHECK_CONTAINS(error.message, "lamp");
     REQUIRE(error.notes.size() == 1);
-    CHECK(error.notes[0].message.find("declared 'caustic' here") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.notes[0].message, "declared 'caustic' here");
     CHECK(error.location.source->lineAndColumn(error.location.offset).lineNo ==
           2);
     CHECK(error.notes[0]
@@ -254,9 +242,8 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
       FAIL("expected the pack to be refused");
     } catch (const smdl::Error &error) {
       CAPTURE(error.message);
-      CHECK(error.message.find(std::string("a '") + word +
-                               "' override on a place has no record") !=
-            std::string::npos);
+      CHECK_CONTAINS(error.message, std::string("a '") + word +
+                                        "' override on a place has no record");
     }
   }
   // Without a mark the same place packs.
@@ -298,10 +285,9 @@ TEST_CASE("Layout lowering: a camera directive names where it belongs") {
   (void)lowerLayout(diags, entry);
   REQUIRE(diags.errorCount() == 1);
   const auto &error{diags.all().front()};
-  CHECK(error.message.find("unknown directive") != std::string::npos);
+  CHECK_CONTAINS(error.message, "unknown directive");
   REQUIRE(!error.notes.empty());
-  CHECK(error.notes.front().message.find("'.camera' file") !=
-        std::string::npos);
+  CHECK_CONTAINS(error.notes.front().message, "'.camera' file");
 }
 
 TEST_CASE("Layout lowering: motion tracks compose pairwise") {

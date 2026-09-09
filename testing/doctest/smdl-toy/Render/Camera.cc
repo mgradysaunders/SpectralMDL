@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include "Render/Camera.h"
 #include "Render/Sampler.h"
@@ -40,20 +40,16 @@ CameraSample rayAt(const Camera &camera, float u) {
   return sample;
 }
 
-bool isSameVector(const float3 &a, const float3 &b) {
-  return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-
 bool isSameRay(const Ray &a, const Ray &b) {
-  return isSameVector(a.org, b.org) && isSameVector(a.dir, b.dir) &&
-         a.tmin == b.tmin && a.tmax == b.tmax;
+  return isSame(a.org, b.org) && isSame(a.dir, b.dir) && a.tmin == b.tmin &&
+         a.tmax == b.tmax;
 }
 } // namespace
 
 TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
   auto options{openOptions()};
-  SUBCASE("Pinhole") {}
-  SUBCASE("Thin lens") { options.fStop = 2.8f; }
+  SUBCASE("With a pinhole") {}
+  SUBCASE("With a thin lens") { options.fStop = 2.8f; }
   const Camera camera{options};
   const auto r0{rayAt(camera, 0.0f)};
   const auto r1{rayAt(camera, 0.3f)};

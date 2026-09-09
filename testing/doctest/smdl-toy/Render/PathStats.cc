@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
 #include <cfloat>
 #include <cmath>
@@ -21,25 +21,6 @@
 // identity is what the report's numbers stand on.
 
 namespace {
-
-// The render-wide grid at four bands, so that a contribution's average
-// and largest band differ, put back on the way out; see `Color.cc`.
-class ScopedGrid final {
-public:
-  explicit ScopedGrid(const std::vector<float> &wavelens) {
-    gRenderGrid.reset(smdl::Span<const float>(wavelens.data(), wavelens.size()),
-                      false);
-  }
-
-  ScopedGrid(const ScopedGrid &) = delete;
-
-  ScopedGrid &operator=(const ScopedGrid &) = delete;
-
-  ~ScopedGrid() { gRenderGrid = mSaved; }
-
-private:
-  const WavelengthGrid mSaved{gRenderGrid};
-};
 
 [[nodiscard]] Color color4(float a, float b, float c, float d) {
   const float values[]{a, b, c, d};
@@ -121,8 +102,8 @@ bruteForceCountAtOrAbove(const std::vector<Entry> &entries, double bound,
 
 } // namespace
 
-TEST_CASE("PathStats bins") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: the contribution bins") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   SUBCASE("The edges are the 1-2-3-5 series across twenty decades") {
     CHECK(PathStats::binEdge(0) == 0.0);
     CHECK(PathStats::binEdge(1) == 1e-10);
@@ -155,8 +136,8 @@ TEST_CASE("PathStats bins") {
   }
 }
 
-TEST_CASE("PathStats removed-energy identity") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: the removed-energy identity against brute force") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   const auto entries{makeEntries()};
   const auto stats{tallyOf(entries)};
   const double scale{stats.totalEnergy()};
@@ -182,8 +163,8 @@ TEST_CASE("PathStats removed-energy identity") {
   }
 }
 
-TEST_CASE("PathStats bound in force") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: a tally taken with a bound already in force") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   const auto entries{makeEntries()};
   auto stats{tallyOf(entries)};
   const double scale{stats.totalEnergy()};
@@ -210,8 +191,8 @@ TEST_CASE("PathStats bound in force") {
                     scale, 1e-6));
 }
 
-TEST_CASE("PathStats paths and totals") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: where paths end and what they carried") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   PathStats stats{};
   for (int i = 0; i < 3; i++) stats.recordPath(0, PathEnd::ESCAPED);
   stats.recordPath(2, PathEnd::ABSORBED);
@@ -241,8 +222,8 @@ TEST_CASE("PathStats paths and totals") {
   CHECK(empty.rows().empty());
 }
 
-TEST_CASE("PathStats merge") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: merging one block tally into another") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   const auto entries{makeEntries()};
   // One tally takes the first half, another the rest and a deeper path
   // than the first ever sees; a third takes everything.
@@ -293,8 +274,8 @@ TEST_CASE("PathStats merge") {
   CHECK(a.rows().size() == whole.rows().size());
 }
 
-TEST_CASE("PathStats printers") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: the text and JSON reports") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   const auto entries{makeEntries()};
   auto stats{tallyOf(entries)};
   stats.recordPath(0, PathEnd::ESCAPED);
@@ -320,35 +301,34 @@ TEST_CASE("PathStats printers") {
   }};
   SUBCASE("The text, without and with a bound in force") {
     auto text{printText(stats)};
-    CHECK(text.find("5 samples over window 0,0,4,2 at 1 spp from sample 7") !=
-          std::string::npos);
-    CHECK(text.find("2 camera samples vignetted") != std::string::npos);
-    CHECK(text.find("failed") == std::string::npos);
-    CHECK(text.find("bound in force") == std::string::npos);
-    CHECK(text.find("removed at") == std::string::npos);
+    CHECK_CONTAINS(text,
+                   "5 samples over window 0,0,4,2 at 1 spp from sample 7");
+    CHECK_CONTAINS(text, "2 camera samples vignetted");
+    CHECK_NOT_CONTAINS(text, "failed");
+    CHECK_NOT_CONTAINS(text, "bound in force");
+    CHECK_NOT_CONTAINS(text, "removed at");
     path.maxContribution = 30.0f;
     path.maxContributionBounces = 2;
     text = printText(stats);
-    CHECK(text.find("removed at 30") != std::string::npos);
-    CHECK(text.find("-max-contribution 30 from 2 bounces") !=
-          std::string::npos);
+    CHECK_CONTAINS(text, "removed at 30");
+    CHECK_CONTAINS(text, "-max-contribution 30 from 2 bounces");
     path.useRoulette = false;
     path.maxBounces = 3;
     text = printText(stats);
-    CHECK(text.find("-max-bounces 3") != std::string::npos);
+    CHECK_CONTAINS(text, "-max-bounces 3");
   }
   SUBCASE("A failed path is named only when there is one") {
     stats.recordPath(4, PathEnd::FAILED);
-    CHECK(printText(stats).find("failed") != std::string::npos);
+    CHECK_CONTAINS(printText(stats), "failed");
   }
   SUBCASE("A gate past every row says so") {
     path.maxContribution = 30.0f;
     path.maxContributionBounces = 9;
-    CHECK(printText(stats).find("no bound would apply") != std::string::npos);
+    CHECK_CONTAINS(printText(stats), "no bound would apply");
   }
   SUBCASE("An empty tally prints and parses") {
     const PathStats empty{};
-    CHECK(printText(empty).find("No paths were traced") != std::string::npos);
+    CHECK_CONTAINS(printText(empty), "No paths were traced");
     auto parsed{llvm::json::parse(printJSON(empty))};
     if (!parsed) FAIL(llvm::toString(parsed.takeError()));
     const auto *object{parsed->getAsObject()};
@@ -409,8 +389,8 @@ walkReport(int iterations, smdl::ManifoldWalkReport::Outcome outcome,
 
 } // namespace
 
-TEST_CASE("PathStats manifold counters") {
-  ScopedGrid grid{{400, 500, 600, 700}};
+TEST_CASE("PathStats: the manifold section") {
+  const ScopedGrid grid{{400, 500, 600, 700}, false};
   using Outcome = smdl::ManifoldWalkReport::Outcome;
   using Failure = smdl::ManifoldWalkReport::Failure;
   PathStats stats{};
@@ -499,16 +479,16 @@ TEST_CASE("PathStats manifold counters") {
       os.flush();
       return text;
     }};
-    CHECK(printText().find("Manifold estimators") == std::string::npos);
-    CHECK(printJSON().find("\"mnee\"") == std::string::npos);
+    CHECK_NOT_CONTAINS(printText(), "Manifold estimators");
+    CHECK_NOT_CONTAINS(printJSON(), "\"mnee\"");
     mneeOptions.depth = 2;
     const auto text{printText()};
-    CHECK(text.find("Manifold estimators") != std::string::npos);
-    CHECK(text.find("p50 5, p90 7") != std::string::npos);
-    CHECK(text.find("dirac refraction") != std::string::npos);
+    CHECK_CONTAINS(text, "Manifold estimators");
+    CHECK_CONTAINS(text, "p50 5, p90 7");
+    CHECK_CONTAINS(text, "dirac refraction");
     const auto json{printJSON()};
     INFO(json);
-    CHECK(json.find("\"mnee\"") != std::string::npos);
+    CHECK_CONTAINS(json, "\"mnee\"");
     auto parsed{llvm::json::parse(json)};
     if (!parsed) FAIL(llvm::toString(parsed.takeError()));
     const auto *object{parsed->getAsObject()->getObject("mnee")};

@@ -1,7 +1,6 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -10,31 +9,31 @@
 namespace fs = std::filesystem;
 
 namespace {
-void touch(const fs::path &path) { std::ofstream(path) << '\n'; }
+// An empty file at `name`: the locator matches on names alone.
+void touch(const TempDir &dir, std::string_view name) { dir.write(name, "\n"); }
 } // namespace
 
-TEST_CASE("FileLocator") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-filelocator-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("FileLocator: the tile markers and the search order") {
+  TempDir tmpDir{"filelocator"};
   fs::create_directories(tmpDir / "dirA" / "sub");
   fs::create_directories(tmpDir / "dirB");
-  touch(tmpDir / "dirA" / "plain.png");
-  touch(tmpDir / "dirA" / "tex_1001.png");
-  touch(tmpDir / "dirA" / "tex_1012.png");
-  touch(tmpDir / "dirA" / "tex_1101.png");
-  touch(tmpDir / "dirA" / "tex_01001.png");
-  touch(tmpDir / "dirA" / "tex_10011.png");
-  touch(tmpDir / "dirA" / "tex_999.png");
-  touch(tmpDir / "dirA" / "notmytex_1001.png");
-  touch(tmpDir / "dirA" / "1001.png");
-  touch(tmpDir / "dirA" / "1002.png");
-  touch(tmpDir / "dirA" / "uv_u0_v0.png");
-  touch(tmpDir / "dirA" / "uv_u3_v2.png");
-  touch(tmpDir / "dirA" / "t_u0_v0.exr");
-  touch(tmpDir / "dirA" / "t_u1_v1.exr");
-  touch(tmpDir / "dirA" / "t_u2_v1.exr");
-  touch(tmpDir / "dirA" / "sub" / "n_1001.png");
-  touch(tmpDir / "dirB" / "tex_1002.png");
+  touch(tmpDir, "dirA/plain.png");
+  touch(tmpDir, "dirA/tex_1001.png");
+  touch(tmpDir, "dirA/tex_1012.png");
+  touch(tmpDir, "dirA/tex_1101.png");
+  touch(tmpDir, "dirA/tex_01001.png");
+  touch(tmpDir, "dirA/tex_10011.png");
+  touch(tmpDir, "dirA/tex_999.png");
+  touch(tmpDir, "dirA/notmytex_1001.png");
+  touch(tmpDir, "dirA/1001.png");
+  touch(tmpDir, "dirA/1002.png");
+  touch(tmpDir, "dirA/uv_u0_v0.png");
+  touch(tmpDir, "dirA/uv_u3_v2.png");
+  touch(tmpDir, "dirA/t_u0_v0.exr");
+  touch(tmpDir, "dirA/t_u1_v1.exr");
+  touch(tmpDir, "dirA/t_u2_v1.exr");
+  touch(tmpDir, "dirA/sub/n_1001.png");
+  touch(tmpDir, "dirB/tex_1002.png");
   auto locator{smdl::FileLocator()};
   locator.setSearchPwd(false);
   REQUIRE(locator.addSearchDir((tmpDir / "dirA").string()));
@@ -90,7 +89,7 @@ TEST_CASE("FileLocator") {
     CHECK(images[1].tileIndexV == 0);
     CHECK(fs::path(images[1].path).filename() == "t_u2_v1.exr");
   }
-  SUBCASE("All tiles must reside in the same directory") {
+  SUBCASE("Every tile must reside in the same directory") {
     // Both 'dirA' and 'dirB' match the pattern, but 'dirA' is
     // scanned first, so 'dirB/tex_1002.png' must not appear.
     for (auto &image : locator.locateImages("tex_<UDIM>.png")) {
@@ -110,10 +109,10 @@ TEST_CASE("FileLocator") {
     CHECK(images[0].tileIndexV == 0);
     CHECK(fs::path(images[0].path).filename() == "tex_1002.png");
   }
-  SUBCASE("Priority dirs outrank everything") {
+  SUBCASE("A priority directory outranks every other") {
     fs::create_directories(tmpDir / "dirP");
-    touch(tmpDir / "dirP" / "plain.png");
-    touch(tmpDir / "dirP" / "tex_1005.png");
+    touch(tmpDir, "dirP/plain.png");
+    touch(tmpDir, "dirP/tex_1005.png");
     auto priorityDirs{std::vector<std::string>{(tmpDir / "dirP").string()}};
     // Without priority dirs, 'plain.png' resolves in 'dirA', even more so
     // with 'dirA' as the relative-to anchor. With priority dirs, 'dirP'
@@ -128,8 +127,7 @@ TEST_CASE("FileLocator") {
     // The first directory that matches a tile pattern provides all of
     // the results, so the priority dir must eclipse the tiles in 'dirA'.
     auto images{locator.locateImages("tex_<UDIM>.png",
-                                     (tmpDir / "dirA").string(),
-                                     priorityDirs)};
+                                     (tmpDir / "dirA").string(), priorityDirs)};
     REQUIRE(images.size() == 1);
     CHECK(fs::path(images[0].path).filename() == "tex_1005.png");
     // A priority dir must not disable the regular search dirs: a file
@@ -139,5 +137,4 @@ TEST_CASE("FileLocator") {
     REQUIRE(located);
     CHECK(fs::path(*located).parent_path().filename() == "dirB");
   }
-  fs::remove_all(tmpDir);
 }

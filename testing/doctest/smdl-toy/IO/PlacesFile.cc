@@ -1,6 +1,5 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
-#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -8,12 +7,8 @@
 
 #include "IO/PlacesFile.h"
 
-namespace fs = std::filesystem;
-
 TEST_CASE("PlacesFile: round trip") {
-  const auto tmpDir{fs::temp_directory_path() / "smdl-toy-places-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+  TempDir tmpDir{"toy-places"};
   const auto fileName{(tmpDir / "scatter.places").string()};
   // Sheared, scaled, and translated, so that every stored entry of the
   // top three rows is exercised and none is a matrix default.
@@ -74,5 +69,4 @@ TEST_CASE("PlacesFile: round trip") {
     }
     CHECK_THROWS_AS((void)readPlacesFile(fileName), smdl::Error);
   }
-  fs::remove_all(tmpDir);
 }

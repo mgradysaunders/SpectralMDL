@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
 #include <algorithm>
 #include <vector>
@@ -13,33 +13,7 @@
 // rectangle, since that is what makes the accumulated band the mean
 // radiance over the band.
 
-// The render-wide grid set the way `main()` does, so that the `Color`
-// constructors and `jitterWavelengths()` agree on the band count, and
-// put back on the way out: the whole suite shares one process, and the
-// other cases build materials against the grid this one would leave
-// behind.
-namespace {
-
-class ScopedGrid final {
-public:
-  explicit ScopedGrid(const std::vector<float> &wavelens) {
-    gRenderGrid.reset(smdl::Span<const float>(wavelens.data(), wavelens.size()),
-                      true);
-  }
-
-  ScopedGrid(const ScopedGrid &) = delete;
-
-  ScopedGrid &operator=(const ScopedGrid &) = delete;
-
-  ~ScopedGrid() { gRenderGrid = mSaved; }
-
-private:
-  const WavelengthGrid mSaved{gRenderGrid};
-};
-
-} // namespace
-
-TEST_CASE("Color wavelength band edges") {
+TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
   SUBCASE("A uniform grid tiles with bands of the spacing") {
     const auto wavelens{std::vector<float>{400, 500, 600, 700}};
     const auto edges{wavelengthBandEdges(
@@ -77,9 +51,9 @@ TEST_CASE("Color wavelength band edges") {
   }
 }
 
-TEST_CASE("Color wavelength jitter") {
+TEST_CASE("jitterWavelengths: every sample inside its own band") {
   const auto wavelens{std::vector<float>{400, 420, 500, 900}};
-  const ScopedGrid grid{wavelens};
+  const ScopedGrid grid{wavelens, true};
   const auto &edges{gRenderGrid.bandEdges};
   SUBCASE("The offset places every band at the same point of its band") {
     auto wavelengths{Color(smdl::Span<const float>(wavelens.data(), //
@@ -125,7 +99,7 @@ TEST_CASE("Color wavelength jitter") {
   }
 }
 
-TEST_CASE("Color wavelength jitter offset") {
+TEST_CASE("wavelengthJitterOffset: the sequence a pixel draws") {
   SUBCASE("A pixel's offsets stratify") {
     // A power of two of an Owen-scrambled radical inverse falls exactly
     // one per stratum, which is the property the jitter is drawn this

@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
 #include <cmath>
 #include <vector>
@@ -116,40 +116,26 @@ namespace {
 class Fixture final {
 public:
   explicit Fixture(const PrimitiveSpec &spec) {
-    if (auto error{compiler.addCode("::primtest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.addCode("::primtest", MATERIALS));
     LayoutItem item{};
     item.primitive = spec;
     item.materials.all = "dull";
     scene.add(item);
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
 
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 } // namespace
 
-TEST_CASE("Primitive") {
-  SUBCASE("Piece counts") {
+TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
+  SUBCASE("Every shape reports the piece count it is built from") {
     for (const auto &spec : everyShape()) {
       CAPTURE(std::string(spec.name()));
       const auto pieceCount{primitivePieceCount(spec)};

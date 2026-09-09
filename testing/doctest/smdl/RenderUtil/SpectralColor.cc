@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 #include <initializer_list>
@@ -10,12 +10,12 @@
 
 using smdl::SpectralColor;
 
-TEST_CASE("SpectralColor construction and storage") {
-  SUBCASE("Default is empty") {
+TEST_CASE("SpectralColor: construction and where the storage lives") {
+  SUBCASE("A default color has no bands") {
     SpectralColor c{};
     CHECK(c.size() == 0);
   }
-  SUBCASE("Sized fill, inline and heap") {
+  SUBCASE("A sized fill holds its value, inline and on the heap") {
     for (size_t n : {size_t(1), size_t(16), size_t(17), size_t(421)}) {
       CAPTURE(n);
       SpectralColor c{n, 2.5f};
@@ -23,7 +23,7 @@ TEST_CASE("SpectralColor construction and storage") {
       for (size_t i = 0; i < n; i++) CHECK(c[i] == 2.5f);
     }
   }
-  SUBCASE("Span copies exactly its size") {
+  SUBCASE("A span copies exactly its size") {
     const float values[5]{1, 2, 3, 4, 5};
     SpectralColor c{smdl::Span<const float>(values, 5)};
     REQUIRE(c.size() == 5);
@@ -31,19 +31,19 @@ TEST_CASE("SpectralColor construction and storage") {
   }
 }
 
-TEST_CASE("SpectralColor copy and move") {
+TEST_CASE("SpectralColor: copying and moving across the inline boundary") {
   for (size_t n : {size_t(3), size_t(16), size_t(40)}) {
     CAPTURE(n);
     SpectralColor a{n, 1.0f};
     for (size_t i = 0; i < n; i++) a[i] = float(i);
-    SUBCASE("Copy construct") {
+    SUBCASE("Copy construction leaves the source alone") {
       SpectralColor b{a};
       REQUIRE(b.size() == n);
       for (size_t i = 0; i < n; i++) CHECK(b[i] == float(i));
       b[0] = 99.0f; // No aliasing.
       CHECK(a[0] == 0.0f);
     }
-    SUBCASE("Copy assign over different sizes") {
+    SUBCASE("Copy assignment resizes the destination") {
       SpectralColor b{n + 7, 0.0f};
       b = a;
       REQUIRE(b.size() == n);
@@ -53,13 +53,13 @@ TEST_CASE("SpectralColor copy and move") {
       REQUIRE(c.size() == n);
       for (size_t i = 0; i < n; i++) CHECK(c[i] == float(i));
     }
-    SUBCASE("Move construct empties the source") {
+    SUBCASE("Move construction empties the source") {
       SpectralColor b{std::move(a)};
       REQUIRE(b.size() == n);
       for (size_t i = 0; i < n; i++) CHECK(b[i] == float(i));
       CHECK(a.size() == 0);
     }
-    SUBCASE("Move assign empties the source") {
+    SUBCASE("Move assignment empties the source") {
       SpectralColor b{2, 0.0f};
       b = std::move(a);
       REQUIRE(b.size() == n);
@@ -69,7 +69,7 @@ TEST_CASE("SpectralColor copy and move") {
   }
 }
 
-TEST_CASE("SpectralColor arithmetic") {
+TEST_CASE("SpectralColor: the arithmetic operators") {
   // Inline (16 and under) and heap (over 16) storage run different
   // loops, so both sizes are exercised.
   for (size_t n : {size_t(16), size_t(21)}) {
@@ -105,7 +105,7 @@ TEST_CASE("SpectralColor arithmetic") {
   }
 }
 
-TEST_CASE("SpectralColor reductions and predicates") {
+TEST_CASE("SpectralColor: the reductions and the predicates") {
   SpectralColor c{4, 0.0f};
   c[0] = 1.0f, c[1] = 2.0f, c[2] = 3.0f, c[3] = 6.0f;
   CHECK(c.average() == 3.0f);
@@ -154,19 +154,17 @@ SpectralColor withLanesPastSize(std::initializer_list<float> values,
 }
 } // namespace
 
-TEST_CASE("SpectralColor reductions ignore the inline lanes past the size") {
+TEST_CASE(
+    "SpectralColor: the reductions ignore the inline lanes past the size") {
   const float nan{std::numeric_limits<float>::quiet_NaN()};
   const float inf{std::numeric_limits<float>::infinity()};
-  const auto same{[](float a, float b) {
-    return (std::isnan(a) && std::isnan(b)) || a == b;
-  }};
   for (float past : {nan, inf, 1e30f, -1e30f}) {
     CAPTURE(past);
     const SpectralColor c{
         withLanesPastSize({1.0f, -2.0f, 3.0f, 6.0f, 0.5f}, past)};
     REQUIRE(c.size() == 5);
     for (size_t i = 5; i < SpectralColor::INLINE_CAPACITY; i++)
-      REQUIRE(same(c.data()[i], past));
+      REQUIRE(hasSameBits(c.data()[i], past));
     CHECK(c.average() == 8.5f / 5.0f);
     CHECK(c.maxComponent() == 6.0f);
     CHECK(c.minComponent() == -2.0f);

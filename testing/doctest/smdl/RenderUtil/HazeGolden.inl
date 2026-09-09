@@ -1,3 +1,6 @@
+// Include this inside an anonymous namespace: the two golden tables in
+// this directory name some of the same constants, and internal linkage
+// is what keeps them apart.
 // Golden data for the haze extinction spectrum, generated from the
 // same extraction as HazeRural.h by gen_haze_table.py in
 // Empirical-Atm; regenerate rather than editing.

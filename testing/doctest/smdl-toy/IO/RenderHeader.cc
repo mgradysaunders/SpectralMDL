@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <map>
 #include <string>
@@ -55,9 +55,9 @@ TEST_CASE("RenderHeader: round trip") {
     // and left out of the table, which is the drift this type exists to
     // prevent; bump it when a field is genuinely added.
     CHECK(fields.size() == 7);
-    for (const auto &[name, value] : fields) {
-      CAPTURE(name);
-      CHECK(name.rfind("render ", 0) == 0);
+    for (const auto &field : fields) {
+      CAPTURE(field.first);
+      CHECK(field.first.rfind("render ", 0) == 0);
     }
   }
   SUBCASE("A field the file does not carry leaves the value alone") {

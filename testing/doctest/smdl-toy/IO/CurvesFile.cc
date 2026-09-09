@@ -1,14 +1,11 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
-#include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "smdl/Support/Error.h"
 
 #include "IO/CurvesFile.h"
-
-namespace fs = std::filesystem;
 
 namespace {
 
@@ -49,9 +46,7 @@ void checkSame(const CurvesFile &read, const CurvesFile &written) {
 } // namespace
 
 TEST_CASE("CurvesFile: round trip") {
-  const auto tmpDir{fs::temp_directory_path() / "smdl-toy-curves-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+  TempDir tmpDir{"toy-curves"};
   const auto fileName{(tmpDir / "groom.curves").string()};
   SUBCASE("Every basis survives") {
     for (const auto basis :
@@ -142,5 +137,4 @@ TEST_CASE("CurvesFile: round trip") {
       CHECK_THROWS_AS(writeCurvesFile(fileName, groom), smdl::Error);
     }
   }
-  fs::remove_all(tmpDir);
 }

@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -28,8 +28,8 @@ namespace {
 
 } // namespace
 
-TEST_CASE("Doc") {
-  SUBCASE("extraction") {
+TEST_CASE("Doc: what a doc comment extracts to") {
+  SUBCASE("Every documented declaration comes out with its comment") {
     auto mod{extractFromSource(R"(/// The module documentation.
 #smdl
 
@@ -129,7 +129,7 @@ namespace inner {
     CHECK(inner.members[0].qualifiedName == "::test::inner::nested");
     CHECK(inner.members[0].docText == "The nested function.");
   }
-  SUBCASE("signature re-expansion") {
+  SUBCASE("A minified signature is re-expanded to a readable one") {
     // Minified sources, which is how the builtins are embedded, drop the
     // spacing around initializers and separators.
     auto mod{extractFromSource(R"(#smdl
@@ -157,7 +157,7 @@ export const int X=-1;
     CHECK(entryNamed(mod, "g").signature == "export int g(int a, int b)");
     CHECK(entryNamed(mod, "X").signature == "export const int X = -1");
   }
-  SUBCASE("signature leaves compound operators alone") {
+  SUBCASE("Re-expansion leaves a compound operator alone") {
     // Only the `=` that introduces an initializer is spaced apart; a `=`
     // belonging to an operator inside the initializer expression is not.
     auto mod{extractFromSource(R"(#smdl
@@ -175,7 +175,7 @@ export struct s {
     CHECK(s.members[2].signature == "bool c = (1<=2)");
     CHECK(s.members[3].signature == "bool d = (1>=2)");
   }
-  SUBCASE("nameOffset locates the declared name") {
+  SUBCASE("nameOffset locates the declared name inside the signature") {
     auto mod{extractFromSource(R"(#smdl
 /// The function.
 @(pure macro)
@@ -217,13 +217,13 @@ namespace ns {
     CHECK(helper.signature == "@(pure macro) export float helper(float x)");
     CHECK(helper.nameOffset == helper.signature.find("helper("));
   }
-  SUBCASE("anno::description fallback") {
+  SUBCASE("A conformant module falls back on 'anno::description'") {
     auto mod{extractFromSource(R"(mdl 1.7;
 export const int X = 0 [[ anno::description("The described constant.") ]];
 )")};
     CHECK(entryNamed(mod, "X").docText == "The described constant.");
   }
-  SUBCASE("findSymbol and removeHidden") {
+  SUBCASE("findSymbol finds what removeHidden has not taken away") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// The exported function.
@@ -266,7 +266,7 @@ namespace ns {
     CHECK(docs.findSymbol("s::visible").size() == 1);
     CHECK(docs.findSymbol("s::_invisible").empty());
   }
-  SUBCASE("removeHidden drops empty namespaces") {
+  SUBCASE("removeHidden drops a namespace it has emptied") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 namespace ns {
@@ -281,7 +281,7 @@ namespace _detail {
     CHECK(docs.findSymbol("_detail").empty());
     CHECK(docs.findSymbol("hidden").empty());
   }
-  SUBCASE("printJSON escaping") {
+  SUBCASE("printJSON escapes what JSON requires escaping") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// A "quoted" doc with a backslash \ and
@@ -289,22 +289,22 @@ namespace _detail {
 export const int X = 0;
 )"));
     auto json{docs.printJSON()};
-    CHECK(json.find("\"modules\"") != std::string::npos);
-    CHECK(json.find("A \\\"quoted\\\" doc with a backslash \\\\ and\\n"
-                    "a second line.") != std::string::npos);
+    CHECK_CONTAINS(json, "\"modules\"");
+    CHECK_CONTAINS(json, "A \\\"quoted\\\" doc with a backslash \\\\ and\\n"
+                         "a second line.");
   }
-  SUBCASE("printMarkdown") {
+  SUBCASE("printMarkdown renders the declaration and its comment") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// The function.
 export int f(int a) = a;
 )"));
     auto md{docs.printMarkdown()};
-    CHECK(md.find("# Module `::test`") != std::string::npos);
-    CHECK(md.find("## `::test::f`") != std::string::npos);
-    CHECK(md.find("The function.") != std::string::npos);
+    CHECK_CONTAINS(md, "# Module `::test`");
+    CHECK_CONTAINS(md, "## `::test::f`");
+    CHECK_CONTAINS(md, "The function.");
   }
-  SUBCASE("builtin modules") {
+  SUBCASE("The builtin module names are reported") {
     auto names{getBuiltinModuleNames()};
     CHECK(!names.empty());
     CHECK(std::find(names.begin(), names.end(), "df") != names.end());

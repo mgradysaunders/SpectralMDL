@@ -1,16 +1,13 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <fstream>
 #include <vector>
 
 #include "smdl/RenderUtil/MajorantWalk.h"
 #include "smdl/Resource/VoxelGrid.h"
 #include "smdl/Support/RNG.h"
-
-namespace fs = std::filesystem;
 
 using smdl::float2;
 using smdl::float3;
@@ -56,10 +53,8 @@ std::vector<MajorantSpan> spansOf(const smdl::VoxelGrid *grid,
 }
 } // namespace
 
-TEST_CASE("MajorantSpanWalk") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-majorant-walk-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
+  TempDir tmpDir{"majorant-walk"};
   // A field whose cells are its voxels (the extent is within the cell
   // target), with a dense blob, a plane of small values, and empty space
   // around them, so that spans of every kind occur.
@@ -77,7 +72,7 @@ TEST_CASE("MajorantSpanWalk") {
   const auto fileName{(tmpDir / "field.vol").string()};
   writeVol(fileName, NX, NY, NZ, values);
   smdl::VoxelGrid grid{};
-  REQUIRE(!grid.loadFromFile(fileName));
+  REQUIRE_OK(grid.loadFromFile(fileName));
   REQUIRE(grid.getMajorantExtent() == 1);
   REQUIRE(smdl::isAllTrue(grid.getMajorantCount() == int3(NX, NY, NZ)));
   const float invMaxValue{1.0f / grid.getMaxValue()};
@@ -170,5 +165,4 @@ TEST_CASE("MajorantSpanWalk") {
     CHECK(
         spansOf(nullptr, float3(), float3(1, 0, 0), 0.0f, 0.0f, true).empty());
   }
-  fs::remove_all(tmpDir);
 }

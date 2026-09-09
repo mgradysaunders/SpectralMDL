@@ -1,3 +1,6 @@
+// Include this inside an anonymous namespace: the two golden tables in
+// this directory name some of the same constants, and internal linkage
+// is what keeps them apart.
 // Golden data generated from the fitted Python models
 // (sky_model_rural_view2.npz + direct_model_rural_sparse5.npz) by
 // gen_doctest_golden.py in Empirical-Atm, seed 20260810; regenerate rather

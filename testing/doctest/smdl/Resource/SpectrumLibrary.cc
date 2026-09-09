@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cstdint>
 #include <cstring>
@@ -17,7 +17,6 @@ namespace {
 // which makes the expected values obvious after the sort.
 const float WAVELENGTHS_UM[4] = {0.7f, 0.4f, 0.6f, 0.5f};
 const float CURVE_SCALES[3] = {10.0f, 100.0f, 1.0f};
-} // namespace
 
 struct LibraryOptions final {
   const char *fileType{"ENVI Spectral Library"};
@@ -32,7 +31,6 @@ struct LibraryOptions final {
   bool isTruncated{false};
 };
 
-namespace {
 // Append the bytes of `bits` in the given order, independent of the
 // host's own.
 template <typename Bits>
@@ -98,15 +96,13 @@ void checkCurve(smdl::SpectrumView view, float scale) {
 }
 } // namespace
 
-TEST_CASE("SpectrumLibrary") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-spectrum-library-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
+  TempDir tmpDir{"spectrum-library"};
   smdl::SpectrumLibrary library{};
-  SUBCASE("Float, little endian, micrometers") {
+  SUBCASE("A float, little-endian, micrometer library reads back its curves") {
     auto fileName{(tmpDir / "float.sli").string()};
     writeLibrary(fileName, {});
-    REQUIRE(!library.loadFromFile(fileName));
+    REQUIRE_OK(library.loadFromFile(fileName));
     for (int i = 0; i < 3; i++)
       checkCurve(library.getCurveByIndex(i), CURVE_SCALES[i]);
     // Names match without regard to case.
@@ -118,7 +114,8 @@ TEST_CASE("SpectrumLibrary") {
     CHECK(library.getCurveByIndex(3).curveValues.empty());
     CHECK(library.getCurveByName("Delta").curveValues.empty());
   }
-  SUBCASE("Double, big endian, nanometers, header offset") {
+  SUBCASE(
+      "A double, big-endian, nanometer library with a header offset does too") {
     LibraryOptions opts{};
     opts.dataType = 5;
     opts.byteOrder = 1;
@@ -127,25 +124,25 @@ TEST_CASE("SpectrumLibrary") {
     opts.wavelengthScale = 1000.0f;
     auto fileName{(tmpDir / "double.sli").string()};
     writeLibrary(fileName, opts);
-    REQUIRE(!library.loadFromFile(fileName));
+    REQUIRE_OK(library.loadFromFile(fileName));
     for (int i = 0; i < 3; i++)
       checkCurve(library.getCurveByIndex(i), CURVE_SCALES[i]);
   }
-  SUBCASE("Without spectra names") {
+  SUBCASE("A library with no spectra names still reads") {
     LibraryOptions opts{};
     opts.useNames = false;
     auto fileName{(tmpDir / "unnamed.sli").string()};
     writeLibrary(fileName, opts);
-    REQUIRE(!library.loadFromFile(fileName));
+    REQUIRE_OK(library.loadFromFile(fileName));
     checkCurve(library.getCurveByIndex(2), CURVE_SCALES[2]);
     CHECK(library.getCurveByName("Alpha").curveValues.empty());
   }
-  SUBCASE("Rejects") {
+  SUBCASE("A malformed library is refused and leaves nothing behind") {
     // A good load first, so each rejection also shows the failure
     // leaves the library empty rather than half loaded.
     auto goodName{(tmpDir / "good.sli").string()};
     writeLibrary(goodName, {});
-    REQUIRE(!library.loadFromFile(goodName));
+    REQUIRE_OK(library.loadFromFile(goodName));
     auto reject{[&](const char *name, const LibraryOptions &opts) {
       CAPTURE(name);
       auto fileName{(tmpDir / name).string()};
@@ -177,5 +174,4 @@ TEST_CASE("SpectrumLibrary") {
         library.loadFromFile((tmpDir / "headerless.sli").string()).has_value());
     CHECK(library.loadFromFile((tmpDir / "missing.sli").string()).has_value());
   }
-  fs::remove_all(tmpDir);
 }

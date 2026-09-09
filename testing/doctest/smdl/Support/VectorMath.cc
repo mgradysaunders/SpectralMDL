@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 
@@ -20,7 +20,7 @@ namespace {
 
 } // namespace
 
-TEST_CASE("VectorMath") {
+TEST_CASE("VectorMath: transforming points and directions") {
   SUBCASE("transformPoint carries the translation") {
     const auto xf{awkwardTransform()};
     const auto origin{smdl::transformPoint(xf, float3(0.0f, 0.0f, 0.0f))};
@@ -33,7 +33,7 @@ TEST_CASE("VectorMath") {
     CHECK(point.y == doctest::Approx(0.0 + 3.0 + 0.0 - 2.0));
     CHECK(point.z == doctest::Approx(0.0 + 0.0 - 1.0 + 5.0));
   }
-  SUBCASE("transformDirection drops it") {
+  SUBCASE("transformDirection drops the translation") {
     const auto xf{awkwardTransform()};
     const auto zero{smdl::transformDirection(xf, float3(0.0f, 0.0f, 0.0f))};
     CHECK(zero.x == 0.0f);

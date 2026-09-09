@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 #include <random>
@@ -24,8 +24,8 @@ float channelWavelength(int channel) { return 400.0f + 5.0f * channel; }
 
 } // namespace
 
-TEST_CASE("SunSky") {
-  SUBCASE("sky radiance golden") {
+TEST_CASE("SunSky: the fitted radiances against their generator") {
+  SUBCASE("The sky radiance matches the generator") {
     // The golden spectra come from the Python fit at exact grid
     // wavelengths, so the port must reproduce them to float roundoff;
     // the tolerance only absorbs the float3 direction round trip. The
@@ -58,7 +58,7 @@ TEST_CASE("SunSky") {
       CHECK(worst < 5e-4f);
     }
   }
-  SUBCASE("sun radiance golden") {
+  SUBCASE("The sun radiance matches the generator") {
     // The golden direct irradiance is recovered from the disk radiance
     // by multiplying the solid angle back, in the fit's native units
     // exactly as in the sky case above.
@@ -87,7 +87,7 @@ TEST_CASE("SunSky") {
       CHECK(worst < 5e-4f);
     }
   }
-  SUBCASE("radiance units") {
+  SUBCASE("The radiances are in the library-wide units") {
     // The fit tables carry the conversion from the fit's native
     // W/(cm^2 sr um) to the library-wide W/(m^2 sr nm), so the outputs
     // scale exactly with the scale factor and the factor of ten between
@@ -111,7 +111,8 @@ TEST_CASE("SunSky") {
     for (int j = 0; j < 4; j++)
       CHECK(libraryValues[j] == doctest::Approx(10.0f * nativeValues[j]));
   }
-  SUBCASE("wavelength interpolation and clamping") {
+  SUBCASE(
+      "A wavelength between channels interpolates, and past the ends clamps") {
     const auto sunSky{
         smdl::SunSky(smdl::SunSkyOptions{makeDirection(40.0, 0.0)})};
     const auto direction{makeDirection(60.0, 120.0)};
@@ -134,7 +135,7 @@ TEST_CASE("SunSky") {
     CHECK(sunRadiance[3] == sunRadiance[4]);
     CHECK(sunRadiance[5] == sunRadiance[6]);
   }
-  SUBCASE("azimuthal symmetry and below-horizon continuation") {
+  SUBCASE("The sky is azimuthally symmetric and continues below the horizon") {
     const auto sunSky{
         smdl::SunSky(smdl::SunSkyOptions{makeDirection(50.0, 30.0)})};
     const float wavelens[3] = {550.0f, 1000.0f, 1650.0f};
@@ -159,7 +160,7 @@ TEST_CASE("SunSky") {
         for (int j = 0; j < 3; j++) CHECK(radiance[j] >= 0.0f);
       }
   }
-  SUBCASE("sun physics sanity") {
+  SUBCASE("The sun disk and its solid angle agree") {
     // Broadband direct-normal irradiance at mid sun elevation must land
     // in the clear-sky range (a MODTRAN run at these parameters gives
     // 662 W/m^2 over 0.4-2.5um), and it must decrease with airmass.
@@ -203,7 +204,7 @@ TEST_CASE("SunSky") {
     skyOnly.skyRadiance(makeDirection(50.0, 90.0), 2, wavelens, skyRadiance);
     CHECK(skyRadiance[1] > 0.0f);
   }
-  SUBCASE("moon multiplier golden") {
+  SUBCASE("The moon multiplier matches the generator") {
     // Golden values from the Python reference implementation
     // (rolo_table.npz, gen_rolo_table.py in Empirical-Atm), which is
     // validated to float roundoff against the rimopy reference of the
@@ -214,7 +215,7 @@ TEST_CASE("SunSky") {
     struct MoonCase {
       double wavelenNm, phaseDeg, distanceScale, expected;
     };
-    constexpr MoonCase kMoonCases[] = {
+    constexpr MoonCase MOON_CASES[] = {
         {400, 2, 1, 2.0117149621426005e-06},
         {550, 7.5, 1, 1.9950311760825594e-06},
         {555, -30, 1, 1.0810244917549532e-06},
@@ -226,7 +227,7 @@ TEST_CASE("SunSky") {
         {550, 155, 1, 4.8203680193892179e-09},
         {1600, 178, 1, 1.8678159109339203e-11},
     };
-    for (const auto &moonCase : kMoonCases) {
+    for (const auto &moonCase : MOON_CASES) {
       CAPTURE(moonCase.wavelenNm);
       CAPTURE(moonCase.phaseDeg);
       CHECK(smdl::SunSky::moonMultiplier(moonCase.wavelenNm, moonCase.phaseDeg,
@@ -237,7 +238,7 @@ TEST_CASE("SunSky") {
     CHECK(smdl::SunSky::moonMultiplier(550.0, 180.0) == 0.0);
     CHECK(smdl::SunSky::moonMultiplier(550.0, -180.0) == 0.0);
   }
-  SUBCASE("moonlight composition") {
+  SUBCASE("Moonlight composes the sun spectrum with the phase") {
     // Moonlight mode must be exactly the sun-sky evaluation at the
     // same geometry times the per-channel lunar multiplier, for the
     // sky dome and the disk alike. Compare at exact grid channels,
@@ -292,7 +293,7 @@ TEST_CASE("SunSky") {
     for (int j = 0; j < 5; j++) CHECK(dark[j] == 0.0f);
     CHECK(newMoon.averageRadiance() == 0.0f);
   }
-  SUBCASE("sampling") {
+  SUBCASE("Sampling agrees with the reported density") {
     // For each compensation setting, `sample()` must agree with
     // `pdf()`, and the Monte Carlo estimate of the radiance integral
     // must match quadrature over the support of the pdf: the smooth

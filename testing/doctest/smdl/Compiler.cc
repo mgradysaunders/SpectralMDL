@@ -1,127 +1,25 @@
-#include "doctest.h"
+#include "CompileFixtures.h"
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
 #include "smdl/Compiler.h"
-#include "smdl/Manifold.h"
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/MD5Hash.h"
 
 namespace fs = std::filesystem;
 
-namespace {
-void writeFile(const fs::path &path, std::string_view text) {
-  fs::create_directories(path.parent_path());
-  std::ofstream(path) << text;
-}
-
-// Add everything, compile, and JIT-compile. Returns the first error
-// message, or the empty string on success.
-std::string buildAll(smdl::Compiler &compiler,
-                     const std::vector<fs::path> &paths,
-                     std::vector<std::string> *names = nullptr) {
-  for (const auto &path : paths)
-    if (auto error{compiler.add(path.string(), names)}) return error->message;
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return error->message;
-  if (auto error{compiler.jitCompile()}) return error->message;
-  return {};
-}
-
-// Count the image symbol declarations in an LLVM-IR dump. A declaration
-// starts a line; every other mention of the symbol is a use.
-size_t countImageSymbols(std::string_view ir) {
-  auto count{size_t(0)};
-  for (size_t pos{}; (pos = ir.find("\n@smdl.image.", pos)) != ir.npos; pos++)
-    count++;
-  return count;
-}
-
-// A minimal named material definition.
-std::string materialDef(std::string_view name) {
-  auto text{std::string()};
-  text += "material ";
-  text += name;
-  text += "() = material(\n"
-          "  surface: material_surface(\n"
-          "    scattering: df::diffuse_reflection_bsdf(tint: 0.5)),\n"
-          ");\n";
-  return text;
-}
-
-// CRC-32 (polynomial 0xEDB88320) as required by the ZIP format.
-uint32_t zipCrc32(std::string_view data) {
-  uint32_t crc{0xFFFFFFFFu};
-  for (auto ch : data) {
-    crc ^= uint8_t(ch);
-    for (int i = 0; i < 8; i++)
-      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-  }
-  return ~crc;
-}
-
-// Write a minimal ZIP with stored (uncompressed) entries, sufficient
-// for the miniz-based 'Archive' reader to load as an '.mdr'.
-void writeZip(const fs::path &path,
-              const std::vector<std::pair<std::string, std::string>> &entries) {
-  auto out{std::string()};
-  auto putU16{[&](uint32_t value) {
-    out += char(value & 0xFF);
-    out += char((value >> 8) & 0xFF);
-  }};
-  auto putU32{[&](uint32_t value) {
-    putU16(value & 0xFFFF);
-    putU16(value >> 16);
-  }};
-  auto offsets{std::vector<uint32_t>()};
-  for (const auto &[name, data] : entries) {
-    offsets.push_back(uint32_t(out.size()));
-    putU32(0x04034B50u); // Local file header
-    putU16(20), putU16(0), putU16(0), putU16(0), putU16(0);
-    putU32(zipCrc32(data));
-    putU32(uint32_t(data.size())), putU32(uint32_t(data.size()));
-    putU16(uint32_t(name.size())), putU16(0);
-    out += name, out += data;
-  }
-  auto centralOffset{uint32_t(out.size())};
-  for (size_t i = 0; i < entries.size(); i++) {
-    const auto &[name, data]{entries[i]};
-    putU32(0x02014B50u); // Central directory header
-    putU16(20), putU16(20), putU16(0), putU16(0), putU16(0), putU16(0);
-    putU32(zipCrc32(data));
-    putU32(uint32_t(data.size())), putU32(uint32_t(data.size()));
-    putU16(uint32_t(name.size())), putU16(0), putU16(0), putU16(0), putU16(0);
-    putU32(0);
-    putU32(offsets[i]);
-    out += name;
-  }
-  auto centralSize{uint32_t(out.size()) - centralOffset};
-  putU32(0x06054B50u); // End of central directory
-  putU16(0), putU16(0);
-  putU16(uint32_t(entries.size())), putU16(uint32_t(entries.size()));
-  putU32(centralSize), putU32(centralOffset);
-  putU16(0);
-  fs::create_directories(path.parent_path());
-  std::ofstream(path, std::ios::binary) << out;
-}
-} // namespace
-
-TEST_CASE("Compiler module resolution") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("Compiler: the import resolution order") {
+  TempDir tmpDir{"compiler-modules"};
   SUBCASE("Weak-relative import prefers the importing module's directory") {
-    writeFile(tmpDir / "root" / "util.mdl",
-              "#smdl\nexport const int marker_top = 1;\n");
-    writeFile(tmpDir / "root" / "sub" / "util.mdl",
-              "#smdl\nexport const int marker_sub = 1;\n");
-    writeFile(tmpDir / "root" / "sub" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport util::marker_sub;\n" +
-                  materialDef("main_ok"));
+    tmpDir.write("root/util.mdl", "#smdl\nexport const int marker_top = 1;\n");
+    tmpDir.write("root/sub/util.mdl",
+                 "#smdl\nexport const int marker_sub = 1;\n");
+    tmpDir.write("root/sub/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport util::marker_sub;\n" +
+                     minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
@@ -129,26 +27,23 @@ TEST_CASE("Compiler module resolution") {
   SUBCASE("Import binds the resolved module even if the name is absent") {
     // 'sub/util.mdl' shadows 'util.mdl' for 'sub/main.mdl', and there is
     // no fallback re-resolution when the imported name is missing.
-    writeFile(tmpDir / "root" / "util.mdl",
-              "#smdl\nexport const int marker_top = 1;\n");
-    writeFile(tmpDir / "root" / "sub" / "util.mdl",
-              "#smdl\nexport const int marker_sub = 1;\n");
-    writeFile(tmpDir / "root" / "sub" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport util::marker_top;\n" +
-                  materialDef("main_bad"));
+    tmpDir.write("root/util.mdl", "#smdl\nexport const int marker_top = 1;\n");
+    tmpDir.write("root/sub/util.mdl",
+                 "#smdl\nexport const int marker_sub = 1;\n");
+    tmpDir.write("root/sub/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport util::marker_top;\n" +
+                     minimalMaterial("main_bad"));
     smdl::Compiler compiler{};
     auto message{buildAll(compiler, {tmpDir / "root"})};
     CHECK(message != "");
-    CHECK(message.find("cannot resolve import") != std::string::npos);
+    CHECK_CONTAINS(message, "cannot resolve import");
   }
   SUBCASE("Weak-relative import falls back to search roots in add order") {
-    writeFile(tmpDir / "rootA" / "util.mdl",
-              "#smdl\nexport const int marker_a = 1;\n");
-    writeFile(tmpDir / "rootB" / "util.mdl",
-              "#smdl\nexport const int marker_b = 1;\n");
-    writeFile(tmpDir / "rootC" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport util::marker_a;\n" +
-                  materialDef("main_ok"));
+    tmpDir.write("rootA/util.mdl", "#smdl\nexport const int marker_a = 1;\n");
+    tmpDir.write("rootB/util.mdl", "#smdl\nexport const int marker_b = 1;\n");
+    tmpDir.write("rootC/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport util::marker_a;\n" +
+                     minimalMaterial("main_ok"));
     {
       // 'rootA' added first: its 'util' wins, so 'marker_a' resolves.
       smdl::Compiler compiler{};
@@ -160,59 +55,54 @@ TEST_CASE("Compiler module resolution") {
       smdl::Compiler compiler{};
       auto message{buildAll(
           compiler, {tmpDir / "rootB", tmpDir / "rootA", tmpDir / "rootC"})};
-      CHECK(message.find("cannot resolve import") != std::string::npos);
+      CHECK_CONTAINS(message, "cannot resolve import");
     }
   }
   SUBCASE("Strict-relative '.' import never falls back to search roots") {
-    writeFile(tmpDir / "root" / "util.mdl",
-              "#smdl\nexport const int marker_top = 1;\n");
-    writeFile(tmpDir / "root" / "pkg" / "strict.mdl",
-              "#smdl\nimport .::util::marker_top;\n");
+    tmpDir.write("root/util.mdl", "#smdl\nexport const int marker_top = 1;\n");
+    tmpDir.write("root/pkg/strict.mdl", "#smdl\nimport .::util::marker_top;\n");
     {
       smdl::Compiler compiler{};
       auto message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK(message.find("cannot resolve import") != std::string::npos);
+      CHECK_CONTAINS(message, "cannot resolve import");
     }
     // The same import spelled weakly succeeds via the search root.
-    writeFile(tmpDir / "root" / "pkg" / "strict.mdl",
-              "#smdl\nimport util::marker_top;\n");
+    tmpDir.write("root/pkg/strict.mdl", "#smdl\nimport util::marker_top;\n");
     {
       smdl::Compiler compiler{};
       CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     }
   }
-  SUBCASE("Strict-relative '..' traversal") {
-    writeFile(tmpDir / "root" / "p2" / "helper.mdl",
-              "#smdl\nexport const int marker = 1;\n");
-    writeFile(tmpDir / "root" / "p1" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport ..::p2::helper::marker;\n" +
-                  materialDef("main_ok"));
+  SUBCASE("A strict-relative '..' traverses to the parent") {
+    tmpDir.write("root/p2/helper.mdl", "#smdl\nexport const int marker = 1;\n");
+    tmpDir.write("root/p1/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport ..::p2::helper::marker;\n" +
+                     minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
   }
   SUBCASE("Absolute '::' prefers builtins over search roots") {
     // A module named 'df' on disk cannot shadow the builtin '::df' ...
-    writeFile(tmpDir / "root" / "df.mdl",
-              "#smdl\nexport const int fake_fn = 1;\n");
-    writeFile(tmpDir / "root" / "main.mdl", "#smdl\nimport ::df::fake_fn;\n");
+    tmpDir.write("root/df.mdl", "#smdl\nexport const int fake_fn = 1;\n");
+    tmpDir.write("root/main.mdl", "#smdl\nimport ::df::fake_fn;\n");
     {
       smdl::Compiler compiler{};
       auto message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK(message.find("cannot resolve import") != std::string::npos);
+      CHECK_CONTAINS(message, "cannot resolve import");
     }
     // ... but a weak-relative 'df' import binds the disk module.
-    writeFile(tmpDir / "root" / "main.mdl", "#smdl\nimport df::fake_fn;\n");
+    tmpDir.write("root/main.mdl", "#smdl\nimport df::fake_fn;\n");
     {
       smdl::Compiler compiler{};
       CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     }
   }
-  SUBCASE("Nested builtin absolute import") {
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport ::models::prospect::*;\n"
-              "import ::models::marmit::*;\n" +
-                  materialDef("main_ok"));
+  SUBCASE("A nested builtin resolves absolutely") {
+    tmpDir.write("root/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport ::models::prospect::*;\n"
+                 "import ::models::marmit::*;\n" +
+                     minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
@@ -220,18 +110,17 @@ TEST_CASE("Compiler module resolution") {
   SUBCASE("Nested builtin priority mirrors single-component rules") {
     // A disk module at 'models/prospect.mdl' cannot shadow the builtin
     // '::models::prospect' on an absolute import ...
-    writeFile(tmpDir / "root" / "models" / "prospect.mdl",
-              "#smdl\nexport const int fake_fn = 1;\n");
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport ::models::prospect::fake_fn;\n");
+    tmpDir.write("root/models/prospect.mdl",
+                 "#smdl\nexport const int fake_fn = 1;\n");
+    tmpDir.write("root/main.mdl",
+                 "#smdl\nimport ::models::prospect::fake_fn;\n");
     {
       smdl::Compiler compiler{};
       auto message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK(message.find("cannot resolve import") != std::string::npos);
+      CHECK_CONTAINS(message, "cannot resolve import");
     }
     // ... but a weak import binds the disk module.
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport models::prospect::fake_fn;\n");
+    tmpDir.write("root/main.mdl", "#smdl\nimport models::prospect::fake_fn;\n");
     {
       smdl::Compiler compiler{};
       CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
@@ -240,47 +129,42 @@ TEST_CASE("Compiler module resolution") {
   SUBCASE("Weak import falls back to nested builtins") {
     // No disk 'models/prospect' anywhere, so the weak path reaches the
     // builtin after the relative and search-root strategies miss.
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport models::prospect::*;\n");
+    tmpDir.write("root/main.mdl", "#smdl\nimport models::prospect::*;\n");
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
   }
   SUBCASE("Using aliases resolve through the same machinery") {
-    writeFile(tmpDir / "root" / "target.mdl",
-              "#smdl\nexport const int marker = 1;\n");
-    writeFile(tmpDir / "root" / "sub" / "helper.mdl",
-              "#smdl\nexport const int marker = 2;\n");
-    writeFile(tmpDir / "root" / "main.mdl", "#smdl\n"
-                                            "import ::df::*;\n"
-                                            "using u = \"target\";\n"
-                                            "using v = .::sub::helper;\n"
-                                            "import u::marker;\n"
-                                            "import v::*;\n" +
-                                                materialDef("main_ok"));
+    tmpDir.write("root/target.mdl", "#smdl\nexport const int marker = 1;\n");
+    tmpDir.write("root/sub/helper.mdl",
+                 "#smdl\nexport const int marker = 2;\n");
+    tmpDir.write("root/main.mdl", "#smdl\n"
+                                  "import ::df::*;\n"
+                                  "using u = \"target\";\n"
+                                  "using v = .::sub::helper;\n"
+                                  "import u::marker;\n"
+                                  "import v::*;\n" +
+                                      minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler module identity") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("Compiler: the qualified name a search root derives") {
+  TempDir tmpDir{"compiler-identity"};
   SUBCASE("Qualified names derive from search roots") {
-    writeFile(tmpDir / "root" / "top.mdl", "#smdl\nexport const int x = 1;\n");
-    writeFile(tmpDir / "root" / "vendor" / "metals" / "steel.mdl",
-              "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/top.mdl", "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/vendor/metals/steel.mdl",
+                 "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
-    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     std::sort(names.begin(), names.end());
     CHECK(names ==
           std::vector<std::string>{"::top", "::vendor::metals::steel"});
   }
   SUBCASE("Single-file add uses the parent directory as implicit root") {
-    writeFile(tmpDir / "dir" / "pkg" / "mod.mdl",
-              "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("dir/pkg/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
     REQUIRE(
@@ -288,77 +172,67 @@ TEST_CASE("Compiler module identity") {
     CHECK(names == std::vector<std::string>{"::mod"});
   }
   SUBCASE("Re-adding the same search root is a no-op") {
-    writeFile(tmpDir / "root" / "mod.mdl", "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.add((tmpDir / "root").string()));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string()));
     auto names{std::vector<std::string>()};
-    CHECK(!compiler.add((tmpDir / "root").string(), &names));
+    CHECK_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names.empty());
   }
   SUBCASE("Nested search roots are rejected") {
-    writeFile(tmpDir / "root" / "sub" / "mod.mdl",
-              "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/sub/mod.mdl", "#smdl\nexport const int x = 1;\n");
     {
       smdl::Compiler compiler{};
-      REQUIRE(!compiler.add((tmpDir / "root").string()));
-      auto error{compiler.add((tmpDir / "root" / "sub").string())};
-      REQUIRE(error.has_value());
-      CHECK(error->message.find("nested") != std::string::npos);
+      REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+      CHECK_ERROR(compiler.add((tmpDir / "root" / "sub").string()), "nested");
     }
     {
       smdl::Compiler compiler{};
-      REQUIRE(!compiler.add((tmpDir / "root" / "sub").string()));
-      auto error{compiler.add((tmpDir / "root").string())};
-      REQUIRE(error.has_value());
-      CHECK(error->message.find("nested") != std::string::npos);
+      REQUIRE_OK(compiler.add((tmpDir / "root" / "sub").string()));
+      CHECK_ERROR(compiler.add((tmpDir / "root").string()), "nested");
     }
   }
   SUBCASE("Same qualified name across roots loads both, later is shadowed") {
-    writeFile(tmpDir / "root1" / "util.mdl",
-              "#smdl\nexport const int marker_a = 1;\n");
-    writeFile(tmpDir / "root2" / "util.mdl",
-              "#smdl\nexport const int marker_b = 1;\n");
-    writeFile(tmpDir / "root2" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport util::marker_b;\n" +
-                  materialDef("main_ok"));
+    tmpDir.write("root1/util.mdl", "#smdl\nexport const int marker_a = 1;\n");
+    tmpDir.write("root2/util.mdl", "#smdl\nexport const int marker_b = 1;\n");
+    tmpDir.write("root2/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport util::marker_b;\n" +
+                     minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     auto names1{std::vector<std::string>()};
     auto names2{std::vector<std::string>()};
-    REQUIRE(!compiler.add((tmpDir / "root1").string(), &names1));
-    REQUIRE(!compiler.add((tmpDir / "root2").string(), &names2));
+    REQUIRE_OK(compiler.add((tmpDir / "root1").string(), &names1));
+    REQUIRE_OK(compiler.add((tmpDir / "root2").string(), &names2));
     CHECK(names1 == std::vector<std::string>{"::util"});
     // The shadowed module is still loaded and reported (a warning is
     // logged), and the weak-relative import inside 'root2' still binds
     // 'root2/util.mdl', so the build succeeds.
     std::sort(names2.begin(), names2.end());
     CHECK(names2 == std::vector<std::string>{"::main", "::util"});
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.findMaterial("main_ok") != nullptr);
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler MDR archives") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("Compiler: an MDR archive") {
+  TempDir tmpDir{"compiler-archives"};
   SUBCASE("Archive names encode the package prefix") {
     writeZip(
         tmpDir / "root" / "vendor.metals.mdr",
         {{"vendor/metals.mdl", "#smdl\nexport const int metals_marker = 1;\n"},
          {"vendor/metals/steel.mdl", "#smdl\nimport ::df::*;\n"
                                      "import ..::metals::metals_marker;\n" +
-                                         materialDef("brushed")}});
+                                         minimalMaterial("brushed")}});
     // A loose module importing through the archive: absolutely and
     // weakly.
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport ::df::*;\n"
-              "import ::vendor::metals::steel::*;\n"
-              "import vendor::metals::metals_marker;\n" +
-                  materialDef("main_ok"));
+    tmpDir.write("root/main.mdl", "#smdl\nimport ::df::*;\n"
+                                  "import ::vendor::metals::steel::*;\n"
+                                  "import vendor::metals::metals_marker;\n" +
+                                      minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
-    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     std::sort(names.begin(), names.end());
     CHECK(names == std::vector<std::string>{"::main", "::vendor::metals",
                                             "::vendor::metals::steel"});
@@ -367,44 +241,38 @@ TEST_CASE("Compiler MDR archives") {
     auto materialDef{compiler.findMaterial("brushed")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::vendor::metals::steel::brushed");
-    CHECK(materialDef->moduleFileName.find("vendor.metals.mdr") !=
-          std::string::npos);
+    CHECK_CONTAINS(materialDef->moduleFileName, "vendor.metals.mdr");
   }
   SUBCASE("Non-conforming archives are rejected") {
     writeZip(tmpDir / "root" / "vendor.metals.mdr",
              {{"other/thing.mdl", "#smdl\nexport const int x = 1;\n"}});
     smdl::Compiler compiler{};
-    auto error{compiler.add((tmpDir / "root").string())};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("conform") != std::string::npos);
+    CHECK_ERROR(compiler.add((tmpDir / "root").string()), "conform");
   }
   SUBCASE("Empty package prefix components are rejected") {
     writeZip(tmpDir / "root" / "vendor..metals.mdr",
              {{"vendor/metals.mdl", "#smdl\n"}});
     smdl::Compiler compiler{};
-    auto error{compiler.add((tmpDir / "root").string())};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("empty package prefix") != std::string::npos);
+    CHECK_ERROR(compiler.add((tmpDir / "root").string()),
+                "empty package prefix");
   }
   SUBCASE("Loose duplicates of archive contents are errors") {
     writeZip(tmpDir / "root" / "vendor.metals.mdr",
              {{"vendor/metals.mdl", "#smdl\nexport const int x = 1;\n"}});
-    writeFile(tmpDir / "root" / "vendor" / "metals" / "extra.mdl",
-              "#smdl\nexport const int y = 1;\n");
+    tmpDir.write("root/vendor/metals/extra.mdl",
+                 "#smdl\nexport const int y = 1;\n");
     {
       smdl::Compiler compiler{};
-      auto error{compiler.add((tmpDir / "root").string())};
-      REQUIRE(error.has_value());
-      CHECK(error->message.find("conflicts with loose") != std::string::npos);
+      CHECK_ERROR(compiler.add((tmpDir / "root").string()),
+                  "conflicts with loose");
     }
     // Loose siblings outside the enclosed package are fine.
     fs::remove_all(tmpDir / "root" / "vendor" / "metals");
-    writeFile(tmpDir / "root" / "vendor" / "other.mdl",
-              "#smdl\nexport const int y = 1;\n");
+    tmpDir.write("root/vendor/other.mdl", "#smdl\nexport const int y = 1;\n");
     {
       smdl::Compiler compiler{};
       auto names{std::vector<std::string>()};
-      REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+      REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
       std::sort(names.begin(), names.end());
       CHECK(names ==
             std::vector<std::string>{"::vendor::metals", "::vendor::other"});
@@ -415,9 +283,7 @@ TEST_CASE("Compiler MDR archives") {
     writeZip(tmpDir / "root" / "a.b.c.mdr", {{"a/b/c.mdl", "#smdl\n"}});
     {
       smdl::Compiler compiler{};
-      auto error{compiler.add((tmpDir / "root").string())};
-      REQUIRE(error.has_value());
-      CHECK(error->message.find("overlapping") != std::string::npos);
+      CHECK_ERROR(compiler.add((tmpDir / "root").string()), "overlapping");
     }
     // Sibling prefixes are fine.
     fs::remove(tmpDir / "root" / "a.b.c.mdr");
@@ -425,13 +291,14 @@ TEST_CASE("Compiler MDR archives") {
     {
       smdl::Compiler compiler{};
       auto names{std::vector<std::string>()};
-      REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+      REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
       std::sort(names.begin(), names.end());
       CHECK(names == std::vector<std::string>{"::a::b", "::a::c"});
     }
   }
-  SUBCASE("Cross-root archive shadowing") {
-    auto archiveEntry{"#smdl\nimport ::df::*;\n" + materialDef("shared_arch")};
+  SUBCASE("An archive under a later root is shadowed") {
+    auto archiveEntry{"#smdl\nimport ::df::*;\n" +
+                      minimalMaterial("shared_arch")};
     writeZip(tmpDir / "root1" / "vendor.metals.mdr",
              {{"vendor/metals.mdl", archiveEntry}});
     writeZip(tmpDir / "root2" / "vendor.metals.mdr",
@@ -440,25 +307,23 @@ TEST_CASE("Compiler MDR archives") {
     REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
     auto materialDef{compiler.findMaterial("shared_arch")};
     REQUIRE(materialDef != nullptr);
-    CHECK(materialDef->moduleFileName.find("root1") != std::string::npos);
+    CHECK_CONTAINS(materialDef->moduleFileName, "root1");
     CHECK(compiler.findMaterials("shared_arch").size() == 1);
   }
   SUBCASE("Archives below the top level are ignored") {
     writeZip(tmpDir / "root" / "sub" / "x.y.mdr", {{"x/y.mdl", "#smdl\n"}});
-    writeFile(tmpDir / "root" / "mod.mdl", "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
-    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler MDLE") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("Compiler: an MDLE container") {
+  TempDir tmpDir{"compiler-mdle"};
   const auto mainModule{"#smdl\nimport ::df::*;\nexport const int m = 1;\n" +
-                        materialDef("main")};
+                        minimalMaterial("main")};
   SUBCASE("Content-based identity and the 'main' convention") {
     writeZip(tmpDir / "CoolSteel.mdle", {{"main.mdl", mainModule}});
     auto expectedName{"::mdle::" + std::string(smdl::MD5Hash::hashFile(
@@ -471,8 +336,7 @@ TEST_CASE("Compiler MDLE") {
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == expectedName + "::main");
     CHECK(materialDef->moduleName == "CoolSteel");
-    CHECK(materialDef->moduleFileName.find("CoolSteel.mdle") !=
-          std::string::npos);
+    CHECK_CONTAINS(materialDef->moduleFileName, "CoolSteel.mdle");
     // Unique here, so the bare suffix also resolves.
     CHECK(compiler.findMaterial("main") == materialDef);
   }
@@ -480,7 +344,7 @@ TEST_CASE("Compiler MDLE") {
     writeZip(tmpDir / "a" / "one.mdle", {{"main.mdl", mainModule}});
     writeZip(tmpDir / "b" / "two.mdle", {{"main.mdl", mainModule}});
     auto otherModule{"#smdl\nimport ::df::*;\nexport const int m = 2;\n" +
-                     materialDef("main")};
+                     minimalMaterial("main")};
     writeZip(tmpDir / "c" / "three.mdle", {{"main.mdl", otherModule}});
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
@@ -505,35 +369,27 @@ TEST_CASE("Compiler MDLE") {
   SUBCASE("Missing 'main.mdl' is an error") {
     writeZip(tmpDir / "bad.mdle", {{"other.mdl", "#smdl\n"}});
     smdl::Compiler compiler{};
-    auto error{compiler.add((tmpDir / "bad.mdle").string())};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("main.mdl") != std::string::npos);
+    CHECK_ERROR(compiler.add((tmpDir / "bad.mdle").string()), "main.mdl");
   }
   SUBCASE("Directory walks do not ingest MDLEs") {
     writeZip(tmpDir / "root" / "loose.mdle", {{"main.mdl", mainModule}});
-    writeFile(tmpDir / "root" / "mod.mdl", "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     auto names{std::vector<std::string>()};
-    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
   }
   SUBCASE("Container resources extract and anchor resource lookups") {
     // Generate a tiny PNG with the library's own writer and pack it
     // beside a 'main.mdl' that references it.
     const uint8_t texels[12] = {255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255};
-    fs::create_directories(tmpDir);
-    auto pngPath{(tmpDir / "wood.png").string()};
-    REQUIRE(!smdl::write8bitImage(pngPath, 2, 2, 3, texels));
-    auto pngBytes{std::string()};
-    {
-      auto stream{std::ifstream(pngPath, std::ios::binary)};
-      pngBytes.assign(std::istreambuf_iterator<char>(stream),
-                      std::istreambuf_iterator<char>());
-    }
+    REQUIRE_OK(
+        smdl::write8bitImage((tmpDir / "wood.png").string(), 2, 2, 3, texels));
+    const auto pngBytes{tmpDir.read("wood.png")};
     REQUIRE(!pngBytes.empty());
     writeZip(tmpDir / "Textured.mdle",
              {{"main.mdl", "#smdl\nimport ::df::*;\nimport ::tex::*;\n" +
-                               materialDef("main") +
+                               minimalMaterial("main") +
                                "unit_test \"MDLE texture\" {\n"
                                "  const auto t = texture_2d(\"wood.png\", "
                                "tex::gamma_linear);\n"
@@ -554,33 +410,21 @@ TEST_CASE("Compiler MDLE") {
     // Run the in-container unit test: it asserts the texture actually
     // loaded (a resource that failed to resolve would only have
     // produced a warning and a default texture).
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    REQUIRE(!compiler.runUnitTests(state));
+    StateStorage storage{compiler};
+    auto state{storage.makeState()};
+    REQUIRE_OK(compiler.runUnitTests(state));
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler findMaterial") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
-  SUBCASE("Qualified and suffix lookup") {
-    writeFile(tmpDir / "root" / "alpha.mdl", "#smdl\nimport ::df::*;\n" +
-                                                 materialDef("unique_mat") +
-                                                 materialDef("dup"));
-    writeFile(tmpDir / "root" / "beta.mdl", "#smdl\nimport ::df::*;\n" +
-                                                materialDef("dup") +
-                                                materialDef("beta_only"));
+TEST_CASE("findMaterial: looking a material up by name") {
+  TempDir tmpDir{"compiler-materials"};
+  SUBCASE("A material is found by qualified name and by suffix") {
+    tmpDir.write("root/alpha.mdl", "#smdl\nimport ::df::*;\n" +
+                                       minimalMaterial("unique_mat") +
+                                       minimalMaterial("dup"));
+    tmpDir.write("root/beta.mdl", "#smdl\nimport ::df::*;\n" +
+                                      minimalMaterial("dup") +
+                                      minimalMaterial("beta_only"));
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     // Unique bare name resolves and carries the qualified identity.
@@ -617,8 +461,8 @@ TEST_CASE("Compiler findMaterial") {
     CHECK(compiler.getMaterials().size() == 4);
   }
   SUBCASE("Suffix matching at multiple depths") {
-    writeFile(tmpDir / "root" / "vendor" / "metals" / "steel.mdl",
-              "#smdl\nimport ::df::*;\n" + materialDef("brushed"));
+    tmpDir.write("root/vendor/metals/steel.mdl",
+                 "#smdl\nimport ::df::*;\n" + minimalMaterial("brushed"));
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     auto materialDef{compiler.findMaterial("brushed")};
@@ -636,13 +480,13 @@ TEST_CASE("Compiler findMaterial") {
     CHECK(compiler.findMaterial("metals::brushed") == nullptr);
     CHECK(compiler.findMaterial("shed") == nullptr);
   }
-  SUBCASE("Namespace-nested materials") {
-    writeFile(tmpDir / "root" / "nsmod.mdl", "#smdl\nimport ::df::*;\n"
-                                             "namespace outer {\n"
-                                             "namespace inner {\n" +
-                                                 materialDef("nested") +
-                                                 "}\n"
-                                                 "}\n");
+  SUBCASE("A material inside a namespace is found by its path") {
+    tmpDir.write("root/nsmod.mdl", "#smdl\nimport ::df::*;\n"
+                                   "namespace outer {\n"
+                                   "namespace inner {\n" +
+                                       minimalMaterial("nested") +
+                                       "}\n"
+                                       "}\n");
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     auto materialDef{compiler.findMaterial("nested")};
@@ -656,12 +500,12 @@ TEST_CASE("Compiler findMaterial") {
     CHECK(compiler.findMaterial("nsmod::nested") == nullptr);
   }
   SUBCASE("Same module name in different search roots") {
-    writeFile(tmpDir / "root1" / "mat.mdl", "#smdl\nimport ::df::*;\n" +
-                                                materialDef("shared_name") +
-                                                materialDef("only_r1"));
-    writeFile(tmpDir / "root2" / "mat.mdl", "#smdl\nimport ::df::*;\n" +
-                                                materialDef("shared_name") +
-                                                materialDef("only_r2"));
+    tmpDir.write("root1/mat.mdl", "#smdl\nimport ::df::*;\n" +
+                                      minimalMaterial("shared_name") +
+                                      minimalMaterial("only_r1"));
+    tmpDir.write("root2/mat.mdl", "#smdl\nimport ::df::*;\n" +
+                                      minimalMaterial("shared_name") +
+                                      minimalMaterial("only_r2"));
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
     // 'root2/mat.mdl' is shadowed by 'root1/mat.mdl', so its materials
@@ -669,7 +513,7 @@ TEST_CASE("Compiler findMaterial") {
     // module itself by qualified name.
     auto materialDef{compiler.findMaterial("mat::shared_name")};
     REQUIRE(materialDef != nullptr);
-    CHECK(materialDef->moduleFileName.find("root1") != std::string::npos);
+    CHECK_CONTAINS(materialDef->moduleFileName, "root1");
     CHECK(compiler.findMaterials("shared_name").size() == 1);
     CHECK(compiler.findMaterial("mat::only_r1") != nullptr);
     CHECK(compiler.findMaterial("mat::only_r2") == nullptr);
@@ -691,10 +535,10 @@ TEST_CASE("Compiler findMaterial") {
     }
   }
   SUBCASE("Symbols are deterministic across identical compiles") {
-    writeFile(tmpDir / "root1" / "mat.mdl",
-              "#smdl\nimport ::df::*;\n" + materialDef("shared_name"));
-    writeFile(tmpDir / "root2" / "mat.mdl",
-              "#smdl\nimport ::df::*;\n" + materialDef("shared_name"));
+    tmpDir.write("root1/mat.mdl",
+                 "#smdl\nimport ::df::*;\n" + minimalMaterial("shared_name"));
+    tmpDir.write("root2/mat.mdl",
+                 "#smdl\nimport ::df::*;\n" + minimalMaterial("shared_name"));
     auto symbolNames{[&]() {
       smdl::Compiler compiler{};
       REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
@@ -706,15 +550,13 @@ TEST_CASE("Compiler findMaterial") {
     }};
     CHECK(symbolNames() == symbolNames());
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler desired materials") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-desired-materials-test"};
-  fs::remove_all(tmpDir);
-  writeFile(tmpDir / "root" / "mats.mdl", "#smdl\nimport ::df::*;\n" +
-                                              materialDef("wanted") +
-                                              materialDef("unwanted"));
+TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
+  TempDir tmpDir{"desired-materials"};
+  tmpDir.write("root/mats.mdl", "#smdl\nimport ::df::*;\n" +
+                                    minimalMaterial("wanted") +
+                                    minimalMaterial("unwanted"));
   SUBCASE("Filter compiles only the desired materials") {
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"wanted"});
@@ -732,12 +574,12 @@ TEST_CASE("Compiler desired materials") {
   SUBCASE("Skipped materials emit no entry points at all") {
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"wanted"});
-    REQUIRE(!compiler.add((tmpDir / "root").string()));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     auto ir{std::string()};
-    REQUIRE(!compiler.dump(smdl::DUMP_FORMAT_IR, ir));
-    CHECK(ir.find("mats.wanted.evaluate") != std::string::npos);
-    CHECK(ir.find("mats.unwanted") == std::string::npos);
+    REQUIRE_OK(compiler.dump(smdl::DUMP_FORMAT_IR, ir));
+    CHECK_CONTAINS(ir, "mats.wanted.evaluate");
+    CHECK_NOT_CONTAINS(ir, "mats.unwanted");
   }
   SUBCASE("Matching rules mirror findMaterial") {
     // Absolute names must match exactly; '::wanted' matches nothing, so
@@ -750,9 +592,9 @@ TEST_CASE("Compiler desired materials") {
     CHECK(compiler.getSkippedMaterialNames().size() == 1);
   }
   SUBCASE("A kept material may instantiate a skipped one") {
-    writeFile(tmpDir / "root2" / "variants.mdl",
-              "#smdl\nimport ::df::*;\n" + materialDef("base") +
-                  "material derived() = base();\n");
+    tmpDir.write("root2/variants.mdl", "#smdl\nimport ::df::*;\n" +
+                                           minimalMaterial("base") +
+                                           "material derived() = base();\n");
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"derived"});
     REQUIRE(buildAll(compiler, {tmpDir / "root2"}) == "");
@@ -766,1104 +608,30 @@ TEST_CASE("Compiler desired materials") {
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     REQUIRE(compiler.getMaterials().size() == 1);
     compiler.setDesiredMaterials({});
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.getMaterials().size() == 2);
     CHECK(compiler.getSkippedMaterialNames().empty());
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler static material flags") {
-  using namespace smdl::JIT;
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
-  fs::remove_all(tmpDir);
-  writeFile(
-      tmpDir / "root" / "mats.mdl",
-      "#smdl\n"
-      "import ::df::*;\n"
-      "import ::state::*;\n"
-      "import ::scene::*;\n"
-      "export material mat_default() = material();\n"
-      "export material mat_plastic() = material(\n"
-      "  surface: material_surface(\n"
-      "    scattering: df::diffuse_reflection_bsdf(tint: 0.8)));\n"
-      "export material mat_cutout_const() = material(\n"
-      "  geometry: material_geometry(cutout_opacity: 0.5));\n"
-      "export material mat_cutout_folds() = material(\n"
-      "  geometry: material_geometry(cutout_opacity: 0.25 + 0.75));\n"
-      "export material mat_cutout_runtime() = material(\n"
-      "  geometry: material_geometry(\n"
-      "    cutout_opacity: scene::data_lookup_float(\"opacity\", 1.0)));\n"
-      "export material mat_thin() = material(thin_walled: true);\n"
-      "export material mat_thin_runtime() = material(\n"
-      "  thin_walled: state::position().x > 0.0);\n"
-      "export material mat_volume() = material(\n"
-      "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
-      "export material mat_volume_additive() = material(\n"
-      "  ior: 1.0,\n"
-      "  volume: material_volume(\n"
-      "    scattering_coefficient: color(0.5),\n"
-      "    additive: true));\n"
-      "export material mat_volume_surface() = material(\n"
-      "  ior: 1.33,\n"
-      "  surface: material_surface(\n"
-      "    scattering: df::specular_bsdf(mode: "
-      "df::scatter_reflect_transmit)),\n"
-      "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
-      "export material mat_emissive() = material(\n"
-      "  surface: material_surface(\n"
-      "    scattering: df::diffuse_reflection_bsdf(),\n"
-      "    emission: material_emission(emission: df::diffuse_edf())));\n");
-  smdl::Compiler compiler{};
-  REQUIRE(!compiler.add((tmpDir / "root").string()));
-  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-  REQUIRE(!compiler.jitCompile());
-  auto get{[&](std::string_view name) {
-    auto materialDef{compiler.findMaterial(name)};
-    REQUIRE(materialDef != nullptr);
-    return materialDef;
-  }};
-  // The six '#isDefault'-derived structural bits are always known, and
-  // at -O2 the constant-foldable value bits are too, including the
-  // heterogeneous-volume bit (every material here has a constant, or
-  // no, volume, so the '.volumeEvaluate' body folds away from the
-  // state and homogeneity is proven), the displacement bit (every
-  // material here has a constant, in fact default, displacement, so
-  // the '.displacementProbe' body folds to the zero vector), and the
-  // normal-remap bit (every material here keeps the state normal, so
-  // the '.normalProbe' body folds to the zero vector too).
-  constexpr int structuralBits{
-      smdl::MATERIAL_HAS_SURFACE | smdl::MATERIAL_HAS_BACKFACE |
-      smdl::MATERIAL_HAS_SURFACE_EMISSION |
-      smdl::MATERIAL_HAS_BACKFACE_EMISSION | smdl::MATERIAL_HAS_VOLUME |
-      smdl::MATERIAL_HAS_HAIR};
-  constexpr int allBits{
-      structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
-      smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME |
-      smdl::MATERIAL_HAS_DISPLACEMENT | smdl::MATERIAL_REMAPS_NORMAL};
-  SUBCASE("Structural and constant-foldable bits are known") {
-    auto matDefault{get("mat_default")};
-    CHECK(matDefault->staticFlagsKnown == allBits);
-    CHECK(matDefault->staticFlags == 0);
-    CHECK(matDefault->isAlwaysOpaque());
-    auto matPlastic{get("mat_plastic")};
-    CHECK(matPlastic->staticFlagsKnown == allBits);
-    CHECK(matPlastic->staticFlags == smdl::MATERIAL_HAS_SURFACE);
-    CHECK(matPlastic->isAlwaysOpaque());
-    auto matCutoutConst{get("mat_cutout_const")};
-    CHECK((matCutoutConst->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) != 0);
-    CHECK((matCutoutConst->staticFlags & smdl::MATERIAL_HAS_CUTOUT) != 0);
-    CHECK(!matCutoutConst->isAlwaysOpaque());
-    auto matCutoutFolds{get("mat_cutout_folds")};
-    CHECK(matCutoutFolds->isAlwaysOpaque());
-    auto matThin{get("mat_thin")};
-    CHECK((matThin->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) != 0);
-    CHECK((matThin->staticFlags & smdl::MATERIAL_THIN_WALLED) != 0);
-    auto matVolume{get("mat_volume")};
-    CHECK(matVolume->hasVolume());
-    CHECK(matVolume->hasHomogeneousVolume());
-    // Not opaque because it passes shadow rays through, not because it
-    // has a volume: the volume-with-surface material below blocks at
-    // every hit and is opaque despite its interior.
-    CHECK(matVolume->isNullInterface());
-    CHECK(!matVolume->isAlwaysOpaque());
-    auto matVolumeSurface{get("mat_volume_surface")};
-    CHECK(matVolumeSurface->hasVolume());
-    CHECK(!matVolumeSurface->isNullInterface());
-    CHECK(matVolumeSurface->isAlwaysOpaque());
-    auto matEmissive{get("mat_emissive")};
-    CHECK((matEmissive->staticFlags & smdl::MATERIAL_HAS_SURFACE_EMISSION) !=
-          0);
-    CHECK(matEmissive->isAlwaysOpaque());
-  }
-  SUBCASE("Runtime-dependent bits degrade to unknown") {
-    auto matCutoutRuntime{get("mat_cutout_runtime")};
-    CHECK(matCutoutRuntime->staticFlagsKnown ==
-          (allBits & ~smdl::MATERIAL_HAS_CUTOUT));
-    CHECK(!matCutoutRuntime->isAlwaysOpaque());
-    auto matThinRuntime{get("mat_thin_runtime")};
-    CHECK(matThinRuntime->staticFlagsKnown ==
-          (allBits & ~smdl::MATERIAL_THIN_WALLED));
-  }
-  SUBCASE("Instances satisfy the static-flags invariant") {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    for (const auto &materialDef : compiler.getMaterials()) {
-      auto materialEval{smdl::JIT::Material(state, &materialDef)};
-      CHECK((materialEval.eval.flags & materialDef.staticFlagsKnown) ==
-            materialDef.staticFlags);
-    }
-    // 'opacityEvaluate' agrees with the full evaluation and requires no
-    // allocator.
-    auto stateNoAlloc{state};
-    stateNoAlloc.allocator = nullptr;
-    for (const auto &materialDef : compiler.getMaterials()) {
-      auto materialEval{smdl::JIT::Material(state, &materialDef)};
-      CHECK(materialDef.opacityEvaluate(stateNoAlloc) ==
-            materialEval.getCutoutOpacity());
-    }
-    CHECK(get("mat_default")->opacityEvaluate(stateNoAlloc) == 1.0f);
-    CHECK(get("mat_cutout_const")->opacityEvaluate(stateNoAlloc) == 0.5f);
-    // The additive-volume declaration reaches the instance flags.
-    auto instAdditive{smdl::JIT::Material(state, get("mat_volume_additive"))};
-    CHECK(instAdditive.hasAdditiveVolume());
-    auto instReplacing{smdl::JIT::Material(state, get("mat_volume"))};
-    CHECK(!instReplacing.hasAdditiveVolume());
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler volume evaluate") {
-  using namespace smdl::JIT;
-  auto tmpDir{fs::temp_directory_path() / "smdl-volume-evaluate-test"};
-  fs::remove_all(tmpDir);
-  // A 32x8x4 Mitsuba volume holding the linear field
-  // 'value = x + 10*y + 100*z', so trilinear filtering reproduces it
-  // exactly and the maximum is 31 + 70 + 300 = 401.
-  {
-    fs::create_directories(tmpDir / "root");
-    std::ofstream file((tmpDir / "root" / "linear.vol").string(),
-                       std::ios::binary);
-    file.write("VOL", 3);
-    const char version{3};
-    file.write(&version, 1);
-    const int32_t header[5] = {1, 32, 8, 4, 1};
-    file.write(reinterpret_cast<const char *>(header), sizeof(header));
-    const float bound[6] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
-    file.write(reinterpret_cast<const char *>(bound), sizeof(bound));
-    for (int z = 0; z < 4; z++)
-      for (int y = 0; y < 8; y++)
-        for (int x = 0; x < 32; x++) {
-          const float value{float(x) + 10.0f * float(y) + 100.0f * float(z)};
-          file.write(reinterpret_cast<const char *>(&value), sizeof(value));
-        }
-  }
-  writeFile(tmpDir / "root" / "vols.mdl",
-            "#smdl\n"
-            "import ::df::*;\n"
-            "import ::state::*;\n"
-            "import ::tex::*;\n"
-            "export material vol_homog() = material(\n"
-            "  ior: 1.0,\n"
-            "  volume: material_volume(\n"
-            "    scattering: df::anisotropic_vdf(),\n"
-            "    absorption_coefficient: color(0.5),\n"
-            "    scattering_coefficient: color(2.0),\n"
-            "    max_scattering_coefficient: color(2.0)));\n"
-            "export material vol_hetero() = material(\n"
-            "  ior: 1.0,\n"
-            "  volume: material_volume(\n"
-            "    scattering: df::anisotropic_vdf(),\n"
-            "    scattering_coefficient: 4.0 *\n"
-            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
-            "                        state::position()) * color(1.0),\n"
-            "    max_scattering_coefficient: 4.0 *\n"
-            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0)));\n"
-            "export material vol_none() = material();\n"
-            "export material vol_fire() = material(\n"
-            "  ior: 1.0,\n"
-            "  volume: material_volume(\n"
-            "    scattering: df::anisotropic_vdf(),\n"
-            "    absorption_coefficient: 2.0 *\n"
-            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
-            "                        state::position()) * color(1.0),\n"
-            "    emission_intensity: 0.25 *\n"
-            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
-            "                        state::position()) * color(1.0),\n"
-            "    max_absorption_coefficient: 2.0 *\n"
-            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0)));\n"
-            "export material vol_hinted() = material(\n"
-            "  ior: 1.0,\n"
-            "  volume: material_volume(\n"
-            "    scattering: df::anisotropic_vdf(),\n"
-            "    scattering_coefficient: 4.0 *\n"
-            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
-            "                        state::position()) * color(1.0),\n"
-            "    max_scattering_coefficient: 4.0 *\n"
-            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0),\n"
-            "    density: texture_3d(\"linear.vol\"),\n"
-            "    density_bound_min: float3(0.0),\n"
-            "    density_bound_max: float3(1.0)));\n");
-  smdl::Compiler compiler{};
-  REQUIRE(!compiler.add((tmpDir / "root").string()));
-  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-  REQUIRE(!compiler.jitCompile());
-  auto get{[&](std::string_view name) {
-    auto materialDef{compiler.findMaterial(name)};
-    REQUIRE(materialDef != nullptr);
-    return materialDef;
-  }};
-  const auto N{size_t(compiler.wavelengthBaseMax)};
-  auto sigmaA{std::vector<float>(N)};
-  auto sigmaS{std::vector<float>(N)};
-  auto emission{std::vector<float>(N)};
-  // 'volumeEvaluate' is allocation-free, so the partial state carries
-  // no allocator: only the object-space position identifies the query.
-  auto state{smdl::State()};
-  SUBCASE("Homogeneous coefficients are position-independent") {
-    auto materialDef{get("vol_homog")};
-    CHECK(materialDef->hasVolume());
-    CHECK(materialDef->hasHomogeneousVolume());
-    materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                                emission.data());
-    for (size_t i = 0; i < N; i++) {
-      CHECK(sigmaA[i] == 0.5f);
-      CHECK(sigmaS[i] == 2.0f);
-    }
-  }
-  SUBCASE("Heterogeneous coefficients follow the position") {
-    auto materialDef{get("vol_hetero")};
-    CHECK(materialDef->hasVolume());
-    CHECK(!materialDef->hasHomogeneousVolume());
-    // The center of voxel (3, 4, 2) has the exactly representable
-    // texture coordinate below, where the field is 243.
-    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
-    materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                                emission.data());
-    for (size_t i = 0; i < N; i++) {
-      CHECK(sigmaA[i] == 0.0f);
-      CHECK(sigmaS[i] == 4.0f * 243.0f);
-    }
-    // The center of voxel (0, 0, 0), where the field is 0.
-    state.position = smdl::float3(0.5f / 32.0f, 0.5f / 8.0f, 0.5f / 4.0f);
-    materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                                emission.data());
-    for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 0.0f);
-  }
-  SUBCASE("Emission follows the position and absent emission is zero") {
-    auto materialDef{get("vol_fire")};
-    CHECK(materialDef->hasVolume());
-    // The center of voxel (3, 4, 2), where the linear field is 243:
-    // emission is 0.25 times the field, absorption 2 times it.
-    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
-    materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                                emission.data());
-    for (size_t i = 0; i < N; i++) {
-      CHECK(sigmaA[i] == 2.0f * 243.0f);
-      CHECK(sigmaS[i] == 0.0f);
-      CHECK(emission[i] == 0.25f * 243.0f);
-    }
-    // A material that declares no emission resolves it to zero.
-    auto hetero{get("vol_hetero")};
-    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
-    hetero->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                           emission.data());
-    for (size_t i = 0; i < N; i++) CHECK(emission[i] == 0.0f);
-  }
-  SUBCASE("No volume evaluates to zero and proves homogeneous") {
-    auto materialDef{get("vol_none")};
-    CHECK(!materialDef->hasVolume());
-    CHECK(materialDef->hasHomogeneousVolume());
-    materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
-                                emission.data());
-    for (size_t i = 0; i < N; i++) {
-      CHECK(sigmaA[i] == 0.0f);
-      CHECK(sigmaS[i] == 0.0f);
-    }
-  }
-  SUBCASE("Instances expose the density acceleration hint") {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(N)};
-    auto fullState{smdl::State()};
-    fullState.allocator = &allocator;
-    fullState.wavelengthMin = 380.0f;
-    fullState.wavelengthMax = 720.0f;
-    fullState.wavelengthBase = wavelengths.data();
-    for (size_t i = 0; i < N; i++) {
-      float fac{float(i) / float(N - 1)};
-      wavelengths[i] =
-          (1 - fac) * fullState.wavelengthMin + fac * fullState.wavelengthMax;
-    }
-    // A material with the complete hint exposes the grid resource and
-    // both corners of the bound box through the instance.
-    auto hinted{smdl::JIT::Material(fullState, get("vol_hinted"))};
-    const auto *grid{hinted.getVolumeDensityGrid()};
-    REQUIRE(grid != nullptr);
-    CHECK(grid->isValid());
-    CHECK(grid->getExtent().x == 32);
-    CHECK(grid->getExtent().y == 8);
-    CHECK(grid->getExtent().z == 4);
-    CHECK(grid->getMaxValue() == 401.0f);
-    REQUIRE(hinted.getVolumeDensityBoundMin() != nullptr);
-    REQUIRE(hinted.getVolumeDensityBoundMax() != nullptr);
-    CHECK(hinted.getVolumeDensityBoundMin()->x == 0.0f);
-    CHECK(hinted.getVolumeDensityBoundMax()->x == 1.0f);
-    CHECK(hinted.getVolumeDensityBoundMax()->z == 1.0f);
-    // The majorant bounds behind the hint cover the extent and bracket
-    // the field: some cell reports the peak, none exceeds it, and the
-    // same holds below.
-    const int E{grid->getMajorantExtent()};
-    const auto cells{grid->getMajorantCount()};
-    CHECK(cells.x == (32 + E - 1) / E);
-    CHECK(cells.y == (8 + E - 1) / E);
-    CHECK(cells.z == (4 + E - 1) / E);
-    float cellMax{-INFINITY}, cellMin{INFINITY};
-    for (int cz = 0; cz < cells.z; cz++)
-      for (int cy = 0; cy < cells.y; cy++)
-        for (int cx = 0; cx < cells.x; cx++) {
-          const auto bounds{grid->getMajorantBounds(cx, cy, cz)};
-          cellMax = std::max(cellMax, bounds.y);
-          cellMin = std::min(cellMin, bounds.x);
-        }
-    CHECK(cellMax == grid->getMaxValue());
-    CHECK(cellMin == grid->getMinValue());
-    // A material without the hint reports null pointers.
-    auto unhinted{smdl::JIT::Material(fullState, get("vol_hetero"))};
-    CHECK(unhinted.getVolumeDensityGrid() == nullptr);
-    CHECK(unhinted.getVolumeDensityBoundMin() == nullptr);
-    CHECK(unhinted.getVolumeDensityBoundMax() == nullptr);
-  }
-  SUBCASE("Instances expose the declared majorants") {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(N)};
-    auto fullState{smdl::State()};
-    fullState.allocator = &allocator;
-    fullState.wavelengthMin = 380.0f;
-    fullState.wavelengthMax = 720.0f;
-    fullState.wavelengthBase = wavelengths.data();
-    for (size_t i = 0; i < N; i++) {
-      float fac{float(i) / float(N - 1)};
-      wavelengths[i] =
-          (1 - fac) * fullState.wavelengthMin + fac * fullState.wavelengthMax;
-    }
-    auto homog{smdl::JIT::Material(fullState, get("vol_homog"))};
-    REQUIRE(homog.getMaxScatteringCoefficient().size() == N);
-    CHECK(homog.getMaxAbsorptionCoefficient().empty());
-    for (size_t i = 0; i < N; i++)
-      CHECK(homog.getMaxScatteringCoefficient()[i] == 2.0f);
-    // The heterogeneous majorant is exact through 'tex::max_value'.
-    auto hetero{smdl::JIT::Material(fullState, get("vol_hetero"))};
-    REQUIRE(hetero.getMaxScatteringCoefficient().size() == N);
-    for (size_t i = 0; i < N; i++)
-      CHECK(hetero.getMaxScatteringCoefficient()[i] == 4.0f * 401.0f);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler displacement evaluate") {
-  using namespace smdl::JIT;
-  auto tmpDir{fs::temp_directory_path() / "smdl-displacement-test"};
-  fs::remove_all(tmpDir);
-  writeFile(tmpDir / "root" / "disp.mdl",
-            "#smdl\n"
-            "import ::state::*;\n"
-            "export material disp_none() = material();\n"
-            "export material disp_const() = material(\n"
-            "  geometry: material_geometry(\n"
-            "    displacement: float3(0.0, 0.0, 0.25)));\n"
-            "export material disp_state() = material(\n"
-            "  geometry: material_geometry(\n"
-            "    displacement: state::texture_coordinate(0).x *\n"
-            "      float3(0.0, 0.0, 1.0)));\n");
-  smdl::Compiler compiler{};
-  REQUIRE(!compiler.add((tmpDir / "root").string()));
-  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-  REQUIRE(!compiler.jitCompile());
-  auto get{[&](std::string_view name) {
-    auto materialDef{compiler.findMaterial(name)};
-    REQUIRE(materialDef != nullptr);
-    return materialDef;
-  }};
-  // 'displacementEvaluate' is allocation-free, so the partial state
-  // carries no allocator, exactly as with 'volumeEvaluate'.
-  auto state{smdl::State()};
-  auto displacement{smdl::float3()};
-  SUBCASE("The default material is provably undisplaced") {
-    auto materialDef{get("disp_none")};
-    CHECK(materialDef->hasZeroDisplacement());
-    CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) !=
-          0);
-    CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_DISPLACEMENT) == 0);
-    materialDef->displacementEvaluate(state, displacement);
-    CHECK(displacement.x == 0.0f);
-    CHECK(displacement.y == 0.0f);
-    CHECK(displacement.z == 0.0f);
-  }
-  SUBCASE("A constant displacement is provably non-zero") {
-    auto materialDef{get("disp_const")};
-    CHECK(!materialDef->hasZeroDisplacement());
-    CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) !=
-          0);
-    CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_DISPLACEMENT) != 0);
-    materialDef->displacementEvaluate(state, displacement);
-    CHECK(displacement.x == 0.0f);
-    CHECK(displacement.y == 0.0f);
-    CHECK(displacement.z == 0.25f);
-  }
-  SUBCASE("A state-dependent displacement is unknown, not proven zero") {
-    auto materialDef{get("disp_state")};
-    CHECK(!materialDef->hasZeroDisplacement());
-    CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) ==
-          0);
-    state.textureCoordinate[0] = smdl::float3(2.5f, 0.0f, 0.0f);
-    materialDef->displacementEvaluate(state, displacement);
-    CHECK(displacement.x == 0.0f);
-    CHECK(displacement.y == 0.0f);
-    CHECK(displacement.z == 2.5f);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler hair scattering") {
-  using namespace smdl::JIT;
-  auto tmpDir{fs::temp_directory_path() / "smdl-hair-test"};
-  fs::remove_all(tmpDir);
-  writeFile(tmpDir / "root" / "hair.mdl",
-            "#smdl\n"
-            "import ::df::*;\n"
-            "export material hair_brown() = material(\n"
-            "  hair: df::chiang_hair_bsdf(\n"
-            "    roughness_R: float2(0.3, 0.4),\n"
-            "    absorption_coefficient: color(0.4)));\n"
-            "export material hair_none() = material();\n");
-  smdl::Compiler compiler{};
-  REQUIRE(!compiler.add((tmpDir / "root").string()));
-  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-  REQUIRE(!compiler.jitCompile());
-  auto get{[&](std::string_view name) {
-    auto materialDef{compiler.findMaterial(name)};
-    REQUIRE(materialDef != nullptr);
-    return materialDef;
-  }};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-  auto state{smdl::State()};
-  state.allocator = &allocator;
-  state.wavelengthMin = 380.0f;
-  state.wavelengthMax = 720.0f;
-  state.wavelengthBase = wavelengths.data();
-  for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-    float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-    wavelengths[i] =
-        (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-  }
-  // The default state's tangent-to-world is identity, so the directions
-  // below are written directly in the hair frame: X is the fiber tangent
-  // and Z is the cross-section normal.
-  auto wo{smdl::float3(0.0f, 0.6f, 0.8f)};
-  auto wi{smdl::float3(0.6f, -0.64f, -0.48f)};
-  auto f{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-  auto fSpan{smdl::Span<float>(f.data(), f.size())};
-  float pdfFwd{};
-  float pdfRev{};
-  SUBCASE("A hair material evaluates and samples through the entry points") {
-    auto materialDef{get("hair_brown")};
-    CHECK(materialDef->hasHair());
-    CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
-    CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
-    auto materialEval{smdl::JIT::Material(state, materialDef)};
-    CHECK(materialEval.hasHair());
-    CHECK(materialEval.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd > 0.0f);
-    CHECK(pdfRev > 0.0f);
-    for (float fValue : f) {
-      CHECK(fValue > 0.0f);
-      CHECK(std::isfinite(fValue));
-    }
-    auto xi{smdl::float4(0.3f, 0.4f, 0.5f, 0.6f)};
-    auto wiSampled{smdl::float3()};
-    CHECK(materialEval.hairScatterSample(xi, wo, wiSampled, pdfFwd, pdfRev,
-                                         fSpan));
-    CHECK(pdfFwd > 0.0f);
-    float lengthSquared{wiSampled.x * wiSampled.x + wiSampled.y * wiSampled.y +
-                        wiSampled.z * wiSampled.z};
-    CHECK(lengthSquared == doctest::Approx(1.0f).epsilon(1e-3));
-  }
-  SUBCASE("The default hair BSDF is safe to call and reports black") {
-    auto materialDef{get("hair_none")};
-    CHECK(!materialDef->hasHair());
-    CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
-    CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) == 0);
-    auto materialEval{smdl::JIT::Material(state, materialDef)};
-    CHECK(!materialEval.hasHair());
-    CHECK(!materialEval.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd == 0.0f);
-    CHECK(pdfRev == 0.0f);
-    for (float fValue : f) {
-      CHECK(fValue == 0.0f);
-    }
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler inferred-size array deduction") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-inferred-size-test"};
-  fs::remove_all(tmpDir);
-  // A macro whose two parameters share the size name 'N'.
-  static const char *sharedN{
-      "#smdl\n"
-      "@(pure macro)\n"
-      "int sharedN(const float[<N>] a, const float[<N>] b) = N;\n"};
-  SUBCASE("Consistent sizes across a shared size name compile") {
-    writeFile(tmpDir / "root" / "main.mdl",
-              std::string(sharedN) +
-                  "export const int ok = sharedN(float[2](1.0, 2.0), "
-                  "float[2](3.0, 4.0));\n");
-    smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
-  }
-  SUBCASE("Mismatched sizes are rejected at overload resolution") {
-    writeFile(tmpDir / "root" / "main.mdl",
-              std::string(sharedN) +
-                  "export const int bad = sharedN(float[2](1.0, 2.0), "
-                  "float[3](3.0, 4.0, 5.0));\n");
-    smdl::Compiler compiler{};
-    auto message{buildAll(compiler, {tmpDir / "root"})};
-    CHECK(message.find("deduces array size") != std::string::npos);
-  }
-  SUBCASE("A local size name must not silently rebind") {
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\n"
-              "@(pure macro)\n"
-              "int localRebind() {\n"
-              "  const float[<N>] a(1.0, 2.0);\n"
-              "  const float[<N>] b(1.0, 2.0, 3.0);\n"
-              "  return N + int(a[0] + b[0]);\n"
-              "}\n"
-              "export const int bad = localRebind();\n");
-    smdl::Compiler compiler{};
-    auto message{buildAll(compiler, {tmpDir / "root"})};
-    CHECK(message.find("conflicts with") != std::string::npos);
-  }
-  SUBCASE("A size name must not silently shadow a same-scope parameter") {
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\n"
-              "@(pure macro)\n"
-              "int collide(const int N, const float[<N>] w) = N + int(w[0]);\n"
-              "export const int bad = collide(7, float[3](0.0, 0.0, 0.0));\n");
-    smdl::Compiler compiler{};
-    auto message{buildAll(compiler, {tmpDir / "root"})};
-    CHECK(message.find("conflicts with") != std::string::npos);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler lambda expressions") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-lambda-test"};
-  fs::remove_all(tmpDir);
-  // Compile a single module and return the first error message, or the
-  // empty string on success. The positive behavior of lambdas is covered
-  // by 'testing/language/lang/lambdas.smdl'; these subcases pin the error
-  // paths.
-  auto build{[&](std::string_view text) {
-    writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);
-    smdl::Compiler compiler{};
-    // Some subcases place the erroring code inside a 'unit_test' body,
-    // which is only compiled when unit tests are enabled.
-    compiler.shouldEmitUnitTests = true;
-    return buildAll(compiler, {tmpDir / "root"});
-  }};
-  SUBCASE("Function values must not pass through non-macro parameters") {
-    auto message{build("@(pure)\n"
-                       "float apply(const auto f, const float x) = f(x);\n"
-                       "export const float bad = "
-                       "apply(\\(const float x) = x, 1.0);\n")};
-    CHECK(message.find("compile-time only") != std::string::npos);
-  }
-  SUBCASE("A variable holding a function must be 'const'") {
-    auto message{build("unit_test \"t\" {\n"
-                       "  auto f = \\(const float x) = x;\n"
-                       "  #assert(f(1.0) == 1.0);\n"
-                       "}\n")};
-    CHECK(message.find("must be declared 'const'") != std::string::npos);
-  }
-  SUBCASE("A variable holding a function must not be 'static'") {
-    auto message{build("static const auto f = \\(const float x) = x;\n"
-                       "unit_test \"t\" { #assert(f(1.0) == 1.0); }\n")};
-    CHECK(message.find("without 'static'") != std::string::npos);
-  }
-  SUBCASE("Lambda must not be a function variant") {
-    auto message{build("const auto f = \\(*) = 1.0;\n")};
-    CHECK(message.find("must not be a function variant") != std::string::npos);
-  }
-  SUBCASE("Lambda must not be variadic") {
-    auto message{build("const auto f = \\(const float x,...) = x;\n")};
-    CHECK(message.find("must not be variadic") != std::string::npos);
-  }
-  SUBCASE("Lambda requires a parameter list") {
-    auto message{build("const auto f = \\;\n")};
-    CHECK(message.find("expected parameter list") != std::string::npos);
-  }
-  SUBCASE("Lambda requires a body") {
-    auto message{build("const auto f = \\(const float x);\n")};
-    CHECK(message.find("expected '=' or compound statement") !=
-          std::string::npos);
-  }
-  SUBCASE("Lambda parameter names must be unique") {
-    auto message{
-        build("const auto f = \\(const float x, const float x) = x;\n")};
-    CHECK(message.find("duplicate parameter name") != std::string::npos);
-  }
-  SUBCASE("Mutual recursion through a lambda hits the recursion limit") {
-    auto message{
-        build("@(pure macro)\n"
-              "float rec(const auto f, const float x) = f(f, x);\n"
-              "export const float bad = "
-              "rec(\\(const auto g, const float x) = rec(g, x), 1.0);\n")};
-    CHECK(message.find("recursion limit") != std::string::npos);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler indirect aggregate parameters") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-aggregate-abi-test"};
-  fs::remove_all(tmpDir);
-  // Dump LLVM-IR for a module. Returns the empty string on failure.
-  auto dumpIR{[&](std::string_view text) {
-    writeFile(tmpDir / "root" / "main.mdl", text);
-    smdl::Compiler compiler{};
-    if (compiler.add((tmpDir / "root").string())) return std::string();
-    if (compiler.compile(smdl::OPT_LEVEL_NONE)) return std::string();
-    auto out{std::string()};
-    if (compiler.dump(smdl::DUMP_FORMAT_IR, out)) return std::string();
-    return out;
-  }};
-  SUBCASE("Large aggregates pass as 'byval' pointers") {
-    // 'float[24]' is 96 bytes, over the 64-byte threshold.
-    auto ir{dumpIR("#smdl\n"
-                   "@(pure noinline)\n"
-                   "float f(const float[24] w) = w[0];\n"
-                   "@(pure visible)\n"
-                   "export float use(const float x) = f(float[24]());\n")};
-    CHECK(ir.find("byval([24 x float])") != std::string::npos);
-  }
-  SUBCASE("Aggregates at the threshold still pass by value") {
-    // 'float[16]' is exactly 64 bytes. The threshold is deliberately
-    // 'greater than': a 'color' is the same size and lives in the hot path.
-    auto ir{dumpIR("#smdl\n"
-                   "@(pure noinline)\n"
-                   "float f(const float[16] w) = w[0];\n"
-                   "@(pure visible)\n"
-                   "export float use(const float x) = f(float[16]());\n")};
-    CHECK(ir.find("byval") == std::string::npos);
-    CHECK(ir.find("[16 x float] %w") != std::string::npos);
-  }
-  SUBCASE("'@(visible)' keeps the by-value convention") {
-    // External linkage: the host matches this signature by hand, so it must
-    // not silently change.
-    auto ir{dumpIR("#smdl\n"
-                   "@(pure visible noinline)\n"
-                   "export float f(const float[24] w) = w[0];\n")};
-    CHECK(ir.find("byval") == std::string::npos);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler inline call-site arguments") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-inline-args-test"};
-  fs::remove_all(tmpDir);
-  // Compile a single module and return the first error message, or the
-  // empty string on success. The positive behavior of call-site 'inline'
-  // is covered by 'testing/language/lang/structs.smdl'; these subcases pin the
-  // error paths.
-  auto build{[&](std::string_view text) {
-    writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);
-    smdl::Compiler compiler{};
-    compiler.shouldEmitUnitTests = true;
-    return buildAll(compiler, {tmpDir / "root"});
-  }};
-  static const char *sum2{
-      "float sum2(const float a, const float b) = a + b;\n"};
-  SUBCASE("A scalar does not expand") {
-    auto message{build(std::string(sum2) +
-                       "export const float bad = sum2(inline 1.0, 2.0);\n")};
-    CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
-  }
-  SUBCASE("A color does not expand") {
-    auto message{build(std::string(sum2) + "unit_test \"t\" {\n"
-                                           "  const color c = color(0.5);\n"
-                                           "  #assert(sum2(inline c) == 1.0);\n"
-                                           "}\n")};
-    CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
-  }
-  SUBCASE("A pointer does not expand, with a dereference hint") {
-    auto message{build("struct P { float a = 1.0; };\n"
-                       "float f(const float a) = a;\n"
-                       "unit_test \"t\" {\n"
-                       "  auto p = P();\n"
-                       "  auto q = &p;\n"
-                       "  #assert(f(inline q) == 1.0);\n"
-                       "}\n")};
-    CHECK(message.find("dereference it first") != std::string::npos);
-  }
-  SUBCASE("'visit inline' is rejected at parse") {
-    auto message{build(std::string(sum2) +
-                       "export const float bad = "
-                       "sum2(visit inline auto(1.0, 2.0));\n")};
-    CHECK(message.find("cannot combine 'visit' and 'inline'") !=
-          std::string::npos);
-  }
-  SUBCASE("An inlined argument must not be named") {
-    auto message{build(std::string(sum2) +
-                       "export const float bad = "
-                       "sum2(inline a: auto(1.0, 2.0));\n")};
-    CHECK(message.find("must not be named") != std::string::npos);
-  }
-  SUBCASE("A struct field colliding with a named argument is ambiguous") {
-    auto message{build(std::string(sum2) +
-                       "struct S { float a = 1.0; float b = 2.0; };\n"
-                       "export const float bad = sum2(a: 3.0, inline S());\n")};
-    CHECK(message.find("ambiguous name") != std::string::npos);
-  }
-  SUBCASE("A positional argument after an inlined struct is rejected") {
-    auto message{build(std::string(sum2) +
-                       "struct S { float a = 1.0; };\n"
-                       "export const float bad = sum2(inline S(), 2.0);\n")};
-    CHECK(message.find("unnamed arguments must appear before named") !=
-          std::string::npos);
-  }
-  fs::remove_all(tmpDir);
-}
-
-// Counts warnings mentioning a substring, so a test can assert how many
-// times a diagnostic was raised rather than merely that it was.
-class WarningCounter final : public smdl::LogSink {
-public:
-  WarningCounter(std::string needle) : needle(std::move(needle)) {}
-
-  void logMessage(smdl::LogLevel level, std::string_view message) override {
-    if (level == smdl::LOG_LEVEL_WARN &&
-        message.find(needle) != std::string_view::npos)
-      count++;
-  }
-
-  std::string needle{};
-  int count{};
-};
-
-TEST_CASE("Compiler missing resource warnings") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-missing-resource-test"};
-  fs::remove_all(tmpDir);
-  // A missing texture is a warning, not an error, and the texture reads
-  // black -- so the interesting question is how many times it is reported.
-  // A material body is emitted three times ('evaluate', 'opacityEvaluate'
-  // and 'thinWalledProbe' in 'Type.cc'), and the not-found path cannot be
-  // memoized by file hash the way an actual load failure is, so without
-  // 'Compiler::logResourceWarningOnce' it would be reported three times.
-  auto materialUsing{[](std::string_view fileName) {
-    auto text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
-                          "export material M() = let {\n  auto t = "
-                          "texture_2d(\"")};
-    text += fileName;
-    text += "\", tex::gamma_srgb);\n"
-            "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
-            "} in material(surface: material_surface(\n"
-            "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n";
-    return text;
-  }};
-  SUBCASE("A missing texture is reported exactly once per file") {
-    writeFile(tmpDir / "main.mdl", materialUsing("nowhere.png"));
-    auto &sink{smdl::Logger::get().addSink<WarningCounter>("nowhere.png")};
-    smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
-    CHECK(sink.count == 1);
-    // The memo is per compile, not per Compiler: recompiling has to report
-    // the same missing file again rather than swallow it.
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    CHECK(sink.count == 2);
-    smdl::Logger::get().reset();
-  }
-  SUBCASE("Distinct missing textures are each reported") {
-    auto text{materialUsing("gone_a.png")};
-    text += "export material N() = let {\n"
-            "  auto t = texture_2d(\"gone_b.png\", tex::gamma_srgb);\n"
-            "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
-            "} in material(surface: material_surface(\n"
-            "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n";
-    writeFile(tmpDir / "main.mdl", text);
-    auto &sinkA{smdl::Logger::get().addSink<WarningCounter>("gone_a.png")};
-    auto &sinkB{smdl::Logger::get().addSink<WarningCounter>("gone_b.png")};
-    smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
-    CHECK(sinkA.count == 1);
-    CHECK(sinkB.count == 1);
-    smdl::Logger::get().reset();
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler mip levels") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-mipmap-test"};
-  fs::remove_all(tmpDir);
-  // A 4x4 image, whose chain is 4x4 -> 2x2 -> 1x1, so a texture that
-  // reads the chain bakes 3 levels and one that does not bakes 1. The
-  // level count is the thing to pin: it is what keeps JIT code from
-  // walking mip levels that were never generated.
-  const uint8_t texels[16] = {0,   16,  32,  48,  //
-                              64,  80,  96,  112, //
-                              128, 144, 160, 176, //
-                              192, 208, 224, 240};
-  fs::create_directories(tmpDir);
-  REQUIRE(
-      !smdl::write8bitImage((tmpDir / "mip.png").string(), 4, 4, 1, texels));
-  // Build and run a module asserting the baked level count of a texture
-  // constructed with the given extra arguments. Whether the '#assert'
-  // folds at compile time or runs in the JIT, a mismatch comes back as a
-  // message here.
-  auto checkNumLevels{[&](std::string_view args, int numLevels) {
-    writeFile(tmpDir / "mips.smdl", "#smdl\nimport ::tex::*;\n"
-                                    "unit_test \"Baked level count\" {\n"
-                                    "  const auto t = texture_2d(\"mip.png\"" +
-                                        std::string(args) +
-                                        ");\n"
-                                        "  #assert(t.num_levels == " +
-                                        std::to_string(numLevels) + ");\n}\n");
-    smdl::Compiler compiler{};
-    compiler.shouldEmitUnitTests = true;
-    if (auto message{buildAll(compiler, {tmpDir / "mips.smdl"})};
-        !message.empty())
-      return message;
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    if (auto error{compiler.runUnitTests(state)}) return error->message;
-    return std::string();
-  }};
-  SUBCASE("'use_mipmap: true' bakes the whole chain") {
-    CHECK(checkNumLevels(", tex::gamma_linear, use_mipmap: true", 3) == "");
-  }
-  SUBCASE("Mip filtering is opt in") {
-    CHECK(checkNumLevels(", tex::gamma_linear", 1) == "");
-    // And the level count really is what is asserted, rather than the
-    // check above passing for some unrelated reason.
-    CHECK(checkNumLevels(", tex::gamma_linear", 3) != "");
-  }
-  fs::remove_all(tmpDir);
-}
-
-// Collects log messages mentioning a substring at any level, for
-// asserting on diagnostics that are not warnings.
-//
-// The logger filters by level before any sink is asked, so collecting a
-// message below the default `LOG_LEVEL_INFO` means lowering the minimum
-// too; `collectEveryLevel()` does that, and `Logger::reset()` alone does
-// not put it back.
-class MessageCollector final : public smdl::LogSink {
-public:
-  MessageCollector(std::string needle) : needle(std::move(needle)) {}
-
-  void logMessage(smdl::LogLevel, std::string_view message) override {
-    if (message.find(needle) != std::string_view::npos)
-      messages.emplace_back(message);
-  }
-
-  std::string needle{};
-  std::vector<std::string> messages{};
-};
-
-// Collect every message mentioning `needle`, debug included, for as long
-// as the returned guard lives.
-class CollectEveryLevel final {
-public:
-  explicit CollectEveryLevel(std::string needle)
-      : messages(smdl::Logger::get()
-                     .addSink<MessageCollector>(std::move(needle))
-                     .messages) {
-    smdl::Logger::get().setMinLevel(smdl::LOG_LEVEL_DEBUG);
-  }
-
-  ~CollectEveryLevel() {
-    smdl::Logger::get().reset();
-    smdl::Logger::get().setMinLevel(smdl::LOG_LEVEL_INFO);
-  }
-
-  const std::vector<std::string> &messages;
-};
-
-TEST_CASE("Compiler unused image dropping") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-unused-image-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
-  // Distinct texels, or the two files would content-hash to one image.
-  const uint8_t texelsLive[4] = {32, 64, 96, 128};
-  const uint8_t texelsDead[4] = {1, 2, 3, 4};
-  REQUIRE(!smdl::write8bitImage((tmpDir / "live.png").string(), 2, 2, 1,
-                                texelsLive));
-  REQUIRE(!smdl::write8bitImage((tmpDir / "dead.png").string(), 2, 2, 1,
-                                texelsDead));
-  // 'live.png' is sampled, so its texel pointer must survive into the
-  // optimized module; 'dead.png' contributes only its extent, which is
-  // baked by the probe, so optimization erases every read and the
-  // decode can be skipped. The unit test pins the extent staying valid
-  // after the drop: a comptime-false '#assert' is a compile error.
-  writeFile(tmpDir / "main.smdl",
-            "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
-            "export material M() = let {\n"
-            "  auto tLive = texture_2d(\"live.png\", tex::gamma_srgb);\n"
-            "  auto tDead = texture_2d(\"dead.png\", tex::gamma_srgb);\n"
-            "  auto c = ::tex::lookup_float3(tLive, float2(0.5));\n"
-            "  auto s = float(::tex::width(tDead)) / 4.0;\n"
-            "} in material(surface: material_surface(\n"
-            "  scattering: df::diffuse_reflection_bsdf(tint: color(s * c))));"
-            "\n"
-            "unit_test \"Extent survives the drop\" {\n"
-            "  #assert(tex::width(texture_2d(\"dead.png\")) == 2);\n"
-            "}\n");
-  auto ir{std::string()};
-  auto build{[&](smdl::OptLevel optLevel) {
-    smdl::Compiler compiler{};
-    compiler.shouldEmitUnitTests = true;
-    if (auto error{compiler.add((tmpDir / "main.smdl").string())})
-      return error->message;
-    if (auto error{compiler.compile(optLevel)}) return error->message;
-    if (auto error{compiler.dump(smdl::DUMP_FORMAT_IR, ir)})
-      return error->message;
-    if (auto error{compiler.jitCompile()}) return error->message;
-    return std::string();
-  }};
-  SUBCASE("An unread image is dropped at O2 and a sampled one is kept") {
-    CollectEveryLevel dropped{"Dropping image"};
-    CHECK(build(smdl::OPT_LEVEL_O2) == "");
-    REQUIRE(dropped.messages.size() == 1);
-    CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
-    // The declaration goes with the image, so the JIT is never asked to
-    // define a symbol for texels that were never loaded.
-    CHECK(countImageSymbols(ir) == 1);
-  }
-  SUBCASE("The unread image is dropped even at OPT_LEVEL_NONE") {
-    // Constant-field elimination bakes the 'texture_2d' struct into the
-    // type, so the dead image's texel pointers never enter the IR at
-    // all: the image is provably unused with no optimization running.
-    // The size requirement doubles as the guard that the sampled image
-    // is never dropped.
-    CollectEveryLevel dropped{"Dropping image"};
-    CHECK(build(smdl::OPT_LEVEL_NONE) == "");
-    REQUIRE(dropped.messages.size() == 1);
-    CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
-    CHECK(countImageSymbols(ir) == 1);
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler image symbols") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-image-symbol-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
-  // 4x4 so the chain is 4x4 -> 2x2 -> 1x1, and distinct content so the
-  // two files cannot content-hash to one image.
-  const uint8_t texelsA[16] = {0,   16,  32,  48,  //
-                               64,  80,  96,  112, //
-                               128, 144, 160, 176, //
-                               192, 208, 224, 240};
-  const uint8_t texelsB[16] = {1, 2,  3,  4,  5,  6,  7,  8,
-                               9, 10, 11, 12, 13, 14, 15, 16};
-  REQUIRE(!smdl::write8bitImage((tmpDir / "a.png").string(), 4, 4, 1, texelsA));
-  REQUIRE(!smdl::write8bitImage((tmpDir / "b.png").string(), 4, 4, 1, texelsB));
-  SUBCASE("One symbol per file, however many textures read it") {
-    // Two textures over 'a.png' differing in exactly the thing that is
-    // per-texture rather than per-image: whether they read the chain.
-    writeFile(
-        tmpDir / "main.smdl",
-        "#smdl\nimport ::tex::*;\n"
-        "export const auto a0 = texture_2d(\"a.png\", tex::gamma_linear);\n"
-        "export const auto a1 = texture_2d(\"a.png\", tex::gamma_linear, "
-        "use_mipmap: true);\n"
-        "export const auto b = texture_2d(\"b.png\", tex::gamma_linear);\n"
-        "export exec {\n"
-        "  #assert(tex::texel_float(a0, int2(1, 2)) == "
-        "tex::texel_float(a1, int2(1, 2)));\n"
-        "  #assert(a0.num_levels == 1);\n"
-        "  #assert(a1.num_levels == 3);\n"
-        "  #assert(tex::texel_float(b, int2(0, 0)) != "
-        "tex::texel_float(a0, int2(0, 0)));\n"
-        "}\n");
-    smdl::Compiler compiler{};
-    REQUIRE(!compiler.add((tmpDir / "main.smdl").string()));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-    auto ir{std::string()};
-    REQUIRE(!compiler.dump(smdl::DUMP_FORMAT_IR, ir));
-    // Two files, so two symbols: the level count is baked per texture,
-    // but the texels are shared and named once.
-    CHECK(countImageSymbols(ir) == 2);
-    // And they resolve, which is the whole point of naming them.
-    REQUIRE(!compiler.jitCompile());
-    CHECK(!compiler.runExecs());
-  }
-  SUBCASE("The chain reads correctly through the symbol") {
-    // Level 0 is named; the higher levels are found by offsetting from
-    // it, so a wrong base or a short allocation shows up here. The mean
-    // of each 2x2 block of 'texelsA' gives level 1 as 40, 72, 168, 200
-    // in file order, and level 2 as their mean, 120. Texture space is
-    // v-up, so 'int2(0, 0)' of level 1 is the last row in file order.
-    writeFile(tmpDir / "mips.smdl",
-              "#smdl\nimport ::tex::*;\n"
-              "export const auto t = texture_2d(\"a.png\", tex::gamma_linear, "
-              "use_mipmap: true);\n"
-              "export exec {\n"
-              "  #assert(#abs(tex::level_texel_float4(t, 1, int2(0, 0)).x - "
-              "168.0 / 255.0) < 1e-6);\n"
-              "  #assert(#abs(tex::level_texel_float4(t, 1, int2(0, 1)).x - "
-              "40.0 / 255.0) < 1e-6);\n"
-              "  #assert(#abs(tex::level_texel_float4(t, 2, int2(0, 0)).x - "
-              "120.0 / 255.0) < 1e-6);\n"
-              "}\n");
-    smdl::Compiler compiler{};
-    REQUIRE(!compiler.add((tmpDir / "mips.smdl").string()));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
-    REQUIRE(!compiler.jitCompile());
-    CHECK(!compiler.runExecs());
-  }
-  SUBCASE("An unloadable image still links") {
-    // 'startLoad()' fails, so there are no texels and the symbol
-    // resolves to a null address. The extent is zero, which is what
-    // keeps the lookups away from it, but the link must still succeed.
-    std::ofstream(tmpDir / "bad.png") << "This is not an image!\n";
-    writeFile(tmpDir / "bad.smdl",
-              "#smdl\nimport ::tex::*;\n"
-              "export const auto t = texture_2d(\"bad.png\", "
-              "tex::gamma_linear);\n"
-              "export exec {\n"
-              "  #assert(tex::width(t) == 0);\n"
-              "  #assert(tex::texel_float(t, int2(0, 0)) == 0.0);\n"
-              "}\n");
-    smdl::Compiler compiler{};
-    REQUIRE(!compiler.add((tmpDir / "bad.smdl").string()));
-    // 'OPT_LEVEL_NONE' so the reads survive to the JIT rather than being
-    // folded away along with the image.
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
-    CHECK(!compiler.runExecs());
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler wavelengthBaseMax") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-wavelength-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE(
+    "Compiler: the spectral machinery at one, four, and sixty-four bands") {
+  TempDir tmpDir{"compiler-wavelength"};
   // One module whose in-JIT unit test exercises the spectral machinery
   // that is easiest to get wrong away from the default 16-band grid:
   // comparisons over 'color' (at 1 band the compare result is a scalar
   // bool rather than a bool vector), '#any'/'#all' reductions of those
   // results, and RGB-to-color construction.
-  writeFile(tmpDir / "spectral.smdl",
-            "#smdl\nimport ::df::*;\n" + materialDef("main") +
-                "unit_test \"Spectral basics\" {\n"
-                "  const color c = color(float3(0.8, 0.5, 0.2));\n"
-                "  #assert(#all(c >= 0.0));\n"
-                "  #assert(#any(color(0.5) > 0.0));\n"
-                "  #assert(#all(color(0.5) == 0.5));\n"
-                "  #assert(!#any(color(0.0) > 0.0));\n"
-                "}\n");
+  tmpDir.write("spectral.smdl",
+               "#smdl\nimport ::df::*;\n" + minimalMaterial("main") +
+                   "unit_test \"Spectral basics\" {\n"
+                   "  const color c = color(float3(0.8, 0.5, 0.2));\n"
+                   "  #assert(#all(c >= 0.0));\n"
+                   "  #assert(#any(color(0.5) > 0.0));\n"
+                   "  #assert(#all(color(0.5) == 0.5));\n"
+                   "  #assert(!#any(color(0.0) > 0.0));\n"
+                   "}\n");
   for (uint32_t numBands : {1u, 4u, 64u}) {
     CAPTURE(numBands);
     smdl::Compiler compiler{numBands};
@@ -1873,19 +641,9 @@ TEST_CASE("Compiler wavelengthBaseMax") {
     REQUIRE(compiler.findMaterial("main") != nullptr);
     // An endpoint-inclusive uniform grid over the visible; a single band
     // sits at the midpoint.
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(numBands))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < numBands; i++) {
-      float fac{numBands > 1 ? float(i) / float(numBands - 1) : 0.5f};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    REQUIRE(!compiler.runUnitTests(state));
+    StateStorage storage{compiler};
+    auto state{storage.makeState()};
+    REQUIRE_OK(compiler.runUnitTests(state));
     // The gray fast path of RGB-to-color is exact at any band count.
     auto colorBuf{std::vector<float>(size_t(numBands), -1.0f)};
     compiler.convertRGBToColor(state, smdl::float3(0.5f, 0.5f, 0.5f),
@@ -1935,35 +693,23 @@ TEST_CASE("Compiler wavelengthBaseMax") {
             doctest::Approx(2.0f * rgbWeighted[i]).epsilon(1e-5).scale(1.0));
     state.wavelengthWeight = nullptr;
   }
-  fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler addCode") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-source-code-test"};
-  fs::remove_all(tmpDir);
+TEST_CASE("addCode: a module the host supplies as source") {
+  TempDir tmpDir{"source-code"};
   // The render state the unit tests below run against.
   auto runUnitTests{[](smdl::Compiler &compiler) {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
+    StateStorage storage{compiler};
+    auto state{storage.makeState()};
     if (auto error{compiler.runUnitTests(state)}) return error->message;
     return std::string();
   }};
   SUBCASE("Source code compiles as a module with no file") {
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::host::mats", "#smdl\nimport ::df::*;\n" +
-                                                  materialDef("mat_ok")));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.addCode("::host::mats", "#smdl\nimport ::df::*;\n" +
+                                                    minimalMaterial("mat_ok")));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     auto materialDef{compiler.findMaterial("mat_ok")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::host::mats::mat_ok");
@@ -1973,40 +719,40 @@ TEST_CASE("Compiler addCode") {
   }
   SUBCASE("The leading '::' is optional") {
     smdl::Compiler compiler{};
-    auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
-    REQUIRE(!compiler.addCode("host::mats", source));
+    auto source{"#smdl\nimport ::df::*;\n" + minimalMaterial("mat_ok")};
+    REQUIRE_OK(compiler.addCode("host::mats", source));
     // The same name and the same source code again is a no-op, so a host
     // may register its defaults defensively.
-    CHECK(!compiler.addCode("::host::mats", source));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    CHECK_OK(compiler.addCode("::host::mats", source));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.findMaterials("mat_ok").size() == 1);
   }
   SUBCASE("A different body under a taken name is an error") {
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
-    auto error{compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
+    REQUIRE_OK(compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
+    const auto error{
+        compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
-    CHECK(error->message.find("already taken") != std::string::npos);
-    CHECK(error->message.find("<string ::host>") != std::string::npos);
+    CHECK_CONTAINS(error->message, "already taken");
+    CHECK_CONTAINS(error->message, "<string ::host>");
   }
   SUBCASE("A name taken by a file module is an error") {
-    writeFile(tmpDir / "root" / "util.mdl", "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/util.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.add((tmpDir / "root").string()));
-    auto error{compiler.addCode("::util", "#smdl\nexport const int x = 2;\n")};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("already taken") != std::string::npos);
+    REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+    CHECK_ERROR(compiler.addCode("::util", "#smdl\nexport const int x = 2;\n"),
+                "already taken");
   }
   SUBCASE("A file module added later is shadowed, not an error") {
-    writeFile(tmpDir / "root" / "host.mdl",
-              "#smdl\nimport ::df::*;\n" + materialDef("from_file"));
+    tmpDir.write("root/host.mdl",
+                 "#smdl\nimport ::df::*;\n" + minimalMaterial("from_file"));
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::host", "#smdl\nimport ::df::*;\n" +
-                                            materialDef("from_string")));
-    REQUIRE(!compiler.add((tmpDir / "root").string()));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.addCode("::host", "#smdl\nimport ::df::*;\n" +
+                                              minimalMaterial("from_string")));
+    REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     // The earliest added module wins the qualified name, exactly as it
     // does across search roots, so the file is the one shadowed here.
     CHECK(compiler.findMaterial("from_string") != nullptr);
@@ -2022,52 +768,50 @@ TEST_CASE("Compiler addCode") {
     }
   }
   SUBCASE("Modules import each other by qualified name") {
-    writeFile(tmpDir / "root" / "util.mdl",
-              "#smdl\nexport const int marker_file = 1;\n");
-    writeFile(tmpDir / "root" / "main.mdl",
-              "#smdl\nimport ::df::*;\nimport ::host::consts::*;\n"
-              "export const int echo = host::consts::marker_host;\n" +
-                  materialDef("main_ok"));
+    tmpDir.write("root/util.mdl", "#smdl\nexport const int marker_file = 1;\n");
+    tmpDir.write("root/main.mdl",
+                 "#smdl\nimport ::df::*;\nimport ::host::consts::*;\n"
+                 "export const int echo = host::consts::marker_host;\n" +
+                     minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode(
+    REQUIRE_OK(compiler.addCode(
         "::host::consts",
         "#smdl\nimport ::util::*;\n"
         "export const int marker_host = util::marker_file + 1;\n"));
-    REQUIRE(!compiler.add((tmpDir / "root").string()));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.findMaterial("main_ok") != nullptr);
   }
   SUBCASE("A compile error names the module it came from") {
     smdl::Compiler compiler{};
     REQUIRE(
         !compiler.addCode("::host::bad", "#smdl\nimport ::nonexistent::*;\n"));
-    auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("[<string ::host::bad>:2:") != std::string::npos);
+    CHECK_ERROR(compiler.compile(smdl::OPT_LEVEL_NONE),
+                "[<string ::host::bad>:2:");
   }
-  SUBCASE("Unit tests run") {
+  SUBCASE("The unit tests in the module run") {
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
-    REQUIRE(!compiler.addCode("::host::tests",
-                              "#smdl\nunit_test \"Arithmetic\" {\n"
-                              "  int i = 2;\n"
-                              "  #assert(i + i == 4);\n}\n"));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
+    REQUIRE_OK(compiler.addCode("::host::tests",
+                                "#smdl\nunit_test \"Arithmetic\" {\n"
+                                "  int i = 2;\n"
+                                "  #assert(i + i == 4);\n}\n"));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
     CHECK(runUnitTests(compiler) == "");
   }
   SUBCASE("The source code outlives the string it was given") {
     smdl::Compiler compiler{};
     {
-      auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
-      REQUIRE(!compiler.addCode("::host::mats", source));
+      auto source{"#smdl\nimport ::df::*;\n" + minimalMaterial("mat_ok")};
+      REQUIRE_OK(compiler.addCode("::host::mats", source));
     }
     // Twice, because 'compile()' resets and re-parses every module: a
     // module of source code has no file to read back.
     for (int i = 0; i < 2; i++) {
-      REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-      REQUIRE(!compiler.jitCompile());
+      REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+      REQUIRE_OK(compiler.jitCompile());
       CHECK(compiler.findMaterial("mat_ok") != nullptr);
     }
   }
@@ -2076,8 +820,7 @@ TEST_CASE("Compiler addCode") {
     fs::create_directories(tmpDir / "anchor");
     REQUIRE(!smdl::write8bitImage((tmpDir / "anchor" / "wood.png").string(), 2,
                                   2, 1, texels));
-    writeFile(tmpDir / "anchor" / "helper.mdl",
-              "#smdl\nexport const int marker = 3;\n");
+    tmpDir.write("anchor/helper.mdl", "#smdl\nexport const int marker = 3;\n");
     // Explicitly relative, so this resolves against the module's own
     // directory and nothing else.
     auto source{std::string("#smdl\nimport ::tex::*;\n"
@@ -2105,701 +848,14 @@ TEST_CASE("Compiler addCode") {
     CHECK(build("") != "");
     // An anchor that is not a directory is refused outright.
     smdl::Compiler compiler{};
-    auto error{compiler.addCode("::host::mats", source,
-                                (tmpDir / "nowhere").string())};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("not an existing directory") !=
-          std::string::npos);
+    CHECK_ERROR(
+        compiler.addCode("::host::mats", source, (tmpDir / "nowhere").string()),
+        "not an existing directory");
   }
   SUBCASE("A name that matches a builtin module is warned about") {
-    auto &warned{smdl::Logger::get().addSink<MessageCollector>(
-        "same name as a builtin")};
+    const CollectedLog warned{"same name as a builtin"};
     smdl::Compiler compiler{};
-    CHECK(!compiler.addCode("::df", "#smdl\nexport const int x = 1;\n"));
-    CHECK(warned.messages.size() == 1);
-    smdl::Logger::get().reset();
-  }
-  fs::remove_all(tmpDir);
-}
-
-TEST_CASE("Compiler diagnostics") {
-  // Compile source that is expected to fail, returning the whole error so
-  // that the message and its source snippet can both be checked.
-  auto compileError{[](std::string sourceCode) {
-    smdl::Compiler compiler{};
-    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
-      return *error;
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
-    return smdl::Error("compiled without error");
-  }};
-  SUBCASE("A message carries the line, the column, and the source line") {
-    auto error{compileError("#smdl\nexec { int i = nope; }\n")};
-    CHECK(error.message.find("[<string ::diag>:2:16]") != std::string::npos);
-    CHECK(error.snippet.find("exec { int i = nope; }") != std::string::npos);
-    CHECK(error.snippet.find('^') != std::string::npos);
-  }
-  SUBCASE("A quoted candidate note does not repeat the caret") {
-    auto error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
-                            "exec { auto s = S(alhpa: 2); }\n")};
-    CHECK(error.message.find("no parameter named 'alhpa'; did you mean "
-                             "'alpha'?") != std::string::npos);
-    // The caret belongs to the primary error, not to the note quoting the
-    // rejected candidate.
-    CHECK(error.message.find('^') == std::string::npos);
-    CHECK(error.snippet.find('^') != std::string::npos);
-  }
-  SUBCASE("Too many arguments reports how many were expected") {
-    auto error{compileError("#smdl\nint f(int a) { return a; }\n"
-                            "exec { #assert(f(1, 2) == 1); }\n")};
-    CHECK(error.message.find("expected at most 1, got 2") != std::string::npos);
-  }
-  SUBCASE("Integer division by a constant zero is rejected") {
-    CHECK(compileError("#smdl\nexec { const int i = 1 / 0; }\n")
-              .message.find("integer division by zero") != std::string::npos);
-    CHECK(compileError("#smdl\nexec { const int i = 1 % 0; }\n")
-              .message.find("integer remainder by zero") != std::string::npos);
-    // A compound assignment lowers to the same operator.
-    CHECK(compileError("#smdl\nexec { int i = 4; i /= 0; }\n")
-              .message.find("integer division by zero") != std::string::npos);
-    // One zero lane is enough to poison a vector divide.
-    CHECK(compileError(
-              "#smdl\nexec { const auto v = int2(1, 2) / int2(1, 0); }\n")
-              .message.find("integer division by zero") != std::string::npos);
-    // Floating point division by zero is well defined and stays legal.
-    CHECK(
-        compileError("#smdl\nexec { const float f = 1.0 / 0.0; }\n").message ==
-        "compiled without error");
-  }
-  SUBCASE("A run-time assertion failure reports where it failed") {
-    smdl::Compiler compiler{};
-    compiler.shouldEmitUnitTests = true;
-    REQUIRE(!compiler.addCode("::diag", "#smdl\nunit_test \"t\" {\n"
-                                        "  int i = 1;\n"
-                                        "  #assert(i == 2);\n}\n"));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    auto error{compiler.runUnitTests(state)};
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("[<string ::diag>:4:") != std::string::npos);
-    CHECK(error->message.find("assertion failed: i == 2") != std::string::npos);
-    CHECK(error->snippet.find("#assert(i == 2);") != std::string::npos);
-  }
-}
-
-TEST_CASE("Compiler diagnostic suggestions") {
-  auto compileError{[](std::string sourceCode) {
-    smdl::Compiler compiler{};
-    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
-      return *error;
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
-    return smdl::Error("compiled without error");
-  }};
-  auto errorFor{[&](std::string body) {
-    return compileError("#smdl\nexec {\n" + std::move(body) + "\n}\n").message;
-  }};
-  SUBCASE("The C spelling of an intrinsic suggests the intrinsic") {
-    CHECK(errorFor("  assert(1 == 1);").find("did you mean '#assert'?") !=
-          std::string::npos);
-    CHECK(errorFor("  printf(\"hi\");").find("did you mean '#print'?") !=
-          std::string::npos);
-    // Wins over 'size_t', which is a keyword two edits away, because the
-    // candidates are weighed together instead of list by list.
-    CHECK(errorFor("  #print(sizeof(int));").find("did you mean '#sizeOf'?") !=
-          std::string::npos);
-  }
-  SUBCASE("A word-shaped literal is suggested") {
-    CHECK(
-        errorFor("  bool b = True; #print(b);").find("did you mean 'true'?") !=
-        std::string::npos);
-  }
-  SUBCASE("A bare 'state' suggests '$state'") {
-    CHECK(errorFor("  #print(state);").find("did you mean '$state'?") !=
-          std::string::npos);
-  }
-  SUBCASE("A qualified name suggests within its module") {
-    auto error{compileError("#smdl\nimport ::math::*;\n"
-                            "exec { #print(math::sqr(4.0)); }\n")};
-    CHECK(error.message.find("did you mean 'math::sqrt'?") !=
-          std::string::npos);
-  }
-  SUBCASE("A suggestion keeps the kind of what was typed") {
-    // 'diffuse_edf' is nearer to 'diffuse_bsdf' by edit distance, and is
-    // the wrong kind of distribution function, so nothing is suggested.
-    auto error{compileError("#smdl\nimport ::df::*;\n"
-                            "exec { auto b = df::diffuse_bsdf(); }\n")};
-    CHECK(error.message.find("cannot resolve identifier") != std::string::npos);
-    CHECK(error.message.find("did you mean") == std::string::npos);
-  }
-  SUBCASE("An imported module that is not opened says so") {
-    auto error{compileError("#smdl\nimport ::math::*;\n"
-                            "exec { #print(sqrt(4.0)); }\n")};
-    CHECK(error.message.find("'math' is imported but not opened") !=
-          std::string::npos);
-    CHECK(error.message.find("'math::sqrt'") != std::string::npos);
-    CHECK(error.message.find("using ::math import sqrt;") != std::string::npos);
-  }
-  SUBCASE("A misspelled module suggests the builtin") {
-    auto error{
-        compileError("#smdl\nimport ::maths::*;\nexec { #print(1); }\n")};
-    CHECK(error.message.find("did you mean '::math'?") != std::string::npos);
-  }
-  SUBCASE("A misspelled imported name suggests within the module") {
-    auto error{compileError("#smdl\nusing ::math import sqrtt;\n"
-                            "exec { #print(1); }\n")};
-    CHECK(error.message.find("did you mean 'sqrt'?") != std::string::npos);
-  }
-  SUBCASE("A misspelled field suggests the field") {
-    auto error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
-                            "exec { #print(S().alhpa); }\n")};
-    CHECK(error.message.find("did you mean 'alpha'?") != std::string::npos);
-  }
-  SUBCASE("A swizzle off the end lists the components") {
-    auto error{compileError("#smdl\nexec { float2 v; #print(v.z); }\n")};
-    CHECK(error.message.find("the components are x, y (or r, g)") !=
-          std::string::npos);
-  }
-  SUBCASE("'=' where ':' was meant names the mistake") {
-    auto error{
-        compileError("#smdl\nexport material m() = material(ior = 1.5);\n")};
-    CHECK(error.message.find("a named argument is written 'ior: ...', not "
-                             "'ior = ...'") != std::string::npos);
-  }
-  SUBCASE("An empty 'exec' is skipped with a warning") {
-    auto &warned{smdl::Logger::get().addSink<MessageCollector>(
-        "empty body does nothing")};
-    smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::diag", "#smdl\nexec {}\n"));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(!compiler.jitCompile());
-    CHECK(warned.messages.size() == 1);
-    // Nothing was emitted, so there is nothing to run.
-    CHECK(!compiler.runExecs());
-    smdl::Logger::get().reset();
-  }
-  SUBCASE("An assignment to something real stays an assignment") {
-    CHECK(compileError("#smdl\nint f(int a) { return a; }\n"
-                       "export int g() { int y = 0; return f(y = 3); }\n")
-              .message == "compiled without error");
-  }
-}
-
-TEST_CASE("Compiler candidate diagnostics") {
-  auto compileError{[](std::string sourceCode) {
-    smdl::Compiler compiler{};
-    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
-      return *error;
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
-    return smdl::Error("compiled without error");
-  }};
-  SUBCASE("A rejected overload names itself and where it is declared") {
-    auto error{compileError("#smdl\nint f(int a) { return a; }\n"
-                            "exec { #assert(f(1, 2) == 1); }\n")};
-    // The signature identifies which candidate the note is about, and the
-    // location is the declaration, not the call site every candidate was
-    // probed against.
-    CHECK(error.message.find("candidate rejected: f(int a) declared at "
-                             "[<string ::diag>:2:") != std::string::npos);
-    CHECK(error.message.find("expected at most 1, got 2") != std::string::npos);
-  }
-  SUBCASE("Every overload of a builtin is told apart") {
-    auto error{compileError(
-        "#smdl\nimport ::tex::*;\n"
-        "export material m(uniform texture_2d t = texture_2d()) = material(\n"
-        "  surface: material_surface(emission: material_emission(\n"
-        "    intensity: tex::lookup_color(t, 0.5))));\n")};
-    CHECK(error.message.find("lookup_color(texture_2d tex") !=
-          std::string::npos);
-    CHECK(error.message.find("lookup_color(texture_3d tex") !=
-          std::string::npos);
-    CHECK(error.message.find("<builtin ::tex>") != std::string::npos);
-  }
-  SUBCASE("A forwarded call leads with the name that was written") {
-    auto error{compileError(
-        "#smdl\nimport ::df::*;\nexport material m() = material(surface: "
-        "material_surface(scattering: "
-        "df::microfacet_ggx_smith_bsdf(roughness: 0.1)));\n")};
-    // The '(*)' forwarder used to report only the internal callee and the
-    // two arguments it injects, neither of which the caller wrote.
-    CHECK(error.message.find("cannot call 'microfacet_ggx_smith_bsdf' with "
-                             "arguments '(roughness: float)'") !=
-          std::string::npos);
-    CHECK(error.message.find("forwards to:") != std::string::npos);
-    CHECK(error.message.find("did you mean 'roughness_u'?") !=
-          std::string::npos);
-  }
-  SUBCASE("A builtin type says what it accepts") {
-    CHECK(compileError("#smdl\nexec { float3 v = float3(1, 2, 3, 4); }\n")
-              .message.find("takes one scalar, or scalars and shorter vectors "
-                            "totalling 3 components") != std::string::npos);
-    CHECK(
-        compileError("#smdl\nexec { float4x3 m = float4x3(1, 2, 3); }\n")
-            .message.find("4 column vectors of 3 components, or 12 scalars") !=
-        std::string::npos);
-    CHECK(compileError("#smdl\nexec { color c = color(1.0, 0.5); }\n")
-              .message.find("'(wavelengths, amplitudes)'") !=
-          std::string::npos);
-    CHECK(compileError("#smdl\nexec { int[3] a(1, 2); }\n")
-              .message.find("takes 3 elements or one array of that size") !=
-          std::string::npos);
-  }
-}
-
-TEST_CASE("Compiler diagnostic wording") {
-  auto compileError{[](std::string sourceCode) {
-    smdl::Compiler compiler{};
-    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
-      return *error;
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
-    return smdl::Error("compiled without error");
-  }};
-  SUBCASE("An ill-formed operator is not called unimplemented") {
-    auto error{compileError("#smdl\nexec { float4x3 a; float4x3 b; auto c = a "
-                            "* b; #print(c); }\n")};
-    CHECK(error.message.find("no binary operator '*'") != std::string::npos);
-    CHECK(error.message.find("columns of the left (4) to match the rows of "
-                             "the right (3)") != std::string::npos);
-    CHECK(error.message.find("unimplemented") == std::string::npos);
-  }
-  SUBCASE("A returned value of the wrong type says so") {
-    // A function body is only emitted where something reaches it, so the
-    // call has to be somewhere that is compiled.
-    auto error{compileError("#smdl\n@(pure) int f() { return \"hello\"; }\n"
-                            "exec { #print(f()); }\n")};
-    CHECK(error.message.find("cannot convert return value of type 'string' "
-                             "to 'int'") != std::string::npos);
-  }
-  SUBCASE("Assigning to a 'const' says 'const', not 'rvalue'") {
-    auto error{compileError("#smdl\nexec { const int i = 1; i = 2; }\n")};
-    CHECK(error.message.find("cannot assign to 'i' because it is declared "
-                             "'const'") != std::string::npos);
-    CHECK(error.message.find("declared at [<string ::diag>:2:") !=
-          std::string::npos);
-    CHECK(error.message.find("rvalue") == std::string::npos);
-  }
-  SUBCASE(
-      "Assigning to something that is not a variable does not claim const") {
-    auto error{compileError("#smdl\nenum E { A, B };\nexec { A = B; }\n")};
-    CHECK(error.message.find("because it is not a variable") !=
-          std::string::npos);
-  }
-  SUBCASE("A missing resource blames the line that asked for it") {
-    auto &warned{
-        smdl::Logger::get().addSink<MessageCollector>("no image(s) found")};
-    smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::diag",
-                              "#smdl\nexport material m(uniform texture_2d t = "
-                              "texture_2d(\"nope.png\")) = material();\n"));
-    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
-    REQUIRE(warned.messages.size() >= 1);
-    // The load happens inside the builtin 'texture_2d' constructor, whose
-    // location the user cannot act on.
-    CHECK(warned.messages[0].find("<builtin") == std::string::npos);
-    CHECK(warned.messages[0].find("<string ::diag>:2:") != std::string::npos);
-    smdl::Logger::get().reset();
-  }
-}
-
-TEST_CASE("Compiler color conversions") {
-  auto compileError{[](std::string sourceCode) {
-    smdl::Compiler compiler{};
-    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
-      return *error;
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
-    return smdl::Error("compiled without error");
-  }};
-  SUBCASE("'color' to 'float3' is refused in a pure context") {
-    auto error{compileError(
-        "#smdl\nexec { color c = color(1.0); float3 v = c; #print(v); }\n")};
-    CHECK(error.message.find("cannot convert 'color' to 'float3' in a "
-                             "'@(pure)' context") != std::string::npos);
-    // Naming the internal function the conversion reaches is what this
-    // replaced.
-    CHECK(error.message.find("_colorToRgb") == std::string::npos);
-  }
-  SUBCASE("'float3' to 'color' is refused in a pure context") {
-    auto error{compileError("#smdl\nexec { color c = float3(1.0, 0.5, 0.25); "
-                            "#print(c[0]); }\n")};
-    CHECK(error.message.find("cannot convert 'float3' to 'color' in a "
-                             "'@(pure)' context") != std::string::npos);
-    CHECK(error.message.find("nontrivialRGBToColor") == std::string::npos);
-  }
-  SUBCASE("A compile-time grey needs no wavelengths") {
-    // It folds to a flat spectrum, so it stays legal where the
-    // colorimetric path is not.
-    CHECK(compileError("#smdl\nexec { color c = float3(0.5); #print(c[0]); }\n")
-              .message == "compiled without error");
-  }
-  SUBCASE("The conversion is colorimetric where there is state") {
-    // A flat spectrum is not RGB white, which is the whole point of the
-    // conversion being an integration against the observer.
-    CHECK(compileError("#smdl\nexport material m() = material(\n"
-                       "  geometry: material_geometry(normal: "
-                       "float3(color(1.0))));\n")
-              .message == "compiled without error");
-  }
-}
-
-TEST_CASE("Compiler shouldEmitScatterNormal") {
-  // The normal distribution entry points are opt-in, so that a host with no
-  // half vector to constrain never pays to emit or optimize them.
-  auto buildGlossy{[](smdl::Compiler &compiler, bool shouldEmit) {
-    compiler.shouldEmitScatterNormal = shouldEmit;
-    auto error{compiler.addCode(
-        "::glossy", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
-                    "  surface: material_surface(scattering: "
-                    "df::microfacet_ggx_smith_bsdf(\n"
-                    "    roughness_u: 0.4, tint: 0.8)));\n")};
-    REQUIRE(!error);
-    error = compiler.compile(smdl::OPT_LEVEL_NONE);
-    if (error) FAIL(error->message);
-    error = compiler.jitCompile();
-    if (error) FAIL(error->message);
-  }};
-  SUBCASE("Off by default, and the entry points are absent") {
-    CHECK(smdl::Compiler().shouldEmitScatterNormal == false);
-    auto compiler{smdl::Compiler()};
-    buildGlossy(compiler, false);
-    auto *materialDef{compiler.findMaterial("m")};
-    REQUIRE(materialDef);
-    // Absent, not merely unresolved: nothing was emitted to resolve.
-    CHECK(materialDef->scatterNormalSample.name.empty());
-    CHECK(!materialDef->scatterNormalSample);
-    CHECK(!materialDef->scatterNormalEvaluate);
-    // Everything else is untouched by the switch.
-    CHECK(bool(materialDef->scatterSample));
-    CHECK(bool(materialDef->scatterEvaluate));
-  }
-  SUBCASE("On, and the entry points resolve") {
-    auto compiler{smdl::Compiler()};
-    buildGlossy(compiler, true);
-    auto *materialDef{compiler.findMaterial("m")};
-    REQUIRE(materialDef);
-    CHECK(bool(materialDef->scatterNormalSample));
-    CHECK(bool(materialDef->scatterNormalEvaluate));
-    CHECK(materialDef->scatterNormalSample.name.find(".scatterNormalSample") !=
-          std::string::npos);
-  }
-  SUBCASE("The wrapper takes exactly one glossy kind") {
-    // The two-domain mixture is not a distribution any single crossing
-    // scatters by, so the wrapper refuses it; the raw entry point still
-    // reports the mixture for a caller that wants it.
-    auto compiler{smdl::Compiler()};
-    buildGlossy(compiler, true);
-    auto *materialDef{compiler.findMaterial("m")};
-    REQUIRE(materialDef);
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    state.finalize();
-    auto inst{smdl::JIT::Material(state, materialDef)};
-    const auto xi{smdl::float4(0.25f, 0.5f, 0.5f, 0.5f)};
-    auto wm{smdl::float3()};
-    auto alpha{smdl::float2()};
-    float pdf{};
-    CHECK(
-        !inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_GLOSSY));
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_ALL));
-    CHECK(!inst.scatterNormalEvaluate(false, smdl::float3(0.0f, 0.0f, 1.0f),
-                                      pdf, smdl::DF_GLOSSY));
-    // And exactly one kind answers: this material is glossy in
-    // reflection only, so that kind draws and the other reports nothing.
-    CHECK(inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                   smdl::DF_GLOSSY_BRDF));
-    CHECK(pdf > 0.0f);
-    CHECK(alpha.x == doctest::Approx(0.16f));
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                    smdl::DF_GLOSSY_BTDF));
-  }
-  SUBCASE("The normal probe and the geometry normal hook") {
-    auto compiler{smdl::Compiler()};
-    compiler.shouldEmitScatterNormal = true;
-    auto error{compiler.addCode(
-        "::remap",
-        "#smdl\nimport ::df::*;\nimport ::math::*;\n"
-        "export material plain() = material(\n"
-        "  surface: material_surface(scattering: "
-        "df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.8)));\n"
-        "export material remapped() = material(\n"
-        "  surface: material_surface(scattering: "
-        "df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.8)),\n"
-        "  geometry: material_geometry(normal: "
-        "math::normalize(float3(0.3, 0.0, 1.0))));\n")};
-    REQUIRE(!error);
-    error = compiler.compile(smdl::OPT_LEVEL_O2);
-    if (error) FAIL(error->message);
-    error = compiler.jitCompile();
-    if (error) FAIL(error->message);
-    auto *plain{compiler.findMaterial("plain")};
-    auto *remapped{compiler.findMaterial("remapped")};
-    REQUIRE(plain);
-    REQUIRE(remapped);
-    // The probe folds 'geometry.normal - $state.normal' at O2, so the
-    // flag is known on both sides: provably identity on one, provably
-    // remapped on the other.
-    CHECK(!plain->canRemapNormal());
-    CHECK(remapped->canRemapNormal());
-    // And the hook reads the field itself, in internal space.
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    state.finalize();
-    auto normal{smdl::float3()};
-    REQUIRE(bool(plain->geometryNormalEvaluate));
-    plain->geometryNormalEvaluate(state, normal);
-    CHECK(normal.x == doctest::Approx(0.0f));
-    CHECK(normal.y == doctest::Approx(0.0f));
-    CHECK(normal.z == doctest::Approx(1.0f));
-    remapped->geometryNormalEvaluate(state, normal);
-    const float invLen{1.0f / std::sqrt(1.09f)};
-    CHECK(normal.x == doctest::Approx(0.3f * invLen));
-    CHECK(normal.y == doctest::Approx(0.0f));
-    CHECK(normal.z == doctest::Approx(1.0f * invLen));
-  }
-  SUBCASE("A remap bars a claim only over a df node given its own normal") {
-    auto compiler{smdl::Compiler()};
-    compiler.shouldEmitScatterNormal = true;
-    auto error{compiler.addCode(
-        "::claim",
-        "#smdl\nimport ::df::*;\nimport ::math::*;\n"
-        "const auto N = math::normalize(float3(0.3, 0.0, 1.0));\n"
-        "export material inherits() = material(\n"
-        "  surface: material_surface(scattering: df::fresnel_layer(ior: 1.5,\n"
-        "    layer: df::specular_bsdf(mode: df::scatter_reflect),\n"
-        "    base: df::diffuse_reflection_bsdf(tint: 0.8))),\n"
-        "  geometry: material_geometry(normal: N));\n"
-        "export material pinned() = material(\n"
-        "  surface: material_surface(scattering: df::fresnel_layer(ior: 1.5,\n"
-        "    layer: df::specular_bsdf(mode: df::scatter_reflect),\n"
-        "    base: df::diffuse_reflection_bsdf(tint: 0.8),\n"
-        "    normal: $state.normal)),\n"
-        "  geometry: material_geometry(normal: N));\n")};
-    REQUIRE(!error);
-    error = compiler.compile(smdl::OPT_LEVEL_O2);
-    if (error) FAIL(error->message);
-    error = compiler.jitCompile();
-    if (error) FAIL(error->message);
-    auto *inheritsMaterial{compiler.findMaterial("inherits")};
-    auto *pinnedMaterial{compiler.findMaterial("pinned")};
-    REQUIRE(inheritsMaterial);
-    REQUIRE(pinnedMaterial);
-    CHECK(inheritsMaterial->canRemapNormal());
-    CHECK(pinnedMaterial->canRemapNormal());
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    state.finalize();
-    auto inherits{smdl::JIT::Material(state, inheritsMaterial)};
-    auto pinned{smdl::JIT::Material(state, pinnedMaterial)};
-    // A defaulted layer normal follows the remapped field, so it reports
-    // neither property bit and the walk can solve the whole tree.
-    CHECK((inherits.getLobes() &
-           (smdl::DF_SETS_NORMAL | smdl::DF_CAN_SET_NORMAL)) == 0);
-    CHECK(!smdl::manifoldClaim(inherits, /*isMarked=*/true).empty());
-    // Spelling out the state normal detaches the layer from the remapped
-    // field even though the two values agree here, which is exactly what
-    // `smdl::DF_CAN_SET_NORMAL` exists to report.
-    CHECK((pinned.getLobes() & smdl::DF_SETS_NORMAL) == 0);
-    CHECK((pinned.getLobes() & smdl::DF_CAN_SET_NORMAL) != 0);
-    CHECK(smdl::manifoldClaim(pinned, /*isMarked=*/true).empty());
-  }
-  SUBCASE("The remap flag degrades to unproven without optimization") {
-    auto compiler{smdl::Compiler()};
-    buildGlossy(compiler, false); // OPT_LEVEL_NONE inside
-    auto *materialDef{compiler.findMaterial("m")};
-    REQUIRE(materialDef);
-    // Nothing folded, so the identity is unproven and the conservative
-    // reading is that the material may remap.
-    CHECK(materialDef->canRemapNormal());
-  }
-}
-
-TEST_CASE("Compiler reports lobe words per side of the interface") {
-  // The `surface` and `backface` trees scatter on their own sides of the
-  // interface, so a question that knows its side reads one word and never
-  // the union: claiming a kind on the side that cannot produce it bars
-  // the ordinary estimators from transport the manifold gather then fails
-  // to draw, and the two lose it between them.
-  auto compiler{smdl::Compiler()};
-  auto error{compiler.addCode(
-      "::sides", "#smdl\nimport ::df::*;\n"
-                 "export material one_sided() = material(\n"
-                 "  surface: material_surface(scattering: "
-                 "df::diffuse_reflection_bsdf(tint: 0.8)));\n"
-                 "export material two_sided() = material(\n"
-                 "  thin_walled: true,\n"
-                 "  surface: material_surface(scattering: "
-                 "df::diffuse_reflection_bsdf(tint: 0.8)),\n"
-                 "  backface: material_surface(scattering: "
-                 "df::specular_bsdf(mode: df::scatter_reflect)));\n")};
-  REQUIRE(!error);
-  error = compiler.compile(smdl::OPT_LEVEL_O2);
-  if (error) FAIL(error->message);
-  error = compiler.jitCompile();
-  if (error) FAIL(error->message);
-  auto *oneSidedMaterial{compiler.findMaterial("one_sided")};
-  auto *twoSidedMaterial{compiler.findMaterial("two_sided")};
-  REQUIRE(oneSidedMaterial);
-  REQUIRE(twoSidedMaterial);
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-  auto state{smdl::State()};
-  state.allocator = &allocator;
-  state.wavelengthMin = 380.0f;
-  state.wavelengthMax = 720.0f;
-  state.wavelengthBase = wavelengths.data();
-  for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-    const float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-    wavelengths[i] =
-        (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-  }
-  state.finalize();
-  const auto lobes{[](const smdl::JIT::Material &material, bool isBackface) {
-    return material.getLobes(isBackface) & smdl::DF_ALL;
-  }};
-  // A material with no `backface` initializer scatters by its `surface`
-  // from both sides, so the back side reports the surface word and not
-  // the empty one the raw `backfaceLobes` field holds.
-  auto oneSided{smdl::JIT::Material(state, oneSidedMaterial)};
-  CHECK(lobes(oneSided, false) == smdl::DF_SMOOTH_BRDF);
-  CHECK(lobes(oneSided, true) == smdl::DF_SMOOTH_BRDF);
-  CHECK((oneSided.getLobes() & smdl::DF_ALL) == smdl::DF_SMOOTH_BRDF);
-  // A two-sided one distinguishes, and the sideless union is the two
-  // together.
-  auto twoSided{smdl::JIT::Material(state, twoSidedMaterial)};
-  CHECK(lobes(twoSided, false) == smdl::DF_SMOOTH_BRDF);
-  CHECK(lobes(twoSided, true) == smdl::DF_DIRAC_BRDF);
-  CHECK((twoSided.getLobes() & smdl::DF_ALL) ==
-        (smdl::DF_SMOOTH_BRDF | smdl::DF_DIRAC_BRDF));
-  // And the claim follows the side: a diffuse front has no kind a walk
-  // can solve, so a mark claims nothing there however the back mirrors.
-  // The sideless claim is the union of the two, which is what a load-time
-  // enumeration of marked instances asks.
-  CHECK(smdl::manifoldClaim(twoSided, /*isBackface=*/false, /*isMarked=*/true)
-            .empty());
-  CHECK(smdl::manifoldClaim(twoSided, /*isBackface=*/true, /*isMarked=*/true)
-            .reflectLobes == smdl::DF_DIRAC_BRDF);
-  CHECK(smdl::manifoldClaim(twoSided, /*isMarked=*/true).reflectLobes ==
-        smdl::DF_DIRAC_BRDF);
-}
-
-TEST_CASE("Compiler vertex color reaches SMDL and the scene data alias") {
-  // The renderer's contract: the state carries the color and the count,
-  // and the host registers "vertex_color" scene data that reads the
-  // state, so the extension spelling and the MDL spelling agree at every
-  // hit and `data_isvalid` answers per hit. The getter honors the count
-  // too, so a lookup where nothing is present keeps its default.
-  const auto registerAlias{[](smdl::Compiler &compiler) {
-    compiler.sceneData.set(
-        "vertex_color",
-        [](smdl::State *state, smdl::SceneData::Kind kind, int size,
-           void *out) {
-          if (state->vertexColorCount > 0 &&
-              kind == smdl::SceneData::Kind::Float && (size == 3 || size == 4))
-            for (int i = 0; i < size; i++)
-              static_cast<float *>(out)[i] = state->vertexColor[0][i];
-        },
-        [](const smdl::State *state) { return state->vertexColorCount > 0; });
-  }};
-  const auto run{[&](const char *source, bool isPresent) {
-    auto compiler{smdl::Compiler()};
-    compiler.shouldEmitUnitTests = true;
-    registerAlias(compiler);
-    if (auto error{compiler.addCode("::vertex_color_test", source)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
-    state.allocator = &allocator;
-    state.wavelengthMin = 380.0f;
-    state.wavelengthMax = 720.0f;
-    state.wavelengthBase = wavelengths.data();
-    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
-      const float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
-      wavelengths[i] =
-          (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
-    }
-    if (isPresent) {
-      state.vertexColorCount = 1;
-      state.vertexColor[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
-    }
-    state.finalize();
-    if (auto error{compiler.runUnitTests(state)}) {
-      MESSAGE(error->message);
-      CHECK(false);
-    }
-  }};
-  SUBCASE("Present") {
-    run(R"(#smdl
-import ::scene::*;
-import ::state::*;
-unit_test "Vertex color present" {
-  #assert(state::vertex_color_max() == 1);
-  #assert(#all(state::vertex_color() == float4(0.25, 0.5, 0.75, 1.0)));
-  #assert(scene::data_isvalid("vertex_color"));
-  #assert(#all(scene::data_lookup_float4("vertex_color") == float4(0.25, 0.5, 0.75, 1.0)));
-  #assert(#all(scene::data_lookup_float3("vertex_color") == float3(0.25, 0.5, 0.75)));
-}
-)",
-        true);
-  }
-  SUBCASE("Absent") {
-    run(R"(#smdl
-import ::scene::*;
-import ::state::*;
-unit_test "Vertex color absent" {
-  #assert(state::vertex_color_max() == 0);
-  #assert(#all(state::vertex_color() == float4(1.0, 1.0, 1.0, 1.0)));
-  #assert(!scene::data_isvalid("vertex_color"));
-  #assert(#all(scene::data_lookup_float4("vertex_color", float4(0.0, 0.0, 0.0, 0.0)) == float4(0.0, 0.0, 0.0, 0.0)));
-}
-)",
-        false);
+    CHECK_OK(compiler.addCode("::df", "#smdl\nexport const int x = 1;\n"));
+    CHECK(warned.messages().size() == 1);
   }
 }

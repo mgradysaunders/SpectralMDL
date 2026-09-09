@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <optional>
 #include <string>
@@ -65,8 +65,8 @@ TEST_CASE("LayoutParser: diagnostics") {
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown asset operation") != std::string::npos);
-    CHECK(error.message.find("frobnicate") != std::string::npos);
+    CHECK_CONTAINS(error.message, "unknown asset operation");
+    CHECK_CONTAINS(error.message, "frobnicate");
     REQUIRE(error.location.source == &source);
     const auto where{source.lineAndColumn(error.location.offset)};
     CHECK(where.lineNo == 2);
@@ -78,8 +78,7 @@ TEST_CASE("LayoutParser: diagnostics") {
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
     REQUIRE(!error.notes.empty());
-    CHECK(error.notes.front().message.find("'.camera' file") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.notes.front().message, "'.camera' file");
   }
   SUBCASE("A 'time' directive names the flag, since no file holds the clock") {
     const auto &source{diags.addSource("test.layout", "time { base 2 }\n")};
@@ -88,8 +87,8 @@ TEST_CASE("LayoutParser: diagnostics") {
     const auto &error{diags.all().front()};
     REQUIRE(!error.notes.empty());
     // Never the camera file, which rejects a 'time' block of its own.
-    CHECK(error.notes.front().message.find("'-time'") != std::string::npos);
-    CHECK(error.notes.front().message.find("belongs in") == std::string::npos);
+    CHECK_CONTAINS(error.notes.front().message, "'-time'");
+    CHECK_NOT_CONTAINS(error.notes.front().message, "belongs in");
   }
   SUBCASE("The box takes a size, and only the box does") {
     const auto document{
@@ -121,7 +120,7 @@ asset plain = box { material wood }
       // Recovery skips the rest of the block, so the missing `material`
       // is reported after it; the first error is the one under test.
       REQUIRE(local.hasErrors());
-      CHECK(local.all().front().message.find("has no") != std::string::npos);
+      CHECK_CONTAINS(local.all().front().message, "has no");
     }
   }
   SUBCASE("A box size must be three positive numbers") {
@@ -129,8 +128,7 @@ asset plain = box { material wood }
         "test.layout", "asset a = box { size 1 0 2 material m }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.hasErrors());
-    CHECK(diags.all().front().message.find("three positive numbers") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "three positive numbers");
   }
   SUBCASE("A shape light's extent must be positive") {
     for (const char *text :
@@ -141,8 +139,7 @@ asset plain = box { material wood }
       const auto &source{local.addSource("test.layout", text)};
       (void)parseLayout(local, source, "/nowhere");
       REQUIRE(local.hasErrors());
-      CHECK(local.all().front().message.find("positive number") !=
-            std::string::npos);
+      CHECK_CONTAINS(local.all().front().message, "positive number");
     }
   }
   SUBCASE("A light setting the kind does not have is an error") {
@@ -164,8 +161,7 @@ asset plain = box { material wood }
       const auto &source{local.addSource("test.layout", text)};
       (void)parseLayout(local, source, "/nowhere");
       REQUIRE(local.hasErrors());
-      CHECK(local.all().front().message.find(check.second) !=
-            std::string::npos);
+      CHECK_CONTAINS(local.all().front().message, check.second);
     }
   }
   SUBCASE("A redeclared light points back at the first") {
@@ -174,7 +170,7 @@ asset plain = box { material wood }
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("redeclaration of light") != std::string::npos);
+    CHECK_CONTAINS(error.message, "redeclaration of light");
     REQUIRE(error.notes.size() == 1);
     CHECK(source.lineAndColumn(error.location.offset).lineNo == 2);
     CHECK(source.lineAndColumn(error.notes[0].location.offset).lineNo == 1);
@@ -247,7 +243,7 @@ import "b.gltf" { caster light }
                            "'light' appears twice in one import"};
     for (size_t i = 0; i < 4; i++) {
       CAPTURE(i);
-      CHECK(diags.all()[i].message.find(expected[i]) != std::string::npos);
+      CHECK_CONTAINS(diags.all()[i].message, expected[i]);
       CHECK(source.lineAndColumn(diags.all()[i].location.offset).lineNo ==
             uint32_t(2 + i));
     }
@@ -262,8 +258,7 @@ import "b.gltf" { caster light }
     REQUIRE(diags.errorCount() == 4);
     for (size_t i = 0; i < 4; i++) {
       CAPTURE(i);
-      CHECK(diags.all()[i].message.find("caster, light, ") !=
-            std::string::npos);
+      CHECK_CONTAINS(diags.all()[i].message, "caster, light, ");
     }
   }
 }
@@ -382,8 +377,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                        "place ball\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("ascending time") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "ascending time");
   }
   SUBCASE("An operation before the first key names the spelling") {
     const auto &source{diags.addSource("test.layout",
@@ -393,7 +387,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("'at <seconds>' keys") != std::string::npos);
+    CHECK_CONTAINS(error.message, "'at <seconds>' keys");
     REQUIRE(!error.notes.empty());
   }
   SUBCASE("An empty block is an error rather than a static placement") {
@@ -402,8 +396,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                                        "place ball motion { }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("at least one") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "at least one");
   }
   SUBCASE("A second block on one place is an error, not a merge") {
     const auto &source{diags.addSource(
@@ -413,8 +406,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("'motion' appears twice") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "'motion' appears twice");
     REQUIRE(document.placements.size() == 2);
     REQUIRE(document.placements[0].motion.keys.size() == 1);
     CHECK(document.placements[0].motion.keys[0].transform[3].x ==
@@ -429,8 +421,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
         "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("place operation") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "place operation");
     CHECK(document.placements.size() == 2);
   }
   SUBCASE("Only transform operations are admitted inside a key") {
@@ -441,9 +432,8 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("transform operation inside 'motion'") !=
-          std::string::npos);
-    CHECK(error.message.find("rotate_z, or matrix") != std::string::npos);
+    CHECK_CONTAINS(error.message, "transform operation inside 'motion'");
+    CHECK_CONTAINS(error.message, "rotate_z, or matrix");
     REQUIRE(document.placements.size() == 2);
     CHECK(document.placements[1].motion.empty());
   }
@@ -454,8 +444,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                        "place ball\n")};
     const auto document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("'{' after 'motion'") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "'{' after 'motion'");
     CHECK(document.placements.size() == 2);
   }
 }
@@ -512,33 +501,28 @@ TEST_CASE("LayoutParser: the animation operation") {
     CHECK(document.assets[2].animation.key() == "off");
     CHECK(!document.assets[3].animationLoc);
   }
-  SUBCASE("The errors") {
+  SUBCASE("The errors an animation operation raises") {
     const auto at{[](const std::string &body) {
       return firstErrorOf("asset h = \"h.glb\" { " + body + " }\nplace h\n");
     }};
-    CHECK(at("animation \"a\" animation \"b\"").find("appears twice") !=
-          std::string::npos);
-    CHECK(at("animation { }").find("not a block") != std::string::npos);
-    CHECK(at("animation off once").find("takes no clip and no settings") !=
-          std::string::npos);
-    CHECK(at("animation once off").find("takes no clip and no settings") !=
-          std::string::npos);
-    CHECK(at("animation \"a\" 2").find("names two clips") != std::string::npos);
-    CHECK(at("animation 1.5").find("unsigned clip index") != std::string::npos);
-    CHECK(at("animation -1").find("unsigned clip index") != std::string::npos);
-    CHECK(at("animation speed 0").find("'speed' must be nonzero") !=
-          std::string::npos);
-    CHECK(at("animation offset fast").find("expected a number") !=
-          std::string::npos);
-    CHECK(at("frobnicate").find("animation") != std::string::npos);
-    CHECK(firstErrorOf("asset s = sphere { material m "
-                       "animation \"x\" }\nplace s\n")
-              .find("but this asset is a sphere") != std::string::npos);
-    CHECK(firstErrorOf("asset h = \"h.glb\"\n"
-                       "place h animation \"x\"\n")
-              .find("property of what is loaded") != std::string::npos);
-    CHECK(firstErrorOf("import \"h.glb\" { animation \"x\" }\n")
-              .find("belongs on an 'asset' declaration") != std::string::npos);
+    CHECK_CONTAINS(at("animation \"a\" animation \"b\""), "appears twice");
+    CHECK_CONTAINS(at("animation { }"), "not a block");
+    CHECK_CONTAINS(at("animation off once"), "takes no clip and no settings");
+    CHECK_CONTAINS(at("animation once off"), "takes no clip and no settings");
+    CHECK_CONTAINS(at("animation \"a\" 2"), "names two clips");
+    CHECK_CONTAINS(at("animation 1.5"), "unsigned clip index");
+    CHECK_CONTAINS(at("animation -1"), "unsigned clip index");
+    CHECK_CONTAINS(at("animation speed 0"), "'speed' must be nonzero");
+    CHECK_CONTAINS(at("animation offset fast"), "expected a number");
+    CHECK_CONTAINS(at("frobnicate"), "animation");
+    CHECK_CONTAINS(firstErrorOf("asset s = sphere { material m "
+                                "animation \"x\" }\nplace s\n"),
+                   "but this asset is a sphere");
+    CHECK_CONTAINS(firstErrorOf("asset h = \"h.glb\"\n"
+                                "place h animation \"x\"\n"),
+                   "property of what is loaded");
+    CHECK_CONTAINS(firstErrorOf("import \"h.glb\" { animation \"x\" }\n"),
+                   "belongs on an 'asset' declaration");
   }
 }
 
@@ -567,17 +551,17 @@ TEST_CASE("LayoutParser: the offset on a place") {
     CHECK(!document.placements[3].animationOffset);
     CHECK(!document.placements[3].animationOffsetLoc);
   }
-  SUBCASE("The errors") {
-    CHECK(firstErrorOf("asset h = \"h.glb\"\n"
-                       "place h offset 1 offset 2\n")
-              .find("'offset' appears twice") != std::string::npos);
-    CHECK(firstErrorOf("asset h = \"h.glb\"\n"
-                       "place h offset fast\n")
-              .find("expected a number") != std::string::npos);
-    CHECK(firstErrorOf("import \"h.glb\" { offset 1 }\n")
-              .find("'offset' is a place operation") != std::string::npos);
-    CHECK(firstErrorOf("asset h = \"h.glb\"\n"
-                       "place h frobnicate\n")
-              .find("offset") != std::string::npos);
+  SUBCASE("The errors an offset raises") {
+    CHECK_CONTAINS(firstErrorOf("asset h = \"h.glb\"\n"
+                                "place h offset 1 offset 2\n"),
+                   "'offset' appears twice");
+    CHECK_CONTAINS(firstErrorOf("asset h = \"h.glb\"\n"
+                                "place h offset fast\n"),
+                   "expected a number");
+    CHECK_CONTAINS(firstErrorOf("import \"h.glb\" { offset 1 }\n"),
+                   "'offset' is a place operation");
+    CHECK_CONTAINS(firstErrorOf("asset h = \"h.glb\"\n"
+                                "place h frobnicate\n"),
+                   "offset");
   }
 }

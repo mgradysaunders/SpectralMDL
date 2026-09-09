@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <algorithm>
 #include <cmath>
@@ -60,14 +60,14 @@ float referenceDepth(const smdl::Haze &haze, const smdl::float3 &org,
 
 } // namespace
 
-TEST_CASE("MiePhase") {
+TEST_CASE("MiePhase: the fit against its generator") {
   // The goldens below are the ones 'testing/language/builtin/df/volume.smdl'
   // asserts against the builtin 'df::fog_vdf', produced by an
   // independent Python transcription of the paper's fits and of the
   // analytic Draine cumulative inversion. Sharing them is what ties the
   // two implementations of this phase function together: neither is the
   // other's reference, and a drift in either shows up here.
-  SUBCASE("fitted parameters golden") {
+  SUBCASE("The fitted parameters match the generator") {
     struct Case final {
       float diameter, gHG, gD, alpha, wD;
     };
@@ -89,7 +89,7 @@ TEST_CASE("MiePhase") {
     CHECK(clamped.asymmetryHG() == atMax.asymmetryHG());
     CHECK(clamped.weightDraine() == atMax.weightDraine());
   }
-  SUBCASE("phase value golden") {
+  SUBCASE("The phase values match the generator") {
     struct Case final {
       float diameter, u, expected, tolerance;
     };
@@ -121,7 +121,7 @@ TEST_CASE("MiePhase") {
     CHECK(phase.evaluate(wo, smdl::float3{0.6f, 0.0f, -0.8f}) ==
           doctest::Approx(phase.evaluate(0.8f)));
   }
-  SUBCASE("cumulative inversion golden") {
+  SUBCASE("The cumulative inversion matches the generator") {
     // The lobes are addressed through their fitted diameters, which is
     // where the goldens' explicit parameters came from.
     struct Case final {
@@ -154,7 +154,8 @@ TEST_CASE("MiePhase") {
     CHECK(sampleDeflection(isotropic, 0.25f, true) < 0.0f);
     CHECK(sampleDeflection(isotropic, 0.75f, true) > 0.0f);
   }
-  SUBCASE("normalized, non-negative, and sampled as evaluated") {
+  SUBCASE(
+      "The phase is normalized and non-negative, and samples as it evaluates") {
     // One diameter per branch of the piecewise fits.
     for (float diameter : {0.05f, 0.8f, 3.0f, 12.0f}) {
       CAPTURE(diameter);
@@ -222,11 +223,11 @@ TEST_CASE("MiePhase") {
   }
 }
 
-TEST_CASE("Haze") {
+TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
   const auto wavelens{makeWavelengths()};
   const auto options{makeOptions()};
   const auto span{smdl::Span<const float>(wavelens.data(), wavelens.size())};
-  SUBCASE("optical depth against quadrature") {
+  SUBCASE("The optical depth agrees with quadrature") {
     // Rays that climb, descend, and run flat, from origins on both
     // sides of the reference height.
     const auto haze{smdl::Haze(options, span, 1.0f)};
@@ -254,7 +255,7 @@ TEST_CASE("Haze") {
       }
     }
   }
-  SUBCASE("free-flight inversion against its own distribution") {
+  SUBCASE("The free-flight inversion agrees with its own distribution") {
     // Sampling at `xi` must land where the transmittance has fallen to
     // `1 - xi`, which is the whole claim the analytic sampler makes.
     for (float k : {-2e-3f, -1e-4f, 0.0f, 1e-5f, 4e-4f, 3e-3f}) {
@@ -277,7 +278,7 @@ TEST_CASE("Haze") {
       }
     }
   }
-  SUBCASE("extinction spectrum against its generator") {
+  SUBCASE("The extinction spectrum matches the generator") {
     // The tables and this golden come out of the same MODTRAN runs, so
     // what is checked here is the construction the header describes: the
     // Koschmieder amount split between aerosol and Rayleigh, each
@@ -302,7 +303,7 @@ TEST_CASE("Haze") {
       }
     }
   }
-  SUBCASE("the reference wavelength is Koschmieder's") {
+  SUBCASE("The reference wavelength is Koschmieder's") {
     // The one thing the tables are not free to choose: aerosol plus
     // Rayleigh at 550nm is the extinction the meteorological range
     // names, which is what ties the haze to the sun-sky model's
@@ -320,7 +321,7 @@ TEST_CASE("Haze") {
             doctest::Approx(3.912f / (1000.0f * visibility)).epsilon(1e-5));
     }
   }
-  SUBCASE("scattering never exceeds extinction") {
+  SUBCASE("Scattering never exceeds extinction") {
     const auto haze{smdl::Haze(options, span, 1.0f)};
     std::vector<float> albedo(haze.size());
     haze.albedo(smdl::Span<float>(albedo.data(), albedo.size()));
@@ -331,7 +332,7 @@ TEST_CASE("Haze") {
       CHECK(albedo[i] <= 1.0f);
     }
   }
-  SUBCASE("zenith depth is finite and approached from below") {
+  SUBCASE("The zenith depth is finite and approached from below") {
     // An upward ray leaves the atmosphere having accumulated
     // `sigmaC / k`, which is why the sky survives the haze.
     const auto haze{smdl::Haze(options, span, 1.0f)};

@@ -1,9 +1,8 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
 #include <algorithm>
 #include <cmath>
 #include <string>
-#include <vector>
 
 #include "smdl/Compiler.h"
 #include "smdl/Support/Span.h"
@@ -138,12 +137,9 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
 
 } // namespace
 
-TEST_CASE("Manifold walk: connection measure over scene surfaces") {
+TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
   auto compiler{smdl::Compiler()};
-  if (auto error{compiler.addCode("::selftest", SELFTEST_MATERIALS)}) {
-    MESSAGE(error->message);
-    REQUIRE(false);
-  }
+  REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
   auto scene{Scene(compiler)};
   // A mirror disk at the origin and two stacked glass disks off to the
   // side, so the two families' casts never see each other; not too far,
@@ -163,20 +159,10 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
     glassB.objectToWorld[3] = float4(50.0f, 0.0f, -2.0f, 1.0f);
     scene.add(glassB);
   }
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-    MESSAGE(error->message);
-    REQUIRE(false);
-  }
-  if (auto error{compiler.jitCompile()}) {
-    MESSAGE(error->message);
-    REQUIRE(false);
-  }
-  auto gridSpec{std::vector<float>(16)};
-  for (size_t i = 0; i < gridSpec.size(); i++)
-    gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-  const auto wavelengths{
-      Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
-  gRenderGrid.wavelengths = wavelengths;
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const ScopedGrid grid{};
+  const auto &wavelengths{grid.wavelengths()};
   scene.commit(wavelengths);
   const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
 
@@ -271,7 +257,7 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
 // value per distinct solution however often a walk re-finds it, and a
 // hard cap past which a distinct solution is dropped rather than summed
 // unclustered.
-TEST_CASE("Manifold solution set: distinct solutions counted once") {
+TEST_CASE("ManifoldSolutionSet: distinct solutions counted once") {
   const float3 receiver{};
   // A one-crossing connection at `point`, which is all
   // `isSameManifoldSolution()` reads.
@@ -291,7 +277,7 @@ TEST_CASE("Manifold solution set: distinct solutions counted once") {
     valued++;
     return Color(1.0f);
   }};
-  SUBCASE("a re-find is valued and summed once") {
+  SUBCASE("A re-found solution is valued and summed once") {
     ManifoldSolutionSet solutions{};
     solutions.consider(receiver, solutionAt(0), value, nullptr);
     solutions.consider(receiver, solutionAt(0), value, nullptr);
@@ -306,7 +292,7 @@ TEST_CASE("Manifold solution set: distinct solutions counted once") {
     CHECK(stats.contributionCount == 1);
     CHECK(stats.contributionNonZeroCount == 1);
   }
-  SUBCASE("a distinct solution past the cap is dropped, not summed") {
+  SUBCASE("A distinct solution past the cap is dropped, not summed") {
     ManifoldSolutionSet solutions{};
     for (int i = 0; i < 64; i++)
       solutions.consider(receiver, solutionAt(i), value, nullptr);

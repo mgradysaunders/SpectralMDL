@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <array>
 #include <cmath>
@@ -10,8 +10,8 @@
 
 #include "smdl/RenderUtil/MonteCarlo.h"
 
-TEST_CASE("MonteCarlo") {
-  SUBCASE("Distribution1D") {
+TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
+  SUBCASE("Distribution1D draws in proportion to its values") {
     auto distr =
         smdl::Distribution1D(std::vector<float>{1.0f, 2.0f, 3.0f, 1.0f});
     CHECK(distr.indexPMF(0) == doctest::Approx(1.0 / 7.0));
@@ -38,14 +38,14 @@ TEST_CASE("MonteCarlo") {
     CHECK(histogram[3] * 1e-5 ==
           doctest::Approx(distr.indexPMF(3)).epsilon(1e-3));
   }
-  SUBCASE("Distribution1D with all-zero values") {
+  SUBCASE("Distribution1D with all-zero values draws uniformly") {
     auto distr = smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 0.0f});
     CHECK(distr.indexPMF(0) == 0.0f);
     CHECK(distr.indexPMF(1) == 0.0f);
     CHECK(distr.indexPMF(2) == 0.0f);
     CHECK(distr.unnormalizedSum() == 0.0f);
   }
-  SUBCASE("Distribution2D") {
+  SUBCASE("Distribution2D draws in proportion to its values") {
     auto distr =
         smdl::Distribution2D(4, 2,
                              std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f, //
@@ -97,7 +97,7 @@ void checkNet(const std::vector<uint32_t> &X, const std::vector<uint32_t> &Y,
 }
 } // namespace
 
-TEST_CASE("Canonical samples") {
+TEST_CASE("MonteCarlo: the canonical sample helpers") {
   SUBCASE("canonicalFromBits excludes both endpoints") {
     // Only the zero pattern reaches the bottom clamp: the next one up
     // already lands at 2^-32, which is an ordinary normal float.
@@ -145,10 +145,10 @@ TEST_CASE("Canonical samples") {
   }
 }
 
-TEST_CASE("QMC helpers") {
+TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
   // The golden values pin the exact bit patterns, which the sampler
   // sequence and thus resumable renders depend on.
-  SUBCASE("reverseBits") {
+  SUBCASE("reverseBits is its own inverse") {
     CHECK(smdl::reverseBits(0x00000000U) == 0x00000000U);
     CHECK(smdl::reverseBits(0xFFFFFFFFU) == 0xFFFFFFFFU);
     CHECK(smdl::reverseBits(0x00000001U) == 0x80000000U);
@@ -161,7 +161,7 @@ TEST_CASE("QMC helpers") {
     }
     CHECK(isInvolution);
   }
-  SUBCASE("mixBits") {
+  SUBCASE("mixBits is a bijection with no short cycle") {
     static_assert(
         std::is_same_v<decltype(smdl::mixBits(uint32_t(1))), uint32_t>);
     static_assert(
@@ -176,7 +176,7 @@ TEST_CASE("QMC helpers") {
     CHECK(smdl::mixBits(uint64_t(0x9E3779B97F4A7C15ULL)) ==
           0xE220A8397B1DCDAFULL);
   }
-  SUBCASE("nestedUniformScramble nested property") {
+  SUBCASE("nestedUniformScramble keeps a prefix a prefix") {
     CHECK(smdl::nestedUniformScramble(0x12345678U, 0xCAFEBABEU) == 0x7530FA95U);
     // The property that makes the scramble Owen-style: inputs agreeing in
     // their top k bits map to outputs agreeing in their top k bits, for
@@ -221,7 +221,7 @@ TEST_CASE("QMC helpers") {
     }
     CHECK(roundTrips);
   }
-  SUBCASE("Sobol pair is a (0,2)-net") {
+  SUBCASE("The Sobol pair is a (0,2)-net") {
     CHECK(smdl::sobolDim1(5) == 0x20000000U);
     CHECK(smdl::sobolDim1(0xFFFFU) == 0x00010000U);
     for (int m = 0; m <= 12; m++) {
@@ -263,8 +263,8 @@ TEST_CASE("QMC helpers") {
   }
 }
 
-TEST_CASE("OwenSobolSampler") {
-  SUBCASE("determinism and golden sequence") {
+TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
+  SUBCASE("The sequence is deterministic and matches the golden draws") {
     auto sampler{smdl::OwenSobolSampler()};
     sampler.start(0xC0FFEEU, 12345U);
     CHECK(sampler.generate() == 0xDACD9D31U);
@@ -285,7 +285,7 @@ TEST_CASE("OwenSobolSampler") {
       anyDiff |= other.generate() != sampler.generate();
     CHECK(anyDiff);
   }
-  SUBCASE("draws in strict (0,1)") {
+  SUBCASE("Every draw lands in the open unit interval") {
     auto sampler{smdl::OwenSobolSampler()};
     bool isInRange{true};
     for (uint32_t index = 0; index < 256; index++) {
@@ -300,7 +300,7 @@ TEST_CASE("OwenSobolSampler") {
     }
     CHECK(isInRange);
   }
-  SUBCASE("scrambling preserves the net") {
+  SUBCASE("Scrambling preserves the net property") {
     // The index shuffle maps the first 2^m indexes among themselves (a
     // consequence of the nested property), and the per-dimension Owen
     // scrambles preserve elementary intervals, so every aligned pair of
@@ -324,7 +324,7 @@ TEST_CASE("OwenSobolSampler") {
       }
     }
   }
-  SUBCASE("the pair draw is the two single draws") {
+  SUBCASE("The pair draw is the two single draws") {
     // Aligned, where the pair is formed once for both components, and
     // unaligned, where the two draws straddle two pairs.
     for (const uint32_t seed : {1U, 0xC0FFEEU}) {
@@ -352,7 +352,7 @@ TEST_CASE("OwenSobolSampler") {
       }
     }
   }
-  SUBCASE("alignPair and dimension accounting") {
+  SUBCASE("alignPair advances the dimension it says it does") {
     auto sampler{smdl::OwenSobolSampler()};
     sampler.start(1U, 2U);
     CHECK(sampler.dimension() == 0U);
@@ -375,7 +375,7 @@ TEST_CASE("OwenSobolSampler") {
     sampler.start(1U, 3U); // restart resets
     CHECK(sampler.dimension() == 0U);
   }
-  SUBCASE("pairs decorrelate") {
+  SUBCASE("Consecutive pairs are uncorrelated") {
     // The first components of pairs 0 and 1 across many indexes should
     // be uncorrelated; the tolerance is a few times 1/sqrt(N).
     const int N{4096};
@@ -397,7 +397,7 @@ TEST_CASE("OwenSobolSampler") {
         std::sqrt((N * sumXX - sumX * sumX) * (N * sumYY - sumY * sumY))};
     CHECK(std::abs(correlation) < 0.05);
   }
-  SUBCASE("mean converges at the QMC rate") {
+  SUBCASE("The mean converges at the QMC rate") {
     // The first 2^m points of a scrambled dimension put one point in
     // each interval of width 2^-m, so the mean sits within 2^-m of 0.5,
     // far tighter than the Monte Carlo rate.

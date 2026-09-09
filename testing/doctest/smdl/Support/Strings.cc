@@ -1,12 +1,12 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include "smdl/Support/Strings.h"
 
 #include <array>
 #include <string>
 
-TEST_CASE("Strings") {
-  SUBCASE("suggestNearest") {
+TEST_CASE("Strings: the suggestion and the float formatting") {
+  SUBCASE("suggestNearest picks the nearest candidate, or nothing") {
     const std::array<std::string_view, 5> candidates{
         "import", "place", "material", "camera", "sky"};
     auto suggest{[&](std::string_view name) {

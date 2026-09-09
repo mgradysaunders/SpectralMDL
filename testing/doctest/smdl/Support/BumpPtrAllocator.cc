@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cstdint>
 #include <vector>
@@ -34,8 +34,8 @@ struct alignas(64) OverAligned final {
 
 } // namespace
 
-TEST_CASE("BumpPtrAllocator") {
-  SUBCASE("zero size allocates nothing") {
+TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
+  SUBCASE("A zero-size request allocates nothing") {
     auto allocator{smdl::BumpPtrAllocator()};
     CHECK(allocator.allocate(0, 1) == nullptr);
     CHECK(allocator.allocate(0, 16) == nullptr);
@@ -45,7 +45,7 @@ TEST_CASE("BumpPtrAllocator") {
     void *ptr1{allocator.allocate(8, 8)};
     CHECK(static_cast<char *>(ptr1) - static_cast<char *>(ptr0) == 8);
   }
-  SUBCASE("alignment") {
+  SUBCASE("Every block is aligned as asked, padding past the last") {
     auto allocator{smdl::BumpPtrAllocator()};
     // Interleave alignments so that each allocation has to pad past the
     // last, and include alignments past the slab header's own.
@@ -56,7 +56,7 @@ TEST_CASE("BumpPtrAllocator") {
       }
     }
   }
-  SUBCASE("blocks do not overlap and survive slab growth") {
+  SUBCASE("Blocks do not overlap and survive slab growth") {
     auto allocator{smdl::BumpPtrAllocator()};
     auto rng{smdl::RNG(1234)};
     auto blocks{std::vector<Block>()};
@@ -105,7 +105,7 @@ TEST_CASE("BumpPtrAllocator") {
     empty.reset();
     CHECK(empty.allocate(8, 8) != nullptr);
   }
-  SUBCASE("an allocation larger than a slab") {
+  SUBCASE("A request larger than a slab is served") {
     auto allocator{smdl::BumpPtrAllocator()};
     const size_t size{4 * smdl::BumpPtrAllocator::MIN_SLAB_SIZE};
     auto *ptr{static_cast<unsigned char *>(allocator.allocate(size, 64))};
@@ -120,7 +120,7 @@ TEST_CASE("BumpPtrAllocator") {
     for (size_t i = 0; i < size; i++) isIntact &= ptr[i] == 0xAB;
     CHECK(isIntact);
   }
-  SUBCASE("typed allocation") {
+  SUBCASE("A typed allocation destructs only what needs destructing") {
     auto allocator{smdl::BumpPtrAllocator()};
     // A trivially destructible type comes back as a raw pointer, since
     // there is nothing to destruct.
@@ -136,7 +136,7 @@ TEST_CASE("BumpPtrAllocator") {
     }
     CHECK(liveCount == 0);
   }
-  SUBCASE("placement new honors extended alignment") {
+  SUBCASE("Placement new honors an extended alignment") {
     auto allocator{smdl::BumpPtrAllocator()};
     // Nudge the bump pointer off the extended alignment first, so that a
     // pass through the unaligned overload would be caught.

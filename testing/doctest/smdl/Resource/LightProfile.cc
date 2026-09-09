@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <random>
 
@@ -84,8 +84,8 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
 }
 } // namespace
 
-TEST_CASE("LightProfile") {
-  SUBCASE("Invalid profile") {
+TEST_CASE("LightProfile: the IES symmetries and the sampling") {
+  SUBCASE("A default profile is invalid and safe to query") {
     auto profile{smdl::LightProfile()};
     CHECK(!profile.isValid());
     CHECK(profile.directionPDF(smdl::float3(0, 0, 1)) == 0.0f);
@@ -96,9 +96,9 @@ TEST_CASE("LightProfile") {
     CHECK(w.y == 0.0f);
     CHECK(w.z == 0.0f);
   }
-  SUBCASE("Axially symmetric") {
+  SUBCASE("An axially symmetric profile reads back its angles") {
     auto profile{smdl::LightProfile()};
-    REQUIRE(!profile.loadFromFileMemory(axialIES));
+    REQUIRE_OK(profile.loadFromFileMemory(axialIES));
     REQUIRE(profile.isValid());
     CHECK(profile.maxIntensity() == doctest::Approx(1.0f));
     // Spot check the parsed intensities through the interpolator.
@@ -110,9 +110,9 @@ TEST_CASE("LightProfile") {
           doctest::Approx(0.2f).epsilon(1e-3));
     checkDistributionConsistency(profile);
   }
-  SUBCASE("Quadrant symmetric") {
+  SUBCASE("A quadrant symmetric profile mirrors into four") {
     auto profile{smdl::LightProfile()};
-    REQUIRE(!profile.loadFromFileMemory(quadrantIES));
+    REQUIRE_OK(profile.loadFromFileMemory(quadrantIES));
     REQUIRE(profile.isValid());
     // The quadrant unfolds by mirroring, so the +X and -X directions
     // agree, and there is no emission below the horizon.

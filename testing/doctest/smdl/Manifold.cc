@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 
@@ -120,7 +120,7 @@ public:
 
 } // namespace
 
-TEST_CASE("Manifold flat mirror") {
+TEST_CASE("Manifold: a connection through a flat mirror") {
   const PlaneSurfaces surfaces{};
   const float3 receiver{0.5f, -0.8f, 1.2f};
   smdl::ManifoldChain chain{};
@@ -166,7 +166,7 @@ TEST_CASE("Manifold flat mirror") {
   }
 }
 
-TEST_CASE("Manifold sphere refraction") {
+TEST_CASE("Manifold: a connection refracted through a sphere") {
   const SphereSurfaces surfaces{};
   // The receiver on the axis inside the unit sphere, on the dense side,
   // and the light distant along the axis: by symmetry the crossing is
@@ -221,7 +221,7 @@ TEST_CASE("Manifold sphere refraction") {
   }
 }
 
-TEST_CASE("Manifold reciprocal trial counting") {
+TEST_CASE("Manifold: the trials a reciprocal walk counts") {
   // The count is the estimate: a retry that lands on the solution at
   // attempt k reports inverse probability k, and running out drops.
   smdl::ManifoldConnection connection{};

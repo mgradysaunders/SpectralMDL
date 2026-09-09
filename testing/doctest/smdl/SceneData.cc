@@ -1,12 +1,12 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <array>
 
 #include "smdl/SceneData.h"
 
-TEST_CASE("SceneData") {
+TEST_CASE("SceneData: what a registered field answers") {
   smdl::SceneData sceneData{};
-  SUBCASE("setFloat4x4") {
+  SUBCASE("setFloat4x4 answers a matrix lookup by name") {
     smdl::float4x4 matrix{};
     for (size_t j{}; j < 4; j++)
       for (size_t i{}; i < 4; i++) matrix[j][i] = float(4 * j + i);
@@ -59,7 +59,7 @@ TEST_CASE("SceneData") {
     CHECK(out[2] == 0.75f);
     CHECK(out[3] == 1.0f);
   }
-  SUBCASE("setFloat4 does not answer float4x4 lookups") {
+  SUBCASE("setFloat4 does not answer a float4x4 lookup") {
     sceneData.setFloat4("vector", smdl::float4(1.0f, 2.0f, 3.0f, 4.0f));
     auto *getter{sceneData.get("vector")};
     REQUIRE(getter);

@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
 #include <algorithm>
 #include <cmath>
@@ -128,35 +128,17 @@ namespace {
 // its allocator.
 class Fixture final {
 private:
-  // Declared first, so that every `Color` below is sized to this grid,
-  // and put back on the way out: the suite shares one process and the
-  // other cases build materials against the grid they set.
-  struct ScopedGrid final {
-    ScopedGrid() {
-      gRenderGrid.reset(smdl::Span<const float>(GRID.data(), GRID.size()),
-                        false);
-    }
-    ~ScopedGrid() { gRenderGrid = saved; }
-    const WavelengthGrid saved{gRenderGrid};
-  } mGrid{};
+  // Declared first, so that every `Color` below is sized to this grid.
+  const ScopedGrid mGrid{GRID, false};
 
 public:
   Fixture() {
-    if (auto error{compiler.addCode("::mediumtest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.addCode("::mediumtest", MATERIALS));
     // O2, because `hasHomogeneousVolume()` is derived after optimization
     // and degrades to unknown without it, which would send every
     // material here down the heterogeneous path.
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     state.emplace(makeRenderState(wavelengths, &allocator, 0.0f));
     // The coefficient snapshots are captured at this point, which is
     // what a position-dependent material without a majorant falls back

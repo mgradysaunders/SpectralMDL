@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,10 +10,8 @@
 
 namespace fs = std::filesystem;
 
-TEST_CASE("Image") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-image-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+TEST_CASE("Image: reading, writing, and the mip chains") {
+  TempDir tmpDir{"image"};
   SUBCASE("PNG round trip with RGB rounded up to RGBA") {
     // A 2x3 RGB image with distinct texels.
     const uint8_t texels[18] = {255, 0,   0,   0,   255, 0,   //
@@ -22,7 +20,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "test.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 3, 3, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.getFormat() == smdl::Image::UINT8);
     CHECK(image.getNumTexelsX() == 2);
     CHECK(image.getNumTexelsY() == 3);
@@ -43,12 +41,12 @@ TEST_CASE("Image") {
     CHECK(image.fetch(0, 0)[0] == 51.0f / 255.0f);
     CHECK(image.fetch(0, 2)[0] == 1.0f);
   }
-  SUBCASE("Gray PNG") {
+  SUBCASE("A gray PNG round-trips as one channel") {
     const uint8_t texels[4] = {0, 85, 170, 255};
     auto fileName{(tmpDir / "gray.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 2, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.getNumChannels() == 1);
     image.finishLoad();
     CHECK(image.fetch(1, 0)[0] == 85.0f / 255.0f);
@@ -56,7 +54,7 @@ TEST_CASE("Image") {
     // Channels not present must be NaN.
     CHECK(std::isnan(image.fetch(0, 0)[1]));
   }
-  SUBCASE("Mip chain") {
+  SUBCASE("A chain is built down to the 1x1 level") {
     // A 4x4 gray PNG whose 2x2 box averages are exact integers, so
     // every mip texel has a predictable value.
     const uint8_t texels[16] = {0,   16,  32,  48,  //
@@ -66,7 +64,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "mip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     image.requestMipLevels();
     CHECK(image.getNumLevels() == 3);
     CHECK(image.getNumTexelsX(1) == 2);
@@ -95,7 +93,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "npot.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 5, 3, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     image.requestMipLevels();
     CHECK(image.getNumLevels() == 3);
     CHECK(image.getNumTexelsX(1) == 2);
@@ -113,7 +111,7 @@ TEST_CASE("Image") {
           CHECK(value <= 150.0f / 255.0f);
         }
   }
-  SUBCASE("Maximum mip chain") {
+  SUBCASE("A maximum chain takes the largest of each group") {
     // 7x5 gray, odd on both axes, with the maxima placed so that the
     // border and the widened last cells matter: texel (I, J) of level l
     // must be the maximum over level 0 texels [I << l, (I + 1) << l),
@@ -128,7 +126,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "max.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, numX, numY, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
     CHECK(image.getMipFilter() == smdl::Image::MIP_MAX);
     // Asking again for the same kind is a no-op; the other kind is
@@ -177,7 +175,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "max_rgba.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 2, 4, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
     image.finishLoad();
     auto texel{image.fetch(0, 0, 1)};
@@ -194,7 +192,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "max.exr").string()};
     REQUIRE(!smdl::writeFloatImage(fileName, 4, 2, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
     image.finishLoad();
     CHECK(image.getNumLevels() == 3);
@@ -210,14 +208,14 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "nomip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     // Nothing asked, so the image holds level 0 only.
     CHECK(image.getNumLevels() == 1);
     image.finishLoad();
     CHECK(image.getNumLevels() == 1);
     // Level 0 must be identical to a with-mips load of the same file.
     smdl::Image imageWithMips{};
-    REQUIRE(!imageWithMips.startLoad(fileName));
+    REQUIRE_OK(imageWithMips.startLoad(fileName));
     imageWithMips.requestMipLevels();
     imageWithMips.finishLoad();
     CHECK(imageWithMips.getNumLevels() == 3);
@@ -240,7 +238,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "nochain.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     // Nothing is obtained up front, whatever the file turns out to be.
     CHECK(image.getSizeInBytes() == 0);
     image.finishLoad();
@@ -249,7 +247,7 @@ TEST_CASE("Image") {
     // The same file with the chain asked for is larger by the levels it
     // actually holds, and level 0 reads the same either way.
     smdl::Image imageWithChain{};
-    REQUIRE(!imageWithChain.startLoad(fileName));
+    REQUIRE_OK(imageWithChain.startLoad(fileName));
     imageWithChain.requestMipLevels();
     imageWithChain.finishLoad();
     CHECK(imageWithChain.getNumLevels() == 3);
@@ -270,7 +268,7 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "earlymip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     image.requestMipLevels();
     image.finishLoad();
     CHECK(image.getNumLevels() == 3);
@@ -296,7 +294,7 @@ TEST_CASE("Image") {
     REQUIRE(sizeInBytes > 128);
     fs::resize_file(fileName, sizeInBytes / 2);
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName));
+    REQUIRE_OK(image.startLoad(fileName));
     image.requestMipLevels();
     CHECK_THROWS(image.finishLoad());
     CHECK(image.getNumLevels() == 7);
@@ -317,5 +315,4 @@ TEST_CASE("Image") {
     CHECK(smdl::write8bitImage((tmpDir / "test.webp").string(), 2, 2, 1, texels)
               .has_value());
   }
-  fs::remove_all(tmpDir);
 }

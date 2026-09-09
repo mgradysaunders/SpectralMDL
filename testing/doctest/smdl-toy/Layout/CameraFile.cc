@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <string>
 
@@ -41,24 +41,23 @@ TEST_CASE("CameraFile: the shutter setting") {
         diags.addSource("test.camera", "camera { shutter -1 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find(
-              "nonnegative number for 'shutter'") != std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message,
+                   "nonnegative number for 'shutter'");
   }
   SUBCASE("A non-finite shutter is an error") {
     const auto &source{
         diags.addSource("test.camera", "camera { shutter inf }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("finite number for 'shutter'") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "finite number for 'shutter'");
   }
   SUBCASE("It cannot be keyed, since it is the interval, not a value in it") {
     const auto &source{diags.addSource(
         "test.camera", "camera { motion { at 0 shutter 1 } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("not a quantity to interpolate") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message,
+                   "not a quantity to interpolate");
   }
 }
 
@@ -70,10 +69,9 @@ TEST_CASE("CameraFile: what the file deliberately does not carry") {
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown directive") != std::string::npos);
+    CHECK_CONTAINS(error.message, "unknown directive");
     REQUIRE(!error.notes.empty());
-    CHECK(error.notes.front().message.find("'-time' names the instant") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.notes.front().message, "'-time' names the instant");
   }
   SUBCASE("'resolution' names the flag that sizes the picture") {
     const auto &source{
@@ -81,11 +79,10 @@ TEST_CASE("CameraFile: what the file deliberately does not carry") {
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("fact about this render") != std::string::npos);
+    CHECK_CONTAINS(error.message, "fact about this render");
     REQUIRE(!error.notes.empty());
-    CHECK(error.notes.front().message.find("-resolution") != std::string::npos);
-    CHECK(error.notes.front().message.find("-crop-window") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.notes.front().message, "-resolution");
+    CHECK_CONTAINS(error.notes.front().message, "-crop-window");
   }
   SUBCASE("The parse resynchronizes at the next statement") {
     const auto &source{diags.addSource(
@@ -166,8 +163,7 @@ TEST_CASE("CameraFile: the camera motion block") {
         "test.camera", "camera { motion { at 2 fovy 30 at 1 fovy 60 } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("ascending time") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "ascending time");
   }
   SUBCASE("A setting before the first key names the spelling") {
     const auto &source{diags.addSource(
@@ -175,7 +171,7 @@ TEST_CASE("CameraFile: the camera motion block") {
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("'at <seconds>' keys") != std::string::npos);
+    CHECK_CONTAINS(error.message, "'at <seconds>' keys");
     REQUIRE(!error.notes.empty());
   }
   SUBCASE("An empty block is an error rather than a still camera") {
@@ -183,40 +179,36 @@ TEST_CASE("CameraFile: the camera motion block") {
         diags.addSource("test.camera", "camera { motion { } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("at least one") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "at least one");
   }
   SUBCASE("What cannot be interpolated cannot be keyed") {
     const auto &source{diags.addSource(
         "test.camera", "camera { motion { at 0 resolution 64 64 } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("not a quantity to interpolate") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message,
+                   "not a quantity to interpolate");
   }
   SUBCASE("An unknown setting inside a key is an error") {
     const auto &source{
         diags.addSource("test.camera", "camera { motion { at 0 fov 30 } }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("in a 'motion' key") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "in a 'motion' key");
   }
   SUBCASE("The block needs its brace") {
     const auto &source{diags.addSource(
         "test.camera", "camera { motion at 0 look_to 0 0 0 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("'{' after 'motion'") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "'{' after 'motion'");
   }
   SUBCASE("At the top level, motion is still an unknown directive") {
     const auto &source{
         diags.addSource("test.camera", "motion { at 0 look_to 0 0 0 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("unknown directive") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "unknown directive");
   }
 }
 
@@ -256,8 +248,7 @@ TEST_CASE("CameraFile: the camera block") {
     const auto &source{diags.addSource("test.camera", "camera { fovy 0 }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK(diags.all().front().message.find("positive number for") !=
-          std::string::npos);
+    CHECK_CONTAINS(diags.all().front().message, "positive number for");
   }
   SUBCASE("A scene directive names where it belongs") {
     const auto &source{
@@ -265,9 +256,8 @@ TEST_CASE("CameraFile: the camera block") {
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const auto &error{diags.all().front()};
-    CHECK(error.message.find("unknown directive") != std::string::npos);
+    CHECK_CONTAINS(error.message, "unknown directive");
     REQUIRE(!error.notes.empty());
-    CHECK(error.notes.front().message.find("belongs in the layout") !=
-          std::string::npos);
+    CHECK_CONTAINS(error.notes.front().message, "belongs in the layout");
   }
 }

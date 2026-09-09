@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cstring>
 #include <random>
@@ -45,8 +45,7 @@ std::vector<float> testValuesFloat() {
   auto data{std::vector<float>()};
   for (int iO = 0; iO < N_THETA; iO++)
     for (int iI = 0; iI < N_THETA; iI++)
-      for (int iP = 0; iP < N_PHI; iP++)
-        data.push_back(testValue(iO, iI, iP));
+      for (int iP = 0; iP < N_PHI; iP++) data.push_back(testValue(iO, iI, iP));
   return data;
 }
 
@@ -123,8 +122,8 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
 }
 } // namespace
 
-TEST_CASE("BSDFMeasurement") {
-  SUBCASE("Invalid measurement") {
+TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
+  SUBCASE("A default measurement is invalid and safe to query") {
     auto measured{smdl::BSDFMeasurement()};
     CHECK(measured.directionPDF(smdl::float3(0, 0, 1), smdl::float3(0, 0, 1)) ==
           0.0f);
@@ -134,9 +133,9 @@ TEST_CASE("BSDFMeasurement") {
     CHECK(pdf == 0.0f);
     CHECK(wi.z == 0.0f);
   }
-  SUBCASE("Float") {
+  SUBCASE("The scalar format reads back its values") {
     auto measured{smdl::BSDFMeasurement()};
-    REQUIRE(!measured.loadFromFileMemory(
+    REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(0, N_THETA, N_PHI, testValuesFloat())));
     CHECK(measured.kind == smdl::BSDFMeasurement::KIND_REFLECTION);
     CHECK(measured.type == smdl::BSDFMeasurement::TYPE_FLOAT);
@@ -149,8 +148,9 @@ TEST_CASE("BSDFMeasurement") {
     CHECK(value.z == doctest::Approx(testValue(1, 2, 3)));
     // Interpolating at cell centers reproduces the table exactly, and
     // interpolating between centers averages the neighboring values.
-    CHECK(measured.interpolate(thetaCenter(1), thetaCenter(2), phiCenter(3)).x ==
-          doctest::Approx(testValue(1, 2, 3)));
+    CHECK(
+        measured.interpolate(thetaCenter(1), thetaCenter(2), phiCenter(3)).x ==
+        doctest::Approx(testValue(1, 2, 3)));
     CHECK(measured
               .interpolate(0.5f * (thetaCenter(1) + thetaCenter(2)),
                            thetaCenter(0), phiCenter(0))
@@ -163,9 +163,9 @@ TEST_CASE("BSDFMeasurement") {
         measured.interpolate(0.5f * smdl::PI, thetaCenter(0), phiCenter(0)).x ==
         doctest::Approx(testValue(N_THETA - 1, 0, 0)));
   }
-  SUBCASE("Float3") {
+  SUBCASE("The float3 format reads back its values") {
     auto measured{smdl::BSDFMeasurement()};
-    REQUIRE(!measured.loadFromFileMemory(
+    REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(1, N_THETA, N_PHI, testValuesFloat3())));
     CHECK(measured.type == smdl::BSDFMeasurement::TYPE_FLOAT3);
     auto value{measured.fetch(1, 2, 3)};
@@ -186,9 +186,9 @@ TEST_CASE("BSDFMeasurement") {
     CHECK(measured.interpolate(wo, wi).x ==
           doctest::Approx(measured.interpolate(wi, wo).x).epsilon(1e-3));
   }
-  SUBCASE("Sampling consistency") {
+  SUBCASE("Sampling agrees with the reported density") {
     auto measured{smdl::BSDFMeasurement()};
-    REQUIRE(!measured.loadFromFileMemory(
+    REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(1, N_THETA, N_PHI, testValuesFloat3())));
     checkDistributionConsistency(measured, smdl::float3(0, 0, 1));
     checkDistributionConsistency(measured,

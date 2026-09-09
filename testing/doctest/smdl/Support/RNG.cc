@@ -1,11 +1,11 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <array>
 
 #include "smdl/Support/RNG.h"
 
-TEST_CASE("RNG") {
-  SUBCASE("seeding") {
+TEST_CASE("RNG: the golden sequence and the streams") {
+  SUBCASE("The seeding sequence matches the PCG32 reference") {
     // The seeding sequence must match the PCG32 reference: starting from
     // zero, advance, add the seed, advance, with the stream selector
     // mapped to an odd increment. The language test 'rng.smdl' pins the
@@ -16,7 +16,7 @@ TEST_CASE("RNG") {
     CHECK(smdl::RNG(42).increment == smdl::RNG().increment);
     CHECK(smdl::RNG().increment == smdl::RNG::DEFAULT_INCREMENT);
   }
-  SUBCASE("golden vectors") {
+  SUBCASE("The first draws match the published outputs") {
     // The published outputs of O'Neill's pcg32-demo for seed 42,
     // stream 54.
     auto rng{smdl::RNG(42, 54)};
@@ -27,7 +27,7 @@ TEST_CASE("RNG") {
     CHECK(rng.generate() == 0xBFA4784BU);
     CHECK(rng.generate() == 0xCBED606EU);
   }
-  SUBCASE("discard") {
+  SUBCASE("discard advances exactly as far as generating would") {
     auto rng0{smdl::RNG(7, 11)};
     auto rng1{rng0};
     rng0.discard(1000);
@@ -36,7 +36,7 @@ TEST_CASE("RNG") {
     rng1.discard(0);
     CHECK(rng0 == rng1);
   }
-  SUBCASE("generateInt") {
+  SUBCASE("generateInt lands in the requested range without bias") {
     auto rng{smdl::RNG(123)};
     std::array<int, 7> hits{};
     bool isInBounds{true};
@@ -50,7 +50,7 @@ TEST_CASE("RNG") {
     CHECK(rng.generateInt(1) == 0);
     CHECK(rng.generateInt(0) == 0);
   }
-  SUBCASE("generateFloat range") {
+  SUBCASE("generateFloat stays inside the unit interval") {
     auto rng{smdl::RNG(5)};
     bool isInRange{true};
     for (int i = 0; i < 10000; i++) {
@@ -59,7 +59,7 @@ TEST_CASE("RNG") {
     }
     CHECK(isInRange);
   }
-  SUBCASE("streams are distinct") {
+  SUBCASE("Two streams of one seed do not agree") {
     auto rng0{smdl::RNG(42, 1)};
     auto rng1{smdl::RNG(42, 2)};
     bool anyDiff{false};

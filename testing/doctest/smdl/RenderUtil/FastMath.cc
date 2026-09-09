@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 #include <limits>
@@ -20,8 +20,8 @@ template <typename T, typename F> void sweep(T lo, T hi, F &&visit) {
 
 } // namespace
 
-TEST_CASE("FastMath") {
-  SUBCASE("exact points") {
+TEST_CASE("FastMath: the error bounds of the approximations") {
+  SUBCASE("The exact points are exact") {
     CHECK(smdl::fastExp(0.0f) == 1.0f);
     CHECK(smdl::fastExp(0.0) == 1.0);
     CHECK(smdl::fastLog(1.0f) == 0.0f);
@@ -30,7 +30,7 @@ TEST_CASE("FastMath") {
     CHECK(smdl::fastAcos(-1.0f) == 3.14159265f);
     CHECK(smdl::fastAcos(0.0f) == doctest::Approx(1.57079633).epsilon(1e-6));
   }
-  SUBCASE("exp float, relative error over the normal range") {
+  SUBCASE("fastExp holds its relative bound over the normal float range") {
     double worst{};
     sweep(-87.3f, 88.3f, [&](float x) {
       const double ref{std::exp(double(x))};
@@ -38,7 +38,7 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 3e-7);
   }
-  SUBCASE("exp double, relative error over the normal range") {
+  SUBCASE("fastExp holds its relative bound over the normal double range") {
     long double worst{};
     sweep(-708.3, 709.4, [&](double x) {
       const long double ref{std::exp(static_cast<long double>(x))};
@@ -48,7 +48,7 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 1e-8);
   }
-  SUBCASE("exp saturation, never a NaN") {
+  SUBCASE("fastExp saturates at the extremes rather than returning a NaN") {
     CHECK(smdl::fastExp(-87.34f) == 0.0f);
     CHECK(smdl::fastExp(-200.0f) == 0.0f);
     CHECK(smdl::fastExp(-87.0f) > 0.0f);
@@ -72,7 +72,7 @@ TEST_CASE("FastMath") {
     });
     CHECK(isSane);
   }
-  SUBCASE("log float, over every binade") {
+  SUBCASE("fastLog holds its bound over every float binade") {
     // The bound is relative to ln(x) away from 1 and absolute near it.
     double worst{};
     sweep(-126.0f, 127.99f, [&](float u) {
@@ -83,7 +83,7 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 3e-7);
   }
-  SUBCASE("log double, over every binade") {
+  SUBCASE("fastLog holds its bound over every double binade") {
     long double worst{};
     sweep(-1022.0, 1023.99, [&](double u) {
       const double x{std::exp2(u)};
@@ -94,7 +94,7 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 2e-11);
   }
-  SUBCASE("acos, absolute error in radians") {
+  SUBCASE("fastAcos holds its absolute bound in radians") {
     double worst{};
     sweep(-1.0f, 1.0f, [&](float x) {
       const double ref{std::acos(double(x))};
@@ -102,12 +102,12 @@ TEST_CASE("FastMath") {
     });
     CHECK(worst < 5e-7);
   }
-  SUBCASE("acos, continuous through zero") {
+  SUBCASE("fastAcos is continuous through zero") {
     const float tiny{std::numeric_limits<float>::denorm_min()};
     CHECK(std::abs(smdl::fastAcos(-tiny) - smdl::fastAcos(+tiny)) < 1e-6f);
     CHECK(std::abs(smdl::fastAcos(-1e-7f) - smdl::fastAcos(+1e-7f)) < 1e-6f);
   }
-  SUBCASE("atan2, absolute error in radians over the circle") {
+  SUBCASE("fastAtan2 holds its absolute bound around the circle") {
     double worst{};
     // Over angles rather than over the plane, so that every eighth of
     // the circle the reflections stitch together is swept evenly, and
@@ -126,7 +126,7 @@ TEST_CASE("FastMath") {
     }
     CHECK(worst < 4e-7);
   }
-  SUBCASE("atan2, the axes and the origin") {
+  SUBCASE("fastAtan2 agrees on the axes and at the origin") {
     CHECK(smdl::fastAtan2(0.0f, 0.0f) == 0.0f);
     CHECK(smdl::fastAtan2(0.0f, 1.0f) == 0.0f);
     CHECK(smdl::fastAtan2(0.0f, -1.0f) == doctest::Approx(3.14159265));

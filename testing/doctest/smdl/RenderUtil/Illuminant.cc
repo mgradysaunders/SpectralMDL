@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 
@@ -62,8 +62,9 @@ template <typename Spd> smdl::float2 integrateChromaticity(Spd &&spd) {
 }
 } // namespace
 
-TEST_CASE("Illuminant") {
-  SUBCASE("smdlKelvinToChromaticity") {
+TEST_CASE(
+    "Illuminant: the standard illuminants against published chromaticities") {
+  SUBCASE("smdlKelvinToChromaticity matches the published locus") {
     // Null output must not crash.
     smdl::smdlKelvinToChromaticity(6504.0f, nullptr);
 
@@ -93,7 +94,7 @@ TEST_CASE("Illuminant") {
     CHECK(kelvinToChromaticity(6999.0f)[1] ==
           doctest::Approx(kelvinToChromaticity(7001.0f)[1]).epsilon(1e-4));
   }
-  SUBCASE("smdlEvalIlluminantD") {
+  SUBCASE("smdlEvalIlluminantD matches the published chromaticities") {
     // Null arguments must not crash.
     smdl::smdlEvalIlluminantD(1, nullptr, nullptr, smdl::float2(0.0f));
 
@@ -142,7 +143,7 @@ TEST_CASE("Illuminant") {
       CHECK(integratedXY[1] == doctest::Approx(xy[1]).epsilon(2e-3));
     }
   }
-  SUBCASE("smdlEvalIlluminantF") {
+  SUBCASE("smdlEvalIlluminantF matches the published chromaticities") {
     // Null arguments must not crash.
     smdl::smdlEvalIlluminantF(1, nullptr, nullptr, 1);
 
@@ -190,7 +191,7 @@ TEST_CASE("Illuminant") {
             doctest::Approx(EXPECTED_XY[number - 1][1]).epsilon(2e-3));
     }
   }
-  SUBCASE("smdlEvalIlluminantHP") {
+  SUBCASE("smdlEvalIlluminantHP matches the published chromaticities") {
     // Null arguments must not crash.
     smdl::smdlEvalIlluminantHP(1, nullptr, nullptr, 1);
 
@@ -235,7 +236,7 @@ TEST_CASE("Illuminant") {
             doctest::Approx(EXPECTED_XY[number - 1][1]).epsilon(3e-3));
     }
   }
-  SUBCASE("smdlEvalIlluminantLED") {
+  SUBCASE("smdlEvalIlluminantLED matches the published chromaticities") {
     // Null arguments must not crash.
     smdl::smdlEvalIlluminantLED(1, nullptr, nullptr, 1);
 

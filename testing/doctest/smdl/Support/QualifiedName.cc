@@ -1,11 +1,11 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include "smdl/Support/QualifiedName.h"
 
 using Components = std::vector<std::string_view>;
 
-TEST_CASE("QualifiedName") {
-  SUBCASE("splitQualifiedName") {
+TEST_CASE("QualifiedName: splitting, joining, and suffix matching") {
+  SUBCASE("splitQualifiedName splits on the component boundaries") {
     CHECK(smdl::splitQualifiedName("").empty());
     CHECK(smdl::splitQualifiedName("::").empty());
     CHECK(smdl::splitQualifiedName("a") == Components{"a"});
@@ -16,7 +16,7 @@ TEST_CASE("QualifiedName") {
     CHECK(smdl::splitQualifiedName("a::") == Components{"a", ""});
     CHECK(smdl::splitQualifiedName("a::::b") == Components{"a", "", "b"});
   }
-  SUBCASE("joinQualifiedName") {
+  SUBCASE("joinQualifiedName is the inverse of splitting") {
     CHECK(smdl::joinQualifiedName({}) == "");
     CHECK(smdl::joinQualifiedName({"a"}) == "::a");
     CHECK(smdl::joinQualifiedName({"a", "b"}) == "::a::b");
@@ -24,7 +24,7 @@ TEST_CASE("QualifiedName") {
     auto components{smdl::splitQualifiedName("::vendor::metals::steel")};
     CHECK(smdl::joinQualifiedName(components) == "::vendor::metals::steel");
   }
-  SUBCASE("isQualifiedNameSuffix") {
+  SUBCASE("isQualifiedNameSuffix matches whole components only") {
     const auto name{"::vendor::metals::steel::brushed"};
     CHECK(smdl::isQualifiedNameSuffix("brushed", name));
     CHECK(smdl::isQualifiedNameSuffix("steel::brushed", name));

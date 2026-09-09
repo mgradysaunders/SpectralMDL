@@ -4,8 +4,11 @@ smdl_add_doctest(
   SOURCES
     "Common.cc"
     "Compiler.cc"
+    "Compiler/Diagnostics.cc"
     "Compiler/Emitter.cc"
+    "Compiler/Resources.cc"
     "Doc.cc"
+    "JIT.cc"
     "Manifold.cc"
     "Module.cc"
     "Parser.cc"
@@ -37,3 +40,6 @@ smdl_add_doctest(
   LINK
     "SpectralMDL::SpectralMDL"
   )
+# The fixtures the suite's tests share ('CompileFixtures.h') live beside
+# this file, so it is on the include path.
+target_include_directories("smdl-doctest" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

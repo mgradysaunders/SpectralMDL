@@ -1,10 +1,7 @@
-#include "doctest.h"
+#include "RenderFixtures.h"
 
-#include <filesystem>
-#include <fstream>
 #include <set>
 #include <string>
-#include <vector>
 
 #include "smdl/Compiler.h"
 #include "smdl/Support/Span.h"
@@ -15,8 +12,6 @@
 #include "Render/Sampler.h"
 #include "RigFixtures.h"
 #include "Scene/Scene.h"
-
-namespace fs = std::filesystem;
 
 // The light sampler over marked and unmarked emitters: what the `light`
 // mark decides and, just as important, what it leaves alone. Two
@@ -51,10 +46,7 @@ const smdl::SkyBasis NO_SKY{};
 class Fixture final {
 public:
   Fixture() {
-    if (auto error{compiler.addCode("::lighttest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.addCode("::lighttest", MATERIALS));
     // Spheres of radius 0.5 along +X, two units apart, so every one is
     // visible from the receiver below and none shadows another.
     const char *materials[]{"glow", "glow", "dull", "glow_power", "glow_power"};
@@ -68,20 +60,8 @@ public:
       item.objectToWorld[3] = float4(2.0f * float(i), 0.0f, 0.0f, 1.0f);
       scene.add(item);
     }
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
 
@@ -106,7 +86,8 @@ public:
 
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 // The instances `sample()` draws over `numDraws` draws from the receiver.
@@ -351,10 +332,7 @@ namespace {
 class ConeFixture final {
 public:
   ConeFixture() {
-    if (auto error{compiler.addCode("::conetest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.addCode("::conetest", MATERIALS));
     for (int i = 0; i < 2; i++) {
       LayoutItem item{};
       item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
@@ -365,20 +343,8 @@ public:
       item.objectToWorld[3] = float4(center(i), 1.0f);
       scene.add(item);
     }
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
 
@@ -391,7 +357,8 @@ public:
 
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 } // namespace
@@ -487,10 +454,7 @@ namespace {
 class LampFixture final {
 public:
   LampFixture() {
-    if (auto error{compiler.addCode("::lamptest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    REQUIRE_OK(compiler.addCode("::lamptest", MATERIALS));
     // The primitive faces +Z, so a half turn about X points it down; the
     // disk light faces down under the identity.
     LayoutItem item{};
@@ -502,20 +466,8 @@ public:
     item.objectToWorld[2] = float4(0.0f, 0.0f, -1.0f, 0.0f);
     item.objectToWorld[3] = float4(0.0f, 0.0f, HEIGHT, 1.0f);
     scene.add(item);
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
 
@@ -557,7 +509,8 @@ public:
 
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 } // namespace
@@ -821,17 +774,11 @@ namespace {
 class MotionFixture final {
 public:
   MotionFixture() {
-    fs::remove_all(dir);
-    fs::create_directories(dir);
-    quad = (dir / "quad.obj").string();
-    {
-      std::ofstream file(quad, std::ios::binary | std::ios::trunc);
-      file << "o quad\nv -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nf 1 2 3 4\n";
-    }
-    if (auto error{compiler.addCode("::motiontest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
+    quad =
+        dir.write("quad.obj",
+                  "o quad\nv -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nf 1 2 3 4\n")
+            .string();
+    REQUIRE_OK(compiler.addCode("::motiontest", MATERIALS));
     const auto sphereAt{[](const float3 &center) {
       LayoutItem item{};
       item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
@@ -863,35 +810,22 @@ public:
     movingQuad.objectToWorldShut = quadAt(2.0f).objectToWorld;
     scene.add(movingQuad);
     scene.add(quadAt(2.0f));
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
-  ~MotionFixture() { fs::remove_all(dir); }
-
   static constexpr float RADIUS{0.5f};
   static constexpr float3 CENTER_OPEN{0.0f, 0.0f, 0.0f};
   static constexpr float3 CENTER_SHUT{4.0f, 0.0f, 0.0f};
   static constexpr float3 QUAD_CENTER{2.0f, 0.0f, -5.0f};
   static constexpr float3 RECEIVER{2.0f, 0.0f, -3.0f};
 
-  fs::path dir{fs::temp_directory_path() / "smdl-toy-light-motion-test"};
+  TempDir dir{"toy-light-motion"};
   std::string quad{};
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 } // namespace
@@ -1091,49 +1025,26 @@ namespace {
 class DeformFixture final {
 public:
   DeformFixture() {
-    fs::remove_all(dir);
-    fs::create_directories(dir);
-    files = rig::writeFiles(dir);
-    if (auto error{compiler.addCode("::deformtest", MATERIALS)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    gRenderShutter.time = 0.25f;
-    gRenderShutter.length = 0.5f;
+    files = rig::writeFiles(dir.path());
+    REQUIRE_OK(compiler.addCode("::deformtest", MATERIALS));
     LayoutItem item{};
     item.fileName = files.morph;
     item.materials.all = "glow";
     item.isLight = true;
     scene.add(item);
-    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    if (auto error{compiler.jitCompile()}) {
-      MESSAGE(error->message);
-      REQUIRE(false);
-    }
-    auto gridSpec{std::vector<float>(16)};
-    for (size_t i = 0; i < gridSpec.size(); i++)
-      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
-    wavelengths =
-        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
-    gRenderGrid.wavelengths = wavelengths;
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE_OK(compiler.jitCompile());
     scene.commit(wavelengths);
   }
-  ~DeformFixture() {
-    gRenderShutter.time = 0.0f;
-    gRenderShutter.length = 0.0f;
-    fs::remove_all(dir);
-  }
-
   static constexpr float3 RECEIVER{0.6f, 0.5f, 3.0f};
 
-  fs::path dir{fs::temp_directory_path() / "smdl-toy-light-deform-test"};
+  const ScopedShutter mShutter{0.25f, 0.5f};
+  TempDir dir{"toy-light-deform"};
   rig::Files files{};
   smdl::Compiler compiler{};
   Scene scene{compiler};
-  Color wavelengths{};
+  ScopedGrid grid{};
+  Color wavelengths{grid.wavelengths()};
 };
 
 } // namespace

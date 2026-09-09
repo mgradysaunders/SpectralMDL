@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include "smdl/AST.h"
 #include "smdl/Module.h"
@@ -49,14 +49,10 @@ private:
   return error->message;
 }
 
-[[nodiscard]] bool contains(std::string_view str, std::string_view sub) {
-  return str.find(sub) != str.npos;
-}
-
 } // namespace
 
-TEST_CASE("Parser doc comments") {
-  SUBCASE("getDocCommentText") {
+TEST_CASE("Parser: which declaration a doc comment attaches to") {
+  SUBCASE("getDocCommentText strips the comment markers") {
     CHECK(docText("") == "");
     CHECK(docText("/// Hello") == "Hello");
     CHECK(docText("///No space") == "No space");
@@ -65,7 +61,7 @@ TEST_CASE("Parser doc comments") {
     CHECK(docText("/// A\n///\n/// B") == "A\n\nB");
     CHECK(docText("///\n/// After blank") == "After blank");
   }
-  SUBCASE("global declarations") {
+  SUBCASE("On a global declaration") {
     auto parsed{ParsedModule(R"(#smdl
 /// The documented constant.
 const int X = 1;
@@ -83,7 +79,7 @@ const int UNDOCUMENTED = 0;
           "The documented function,\non two lines.");
     CHECK(parsed.decl(2).srcDocComment.empty());
   }
-  SUBCASE("blank lines and ordinary comments break attachment") {
+  SUBCASE("A blank line or an ordinary comment breaks the attachment") {
     auto parsed{ParsedModule(R"(#smdl
 /// Not attached, blank line follows.
 
@@ -100,7 +96,7 @@ const int C = 0;
     CHECK(parsed.decl(1).srcDocComment.empty());
     CHECK(parsed.decl(2).srcDocComment.empty());
   }
-  SUBCASE("blank line between doc lines starts a new block") {
+  SUBCASE("A blank line between doc lines starts a new block") {
     auto parsed{ParsedModule(R"(#smdl
 /// Dropped.
 
@@ -109,7 +105,7 @@ const int A = 0;
 )")};
     CHECK(docText(parsed.decl(0).srcDocComment) == "Kept.");
   }
-  SUBCASE("struct fields") {
+  SUBCASE("On a struct field") {
     auto parsed{ParsedModule(R"(#smdl
 struct S {
   /// The first field,
@@ -124,7 +120,7 @@ struct S {
           "The first field,\non two lines.");
     CHECK(decl.fields[1].srcDocComment.empty());
   }
-  SUBCASE("enum declarators") {
+  SUBCASE("On an enum declarator") {
     auto parsed{ParsedModule(R"(#smdl
 enum E {
   /// The first.
@@ -137,7 +133,7 @@ enum E {
     CHECK(docText(decl.declarators[0].srcDocComment) == "The first.");
     CHECK(decl.declarators[1].srcDocComment.empty());
   }
-  SUBCASE("trailing '///<' on enum declarators") {
+  SUBCASE("Trailing '///<' on an enum declarator") {
     auto parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST = 0x0,  ///< The first.
@@ -151,7 +147,7 @@ enum E {
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[1].srcDocComment.empty());
   }
-  SUBCASE("trailing '///<' on last declarator without comma") {
+  SUBCASE("Trailing '///<' on the last declarator, with no comma after it") {
     auto parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST,
@@ -163,7 +159,7 @@ enum E {
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The second.");
   }
-  SUBCASE("stray '///<' on its own line attaches to nothing") {
+  SUBCASE("A stray '///<' on its own line attaches to nothing") {
     auto parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST,
@@ -178,7 +174,7 @@ enum E {
     CHECK(decl.declarators[1].srcDocComment.empty());
     CHECK(decl.declarators[1].srcDocCommentTrailing.empty());
   }
-  SUBCASE("stray '///<' before any item attaches to nothing") {
+  SUBCASE("A stray '///<' before any item attaches to nothing") {
     auto parsed{ParsedModule(R"(#smdl
 enum E { ///< Stray, trails the brace, not a declarator.
   E_FIRST,
@@ -189,7 +185,7 @@ enum E { ///< Stray, trails the brace, not a declarator.
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
   }
-  SUBCASE("leading and trailing docs together") {
+  SUBCASE("A leading and a trailing comment on one item") {
     auto parsed{ParsedModule(R"(#smdl
 enum E {
   /// The leading doc.
@@ -205,7 +201,7 @@ enum E {
     CHECK(decl.declarators[1].srcDocComment.empty());
     CHECK(decl.declarators[1].srcDocCommentTrailing.empty());
   }
-  SUBCASE("trailing '///<' on struct fields") {
+  SUBCASE("Trailing '///<' on a struct field") {
     auto parsed{ParsedModule(R"(#smdl
 struct S {
   int field1 = 0; ///< The first.
@@ -217,7 +213,7 @@ struct S {
     CHECK(docText(decl.fields[0].srcDocCommentTrailing) == "The first.");
     CHECK(docText(decl.fields[1].srcDocCommentTrailing) == "The second.");
   }
-  SUBCASE("trailing '///<' on parameters") {
+  SUBCASE("Trailing '///<' on a parameter") {
     auto parsed{ParsedModule(R"(#smdl
 int f(
   int a, ///< The a.
@@ -228,7 +224,7 @@ int f(
     CHECK(docText(decl.params[0].srcDocCommentTrailing) == "The a.");
     CHECK(decl.params[1].srcDocCommentTrailing.empty());
   }
-  SUBCASE("trailing '///<' on variable declarators") {
+  SUBCASE("Trailing '///<' on a variable declarator") {
     auto parsed{ParsedModule(R"(#smdl
 const int c0 = 0, ///< The c0.
   c1 = 1; ///< The c1.
@@ -238,7 +234,7 @@ const int c0 = 0, ///< The c0.
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) == "The c0.");
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The c1.");
   }
-  SUBCASE("parameters") {
+  SUBCASE("On a parameter") {
     auto parsed{ParsedModule(R"(#smdl
 int f(
   /// The parameter.
@@ -250,7 +246,7 @@ int f(
     CHECK(docText(decl.params[0].srcDocComment) == "The parameter.");
     CHECK(decl.params[1].srcDocComment.empty());
   }
-  SUBCASE("variable declarators") {
+  SUBCASE("On a variable declarator") {
     auto parsed{ParsedModule(R"(#smdl
 const int c0 = 0,
   /// The second declarator.
@@ -262,7 +258,7 @@ const int c0 = 0,
     CHECK(docText(decl.declarators[1].srcDocComment) ==
           "The second declarator.");
   }
-  SUBCASE("namespaced declarations") {
+  SUBCASE("On a declaration inside a namespace") {
     auto parsed{ParsedModule(R"(#smdl
 namespace ns {
 /// The nested function.
@@ -273,7 +269,7 @@ int g() = 0;
     REQUIRE(decl.decls.size() == 1);
     CHECK(docText(decl.decls[0]->srcDocComment) == "The nested function.");
   }
-  SUBCASE("module doc, SMDL syntax") {
+  SUBCASE("On the module itself, in the SMDL dialect") {
     auto parsed{ParsedModule(R"(// A line comment.
 /// The module documentation,
 /// on two lines.
@@ -285,7 +281,7 @@ const int X = 0;
           "The module documentation,\non two lines.");
     CHECK(parsed.decl(0).srcDocComment.empty());
   }
-  SUBCASE("module doc, MDL syntax") {
+  SUBCASE("On the module itself, in a conformant file") {
     auto parsed{ParsedModule(R"(/// The module documentation.
 mdl 1.7;
 
@@ -297,8 +293,8 @@ export const int X = 0;
   }
 }
 
-TEST_CASE("Parser let expression") {
-  SUBCASE("non-declaration is reported at the offending token") {
+TEST_CASE("Parser: a malformed let expression") {
+  SUBCASE("A non-declaration is reported at the offending token") {
     auto message{parseError(R"(#smdl
 exec {
   int y = let {
@@ -307,72 +303,72 @@ exec {
   } in int(x);
 }
 )")};
-    CHECK(contains(message, "::test>:5:"));
-    CHECK(contains(message, "must contain only declarations"));
+    CHECK_CONTAINS(message, "::test>:5:");
+    CHECK_CONTAINS(message, "must contain only declarations");
   }
-  SUBCASE("unterminated block is reported at the 'let'") {
+  SUBCASE("An unterminated block is reported at the 'let'") {
     auto message{parseError(R"(#smdl
 exec {
   int y = let {
     float x = 2;
 )")};
-    CHECK(contains(message, "::test>:3:"));
-    CHECK(contains(message, "expected closing '}' after 'let'"));
+    CHECK_CONTAINS(message, "::test>:3:");
+    CHECK_CONTAINS(message, "expected closing '}' after 'let'");
   }
 }
 
-TEST_CASE("Parser unexpected token") {
+TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     auto message{parseError("#smdl\nint i = 1\nint j = 2;\n")};
-    CHECK(contains(message, "but found 'int'"));
+    CHECK_CONTAINS(message, "but found 'int'");
   }
   SUBCASE("End of file is said plainly") {
     auto message{parseError("#smdl\nexec {\n  int i = 1;\n")};
-    CHECK(contains(message, "reached the end of the file"));
+    CHECK_CONTAINS(message, "reached the end of the file");
   }
   SUBCASE("A keyword borrowed from another language is explained") {
-    CHECK(contains(parseError("#smdl\nclass Foo { int a; };\n"),
-                   "there is no 'class'; use 'struct'"));
-    CHECK(contains(parseError("#smdl\nunion U { int a; };\n"),
-                   "union types are written '(A | B)'"));
-    CHECK(contains(parseError("#smdl\n#define N 3\nexec { #print(N); }\n"),
-                   "there is no preprocessor"));
+    CHECK_CONTAINS(parseError("#smdl\nclass Foo { int a; };\n"),
+                   "there is no 'class'; use 'struct'");
+    CHECK_CONTAINS(parseError("#smdl\nunion U { int a; };\n"),
+                   "union types are written '(A | B)'");
+    CHECK_CONTAINS(parseError("#smdl\n#define N 3\nexec { #print(N); }\n"),
+                   "there is no preprocessor");
   }
   SUBCASE("A borrowed keyword inside the construct is found") {
     // 'new' is neither where the parse started nor where it stopped.
-    CHECK(contains(parseError("#smdl\nexec { auto p = new int(3); }\n"),
-                   "there is no 'new'"));
+    CHECK_CONTAINS(parseError("#smdl\nexec { auto p = new int(3); }\n"),
+                   "there is no 'new'");
     // 'and' sits past the token that stopped the parse.
-    CHECK(contains(parseError("#smdl\nexec { #assert(1 == 1 and 2 == 2); }\n"),
-                   "there is no 'and'; use '&&'"));
-    CHECK(contains(parseError("#smdl\nexec { #assert(1 is int); }\n"),
-                   "the type test operator is '<:'"));
+    CHECK_CONTAINS(parseError("#smdl\nexec { #assert(1 == 1 and 2 == 2); }\n"),
+                   "there is no 'and'; use '&&'");
+    CHECK_CONTAINS(parseError("#smdl\nexec { #assert(1 is int); }\n"),
+                   "the type test operator is '<:'");
   }
   SUBCASE("A borrowed keyword in a comment or string is not advice") {
     auto message{parseError("#smdl\nexec { int i = 1 /* class */ 2; }\n")};
-    CHECK(contains(message, "but found"));
-    CHECK(!contains(message, "use 'struct'"));
+    CHECK_CONTAINS(message, "but found");
+    CHECK_NOT_CONTAINS(message, "use 'struct'");
     message = parseError("#smdl\nexec { string s = \"class\" 2; }\n");
-    CHECK(!contains(message, "use 'struct'"));
+    CHECK_NOT_CONTAINS(message, "use 'struct'");
   }
   SUBCASE("An extension in a conformant file says to use '#smdl'") {
-    CHECK(contains(parseError("mdl 1.8;\nunit_test \"x\" {}\n"),
-                   "'unit_test' is a SpectralMDL extension"));
-    CHECK(contains(
+    CHECK_CONTAINS(parseError("mdl 1.8;\nunit_test \"x\" {}\n"),
+                   "'unit_test' is a SpectralMDL extension");
+    CHECK_CONTAINS(
         parseError("mdl 1.8;\nexport int f() { return #sizeOf(int); }\n"),
-        "'#sizeOf' is a SpectralMDL extension"));
+        "'#sizeOf' is a SpectralMDL extension");
   }
   SUBCASE("An extension in an SMDL file is not blamed on the dialect") {
-    CHECK(!contains(parseError("#smdl\nexec { int i = 1 unit_test; }\n"),
-                    "SpectralMDL extension"));
+    CHECK_NOT_CONTAINS(parseError("#smdl\nexec { int i = 1 unit_test; }\n"),
+                       "SpectralMDL extension");
   }
   SUBCASE("A character literal is called out") {
-    CHECK(contains(parseError("#smdl\nexec { int c = 'a'; }\n"),
-                   "there are no character literals"));
+    CHECK_CONTAINS(parseError("#smdl\nexec { int c = 'a'; }\n"),
+                   "there are no character literals");
   }
   SUBCASE("An unclosed delimiter says where it opened") {
-    CHECK(contains(parseError("#smdl\nexec {\n  int i = (1 +\n    2;\n}\n"),
-                   "to close the '(' opened at line 3"));
+    CHECK_CONTAINS(parseError("#smdl\nexec {\n int i = (1 +\n 2;\n}\n"),
+                   "to close the '(' opened at line 3");
   }
   SUBCASE("An empty destructure is not a declarator") {
     // Accepting '{}' here swallowed the body of 'exec {}'.

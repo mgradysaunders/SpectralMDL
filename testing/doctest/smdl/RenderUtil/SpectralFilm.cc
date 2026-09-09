@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <filesystem>
 #include <fstream>
@@ -7,10 +7,8 @@
 
 namespace fs = std::filesystem;
 
-TEST_CASE("SpectralFilm") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-spectral-film-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
+TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
+  TempDir tmpDir{"spectral-film"};
   // A 3x2 film with 4 bands and distinct values everywhere: pixel
   // (x, y) band b accumulates 5 samples summing to 5 * (100x + 10y + b),
   // so the stored mean recovers 100x + 10y + b exactly.
@@ -45,7 +43,7 @@ TEST_CASE("SpectralFilm") {
     CHECK(film.getNumSamples() == 0);
     CHECK(film.mean(2, 1, 3) == 0.0);
   }
-  SUBCASE("ENVI round trip") {
+  SUBCASE("A film round-trips through an ENVI pair") {
     auto fileName{(tmpDir / "test.envi").string()};
     const std::array<std::string, 2> extraLines = {
         std::string("render sampler = test-1"),
@@ -82,7 +80,7 @@ TEST_CASE("SpectralFilm") {
     CHECK(film.getNumSamples() == 2 * SPP);
     CHECK(film.mean(1, 1, 2) == doctest::Approx(112.0).epsilon(1e-12));
   }
-  SUBCASE("ENVI window round trip") {
+  SUBCASE("A windowed film round-trips through an ENVI pair") {
     // The window is the middle column, which is where a windowed render
     // has samples; everything else is untouched.
     const smdl::int4 window{1, 0, 2, int(NUM_Y)};
@@ -161,7 +159,7 @@ TEST_CASE("SpectralFilm") {
       auto file{std::ifstream(headerName)};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
-    CHECK(text.find("render crop window") == std::string::npos);
+    CHECK_NOT_CONTAINS(text, "render crop window");
     auto loadedFilm{smdl::SpectralFilm{}};
     auto loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.cropWindow[0] == 0);
@@ -230,5 +228,4 @@ TEST_CASE("SpectralFilm") {
     CHECK(loadedFilm.getNumSamples() == 1);
     CHECK(loadedFilm.mean(2, 1, 3) == doctest::Approx(213.0).epsilon(1e-12));
   }
-  fs::remove_all(tmpDir);
 }

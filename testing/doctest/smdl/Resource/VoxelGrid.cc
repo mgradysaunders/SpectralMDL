@@ -1,16 +1,13 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <vector>
 
 #include "smdl/Common.h"
 #include "smdl/Resource/VoxelGrid.h"
-
-namespace fs = std::filesystem;
 
 using smdl::float3;
 
@@ -29,11 +26,8 @@ bool isSameGrid(const smdl::VoxelGrid &grid0, const smdl::VoxelGrid &grid1) {
   if (grid0.getBackground() != grid1.getBackground()) return false;
   if (grid0.getMinValue() != grid1.getMinValue()) return false;
   if (grid0.getMaxValue() != grid1.getMaxValue()) return false;
-  const auto sameFloat3{[](const float3 &a, const float3 &b) {
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-  }};
-  if (!sameFloat3(grid0.getWorldBoundMin(), grid1.getWorldBoundMin()) ||
-      !sameFloat3(grid0.getWorldBoundMax(), grid1.getWorldBoundMax()))
+  if (!isSame(grid0.getWorldBoundMin(), grid1.getWorldBoundMin()) ||
+      !isSame(grid0.getWorldBoundMax(), grid1.getWorldBoundMax()))
     return false;
   for (int z = 0; z < extent.z; z++)
     for (int y = 0; y < extent.y; y++)
@@ -61,11 +55,9 @@ void writeVol(const std::string &fileName, int nx, int ny, int nz,
 }
 } // namespace
 
-TEST_CASE("VoxelGrid") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-voxel-grid-test"};
-  fs::remove_all(tmpDir);
-  fs::create_directories(tmpDir);
-  SUBCASE("Mitsuba volume round trip") {
+TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
+  TempDir tmpDir{"voxel-grid"};
+  SUBCASE("A Mitsuba volume round-trips through the file") {
     // A 20x24x28 linear field, exactly representable in float.
     const int NX{20}, NY{24}, NZ{28};
     auto values{std::vector<float>()};
@@ -76,7 +68,7 @@ TEST_CASE("VoxelGrid") {
     auto fileName{(tmpDir / "linear.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
-    REQUIRE(!grid.loadFromFile(fileName));
+    REQUIRE_OK(grid.loadFromFile(fileName));
     CHECK(grid.isValid());
     CHECK(grid.getExtent().x == NX);
     CHECK(grid.getExtent().y == NY);
@@ -117,7 +109,7 @@ TEST_CASE("VoxelGrid") {
     CHECK(grid.sample(float3(2.0f, 2.0f, 2.0f)) ==
           grid.sample(float3(1.0f, 1.0f, 1.0f)));
   }
-  SUBCASE("Sparsity") {
+  SUBCASE("A brick of nothing but zeros is not stored") {
     // A field three bricks wide in x that is zero except over the middle
     // brick and half of the last, so brick (0,0,0) is empty outright.
     const int B{smdl::VoxelGrid::BRICK_EXTENT};
@@ -131,7 +123,7 @@ TEST_CASE("VoxelGrid") {
     auto fileName{(tmpDir / "sparse.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
-    REQUIRE(!grid.loadFromFile(fileName));
+    REQUIRE_OK(grid.loadFromFile(fileName));
     CHECK(grid.getBrickCount().x == 3);
     // The empty brick reads back as the background, and folds it into
     // the global minimum.
@@ -143,7 +135,7 @@ TEST_CASE("VoxelGrid") {
     CHECK(grid.fetch(NX, 0, 0) == 0.0f);
     CHECK(grid.fetch(-1, 0, 0) == 0.0f);
   }
-  SUBCASE("Majorant cell bounds") {
+  SUBCASE("A majorant cell bounds the voxels it covers") {
     // Three times the target cell count in x, which puts the derived
     // cell at four voxels whatever the target is, and one cell in the
     // other axes so the sweep at the end stays inside the cell it
@@ -164,7 +156,7 @@ TEST_CASE("VoxelGrid") {
     auto fileName{(tmpDir / "cells.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
-    REQUIRE(!grid.loadFromFile(fileName));
+    REQUIRE_OK(grid.loadFromFile(fileName));
     CHECK(grid.getMajorantExtent() == E);
     CHECK(grid.getMajorantCount().x == NX / E);
     CHECK(grid.getMajorantCount().y == 1);
@@ -200,7 +192,7 @@ TEST_CASE("VoxelGrid") {
     }
     CHECK(isBounded);
   }
-  SUBCASE("Saving") {
+  SUBCASE("Saving and loading back") {
     // A 20x24x28 field with structure in every axis, so a transposed or
     // shifted write cannot pass.
     const int NX{20}, NY{24}, NZ{28};
@@ -212,31 +204,31 @@ TEST_CASE("VoxelGrid") {
     auto sourceName{(tmpDir / "source.vol").string()};
     writeVol(sourceName, NX, NY, NZ, values);
     smdl::VoxelGrid source{};
-    REQUIRE(!source.loadFromFile(sourceName));
-    SUBCASE("Mitsuba volume") {
+    REQUIRE_OK(source.loadFromFile(sourceName));
+    SUBCASE("As a Mitsuba volume") {
       auto fileName{(tmpDir / "saved.vol").string()};
-      REQUIRE(!source.saveToFile(fileName));
+      REQUIRE_OK(source.saveToFile(fileName));
       smdl::VoxelGrid grid{};
-      REQUIRE(!grid.loadFromFile(fileName));
+      REQUIRE_OK(grid.loadFromFile(fileName));
       CHECK(isSameGrid(source, grid));
     }
-    SUBCASE("NanoVDB") {
+    SUBCASE("As a NanoVDB grid") {
       if (!hasNanoVDB()) return;
       auto fileName{(tmpDir / "saved.nvdb").string()};
-      REQUIRE(!source.saveToFile(fileName));
+      REQUIRE_OK(source.saveToFile(fileName));
       smdl::VoxelGrid grid{};
       // The default name is what an unnamed save writes.
-      REQUIRE(!grid.loadFromFile(fileName, "density"));
+      REQUIRE_OK(grid.loadFromFile(fileName, "density"));
       CHECK(isSameGrid(source, grid));
       // And back again, so the whole conversion the CLI performs is
       // covered in both directions.
       auto backName{(tmpDir / "back.vol").string()};
-      REQUIRE(!grid.saveToFile(backName));
+      REQUIRE_OK(grid.saveToFile(backName));
       smdl::VoxelGrid back{};
-      REQUIRE(!back.loadFromFile(backName));
+      REQUIRE_OK(back.loadFromFile(backName));
       CHECK(isSameGrid(source, back));
     }
-    SUBCASE("NanoVDB keeps the extent") {
+    SUBCASE("As a NanoVDB grid, keeping the extent") {
       if (!hasNanoVDB()) return;
       // A 40x8x8 field that is nonzero only over x in [16, 24). NanoVDB
       // stores the active index bounds and the loader takes the extent
@@ -251,12 +243,12 @@ TEST_CASE("VoxelGrid") {
       auto borderName{(tmpDir / "border.vol").string()};
       writeVol(borderName, MX, MY, MZ, sparse);
       smdl::VoxelGrid border{};
-      REQUIRE(!border.loadFromFile(borderName));
+      REQUIRE_OK(border.loadFromFile(borderName));
       REQUIRE(border.getExtent().x == MX);
       auto fileName{(tmpDir / "border.nvdb").string()};
-      REQUIRE(!border.saveToFile(fileName));
+      REQUIRE_OK(border.saveToFile(fileName));
       smdl::VoxelGrid grid{};
-      REQUIRE(!grid.loadFromFile(fileName, "density"));
+      REQUIRE_OK(grid.loadFromFile(fileName, "density"));
       CHECK(grid.getExtent().x == MX);
       CHECK(isSameGrid(border, grid));
       // The anchor changes no value: the corner it pins still holds the
@@ -268,7 +260,7 @@ TEST_CASE("VoxelGrid") {
       CHECK(grid.getMajorantBounds(0, 0, 0).y ==
             border.getMajorantBounds(0, 0, 0).y);
     }
-    SUBCASE("Several named grids in one NanoVDB file") {
+    SUBCASE("As several named grids in one NanoVDB file") {
       if (!hasNanoVDB()) return;
       // A second field, distinguishable from the first everywhere.
       auto other{std::vector<float>()};
@@ -276,19 +268,19 @@ TEST_CASE("VoxelGrid") {
       auto otherName{(tmpDir / "other.vol").string()};
       writeVol(otherName, NX, NY, NZ, other);
       smdl::VoxelGrid temperature{};
-      REQUIRE(!temperature.loadFromFile(otherName));
+      REQUIRE_OK(temperature.loadFromFile(otherName));
       auto fileName{(tmpDir / "both.nvdb").string()};
       REQUIRE(!smdl::VoxelGrid::saveToFile(fileName, {&source, &temperature},
                                            {"density", "temperature"}));
       smdl::VoxelGrid grid{};
-      REQUIRE(!grid.loadFromFile(fileName, "density"));
+      REQUIRE_OK(grid.loadFromFile(fileName, "density"));
       CHECK(isSameGrid(source, grid));
-      REQUIRE(!grid.loadFromFile(fileName, "temperature"));
+      REQUIRE_OK(grid.loadFromFile(fileName, "temperature"));
       CHECK(isSameGrid(temperature, grid));
       // A name the file does not carry is an error, not the first grid.
       CHECK(grid.loadFromFile(fileName, "flame").has_value());
     }
-    SUBCASE("Errors") {
+    SUBCASE("An unwritable target is refused") {
       CHECK(source.saveToFile((tmpDir / "nope.xyz").string()).has_value());
       // Grid names are a NanoVDB concept.
       CHECK(source.saveToFile((tmpDir / "named.vol").string(), "density")
@@ -312,7 +304,7 @@ TEST_CASE("VoxelGrid") {
                 .has_value());
     }
   }
-  SUBCASE("Errors") {
+  SUBCASE("A malformed or missing file is refused") {
     smdl::VoxelGrid grid{};
     // Unknown extension.
     CHECK(grid.loadFromFile((tmpDir / "nope.xyz").string()).has_value());

@@ -1,4 +1,4 @@
-#include "doctest.h"
+#include "Fixtures.h"
 
 #include <algorithm>
 #include <cmath>
@@ -44,12 +44,6 @@ void searchEvalMetalIOR(smdl::Metal metal, int numWavelens,
   }
 }
 
-// Bit-identical, and NaN compares equal to NaN so the out-of-domain results
-// are held to the same bits as everything else.
-bool hasSameBits(float a, float b) {
-  return (std::isnan(a) && std::isnan(b)) || a == b;
-}
-
 // Every wavelength worth asking about: each table entry and its two nearest
 // neighbors, every interval midpoint, a sweep across and well past the bucket
 // domain, and the exceptional values.
@@ -75,8 +69,8 @@ std::vector<float> probeWavelengths(const smdl::MetalIOR &metalIOR) {
 }
 } // namespace
 
-TEST_CASE("MetalIOR") {
-  SUBCASE("smdlFindMetalIOR") {
+TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
+  SUBCASE("smdlFindMetalIOR finds a metal by name and refuses the rest") {
     // Every valid metal must have a table that respects the documented
     // invariants: at least two entries, wavelengths positive, at most
     // 14000nm, and strictly increasing, with n > 0 and k >= 0.
@@ -108,7 +102,7 @@ TEST_CASE("MetalIOR") {
     CHECK(smdl::smdlFindMetalIOR(smdl::Metal(17), &metalIOR) == 0);
     CHECK(smdl::smdlFindMetalIOR(smdl::Metal::Au, nullptr) == 0);
   }
-  SUBCASE("smdlEvalMetalIOR at table wavelengths") {
+  SUBCASE("smdlEvalMetalIOR reproduces the table at its own wavelengths") {
     // Evaluating all table wavelengths at once must reproduce the table
     // exactly. This exercises the sorted-wavelength scan over each entire
     // table, including both endpoints.
@@ -131,7 +125,8 @@ TEST_CASE("MetalIOR") {
       CHECK(violations == 0);
     }
   }
-  SUBCASE("smdlEvalMetalIOR interpolation and clamping") {
+  SUBCASE(
+      "smdlEvalMetalIOR interpolates between rows and clamps past the ends") {
     // The evaluation must interpolate linearly between table entries.
     smdl::MetalIOR metalIOR{};
     REQUIRE(smdl::smdlFindMetalIOR(smdl::Metal::Au, &metalIOR) == 1);
@@ -151,7 +146,7 @@ TEST_CASE("MetalIOR") {
     CHECK(evalMetalIOR(smdl::Metal::Au, 100000.0f)[0] == entryLast.ior[0]);
     CHECK(evalMetalIOR(smdl::Metal::Au, 100000.0f)[1] == entryLast.ior[1]);
   }
-  SUBCASE("smdlEvalMetalIOR argument handling") {
+  SUBCASE("smdlEvalMetalIOR handles an empty and a non-finite argument") {
     // Null arguments must not crash.
     smdl::smdlEvalMetalIOR(smdl::Metal::Au, 1, nullptr, nullptr, nullptr);
 
@@ -173,7 +168,7 @@ TEST_CASE("MetalIOR") {
     CHECK(iorN[1] == evalMetalIOR(smdl::Metal::Au, 700.0f)[0]);
     CHECK(iorK[1] == evalMetalIOR(smdl::Metal::Au, 700.0f)[1]);
   }
-  SUBCASE("smdlEvalMetalIOR against published values") {
+  SUBCASE("smdlEvalMetalIOR matches the published values") {
     // Spot check against the underlying refractiveindex.info datasets. The
     // tables are downsampled, so interpolation may deviate from dropped
     // source entries by up to about half a percent.
@@ -211,7 +206,7 @@ TEST_CASE("MetalIOR") {
     }
   }
 
-  SUBCASE("smdlEvalMetalIOR matches the search it replaced") {
+  SUBCASE("smdlEvalMetalIOR agrees with a linear search of the table") {
     // The bucket index is an acceleration, not a re-derivation: it must land
     // on the same bracketing pair the search does, so the interpolation is
     // the same arithmetic on the same two entries and the result agrees to
@@ -237,11 +232,11 @@ TEST_CASE("MetalIOR") {
     }
   }
 
-  SUBCASE("smdlEvalMetalIOR does not depend on wavelength order") {
-    // The search used to carry its lower bound forward from the previous
-    // wavelength, which quietly returned wrong values for unsorted input
-    // rather than merely being slower. The bucket index reaches each
-    // wavelength independently, so order cannot matter.
+  SUBCASE("smdlEvalMetalIOR does not depend on the order of its wavelengths") {
+    // Each wavelength reaches its bucket independently, so the order they
+    // arrive in cannot matter. Carrying a lower bound forward from the
+    // wavelength before is the tempting optimization, and it would return
+    // wrong values for unsorted input rather than merely being slower.
     for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
       const auto metal{smdl::Metal(i)};
       smdl::MetalIOR metalIOR{};
