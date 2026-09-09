@@ -580,7 +580,7 @@ void Compiler::resetForRecompile() {
   mRGBToColor.func = nullptr;
   mColorToRGB.func = nullptr;
   mSkippedMaterialNames.clear();
-  mMaterials.clear();
+  mMaterialDefs.clear();
   mUnitTests.clear();
   mExecs.clear();
   mLLVMContext = std::make_unique<llvm::LLVMContext>();
@@ -624,12 +624,12 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     }
     // Sort JIT materials and unit tests by module and line number in
     // case we want to print them later.
-    sortByModuleAndLine(mMaterials);
+    sortByModuleAndLine(mMaterialDefs);
     sortByModuleAndLine(mUnitTests);
     // Warn about desired material names that matched nothing at all, so
     // a typo does not silently skip the material it meant to keep.
     for (const auto &desiredName : mDesiredMaterialNames) {
-      if (std::none_of(mMaterials.begin(), mMaterials.end(),
+      if (std::none_of(mMaterialDefs.begin(), mMaterialDefs.end(),
                        [&](const auto &jitMaterial) {
                          return matchesMaterialName(desiredName,
                                                     jitMaterial.qualifiedName);
@@ -647,7 +647,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                                           ? llvm::OptimizationLevel::O2
                                           : llvm::OptimizationLevel::O3);
     }
-    deriveStaticMaterialFlags(*mLLVMModule, mMaterials);
+    deriveStaticMaterialFlags(*mLLVMModule, mMaterialDefs);
     // Drop the images the optimizer proved unread before decoding the
     // rest, which is why decoding waits until here: the drop decision
     // needs the optimized module, after 'deriveStaticMaterialFlags' has
@@ -938,7 +938,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     llvmThrowIfError(mLLVMJit->addIRModule(std::move(llvmJitModule)));
     jitLookup(mColorToRGB);
     jitLookup(mRGBToColor);
-    for (auto &jitMaterial : mMaterials) {
+    for (auto &jitMaterial : mMaterialDefs) {
       jitLookup(jitMaterial.evaluate);
       jitLookup(jitMaterial.opacityEvaluate);
       jitLookup(jitMaterial.displacementEvaluate);
@@ -1017,7 +1017,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 std::vector<const JIT::MaterialDef *>
 Compiler::findMaterials(std::string_view materialName) const {
   auto results{std::vector<const JIT::MaterialDef *>()};
-  for (const auto &jitMaterial : mMaterials) {
+  for (const auto &jitMaterial : mMaterialDefs) {
     if (!jitMaterial.moduleIsShadowed &&
         matchesMaterialName(materialName, jitMaterial.qualifiedName))
       results.push_back(&jitMaterial);
@@ -1139,7 +1139,7 @@ std::string Compiler::printMaterialSummary() const {
   }};
   std::string message{};
   forEachModuleGroup(
-      mMaterials.begin(), mMaterials.end(), [&](auto itr0, auto itr1) {
+      mMaterialDefs.begin(), mMaterialDefs.end(), [&](auto itr0, auto itr1) {
         message += concat(QuotedPath(itr0->moduleDisplayName), " contains ",
                           itr1 - itr0, " materials:\n");
         for (; itr0 != itr1; ++itr0) {

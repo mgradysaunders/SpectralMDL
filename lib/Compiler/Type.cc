@@ -1540,7 +1540,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     return;
   }
   SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
-  auto &jitMaterial{compiler.mMaterials.emplace_back()};
+  auto &jitMaterial{compiler.mMaterialDefs.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.moduleDisplayName =
@@ -1560,7 +1560,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     symbolBase += component;
   }
   if (auto numDuplicates{std::count_if(
-          compiler.mMaterials.begin(), compiler.mMaterials.end(),
+          compiler.mMaterialDefs.begin(), compiler.mMaterialDefs.end(),
           [&](const auto &other) {
             return &other != &jitMaterial &&
                    other.qualifiedName == jitMaterial.qualifiedName;

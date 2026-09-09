@@ -440,7 +440,7 @@ public:
   /// Get all JIT-compiled materials, including materials in shadowed
   /// modules.
   [[nodiscard]] Span<const JIT::MaterialDef> getMaterials() const noexcept {
-    return mMaterials;
+    return mMaterialDefs;
   }
 
   /// Run the JIT-compiled color-to-RGB function.
@@ -684,7 +684,7 @@ private:
   std::vector<std::string> mSkippedMaterialNames;
 
   /// The JIT-compiled materials.
-  std::vector<JIT::MaterialDef> mMaterials;
+  std::vector<JIT::MaterialDef> mMaterialDefs;
 
   /// The JIT-compiled unit tests.
   std::vector<JIT::UnitTest> mUnitTests;
