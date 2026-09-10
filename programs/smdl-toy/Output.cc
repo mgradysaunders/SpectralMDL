@@ -20,8 +20,15 @@
 namespace {
 
 /// The spectral radiance the film holds, which is the library-wide
-/// convention; see `smdl::SunSky`.
+/// convention; see `smdl::SunSky`. Through a lens on the physical
+/// exposure the film holds `4 / pi` times the spectral irradiance at
+/// the sensor instead, an ideal f/1 lens reading 1 on axis; see
+/// `Camera::holdsRadiance()`.
+///
+/// \{
 constexpr const char *SPECTRAL_RADIANCE_UNITS{"W/(m^2 sr nm)"};
+constexpr const char *LENS_FILM_UNITS{"4/pi W/(m^2 nm)"};
+/// \}
 
 /// The header fields written for a reader rather than for a resume.
 /// `radiance units` is not an ENVI standard field; the three solar ones
@@ -109,8 +116,10 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // whoever opens the file next, and never read back, so none of it
     // joins the fingerprint a resumed session compares.
     auto headerLines{resumed.header.headerLines()};
-    headerLines.push_back(
-        smdl::concat(ENVI_RADIANCE_UNITS, " = ", SPECTRAL_RADIANCE_UNITS));
+    headerLines.push_back(smdl::concat(ENVI_RADIANCE_UNITS, " = ",
+                                       frame.camera->holdsRadiance()
+                                           ? SPECTRAL_RADIANCE_UNITS
+                                           : LENS_FILM_UNITS));
     {
       float azimuthDeg{};
       float elevationDeg{};

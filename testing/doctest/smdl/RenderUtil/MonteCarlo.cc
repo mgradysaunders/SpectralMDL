@@ -411,3 +411,33 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     CHECK(sum / N == doctest::Approx(0.5).epsilon(1e-3));
   }
 }
+
+TEST_CASE("MonteCarlo: the inverse error function") {
+  // A Newton refinement through the double-precision `std::erf`, from
+  // the float answer, is the reference: the answer is right when the
+  // refinement moves it by less than the float itself carries.
+  const auto refined{[](float y) {
+    double z{double(smdl::erfInverse(y))};
+    for (int i = 0; i < 8; i++)
+      z -= (std::erf(z) - double(y)) /
+           (2.0 / std::sqrt(3.14159265358979323846) * std::exp(-z * z));
+    return z;
+  }};
+  SUBCASE("Both branches of the approximation agree with the refinement") {
+    // The branch changes at `-log((1 - y) (1 + y)) = 5`, and the tail
+    // runs to the last float below 1, where the polynomial's leading
+    // coefficient carries most of its weight.
+    for (const float y : {0.1f, 0.5f, 0.9f, 0.99f, 0.996f, 0.9975f, 0.999f,
+                          0.9999f, 0.999999f, 0.9999999f, 0.99999994f}) {
+      CAPTURE(y);
+      const double z{refined(y)};
+      CHECK(double(smdl::erfInverse(y)) == doctest::Approx(z).epsilon(2e-5));
+      CHECK(double(smdl::erfInverse(-y)) == doctest::Approx(-z).epsilon(2e-5));
+    }
+  }
+  SUBCASE("A standard normal sample from the tail of the unit interval is "
+          "past three sigma") {
+    CHECK(smdl::standardNormalSample(0.9999f) > 3.7f);
+    CHECK(smdl::standardNormalSample(0.0001f) < -3.7f);
+  }
+}

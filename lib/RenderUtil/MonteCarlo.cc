@@ -140,7 +140,7 @@ float erfInverse(float y) noexcept {
     x = w * x + 1.50140941f;
   } else {
     w = std::sqrt(w) - 3;
-    x = x * -2.00214257e-4f + 1.00950558e-4f;
+    x = w * -2.00214257e-4f + 1.00950558e-4f;
     x = w * x + 1.34934322e-3f;
     x = w * x - 3.67342844e-3f;
     x = w * x + 5.73950773e-3f;

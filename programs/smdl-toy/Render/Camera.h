@@ -202,6 +202,15 @@ public:
   /// and 0 for a pinhole, which has none.
   [[nodiscard]] float fNumber() const noexcept;
 
+  /// Does the film hold radiance? The thin lens and a lens normalized to
+  /// its f-number average radiance; a lens on the physical exposure
+  /// averages the pupil integral instead, `4 / pi` times the spectral
+  /// irradiance at the sensor, which is what the spectral output's units
+  /// line has to say.
+  [[nodiscard]] bool holdsRadiance() const noexcept {
+    return !mLens || mIsLensExposureNormalized;
+  }
+
   /// What turns one unit of film into spectral irradiance at the sensor
   /// in W/(m^2 nm), for a readout that counts electrons. A lens on the
   /// physical exposure holds `4 / pi` times the irradiance exactly, on
