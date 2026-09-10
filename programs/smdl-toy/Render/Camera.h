@@ -1,6 +1,10 @@
 #pragma once
 
+#include <optional>
+
 #include "Common.h"
+
+#include "Render/Lens.h"
 #include "Render/Sampler.h"
 
 /// The camera and lens parameters, merged from the scene file's `camera`
@@ -42,7 +46,20 @@ struct CameraOptions final {
   /// The up vector at shutter shut.
   float3 lookUpShut{};
 
-  /// The vertical field of view in degrees.
+  /// The lens to look through, or none for the thin lens model.
+  ///
+  /// With one, the field of view is a consequence of the sensor and the
+  /// prescription rather than an input, so `fovYDeg` means nothing, and
+  /// the distortion, the vignetting and the cat's eye are all emergent
+  /// rather than settings. The caller refuses those combinations rather
+  /// than silently ignoring them, so nothing here has to.
+  std::optional<LensPrescription> lens{};
+
+  /// With `lens`, the sensor width and height in millimeters. Zero takes
+  /// the 36 by 24 of full frame.
+  float2 sensorMM{};
+
+  /// The vertical field of view in degrees. Unused with a lens.
   float fovYDeg{37.8f};
 
   /// Enable DOF by f-number assuming a 35mm-format frame, or 0.
@@ -147,6 +164,19 @@ public:
   }
 
 private:
+  /// The two halves of the constructor that differ, one of which runs.
+  /// Everything the two share, the framing and its motion, the focus
+  /// distance and the aperture polygon, is settled before either.
+  ///
+  /// \throws smdl::Error if the prescription cannot be a camera lens.
+  void buildLens(const CameraOptions &options);
+  void buildThinLens(const CameraOptions &options);
+
+  /// The lens half of `sample()`, out of line as `toWorldMoving()` is,
+  /// so that the thin lens keeps the smaller body.
+  [[nodiscard]] SMDL_NO_INLINE CameraSample
+  sampleThroughLens(float u, float v, Sampler &sampler) const noexcept;
+
   /// The moving half of `toWorld()`: the look-at of the framing vectors
   /// interpolated to `u`, see `mLookFrom`.
   SMDL_NO_INLINE void toWorldMoving(CameraSample &sample,
@@ -158,7 +188,20 @@ private:
   /// The aspect ratio, X over Y.
   float mAspectRatio{};
 
-  /// The image plane distance in units of image height.
+  /// The lens, or none for the thin lens model. Its presence is what
+  /// `sample()` branches on, and the only thing it branches on.
+  std::optional<Lens> mLens{};
+
+  /// With `mLens`, the table that says where on the rear aperture a
+  /// film point has any chance of getting a ray out. Present whenever
+  /// `mLens` is.
+  std::optional<ExitPupil> mExitPupil{};
+
+  /// With `mLens`, the sensor size in scene units.
+  float mSensorWidth{}, mSensorHeight{};
+
+  /// The image plane distance in units of image height. Unused with a
+  /// lens, whose film distance is a real one and lives in `mLens`.
   float mFocalLength{};
 
   /// One pixel of the image plane (height 1 at distance `mFocalLength`)

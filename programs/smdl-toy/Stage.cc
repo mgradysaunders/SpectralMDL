@@ -12,6 +12,7 @@
 
 #include "Layout/CameraFile.h"
 #include "Layout/LayoutTables.h"
+#include "Layout/LensFile.h"
 #include "Options.h"
 #include "Render/Autolook.h"
 #include "Resume.h"
@@ -41,6 +42,57 @@ export material default_ground() = material(
 // names of the two materials in it.
 constexpr const char *DEFAULT_MATERIAL_MODULE = "::smdl_toy_default";
 
+// With a lens the frame is the sensor and the prescription together, and
+// every setting the thin lens uses to stand in for a real one is either
+// meaningless or now emergent. Naming one anyway is a mistake worth
+// reporting rather than a value to quietly drop, and this is the one
+// place both sources have had their say: an explicit flag and whatever
+// the camera file resolved to at shutter open.
+void refuseThinLensSettings(const Options &opts,
+                            const CameraSettings &fileCamera, bool hasLens) {
+  struct Refusal final {
+    const char *name;
+    bool wasStated;
+    const char *why;
+  };
+  const Refusal refusals[]{
+      {"fovy", opts.camera.fovYDeg.wasGiven || fileCamera.fovYDeg.has_value(),
+       "the field of view is what the sensor and the prescription come to "
+       "between them; state the sensor with 'sensor'"},
+      {"aperture",
+       opts.camera.aperture.wasGiven || fileCamera.aperture.has_value(),
+       "the aperture is the lens's own stop, which 'fstop' still narrows"},
+      {"distortion_k1",
+       opts.camera.distortionK1.wasGiven || fileCamera.distortionK1.has_value(),
+       "the distortion is whatever the surfaces do"},
+      {"distortion_k2",
+       opts.camera.distortionK2.wasGiven || fileCamera.distortionK2.has_value(),
+       "the distortion is whatever the surfaces do"},
+      {"distortion_fit",
+       opts.camera.shouldFitDistortion.wasGiven ||
+           fileCamera.shouldFitDistortion.has_value(),
+       "there is no distortion polynomial to refit"},
+      {"vignetting",
+       opts.camera.vignetting.wasGiven || fileCamera.vignetting.has_value(),
+       "the cos^4 falloff comes out of the pupil integral, and is not "
+       "optional there"},
+      {"cat_eye", opts.camera.catEye.wasGiven || fileCamera.catEye.has_value(),
+       "the barrel vignette is whatever the clear apertures do"},
+      {"cat_eye_radius",
+       opts.camera.catEyeRadius.wasGiven || fileCamera.catEyeRadius.has_value(),
+       "the barrel vignette is whatever the clear apertures do"},
+  };
+  if (hasLens) {
+    for (const auto &refusal : refusals)
+      if (refusal.wasStated)
+        throw smdl::Error(smdl::concat(
+            "'", refusal.name, "' has no meaning with a lens: ", refusal.why));
+  } else if (opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) {
+    throw smdl::Error("'sensor' needs a lens to mean anything: without one "
+                      "the frame is 'fovy' and the sensor has no size");
+  }
+}
+
 Frame resolveFrame(const Options &opts) {
   // Everything the command line asks for, lowered into one layout: the
   // positional argument first, then each -mesh. Either may name a mesh
@@ -66,6 +118,18 @@ Frame resolveFrame(const Options &opts) {
   gRenderShutter.time = opts.scene.time;
   gRenderShutter.length =
       pick(opts.camera.shutter, cameraDocument.camera.shutter);
+  // The file's own settings resolved at shutter open, which is where
+  // everything but the framing is read: the renderer varies the framing
+  // within one shutter and holds the rest. Resolved here, ahead of the
+  // scene, because the lens it may name is read here too and a typo in
+  // either should not wait on a layout.
+  const auto fileCamera{cameraDocument.camera.at(gRenderShutter.time)};
+  const auto lensFileName{
+      resolveLensFileName(opts.camera.lens.value, cameraFileName,
+                          fileCamera.lens ? *fileCamera.lens : std::string())};
+  refuseThinLensSettings(opts, fileCamera, !lensFileName.empty());
+  auto lensPrescription{std::optional<LensPrescription>()};
+  if (!lensFileName.empty()) lensPrescription = readLens(lensFileName).lens;
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
@@ -89,12 +153,10 @@ Frame resolveFrame(const Options &opts) {
   // directive named, and whatever the command line explicitly gave. A flag
   // that was not given must not override the file, so what decides is the
   // occurrence count rather than the value.
-  // The file's own settings resolved at shutter open, which is where
-  // everything but the framing is read: the renderer varies the framing
-  // within one shutter and holds the rest.
-  const auto fileCamera{cameraDocument.camera.at(gRenderShutter.time)};
   auto cameraOptions{CameraOptions{}};
   cameraOptions.resolution = opts.image.resolution;
+  cameraOptions.lens = std::move(lensPrescription);
+  cameraOptions.sensorMM = pick(opts.camera.sensorMM, fileCamera.sensorMM);
   cameraOptions.lookFrom = pick(opts.camera.lookFrom, fileCamera.lookFrom);
   cameraOptions.lookTo = pick(opts.camera.lookTo, fileCamera.lookTo);
   cameraOptions.lookUp = pick(opts.camera.lookUp, fileCamera.lookUp);
@@ -424,6 +486,21 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
+    if (cameraOptions.lens) {
+      // A lens has no field of view to be given; it has one that follows
+      // from the sensor and the focal length, which is what the fit
+      // needs. The prescription is solved once here for its focal length
+      // alone, focused at infinity, since the focus the real lens takes
+      // is the distance this very solve is about to choose.
+      const auto sensorMM{cameraOptions.sensorMM.x > 0 &&
+                                  cameraOptions.sensorMM.y > 0
+                              ? cameraOptions.sensorMM
+                              : float2(36.0f, 24.0f)};
+      const Lens probe{*cameraOptions.lens, LensOptions{}};
+      autolookOptions.fovYDeg = smdl::degrees(
+          2 * std::atan(0.5e-3f * sensorMM.y / probe.focalLength()));
+      autolookOptions.aspectRatio = sensorMM.x / sensorMM.y;
+    }
     autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;
     if (opts.camera.autolook.azimuthDeg.wasGiven) {
       autolookOptions.azimuthDeg = opts.camera.autolook.azimuthDeg.value;

@@ -94,6 +94,13 @@ private:
         camera.aperture = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "focus") {
         camera.focus = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "lens") {
+        camera.lens =
+            expect(Token::STRING, "a quoted '.lens' path after 'lens'");
+      } else if (key == "sensor") {
+        auto v{numbers<2>()};
+        camera.sensorMM =
+            float2(positive(keyLoc, key, v[0]), positive(keyLoc, key, v[1]));
       } else if (key == "blades") {
         camera.blades = int(numbers<1>()[0]);
       } else if (key == "blade_angle") {
@@ -134,8 +141,8 @@ private:
             keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
-                         "shutter, fstop, aperture, focus, blades, "
-                         "blade_angle, distortion_k1, distortion_k2, "
+                         "shutter, lens, sensor, fstop, aperture, focus, "
+                         "blades, blade_angle, distortion_k1, distortion_k2, "
                          "distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
         throw Recover();
@@ -231,7 +238,8 @@ private:
     } else if (setting == "cat_eye_radius") {
       key.catEyeRadius = positive(settingLoc, setting, numbers<1>()[0]);
     } else if (setting == "blades" || setting == "distortion_fit" ||
-               setting == "shutter" || setting == "resolution") {
+               setting == "shutter" || setting == "resolution" ||
+               setting == "lens" || setting == "sensor") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),

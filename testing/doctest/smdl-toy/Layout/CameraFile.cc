@@ -261,3 +261,38 @@ TEST_CASE("CameraFile: the camera block") {
     CHECK_CONTAINS(error.notes.front().message, "belongs in the layout");
   }
 }
+
+TEST_CASE("CameraFile: the lens and the sensor") {
+  LayoutDiagnostics diags{};
+  SUBCASE("A lens is a path, kept as written for the reader to resolve") {
+    const auto document{
+        parseOK(diags, "camera { lens \"lenses/dgauss-50mm.lens\" }\n")};
+    REQUIRE(document.camera.lens);
+    CHECK(*document.camera.lens == "lenses/dgauss-50mm.lens");
+  }
+  SUBCASE("A sensor is a width and a height in millimeters") {
+    const auto document{parseOK(diags, "camera { sensor 36 24 }\n")};
+    REQUIRE(document.camera.sensorMM);
+    CHECK(document.camera.sensorMM->x == doctest::Approx(36.0f));
+    CHECK(document.camera.sensorMM->y == doctest::Approx(24.0f));
+  }
+  SUBCASE("A sensor with no size is an error") {
+    const auto &source{
+        diags.addSource("test.camera", "camera { sensor 36 0 }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message, "positive number for 'sensor'");
+  }
+  SUBCASE("Neither can be keyed, being the instrument rather than a value "
+          "in it") {
+    for (const char *text : {"camera { motion { at 0 lens \"a.lens\" } }\n",
+                             "camera { motion { at 0 sensor 36 24 } }\n"}) {
+      LayoutDiagnostics keyed{};
+      const auto &source{keyed.addSource("test.camera", text)};
+      (void)parseCamera(keyed, source);
+      REQUIRE(keyed.errorCount() == 1);
+      CHECK_CONTAINS(keyed.all().front().message,
+                     "not a quantity to interpolate");
+    }
+  }
+}

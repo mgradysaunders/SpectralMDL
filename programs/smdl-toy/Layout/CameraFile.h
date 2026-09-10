@@ -78,6 +78,19 @@ public:
   std::optional<int> blades{};
   std::optional<bool> shouldFitDistortion{};
 
+  /// `lens`: the '.lens' file the camera looks through, as written, to be
+  /// resolved relative to the camera file that names it. Not keyable: it
+  /// is the lens, not a quantity to interpolate.
+  ///
+  /// With one, the frame is the sensor and the prescription together, so
+  /// `fovy` and every setting that stands in for what a real lens does on
+  /// its own are refused rather than ignored.
+  std::optional<std::string> lens{};
+
+  /// `sensor`: the sensor width and height in millimeters, which with a
+  /// lens is what decides the field of view. Full frame when unset.
+  std::optional<float2> sensorMM{};
+
   /// `shutter`: the seconds from shutter open to shutter shut,
   /// nonnegative, which `-shutter` overrides. Zero or unset is a shut
   /// shutter, and every path then renders the one instant `-time`

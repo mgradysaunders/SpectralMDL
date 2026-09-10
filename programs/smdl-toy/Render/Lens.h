@@ -1,0 +1,280 @@
+/// \file
+/// The traced lens: a prescription laid out on the camera's own axis in
+/// scene units, with the paraxial quantities every camera setting is
+/// derived from.
+///
+/// The camera-space origin is the entrance pupil. That is already where a
+/// pinhole camera's origin sits, it is the point a pan turns about
+/// without parallax, and it makes `look_from` and `focus` mean with a
+/// lens what they mean without one. The film is at positive z behind it,
+/// the surfaces run toward negative z in front of it, and a ray leaving
+/// the front element is already travelling the way the camera looks.
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "smdl/Support/Span.h"
+
+#include "Common.h"
+
+#include "Layout/LensFile.h"
+
+/// What this render asks of the prescription: where the lens is focused
+/// and how far it is stopped down.
+struct LensOptions final {
+  /// The focus distance in scene units, from the entrance pupil, or 0
+  /// to focus at infinity, which puts the film on the rear focal point.
+  float focusDistance{};
+
+  /// The f-number to stop down to, or 0 to leave the lens wide open at
+  /// the stop diameter the prescription states.
+  float fStop{};
+
+  /// The number of aperture blades, or 0 for a round stop. The polygon
+  /// has the same area as the round stop it replaces, so the f-number
+  /// keeps meaning what it says.
+  int numBlades{};
+
+  /// With `numBlades`, the rotation of the polygon in radians, measured
+  /// so that zero puts a vertex at screen right, as the thin lens does.
+  float bladeAngle{};
+};
+
+/// One surface as the trace sees it: on the camera's z axis, in scene
+/// units, with the index on each side spelled out.
+class LensElement final {
+public:
+  /// The camera-space z of the vertex. Surfaces run from the front
+  /// element at the smallest z to the rear element at the largest, and
+  /// the film sits behind them all.
+  float z{};
+
+  /// The signed curvature radius, positive when the center of curvature
+  /// lies on the film side of the vertex. Zero is flat.
+  float radius{};
+
+  /// The conic constant. Zero is a sphere.
+  float conic{};
+
+  /// The clear aperture radius, which is half of what the file states.
+  /// On the stop it is the working radius, so stopping down narrows it.
+  float semiDiameter{};
+
+  /// The refractive index on the scene side and on the film side. Both
+  /// are stored because a refraction needs both, and reading one off the
+  /// neighbor at every surface is how the two come apart.
+  float iorBefore{1}, iorAfter{1};
+
+  /// Is this the aperture stop? It refracts nothing. What it does is
+  /// block whatever falls outside `semiDiameter`.
+  bool isStop{};
+};
+
+/// A lens the camera can look through: the surfaces in order, and the
+/// paraxial solve that says what the prescription amounts to.
+///
+/// Everything here is scale-invariant arithmetic on a first-order model
+/// of the system, so it costs nothing and is exact for the quantities it
+/// reports, which are the ones lens designs are published with. It is
+/// also the check on a transcription: a prescription typed wrong almost
+/// never reproduces its own focal length.
+///
+class Lens final {
+public:
+  /// Lay the prescription out on the axis, solve the cardinal points and
+  /// the pupils, stop the lens down, and place the film.
+  ///
+  /// \throws smdl::Error  If the prescription cannot be a camera lens:
+  ///                      no stop, no net power, glass against the film,
+  ///                      a pupil at infinity, an aperture wider than the
+  ///                      stop, or a focus distance the lens cannot
+  ///                      reach.
+  ///
+  Lens(const LensPrescription &prescription, const LensOptions &options);
+
+  /// Trace a ray from the film out into the scene: refract at every
+  /// surface, and block whatever falls outside a clear aperture or
+  /// outside the stop.
+  ///
+  /// `ray` arrives as the film point and a direction toward the lens,
+  /// and leaves as the point on the front element and the unit direction
+  /// departing it, both in camera space. False means the ray was
+  /// blocked, which the caller weights zero rather than redrawing, so
+  /// that the trace consumes no sampler dimensions of its own.
+  [[nodiscard]] bool traceFromFilm(Ray &ray) const noexcept;
+
+  /// Log what the prescription turned out to be: the line that says a
+  /// transcription is right, and the only place the numbers appear in
+  /// the millimeters they were written in.
+  void logSummary() const;
+
+  /// The disk a camera draws its pupil point on: the rear element's
+  /// clear aperture as the prescription states it, in the plane
+  /// `rearZ()`, which bounds as much of the exit pupil as any film point
+  /// can possibly see.
+  ///
+  /// Stopping down never narrows this, even on a lens whose rear element
+  /// is the stop. The sampling domain has to stay put for the fraction
+  /// of it that gets through to mean what it means, which is how a
+  /// smaller aperture comes to darken the picture.
+  [[nodiscard]] float rearApertureRadius() const noexcept {
+    return mRearApertureRadius;
+  }
+
+  /// The surfaces, front first.
+  [[nodiscard]] smdl::Span<const LensElement> elements() const noexcept {
+    return mElements;
+  }
+
+  /// The index of the aperture stop within `elements()`.
+  [[nodiscard]] size_t stopIndex() const noexcept { return mStopIndex; }
+
+  /// The effective focal length.
+  [[nodiscard]] float focalLength() const noexcept { return mFocalLength; }
+
+  /// The distance from the rear vertex to the rear focal point, which is
+  /// where the film sits when the lens is focused at infinity.
+  [[nodiscard]] float backFocalDistance() const noexcept {
+    return mBackFocalDistance;
+  }
+
+  /// The design's own back focus, or 0 when the file did not state one.
+  /// A design that states one and does not agree with
+  /// `backFocalDistance()` was transcribed wrong.
+  [[nodiscard]] float designBackFocus() const noexcept {
+    return mDesignBackFocus;
+  }
+
+  /// The working f-number, which is the wide-open one unless `fStop`
+  /// stopped the lens down.
+  [[nodiscard]] float fNumber() const noexcept { return mFNumber; }
+
+  /// The f-number at the stop diameter the prescription states.
+  [[nodiscard]] float fNumberWideOpen() const noexcept {
+    return mFNumberWideOpen;
+  }
+
+  /// The working entrance pupil radius. The pupil is at the camera-space
+  /// origin by construction, so it has no position to report.
+  [[nodiscard]] float entrancePupilRadius() const noexcept {
+    return mEntrancePupilRadius;
+  }
+
+  /// The working exit pupil radius, and the camera-space z of the plane
+  /// it lies in, which is negative whenever the pupil stands in front of
+  /// the entrance pupil, as it does on a double Gauss.
+  [[nodiscard]] float exitPupilRadius() const noexcept {
+    return mExitPupilRadius;
+  }
+  [[nodiscard]] float exitPupilZ() const noexcept { return mExitPupilZ; }
+
+  /// The film plane, solved from the focus distance.
+  [[nodiscard]] float filmZ() const noexcept { return mFilmZ; }
+
+  /// The front and rear vertices, which bound the glass.
+  [[nodiscard]] float frontZ() const noexcept { return mElements.front().z; }
+  [[nodiscard]] float rearZ() const noexcept { return mElements.back().z; }
+
+private:
+  std::string mName{};
+  std::vector<LensElement> mElements{};
+  size_t mStopIndex{};
+  float mFocalLength{};
+  float mBackFocalDistance{};
+  float mDesignBackFocus{};
+  float mFNumber{};
+  float mFNumberWideOpen{};
+  float mEntrancePupilRadius{};
+  float mExitPupilRadius{};
+  float mExitPupilZ{};
+  float mRearApertureRadius{};
+  float mFilmZ{};
+
+  /// The focus distance the film was placed for, kept for the log.
+  float mFocusDistance{};
+
+  /// The aperture polygon, or zero blades for a round stop. The radius
+  /// is the circumradius of the polygon of the stop's own area, so
+  /// blades change the shape of the bokeh and not the exposure.
+  int mNumBlades{};
+  float mBladeAngle{};
+  float mBladeCircumRadius{};
+};
+
+/// The exit pupil as a film point sees it, tabulated by film radius.
+///
+/// A film point sees only part of the rear element, and through a
+/// stopped-down aperture or from a corner of the frame it sees very
+/// little of it, so drawing the pupil point on the whole rear aperture
+/// throws most of the draws away. The lens is a surface of revolution,
+/// so what a film point can see out through depends only on how far off
+/// axis it is, up to a rotation: this traces that region out for a
+/// ladder of film radii, keeps an ellipse bounding each, and at render
+/// time draws inside the ellipse and turns it to the film point's
+/// azimuth.
+///
+/// The estimator does not change. The pupil point is still distributed
+/// over the rear aperture, the weight carries the fraction of the
+/// aperture the ellipse covers, which is exactly the factor by which the
+/// domain shrank, and a draw landing outside the aperture is the same
+/// zero it always was.
+class ExitPupil final {
+public:
+  /// Trace the table out. `maxFilmRadius` is how far off axis the film
+  /// point can be, which is half the sensor diagonal.
+  ///
+  /// This is the one part of building a camera that is not instant: it
+  /// is a few million rays through the prescription, run in parallel.
+  ExitPupil(const Lens &lens, float maxFilmRadius);
+
+  /// Draw a point on the plane of the rear vertex for the film point
+  /// `film`, out of the two numbers `xi`, and report in `weight` the
+  /// fraction of the rear aperture it was drawn from, which is what the
+  /// camera's weight has to carry. Zero there is a draw that landed
+  /// outside the aperture, which is blocked and need not be traced.
+  [[nodiscard]] float2 sample(float2 film, float2 xi,
+                              float &weight) const noexcept;
+
+  /// Log what the table bought: the share of the rear aperture the
+  /// middle of the frame and the corner of it draw from.
+  void logSummary() const;
+
+  /// The share of the rear aperture the film point at `filmRadius`
+  /// draws from, which is the factor by which the table cut the wasted
+  /// draws at that radius.
+  [[nodiscard]] float areaFraction(float filmRadius) const noexcept;
+
+private:
+  /// One entry: the ellipse bounding what a film point at this radius
+  /// can see, on the plane of the rear vertex, in the frame where the
+  /// film point lies on the +x axis.
+  struct Bound final {
+    float2 center{};
+    float2 semiAxes{};
+  };
+
+  /// The bounds, indexed by film radius over `[0, maxFilmRadius]`. Each
+  /// entry bounds a span of that range rather than a point of it, so the
+  /// table is conservative between its entries as well as at them.
+  std::vector<Bound> mBounds{};
+
+  /// The entry covering a film point `filmRadius` off axis, which is the
+  /// last one for anything past the corner the table was built for.
+  [[nodiscard]] const Bound &boundAt(float filmRadius) const noexcept {
+    const auto index{size_t(filmRadius * mBoundsPerRadius)};
+    return mBounds[index < mBounds.size() ? index : mBounds.size() - 1];
+  }
+
+  /// The aperture the drawn points lie within, copied out of the lens so
+  /// that sampling touches nothing else.
+  float mRearRadius{};
+
+  /// Entries per unit of film radius, and one over the area of the rear
+  /// aperture, which are the two constants `sample()` runs on.
+  float mBoundsPerRadius{};
+  float mInvApertureArea{};
+
+  /// The largest film radius the table covers, kept for the log.
+  float mMaxFilmRadius{};
+};

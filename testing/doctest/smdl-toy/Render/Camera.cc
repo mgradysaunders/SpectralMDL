@@ -1,5 +1,7 @@
 #include "Fixtures.h"
 
+#include <cmath>
+
 #include "Render/Camera.h"
 #include "Render/Sampler.h"
 
@@ -107,4 +109,137 @@ TEST_CASE("Camera: a motion equal to the open keys is still") {
   const auto b{rayAt(notMoving, 0.3f)};
   CHECK(isSameRay(a.ray, b.ray));
   CHECK(b.ray.time == 0.3f);
+}
+
+// The camera with a lens in it. The seam is one branch in `sample()`, so
+// what these pin is that the branch keeps the frame the same way up,
+// keeps the sampler consuming what it consumed, and hands the walk a ray
+// that starts at the glass rather than at the camera's origin.
+
+namespace {
+// A biconvex singlet with the stop against its back, thick enough to be
+// a solid out to its rim. What it does optically is pinned in the `Lens`
+// suite; here it is only a lens that is present.
+LensPrescription singlet() {
+  const auto surface{[](float radius, float thickness, float ior, bool isStop) {
+    auto value{LensSurface{}};
+    value.radius = radius;
+    value.thickness = thickness;
+    value.ior = ior;
+    value.diameter = 20.0f;
+    value.isStop = isStop;
+    return value;
+  }};
+  auto lens{LensPrescription{}};
+  lens.name = "singlet";
+  lens.surfaces.push_back(surface(50, 4, 1.5f, false));
+  lens.surfaces.push_back(surface(-50, 0, 1, false));
+  lens.surfaces.push_back(surface(0, 0, 1, true));
+  return lens;
+}
+
+CameraOptions lensOptions() {
+  auto options{openOptions()};
+  options.lens = singlet();
+  options.sensorMM = float2(36.0f, 27.0f);
+  options.focus = 8.0f;
+  return options;
+}
+
+// One pixel's ray in camera space, before the world transform puts it
+// where the camera stands, from a fixed sampler state.
+CameraSample cameraSpaceSample(const Camera &camera, size_t x, size_t y,
+                               uint32_t sampleIndex) {
+  Sampler sampler{};
+  sampler.startPixelSample(uint32_t(y * 64 + x), sampleIndex);
+  return camera.sample(x, y, sampler);
+}
+
+// The first sample of this pixel that gets through the glass. Which draw
+// that is depends on where the pupil point lands, so a test that wants a
+// ray rather than a blocked one has to ask for one.
+CameraSample passingSample(const Camera &camera, size_t x, size_t y) {
+  for (uint32_t sampleIndex = 0; sampleIndex < 32; sampleIndex++)
+    if (auto sample{cameraSpaceSample(camera, x, y, sampleIndex)};
+        sample.weight > 0)
+      return sample;
+  return CameraSample{};
+}
+
+// What the pixel weighs on average, which is the vignetting: the cos^4
+// of the pupil integral times the fraction of the aperture that is not
+// blocked on the way out.
+float meanWeight(const Camera &camera, size_t x, size_t y) {
+  constexpr uint32_t NUM_SAMPLES = 256;
+  auto total{0.0f};
+  for (uint32_t sampleIndex = 0; sampleIndex < NUM_SAMPLES; sampleIndex++)
+    total += cameraSpaceSample(camera, x, y, sampleIndex).weight;
+  return total / float(NUM_SAMPLES);
+}
+} // namespace
+
+TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
+  const Camera lensed{lensOptions()};
+  const Camera pinhole{openOptions()};
+  SUBCASE("The frame comes out the same way up") {
+    // A film point is the sensor coordinate with the image inverted on
+    // it, and the pinhole's is the ideal image point already the right
+    // way up, so the two arrive at the same signs by opposite routes.
+    // Corner pixels, where the field angle swamps the pupil point.
+    for (const auto pixel : {int2(60, 4), int2(4, 44)}) {
+      const auto a{passingSample(lensed, size_t(pixel.x), size_t(pixel.y))};
+      const auto b{
+          cameraSpaceSample(pinhole, size_t(pixel.x), size_t(pixel.y), 3)};
+      REQUIRE(a.weight > 0);
+      CHECK(std::signbit(a.ray.dir.x) == std::signbit(b.ray.dir.x));
+      CHECK(std::signbit(a.ray.dir.y) == std::signbit(b.ray.dir.y));
+      CHECK(a.ray.dir.z < 0);
+      CHECK(b.ray.dir.z < 0);
+    }
+  }
+  SUBCASE("The ray leaves the front of the glass, not the camera origin") {
+    const auto sample{passingSample(lensed, 32, 24)};
+    REQUIRE(sample.weight > 0);
+    CHECK(sample.ray.org.z < 0);
+    CHECK(length(sample.ray.org) > 0);
+  }
+  SUBCASE("It consumes the sampler dimensions the thin lens with a lens "
+          "point consumes, in the same place") {
+    auto withLens{Sampler{}};
+    auto withDOF{Sampler{}};
+    withLens.startPixelSample(77, 2);
+    withDOF.startPixelSample(77, 2);
+    auto dofOptions{openOptions()};
+    dofOptions.aperture = 0.1f;
+    const Camera defocused{dofOptions};
+    (void)lensed.sample(11, 7, withLens);
+    (void)defocused.sample(11, 7, withDOF);
+    // Whatever the next draw is, both have to be looking at it: a lens
+    // that consumed a different count would move every sequence after
+    // it and `SAMPLER_VERSION` would owe a bump.
+    CHECK(float(withLens) == float(withDOF));
+  }
+  SUBCASE("A blocked ray weighs nothing, so the walk skips it and the pixel "
+          "average still counts it") {
+    // Stopped far down, most of the rear aperture is shut off, so some
+    // pixel of a frame this size draws a pupil point the stop blocks.
+    auto options{lensOptions()};
+    options.fStop = 22.0f;
+    const Camera stopped{options};
+    auto numBlocked{0};
+    for (size_t y = 0; y < 48; y++)
+      for (size_t x = 0; x < 64; x++)
+        if (cameraSpaceSample(stopped, x, y, 3).weight == 0) numBlocked++;
+    CHECK(numBlocked > 0);
+  }
+  SUBCASE("The cos^4 falloff is there without anything asking for it") {
+    // The thin lens leaves `vignetting` off by default; the pupil
+    // integral has no such switch, so a corner weighs less than the
+    // middle does.
+    const auto middle{meanWeight(lensed, 32, 24)};
+    const auto corner{meanWeight(lensed, 1, 1)};
+    REQUIRE(middle > 0);
+    CHECK(corner < middle);
+    CHECK(middle <= 1.0f);
+  }
 }

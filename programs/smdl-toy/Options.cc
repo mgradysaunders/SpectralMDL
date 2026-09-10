@@ -49,6 +49,16 @@ cl::opt<float3> optLookUp{"look-up", cl::desc("The up vector (default: 0,0,1)"),
 cl::opt<float> optFOV{"fovy",
                       cl::desc("The vertical FOV in degrees (default: 37.8)"),
                       cl::init(37.8f), cl::cat(catCamera)};
+cl::opt<std::string> optLens{
+    "lens",
+    cl::desc("The '.lens' file to look through, overriding the camera file's "
+             "'lens' (default: none, the thin lens model)"),
+    cl::cat(catCamera)};
+cl::opt<float2> optSensor{
+    "sensor",
+    cl::desc("With a lens, the sensor width and height in mm (default: "
+             "36,24, full frame)"),
+    cl::init(float2{0, 0}), cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -556,6 +566,10 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected -aperture to be positive");
   if (optFocus.getNumOccurrences() > 0 && !(float(optFocus) > 0))
     throw smdl::Error("expected -focus to be positive");
+  if (optSensor.getNumOccurrences() > 0 &&
+      !(float2(optSensor).x > 0 && float2(optSensor).y > 0))
+    throw smdl::Error("expected -sensor to be a positive width and height "
+                      "in millimeters");
   if (optCatEyeRadius.getNumOccurrences() > 0 && !(float(optCatEyeRadius) > 0))
     throw smdl::Error("expected -cat-eye-radius to be positive");
   if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
@@ -604,6 +618,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.lookTo = flag(optLookTo);
   opts.camera.lookUp = flag(optLookUp);
   opts.camera.fovYDeg = flag(optFOV);
+  opts.camera.lens = flag(optLens);
+  opts.camera.sensorMM = flag(optSensor);
   opts.camera.shutter = flag(optShutter);
   opts.camera.fStop = flag(optFStop);
   opts.camera.aperture = flag(optAperture);

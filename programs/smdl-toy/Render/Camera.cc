@@ -30,6 +30,29 @@ namespace {
       std::sqrt(std::max(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
   return imageIdeal;
 }
+
+// The fraction of the rear aperture that a film point can see out
+// through the lens, measured rather than guessed: a fixed grid over the
+// disk, traced. On axis it is the throughput the whole exposure is
+// relative to; at the sensor corner it is the mechanical vignette, which
+// the thin lens can only approximate with its cat's eye. Zero at the
+// corner means the sensor reaches past what the lens covers.
+[[nodiscard]] float probeTransmission(const Lens &lens, float2 film) noexcept {
+  constexpr int NUM_STEPS = 32;
+  const auto radius{lens.rearApertureRadius()};
+  auto numPassed{0};
+  for (int i = 0; i < NUM_STEPS; i++) {
+    for (int j = 0; j < NUM_STEPS; j++) {
+      const auto disk{radius *
+                      smdl::uniformDiskSample(float2((i + 0.5f) / NUM_STEPS,
+                                                     (j + 0.5f) / NUM_STEPS))};
+      const float3 org{film.x, film.y, lens.filmZ()};
+      auto ray{Ray{org, float3(disk.x, disk.y, lens.rearZ()) - org, EPS, INF}};
+      if (lens.traceFromFilm(ray)) numPassed++;
+    }
+  }
+  return float(numPassed) / float(NUM_STEPS * NUM_STEPS);
+}
 } // namespace
 
 Camera::Camera(const CameraOptions &options) {
@@ -64,11 +87,6 @@ Camera::Camera(const CameraOptions &options) {
   mNumPixelsX = float(options.resolution.x);
   mNumPixelsY = float(options.resolution.y);
   mAspectRatio = mNumPixelsX / mNumPixelsY;
-  mFocalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
-  // One pixel's subtended angle, the ray cone spread that seeds the LOD
-  // state; zero switches the cone off end to end.
-  mConeAngleBase =
-      options.noLOD ? 0.0f : std::atan(1.0f / (mFocalLength * mNumPixelsY));
   mCameraToWorld =
       smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp);
   mLookFrom = options.lookFrom;
@@ -82,6 +100,87 @@ Camera::Camera(const CameraOptions &options) {
                   smdl::isAllTrue(mLookToShut == mLookTo) &&
                   smdl::isAllTrue(mLookUpShut == mLookUp));
   }
+  mFocusDistance = options.focus > 0
+                       ? options.focus
+                       : length(options.lookTo - options.lookFrom);
+  mNumBlades = options.blades;
+  mBladeAngle = smdl::radians(options.bladeAngleDeg);
+  if (options.lens) {
+    buildLens(options);
+  } else {
+    buildThinLens(options);
+  }
+  if (mIsMoving) {
+    SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
+                  length(mLookFromShut - mLookFrom),
+                  " scene units and the target moves ",
+                  length(mLookToShut - mLookTo));
+  } else if (options.hasMotion) {
+    SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
+                  "rendering still");
+  }
+}
+
+// The lens the file names, and everything that follows from it: the
+// sensor it covers, the pixel footprint that seeds the LOD cone, and the
+// two probes that say what actually reaches the film.
+void Camera::buildLens(const CameraOptions &options) {
+  const auto sensorMM{options.sensorMM.x > 0 && options.sensorMM.y > 0
+                          ? options.sensorMM
+                          : float2(36.0f, 24.0f)};
+  mSensorWidth = 1e-3f * sensorMM.x;
+  mSensorHeight = 1e-3f * sensorMM.y;
+  mLens.emplace(*options.lens, LensOptions{mFocusDistance, options.fStop,
+                                           mNumBlades, mBladeAngle});
+  // The pixel's angular footprint, the same quantity the thin lens takes
+  // from its field of view, now in the millimeters of a real sensor over
+  // a real focal length.
+  mConeAngleBase =
+      options.noLOD
+          ? 0.0f
+          : std::atan(mSensorHeight / (mNumPixelsY * mLens->focalLength()));
+  mLens->logSummary();
+  const auto halfDiagonal{0.5f * std::hypot(mSensorWidth, mSensorHeight)};
+  mExitPupil.emplace(*mLens, halfDiagonal);
+  mExitPupil->logSummary();
+  SMDL_LOG_INFO(
+      "Lens frame: a ", sensorMM.x, " by ", sensorMM.y, " mm sensor, ",
+      smdl::degrees(2 * std::atan(halfDiagonal / mLens->focalLength())),
+      " degrees across the diagonal");
+  if (const auto sensorAspect{mSensorWidth / mSensorHeight};
+      std::abs(sensorAspect - mAspectRatio) > 0.01f * mAspectRatio)
+    SMDL_LOG_WARN("Lens: the sensor is ", sensorAspect,
+                  " wide for its height and -resolution is ", mAspectRatio,
+                  ", so the picture is stretched out of the shape of the "
+                  "sensor it names");
+  const auto onAxis{probeTransmission(*mLens, float2(0.0f))};
+  if (!(onAxis > 0))
+    throw smdl::Error("no ray from the middle of the sensor reaches the "
+                      "scene through this lens: check that the surfaces are "
+                      "in front-to-film order and that the clear apertures "
+                      "are diameters");
+  const auto atCorner{
+      probeTransmission(*mLens, 0.5f * float2(mSensorWidth, mSensorHeight))};
+  if (!(atCorner > 0)) {
+    SMDL_LOG_WARN("Lens: nothing reaches the corner of the sensor through "
+                  "this lens, so the frame is dark outside the circle it "
+                  "covers; a smaller 'sensor' is what fits it");
+  } else {
+    SMDL_LOG_INFO("Lens vignetting: the sensor corner sees ",
+                  100 * atCorner / onAxis,
+                  "% of what its middle sees, measured through the glass");
+  }
+}
+
+// The thin lens: a pinhole at the focal length the field of view sets,
+// with the radial distortion, the depth of field, and the two vignettes
+// that stand in for what a real lens does on its own.
+void Camera::buildThinLens(const CameraOptions &options) {
+  mFocalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
+  // One pixel's subtended angle, the ray cone spread that seeds the LOD
+  // state; zero switches the cone off end to end.
+  mConeAngleBase =
+      options.noLOD ? 0.0f : std::atan(1.0f / (mFocalLength * mNumPixelsY));
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
   mRCorner = std::hypot(0.5f * mAspectRatio, 0.5f);
@@ -109,11 +208,6 @@ Camera::Camera(const CameraOptions &options) {
     // of that across.
     mLensRadius = 0.5f * 0.024f * mFocalLength / options.fStop;
   }
-  mFocusDistance = options.focus > 0
-                       ? options.focus
-                       : length(options.lookTo - options.lookFrom);
-  mNumBlades = options.blades;
-  mBladeAngle = smdl::radians(options.bladeAngleDeg);
   mVignetteStrength = options.vignetting;
   // The barrel rim radius and the rim displacement per unit of image
   // radius, both zero when mechanical vignetting is off. Parameterizing
@@ -141,15 +235,6 @@ Camera::Camera(const CameraOptions &options) {
                   ", displaced ", options.catEye * mRimRadius,
                   " at the frame corner");
   }
-  if (mIsMoving) {
-    SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
-                  length(mLookFromShut - mLookFrom),
-                  " scene units and the target moves ",
-                  length(mLookToShut - mLookTo));
-  } else if (options.hasMotion) {
-    SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
-                  "rendering still");
-  }
 }
 
 CameraSample Camera::sample(size_t x, size_t y,
@@ -158,6 +243,7 @@ CameraSample Camera::sample(size_t x, size_t y,
   const auto xi{float2(sampler)};
   const float u{(float(x) + xi.x) / mNumPixelsX};
   const float v{(float(y) + xi.y) / mNumPixelsY};
+  if (mLens) return sampleThroughLens(u, v, sampler);
   // The image-plane point: the film point inverted through the lens.
   const float2 image{+(u - 0.5f) * mAspectRatio, -(v - 0.5f)};
   // Distortion remaps only the direction this sensor point looks in;
@@ -210,6 +296,41 @@ CameraSample Camera::sample(size_t x, size_t y,
       result.weight = 0;
   }
   result.coneAngle = mConeAngleBase * distortConeScale;
+  return result;
+}
+
+CameraSample Camera::sampleThroughLens(float u, float v,
+                                       Sampler &sampler) const noexcept {
+  auto result{CameraSample{}};
+  result.coneAngle = mConeAngleBase;
+  // The film point: the sensor coordinate, with the image inverted on it
+  // the way a lens leaves it, which is why both signs run against the
+  // pixel coordinate.
+  const float3 film{-(u - 0.5f) * mSensorWidth, (v - 0.5f) * mSensorHeight,
+                    mLens->filmZ()};
+  // The pupil point, drawn inside the part of the rear aperture this
+  // film point can see out through. These are the two dimensions the
+  // thin lens point takes, in the same place, so no existing sequence
+  // moves; a blocked ray is weight 0 rather than a redraw, so the count
+  // is fixed as well.
+  auto boundFraction{0.0f};
+  const auto pupil{mExitPupil->sample(float2(film.x, film.y), float2(sampler),
+                                      boundFraction)};
+  result.ray =
+      Ray{film, float3(pupil.x, pupil.y, mLens->rearZ()) - film, EPS, INF};
+  if (boundFraction <= 0) {
+    result.weight = 0;
+    return result;
+  }
+  // The cos^4 falloff of the pupil integral, over the share of the
+  // aperture the point was drawn from, which is what keeps the estimator
+  // the one a draw over the whole aperture makes. Unlike the thin
+  // lens's, the falloff is not an effect to switch on: it is the
+  // estimator, and the whole of the natural vignetting comes out of it.
+  const auto cosTheta{-result.ray.dir.z / length(result.ray.dir)};
+  const auto cosSquared{cosTheta * cosTheta};
+  result.weight = boundFraction * cosSquared * cosSquared;
+  if (!mLens->traceFromFilm(result.ray)) result.weight = 0;
   return result;
 }
 

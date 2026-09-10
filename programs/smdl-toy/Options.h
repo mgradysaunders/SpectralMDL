@@ -71,6 +71,13 @@ struct CameraFlags final {
 
   Flag<float> fovYDeg{};
 
+  /// The '.lens' file to look through, empty for the thin lens model.
+  /// Resolved relative to the camera file when that is what named it.
+  Flag<std::string> lens{};
+
+  /// With a lens, the sensor width and height in millimeters.
+  Flag<float2> sensorMM{};
+
   /// The seconds the shutter stays open, 0 for shut. When it opens is
   /// `SceneOptions::time`, which no camera file has a say in.
   Flag<float> shutter{};
