@@ -3,4 +3,4 @@ mdl 1.8;
 // A conformant module: no `#smdl` marker, so none of the dialect is
 // available here and the parser holds this file to the specification.
 // `modules.smdl` imports it to prove the conformant path still resolves.
-export const int conformant_answer = 42;
+export const int conformantAnswer = 42;

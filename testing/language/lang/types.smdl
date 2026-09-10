@@ -58,13 +58,13 @@ unit_test "The complex type carries the intrinsics over" {
   #assert(#norm(z) ~== |1e-6| #real(#conj(z) * z));
   #assert(#abs(z) ~== |1e-6| #sqrt(#norm(z)));
 
-  const auto sqrt_z = #sqrt(z);
-  #assert(#real(sqrt_z * sqrt_z) ~== |1e-6| #real(z));
-  #assert(#imag(sqrt_z * sqrt_z) ~== |1e-6| #imag(z));
+  const auto sqrtZ = #sqrt(z);
+  #assert(#real(sqrtZ * sqrtZ) ~== |1e-6| #real(z));
+  #assert(#imag(sqrtZ * sqrtZ) ~== |1e-6| #imag(z));
 
-  const auto log_z = #log(z);
-  #assert(#real(#exp(log_z)) ~== |1e-6| #real(z));
-  #assert(#imag(#exp(log_z)) ~== |1e-6| #imag(z));
+  const auto logZ = #log(z);
+  #assert(#real(#exp(logZ)) ~== |1e-6| #real(z));
+  #assert(#imag(#exp(logZ)) ~== |1e-6| #imag(z));
 
   // Literal imaginary
   #assert(#real(#exp(0.558j)) ~== |1e-6| #cos(0.558));
@@ -91,7 +91,7 @@ struct HasFieldProbe {
   // holds a color is a runtime question, not a compile-time one.
   ?color optional = none;
 
-  static const int static_field = 3;
+  static const int staticField = 3;
 };
 
 // `#hasField` folds to a constant with no instructions, so it is legal
@@ -106,7 +106,7 @@ unit_test "#hasField answers for live, voided, and absent fields" {
   #assert(#hasField(probe, "optional"));
 
   // Static fields count, just as they do for field access.
-  #assert(#hasField(probe, "static_field"));
+  #assert(#hasField(probe, "staticField"));
 
   // A field that is not declared at all is simply absent, rather than
   // the error that spelling this `!#isVoid(probe.nonexistent)` would be.
@@ -145,9 +145,8 @@ unit_test "#hasField follows a generic instantiation" {
   #assert(#hasField(probe, "optional"));
 }
 
-// constructing an array from a pointer to its element type compared the
-// pointer type against the element type instead of the pointee, so the
-// feature never fired.
+// An array constructed from a pointer matches on the pointee type, not on
+// the pointer type itself.
 unit_test "An array constructs from a pointer to its element" {
   float[2] src = float[2](3.0, 4.0);
   auto p = &src[0];

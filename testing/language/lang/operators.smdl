@@ -48,7 +48,7 @@ unit_test "The approximate comparison takes an absolute or a relative tolerance"
 }
 
 @(pure)
-&int first_nonnull(
+&int firstNonnull(
   const &int a,
   const &int b,
   const &int c,
@@ -58,9 +58,9 @@ unit_test "The binary else yields its left operand unless it is empty" {
   int a = 7;
   int b = 1;
   int c = 9;
-  #assert(first_nonnull(&a, &b, &c) == &a);
-  #assert(first_nonnull(none, &b, &c) == &b);
-  #assert(first_nonnull(none, none, &c) == &c);
+  #assert(firstNonnull(&a, &b, &c) == &a);
+  #assert(firstNonnull(none, &b, &c) == &b);
+  #assert(firstNonnull(none, none, &c) == &c);
 }
 
 unit_test "#select takes its extent from the condition" {
@@ -87,8 +87,9 @@ unit_test "#select takes its extent from the condition" {
   #assert(#typeOf(#select(float3(1.0) < 2.0, 0.0, 1.0)) == float3);
 }
 
-// string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
-// equal to a longer string (and the comparison was asymmetric).
+// String '=='/'!=' compares the whole of both operands, so a prefix is
+// unequal to the longer string and the answer does not depend on which
+// operand is written first.
 unit_test "String comparison is not prefix-based" {
   #assert(!("abc" == "abcdef"));
   #assert(!("abcdef" == "abc"));

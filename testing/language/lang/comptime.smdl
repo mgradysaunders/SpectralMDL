@@ -102,12 +102,12 @@ unit_test "A chain of derived defaults folds through a macro" {
 // than a panic that has to be reached to report. So this macro is
 // checked at every expansion, even the ones folded into compile-time
 // constants where no runtime panic could ever have fired.
-@(pure macro) int checked_positive(const int n) {
+@(pure macro) int checkedPositive(const int n) {
   #assert(n > 0, "expected a positive value");
   return n;
 }
 
-const int CHECKED_AT_MODULE_SCOPE = checked_positive(7);
+const int CHECKED_AT_MODULE_SCOPE = checkedPositive(7);
 
 unit_test "#assert folds when its condition folds" {
   // Folds to nothing. Every `#assert` above with a compile-time
@@ -118,11 +118,11 @@ unit_test "#assert folds when its condition folds" {
 
   // Still an ordinary runtime assertion when the condition is not
   // compile-time.
-  #assert(checked_positive($state.wavelengthMax > 0.0 ? 3 : 5) > 0);
+  #assert(checkedPositive($state.wavelengthMax > 0.0 ? 3 : 5) > 0);
 }
 
 @(pure macro)
-float select_lane(const int lane, const float4 v) {
+float selectLane(const int lane, const float4 v) {
   return v.x if (lane < 0);
   return v[lane];
 }
@@ -130,9 +130,9 @@ float select_lane(const int lane, const float4 v) {
 unit_test "A comptime-true late if prunes what follows" {
   // A comptime-true late 'if' must prune the statements after it, or
   // 'v[lane]' would be rejected for its constant out-of-bounds index.
-  #assert(select_lane(-1, float4(1, 2, 3, 4)) == 1);
+  #assert(selectLane(-1, float4(1, 2, 3, 4)) == 1);
   // And a comptime-false late 'if' must skip the guarded statement.
-  #assert(select_lane(2, float4(1, 2, 3, 4)) == 3);
+  #assert(selectLane(2, float4(1, 2, 3, 4)) == 3);
 }
 
 // The build configuration constants fold at compile time, so they are
@@ -182,10 +182,10 @@ exec {
 // reported as an
 // error rather than crashing.
 @(pure macro)
-int module_scope_macro(const int x) = x + 1;
+int moduleScopeMacro(const int x) = x + 1;
 
 @(pure macro)
-int module_scope_macro_branching(const int x) {
+int moduleScopeMacroBranching(const int x) {
   if (x > 0) {
     return x;
   } else {
@@ -195,15 +195,15 @@ int module_scope_macro_branching(const int x) {
 
 // NOTE: Two parameters, so that this cannot be confused with the field-wise
 // constructor and the declared one is genuinely the overload selected.
-struct module_scope_ctor {
-  module_scope_ctor(const int x, const int y) = module_scope_ctor(value: x * y);
+struct ModuleScopeCtor {
+  ModuleScopeCtor(const int x, const int y) = ModuleScopeCtor(value: x * y);
 
   int value = 0;
 };
 
-const auto MODULE_SCOPE_MACRO = module_scope_macro(1);
-const auto MODULE_SCOPE_BRANCHING = module_scope_macro_branching(-3);
-const auto MODULE_SCOPE_CTOR = module_scope_ctor(6, 7);
+const auto MODULE_SCOPE_MACRO = moduleScopeMacro(1);
+const auto MODULE_SCOPE_BRANCHING = moduleScopeMacroBranching(-3);
+const auto MODULE_SCOPE_CTOR = ModuleScopeCtor(6, 7);
 const auto MODULE_SCOPE_TEXTURE = texture_2d("4x4.png", tex::gamma_linear);
 
 unit_test "A macro, a constructor, and a texture expand at module scope" {

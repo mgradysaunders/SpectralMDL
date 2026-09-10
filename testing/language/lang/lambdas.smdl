@@ -22,10 +22,10 @@
 float apply(const auto f, const float x) = f(x);
 
 @(pure macro)
-float apply_twice(const auto f, const float x) = f(f(x));
+float applyTwice(const auto f, const float x) = f(f(x));
 
 @(pure macro)
-auto apply_any(const auto f, const auto x) = f(x);
+auto applyAny(const auto f, const auto x) = f(x);
 
 // Binding one at module scope, where a run-time value could not go.
 const auto SQ = \(const float x) = x * x;
@@ -33,7 +33,7 @@ const auto SQ = \(const float x) = x * x;
 unit_test "A lambda may be bound at module scope" {
   #assert(SQ(3.0) == 9.0);
   #assert(apply(SQ, 4.0) == 16.0);
-  #assert(apply_twice(SQ, 2.0) == 16.0);
+  #assert(applyTwice(SQ, 2.0) == 16.0);
 }
 
 unit_test "A lambda literal may be an argument" {
@@ -44,10 +44,10 @@ unit_test "A lambda literal may be an argument" {
 // implicitly `auto`, inferred per expansion.
 unit_test "A lambda takes generic and defaulted parameters" {
   const auto scale = \(const auto a, const auto b = 1.0) = a * b;
-  #assert(apply_any(scale, 3.0) == 3.0);
+  #assert(applyAny(scale, 3.0) == 3.0);
   const auto twice = \(const auto a) = 2 * a;
-  #assert(apply_any(twice, 3) == 6);
-  #assert(#all(apply_any(twice, float3(1.0, 2.0, 3.0)) == float3(2.0, 4.0, 6.0)));
+  #assert(applyAny(twice, 3) == 6);
+  #assert(#all(applyAny(twice, float3(1.0, 2.0, 3.0)) == float3(2.0, 4.0, 6.0)));
 }
 
 unit_test "A lambda body may be a compound statement" {
@@ -82,10 +82,10 @@ unit_test "A lambda captures enclosing locals by aliasing" {
   #assert(apply(\(const float x) = scale * x, 2.0) == 6.0);
 
   float bias = 1.0;
-  const auto add_bias = \(const float x) = x + bias;
-  #assert(apply(add_bias, 1.0) == 2.0);
+  const auto addBias = \(const float x) = x + bias;
+  #assert(apply(addBias, 1.0) == 2.0);
   bias = 10.0;
-  #assert(apply(add_bias, 1.0) == 11.0);
+  #assert(apply(addBias, 1.0) == 11.0);
 
   float sum = 0.0;
   const auto accumulate = \(const float x) {
@@ -101,32 +101,32 @@ unit_test "A lambda captures enclosing locals by aliasing" {
 // macro, so each call site sees its own captured values. A lambda's type
 // therefore cannot be interned by the declaration it is written in.
 @(pure macro)
-float scaled_increment(const float scale, const float x) {
+float scaledIncrement(const float scale, const float x) {
   const auto f = \(const float y) = scale * y + 1.0;
   return f(x);
 }
 
 unit_test "A lambda re-anchors at every macro expansion" {
-  #assert(scaled_increment(2.0, 3.0) == 7.0);
-  #assert(scaled_increment(10.0, 3.0) == 31.0);
+  #assert(scaledIncrement(2.0, 3.0) == 7.0);
+  #assert(scaledIncrement(10.0, 3.0) == 31.0);
 }
 
 @(pure macro)
-float apply_indirect(const auto f, const float x) = apply(f, x);
+float applyIndirect(const auto f, const float x) = apply(f, x);
 
 unit_test "A lambda forwards through nested macros" {
   const float k = 5.0;
-  #assert(apply_indirect(\(const float x) = x - k, 8.0) == 3.0);
+  #assert(applyIndirect(\(const float x) = x - k, 8.0) == 3.0);
 }
 
 // A lambda has no purity attribute: it is as pure as its body. Touching
 // `$state` is fine in a non-pure context.
 @(macro)
-float apply_statey(const auto f) = f();
+float applyStatey(const auto f) = f();
 
 unit_test "A lambda is as pure as its body" {
-  const auto get_wavelength = \() = $state.wavelengthBase[0];
-  #assert(apply_statey(get_wavelength) > 0.0);
+  const auto wavelength = \() = $state.wavelengthBase[0];
+  #assert(applyStatey(wavelength) > 0.0);
 }
 
 @(pure macro)
@@ -141,10 +141,10 @@ unit_test "A lambda may be a default argument" {
 // which is what makes combinator factories work. The factory parameter
 // is captured by the lambda and read at the later call.
 @(pure macro)
-auto make_offsetter(const float offset) = \(const float x) = x + offset;
+auto makeOffsetter(const float offset) = \(const float x) = x + offset;
 
 unit_test "A lambda may be returned from a macro and from return_from" {
-  const auto f = make_offsetter(4.0);
+  const auto f = makeOffsetter(4.0);
   #assert(f(1.0) == 5.0);
   const auto g = return_from {
     return \(const float x) = 2.0 * x;

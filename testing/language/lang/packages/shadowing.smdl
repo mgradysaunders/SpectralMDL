@@ -4,15 +4,15 @@
 /// importer's overload resolution.
 #smdl
 
-using .::overloads import overload_target;
+using .::overloads import overloadTarget;
 
 @(pure)
-int overload_target(int v [[anno::unused()]]) = 2;
+int overloadTarget(int v [[anno::unused()]]) = 2;
 
 unit_test "A local declaration shadows an imported name" {
   // The local declaration wins unqualified lookup.
-  #assert(overload_target(5) == 2);
+  #assert(overloadTarget(5) == 2);
   // The imported function is still reachable by its qualified name, and
   // resolves against the exporting module's overloads only.
-  #assert(overloads::overload_target(1.5) == 1);
+  #assert(overloads::overloadTarget(1.5) == 1);
 }

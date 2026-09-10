@@ -18,10 +18,10 @@
 using probe = ::support::probe;
 import probe::*;
 
-// same-scope redeclaration is a compile error (verified out of tree
-// since an error aborts the suite); shadowing in nested scopes is legal and
-// guarded here.
-const int decl_g = 10;
+// A redeclaration in the same scope is a compile error, verified out of
+// tree since an error aborts the suite. Shadowing in a nested scope is
+// legal, and guarded here.
+const int moduleValue = 10;
 
 // A `do`-`while` runs its body once before it ever tests the condition,
 // which is the only loop in the language that does.
@@ -39,8 +39,9 @@ unit_test "A do-while body runs before its condition" {
   #assert(j == 1);
 }
 
-// a 'for' with an empty condition made the emitter dereference a null
-// condition expression.
+// A 'for' may leave its condition out entirely, in which case the loop
+// runs until the body leaves it: there is no condition expression to read,
+// and the emitter has to supply the always-true one itself.
 unit_test "A for with an empty condition loops" {
   int j = 0;
   for (int n = 0; ; n++) {
@@ -51,9 +52,10 @@ unit_test "A for with an empty condition loops" {
   #assert(j == 5);
 }
 
-// 'return' recorded its PHI predecessor block before unwinding 'defer's,
-// so a 'defer' containing control flow broke the PHI wiring.
-int defer_with_branch(bool b) {
+// A 'defer' may contain control flow of its own, so the block a 'return'
+// value arrives from is the block the unwind ends in, not the one the
+// 'return' started in.
+int deferWithBranch(bool b) {
   int x = 1;
   defer {
     if (b) {
@@ -64,8 +66,8 @@ int defer_with_branch(bool b) {
 }
 
 unit_test "A defer containing control flow still runs on return" {
-  #assert(defer_with_branch(true) == 1);
-  #assert(defer_with_branch(false) == 1);
+  #assert(deferWithBranch(true) == 1);
+  #assert(deferWithBranch(false) == 1);
 }
 
 // A case constant is converted to the type of the switched-on value, so a
@@ -127,14 +129,14 @@ unit_test "Shadowing is legal in nested scopes" {
   } in x * x;
   #assert(v == 9);
   // Function-body scope may shadow module scope.
-  int decl_g = 20;
-  #assert(decl_g == 20);
+  int moduleValue = 20;
+  #assert(moduleValue == 20);
 }
 
 // each switch case is its own scope. The dispatch may jump directly
 // to any case, past the declarations of the cases before it, so a
 // declaration is not visible beyond its own case, not even on fallthrough
-// (jump-past-initialization is a compile error). Falling through unwinds 
+// (jump-past-initialization is a compile error). Falling through unwinds
 // the case scope like any other scope exit.
 unit_test "Switch cases are separate scopes" {
   // The same name may be declared in different cases.

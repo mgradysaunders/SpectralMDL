@@ -12,15 +12,13 @@
 /// `@(noinline)` matters throughout: an inlined callee has no ABI to test.
 #smdl
 
-struct bigStruct {
+struct BigStruct {
   float4 a = float4(0.0);
   float4 b = float4(0.0);
   float4 c = float4(0.0);
   float4 d = float4(0.0);
   float4 e = float4(0.0);
 };
-
-// '@(noinline)' matters throughout: an inlined callee has no ABI to test.
 
 @(pure noinline)
 float sumArray(const float[24] w) {
@@ -42,10 +40,10 @@ float clobberArray(float[24] w) {
 }
 
 @(pure noinline)
-float sumStruct(const bigStruct v) = #sum(v.a) + #sum(v.b) + #sum(v.c) + #sum(v.d) + #sum(v.e);
+float sumStruct(const BigStruct v) = #sum(v.a) + #sum(v.b) + #sum(v.c) + #sum(v.d) + #sum(v.e);
 
 @(pure noinline)
-bigStruct clobberStruct(bigStruct v) {
+BigStruct clobberStruct(BigStruct v) {
   v.a = float4(-1.0);
   return v;
 }
@@ -118,7 +116,7 @@ unit_test "A large aggregate passes by pointer and arrives intact" {
   for (int i = 0; i < 16; i++)
     small[i] = 1.0;
   #assert(sumSmallArray(small) == 16.0, "sub-threshold arrays must still pass by value");
-  const auto v(bigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  const auto v(BigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
   #assert(sumStruct(v) == 60.0);
 }
 
@@ -128,7 +126,7 @@ unit_test "A byval parameter is private to the callee" {
   #assert(clobberArray(w) == -1.0, "callee must see its own write");
   #assert(sumArray(w) == 276.0, "callee must not write through to the caller");
   #assert(w[5] == 5.0, "callee must not write through to the caller");
-  auto v(bigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  auto v(BigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
   const auto v2(clobberStruct(v));
   #assert(#all(v2.a == float4(-1.0)), "callee must see its own write");
   #assert(#all(v.a == float4(1.0)), "callee must not write through to the caller");

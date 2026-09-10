@@ -71,9 +71,9 @@ struct CtorPrecedence {
   // The parameter name 'value' deliberately collides with the field name,
   // so 'CtorPrecedence(value: ...)' resolves both as this constructor and
   // as field-wise construction. Explicit constructors are applied first!
-  CtorPrecedence(const int value) = CtorPrecedence(field_wise: false, value: 10 * value);
+  CtorPrecedence(const int value) = CtorPrecedence(fieldWise: false, value: 10 * value);
 
-  bool field_wise = true;
+  bool fieldWise = true;
 
   int value = 0;
 };
@@ -82,13 +82,13 @@ unit_test "A declared constructor beats the field-wise one" {
   // Both the constructor and field-wise construction can resolve this,
   // and the constructor must win.
   auto foo0 = CtorPrecedence(value: 7);
-  #assert(!foo0.field_wise);
+  #assert(!foo0.fieldWise);
   #assert(foo0.value == 70);
 
   // Naming a field the constructor does not know forces field-wise
   // construction.
-  auto foo1 = CtorPrecedence(value: 7, field_wise: true);
-  #assert(foo1.field_wise);
+  auto foo1 = CtorPrecedence(value: 7, fieldWise: true);
+  #assert(foo1.fieldWise);
   #assert(foo1.value == 7);
 }
 
@@ -109,8 +109,8 @@ struct StaticFields {
 };
 
 unit_test "A static field takes no storage" {
-  // Static fields may be accessed either thru instances of the
-  // struct or through the struct type itself
+  // Static fields may be accessed either through instances of the
+  // struct or through the struct type itself.
   auto foo = StaticFields();
   #assert(StaticFields.bar == 11);
   #assert(StaticFields.baz == 33 - 9);
@@ -184,10 +184,10 @@ unit_test "A voided field takes no storage and leaves the layout packed" {
   // to write generic code over a field that may or may not be voided is
   // to guard with `#hasField`. The dead branch of a compile-time `?:` is
   // never emitted, so the guard is what makes this legal.
-  const auto ptr_v = #hasField(bar, "v") ? &bar.v : none;
-  const auto ptr_b = #hasField(bar, "b") ? &bar.b : none;
-  #assert(#isVoid(ptr_v));
-  #assert(*ptr_b == 2.0);
+  const auto ptrV = #hasField(bar, "v") ? &bar.v : none;
+  const auto ptrB = #hasField(bar, "b") ? &bar.b : none;
+  #assert(#isVoid(ptrV));
+  #assert(*ptrB == 2.0);
 }
 
 struct Destructurable {
@@ -210,7 +210,7 @@ unit_test "A struct destructures into its fields" {
 // An abstract struct: 'payload' forces instantiation through
 // 'StructType::getInstance', where 'const' fields whose values fold at
 // compile time are baked into the type and eliminated from storage.
-struct wrap {
+struct Wrap {
   auto payload;
   const float r = 0.5;
   const float r2 = r * r;
@@ -218,10 +218,10 @@ struct wrap {
 };
 
 @(pure)
-float wrap_r(const &wrap w) = w.r + w.r2;
+float wrapR(const &Wrap w) = w.r + w.r2;
 
 unit_test "A comptime-constant field is baked into the type" {
-  auto a = wrap(payload: 1, r: 0.25);
+  auto a = Wrap(payload: 1, r: 0.25);
   #assert(a.r == 0.25);
   #assert(a.r2 == 0.0625);
   #assert(a.mut == 0.0);
@@ -229,22 +229,22 @@ unit_test "A comptime-constant field is baked into the type" {
   #assert(#sizeOf(#typeOf(a)) == #sizeOf(int) + #sizeOf(float));
   // Identical constants share one instance; different constants are
   // distinct types.
-  auto b = wrap(payload: 2, r: 0.25);
+  auto b = Wrap(payload: 2, r: 0.25);
   #assert(#typeOf(b) == #typeOf(a));
-  auto c = wrap(payload: 1, r: 0.75);
+  auto c = Wrap(payload: 1, r: 0.75);
   #assert(#typeOf(c) != #typeOf(a));
   // A runtime value keeps its storage, and the derived default computed
   // from it stays stored as well.
   float rt = 0.25;
-  auto d = wrap(payload: 1, r: rt);
+  auto d = Wrap(payload: 1, r: rt);
   #assert(d.r == 0.25);
   #assert(d.r2 == 0.0625);
   #assert(#typeOf(d) != #typeOf(a));
   #assert(#sizeOf(#typeOf(d)) == #sizeOf(int) + 3 * #sizeOf(float));
   // Baked fields read correctly through pointers and functions, which
   // monomorphize per instance type.
-  #assert(wrap_r(&a) == 0.25 + 0.0625);
-  #assert(wrap_r(&d) == 0.25 + 0.0625);
+  #assert(wrapR(&a) == 0.25 + 0.0625);
+  #assert(wrapR(&d) == 0.25 + 0.0625);
   // Re-invoking the instance type accepts the identical constant.
   auto e = #typeOf(a)(payload: 3, r: 0.25);
   #assert(#typeOf(e) == #typeOf(a));
@@ -257,33 +257,33 @@ unit_test "Two arms that disagree on a constant field demote it to storage" {
   // Arms differing only in a baked constant merge to one struct type
   // with the constant demoted to storage, not to a union: the merged
   // type is exactly the instance a runtime-valued construction produces.
-  auto m = cond ? wrap(payload: 1, r: 0.25) : wrap(payload: 1, r: 0.75);
+  auto m = cond ? Wrap(payload: 1, r: 0.25) : Wrap(payload: 1, r: 0.75);
   float rt = 0.25;
-  #assert(#typeOf(m) == #typeOf(wrap(payload: 1, r: rt)));
+  #assert(#typeOf(m) == #typeOf(Wrap(payload: 1, r: rt)));
   #assert(m.r == 0.25);
   #assert(m.r2 == 0.0625);
   #assert(m.mut == 0.0);
   // Arms agreeing on the constants keep them baked.
-  auto m2 = cond ? wrap(payload: 1, r: 0.25, mut: 1.0)
-                 : wrap(payload: 1, r: 0.25, mut: 2.0);
-  #assert(#typeOf(m2) == #typeOf(wrap(payload: 1, r: 0.25)));
+  auto m2 = cond ? Wrap(payload: 1, r: 0.25, mut: 1.0)
+                 : Wrap(payload: 1, r: 0.25, mut: 2.0);
+  #assert(#typeOf(m2) == #typeOf(Wrap(payload: 1, r: 0.25)));
   #assert(m2.r == 0.25);
   #assert(m2.mut == 1.0);
   // Arrays of disagreeing constructions demote element-wise.
-  auto arr = wrap[2](wrap(payload: 1, r: 0.25), wrap(payload: 2, r: 0.75));
+  auto arr = Wrap[2](Wrap(payload: 1, r: 0.25), Wrap(payload: 2, r: 0.75));
   #assert(arr[0].r == 0.25);
   #assert(arr[0].r2 == 0.0625);
   #assert(arr[1].r == 0.75);
   #assert(arr[1].payload == 2);
 }
 
-struct tinted {
+struct Tinted {
   const $(color | float) tint = 1.0;
 };
 
 unit_test "A comptime union field eliminates entirely" {
-  auto t1 = tinted(tint: 0.5);
-  auto t2 = tinted(tint: color(0.5));
+  auto t1 = Tinted(tint: 0.5);
+  auto t2 = Tinted(tint: color(0.5));
   #assert(t1.tint == 0.5);
   #assert(#all(t2.tint == color(0.5)));
   // Both eliminate entirely: the instances have no storage at all.
@@ -291,7 +291,7 @@ unit_test "A comptime union field eliminates entirely" {
   #assert(#sizeOf(#typeOf(t2)) == 0);
   #assert(#typeOf(t1) != #typeOf(t2));
   float rt = 0.5;
-  auto t3 = tinted(tint: rt);
+  auto t3 = Tinted(tint: rt);
   #assert(t3.tint == 0.5);
   #assert(#sizeOf(#typeOf(t3)) == #sizeOf(float));
   #assert(#typeOf(t3) != #typeOf(t1));
@@ -386,14 +386,15 @@ unit_test "An inline struct argument expands by name" {
   #assert(rebuilt.a == full.a && rebuilt.b == full.b && rebuilt.c == full.c);
 }
 
-// referencing another function's run-time local is an
-// impossible-capture error rather than a silent bind to something farther
-// up the chain (verified out of tree: constructing the escaped type below
-// with its default 'a = k' from another function is a compile error citing
-// both locations). In-function defaults and escaped construction with
-// explicit arguments remain legal.
+// A struct type declared inside a function escapes it, but a default that
+// reads a run-time local of that function can only be evaluated there.
+// Constructing the escaped type from elsewhere and letting 'a = k' apply is
+// an impossible-capture error citing both locations, rather than a silent
+// bind to something farther up the chain; that one is verified out of tree.
+// In-function defaults and escaped construction with explicit arguments are
+// what remains legal.
 @(pure noinline)
-auto decl_make() {
+auto makeLocalStruct() {
   int k = 5;
   struct DeclLocalS {
     int a = k;
@@ -402,7 +403,7 @@ auto decl_make() {
 }
 
 unit_test "Local struct type escapes, defaults bind in-function" {
-  auto s = decl_make();
+  auto s = makeLocalStruct();
   #assert(s.a == 5);
   // Explicit arguments emit no default, so no foreign-local reference.
   auto t = #typeOf(s)(a: 7);

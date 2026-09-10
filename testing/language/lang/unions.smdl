@@ -7,18 +7,18 @@ tag Animal;
 struct Cat: default Animal {
   string name = "Fe";
   int age = 11;
-  int num_meows = 8;
+  int meowCount = 8;
 };
 
 struct Dog: Animal {
   string name = "Doug";
   int age = 5;
-  int num_barks = 9;
+  int barkCount = 9;
 };
 
 struct Horse {
   string name = "Cliff";
-  bool has_saddle = true;
+  bool hasSaddle = true;
 };
 
 struct Zebra {
@@ -28,20 +28,20 @@ struct Zebra {
 
 struct Bison {
   string name = "Buff";
-  double horn_size = 1.2;
+  double hornSize = 1.2;
 };
 
 // This implicitly constructs a '(Horse | Zebra | Bison)' by a chain of
-// conditional expressions. The result of the inner 'i == 1' conditional 
+// conditional expressions. The result of the inner 'i == 1' conditional
 // expression is a '(Zebra | Bison)' which then unites with 'Horse' to
 // form '(Horse | Zebra | Bison)'.
 @(pure noinline)
-auto get_implied_union_from_conditional(int i) = i == 0 ? Horse() : (i == 1 ? Zebra() : Bison());
+auto impliedUnionFromConditional(int i) = i == 0 ? Horse() : (i == 1 ? Zebra() : Bison());
 
 // This implicitly constructs a '(Horse | Zebra | Bison)' by looking at
 // the 'return' statements of a function with 'auto' return type.
 @(pure noinline)
-auto get_implied_union_from_returns(int i) {
+auto impliedUnionFromReturns(int i) {
   switch (i) {
   case 0: return Horse();
   case 1: return Zebra();
@@ -51,30 +51,30 @@ auto get_implied_union_from_returns(int i) {
 }
 
 unit_test "A union is implied by a conditional and by two returns" {
-  auto biff(get_implied_union_from_conditional(1)); // Should be a 'Zebra'
-  auto buff(get_implied_union_from_returns(2));     // Should be a 'Bison'
+  auto biff(impliedUnionFromConditional(1)); // Should be a 'Zebra'
+  auto buff(impliedUnionFromReturns(2));     // Should be a 'Bison'
   #assert(#typeOf(biff) == (Horse | Zebra | Bison));
   #assert(#typeOf(buff) == (Horse | Zebra | Bison));
 
   // The 'visit' keyword before an argument wraps the function call
   // with a type switch and unites the results in the most sensible way. In
-  // this case, '#typeOf(...)' returns a type always, so '#typeOf(visit ...)' 
+  // this case, '#typeOf(...)' returns a type always, so '#typeOf(visit ...)'
   // also returns a type.
   #assert(#typeOf(visit biff) == Zebra);
   #assert(#typeOf(visit buff) == Bison);
 }
 
-// This implicitly constructs a 'double' by a chain of conditional 
+// This implicitly constructs a 'double' by a chain of conditional
 // expressions. The result of the inner expression promotes 'float' and
 // 'double' to 'double', then the outer expression promotes 'int' and
-// 'double' to 'double. This demonstrates that arithmetic promotion 
+// 'double' to 'double'. This demonstrates that arithmetic promotion
 // is preferred to union when possible!
 @(pure noinline)
-auto get_implied_promotion_from_conditional(int i) = i == 0 ? 7 : (i == 1 ? 7.1f : 7.2d);
+auto impliedPromotionFromConditional(int i) = i == 0 ? 7 : (i == 1 ? 7.1f : 7.2d);
 
 // Same as above.
 @(pure noinline)
-auto get_implied_promotion_from_returns(int i) {
+auto impliedPromotionFromReturns(int i) {
   switch (i) {
   case 0: return 7;
   case 1: return 7.1f;
@@ -84,8 +84,8 @@ auto get_implied_promotion_from_returns(int i) {
 }
 
 unit_test "Arithmetic promotion is preferred to a union" {
-  #assert(#typeOf(get_implied_promotion_from_conditional(0)) == double);
-  #assert(#typeOf(get_implied_promotion_from_returns(2)) == double);
+  #assert(#typeOf(impliedPromotionFromConditional(0)) == double);
+  #assert(#typeOf(impliedPromotionFromReturns(2)) == double);
 }
 
 struct Tagged {
@@ -94,10 +94,10 @@ struct Tagged {
 };
 
 @(pure noinline)
-auto get_union_of_void_and_non_void_field(int i) = i == 0 ? Tagged(marking: 7) : Tagged();
+auto unionOfVoidAndNonVoidField(int i) = i == 0 ? Tagged(marking: 7) : Tagged();
 
 unit_test "#hasField answers through a union" {
-  auto animal(get_implied_union_from_conditional(1));
+  auto animal(impliedUnionFromConditional(1));
 
   // Every case has `name`, so accessing it through the union is legal.
   #assert(#hasField(animal, "name"));
@@ -105,7 +105,7 @@ unit_test "#hasField answers through a union" {
   // Only `Zebra` has `stripes`, so accessing it through the union is
   // not, and `#hasField` says so rather than failing to compile.
   #assert(!#hasField(animal, "stripes"));
-  #assert(!#hasField(animal, "has_saddle"));
+  #assert(!#hasField(animal, "hasSaddle"));
   #assert(!#hasField(animal, "nonexistent"));
 
   // Visiting narrows to the one case, so the fields of that case alone
@@ -116,7 +116,7 @@ unit_test "#hasField answers through a union" {
   // A union over the two instantiations of one generic struct, one of
   // which voids `marking` and one of which does not. The access is legal
   // and yields an `(int | void)`, so the field is present.
-  auto marked(get_union_of_void_and_non_void_field(0));
+  auto marked(unionOfVoidAndNonVoidField(0));
   #assert(#hasField(marked, "name"));
   #assert(#hasField(marked, "marking"));
 
@@ -157,7 +157,7 @@ unit_test "An abstract field type makes the struct a template" {
   typedef #typeOf(dogOwner) DogOwner; // By analogy to C++, this is 'PetOwner<Dog>'
   #assert(CatOwner != DogOwner);
 
-  // By the subtype relation '<:', both satisify the constraint of being
+  // By the subtype relation '<:', both satisfy the constraint of being
   // a 'PetOwner'. (As if 'PetOwner' were a tag.)
   #assert(CatOwner <: PetOwner);
   #assert(DogOwner <: PetOwner);
@@ -168,34 +168,34 @@ unit_test "An abstract field type makes the struct a template" {
 
   // The compiler interprets the abstract type signature 'PetOwner[2]' as an
   // array of two concrete instances of the 'PetOwner' type, but not necessarily
-  // identical instances. Therefore, it is legal to pass in 'CatOwner' and 'DogOwner', 
+  // identical instances. Therefore, it is legal to pass in 'CatOwner' and 'DogOwner',
   // and the compiler infers the array element type must be '(CatOwner | DogOwner)'.
   #assert(#typeOf(petOwners) == (CatOwner | DogOwner)[2]);
   #assert(#typeOf(visit petOwners[0]) == CatOwner);
   #assert(#typeOf(visit petOwners[1]) == DogOwner);
 }
 
-// This implicitly constructs a '(CatOwner | DogOwner)' by a conditional expressions. See 
-// the 'implicit_unions.smdl' file for more information.
-@(pure noinline) auto get_cat_or_dog_owner(string name, bool owns_cat) = owns_cat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
+// This implicitly constructs a '(CatOwner | DogOwner)' by a conditional
+// expression, the same way the tests at the top of this file do.
+@(pure noinline) auto catOrDogOwner(string name, bool ownsCat) = ownsCat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
 
 unit_test "Two instantiations of one generic struct union" {
-  // Now construct a cat owner and a dog owner using the implicit union returned by 
-  // 'get_cat_or_dog_owner()'.
-  auto petOwner0(get_cat_or_dog_owner(name: "Pete", owns_cat: true));
-  auto petOwner1(get_cat_or_dog_owner(name: "Fred", owns_cat: false));
+  // Now construct a cat owner and a dog owner using the implicit union returned by
+  // 'catOrDogOwner()'.
+  auto petOwner0(catOrDogOwner(name: "Pete", ownsCat: true));
+  auto petOwner1(catOrDogOwner(name: "Fred", ownsCat: false));
 
   // Unlike the first test case, these variables both have the same type '(CatOwner | DogOwner)'.
   typedef #typeOf(petOwner0) CatOrDogOwner;
   #assert(#typeOf(petOwner1) == CatOrDogOwner);
 
   // By the subtype relation '<:', the compiler considers 'CatOrDogOwner' to satisfy
-  // the constraint of being a 'PetOwner'. Even though it is a union, every alternative 
-  // of the union satifies 'PetOwner', so it is ALWAYS a 'PetOwner' even if we do not
+  // the constraint of being a 'PetOwner'. Even though it is a union, every alternative
+  // of the union satisfies 'PetOwner', so it is ALWAYS a 'PetOwner' even if we do not
   // specifically know which one it is at compile-time.
   #assert(CatOrDogOwner <: PetOwner);
 
-  // OK now for some crazy stuff. The compiler also knows when a field name is present 
+  // OK now for some crazy stuff. The compiler also knows when a field name is present
   // in every alternative of a union. In which case, you can use dot syntax to access it
   // directly on the union, and the compiler will implicitly type switch to access the
   // field.
@@ -205,7 +205,7 @@ unit_test "Two instantiations of one generic struct union" {
   #assert(petOwner1.pet.name == "Doug"); // PetOwner<Dog>::Dog::name
 
   // Following intuitive 'visit' semantics, the result type of the field access is
-  // a union only if the type could differ depending on the alterative of the union being
+  // a union only if the type could differ depending on the alternative of the union being
   // accessed. In other words, it is a union of every type the result of the expression
   // could possibly be.
   #assert(#typeOf(petOwner0.name) == string);     // Always 'string'
@@ -219,79 +219,79 @@ unit_test "Two instantiations of one generic struct union" {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 typedef (Cat | Dog) AnyAnimal;
 
-// 'Animal' is an abstract type, so 'get_animal_name()' is 
+// 'Animal' is an abstract type, so 'animalName()' is
 // essentially a template function.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// template <typename T> requires Animal<T> 
-// string get_animal_name(T animal) { return animal.name; }
+// template <typename T> requires Animal<T>
+// string animalName(T animal) { return animal.name; }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure)
-string get_animal_name(Animal animal) = animal.name;
+string animalName(Animal animal) = animal.name;
 
-// 'AnyAnimal' is a concrete union (union types MUST be concrete!) 
+// 'AnyAnimal' is a concrete union (union types MUST be concrete!)
 // that is analogous to a variant in C++. When the template function
-// 'get_animal_name()' is invoked in this function with the 'AnyAnimal' 
-// union (that the compiler knows necessarily satisfies 'Animal'), the 
+// 'animalName()' is invoked in this function with the 'AnyAnimal'
+// union (that the compiler knows necessarily satisfies 'Animal'), the
 // call implicitly type switches.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// string get_animal_union_name(AnyAnimal animal) {
-//   auto vis{[](auto &a) { return get_animal_name(a); }};
+// string animalUnionName(AnyAnimal animal) {
+//   auto vis{[](auto &a) { return animalName(a); }};
 //   return std::visit(vis, animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure visible noinline)
-string get_animal_union_name(AnyAnimal animal) = get_animal_name(animal);
+string animalUnionName(AnyAnimal animal) = animalName(animal);
 
 unit_test "A union passed to a tag parameter switches implicitly" {
   #assert(#typeOf(Animal()) == Cat); // Default constructor returns 'Cat'
   #assert(Cat <: Animal);
   #assert(Dog <: Animal);
   #assert(AnyAnimal <: Animal); // AnyAnimal is always an Animal!
-  #assert(get_animal_union_name(Cat()) == "Fe");
-  #assert(get_animal_union_name(Dog()) == "Doug");
+  #assert(animalUnionName(Cat()) == "Fe");
+  #assert(animalUnionName(Dog()) == "Doug");
 }
 
-// '&Animal' is also an abstract type (a pointer to an abstract type is 
-// still abstract), so 'get_animal_name_with_pointer()' is also essentially 
-// a template function. 
+// '&Animal' is also an abstract type (a pointer to an abstract type is
+// still abstract), so 'animalNameWithPointer()' is also essentially
+// a template function.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // template <typename T> requires Animal<T>
-// string get_animal_name_with_pointer(T *animal) { return animal->name; }
+// string animalNameWithPointer(T *animal) { return animal->name; }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure)
-string get_animal_name_with_pointer(&Animal animal) = animal.name;
+string animalNameWithPointer(&Animal animal) = animal.name;
 
-// '&AnyAnimal' is a concrete pointer to union type. The same logic of it 
+// '&AnyAnimal' is a concrete pointer to union type. The same logic of it
 // always being a pointer to some 'Animal' still applies, and the compiler
 // implicitly type switches through the pointer.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// string get_animal_union_name_with_pointer(AnyAnimal *animal) {
-//   auto vis{[](auto &a) { return get_animal_name_with_pointer(&a); }};
+// string animalUnionNameWithPointer(AnyAnimal *animal) {
+//   auto vis{[](auto &a) { return animalNameWithPointer(&a); }};
 //   return std::visit(vis, *animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure visible noinline)
-string get_animal_union_name_with_pointer(&AnyAnimal animal) = get_animal_name_with_pointer(animal);
+string animalUnionNameWithPointer(&AnyAnimal animal) = animalNameWithPointer(animal);
 
 unit_test "The implicit switch works through a pointer" {
   auto cat(AnyAnimal(Cat()));
   auto dog(AnyAnimal(Dog()));
-  #assert(get_animal_union_name_with_pointer(&cat) == "Fe");
-  #assert(get_animal_union_name_with_pointer(&dog) == "Doug");
+  #assert(animalUnionNameWithPointer(&cat) == "Fe");
+  #assert(animalUnionNameWithPointer(&dog) == "Doug");
 }
 
 // Introduce the 'Shape' tag.
 //
 // This is analogous to a C++ concept that identifies types
-// that declare themselves to be shapes by an 'is_shape' member 
+// that declare themselves to be shapes by an 'is_shape' member
 // type as shown below.
 //
 // C++ equivalent:
@@ -335,76 +335,75 @@ struct Rect: Shape {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 typedef (Disk | Rect) AnyShape;
 
-// This is a concrete overload of 'compute_area()' for the 'Disk' type.
+// This is a concrete overload of 'computeArea()' for the 'Disk' type.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// float compute_area(Disk shape) {
+// float computeArea(Disk shape) {
 //   return M_PI * shape.radius * shape.radius;
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure noinline)
-float compute_area(inline Disk shape) = $PI * radius * radius;
+float computeArea(inline Disk shape) = $PI * radius * radius;
 
-// This is a concrete overload of 'compute_area()' for the 'Rect' type.
+// This is a concrete overload of 'computeArea()' for the 'Rect' type.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// float compute_area(Rect shape) {
+// float computeArea(Rect shape) {
 //   return shape.extent.x * shape.extent.y;
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure noinline)
-float compute_area(inline Rect shape) = #prod(extent);
+float computeArea(inline Rect shape) = #prod(extent);
 
-// This is a concrete overload of 'compute_area()' for the 'AnyShape' type
+// This is a concrete overload of 'computeArea()' for the 'AnyShape' type
 // that uses the 'visit' keyword to generate a type switch that dispatches
-// the function call to another 'compute_area()' overload.
+// the function call to another 'computeArea()' overload.
 //
 // C++ equivalent:
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// float compute_area(AnyShape shape) {
-//   auto vis{[](auto &s) { return compute_area(s); }};
+// float computeArea(AnyShape shape) {
+//   auto vis{[](auto &s) { return computeArea(s); }};
 //   return std::visit(vis, shape);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure noinline)
-float compute_area(AnyShape shape) = compute_area(visit shape);
+float computeArea(AnyShape shape) = computeArea(visit shape);
 
 unit_test "visit makes the switch explicit" {
   auto disk(AnyShape(Disk()));
   auto rect(AnyShape(Rect()));
-  #assert(compute_area(disk) == $PI);
-  #assert(compute_area(rect) == 2);
+  #assert(computeArea(disk) == $PI);
+  #assert(computeArea(rect) == 2);
 }
 
 // Narrowing a wider union to a narrower one is a run-time type switch, so
 // it emits control flow of its own -- at a `return`, inside a branch that
 // is already control flow.
-(int | float) narrow_union(bool b) {
+(int | float) narrowUnion(bool b) {
   (int | float | string) u = 1;
   if (b)
     return u;
   return 2;
 }
 
-int union_as_int(int x) = x;
+int unionAsInt(int x) = x;
 
 unit_test "A union narrows at a return inside a branch" {
-  auto v0 = narrow_union(true);
-  auto v1 = narrow_union(false);
+  auto v0 = narrowUnion(true);
+  auto v1 = narrowUnion(false);
   #assert(#typeOf(visit v0) == int);
   #assert(#typeOf(visit v1) == int);
-  #assert(union_as_int(visit v0) == 1);
-  #assert(union_as_int(visit v1) == 2);
+  #assert(unionAsInt(visit v0) == 1);
+  #assert(unionAsInt(visit v1) == 2);
 }
 
-// The 'visit' statement's case binding took ownership of the visited
-// storage: in the non-union case the binding is the visited variable's
-// own alloca passed through verbatim, so the case scope's unwind emitted
-// 'llvm.lifetime.end' on the variable at the end of every visit -- IR-level
-// use-after-lifetime for all later uses, which optimization is entitled
-// to turn into garbage once the alloca is big enough to stay in memory.
+// A 'visit' statement's case binding borrows the visited storage; it does
+// not own it. In the non-union case the binding is the visited variable's
+// own alloca passed through verbatim, so ending the case scope must not
+// end that variable's lifetime: every later use would then be reading
+// storage the optimizer is entitled to have reused.
 unit_test "Visit statement leaves the visited variable alive" {
   // Non-union: the ternary promotes int to float, so 'u' is a plain
   // float variable and the binding aliases its alloca directly.

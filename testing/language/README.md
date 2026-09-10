@@ -86,10 +86,11 @@ pairing wrong the way a saved value and a `defer` can.
 **Helpers.** One that returns a measurement is named for the measurement
 (`furnaceIntegral`, `whiteSkyAlbedo`); one that asserts is named `check*`
 and asserts only the property its name states. `camelCase` for helpers and
-their locals; `snake_case` only where an identifier stands in for a name the
-specification gives. A helper taking a lambda must be `@(macro)`: a lambda
-expands at its call site, so a non-macro callee would try to expand a
-caller-capturing body inside its own frame.
+their locals and `PascalCase` for a struct or tag the test declares itself;
+`snake_case` only where an identifier stands in for a name the specification
+gives. A helper taking a lambda must be `@(macro)`: a lambda expands at its
+call site, so a non-macro callee would try to expand a caller-capturing body
+inside its own frame.
 
 ## Two things that are not free to change
 

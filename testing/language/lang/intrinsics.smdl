@@ -84,8 +84,8 @@ unit_test "The classification and two-argument intrinsics accept a color" {
   #assert(c[0] > 0.78 && c[0] < 0.79); // ~pi/4
 }
 
-// '#unpackFloat4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
-// texel types, producing an infinite scale factor.
+// '#unpackFloat4' normalizes by the largest value the texel type holds,
+// which for the widest type is not a shift by the full width of the type.
 unit_test "#unpackFloat4 of a 64-bit texel is finite" {
   auto u = #unpackFloat4(#getIntType(64)(3));
   #assert(u.x >= 0.0 && u.x < 1.0);

@@ -30,7 +30,7 @@ import reexported::*;
 import .::packages::one::*;
 import .::packages::overloads::*;
 // Importing `shadowing` guarantees it compiles before the tests below are
-// emitted: its private `overload_target(int)` declaration is exactly what
+// emitted: its private `overloadTarget(int)` declaration is exactly what
 // the cross-module leak test needs to have happened already.
 import .::packages::shadowing::*;
 import .::packages::conformant::*;
@@ -63,18 +63,18 @@ unit_test "A universal using-import works at any path depth" {
 }
 
 unit_test "A private overload does not leak across modules" {
-  // `packages/shadowing.smdl` declares a private `overload_target(int)`
+  // `packages/shadowing.smdl` declares a private `overloadTarget(int)`
   // over the name it imports from here. That declaration must not join
   // this overload set: `int` converts implicitly to `(int | float)` but not
   // the other way, so a leaked overload would deterministically win both
   // calls below and return 2.
-  #assert(packages::overloads::overload_target(5) == 1);
-  #assert(packages::overloads::overload_target(1.5) == 1);
+  #assert(packages::overloads::overloadTarget(5) == 1);
+  #assert(packages::overloads::overloadTarget(1.5) == 1);
 }
 
 // `export` gates access to a namespace member across module boundaries
 // only. Within the declaring module, qualified access works without it.
-namespace local_ns {
+namespace local {
   const int hidden = 5;
   export const int shown = 6;
   namespace inner {
@@ -83,9 +83,9 @@ namespace local_ns {
 }
 
 unit_test "export gates a namespace member across modules, not within one" {
-  #assert(local_ns::shown == 6);
-  #assert(local_ns::hidden == 5);
-  #assert(local_ns::inner::deep == 7);
+  #assert(local::shown == 6);
+  #assert(local::hidden == 5);
+  #assert(local::inner::deep == 7);
   // From another module, only the exported member is reachable.
   #assert(shielded::visible == 1);
 }
@@ -94,5 +94,5 @@ unit_test "A conformant module resolves like any other" {
   // `packages/conformant.mdl` declares `mdl 1.8;` and has no `#smdl`
   // marker, so none of the dialect is available inside it. Nothing about
   // importing it differs.
-  #assert(packages::conformant::conformant_answer == 42);
+  #assert(packages::conformant::conformantAnswer == 42);
 }

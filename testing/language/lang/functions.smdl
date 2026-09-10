@@ -25,19 +25,19 @@
 // would show up: the caller and the callee have to agree about which
 // positions disappeared.
 // Voided in the middle of the list.
-int voided_between(int a, auto x [[anno::unused()]], int b) = a + b;
+int voidedBetween(int a, auto x [[anno::unused()]], int b) = a + b;
 
 // Every parameter voided, so the function takes nothing at all.
-int voided_all(auto x [[anno::unused()]], auto y [[anno::unused()]]) = 42;
+int voidedAll(auto x [[anno::unused()]], auto y [[anno::unused()]]) = 42;
 
 // Voided by a generic default rather than by deduction, and referenced in
 // the body, which is the reason a voided parameter still has to bind.
-float voided_used($(?float) k = none, float v = 1.0) {
+float voidedUsed($(?float) k = none, float v = 1.0) {
   return #isVoid(k) ? v : v * k;
 }
 
 // Impure, so the state pointer leads the signature and must not shift.
-float voided_with_state(auto x [[anno::unused()]], float v) = v + $state.position.x;
+float voidedWithState(auto x [[anno::unused()]], float v) = v + $state.position.x;
 
 // Larger than the 64-byte threshold, so it travels as an indirect
 // ('byval') parameter whose index must survive the dropped ones.
@@ -53,11 +53,11 @@ struct VoidParamBig {
   double i = 9.0;
 };
 
-double voided_around_indirect(auto x [[anno::unused()]], VoidParamBig p, auto y [[anno::unused()]], double s) = p.a + p.i + s;
+double voidedAroundIndirect(auto x [[anno::unused()]], VoidParamBig p, auto y [[anno::unused()]], double s) = p.a + p.i + s;
 
 // Returned indirectly, which rebuilds the function with a leading result
 // slot and shifts every parameter index by one.
-VoidParamBig voided_with_indirect_return(auto x [[anno::unused()]], double a, auto y [[anno::unused()]]) {
+VoidParamBig voidedWithIndirectReturn(auto x [[anno::unused()]], double a, auto y [[anno::unused()]]) {
   auto result = VoidParamBig();
   result.a = a;
   return result;
@@ -65,22 +65,22 @@ VoidParamBig voided_with_indirect_return(auto x [[anno::unused()]], double a, au
 
 // Recursive, so the call is emitted against the by-value placeholder and
 // rewritten afterwards.
-int voided_recursive(auto x [[anno::unused()]], int n) = n <= 0 ? 0 : 1 + voided_recursive(void(), n - 1);
+int voidedRecursive(auto x [[anno::unused()]], int n) = n <= 0 ? 0 : 1 + voidedRecursive(void(), n - 1);
 
 @(macro)
-int voided_macro(auto x [[anno::unused()]], int n) = n * 2;
+int voidedMacro(auto x [[anno::unused()]], int n) = n * 2;
 
 unit_test "A voided parameter leaves the signature" {
-  #assert(voided_between(3, void(), 4) == 7);
-  #assert(voided_all(void(), void()) == 42);
-  #assert(voided_used(v: 4.0) == 4.0);
-  #assert(voided_used(k: 0.5, v: 4.0) == 2.0);
-  #assert(voided_with_state(void(), 2.0) == 2.0 + $state.position.x);
-  #assert(voided_around_indirect(void(), VoidParamBig(), void(), 0.5) == 10.5);
-  #assert(voided_recursive(void(), 5) == 5);
-  #assert(voided_macro(void(), 21) == 42);
+  #assert(voidedBetween(3, void(), 4) == 7);
+  #assert(voidedAll(void(), void()) == 42);
+  #assert(voidedUsed(v: 4.0) == 4.0);
+  #assert(voidedUsed(k: 0.5, v: 4.0) == 2.0);
+  #assert(voidedWithState(void(), 2.0) == 2.0 + $state.position.x);
+  #assert(voidedAroundIndirect(void(), VoidParamBig(), void(), 0.5) == 10.5);
+  #assert(voidedRecursive(void(), 5) == 5);
+  #assert(voidedMacro(void(), 21) == 42);
 
-  const auto big = voided_with_indirect_return(void(), 11.0, void());
+  const auto big = voidedWithIndirectReturn(void(), 11.0, void());
   #assert(big.a == 11.0);
   #assert(big.i == 9.0);
 }
@@ -90,22 +90,22 @@ int add3(int a, int b, int c) = a + b + c;
 // A function variant may be expressed in two ways. The first is simply
 // a call expression with named arguments that will operate as defaults
 // if not explicitly set in the variant call.
-int add3_variant(*) = add3(a: 2);
+int add3Variant(*) = add3(a: 2);
 
 // The second is a let expression followed by a call expression with
 // a call expression with named arguments. This allows the user to
 // define arbitrary helper variables conveniently. The let variables go
 // unused in instantiations that pass 'c' explicitly (the default they
 // feed is skipped), so they are marked to quiet the warning.
-int add3_variant_of_variant(*) = let {
+int add3VariantOfVariant(*) = let {
                                    int f = 7 [[anno::unused()]];
                                    int g = 11 [[anno::unused()]];
-                                 } in add3_variant(c: f * g + 1);
+                                 } in add3Variant(c: f * g + 1);
 
 unit_test "A function variant binds arguments of the function it names" {
-  #assert(add3_variant(4, 7) == 2 + 4 + 7);
-  #assert(add3_variant_of_variant(8) == 2 + 8 + (7 * 11 + 1));
-  #assert(add3_variant_of_variant(8, c: 1) == 2 + 8 + 1);
+  #assert(add3Variant(4, 7) == 2 + 4 + 7);
+  #assert(add3VariantOfVariant(8) == 2 + 8 + (7 * 11 + 1));
+  #assert(add3VariantOfVariant(8, c: 1) == 2 + 8 + 1);
 }
 
 // This is a concrete run-time function. This must not return auto!
@@ -124,31 +124,31 @@ int factorial(int n) {
 // pass in a compile-time constant it evaluates at compile-time,
 // otherwise there is a recursion-depth-exceeded error!
 @(pure macro)
-auto factorial_macro(const auto n) {
+auto factorialMacro(const auto n) {
   if (n <= 1)
     return 1;
   else
-    return n * factorial_macro(n - 1);
+    return n * factorialMacro(n - 1);
 }
 
 unit_test "A function may recurse at run time and a macro at compile time" {
   #assert(factorial(0) == 1);
   #assert(factorial(4) == 4 * 3 * 2 * 1);
   #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
-  #assert(factorial_macro(5) == 5 * 4 * 3 * 2 * 1);
+  #assert(factorialMacro(5) == 5 * 4 * 3 * 2 * 1);
 }
 
-int get_array_dim(auto[<N>] x) {
+int arrayDim(auto[<N>] x) {
   x; // Silence unused parameter warning
   return N;
 }
 
-int get_array_dim_rows(auto[<M>][<N>] x) {
+int arrayDimRows(auto[<M>][<N>] x) {
   x; // Silence unused parameter warning
   return M;
 }
 
-int get_array_dim_cols(auto[<M>][<N>] x) {
+int arrayDimCols(auto[<M>][<N>] x) {
   x; // Silence unused parameter warning
   return N;
 }
@@ -161,9 +161,9 @@ unit_test "An inferred size is deduced in one and two dimensions" {
     int[2](5, 6),
     int[2](7, 8),
   );
-  #assert(get_array_dim(arr1) == 3);
-  #assert(get_array_dim_rows(arr2) == 4);
-  #assert(get_array_dim_cols(arr2) == 2);
+  #assert(arrayDim(arr1) == 3);
+  #assert(arrayDimRows(arr2) == 4);
+  #assert(arrayDimCols(arr2) == 2);
 }
 
 // A non-macro @(pure) function with an inferred-size parameter, which must
@@ -224,20 +224,20 @@ unit_test "An inferred size binds per call and reaches the defaults" {
 // declaration; the `float` overload is declared first on purpose, so that
 // picking by order would give the wrong answer for the integer call.
 @(pure)
-int overload_rank(float x) {
+int overloadRank(float x) {
   x; // Silence unused parameter warning
   return 1;
 }
 
 @(pure)
-int overload_rank(int x) {
+int overloadRank(int x) {
   x; // Silence unused parameter warning
   return 2;
 }
 
 unit_test "Exact overload match beats implicit conversion" {
-  #assert(overload_rank(5) == 2);
-  #assert(overload_rank(1.5) == 1);
+  #assert(overloadRank(5) == 2);
+  #assert(overloadRank(1.5) == 1);
 }
 
 // Declaration-order visibility: lazily emitted bodies (macro expansions,
@@ -245,25 +245,25 @@ unit_test "Exact overload match beats implicit conversion" {
 // their definition-site environment. They see earlier module declarations
 // but not the caller's locals (and not later module declarations, which is
 // a compile error verified out of tree).
-const int decl_mv = 1;
+const int moduleValue = 1;
 
 @(pure macro)
-int decl_read_mv_macro() = decl_mv;
+int readModuleValueMacro() = moduleValue;
 
 @(pure noinline)
-int decl_read_mv_fn() {
-  return decl_mv;
+int readModuleValueFunction() {
+  return moduleValue;
 }
 
 @(pure)
-int decl_read_mv_default(int arg = decl_mv) {
+int readModuleValueDefault(int arg = moduleValue) {
   return arg;
 }
 
 unit_test "Lazy bodies resolve in definition scope" {
-  int decl_mv = 999;
-  #assert(decl_read_mv_macro() == 1);
-  #assert(decl_read_mv_fn() == 1);
-  #assert(decl_read_mv_default() == 1);
-  #assert(decl_mv == 999);
+  int moduleValue = 999;
+  #assert(readModuleValueMacro() == 1);
+  #assert(readModuleValueFunction() == 1);
+  #assert(readModuleValueDefault() == 1);
+  #assert(moduleValue == 999);
 }
