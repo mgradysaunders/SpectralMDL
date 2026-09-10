@@ -5,8 +5,9 @@
 " The camera format that `smdl-toy` reads beside a layout: one `camera` block
 " holding the framing, the lens, and the shutter, with a `motion` track of
 " `at <seconds>` keys inside it. Everything about the scene itself is in the
-" `.layout`, which `layout.vim` covers; which instant to photograph and how
-" big the picture is are the command line's alone.
+" `.layout`, which `layout.vim` covers; the prescription a `lens` names is in
+" a `.lens`, which `lens.vim` covers; which instant to photograph and how big
+" the picture is are the command line's alone.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/Layout/CameraFile.cc`, so the words it knows inside a
 " block are exactly the ones that block accepts, and anything else there is
@@ -14,7 +15,7 @@
 "
 " A camera file is identified by its `.camera` extension.
 "
-" Install: see the header of `layout.vim`, which covers both files.
+" Install: see the header of `layout.vim`, which covers all three files.
 "
 " Options:
 "
@@ -74,6 +75,11 @@ syn match cameraComment display "#.*$" contains=cameraTodo,@Spell
 "--}
 
 "--{ Literals
+" A quoted string may not span lines and has no escape sequences: the lexer
+" takes every character up to the closing quote verbatim. The only one a
+" camera holds is the path its `lens` names.
+syn region cameraString display oneline start=+"+ end=+"+
+
 syn match cameraNumber display
       \ "\w\@<![-+]\=\%(\d\+\%(\.\d*\)\=\|\.\d\+\)\%([eE][-+]\=\d\+\)\=\w\@!"
 "--}
@@ -98,6 +104,13 @@ syn keyword cameraSetting contained fstop aperture focus blades blade_angle
 syn keyword cameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
 
+" A real lens and the sensor it covers. `lens` names a `.lens` beside this
+" file and `sensor` is a width and a height in millimeters. With one, the
+" field of view is a consequence rather than an input, so `fovy` and every
+" setting that stands in for what a real lens does on its own are refused
+" beside it; the parser says which, and it says it better than a color can.
+syn keyword cameraSetting contained lens sensor
+
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
 " `distortion_fit`, and `shutter`, which are not quantities to interpolate.
@@ -112,7 +125,7 @@ syn keyword cameraMotionSetting contained vignetting cat_eye cat_eye_radius
 
 "--{ Blocks
 syn cluster cameraCommon
-      \ contains=cameraComment,cameraNumber,cameraBadWord
+      \ contains=cameraComment,cameraString,cameraNumber,cameraBadWord
 
 syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraSetting
@@ -128,6 +141,7 @@ syn sync minlines=100
 hi def link cameraTodo            Todo
 hi def link cameraComment         Comment
 
+hi def link cameraString          String
 hi def link cameraNumber          Number
 
 hi def link cameraStatement       Statement
