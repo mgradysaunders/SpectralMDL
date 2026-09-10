@@ -185,7 +185,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
                  "which the manifold walk cannot solve against; leave it "
                  "defaulted to inherit 'geometry.normal', else the mark is "
                  "ignored";
-      else if (material.materialDef->canRemapNormal() &&
+      else if (material.def->canRemapNormal() &&
                (dfLobes & smdl::DF_CAN_SET_NORMAL) != 0)
         reason = ") claims nothing: the material remaps 'geometry.normal' "
                  "while a df node was given a normal of its own, which "

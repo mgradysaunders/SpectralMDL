@@ -114,10 +114,28 @@ SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {
 /// MSVC's traditional preprocessor, and supplying no argument at all for a
 /// `...` parameter is only well-formed as of C++20.
 ///
-#define SMDL_SANITY_CHECK(cond)                                                \
-  do {                                                                         \
-    if (!(cond)) ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__); \
+#define SMDL_SANITY_CHECK(cond)                                     \
+  do {                                                              \
+    if (SMDL_UNLIKELY(!(cond)))                                     \
+      ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__); \
   } while (false)
+
+/// Sanity check a condition, explaining what it means if it fails.
+#define SMDL_SANITY_CHECK_MSG(cond, message)                                 \
+  do {                                                                       \
+    if (SMDL_UNLIKELY(!(cond)))                                              \
+      ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__, message); \
+  } while (false)
+
+#if !SMDL_DOXYGEN
+namespace detail {
+
+[[noreturn]] SMDL_EXPORT void sanityCheckFailed(const char *condition,
+                                                const char *file, int line,
+                                                const char *more = nullptr);
+
+} // namespace detail
+#endif // #if !SMDL_DOXYGEN
 
 /// Sanity check a condition in a debug build only.
 ///
@@ -132,32 +150,17 @@ SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {
 /// weakening the checked one.
 #ifdef NDEBUG
 #define SMDL_DEBUG_CHECK(cond) ((void)0)
+#define SMDL_DEBUG_CHECK_MSG(cond, message) ((void)0)
 #else
 #define SMDL_DEBUG_CHECK(cond) SMDL_SANITY_CHECK(cond)
+#define SMDL_DEBUG_CHECK_MSG(cond, message) SMDL_SANITY_CHECK_MSG(cond, message)
 #endif
 
-/// Sanity check a condition, explaining what it means if it fails.
-#define SMDL_SANITY_CHECK_MSG(cond, message)                                 \
-  do {                                                                       \
-    if (!(cond))                                                             \
-      ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__, message); \
-  } while (false)
-
-#if !SMDL_DOXYGEN
-namespace detail {
-
-[[noreturn]] SMDL_EXPORT void sanityCheckFailed(const char *condition,
-                                                const char *file, int line,
-                                                const char *more = nullptr);
-
-} // namespace detail
-#endif // #if !SMDL_DOXYGEN
-
 /// Helper to implement `SMDL_CAT` correctly (Yes this is necessary!)
-#define SMDL_CAT__HELPER(X, Y) X##Y
+#define SMDL_CAT_HELPER(X, Y) X##Y
 
 /// Concatenate macros.
-#define SMDL_CAT(X, Y) SMDL_CAT__HELPER(X, Y)
+#define SMDL_CAT(X, Y) SMDL_CAT_HELPER(X, Y)
 
 /// Defer until end of scope.
 #define SMDL_DEFER(...) \

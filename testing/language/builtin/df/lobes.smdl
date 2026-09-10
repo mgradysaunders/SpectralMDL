@@ -96,7 +96,7 @@ unit_test "The normal property bits ride above the lobe bits" {
   // The bits union through plain wrappers exactly as the lobes do.
   const auto wrapped = df::tint(color(0.5), tilted);
   #assert((wrapped._lobes & bits) == bits);
-  // And they surface on the instance's own lobe word.
+  // And they surface on the evaluation's own lobe word.
   auto mat = material(surface: material_surface(scattering: tilted));
   #assert((_MaterialEval(&mat).surfaceLobes & bits) == bits);
 }

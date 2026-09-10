@@ -36,14 +36,14 @@ export EvaluateResult evaluate(
     ior: ior,
     surface: material_surface(scattering: scattering),
     geometry: material_geometry(normal: normal));
-  auto instance = _MaterialEval(&mat);
-  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exteriorIOR = exterior_ior;
+  auto eval = _MaterialEval(&mat);
+  eval.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  eval.exteriorIOR = exterior_ior;
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
   if (df::_scatterEvaluate(
-        &instance, &wo, &wi, lobeMask, &pdfFwd, &pdfRev, cast<&float>(&f)))
+        &eval, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), lobeMask))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   return EvaluateResult();
 }
@@ -80,9 +80,9 @@ export SampleResult sample(
     ior: ior,
     surface: material_surface(scattering: scattering),
     geometry: material_geometry(normal: normal));
-  auto instance = _MaterialEval(&mat);
-  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
-  instance.exteriorIOR = exterior_ior;
+  auto eval = _MaterialEval(&mat);
+  eval.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  eval.exteriorIOR = exterior_ior;
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;
@@ -91,15 +91,15 @@ export SampleResult sample(
   int sampledLobe = 0;
   float lobeChanceOut = 1.0;
   const auto success = df::_scatterSample(
-    &instance,
+    &eval,
     &xi1,
     &wo,
-    lobeMask,
     &wi,
     &pdfFwd,
     &pdfRev,
     cast<&float>(&f),
     &sampledLobe,
+    lobeMask,
     &lobeChanceOut);
   return SampleResult(
            wi,
@@ -136,14 +136,14 @@ export NormalSampleResult normalSample(
     ior: ior,
     surface: material_surface(scattering: scattering),
     geometry: material_geometry(normal: normal));
-  auto instance = _MaterialEval(&mat);
-  instance.exteriorIOR = exterior_ior;
+  auto eval = _MaterialEval(&mat);
+  eval.exteriorIOR = exterior_ior;
   float4 xi1 = xi;
   float3 wm = float3(0);
   float pdf = 0;
   float2 alpha = float2(0);
   const auto success = df::_scatterNormalSample(
-    &instance, &xi1, int(backface), lobeMask, &wm, &pdf, &alpha);
+    &eval, &xi1, int(backface), &wm, &pdf, &alpha, lobeMask);
   return NormalSampleResult(wm, pdf, alpha, bool(success));
 }
 
@@ -162,10 +162,10 @@ export float normalEvaluate(
     ior: ior,
     surface: material_surface(scattering: scattering),
     geometry: material_geometry(normal: normal));
-  auto instance = _MaterialEval(&mat);
-  instance.exteriorIOR = exterior_ior;
+  auto eval = _MaterialEval(&mat);
+  eval.exteriorIOR = exterior_ior;
   float pdf = 0;
-  df::_scatterNormalEvaluate(&instance, int(backface), &wm, lobeMask, &pdf);
+  df::_scatterNormalEvaluate(&eval, int(backface), &wm, &pdf, lobeMask);
   return pdf;
 }
 
@@ -272,8 +272,8 @@ export float furnaceIntegral(const bsdf scattering, const float3 wo) {
 export int surfaceLobes(const bsdf scattering) {
   auto mat =
     material(ior: 1.5, surface: material_surface(scattering: scattering));
-  auto instance = _MaterialEval(&mat);
-  return instance.surfaceLobes & df::DF_ALL;
+  auto eval = _MaterialEval(&mat);
+  return eval.surfaceLobes & df::DF_ALL;
 }
 
 /// A direction with azimuth `d` (need not be normalized) and elevation

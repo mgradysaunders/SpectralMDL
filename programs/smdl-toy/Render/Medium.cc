@@ -407,7 +407,7 @@ bool Medium::matches(const Component &comp,
   // The cheap fields first, the spectra last: a mismatch is usually a
   // different material, and the compare runs once per path.
   const auto &material{*entry.material};
-  if (comp.materialDef != material.materialDef) return false;
+  if (comp.materialDef != material.def) return false;
   if (comp.presence != presenceOf(material)) return false;
   if (!comp.isHeterogeneous)
     return valuesMatch(material.getAbsorptionCoefficient(), comp.sigmaA) &&
@@ -474,7 +474,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
         !material.getVolumeEmissionIntensity().empty()) {
       auto &comp{mComponents.emplace_back()};
       comp.material = &material;
-      comp.materialDef = material.materialDef;
+      comp.materialDef = material.def;
       comp.presence = presenceOf(material);
       comp.sigmaA = Color(material.getAbsorptionCoefficient());
       comp.sigmaS = Color(material.getScatteringCoefficient());
@@ -483,9 +483,9 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
       // Heterogeneous (or unproven, which must be treated the same): the
       // per-point queries need majorants to track against, covering every
       // coefficient the material actually has.
-      if (!material.materialDef->hasHomogeneousVolume()) {
+      if (!material.def->hasHomogeneousVolume()) {
         if (!hasUsableMajorants(material)) {
-          warnMissingMajorantOnce(material.materialDef);
+          warnMissingMajorantOnce(material.def);
         } else {
           comp.isHeterogeneous = true;
           // Clamped nonnegative, so that a misdeclared negative majorant
@@ -506,7 +506,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
           if (comp.meshInstance) {
             mIsMoving |= comp.meshInstance->isMoving;
             if (comp.meshInstance->frame.isDeformed)
-              warnDeformedVolumeOnce(material.materialDef);
+              warnDeformedVolumeOnce(material.def);
             std::optional<InstanceFrame> scratch{};
             comp.state->objectToWorld =
                 comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
@@ -645,7 +645,7 @@ SMDL_ALWAYS_INLINE void Medium::query(const Component &comp, float t,
     return;
   }
   comp.state->position = comp.orgR + t * comp.dirR;
-  comp.material->materialDef->volumeEvaluate(*comp.state, sigmaA.data(),
+  comp.material->def->volumeEvaluate(*comp.state, sigmaA.data(),
                                              sigmaS.data(), emission.data());
   // Clamp so a lying majorant or density hint renders a clamped medium
   // instead of accumulating negative-weight bias. The emission

@@ -111,7 +111,7 @@ const char *MATERIALS{
     "    max_scattering_coefficient: ramp(0.80, 0.20),\n"
     "    additive: true));\n"
     // Position-dependent with no majorant to track against, which falls
-    // back to the coefficient snapshot the instance captured (nonzero at
+    // back to the coefficient snapshot the evaluation captured (nonzero at
     // the origin, unlike the ramps above).
     "export material ramp_nomax() = material(\n"
     "  volume: material_volume(\n"
@@ -122,9 +122,9 @@ const char *MATERIALS{
 
 namespace {
 
-// The compiler, the render grid, and the material instances the cases
+// The compiler, the render grid, and the evaluated materials the cases
 // build stacks out of. Built per test case, since the compiler must
-// outlive everything evaluated through it and the instances point into
+// outlive everything evaluated through it and the evaluations point into
 // its allocator.
 class Fixture final {
 private:
@@ -159,16 +159,16 @@ public:
     return materialDef->hasHomogeneousVolume();
   }
 
-  // A stack entry over the material `name`, whose instance lives as long
+  // A stack entry over the material `name`, whose evaluation lives as long
   // as the fixture. `prev` is the entry below it.
   [[nodiscard]] MediumStack &entry(const char *name,
                                    const MediumStack *prev = nullptr) {
     const auto *materialDef{compiler.findMaterial(name)};
     REQUIRE(materialDef);
-    mInstances.push_back(
+    mMaterials.push_back(
         std::make_unique<smdl::JIT::Material>(*state, materialDef));
     mEntries.push_back(std::make_unique<MediumStack>(
-        MediumStack{prev, mInstances.back().get(), nullptr}));
+        MediumStack{prev, mMaterials.back().get(), nullptr}));
     return *mEntries.back();
   }
 
@@ -180,12 +180,12 @@ public:
   std::optional<smdl::State> state{};
 
 private:
-  std::vector<std::unique_ptr<smdl::JIT::Material>> mInstances{};
+  std::vector<std::unique_ptr<smdl::JIT::Material>> mMaterials{};
 
   std::vector<std::unique_ptr<MediumStack>> mEntries{};
 };
 
-// The absorption and scattering coefficients the instance captured, in
+// The absorption and scattering coefficients the evaluation captured, in
 // inverse scene units, which is what the closed forms below are the
 // closed forms of.
 struct Coefficients final {
@@ -449,7 +449,7 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
     INFO(
         "a isHeterogeneous volume with no majorant falls back to its snapshot");
     // The material cannot bound its own field, so the medium stands
-    // down to the snapshot the instance captured rather than tracking
+    // down to the snapshot the evaluation captured rather than tracking
     // against a majorant it does not have.
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
     auto &nomax{fixture.entry("ramp_nomax")};
@@ -620,7 +620,7 @@ TEST_CASE("Medium: the resolution carries across paths") {
     // Two stacks over one material, the second seen after `beginPath()`
     // as the next path would see it: the answers must be the same
     // floating-point numbers, and every scattering event must name the
-    // new stack's instance, never the old one's.
+    // new stack's evaluation, never the old one's.
     REQUIRE(fixture.isProvablyHomogeneous("fog"));
     auto &a{fixture.entry("fog")};
     auto &b{fixture.entry("fog")};
@@ -656,7 +656,7 @@ TEST_CASE("Medium: the resolution carries across paths") {
   {
     INFO("a snapshot captured elsewhere is another medium");
     // The fallback medium is its captured coefficients, which this
-    // material varies along X: an instance captured at another point
+    // material varies along X: an evaluation captured at another point
     // must resolve to its own snapshot, not be taken for the last one.
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
     const float unitScale{fixture.state->metersPerSceneUnit};
@@ -678,14 +678,14 @@ TEST_CASE("Medium: the resolution carries across paths") {
     INFO("a different medium at a reused address");
     // The path allocator hands the same addresses out again, so a stack
     // at the address of the last path's must be seen for what it holds.
-    std::optional<smdl::JIT::Material> inst{};
+    std::optional<smdl::JIT::Material> material{};
     std::optional<MediumStack> slot{};
-    inst.emplace(*fixture.state, fixture.compiler.findMaterial("fog"));
-    slot.emplace(MediumStack{nullptr, &*inst, nullptr});
+    material.emplace(*fixture.state, fixture.compiler.findMaterial("fog"));
+    slot.emplace(MediumStack{nullptr, &*material, nullptr});
     const auto fog{
         attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};
-    inst.emplace(*fixture.state, fixture.compiler.findMaterial("fog_a"));
-    slot.emplace(MediumStack{nullptr, &*inst, nullptr});
+    material.emplace(*fixture.state, fixture.compiler.findMaterial("fog_a"));
+    slot.emplace(MediumStack{nullptr, &*material, nullptr});
     medium.beginPath();
     const auto fogA{
         attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};

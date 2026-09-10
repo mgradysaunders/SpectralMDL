@@ -36,7 +36,7 @@ public:
       stack = new (allocator) MediumStack{stack, material, meshInstance};
       return;
     }
-    Leave(stack, allocator, material->materialDef, meshInstance);
+    Leave(stack, allocator, material->def, meshInstance);
   }
 
   /// Leave the medium entered through the boundary of `meshInstance`
@@ -58,7 +58,7 @@ public:
     const MediumStack *found{};
     for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
       if (entry->meshInstance == meshInstance) {
-        if (entry->material->materialDef == materialDef) {
+        if (entry->material->def == materialDef) {
           found = entry;
           break;
         }

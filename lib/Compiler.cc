@@ -948,8 +948,8 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       // Emitted only when the host asked for them; see
       // 'Compiler::shouldEmitScatterNormal'.
       if (!jitMaterial.scatterNormalSample.name.empty()) {
-        jitLookup(jitMaterial.scatterNormalSample);
         jitLookup(jitMaterial.scatterNormalEvaluate);
+        jitLookup(jitMaterial.scatterNormalSample);
         jitLookup(jitMaterial.geometryNormalEvaluate);
       }
       jitLookup(jitMaterial.emissionEvaluate);

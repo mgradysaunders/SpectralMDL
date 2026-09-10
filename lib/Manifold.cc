@@ -380,8 +380,8 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
   // nothing. A remap without the hook has no field to read at all. See
   // the header.
   if ((dfLobes & DF_SETS_NORMAL) != 0) return claim;
-  if (material.materialDef->canRemapNormal() &&
-      (!material.materialDef->geometryNormalEvaluate ||
+  if (material.def->canRemapNormal() &&
+      (!material.def->geometryNormalEvaluate ||
        (dfLobes & DF_CAN_SET_NORMAL) != 0))
     return claim;
   const bool bends{!material.isThinWalled() &&
@@ -394,7 +394,7 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
   // The width gate, at a FIXED center draw so every evaluation of the
   // claim on this side answers the same however the two halves of the
   // estimator reached it; see the header.
-  if (maxGlossyAlpha > 0.0f && material.materialDef->scatterNormalSample &&
+  if (maxGlossyAlpha > 0.0f && material.def->scatterNormalSample &&
       (claim.lobes() & DF_GLOSSY) != 0) {
     auto tooWide{[&](int kind) {
       float3 wm{};

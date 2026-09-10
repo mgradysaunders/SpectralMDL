@@ -504,7 +504,7 @@ public:
   /// The scene data.
   SceneData sceneData{};
 
-  /// Enable the `scatterNormalSample`, `scatterNormalEvaluate`, and
+  /// Enable the `scatterNormalEvaluate`, `scatterNormalSample`, and
   /// `geometryNormalEvaluate` entry points?
   ///
   /// The first two answer for the normal distribution behind a GLOSSY

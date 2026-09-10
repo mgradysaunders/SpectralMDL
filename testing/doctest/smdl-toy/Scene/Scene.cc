@@ -17,7 +17,7 @@
 // corner (assimp reads the six-component `v` line), placed under three
 // materials that read the color through the three spellings, beside a
 // colorless quad under two of them. What a hit interpolates, what the
-// state receives, and what the material instance carries are checked
+// state receives, and what the evaluated material carries are checked
 // against each other and against the corner values.
 
 namespace {
@@ -102,7 +102,7 @@ public:
     return hit;
   }
 
-  /// The emission intensity a material instance carries at `hit`.
+  /// The emission intensity the evaluated material carries at `hit`.
   [[nodiscard]] float intensityAt(const Hit &hit) const {
     auto allocator{smdl::BumpPtrAllocator()};
     auto state{makeRenderState(wavelengths, &allocator)};

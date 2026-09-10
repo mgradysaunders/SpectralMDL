@@ -124,12 +124,12 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     CHECK(matThinRuntime->staticFlagsKnown ==
           (allBits & ~smdl::MATERIAL_THIN_WALLED));
   }
-  SUBCASE("Instances satisfy the static-flags invariant") {
+  SUBCASE("Evaluations satisfy the static-flags invariant") {
     StateStorage storage{compiler};
     auto state{storage.makeState()};
     for (const auto &materialDef : compiler.getMaterials()) {
-      auto materialEval{smdl::JIT::Material(state, &materialDef)};
-      CHECK((materialEval.eval.flags & materialDef.staticFlagsKnown) ==
+      auto material{smdl::JIT::Material(state, &materialDef)};
+      CHECK((material.eval.flags & materialDef.staticFlagsKnown) ==
             materialDef.staticFlags);
     }
     // 'opacityEvaluate' agrees with the full evaluation and requires no
@@ -137,21 +137,21 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     auto stateNoAlloc{state};
     stateNoAlloc.allocator = nullptr;
     for (const auto &materialDef : compiler.getMaterials()) {
-      auto materialEval{smdl::JIT::Material(state, &materialDef)};
+      auto material{smdl::JIT::Material(state, &materialDef)};
       CHECK(materialDef.opacityEvaluate(stateNoAlloc) ==
-            materialEval.getCutoutOpacity());
+            material.getCutoutOpacity());
     }
     CHECK(requireMaterial(compiler, "mat_default")
               ->opacityEvaluate(stateNoAlloc) == 1.0f);
     CHECK(requireMaterial(compiler, "mat_cutout_const")
               ->opacityEvaluate(stateNoAlloc) == 0.5f);
-    // The additive-volume declaration reaches the instance flags.
-    auto instAdditive{smdl::JIT::Material(
+    // The additive-volume declaration reaches the evaluation's flags.
+    auto additiveMaterial{smdl::JIT::Material(
         state, requireMaterial(compiler, "mat_volume_additive"))};
-    CHECK(instAdditive.hasAdditiveVolume());
-    auto instReplacing{
+    CHECK(additiveMaterial.hasAdditiveVolume());
+    auto replacingMaterial{
         smdl::JIT::Material(state, requireMaterial(compiler, "mat_volume"))};
-    CHECK(!instReplacing.hasAdditiveVolume());
+    CHECK(!replacingMaterial.hasAdditiveVolume());
   }
 }
 
@@ -298,11 +298,11 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       CHECK(sigmaS[i] == 0.0f);
     }
   }
-  SUBCASE("Instances expose the density acceleration hint") {
+  SUBCASE("Evaluations expose the density acceleration hint") {
     StateStorage storage{compiler};
     auto fullState{storage.makeState()};
     // A material with the complete hint exposes the grid resource and
-    // both corners of the bound box through the instance.
+    // both corners of the bound box through the evaluation.
     auto hinted{smdl::JIT::Material(fullState,
                                     requireMaterial(compiler, "vol_hinted"))};
     const auto *grid{hinted.getVolumeDensityGrid()};
@@ -342,7 +342,7 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     CHECK(unhinted.getVolumeDensityBoundMin() == nullptr);
     CHECK(unhinted.getVolumeDensityBoundMax() == nullptr);
   }
-  SUBCASE("Instances expose the declared majorants") {
+  SUBCASE("Evaluations expose the declared majorants") {
     StateStorage storage{compiler};
     auto fullState{storage.makeState()};
     auto homog{
@@ -445,9 +445,9 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
     CHECK(materialDef->hasHair());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
-    auto materialEval{smdl::JIT::Material(state, materialDef)};
-    CHECK(materialEval.hasHair());
-    CHECK(materialEval.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
+    auto material{smdl::JIT::Material(state, materialDef)};
+    CHECK(material.hasHair());
+    CHECK(material.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd > 0.0f);
     CHECK(pdfRev > 0.0f);
     for (float fValue : f) {
@@ -456,8 +456,7 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
     }
     auto xi{smdl::float4(0.3f, 0.4f, 0.5f, 0.6f)};
     auto wiSampled{smdl::float3()};
-    CHECK(materialEval.hairScatterSample(xi, wo, wiSampled, pdfFwd, pdfRev,
-                                         fSpan));
+    CHECK(material.hairScatterSample(xi, wo, wiSampled, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd > 0.0f);
     float lengthSquared{wiSampled.x * wiSampled.x + wiSampled.y * wiSampled.y +
                         wiSampled.z * wiSampled.z};
@@ -468,14 +467,72 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
     CHECK(!materialDef->hasHair());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) == 0);
-    auto materialEval{smdl::JIT::Material(state, materialDef)};
-    CHECK(!materialEval.hasHair());
-    CHECK(!materialEval.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
+    auto material{smdl::JIT::Material(state, materialDef)};
+    CHECK(!material.hasHair());
+    CHECK(!material.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd == 0.0f);
     CHECK(pdfRev == 0.0f);
     for (float fValue : f) {
       CHECK(fValue == 0.0f);
     }
+  }
+}
+
+TEST_CASE("scatterSample: a rough reflector sampled and evaluated back") {
+  // A rough reflector has a density wherever it scatters, so a sampled
+  // direction can be evaluated back, and the two must agree on everything
+  // they report.
+  auto compiler{smdl::Compiler()};
+  REQUIRE_OK(compiler.addCode(
+      "::rough", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
+                 "  surface: material_surface(scattering: "
+                 "df::microfacet_ggx_smith_bsdf(\n"
+                 "    roughness_u: 0.4, tint: 0.8)));\n"));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  auto *materialDef{compiler.findMaterial("m")};
+  REQUIRE(materialDef);
+  StateStorage storage{compiler};
+  auto state{storage.makeState()};
+  state.finalize();
+  auto material{smdl::JIT::Material(state, materialDef)};
+  const auto wo{smdl::float3(0.0f, 0.6f, 0.8f)};
+  auto f{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+  auto fSpan{smdl::Span<float>(f.data(), f.size())};
+  float pdfFwd{};
+  float pdfRev{};
+  SUBCASE("The sample agrees with the evaluation at its direction") {
+    auto wi{smdl::float3()};
+    int lobe{};
+    float lobeChance{};
+    REQUIRE(material.scatterSample(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f), wo,
+                                   wi, pdfFwd, pdfRev, fSpan, lobe,
+                                   smdl::DF_ALL, &lobeChance));
+    // Exactly one reflective bit, drawn with a proper chance.
+    CHECK(lobe != 0);
+    CHECK((lobe & smdl::DF_BRDF) == lobe);
+    CHECK((lobe & (lobe - 1)) == 0);
+    CHECK(lobeChance > 0.0f);
+    CHECK(lobeChance <= 1.0f);
+    const auto fSampled{f};
+    float pdfFwdEvaluated{};
+    float pdfRevEvaluated{};
+    REQUIRE(material.scatterEvaluate(wo, wi, pdfFwdEvaluated, pdfRevEvaluated,
+                                     fSpan));
+    CHECK(pdfFwdEvaluated == doctest::Approx(pdfFwd));
+    CHECK(pdfRevEvaluated == doctest::Approx(pdfRev));
+    for (size_t i = 0; i < f.size(); i++)
+      CHECK(f[i] == doctest::Approx(fSampled[i]));
+  }
+  SUBCASE("A mask without the query's domain excludes the query") {
+    // Mirrored about the normal, so the pair is a reflection.
+    const auto wi{smdl::float3(0.0f, -0.6f, 0.8f)};
+    CHECK(material.scatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
+    CHECK(pdfFwd > 0.0f);
+    CHECK(!material.scatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan,
+                                    smdl::DF_BTDF));
+    CHECK(pdfFwd == 0.0f);
+    CHECK(pdfRev == 0.0f);
   }
 }
 
@@ -526,24 +583,45 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     StateStorage storage{compiler};
     auto state{storage.makeState()};
     state.finalize();
-    auto inst{smdl::JIT::Material(state, materialDef)};
+    auto material{smdl::JIT::Material(state, materialDef)};
     const auto xi{smdl::float4(0.25f, 0.5f, 0.5f, 0.5f)};
     auto wm{smdl::float3()};
     auto alpha{smdl::float2()};
     float pdf{};
+    CHECK(!material.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                        smdl::DF_GLOSSY));
     CHECK(
-        !inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_GLOSSY));
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_ALL));
-    CHECK(!inst.scatterNormalEvaluate(false, smdl::float3(0.0f, 0.0f, 1.0f),
-                                      pdf, smdl::DF_GLOSSY));
+        !material.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_ALL));
+    CHECK(!material.scatterNormalEvaluate(false, smdl::float3(0.0f, 0.0f, 1.0f),
+                                          pdf, smdl::DF_GLOSSY));
     // And exactly one kind answers: this material is glossy in
     // reflection only, so that kind draws and the other reports nothing.
-    CHECK(inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                   smdl::DF_GLOSSY_BRDF));
+    CHECK(material.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                       smdl::DF_GLOSSY_BRDF));
     CHECK(pdf > 0.0f);
     CHECK(alpha.x == doctest::Approx(0.16f));
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                    smdl::DF_GLOSSY_BTDF));
+    CHECK(!material.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                        smdl::DF_GLOSSY_BTDF));
+  }
+  SUBCASE("The evaluate hook reports the density the sample hook drew") {
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, true);
+    auto *materialDef{compiler.findMaterial("m")};
+    REQUIRE(materialDef);
+    StateStorage storage{compiler};
+    auto state{storage.makeState()};
+    state.finalize();
+    auto material{smdl::JIT::Material(state, materialDef)};
+    auto wm{smdl::float3()};
+    auto alpha{smdl::float2()};
+    float pdf{};
+    REQUIRE(material.scatterNormalSample(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f),
+                                         false, wm, pdf, alpha,
+                                         smdl::DF_GLOSSY_BRDF));
+    float pdfEvaluated{};
+    CHECK(material.scatterNormalEvaluate(false, wm, pdfEvaluated,
+                                         smdl::DF_GLOSSY_BRDF));
+    CHECK(pdfEvaluated == doctest::Approx(pdf));
   }
   SUBCASE("The normal probe and the geometry normal hook") {
     auto compiler{smdl::Compiler()};

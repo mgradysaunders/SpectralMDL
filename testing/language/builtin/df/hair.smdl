@@ -16,12 +16,12 @@ struct EvaluateResult {
 
 EvaluateResult evaluate(const hair_bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(hair: scattering);
-  auto instance = _MaterialEval(&mat);
+  auto eval = _MaterialEval(&mat);
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
   if (df::_hairScatterEvaluate(
-        &instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+        &eval, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   return EvaluateResult();
 }
@@ -35,14 +35,14 @@ struct SampleResult {
 
 SampleResult sample(const hair_bsdf scattering, const float4 xi, float3 wo) {
   auto mat = material(hair: scattering);
-  auto instance = _MaterialEval(&mat);
+  auto eval = _MaterialEval(&mat);
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
   const auto success = df::_hairScatterSample(
-    &instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
+    &eval, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
   return SampleResult(wi, f, pdfFwd, bool(success));
 }
 

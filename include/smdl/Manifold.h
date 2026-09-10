@@ -622,7 +622,7 @@ template <typename DrawXi>
   const int dfLobes{material.getLobes(isBackface)};
   if ((dfLobes & DF_FINITE) == 0) return false;
   if ((dfLobes & DF_SMOOTH) != 0) return true;
-  if (!(minAlpha > 0.0f) || !material.materialDef->scatterNormalSample)
+  if (!(minAlpha > 0.0f) || !material.def->scatterNormalSample)
     return true;
   // One glossy kind, per the hook's contract; see above.
   const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF

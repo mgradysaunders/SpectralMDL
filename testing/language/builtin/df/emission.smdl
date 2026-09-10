@@ -9,7 +9,7 @@ using quadrature = ::support::quadrature;
 import quadrature::*;
 
 // The evaluation harness, matching the one in `df/hapke.smdl`: wrap the
-// material in a material instance and go through the exported entry
+// material in a `_MaterialEval` and go through the exported entry
 // points, so the tests exercise exactly the path a renderer takes.
 struct EmissionResult {
   color Le = color(0);
@@ -20,12 +20,12 @@ struct EmissionResult {
 };
 
 EmissionResult evaluate(&material mat, const float3 wi) {
-  auto instance = _MaterialEval(mat);
+  auto eval = _MaterialEval(mat);
   float pdf = 0;
   color Le = color(0);
   float3 wiCopy = wi;
   const bool isNonZero =
-    bool(df::_emissionEvaluate(&instance, &wiCopy, &pdf, cast<&float>(&Le)));
+    bool(df::_emissionEvaluate(&eval, &wiCopy, &pdf, cast<&float>(&Le)));
   return EmissionResult(Le, pdf, isNonZero);
 }
 
@@ -40,13 +40,13 @@ struct EmissionSample {
 };
 
 EmissionSample sample(&material mat, const float4 xi) {
-  auto instance = _MaterialEval(mat);
+  auto eval = _MaterialEval(mat);
   float4 xiCopy = xi;
   float3 wi = float3(0);
   float pdf = 0;
   color Le = color(0);
   const bool isNonZero =
-    bool(df::_emissionSample(&instance, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
+    bool(df::_emissionSample(&eval, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
   return EmissionSample(wi, Le, pdf, isNonZero);
 }
 
@@ -306,9 +306,9 @@ unit_test "A tint scales the radiance and a mix combines by weight" {
   #assert(resultMix.pdf ~== |1e-5| 0.5 * (wi.z / $PI) + 0.5 * (1.0 / $TWO_PI));
 }
 
-// The material instance must advertise emission through the flags, the
+// The evaluation must advertise emission through the flags, the
 // intensity pointers, and the intensity modes.
-unit_test "The emission flags and modes reach the material instance" {
+unit_test "The emission flags and modes reach the evaluation" {
   const int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
   const int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
   auto mat = material(
@@ -317,13 +317,13 @@ unit_test "The emission flags and modes reach the material instance" {
         emission: df::diffuse_edf(), intensity: 5.0, mode: intensity_power),
     ),
   );
-  auto instance = _MaterialEval(&mat);
-  #assert((instance.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
-  #assert((instance.flags & MATERIAL_HAS_BACKFACE_EMISSION) == 0);
-  #assert(instance.emissionModes == 1);
-  #assert(bool(instance.surfaceEmissionIntensity));
-  #assert(!bool(instance.backfaceEmissionIntensity));
-  const color intensity = *instance.surfaceEmissionIntensity;
+  auto eval = _MaterialEval(&mat);
+  #assert((eval.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
+  #assert((eval.flags & MATERIAL_HAS_BACKFACE_EMISSION) == 0);
+  #assert(eval.emissionModes == 1);
+  #assert(bool(eval.surfaceEmissionIntensity));
+  #assert(!bool(eval.backfaceEmissionIntensity));
+  const color intensity = *eval.surfaceEmissionIntensity;
   #assert(intensity[0] == 5.0);
 
   auto matDefault = material();

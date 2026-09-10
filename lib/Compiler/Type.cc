@@ -1626,20 +1626,20 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   }
   verifyMaterialEvalLayout(context, materialEvalType, decl.srcLoc);
   // Generate the scatter and emission entry points, which all have the
-  // same shape: a '@(pure visible)' wrapper that forwards the material
-  // instance and its remaining parameters to the like-named function in
+  // same shape: a '@(pure visible)' wrapper that forwards the evaluated
+  // material and its remaining parameters to the like-named function in
   // the 'df' module:
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // @(pure visible) int "material_name.scatterEvaluate"(
-  //     &_MaterialEval instance,
+  //     &_MaterialEval eval,
   //     &float3 wo,
   //     &float3 wi,
-  //     int lobeMask,
   //     &float pdfFwd,
   //     &float pdfRev,
-  //     &float f) {
+  //     &float f,
+  //     int lobeMask) {
   //   return ::df::_scatterEvaluate(
-  //     instance, wo, wi, lobeMask, pdfFwd, pdfRev, f);
+  //     eval, wo, wi, pdfFwd, pdfRev, f, lobeMask);
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // A wrapper parameter passes by pointer unless it is marked
@@ -1657,7 +1657,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                          Type *funcReturnType,
                          std::initializer_list<WrapperParam> wrapperParams) {
     auto params{ParameterList{}};
-    params.push_back(constParameter(materialEvalPtrType, "instance"));
+    params.push_back(constParameter(materialEvalPtrType, "eval"));
     for (const auto &wrapperParam : wrapperParams)
       params.push_back(constParameter(
           wrapperParam.isByValue ? wrapperParam.type
@@ -1699,46 +1699,46 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
-                 {"lobeMask", intType, 1, /*isByValue=*/true},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
-                 {"f", floatType, colorSize}});
+                 {"f", floatType, colorSize},
+                 {"lobeMask", intType, 1, /*isByValue=*/true}});
   makeDfWrapper(jitMaterial.scatterSample, "scatterSample", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
-                 {"lobeMask", intType, 1, /*isByValue=*/true},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize},
-                 {"sampledLobe", intType},
+                 {"lobe", intType},
+                 {"lobeMask", intType, 1, /*isByValue=*/true},
                  {"lobeChance", floatType}});
   // The normal distribution entry points are opt-in: a host that never
   // constrains a half vector should not pay to emit and optimize two more
   // whole-tree descents per material. See 'Compiler::shouldEmitScatterNormal',
   // and the matching skip in 'Compiler::jitCompile()'.
   if (compiler.shouldEmitScatterNormal) {
+    makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
+                  intType,
+                  {{"isBackface", intType, 1, /*isByValue=*/true},
+                   {"wm", float3Type},
+                   {"pdf", floatType},
+                   {"lobeMask", intType, 1, /*isByValue=*/true}});
     makeDfWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
                   intType,
                   {{"xi", float4Type},
-                   {"backface", intType, 1, /*isByValue=*/true},
-                   {"lobeMask", intType, 1, /*isByValue=*/true},
+                   {"isBackface", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
                    {"pdf", floatType},
-                   {"alpha", float2Type}});
-    makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
-                  intType,
-                  {{"backface", intType, 1, /*isByValue=*/true},
-                   {"wm", float3Type},
-                   {"lobeMask", intType, 1, /*isByValue=*/true},
-                   {"pdf", floatType}});
+                   {"alpha", float2Type},
+                   {"lobeMask", intType, 1, /*isByValue=*/true}});
   }
   makeDfWrapper(
       jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
-      {{"wi", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
+      {{"we", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
   makeDfWrapper(jitMaterial.emissionSample, "emissionSample", intType,
                 {{"xi", float4Type},
-                 {"wi", float3Type},
+                 {"we", float3Type},
                  {"pdf", floatType},
                  {"Le", floatType, colorSize}});
   makeDfWrapper(jitMaterial.volumeScatterEvaluate, "volumeScatterEvaluate",

@@ -70,8 +70,7 @@ public:
     return float3(2.0f * float(i), 0.0f, 0.0f);
   }
 
-  /// The hit on sphere `i` seen from the receiver, and the state and
-  /// material instance at it.
+  /// The hit on sphere `i` seen from the receiver, applied to `state`.
   [[nodiscard]] Hit hitOn(int i, smdl::State &state) const {
     Ray ray{RECEIVER, normalize(center(i) - RECEIVER), EPS, INF};
     Hit hit{};

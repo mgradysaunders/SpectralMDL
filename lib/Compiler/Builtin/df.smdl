@@ -100,7 +100,7 @@ export const int DF_ALL = DF_BRDF | DF_BTDF;
 // `DF_CAN_SET_NORMAL`: the subtree contains a node that was GIVEN a
 // `normal`, which pins that node's lobes to it instead of the normal the
 // node would otherwise inherit. A node left defaulted inherits and reports
-// neither bit. `DF_SETS_NORMAL`: such a given normal is, at this instance
+// neither bit. `DF_SETS_NORMAL`: such a given normal is, at this
 // evaluation, actually different from `$state.normal`.
 //
 // A manifold estimator solves against `geometry.normal`, which is the
@@ -299,13 +299,13 @@ auto clampChance(const auto chance) = #select(
 
 // Every user-facing IOR is the ABSOLUTE index of the denser medium. Plastic
 // is 1.4, never 1/1.4. The exterior medium defaults to 1 and may be overridden
-// per instance by the host through `_MaterialEval.exteriorIOR` for nested
+// per evaluation by the host through `_MaterialEval.exteriorIOR` for nested
 // dielectric tracking.
 //
 // The scatter parameter structs instead carry the RELATIVE ratio
 // `ior = n(wo) / n(wt)` of the current frame. The entry points
 // `_scatterEvaluate` and `_scatterSample` construct it as
-// `instance.exteriorIOR / instance.ior` (entering), and the `finalize` blocks
+// `eval.exteriorIOR / eval.ior` (entering), and the `finalize` blocks
 // reciprocate it on backface hits of solid materials, so that `wo` is
 // always in the upper hemisphere and the ratio is always oriented with it.
 // Thin-walled materials never reciprocate: both sides face the exterior,
@@ -319,7 +319,7 @@ const float DEFAULT_IOR = 1.4;
 // Convert a user-facing absolute IOR to the relative ratio oriented with
 // the current frame of the given scatter parameters, honoring the backface
 // reciprocation applied in the parameter `finalize` blocks and the
-// exterior medium of the instance.
+// exterior medium the host set on the evaluation.
 @(pure macro)
 auto relativeIOR(const auto params, const auto absoluteIOR) {
   if (params.hitBackface & !params.thin_walled) {
@@ -6727,25 +6727,25 @@ auto scatterSample(
 
 @(macro)
 export int _scatterEvaluate(
-  const &_MaterialEval instance,
+  const &_MaterialEval eval,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
-  const int lobeMask,    ///< Which lobes to evaluate, `DF_ALL` for every one
-  const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,        ///< output: The scattering function
+  const &float pdfFwd,   ///< output: The solid-angle PDF of sampling `wi` given `wo`
+  const &float pdfRev,   ///< output: The solid-angle PDF of sampling `wo` given `wi`
+  const &float f,        ///< output: The scattering spectrum
+  const int lobeMask,    ///< The lobes to consider, `DF_ALL` is every lobe
 ) {
-  const auto wo0(normalize((*woWorld) * instance.tangentToWorld));
-  const auto wi0(normalize((*wiWorld) * instance.tangentToWorld));
+  const auto wo0(normalize((*woWorld) * eval.tangentToWorld));
+  const auto wi0(normalize((*wiWorld) * eval.tangentToWorld));
   auto params = ScatterEvaluateParameters(
-    isImportance: (instance.flags & 1) != 0,
-    rng: make_rng(instance.seed, directionPairHash(wo0, wi0)),
-    ior: instance.exteriorIOR / instance.ior,
-    exterior_ior: instance.exteriorIOR,
+    isImportance: (eval.flags & 1) != 0,
+    rng: make_rng(eval.seed, directionPairHash(wo0, wi0)),
+    ior: eval.exteriorIOR / eval.ior,
+    exterior_ior: eval.exteriorIOR,
     wo0: wo0,
     wi0: wi0,
-    normal: normalize(instance.geometry.normal),
-    thin_walled: instance.ptr.thin_walled,
+    normal: normalize(eval.geometry.normal),
+    thin_walled: eval.ptr.thin_walled,
     lobeMask: lobeMask,
   );
   // Whether this query is reflection or transmission follows from the
@@ -6758,9 +6758,9 @@ export int _scatterEvaluate(
       f[i] = 0.0;
     return false;
   }
-  auto result = #isDefault(instance.ptr.backface) || !params.hitBackface   //
-  ? scatterEvaluateMasked(visit &instance.ptr.surface.scattering, &params) //
-  : scatterEvaluateMasked(visit &instance.ptr.backface.scattering, &params);
+  auto result = #isDefault(eval.ptr.backface) || !params.hitBackface   //
+  ? scatterEvaluateMasked(visit &eval.ptr.surface.scattering, &params) //
+  : scatterEvaluateMasked(visit &eval.ptr.backface.scattering, &params);
   visit result in result {
     if (result.isBlack) {
       *pdfFwd = 0.0;
@@ -6783,36 +6783,36 @@ export int _scatterEvaluate(
 
 @(macro)
 export int _scatterSample(
-  const &_MaterialEval instance,
-  const &float4 xi,        ///< The canonical random sample in `[0,1]^4`
+  const &_MaterialEval eval,
+  const &float4 xi,        ///< The canonical random sample
   const &float3 woWorld,   ///< The outgoing direction in world space
-  const int lobeMask,      ///< Which lobes to sample among, `DF_ALL` for every one
   const &float3 wiWorld,   ///< output: The incoming direction in world space
-  const &float pdfFwd,     ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdfRev,     ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,          ///< output: The scattering function
-  const &int sampledLobe,  ///< output: The single lobe drawn from, 0 if none
-  const &float lobeChance, ///< output: The unmasked chance of the same selection
+  const &float pdfFwd,     ///< output: The solid-angle PDF of sampling `wi` given `wo`
+  const &float pdfRev,     ///< output: The solid-angle PDF of sampling `wo` given `wi`
+  const &float f,          ///< output: The scattering spectrum
+  const &int lobe,         ///< output: The sampled lobe, exactly one bit, or 0 if none
+  const int lobeMask,      ///< The lobes to consider, `DF_ALL` is every lobe
+  const &float lobeChance, ///< output: The probability that an unmasked sample would have resulted in the same selection
 ) {
-  auto wo = normalize((*woWorld) * instance.tangentToWorld);
+  auto wo = normalize((*woWorld) * eval.tangentToWorld);
   auto params = ScatterSampleParameters(
-    isImportance: (instance.flags & 1) != 0,
+    isImportance: (eval.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
-    ior: instance.exteriorIOR / instance.ior,
-    exterior_ior: instance.exteriorIOR,
-    normal: normalize(instance.geometry.normal),
-    thin_walled: instance.ptr.thin_walled,
+    ior: eval.exteriorIOR / eval.ior,
+    exterior_ior: eval.exteriorIOR,
+    normal: normalize(eval.geometry.normal),
+    thin_walled: eval.ptr.thin_walled,
     lobeMask: lobeMask,
   );
-  auto result = #isDefault(instance.ptr.backface) || !params.hitBackface //
-  ? scatterSampleMasked(visit &instance.ptr.surface.scattering, &params) //
-  : scatterSampleMasked(visit &instance.ptr.backface.scattering, &params);
+  auto result = #isDefault(eval.ptr.backface) || !params.hitBackface //
+  ? scatterSampleMasked(visit &eval.ptr.surface.scattering, &params) //
+  : scatterSampleMasked(visit &eval.ptr.backface.scattering, &params);
   // The chance the unmasked sampler would have made these same
   // selections, whatever the outcome: a caller that got nothing still
   // learns nothing chose.
   *lobeChance = params.lobeChance;
-  *sampledLobe = 0;
+  *lobe = 0;
   visit result in result {
     const auto wi = #select(params.hitBackface, -result.wi, +result.wi);
     if (result.mode == scatter_none || ((wo.z < 0.0) == (wi.z < 0.0)) != (result.mode == scatter_reflect)) {
@@ -6822,10 +6822,10 @@ export int _scatterSample(
         f[i] = 0.0;
       return false;
     }
-    *wiWorld = normalize(instance.tangentToWorld * wi);
+    *wiWorld = normalize(eval.tangentToWorld * wi);
     // The descent narrowed to what the leaf can produce; the mode it
     // returned names the domain, and one domain of one leaf is one lobe.
-    *sampledLobe = params.sampledLobe & modeLobes(int(result.mode), DF_ALL);
+    *lobe = params.sampledLobe & modeLobes(int(result.mode), DF_ALL);
     if (bool(result.fDirac)) {
       *pdfFwd = 1.0;
       *pdfRev = 1.0;
@@ -6836,36 +6836,36 @@ export int _scatterSample(
       // the same mask: a direction drawn from the masked distribution
       // weighed against the density of the whole one is biased.
       return _scatterEvaluate(
-               instance, woWorld, wiWorld, lobeMask, pdfFwd, pdfRev, f);
+               eval, woWorld, wiWorld, pdfFwd, pdfRev, f, lobeMask);
     }
   }
 }
 
 /// The normal distribution evaluate entry point. NOTE: This is non-standard!
 ///
-/// The density with which `_scatterNormalSample` draws `wmWorld` given
-/// `woWorld`, per unit solid angle about it, mixed over every lobe the mask
-/// keeps that could have produced it.
+/// The density with which `_scatterNormalSample` draws `wmWorld` on the side
+/// `isBackface` names, per unit solid angle about it, mixed over every lobe
+/// the mask keeps that could have produced it.
 @(macro)
 export int _scatterNormalEvaluate(
-  const &_MaterialEval instance,
-  const int backface,    ///< Ask on the geometric backface side?
+  const &_MaterialEval eval,
+  const int isBackface,  ///< Whether to ask on the backface side
   const &float3 wmWorld, ///< The microfacet normal in world space
-  const int lobeMask,    ///< Which lobes to consider, `DF_GLOSSY` for every one
-  const &float pdf,      ///< output: The density of `wm` per unit solid angle
+  const &float pdf,      ///< output: The solid-angle PDF of sampling `wm`
+  const int lobeMask,    ///< The lobes to consider, `DF_GLOSSY` is every lobe
 ) {
   auto params = ScatterNormalParameters(
-    hitBackface: bool(backface),
-    wm0: normalize((*wmWorld) * instance.tangentToWorld),
-    ior: instance.exteriorIOR / instance.ior,
-    exterior_ior: instance.exteriorIOR,
-    normal: normalize(instance.geometry.normal),
-    thin_walled: instance.ptr.thin_walled,
+    hitBackface: bool(isBackface),
+    wm0: normalize((*wmWorld) * eval.tangentToWorld),
+    ior: eval.exteriorIOR / eval.ior,
+    exterior_ior: eval.exteriorIOR,
+    normal: normalize(eval.geometry.normal),
+    thin_walled: eval.ptr.thin_walled,
     lobeMask: lobeMask,
   );
-  *pdf = #isDefault(instance.ptr.backface) || !params.hitBackface         //
-  ? normalEvaluateMasked(visit &instance.ptr.surface.scattering, &params) //
-  : normalEvaluateMasked(visit &instance.ptr.backface.scattering, &params);
+  *pdf = #isDefault(eval.ptr.backface) || !params.hitBackface         //
+  ? normalEvaluateMasked(visit &eval.ptr.surface.scattering, &params) //
+  : normalEvaluateMasked(visit &eval.ptr.backface.scattering, &params);
   return *pdf > 0.0;
 }
 
@@ -6879,41 +6879,41 @@ export int _scatterNormalEvaluate(
 /// `_scatterSample` takes a non-Dirac density from `_scatterEvaluate`.
 @(macro)
 export int _scatterNormalSample(
-  const &_MaterialEval instance,
-  const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
-  const int backface,    ///< Ask on the geometric backface side?
-  const int lobeMask,    ///< Which lobes to consider, `DF_GLOSSY` for every one
+  const &_MaterialEval eval,
+  const &float4 xi,      ///< The canonical random sample
+  const int isBackface,  ///< Whether to ask on the backface side
   const &float3 wmWorld, ///< output: The microfacet normal in world space
-  const &float pdf,      ///< output: The density of `wm` per unit solid angle
+  const &float pdf,      ///< output: The solid-angle PDF of sampling `wm`
   const &float2 alpha,   ///< output: The squared roughness of the lobe drawn from
+  const int lobeMask,    ///< The lobes to consider, `DF_GLOSSY` is every lobe
 ) {
   auto params = ScatterNormalParameters(
     xi: *xi,
-    hitBackface: bool(backface),
-    ior: instance.exteriorIOR / instance.ior,
-    exterior_ior: instance.exteriorIOR,
-    normal: normalize(instance.geometry.normal),
-    thin_walled: instance.ptr.thin_walled,
+    hitBackface: bool(isBackface),
+    ior: eval.exteriorIOR / eval.ior,
+    exterior_ior: eval.exteriorIOR,
+    normal: normalize(eval.geometry.normal),
+    thin_walled: eval.ptr.thin_walled,
     lobeMask: lobeMask,
   );
-  auto result = #isDefault(instance.ptr.backface) || !params.hitBackface //
-  ? normalSampleMasked(visit &instance.ptr.surface.scattering, &params)  //
-  : normalSampleMasked(visit &instance.ptr.backface.scattering, &params);
+  auto result = #isDefault(eval.ptr.backface) || !params.hitBackface //
+  ? normalSampleMasked(visit &eval.ptr.surface.scattering, &params)  //
+  : normalSampleMasked(visit &eval.ptr.backface.scattering, &params);
   *pdf = 0.0;
   *alpha = float2(0.0);
   if (!result.isValid)
     return false;
   // Undo the backface flip the parameters applied, exactly as the scattering
   // sampler does, so the world-space normal comes back on the requested side.
-  *wmWorld = normalize(instance.tangentToWorld * #select(
+  *wmWorld = normalize(eval.tangentToWorld * #select(
     params.hitBackface, -result.wm, +result.wm));
   *alpha = result.alpha;
-  return _scatterNormalEvaluate(instance, backface, wmWorld, lobeMask, pdf);
+  return _scatterNormalEvaluate(eval, isBackface, wmWorld, pdf, lobeMask);
 }
 
 @(macro)
 export float _volumeScatterEvaluate(
-  const &_MaterialEval instance,
+  const &_MaterialEval eval,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
 ) {
@@ -6928,13 +6928,13 @@ export float _volumeScatterEvaluate(
   // color-valued phase; `average` folds it and is the identity for the
   // float-valued elemental VDFs.
   return average(scatterEvaluateMasked(
-           visit &instance.ptr.volume.scattering, &params).f);
+           visit &eval.ptr.volume.scattering, &params).f);
 }
 
 @(macro)
 export float _volumeScatterSample(
-  const &_MaterialEval instance,
-  const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+  const &_MaterialEval eval,
+  const &float4 xi,      ///< The canonical random sample
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
 ) {
@@ -6947,12 +6947,12 @@ export float _volumeScatterSample(
     ior: 1.0,           // Not applicable for volume scattering
   );
   auto result =
-    scatterSampleMasked(visit &instance.ptr.volume.scattering, &params);
+    scatterSampleMasked(visit &eval.ptr.volume.scattering, &params);
   if (result.mode == scatter_none) {
     return 0.0;
   }
   *wiWorld = normalize(result.wi);
-  return _volumeScatterEvaluate(instance, woWorld, wiWorld);
+  return _volumeScatterEvaluate(eval, woWorld, wiWorld);
 }
 
 /// The hair scattering entry point, dispatching `material.hair`. NOTE:
@@ -6971,21 +6971,21 @@ export float _volumeScatterSample(
 /// `hair_bsdf()` reports black.
 @(macro)
 export int _hairScatterEvaluate(
-  const &_MaterialEval instance,
+  const &_MaterialEval eval,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
-  const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,        ///< output: The scattering function
+  const &float pdfFwd,   ///< output: The solid-angle PDF of sampling `wi` given `wo`
+  const &float pdfRev,   ///< output: The solid-angle PDF of sampling `wo` given `wi`
+  const &float f,        ///< output: The scattering spectrum
 ) {
   auto params = ScatterEvaluateParameters(
-    isImportance: (instance.flags & 1) != 0,
-    wo0: normalize((*woWorld) * instance.tangentToWorld),
-    wi0: normalize((*wiWorld) * instance.tangentToWorld),
+    isImportance: (eval.flags & 1) != 0,
+    wo0: normalize((*woWorld) * eval.tangentToWorld),
+    wi0: normalize((*wiWorld) * eval.tangentToWorld),
     hitBackface: false, // Not applicable for hair scattering
     ior: 1.0,           // Not applicable for hair scattering
   );
-  auto result = scatterEvaluateMasked(visit &instance.ptr.hair, &params);
+  auto result = scatterEvaluateMasked(visit &eval.ptr.hair, &params);
   visit result in result {
     if (result.isBlack) {
       *pdfFwd = 0.0;
@@ -7016,22 +7016,22 @@ export int _hairScatterEvaluate(
 /// `mode == scatter_none` alone.
 @(macro)
 export int _hairScatterSample(
-  const &_MaterialEval instance,
-  const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+  const &_MaterialEval eval,
+  const &float4 xi,      ///< The canonical random sample
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
-  const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,        ///< output: The scattering function
+  const &float pdfFwd,   ///< output: The solid-angle PDF of sampling `wi` given `wo`
+  const &float pdfRev,   ///< output: The solid-angle PDF of sampling `wo` given `wi`
+  const &float f,        ///< output: The scattering spectrum
 ) {
   auto params = ScatterSampleParameters(
-    isImportance: (instance.flags & 1) != 0,
+    isImportance: (eval.flags & 1) != 0,
     xi: *xi,
-    wo0: normalize((*woWorld) * instance.tangentToWorld),
+    wo0: normalize((*woWorld) * eval.tangentToWorld),
     hitBackface: false, // Not applicable for hair scattering
     ior: 1.0,           // Not applicable for hair scattering
   );
-  auto result = scatterSampleMasked(visit &instance.ptr.hair, &params);
+  auto result = scatterSampleMasked(visit &eval.ptr.hair, &params);
   visit result in result {
     if (result.mode == scatter_none) {
       *pdfFwd = 0.0;
@@ -7040,8 +7040,8 @@ export int _hairScatterSample(
         f[i] = 0.0;
       return false;
     }
-    *wiWorld = normalize(instance.tangentToWorld * result.wi);
-    return _hairScatterEvaluate(instance, woWorld, wiWorld, pdfFwd, pdfRev, f);
+    *wiWorld = normalize(eval.tangentToWorld * result.wi);
+    return _hairScatterEvaluate(eval, woWorld, wiWorld, pdfFwd, pdfRev, f);
   }
 }
 
@@ -7061,16 +7061,16 @@ export int _hairScatterSample(
 
 /// Calculate the average emission intensities of the front and back sides.
 @(macro)
-float2 _emissionSideWeights(const &_MaterialEval instance) {
+float2 _emissionSideWeights(const &_MaterialEval eval) {
   float frontWeight = 0.0;
   float backWeight = 0.0;
-  if $(!#isDefault(instance.ptr.surface.emission.emission)) {
-    frontWeight = #max(average(instance.ptr.surface.emission.intensity), 0.0);
+  if $(!#isDefault(eval.ptr.surface.emission.emission)) {
+    frontWeight = #max(average(eval.ptr.surface.emission.intensity), 0.0);
   }
-  if (instance.ptr.thin_walled) {
-    if $(!#isDefault(instance.ptr.backface)) {
-      if $(!#isDefault(instance.ptr.backface.emission.emission)) {
-        backWeight = #max(average(instance.ptr.backface.emission.intensity), 0.0);
+  if (eval.ptr.thin_walled) {
+    if $(!#isDefault(eval.ptr.backface)) {
+      if $(!#isDefault(eval.ptr.backface.emission.emission)) {
+        backWeight = #max(average(eval.ptr.backface.emission.intensity), 0.0);
       }
     } else {
       backWeight = frontWeight;
@@ -7104,69 +7104,69 @@ int _emissionEvaluateSide(
 
 @(macro)
 export int _emissionEvaluate(
-  const &_MaterialEval instance,
-  const &float3 wiWorld, ///< The emission direction in world space
-  const &float pdf,      ///< output: The PDF of sampling `wiWorld`
-  const &float Le,       ///< output: The emitted radiance
+  const &_MaterialEval eval,
+  const &float3 weWorld, ///< The emission direction in world space, pointing away
+  const &float pdf,      ///< output: The solid-angle PDF of sampling `we`
+  const &float Le,       ///< output: The emission spectrum
 ) {
   *pdf = 0.0;
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
     Le[i] = 0.0;
-  const auto weights = _emissionSideWeights(instance);
+  const auto weights = _emissionSideWeights(eval);
   const auto totalWeight = weights.x + weights.y;
   if (!(totalWeight > 0.0))
     return false;
   auto params = EmissionEvaluateParameters(
-    wi0: normalize((*wiWorld) * instance.tangentToWorld),
-    normal: normalize(instance.geometry.normal),
+    wi0: normalize((*weWorld) * eval.tangentToWorld),
+    normal: normalize(eval.geometry.normal),
   );
   if (!params.hitBackface) {
     return _emissionEvaluateSide(
-             &instance.ptr.surface, weights.x / totalWeight, &params, pdf, Le);
+             &eval.ptr.surface, weights.x / totalWeight, &params, pdf, Le);
   } else {
-    if (!instance.ptr.thin_walled)
+    if (!eval.ptr.thin_walled)
       return false;
-    if $(!#isDefault(instance.ptr.backface)) {
+    if $(!#isDefault(eval.ptr.backface)) {
       return _emissionEvaluateSide(
-               &instance.ptr.backface, weights.y / totalWeight, &params, pdf, Le);
+               &eval.ptr.backface, weights.y / totalWeight, &params, pdf, Le);
     } else {
       return _emissionEvaluateSide(
-               &instance.ptr.surface, weights.y / totalWeight, &params, pdf, Le);
+               &eval.ptr.surface, weights.y / totalWeight, &params, pdf, Le);
     }
   }
 }
 
 @(macro)
 export int _emissionSample(
-  const &_MaterialEval instance,
-  const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
-  const &float3 wiWorld, ///< output: The emission direction in world space
-  const &float pdf,      ///< output: The PDF of sampling `wiWorld`
-  const &float Le,       ///< output: The emitted radiance
+  const &_MaterialEval eval,
+  const &float4 xi,      ///< The canonical random sample
+  const &float3 weWorld, ///< output: The emission direction in world space, pointing away
+  const &float pdf,      ///< output: The solid-angle PDF of sampling `we`
+  const &float Le,       ///< output: The emission spectrum
 ) {
   *pdf = 0.0;
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
     Le[i] = 0.0;
-  const auto weights = _emissionSideWeights(instance);
+  const auto weights = _emissionSideWeights(eval);
   const auto totalWeight = weights.x + weights.y;
   if (!(totalWeight > 0.0))
     return false;
   auto params = EmissionSampleParameters(
     xi: *xi,
-    normal: normalize(instance.geometry.normal),
+    normal: normalize(eval.geometry.normal),
   );
   const bool sampleFront =
     sampling::bool_sample(&params.xi.w, weights.x / totalWeight);
   auto result = return_from {
     if (sampleFront) {
       return emissionSample(
-               visit &instance.ptr.surface.emission.emission, &params);
-    } else if $(!#isDefault(instance.ptr.backface)) {
+               visit &eval.ptr.surface.emission.emission, &params);
+    } else if $(!#isDefault(eval.ptr.backface)) {
       return emissionSample(
-               visit &instance.ptr.backface.emission.emission, &params);
+               visit &eval.ptr.backface.emission.emission, &params);
     } else {
       return emissionSample(
-               visit &instance.ptr.surface.emission.emission, &params);
+               visit &eval.ptr.surface.emission.emission, &params);
     }
   };
   visit result in result {
@@ -7174,9 +7174,9 @@ export int _emissionSample(
     // would attribute them to the other side and disagree on the PDF.
     if (!result.isValid || !(result.wi.z > 0.0))
       return false;
-    const auto wiNatural = sampleFront ? result.wi : -result.wi;
-    *wiWorld = normalize(instance.tangentToWorld * wiNatural);
-    return _emissionEvaluate(instance, wiWorld, pdf, Le);
+    const auto weNatural = sampleFront ? result.wi : -result.wi;
+    *weWorld = normalize(eval.tangentToWorld * weNatural);
+    return _emissionEvaluate(eval, weWorld, pdf, Le);
   }
 }
 //--}
