@@ -109,14 +109,60 @@ public:
   bandIndex(std::string_view name) const noexcept;
 };
 
+/// The `detector` a camera reads out with: what turns the electrons a
+/// `qe` response counts into the digital numbers a stated instrument
+/// writes. Every field has a generic default from a modern CMOS sensor,
+/// so an empty block, or none at all, is a usable detector and a block
+/// names what differs; a vendor's EMVA 1288 data sheet carries the whole
+/// vector in exactly these units.
+class DetectorSettings final {
+public:
+  /// `full_well`: the electrons a pixel holds before it clips, positive.
+  /// Unset is 1000 electrons per square micrometer of pixel, which the
+  /// readout derives from the pitch, so that a phone pixel and a
+  /// full-frame one both get a plausible well.
+  std::optional<float> fullWell{};
+
+  /// `read_noise`: the read noise in electrons rms, nonnegative.
+  float readNoise{1.5f};
+
+  /// `dark_current`: the dark current in electrons per second at
+  /// `reference_temperature`, nonnegative.
+  float darkCurrent{0.1f};
+
+  /// `reference_temperature`: the degrees Celsius `dark_current` is
+  /// stated at.
+  float referenceTemperature{25.0f};
+
+  /// `doubling_temperature`: the degrees Celsius per doubling of the dark
+  /// current, positive. A field rather than a constant: the textbook 7
+  /// and the 12.7 measured on current back-illuminated parts differ by
+  /// a factor of four in dark current extrapolated to room temperature.
+  float doublingTemperature{7.0f};
+
+  /// `temperature`: the sensor's degrees Celsius at the exposure.
+  float temperature{25.0f};
+
+  /// `black_level`: the electrons added before the ADC so that the noise
+  /// around zero is not clipped away, nonnegative.
+  float blackLevel{};
+
+  /// `bits`: the ADC's depth, 1 to 16, so the top code is `2^bits - 1`.
+  int bits{12};
+
+  /// `gain`: digital numbers per electron, positive. Unset fills the
+  /// well to the top code: `(2^bits - 1) / (full_well + black_level)`.
+  std::optional<float> gain{};
+};
+
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
 ///
 /// The ones left out are left out because they are not: `blades` counts
 /// the aperture's edges, `distortion_fit` is a bare flag, `lens`,
-/// `sensor`, and `response` are the instrument, and `shutter`,
-/// `readout`, and `readout_direction` describe the interval a key is
-/// sampled over rather than something sampled within it.
+/// `sensor`, `response`, and `detector` are the instrument, and
+/// `shutter`, `readout`, and `readout_direction` describe the interval a
+/// key is sampled over rather than something sampled within it.
 ///
 class CameraKeyable {
 public:
@@ -169,8 +215,10 @@ public:
   /// its own are refused rather than ignored.
   std::optional<std::string> lens{};
 
-  /// `sensor`: the sensor width and height in millimeters, which with a
-  /// lens is what decides the field of view. Full frame when unset.
+  /// `sensor`: the sensor width and height in millimeters, full frame
+  /// when unset. With a lens it decides the field of view; with the thin
+  /// lens it sizes the frame `fovy` spans, which sets the pixel pitch a
+  /// readout counts over and the focal length `fstop` is a fraction of.
   std::optional<float2> sensorMM{};
 
   /// `shutter`: the seconds from shutter open to shutter shut,
@@ -206,6 +254,11 @@ public:
   /// as written, to be resolved relative to the camera file that names
   /// it. `-response` overrides it as `-lens` overrides `lens`.
   std::optional<std::string> responseFile{};
+
+  /// `detector { ... }`: what the camera reads out with, see
+  /// `DetectorSettings`. Not keyable, and not merged: a second `detector`
+  /// is an error, as a second `response` is.
+  std::optional<DetectorSettings> detector{};
 
   /// The keys the `motion` block wrote, in ascending time, or empty for
   /// a still camera. See `CameraKey`.

@@ -388,6 +388,92 @@ std::string parseError(std::string text) {
 }
 } // namespace
 
+TEST_CASE("CameraFile: the detector block") {
+  LayoutDiagnostics diags{};
+  SUBCASE("An empty block is the generic detector") {
+    const auto document{parseOK(diags, "camera { detector { } }\n")};
+    REQUIRE(document.camera.detector);
+    const auto &detector{*document.camera.detector};
+    CHECK(!detector.fullWell);
+    CHECK(detector.readNoise == 1.5f);
+    CHECK(detector.darkCurrent == 0.1f);
+    CHECK(detector.referenceTemperature == 25.0f);
+    CHECK(detector.doublingTemperature == 7.0f);
+    CHECK(detector.temperature == 25.0f);
+    CHECK(detector.blackLevel == 0.0f);
+    CHECK(detector.bits == 12);
+    CHECK(!detector.gain);
+  }
+  SUBCASE("Absent, it stays unset") {
+    const auto document{parseOK(diags, "camera { fovy 30 }\n")};
+    CHECK(!document.camera.detector);
+  }
+  SUBCASE("Every key parses, last one wins") {
+    const auto document{parseOK(
+        diags, "camera { detector {\n"
+               "  full_well 30000 read_noise 2.5 dark_current 0.02\n"
+               "  reference_temperature 5 doubling_temperature 12.7\n"
+               "  temperature 35 black_level 64 bits 14 gain 0.5 bits 16\n"
+               "} }\n")};
+    REQUIRE(document.camera.detector);
+    const auto &detector{*document.camera.detector};
+    REQUIRE(detector.fullWell);
+    CHECK(*detector.fullWell == 30000.0f);
+    CHECK(detector.readNoise == 2.5f);
+    CHECK(detector.darkCurrent == 0.02f);
+    CHECK(detector.referenceTemperature == 5.0f);
+    CHECK(detector.doublingTemperature == 12.7f);
+    CHECK(detector.temperature == 35.0f);
+    CHECK(detector.blackLevel == 64.0f);
+    CHECK(detector.bits == 16);
+    REQUIRE(detector.gain);
+    CHECK(*detector.gain == 0.5f);
+  }
+  SUBCASE("Each refusal points at its key") {
+    const auto detectorWith{[](const char *setting) {
+      return std::string("camera { detector { ") + setting + " } }\n";
+    }};
+    CHECK_CONTAINS(parseError(detectorWith("full_well 0")),
+                   "positive number for 'full_well'");
+    CHECK_CONTAINS(parseError(detectorWith("full_well inf")),
+                   "finite number for 'full_well'");
+    CHECK_CONTAINS(parseError(detectorWith("read_noise -1")),
+                   "nonnegative number for 'read_noise'");
+    CHECK_CONTAINS(parseError(detectorWith("dark_current nan")),
+                   "finite number for 'dark_current'");
+    CHECK_CONTAINS(parseError(detectorWith("doubling_temperature 0")),
+                   "positive number for 'doubling_temperature'");
+    CHECK_CONTAINS(parseError(detectorWith("black_level -5")),
+                   "nonnegative number for 'black_level'");
+    CHECK_CONTAINS(parseError(detectorWith("bits 12.5")),
+                   "integer from 1 to 16 for 'bits'");
+    CHECK_CONTAINS(parseError(detectorWith("bits 17")),
+                   "integer from 1 to 16 for 'bits'");
+    CHECK_CONTAINS(parseError(detectorWith("gain 0")),
+                   "positive number for 'gain'");
+    CHECK_CONTAINS(parseError(detectorWith("gain")), "expected 1 number(s)");
+    CHECK_CONTAINS(parseError(detectorWith("well 3")),
+                   "unknown detector setting 'well'");
+    CHECK_CONTAINS(parseError("camera { detector 3 }\n"),
+                   "expected '{' after 'detector'");
+  }
+  SUBCASE("A second block points at the first") {
+    const auto &source{diags.addSource(
+        "test.camera", "camera { detector { } detector { bits 8 } }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK_CONTAINS(error.message, "the second 'detector'");
+    REQUIRE(!error.notes.empty());
+    CHECK_CONTAINS(error.notes.front().message, "the first one is here");
+  }
+  SUBCASE("It cannot be keyed, being the instrument rather than a value "
+          "in it") {
+    CHECK_CONTAINS(parseError("camera { motion { at 0 detector { } } }\n"),
+                   "not a quantity to interpolate");
+  }
+}
+
 TEST_CASE("CameraFile: the response block") {
   LayoutDiagnostics diags{};
   SUBCASE("It parses with its name, its bands, and their knots, and the "

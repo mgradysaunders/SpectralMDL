@@ -130,6 +130,20 @@ void writeArrayField(std::ostream &stream, const char *name,
   return llvm::endianness::native == llvm::endianness::little ? 0 : 1;
 }
 
+// What both writers refuse before touching a file.
+void checkWindowAndNames(const std::string &fileName,
+                         std::optional<int4> window, size_t nX, size_t nY,
+                         Span<const std::string> bandNames, size_t nBands) {
+  if (window && !isSubWindow(*window, nX, nY))
+    throw Error(concat("cannot write ", Quoted(fileName), ": the window ",
+                       (*window)[0], ",", (*window)[1], ",", (*window)[2], ",",
+                       (*window)[3], " is not a non-empty sub-rectangle of ",
+                       nX, "x", nY));
+  if (!bandNames.empty() && bandNames.size() != nBands)
+    throw Error(concat("cannot write ", Quoted(fileName), ": ",
+                       bandNames.size(), " band names for ", nBands, " bands"));
+}
+
 } // namespace
 
 void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
@@ -138,16 +152,8 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                                  std::optional<int4> cropWindow,
                                  Span<const std::string> bandNames) const {
   const auto noCrop{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
-  if (cropWindow && !isSubWindow(*cropWindow, mNumPixelsX, mNumPixelsY))
-    throw Error(concat("cannot write ", Quoted(fileName), ": the window ",
-                       (*cropWindow)[0], ",", (*cropWindow)[1], ",",
-                       (*cropWindow)[2], ",", (*cropWindow)[3],
-                       " is not a non-empty sub-rectangle of ", mNumPixelsX,
-                       "x", mNumPixelsY));
-  if (!bandNames.empty() && bandNames.size() != mNumBands)
-    throw Error(concat("cannot write ", Quoted(fileName), ": ",
-                       bandNames.size(), " band names for ", mNumBands,
-                       " bands"));
+  checkWindowAndNames(fileName, cropWindow, mNumPixelsX, mNumPixelsY, bandNames,
+                      mNumBands);
   const auto pixelWindow{cropWindow.value_or(noCrop)};
   // Write the header file
   {
@@ -191,6 +197,47 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
         }
       }
     }
+  }
+}
+
+void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
+                         size_t numPixelsX, size_t numPixelsY,
+                         const std::string &fileName,
+                         Span<const std::string> bandNames,
+                         Span<const std::string> extraHeaderLines,
+                         std::optional<int4> window, uint64_t numSamples) {
+  const auto noCrop{int4{0, 0, int(numPixelsX), int(numPixelsY)}};
+  if (data.size() != numBands * numPixelsX * numPixelsY)
+    throw Error(concat("cannot write ", Quoted(fileName), ": ", data.size(),
+                       " values for ", numBands, " bands over ", numPixelsX,
+                       "x", numPixelsY, " pixels"));
+  checkWindowAndNames(fileName, window, numPixelsX, numPixelsY, bandNames,
+                      numBands);
+  const auto pixelWindow{window.value_or(noCrop)};
+  {
+    auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
+    file << "ENVI\n";
+    writeField(file, ENVI_FILE_TYPE, "ENVI Standard");
+    writeField(file, ENVI_DATA_TYPE, 12);
+    writeField(file, ENVI_BYTE_ORDER, hostByteOrder());
+    writeField(file, ENVI_SAMPLES, numPixelsX);
+    writeField(file, ENVI_LINES, numPixelsY);
+    writeField(file, ENVI_BANDS, numBands);
+    if (!bandNames.empty()) writeArrayField(file, ENVI_BAND_NAMES, bandNames);
+    writeField(file, ENVI_HEADER_OFFSET, 0);
+    writeField(file, ENVI_INTERLEAVE, "bip");
+    if (numSamples > 0) {
+      writeField(file, ENVI_SPP, numSamples);
+      if (!isAllTrue(pixelWindow == noCrop))
+        writeArrayField(file, ENVI_CROP_WINDOW,
+                        Span<const int>(&pixelWindow[0], 4));
+    }
+    for (const auto &line : extraHeaderLines) file << line << '\n';
+  }
+  {
+    auto file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
+    file.write(reinterpret_cast<const char *>(data.data()),
+               std::streamsize(2 * data.size()));
   }
 }
 

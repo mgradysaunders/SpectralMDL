@@ -3,10 +3,18 @@
 format.
 
     response_convert.py IN.json [-o OUT.response] [--name "Canon EOS 5D"]
+                        [--peak-qe 0.5]
 
 Nobody measures a sensor for this renderer: the curves come from a
 published data set, and this script covers the mechanical half of
 getting one in, so the '.response' parser never has to be general.
+
+With --peak-qe the output is a 'qe' response instead: the same curves
+scaled so that their largest value is the stated peak quantum
+efficiency, electrons per photon, which is what a detector readout
+counts electrons from. A published relative curve carries no absolute
+scale, so the peak is a guess the user states, and the result is no
+better than that guess.
 
 Input format
 ------------
@@ -92,25 +100,34 @@ def file_stem(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-def write_response(out, name, channels, rows, source_name):
+def write_response(out, name, channels, rows, source_name, peak_qe=None):
     lo = rows[0][0]
     hi = rows[-1][0]
     step = rows[1][0] - rows[0][0] if len(rows) > 1 else 0
+    scale = 1.0
+    if peak_qe is not None:
+        peak = max(v for _, values in rows for v in values)
+        if not peak > 0:
+            raise ConvertError("every value is zero, so there is no peak to scale")
+        scale = peak_qe / peak
     lines = []
     lines.append(f"# {name}: spectral sensitivity as measured by Weta Digital's")
     lines.append("# lightsaber system (Winquist and Thurston, \"Physlight - Camera")
     lines.append("# Spectral Sensitivity Curves\", 2022,")
     lines.append("# https://doi.org/10.5281/zenodo.6590768, Apache-2.0). Relative and")
     lines.append(f"# peak-normalized, {lo:g} to {hi:g} nm at {step:g} nm.")
+    if peak_qe is not None:
+        lines.append(f"# Scaled to a stated peak quantum efficiency of {peak_qe:g}")
+        lines.append("# electrons per photon, which the measurement does not carry.")
     lines.append(f"# Converted by response_convert.py from {source_name}.")
     lines.append("response {")
     lines.append(f"  name \"{name}\"")
-    lines.append("  kind relative")
+    lines.append("  kind qe" if peak_qe is not None else "  kind relative")
     width = max(len(f"{w:g}") for w, _ in rows)
     for c, channel in enumerate(channels):
         lines.append(f"  band {band_name(channel)} {{")
         for wavelength, values in rows:
-            lines.append(f"    {wavelength:>{width}g} {values[c]:.8g}")
+            lines.append(f"    {wavelength:>{width}g} {scale * values[c]:.8g}")
         lines.append("  }")
     lines.append("}")
     out.write("\n".join(lines) + "\n")
@@ -124,7 +141,14 @@ def main():
                              "the body, beside the input)")
     parser.add_argument("--name", help="the name to write instead of the "
                                        "manufacturer and model")
+    parser.add_argument("--peak-qe", type=float,
+                        help="write a 'qe' response with the curves scaled "
+                             "to this peak quantum efficiency in electrons "
+                             "per photon")
     args = parser.parse_args()
+    if args.peak_qe is not None and not args.peak_qe > 0:
+        print("error: --peak-qe must be positive", file=sys.stderr)
+        return 1
     try:
         name, channels, rows = read_physlight(args.input)
     except (OSError, ValueError, ConvertError) as error:
@@ -136,9 +160,16 @@ def main():
     if not output:
         output = os.path.join(os.path.dirname(args.input),
                               file_stem(name) + ".response")
-    with open(output, "w") as out:
-        write_response(out, name, channels, rows, os.path.basename(args.input))
-    print(f"{output}: {name}, {len(channels)} band(s) of {len(rows)} knots")
+    try:
+        with open(output, "w") as out:
+            write_response(out, name, channels, rows,
+                           os.path.basename(args.input), args.peak_qe)
+    except ConvertError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    kind = "qe" if args.peak_qe is not None else "relative"
+    print(f"{output}: {name}, {len(channels)} {kind} band(s) of "
+          f"{len(rows)} knots")
     return 0
 
 

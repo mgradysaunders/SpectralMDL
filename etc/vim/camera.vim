@@ -119,10 +119,12 @@ syn keyword cameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
 
 " A real lens and the sensor it covers. `lens` names a `.lens` beside this
-" file and `sensor` is a width and a height in millimeters. With one, the
-" field of view is a consequence rather than an input, so `fovy` and every
-" setting that stands in for what a real lens does on its own are refused
-" beside it; the parser says which, and it says it better than a color can.
+" file and `sensor` is a width and a height in millimeters, which with a
+" lens decides the field of view and without one sizes the pixels. With a
+" lens the field of view is a consequence rather than an input, so `fovy`
+" and every setting that stands in for what a real lens does on its own
+" are refused beside it; the parser says which, and it says it better
+" than a color can.
 syn keyword cameraSetting contained lens sensor
 
 " response { ... } or response "x.response" inside camera: the detector's
@@ -143,10 +145,21 @@ syn keyword cameraResponseSetting contained cfa
 syn keyword cameraCFARow contained row
 syn match cameraCFAName contained "\<\h\w*\>"
 
+" detector { ... } inside camera: what the sensor reads out with, every
+" key one number with a documented default.
+syn keyword cameraSetting contained detector
+      \ nextgroup=cameraDetectorBlock skipwhite skipempty
+syn keyword cameraDetectorSetting contained full_well read_noise
+syn keyword cameraDetectorSetting contained dark_current
+syn keyword cameraDetectorSetting contained reference_temperature
+syn keyword cameraDetectorSetting contained doubling_temperature temperature
+syn keyword cameraDetectorSetting contained black_level bits gain
+
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
-" `distortion_fit`, `lens`, `sensor`, `shutter`, `readout`, and
-" `readout_direction`, which are not quantities to interpolate.
+" `distortion_fit`, `lens`, `sensor`, `response`, `detector`, `shutter`,
+" `readout`, and `readout_direction`, which are not quantities to
+" interpolate.
 syn keyword cameraSetting contained motion
       \ nextgroup=cameraMotionBlock skipwhite skipempty
 syn keyword cameraMotionAt contained at
@@ -176,6 +189,10 @@ syn region cameraBandBlock contained matchgroup=cameraDelim start="{" end="}"
 
 syn region cameraCFABlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=cameraComment,cameraCFARow,cameraCFAName
+
+syn region cameraDetectorBlock contained matchgroup=cameraDelim
+      \ start="{" end="}"
+      \ contains=@cameraCommon,cameraDetectorSetting
 "--}
 
 " Blocks nest at most three deep (camera, response, band), but a band's
@@ -200,6 +217,7 @@ hi def link cameraResponseKind    Constant
 hi def link cameraBandName        Identifier
 hi def link cameraCFARow          Keyword
 hi def link cameraCFAName         Identifier
+hi def link cameraDetectorSetting Label
 
 hi def link cameraDelim           Delimiter
 

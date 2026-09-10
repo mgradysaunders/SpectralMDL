@@ -22,6 +22,15 @@ void appendNumber(std::string &text, double value) {
   text += ' ';
 }
 
+// The name beside a spectral film with `suffix` before its extension.
+[[nodiscard]] std::string besideSpectrum(const std::string &spectrumName,
+                                         const char *suffix) {
+  auto path{std::filesystem::path(spectrumName)};
+  const auto extension{path.extension().string()};
+  path.replace_extension();
+  return path.string() + suffix + extension;
+}
+
 } // namespace
 
 std::vector<std::string>
@@ -50,10 +59,11 @@ std::string responseHash(const ResponseSettings &settings) {
 }
 
 std::string bandFilmFileName(const std::string &spectrumName) {
-  auto path{std::filesystem::path(spectrumName)};
-  const auto extension{path.extension().string()};
-  path.replace_extension();
-  return path.string() + "-bands" + extension;
+  return besideSpectrum(spectrumName, "-bands");
+}
+
+std::string bandSquaresFileName(const std::string &spectrumName) {
+  return besideSpectrum(spectrumName, "-bands-squares");
 }
 
 Response::Response(const ResponseSettings &settings, const Color &wavelengths)
@@ -204,14 +214,18 @@ double Response::project(const Band &band, smdl::Span<const float> wavelengths,
 
 void Response::accumulate(smdl::Span<const float> wavelengths,
                           smdl::Span<const float> L, size_t x, size_t y,
-                          double *sums) const noexcept {
+                          double *sums, double *squares) const noexcept {
   SMDL_SANITY_CHECK(wavelengths.size() == L.size());
+  const auto add{[&](size_t b, const Band &band) {
+    const double value{project(band, wavelengths, L)};
+    sums[b] += value;
+    if (squares) squares[b] += value * value;
+  }};
   if (hasTile()) {
-    sums[0] += project(mBands[bandAt(x, y)], wavelengths, L);
+    add(0, mBands[bandAt(x, y)]);
     return;
   }
-  for (size_t b = 0; b < mBands.size(); b++)
-    sums[b] += project(mBands[b], wavelengths, L);
+  for (size_t b = 0; b < mBands.size(); b++) add(b, mBands[b]);
 }
 
 std::optional<Response>

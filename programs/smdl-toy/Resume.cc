@@ -51,7 +51,10 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "mnee-max-roughness",
                                                          "mnee-receiver-alpha",
                                                          "sample-offset",
-                                                         "threads"};
+                                                         "threads",
+                                                         "output-dn",
+                                                         "detector-seed",
+                                                         "detector-noise"};
   static constexpr auto SESSION_ONLY_FLAGS = std::array{"guide",
                                                         "guide-adrrs",
                                                         "mnee",
@@ -110,6 +113,57 @@ namespace {
   for (size_t i = 0; i < names.size(); i++)
     text += (i > 0 ? ", " : "") + names[i];
   return text + "}";
+}
+
+// One of the films beside the accumulation, the band film or its
+// squares, with what its header carried.
+struct Companion final {
+  smdl::SpectralFilm film{};
+  smdl::SpectralFilm::ENVIFileInfo info{};
+};
+
+// Load the companion at `name`, called `what` in a message, and hold it
+// to the accumulation: present as a pair, the same resolution and
+// window, the same sample count, and the bands `names`. Everything is a
+// hard error; see `resumeSequence()`.
+[[nodiscard]] Companion loadCompanion(const std::string &name, const char *what,
+                                      int2 resolution, int4 window,
+                                      uint64_t samplesPerPixel,
+                                      const std::vector<std::string> &names) {
+  const bool hasData{smdl::exists(name)};
+  const bool hasHeader{smdl::exists(name + ".hdr")};
+  if (!hasData || !hasHeader)
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the ", what, " ", smdl::Quoted(name),
+        " beside the accumulation ",
+        hasData || hasHeader ? "is half a pair" : "does not exist",
+        "; the sequence was rendered without a response, or its last "
+        "session was interrupted between the files"));
+  auto result{Companion{}};
+  result.info = result.film.readENVIFile(name);
+  if (result.film.getNumPixelsX() != size_t(resolution.x) ||
+      result.film.getNumPixelsY() != size_t(resolution.y))
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the ", what, " is ", result.film.getNumPixelsX(), "x",
+        result.film.getNumPixelsY(), " against -resolution ", resolution.x, ",",
+        resolution.y));
+  if (result.info.samplesPerPixel != samplesPerPixel)
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the ", what, " holds ", result.info.samplesPerPixel,
+        " samples per pixel against the accumulation's ", samplesPerPixel,
+        "; the last session was interrupted between the files, or rendered "
+        "without the response"));
+  if (!smdl::isAllTrue(result.info.cropWindow == window))
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the ", what, " was rendered with -crop-window ",
+        spellVector(result.info.cropWindow), " against this session's ",
+        spellVector(window)));
+  if (result.info.bandNames != names)
+    throw smdl::Error(smdl::concat("cannot resume: the ", what, "'s bands are ",
+                                   spellNames(result.info.bandNames),
+                                   " against this response's ",
+                                   spellNames(names)));
+  return result;
 }
 
 } // namespace
@@ -206,58 +260,35 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
                 smdl::Quoted(opts.image.resume), " (sample offset ",
                 header.sampleOffset, ")");
-  // The band film beside the accumulation. Without a response it is
-  // left where it is, and said so, since it falls behind from here on.
+  // The band film beside the accumulation and its squares beside that.
+  // Without a response they are left where they are, and said so, since
+  // they fall behind from here on.
   const auto bandName{bandFilmFileName(opts.image.resume)};
-  const bool hasBandData{smdl::exists(bandName)};
-  const bool hasBandHeader{smdl::exists(bandName + ".hdr")};
+  const auto squaresName{bandSquaresFileName(opts.image.resume)};
   if (!response) {
-    if (hasBandData || hasBandHeader)
-      SMDL_LOG_WARN("the band film ", smdl::Quoted(bandName),
-                    " beside the accumulation is not continued: this "
-                    "session has no response, so it falls behind");
+    if (smdl::exists(bandName) || smdl::exists(bandName + ".hdr"))
+      SMDL_LOG_WARN("the band films ", smdl::Quoted(bandName), " and ",
+                    smdl::Quoted(squaresName),
+                    " beside the accumulation are not continued: this "
+                    "session has no response, so they fall behind");
     return result;
   }
-  if (!hasBandData || !hasBandHeader)
-    throw smdl::Error(smdl::concat(
-        "cannot resume: the band film ", smdl::Quoted(bandName),
-        " beside the accumulation ",
-        hasBandData || hasBandHeader ? "is half a pair" : "does not exist",
-        "; the sequence was rendered without a response, or its last "
-        "session was interrupted between the two files"));
-  auto &bandFilm{result.bandFilm};
-  auto &bandInfo{result.bandInfo};
-  bandInfo = bandFilm.readENVIFile(bandName);
-  if (bandFilm.getNumPixelsX() != size_t(resolution.x) ||
-      bandFilm.getNumPixelsY() != size_t(resolution.y))
-    throw smdl::Error(
-        smdl::concat("cannot resume: the band film is ",
-                     bandFilm.getNumPixelsX(), "x", bandFilm.getNumPixelsY(),
-                     " against -resolution ", resolution.x, ",", resolution.y));
-  if (bandInfo.samplesPerPixel != info.samplesPerPixel)
-    throw smdl::Error(smdl::concat(
-        "cannot resume: the band film holds ", bandInfo.samplesPerPixel,
-        " samples per pixel against the accumulation's ", info.samplesPerPixel,
-        "; the last session was interrupted between "
-        "the two files, or rendered without the response"));
-  if (!smdl::isAllTrue(bandInfo.cropWindow == window))
-    throw smdl::Error(smdl::concat(
-        "cannot resume: the band film was rendered with -crop-window ",
-        spellVector(bandInfo.cropWindow), " against this session's ",
-        spellVector(window)));
-  if (const auto names{responseFilmBandNames(*response)};
-      bandInfo.bandNames != names)
-    throw smdl::Error(smdl::concat("cannot resume: the band film's bands are ",
-                                   spellNames(bandInfo.bandNames),
-                                   " against this response's ",
-                                   spellNames(names)));
-  result.responseHeader.readFrom(bandInfo.fields);
+  const auto names{responseFilmBandNames(*response)};
+  auto bands{loadCompanion(bandName, "band film", resolution, window,
+                           info.samplesPerPixel, names)};
+  auto squares{loadCompanion(squaresName, "squares film", resolution, window,
+                             info.samplesPerPixel, names)};
+  result.responseHeader.readFrom(bands.info.fields);
   if (result.responseHeader.hash != responseHash(*response))
     throw smdl::Error(
         "cannot resume: the response's curves differ from the ones the band "
         "film was rendered with; start a fresh -output-spectrum, or render "
         "without the response");
-  SMDL_LOG_INFO("Resuming the band film: ", smdl::Quoted(bandName), ", ",
-                bandInfo.bandNames.size(), " band(s)");
+  result.bandFilm = std::move(bands.film);
+  result.bandInfo = std::move(bands.info);
+  result.bandSquares = std::move(squares.film);
+  result.squaresInfo = std::move(squares.info);
+  SMDL_LOG_INFO("Resuming the band films: ", smdl::Quoted(bandName), " and ",
+                smdl::Quoted(squaresName), ", ", names.size(), " band(s)");
   return result;
 }

@@ -14,7 +14,11 @@ constexpr const char *PREFIX{"render "};
 // How each field type crosses the header, written and read side by side
 // because the two have to agree.
 void spell(std::string &line, uint64_t value) { line += std::to_string(value); }
-void spell(std::string &line, double value) { line += std::to_string(value); }
+// Nine significant digits, every one a double carries that a reader
+// recovering electrons from a gain could want, and no trailing zeros.
+void spell(std::string &line, double value) {
+  smdl::Brief(value, 9).appendTo(line);
+}
 void spell(std::string &line, bool value) { line += value ? '1' : '0'; }
 void spell(std::string &line, const std::string &value) { line += value; }
 
@@ -31,11 +35,12 @@ void parse(const std::string &text, uint64_t &value) {
 }
 
 void parse(const std::string &text, double &value) {
-  // A tally is a duration, so anything a corrupt or hand-edited header
-  // offers that is not one starts the count over rather than poisoning
-  // every later session's total.
-  const double seconds{std::strtod(text.c_str(), nullptr)};
-  value = std::isfinite(seconds) && seconds > 0.0 ? seconds : 0.0;
+  // A tally is a duration and the rest are physical quantities, none of
+  // them negative, so anything a corrupt or hand-edited header offers
+  // that is not one reads as zero rather than poisoning every later
+  // session's total.
+  const double parsed{std::strtod(text.c_str(), nullptr)};
+  value = std::isfinite(parsed) && parsed > 0.0 ? parsed : 0.0;
 }
 
 void parse(const std::string &text, bool &value) { value = text != "0"; }
@@ -83,6 +88,25 @@ void visitResponseFields(Self &self, Visitor &&visit) {
   visit("cfa", self.cfa);
 }
 
+// The readout's table, under the same prefix.
+template <typename Self, typename Visitor>
+void visitDetectorFields(Self &self, Visitor &&visit) {
+  visit("detector seed", self.seed);
+  visit("detector noise", self.noise);
+  visit("detector exposure", self.exposure);
+  visit("detector pixel width", self.pixelWidth);
+  visit("detector pixel height", self.pixelHeight);
+  visit("detector f number", self.fNumber);
+  visit("detector full well", self.fullWell);
+  visit("detector read noise", self.readNoise);
+  visit("detector dark electrons", self.darkElectrons);
+  visit("detector gain", self.gain);
+  visit("detector black level", self.blackLevel);
+  visit("detector bits", self.bits);
+  visit("detector electrons per film unit", self.electronsPerFilmUnit);
+  visit("detector noise limited share", self.noiseLimitedShare);
+}
+
 // The two directions over either table.
 template <typename Self, typename Walk>
 [[nodiscard]] std::vector<std::string> linesOf(const Self &self, Walk &&walk) {
@@ -126,4 +150,16 @@ void ResponseHeader::readFrom(
     const std::map<std::string, std::string> &fields) {
   readInto(*this, fields,
            [](auto &self, auto &&visit) { visitResponseFields(self, visit); });
+}
+
+std::vector<std::string> DetectorHeader::headerLines() const {
+  return linesOf(*this, [](auto &self, auto &&visit) {
+    visitDetectorFields(self, visit);
+  });
+}
+
+void DetectorHeader::readFrom(
+    const std::map<std::string, std::string> &fields) {
+  readInto(*this, fields,
+           [](auto &self, auto &&visit) { visitDetectorFields(self, visit); });
 }

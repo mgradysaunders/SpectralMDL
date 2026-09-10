@@ -43,14 +43,17 @@ struct ResumedSequence final {
   /// added to by this session before being written back.
   RenderHeader header{};
 
-  /// The band film beside the accumulation, what its header carried,
-  /// and the response it recorded; empty unless a response is present
-  /// and the accumulation loaded, in which case all three are, since a
-  /// band film that cannot be continued is an error rather than a gap.
+  /// The band film beside the accumulation and the film of its squares
+  /// beside that, what their headers carried, and the response the band
+  /// film recorded; empty unless a response is present and the
+  /// accumulation loaded, in which case all of them are, since a band
+  /// film that cannot be continued is an error rather than a gap.
   ///
   /// \{
   smdl::SpectralFilm bandFilm{};
   smdl::SpectralFilm::ENVIFileInfo bandInfo{};
+  smdl::SpectralFilm bandSquares{};
+  smdl::SpectralFilm::ENVIFileInfo squaresInfo{};
   ResponseHeader responseHeader{};
   /// \}
 
@@ -69,12 +72,13 @@ struct ResumedSequence final {
 /// merely ought to (the sampler, the jitter, the flags) is a warning.
 ///
 /// `response` is this render's detector response, or null for none.
-/// With one, the band film beside the accumulation is loaded too, and
-/// everything about it is a hard error: that it exists, that it holds
-/// the accumulation's sample count, that its bands are this response's,
-/// and that the curves are the same by hash. The curves decide what the
-/// file's numbers are, and a re-run of the output stage would relabel a
-/// mixture as one sensor with nothing to say so.
+/// With one, the band film beside the accumulation and the film of its
+/// squares are loaded too, and everything about them is a hard error:
+/// that both exist, that each holds the accumulation's sample count,
+/// that their bands are this response's, and that the curves are the
+/// same by hash. The curves decide what the files' numbers are, and a
+/// re-run of the output stage would relabel a mixture as one sensor with
+/// nothing to say so.
 ///
 /// \throws smdl::Error  If the file cannot be resumed from.
 ///

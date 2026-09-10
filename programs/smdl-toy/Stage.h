@@ -60,6 +60,12 @@ struct Frame final {
   /// The file `response` came from, or empty for an inline block.
   std::string responseFileName{};
 
+  /// The detector the camera file reads out with, or nothing, which a
+  /// readout takes as the generic defaults. The parsed settings alone;
+  /// what the readout makes of them needs the pitch, which the camera
+  /// decides.
+  std::optional<DetectorSettings> detector{};
+
   /// The camera itself.
   ///
   /// Empty under `-autolook`, whose position comes from measuring the

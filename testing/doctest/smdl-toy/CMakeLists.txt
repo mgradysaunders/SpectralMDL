@@ -4,6 +4,7 @@ smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
     "Color.cc"
+    "Detector.cc"
     "MedianFilter.cc"
     "Response.cc"
     "IO/CurvesFile.cc"

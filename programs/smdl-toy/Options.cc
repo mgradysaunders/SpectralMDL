@@ -62,8 +62,10 @@ cl::opt<std::string> optResponse{
     cl::cat(catCamera)};
 cl::opt<float2> optSensor{
     "sensor",
-    cl::desc("With a lens, the sensor width and height in mm (default: "
-             "36,24, full frame)"),
+    cl::desc("The sensor width and height in mm (default: 36,24, full "
+             "frame): with a lens it decides the field of view, with the "
+             "thin lens it sizes the pixels and what -fstop is a fraction "
+             "of"),
     cl::init(float2{0, 0}), cl::cat(catCamera)};
 cl::opt<bool> optNormalizeLensExposure{
     "normalize-lens-exposure",
@@ -111,7 +113,9 @@ cl::opt<float> optReadout{
              "shutter)"),
     cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optFStop{
-    "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
+    "fstop",
+    cl::desc("Enable DOF by f-number of the frame -sensor sizes (default: "
+             "35mm format)"),
     cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optAperture{
     "aperture",
@@ -247,6 +251,26 @@ cl::opt<std::string> optResume{
     cl::desc("Resume accumulating from this ENVI file written by a previous "
              "-output-spectrum"),
     cl::cat(catImage)};
+cl::opt<std::string> optOutputDN{
+    "output-dn",
+    cl::desc("Also write the detector readout to this 16-bit ENVI file of "
+             "digital numbers, through the camera file's 'detector' and a "
+             "'qe' response"),
+    cl::cat(catImage)};
+cl::opt<unsigned> optDetectorSeed{
+    "detector-seed",
+    cl::desc("With -output-dn, which noise realization to draw (default: 0)"),
+    cl::init(0), cl::cat(catImage)};
+cl::opt<std::string> optDetectorNoise{
+    "detector-noise",
+    cl::desc("With -output-dn, which noise to draw: 'none', 'shot', 'all', "
+             "or 'full' (default: all)\n"
+             "* 'none' makes the digital numbers a function of the film "
+             "alone\n"
+             "* 'all' draws the shot noise the render did not already put "
+             "there by the film's own estimate, which the sampler beats\n"
+             "* 'full' draws it in full, for a render that is converged"),
+    cl::init(std::string("all")), cl::cat(catImage)};
 cl::opt<std::string> optTonemap{
     "tonemap",
     cl::desc(
@@ -684,6 +708,9 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.outputSpectrum = std::string(optOutputSpectrum);
   opts.image.wasOutputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
   opts.image.resume = std::string(optResume);
+  opts.image.outputDN = std::string(optOutputDN);
+  opts.image.readout.seed = unsigned(optDetectorSeed);
+  opts.image.readout.noise = parseDetectorNoise(std::string(optDetectorNoise));
 
   opts.light.sky.none = flag(optNoSunSky);
   opts.light.sky.sunZenithDeg = flag(optSunZenith);

@@ -98,6 +98,53 @@ TEST_CASE("RenderHeader: round trip") {
   }
 }
 
+TEST_CASE("DetectorHeader: round trip") {
+  auto written{DetectorHeader()};
+  written.seed = 7;
+  written.noise = "shot";
+  written.exposure = 0.001;
+  written.pixelWidth = 4;
+  written.pixelHeight = 4.5;
+  written.fNumber = 8;
+  written.fullWell = 16000;
+  written.readNoise = 1.5;
+  written.darkElectrons = 1e-7;
+  written.gain = 0.00341;
+  written.blackLevel = 64;
+  written.bits = 14;
+  written.electronsPerFilmUnit = 1.96349541e-16;
+  written.noiseLimitedShare = 0.125;
+  const auto fields{asFields(written.headerLines())};
+  SUBCASE("Every field survives the header at its digits") {
+    CHECK(fields.at("render detector gain") == "0.00341");
+    CHECK(fields.at("render detector dark electrons") == "1e-07");
+    CHECK(fields.at("render detector noise") == "shot");
+    auto read{DetectorHeader()};
+    read.readFrom(fields);
+    CHECK(read.seed == 7);
+    CHECK(read.noise == "shot");
+    CHECK(read.exposure == doctest::Approx(0.001));
+    CHECK(read.pixelWidth == 4);
+    CHECK(read.pixelHeight == 4.5);
+    CHECK(read.fNumber == 8);
+    CHECK(read.fullWell == 16000);
+    CHECK(read.readNoise == 1.5);
+    CHECK(read.darkElectrons == doctest::Approx(1e-7));
+    CHECK(read.gain == doctest::Approx(0.00341));
+    CHECK(read.blackLevel == 64);
+    CHECK(read.bits == 14);
+    CHECK(read.electronsPerFilmUnit == doctest::Approx(1.96349541e-16));
+    CHECK(read.noiseLimitedShare == 0.125);
+  }
+  SUBCASE("Every field is written, under the 'render detector' prefix") {
+    CHECK(fields.size() == 14);
+    for (const auto &field : fields) {
+      CAPTURE(field.first);
+      CHECK(field.first.rfind("render detector ", 0) == 0);
+    }
+  }
+}
+
 TEST_CASE("ResponseHeader: round trip") {
   auto written{ResponseHeader()};
   written.kind = "qe";

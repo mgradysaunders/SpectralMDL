@@ -301,6 +301,77 @@ TEST_CASE("Camera: a lens is exposed by its f-number and nothing else") {
   }
 }
 
+TEST_CASE("Camera: the frame's size and what turns its film into "
+          "irradiance") {
+  constexpr double PI_DOUBLE{3.14159265358979323846};
+  SUBCASE("A lens on the physical exposure holds four over pi times the "
+          "irradiance, whatever its f-number") {
+    const Camera camera{lensOptions()};
+    CHECK(camera.fNumber() == doctest::Approx(fNumberOf(singlet())));
+    CHECK(camera.irradianceScale() == PI_DOUBLE / 4);
+    CHECK(camera.sensorSize().x == doctest::Approx(0.036f));
+    CHECK(camera.sensorSize().y == doctest::Approx(0.027f));
+  }
+  SUBCASE("Normalized to its f-number, the lens's film is radiance again") {
+    auto options{lensOptions()};
+    options.shouldNormalizeLensExposure = true;
+    options.fStop = 2 * fNumberOf(singlet());
+    const Camera camera{options};
+    const double N{camera.fNumber()};
+    CHECK(N == doctest::Approx(options.fStop));
+    CHECK(camera.irradianceScale() == doctest::Approx(PI_DOUBLE / (4 * N * N)));
+  }
+  SUBCASE("The thin lens spans full frame unless the sensor is stated, and "
+          "its f-number is what set the aperture") {
+    auto options{openOptions()};
+    options.fStop = 2.8f;
+    const Camera fullFrame{options};
+    CHECK(fullFrame.sensorSize().x == 1e-3f * 36.0f);
+    CHECK(fullFrame.sensorSize().y == 1e-3f * 24.0f);
+    CHECK(fullFrame.fNumber() == doctest::Approx(2.8f));
+    CHECK(fullFrame.irradianceScale() ==
+          doctest::Approx(PI_DOUBLE / (4 * 2.8 * 2.8)));
+    options.sensorMM = float2(7.68f, 5.76f);
+    const Camera phone{options};
+    CHECK(phone.sensorSize().x == doctest::Approx(0.00768f));
+    CHECK(phone.fNumber() == doctest::Approx(2.8f));
+    // The same f-number on a frame a quarter the height is a lens a
+    // quarter the radius: the lens point of one draw scales with it.
+    const auto onFullFrame{rayAt(fullFrame, 0.0f)};
+    const auto onPhone{rayAt(phone, 0.0f)};
+    CHECK(length(onPhone.ray.org - openOptions().lookFrom) ==
+          doctest::Approx(
+              0.24 * length(onFullFrame.ray.org - openOptions().lookFrom)));
+  }
+  SUBCASE("An aperture radius has an f-number too, and a pinhole none") {
+    auto options{openOptions()};
+    const float focalLength{0.5f /
+                            std::tan(smdl::radians(options.fovYDeg / 2))};
+    options.aperture = 0.5f * 0.024f * focalLength / 4.0f;
+    const Camera stated{options};
+    CHECK(stated.fNumber() == doctest::Approx(4.0f));
+    CHECK(stated.irradianceScale() == doctest::Approx(PI_DOUBLE / 64));
+    const Camera pinhole{openOptions()};
+    CHECK(pinhole.fNumber() == 0.0f);
+    CHECK(pinhole.irradianceScale() == 0.0);
+  }
+  SUBCASE("With the sensor unstated the thin lens's aperture is what it "
+          "always was") {
+    // The frame height the f-number is a fraction of is spelled as the
+    // same float the old constant was, so a render that states no sensor
+    // draws the same lens point bit for bit.
+    CHECK(1e-3f * 24.0f == 0.024f);
+    auto byFStop{openOptions()};
+    byFStop.fStop = 2.8f;
+    auto byRadius{openOptions()};
+    const float focalLength{0.5f /
+                            std::tan(smdl::radians(byRadius.fovYDeg / 2))};
+    byRadius.aperture = 0.5f * 0.024f * focalLength / 2.8f;
+    CHECK(isSameRay(rayAt(Camera{byFStop}, 0.0f).ray,
+                    rayAt(Camera{byRadius}, 0.0f).ray));
+  }
+}
+
 TEST_CASE("Camera: a field of view stated with a lens solves the sensor") {
   SUBCASE("The sensor it picks is the one that looks out at what was "
           "asked") {

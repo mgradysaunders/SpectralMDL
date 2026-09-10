@@ -21,6 +21,7 @@
 
 #include "../CommandLine.h"
 #include "Color.h"
+#include "Detector.h"
 #include "MedianFilter.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
@@ -80,7 +81,9 @@ struct CameraFlags final {
   /// file when that is what named it.
   Flag<std::string> response{};
 
-  /// With a lens, the sensor width and height in millimeters.
+  /// The sensor width and height in millimeters: with a lens what
+  /// decides the field of view, with the thin lens what sizes the frame
+  /// `fovy` spans.
   Flag<float2> sensorMM{};
 
   /// With a lens, take the lens's own f-number back out of the exposure,
@@ -155,6 +158,13 @@ struct ImageOptions final {
   bool wasOutputSpectrumGiven{};
 
   std::string resume{};
+
+  /// The detector readout, empty for none: a 16-bit ENVI pair of digital
+  /// numbers through the camera file's `detector` and a `qe` response.
+  std::string outputDN{};
+
+  /// The readout's realization and which noise it draws.
+  DetectorReadoutOptions readout{};
 };
 //--}
 

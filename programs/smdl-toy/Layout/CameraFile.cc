@@ -178,6 +178,8 @@ private:
         }
       } else if (key == "response") {
         parseResponseSetting(camera, keyLoc);
+      } else if (key == "detector") {
+        parseDetectorSetting(camera, keyLoc);
       } else if (key == "resolution") {
         mDiags
             .error(keyLoc, "'resolution' is a fact about this render, not "
@@ -193,7 +195,7 @@ private:
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
                          "shutter, readout, readout_direction, lens, sensor, "
-                         "response, fstop, aperture, focus, "
+                         "response, detector, fstop, aperture, focus, "
                          "blades, blade_angle, distortion_k1, distortion_k2, "
                          "distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
@@ -293,7 +295,7 @@ private:
                setting == "shutter" || setting == "readout" ||
                setting == "readout_direction" || setting == "resolution" ||
                setting == "lens" || setting == "sensor" ||
-               setting == "response") {
+               setting == "response" || setting == "detector") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),
@@ -334,6 +336,76 @@ private:
                                "after 'response'");
       throw Recover();
     }
+  }
+
+  // The `detector` block inside `camera`. One per camera; a second is an
+  // error rather than a merge, as `response` is. Every key takes one
+  // number and the last one wins, as the camera's own keys do.
+  void parseDetectorSetting(CameraSettings &camera,
+                            const LayoutLocation &keyLoc) {
+    if (mDetectorLoc) {
+      mDiags
+          .error(keyLoc, "a camera reads out through one detector, and this "
+                         "is the second 'detector'")
+          .note(mDetectorLoc, "the first one is here");
+      throw Recover();
+    }
+    mDetectorLoc = keyLoc;
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'detector'");
+      throw Recover();
+    }
+    auto &detector{camera.detector.emplace()};
+    parseSettings("a detector setting", [&](const std::string &key,
+                                            const LayoutLocation &settingLoc) {
+      const auto nonnegative{[&](float value) {
+        value = finite(settingLoc, key, value);
+        if (!(value >= 0)) {
+          mDiags.error(settingLoc,
+                       smdl::concat("expected a nonnegative number for ",
+                                    smdl::Quoted(key)));
+          throw Recover();
+        }
+        return value;
+      }};
+      const auto positiveFinite{[&](float value) {
+        return positive(settingLoc, key, finite(settingLoc, key, value));
+      }};
+      if (key == "full_well") {
+        detector.fullWell = positiveFinite(numbers<1>()[0]);
+      } else if (key == "read_noise") {
+        detector.readNoise = nonnegative(numbers<1>()[0]);
+      } else if (key == "dark_current") {
+        detector.darkCurrent = nonnegative(numbers<1>()[0]);
+      } else if (key == "reference_temperature") {
+        detector.referenceTemperature =
+            finite(settingLoc, key, numbers<1>()[0]);
+      } else if (key == "doubling_temperature") {
+        detector.doublingTemperature = positiveFinite(numbers<1>()[0]);
+      } else if (key == "temperature") {
+        detector.temperature = finite(settingLoc, key, numbers<1>()[0]);
+      } else if (key == "black_level") {
+        detector.blackLevel = nonnegative(numbers<1>()[0]);
+      } else if (key == "bits") {
+        const auto value{numbers<1>()[0]};
+        if (!(value >= 1 && value <= 16 && value == std::floor(value))) {
+          mDiags.error(settingLoc,
+                       "expected an integer from 1 to 16 for 'bits'");
+          throw Recover();
+        }
+        detector.bits = int(value);
+      } else if (key == "gain") {
+        detector.gain = positiveFinite(numbers<1>()[0]);
+      } else {
+        mDiags.error(
+            settingLoc,
+            smdl::concat("unknown detector setting ", smdl::Quoted(key),
+                         " (expected full_well, read_noise, dark_current, "
+                         "reference_temperature, doubling_temperature, "
+                         "temperature, black_level, bits, or gain)"));
+        throw Recover();
+      }
+    });
   }
 
   // The `response` directive of a response file, which is the whole
@@ -566,6 +638,8 @@ private:
   // Where the camera's 'response' was written, in either form, so that a
   // second one can point at it.
   LayoutLocation mResponseLoc{};
+
+  LayoutLocation mDetectorLoc{};
 };
 
 } // namespace

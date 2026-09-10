@@ -23,6 +23,7 @@ add_library("smdl-toy-objects" OBJECT)
 target_sources(
   "smdl-toy-objects"
   PRIVATE
+    "Detector.cc"
     "MedianFilter.cc"
     "Options.cc"
     "Output.cc"

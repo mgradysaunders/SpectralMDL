@@ -196,6 +196,60 @@ TEST_CASE("Response: the band film is the projection of the spectral film") {
         doctest::Approx(ofMean[0]).epsilon(1e-6));
 }
 
+TEST_CASE("Response: the squares are the projections squared") {
+  // The squares film takes each sample's projection squared, so that
+  // the film knows its own variance, and the sums are the same with and
+  // without it.
+  ScopedGrid scoped{coarseGrid(), false};
+  const auto &wavelengths{scoped.wavelengths()};
+  auto settings{oneBand("g", {400, 500, 550, 600, 700}, {0, 1, 0.2, 1, 0})};
+  auto &blue{settings.bands.emplace_back()};
+  blue.name = "b";
+  blue.wavelengths = {400, 450, 500};
+  blue.values = {0, 1, 0};
+  const auto sample{[](size_t s) {
+    auto L{Color()};
+    for (size_t i = 0; i < L.size(); i++)
+      L[i] = 0.1f * float((s * 5 + i * 3) % 7) + 0.02f * float(i);
+    return L;
+  }};
+  SUBCASE("Every band without a tile") {
+    const Response response{settings, wavelengths};
+    auto sums{std::vector<double>(2)};
+    auto sumsAlone{std::vector<double>(2)};
+    auto squares{std::vector<double>(2)};
+    auto expected{std::vector<double>(2)};
+    for (size_t s = 0; s < 8; s++) {
+      const auto L{sample(s)};
+      const auto values{projectOnce(response, wavelengths, L)};
+      for (size_t b = 0; b < 2; b++) expected[b] += values[b] * values[b];
+      response.accumulate(smdl::Span<const float>(wavelengths),
+                          smdl::Span<const float>(L), 0, 0, sums.data(),
+                          squares.data());
+      response.accumulate(smdl::Span<const float>(wavelengths),
+                          smdl::Span<const float>(L), 0, 0, sumsAlone.data());
+    }
+    for (size_t b = 0; b < 2; b++) {
+      CHECK(sums[b] == sumsAlone[b]);
+      CHECK(squares[b] == doctest::Approx(expected[b]).epsilon(1e-12));
+    }
+  }
+  SUBCASE("The tile's one band with it") {
+    settings.cfaColumns = 2;
+    settings.cfa = {0, 1, 1, 0};
+    const Response response{settings, wavelengths};
+    const auto L{sample(3)};
+    for (size_t x = 0; x < 2; x++) {
+      auto sums{std::vector<double>(1)};
+      auto squares{std::vector<double>(1)};
+      response.accumulate(smdl::Span<const float>(wavelengths),
+                          smdl::Span<const float>(L), x, 0, sums.data(),
+                          squares.data());
+      CHECK(squares[0] == doctest::Approx(sums[0] * sums[0]).epsilon(1e-12));
+    }
+  }
+}
+
 TEST_CASE("Response: the tile picks one band per pixel") {
   ScopedGrid scoped{coarseGrid(), false};
   auto settings{ResponseSettings()};

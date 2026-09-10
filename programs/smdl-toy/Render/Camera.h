@@ -56,9 +56,10 @@ struct CameraOptions final {
   /// here has to.
   std::optional<LensPrescription> lens{};
 
-  /// With `lens`, the sensor width and height in millimeters. Zero
+  /// The sensor width and height in millimeters. With `lens`, zero
   /// solves it from `fovYDeg`, or takes the 36 by 24 of full frame when
-  /// that is zero too.
+  /// that is zero too; without, zero is full frame, and the size sets
+  /// the pixel pitch and the frame height `fStop` is a fraction of.
   float2 sensorMM{};
 
   /// With `lens`, normalize the exposure to the lens's own f-number, so
@@ -81,8 +82,9 @@ struct CameraOptions final {
   /// contradict, and stating both is refused before this is built.
   float fovYDeg{37.8f};
 
-  /// Enable DOF by f-number assuming a 35mm-format frame, or 0.
-  /// Mutually exclusive with `aperture`.
+  /// Enable DOF by f-number, or 0: with a lens its working stop, with
+  /// the thin lens the aperture radius as a fraction of the focal length
+  /// `sensorMM` makes real. Mutually exclusive with `aperture`.
   float fStop{};
 
   /// Enable DOF by aperture radius in scene units, or 0.
@@ -187,6 +189,30 @@ public:
     sample.ray.time = u;
   }
 
+  /// The frame's physical size in scene units: the sensor a lens covers,
+  /// or the frame the thin lens's field of view spans, which
+  /// `CameraOptions::sensorMM` states and full frame stands in for.
+  [[nodiscard]] float2 sensorSize() const noexcept {
+    return float2(mSensorWidth, mSensorHeight);
+  }
+
+  /// The working f-number: a lens's own, stopped down by `fStop`; a thin
+  /// lens's aperture radius against the focal length its sensor height
+  /// makes real, which is `fStop` back again when that set the radius;
+  /// and 0 for a pinhole, which has none.
+  [[nodiscard]] float fNumber() const noexcept;
+
+  /// What turns one unit of film into spectral irradiance at the sensor
+  /// in W/(m^2 nm), for a readout that counts electrons. A lens on the
+  /// physical exposure holds `4 / pi` times the irradiance exactly, on
+  /// and off axis, so this is `pi / 4`; normalized to its f-number, and
+  /// for a thin lens with an aperture, it is `pi / (4 N^2)`, the paraxial
+  /// form for a lens focused at infinity, which the exact circular
+  /// pupil's `pi / (4 N^2 + 1)` sits under by 0.4% at f/8; and 0 for a
+  /// pinhole, whose film is radiance with no pupil to turn it into
+  /// anything.
+  [[nodiscard]] double irradianceScale() const noexcept;
+
 private:
   /// The two halves of the constructor that differ, one of which runs.
   /// Everything the two share, the framing and its motion, the focus
@@ -221,13 +247,19 @@ private:
   /// `mLens` is.
   std::optional<ExitPupil> mExitPupil{};
 
-  /// With `mLens`, the sensor size in scene units.
+  /// The frame's physical size in scene units: the sensor a lens
+  /// covers, or the frame the thin lens spans, which sizes its pixels
+  /// and makes its focal length real.
   float mSensorWidth{}, mSensorHeight{};
 
   /// With `mLens`, the response one unit of drawn pupil area carries:
   /// the pupil integral's own `1 / d^2`, over the constant that sets the
   /// exposure convention. See `CameraOptions`.
   float mExposurePerPupilArea{};
+
+  /// With `mLens`, is the exposure normalized to its f-number? See
+  /// `CameraOptions::shouldNormalizeLensExposure`.
+  bool mIsLensExposureNormalized{};
 
   /// The image plane distance in units of image height. Unused with a
   /// lens, whose film distance is a real one and lives in `mLens`.

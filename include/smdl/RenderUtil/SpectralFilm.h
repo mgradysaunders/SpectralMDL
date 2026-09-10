@@ -204,6 +204,30 @@ private:
   std::unique_ptr<double[]> mTotals{};
 };
 
+/// Write an ENVI Standard image of 16-bit unsigned integers, `data type
+/// = 12`, band interleaved by pixel, with the header conventions of
+/// `SpectralFilm::writeENVIFile()`: `band names` when given, `render spp`
+/// when `numSamples` is nonzero, `render crop window` when `window`
+/// narrows the frame, then `extraHeaderLines` verbatim. For what a
+/// detector reads out of a film: integers rather than means, so nothing
+/// here is a film, and `SpectralFilm::readENVIFile()` refuses the result
+/// on purpose.
+///
+/// \param[in] data
+/// The `numBands` values of each pixel, pixel by pixel and row by row,
+/// `numBands * numPixelsX * numPixelsY` in all.
+///
+/// \throws Error if the sizes disagree, the window is empty or out of
+/// bounds, or the names do not number the bands.
+///
+SMDL_EXPORT void
+writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
+                    size_t numPixelsX, size_t numPixelsY,
+                    const std::string &fileName,
+                    Span<const std::string> bandNames = {},
+                    Span<const std::string> extraHeaderLines = {},
+                    std::optional<int4> window = {}, uint64_t numSamples = 0);
+
 /// \}
 
 } // namespace smdl

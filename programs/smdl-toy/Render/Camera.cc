@@ -150,6 +150,7 @@ void Camera::buildLens(const CameraOptions &options) {
   // two apertures, are on the same exposure.
   const auto filmToPupil{mLens->filmZ() - mLens->rearZ()};
   mExposurePerPupilArea = 4 / (PI * filmToPupil * filmToPupil);
+  mIsLensExposureNormalized = options.shouldNormalizeLensExposure;
   if (options.shouldNormalizeLensExposure) {
     mExposurePerPupilArea *= mLens->fNumber() * mLens->fNumber();
     SMDL_LOG_INFO("Lens exposure: normalized to f/", mLens->fNumber(),
@@ -204,6 +205,21 @@ void Camera::buildLens(const CameraOptions &options) {
 // that stand in for what a real lens does on its own.
 void Camera::buildThinLens(const CameraOptions &options) {
   mFocalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
+  // The frame's physical size, which the field of view does not need but
+  // the pixel pitch and the f-number do: what `sensor` states, else the
+  // 36 by 24 of full frame.
+  if (options.sensorMM.x > 0 && options.sensorMM.y > 0) {
+    mSensorWidth = 1e-3f * options.sensorMM.x;
+    mSensorHeight = 1e-3f * options.sensorMM.y;
+    if (const auto sensorAspect{mSensorWidth / mSensorHeight};
+        std::abs(sensorAspect - mAspectRatio) > 0.01f * mAspectRatio)
+      SMDL_LOG_WARN("Camera: the sensor is ", sensorAspect,
+                    " wide for its height and -resolution is ", mAspectRatio,
+                    ", so its pixels are not square");
+  } else {
+    mSensorWidth = 1e-3f * 36.0f;
+    mSensorHeight = 1e-3f * 24.0f;
+  }
   // One pixel's subtended angle, the ray cone spread that seeds the LOD
   // state; zero switches the cone off end to end.
   mConeAngleBase =
@@ -230,10 +246,10 @@ void Camera::buildThinLens(const CameraOptions &options) {
   if (options.aperture > 0) {
     mLensRadius = options.aperture;
   } else if (options.fStop > 0) {
-    // A 35mm frame is 24mm high and `mFocalLength` is in units of image
-    // height, so the equivalent lens is 24mm*focalLength long and 1/fstop
-    // of that across.
-    mLensRadius = 0.5f * 0.024f * mFocalLength / options.fStop;
+    // `mFocalLength` is in units of image height, so the lens is
+    // `mSensorHeight * mFocalLength` long and `1 / fstop` of that across:
+    // the 24 mm of a 35mm frame unless `sensor` says otherwise.
+    mLensRadius = 0.5f * mSensorHeight * mFocalLength / options.fStop;
   }
   mVignetteStrength = options.vignetting;
   // The barrel rim radius and the rim displacement per unit of image
@@ -262,6 +278,19 @@ void Camera::buildThinLens(const CameraOptions &options) {
                   ", displaced ", options.catEye * mRimRadius,
                   " at the frame corner");
   }
+}
+
+float Camera::fNumber() const noexcept {
+  if (mLens) return mLens->fNumber();
+  return mLensRadius > 0 ? mFocalLength * mSensorHeight / (2 * mLensRadius)
+                         : 0.0f;
+}
+
+double Camera::irradianceScale() const noexcept {
+  constexpr double pi{3.14159265358979323846};
+  if (mLens && !mIsLensExposureNormalized) return pi / 4;
+  const double N{fNumber()};
+  return N > 0 ? pi / (4 * N * N) : 0.0;
 }
 
 CameraSample Camera::sample(size_t x, size_t y,

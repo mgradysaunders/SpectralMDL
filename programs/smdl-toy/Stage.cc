@@ -92,9 +92,6 @@ void refuseThinLensSettings(const Options &opts,
                         "is: state the sensor and read the field of view "
                         "off the log, or state the field of view and let "
                         "the sensor be solved for it");
-  } else if (opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) {
-    throw smdl::Error("'sensor' needs a lens to mean anything: without one "
-                      "the frame is 'fovy' and the sensor has no size");
   } else if (opts.camera.shouldNormalizeLensExposure.wasGiven) {
     throw smdl::Error("'-normalize-lens-exposure' needs a lens to mean "
                       "anything: the thin lens already holds its brightness, "
@@ -209,6 +206,26 @@ Frame resolveFrame(const Options &opts) {
     }
     SMDL_LOG_INFO(line);
   }
+  // The detector the camera reads out with, as the file states it; the
+  // generic one when the file states none and a readout is asked for.
+  const auto describeDetector{[](const DetectorSettings &detector) {
+    return smdl::concat(
+        "full well ",
+        detector.fullWell
+            ? smdl::concat(smdl::Brief(*detector.fullWell, 6), " e-")
+            : std::string("from the pitch"),
+        ", read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
+        smdl::Brief(detector.darkCurrent, 4), " e-/s at ",
+        smdl::Brief(detector.referenceTemperature, 4), " C doubling every ",
+        smdl::Brief(detector.doublingTemperature, 4), " C, at ",
+        smdl::Brief(detector.temperature, 4), " C; ", detector.bits,
+        " bits at ",
+        detector.gain ? smdl::concat(smdl::Brief(*detector.gain, 6), " DN/e-")
+                      : std::string("a gain filling the well"),
+        ", black level ", smdl::Brief(detector.blackLevel, 4), " e-");
+  }};
+  if (fileCamera.detector)
+    SMDL_LOG_INFO("Detector: ", describeDetector(*fileCamera.detector));
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
@@ -274,6 +291,24 @@ Frame resolveFrame(const Options &opts) {
                       "the command line and the camera file's 'camera' "
                       "directive (they are two spellings of the same "
                       "quantity)");
+  // What a readout needs of the camera, refused here so that a missing
+  // f-number fails before anything slow loads. The pitch is read off the
+  // camera at the readout, since under -autolook the camera is built
+  // after the scene.
+  if (!opts.image.outputDN.empty()) {
+    if (!response || response->kind != ResponseKind::QE)
+      throw smdl::Error(
+          "-output-dn counts electrons, which needs a 'qe' response");
+    if (!gRenderShutter.hasExposure())
+      throw smdl::Error("-output-dn needs an exposure: state 'shutter'");
+    if (!cameraOptions.lens && !(cameraOptions.fStop > 0) &&
+        !(cameraOptions.aperture > 0))
+      throw smdl::Error("-output-dn needs an f-number to turn radiance into "
+                        "irradiance: state 'fstop'");
+    if (!fileCamera.detector)
+      SMDL_LOG_INFO("Detector: none in the camera file, so the generic one: ",
+                    describeDetector(DetectorSettings{}));
+  }
   // The camera's framing at shutter shut. The keys are absolute readings
   // of the clock, so a flag that replaces the framing drops the track
   // rather than moving a camera the file never described.
@@ -361,6 +396,7 @@ Frame resolveFrame(const Options &opts) {
   frame.cameraOptions = cameraOptions;
   frame.response = std::move(response);
   frame.responseFileName = responseFileName;
+  frame.detector = fileCamera.detector;
   frame.camera = std::move(camera);
   frame.resolution = resolution;
   frame.numPixelsX = numPixelsX;
@@ -447,12 +483,12 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "RGB outputs project through CIE color matching, so they darken "
         "wherever the grid misses the visible; the ENVI output is the "
         "radiometric record");
-  // The accumulation buffers scale as bands times pixels; say so before
-  // allocating gigabytes.
+  // The accumulation buffers scale as bands times pixels, the band film
+  // and its squares counting twice; say so before allocating gigabytes.
   const double bandFilmBytes{
-      frame.response ? 8.0 * double(frame.response->hasCFA()
-                                        ? 1
-                                        : frame.response->bands.size())
+      frame.response ? 16.0 * double(frame.response->hasCFA()
+                                         ? 1
+                                         : frame.response->bands.size())
                      : 0.0};
   if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
                        (8.0 + 8.0 * double(wavelengths.size()) + bandFilmBytes +

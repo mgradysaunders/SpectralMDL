@@ -78,3 +78,62 @@ struct ResponseHeader final {
   /// Take whatever of these `fields` carries, leaving the rest alone.
   void readFrom(const std::map<std::string, std::string> &fields);
 };
+
+/// What the readout's header says about how its digital numbers were
+/// computed: every factor between the band film and the file, so that a
+/// reader can recover the electrons, and which realization it is.
+/// Nothing resumes a readout, so this is written for the reader; it
+/// still goes through one table, so the doctest can read it back.
+struct DetectorHeader final {
+  /// The realization, `-detector-seed`.
+  uint64_t seed{};
+
+  /// Which noise was drawn, `-detector-noise`.
+  std::string noise{};
+
+  /// The exposure in seconds.
+  double exposure{};
+
+  /// The pixel pitch in micrometers, across and down.
+  ///
+  /// \{
+  double pixelWidth{};
+  double pixelHeight{};
+  /// \}
+
+  /// The f-number the irradiance came through.
+  double fNumber{};
+
+  /// The well in electrons, stated or derived.
+  double fullWell{};
+
+  /// The read noise in electrons rms.
+  double readNoise{};
+
+  /// The dark electrons at this exposure and temperature.
+  double darkElectrons{};
+
+  /// The gain in digital numbers per electron, stated or derived.
+  double gain{};
+
+  /// The black level in electrons.
+  double blackLevel{};
+
+  /// The ADC's depth.
+  uint64_t bits{};
+
+  /// The signal electrons one unit of the band film is worth: the pixel
+  /// area, the exposure, and the irradiance scale together, so that a
+  /// reader recovers the electrons from the band film alone.
+  double electronsPerFilmUnit{};
+
+  /// The share of the window's pixel bands whose render noise, by the
+  /// film's own estimate, exceeded their shot noise.
+  double noiseLimitedShare{};
+
+  /// The lines to hand `smdl::writeENVIFileUInt16()`.
+  [[nodiscard]] std::vector<std::string> headerLines() const;
+
+  /// Take whatever of these `fields` carries, leaving the rest alone.
+  void readFrom(const std::map<std::string, std::string> &fields);
+};

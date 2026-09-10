@@ -1,8 +1,10 @@
 #include "Fixtures.h"
 
 #include <array>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -241,6 +243,46 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
                        fileName);
     std::ofstream(fileName + ".hdr", std::ios::app) << "band names = {a, b}\n";
     CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
+  }
+  SUBCASE("A 16-bit image writes its integers, its names, and its count, "
+          "and is not a film") {
+    auto fileName{(tmpDir / "readout.envi").string()};
+    const std::array<std::string, 2> names = {"R", "nir"};
+    // NOLINTNEXTLINE
+    const uint16_t values[2 * NUM_X * NUM_Y] = {0, 1, 2, 3, 4,     5,
+                                                6, 7, 8, 9, 65535, 65534};
+    const std::array<std::string, 1> extra = {"band units = DN"};
+    smdl::writeENVIFileUInt16(
+        smdl::Span<const uint16_t>(values, 2 * NUM_X * NUM_Y), 2, NUM_X, NUM_Y,
+        fileName, smdl::Span<const std::string>(names.data(), 2),
+        smdl::Span<const std::string>(extra.data(), 1), smdl::int4{1, 0, 3, 2},
+        SPP);
+    auto text{std::string()};
+    {
+      auto file{std::ifstream(fileName + ".hdr")};
+      for (std::string line; std::getline(file, line);) text += line + "\n";
+    }
+    CHECK_CONTAINS(text, "data type = 12");
+    CHECK_CONTAINS(text, "interleave = bip");
+    CHECK_CONTAINS(text, "band names = {R, nir}");
+    CHECK_CONTAINS(text, "render spp = 5");
+    CHECK_CONTAINS(text, "render crop window = {1, 0, 3, 2}");
+    CHECK_CONTAINS(text, "band units = DN");
+    CHECK_NOT_CONTAINS(text, "wavelength");
+    auto bytes{std::string()};
+    {
+      auto file{std::ifstream(fileName, std::ios::binary)};
+      bytes.assign(std::istreambuf_iterator<char>(file),
+                   std::istreambuf_iterator<char>());
+    }
+    REQUIRE(bytes.size() == sizeof(values));
+    CHECK(std::memcmp(bytes.data(), values, sizeof(values)) == 0);
+    CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
+    CHECK_THROWS(smdl::writeENVIFileUInt16(
+        smdl::Span<const uint16_t>(values, 3), 2, NUM_X, NUM_Y, fileName));
+    CHECK_THROWS(smdl::writeENVIFileUInt16(
+        smdl::Span<const uint16_t>(values, 2 * NUM_X * NUM_Y), 2, NUM_X, NUM_Y,
+        fileName, smdl::Span<const std::string>(names.data(), 1)));
   }
   SUBCASE("No 'render spp' reads back with a count of 1") {
     auto fileName{(tmpDir / "foreign.envi").string()};
