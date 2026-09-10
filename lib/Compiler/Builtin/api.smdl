@@ -62,6 +62,60 @@ export float _polylineLerp(
   }
 }
 
+/// Construct a `color` by evaluating `f` at each wavelength of the active
+/// spectral basis `$state.wavelengthBase`.
+@(macro)
+export color _spectralInit(const auto f) {
+  color c(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    c[i] = f($state.wavelengthBase[i]);
+  }
+  return c;
+}
+
+/// Construct a `color` by looking up each wavelength of the active spectral
+/// basis in a table, locating every wavelength before fetching any of them.
+///
+/// `locate` maps a wavelength to the index and fraction of the entry pair
+/// bracketing it, and `fetch` turns that pair into the value at that
+/// wavelength. They run as separate passes because locating is arithmetic
+/// that ends in an address and fetching is the loads waiting on it, so
+/// interleaved every wavelength's loads stall behind its own index. The
+/// arithmetic is the one `_spectralInit` performs, in the same order per
+/// wavelength, so the result is identical.
+@(macro)
+export color _spectralLerpInit(const auto locate, const auto fetch) {
+  // The index and the fraction go to separate arrays rather than one array
+  // of pairs. The locate pass is the same arithmetic on every wavelength
+  // independently, so it vectorizes either way, but an interleaved
+  // 'int, float' layout has to be taken apart again before the fetch pass
+  // can index with it, which is two shuffles and a pair of full-width
+  // integer operations that flat arrays do not need.
+  int[$WAVELENGTH_BASE_MAX] keyIndex;
+  float[$WAVELENGTH_BASE_MAX] keyFraction;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const auto key = locate($state.wavelengthBase[i]);
+    keyIndex[i] = key.i;
+    keyFraction[i] = key.t;
+  }
+  color c(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    c[i] = fetch(keyIndex[i], keyFraction[i]);
+  }
+  return c;
+}
+
+/// Fold `f` over the components of `a` paired with the wavelengths of the
+/// active spectral basis, accumulating from `init`.
+@(macro)
+export auto _spectralFold(const auto init, const color a, const auto f) {
+  auto result(init);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    result = f(result, $state.wavelengthBase[i], a[i]);
+  }
+  return result;
+}
+
 /// The number of wavelengths in the sRGB spectral primaries.
 const int SRGB_PRIMARIES_NUM_WAVELENGTHS = 81;
 
@@ -142,19 +196,22 @@ const static auto SRGB_PRIMARIES = auto[](
 /// outside its range; a zero tail would make every RGB-authored color a
 /// perfect absorber in the SWIR and LWIR.
 @(hot noinline)
-color nontrivialRGBToColor(float3 rgb) {
-  #assert(bool($state.wavelengthBase));
-  color c(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const auto lerp = _uniformLerpIndexAndFraction(
+color nontrivialRGBToColor(const float3 rgb) {
+  // Debug-gated on purpose. An '#assert' calls 'smdlPanic', which is
+  // opaque to LLVM, and one opaque call denies this whole function its
+  // memory effects; without them the optimizer can neither share two
+  // conversions of the same RGB nor delete one whose result goes unused.
+  // A material body is emitted once per entry point, so an undeletable
+  // conversion is one 'opacityEvaluate' and its siblings each keep.
+  #assert(bool($state.wavelengthBase)) if ($DEBUG);
+  return _spectralLerpInit(
+    \(const float wavelength) = _uniformLerpIndexAndFraction(
       SRGB_PRIMARIES_NUM_WAVELENGTHS,
       SRGB_PRIMARIES_MIN_WAVELENGTH,
       SRGB_PRIMARIES_MAX_WAVELENGTH,
-      $state.wavelengthBase[i]);
-    c[i] = #sum(
-      float2(1 - lerp.t, lerp.t) * (rgb.x * float2(&SRGB_PRIMARIES[0][lerp.i]) + rgb.y * float2(&SRGB_PRIMARIES[1][lerp.i]) + rgb.z * float2(&SRGB_PRIMARIES[2][lerp.i])));
-  }
-  return c;
+      wavelength),
+    \(const int i, const float t) = #sum(
+      float2(1 - t, t) * (rgb.x * float2(&SRGB_PRIMARIES[0][i]) + rgb.y * float2(&SRGB_PRIMARIES[1][i]) + rgb.z * float2(&SRGB_PRIMARIES[2][i]))));
 }
 
 /// Convert RGB to color, used by `color` constructor!
@@ -165,51 +222,6 @@ export color _rgbToColor(const float3 rgb) {
   } else {
     return nontrivialRGBToColor(rgb);
   }
-}
-
-/// Construct a `color` by evaluating `f` at each wavelength of the active
-/// spectral basis `$state.wavelengthBase`.
-@(macro)
-export color _spectralInit(const auto f) {
-  color c(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    c[i] = f($state.wavelengthBase[i]);
-  }
-  return c;
-}
-
-/// Construct a `color` by looking up each wavelength of the active spectral
-/// basis in a table, locating every wavelength before fetching any of them.
-///
-/// `locate` maps a wavelength to the index and fraction of the entry pair
-/// bracketing it, and `fetch` turns that pair into the value at that
-/// wavelength. They run as separate passes because locating is arithmetic
-/// that ends in an address and fetching is the loads waiting on it, so
-/// interleaved every wavelength's loads stall behind its own index. The
-/// arithmetic is the one `_spectralInit` performs, in the same order per
-/// wavelength, so the result is identical.
-@(macro)
-export color _spectralLerpInit(const auto locate, const auto fetch) {
-  _UniformLerp[$WAVELENGTH_BASE_MAX] keys;
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    keys[i] = locate($state.wavelengthBase[i]);
-  }
-  color c(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    c[i] = fetch(keys[i].i, keys[i].t);
-  }
-  return c;
-}
-
-/// Fold `f` over the components of `a` paired with the wavelengths of the
-/// active spectral basis, accumulating from `init`.
-@(macro)
-export auto _spectralFold(const auto init, const color a, const auto f) {
-  auto result(init);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    result = f(result, $state.wavelengthBase[i], a[i]);
-  }
-  return result;
 }
 
 @(noinline)

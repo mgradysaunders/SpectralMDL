@@ -223,6 +223,14 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                                   : context.llvmIncompleteReturnTy,
                               llvmParamTys, params.isVariadic),
       llvm::Function::InternalLinkage, "", context.llvmModule);
+  // Every loop in emitted code either makes progress or has side effects,
+  // which is the same promise a C++ frontend makes and the one LLVM needs
+  // before it will infer 'willreturn'. Without it, a function holding any
+  // loop at all is a call the optimizer may never delete however plainly
+  // its result goes unused, and since a material body is emitted once per
+  // entry point, that is a color conversion or a relief march kept by
+  // every one of them for the sake of the one that reads it.
+  llvmFunc->addFnAttr(llvm::Attribute::MustProgress);
   for (auto [i, paramType] : indirectParams)
     addIndirectParamAttrs(paramType, i, llvmFunc, nullptr);
 

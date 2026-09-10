@@ -2887,6 +2887,18 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
         srcLoc.throwError("cannot construct union ", Quoted(displayName),
                           " from ", Quoted(arg.type->displayName));
       auto i{getCaseTypeIndex(arg.type)};
+      // A union is built by storing the payload and then the tag, so it
+      // needs a slot, and module scope has no function to allocate one in.
+      // Saying so is worth the check: the alloca below would otherwise
+      // trip a sanity check reporting nothing a user can act on, and the
+      // mistake is easy to make by accident, since an array of textures
+      // whose images decoded to different texel types is an array of a
+      // union rather than of 'texture_2d'.
+      if (!emitter.getLLVMFunction())
+        srcLoc.throwError(
+            "cannot construct union ", Quoted(displayName),
+            " outside of a function: a union is built in storage, so it "
+            "must not appear in a module-scope initializer");
       auto lv{emitter.createAlloca(this, "union.lv")};
       emitter.createLifetimeStart(lv);
       emitter.builder.CreateStore(Value::zero(this), lv); // zeroinitializer
