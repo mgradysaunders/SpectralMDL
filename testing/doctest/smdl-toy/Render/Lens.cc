@@ -1,5 +1,6 @@
 #include "Fixtures.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -336,6 +337,15 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
                 "expected air behind the last surface");
   }
+  SUBCASE("One with more aspheric coefficients than a surface holds is "
+          "refused") {
+    // The reader caps the list, so this is the guard on a prescription
+    // built in code rather than read from a file.
+    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    lens.surfaces.front().aspheric.assign(LENS_MAX_ASPHERIC_TERMS + 1, 0.0f);
+    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
+                "at most 8 aspheric coefficients");
+  }
   SUBCASE("One with no net power has no focal length") {
     auto lens{LensPrescription{}};
     // A plane parallel plate bends nothing, so it images nothing.
@@ -446,5 +456,159 @@ TEST_CASE("ExitPupil: the domain the pupil point is drawn from") {
     CHECK(stoppedPupil.areaFraction(0) < 0.05f * pupil.areaFraction(0));
     CHECK(transmissionThroughBound(stopped, stoppedPupil, 0) ==
           doctest::Approx(transmission(stopped, 0)).epsilon(0.02));
+  }
+}
+
+namespace {
+// The sag a prescription means, in the millimeters it is written in: the
+// conic term of the published formula, then the even polynomial on top
+// of it. In double, so that it is the surface the test compares against
+// rather than a second opinion of the same precision.
+double sagMM(double radius, double conic, const std::vector<float> &aspheric,
+             double r) {
+  const auto curvature{radius == 0 ? 0.0 : 1 / radius};
+  auto sag{curvature * r * r /
+           (1 + std::sqrt(1 - (1 + conic) * curvature * curvature * r * r))};
+  for (size_t i = 0; i < aspheric.size(); i++)
+    sag += aspheric[i] * std::pow(r, double(2 * i + 4));
+  return sag;
+}
+
+// A plano-convex singlet whose front surface carries a conic and an
+// `r^4` term, which puts 25 microns of polynomial on 2.4 mm of conic sag
+// at the rim: the regime every real asphere is in, and the one the
+// conic seed is chosen for.
+LensPrescription frontAsphere(const std::vector<float> &aspheric) {
+  auto lens{LensPrescription{}};
+  lens.name = "front asphere";
+  auto front{surfaceOf(30, 6, 1.5f, 24)};
+  front.conic = -0.6f;
+  front.aspheric = aspheric;
+  lens.surfaces.push_back(front);
+  lens.surfaces.push_back(surfaceOf(0, 0, 1, 24));
+  lens.surfaces.push_back(stopOf(0, 24));
+  return lens;
+}
+
+// Where a ray drawn to the point `(x, y)` of the pupil plane leaves the
+// front element, which is what `traceFromFilm()` puts the ray at.
+float3 frontPointOf(const Lens &lens, float3 film, float x, float y) {
+  auto ray{rayToPupil(lens, film, x, y)};
+  REQUIRE(lens.traceFromFilm(ray));
+  return ray.org;
+}
+
+// How far off the front surface a point landed, in millimeters. The
+// iteration promises a millionth of the clear aperture radius, which is
+// twelve nanometers here, so anything a hundredth of a millimeter out is
+// a solve that went somewhere else.
+double sagErrorMM(const Lens &lens, const std::vector<float> &aspheric,
+                  float3 point) {
+  const auto radius{std::hypot(point.x, point.y) / MM};
+  return std::abs((point.z - lens.frontZ()) / MM -
+                  sagMM(30, -0.6, aspheric, radius));
+}
+} // namespace
+
+TEST_CASE("Lens: an aspheric surface is solved by iteration") {
+  const std::vector<float> aspheric{-1.2e-6f};
+  const Lens lens{frontAsphere(aspheric), {AT_INFINITY, 0}};
+  const float3 film{2 * MM, -1 * MM, lens.filmZ()};
+  SUBCASE("The point it lands on is on the surface the prescription "
+          "describes") {
+    for (const auto x : {0.5f, 3.0f, 6.0f, 9.0f})
+      CHECK(sagErrorMM(lens, aspheric,
+                       frontPointOf(lens, film, x * MM, 0.4f * x * MM)) < 1e-4);
+  }
+  SUBCASE("A polynomial too small to see leaves the closed form alone") {
+    // The iteration runs on a surface that is a conic to within 1e-26 mm,
+    // so it has to land where the quadric solve lands. This is the one
+    // check on the point and the normal together: what leaves the front
+    // element carries both.
+    const Lens conic{frontAsphere({}), {AT_INFINITY, 0}};
+    const Lens iterated{frontAsphere({1e-30f}), {AT_INFINITY, 0}};
+    CHECK(conic.elements().front().numAsphericTerms == 0);
+    CHECK(iterated.elements().front().numAsphericTerms == 1);
+    for (const auto x : {1.0f, 5.0f, 9.0f}) {
+      auto one{rayToPupil(conic, film, x * MM, 0)};
+      auto two{rayToPupil(iterated, film, x * MM, 0)};
+      REQUIRE(conic.traceFromFilm(one));
+      REQUIRE(iterated.traceFromFilm(two));
+      CHECK_NEAR(one.org, two.org, 1e-8f);
+      CHECK_NEAR(one.dir, two.dir, 1e-6f);
+    }
+  }
+  SUBCASE("Coefficients that are all zero leave the surface a conic") {
+    const Lens zeros{frontAsphere({0, 0, 0}), {AT_INFINITY, 0}};
+    CHECK(zeros.elements().front().numAsphericTerms == 0);
+    CHECK(zeros.focalLength() ==
+          doctest::Approx(
+              Lens{frontAsphere({}), {AT_INFINITY, 0}}.focalLength()));
+  }
+  SUBCASE("It turns the ray by the slope of the surface it describes") {
+    // A ray up the axis crosses the flat rear surface without bending,
+    // so it meets the front one at exactly the height it started at.
+    // Everything about that meeting is then closed form: the point, the
+    // slope of the sag there, and the direction Snell turns the ray to
+    // on the way out into air. That is the one check on the normal the
+    // polynomial contributes to, the point tests above being blind to
+    // it.
+    for (const auto height : {3.0, 7.0, 11.0}) {
+      auto ray{Ray{float3(float(height * MM), 0, lens.filmZ()),
+                   float3(0, 0, -1), EPS, INF}};
+      REQUIRE(lens.traceFromFilm(ray));
+      CHECK(ray.org.x / MM == doctest::Approx(height).epsilon(1e-6));
+      // The published sag differentiated by hand: the conic slope, then
+      // the polynomial's.
+      const auto curvature{1 / 30.0};
+      const auto w{
+          std::sqrt(1 - (1 - 0.6) * curvature * curvature * height * height)};
+      auto slope{curvature * height / w};
+      for (size_t i = 0; i < aspheric.size(); i++)
+        slope += aspheric[i] * double(2 * i + 4) *
+                 std::pow(height, double(2 * i + 3));
+      const auto scale{std::sqrt(1 + slope * slope)};
+      const auto cosThetaI{1 / scale};
+      const auto eta{1.5};
+      const auto cosThetaT{
+          std::sqrt(1 - eta * eta * (1 - cosThetaI * cosThetaI))};
+      // Snell in vector form, on the incident direction (0, 0, -1) and
+      // the unit normal (-slope, 0, 1) / scale.
+      const auto factor{(eta * cosThetaI - cosThetaT) / scale};
+      const auto turned{
+          normalize(float3(float(-factor * slope), 0, float(-eta + factor)))};
+      CHECK_NEAR(ray.dir, turned, 1e-6f);
+    }
+  }
+  SUBCASE("The polynomial bends the ray, the conic alone being a different "
+          "surface") {
+    auto withIt{rayToPupil(lens, film, 9 * MM, 0)};
+    const Lens without{frontAsphere({}), {AT_INFINITY, 0}};
+    auto withoutIt{rayToPupil(without, film, 9 * MM, 0)};
+    REQUIRE(lens.traceFromFilm(withIt));
+    REQUIRE(without.traceFromFilm(withoutIt));
+    CHECK(length(withIt.dir - withoutIt.dir) > 1e-4f);
+  }
+  SUBCASE("The paraxial solve does not see it, the terms being fourth order "
+          "and up") {
+    CHECK(lens.focalLength() ==
+          doctest::Approx(
+              Lens{frontAsphere({}), {AT_INFINITY, 0}}.focalLength()));
+  }
+  SUBCASE("It converges everywhere on the aperture, at every film point") {
+    auto numTraced{0};
+    auto worst{0.0};
+    for (int i = 0; i < 24; i++) {
+      const auto filmRadius{i * 0.5f * MM};
+      for (int j = 0; j < 24; j++) {
+        const auto x{(-11.0f + j) * MM};
+        auto ray{rayToPupil(lens, float3(filmRadius, 0, lens.filmZ()), x, 0)};
+        if (!lens.traceFromFilm(ray)) continue;
+        numTraced++;
+        worst = std::max(worst, sagErrorMM(lens, aspheric, ray.org));
+      }
+    }
+    CHECK(numTraced > 300);
+    CHECK(worst < 1e-4);
   }
 }

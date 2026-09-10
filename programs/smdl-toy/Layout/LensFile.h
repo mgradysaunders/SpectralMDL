@@ -67,12 +67,12 @@ public:
   float conic{};
 
   /// The even aspheric coefficients added to the sag, the `r^4` term
-  /// first: `sum a[i] * r^(2 i + 4)`. Empty for most designs, and for
-  /// every design before roughly 1990.
+  /// first: `sum a[i] * r^(2 i + 4)`, in millimeters as the radius is.
+  /// Empty for most designs, and for every design before roughly 1990.
   ///
   /// A table that prints its zero terms is common, so all-zero
-  /// coefficients are accepted; a nonzero one is refused at parse time
-  /// while the trace has no iterative intersection to solve it with.
+  /// coefficients are accepted and describe a surface that is exactly
+  /// its conic.
   std::vector<float> aspheric{};
 };
 

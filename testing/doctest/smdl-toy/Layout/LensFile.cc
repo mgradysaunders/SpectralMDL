@@ -175,11 +175,16 @@ TEST_CASE("LensFile: conic and aspheric surfaces") {
                                        "}\n")};
     CHECK(document.lens.surfaces[0].aspheric.size() == 3);
   }
-  SUBCASE("A nonzero coefficient is refused while the trace cannot solve it") {
-    CHECK_CONTAINS(parseError(diags, "lens { surface { radius 21.48 "
-                                     "aspheric 0 1.2e-5 diameter 12 } "
-                                     "stop { diameter 10 } }"),
-                   "aspheric surfaces are not supported yet");
+  SUBCASE("Coefficients are kept in the order written, the r^4 term first") {
+    const auto document{parseOK(diags, "lens {\n"
+                                       "  surface { radius 21.48 "
+                                       "aspheric 0 1.2e-5 -3e-9 diameter 12 }\n"
+                                       "  stop { diameter 10 }\n"
+                                       "}\n")};
+    REQUIRE(document.lens.surfaces[0].aspheric.size() == 3);
+    CHECK(document.lens.surfaces[0].aspheric[0] == 0.0f);
+    CHECK(document.lens.surfaces[0].aspheric[1] == doctest::Approx(1.2e-5f));
+    CHECK(document.lens.surfaces[0].aspheric[2] == doctest::Approx(-3e-9f));
   }
   SUBCASE("An empty coefficient list is an error") {
     CHECK_CONTAINS(parseError(diags, "lens { surface { aspheric "

@@ -185,7 +185,7 @@ private:
       } else if (key == "conic") {
         surface.conic = finite(keyLoc, key, numbers<1>()[0]);
       } else if (key == "aspheric") {
-        parseAspheric(surface, keyLoc);
+        parseAspheric(surface);
       } else {
         mDiags.error(keyLoc,
                      smdl::concat("unknown surface setting ", smdl::Quoted(key),
@@ -204,12 +204,11 @@ private:
     return surface;
   }
 
-  // The `aspheric` coefficient list, which takes as many numbers as are
-  // written. A table that prints its zero terms is common enough that
-  // all-zero coefficients have to parse; a nonzero one names a surface
-  // shape the trace cannot solve yet, and saying so here is what puts a
-  // caret under the number that caused it.
-  void parseAspheric(LensSurface &surface, const LayoutLocation &keyLoc) {
+  // The `aspheric` coefficient list, the `r^4` term first, which takes as
+  // many numbers as are written. A table that prints its zero terms is
+  // common, so all-zero coefficients parse and mean a surface that is
+  // exactly its conic.
+  void parseAspheric(LensSurface &surface) {
     auto value{0.0f};
     while (mToken.kind == Token::WORD && tryNumber(mToken, value)) {
       if (surface.aspheric.size() == LENS_MAX_ASPHERIC_TERMS) {
@@ -227,22 +226,8 @@ private:
       advance();
     }
     if (surface.aspheric.empty()) {
-      mDiags.error(location(), "expected at least one number after "
-                               "'aspheric'");
+      mDiags.error(location(), "expected at least one number after 'aspheric'");
       throw Recover();
-    }
-    for (const auto coefficient : surface.aspheric) {
-      if (coefficient != 0) {
-        mDiags
-            .error(keyLoc, "aspheric surfaces are not supported yet, and "
-                           "this one has a nonzero coefficient")
-            .note({}, "the trace solves spheres and conics in closed form; "
-                      "the polynomial sag needs an iterative intersection "
-                      "that is not written. Coefficients that are all zero "
-                      "parse, so a table that prints its zero terms works "
-                      "as it stands");
-        throw Recover();
-      }
     }
   }
 

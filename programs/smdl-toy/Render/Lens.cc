@@ -53,6 +53,79 @@ public:
   return ABCD::transfer(to.z - from.z, from.iorAfter);
 }
 
+// How many passes the aspheric intersection may take, and how close to
+// the surface it has to land as a fraction of the clear aperture radius.
+// The conic root is a good enough seed that one correction and the pass
+// that confirms it are all any surface tested here needs; eight is a
+// runaway.
+constexpr int MAX_NEWTON_STEPS = 8;
+constexpr float NEWTON_TOLERANCE = 1e-6f;
+
+// The sag of a surface at squared radius `u`, and its derivative with
+// respect to `u`, both in scene units. False is a radius past where the
+// base conic turns back on itself, which no point of the surface is.
+[[nodiscard]] bool sagOf(const LensElement &element, float u, float &sag,
+                         float &dSagDu) noexcept {
+  const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
+  const auto wSquared{1 - (1 + element.conic) * curvature * curvature * u};
+  if (!(wSquared > 0)) return false;
+  const auto w{std::sqrt(wSquared)};
+  sag = curvature * u / (1 + w);
+  dSagDu = 0.5f * curvature / w;
+  if (element.numAsphericTerms == 0) return true;
+  // The polynomial is evaluated in the millimeters its coefficients are
+  // written in and converted once, here. Scaling the coefficients into
+  // scene units instead would multiply the `r^18` one by 1e51 and divide
+  // its argument by the same, which is off the end of a float at both
+  // ends of the product.
+  const auto uMM{u * (SCENE_TO_MM * SCENE_TO_MM)};
+  auto poly{0.0f}, dPoly{0.0f};
+  auto power{uMM};
+  for (int i = 0; i < element.numAsphericTerms; i++) {
+    poly += element.aspheric[i] * power * uMM;
+    dPoly += element.aspheric[i] * (i + 2) * power;
+    power *= uMM;
+  }
+  sag += poly * MM_TO_SCENE;
+  dSagDu += dPoly * SCENE_TO_MM;
+  return true;
+}
+
+// Refine a conic root into a root of the whole sag, the polynomial
+// included, by Newton on the axial distance from the ray to the surface.
+// The polynomial is a perturbation of the conic the seed came from,
+// microns against a sag of millimeters on any real design, which is why
+// so few passes settle it.
+[[nodiscard]] bool intersectAspheric(const LensElement &element, const Ray &ray,
+                                     float t, float3 &point,
+                                     float3 &normal) noexcept {
+  const auto tolerance{NEWTON_TOLERANCE * element.semiDiameter};
+  for (int step = 0; step < MAX_NEWTON_STEPS; step++) {
+    const auto p{ray(t)};
+    const auto u{p.x * p.x + p.y * p.y};
+    auto sag{0.0f}, dSagDu{0.0f};
+    if (!sagOf(element, u, sag, dSagDu)) return false;
+    const auto residual{(p.z - element.z) - sag};
+    if (std::abs(residual) <= tolerance) {
+      point = p;
+      // The surface is `z - vertex - sag(x^2 + y^2) = 0`, so its
+      // gradient is the sag's slope in the two radial directions against
+      // a unit rise in z.
+      normal = normalize(float3(-2 * dSagDu * p.x, -2 * dSagDu * p.y, 1.0f));
+      if (dot(normal, ray.dir) > 0) normal = -normal;
+      return true;
+    }
+    // How fast the residual closes: the ray climbing in z against the
+    // surface receding under it as the radius grows.
+    const auto slope{ray.dir.z -
+                     2 * dSagDu * (p.x * ray.dir.x + p.y * ray.dir.y)};
+    if (slope == 0) return false;
+    t -= residual / slope;
+    if (!(t >= 0)) return false;
+  }
+  return false;
+}
+
 // Intersect a ray with one surface of revolution about the z axis, and
 // return the hit point and the surface normal there, the normal turned to
 // face the ray.
@@ -98,6 +171,10 @@ public:
     if (q != 0) consider(c / q);
   }
   if (sBest == FLOAT_MAX) return false;
+  // A polynomial on top of the conic is not a quadric and has no closed
+  // form; the root just found is where its solve starts.
+  if (element.numAsphericTerms > 0)
+    return intersectAspheric(element, ray, tBest, point, normal);
   point = ray(tBest);
   normal = normalize(float3(curvature * point.x, curvature * point.y,
                             curvature * kPlusOne * (point.z - element.z) - 1));
@@ -311,6 +388,19 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     element.z = z * MM_TO_SCENE;
     element.radius = surface.radius * MM_TO_SCENE;
     element.conic = surface.conic;
+    if (surface.aspheric.size() > LENS_MAX_ASPHERIC_TERMS)
+      throw smdl::Error(
+          smdl::concat("expected at most ", LENS_MAX_ASPHERIC_TERMS,
+                       " aspheric coefficients on a surface, got ",
+                       surface.aspheric.size()));
+    // A table that prints its unused terms leaves trailing zeros, and a
+    // polynomial that is all zeros is a conic. Dropping them is what
+    // keeps such a surface on the closed-form path.
+    auto numTerms{surface.aspheric.size()};
+    while (numTerms > 0 && surface.aspheric[numTerms - 1] == 0) numTerms--;
+    element.numAsphericTerms = int(numTerms);
+    for (size_t j = 0; j < numTerms; j++)
+      element.aspheric[j] = surface.aspheric[j];
     element.semiDiameter = 0.5f * surface.diameter * MM_TO_SCENE;
     element.iorBefore = ior;
     element.iorAfter = surface.isStop ? ior : surface.ior;

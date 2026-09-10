@@ -11,6 +11,7 @@
 /// the front element is already travelling the way the camera looks.
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,19 @@ public:
 
   /// The conic constant. Zero is a sphere.
   float conic{};
+
+  /// The even aspheric coefficients added to the sag, the `r^4` term
+  /// first, and how many of them there are. Trailing zeros are dropped
+  /// when the element is laid out, so a count of zero is a surface the
+  /// closed-form intersection answers on its own, which is every surface
+  /// of every design published before roughly 1990.
+  ///
+  /// These alone are in the millimeters the file states, everything else
+  /// here being in scene units. Scaling them would multiply the `r^18`
+  /// coefficient by 1e51 and divide its argument by the same, which is
+  /// off the end of a float in both directions.
+  std::array<float, LENS_MAX_ASPHERIC_TERMS> aspheric{};
+  int numAsphericTerms{};
 
   /// The clear aperture radius, which is half of what the file states.
   /// On the stop it is the working radius, so stopping down narrows it.
