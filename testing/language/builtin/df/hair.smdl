@@ -20,7 +20,8 @@ EvaluateResult evaluate(const hair_bsdf scattering, float3 wo, float3 wi) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  if (df::_hairScatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+  if (df::_hairScatterEvaluate(
+        &instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   return EvaluateResult();
 }
@@ -40,25 +41,29 @@ SampleResult sample(const hair_bsdf scattering, const float4 xi, float3 wo) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  const auto success = df::_hairScatterSample(&instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
+  const auto success = df::_hairScatterSample(
+    &instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
   return SampleResult(wi, f, pdfFwd, bool(success));
 }
 
 // A direction in the hair frame from the longitudinal angle `theta` and
 // the azimuth `phi` measured per the hair convention `atan2(w.z, w.y)`.
 @(pure)
-float3 hairDirection(const float theta, const float phi) = float3(#sin(theta), #cos(theta) * #cos(phi), #cos(theta) * #sin(phi));
+float3 hairDirection(const float theta, const float phi) =
+  float3(#sin(theta), #cos(theta) * #cos(phi), #cos(theta) * #sin(phi));
 
 // The value and the forward density integrated over the sphere of
 // incoming directions. Energy conservation is the first at most one, and
 // the density being a density is the second at exactly one.
 @(macro)
 double valueIntegral(const hair_bsdf scattering, const float3 wo) =
-  quadrature::integrateSphere(128, \(const float3 wi) = math::average(evaluate(scattering, wo, wi).f));
+  quadrature::integrateSphere(
+    128, \(const float3 wi) = math::average(evaluate(scattering, wo, wi).f));
 
 @(macro)
 double densityIntegral(const hair_bsdf scattering, const float3 wo) =
-  quadrature::integrateSphere(128, \(const float3 wi) = evaluate(scattering, wo, wi).pdf[0]);
+  quadrature::integrateSphere(
+    128, \(const float3 wi) = evaluate(scattering, wo, wi).pdf[0]);
 //--}
 
 unit_test "Bessel I0 matches the series and its log form is continuous" {
@@ -67,8 +72,10 @@ unit_test "Bessel I0 matches the series and its log form is continuous" {
   #assert(df::hair::bessel_i0(4.0) ~== |1e-2| 11.3019220);
   // Agreement of the log form across the asymptotic switch at 12. The
   // series is truncated at 10 terms, so the boundary agreement is loose.
-  #assert(df::hair::log_bessel_i0(11.99) ~== |1e-5| #log(df::hair::bessel_i0(11.99)));
-  #assert(df::hair::log_bessel_i0(12.01) ~== |5e-2| #log(df::hair::bessel_i0(12.01)));
+  #assert(df::hair::log_bessel_i0(11.99) ~== |1e-5| #log(
+    df::hair::bessel_i0(11.99)));
+  #assert(df::hair::log_bessel_i0(12.01) ~== |5e-2| #log(
+    df::hair::bessel_i0(12.01)));
   // An external pin of the asymptotic branch: `log(I0(20))`
   #assert(df::hair::log_bessel_i0(20.0) ~== |1e-2| 17.5896);
 }
@@ -117,8 +124,9 @@ unit_test "The trimmed logistic normalizes and its sampler inverts the CDF" {
     for (int i = 0; i < 5; i++) {
       const float xi = (i + 0.5) / 5.0;
       const float x = df::hair::trimmed_logistic_sample(xi, s, -$PI, $PI);
-      const float cdf = (df::hair::logistic_cdf(x, s) - df::hair::logistic_cdf(-$PI, s)) / //
-                        (df::hair::logistic_cdf($PI, s) - df::hair::logistic_cdf(-$PI, s));
+      const float cdf =
+        (df::hair::logistic_cdf(x, s) - df::hair::logistic_cdf(-$PI, s)) / //
+        (df::hair::logistic_cdf($PI, s) - df::hair::logistic_cdf(-$PI, s));
       #assert(cdf ~== |1e-4| xi);
     }
   }
@@ -130,7 +138,8 @@ unit_test "The four lobes carry all the energy at unit transmittance" {
     for (int j = 0; j < 5; j++) {
       const float cosThetao = math::lerp(0.05, 1.0, i / 4.0);
       const float cosGammao = math::lerp(0.05, 1.0, j / 4.0);
-      const float F = df::specular::dielectric_fresnel(cosThetao * cosGammao, 1.0 / 1.55);
+      const float F =
+        df::specular::dielectric_fresnel(cosThetao * cosGammao, 1.0 / 1.55);
       #assert(#sum(df::hair::attenuation(F, 1.0)) ~== |1e-5| 1.0);
     }
   }
@@ -145,28 +154,41 @@ unit_test "The four lobes carry all the energy at unit transmittance" {
 
 unit_test "The Fresnel term is oriented air to keratin" {
   // Air-to-keratin at normal incidence
-  #assert(df::specular::dielectric_fresnel(1.0, 1.0 / 1.55) ~== |1e-5| #pow(0.55 / 2.55, 2.0));
+  #assert(
+    df::specular::dielectric_fresnel(1.0, 1.0 / 1.55) ~== |1e-5| #pow(0.55 / 2.55, 2.0));
 }
 
 unit_test "Energy is conserved in a white furnace" {
   const auto wo = hairDirection(0.3, 1.2);
   // Moderate roughness, no absorption: the sphere integral of `f` is 1
-  #assert(valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3)), wo) ~== |2e-2d| 1.0d);
-  #assert(valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.2, 0.4), roughness_TT: float2(0.4, 0.3), roughness_TRT: float2(0.6, 0.5)), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3)), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.2, 0.4), roughness_TT: float2(0.4, 0.3), roughness_TRT: float2(0.6, 0.5)), wo) ~== |2e-2d| 1.0d);
   // The diffuse lobe preserves the furnace at unit tint
-  #assert(valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 0.5), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    valueIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 0.5), wo) ~== |2e-2d| 1.0d);
 }
 
 unit_test "The density integrates to one" {
   const auto wo = hairDirection(-0.4, 0.7);
-  #assert(densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3)), wo) ~== |2e-2d| 1.0d);
-  #assert(densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.4, 0.3), absorption_coefficient: 0.8), wo) ~== |2e-2d| 1.0d);
-  #assert(densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 0.5, diffuse_reflection_tint: 0.4), wo) ~== |2e-2d| 1.0d);
-  #assert(densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 1.0), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3)), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.4, 0.3), absorption_coefficient: 0.8), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 0.5, diffuse_reflection_tint: 0.4), wo) ~== |2e-2d| 1.0d);
+  #assert(
+    densityIntegral(df::chiang_hair_bsdf(roughness_R: float2(0.3), diffuse_reflection_weight: 1.0), wo) ~== |2e-2d| 1.0d);
 }
 
 unit_test "The forward and reverse densities swap" {
-  const auto h = df::chiang_hair_bsdf(roughness_R: float2(0.2, 0.3), roughness_TT: float2(0.1, 0.2), cuticle_angle: 0.05, absorption_coefficient: 0.4, diffuse_reflection_weight: 0.3);
+  const auto h = df::chiang_hair_bsdf(
+    roughness_R: float2(0.2, 0.3),
+    roughness_TT: float2(0.1, 0.2),
+    cuticle_angle: 0.05,
+    absorption_coefficient: 0.4,
+    diffuse_reflection_weight: 0.3);
   const auto wo0 = hairDirection(0.5, 2.1);
   const auto wi0 = hairDirection(-0.6, 0.4);
   const auto wo1 = hairDirection(-0.1, -1.7);
@@ -183,7 +205,10 @@ unit_test "Sampling agrees with the reported density" {
   // This exercises the `(0, 0)` roughness floor where the lobes are far
   // too sharp for grid integration.
   const auto smooth = df::chiang_hair_bsdf();
-  const auto rough = df::chiang_hair_bsdf(roughness_R: float2(0.1, 0.6), roughness_TT: float2(0.3, 0.2), roughness_TRT: float2(0.7, 0.4));
+  const auto rough = df::chiang_hair_bsdf(
+    roughness_R: float2(0.1, 0.6),
+    roughness_TT: float2(0.3, 0.2),
+    roughness_TRT: float2(0.7, 0.4));
   const auto wo = hairDirection(0.5, -2.0);
   auto xi = float4(0.19, 0.53, 0.83, 0.44);
   int accepted = 0;
@@ -207,14 +232,19 @@ unit_test "The sampler's histogram matches the density's mass" {
   // the reported density mass of the band, which catches any mismatch
   // between the sampler and the PDF that the `f / pdf` cancellation in
   // "Hair sample consistency" cannot see.
-  const auto h = df::chiang_hair_bsdf(roughness_R: float2(0.3, 0.5), roughness_TT: float2(0.2, 0.3), absorption_coefficient: 0.8, diffuse_reflection_weight: 0.25);
+  const auto h = df::chiang_hair_bsdf(
+    roughness_R: float2(0.3, 0.5),
+    roughness_TT: float2(0.2, 0.3),
+    absorption_coefficient: 0.8,
+    diffuse_reflection_weight: 0.25);
   const auto wo = hairDirection(0.4, 2.2);
   const int n = 128;
   double bandPdf = 0;
   double totalPdf = 0;
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      const auto wi = sampling::uniform_sphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+      const auto wi =
+        sampling::uniform_sphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
       const double pdf = evaluate(h, wo, wi).pdf[0];
       totalPdf += pdf;
       bandPdf += wi.x > 0.25 ? pdf : 0.0;
@@ -238,24 +268,34 @@ unit_test "The cuticle tilt shifts the peak and absorption kills the TT lobe" {
   const auto wo = hairDirection(thetao, $PI / 2); // gamma_o = 0
   // Cuticle tilt shifts the R peak by about `2 alpha`: heavy absorption
   // suppresses the transmitted lobes so R dominates
-  const auto noTilt = df::chiang_hair_bsdf(roughness_R: float2(0.05, 0.3), absorption_coefficient: 4.0);
-  const auto tilted = df::chiang_hair_bsdf(roughness_R: float2(0.05, 0.3), absorption_coefficient: 4.0, cuticle_angle: 0.1);
+  const auto noTilt = df::chiang_hair_bsdf(
+    roughness_R: float2(0.05, 0.3), absorption_coefficient: 4.0);
+  const auto tilted = df::chiang_hair_bsdf(
+    roughness_R: float2(0.05, 0.3),
+    absorption_coefficient: 4.0,
+    cuticle_angle: 0.1);
   const auto wiMirror = hairDirection(-thetao, $PI / 2);
   const auto wiShifted = hairDirection(-thetao - 0.2, $PI / 2);
-  #assert(math::average(evaluate(noTilt, wo, wiMirror).f) > math::average(evaluate(noTilt, wo, wiShifted).f));
-  #assert(math::average(evaluate(tilted, wo, wiShifted).f) > math::average(evaluate(tilted, wo, wiMirror).f));
+  #assert(math::average(evaluate(noTilt, wo, wiMirror).f) > math::average(
+    evaluate(noTilt, wo, wiShifted).f));
+  #assert(math::average(evaluate(tilted, wo, wiShifted).f) > math::average(
+    evaluate(tilted, wo, wiMirror).f));
   // Absorption kills transmission outright, while the mirror peak only
   // loses its TRT share: at `h = 0` the TRT lobe exits at exactly the R
   // azimuth, so the surviving fraction is the R share `F / (F + (1-F)^2 F)`,
   // about 0.52 here, rather than 1.
   const auto clear = df::chiang_hair_bsdf(roughness_R: float2(0.2, 0.4));
-  const auto dark = df::chiang_hair_bsdf(roughness_R: float2(0.2, 0.4), absorption_coefficient: color(2.0, 3.0, 4.0));
+  const auto dark = df::chiang_hair_bsdf(
+    roughness_R: float2(0.2, 0.4), absorption_coefficient: color(2.0, 3.0, 4.0));
   const auto wiTT = hairDirection(-thetao, $PI / 2 + $PI); // through the fiber
-  #assert(math::average(evaluate(dark, wo, wiTT).f) < 0.25 * math::average(evaluate(clear, wo, wiTT).f));
-  #assert(math::average(evaluate(dark, wo, wiMirror).f) > 0.4 * math::average(evaluate(clear, wo, wiMirror).f));
+  #assert(math::average(evaluate(dark, wo, wiTT).f) < 0.25 * math::average(
+    evaluate(clear, wo, wiTT).f));
+  #assert(math::average(evaluate(dark, wo, wiMirror).f) > 0.4 * math::average(
+    evaluate(clear, wo, wiMirror).f));
   // Tint scales the value and leaves the densities alone
   const auto base = df::chiang_hair_bsdf(roughness_R: float2(0.3, 0.3));
-  const auto tinted = df::tint(0.5, df::chiang_hair_bsdf(roughness_R: float2(0.3, 0.3)));
+  const auto tinted =
+    df::tint(0.5, df::chiang_hair_bsdf(roughness_R: float2(0.3, 0.3)));
   const auto wiAny = hairDirection(-0.1, 2.4);
   const auto rBase = evaluate(base, wo, wiAny);
   const auto rTint = evaluate(tinted, wo, wiAny);
@@ -269,7 +309,8 @@ unit_test "An along-axis direction culls and a downward one does not" {
   #assert(!evaluate(h, float3(1.0, 0.0, 0.0), hairDirection(0.1, 1.0)).success);
   #assert(!sample(h, float4(0.3, 0.4, 0.5, 0.6), float3(1.0, 0.0, 0.0)).success);
   // `wo.z < 0` is a legitimate configuration, not a backface hit
-  const auto below = evaluate(h, hairDirection(0.2, -$PI / 2), hairDirection(-0.3, 2.0));
+  const auto below =
+    evaluate(h, hairDirection(0.2, -$PI / 2), hairDirection(-0.3, 2.0));
   #assert(below.success);
   #assert(#any(below.f > 0.0));
 }

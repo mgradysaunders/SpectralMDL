@@ -24,7 +24,8 @@ const auto TILTED = float3(0.9, 0.0, 0.435889894);
 // The Lambertian value, which is the effective shading cosine over pi and so
 // reads the bent normal back out directly.
 float diffuseAt(const float3 normal, const float3 wo, const float3 wi) {
-  const auto result = scatter::evaluate(df::diffuse_reflection_bsdf(tint: 1.0), wo, wi, normal: normal);
+  const auto result = scatter::evaluate(
+    df::diffuse_reflection_bsdf(tint: 1.0), wo, wi, normal: normal);
   #assert(result.success);
   return math::average(result.f);
 }
@@ -45,7 +46,8 @@ unit_test "The bend recovers a view below the shading horizon" {
   const auto wo = float3(-0.9, 0.0, 0.436);
   const auto wi = float3(0.0, 0.0, 1.0);
   #assert(math::dot(TILTED, wo) < 0.0); // Else the test is vacuous
-  const auto result = scatter::evaluate(df::diffuse_reflection_bsdf(tint: 1.0), wo, wi, normal: TILTED);
+  const auto result = scatter::evaluate(
+    df::diffuse_reflection_bsdf(tint: 1.0), wo, wi, normal: TILTED);
   #assert(result.success);
   #assert(#all(result.f > 0.0));
   #assert(#all(result.pdf > 0.0));
@@ -57,7 +59,8 @@ unit_test "The bend recovers a transmitted direction" {
   const auto wo = float3(0.0, 0.0, 1.0);
   const auto wi = float3(0.9, 0.0, -0.436);
   #assert(math::dot(TILTED, wi) > 0.0); // Else the test is vacuous
-  const auto result = scatter::evaluate(df::diffuse_transmission_bsdf(tint: 1.0), wo, wi, normal: TILTED);
+  const auto result = scatter::evaluate(
+    df::diffuse_transmission_bsdf(tint: 1.0), wo, wi, normal: TILTED);
   #assert(result.success);
   #assert(#all(result.f > 0.0));
   #assert(#all(result.pdf > 0.0));
@@ -97,13 +100,15 @@ unit_test "The bend stays reciprocal" {
   // orderings differently and break every one of these.
   const auto wo = float3(-0.9, 0.0, 0.436);
   const auto wi = math::normalize(float3(0.2, -0.1, 1.0));
-  const auto scattering = df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, tint: 1.0);
+  const auto scattering =
+    df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, tint: 1.0);
   #assert(math::dot(TILTED, wo) < 0.0); // Else the bend never engages
   // The value is cosine weighted by the incoming direction, so reciprocity
   // reads out through the shading normal correction factor that importance
   // transport carries. Relative tolerances, because the densities here are
   // large.
-  scatter::checkBidirectionalConsistency(scattering, wo, wi, TILTED, absTol: 0.0, relTol: 1e-4);
+  scatter::checkBidirectionalConsistency(
+    scattering, wo, wi, TILTED, absTol: 0.0, relTol: 1e-4);
 }
 
 unit_test "The bend covers a layer's own normal" {
@@ -117,7 +122,8 @@ unit_test "The bend covers a layer's own normal" {
   #assert(math::dot(TILTED, wo) < 0.0); // Else the test is vacuous
   const auto layered = df::fresnel_layer(
     ior: 1.5,
-    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, multiscatter_tint: 1.0),
+    layer: df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.5, multiscatter_tint: 1.0),
     base: df::diffuse_reflection_bsdf(tint: 1.0),
     normal: TILTED);
   const auto result = scatter::evaluate(layered, wo, wi, normal: TILTED);
@@ -126,7 +132,11 @@ unit_test "The bend covers a layer's own normal" {
   #assert(#all(result.pdf > 0.0));
   // Nesting a layer under a layer, which is what a foliage material does,
   // must not reintroduce it either.
-  const auto nested = df::weighted_layer(weight: 0.7, layer: layered, base: df::diffuse_transmission_bsdf(tint: 1.0), normal: TILTED);
+  const auto nested = df::weighted_layer(
+    weight: 0.7,
+    layer: layered,
+    base: df::diffuse_transmission_bsdf(tint: 1.0),
+    normal: TILTED);
   const auto nestedResult = scatter::evaluate(nested, wo, wi, normal: TILTED);
   #assert(nestedResult.success);
   #assert(#all(nestedResult.f > 0.0));
@@ -161,7 +171,8 @@ unit_test "A defaulted layer normal follows the material geometry normal" {
   // which is what the geometry normal was remapped away from.
   const auto pinned = df::weighted_layer(
     weight: 0.6,
-    layer: df::fresnel_layer(ior: 1.5, layer: leaf, base: base, normal: $state.normal),
+    layer: df::fresnel_layer(
+      ior: 1.5, layer: leaf, base: base, normal: $state.normal),
     base: base,
     normal: $state.normal);
   const auto c = scatter::evaluate(pinned, wo, wi, normal: TILTED);
@@ -181,8 +192,7 @@ unit_test "A micrograin layer samples its base in the inherited frame" {
   const auto s = scatter::sample(
     df::micrograin_layer(
       filling_factor: 0.05, // Small, so the pores dominate the selection
-      base: df::specular_bsdf(mode: df::scatter_reflect),
-      normal: TILTED),
+      base: df::specular_bsdf(mode: df::scatter_reflect), normal: TILTED),
     float4(0.3, 0.7, 0.05, 0.5), // xi.z low: take the base branch
     wo);
   #assert(s.success);
@@ -218,13 +228,17 @@ unit_test "The bend recovers sampling below the shading horizon" {
 unit_test "The normal density agrees with the normal sample" {
   // Two glossy lobes of different roughness under a layer, so the reported
   // density is a mixture and not one leaf's own.
-  const auto rough = df::microfacet_ggx_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 0.9);
-  const auto smooth = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.25, roughness_v: 0.25, tint: 0.9);
-  const auto layered = df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
+  const auto rough =
+    df::microfacet_ggx_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 0.9);
+  const auto smooth = df::microfacet_beckmann_smith_bsdf(
+    roughness_u: 0.25, roughness_v: 0.25, tint: 0.9);
+  const auto layered =
+    df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
   int seenSmooth = 0;
   int seenRough = 0;
   for (int i = 0; i < 16; i++) {
-    const auto xi = float4((i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
+    const auto xi = float4(
+      (i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
     const auto r = scatter::normalSample(layered, xi);
     #assert(r.success);
     #assert(r.pdf > 0.0);
@@ -251,20 +265,35 @@ unit_test "The normal density agrees with the normal sample" {
 }
 
 unit_test "The normal density integrates to one" {
-  scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
-  scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0, mode: df::scatter_reflect_transmit));
-  scatter::checkNormalDensityIntegral(df::microfacet_ggx_vcavities_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
-  scatter::checkNormalDensityIntegral(df::microfacet_beckmann_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
-  scatter::checkNormalDensityIntegral(df::simple_glossy_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
-  scatter::checkNormalDensityIntegral(df::ward_geisler_moroder_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.5,
+    roughness_v: 0.5,
+    tint: 1.0,
+    mode: df::scatter_reflect_transmit));
+  scatter::checkNormalDensityIntegral(df::microfacet_ggx_vcavities_bsdf(
+    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  scatter::checkNormalDensityIntegral(df::microfacet_beckmann_smith_bsdf(
+    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  scatter::checkNormalDensityIntegral(df::simple_glossy_bsdf(
+    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  scatter::checkNormalDensityIntegral(df::ward_geisler_moroder_bsdf(
+    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
   // And a mixture, where the density is the mixture's rather than a leaf's.
   scatter::checkNormalDensityIntegral(df::weighted_layer(
     weight: 0.4,
-    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
-    base: df::microfacet_beckmann_smith_bsdf(roughness_u: 0.7, roughness_v: 0.7, tint: 1.0)));
+    layer: df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    base: df::microfacet_beckmann_smith_bsdf(
+      roughness_u: 0.7, roughness_v: 0.7, tint: 1.0)));
   scatter::checkNormalDensityIntegral(df::normalized_mix(df::bsdf_component[2](
-    df::bsdf_component(weight: 0.3, component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0)),
-    df::bsdf_component(weight: 0.7, component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))));
+    df::bsdf_component(
+      weight: 0.3,
+      component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0)),
+    df::bsdf_component(
+      weight: 0.7,
+      component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))));
 }
 
 // The proposal is the distribution ITSELF and not the visible part of it.
@@ -274,13 +303,15 @@ unit_test "The normal density integrates to one" {
 unit_test "The reported distribution is the plain one, not the visible one" {
   const auto wm = math::normalize(float3(0.12, -0.09, 0.99));
   const auto alpha = float2(0.45 * 0.45);
-  const auto ggx = df::microfacet_ggx_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
-  const auto beckmann = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  const auto ggx = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  const auto beckmann = df::microfacet_beckmann_smith_bsdf(
+    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
   // `D(wm) cos(theta_m)` is the distribution's own solid-angle density.
-  #assert(scatter::normalEvaluate(ggx, wm) ~== |1e-4|
-          df::microfacet::smith_normal_pdf(df::microfacet::ggx(), alpha, wm) * wm.z);
-  #assert(scatter::normalEvaluate(beckmann, wm) ~== |1e-4|
-          df::microfacet::smith_normal_pdf(df::microfacet::beckmann(), alpha, wm) * wm.z);
+  #assert(
+    scatter::normalEvaluate(ggx, wm) ~== |1e-4| df::microfacet::smith_normal_pdf(df::microfacet::ggx(), alpha, wm) * wm.z);
+  #assert(
+    scatter::normalEvaluate(beckmann, wm) ~== |1e-4| df::microfacet::smith_normal_pdf(df::microfacet::beckmann(), alpha, wm) * wm.z);
 }
 
 // Nothing without a normal distribution answers, whatever the mask says, and
@@ -288,31 +319,44 @@ unit_test "The reported distribution is the plain one, not the visible one" {
 unit_test "Only a lobe with a distribution behind it answers" {
   const auto xi = float4(0.3, 0.7, 0.5, 0.5);
   // A reflection-only glossy lobe has nothing transmissive to offer.
-  const auto glossyReflect = df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.9);
+  const auto glossyReflect =
+    df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.9);
   #assert(scatter::normalSample(glossyReflect, xi).success);
-  #assert(!scatter::normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSSY_BTDF).success);
+  #assert(
+    !scatter::normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSSY_BTDF).success);
   // Neither does a Dirac lobe, nor a diffuse one, at any mask: the promise is
   // attached to `DF_GLOSSY` and nothing else makes it.
-  #assert(!scatter::normalSample(df::specular_bsdf(mode: df::scatter_reflect_transmit), xi, lobeMask: df::DF_ALL).success);
-  #assert(!scatter::normalSample(df::diffuse_reflection_bsdf(tint: 0.7), xi, lobeMask: df::DF_ALL).success);
-  #assert(!scatter::normalSample(df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, lobeMask: df::DF_ALL).success);
+  #assert(!scatter::normalSample(
+    df::specular_bsdf(mode: df::scatter_reflect_transmit),
+    xi,
+    lobeMask: df::DF_ALL).success);
+  #assert(!scatter::normalSample(
+    df::diffuse_reflection_bsdf(tint: 0.7), xi, lobeMask: df::DF_ALL).success);
+  #assert(!scatter::normalSample(
+    df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, lobeMask: df::DF_ALL).success);
   // Nor the micrograin layer, which declares SMOOTH precisely so that it
   // does not: its base is what answers here.
   const auto dusted = df::micrograin_layer(
     filling_factor: 0.4, grain_diffuse_albedo: color(0.5), base: glossyReflect);
   #assert(scatter::normalSample(dusted, xi).success);
-  #assert(!scatter::normalSample(df::micrograin_layer(
-    filling_factor: 0.4, grain_diffuse_albedo: color(0.5),
-    base: df::diffuse_reflection_bsdf(tint: 0.7)), xi, lobeMask: df::DF_ALL).success);
+  #assert(!scatter::normalSample(
+    df::micrograin_layer(
+      filling_factor: 0.4,
+      grain_diffuse_albedo: color(0.5),
+      base: df::diffuse_reflection_bsdf(tint: 0.7)),
+    xi,
+    lobeMask: df::DF_ALL).success);
   // A mask naming nothing selects nothing, as everywhere else.
   #assert(!scatter::normalSample(glossyReflect, xi, lobeMask: 0).success);
-  #assert(scatter::normalEvaluate(glossyReflect, float3(0, 0, 1), lobeMask: 0) == 0.0);
+  #assert(
+    scatter::normalEvaluate(glossyReflect, float3(0, 0, 1), lobeMask: 0) == 0.0);
   // A backface query reports a normal on the requested side, so the
   // caller never has to transform anything across.
   const auto back = scatter::normalSample(glossyReflect, xi, backface: true);
   #assert(back.success);
   #assert(back.wm.z < 0.0);
-  #assert(scatter::normalEvaluate(glossyReflect, back.wm, backface: true) ~== |1e-5| back.pdf);
+  #assert(
+    scatter::normalEvaluate(glossyReflect, back.wm, backface: true) ~== |1e-5| back.pdf);
 }
 
 // A layer's own `normal:` tilts the frame its lobe reports in, and the
@@ -321,14 +365,18 @@ unit_test "Only a lobe with a distribution behind it answers" {
 // horizon of the natural frame.
 unit_test "The normal density integrates to one under a tilted layer normal" {
   const auto scattering = df::weighted_layer(
-    weight: 0.5, normal: math::normalize(float3(0.25, -0.15, 0.96)),
-    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
-    base: df::microfacet_beckmann_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 1.0));
+    weight: 0.5,
+    normal: math::normalize(float3(0.25, -0.15, 0.96)),
+    layer: df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    base: df::microfacet_beckmann_smith_bsdf(
+      roughness_u: 0.6, roughness_v: 0.6, tint: 1.0));
   const int n = 400;
   double integral = 0;
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      const auto wm = sampling::uniform_hemisphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+      const auto wm = sampling::uniform_hemisphere_sample(float2(
+        (i + 0.5) / n, (j + 0.5) / n));
       integral += scatter::normalEvaluate(scattering, wm);
       integral += scatter::normalEvaluate(scattering, wm * float3(1, 1, -1));
     }
@@ -350,7 +398,8 @@ unit_test "A specular Dirac weight carries the shading normal correction" {
     #assert(imp.success && imp.isDirac);
     #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(#all(rad.f ~== |1e-6| color(1.0)));
-    const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
+    const auto corr =
+      #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
     #assert(#all(imp.f ~== |1e-5| color(corr)));
     // With the default shading normal the correction must be the identity.
     const auto impDefault = scatter::sample(bsdfR, xi, wo, true);
@@ -367,7 +416,8 @@ unit_test "A specular Dirac weight carries the shading normal correction" {
     #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(rad.wi.z < 0.0);
     #assert(#all(rad.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4)))); // MaterialDef IOR defaults to 1.4
-    const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
+    const auto corr =
+      #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
     #assert(#all(imp.f ~== |1e-5| color(corr)));
   }
 }

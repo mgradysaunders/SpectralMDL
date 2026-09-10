@@ -75,12 +75,18 @@ unit_test "A private overload does not leak across modules" {
 // `export` gates access to a namespace member across module boundaries
 // only. Within the declaring module, qualified access works without it.
 namespace local {
-  const int hidden = 5;
-  export const int shown = 6;
-  namespace inner {
-    const int deep = 7;
-  }
-}
+
+const int hidden = 5;
+
+export const int shown = 6;
+
+namespace inner {
+
+const int deep = 7;
+
+} // namespace inner
+
+} // namespace local
 
 unit_test "export gates a namespace member across modules, not within one" {
   #assert(local::shown == 6);

@@ -15,8 +15,10 @@ unit_test "The EON model conserves energy in a white furnace" {
   for (int k = 0; k < 3; k++) {
     const auto r = float(0.25 + 0.375 * k);
     const auto b = df::diffuse_reflection_bsdf(tint: 1.0, roughness: r);
-    const auto E0 = scatter::furnaceIntegral(b, math::normalize(float3(0.1, 0.2, 0.97)));
-    const auto E1 = scatter::furnaceIntegral(b, math::normalize(float3(0.8, 0.1, 0.35)));
+    const auto E0 =
+      scatter::furnaceIntegral(b, math::normalize(float3(0.1, 0.2, 0.97)));
+    const auto E1 =
+      scatter::furnaceIntegral(b, math::normalize(float3(0.8, 0.1, 0.35)));
     #assert((0.97 < E0) & (E0 < 1.03));
     #assert((0.97 < E1) & (E1 < 1.03));
   }
@@ -36,12 +38,16 @@ unit_test "The LTC sheen fit conserves energy and matches its acceptance" {
     #assert((0.0 <= E1) & (E1 < 1.02));
   }
   // With full multiscatter compensation the total stays near or below 1.
-  const auto EMS = scatter::furnaceIntegral(df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 1.0), wo);
+  const auto EMS = scatter::furnaceIntegral(
+    df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 1.0), wo);
   #assert((0.2 < EMS) & (EMS < 1.05));
   // The LTC sampling densities must match the sampling routine, including
   // the cosine fallback where the fit degenerates and the multiscatter
   // sampling chance.
-  scatter::checkDensityAgainstAcceptance(df::sheen_bsdf(tint: 1.0, roughness: 0.3), wo, 1.0);
-  scatter::checkDensityAgainstAcceptance(df::sheen_bsdf(tint: 1.0, roughness: 0.8), woG, 1.0);
-  scatter::checkDensityAgainstAcceptance(df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 0.8), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(
+    df::sheen_bsdf(tint: 1.0, roughness: 0.3), wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(
+    df::sheen_bsdf(tint: 1.0, roughness: 0.8), woG, 1.0);
+  scatter::checkDensityAgainstAcceptance(
+    df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 0.8), wo, 1.0);
 }

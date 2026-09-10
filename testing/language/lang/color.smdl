@@ -17,14 +17,14 @@
 
 import ::math::*;
 
-
 // A wavelength base from 300 nm to 14 um on a log scale: one band below
 // the primaries' table, a few in the visible, and the rest in the SWIR
 // and LWIR.
 float[$WAVELENGTH_BASE_MAX] wideBase() {
   float[$WAVELENGTH_BASE_MAX] ws;
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const float t = $WAVELENGTH_BASE_MAX > 1 ? float(i) / ($WAVELENGTH_BASE_MAX - 1) : 0.5;
+    const float t =
+      $WAVELENGTH_BASE_MAX > 1 ? float(i) / ($WAVELENGTH_BASE_MAX - 1) : 0.5;
     ws[i] = 300.0 * math::pow(14000.0 / 300.0, t);
   }
   return ws;
@@ -52,7 +52,8 @@ unit_test "The primaries partition unity from 300 nm to 14 um" {
   auto ws = wideBase();
   preserve $state.wavelengthBase;
   $state.wavelengthBase = &ws[0];
-  const color sum = color(1.0, 0.0, 0.0) + color(0.0, 1.0, 0.0) + color(0.0, 0.0, 1.0);
+  const color sum =
+    color(1.0, 0.0, 0.0) + color(0.0, 1.0, 0.0) + color(0.0, 0.0, 1.0);
   const color white = color(1.0, 1.0, 1.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     #assert(math::abs(sum[i] - 1.0) < 1e-6);
@@ -145,10 +146,12 @@ unit_test "Each primary peaks in its own band" {
   #assert(convertAt(green, 650.0) < 0.1);
   // Between tabulated wavelengths the lookup interpolates linearly.
   const float mid = convertAt(red, 602.5);
-  #assert(math::abs(mid - 0.5 * (convertAt(red, 600.0) + convertAt(red, 605.0))) < 1e-6);
+  #assert(
+    math::abs(mid - 0.5 * (convertAt(red, 600.0) + convertAt(red, 605.0))) < 1e-6);
 }
 
 unit_test "The runner's base is restored" {
   #assert($state.wavelengthBase[0] == $state.wavelengthMin);
-  #assert($state.wavelengthBase[$WAVELENGTH_BASE_MAX - 1] == $state.wavelengthMax);
+  #assert(
+    $state.wavelengthBase[$WAVELENGTH_BASE_MAX - 1] == $state.wavelengthMax);
 }

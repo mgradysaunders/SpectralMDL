@@ -156,13 +156,11 @@ unit_test "Switch cases are separate scopes" {
   // Fallthrough control flow still works.
   int n = 0;
   switch (probe::opaque(1)) {
-  case 1:
-    n += 1;
+  case 1: n += 1;
   case 2:
     n += 2;
     break;
-  default:
-    n += 100;
+  default: n += 100;
   }
   #assert(n == 3);
   // A case-local defer runs when the case falls through (scope exit).

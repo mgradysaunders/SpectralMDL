@@ -24,7 +24,8 @@ EmissionResult evaluate(&material mat, const float3 wi) {
   float pdf = 0;
   color Le = color(0);
   float3 wiCopy = wi;
-  const bool isNonZero = bool(df::_emissionEvaluate(&instance, &wiCopy, &pdf, cast<&float>(&Le)));
+  const bool isNonZero =
+    bool(df::_emissionEvaluate(&instance, &wiCopy, &pdf, cast<&float>(&Le)));
   return EmissionResult(Le, pdf, isNonZero);
 }
 
@@ -44,12 +45,14 @@ EmissionSample sample(&material mat, const float4 xi) {
   float3 wi = float3(0);
   float pdf = 0;
   color Le = color(0);
-  const bool isNonZero = bool(df::_emissionSample(&instance, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
+  const bool isNonZero =
+    bool(df::_emissionSample(&instance, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
   return EmissionSample(wi, Le, pdf, isNonZero);
 }
 
 material diffuseEmitter(const auto intensity) = material(
-  surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: intensity)),
+  surface: material_surface(emission: material_emission(
+    emission: df::diffuse_edf(), intensity: intensity)),
 );
 
 // The diffuse EDF is constant radiance `intensity / π` with
@@ -75,15 +78,16 @@ float exitanceQuadrature(&material mat, const int n) {
 // intensity, which exercises the consistency of the sampled directions
 // and the reported PDF end-to-end.
 @(macro)
-float exitanceEstimate(&material mat, const bool bothSides = false) =
-  float(quadrature::meanOverLowDiscrepancy(4096, float4(0.1, 0.2, 0.3, 0.4), \(const float4 xi) {
-    const auto s = sample(mat, xi);
-    if (s.isNonZero) {
-      #assert(bothSides | (s.wi.z > 0.0));
-      return s.Le[0] * #abs(s.wi.z) / s.pdf;
-    }
-    return 0.0;
-  }));
+float exitanceEstimate(&material mat, const bool bothSides = false) = float(
+  quadrature::meanOverLowDiscrepancy(
+    4096, float4(0.1, 0.2, 0.3, 0.4), \(const float4 xi) {
+      const auto s = sample(mat, xi);
+      if (s.isNonZero) {
+        #assert(bothSides | (s.wi.z > 0.0));
+        return s.Le[0] * #abs(s.wi.z) / s.pdf;
+      }
+      return 0.0;
+    }));
 
 unit_test "The diffuse EDF is the intensity over pi" {
   auto mat = diffuseEmitter(3.0);
@@ -118,7 +122,8 @@ unit_test "A solid material emits nothing from its backface" {
 // The default `edf()` means no emission, even with a nonzero intensity.
 unit_test "The default EDF emits nothing at any intensity" {
   auto mat0 = material();
-  auto mat1 = material(surface: material_surface(emission: material_emission(intensity: 100.0)));
+  auto mat1 = material(surface: material_surface(
+    emission: material_emission(intensity: 100.0)));
   #assert(!evaluate(&mat0, float3(0.0, 0.0, 1.0)).isNonZero);
   #assert(!evaluate(&mat1, float3(0.0, 0.0, 1.0)).isNonZero);
   #assert(!sample(&mat0, float4(0.3, 0.4, 0.5, 0.6)).isNonZero);
@@ -131,7 +136,8 @@ unit_test "The default EDF emits nothing at any intensity" {
 unit_test "A thin-walled backface mirrors the surface EDF by default" {
   auto mat = material(
     thin_walled: true,
-    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+    surface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 3.0)),
   );
   const auto wiFront = normalize(float3(0.5, 0.0, 0.8));
   const auto wiBack = normalize(float3(0.5, 0.0, -0.8));
@@ -151,8 +157,10 @@ unit_test "A thin-walled backface mirrors the surface EDF by default" {
 unit_test "A thin-walled backface takes its own EDF" {
   auto mat = material(
     thin_walled: true,
-    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
-    backface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 1.0)),
+    surface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 3.0)),
+    backface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 1.0)),
   );
   const auto wiFront = normalize(float3(0.5, 0.0, 0.8));
   const auto wiBack = normalize(float3(0.5, 0.0, -0.8));
@@ -169,7 +177,8 @@ unit_test "A thin-walled backface takes its own EDF" {
   // black and the front side chance at 1.
   auto matBackNoEmission = material(
     thin_walled: true,
-    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+    surface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 3.0)),
     backface: material_surface(scattering: df::diffuse_reflection_bsdf()),
   );
   #assert(!evaluate(&matBackNoEmission, wiBack).isNonZero);
@@ -181,7 +190,8 @@ unit_test "A thin-walled backface takes its own EDF" {
 // than cosine-weighted sampling.
 unit_test "A spot EDF at exponent zero is uniform" {
   auto mat = material(
-    surface: material_surface(emission: material_emission(emission: df::spot_edf(exponent: 0.0), intensity: 3.0)),
+    surface: material_surface(emission: material_emission(
+      emission: df::spot_edf(exponent: 0.0), intensity: 3.0)),
   );
   const auto wi = normalize(float3(0.5, 0.0, 0.8));
   const auto result = evaluate(&mat, wi);
@@ -217,7 +227,8 @@ unit_test "The sampled exitance reproduces the intensity" {
   // keeps it tight.
   auto matSpot = material(
     surface: material_surface(
-      emission: material_emission(emission: df::spot_edf(exponent: 4.0, spread: 1.2), intensity: 3.0),
+      emission: material_emission(
+        emission: df::spot_edf(exponent: 4.0, spread: 1.2), intensity: 3.0),
     ),
   );
   #assert(exitanceEstimate(&matSpot) ~== |0.05| 3.0);
@@ -226,7 +237,8 @@ unit_test "The sampled exitance reproduces the intensity" {
   // the full-sphere estimate is twice the intensity.
   auto matTwoSided = material(
     thin_walled: true,
-    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+    surface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 3.0)),
   );
   #assert(exitanceEstimate(&matTwoSided, bothSides: true) ~== |1e-3| 6.0);
 }
@@ -237,9 +249,11 @@ unit_test "Sampling agrees with evaluation" {
   auto mat = material(
     thin_walled: true,
     surface: material_surface(
-      emission: material_emission(emission: df::spot_edf(exponent: 2.0, spread: 2.0), intensity: 3.0),
+      emission: material_emission(
+        emission: df::spot_edf(exponent: 2.0, spread: 2.0), intensity: 3.0),
     ),
-    backface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 1.0)),
+    backface: material_surface(emission: material_emission(
+      emission: df::diffuse_edf(), intensity: 1.0)),
   );
   float4 xi = float4(0.1, 0.2, 0.3, 0.4);
   int numBack = 0;
@@ -263,7 +277,8 @@ unit_test "Sampling agrees with evaluation" {
 unit_test "A tint scales the radiance and a mix combines by weight" {
   auto matTint = material(
     surface: material_surface(
-      emission: material_emission(emission: df::tint(0.5, df::diffuse_edf()), intensity: 3.0),
+      emission: material_emission(
+        emission: df::tint(0.5, df::diffuse_edf()), intensity: 3.0),
     ),
   );
   const auto wi = normalize(float3(0.5, 0.0, 0.8));
@@ -298,7 +313,8 @@ unit_test "The emission flags and modes reach the material instance" {
   const int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
   auto mat = material(
     surface: material_surface(
-      emission: material_emission(emission: df::diffuse_edf(), intensity: 5.0, mode: intensity_power),
+      emission: material_emission(
+        emission: df::diffuse_edf(), intensity: 5.0, mode: intensity_power),
     ),
   );
   auto instance = _MaterialEval(&mat);
@@ -325,7 +341,8 @@ unit_test "An isotropic light profile is uniform over the hemisphere" {
   auto mat = material(
     surface: material_surface(
       emission: material_emission(
-        emission: df::measured_edf(profile: light_profile("isotropic.ies"), multiplier: 2.0),
+        emission: df::measured_edf(
+          profile: light_profile("isotropic.ies"), multiplier: 2.0),
         intensity: 3.0,
       ),
     ),
@@ -348,13 +365,16 @@ unit_test "An isotropic light profile is uniform over the hemisphere" {
 unit_test "A measured profile interpolates linearly in angle" {
   auto mat = material(
     surface: material_surface(
-      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 1.0),
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("axial.ies")),
+        intensity: 1.0),
     ),
   );
   #assert(evaluate(&mat, float3(0.0, 0.0, 1.0)).Le[0] ~== |1e-4| 1.0);
   #assert(evaluate(&mat, normalize(float3(1.0, 0.0, 1.0))).Le[0] ~== |1e-4| 0.8);
   const float theta = $PI / 3.0; // 60 degrees interpolates 45..90
-  #assert(evaluate(&mat, float3(#sin(theta), 0.0, #cos(theta))).Le[0] ~== |1e-3| 0.8 + (0.6 - 0.8) / 3.0);
+  #assert(
+    evaluate(&mat, float3(#sin(theta), 0.0, #cos(theta))).Le[0] ~== |1e-3| 0.8 + (0.6 - 0.8) / 3.0);
 }
 
 // The horizontal angle of the profile is oriented by `tangent_u`.
@@ -362,13 +382,17 @@ unit_test "A measured profile rotates with the tangent frame" {
   const auto wi = normalize(float3(1.0, 0.0, 1.0)); // vert 45, horz 0 from +X
   auto mat0 = material(
     surface: material_surface(
-      emission: material_emission(emission: df::measured_edf(profile: light_profile("quadrant.ies")), intensity: 1.0),
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("quadrant.ies")),
+        intensity: 1.0),
     ),
   );
   auto mat1 = material(
     surface: material_surface(
       emission: material_emission(
-        emission: df::measured_edf(profile: light_profile("quadrant.ies"), tangent_u: float3(0.0, 1.0, 0.0)),
+        emission: df::measured_edf(
+          profile: light_profile("quadrant.ies"),
+          tangent_u: float3(0.0, 1.0, 0.0)),
         intensity: 1.0,
       ),
     ),
@@ -386,7 +410,9 @@ unit_test "A measured profile rotates with the tangent frame" {
 unit_test "The sampled exitance of a measured profile matches its quadrature" {
   auto mat = material(
     surface: material_surface(
-      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 3.0),
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("axial.ies")),
+        intensity: 3.0),
     ),
   );
   #assert(exitanceEstimate(&mat) ~== (0.02) exitanceQuadrature(&mat, 1024));
@@ -397,7 +423,9 @@ unit_test "The sampled exitance of a measured profile matches its quadrature" {
 unit_test "Sampling a measured profile agrees with evaluating it" {
   auto mat = material(
     surface: material_surface(
-      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 3.0),
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("axial.ies")),
+        intensity: 3.0),
     ),
   );
   float4 xi = float4(0.1, 0.2, 0.3, 0.4);

@@ -71,7 +71,8 @@ struct CtorPrecedence {
   // The parameter name 'value' deliberately collides with the field name,
   // so 'CtorPrecedence(value: ...)' resolves both as this constructor and
   // as field-wise construction. Explicit constructors are applied first!
-  CtorPrecedence(const int value) = CtorPrecedence(fieldWise: false, value: 10 * value);
+  CtorPrecedence(const int value) =
+    CtorPrecedence(fieldWise: false, value: 10 * value);
 
   bool fieldWise = true;
 
@@ -264,8 +265,8 @@ unit_test "Two arms that disagree on a constant field demote it to storage" {
   #assert(m.r2 == 0.0625);
   #assert(m.mut == 0.0);
   // Arms agreeing on the constants keep them baked.
-  auto m2 = cond ? Wrap(payload: 1, r: 0.25, mut: 1.0)
-                 : Wrap(payload: 1, r: 0.25, mut: 2.0);
+  auto m2 = cond ? Wrap(payload: 1, r: 0.25, mut: 1.0) : Wrap(
+    payload: 1, r: 0.25, mut: 2.0);
   #assert(#typeOf(m2) == #typeOf(Wrap(payload: 1, r: 0.25)));
   #assert(m2.r == 0.25);
   #assert(m2.mut == 1.0);
@@ -307,19 +308,30 @@ unit_test "A comptime union field eliminates entirely" {
 // matter here: any permutation of the arguments gives a different answer,
 // so the equivalence below is a real claim about the expansion.
 @(pure)
-color eleven(const float p0, const float p1, const float p2, const float p3,
-             const float p4, const float p5, const float p6, const float p7,
-             const float p8, const float p9, const float p10) =
-  color(p0 + 2.0 * p1 + 3.0 * p2 + 5.0 * p3 + 7.0 * p4 + 11.0 * p5 +
-        13.0 * p6 + 17.0 * p7 + 19.0 * p8 + 23.0 * p9 + 29.0 * p10);
+color eleven(
+  const float p0,
+  const float p1,
+  const float p2,
+  const float p3,
+  const float p4,
+  const float p5,
+  const float p6,
+  const float p7,
+  const float p8,
+  const float p9,
+  const float p10) = color(
+  p0 + 2.0 * p1 + 3.0 * p2 + 5.0 * p3 + 7.0 * p4 + 11.0 * p5 + 13.0 * p6 + 17.0 * p7 + 19.0 * p8 + 23.0 * p9 + 29.0 * p10);
 
-const auto SOIL_A = auto(0.51, 0.57, 0.63, 0.55, 0.19, 0.05, 0.34, 0.04, 1.0, 0.25, 0.0);
-const auto SOIL_B = auto(0.32, 0.82, 0.51, 0.57, 0.90, 0.06, 0.12, 0.00, 0.0, 0.16, 0.8);
+const auto SOIL_A =
+  auto(0.51, 0.57, 0.63, 0.55, 0.19, 0.05, 0.34, 0.04, 1.0, 0.25, 0.0);
+const auto SOIL_B =
+  auto(0.32, 0.82, 0.51, 0.57, 0.90, 0.06, 0.12, 0.00, 0.0, 0.16, 0.8);
 
 // A small helper whose parameters are distinguishable by position, with a
 // trailing defaulted parameter to exercise inline-then-named call shapes.
-float weighted(const float a, const float b, const float c,
-               const float scale = 1.0) = scale * (a + 2.0 * b + 3.0 * c);
+float weighted(
+  const float a, const float b, const float c, const float scale = 1.0) =
+  scale * (a + 2.0 * b + 3.0 * c);
 
 // Structs for the named expansion: 'Shuffled' declares the same field names
 // as 'weighted's parameters but in a different order, so only name-driven
@@ -339,8 +351,17 @@ unit_test "An inline vector argument expands positionally" {
   // bit-for-bit.
   const auto viaInline = eleven(inline SOIL_A);
   const auto viaManual = eleven(
-    SOIL_A[0], SOIL_A[1], SOIL_A[2], SOIL_A[3], SOIL_A[4], SOIL_A[5],
-    SOIL_A[6], SOIL_A[7], SOIL_A[8], SOIL_A[9], SOIL_A[10]);
+    SOIL_A[0],
+    SOIL_A[1],
+    SOIL_A[2],
+    SOIL_A[3],
+    SOIL_A[4],
+    SOIL_A[5],
+    SOIL_A[6],
+    SOIL_A[7],
+    SOIL_A[8],
+    SOIL_A[9],
+    SOIL_A[10]);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
     #assert(viaInline[i] == viaManual[i]);
 
@@ -349,8 +370,17 @@ unit_test "An inline vector argument expands positionally" {
     const auto mixed = math::lerp(SOIL_A, SOIL_B, 0.25 * k);
     const auto m0 = eleven(inline mixed);
     const auto m1 = eleven(
-      mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed[5],
-      mixed[6], mixed[7], mixed[8], mixed[9], mixed[10]);
+      mixed[0],
+      mixed[1],
+      mixed[2],
+      mixed[3],
+      mixed[4],
+      mixed[5],
+      mixed[6],
+      mixed[7],
+      mixed[8],
+      mixed[9],
+      mixed[10]);
     for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
       #assert(m0[i] == m1[i]);
   }

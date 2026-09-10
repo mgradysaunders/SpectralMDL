@@ -40,7 +40,8 @@ float clobberArray(float[24] w) {
 }
 
 @(pure noinline)
-float sumStruct(const BigStruct v) = #sum(v.a) + #sum(v.b) + #sum(v.c) + #sum(v.d) + #sum(v.e);
+float sumStruct(const BigStruct v) =
+  #sum(v.a) + #sum(v.b) + #sum(v.c) + #sum(v.d) + #sum(v.e);
 
 @(pure noinline)
 BigStruct clobberStruct(BigStruct v) {
@@ -109,14 +110,24 @@ unit_test "A large aggregate passes by pointer and arrives intact" {
   #assert(sumArray(w) == 276.0); // 0 + 1 + ... + 23
   #assert(dotArray(w, w) == 4324.0);
   #assert(sumGeneric(w) == 276.0, "generic parameter must agree with the callee");
-  #assert(sumInferred(w) == 276.0, "inferred-size parameter must agree with the callee");
+  #assert(
+    sumInferred(w) == 276.0,
+    "inferred-size parameter must agree with the callee");
   const auto scaled(scaleArray(w, 2.0));
-  #assert(scaled[23] == 46.0, "indirect parameter and indirect return must compose");
+  #assert(
+    scaled[23] == 46.0, "indirect parameter and indirect return must compose");
   auto small(float[16]());
   for (int i = 0; i < 16; i++)
     small[i] = 1.0;
-  #assert(sumSmallArray(small) == 16.0, "sub-threshold arrays must still pass by value");
-  const auto v(BigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  #assert(
+    sumSmallArray(small) == 16.0,
+    "sub-threshold arrays must still pass by value");
+  const auto v(BigStruct(
+    a: float4(1.0),
+    b: float4(2.0),
+    c: float4(3.0),
+    d: float4(4.0),
+    e: float4(5.0)));
   #assert(sumStruct(v) == 60.0);
 }
 
@@ -126,20 +137,31 @@ unit_test "A byval parameter is private to the callee" {
   #assert(clobberArray(w) == -1.0, "callee must see its own write");
   #assert(sumArray(w) == 276.0, "callee must not write through to the caller");
   #assert(w[5] == 5.0, "callee must not write through to the caller");
-  auto v(BigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  auto v(BigStruct(
+    a: float4(1.0),
+    b: float4(2.0),
+    c: float4(3.0),
+    d: float4(4.0),
+    e: float4(5.0)));
   const auto v2(clobberStruct(v));
   #assert(#all(v2.a == float4(-1.0)), "callee must see its own write");
-  #assert(#all(v.a == float4(1.0)), "callee must not write through to the caller");
+  #assert(
+    #all(v.a == float4(1.0)), "callee must not write through to the caller");
   // The same value passed to two parameters must not alias.
-  #assert(dotArray(w, w) == 4324.0, "one value in two indirect parameters must not alias");
+  #assert(
+    dotArray(w, w) == 4324.0,
+    "one value in two indirect parameters must not alias");
 }
 
 unit_test "A call-site temporary survives to the callee" {
   // An argument built at the call site is memory-resident already; one that
   // comes from a default initializer is materialized during resolution.
-  #assert(sumArray(rampArray()) == 276.0, "temporary argument must survive to the call");
-  #assert(sumInferred(float[20](1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, //
-                                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)) == 20.0);
+  #assert(
+    sumArray(rampArray()) == 276.0,
+    "temporary argument must survive to the call");
+  #assert(
+    sumInferred(float[20](1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, //
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)) == 20.0);
   // Repeated calls must not share a slot in a way that corrupts either.
   const auto a(rampArray());
   auto total(0.0);

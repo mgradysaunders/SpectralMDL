@@ -14,19 +14,28 @@ import scatter::*;
 unit_test "A deep layered stack is reciprocal" {
   const auto wo = math::normalize(float3(-0.4, 1.2, 0.2));
   const auto wi = math::normalize(float3(+0.1, -0.7, 0.4));
-  const auto f = df::weighted_layer(
-    weight: 0.5,
-    layer: df::sheen_bsdf(tint: 0.8, roughness: 0.6),
-    base: df::fresnel_layer(
-      ior: 1.4,
-      layer: df::weighted_layer(
-        weight: 0.5,
-        layer: df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
-        base: df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, roughness_v: 0.5, tint: 1.0, multiscatter_tint: 1.0),
+  const auto f =
+    df::weighted_layer(
+      weight: 0.5,
+      layer: df::sheen_bsdf(tint: 0.8, roughness: 0.6),
+      base: df::fresnel_layer(
+        ior: 1.4,
+        layer: df::weighted_layer(
+          weight: 0.5,
+          layer: df::ward_geisler_moroder_bsdf(
+            roughness_u: 0.4,
+            roughness_v: 0.8,
+            tint: 1.0,
+            multiscatter_tint: 1.0),
+          base: df::microfacet_ggx_smith_bsdf(
+            roughness_u: 0.2,
+            roughness_v: 0.5,
+            tint: 1.0,
+            multiscatter_tint: 1.0),
+        ),
+        base: df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.6),
       ),
-      base: df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.6),
-    ),
-  );
+    );
   const auto result0 = scatter::evaluate(f, wo, wi);
   const auto result1 = scatter::evaluate(f, wi, wo);
   #assert(#all(result0.pdf ~== |1e-6| result1.pdf.yx));
@@ -38,44 +47,132 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
   const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
   const auto wt = math::normalize(float3(+0.5, 0.2, -0.9));
   const auto ns = math::normalize(float3(0.2, -0.1, 1.0)); // Tilted shading normal
-  const auto ggx = df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, roughness_v: 0.5, tint: 1.0, multiscatter_tint: 1.0);
+  const auto ggx = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.2, roughness_v: 0.5, tint: 1.0, multiscatter_tint: 1.0);
   // Elemental reflection lobes.
-  scatter::checkBidirectionalConsistency(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5), wo, wi);
-  scatter::checkBidirectionalConsistency(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7), wo, wi);
-  scatter::checkBidirectionalConsistency(df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.6, tint: 0.9), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::microfacet_beckmann_vcavities_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0), wo, wi, ns);
+  scatter::checkBidirectionalConsistency(
+    df::diffuse_reflection_bsdf(
+      tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5),
+    wo,
+    wi);
+  scatter::checkBidirectionalConsistency(
+    df::diffuse_reflection_bsdf(
+      tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7), wo, wi);
+  scatter::checkBidirectionalConsistency(
+    df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::ward_geisler_moroder_bsdf(
+      roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.6, tint: 0.9),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::microfacet_beckmann_vcavities_bsdf(
+      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    wo,
+    wi,
+    ns);
   scatter::checkBidirectionalConsistency(ggx, wo, wi);
   scatter::checkBidirectionalConsistency(ggx, wo, wi, ns);
   // Transmission lobes. NOTE: `wt2` is near the ideal refraction of `wo` so that the
   // narrow Blinn lobe evaluates to something substantial.
   const auto wt2 = math::normalize(float3(0.15, -0.25, -0.9));
-  scatter::checkBidirectionalConsistency(df::diffuse_transmission_bsdf(tint: 0.7), wo, wt, ns);
-  scatter::checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt);
-  scatter::checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt, ns);
-  scatter::checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit), wo, wt2);
-  scatter::checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit), wo, wt2, ns);
-  scatter::checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_reflect_transmit), wo, wt2);
-  scatter::checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_reflect_transmit), wo, wi);
-  scatter::checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_reflect_transmit), wo, wt);
+  scatter::checkBidirectionalConsistency(
+    df::diffuse_transmission_bsdf(tint: 0.7), wo, wt, ns);
+  scatter::checkBidirectionalConsistency(
+    df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit),
+    wo,
+    wt);
+  scatter::checkBidirectionalConsistency(
+    df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit),
+    wo,
+    wt,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::simple_glossy_bsdf(
+      roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit),
+    wo,
+    wt2);
+  scatter::checkBidirectionalConsistency(
+    df::simple_glossy_bsdf(
+      roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit),
+    wo,
+    wt2,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::simple_glossy_bsdf(
+      roughness_u: 0.8, tint: 1.0, mode: df::scatter_reflect_transmit),
+    wo,
+    wt2);
+  scatter::checkBidirectionalConsistency(
+    df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.3,
+      roughness_v: 0.3,
+      tint: 1.0,
+      mode: df::scatter_reflect_transmit),
+    wo,
+    wi);
+  scatter::checkBidirectionalConsistency(
+    df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.3,
+      roughness_v: 0.3,
+      tint: 1.0,
+      mode: df::scatter_reflect_transmit),
+    wo,
+    wt);
   // Modifiers.
-  scatter::checkBidirectionalConsistency(df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi);
-  scatter::checkBidirectionalConsistency(df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::thin_film(thickness: 250.0, ior: color(1.35), base: ggx), wo, wi, ns);
+  scatter::checkBidirectionalConsistency(
+    df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi);
+  scatter::checkBidirectionalConsistency(
+    df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi, ns);
+  scatter::checkBidirectionalConsistency(
+    df::thin_film(thickness: 250.0, ior: color(1.35), base: ggx), wo, wi, ns);
   scatter::checkBidirectionalConsistency(df::tint(0.5, ggx), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::directional_factor(normal_tint: 0.9, grazing_tint: 0.3, base: ggx), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::fresnel_factor(ior: 1.5, extinction_coefficient: 2.0, base: ggx), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::measured_curve_factor(curve_values: color[3](color(0.9), color(0.5), color(0.2)), base: ggx), wo, wi, ns);
-  scatter::checkBidirectionalConsistency(df::measured_factor(values: texture_2d("4x4.png", tex::gamma_linear), base: ggx), wo, wi, ns);
+  scatter::checkBidirectionalConsistency(
+    df::directional_factor(normal_tint: 0.9, grazing_tint: 0.3, base: ggx),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::fresnel_factor(ior: 1.5, extinction_coefficient: 2.0, base: ggx),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::measured_curve_factor(
+      curve_values: color[3](color(0.9), color(0.5), color(0.2)), base: ggx),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
+    df::measured_factor(
+      values: texture_2d("4x4.png", tex::gamma_linear), base: ggx),
+    wo,
+    wi,
+    ns);
   // Layers.
   const auto composite = df::weighted_layer(
     weight: 0.5,
     layer: df::sheen_bsdf(tint: 0.8, roughness: 0.6),
     base: df::fresnel_layer(
       ior: 1.4,
-      layer: df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
+      layer: df::ward_geisler_moroder_bsdf(
+        roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
       base: df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.6),
     ),
   );
@@ -99,7 +196,9 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
       layer: ggx,
       base: df::diffuse_reflection_bsdf(tint: 0.5),
     ),
-    wo, wi, ns,
+    wo,
+    wi,
+    ns,
   );
   scatter::checkBidirectionalConsistency(
     df::micrograin_layer(
@@ -109,7 +208,8 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
       grain_extinction: 6.6273,
       base: df::diffuse_reflection_bsdf(tint: 0.8),
     ),
-    wo, wi,
+    wo,
+    wi,
   );
   scatter::checkBidirectionalConsistency(
     df::micrograin_layer(
@@ -118,7 +218,9 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
       grain_ior: 1.6,
       base: df::diffuse_reflection_bsdf(tint: 0.5, roughness: 0.4),
     ),
-    wo, wi, ns,
+    wo,
+    wi,
+    ns,
   );
   scatter::checkBidirectionalConsistency(
     df::micrograin_layer(
@@ -126,7 +228,8 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
       grain_diffuse_albedo: 0.3,
       base: df::diffuse_transmission_bsdf(tint: 0.7),
     ),
-    wo, wt,
+    wo,
+    wt,
   );
   scatter::checkBidirectionalConsistency(
     df::micrograin_layer(
@@ -137,7 +240,9 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
       grain_extinction: 6.6273,
       base: df::diffuse_reflection_bsdf(tint: 0.6),
     ),
-    wo, wi, ns,
+    wo,
+    wi,
+    ns,
   );
   const auto measuredLayer = df::measured_curve_layer(
     curve_values: color[2](color(0.9), color(0.1)),

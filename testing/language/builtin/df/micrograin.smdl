@@ -16,8 +16,10 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
   // 1, including for anisotropic stretching.
   {
     const auto configs = float3[4](
-      float3(0.10, 0.5, 0.5), float3(0.50, 1.0, 1.0),
-      float3(0.90, 3.0, 3.0), float3(0.50, 3.0, 0.5));
+      float3(0.10, 0.5, 0.5),
+      float3(0.50, 1.0, 1.0),
+      float3(0.90, 3.0, 3.0),
+      float3(0.50, 3.0, 0.5));
     for (int k = 0; k < 4; k++) {
       const auto tau0 = configs[k].x;
       const auto beta = float2(configs[k].y, configs[k].z);
@@ -25,7 +27,8 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
       const int n = 512 * 512;
       float2 xi = float2(0.228, 0.712);
       for (int i = 0; i < n; i++, sampling::next_low_discrepancy(&xi)) {
-        fSum += df::micrograin::normal_pdf(tau0, beta, sampling::cosine_hemisphere_sample(xi));
+        fSum += df::micrograin::normal_pdf(
+          tau0, beta, sampling::cosine_hemisphere_sample(xi));
       }
       #assert($PI * fSum / n ~== |1e-2| 1.0);
     }
@@ -35,7 +38,8 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
   {
     const auto tau0 = 0.6;
     for (int k = 1; k < 8; k++) {
-      const auto wm = df::micrograin::normal_sample(tau0, float2(2.0), k / 8.0, 0.37);
+      const auto wm =
+        df::micrograin::normal_sample(tau0, float2(2.0), k / 8.0, 0.37);
       #assert(wm.z > 0.0);
       #assert(math::length(wm) ~== |1e-5| 1.0);
     }
@@ -48,12 +52,15 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
   #assert(df::micrograin::shadow_area(0.3, 0.0) > 0.0);
   for (int k = 0; k < 5; k++) {
     const auto mu = 0.05 + 0.9 * k / 4.0;
-    const auto G = df::micrograin::distant_gaf(0.5, float3(#sqrt(1 - mu * mu), 0.0, mu), float3(0.0, 0.0, 1.0), 0.3);
+    const auto G = df::micrograin::distant_gaf(
+      0.5, float3(#sqrt(1 - mu * mu), 0.0, mu), float3(0.0, 0.0, 1.0), 0.3);
     #assert((0.0 < G) & (G <= 1.0));
   }
-  #assert(df::micrograin::distant_gaf(0.5, float3(0.0, 0.0, 1.0), float3(0.0, 0.0, 1.0), 0.5) ~== |1e-6| 1.0);
+  #assert(
+    df::micrograin::distant_gaf(0.5, float3(0.0, 0.0, 1.0), float3(0.0, 0.0, 1.0), 0.5) ~== |1e-6| 1.0);
   // At pore level the shadow area has the closed form of Appendix C.
-  #assert(df::micrograin::shadow_area(0.4, 0.0) ~== |1e-5| float(0.5 * $PI * (1.0 / 0.4 - 1.0)));
+  #assert(df::micrograin::shadow_area(0.4, 0.0) ~== |1e-5| float(
+    0.5 * $PI * (1.0 / 0.4 - 1.0)));
 }
 
 // Brute-force reference for the micrograin shadow areas of Appendix A/B:
@@ -68,8 +75,7 @@ bool micrograinInShadow(const float3 d, const float h, const float2 p) {
   const float disc(b * b - c);
   return false if (!(disc > 0));
   const float sq(#sqrt(disc));
-  return ((t0 := -b - sq) > 1e-6 && p0.z + t0 * d.z >= h - 1e-6) ||
-         ((t1 := -b + sq) > 1e-6 && p0.z + t1 * d.z >= h - 1e-6);
+  return ((t0 := -b - sq) > 1e-6 && p0.z + t0 * d.z >= h - 1e-6) || ((t1 := -b + sq) > 1e-6 && p0.z + t1 * d.z >= h - 1e-6);
 }
 
 unit_test "The shadow areas match a brute-force reference" {
@@ -77,7 +83,7 @@ unit_test "The shadow areas match a brute-force reference" {
   // overlap area against area-sampled ray-traced references, over a mix
   // of zenith angles, azimuthal separations, and heights.
   const auto configs = float4[6](
-    float4(0.4, 0.7, 0.0, 0.3),  // thetai-cos, thetao-cos, dphi, h
+    float4(0.4, 0.7, 0.0, 0.3), // thetai-cos, thetao-cos, dphi, h
     float4(0.3, 0.3, 0.5, 0.5),
     float4(0.6, 0.25, 2.5, 0.4),
     float4(0.5, 0.5, 3.14159, 0.6),
@@ -89,7 +95,8 @@ unit_test "The shadow areas match a brute-force reference" {
     const auto dphi = configs[k].z;
     const auto h = configs[k].w;
     const auto wiT = float3(#sqrt(1 - mui * mui), 0.0, mui);
-    const auto woT = float3(#sqrt(1 - muo * muo) * float2(#cos(dphi), #sin(dphi)), muo);
+    const auto woT =
+      float3(#sqrt(1 - muo * muo) * float2(#cos(dphi), #sin(dphi)), muo);
     const float R = 1.5 / #min(mui, muo) + 2.0;
     double countI = 0;
     double countBoth = 0;
@@ -117,10 +124,14 @@ unit_test "An aligned view and light retro-reflect" {
   // a retro-reflection peak: with view and light aligned, the shadows
   // coincide and attenuation drops [paper Fig. 11].
   const auto wo = math::normalize(float3(0.75, 0.0, 0.55));
-  const auto woOff = math::normalize(float3(0.75 * #cos(0.35), 0.75 * #sin(0.35), 0.55));
+  const auto woOff =
+    math::normalize(float3(0.75 * #cos(0.35), 0.75 * #sin(0.35), 0.55));
   const auto m = df::micrograin_layer(
-    filling_factor: 0.2, beta_u: 2.0,
-    grain_ior: 1.0152, grain_extinction: 6.6273, base: bsdf());
+    filling_factor: 0.2,
+    beta_u: 2.0,
+    grain_ior: 1.0152,
+    grain_extinction: 6.6273,
+    base: bsdf());
   const auto fRetro = scatter::evaluate(m, wo, wo).f;
   const auto fOff = scatter::evaluate(m, wo, woOff).f;
   #assert(#any(fRetro > 0.0));
@@ -132,13 +143,16 @@ unit_test "The grazing directions brighten" {
   // fraction tends to 1 while the base is masked away, so a diffuse-grain
   // layer on a black base must brighten -- never darken to a rim outline
   // -- as the view goes to grazing [2024 paper Eqs. 21 and 25, Fig. 8].
-  const auto m = df::micrograin_layer(
-    filling_factor: 0.3,
-    grain_diffuse_albedo: 0.8,
-    grain_ior: 1.4,
-    base: bsdf());
-  const auto E0 = scatter::furnaceIntegral(m, math::normalize(float3(0.2, 0.1, 0.97)));
-  const auto E1 = scatter::furnaceIntegral(m, math::normalize(float3(0.85, 0.1, 0.15)));
+  const auto m =
+    df::micrograin_layer(
+      filling_factor: 0.3,
+      grain_diffuse_albedo: 0.8,
+      grain_ior: 1.4,
+      base: bsdf());
+  const auto E0 =
+    scatter::furnaceIntegral(m, math::normalize(float3(0.2, 0.1, 0.97)));
+  const auto E1 =
+    scatter::furnaceIntegral(m, math::normalize(float3(0.85, 0.1, 0.15)));
   #assert((0.0 < E0) & (E0 < 1.02));
   #assert((0.0 < E1) & (E1 < 1.02));
   #assert(E1 > 1.5 * E0);
@@ -162,11 +176,17 @@ unit_test "The layer degenerates to its base as the pores vanish" {
   for (int k = 0; k < 3; k++) {
     const auto tau0 = 0.2 + 0.3 * k;
     const auto mBlack = df::micrograin_layer(
-      filling_factor: tau0, beta_u: 1.0,
-      grain_ior: 1.0152, grain_extinction: 6.6273, base: bsdf());
+      filling_factor: tau0,
+      beta_u: 1.0,
+      grain_ior: 1.0152,
+      grain_extinction: 6.6273,
+      base: bsdf());
     const auto mDiff = df::micrograin_layer(
-      filling_factor: tau0, beta_u: 1.0,
-      grain_ior: 1.0152, grain_extinction: 6.6273, base: baseD);
+      filling_factor: tau0,
+      beta_u: 1.0,
+      grain_ior: 1.0152,
+      grain_extinction: 6.6273,
+      base: baseD);
     const auto E0 = scatter::furnaceIntegral(mBlack, wo);
     const auto E1 = scatter::furnaceIntegral(mDiff, wo);
     #assert((0.0 < E0) & (E0 < 1.02));
@@ -175,16 +195,67 @@ unit_test "The layer degenerates to its base as the pores vanish" {
   // Sampling PDF consistency across parameters, grain types, and views,
   // using the stochastic variant so the pore-vs-grain and
   // diffuse-vs-specular selection chances are explored in proportion.
-  scatter::checkDensityAgainstAcceptance(df::micrograin_layer(filling_factor: 0.3, base: baseD), wo, 1.0, isStochastic: true);
-  scatter::checkDensityAgainstAcceptance(df::micrograin_layer(filling_factor: 0.7, beta_u: 2.0, grain_ior: 1.0152, grain_extinction: 6.6273, base: baseD), wo, 1.0, isStochastic: true);
-  scatter::checkDensityAgainstAcceptance(df::micrograin_layer(filling_factor: 0.5, beta_u: 0.5, grain_diffuse_albedo: 0.6, base: baseD), woG, 1.0, isStochastic: true);
-  scatter::checkDensityAgainstAcceptance(df::micrograin_layer(filling_factor: 0.9, beta_u: 3.0, grain_diffuse_albedo: color(0.5, 0.3, 0.1), grain_ior: 1.5, base: bsdf()), wo, 1.0, isStochastic: true);
-  scatter::checkDensityAgainstAcceptance(df::micrograin_layer(filling_factor: 0.4, beta_u: 2.5, beta_v: 0.4, grain_ior: 1.0152, grain_extinction: 6.6273, base: baseD), woG, 1.0, isStochastic: true);
+  scatter::checkDensityAgainstAcceptance(
+    df::micrograin_layer(filling_factor: 0.3, base: baseD),
+    wo,
+    1.0,
+    isStochastic: true);
+  scatter::checkDensityAgainstAcceptance(
+    df::micrograin_layer(
+      filling_factor: 0.7,
+      beta_u: 2.0,
+      grain_ior: 1.0152,
+      grain_extinction: 6.6273,
+      base: baseD),
+    wo,
+    1.0,
+    isStochastic: true);
+  scatter::checkDensityAgainstAcceptance(
+    df::micrograin_layer(
+      filling_factor: 0.5, beta_u: 0.5, grain_diffuse_albedo: 0.6, base: baseD),
+    woG,
+    1.0,
+    isStochastic: true);
+  scatter::checkDensityAgainstAcceptance(
+    df::micrograin_layer(
+      filling_factor: 0.9,
+      beta_u: 3.0,
+      grain_diffuse_albedo: color(0.5, 0.3, 0.1),
+      grain_ior: 1.5,
+      base: bsdf()),
+    wo,
+    1.0,
+    isStochastic: true);
+  scatter::checkDensityAgainstAcceptance(
+    df::micrograin_layer(
+      filling_factor: 0.4,
+      beta_u: 2.5,
+      beta_v: 0.4,
+      grain_ior: 1.0152,
+      grain_extinction: 6.6273,
+      base: baseD),
+    woG,
+    1.0,
+    isStochastic: true);
   // Anisotropic grains stay within the single-scattering energy bound.
-  const auto EAniso = scatter::furnaceIntegral(df::micrograin_layer(filling_factor: 0.5, beta_u: 2.5, beta_v: 0.4, grain_ior: 1.0152, grain_extinction: 6.6273, base: bsdf()), wo);
+  const auto EAniso = scatter::furnaceIntegral(
+    df::micrograin_layer(
+      filling_factor: 0.5,
+      beta_u: 2.5,
+      beta_v: 0.4,
+      grain_ior: 1.0152,
+      grain_extinction: 6.6273,
+      base: bsdf()),
+    wo);
   #assert((0.0 < EAniso) & (EAniso < 1.02));
   // Unit-albedo diffuse grains at a grazing view are the worst case for
   // the visible-grain-fraction weighting of the coupled diffuse term.
-  const auto EDiff = scatter::furnaceIntegral(df::micrograin_layer(filling_factor: 0.6, grain_diffuse_albedo: 1.0, grain_ior: 1.0, base: bsdf()), woG);
+  const auto EDiff = scatter::furnaceIntegral(
+    df::micrograin_layer(
+      filling_factor: 0.6,
+      grain_diffuse_albedo: 1.0,
+      grain_ior: 1.0,
+      base: bsdf()),
+    woG);
   #assert((0.0 < EDiff) & (EDiff < 1.02));
 }

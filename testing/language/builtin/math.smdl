@@ -16,7 +16,8 @@ unit_test "The trigonometric functions invert each other" {
   #assert(math::cos(math::acos(0.349)) ~== |1e-5| 0.349);
   #assert(math::sin(math::asin(0.715)) ~== |1e-5| 0.715);
   #assert(math::tan(math::atan(0.631)) ~== |1e-5| 0.631);
-  #assert(math::atan2(math::sin(theta := 1.491), math::cos(theta)) ~== |1e-5| theta);
+  #assert(
+    math::atan2(math::sin(theta := 1.491), math::cos(theta)) ~== |1e-5| theta);
   #assert(math::cosh(+3.872) ~== |1e-5| 24.029591748);
   #assert(math::sinh(-1.299) ~== |1e-5| -1.69641237193);
   #assert(math::tanh(-2.137) ~== |1e-5| -0.972530602491);
@@ -56,7 +57,8 @@ unit_test "smoothstep is monotone, bounded, and symmetric about its midpoint" {
 }
 
 unit_test "Reversed smoothstep edges give the falling ramp" {
-  #assert(math::smoothstep(8.1, 2.7, 4.3) ~== |1e-6| 1.0 - math::smoothstep(2.7, 8.1, 4.3));
+  #assert(
+    math::smoothstep(8.1, 2.7, 4.3) ~== |1e-6| 1.0 - math::smoothstep(2.7, 8.1, 4.3));
   // Coincident edges degrade to a hard step at the edge.
   #assert(math::smoothstep(1.0, 1.0, 0.9999) == 0.0);
   #assert(math::smoothstep(1.0, 1.0, 1.0001) == 1.0);
@@ -65,8 +67,10 @@ unit_test "Reversed smoothstep edges give the falling ramp" {
 unit_test "smoothstep broadcasts a scalar against per-component edges" {
   // The specification's mixed overload is per-component edges against a
   // scalar value; the transposed spelling broadcasts just as well.
-  #assert(#all(math::smoothstep(float3(0.0, 2.0, 4.0), float3(2.0, 4.0, 6.0), 3.0) ~== |1e-6| float3(1.0, 0.5, 0.0)));
-  #assert(#all(math::smoothstep(0.0, 2.0, float3(-1.0, 1.0, 3.0)) ~== |1e-6| float3(0.0, 0.5, 1.0)));
+  #assert(#all(
+    math::smoothstep(float3(0.0, 2.0, 4.0), float3(2.0, 4.0, 6.0), 3.0) ~== |1e-6| float3(1.0, 0.5, 0.0)));
+  #assert(#all(
+    math::smoothstep(0.0, 2.0, float3(-1.0, 1.0, 3.0)) ~== |1e-6| float3(0.0, 0.5, 1.0)));
   // Spectral colors are an extension, but they fall out of the generic form.
   #assert(math::smoothstep(color(0.0), color(2.0), color(1.0))[0] ~== |1e-6| 0.5);
 }
@@ -109,8 +113,10 @@ unit_test "A spectrum evaluates between its samples" {
 unit_test "A flat spectrum becomes a flat color" {
   // A flat spectrum resamples to a flat color; a single sample
   // broadcasts; the color overload is the identity.
-  #assert(#all(math::emission_color(float[2](400.0, 700.0), float[2](1.0, 1.0)) ~== |1e-5| color(1.0)));
-  #assert(#all(math::emission_color(float[1](550.0), float[1](0.25)) ~== |1e-6| color(0.25)));
+  #assert(#all(
+    math::emission_color(float[2](400.0, 700.0), float[2](1.0, 1.0)) ~== |1e-5| color(1.0)));
+  #assert(#all(
+    math::emission_color(float[1](550.0), float[1](0.25)) ~== |1e-6| color(0.25)));
   #assert(#all(math::emission_color(color(0.7)) == color(0.7)));
 }
 

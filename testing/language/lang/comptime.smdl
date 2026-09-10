@@ -63,7 +63,8 @@ unit_test "The binary intrinsics fold" {
   #assert(SIGNF == -1.0);
   #assert(ROT == 16);
   #assert(POP == 8);
-  static const float2 CLAMPED = #max(float2(0.05), #min(float2(0.2, 1.7), float2(1.0)));
+  static const float2 CLAMPED =
+    #max(float2(0.05), #min(float2(0.2, 1.7), float2(1.0)));
   #assert(#all(CLAMPED == float2(0.2, 1.0)));
 }
 
@@ -91,7 +92,8 @@ unit_test "The reductions fold" {
 unit_test "A chain of derived defaults folds through a macro" {
   // The 'microfacet_bsdf' derived-default pattern: 'clamp' is a macro over
   // '#max'/'#min', and 'roughness0' chains '#sqrt' onto '#prod'.
-  static const float2 ALPHA = math::clamp(float2(0.2, 0.7) * float2(0.2, 0.7), 0.001, 1.0);
+  static const float2 ALPHA =
+    math::clamp(float2(0.2, 0.7) * float2(0.2, 0.7), 0.001, 1.0);
   static const float R0 = #sqrt(#prod(float2(0.25, 0.25)));
   #assert(#all(ALPHA == float2(0.2, 0.7) * float2(0.2, 0.7)));
   #assert(R0 == 0.25);
@@ -102,7 +104,8 @@ unit_test "A chain of derived defaults folds through a macro" {
 // than a panic that has to be reached to report. So this macro is
 // checked at every expansion, even the ones folded into compile-time
 // constants where no runtime panic could ever have fired.
-@(pure macro) int checkedPositive(const int n) {
+@(pure macro)
+int checkedPositive(const int n) {
   #assert(n > 0, "expected a positive value");
   return n;
 }
@@ -219,5 +222,6 @@ unit_test "A macro, a constructor, and a texture expand at module scope" {
   const auto local(texture_2d("4x4.png", tex::gamma_linear));
   for (int x = 0; x < 4; x++)
     for (int y = 0; y < 4; y++)
-      #assert(#all(tex::texel_float4(MODULE_SCOPE_TEXTURE, int2(x, y)) ~== |1e-6| tex::texel_float4(local, int2(x, y))));
+      #assert(#all(
+        tex::texel_float4(MODULE_SCOPE_TEXTURE, int2(x, y)) ~== |1e-6| tex::texel_float4(local, int2(x, y))));
 }

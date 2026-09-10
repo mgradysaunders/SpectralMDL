@@ -106,8 +106,10 @@ unit_test "The phase function integrates to one" {
 unit_test "A tinted VDF folds its tint to the average" {
   auto wo = math::normalize(float3(+0.1, 0.2, +1.0));
   auto wi = math::normalize(float3(-0.3, 0.5, -0.8));
-  auto matPlain = material(volume: material_volume(scattering: df::anisotropic_vdf(directional_bias: 0.4)));
-  auto matTinted = material(volume: material_volume(scattering: df::tint(tint: color(0.5), base: df::anisotropic_vdf(directional_bias: 0.4))));
+  auto matPlain = material(volume: material_volume(
+    scattering: df::anisotropic_vdf(directional_bias: 0.4)));
+  auto matTinted = material(volume: material_volume(scattering: df::tint(
+    tint: color(0.5), base: df::anisotropic_vdf(directional_bias: 0.4))));
   auto instPlain = _MaterialEval(&matPlain);
   auto instTinted = _MaterialEval(&matTinted);
   const auto pPlain = df::_volumeScatterEvaluate(&instPlain, &wo, &wi);
@@ -118,8 +120,11 @@ unit_test "A tinted VDF folds its tint to the average" {
 }
 
 unit_test "An additive volume reaches the material flags" {
-  auto matDefault = material(volume: material_volume(absorption_coefficient: color(0.5)));
-  auto matAdditive = material(ior: 1.0, volume: material_volume(absorption_coefficient: color(0.5), additive: true));
+  auto matDefault =
+    material(volume: material_volume(absorption_coefficient: color(0.5)));
+  auto matAdditive = material(
+    ior: 1.0,
+    volume: material_volume(absorption_coefficient: color(0.5), additive: true));
   #assert(!matDefault.volume.additive);
   #assert(matAdditive.volume.additive);
   // The declaration reaches the instance flags, mirroring

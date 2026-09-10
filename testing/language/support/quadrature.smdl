@@ -30,7 +30,8 @@ export double integrateHemisphere(const int n, const float zSign, const auto f) 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       const auto xi = float2((i + 0.5) / n, (j + 0.5) / n);
-      const auto wi = sampling::uniform_hemisphere_sample(xi) * float3(1, 1, zSign);
+      const auto wi =
+        sampling::uniform_hemisphere_sample(xi) * float3(1, 1, zSign);
       sum += double(f(wi));
     }
   }
