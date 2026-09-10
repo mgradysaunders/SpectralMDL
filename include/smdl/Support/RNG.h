@@ -35,8 +35,7 @@ public:
 
   /// Construct by seeding on the default stream.
   explicit constexpr RNG(uint64_t seed) noexcept {
-    state = seed + increment;
-    state = state * MULTIPLIER + increment;
+    state = (seed + increment) * MULTIPLIER + increment;
   }
 
   /// Construct by seeding on the stream selected by `stream`, such that
@@ -44,52 +43,49 @@ public:
   /// sequences.
   constexpr RNG(uint64_t seed, uint64_t stream) noexcept
       : increment((stream << 1) | 1) {
-    state = seed + increment;
-    state = state * MULTIPLIER + increment;
+    state = (seed + increment) * MULTIPLIER + increment;
   }
 
   /// Generates the next 32-bit integer.
-  constexpr uint32_t generate() noexcept {
+  [[nodiscard]] constexpr uint32_t generate() noexcept {
     const uint64_t state0{state};
     state = state0 * MULTIPLIER + increment;
-    const auto value{uint32_t(((state0 >> 18) ^ state0) >> 27)};
+    const auto val{uint32_t(((state0 >> 18) ^ state0) >> 27)};
     const auto rot{uint32_t(state0 >> 59)};
-    return (value >> rot) | (value << ((32 - rot) % 32));
+    return (val >> rot) | (val << ((32 - rot) % 32));
   }
 
   /// Generates a uniform integer in `[0, bound)` by rejection sampling.
-  constexpr int generateInt(int bound) noexcept {
-    if (bound > 1) {
-      const auto bound32{uint32_t(bound)};
-      const uint32_t xMin{(uint32_t(0) - bound32) % bound32};
+  [[nodiscard]] constexpr int generateInt(int bound) noexcept {
+    if (SMDL_LIKELY(bound > 1)) {
+      const auto xMax{uint32_t(bound)};
+      const auto xMin{(uint32_t(0) - xMax) % xMax};
       while (true) {
-        const uint32_t x{generate()};
-        if (x >= xMin)
-          return int(x % bound32);
+        if (const auto x{generate()}; SMDL_LIKELY(x >= xMin))
+          return int(x % xMax);
       }
     }
     return 0;
   }
 
   /// Generates a uniform `float` in `(0, 1)`.
-  constexpr float generateFloat() noexcept {
+  [[nodiscard]] constexpr float generateFloat() noexcept {
     return std::clamp(float(generate()) * 0x1p-32f, FLOAT_MIN, ONE_MINUS_EPS);
   }
 
   /// Generates a uniform `float2` in `(0, 1)^2`.
-  constexpr float2 generateFloat2() noexcept {
+  [[nodiscard]] constexpr float2 generateFloat2() noexcept {
     return {generateFloat(), generateFloat()};
   }
 
   /// Generates a uniform `float3` in `(0, 1)^3`.
-  constexpr float3 generateFloat3() noexcept {
+  [[nodiscard]] constexpr float3 generateFloat3() noexcept {
     return {generateFloat(), generateFloat(), generateFloat()};
   }
 
   /// Generates a uniform `float4` in `(0, 1)^4`.
-  constexpr float4 generateFloat4() noexcept {
-    return {generateFloat(), generateFloat(), generateFloat(),
-            generateFloat()};
+  [[nodiscard]] constexpr float4 generateFloat4() noexcept {
+    return {generateFloat(), generateFloat(), generateFloat(), generateFloat()};
   }
 
   /// Advances the generator by `n` steps in logarithmic time, as if
@@ -112,11 +108,11 @@ public:
     state = state * aTotal + bTotal;
   }
 
-  constexpr bool operator==(const RNG &other) const noexcept {
+  [[nodiscard]] constexpr bool operator==(const RNG &other) const noexcept {
     return state == other.state && increment == other.increment;
   }
 
-  constexpr bool operator!=(const RNG &other) const noexcept {
+  [[nodiscard]] constexpr bool operator!=(const RNG &other) const noexcept {
     return !(*this == other);
   }
 
