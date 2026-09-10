@@ -117,9 +117,9 @@ TEST_CASE("Lens: the paraxial solve against closed forms") {
 }
 
 TEST_CASE("Lens: focus places the film and nothing else") {
-  SUBCASE("At infinity the film sits on the rear focal point") {
+  SUBCASE("At infinity the paraxial plane is the rear focal point") {
     const Lens lens{dgauss50mm(), {AT_INFINITY, 0}};
-    CHECK(lens.filmZ() - lens.rearZ() ==
+    CHECK(lens.paraxialFilmZ() - lens.rearZ() ==
           doctest::Approx(lens.backFocalDistance()).epsilon(1e-5));
   }
   SUBCASE("A thin lens racks out by exactly the Newton extension") {
@@ -129,7 +129,7 @@ TEST_CASE("Lens: focus places the film and nothing else") {
     const auto atInfinity{Lens{equiconvex(50, 0, 1.5f, 20), {AT_INFINITY, 0}}};
     const auto close{Lens{equiconvex(50, 0, 1.5f, 20), {1.0f, 0}}};
     const auto f{atInfinity.focalLength()};
-    CHECK(close.filmZ() - atInfinity.filmZ() ==
+    CHECK(close.paraxialFilmZ() - atInfinity.paraxialFilmZ() ==
           doctest::Approx(f * f / (1.0f - f)).epsilon(1e-4));
   }
   SUBCASE("A thick one holds the Newton invariant, which fixes its focal "
@@ -141,11 +141,11 @@ TEST_CASE("Lens: focus places the film and nothing else") {
     const auto near{Lens{dgauss50mm(), {2.0f, 0}}};
     const auto far{Lens{dgauss50mm(), {5.0f, 0}}};
     const auto f{atInfinity.focalLength()};
-    const auto rearFocalZ{atInfinity.filmZ()};
+    const auto rearFocalZ{atInfinity.paraxialFilmZ()};
     const auto frontFocalFrom{[&](const Lens &lens, float distance) {
-      return f * f / (lens.filmZ() - rearFocalZ) - distance;
+      return f * f / (lens.paraxialFilmZ() - rearFocalZ) - distance;
     }};
-    CHECK(near.filmZ() > rearFocalZ);
+    CHECK(near.paraxialFilmZ() > rearFocalZ);
     CHECK(frontFocalFrom(near, 2.0f) ==
           doctest::Approx(frontFocalFrom(far, 5.0f)).epsilon(1e-3));
   }
@@ -154,11 +154,24 @@ TEST_CASE("Lens: focus places the film and nothing else") {
   }
   SUBCASE("A focus distance of zero is focus at infinity, not an error") {
     const Lens lens{dgauss50mm(), {0, 0}};
-    CHECK(lens.filmZ() - lens.rearZ() ==
+    CHECK(lens.paraxialFilmZ() - lens.rearZ() ==
           doctest::Approx(lens.backFocalDistance()).epsilon(1e-6));
   }
   SUBCASE("A negative focus distance is an error") {
     CHECK_ERROR(buildLens(dgauss50mm(), {-1, 0}), "nonnegative focus distance");
+  }
+  SUBCASE("The film is not the paraxial plane, and racks with it") {
+    // The trace moves the film off the Gaussian plane and onto the focus
+    // the whole cone comes to, which is a fixed correction of the
+    // design's own spherical aberration: focusing carries it along
+    // rather than solving it again from nothing.
+    const auto atInfinity{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
+    const auto close{Lens{dgauss50mm(), {2.0f, 0}}};
+    const auto correction{atInfinity.filmZ() - atInfinity.paraxialFilmZ()};
+    CHECK(correction != 0);
+    CHECK(std::abs(correction) < 0.01f * atInfinity.focalLength());
+    CHECK(close.filmZ() - close.paraxialFilmZ() ==
+          doctest::Approx(correction).epsilon(0.1));
   }
 }
 
@@ -188,8 +201,20 @@ TEST_CASE("Lens: the f-number is a statement about the entrance pupil") {
     const auto open{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
     const auto shut{Lens{dgauss50mm(), {AT_INFINITY, 8.0f}}};
     CHECK(shut.focalLength() == doctest::Approx(open.focalLength()));
-    CHECK(shut.filmZ() == doctest::Approx(open.filmZ()));
+    CHECK(shut.paraxialFilmZ() == doctest::Approx(open.paraxialFilmZ()));
     CHECK(shut.exitPupilZ() == doctest::Approx(open.exitPupilZ()));
+  }
+  SUBCASE("The film does move, the zones a narrower stop passes agreeing "
+          "elsewhere") {
+    // Focus shift, which is what spherical aberration does when the
+    // aperture changes: the paraxial plane is the limit the film walks
+    // back toward as the cone the stop passes narrows onto the axis.
+    const auto open{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
+    const auto shut{Lens{dgauss50mm(), {AT_INFINITY, 8.0f}}};
+    const auto toward{[](const Lens &lens) {
+      return std::abs(lens.filmZ() - lens.paraxialFilmZ());
+    }};
+    CHECK(toward(shut) < toward(open));
   }
   SUBCASE("Asking for more light than the stop passes is an error") {
     CHECK_ERROR(buildLens(dgauss50mm(), {AT_INFINITY, 1.4f}),
@@ -248,6 +273,36 @@ namespace {
 Ray rayToPupil(const Lens &lens, float3 film, float x, float y) {
   return Ray{film, float3(x, y, lens.rearZ()) - film, EPS, INF};
 }
+
+// The RMS radius of the whole bundle a film point sends out, taken at
+// the plane `z = -distance`: the spot that film point images the scene
+// as, which is the one number a focus solve is answerable to. Zero is a
+// film point nothing reaches.
+double spotRMS(const Lens &lens, float3 film, float distance) {
+  constexpr int NUM_STEPS = 64;
+  const auto radius{lens.rearApertureRadius()};
+  const auto each{[&](auto &&visit) {
+    for (int i = 0; i < NUM_STEPS; i++) {
+      for (int j = 0; j < NUM_STEPS; j++) {
+        const auto x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
+        const auto y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
+        if (x * x + y * y > radius * radius) continue;
+        auto ray{rayToPupil(lens, film, x, y)};
+        if (!lens.traceFromFilm(ray) || !(ray.dir.z < 0)) continue;
+        visit(ray((-distance - ray.org.z) / ray.dir.z));
+      }
+    }
+  }};
+  double sumX{}, sumY{}, count{};
+  each([&](float3 at) { sumX += at.x, sumY += at.y, count += 1; });
+  if (count < 2) return 0;
+  sumX /= count, sumY /= count;
+  double sumSquared{};
+  each([&](float3 at) {
+    sumSquared += (at.x - sumX) * (at.x - sumX) + (at.y - sumY) * (at.y - sumY);
+  });
+  return std::sqrt(sumSquared / count);
+}
 } // namespace
 
 TEST_CASE("Lens: tracing a ray from the film") {
@@ -278,11 +333,22 @@ TEST_CASE("Lens: tracing a ray from the film") {
     // chief ray on an image 40 mm across. That is the lens being a poor
     // one; a trace with a root or a sign wrong misses by millimeters.
     const auto center{imageOf(0, 0)};
-    CHECK_NEAR(imageOf(0.5f * MM, 0), center, 1e-4f);
-    CHECK_NEAR(imageOf(0, -0.5f * MM), center, 1e-4f);
+    CHECK_NEAR(imageOf(0.5f * MM, 0), center, 1e-3f);
+    CHECK_NEAR(imageOf(0, -0.5f * MM), center, 1e-3f);
     // The image on the film is inverted, so the two run opposite.
     CHECK(center.x < 0);
     CHECK(center.y < 0);
+  }
+  SUBCASE("The film is where the whole bundle agrees best, which is not "
+          "where the rays nearest the axis do") {
+    // The rays through the middle of the pupil cross on the paraxial
+    // plane, by definition; every other zone of this singlet crosses
+    // somewhere else, and the film goes where the spread over all of
+    // them is least. So the bundle is tighter than the Gaussian solve
+    // leaves it, which is the whole of what the trace buys.
+    CHECK(spotRMS(lens, film, 1.0f) <
+          0.5 * spotRMS(lens, float3(film.x, film.y, lens.paraxialFilmZ()),
+                        1.0f));
   }
   SUBCASE("A ray outside a clear aperture is blocked") {
     auto ray{rayToPupil(lens, film, 20 * MM, 0)};
@@ -710,11 +776,15 @@ TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
     const std::vector<float> aspheric{3.30286e-01f, -1.53066e+00f,
                                       3.32500e+00f, -1.15603e+01f,
                                       3.45202e+01f, -4.94033e+01f};
+    // On the paraxial plane rather than on `filmZ()`: the solve under
+    // test is the surface intersection, which does not care where the
+    // film sits, and standing the sweep on the one plane a formula gives
+    // is what keeps the counts below comparable.
     const auto cone{axialConeMM(lens, paraxialMM)};
     auto numTraced{0};
     auto worst{0.0};
     for (int i = 0; i <= 40; i++) {
-      const float3 film{(i * 0.04f) * MM, 0, lens.filmZ()};
+      const float3 film{(i * 0.04f) * MM, 0, lens.paraxialFilmZ()};
       for (int j = -60; j <= 60; j++) {
         auto ray{rayToPupil(lens, film, (i * 0.0375f + j * 0.002f) * MM, 0)};
         if (!lens.traceFromFilm(ray)) continue;
@@ -750,6 +820,11 @@ TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
     }
     CHECK(paraxialMM < statedMM);
     CHECK(statedMM < marginalMM);
+    // And that is where the film goes: the trace lands on the plane the
+    // design states rather than on the one the Gaussian solve gives, to
+    // within the two answering slightly different questions.
+    CHECK((lens.filmZ() - lens.rearZ()) / MM ==
+          doctest::Approx(statedMM).epsilon(0.02));
   }
 }
 
@@ -786,6 +861,72 @@ TEST_CASE("Lens: the field a sensor of a given size looks out at") {
     CHECK(circle / MM > 21.7f);
     CHECK(smdl::degrees(2 * lens.fieldAngleAt(12 * MM)) ==
           doctest::Approx(26.9).epsilon(0.02));
+  }
+}
+
+TEST_CASE("Lens: what a film point sees, on a lens whose rear element dwarfs "
+          "the cone that reaches it") {
+  // The phone lens is the case this is built for: 3 mm of rear element
+  // against a cone a tenth of a millimeter across wide open and a
+  // fiftieth of that stopped down. A probe that steps over the whole
+  // aperture at any affordable rate reads zero here and calls a good
+  // prescription broken.
+  SUBCASE("Wide open it is what a grid over the whole aperture finds") {
+    const Lens lens{phone2mm(), {AT_INFINITY, 0}};
+    const auto radius{lens.rearApertureRadius()};
+    const auto whole{PI * radius * radius};
+    for (const auto filmRadius : {0.0f, 1.0f * MM}) {
+      CAPTURE(filmRadius);
+      CHECK(lens.transmittedArea(filmRadius) ==
+            doctest::Approx(transmission(lens, filmRadius) * whole)
+                .epsilon(0.08));
+    }
+  }
+  SUBCASE("Stopped down it goes on reading, and falls as the stop does") {
+    // The cone is the stop as the rear surfaces project it, so its area
+    // follows the f-number squared, up to the pupil aberration that
+    // makes the projection not quite the stop and the focus shift that
+    // moves the film out from under it.
+    const Lens open{phone2mm(), {AT_INFINITY, 0}};
+    for (const auto fStop : {4.0f, 11.0f}) {
+      CAPTURE(fStop);
+      const Lens shut{phone2mm(), {AT_INFINITY, fStop}};
+      const auto ratio{open.fNumber() / fStop};
+      CHECK(shut.transmittedArea(0) > 0);
+      CHECK(shut.transmittedArea(0) ==
+            doctest::Approx(open.transmittedArea(0) * ratio * ratio)
+                .epsilon(0.15));
+    }
+  }
+  SUBCASE("A sensor larger than the image circle is dark at the corner") {
+    const Lens lens{phone2mm(), {AT_INFINITY, 0}};
+    CHECK(lens.transmittedArea(0) > 0);
+    CHECK(lens.transmittedArea(4 * MM) == 0);
+  }
+}
+
+TEST_CASE("ExitPupil: a cone that is a thousandth of the aperture it is "
+          "drawn on") {
+  // Stopping this lens down leaves a cone the table has to find on a
+  // rear aperture three hundred times its width. Falling back to the
+  // whole aperture is correct and costs nothing but draws, which is
+  // exactly what the table exists to save, so it has to not happen.
+  const auto corner{1.15f * MM};
+  const Lens lens{phone2mm(), {AT_INFINITY, 11.0f}};
+  const ExitPupil pupil{lens, corner};
+  SUBCASE("The table finds it rather than giving up and taking the whole") {
+    CHECK(pupil.areaFraction(0) < 0.01f);
+    CHECK(pupil.areaFraction(corner) < 0.01f);
+  }
+  SUBCASE("It still carries the transmission of the whole aperture") {
+    // The brute force it is checked against grids the whole aperture, so
+    // at this f-number it reads the cone with a few hundred cells and
+    // has percents of its own in it; that is what the tolerance is.
+    for (const auto filmRadius : {0.0f, corner}) {
+      CAPTURE(filmRadius);
+      CHECK(transmissionThroughBound(lens, pupil, filmRadius) ==
+            doctest::Approx(transmission(lens, filmRadius)).epsilon(0.15));
+    }
   }
 }
 

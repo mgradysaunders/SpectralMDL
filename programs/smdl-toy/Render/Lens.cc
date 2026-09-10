@@ -213,14 +213,157 @@ constexpr float NEWTON_TOLERANCE = 1e-6f;
   return x * x + y * y <= boundary * boundary;
 }
 
+// The two passes of a scan across the plane of the rear vertex: a coarse
+// one over the whole aperture, then a fine one over the span it found.
+// The rear aperture can be twenty times the width of the cone that
+// actually reaches a film point, and ten times that again once the lens
+// is stopped down, a phone lens being the case that sets these. So the
+// coarse pass is what decides whether the cone is found at all and the
+// fine pass is what resolves it.
+constexpr int NUM_SCAN_COARSE_STEPS = 400;
+constexpr int NUM_SCAN_FINE_STEPS = 200;
+
+// Scan a line across the plane of the rear vertex and report the span of
+// it that light reaching a film point `filmRadius` off the axis, on the
+// +x side, comes through. `pointAt` places a point on the line for a
+// parameter running over [-1, 1], and the span comes back in that same
+// parameter. False is a line nothing gets out through.
+template <typename F>
+[[nodiscard]] bool scanPupil(const Lens &lens, float filmRadius, F &&pointAt,
+                             float &lo, float &hi) noexcept {
+  const float3 film{filmRadius, 0, lens.filmZ()};
+  const auto passes{[&](float t) {
+    const auto point{pointAt(t)};
+    auto ray{
+        Ray{film, float3(point.x, point.y, lens.rearZ()) - film, EPS, INF}};
+    return lens.traceFromFilm(ray);
+  }};
+  lo = FLOAT_MAX, hi = -FLOAT_MAX;
+  for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++) {
+    const auto t{2.0f * i / NUM_SCAN_COARSE_STEPS - 1};
+    if (passes(t)) lo = std::min(lo, t), hi = std::max(hi, t);
+  }
+  if (!(lo <= hi)) return false;
+  const auto cell{2.0f / NUM_SCAN_COARSE_STEPS};
+  const auto from{lo - cell}, to{hi + cell};
+  for (int i = 0; i <= NUM_SCAN_FINE_STEPS; i++) {
+    const auto t{from + (to - from) * i / NUM_SCAN_FINE_STEPS};
+    if (passes(t)) lo = std::min(lo, t), hi = std::max(hi, t);
+  }
+  return true;
+}
+
+// The window along x on the plane of the rear vertex that the light
+// reaching a film point `filmRadius` off the axis comes through. A scan
+// along x finds the whole of it, the system being one of revolution and
+// the film point lying on the +x axis.
+[[nodiscard]] bool pupilWindowOf(const Lens &lens, float filmRadius, float &lo,
+                                 float &hi) noexcept {
+  const auto radius{lens.rearApertureRadius()};
+  const auto alongX{[&](float t) { return float2(radius * t, 0.0f); }};
+  if (!scanPupil(lens, filmRadius, alongX, lo, hi)) return false;
+  lo *= radius, hi *= radius;
+  return true;
+}
+
+// How far that same region reaches in y at the middle of the window,
+// which bounds the whole of it within a factor of two: what a film point
+// sees is the clear apertures projected onto this plane and intersected,
+// so its half-height is a concave function of x vanishing at both ends
+// of the window, and a concave function is at least half its largest
+// value at the midpoint of an interval it vanishes on.
+[[nodiscard]] float pupilHalfHeightOf(const Lens &lens, float filmRadius,
+                                      float x) noexcept {
+  const auto radius{lens.rearApertureRadius()};
+  const auto alongY{[&](float t) { return float2(x, radius * t); }};
+  auto lo{0.0f}, hi{0.0f};
+  if (!scanPupil(lens, filmRadius, alongY, lo, hi)) return 0;
+  return radius * std::max(std::abs(lo), std::abs(hi));
+}
+
+// The middle of the window, which is the chief ray where the lens does
+// not vignette and the middle of what survives where it does.
+[[nodiscard]] bool chiefPointOf(const Lens &lens, float filmRadius,
+                                float &x) noexcept {
+  auto lo{0.0f}, hi{0.0f};
+  if (!pupilWindowOf(lens, filmRadius, lo, hi)) return false;
+  x = 0.5f * (lo + hi);
+  return true;
+}
+
+// How many rays a bundle carries while the film plane is being solved,
+// and how far either way the search starts out from, as a fraction of
+// the focal length. A published design sits within a percent of its
+// paraxial plane; the bracket only seeds the search, which walks out of
+// it if it has to.
+constexpr int NUM_FOCUS_FAN_RAYS = 64;
+constexpr int NUM_FOCUS_SWEEP_STEPS = 64;
+constexpr float FOCUS_SEARCH_SPAN = 0.02f;
+
+// The RMS radius of the axial spot for a film at `filmZ`, measured at
+// the plane the lens is focused on, or as a slope for a lens focused at
+// infinity, which is the limit of the same quantity. The point is on the
+// axis and the system is one of revolution, so a fan along x carries the
+// whole pupil once each ray is weighted by the annulus it stands for,
+// and the spot is centered on the axis by symmetry. Negative is a film
+// position nothing reaches.
+[[nodiscard]] float axialSpotOf(const Lens &lens, float filmZ,
+                                float pupilRadius,
+                                float focusDistance) noexcept {
+  const float3 film{0, 0, filmZ};
+  auto sumWeight{0.0f}, sumSquared{0.0f};
+  for (int i = 0; i < NUM_FOCUS_FAN_RAYS; i++) {
+    const auto height{pupilRadius * (i + 0.5f) / NUM_FOCUS_FAN_RAYS};
+    auto ray{Ray{film, float3(height, 0, lens.rearZ()) - film, EPS, INF}};
+    if (!lens.traceFromFilm(ray) || !(ray.dir.z < 0)) continue;
+    const auto slope{ray.dir.x / ray.dir.z};
+    const auto at{focusDistance > 0
+                      ? ray.org.x + (-focusDistance - ray.org.z) * slope
+                      : -slope};
+    sumWeight += height, sumSquared += height * at * at;
+  }
+  return sumWeight > 0 ? std::sqrt(sumSquared / sumWeight) : -1.0f;
+}
+
+// Move the film to where that spot is smallest, from the paraxial plane
+// the caller has already put it on. The Gaussian solve is only where the
+// rays cross in the limit of zero aperture: a design left with spherical
+// aberration in it, which is every fast design, brings its own zones to
+// a head a little off that plane and states the plane it chose as its
+// back focus.
+//
+// The pupil the fan is drawn on is taken once, at the seed, the window
+// moving by a fraction of a percent over a search this narrow. A sweep
+// brackets the minimum and a compass search walks into it.
+[[nodiscard]] float bestFilmPlane(const Lens &lens,
+                                  float focusDistance) noexcept {
+  auto lo{0.0f}, hi{0.0f};
+  if (!pupilWindowOf(lens, 0, lo, hi)) return lens.filmZ();
+  const auto pupilRadius{std::max(hi, -lo)};
+  const auto span{FOCUS_SEARCH_SPAN * lens.focalLength()};
+  auto best{lens.filmZ()};
+  auto bestSpot{FLOAT_MAX};
+  const auto consider{[&](float z) {
+    const auto spot{axialSpotOf(lens, z, pupilRadius, focusDistance)};
+    if (!(spot >= 0) || !(spot < bestSpot)) return false;
+    bestSpot = spot, best = z;
+    return true;
+  }};
+  for (int i = 0; i <= NUM_FOCUS_SWEEP_STEPS; i++)
+    consider(lens.filmZ() + span * (2.0f * i / NUM_FOCUS_SWEEP_STEPS - 1));
+  if (!(bestSpot < FLOAT_MAX)) return lens.filmZ();
+  auto step{span / NUM_FOCUS_SWEEP_STEPS};
+  for (int i = 0; i < 64 && step > 1e-4f * span; i++)
+    if (!consider(best - step) && !consider(best + step)) step *= 0.5f;
+  return best;
+}
+
 // How many film radii the exit pupil is tabulated at, how many radii
 // within one entry's span are traced (the ends included, so the entry
-// bounds the whole span and not just its middle), and the two grids over
-// the aperture that find the region: a coarse one over the whole of it,
-// then a fine one over what the coarse one found.
+// bounds the whole span and not just its middle), and how finely the
+// region one of them sees is gridded once the scans above have found it.
 constexpr size_t NUM_PUPIL_RADII = 64;
 constexpr int NUM_PUPIL_FILM_STEPS = 4;
-constexpr int NUM_PUPIL_COARSE_STEPS = 64;
 constexpr int NUM_PUPIL_FINE_STEPS = 64;
 
 // An axis-aligned rectangle on the plane of the rear vertex, grown by
@@ -265,37 +408,6 @@ struct PupilEllipse final {
   float2 center{}, semiAxes{};
 };
 
-// The point on the rear plane that the light reaching a film point
-// `filmRadius` off the axis comes through the middle of. A scan along x
-// is enough, the system being one of revolution, and it is coarse and
-// then fine so that a cone a hundredth of the aperture across is still
-// found and still resolved.
-[[nodiscard]] bool chiefPointOf(const Lens &lens, float filmRadius,
-                                float &x) noexcept {
-  constexpr int NUM_COARSE_SCAN = 400;
-  constexpr int NUM_FINE_SCAN = 200;
-  const float3 film{filmRadius, 0, lens.filmZ()};
-  const auto passes{[&](float at) {
-    auto ray{Ray{film, float3(at, 0, lens.rearZ()) - film, EPS, INF}};
-    return lens.traceFromFilm(ray);
-  }};
-  const auto radius{lens.rearApertureRadius()};
-  auto lo{FLOAT_MAX}, hi{-FLOAT_MAX};
-  for (int i = 0; i <= NUM_COARSE_SCAN; i++) {
-    const auto at{radius * (2.0f * i / NUM_COARSE_SCAN - 1)};
-    if (passes(at)) lo = std::min(lo, at), hi = std::max(hi, at);
-  }
-  if (!(lo <= hi)) return false;
-  const auto cell{2 * radius / NUM_COARSE_SCAN};
-  const auto from{lo - cell}, to{hi + cell};
-  for (int i = 0; i <= NUM_FINE_SCAN; i++) {
-    const auto at{from + (to - from) * i / NUM_FINE_SCAN};
-    if (passes(at)) lo = std::min(lo, at), hi = std::max(hi, at);
-  }
-  x = 0.5f * (lo + hi);
-  return true;
-}
-
 // The whole rear aperture as a rectangle, which is the domain a pupil
 // point was drawn from before there was a table and is still the domain
 // the weights are relative to.
@@ -339,6 +451,31 @@ void eachPupilPoint(const Lens &lens, float filmRadius, const PupilRect &over,
   return rect;
 }
 
+// The box on this plane that everything a film point `filmRadius` off
+// the axis can see lies within, found by the two scans rather than by
+// gridding the whole aperture: the rear aperture can be hundreds of
+// times the area of the cone, tens of thousands once the lens is
+// stopped down, and a grid coarse enough to run over the one at every
+// film radius of the table misses the other outright.
+//
+// The x range is the scan's own and is exact. The y range is twice the
+// half-height at the middle of it, which contains the rest. Both are
+// then widened by a quarter, and never by less than the coarse scan's
+// own step, so that a grid over the box reaches past the region on every
+// side.
+[[nodiscard]] PupilRect seedPupil(const Lens &lens, float filmRadius) noexcept {
+  auto rect{PupilRect{}};
+  auto lo{0.0f}, hi{0.0f};
+  if (!pupilWindowOf(lens, filmRadius, lo, hi)) return rect;
+  const auto height{2 * pupilHalfHeightOf(lens, filmRadius, 0.5f * (lo + hi))};
+  rect.extend(lo, -height), rect.extend(hi, +height);
+  const auto least{2 * lens.rearApertureRadius() / NUM_SCAN_COARSE_STEPS};
+  rect.expand(std::max(0.25f * (rect.hiX - rect.loX), least),
+              std::max(0.25f * (rect.hiY - rect.loY), least));
+  rect.clampTo(apertureRect(lens));
+  return rect;
+}
+
 // Bound what every film point between `filmRadius0` and `filmRadius1` can
 // see. Nothing getting out anywhere in the span gives back the whole
 // aperture, which costs the draws it always cost and leaves the estimator
@@ -360,26 +497,16 @@ void eachPupilPoint(const Lens &lens, float filmRadius, const PupilRect &over,
     return filmRadius0 +
            (filmRadius1 - filmRadius0) * float(k) / (NUM_PUPIL_FILM_STEPS - 1);
   }};
-  auto coarse{PupilRect{}};
+  auto seed{PupilRect{}};
   for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-    coarse.extend(
-        gridPupil(lens, filmRadiusAt(k), whole, NUM_PUPIL_COARSE_STEPS));
-  if (coarse.isEmpty()) return wholeEllipse;
-  // Widen by two cells before gridding again, since the region reaches
-  // past the outermost sample that landed in it, and then grid a second
-  // time over that. The second pass is the whole point: it makes the
-  // padding below a fraction of the region rather than a fraction of the
-  // aperture, which at a small aperture is the difference between a
-  // useful bound and no bound at all.
-  const auto coarseCell{2 * radius / NUM_PUPIL_COARSE_STEPS};
-  coarse.expand(2 * coarseCell, 2 * coarseCell);
-  coarse.clampTo(whole);
+    seed.extend(seedPupil(lens, filmRadiusAt(k)));
+  if (seed.isEmpty()) return wholeEllipse;
   auto fine{PupilRect{}};
   for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-    fine.extend(gridPupil(lens, filmRadiusAt(k), coarse, NUM_PUPIL_FINE_STEPS));
+    fine.extend(gridPupil(lens, filmRadiusAt(k), seed, NUM_PUPIL_FINE_STEPS));
   if (fine.isEmpty()) return wholeEllipse;
-  const auto cell{float2((coarse.hiX - coarse.loX) / NUM_PUPIL_FINE_STEPS,
-                         (coarse.hiY - coarse.loY) / NUM_PUPIL_FINE_STEPS)};
+  const auto cell{float2((seed.hiX - seed.loX) / NUM_PUPIL_FINE_STEPS,
+                         (seed.hiY - seed.loY) / NUM_PUPIL_FINE_STEPS)};
   const auto center{fine.center()};
   const auto extent{float2(std::max(fine.halfExtent().x, cell.x),
                            std::max(fine.halfExtent().y, cell.y))};
@@ -390,7 +517,7 @@ void eachPupilPoint(const Lens &lens, float filmRadius, const PupilRect &over,
   // cheaper than the tens of thousands of points it would hold.
   auto scale{1.0f};
   for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-    eachPupilPoint(lens, filmRadiusAt(k), coarse, NUM_PUPIL_FINE_STEPS,
+    eachPupilPoint(lens, filmRadiusAt(k), seed, NUM_PUPIL_FINE_STEPS,
                    [&](float x, float y) {
                      const auto u{(x - center.x) / extent.x};
                      const auto v{(y - center.y) / extent.y};
@@ -556,7 +683,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   if (mFocusDistance == 0) {
     // Focus at infinity, which is the limit of the solve below and is
     // what the film sitting on the rear focal point means.
-    mFilmZ = rearPrincipalZ + mFocalLength;
+    mParaxialFilmZ = rearPrincipalZ + mFocalLength;
   } else {
     const auto objectDistance{frontPrincipalZ + mFocusDistance};
     if (!(objectDistance > mFocalLength))
@@ -565,9 +692,15 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
           " scene units: that is inside the lens's front focal point, ",
           (mFocalLength - frontPrincipalZ),
           " scene units out, and no film position images it"));
-    mFilmZ = rearPrincipalZ +
-             mFocalLength * objectDistance / (objectDistance - mFocalLength);
+    mParaxialFilmZ = rearPrincipalZ + mFocalLength * objectDistance /
+                                          (objectDistance - mFocalLength);
   }
+  // The paraxial plane is where the film starts and not where it ends:
+  // the trace moves it onto the focus the whole cone comes to, which is
+  // the film position the design itself was drawn around. It is set
+  // first because the scan that finds the pupil traces from it.
+  mFilmZ = mParaxialFilmZ;
+  mFilmZ = bestFilmPlane(*this, mFocusDistance);
 }
 
 bool Lens::traceFromFilm(Ray &ray) const noexcept {
@@ -628,6 +761,12 @@ void Lens::logSummary() const {
                 ", film ", (mFilmZ - rearZ()) * SCENE_TO_MM,
                 " mm behind the rear vertex (back focal distance ",
                 mBackFocalDistance * SCENE_TO_MM, " mm)");
+  if (const auto correction{(mFilmZ - mParaxialFilmZ) * SCENE_TO_MM};
+      std::abs(correction) > 1e-4f)
+    SMDL_LOG_INFO("Lens focus: the traced axial spot is smallest ",
+                  std::abs(correction), " mm ",
+                  correction > 0 ? "behind" : "in front of",
+                  " the paraxial image plane, which is where the film sits");
   // A design that states its own back focus is stating where it puts the
   // film, which is the one check on a transcription that costs nothing.
   // It is not the paraxial point, though: a design left with spherical
@@ -722,6 +861,18 @@ float Lens::imageCircleRadius() const noexcept {
       outside = middle;
   }
   return inside;
+}
+
+float Lens::transmittedArea(float filmRadius) const noexcept {
+  constexpr int NUM_PROBE_STEPS = 32;
+  const auto seed{seedPupil(*this, filmRadius)};
+  if (seed.isEmpty()) return 0;
+  auto numPassed{0};
+  eachPupilPoint(*this, filmRadius, seed, NUM_PROBE_STEPS,
+                 [&](float, float) { numPassed++; });
+  const auto extent{seed.halfExtent()};
+  return 4 * extent.x * extent.y * numPassed /
+         float(NUM_PROBE_STEPS * NUM_PROBE_STEPS);
 }
 
 float Lens::filmRadiusForFieldAngle(float angle) const noexcept {

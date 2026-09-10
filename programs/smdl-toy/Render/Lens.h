@@ -183,8 +183,19 @@ public:
   }
   [[nodiscard]] float exitPupilZ() const noexcept { return mExitPupilZ; }
 
-  /// The film plane, solved from the focus distance.
+  /// The film plane: the paraxial solve of the focus distance, moved to
+  /// where the traced axial spot is smallest. A design left with
+  /// spherical aberration in it, which is every fast design, images its
+  /// own zones a little off the plane the Gaussian arithmetic gives, and
+  /// a short lens over a small sensor has no depth of focus to hide that
+  /// in.
   [[nodiscard]] float filmZ() const noexcept { return mFilmZ; }
+
+  /// The paraxial image plane the focus distance solves to, which is
+  /// where `filmZ()` starts from before the trace moves it. The two are
+  /// reported apart so that the arithmetic and the trace that refines it
+  /// can be read separately.
+  [[nodiscard]] float paraxialFilmZ() const noexcept { return mParaxialFilmZ; }
 
   /// The angle off the axis, in radians, that light reaching a film
   /// point `filmRadius` off the axis comes in at. That is what a field
@@ -210,6 +221,17 @@ public:
   /// Traced, so it costs tens of thousands of rays; nothing caches it.
   [[nodiscard]] float imageCircleRadius() const noexcept;
 
+  /// The area on the plane of the rear vertex that a film point
+  /// `filmRadius` off the axis sees the scene through. The ratio of two
+  /// of these is the mechanical vignette: what the corner of the frame
+  /// gets against what its middle gets. Zero is a film point nothing
+  /// reaches at all.
+  ///
+  /// Measured over the window the light comes through rather than over
+  /// the whole rear aperture, which on a lens like a phone camera's is
+  /// hundreds of times the area and leaves a handful of rays to count.
+  [[nodiscard]] float transmittedArea(float filmRadius) const noexcept;
+
   /// The front and rear vertices, which bound the glass.
   [[nodiscard]] float frontZ() const noexcept { return mElements.front().z; }
   [[nodiscard]] float rearZ() const noexcept { return mElements.back().z; }
@@ -227,6 +249,7 @@ private:
   float mExitPupilRadius{};
   float mExitPupilZ{};
   float mRearApertureRadius{};
+  float mParaxialFilmZ{};
   float mFilmZ{};
 
   /// The focus distance the film was placed for, kept for the log.
