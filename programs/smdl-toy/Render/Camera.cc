@@ -30,29 +30,6 @@ namespace {
       std::sqrt(std::max(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
   return imageIdeal;
 }
-
-// The fraction of the rear aperture that a film point can see out
-// through the lens, measured rather than guessed: a fixed grid over the
-// disk, traced. On axis it is the throughput the whole exposure is
-// relative to; at the sensor corner it is the mechanical vignette, which
-// the thin lens can only approximate with its cat's eye. Zero at the
-// corner means the sensor reaches past what the lens covers.
-[[nodiscard]] float probeTransmission(const Lens &lens, float2 film) noexcept {
-  constexpr int NUM_STEPS = 32;
-  const auto radius{lens.rearApertureRadius()};
-  auto numPassed{0};
-  for (int i = 0; i < NUM_STEPS; i++) {
-    for (int j = 0; j < NUM_STEPS; j++) {
-      const auto disk{radius *
-                      smdl::uniformDiskSample(float2((i + 0.5f) / NUM_STEPS,
-                                                     (j + 0.5f) / NUM_STEPS))};
-      const float3 org{film.x, film.y, lens.filmZ()};
-      auto ray{Ray{org, float3(disk.x, disk.y, lens.rearZ()) - org, EPS, INF}};
-      if (lens.traceFromFilm(ray)) numPassed++;
-    }
-  }
-  return float(numPassed) / float(NUM_STEPS * NUM_STEPS);
-}
 } // namespace
 
 Camera::Camera(const CameraOptions &options) {
@@ -200,14 +177,17 @@ void Camera::buildLens(const CameraOptions &options) {
                   " wide for its height and -resolution is ", mAspectRatio,
                   ", so the picture is stretched out of the shape of the "
                   "sensor it names");
-  const auto onAxis{probeTransmission(*mLens, float2(0.0f))};
+  // The two ends of the frame, as areas on the plane of the rear vertex
+  // rather than shares of it: what the corner gets against what the
+  // middle gets is the mechanical vignette, which the thin lens can only
+  // approximate with its cat's eye.
+  const auto onAxis{mLens->transmittedArea(0.0f)};
   if (!(onAxis > 0))
     throw smdl::Error("no ray from the middle of the sensor reaches the "
                       "scene through this lens: check that the surfaces are "
                       "in front-to-film order and that the clear apertures "
                       "are diameters");
-  const auto atCorner{
-      probeTransmission(*mLens, 0.5f * float2(mSensorWidth, mSensorHeight))};
+  const auto atCorner{mLens->transmittedArea(halfDiagonal)};
   if (!(atCorner > 0)) {
     SMDL_LOG_WARN("Lens: nothing reaches the corner of the sensor through "
                   "this lens, so the frame is dark outside the circle it "
