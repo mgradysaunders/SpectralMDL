@@ -1,6 +1,5 @@
 #include "Fixtures.h"
 
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -9,35 +8,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-// An environment variable for the duration of a scope. The suite shares
-// one process, so a variable left behind changes what a later test
-// resolves, and the order tests run in is not fixed.
-class ScopedEnv final {
-public:
-  ScopedEnv(const char *name, const std::string &value) : mName(name) {
-#if defined(_WIN32)
-    _putenv_s(name, value.c_str());
-#else
-    setenv(name, value.c_str(), 1);
-#endif
-  }
-
-  ScopedEnv(const ScopedEnv &) = delete;
-
-  ScopedEnv &operator=(const ScopedEnv &) = delete;
-
-  ~ScopedEnv() {
-#if defined(_WIN32)
-    _putenv_s(mName, "");
-#else
-    unsetenv(mName);
-#endif
-  }
-
-private:
-  const char *mName{};
-};
-
 // Write, load, and parse a module. Returns the parse error message, or
 // the empty string on success, with the parsed module in 'module_'.
 std::string parseModule(const TempDir &tmpDir, std::string_view name,

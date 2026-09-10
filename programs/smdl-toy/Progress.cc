@@ -1,7 +1,6 @@
 #include "Progress.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -79,22 +78,6 @@ constexpr size_t SPINNER_WIDTH{2};
   if (!smdl::cerrSupportsANSIColors()) return false;
   const char *term{std::getenv("TERM")};
   return term && *term && std::strcmp(term, "dumb") != 0;
-}
-
-// Does the environment claim UTF-8? Tests the locale variables in the
-// order the C library resolves them, first non-empty wins, so that a
-// specific `LC_CTYPE` is not overruled by a stale `LANG`.
-[[nodiscard]] bool localeIsUTF8() {
-  for (const char *name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
-    const char *value{std::getenv(name)};
-    if (!value || !*value) continue;
-    auto str{std::string(value)};
-    for (auto &ch : str)
-      ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    return str.find("utf-8") != std::string::npos ||
-           str.find("utf8") != std::string::npos;
-  }
-  return false;
 }
 
 // Round a duration to a step a person can read without watching it
@@ -205,11 +188,9 @@ std::atomic<ProgressBar *> sActive{nullptr};
 
 ProgressStyle parseProgressStyle(std::string_view name) {
   if (name == "auto") return ProgressStyle::AUTO;
-  if (name == "plain") return ProgressStyle::PLAIN;
   if (name == "none") return ProgressStyle::NONE;
   throw smdl::Error(
-      smdl::concat("expected the progress style to be 'auto', 'plain', or "
-                   "'none', not ",
+      smdl::concat("expected the progress style to be 'auto' or 'none', not ",
                    smdl::Quoted(name)));
 }
 
@@ -218,7 +199,7 @@ ProgressBar::ProgressBar(ProgressOptions options)
   mOptions.displayScale = std::max<uint64_t>(mOptions.displayScale, 1);
   mIsEnabled = mOptions.total > 0 && mOptions.style != ProgressStyle::NONE &&
                stderrIsInteractive();
-  mUseUnicode = mOptions.style == ProgressStyle::AUTO && localeIsUTF8();
+  mUseUnicode = smdl::shouldUseUnicode(mOptions.unicodeMode, mIsEnabled);
   mIsReporting = !mOptions.filePath.empty() && mOptions.total > 0;
   if (mIsReporting) {
     std::lock_guard<std::mutex> guard{mMutex};
@@ -456,13 +437,9 @@ void ProgressBar::drawLocked(uint64_t done) {
 
 void ProgressLogSink::logMessage(smdl::LogLevel level,
                                  std::string_view message) {
-  static const bool useColors{smdl::cerrSupportsANSIColors()};
-  const auto write{[&] {
-    std::cerr << smdl::logLevelLabel(level, useColors) << message << '\n';
-  }};
   if (auto *bar{ProgressBar::active()}) {
-    bar->printThrough(write);
+    bar->printThrough([&] { mPrinter.logMessage(level, message); });
   } else {
-    write();
+    mPrinter.logMessage(level, message);
   }
 }

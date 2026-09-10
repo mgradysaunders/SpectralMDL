@@ -476,6 +476,11 @@ cl::opt<std::string> optLogLevel{
     cl::desc("The log level to filter output verbosity, must be "
              "'debug', 'info', 'warn', or 'error' (default: 'info')"),
     cl::init(std::string("info")), cl::cat(catUtility)};
+cl::opt<cl::boolOrDefault> optUnicode{
+    "unicode",
+    cl::desc("Label log messages and draw the progress bar with Unicode "
+             "symbols rather than ASCII (default: autodetect)"),
+    cl::init(cl::boolOrDefault::BOU_UNSET), cl::cat(catUtility)};
 cl::opt<std::string> optDumpPlaces{
     "dump-places",
     cl::desc("Print '.places' buffer as one-line place text, then exit"),
@@ -521,7 +526,7 @@ cl::opt<std::string> optProfile{
     cl::ValueOptional, cl::init(std::string{}), cl::cat(catUtility)};
 cl::opt<std::string> optProgress{
     "progress",
-    cl::desc("Draw a progress bar while rendering: 'auto', 'plain', or 'none' "
+    cl::desc("Draw a progress bar while rendering: 'auto' or 'none' "
              "(default: auto)"),
     cl::init(std::string("auto")), cl::cat(catUtility)};
 cl::opt<std::string> optProgressFile{
@@ -742,9 +747,11 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.allMaterials = bool(optCompileAllMaterials);
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
+  opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
   opts.utility.progress.label = "Rendering";
   opts.utility.progress.units = "px";
   opts.utility.progress.style = parseProgressStyle(std::string(optProgress));
+  opts.utility.progress.unicodeMode = opts.utility.unicodeMode;
   opts.utility.progress.filePath = std::string(optProgressFile);
   opts.utility.previewEvery = double(optPreviewEvery);
   opts.utility.profile = std::string(optProfile).empty()

@@ -118,6 +118,10 @@ struct UtilityOptions final {
   /// which they decide for themselves when this is `COLOR_MODE_AUTO`.
   smdl::ColorMode colorMode{smdl::COLOR_MODE_AUTO};
 
+  /// Whether log messages are labeled with Unicode symbols, which the
+  /// log sink decides for itself when this is `UNICODE_MODE_AUTO`.
+  smdl::UnicodeMode unicodeMode{smdl::UNICODE_MODE_AUTO};
+
   /// The time-trace file, and whether `-profile` was given at all,
   /// since it takes an optional value.
   std::string profile{};

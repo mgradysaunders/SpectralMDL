@@ -335,6 +335,11 @@ struct UtilityOptions final {
   /// logger before anything else can say anything.
   smdl::LogLevel logLevel{smdl::LOG_LEVEL_INFO};
 
+  /// Whether log messages are labeled, and the progress bar drawn, with
+  /// Unicode symbols, which the log sink and the bar decide for
+  /// themselves when this is `UNICODE_MODE_AUTO`.
+  smdl::UnicodeMode unicodeMode{smdl::UNICODE_MODE_AUTO};
+
   /// The progress bar, filled with everything the command line decides;
   /// the totals and the summary need the resolved window and budget.
   ProgressOptions progress{};

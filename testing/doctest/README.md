@@ -107,7 +107,7 @@ is put back by a destructor, never by a statement at the end of a body: a
 throwing `REQUIRE` would skip the statement. That covers the scratch
 directory (`TempDir`), the wavelength grid and the shutter (`ScopedGrid`,
 `ScopedShutter`), the logger's sinks (`CollectedLog`), and the environment
-(`ScopedEnv` in `Module.cc`). It is what makes the random order safe, and
+(`ScopedEnv`). It is what makes the random order safe, and
 the one thing to get right when adding a test that touches any of them.
 
 Two constraints worth knowing:
@@ -144,8 +144,8 @@ record, not a plan.
 
 On the library side `lib/Compiler/Type.cc` (2990 lines) has no test at all,
 and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
-`lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc`,
-`lib/Support/Parallel.cc` and `lib/Support/Logger.cc`. `lib/Formatter.cc`
+`lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc` and
+`lib/Support/Parallel.cc`. `lib/Formatter.cc`
 (641 lines) has exactly one subcase, and it lives in `smdl/Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 

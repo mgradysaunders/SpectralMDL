@@ -9,17 +9,11 @@
 
 #include "smdl/Support/Logger.h"
 
-/// How a `ProgressBar` draws.
+/// Whether a `ProgressBar` draws.
 enum class ProgressStyle {
-  /// Draw the block drawing characters and the braille spinner when the
-  /// environment claims UTF-8, and the ASCII bar and spinner when it
-  /// does not.
+  /// Draw whenever stderr is an interactive terminal, in the alphabet
+  /// `ProgressOptions::unicodeMode` picks.
   AUTO,
-
-  /// Always draw the ASCII bar and spinner. The escape hatch for a
-  /// terminal that claims UTF-8 and then draws the block characters as
-  /// boxes.
-  PLAIN,
 
   /// Never draw at all.
   NONE
@@ -43,8 +37,12 @@ struct ProgressOptions final {
   /// The counter suffix, e.g. `"px"`. Empty prints bare counters.
   std::string units{};
 
-  /// How the bar draws.
+  /// Whether the bar draws.
   ProgressStyle style{ProgressStyle::AUTO};
+
+  /// Whether the bar and the spinner are drawn in block drawing and
+  /// braille characters or in ASCII, the same choice the log labels make.
+  smdl::UnicodeMode unicodeMode{smdl::UNICODE_MODE_AUTO};
 
   /// The total work units. Zero disables the bar.
   uint64_t total{};
@@ -191,8 +189,9 @@ private:
   /// Is there a file to write progress into?
   bool mIsReporting{};
 
-  /// Does the environment claim UTF-8, and are the block drawing
-  /// characters therefore safe?
+  /// Are the block drawing characters and the braille spinner safe, as
+  /// `ProgressOptions::unicodeMode` resolves for the terminal the bar
+  /// draws on?
   bool mUseUnicode{};
 
   /// Is there currently a bar on the line to erase?
@@ -205,11 +204,19 @@ private:
 /// The stderr log sink `smdl-toy` installs in place of
 /// `smdl::LogSinks::PrintToCerr`.
 ///
-/// Identical to it when no bar is on screen. When there is one, the
-/// message is printed through the bar, which is what keeps a warning
-/// logged mid-render (from a worker thread, or from JIT'd material code)
-/// both readable and above an intact bar.
+/// It prints through one, so it is identical to it when no bar is on
+/// screen. When there is one, the message is printed through the bar,
+/// which is what keeps a warning logged mid-render (from a worker thread,
+/// or from JIT'd material code) both readable and above an intact bar.
 class ProgressLogSink final : public smdl::LogSink {
 public:
   void logMessage(smdl::LogLevel level, std::string_view message) final;
+
+  /// See `smdl::LogSinks::PrintToCerr::setUnicodeMode()`.
+  void setUnicodeMode(smdl::UnicodeMode unicodeMode) noexcept {
+    mPrinter.setUnicodeMode(unicodeMode);
+  }
+
+private:
+  smdl::LogSinks::PrintToCerr mPrinter{};
 };

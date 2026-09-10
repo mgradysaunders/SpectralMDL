@@ -28,13 +28,14 @@ int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   // Prints exactly like 'PrintToCerr', except that it knows to step
   // around a progress bar while one is on screen.
-  smdl::Logger::get().addSink<ProgressLogSink>();
+  auto &logSink{smdl::Logger::get().addSink<ProgressLogSink>()};
   const auto opts{parseCommandLine(argc, argv)};
   // Before anything is logged: the sink above is already in place, and
   // the parse itself says nothing, so this is the first point at which a
-  // message could be filtered and the last at which nothing has been
-  // missed.
+  // message could be filtered and labeled as asked, and the last at which
+  // nothing has been missed.
   smdl::Logger::get().setMinLevel(opts.utility.logLevel);
+  logSink.setUnicodeMode(opts.utility.unicodeMode);
   // Before anything parallel: the thread pool is built by whichever
   // parallel operation runs first (the compile's image loads, usually)
   // and cannot be resized afterward. Embree keeps its own pool for

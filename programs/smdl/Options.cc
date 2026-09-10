@@ -171,6 +171,12 @@ cl::opt<std::string> optLogLevel{
     cl::desc("The log level to filter output verbosity, must be "
              "'debug', 'info', 'warn', or 'error' (default: 'info')"),
     cl::init(std::string("info")), cl::sub(allSubs), cl::cat(catUtility)};
+cl::opt<cl::boolOrDefault> optUnicode{
+    "unicode",
+    cl::desc("Label log messages with Unicode symbols rather than bracketed "
+             "words (default: autodetect)"),
+    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
+    cl::cat(catUtility)};
 cl::opt<std::string> optProfile{
     "profile",
     cl::desc("Write a time-trace JSON of the work this subcommand does "
@@ -308,6 +314,7 @@ Options parseCommandLine(int argc, char **argv) {
       optColor == cl::boolOrDefault::BOU_TRUE    ? smdl::COLOR_MODE_ALWAYS
       : optColor == cl::boolOrDefault::BOU_FALSE ? smdl::COLOR_MODE_NEVER
                                                  : smdl::COLOR_MODE_AUTO;
+  opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl.trace.json")
                              : std::string(optProfile);

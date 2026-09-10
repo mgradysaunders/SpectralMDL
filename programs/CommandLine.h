@@ -233,6 +233,15 @@ struct WavelengthRange final {
                                  smdl::Quoted(flagStr)));
 }
 
+/// The '-unicode' flag as `smdl::UnicodeMode` spells it: unset leaves the
+/// choice to autodetection, and either value overrides it.
+[[nodiscard]] inline smdl::UnicodeMode
+lowerUnicodeMode(cl::boolOrDefault value) {
+  return value == cl::boolOrDefault::BOU_TRUE    ? smdl::UNICODE_MODE_ALWAYS
+         : value == cl::boolOrDefault::BOU_FALSE ? smdl::UNICODE_MODE_NEVER
+                                                 : smdl::UNICODE_MODE_AUTO;
+}
+
 /// Parse the '-wavelengths' flag: wavelengths in nanometers separated by
 /// commas or whitespace, or the name of a text file of the same, which
 /// wins whenever the value opens as a file. NOT '@file': LLVM's command

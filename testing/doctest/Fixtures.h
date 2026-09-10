@@ -1,6 +1,7 @@
 /// \file
-/// The vocabulary both suites share: scratch directories, assertions that
-/// say what went wrong, and comparisons over the library's vector types.
+/// The vocabulary both suites share: scratch directories, environment
+/// variables set for a scope, assertions that say what went wrong, and
+/// comparisons over the library's vector types.
 /// Everything here needs the public library and nothing else, so the
 /// renderer suite includes it too. `smdl/Fixtures.h` adds what only the
 /// library suite needs and `smdl-toy/Fixtures.h` what only the renderer
@@ -10,6 +11,7 @@
 #include "doctest.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -166,6 +168,55 @@ public:
 
 private:
   std::filesystem::path mPath{};
+};
+
+//--}
+
+//--{ Environment
+
+/// An environment variable set for the duration of a scope, and put back
+/// the way it was found, set or unset, when the scope ends. The suites
+/// share one process and run in no fixed order, so a variable left
+/// changed would change what a later test resolves.
+class ScopedEnv final {
+public:
+  ScopedEnv(const char *name, const std::string &value) : mName(name) {
+    if (const char *previous{std::getenv(name)}) mPrevious = previous;
+    set(value.c_str());
+  }
+
+  ScopedEnv(const ScopedEnv &) = delete;
+
+  ScopedEnv &operator=(const ScopedEnv &) = delete;
+
+  ~ScopedEnv() {
+    if (mPrevious) {
+      set(mPrevious->c_str());
+    } else {
+      unset();
+    }
+  }
+
+private:
+  void set(const char *value) {
+#if defined(_WIN32)
+    _putenv_s(mName, value);
+#else
+    setenv(mName, value, 1);
+#endif
+  }
+
+  void unset() {
+#if defined(_WIN32)
+    _putenv_s(mName, "");
+#else
+    unsetenv(mName);
+#endif
+  }
+
+  const char *mName{};
+
+  std::optional<std::string> mPrevious{};
 };
 
 //--}
