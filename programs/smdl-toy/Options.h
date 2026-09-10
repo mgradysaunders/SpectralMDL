@@ -78,6 +78,12 @@ struct CameraFlags final {
   /// With a lens, the sensor width and height in millimeters.
   Flag<float2> sensorMM{};
 
+  /// With a lens, take the lens's own f-number back out of the exposure,
+  /// so that the frame holds its brightness whatever lens takes it and
+  /// however far it is stopped down. About this render rather than about
+  /// the camera, so no camera file carries it.
+  Flag<bool> shouldNormalizeLensExposure{};
+
   /// The seconds the shutter stays open, 0 for shut. When it opens is
   /// `SceneOptions::time`, which no camera file has a say in.
   Flag<float> shutter{};

@@ -143,6 +143,25 @@ void Camera::buildLens(const CameraOptions &options) {
   const auto halfDiagonal{0.5f * std::hypot(mSensorWidth, mSensorHeight)};
   mExitPupil.emplace(*mLens, halfDiagonal);
   mExitPupil->logSummary();
+  // What one unit of drawn pupil area is worth. Irradiance at a film
+  // point is the pupil integral of `L cos^4(theta) dA / d^2`, with `d`
+  // the axial distance from the film to the plane the point is drawn on,
+  // and the constant in front sets where the scale sits: this one makes
+  // an ideal f/1 lens read 1 on axis, so that two lenses, and one lens at
+  // two apertures, are on the same exposure.
+  const auto filmToPupil{mLens->filmZ() - mLens->rearZ()};
+  mExposurePerPupilArea = 4 / (PI * filmToPupil * filmToPupil);
+  if (options.shouldNormalizeLensExposure) {
+    mExposurePerPupilArea *= mLens->fNumber() * mLens->fNumber();
+    SMDL_LOG_INFO("Lens exposure: normalized to f/", mLens->fNumber(),
+                  ", so the frame holds its brightness whatever lens takes "
+                  "it and however far it is stopped down");
+  } else {
+    SMDL_LOG_INFO("Lens exposure: f/", mLens->fNumber(), " gathers ",
+                  1 / (mLens->fNumber() * mLens->fNumber()),
+                  " of what an ideal f/1 lens would, before what the glass "
+                  "takes");
+  }
   SMDL_LOG_INFO(
       "Lens frame: a ", sensorMM.x, " by ", sensorMM.y, " mm sensor, ",
       smdl::degrees(2 * std::atan(halfDiagonal / mLens->focalLength())),
@@ -313,23 +332,22 @@ CameraSample Camera::sampleThroughLens(float u, float v,
   // thin lens point takes, in the same place, so no existing sequence
   // moves; a blocked ray is weight 0 rather than a redraw, so the count
   // is fixed as well.
-  auto boundFraction{0.0f};
-  const auto pupil{mExitPupil->sample(float2(film.x, film.y), float2(sampler),
-                                      boundFraction)};
+  auto pupilArea{0.0f};
+  const auto pupil{
+      mExitPupil->sample(float2(film.x, film.y), float2(sampler), pupilArea)};
   result.ray =
       Ray{film, float3(pupil.x, pupil.y, mLens->rearZ()) - film, EPS, INF};
-  if (boundFraction <= 0) {
+  if (pupilArea <= 0) {
     result.weight = 0;
     return result;
   }
-  // The cos^4 falloff of the pupil integral, over the share of the
-  // aperture the point was drawn from, which is what keeps the estimator
-  // the one a draw over the whole aperture makes. Unlike the thin
-  // lens's, the falloff is not an effect to switch on: it is the
-  // estimator, and the whole of the natural vignetting comes out of it.
+  // The pupil integral: the area drawn from, over the density it was
+  // drawn with, times the `cos^4` falloff. Unlike the thin lens's, that
+  // falloff is not an effect to switch on; it is the estimator, and the
+  // whole of the natural vignetting comes out of it.
   const auto cosTheta{-result.ray.dir.z / length(result.ray.dir)};
   const auto cosSquared{cosTheta * cosTheta};
-  result.weight = boundFraction * cosSquared * cosSquared;
+  result.weight = mExposurePerPupilArea * pupilArea * cosSquared * cosSquared;
   if (!mLens->traceFromFilm(result.ray)) result.weight = 0;
   return result;
 }

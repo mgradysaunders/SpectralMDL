@@ -59,6 +59,11 @@ cl::opt<float2> optSensor{
     cl::desc("With a lens, the sensor width and height in mm (default: "
              "36,24, full frame)"),
     cl::init(float2{0, 0}), cl::cat(catCamera)};
+cl::opt<bool> optNormalizeLensExposure{
+    "normalize-lens-exposure",
+    cl::desc("With a lens, hold the frame's brightness when the lens or the "
+             "aperture changes, instead of exposing it by the f-number"),
+    cl::init(false), cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -620,6 +625,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.fovYDeg = flag(optFOV);
   opts.camera.lens = flag(optLens);
   opts.camera.sensorMM = flag(optSensor);
+  opts.camera.shouldNormalizeLensExposure = flag(optNormalizeLensExposure);
   opts.camera.shutter = flag(optShutter);
   opts.camera.fStop = flag(optFStop);
   opts.camera.aperture = flag(optAperture);

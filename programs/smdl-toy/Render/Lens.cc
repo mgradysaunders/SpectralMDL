@@ -55,10 +55,13 @@ public:
 
 // How many passes the aspheric intersection may take, and how close to
 // the surface it has to land as a fraction of the clear aperture radius.
-// The conic root is a good enough seed that one correction and the pass
-// that confirms it are all any surface tested here needs; eight is a
-// runaway.
-constexpr int MAX_NEWTON_STEPS = 8;
+// A gentle asphere settles in one correction and the pass that confirms
+// it; a phone lens, whose surfaces are aspheric to the fourteenth order
+// and are doing most of the correcting, takes six. A pass costs nothing
+// on a ray that has already converged, since the loop leaves on the
+// residual, so the cap is set well past what anything real has needed:
+// what it buys is a hard case answered instead of dropped.
+constexpr int MAX_NEWTON_STEPS = 12;
 constexpr float NEWTON_TOLERANCE = 1e-6f;
 
 // The sag of a surface at squared radius `u`, and its derivative with
@@ -594,17 +597,21 @@ void Lens::logSummary() const {
                 ", film ", (mFilmZ - rearZ()) * SCENE_TO_MM,
                 " mm behind the rear vertex (back focal distance ",
                 mBackFocalDistance * SCENE_TO_MM, " mm)");
-  // A design that states its own back focus is stating what the solve
-  // above should produce at infinity focus, which is the one check on a
-  // transcription that costs nothing.
+  // A design that states its own back focus is stating where it puts the
+  // film, which is the one check on a transcription that costs nothing.
+  // It is not the paraxial point, though: a design left with spherical
+  // aberration in it sits a percent or so of its focal length behind
+  // that on purpose, at the focus its own zones agree on. A transcription
+  // error is a much larger number, and that is what this stands between.
   if (mDesignBackFocus > 0) {
     const auto error{std::abs(mDesignBackFocus - mBackFocalDistance)};
-    if (error > 0.01f * mDesignBackFocus)
+    if (error > 0.02f * mFocalLength)
       SMDL_LOG_WARN("Lens: the design states a back focus of ",
                     mDesignBackFocus * SCENE_TO_MM,
                     " mm and the surfaces solve to ",
                     mBackFocalDistance * SCENE_TO_MM,
-                    " mm; one of the two is transcribed wrong");
+                    " mm, which is too far apart to be where the design "
+                    "chose to put its film; check the transcription");
   }
 }
 
@@ -624,7 +631,7 @@ ExitPupil::ExitPupil(const Lens &lens, float maxFilmRadius) {
   });
 }
 
-float2 ExitPupil::sample(float2 film, float2 xi, float &weight) const noexcept {
+float2 ExitPupil::sample(float2 film, float2 xi, float &area) const noexcept {
   const auto filmRadius{length(film)};
   const auto &bound{boundAt(filmRadius)};
   const auto disk{smdl::uniformDiskSample(xi)};
@@ -633,9 +640,9 @@ float2 ExitPupil::sample(float2 film, float2 xi, float &weight) const noexcept {
   // The bound covers a span of film radii and is padded on top of that,
   // so it reaches outside the aperture near the rim. A draw landing
   // there is the zero it would have been drawn on the whole aperture.
-  weight = x * x + y * y <= mRearRadius * mRearRadius
-               ? PI * bound.semiAxes.x * bound.semiAxes.y * mInvApertureArea
-               : 0.0f;
+  area = x * x + y * y <= mRearRadius * mRearRadius
+             ? PI * bound.semiAxes.x * bound.semiAxes.y
+             : 0.0f;
   // Turn the bound frame, whose +x axis is the film point's azimuth,
   // onto the film point. The turn preserves length, so the aperture test
   // above reads the same on either side of it.

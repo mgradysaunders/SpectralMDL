@@ -59,6 +59,17 @@ struct CameraOptions final {
   /// the 36 by 24 of full frame.
   float2 sensorMM{};
 
+  /// With `lens`, normalize the exposure to the lens's own f-number, so
+  /// that the frame holds its brightness whatever lens is on it and
+  /// however far it is stopped down. That is what the thin lens does,
+  /// where `fStop` buys depth of field and costs nothing.
+  ///
+  /// Otherwise, and by default, the response is the physical one: an
+  /// ideal f/1 lens reads 1 on axis and a slower one reads `1 / N^2`, so
+  /// two lenses and two apertures are on the same exposure and a fast
+  /// lens is worth what it is worth.
+  bool shouldNormalizeLensExposure{};
+
   /// The vertical field of view in degrees. Unused with a lens.
   float fovYDeg{37.8f};
 
@@ -112,10 +123,15 @@ struct CameraSample final {
   /// normalized and the time stamped once `toWorld()` has run.
   Ray ray{};
 
-  /// The camera response: 1 unless a vignetting mechanism is on, and
-  /// exactly 0 for a sample the lens barrel blocks. A zero-weight
-  /// sample must still count in the pixel average to keep the
-  /// darkening unbiased.
+  /// The camera response, and exactly 0 for a sample the lens barrel
+  /// blocks. A zero-weight sample must still count in the pixel average
+  /// to keep the darkening unbiased.
+  ///
+  /// The thin lens reads 1 unless a vignetting mechanism is on. A real
+  /// lens reads the pupil integral instead, which is `1 / N^2` on axis
+  /// for an ideal lens of f-number `N` and less wherever the glass takes
+  /// something, unless `CameraOptions::shouldNormalizeLensExposure`
+  /// takes the f-number back out.
   float weight{1};
 
   /// The ray cone spread that seeds the LOD state, already scaled by
@@ -199,6 +215,11 @@ private:
 
   /// With `mLens`, the sensor size in scene units.
   float mSensorWidth{}, mSensorHeight{};
+
+  /// With `mLens`, the response one unit of drawn pupil area carries:
+  /// the pupil integral's own `1 / d^2`, over the constant that sets the
+  /// exposure convention. See `CameraOptions`.
+  float mExposurePerPupilArea{};
 
   /// The image plane distance in units of image height. Unused with a
   /// lens, whose film distance is a real one and lives in `mLens`.

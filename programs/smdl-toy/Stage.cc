@@ -90,6 +90,11 @@ void refuseThinLensSettings(const Options &opts,
   } else if (opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) {
     throw smdl::Error("'sensor' needs a lens to mean anything: without one "
                       "the frame is 'fovy' and the sensor has no size");
+  } else if (opts.camera.shouldNormalizeLensExposure.wasGiven) {
+    throw smdl::Error("'-normalize-lens-exposure' needs a lens to mean "
+                      "anything: the thin lens already holds its brightness, "
+                      "'fstop' there buying depth of field and costing no "
+                      "light");
   }
 }
 
@@ -173,6 +178,8 @@ Frame resolveFrame(const Options &opts) {
       pick(opts.camera.distortionK2, fileCamera.distortionK2);
   cameraOptions.shouldFitDistortion =
       pick(opts.camera.shouldFitDistortion, fileCamera.shouldFitDistortion);
+  cameraOptions.shouldNormalizeLensExposure =
+      opts.camera.shouldNormalizeLensExposure.value;
   cameraOptions.vignetting =
       pick(opts.camera.vignetting, fileCamera.vignetting);
   cameraOptions.catEye = pick(opts.camera.catEye, fileCamera.catEye);

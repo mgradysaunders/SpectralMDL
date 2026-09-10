@@ -389,16 +389,17 @@ double transmissionThroughBound(const Lens &lens, const ExitPupil &pupil,
   auto total{0.0};
   for (int i = 0; i < NUM_STEPS; i++) {
     for (int j = 0; j < NUM_STEPS; j++) {
-      auto weight{0.0f};
+      auto area{0.0f};
       const auto point{pupil.sample(
           float2(filmRadius, 0),
-          float2((i + 0.5f) / NUM_STEPS, (j + 0.5f) / NUM_STEPS), weight)};
-      if (!(weight > 0)) continue;
+          float2((i + 0.5f) / NUM_STEPS, (j + 0.5f) / NUM_STEPS), area)};
+      if (!(area > 0)) continue;
       auto ray{rayToPupil(lens, film, point.x, point.y)};
-      if (lens.traceFromFilm(ray)) total += weight;
+      if (lens.traceFromFilm(ray)) total += area;
     }
   }
-  return total / (NUM_STEPS * NUM_STEPS);
+  const auto radius{lens.rearApertureRadius()};
+  return total / (NUM_STEPS * NUM_STEPS) / (PI * radius * radius);
 }
 
 // Half the diagonal of a 36 by 24 mm frame, which is how far off axis a
@@ -426,27 +427,27 @@ TEST_CASE("ExitPupil: the domain the pupil point is drawn from") {
     CHECK(pupil.areaFraction(100 * FULL_FRAME_CORNER) ==
           pupil.areaFraction(FULL_FRAME_CORNER));
   }
-  SUBCASE("Every draw is inside the aperture or weighs nothing") {
+  SUBCASE("Every draw is inside the aperture or carries no area") {
     const auto radius{lens.rearApertureRadius()};
     auto numOutside{0};
     for (int i = 0; i < 64; i++) {
       for (int j = 0; j < 64; j++) {
-        auto weight{0.0f};
+        auto area{0.0f};
         const auto point{pupil.sample(float2(FULL_FRAME_CORNER, 0),
                                       float2((i + 0.5f) / 64, (j + 0.5f) / 64),
-                                      weight)};
-        if (weight > 0 && lengthSquared(point) > radius * radius) numOutside++;
+                                      area)};
+        if (area > 0 && lengthSquared(point) > radius * radius) numOutside++;
       }
     }
     CHECK(numOutside == 0);
   }
   SUBCASE("It turns with the film point's azimuth, the system being one of "
           "revolution") {
-    auto weightOnX{0.0f}, weightOnY{0.0f};
+    auto areaOnX{0.0f}, areaOnY{0.0f};
     const auto xi{float2(0.3f, 0.7f)};
-    const auto onX{pupil.sample(float2(FULL_FRAME_CORNER, 0), xi, weightOnX)};
-    const auto onY{pupil.sample(float2(0, FULL_FRAME_CORNER), xi, weightOnY)};
-    CHECK(weightOnY == doctest::Approx(weightOnX));
+    const auto onX{pupil.sample(float2(FULL_FRAME_CORNER, 0), xi, areaOnX)};
+    const auto onY{pupil.sample(float2(0, FULL_FRAME_CORNER), xi, areaOnY)};
+    CHECK(areaOnY == doctest::Approx(areaOnX));
     CHECK(onY.x == doctest::Approx(-onX.y));
     CHECK(onY.y == doctest::Approx(onX.x));
   }
@@ -610,5 +611,144 @@ TEST_CASE("Lens: an aspheric surface is solved by iteration") {
     }
     CHECK(numTraced > 300);
     CHECK(worst < 1e-4);
+  }
+}
+
+namespace {
+LensSurface asphericSurfaceOf(float radius, float thickness, float ior,
+                              float diameter, float conic,
+                              std::vector<float> aspheric) {
+  auto surface{surfaceOf(radius, thickness, ior, diameter)};
+  surface.conic = conic;
+  surface.aspheric = std::move(aspheric);
+  return surface;
+}
+
+// The design `etc/lenses/phone-2mm.lens` ships, from US 8,411,377 B2
+// (Largan Precision), first embodiment: four plastic elements, every one
+// of the eight surfaces aspheric to the fourteenth order, an IR-cut
+// filter, and 2.03 mm of focal length at f/2.8. The hardest surfaces
+// this trace will ever be given, and a design whose numbers are printed
+// on it.
+LensPrescription phone2mm() {
+  auto lens{LensPrescription{}};
+  lens.name = "Largan 2.03mm f/2.8 phone camera";
+  lens.surfaces = {
+      asphericSurfaceOf(2.20482f, 0.316f, 1.544f, 1.00f, -4.17195e+01f,
+                        {3.30286e-01f, -1.53066e+00f, 3.32500e+00f,
+                         -1.15603e+01f, 3.45202e+01f, -4.94033e+01f}),
+      asphericSurfaceOf(-7.70120f, 0.030f, 1, 0.77f, 4.95425e+00f,
+                        {-1.38321e-01f, -8.76915e-01f, 1.30514e-01f,
+                         2.69221e+01f, -9.50759e+01f, -5.08215e+01f}),
+      stopOf(0.406f, 0.6827f),
+      asphericSurfaceOf(-3.09910f, 0.395f, 1.544f, 1.14f, -1.00000e+00f,
+                        {-6.55216e-01f, 1.00267e+00f, -1.53705e+00f,
+                         -3.62084e+01f, 1.96119e+02f, -3.61807e+02f}),
+      asphericSurfaceOf(-1.69968f, 0.062f, 1, 1.52f, 4.00157e+00f,
+                        {1.84010e-01f, -9.96274e-01f, 3.15867e+00f,
+                         2.66215e+00f, -1.67218e+01f, 9.47590e+00f}),
+      asphericSurfaceOf(-0.99811f, 0.579f, 1.544f, 1.54f, -1.30027e+01f,
+                        {-5.45182e-01f, 3.63034e+00f, -1.74375e+01f,
+                         5.11838e+01f, -7.57263e+01f, 4.10274e+01f}),
+      asphericSurfaceOf(-0.65071f, 0.040f, 1, 1.75f, -4.12575e+00f,
+                        {-8.19960e-01f, 1.97197e+00f, -4.06373e+00f,
+                         3.98247e+00f, -1.27573e+00f, -2.04057e-02f}),
+      asphericSurfaceOf(1.51931f, 0.505f, 1.634f, 1.98f, -2.20450e-01f,
+                        {-6.13430e-01f, 2.02104e-01f, -8.11099e-02f,
+                         -2.86991e-02f, 1.31998e-01f, -6.89114e-02f}),
+      asphericSurfaceOf(0.62124f, 0.400f, 1, 2.69f, -4.00694e+00f,
+                        {-2.79288e-01f, 2.26332e-01f, -1.38354e-01f,
+                         5.05528e-02f, -9.50226e-03f, 5.73526e-04f}),
+      surfaceOf(0, 0.200f, 1.517f, 2.87f),
+      surfaceOf(0, 0.360f, 1, 3.00f),
+  };
+  return lens;
+}
+
+// The largest height on the pupil plane a film point on the axis can get
+// a ray out through, which is the edge of the cone the axial rays fill.
+float axialConeMM(const Lens &lens, float filmMM) {
+  const float3 film{0, 0, lens.rearZ() + filmMM * MM};
+  auto largest{0.0f};
+  for (int i = 1; i <= 400; i++) {
+    const auto height{lens.rearApertureRadius() * i / 400};
+    auto ray{rayToPupil(lens, film, height, 0)};
+    if (lens.traceFromFilm(ray)) largest = height;
+  }
+  return largest / MM;
+}
+
+// How nearly parallel the axial rays leave, for a film that far behind
+// the rear vertex. Zero would be a lens with no spherical aberration in
+// it, which no fast one is.
+double axialSpread(const Lens &lens, float filmMM, float coneMM,
+                   float fraction) {
+  const float3 film{0, 0, lens.rearZ() + filmMM * MM};
+  double sum{}, sumSquared{}, count{};
+  for (int i = 1; i <= 12; i++) {
+    auto ray{rayToPupil(lens, film, fraction * coneMM * MM * i / 12, 0)};
+    if (!lens.traceFromFilm(ray)) continue;
+    const auto angle{std::atan2(ray.dir.x, -ray.dir.z)};
+    sum += angle, sumSquared += double(angle) * angle, count += 1;
+  }
+  if (count < 2) return 1e30;
+  return std::sqrt(sumSquared / count - (sum / count) * (sum / count));
+}
+} // namespace
+
+TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
+          "order") {
+  const Lens lens{phone2mm(), {AT_INFINITY, 0}};
+  const auto paraxialMM{float(lens.backFocalDistance() / MM)};
+  // What the patent states, which is where the design puts its sensor.
+  const auto statedMM{0.360f};
+  SUBCASE("It reproduces the focal length and the f-number printed on it") {
+    CHECK(lens.focalLength() / MM == doctest::Approx(2.03).epsilon(2e-3));
+    CHECK(lens.fNumberWideOpen() == doctest::Approx(2.80).epsilon(1e-3));
+  }
+  SUBCASE("Every ray that gets out lands on the surface it left from") {
+    const std::vector<float> aspheric{3.30286e-01f, -1.53066e+00f,
+                                      3.32500e+00f, -1.15603e+01f,
+                                      3.45202e+01f, -4.94033e+01f};
+    const auto cone{axialConeMM(lens, paraxialMM)};
+    auto numTraced{0};
+    auto worst{0.0};
+    for (int i = 0; i <= 40; i++) {
+      const float3 film{(i * 0.04f) * MM, 0, lens.filmZ()};
+      for (int j = -60; j <= 60; j++) {
+        auto ray{rayToPupil(lens, film, (i * 0.0375f + j * 0.002f) * MM, 0)};
+        if (!lens.traceFromFilm(ray)) continue;
+        numTraced++;
+        const auto radius{std::hypot(ray.org.x, ray.org.y) / MM};
+        worst = std::max(
+            worst, std::abs((ray.org.z - lens.frontZ()) / MM -
+                            sagMM(2.20482, -4.17195e+01, aspheric, radius)));
+      }
+    }
+    CHECK(cone > 0.05f);
+    // A ray the iteration gives up on is dropped, so a solve that stops
+    // short shows here rather than as a wrong point: this sweep gets
+    // 1835 rays out once it has converged and 1799 at four passes.
+    CHECK(numTraced > 1830);
+    CHECK(worst < 1e-4);
+  }
+  SUBCASE("The film it asks for sits inside its own spherical aberration") {
+    // The design states a back focus its surfaces do not paraxially have,
+    // which is a designer putting the sensor where the zones agree rather
+    // than where the paraxial rays cross. So the stated plane has to lie
+    // between the paraxial focus and where the whole cone comes to a
+    // head, and that is only true if the polynomials are right: they are
+    // what bends the outer zones.
+    const auto cone{axialConeMM(lens, paraxialMM)};
+    auto marginalMM{paraxialMM};
+    auto best{1e30};
+    for (int i = 0; i <= 200; i++) {
+      const auto filmMM{paraxialMM * (0.9f + 0.002f * i)};
+      if (const auto spread{axialSpread(lens, filmMM, cone, 1.0f)};
+          spread < best)
+        best = spread, marginalMM = filmMM;
+    }
+    CHECK(paraxialMM < statedMM);
+    CHECK(statedMM < marginalMM);
   }
 }

@@ -243,3 +243,60 @@ TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
     CHECK(middle <= 1.0f);
   }
 }
+
+namespace {
+// The same singlet with a wide flat window behind it. The window bends
+// nothing and blocks nothing; all it does is make the rear aperture four
+// times the area and move the plane the pupil point is drawn on, neither
+// of which a lens's exposure may depend on. It stands 2 mm back, clear
+// of the rim of the curved surface in front of it, which bulges a
+// millimeter toward the film and would otherwise cross it.
+LensPrescription singletBehindWindow() {
+  auto lens{singlet()};
+  lens.surfaces.back().thickness = 2.0f;
+  auto window{LensSurface{}};
+  window.diameter = 40.0f;
+  lens.surfaces.push_back(window);
+  return lens;
+}
+
+float fNumberOf(const LensPrescription &prescription) {
+  return Lens{prescription, LensOptions{8.0f, 0, 0, 0}}.fNumberWideOpen();
+}
+} // namespace
+
+TEST_CASE("Camera: a lens is exposed by its f-number and nothing else") {
+  const auto fNumber{fNumberOf(singlet())};
+  const auto ideal{1 / (fNumber * fNumber)};
+  SUBCASE("An ideal lens reads one over the f-number squared, and a real "
+          "one a little under") {
+    const auto middle{meanWeight(Camera{lensOptions()}, 32, 24)};
+    CHECK(middle < 1.02f * ideal);
+    CHECK(middle > 0.8f * ideal);
+  }
+  SUBCASE("A wider rear element changes nothing, the exposure being an "
+          "integral over the pupil and not over the glass") {
+    auto options{lensOptions()};
+    options.lens = singletBehindWindow();
+    const auto behindWindow{meanWeight(Camera{options}, 32, 24)};
+    const auto bare{meanWeight(Camera{lensOptions()}, 32, 24)};
+    CHECK(behindWindow == doctest::Approx(bare).epsilon(0.02));
+  }
+  SUBCASE("Stopping down darkens by the square of the f-number") {
+    auto options{lensOptions()};
+    options.fStop = 2 * fNumber;
+    const auto stopped{meanWeight(Camera{options}, 32, 24)};
+    const auto wideOpen{meanWeight(Camera{lensOptions()}, 32, 24)};
+    CHECK(stopped == doctest::Approx(wideOpen / 4).epsilon(0.1));
+  }
+  SUBCASE("Normalizing takes the f-number back out, so the frame holds its "
+          "brightness") {
+    auto options{lensOptions()};
+    options.shouldNormalizeLensExposure = true;
+    const auto wideOpen{meanWeight(Camera{options}, 32, 24)};
+    options.fStop = 2 * fNumber;
+    const auto stopped{meanWeight(Camera{options}, 32, 24)};
+    CHECK(wideOpen == doctest::Approx(1.0).epsilon(0.2));
+    CHECK(stopped == doctest::Approx(wideOpen).epsilon(0.1));
+  }
+}

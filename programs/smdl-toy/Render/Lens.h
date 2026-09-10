@@ -243,12 +243,12 @@ public:
   ExitPupil(const Lens &lens, float maxFilmRadius);
 
   /// Draw a point on the plane of the rear vertex for the film point
-  /// `film`, out of the two numbers `xi`, and report in `weight` the
-  /// fraction of the rear aperture it was drawn from, which is what the
-  /// camera's weight has to carry. Zero there is a draw that landed
-  /// outside the aperture, which is blocked and need not be traced.
+  /// `film`, out of the two numbers `xi`, and report in `area` the area
+  /// of the ellipse it came from, which is the domain the camera's
+  /// response has to carry. Zero there is a draw that landed outside the
+  /// aperture, which is blocked and need not be traced.
   [[nodiscard]] float2 sample(float2 film, float2 xi,
-                              float &weight) const noexcept;
+                              float &area) const noexcept;
 
   /// Log what the table bought: the share of the rear aperture the
   /// middle of the frame and the corner of it draw from.
@@ -256,7 +256,7 @@ public:
 
   /// The share of the rear aperture the film point at `filmRadius`
   /// draws from, which is the factor by which the table cut the wasted
-  /// draws at that radius.
+  /// draws at that radius. For the log; nothing samples through it.
   [[nodiscard]] float areaFraction(float filmRadius) const noexcept;
 
 private:
