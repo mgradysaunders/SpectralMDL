@@ -8,7 +8,7 @@ import sampling::*;
 using quadrature = ::support::quadrature;
 import quadrature::*;
 
-// The evaluation harness, matching the one in `df_hapke.smdl`: wrap the
+// The evaluation harness, matching the one in `df/hapke.smdl`: wrap the
 // material in a material instance and go through the exported entry
 // points, so the tests exercise exactly the path a renderer takes.
 struct EmissionResult {

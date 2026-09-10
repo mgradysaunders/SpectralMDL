@@ -223,13 +223,13 @@ float2 samplePoint(const int i, const float range) =
 
 // A literal transcription of Listings 1 and 5 of Mikkelsen (2022), against
 // which the module's folded and reconditioned form is checked.
-struct referenceGrid {
+struct ReferenceGrid {
   float3 w = float3(0.0);
   int2[3] v = int2[3](int2(0), int2(0), int2(0));
 };
 
 @(pure)
-referenceGrid referenceTriangleGrid(float2 st) {
+ReferenceGrid referenceTriangleGrid(float2 st) {
   st *= 2.0 * 1.7320508075688772;
   // 'gridToSkewedGrid' is row major in HLSL, with rows (1, -0.57735027) and
   // (0, 1.15470054), and is applied as 'mul(matrix, vector)'.
@@ -239,7 +239,7 @@ referenceGrid referenceTriangleGrid(float2 st) {
   temp.z = 1.0 - temp.x - temp.y;
   const auto s(math::step(0.0, -temp.z));
   const auto s2(2.0 * s - 1.0);
-  return referenceGrid(
+  return ReferenceGrid(
            w: float3(-temp.z * s2, s - temp.y * s2, s - temp.x * s2),
            v: int2[3](baseId + int2(int(s), int(s)), //
            baseId + int2(int(s), int(1.0 - s)),      //
@@ -301,10 +301,10 @@ unit_test "The weights are a partition of unity" {
       "the lattice weights must be normalized");
     #assert(
       #all(w1 >= 0.0) && #abs(#sum(w1) - 1.0) < 1e-4,
-      "hex_modulate must be normalized");
+      "weight_modulate must be normalized");
     #assert(
       #all(w2 >= 0.0) && #abs(#sum(w2) - 1.0) < 1e-4,
-      "hex_contrast must be normalized");
+      "weight_contrast must be normalized");
     #assert(
       #all(w3 >= 0.0) && #abs(#sum(w3) - 1.0) < 1e-4,
       "degenerate weights must still be normalized");
@@ -336,7 +336,7 @@ unit_test "The contrast ramp matches the published curve" {
       const auto r(0.25 * float(j));
       #assert(
         #all(tiling::weight_contrast(w, r) ~== |1e-5| referenceGain3(w, r)),
-        "hex_contrast must match the published Gain3");
+        "weight_contrast must match the published Gain3");
     }
   }
 

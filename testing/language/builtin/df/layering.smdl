@@ -99,7 +99,7 @@ unit_test "The three mixer policies differ only above weight one" {
   // The clamp keeps the truncated component's chance and flags: with
   // default chances, the PDF mixes by the raw weights normalized over
   // both components, and the flags agree with the normalized mixer over
-  // the same components. (Both were dropped before this test existed.)
+  // the same components.
   {
     const auto components = auto[2](
       df::bsdf_component(weight: 0.7, component: lobeA),

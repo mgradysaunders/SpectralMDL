@@ -11,7 +11,7 @@ import sampling::*;
 using scatter = ::support::scatter;
 import scatter::*;
 
-// Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
+// Integrate Smith slope PDF by transforming the open square `(-1, 1)^2`
 // into the entire plane `(-inf, inf)^2`.
 @(pure)
 float integrateSmithSlopePDF(const df::microfacet::distribution distr) {

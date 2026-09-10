@@ -6,7 +6,7 @@
 
 import ::tex::*;
 
-void run_4x4_tests(texture_2d t) {
+void check4x4Fixture(texture_2d t) {
   #assert(tex::texture_isvalid(t));
   #assert(tex::width(t) == 4);
   #assert(tex::height(t) == 4);
@@ -19,7 +19,7 @@ void run_4x4_tests(texture_2d t) {
   //
   //            [64, 255, 0, 255]      [255, 255, 0, 255]
   //                  |                   |
-  // 4 +---------+----|----+---------+----|----+ 
+  // 4 +---------+----|----+---------+----|----+
   //   |         |    |    |         |    |    |
   //   |    *    |    *    |    *    |    *    |
   //   |         |         |         |         |
@@ -124,11 +124,11 @@ unit_test "The level extents and texels follow the mip chain" {
 }
 
 unit_test "A PNG reads back its texels" {
-  run_4x4_tests(texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true));
+  check4x4Fixture(texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true));
 }
 
 unit_test "An EXR reads back the same texels" {
-  run_4x4_tests(texture_2d("4x4.exr", tex::gamma_linear, use_mipmap: true));
+  check4x4Fixture(texture_2d("4x4.exr", tex::gamma_linear, use_mipmap: true));
 }
 
 unit_test "wrap_clip returns zero outside the unit square" {
@@ -184,7 +184,7 @@ unit_test "sRGB decode is the piecewise IEC curve" {
       #assert(dec.w == raw.w); // Alpha is never decoded.
     }
   }
-  // The old gamma-2.2 approximation must NOT match away from the
+  // The gamma-2.2 power curve must NOT match away from the
   // endpoints: 64/255 decodes to ~0.0513 piecewise but ~0.0477 by the
   // power curve, so this pins the piecewise behavior specifically.
   const auto mid = tex::texel_float4(tDec, int2(1, 0)).x;

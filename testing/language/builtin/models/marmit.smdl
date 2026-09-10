@@ -136,14 +136,14 @@ unit_test "A degenerate substrate stays in range" {
   // `pow(0, e)` or drifting off 1 through the round trip.
   const auto black = marmit::marmit(reflectance: color(0.0), water_thickness: 0.01);
   const auto white = marmit::marmit(reflectance: color(1.0), water_thickness: 0.01);
-  const auto mix_black = marmit::areal_mix(color(0.0), color(0.0), 0.5);
-  const auto mix_white = marmit::areal_mix(color(1.0), color(1.0), 0.5);
+  const auto mixBlack = marmit::areal_mix(color(0.0), color(0.0), 0.5);
+  const auto mixWhite = marmit::areal_mix(color(1.0), color(1.0), 0.5);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     #assert(black.wet_reflectance[i] == 0.0);
     #assert(white.wet_reflectance[i] > 0.0);
     #assert(white.wet_reflectance[i] < 1.0);
-    #assert(mix_black[i] == 0.0);
-    #assert(mix_white[i] ~== |1e-6| 1.0);
+    #assert(mixBlack[i] == 0.0);
+    #assert(mixWhite[i] ~== |1e-6| 1.0);
   }
 }
 
@@ -255,13 +255,13 @@ unit_test "A lossless film over a white substrate leaves it white" {
   // particles of varying index. The tolerance admits the two `1 - x` roundings
   // that separate `r21` from `t21`, which is the only inexactness in the
   // identity; the fit error in `r12` itself cancels between the two terms.
-  const auto sweep_ior = float[5](1.0, 1.2, 1.53, 2.0, 2.5);
-  const auto sweep_fraction = float[4](0.0, 0.25, 0.5, 0.75);
+  const auto sweepIOR = float[5](1.0, 1.2, 1.53, 2.0, 2.5);
+  const auto sweepFraction = float[4](0.0, 0.25, 0.5, 0.75);
   for (int a = 0; a < 5; a++) {
     for (int b = 0; b < 4; b++) {
       const auto lossless = marmit::marmit(
         reflectance: color(1.0), water_thickness: 0.0,
-        suspension_ior: sweep_ior[a], suspension_fraction: sweep_fraction[b]);
+        suspension_ior: sweepIOR[a], suspension_fraction: sweepFraction[b]);
       for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
         #assert(lossless.wet_albedo[i] ~== |1e-5| 1.0);
         #assert(lossless.wet_reflectance[i] + lossless.interface_reflectance[i] ~== |1e-5| 1.0);
@@ -339,16 +339,16 @@ unit_test "The visible values match the reference implementation" {
       0.159396, 0.159755, 0.160078, 0.160369,
       0.160634, 0.160877, 0.161094, 0.161303,
       0.161494, 0.161662, 0.161812, 0.161923);
-    const auto thin_partial = partly(0.01, 0.4);
+    const auto thinPartial = partly(0.01, 0.4);
     const auto column = film(1000.0);
-    const auto column_partial = partly(1000.0, 0.4);
+    const auto columnPartial = partly(1000.0, 0.4);
     const auto silt = marmit::marmit(
       reflectance: color(DRY), water_thickness: 0.01, suspension_fraction: 0.2);
     for (int i = 0; i < 16; i++) {
       #assert(full.wet_reflectance[i] ~== |1e-3| REF_THIN[i]);
-      #assert(thin_partial[i] ~== |1e-3| REF_THIN_PARTIAL[i]);
+      #assert(thinPartial[i] ~== |1e-3| REF_THIN_PARTIAL[i]);
       #assert(column.wet_reflectance[i] ~== |1.5e-3| REF_COLUMN[i]);
-      #assert(column_partial[i] ~== |1.5e-3| REF_COLUMN_PARTIAL[i]);
+      #assert(columnPartial[i] ~== |1.5e-3| REF_COLUMN_PARTIAL[i]);
       #assert(silt.wet_reflectance[i] ~== |1e-3| REF_SILT[i]);
     }
   }

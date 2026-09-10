@@ -54,15 +54,15 @@ unit_test "The march is exact on constant heights" {
 unit_test "The march is exact on a linear ramp" {
   // Height 1 - k * u, i.e., depth k * u: the clearance is linear in the
   // layer, so the secant intersection is the closed form
-  // l* = k * u0 / (1 + k * slope_x * scale) at any step count.
+  // l* = k * u0 / (1 + k * slopeX * scale) at any step count.
   const float k = 0.5;
   const auto ramp = \(const float2 c) = 1.0 - k * c.x;
   const float2 uv = float2(0.6, 0.4);
   const float scale = 0.2;
   const float3 v = math::normalize(float3(0.3, 0.0, 0.9));
-  const float slope_x = v.x / v.z;
-  const float l_star = k * uv.x / (1.0 + k * slope_x * scale);
-  const float2 expected = uv - float2(slope_x, 0.0) * (scale * l_star);
+  const float slopeX = v.x / v.z;
+  const float lStar = k * uv.x / (1.0 + k * slopeX * scale);
+  const float2 expected = uv - float2(slopeX, 0.0) * (scale * lStar);
   const float2 got = parallax::parallax_offset_with(ramp, uv, v, scale);
   #assert(math::abs(got.x - expected.x) < 1e-5);
   #assert(math::abs(got.y - expected.y) < 1e-5);
@@ -238,9 +238,9 @@ unit_test "Hierarchical march hits the ridge where the layer march tunnels" {
   // ray runs toward +u): the up-ramp is met at l = 3.6 / 26.6.
   const float2 uv = float2(0.25, 0.5);
   const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
-  const float l_star = 3.6 / 26.6;
+  const float lStar = 3.6 / 26.6;
   const float2 got = parallax::parallax_offset_max(ridge, uv, v, scale);
-  #assert(math::abs(got.x - (uv.x + 2.0 * l_star)) < 1e-4);
+  #assert(math::abs(got.x - (uv.x + 2.0 * lStar)) < 1e-4);
   #assert(got.y == uv.y);
   // Eight fixed layers step clean over the two-texel wall and land on
   // its next repetition, one full tile later.
@@ -248,20 +248,20 @@ unit_test "Hierarchical march hits the ridge where the layer march tunnels" {
   const float2 layered = parallax::parallax_offset_with(field, uv, v, scale, 8, 8);
   #assert(layered.x > uv.x + 1.0);
   // A shallower ray (s = 1/2) reaches the ramp deeper, at l = 3.6 / 7.4.
-  const float3 v_half = math::normalize(float3(-1.0, 0.0, 1.0));
-  const float2 got_half = parallax::parallax_offset_max(ridge, uv, v_half, scale);
-  #assert(math::abs(got_half.x - (uv.x + 0.5 * 3.6 / 7.4)) < 1e-4);
+  const float3 vHalf = math::normalize(float3(-1.0, 0.0, 1.0));
+  const float2 gotHalf = parallax::parallax_offset_max(ridge, uv, vHalf, scale);
+  #assert(math::abs(gotHalf.x - (uv.x + 0.5 * 3.6 / 7.4)) < 1e-4);
   // A diagonal ray crosses a v cell per u cell and meets the same wall at
   // the same depth, since the field is constant along v.
-  const float3 v_diag = math::normalize(float3(-4.0, -4.0, 1.0));
-  const float2 got_diag = parallax::parallax_offset_max(ridge, uv, v_diag, scale);
-  #assert(math::abs(got_diag.x - (uv.x + 2.0 * l_star)) < 1e-4);
-  #assert(math::abs(got_diag.y - (uv.y + 2.0 * l_star)) < 1e-4);
+  const float3 vDiag = math::normalize(float3(-4.0, -4.0, 1.0));
+  const float2 gotDiag = parallax::parallax_offset_max(ridge, uv, vDiag, scale);
+  #assert(math::abs(gotDiag.x - (uv.x + 2.0 * lStar)) < 1e-4);
+  #assert(math::abs(gotDiag.y - (uv.y + 2.0 * lStar)) < 1e-4);
   // A ray toward -u from X0 = 12 meets the down-ramp (texel centers 9.5
   // to 8.5) where 1 - l = 0.2 + 0.8 (9.5 - (12 - 32 l)).
-  const float3 v_back = math::normalize(float3(4.0, 0.0, 1.0));
-  const float2 got_back = parallax::parallax_offset_max(ridge, float2(0.75, 0.5), v_back, scale);
-  #assert(math::abs(got_back.x - (0.75 - 2.0 * 2.8 / 26.6)) < 1e-4);
+  const float3 vBack = math::normalize(float3(4.0, 0.0, 1.0));
+  const float2 gotBack = parallax::parallax_offset_max(ridge, float2(0.75, 0.5), vBack, scale);
+  #assert(math::abs(gotBack.x - (0.75 - 2.0 * 2.8 / 26.6)) < 1e-4);
 }
 
 unit_test "Hierarchical march wraps and clamps" {
@@ -308,18 +308,18 @@ unit_test "Hierarchical march finds the first crossing" {
       // Recover the depth from the offset (the slope is what the march
       // used, cap included).
       float2 slope = v.xy / #max(v.z, parallax::PARALLAX_MIN_VIEW_Z);
-      const float slope_len = math::length(slope);
-      slope *= slope_len > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slope_len : 1.0;
+      const float slopeLength = math::length(slope);
+      slope *= slopeLength > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slopeLength : 1.0;
       slope *= scale;
-      const float l_star = math::length(uv - got) / math::length(slope);
-      #assert(l_star >= 0.0);
-      #assert(l_star <= 1.0 + 1e-6);
+      const float lStar = math::length(uv - got) / math::length(slope);
+      #assert(lStar >= 0.0);
+      #assert(lStar <= 1.0 + 1e-6);
       // On the surface: the field at the hit equals the ray height there,
       // within the patch solve's tolerance.
-      #assert(math::abs(field(got) - (1.0 - l_star)) < 2e-3);
+      #assert(math::abs(field(got) - (1.0 - lStar)) < 2e-3);
       // And above it everywhere before: the field never exceeds the ray.
       for (int i = 0; i < 400; i++) {
-        const float l = l_star * (float(i) + 0.5) / 400.0;
+        const float l = lStar * (float(i) + 0.5) / 400.0;
         #assert(field(uv - slope * l) < 1.0 - l + 2e-3);
       }
     }
@@ -335,17 +335,17 @@ unit_test "The hierarchical march refuses the same cases" {
   #assert(#all(parallax::parallax_offset_max(ridge, uv, float3(0.0, 0.0, 1.0), 0.0) == uv));
   #assert(#all(parallax::parallax_offset_max(ridge, uv, math::normalize(float3(0.4, 0.0, 0.8)), -0.1) == uv));
   #assert(#all(parallax::parallax_offset_max(texture_2d(), uv, math::normalize(float3(0.4, 0.0, 0.8)), 0.1) == uv));
-  const float2 on_wall = float2(8.5 / 16.0, 0.5);
-  #assert(#all(parallax::parallax_offset_max(ridge, on_wall, math::normalize(float3(0.4, 0.0, 0.8)), 0.1) == on_wall));
+  const float2 onWall = float2(8.5 / 16.0, 0.5);
+  #assert(#all(parallax::parallax_offset_max(ridge, onWall, math::normalize(float3(0.4, 0.0, 0.8)), 0.1) == onWall));
   // Straight down there is no offset: the ray bottoms out on the flat at
   // depth 0.8 under the entry point.
   #assert(#all(parallax::parallax_offset_max(ridge, uv, float3(0.0, 0.0, 1.0), 0.1) == uv));
   // A capped traversal stops above the surface, never below it.
   const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
   const float2 capped = parallax::parallax_offset_max(ridge, float2(0.25, 0.5), v, 0.5, max_steps: 2);
-  const float l_capped = (capped.x - 0.25) / 2.0;
-  #assert(l_capped >= 0.0);
-  #assert(l_capped <= 3.6 / 26.6 + 1e-6);
+  const float lCapped = (capped.x - 0.25) / 2.0;
+  #assert(lCapped >= 0.0);
+  #assert(lCapped <= 3.6 / 26.6 + 1e-6);
 }
 
 unit_test "parallax_uv selects the march by the chain" {
@@ -357,19 +357,19 @@ unit_test "parallax_uv selects the march by the chain" {
   #assert(#all(parallax::view_vector() ~== |1e-6| v));
   const float2 uv = float2(0.25, 0.5);
   const float scale = 0.5;
-  const auto ridge_max = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto ridgeMax = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
   // An image holds one chain, so the mean-chain texture is over a file
   // no test wants a maximum chain for.
-  const auto steps_mean = texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true);
-  #assert(!steps_mean.max_mipmap);
+  const auto stepsMean = texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true);
+  #assert(!stepsMean.max_mipmap);
   // A maximum chain takes the hierarchical march.
-  #assert(#all(parallax::parallax_uv(ridge_max, scale, uv) == parallax::parallax_offset_max(ridge_max, uv, v, scale)));
+  #assert(#all(parallax::parallax_uv(ridgeMax, scale, uv) == parallax::parallax_offset_max(ridgeMax, uv, v, scale)));
   // A mean chain takes the layer march with the given layer parameters.
-  const auto field = \(const float2 c) = tex::lookup_float(steps_mean, c);
-  #assert(#all(parallax::parallax_uv(steps_mean, scale, uv, min_steps: 4, max_steps: 4) == parallax::parallax_offset_with(field, uv, v, scale, 4, 4)));
+  const auto field = \(const float2 c) = tex::lookup_float(stepsMean, c);
+  #assert(#all(parallax::parallax_uv(stepsMean, scale, uv, min_steps: 4, max_steps: 4) == parallax::parallax_offset_with(field, uv, v, scale, 4, 4)));
   // So does a maximum chain under a wrap mode the traversal does not take.
-  const auto field_mirror = \(const float2 c) = tex::lookup_float(ridge_max, c, tex::wrap_mirrored_repeat, tex::wrap_mirrored_repeat);
-  #assert(#all(parallax::parallax_uv(ridge_max, scale, uv, wrap_u: tex::wrap_mirrored_repeat, wrap_v: tex::wrap_mirrored_repeat) == parallax::parallax_offset_with(field_mirror, uv, v, scale)));
+  const auto fieldMirror = \(const float2 c) = tex::lookup_float(ridgeMax, c, tex::wrap_mirrored_repeat, tex::wrap_mirrored_repeat);
+  #assert(#all(parallax::parallax_uv(ridgeMax, scale, uv, wrap_u: tex::wrap_mirrored_repeat, wrap_v: tex::wrap_mirrored_repeat) == parallax::parallax_offset_with(fieldMirror, uv, v, scale)));
 }
 
 // The light-side march: `relief_visible()` runs the same traversal upward
@@ -438,14 +438,14 @@ unit_test "Relief visibility agrees with dense sampling" {
         const float2 uv = float2(0.13 + 0.3 * j, 0.71 - 0.2 * j);
         const bool visible = parallax::relief_visible(bumps, uv, wi, scale, bias: bias);
         float2 slope = wi.xy / #max(wi.z, parallax::PARALLAX_MIN_VIEW_Z);
-        const float slope_len = math::length(slope);
-        slope *= slope_len > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slope_len : 1.0;
+        const float slopeLength = math::length(slope);
+        slope *= slopeLength > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slopeLength : 1.0;
         slope *= scale;
         const float start = field(uv) + bias;
-        const float t_end = 1.0 - start;
+        const float tEnd = 1.0 - start;
         float worst = -1.0;
         for (int i = 0; i < 800; i++) {
-          const float t = t_end * (float(i) + 0.5) / 800.0;
+          const float t = tEnd * (float(i) + 0.5) / 800.0;
           worst = #max(worst, field(uv + slope * t) - (start + t));
         }
         if (worst > 2e-3) {

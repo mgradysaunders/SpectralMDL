@@ -332,7 +332,7 @@ int checkSampledLobe(const bsdf scattering, const float4 xi, const float3 wo, co
 
 // A sample comes from ONE lobe. The selection descends to one branch of one
 // leaf, and a branch has one domain and one kind, so the word the entry point
-// reports has exactly one bit. It answers what `df_lobes_surface` cannot: that
+// reports has exactly one bit. It answers what `surfaceLobes` cannot: that
 // word says what the material COULD do, and this says what it DID.
 unit_test "A sample reports the one lobe it came from" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
