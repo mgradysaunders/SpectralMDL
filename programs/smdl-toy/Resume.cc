@@ -16,12 +16,12 @@
 namespace {
 
 // The command line, joined for the `smdl args` metadata field, with the
-// session-only flags stripped: outputs, display transforms, the sample
-// budget, the guiding strategy, the thread count, and -resume itself
-// legitimately change between the sessions of one render, while anything
-// else that differs likely changes the radiance being estimated and
-// earns a warning. The wavelength and window flags are stripped too: a
-// genuine grid or window mismatch already has its own hard error, so
+// session-only flags stripped: outputs, display transforms, the firefly
+// filter, the sample budget, the guiding strategy, the thread count, and
+// -resume itself legitimately change between the sessions of one render,
+// while anything else that differs likely changes the radiance being
+// estimated and earns a warning. The wavelength and window flags are stripped
+// too: a genuine grid or window mismatch already has its own hard error, so
 // warning here would double-report. Tokenizes on whitespace, so a path
 // containing spaces can misalign the comparison; the result only feeds a
 // warning, never behavior.
@@ -37,6 +37,8 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "output-spectrum",
                                                          "exposure",
                                                          "tonemap",
+                                                         "median-filter-factor",
+                                                         "median-filter-radius",
                                                          "wavelength-range",
                                                          "wavelengths",
                                                          "crop-window",
@@ -49,9 +51,14 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "mnee-receiver-alpha",
                                                          "sample-offset",
                                                          "threads"};
-  static constexpr auto SESSION_ONLY_FLAGS = std::array{
-      "guide",  "guide-adrrs", "mnee", "mnee-sun-only", "mnee-test-normalhook",
-      "report", "json"};
+  static constexpr auto SESSION_ONLY_FLAGS = std::array{"guide",
+                                                        "guide-adrrs",
+                                                        "mnee",
+                                                        "mnee-sun-only",
+                                                        "mnee-test-normalhook",
+                                                        "median-filter",
+                                                        "report",
+                                                        "json"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};

@@ -18,6 +18,7 @@
 #include "smdl/Support/Parallel.h"
 #include "smdl/Support/Strings.h"
 
+#include "MedianFilter.h"
 #include "Options.h"
 #include "Progress.h"
 #include "Render.h"
@@ -220,8 +221,10 @@ void renderSamples(const Options &opts, const Frame &frame,
     const auto path{std::filesystem::path(opts.image.outputRGB)};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
-    const auto rgb{
-        resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+    auto rgb{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+    // Filtered like the final write, so that a checkpoint differs from
+    // it only in how many samples stand behind it.
+    (void)medianFilterRGB(opts.image.medianFilter, rgb, numPixelsX, window);
     const auto ldr{tonemap(opts.image.tonemap, rgb, film, wavelengths)};
     if (auto error{smdl::write8bitImage(partPath.string(), //
                                         int(numPixelsX), int(numPixelsY), 3,

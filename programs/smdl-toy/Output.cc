@@ -4,6 +4,7 @@
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
+#include "MedianFilter.h"
 #include "Options.h"
 #include "Output.h"
 #include "Progress.h"
@@ -43,8 +44,25 @@ void writeOutputs(const Options &opts, const Frame &frame,
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
   const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
-  const auto rgbImage{
-      resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+  auto rgbImage{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+  {
+    // Both RGB outputs see the same filtered pixels, and neither the
+    // spectral file below nor the film it comes from sees any of it.
+    const auto report{
+        medianFilterRGB(opts.image.medianFilter, rgbImage, numPixelsX, window)};
+    if (report.replacedCount > 0) {
+      const double sharePixels{100.0 * double(report.replacedCount) /
+                               double(report.examinedCount)};
+      const double shareEnergy{report.energyTotal > 0
+                                   ? 100.0 * report.energyRemoved /
+                                         report.energyTotal
+                                   : 0.0};
+      SMDL_LOG_INFO("Median filter replaced ", report.replacedCount, " of ",
+                    report.examinedCount, " pixels (",
+                    smdl::Brief(sharePixels, 3), "%) and removed ",
+                    smdl::Brief(shareEnergy, 3), "% of the energy");
+    }
+  }
   if (!opts.image.outputRGBFloat.empty()) {
     if (auto error{smdl::writeFloatImage(opts.image.outputRGBFloat,
                                          int(numPixelsX), int(numPixelsY), 3,

@@ -183,6 +183,25 @@ cl::opt<float3> optRGBWavelengths{
     cl::desc("With -false-color, the wavelengths in nm mapped to R,G,B "
              "(default: 5/6, 1/2, and 1/6 of the grid span, long to red)"),
     cl::init(float3{}), cl::cat(catImage)};
+cl::opt<bool> optMedianFilter{
+    "median-filter",
+    cl::desc("Replace firefly pixels with a neighbor in the RGB outputs\n"
+             "* the spectral output stays radiometric, and so does the "
+             "sequence a later -resume reads"),
+    cl::init(false), cl::cat(catImage)};
+cl::opt<float> optMedianFilterFactor{
+    "median-filter-factor",
+    cl::desc("With -median-filter, how many times its neighborhood a pixel "
+             "must exceed to be replaced (default: 8)\n"
+             "* 4 is aggressive and 16 is cautious; the render reports what "
+             "it replaced"),
+    cl::init(8.0f), cl::cat(catImage)};
+cl::opt<int> optMedianFilterRadius{
+    "median-filter-radius",
+    cl::desc("With -median-filter, the neighborhood radius in pixels "
+             "(default: 1, a 3x3 window)\n"
+             "* raise it only for a block of fireflies wider than the window"),
+    cl::init(1), cl::cat(catImage)};
 cl::opt<std::string> optOutputRGB{
     "output-rgb",
     cl::desc("The tone mapped RGB image filename (default: output.png)"),
@@ -563,6 +582,13 @@ Options parseCommandLine(int argc, char **argv) {
       throw smdl::Error("expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
   }
+  if (!(float(optMedianFilterFactor) > 1))
+    throw smdl::Error("expected -median-filter-factor to be greater than 1");
+  if (!(int(optMedianFilterRadius) >= 1 &&
+        int(optMedianFilterRadius) <= MEDIAN_FILTER_MAX_RADIUS))
+    throw smdl::Error(smdl::concat("expected -median-filter-radius between 1 "
+                                   "and ",
+                                   MEDIAN_FILTER_MAX_RADIUS));
   if (!(std::isfinite(float(optShutter)) && float(optShutter) >= 0))
     throw smdl::Error("expected -shutter to be finite and nonnegative");
   if (!std::isfinite(float(optTime)))
@@ -606,6 +632,9 @@ Options parseCommandLine(int argc, char **argv) {
   }
   opts.image.tonemap = parseTonemapOptions(std::string(optTonemap));
   opts.image.tonemap.exposure = float(optExposure);
+  opts.image.medianFilter.isEnabled = bool(optMedianFilter);
+  opts.image.medianFilter.factor = float(optMedianFilterFactor);
+  opts.image.medianFilter.radius = int(optMedianFilterRadius);
   opts.image.outputRGB = std::string(optOutputRGB);
   opts.image.outputRGBFloat = std::string(optOutputRGBf);
   opts.image.outputSpectrum = std::string(optOutputSpectrum);

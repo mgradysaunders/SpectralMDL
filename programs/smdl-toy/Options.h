@@ -21,6 +21,7 @@
 
 #include "../CommandLine.h"
 #include "Color.h"
+#include "MedianFilter.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
 #include "Tonemap.h"
@@ -116,6 +117,10 @@ struct ImageOptions final {
 
   /// The tone map applied to the 8-bit output.
   TonemapOptions tonemap{};
+
+  /// The firefly filter applied to both RGB outputs, and to neither the
+  /// spectral output nor anything a later session resumes from.
+  MedianFilterOptions medianFilter{};
 
   std::string outputRGB{};
 

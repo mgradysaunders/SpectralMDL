@@ -113,7 +113,11 @@ struct RGBPolicy final {
 /// the absolute photopic and scotopic luminance of every pixel rather
 /// than the RGB projection alone; `rgbImage` must be the `resolveRGB()`
 /// of the same film, so every display transform shows the same
-/// radiance.
+/// radiance. The one thing that may have happened to it besides is
+/// `medianFilterRGB()`, which the night filter cannot see: a replaced
+/// pixel still reads as bright in the film, so it stays cone adapted
+/// while its rod adapted neighbors desaturate, and a removed firefly can
+/// leave a faint colored dot in a moonlit frame.
 [[nodiscard]] std::vector<uint8_t> tonemap(const TonemapOptions &options,
                                            const std::vector<float> &rgbImage,
                                            const smdl::SpectralFilm &film,
