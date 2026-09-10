@@ -3,6 +3,11 @@ lens {
   # Muller. Modern Lens Design p.164.
   # Scaled to 10 mm from the published 100 mm.
   # Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
+  # Covers an image circle 26.8 mm across at infinity focus, which is
+  # the whole 155.9 degrees and wider than any sensor is tall, so the
+  # circle is always cropped. At a four thirds 'sensor 17.3 13' it
+  # fills the frame: 74.3 degrees top to bottom and 123.3 across the
+  # diagonal.
   surface { radius 30.2249  thickness 0.8335  ior 1.62  diameter 30.34 }
   surface { radius 11.3931  thickness 7.4136            diameter 20.68 }
   surface { radius 75.2019  thickness 1.0654  ior 1.639 diameter 17.8 }

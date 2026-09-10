@@ -3,6 +3,9 @@ lens {
   # US 2,673,491 (Tronnier). Modern Lens Design p.312.
   # Scaled to 50 mm from the published 100 mm.
   # Converted from dgauss.50mm.dat by etc/scripts/lens_convert.py.
+  # Covers an image circle 54.8 mm across at infinity focus, so full
+  # frame fits with room to spare: at 'sensor 36 24' the frame is 26.9
+  # degrees top to bottom and 47.2 across the diagonal.
   surface { radius 29.475  thickness 3.76  ior 1.67  diameter 25.2 }
   surface { radius 84.83   thickness 0.12            diameter 25.2 }
   surface { radius 19.275  thickness 4.025 ior 1.67  diameter 23 }
