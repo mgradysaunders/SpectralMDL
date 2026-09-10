@@ -327,7 +327,7 @@ def render_thumbnails(args, smdl_toy, manifest_path, asset):
                             "-fallback-material", "default_object"]
             command += ["-asset-dir", directory, "-autolook", "-ground",
                         "-resolution", f"{args.size},{args.size}",
-                        "-spp", str(args.spp), "-progress", "none",
+                        "-spp", str(args.spp), "-progress=false",
                         "-output-rgb", output]
             if args.exposure != 1.0:
                 command += ["-exposure", number(args.exposure)]

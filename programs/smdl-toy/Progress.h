@@ -9,25 +9,6 @@
 
 #include "smdl/Support/Logger.h"
 
-/// Whether a `ProgressBar` draws.
-enum class ProgressStyle {
-  /// Draw whenever stderr is an interactive terminal, in the alphabet
-  /// `ProgressOptions::unicodeMode` picks.
-  AUTO,
-
-  /// Never draw at all.
-  NONE
-};
-
-/// Parse the `-progress` name, which is the one place it is spelled.
-/// The bar is not constructed until everything has loaded and compiled,
-/// so leaving this to the constructor would report a misspelling only
-/// once the render is about to start.
-///
-/// \throws smdl::Error  If the name is not recognized.
-///
-[[nodiscard]] ProgressStyle parseProgressStyle(std::string_view name);
-
 /// What a `ProgressBar` measures and how it draws, resolved from the
 /// command line into plain values.
 struct ProgressOptions final {
@@ -37,8 +18,9 @@ struct ProgressOptions final {
   /// The counter suffix, e.g. `"px"`. Empty prints bare counters.
   std::string units{};
 
-  /// Whether the bar draws.
-  ProgressStyle style{ProgressStyle::AUTO};
+  /// Draw the bar whenever stderr is an interactive terminal. False never
+  /// draws at all.
+  bool shouldDraw{true};
 
   /// Whether the bar and the spinner are drawn in block drawing and
   /// braille characters or in ASCII, the same choice the log labels make.
@@ -74,7 +56,7 @@ struct ProgressOptions final {
 /// becomes a check mark when it completes, the bar, and the counters.
 ///
 /// The bar is only ever for a person watching a terminal, so it draws
-/// nothing at all unless stderr is one (and the style asks for it). That
+/// nothing at all unless stderr is one (and `shouldDraw` asks for it). That
 /// is not cosmetic: the tooling around this renderer captures stderr and
 /// reads it back (the thumbnail batch greps it, the Blender add-on
 /// reports its last line on failure), and a line of carriage returns and

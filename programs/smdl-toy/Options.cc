@@ -524,11 +524,11 @@ cl::opt<std::string> optProfile{
              "(default: smdl-toy.trace.json)\n"
              "* open in chrome://tracing or https://ui.perfetto.dev"),
     cl::ValueOptional, cl::init(std::string{}), cl::cat(catUtility)};
-cl::opt<std::string> optProgress{
+cl::opt<bool> optProgress{
     "progress",
-    cl::desc("Draw a progress bar while rendering: 'auto' or 'none' "
-             "(default: auto)"),
-    cl::init(std::string("auto")), cl::cat(catUtility)};
+    cl::desc("Draw a progress bar while rendering, if stderr is a terminal "
+             "(default: true)"),
+    cl::init(true), cl::cat(catUtility)};
 cl::opt<std::string> optProgressFile{
     "progress-file",
     cl::desc("Write 'done=N total=M elapsed=S eta=S note=...' progress into "
@@ -750,7 +750,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
   opts.utility.progress.label = "Rendering";
   opts.utility.progress.units = "px";
-  opts.utility.progress.style = parseProgressStyle(std::string(optProgress));
+  opts.utility.progress.shouldDraw = bool(optProgress);
   opts.utility.progress.unicodeMode = opts.utility.unicodeMode;
   opts.utility.progress.filePath = std::string(optProgressFile);
   opts.utility.previewEvery = double(optPreviewEvery);

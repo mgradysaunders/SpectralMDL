@@ -65,10 +65,10 @@ void Logger::logMessage(LogLevel level, std::string_view message) {
 
 std::string_view logLevelLabel(LogLevel level, bool useColors,
                                bool useUnicode) noexcept {
-  // The symbols are U+203A, U+2022, U+26A0 and U+2718, each one column
-  // wide. The warning sign is deliberately not followed by U+FE0F, which
-  // would ask for its double-width emoji form, and terminals disagree on
-  // how wide that is.
+  // The symbols are U+2699, U+2139, U+26A0 and U+2718, each one column
+  // wide. The first three are deliberately not followed by U+FE0F, which
+  // would ask for their double-width emoji forms, and terminals disagree
+  // on how wide those are.
   // NOLINTNEXTLINE
   static constexpr const char *labels[2][2][4] = {
       {{"[debug] ", "[info] ", "[warn] ", "[error] "},

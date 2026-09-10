@@ -11,7 +11,6 @@
 
 #include "llvm/Support/Process.h"
 
-#include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"
 
 namespace {
@@ -186,19 +185,11 @@ std::atomic<ProgressBar *> sActive{nullptr};
   return str;
 }
 
-ProgressStyle parseProgressStyle(std::string_view name) {
-  if (name == "auto") return ProgressStyle::AUTO;
-  if (name == "none") return ProgressStyle::NONE;
-  throw smdl::Error(
-      smdl::concat("expected the progress style to be 'auto' or 'none', not ",
-                   smdl::Quoted(name)));
-}
-
 ProgressBar::ProgressBar(ProgressOptions options)
     : mOptions(std::move(options)), mStartTime(Clock::now()) {
   mOptions.displayScale = std::max<uint64_t>(mOptions.displayScale, 1);
-  mIsEnabled = mOptions.total > 0 && mOptions.style != ProgressStyle::NONE &&
-               stderrIsInteractive();
+  mIsEnabled =
+      mOptions.total > 0 && mOptions.shouldDraw && stderrIsInteractive();
   mUseUnicode = smdl::shouldUseUnicode(mOptions.unicodeMode, mIsEnabled);
   mIsReporting = !mOptions.filePath.empty() && mOptions.total > 0;
   if (mIsReporting) {

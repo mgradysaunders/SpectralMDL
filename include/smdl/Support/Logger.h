@@ -145,12 +145,12 @@ logLevelLabel(LogLevel level, bool useColors, bool useUnicode) noexcept;
 /// The default log-sinks for convenience, which label each message as
 /// `logLevelLabel()` does:
 ///
-/// | Level   | ASCII     | Unicode                  | Color      |
-/// |---------|-----------|--------------------------|------------|
-/// | `Debug` | `[debug]` | U+203A, a small pointer  | cyan       |
-/// | `Info`  | `[info]`  | U+2022, a bullet         | green      |
-/// | `Warn`  | `[warn]`  | U+26A0, a warning sign   | yellow     |
-/// | `Error` | `[error]` | U+2718, a heavy ballot X | bright red |
+/// | Level   | ASCII     | Unicode                     | Color      |
+/// |---------|-----------|-----------------------------|------------|
+/// | `Debug` | `[debug]` | U+2699, a gear              | cyan       |
+/// | `Info`  | `[info]`  | U+2139, an information sign | green      |
+/// | `Warn`  | `[warn]`  | U+26A0, a warning sign      | yellow     |
+/// | `Error` | `[error]` | U+2718, a heavy ballot X    | bright red |
 ///
 /// The label is colored when the stream is a terminal, and is a symbol
 /// when the sink's `UnicodeMode` resolves to one.
