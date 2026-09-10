@@ -1,0 +1,37 @@
+# US 8,411,377 B2 (Largan Precision, Tsai and Huang, 2013-04-02),
+# "Optical lens assembly for image photographing", first embodiment.
+# Four plastic elements, every one of the eight surfaces aspheric, with
+# the aperture stop behind the front element and a flat IR-cut filter in
+# front of the sensor: the shape of a phone camera. The patent states
+# f = 2.03 mm, Fno = 2.80, HFOV = 39.5 degrees.
+#
+# The patent tabulates radii, thicknesses, indices, conics and A4 to A14,
+# which is everything here but the diameters. Those are not in it, as
+# patents never state them, so each is the smallest clear aperture that
+# passes the design's own field, traced and rounded up to 0.01 mm, and
+# the stop is the diameter that makes the entrance pupil f/2.80.
+#
+# The image plane the patent states, 0.360 mm behind the filter, is 0.024
+# mm behind paraxial focus, which is where this design's own zones agree:
+# a trace puts best focus at 0.3597 mm. That is the design choosing its
+# film position, not a transcription slip.
+#
+# Surface 4 is the one that limits the field: its conic is oblate enough
+# that the surface turns back on itself at a radius of 0.76 mm, so the
+# corner of the frame vignettes on the glass rather than on the stop.
+lens {
+  name "Largan 2.03mm f/2.8 phone camera"
+  surface { radius  2.20482 thickness 0.316 ior 1.544 diameter 1.00 conic -4.17195e+01 aspheric  3.30286e-01 -1.53066e+00  3.32500e+00 -1.15603e+01  3.45202e+01 -4.94033e+01 }
+  surface { radius -7.70120 thickness 0.030             diameter 0.77 conic  4.95425e+00 aspheric -1.38321e-01 -8.76915e-01  1.30514e-01  2.69221e+01 -9.50759e+01 -5.08215e+01 }
+  stop    {                 thickness 0.406             diameter 0.6827 }
+  surface { radius -3.09910 thickness 0.395 ior 1.544 diameter 1.14 conic -1.00000e+00 aspheric -6.55216e-01  1.00267e+00 -1.53705e+00 -3.62084e+01  1.96119e+02 -3.61807e+02 }
+  surface { radius -1.69968 thickness 0.062             diameter 1.52 conic  4.00157e+00 aspheric  1.84010e-01 -9.96274e-01  3.15867e+00  2.66215e+00 -1.67218e+01  9.47590e+00 }
+  surface { radius -0.99811 thickness 0.579 ior 1.544 diameter 1.54 conic -1.30027e+01 aspheric -5.45182e-01  3.63034e+00 -1.74375e+01  5.11838e+01 -7.57263e+01  4.10274e+01 }
+  surface { radius -0.65071 thickness 0.040             diameter 1.75 conic -4.12575e+00 aspheric -8.19960e-01  1.97197e+00 -4.06373e+00  3.98247e+00 -1.27573e+00 -2.04057e-02 }
+  surface { radius  1.51931 thickness 0.505 ior 1.634 diameter 1.98 conic -2.20450e-01 aspheric -6.13430e-01  2.02104e-01 -8.11099e-02 -2.86991e-02  1.31998e-01 -6.89114e-02 }
+  surface { radius  0.62124 thickness 0.400             diameter 2.69 conic -4.00694e+00 aspheric -2.79288e-01  2.26332e-01 -1.38354e-01  5.05528e-02 -9.50226e-03  5.73526e-04 }
+  # The IR-cut filter, which bends nothing and moves the focus back by a
+  # third of its thickness.
+  surface {                 thickness 0.200 ior 1.517 diameter 2.87 }
+  surface {                 thickness 0.360             diameter 3.00 }
+}

@@ -1,0 +1,18 @@
+lens {
+  name "Muller 10mm f/4 fisheye, 155.9 degrees"
+  # Muller. Modern Lens Design p.164.
+  # Scaled to 10 mm from the published 100 mm.
+  # Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
+  surface { radius 30.2249  thickness 0.8335  ior 1.62  diameter 30.34 }
+  surface { radius 11.3931  thickness 7.4136            diameter 20.68 }
+  surface { radius 75.2019  thickness 1.0654  ior 1.639 diameter 17.8 }
+  surface { radius 8.3349   thickness 11.1549           diameter 13.42 }
+  surface { radius 9.5882   thickness 2.0054  ior 1.654 diameter 9.02 }
+  surface { radius 43.8677  thickness 5.3895            diameter 8.14 }
+  stop    {                 thickness 1.4163            diameter 6.08 }
+  surface { radius 29.4541  thickness 2.1934  ior 1.517 diameter 5.96 }
+  surface { radius -5.2265  thickness 0.9714  ior 1.805 diameter 5.84 }
+  surface { radius -14.2884 thickness 0.0627            diameter 5.96 }
+  surface { radius -22.3726 thickness 0.94    ior 1.673 diameter 5.96 }
+  surface { radius -15.0404                             diameter 6.52 }
+}

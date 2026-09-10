@@ -1,0 +1,13 @@
+lens {
+  name "Sigler super achromate telephoto 250mm f/5.6"
+  # Sigler. Modern Lens Design p.175.
+  # Scaled to 250 mm from the published 100 mm.
+  # Converted from telephoto.250mm.dat by etc/scripts/lens_convert.py.
+  surface { radius 54.6275  thickness 12.52   ior 1.529 diameter 47.5 }
+  surface { radius -86.365  thickness 3.755   ior 1.599 diameter 44.5 }
+  surface { radius 271.7625 thickness 2.8175            diameter 41.5 }
+  stop    {                 thickness 67.4125           diameter 40.5 }
+  surface { radius -32.13   thickness 3.755   ior 1.613 diameter 31.5 }
+  surface { radius 49.5325  thickness 12.52   ior 1.603 diameter 33.5 }
+  surface { radius -50.945                              diameter 37 }
+}

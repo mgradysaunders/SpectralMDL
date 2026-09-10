@@ -1,0 +1,17 @@
+lens {
+  name "Double Gauss 50mm f/2"
+  # US 2,673,491 (Tronnier). Modern Lens Design p.312.
+  # Scaled to 50 mm from the published 100 mm.
+  # Converted from dgauss.50mm.dat by etc/scripts/lens_convert.py.
+  surface { radius 29.475  thickness 3.76  ior 1.67  diameter 25.2 }
+  surface { radius 84.83   thickness 0.12            diameter 25.2 }
+  surface { radius 19.275  thickness 4.025 ior 1.67  diameter 23 }
+  surface { radius 40.77   thickness 3.275 ior 1.699 diameter 23 }
+  surface { radius 12.75   thickness 5.705           diameter 18 }
+  stop    {                thickness 4.5             diameter 17.1 }
+  surface { radius -14.495 thickness 1.18  ior 1.603 diameter 17 }
+  surface { radius 40.77   thickness 6.065 ior 1.658 diameter 20 }
+  surface { radius -20.385 thickness 0.19            diameter 20 }
+  surface { radius 437.065 thickness 3.22  ior 1.717 diameter 20 }
+  surface { radius -39.73                            diameter 20 }
+}
