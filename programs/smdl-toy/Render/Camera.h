@@ -49,14 +49,16 @@ struct CameraOptions final {
   /// The lens to look through, or none for the thin lens model.
   ///
   /// With one, the field of view is a consequence of the sensor and the
-  /// prescription rather than an input, so `fovYDeg` means nothing, and
-  /// the distortion, the vignetting and the cat's eye are all emergent
-  /// rather than settings. The caller refuses those combinations rather
-  /// than silently ignoring them, so nothing here has to.
+  /// prescription rather than an input, so `fovYDeg` becomes a way of
+  /// asking for a sensor, and the distortion, the vignetting and the
+  /// cat's eye are all emergent rather than settings. The caller refuses
+  /// those combinations rather than silently ignoring them, so nothing
+  /// here has to.
   std::optional<LensPrescription> lens{};
 
-  /// With `lens`, the sensor width and height in millimeters. Zero takes
-  /// the 36 by 24 of full frame.
+  /// With `lens`, the sensor width and height in millimeters. Zero
+  /// solves it from `fovYDeg`, or takes the 36 by 24 of full frame when
+  /// that is zero too.
   float2 sensorMM{};
 
   /// With `lens`, normalize the exposure to the lens's own f-number, so
@@ -70,7 +72,13 @@ struct CameraOptions final {
   /// lens is worth what it is worth.
   bool shouldNormalizeLensExposure{};
 
-  /// The vertical field of view in degrees. Unused with a lens.
+  /// The vertical field of view in degrees.
+  ///
+  /// With a lens it is not a setting but a request: the sensor height
+  /// that looks out at it is solved from the traced field angle, and the
+  /// width follows from the picture's shape. Zero takes the default
+  /// sensor instead, and `sensorMM` states the sensor outright; the two
+  /// contradict, and stating both is refused before this is built.
   float fovYDeg{37.8f};
 
   /// Enable DOF by f-number assuming a 35mm-format frame, or 0.

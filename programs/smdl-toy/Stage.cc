@@ -56,9 +56,6 @@ void refuseThinLensSettings(const Options &opts,
     const char *why;
   };
   const Refusal refusals[]{
-      {"fovy", opts.camera.fovYDeg.wasGiven || fileCamera.fovYDeg.has_value(),
-       "the field of view is what the sensor and the prescription come to "
-       "between them; state the sensor with 'sensor'"},
       {"aperture",
        opts.camera.aperture.wasGiven || fileCamera.aperture.has_value(),
        "the aperture is the lens's own stop, which 'fstop' still narrows"},
@@ -87,6 +84,14 @@ void refuseThinLensSettings(const Options &opts,
       if (refusal.wasStated)
         throw smdl::Error(smdl::concat(
             "'", refusal.name, "' has no meaning with a lens: ", refusal.why));
+    // Both say how wide the frame is, in the two directions the solve
+    // runs, and there is nothing sensible to do when they disagree.
+    if ((opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) &&
+        (opts.camera.fovYDeg.wasGiven || fileCamera.fovYDeg.has_value()))
+      throw smdl::Error("'sensor' and 'fovy' both say how wide the frame "
+                        "is: state the sensor and read the field of view "
+                        "off the log, or state the field of view and let "
+                        "the sensor be solved for it");
   } else if (opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) {
     throw smdl::Error("'sensor' needs a lens to mean anything: without one "
                       "the frame is 'fovy' and the sensor has no size");
@@ -166,6 +171,12 @@ Frame resolveFrame(const Options &opts) {
   cameraOptions.lookTo = pick(opts.camera.lookTo, fileCamera.lookTo);
   cameraOptions.lookUp = pick(opts.camera.lookUp, fileCamera.lookUp);
   cameraOptions.fovYDeg = pick(opts.camera.fovYDeg, fileCamera.fovYDeg);
+  // With a lens the field of view is a request to solve the sensor for,
+  // so nobody asking has to be distinguishable from asking for the
+  // default, which the thin lens has no need of.
+  if (cameraOptions.lens && !opts.camera.fovYDeg.wasGiven &&
+      !fileCamera.fovYDeg.has_value())
+    cameraOptions.fovYDeg = 0;
   cameraOptions.fStop = pick(opts.camera.fStop, fileCamera.fStop);
   cameraOptions.aperture = pick(opts.camera.aperture, fileCamera.aperture);
   cameraOptions.focus = pick(opts.camera.focus, fileCamera.focus);
@@ -493,19 +504,21 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
-    if (cameraOptions.lens) {
-      // A lens has no field of view to be given; it has one that follows
-      // from the sensor and the focal length, which is what the fit
-      // needs. The prescription is solved once here for its focal length
-      // alone, focused at infinity, since the focus the real lens takes
-      // is the distance this very solve is about to choose.
+    if (cameraOptions.lens && cameraOptions.fovYDeg <= 0) {
+      // A lens that was not asked for a field of view has one that
+      // follows from the sensor and the prescription, which is what the
+      // fit needs. The prescription is solved once here, focused at
+      // infinity, since the focus the real lens takes is the distance
+      // this very solve is about to choose. A lens that was asked for one
+      // keeps it: the sensor is what gets solved then, and the answer is
+      // the angle already in hand.
       const auto sensorMM{cameraOptions.sensorMM.x > 0 &&
                                   cameraOptions.sensorMM.y > 0
                               ? cameraOptions.sensorMM
                               : float2(36.0f, 24.0f)};
       const Lens probe{*cameraOptions.lens, LensOptions{}};
-      autolookOptions.fovYDeg = smdl::degrees(
-          2 * std::atan(0.5e-3f * sensorMM.y / probe.focalLength()));
+      autolookOptions.fovYDeg =
+          2 * smdl::degrees(probe.fieldAngleAt(0.5e-3f * sensorMM.y));
       autolookOptions.aspectRatio = sensorMM.x / sensorMM.y;
     }
     autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;

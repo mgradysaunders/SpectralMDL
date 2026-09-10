@@ -125,13 +125,35 @@ Camera::Camera(const CameraOptions &options) {
 // sensor it covers, the pixel footprint that seeds the LOD cone, and the
 // two probes that say what actually reaches the film.
 void Camera::buildLens(const CameraOptions &options) {
-  const auto sensorMM{options.sensorMM.x > 0 && options.sensorMM.y > 0
-                          ? options.sensorMM
-                          : float2(36.0f, 24.0f)};
-  mSensorWidth = 1e-3f * sensorMM.x;
-  mSensorHeight = 1e-3f * sensorMM.y;
   mLens.emplace(*options.lens, LensOptions{mFocusDistance, options.fStop,
                                            mNumBlades, mBladeAngle});
+  if (options.sensorMM.x > 0 && options.sensorMM.y > 0) {
+    mSensorWidth = 1e-3f * options.sensorMM.x;
+    mSensorHeight = 1e-3f * options.sensorMM.y;
+  } else if (options.fovYDeg > 0) {
+    // A field of view stated with a lens is a request rather than a
+    // setting: the sensor is however tall it has to be to look out at
+    // it, which is a solve on the traced field angle and so carries
+    // whatever distortion the surfaces have. The width follows from the
+    // picture's own shape, there being nothing else to take it from.
+    const auto halfHeight{
+        mLens->filmRadiusForFieldAngle(smdl::radians(0.5f * options.fovYDeg))};
+    if (!(halfHeight > 0)) {
+      const auto circle{mLens->imageCircleRadius()};
+      throw smdl::Error(smdl::concat(
+          "cannot look out at 'fovy' ", options.fovYDeg,
+          " degrees through this lens: it covers an image circle ",
+          2e3f * circle, " mm across, which is ",
+          2 * smdl::degrees(mLens->fieldAngleAt(circle)),
+          " degrees at its widest, and nothing behind it reaches further"));
+    }
+    mSensorHeight = 2 * halfHeight;
+    mSensorWidth = mSensorHeight * mAspectRatio;
+  } else {
+    mSensorWidth = 1e-3f * 36.0f;
+    mSensorHeight = 1e-3f * 24.0f;
+  }
+  const auto sensorMM{1e3f * float2(mSensorWidth, mSensorHeight)};
   // The pixel's angular footprint, the same quantity the thin lens takes
   // from its field of view, now in the millimeters of a real sensor over
   // a real focal length.
@@ -162,10 +184,16 @@ void Camera::buildLens(const CameraOptions &options) {
                   " of what an ideal f/1 lens would, before what the glass "
                   "takes");
   }
-  SMDL_LOG_INFO(
-      "Lens frame: a ", sensorMM.x, " by ", sensorMM.y, " mm sensor, ",
-      smdl::degrees(2 * std::atan(halfDiagonal / mLens->focalLength())),
-      " degrees across the diagonal");
+  // Traced rather than taken from the focal length, so what it reports
+  // is the frame the picture actually has, distortion and all.
+  const auto verticalDeg{
+      2 * smdl::degrees(mLens->fieldAngleAt(0.5f * mSensorHeight))};
+  const auto diagonalDeg{2 * smdl::degrees(mLens->fieldAngleAt(halfDiagonal))};
+  SMDL_LOG_INFO("Lens frame: a ", sensorMM.x, " by ", sensorMM.y,
+                " mm sensor, ", verticalDeg, " degrees top to bottom",
+                diagonalDeg > 0 ? smdl::concat(" and ", diagonalDeg,
+                                               " degrees across the diagonal")
+                                : std::string(" and dark in the corners"));
   if (const auto sensorAspect{mSensorWidth / mSensorHeight};
       std::abs(sensorAspect - mAspectRatio) > 0.01f * mAspectRatio)
     SMDL_LOG_WARN("Lens: the sensor is ", sensorAspect,

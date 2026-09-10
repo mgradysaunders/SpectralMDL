@@ -186,6 +186,30 @@ public:
   /// The film plane, solved from the focus distance.
   [[nodiscard]] float filmZ() const noexcept { return mFilmZ; }
 
+  /// The angle off the axis, in radians, that light reaching a film
+  /// point `filmRadius` off the axis comes in at. That is what a field
+  /// of view is made of, and it is traced rather than taken from the
+  /// focal length, so whatever distortion the surfaces have is in it.
+  /// Negative when nothing reaches that far.
+  ///
+  /// The ray it measures is the middle of what actually gets out, which
+  /// is the chief ray where the lens does not vignette and the middle of
+  /// what survives where it does.
+  [[nodiscard]] float fieldAngleAt(float filmRadius) const noexcept;
+
+  /// The film radius that looks out at `angle` radians off the axis,
+  /// which is `fieldAngleAt()` inverted and is how a stated field of
+  /// view becomes a sensor size. Negative when the lens does not reach
+  /// that far.
+  [[nodiscard]] float filmRadiusForFieldAngle(float angle) const noexcept;
+
+  /// The radius of the image circle: the largest film radius anything
+  /// reaches at all. A sensor larger than this is dark in the corners
+  /// however long the exposure.
+  ///
+  /// Traced, so it costs tens of thousands of rays; nothing caches it.
+  [[nodiscard]] float imageCircleRadius() const noexcept;
+
   /// The front and rear vertices, which bound the glass.
   [[nodiscard]] float frontZ() const noexcept { return mElements.front().z; }
   [[nodiscard]] float rearZ() const noexcept { return mElements.back().z; }

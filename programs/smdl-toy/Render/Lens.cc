@@ -265,6 +265,37 @@ struct PupilEllipse final {
   float2 center{}, semiAxes{};
 };
 
+// The point on the rear plane that the light reaching a film point
+// `filmRadius` off the axis comes through the middle of. A scan along x
+// is enough, the system being one of revolution, and it is coarse and
+// then fine so that a cone a hundredth of the aperture across is still
+// found and still resolved.
+[[nodiscard]] bool chiefPointOf(const Lens &lens, float filmRadius,
+                                float &x) noexcept {
+  constexpr int NUM_COARSE_SCAN = 400;
+  constexpr int NUM_FINE_SCAN = 200;
+  const float3 film{filmRadius, 0, lens.filmZ()};
+  const auto passes{[&](float at) {
+    auto ray{Ray{film, float3(at, 0, lens.rearZ()) - film, EPS, INF}};
+    return lens.traceFromFilm(ray);
+  }};
+  const auto radius{lens.rearApertureRadius()};
+  auto lo{FLOAT_MAX}, hi{-FLOAT_MAX};
+  for (int i = 0; i <= NUM_COARSE_SCAN; i++) {
+    const auto at{radius * (2.0f * i / NUM_COARSE_SCAN - 1)};
+    if (passes(at)) lo = std::min(lo, at), hi = std::max(hi, at);
+  }
+  if (!(lo <= hi)) return false;
+  const auto cell{2 * radius / NUM_COARSE_SCAN};
+  const auto from{lo - cell}, to{hi + cell};
+  for (int i = 0; i <= NUM_FINE_SCAN; i++) {
+    const auto at{from + (to - from) * i / NUM_FINE_SCAN};
+    if (passes(at)) lo = std::min(lo, at), hi = std::max(hi, at);
+  }
+  x = 0.5f * (lo + hi);
+  return true;
+}
+
 // The whole rear aperture as a rectangle, which is the domain a pupil
 // point was drawn from before there was a table and is still the domain
 // the weights are relative to.
@@ -662,4 +693,48 @@ void ExitPupil::logSummary() const {
                 100 * areaFraction(0.0f),
                 "% of the rear aperture in the middle of the frame and ",
                 100 * areaFraction(mMaxFilmRadius), "% at the corner");
+}
+
+float Lens::fieldAngleAt(float filmRadius) const noexcept {
+  auto x{0.0f};
+  if (!chiefPointOf(*this, filmRadius, x)) return -1;
+  const float3 film{filmRadius, 0, mFilmZ};
+  auto ray{Ray{film, float3(x, 0, rearZ()) - film, EPS, INF}};
+  if (!traceFromFilm(ray)) return -1;
+  return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
+}
+
+float Lens::imageCircleRadius() const noexcept {
+  // Grow until nothing gets out, then halve the gap. A film point
+  // further off the axis needs its light to clear more of the glass and
+  // never less, so where the light stops is one place and not several.
+  const auto cap{16 * mFocalLength};
+  auto x{0.0f};
+  auto inside{0.0f}, outside{0.25f * mFocalLength};
+  while (outside < cap && chiefPointOf(*this, outside, x))
+    inside = outside, outside *= 2;
+  if (!(outside < cap)) return inside;
+  for (int i = 0; i < 30; i++) {
+    const auto middle{0.5f * (inside + outside)};
+    if (chiefPointOf(*this, middle, x))
+      inside = middle;
+    else
+      outside = middle;
+  }
+  return inside;
+}
+
+float Lens::filmRadiusForFieldAngle(float angle) const noexcept {
+  if (!(angle > 0)) return 0;
+  const auto largest{imageCircleRadius()};
+  if (!(fieldAngleAt(largest) >= angle)) return -1;
+  auto lo{0.0f}, hi{largest};
+  for (int i = 0; i < 30; i++) {
+    const auto middle{0.5f * (lo + hi)};
+    if (fieldAngleAt(middle) < angle)
+      lo = middle;
+    else
+      hi = middle;
+  }
+  return 0.5f * (lo + hi);
 }

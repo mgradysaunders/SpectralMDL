@@ -300,3 +300,38 @@ TEST_CASE("Camera: a lens is exposed by its f-number and nothing else") {
     CHECK(stopped == doctest::Approx(wideOpen).epsilon(0.1));
   }
 }
+
+TEST_CASE("Camera: a field of view stated with a lens solves the sensor") {
+  SUBCASE("The sensor it picks is the one that looks out at what was "
+          "asked") {
+    auto options{lensOptions()};
+    options.sensorMM = float2(0.0f);
+    options.fovYDeg = 30.0f;
+    const Camera camera{options};
+    const Lens lens{singlet(), LensOptions{8.0f, 0, 0, 0}};
+    // The camera keeps the sensor to itself, so what it did is read back
+    // out of the lens: the half-height that looks out at 15 degrees,
+    // doubled, against a frame this many pixels wide for its height.
+    const auto halfHeight{lens.filmRadiusForFieldAngle(smdl::radians(15.0f))};
+    CHECK(halfHeight > 0);
+    CHECK(smdl::degrees(2 * lens.fieldAngleAt(halfHeight)) ==
+          doctest::Approx(30.0).epsilon(1e-3));
+  }
+  SUBCASE("A sensor stated outright wins, the field of view then being a "
+          "consequence") {
+    auto options{lensOptions()};
+    options.fovYDeg = 30.0f;
+    const auto stated{meanWeight(Camera{options}, 32, 24)};
+    options.fovYDeg = 90.0f;
+    CHECK(meanWeight(Camera{options}, 32, 24) == doctest::Approx(stated));
+  }
+  SUBCASE("Asking for more than the lens covers is an error rather than a "
+          "dark frame") {
+    auto options{lensOptions()};
+    options.sensorMM = float2(0.0f);
+    options.fovYDeg = 175.0f;
+    CHECK_ERROR(smdl::catchAndReturnError(
+                    [&] { [[maybe_unused]] const Camera camera{options}; }),
+                "cannot look out at 'fovy'");
+  }
+}
