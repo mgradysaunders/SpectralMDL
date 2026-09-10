@@ -127,6 +127,32 @@ struct WavelengthGrid final {
 /// touch it from another translation unit's static initializer.
 inline WavelengthGrid gRenderGrid{};
 
+/// The trapezoid quadrature widths of the render grid `wavelens` in
+/// nanometers, one per band: on a uniform grid the spacing, halved at
+/// the two ends, and on a non-uniform grid `gRenderGrid.weights`, which
+/// are that rule. What a grid held still integrates against, as the
+/// rectangles of `WavelengthGrid::bandEdges` are what a jittered one
+/// does.
+///
+/// The uniform arithmetic is spelled out rather than taken from the
+/// weights so that a default render is unchanged to the bit; a grid of
+/// one band has half a unit of width, as the end of any grid does.
+[[nodiscard]] inline std::vector<double>
+wavelengthTrapezoidWidths(smdl::Span<const float> wavelens) {
+  const size_t numBands{wavelens.size()};
+  auto widths{std::vector<double>(numBands)};
+  const double dLambda{
+      numBands > 1 ? (double(wavelens[numBands - 1]) - double(wavelens[0])) /
+                         double(numBands - 1)
+                   : 1.0};
+  const auto &quadWeights{gRenderGrid.weights};
+  for (size_t i = 0; i < numBands; i++) {
+    const double trap{i == 0 || i == numBands - 1 ? 0.5 : 1.0};
+    widths[i] = quadWeights.empty() ? dLambda * trap : double(quadWeights[i]);
+  }
+  return widths;
+}
+
 /// The render-wide shutter interval: the frame.
 ///
 /// Set once in `main()` before rendering threads start. The frame opens

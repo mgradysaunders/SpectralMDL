@@ -8,22 +8,31 @@
 #include "smdl/Support/Strings.h"
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 
 // The camera format's own vocabulary, over the syntax core in
 // `TextParser.h`. One directive and nothing else: what the picture is
-// taken with.
+// taken with. A '.response' file is the camera's `response` block
+// hoisted to the top level of its own file, so the one parser serves
+// both, told at construction which keyword it synchronizes at.
 
 namespace {
 
-// The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 1> TOP_LEVEL_KEYWORDS{"camera"};
+// The top-level keywords, which are the synchronization points: the
+// camera file's, and the response file's.
+constexpr std::array<std::string_view, 1> CAMERA_KEYWORDS{"camera"};
+constexpr std::array<std::string_view, 1> RESPONSE_KEYWORDS{"response"};
 
 class Parser final : public TextParser {
 public:
   Parser(LayoutDiagnostics &diags, const LayoutSource &source,
          CameraDocument &document)
-      : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
+      : TextParser(diags, source, CAMERA_KEYWORDS), mCamera(&document) {}
+
+  Parser(LayoutDiagnostics &diags, const LayoutSource &source,
+         ResponseDocument &document)
+      : TextParser(diags, source, RESPONSE_KEYWORDS), mResponse(&document) {}
 
   void parse() {
     while (mToken.kind != Token::END) {
@@ -42,20 +51,34 @@ private:
                                             smdl::Quoted(mToken.text)));
       throw Recover();
     }
-    if (mToken.text == "camera") {
+    if (mCamera && mToken.text == "camera") {
       parseCameraBlock();
+    } else if (mResponse && mToken.text == "response") {
+      parseResponseStatement();
     } else {
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
-      if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(), mToken.text) !=
-          TRANSFORM_OPS.end()) {
+      if (mResponse) {
+        if (mToken.text == "camera") {
+          error.note({}, "a response file holds one 'response' block; where "
+                         "the picture is taken from belongs in the '.camera' "
+                         "file that names this one");
+        } else {
+          error.note({}, "a response file holds one 'response' block, whose "
+                         "'band' entries are the curves");
+        }
+      } else if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(),
+                           mToken.text) != TRANSFORM_OPS.end()) {
         error.note({}, "a camera is framed by 'look_from' and 'look_to', not "
                        "by transform operations");
       } else if (mToken.text == "time") {
         error.note({}, "the clock is not the camera's: '-time' names the "
                        "instant, and 'shutter' inside the 'camera' block "
                        "says how long it stays open");
+      } else if (mToken.text == "response") {
+        error.note({}, "the response belongs inside the 'camera' block, or "
+                       "in a '.response' file the camera names");
       } else {
         error.note({}, "a camera file holds one 'camera' block; everything "
                        "about the scene belongs in the layout");
@@ -68,13 +91,13 @@ private:
   // field no directive names is left unset for the command line, or
   // failing that the built-in default, to fill in.
   void parseCameraBlock() {
-    if (!mDocument.cameraLoc) mDocument.cameraLoc = location();
+    if (!mCamera->cameraLoc) mCamera->cameraLoc = location();
     advance();
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(), "expected '{' after 'camera'");
       throw Recover();
     }
-    auto &camera{mDocument.camera};
+    auto &camera{mCamera->camera};
     parseSettings("a camera setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
       if (key == "look_from") {
@@ -153,6 +176,8 @@ private:
                                     " (expected down, up, left, or right)"));
           throw Recover();
         }
+      } else if (key == "response") {
+        parseResponseSetting(camera, keyLoc);
       } else if (key == "resolution") {
         mDiags
             .error(keyLoc, "'resolution' is a fact about this render, not "
@@ -168,7 +193,7 @@ private:
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
                          "shutter, readout, readout_direction, lens, sensor, "
-                         "fstop, aperture, focus, "
+                         "response, fstop, aperture, focus, "
                          "blades, blade_angle, distortion_k1, distortion_k2, "
                          "distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
@@ -231,7 +256,7 @@ private:
     }
   }
 
-  // One setting inside a `motion` key. The three the camera cannot
+  // One setting inside a `motion` key. The ones the camera cannot
   // interpolate are named as such rather than as unknown words.
   void parseCameraKeySetting(CameraKey &key, const std::string &setting,
                              const LayoutLocation &settingLoc) {
@@ -267,7 +292,8 @@ private:
     } else if (setting == "blades" || setting == "distortion_fit" ||
                setting == "shutter" || setting == "readout" ||
                setting == "readout_direction" || setting == "resolution" ||
-               setting == "lens" || setting == "sensor") {
+               setting == "lens" || setting == "sensor" ||
+               setting == "response") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),
@@ -283,7 +309,263 @@ private:
     }
   }
 
-  CameraDocument &mDocument;
+  // The `response` setting inside `camera`: the block itself, or the
+  // quoted path of a file holding it. One per camera in either form; a
+  // second is an error rather than a merge, since two sets of bands have
+  // no meaningful union.
+  void parseResponseSetting(CameraSettings &camera,
+                            const LayoutLocation &keyLoc) {
+    if (mResponseLoc) {
+      mDiags
+          .error(keyLoc, "a camera reads through one response, and this is "
+                         "the second 'response'")
+          .note(mResponseLoc, "the first one is here");
+      throw Recover();
+    }
+    mResponseLoc = keyLoc;
+    if (mToken.kind == Token::STRING) {
+      camera.responseFile = mToken.text;
+      advance();
+    } else if (mToken.kind == Token::OPEN) {
+      camera.response.emplace();
+      parseResponseBlock(*camera.response, keyLoc);
+    } else {
+      mDiags.error(location(), "expected '{' or a quoted '.response' path "
+                               "after 'response'");
+      throw Recover();
+    }
+  }
+
+  // The `response` directive of a response file, which is the whole
+  // file. As with a lens, a second block does not merge.
+  void parseResponseStatement() {
+    if (mResponse->responseLoc) {
+      mDiags
+          .error(location(), "a response file describes one response, and "
+                             "this is the second 'response' block")
+          .note(mResponse->responseLoc, "the first one is here");
+      throw Recover();
+    }
+    mResponse->responseLoc = location();
+    advance();
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'response'");
+      throw Recover();
+    }
+    parseResponseBlock(mResponse->response, mResponse->responseLoc);
+  }
+
+  // The `{ ... }` body of a response, in either place. The bands are
+  // read in file order, and the tile's names resolve once the block
+  // closes, so a row may name a band declared below it. `{` is current.
+  void parseResponseBlock(ResponseSettings &response,
+                          const LayoutLocation &responseLoc) {
+    // The tile's names as written, with where each was written, for the
+    // resolution below.
+    auto tileNames{std::vector<std::string>()};
+    auto tileLocs{std::vector<LayoutLocation>()};
+    auto cfaLoc{LayoutLocation()};
+    parseSettings("a response setting", [&](const std::string &key,
+                                            const LayoutLocation &keyLoc) {
+      if (key == "name") {
+        response.name = expect(Token::STRING, "a quoted name after 'name'");
+      } else if (key == "kind") {
+        const auto word{expect(Token::WORD, "'relative' or 'qe' after 'kind'")};
+        if (word == "relative") {
+          response.kind = ResponseKind::RELATIVE;
+        } else if (word == "qe") {
+          response.kind = ResponseKind::QE;
+        } else {
+          mDiags.error(keyLoc, smdl::concat("unknown response kind ",
+                                            smdl::Quoted(word),
+                                            " (expected relative or qe)"));
+          throw Recover();
+        }
+      } else if (key == "band") {
+        response.bands.push_back(parseResponseBand(response, keyLoc));
+      } else if (key == "cfa") {
+        if (cfaLoc) {
+          mDiags
+              .error(keyLoc, "a response lays one tile over the pixels, and "
+                             "this is the second 'cfa'")
+              .note(cfaLoc, "the first one is here");
+          throw Recover();
+        }
+        cfaLoc = keyLoc;
+        parseResponseCFA(response, keyLoc, tileNames, tileLocs);
+      } else {
+        mDiags.error(keyLoc, smdl::concat("unknown response setting ",
+                                          smdl::Quoted(key),
+                                          " (expected name, kind, band, or "
+                                          "cfa)"));
+        throw Recover();
+      }
+    });
+    if (response.bands.empty()) {
+      mDiags.error(responseLoc, "a response needs at least one 'band'");
+      throw Recover();
+    }
+    for (size_t i = 0; i < tileNames.size(); i++) {
+      const auto index{response.bandIndex(tileNames[i])};
+      if (!index) {
+        mDiags.error(tileLocs[i],
+                     smdl::concat("the tile names ", smdl::Quoted(tileNames[i]),
+                                  ", which is not a band of this response"));
+        throw Recover();
+      }
+      response.cfa.push_back(*index);
+    }
+  }
+
+  // One `band NAME { w v w v ... }`: the name, then the knots as bare
+  // number pairs to the closing brace. A malformed knot list is reported
+  // against the band, since the numbers are gone by the time it is
+  // checked.
+  [[nodiscard]] ResponseBand parseResponseBand(const ResponseSettings &response,
+                                               const LayoutLocation &bandLoc) {
+    if (mToken.kind != Token::WORD || !isIdentifier(mToken.text) ||
+        mToken.text == "row") {
+      mDiags.error(location(), "expected a band name after 'band': a word "
+                               "beginning with a letter or an underscore, "
+                               "other than 'row', which is the tile's own");
+      throw Recover();
+    }
+    auto band{ResponseBand{}};
+    band.name = mToken.text;
+    if (response.bandIndex(band.name)) {
+      mDiags.error(location(), smdl::concat("band ", smdl::Quoted(band.name),
+                                            " is declared twice"));
+      throw Recover();
+    }
+    advance();
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(),
+                   smdl::concat("expected '{' after 'band ", band.name, "'"));
+      throw Recover();
+    }
+    advance(); // '{'
+    auto values{std::vector<float>()};
+    for (float value{}; mToken.kind != Token::CLOSE;) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD || !tryNumber(mToken, value)) {
+        mDiags.error(location(), smdl::concat("expected a number or '}' in "
+                                              "band ",
+                                              smdl::Quoted(band.name), ", got ",
+                                              smdl::Quoted(mToken.text)));
+        throw Recover();
+      }
+      values.push_back(value);
+      advance();
+    }
+    advance(); // '}'
+    if (values.size() % 2 != 0) {
+      mDiags.error(bandLoc, smdl::concat("expected wavelength and value pairs "
+                                         "in band ",
+                                         smdl::Quoted(band.name), ", got ",
+                                         values.size(), " number(s)"));
+      throw Recover();
+    }
+    if (values.size() < 4) {
+      mDiags.error(bandLoc, smdl::concat("expected at least two pairs in band ",
+                                         smdl::Quoted(band.name),
+                                         " (a curve needs two knots)"));
+      throw Recover();
+    }
+    for (size_t i = 0; i < values.size(); i += 2) {
+      const float wavelength{values[i]};
+      const float value{values[i + 1]};
+      if (!(std::isfinite(wavelength) && wavelength > 0)) {
+        mDiags.error(bandLoc, smdl::concat("expected a positive wavelength in "
+                                           "nanometers in band ",
+                                           smdl::Quoted(band.name)));
+        throw Recover();
+      }
+      if (i > 0 && !(wavelength > band.wavelengths.back())) {
+        mDiags.error(bandLoc,
+                     smdl::concat("expected ascending wavelengths in band ",
+                                  smdl::Quoted(band.name), " (",
+                                  smdl::Brief(wavelength, 6), " nm follows ",
+                                  smdl::Brief(band.wavelengths.back(), 6),
+                                  ")"));
+        throw Recover();
+      }
+      if (!(std::isfinite(value) && value >= 0)) {
+        mDiags.error(bandLoc,
+                     smdl::concat("expected a finite nonnegative "
+                                  "value at ",
+                                  smdl::Brief(wavelength, 6), " nm in band ",
+                                  smdl::Quoted(band.name)));
+        throw Recover();
+      }
+      band.wavelengths.push_back(wavelength);
+      band.values.push_back(value);
+    }
+    return band;
+  }
+
+  // The `cfa { row A B  row C D }` tile: rows of band names, all the same
+  // length, kept as names until the block closes. `{` is checked here,
+  // since the block is not optional once 'cfa' is written.
+  void parseResponseCFA(ResponseSettings &response,
+                        const LayoutLocation &cfaLoc,
+                        std::vector<std::string> &names,
+                        std::vector<LayoutLocation> &nameLocs) {
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'cfa'");
+      throw Recover();
+    }
+    size_t numRows{};
+    parseSettings("a 'row' of the tile", [&](const std::string &key,
+                                             const LayoutLocation &keyLoc) {
+      if (key != "row") {
+        mDiags.error(keyLoc, smdl::concat("expected 'row' in 'cfa', got ",
+                                          smdl::Quoted(key)));
+        throw Recover();
+      }
+      size_t numColumns{};
+      while (mToken.kind == Token::WORD && mToken.text != "row") {
+        if (!isIdentifier(mToken.text)) {
+          mDiags.error(location(), smdl::concat("expected a band name in the "
+                                                "row, got ",
+                                                smdl::Quoted(mToken.text)));
+          throw Recover();
+        }
+        names.push_back(mToken.text);
+        nameLocs.push_back(location());
+        numColumns++;
+        advance();
+      }
+      if (numColumns == 0) {
+        mDiags.error(keyLoc, "expected at least one band name after 'row'");
+        throw Recover();
+      }
+      if (numRows == 0) {
+        response.cfaColumns = numColumns;
+      } else if (numColumns != response.cfaColumns) {
+        mDiags.error(keyLoc, smdl::concat("expected ", response.cfaColumns,
+                                          " band name(s) in this row, as in "
+                                          "the first, got ",
+                                          numColumns));
+        throw Recover();
+      }
+      numRows++;
+    });
+    if (numRows == 0) {
+      mDiags.error(cfaLoc, "expected at least one 'row' in 'cfa'");
+      throw Recover();
+    }
+  }
+
+  // Exactly one of the two is set, by which constructor ran.
+  CameraDocument *mCamera{};
+  ResponseDocument *mResponse{};
+
+  // Where the camera's 'response' was written, in either form, so that a
+  // second one can point at it.
+  LayoutLocation mResponseLoc{};
 };
 
 } // namespace
@@ -344,6 +626,13 @@ sampleKeyed(const std::vector<CameraKey> &keys,
 }
 
 } // namespace
+
+std::optional<size_t>
+ResponseSettings::bandIndex(std::string_view name) const noexcept {
+  for (size_t i = 0; i < bands.size(); i++)
+    if (bands[i].name == name) return i;
+  return std::nullopt;
+}
 
 CameraSettings CameraSettings::at(float seconds) const {
   auto result{*this};
@@ -409,5 +698,52 @@ std::string resolveCameraFileName(const std::string &given,
   if (path.extension() != LAYOUT_EXTENSION) return {};
   path.replace_extension(CAMERA_EXTENSION);
   if (!std::filesystem::exists(path)) return {};
+  return path.string();
+}
+
+ResponseDocument parseResponse(LayoutDiagnostics &diags,
+                               const LayoutSource &source) {
+  auto document{ResponseDocument()};
+  document.source = &source;
+  Parser(diags, source, document).parse();
+  // A camera named this file for its bands, so a file with none is an
+  // error rather than an empty response; the caret sits at the start,
+  // there being nothing else to point at.
+  if (!document.responseLoc && !diags.hasErrors())
+    diags.error(LayoutLocation{&source, 0, 1},
+                "a response file holds one 'response' block, and this one "
+                "has none");
+  return document;
+}
+
+ResponseDocument readResponse(const std::string &fileName) {
+  auto diags{LayoutDiagnostics()};
+  const auto &source{diags.loadSource(fileName)};
+  auto document{parseResponse(diags, source)};
+  if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());
+  if (diags.hasErrors())
+    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
+                                   ": ", diags.summary()));
+  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
+  return document;
+}
+
+std::string resolveResponseFileName(const std::string &given,
+                                    const std::string &cameraFileName,
+                                    const std::string &stated) {
+  if (!given.empty()) {
+    if (!std::filesystem::exists(given))
+      throw smdl::Error(smdl::concat("-response ", smdl::QuotedPath(given),
+                                     " does not exist"));
+    return given;
+  }
+  if (stated.empty()) return {};
+  auto path{std::filesystem::path(stated)};
+  if (path.is_relative() && !cameraFileName.empty())
+    path = std::filesystem::path(cameraFileName).parent_path() / path;
+  if (!std::filesystem::exists(path))
+    throw smdl::Error(smdl::concat("the camera file names the response ",
+                                   smdl::QuotedPath(stated),
+                                   ", which does not exist beside it"));
   return path.string();
 }

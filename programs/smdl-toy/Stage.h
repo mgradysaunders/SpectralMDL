@@ -19,6 +19,7 @@
 
 #include "Color.h"
 #include "Common.h"
+#include "Layout/CameraFile.h"
 #include "Layout/Layout.h"
 #include "Render/Camera.h"
 #include "Render/Light.h"
@@ -49,6 +50,15 @@ struct Frame final {
   /// of priority: the defaults, the camera file's `camera` directive, and
   /// whatever the command line explicitly gave.
   CameraOptions cameraOptions{};
+
+  /// The detector's response: `-response`, else the camera file's
+  /// `response` (the sidecar it names, or its inline block), else
+  /// nothing. The parsed settings alone; what the render makes of them
+  /// needs the wavelength grid, which is resolved after the frame.
+  std::optional<ResponseSettings> response{};
+
+  /// The file `response` came from, or empty for an inline block.
+  std::string responseFileName{};
 
   /// The camera itself.
   ///

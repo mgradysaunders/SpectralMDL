@@ -1,7 +1,9 @@
 #include "Fixtures.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
 
@@ -208,6 +210,37 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(loadedFilm.getNumPixelsY() == 0);
     CHECK(loadedFilm.getNumBands() == 0);
     CHECK(loadedFilm.getNumSamples() == 0);
+  }
+  SUBCASE("A film of named bands round-trips with no wavelength line") {
+    auto fileName{(tmpDir / "named.envi").string()};
+    const std::array<std::string, NUM_BANDS> names = {"R", "G", "B", "nir"};
+    film.writeENVIFile({}, fileName, {}, {},
+                       smdl::Span<const std::string>(names.data(), NUM_BANDS));
+    auto text{std::string()};
+    {
+      auto file{std::ifstream(fileName + ".hdr")};
+      for (std::string line; std::getline(file, line);) text += line + "\n";
+    }
+    CHECK_NOT_CONTAINS(text, "wavelength");
+    CHECK_CONTAINS(text, "band names = {R, G, B, nir}");
+    auto loadedFilm{smdl::SpectralFilm{}};
+    auto loaded{loadedFilm.readENVIFile(fileName)};
+    CHECK(loaded.wavelengths.empty());
+    REQUIRE(loaded.bandNames.size() == NUM_BANDS);
+    CHECK(loaded.bandNames[0] == "R");
+    CHECK(loaded.bandNames[3] == "nir");
+    CHECK(loaded.fields.count("band names") == 0);
+    CHECK(loadedFilm.mean(2, 1, 3) == doctest::Approx(213.0).epsilon(1e-12));
+  }
+  SUBCASE("Band names that do not number the bands are refused both ways") {
+    auto fileName{(tmpDir / "misnamed.envi").string()};
+    const std::array<std::string, 2> names = {"R", "G"};
+    CHECK_THROWS(film.writeENVIFile(
+        {}, fileName, {}, {}, smdl::Span<const std::string>(names.data(), 2)));
+    film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
+                       fileName);
+    std::ofstream(fileName + ".hdr", std::ios::app) << "band names = {a, b}\n";
+    CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
   }
   SUBCASE("No 'render spp' reads back with a count of 1") {
     auto fileName{(tmpDir / "foreign.envi").string()};

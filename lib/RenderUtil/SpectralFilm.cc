@@ -58,6 +58,7 @@ constexpr const char *ENVI_HEADER_OFFSET{"header offset"};
 constexpr const char *ENVI_INTERLEAVE{"interleave"};
 constexpr const char *ENVI_WAVELENGTH{"wavelength"};
 constexpr const char *ENVI_WAVELENGTH_UNITS{"wavelength units"};
+constexpr const char *ENVI_BAND_NAMES{"band names"};
 constexpr const char *ENVI_SPP{"render spp"};
 constexpr const char *ENVI_CROP_WINDOW{"render crop window"};
 
@@ -95,6 +96,25 @@ void writeArrayField(std::ostream &stream, const char *name,
   return values;
 }
 
+// Parse the `{a, b, c}` array form of a list of names: the braces go,
+// the commas split, and each name is trimmed.
+[[nodiscard]] std::vector<std::string> parseNameList(std::string value) {
+  auto names{std::vector<std::string>()};
+  for (auto &c : value)
+    if (c == '{' || c == '}') c = ' ';
+  for (size_t pos{}; pos <= value.size();) {
+    auto end{value.find(',', pos)};
+    if (end == std::string::npos) end = value.size();
+    auto name{value.substr(pos, end - pos)};
+    const char *WS{" \t\r\n"};
+    name.erase(0, name.find_first_not_of(WS));
+    name.erase(name.find_last_not_of(WS) + 1);
+    if (!name.empty()) names.push_back(std::move(name));
+    pos = end + 1;
+  }
+  return names;
+}
+
 // Is `window` a non-empty sub-rectangle of the `nX` by `nY` frame? Both
 // directions ask: the writer so a bad window never reaches a file, the
 // reader so a bad file never reaches a film.
@@ -115,7 +135,8 @@ void writeArrayField(std::ostream &stream, const char *name,
 void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                                  const std::string &fileName,
                                  Span<const std::string> extraHeaderLines,
-                                 std::optional<int4> cropWindow) const {
+                                 std::optional<int4> cropWindow,
+                                 Span<const std::string> bandNames) const {
   const auto noCrop{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
   if (cropWindow && !isSubWindow(*cropWindow, mNumPixelsX, mNumPixelsY))
     throw Error(concat("cannot write ", Quoted(fileName), ": the window ",
@@ -123,6 +144,10 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                        (*cropWindow)[2], ",", (*cropWindow)[3],
                        " is not a non-empty sub-rectangle of ", mNumPixelsX,
                        "x", mNumPixelsY));
+  if (!bandNames.empty() && bandNames.size() != mNumBands)
+    throw Error(concat("cannot write ", Quoted(fileName), ": ",
+                       bandNames.size(), " band names for ", mNumBands,
+                       " bands"));
   const auto pixelWindow{cropWindow.value_or(noCrop)};
   // Write the header file
   {
@@ -134,8 +159,11 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
     writeField(file, ENVI_SAMPLES, mNumPixelsX);
     writeField(file, ENVI_LINES, mNumPixelsY);
     writeField(file, ENVI_BANDS, mNumBands);
-    writeField(file, ENVI_WAVELENGTH_UNITS, "Nanometers");
-    writeArrayField(file, ENVI_WAVELENGTH, wavelengths);
+    if (!wavelengths.empty()) {
+      writeField(file, ENVI_WAVELENGTH_UNITS, "Nanometers");
+      writeArrayField(file, ENVI_WAVELENGTH, wavelengths);
+    }
+    if (!bandNames.empty()) writeArrayField(file, ENVI_BAND_NAMES, bandNames);
     writeField(file, ENVI_HEADER_OFFSET, 0);
     writeField(file, ENVI_INTERLEAVE, "bip");
     // A zero count is not recorded, and such a file cannot seed a
@@ -281,6 +309,14 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     if (result.wavelengths.size() != nBands)
       throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
                          result.wavelengths.size(), " wavelengths for ", nBands,
+                         " bands"));
+  }
+  if (auto itr{fields.find(ENVI_BAND_NAMES)}; itr != fields.end()) {
+    result.bandNames = parseNameList(itr->second);
+    fields.erase(itr);
+    if (result.bandNames.size() != nBands)
+      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
+                         result.bandNames.size(), " band names for ", nBands,
                          " bands"));
   }
   fields.erase(ENVI_FILE_TYPE);

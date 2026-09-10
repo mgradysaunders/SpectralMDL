@@ -54,6 +54,12 @@ cl::opt<std::string> optLens{
     cl::desc("The '.lens' file to look through, overriding the camera file's "
              "'lens' (default: none, the thin lens model)"),
     cl::cat(catCamera)};
+cl::opt<std::string> optResponse{
+    "response",
+    cl::desc("The '.response' file holding the detector's bands to read "
+             "through, overriding the camera file's 'response' (default: "
+             "none, the spectral film alone)"),
+    cl::cat(catCamera)};
 cl::opt<float2> optSensor{
     "sensor",
     cl::desc("With a lens, the sensor width and height in mm (default: "
@@ -638,6 +644,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.lookUp = flag(optLookUp);
   opts.camera.fovYDeg = flag(optFOV);
   opts.camera.lens = flag(optLens);
+  opts.camera.response = flag(optResponse);
   opts.camera.sensorMM = flag(optSensor);
   opts.camera.shouldNormalizeLensExposure = flag(optNormalizeLensExposure);
   opts.camera.shutter = flag(optShutter);

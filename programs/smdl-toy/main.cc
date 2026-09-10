@@ -14,6 +14,7 @@
 #include "Render.h"
 #include "Render/Guiding.h"
 #include "Render/Manifold.h"
+#include "Response.h"
 #include "Resume.h"
 #include "Stage.h"
 
@@ -71,8 +72,12 @@ int main(int argc, char **argv) try {
   const auto &profileFileName{opts.utility.profile};
   if (isProfiling) smdl::profilerInitialize();
   auto frame{resolveFrame(opts)};
-  auto resumed{resumeSequence(opts, frame.resolution, frame.window)};
+  auto resumed{resumeSequence(opts, frame.resolution, frame.window,
+                              frame.response ? &*frame.response : nullptr)};
   const auto grid{resolveWavelengthGrid(opts, frame, resumed)};
+  // The response against the grid, here rather than later, so that a
+  // band the grid cannot see fails before anything compiles.
+  const auto response{resolveResponse(frame.response, grid.wavelengths)};
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
   auto compiler{smdl::Compiler{}};
@@ -127,11 +132,25 @@ int main(int argc, char **argv) try {
                                     !resumed.wasRequested
                                 ? opts.image.outputSpectrum
                                 : opts.image.resume};
+  // The band film, which goes beside the spectral one and nowhere else,
+  // so a response with no spectral output has nothing to fill.
+  auto bandFilm{std::optional<smdl::SpectralFilm>()};
+  if (response) {
+    if (outputSpectrum.empty()) {
+      SMDL_LOG_WARN("a response is present but -output-spectrum is not, so "
+                    "the band film is not written");
+    } else {
+      bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
+                       frame.numPixelsY);
+    }
+  }
+  const Response *responseOrNull{response ? &*response : nullptr};
+  smdl::SpectralFilm *bandFilmOrNull{bandFilm ? &*bandFilm : nullptr};
   auto sdtree{std::unique_ptr<STree>()};
   renderSamples(opts, frame, grid, compiler, staged, resumed, film,
-                outputSpectrum, sdtree);
+                responseOrNull, bandFilmOrNull, outputSpectrum, sdtree);
   writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), film,
-               resumed, outputSpectrum,
+               responseOrNull, bandFilmOrNull, resumed, outputSpectrum,
                savesGuideTree(opts, frame, outputSpectrum) ? sdtree.get()
                                                            : nullptr);
   return EXIT_SUCCESS;

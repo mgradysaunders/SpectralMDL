@@ -11,6 +11,7 @@
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Sampler.h"
+#include "Response.h"
 #include "Resume.h"
 #include "Stage.h"
 #include "Tonemap.h"
@@ -29,13 +30,20 @@ constexpr const char *ENVI_SUN_AZIMUTH{"sun azimuth"};
 constexpr const char *ENVI_SUN_ELEVATION{"sun elevation"};
 constexpr const char *ENVI_SOLAR_IRRADIANCE{"solar irradiance"};
 
+/// The band film's reader-only fields: what its numbers are, and whose
+/// response they came from.
+constexpr const char *ENVI_BAND_UNITS{"band units"};
+constexpr const char *ENVI_RESPONSE_NAME{"render response name"};
+
 } // namespace
 
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
                   const EnvLight *envLight, const smdl::SpectralFilm &film,
+                  const Response *response, const smdl::SpectralFilm *bandFilm,
                   ResumedSequence &resumed, const std::string &outputSpectrum,
                   const STree *sdtree) {
+  SMDL_SANITY_CHECK(!bandFilm || response);
   const auto &wavelengths{grid.wavelengths};
   const auto numPixelsX{frame.numPixelsX};
   const auto numPixelsY{frame.numPixelsY};
@@ -126,6 +134,33 @@ void writeOutputs(const Options &opts, const Frame &frame,
       smdl::renameOnto(treePartName, treeName);
       SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
                     sdtree->leafCount(), " spatial leaves");
+    }
+    if (bandFilm) {
+      // The band film beside the spectral one, under the same
+      // discipline: the sequence's own fingerprint, so the pair stands
+      // on its own, then the response's, which a resume must match, and
+      // the reader-only lines.
+      const auto bandName{bandFilmFileName(outputSpectrum)};
+      const auto bandPartName{bandName + ".part"};
+      auto bandLines{resumed.header.headerLines()};
+      auto responseHeader{ResponseHeader{}};
+      responseHeader.kind = response->kindName();
+      responseHeader.hash = response->hash();
+      responseHeader.cfaColumns = response->tileColumns();
+      responseHeader.cfa = response->tileNames();
+      for (auto &line : responseHeader.headerLines())
+        bandLines.push_back(std::move(line));
+      bandLines.push_back(
+          smdl::concat(ENVI_BAND_UNITS, " = ", response->units()));
+      if (!response->name().empty())
+        bandLines.push_back(
+            smdl::concat(ENVI_RESPONSE_NAME, " = ", response->name()));
+      const auto &bandNames{response->filmBandNames()};
+      bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames);
+      smdl::renameOnto(bandPartName, bandName);
+      smdl::renameOnto(bandPartName + ".hdr", bandName + ".hdr");
+      SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(bandName), ", ",
+                    bandNames.size(), " band(s) in ", response->units());
     }
     SMDL_LOG_INFO(
         "Cumulative render time: ", formatDuration(resumed.header.seconds),

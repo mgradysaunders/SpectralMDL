@@ -636,23 +636,12 @@ namespace {
   const size_t numBands{wavelengths.size()};
   auto weightPhotopic{std::vector<double>(numBands)};
   auto weightScotopic{std::vector<double>(numBands)};
-  const double dLambda{numBands > 1 ? (double(wavelengths[numBands - 1]) -
-                                       double(wavelengths[0])) /
-                                          double(numBands - 1)
-                                    : 1.0};
-  // A non-uniform grid carries its own trapezoid band widths; the
-  // uniform formula below is what those widths degenerate to on a
-  // uniform grid, kept spelled out so the default render is unchanged
-  // to the bit.
-  const auto &quadWeights{gRenderGrid.weights};
+  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};
-    const double trap{i == 0 || i == numBands - 1 ? 0.5 : 1.0};
-    const double width{quadWeights.empty() ? dLambda * trap
-                                           : double(quadWeights[i])};
-    weightPhotopic[i] = 683.0 * photopicV(lambda) * width;
-    weightScotopic[i] = 1700.0 * scotopicV(lambda) * width;
+    weightPhotopic[i] = 683.0 * photopicV(lambda) * widths[i];
+    weightScotopic[i] = 1700.0 * scotopicV(lambda) * widths[i];
     photopicMass += weightPhotopic[i];
   }
   // A grid that misses the visible has no photopic signal to model an

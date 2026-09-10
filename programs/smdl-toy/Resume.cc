@@ -11,6 +11,7 @@
 
 #include "Options.h"
 #include "Render/Sampler.h"
+#include "Response.h"
 #include "Resume.h"
 
 namespace {
@@ -101,8 +102,20 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
 
 } // namespace
 
+namespace {
+
+// The names of a band list, for a message.
+[[nodiscard]] std::string spellNames(const std::vector<std::string> &names) {
+  auto text{std::string("{")};
+  for (size_t i = 0; i < names.size(); i++)
+    text += (i > 0 ? ", " : "") + names[i];
+  return text + "}";
+}
+
+} // namespace
+
 ResumedSequence resumeSequence(const Options &opts, int2 resolution,
-                               int4 window) {
+                               int4 window, const ResponseSettings *response) {
   auto result{ResumedSequence{}};
   result.wasRequested = !opts.image.resume.empty();
   result.sampleIndexBase = opts.render.sampling.sampleOffset;
@@ -193,5 +206,58 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
                 smdl::Quoted(opts.image.resume), " (sample offset ",
                 header.sampleOffset, ")");
+  // The band film beside the accumulation. Without a response it is
+  // left where it is, and said so, since it falls behind from here on.
+  const auto bandName{bandFilmFileName(opts.image.resume)};
+  const bool hasBandData{smdl::exists(bandName)};
+  const bool hasBandHeader{smdl::exists(bandName + ".hdr")};
+  if (!response) {
+    if (hasBandData || hasBandHeader)
+      SMDL_LOG_WARN("the band film ", smdl::Quoted(bandName),
+                    " beside the accumulation is not continued: this "
+                    "session has no response, so it falls behind");
+    return result;
+  }
+  if (!hasBandData || !hasBandHeader)
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the band film ", smdl::Quoted(bandName),
+        " beside the accumulation ",
+        hasBandData || hasBandHeader ? "is half a pair" : "does not exist",
+        "; the sequence was rendered without a response, or its last "
+        "session was interrupted between the two files"));
+  auto &bandFilm{result.bandFilm};
+  auto &bandInfo{result.bandInfo};
+  bandInfo = bandFilm.readENVIFile(bandName);
+  if (bandFilm.getNumPixelsX() != size_t(resolution.x) ||
+      bandFilm.getNumPixelsY() != size_t(resolution.y))
+    throw smdl::Error(
+        smdl::concat("cannot resume: the band film is ",
+                     bandFilm.getNumPixelsX(), "x", bandFilm.getNumPixelsY(),
+                     " against -resolution ", resolution.x, ",", resolution.y));
+  if (bandInfo.samplesPerPixel != info.samplesPerPixel)
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the band film holds ", bandInfo.samplesPerPixel,
+        " samples per pixel against the accumulation's ", info.samplesPerPixel,
+        "; the last session was interrupted between "
+        "the two files, or rendered without the response"));
+  if (!smdl::isAllTrue(bandInfo.cropWindow == window))
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the band film was rendered with -crop-window ",
+        spellVector(bandInfo.cropWindow), " against this session's ",
+        spellVector(window)));
+  if (const auto names{responseFilmBandNames(*response)};
+      bandInfo.bandNames != names)
+    throw smdl::Error(smdl::concat("cannot resume: the band film's bands are ",
+                                   spellNames(bandInfo.bandNames),
+                                   " against this response's ",
+                                   spellNames(names)));
+  result.responseHeader.readFrom(bandInfo.fields);
+  if (result.responseHeader.hash != responseHash(*response))
+    throw smdl::Error(
+        "cannot resume: the response's curves differ from the ones the band "
+        "film was rendered with; start a fresh -output-spectrum, or render "
+        "without the response");
+  SMDL_LOG_INFO("Resuming the band film: ", smdl::Quoted(bandName), ", ",
+                bandInfo.bandNames.size(), " band(s)");
   return result;
 }

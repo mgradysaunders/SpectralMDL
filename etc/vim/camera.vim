@@ -1,19 +1,26 @@
 " Vim syntax file
 " Language:    smdl-toy camera
-" Filenames:   *.camera
+" Filenames:   *.camera, *.response
 "
 " The camera format that `smdl-toy` reads beside a layout: one `camera` block
-" holding the framing, the lens, and the shutter, with a `motion` track of
-" `at <seconds>` keys inside it. Everything about the scene itself is in the
-" `.layout`, which `layout.vim` covers; the prescription a `lens` names is in
-" a `.lens`, which `lens.vim` covers; which instant to photograph and how big
-" the picture is are the command line's alone.
+" holding the framing, the lens, the shutter, and the detector's `response`,
+" with a `motion` track of `at <seconds>` keys inside it. Everything about
+" the scene itself is in the `.layout`, which `layout.vim` covers; the
+" prescription a `lens` names is in a `.lens`, which `lens.vim` covers; which
+" instant to photograph and how big the picture is are the command line's
+" alone.
+"
+" A `.response` file is the camera's `response` block on its own, in the
+" same vocabulary, so this file covers it too. The one thing that costs: a
+" top-level `response` is accepted in a `.camera` as well, where the parser
+" refuses it, since the two extensions share one syntax file.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/Layout/CameraFile.cc`, so the words it knows inside a
 " block are exactly the ones that block accepts, and anything else there is
 " flagged the way the parser flags it.
 "
-" A camera file is identified by its `.camera` extension.
+" A camera file is identified by its `.camera` extension, and a response file
+" by `.response`.
 "
 " Install: see the header of `layout.vim`, which covers all three files.
 "
@@ -76,8 +83,8 @@ syn match cameraComment display "#.*$" contains=cameraTodo,@Spell
 
 "--{ Literals
 " A quoted string may not span lines and has no escape sequences: the lexer
-" takes every character up to the closing quote verbatim. The only one a
-" camera holds is the path its `lens` names.
+" takes every character up to the closing quote verbatim. A camera holds the
+" paths its `lens` and `response` name, and a response its `name`.
 syn region cameraString display oneline start=+"+ end=+"+
 
 syn match cameraNumber display
@@ -94,6 +101,10 @@ syn match cameraBadWord display "\<\h\w*\>"
 "--{ Directives
 " camera { ... }, merged per field, last one wins.
 syn keyword cameraStatement camera nextgroup=cameraBlock skipwhite skipempty
+
+" response { ... } at the top level: the whole of a `.response` file.
+syn keyword cameraStatement response
+      \ nextgroup=cameraResponseBlock skipwhite skipempty
 "--}
 
 "--{ Settings
@@ -113,6 +124,24 @@ syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
 " setting that stands in for what a real lens does on its own are refused
 " beside it; the parser says which, and it says it better than a color can.
 syn keyword cameraSetting contained lens sensor
+
+" response { ... } or response "x.response" inside camera: the detector's
+" bands. Inside the block, `name` and `kind` (`relative` or `qe`), then
+" `band NAME { <wavelength> <value> ... }` entries, and an optional
+" `cfa { row NAME ... }` tile. A band name is any identifier, so the two
+" blocks that hold names admit every word rather than flagging them.
+syn keyword cameraSetting contained response
+      \ nextgroup=cameraResponseBlock skipwhite skipempty
+syn keyword cameraResponseSetting contained name kind
+syn keyword cameraResponseKind contained relative qe
+syn keyword cameraResponseSetting contained band
+      \ nextgroup=cameraBandName skipwhite
+syn match cameraBandName contained "\<\h\w*\>"
+      \ nextgroup=cameraBandBlock skipwhite skipempty
+syn keyword cameraResponseSetting contained cfa
+      \ nextgroup=cameraCFABlock skipwhite skipempty
+syn keyword cameraCFARow contained row
+syn match cameraCFAName contained "\<\h\w*\>"
 
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
@@ -136,10 +165,22 @@ syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
 
 syn region cameraMotionBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraMotionAt,cameraMotionSetting
+
+syn region cameraResponseBlock contained matchgroup=cameraDelim
+      \ start="{" end="}"
+      \ contains=@cameraCommon,cameraResponseSetting,cameraResponseKind
+
+" The knots: numbers only, so a stray word is flagged.
+syn region cameraBandBlock contained matchgroup=cameraDelim start="{" end="}"
+      \ contains=cameraComment,cameraNumber,cameraBadWord
+
+syn region cameraCFABlock contained matchgroup=cameraDelim start="{" end="}"
+      \ contains=cameraComment,cameraCFARow,cameraCFAName
 "--}
 
-" Blocks nest at most two deep (camera, motion) and are short.
-syn sync minlines=100
+" Blocks nest at most three deep (camera, response, band), but a band's
+" knots can run to hundreds of lines.
+syn sync minlines=400
 
 "--{ Highlight links
 hi def link cameraTodo            Todo
@@ -154,6 +195,11 @@ hi def link cameraMotionAt        Keyword
 hi def link cameraSetting         Label
 hi def link cameraMotionSetting   Label
 hi def link cameraReadoutDirection Constant
+hi def link cameraResponseSetting Label
+hi def link cameraResponseKind    Constant
+hi def link cameraBandName        Identifier
+hi def link cameraCFARow          Keyword
+hi def link cameraCFAName         Identifier
 
 hi def link cameraDelim           Delimiter
 

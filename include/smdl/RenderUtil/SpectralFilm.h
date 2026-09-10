@@ -107,6 +107,9 @@ public:
     /// The wavelengths in nanometers, empty if the header has none.
     std::vector<float> wavelengths{};
 
+    /// The `band names`, one per band, empty if the header has none.
+    std::vector<std::string> bandNames{};
+
     /// The value of the `render spp` header field, or 0 if the
     /// header does not carry one (a foreign or legacy file). The film
     /// reads back with `getNumSamples()` equal to this clamped to 1, so
@@ -155,7 +158,8 @@ public:
   /// the totals so that a later render can keep accumulating.
   ///
   /// \param[in] wavelengths
-  /// The wavelengths in nanometers.
+  /// The wavelengths in nanometers, or empty for bands that have none,
+  /// in which case no `wavelength` line is written.
   ///
   /// \param[in] fileName
   /// The filename of the image. The header is written alongside as
@@ -175,11 +179,17 @@ public:
   /// belongs to and drops the totals outside them. Every pixel is
   /// written as its mean either way.
   ///
-  /// \throws Error if the window is empty or out of bounds.
+  /// \param[in] bandNames
+  /// The `band names`, one per band, or empty to write none: what a
+  /// band is when it has no wavelength.
+  ///
+  /// \throws Error if the window is empty or out of bounds, or the
+  /// names do not number the bands.
   ///
   void writeENVIFile(Span<const float> wavelengths, const std::string &fileName,
                      Span<const std::string> extraHeaderLines = {},
-                     std::optional<int4> window = {}) const;
+                     std::optional<int4> window = {},
+                     Span<const std::string> bandNames = {}) const;
 
 private:
   size_t mNumBands{};

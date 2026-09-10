@@ -13,6 +13,14 @@
 /// photograph (`-time`, so one camera renders every frame of a shot) and
 /// how big the picture is (`-resolution` and `-crop-window`, which are
 /// facts about this render rather than about the camera).
+///
+/// The detector's response is the one thing the file may hold in either
+/// of two places: a `response { ... }` block inline, or a `.response`
+/// file holding that block alone, named by `response "path"` and
+/// resolved relative to the camera. The sidecar is for curves that run
+/// to hundreds of points and for a sensor several cameras share; it is
+/// parsed by this same vocabulary with `response` as its one top-level
+/// directive, so the two forms cannot drift apart.
 #pragma once
 
 #include <optional>
@@ -28,18 +36,87 @@
 /// the one beside a layout.
 constexpr std::string_view CAMERA_EXTENSION = ".camera";
 
+/// The extension that marks a response file: a `response` block on its
+/// own, which a camera names in place of writing the block inline.
+constexpr std::string_view RESPONSE_EXTENSION = ".response";
+
 /// The direction a rolling readout sweeps the picture, named for where
 /// the sweep travels to: `DOWN` reads the top line first.
 enum class ReadoutDirection { DOWN, UP, LEFT, RIGHT };
+
+/// What a response curve's values are, which decides what its band
+/// integrates to.
+enum class ResponseKind {
+  /// A unitless weighting, the convention of every published camera
+  /// curve. The band is the normalized energy integral: the radiance
+  /// averaged over the curve, in the film's own units.
+  RELATIVE,
+
+  /// Electrons per photon. The band is the photon integral weighted by
+  /// the curve, in electrons per square meter, steradian, and second,
+  /// which is what a detector readout counts from.
+  QE
+};
+
+/// One response band: a named piecewise-linear curve over wavelength.
+class ResponseBand final {
+public:
+  /// The name, an identifier, carried verbatim into the ENVI header's
+  /// `band names`.
+  std::string name{};
+
+  /// The knots' wavelengths in nanometers, positive and strictly
+  /// ascending, at least two of them.
+  std::vector<float> wavelengths{};
+
+  /// The curve's value at each knot, finite and nonnegative. The curve
+  /// is zero outside its knots.
+  std::vector<float> values{};
+};
+
+/// The `response` a camera reads through: the detector's named bands as
+/// curves over wavelength, and the tile that lays them over the pixels
+/// when there is one. As parsed; what the render makes of it against
+/// the wavelength grid is decided after the frame, where the grid is.
+class ResponseSettings final {
+public:
+  /// `name`: the sensor's name, free text, or empty.
+  std::string name{};
+
+  /// `kind`: what the values are, `relative` unless stated. One kind per
+  /// response, so its bands share their units.
+  ResponseKind kind{ResponseKind::RELATIVE};
+
+  /// `band`: the bands in file order, at least one.
+  std::vector<ResponseBand> bands{};
+
+  /// `cfa`: the tile's width in pixels, or 0 without a tile.
+  size_t cfaColumns{};
+
+  /// `cfa`: the tile row by row, each entry an index into `bands`, or
+  /// empty without a tile. Pixel `(x, y)` of the frame reads through
+  /// `cfa[(y % rows) * cfaColumns + x % cfaColumns]`.
+  std::vector<size_t> cfa{};
+
+  [[nodiscard]] bool hasCFA() const noexcept { return cfaColumns > 0; }
+
+  [[nodiscard]] size_t cfaRows() const noexcept {
+    return cfaColumns > 0 ? cfa.size() / cfaColumns : 0;
+  }
+
+  /// The index of the band named `name`, or nothing.
+  [[nodiscard]] std::optional<size_t>
+  bandIndex(std::string_view name) const noexcept;
+};
 
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
 ///
 /// The ones left out are left out because they are not: `blades` counts
-/// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
-/// `sensor` are the instrument, and `shutter`, `readout`, and
-/// `readout_direction` describe the interval a key is sampled over
-/// rather than something sampled within it.
+/// the aperture's edges, `distortion_fit` is a bare flag, `lens`,
+/// `sensor`, and `response` are the instrument, and `shutter`,
+/// `readout`, and `readout_direction` describe the interval a key is
+/// sampled over rather than something sampled within it.
 ///
 class CameraKeyable {
 public:
@@ -119,6 +196,17 @@ public:
   /// nobody changes per render.
   std::optional<ReadoutDirection> readoutDirection{};
 
+  /// `response { ... }`: the detector's bands, written inline. Not
+  /// keyable, and not merged: a second `response` in either form is an
+  /// error, since two sets of bands have no meaningful union. See
+  /// `ResponseSettings`.
+  std::optional<ResponseSettings> response{};
+
+  /// `response "path"`: the '.response' file holding the block instead,
+  /// as written, to be resolved relative to the camera file that names
+  /// it. `-response` overrides it as `-lens` overrides `lens`.
+  std::optional<std::string> responseFile{};
+
   /// The keys the `motion` block wrote, in ascending time, or empty for
   /// a still camera. See `CameraKey`.
   std::vector<CameraKey> motion{};
@@ -188,3 +276,42 @@ public:
 [[nodiscard]] std::string
 resolveCameraFileName(const std::string &given,
                       const std::string &sceneFileName);
+
+/// A parsed response file, as written: the camera's `response` block on
+/// its own.
+class ResponseDocument final {
+public:
+  /// The source the document was parsed from, owned by the
+  /// `LayoutDiagnostics` that loaded it.
+  const LayoutSource *source{};
+
+  /// What the file's `response` block described.
+  ResponseSettings response{};
+  LayoutLocation responseLoc{};
+};
+
+/// Parse one response source into a document, as `parseCamera()` does a
+/// camera: pure, best effort, every diagnostic in `diags`. A file with
+/// no `response` block is an error, since a camera named it for one.
+[[nodiscard]] ResponseDocument parseResponse(LayoutDiagnostics &diags,
+                                             const LayoutSource &source);
+
+/// Read a response file, as `readCamera()` reads a camera.
+///
+/// \throws smdl::Error  If the file cannot be read, or on any parse
+///                      error after printing the diagnostics.
+///
+[[nodiscard]] ResponseDocument readResponse(const std::string &fileName);
+
+/// The response file a camera should read through, or empty for none:
+/// `given` if the command line named one, else `stated` if the camera
+/// file did, resolved relative to `cameraFileName` so that a scene
+/// directory stays self-contained.
+///
+/// \throws smdl::Error  If either names a file that does not exist,
+///                      since neither may be quietly ignored.
+///
+[[nodiscard]] std::string
+resolveResponseFileName(const std::string &given,
+                        const std::string &cameraFileName,
+                        const std::string &stated);

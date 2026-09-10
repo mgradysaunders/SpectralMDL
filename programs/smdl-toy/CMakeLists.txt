@@ -28,6 +28,7 @@ target_sources(
     "Output.cc"
     "Progress.cc"
     "Render.cc"
+    "Response.cc"
     "Resume.cc"
     "Stage.cc"
     "Tonemap.cc"

@@ -5,6 +5,7 @@ smdl_add_doctest(
   SOURCES
     "Color.cc"
     "MedianFilter.cc"
+    "Response.cc"
     "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"

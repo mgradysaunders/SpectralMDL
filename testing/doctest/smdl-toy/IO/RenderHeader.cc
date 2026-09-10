@@ -97,3 +97,46 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.args.empty());
   }
 }
+
+TEST_CASE("ResponseHeader: round trip") {
+  auto written{ResponseHeader()};
+  written.kind = "qe";
+  written.hash = "0123456789abcdef0123456789abcdef";
+  written.cfaColumns = 2;
+  written.cfa = {"R", "G", "G", "B"};
+  const auto fields{asFields(written.headerLines())};
+  SUBCASE("Every field survives the header, the tile as a list") {
+    CHECK(fields.at("render cfa") == "{R, G, G, B}");
+    auto read{ResponseHeader()};
+    read.readFrom(fields);
+    CHECK(read.kind == written.kind);
+    CHECK(read.hash == written.hash);
+    CHECK(read.cfaColumns == 2);
+    CHECK(read.cfa == written.cfa);
+  }
+  SUBCASE("Every field is written, under the 'render' prefix") {
+    CHECK(fields.size() == 4);
+    for (const auto &field : fields) {
+      CAPTURE(field.first);
+      CHECK(field.first.rfind("render ", 0) == 0);
+    }
+  }
+  SUBCASE("No tile spells an empty list and reads back as none") {
+    auto plain{ResponseHeader()};
+    plain.kind = "relative";
+    const auto plainFields{asFields(plain.headerLines())};
+    CHECK(plainFields.at("render cfa") == "{}");
+    CHECK(plainFields.at("render cfa columns") == "0");
+    auto read{written};
+    read.readFrom(plainFields);
+    CHECK(read.cfa.empty());
+    CHECK(read.cfaColumns == 0);
+    CHECK(read.kind == "relative");
+  }
+  SUBCASE("A field the file does not carry leaves the value alone") {
+    auto read{written};
+    read.readFrom({});
+    CHECK(read.hash == written.hash);
+    CHECK(read.cfa.size() == 4);
+  }
+}

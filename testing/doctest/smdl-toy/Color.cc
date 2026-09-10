@@ -13,6 +13,32 @@
 // rectangle, since that is what makes the accumulated band the mean
 // radiance over the band.
 
+TEST_CASE("wavelengthTrapezoidWidths: what a grid held still integrates "
+          "against") {
+  SUBCASE("A uniform grid weighs every band its spacing, halved at the ends") {
+    ScopedGrid scoped{{400, 500, 600, 700}, false};
+    const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+    REQUIRE(widths.size() == 4);
+    CHECK(widths[0] == 50.0);
+    CHECK(widths[1] == 100.0);
+    CHECK(widths[2] == 100.0);
+    CHECK(widths[3] == 50.0);
+    CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
+  }
+  SUBCASE("A non-uniform grid weighs by the render-wide quadrature weights") {
+    ScopedGrid scoped{{400, 450, 600, 700}, false};
+    REQUIRE(gRenderGrid.weights.size() == 4);
+    const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+    REQUIRE(widths.size() == 4);
+    double total{};
+    for (size_t i = 0; i < 4; i++) {
+      CHECK(widths[i] == double(gRenderGrid.weights[i]));
+      total += widths[i];
+    }
+    CHECK(total == doctest::Approx(300.0));
+  }
+}
+
 TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
   SUBCASE("A uniform grid tiles with bands of the spacing") {
     const auto wavelens{std::vector<float>{400, 500, 600, 700}};

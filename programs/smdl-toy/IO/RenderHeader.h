@@ -53,3 +53,28 @@ struct RenderHeader final {
   /// is what makes an older sequence resumable rather than an error.
   void readFrom(const std::map<std::string, std::string> &fields);
 };
+
+/// What the band film's header says about the response that produced
+/// it: the fingerprint a resumed session has to match, since the curves
+/// decide what the file's numbers are, the way the resolution decides
+/// what its pixels are. Written and read through one table, as
+/// `RenderHeader` is and for the same reason.
+struct ResponseHeader final {
+  /// The response's kind, `relative` or `qe`.
+  std::string kind{};
+
+  /// The hash of the curve set; see `responseHash()`.
+  std::string hash{};
+
+  /// The tile's width in pixels, 0 without a tile.
+  uint64_t cfaColumns{};
+
+  /// The tile row by row as band names, empty without a tile.
+  std::vector<std::string> cfa{};
+
+  /// The lines to hand `smdl::SpectralFilm::writeENVIFile()`.
+  [[nodiscard]] std::vector<std::string> headerLines() const;
+
+  /// Take whatever of these `fields` carries, leaving the rest alone.
+  void readFrom(const std::map<std::string, std::string> &fields);
+};

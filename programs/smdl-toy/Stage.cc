@@ -175,6 +175,40 @@ Frame resolveFrame(const Options &opts) {
   refuseThinLensSettings(opts, fileCamera, !lensFileName.empty());
   auto lensPrescription{std::optional<LensPrescription>()};
   if (!lensFileName.empty()) lensPrescription = readLens(lensFileName).lens;
+  // The detector's response, resolved beside the lens for the same
+  // reason. The flag wins over the file's own block, whichever form the
+  // file wrote it in.
+  const auto responseFileName{
+      resolveResponseFileName(opts.camera.response.value, cameraFileName,
+                              fileCamera.responseFile.value_or(std::string()))};
+  auto response{std::optional<ResponseSettings>()};
+  if (!responseFileName.empty()) {
+    if (fileCamera.response)
+      SMDL_LOG_INFO("Response: -response replaces the camera file's own "
+                    "'response' block");
+    response = readResponse(responseFileName).response;
+  } else if (fileCamera.response) {
+    response = fileCamera.response;
+  }
+  if (response) {
+    auto line{smdl::concat("Response: ", response->bands.size(), " band(s)")};
+    for (size_t i = 0; i < response->bands.size(); i++)
+      line += smdl::concat(i == 0 ? " " : ", ", response->bands[i].name);
+    line += response->kind == ResponseKind::QE ? " in electrons per photon"
+                                               : " as relative weights";
+    if (!response->name.empty())
+      line += smdl::concat(" of ", smdl::Quoted(response->name));
+    if (!responseFileName.empty())
+      line += smdl::concat(" from ", smdl::QuotedPath(responseFileName));
+    if (response->hasCFA()) {
+      line += smdl::concat(", tiled ", response->cfaColumns, "x",
+                           response->cfaRows(), " as");
+      for (size_t i = 0; i < response->cfa.size(); i++)
+        line += smdl::concat(i > 0 && i % response->cfaColumns == 0 ? " /" : "",
+                             " ", response->bands[response->cfa[i]].name);
+    }
+    SMDL_LOG_INFO(line);
+  }
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
@@ -325,6 +359,8 @@ Frame resolveFrame(const Options &opts) {
   auto frame{Frame{}};
   frame.layout = std::move(layout);
   frame.cameraOptions = cameraOptions;
+  frame.response = std::move(response);
+  frame.responseFileName = responseFileName;
   frame.camera = std::move(camera);
   frame.resolution = resolution;
   frame.numPixelsX = numPixelsX;
@@ -413,8 +449,13 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
+  const double bandFilmBytes{
+      frame.response ? 8.0 * double(frame.response->hasCFA()
+                                        ? 1
+                                        : frame.response->bands.size())
+                     : 0.0};
   if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
-                       (8.0 + 8.0 * double(wavelengths.size()) +
+                       (8.0 + 8.0 * double(wavelengths.size()) + bandFilmBytes +
                         (opts.render.guide.isEnabled
                              ? 16.0 * double(wavelengths.size()) + 24.0
                              : 0.0)) /

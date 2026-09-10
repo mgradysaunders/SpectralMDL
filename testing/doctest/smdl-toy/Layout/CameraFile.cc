@@ -1,5 +1,6 @@
 #include "Fixtures.h"
 
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -365,5 +366,287 @@ TEST_CASE("CameraFile: the lens and the sensor") {
       CHECK_CONTAINS(keyed.all().front().message,
                      "not a quantity to interpolate");
     }
+  }
+}
+
+namespace {
+// The shortest thing that is a response: one band of two knots. The base
+// every malformed case below perturbs.
+constexpr const char *ONE_BAND = "camera {\n"
+                                 "  response { band vis { 400 1 700 1 } }\n"
+                                 "}\n";
+
+// Parse from memory over a sink of its own, require exactly one error,
+// and hand back its message so the caller can say which one it
+// expected. The sink is local so that a subcase can ask several times.
+std::string parseError(std::string text) {
+  LayoutDiagnostics diags{};
+  const auto &source{diags.addSource("test.camera", std::move(text))};
+  (void)parseCamera(diags, source);
+  REQUIRE(diags.errorCount() == 1);
+  return diags.all().front().message;
+}
+} // namespace
+
+TEST_CASE("CameraFile: the response block") {
+  LayoutDiagnostics diags{};
+  SUBCASE("It parses with its name, its bands, and their knots, and the "
+          "kind is relative unless stated") {
+    const auto document{parseOK(diags, "camera {\n"
+                                       "  response {\n"
+                                       "    name \"Two bands\"\n"
+                                       "    band vis { 380 0  550 1  720 0 }\n"
+                                       "    band nir { 700 0 750 1 1000 1 }\n"
+                                       "  }\n"
+                                       "}\n")};
+    REQUIRE(document.camera.response);
+    const auto &response{*document.camera.response};
+    CHECK(response.name == "Two bands");
+    CHECK(response.kind == ResponseKind::RELATIVE);
+    REQUIRE(response.bands.size() == 2);
+    CHECK(response.bands[0].name == "vis");
+    REQUIRE(response.bands[0].wavelengths.size() == 3);
+    CHECK(response.bands[0].wavelengths[1] == 550.0f);
+    CHECK(response.bands[0].values[1] == 1.0f);
+    CHECK(response.bands[1].name == "nir");
+    CHECK(response.bands[1].wavelengths[2] == 1000.0f);
+    CHECK(!response.hasCFA());
+    CHECK(response.bandIndex("nir") == 1);
+    CHECK(!response.bandIndex("uv"));
+    CHECK(!document.camera.responseFile);
+  }
+  SUBCASE("Absent, there is none") {
+    const auto document{parseOK(diags, "camera { fovy 30 }\n")};
+    CHECK(!document.camera.response);
+    CHECK(!document.camera.responseFile);
+  }
+  SUBCASE("The kind is one of two words") {
+    const auto document{parseOK(diags, "camera { response { kind qe band e "
+                                       "{ 400 0.5 700 0.5 } } }\n")};
+    CHECK(document.camera.response->kind == ResponseKind::QE);
+    CHECK_CONTAINS(parseError("camera { response { kind absolute band "
+                              "e { 400 0.5 700 0.5 } } }\n"),
+                   "unknown response kind 'absolute' (expected relative or "
+                   "qe)");
+  }
+  SUBCASE("A band needs pairs, at least two of them, ascending, finite, and "
+          "nonnegative, each reported against the band") {
+    for (const auto *text :
+         {"camera { response { band v { 400 1 700 } } }\n",
+          "camera { response { band v { 400 1 } } }\n",
+          "camera { response { band v { 700 1 400 1 } } }\n",
+          "camera { response { band v { 400 1 400 1 } } }\n",
+          "camera { response { band v { 400 -1 700 1 } } }\n",
+          "camera { response { band v { 400 inf 700 1 } } }\n",
+          "camera { response { band v { 0 1 700 1 } } }\n"}) {
+      LayoutDiagnostics bad{};
+      const auto &source{bad.addSource("test.camera", text)};
+      (void)parseCamera(bad, source);
+      REQUIRE(bad.errorCount() == 1);
+      const auto &error{bad.all().front()};
+      CHECK_CONTAINS(error.message, "band 'v'");
+      CHECK(error.location.offset == source.text.find("band"));
+    }
+    CHECK_CONTAINS(parseError("camera { response { band v { 400 1 700 "
+                              "} } }\n"),
+                   "wavelength and value pairs");
+    CHECK_CONTAINS(parseError("camera { response { band v { 400 1 } } }\n"),
+                   "at least two pairs");
+    CHECK_CONTAINS(
+        parseError("camera { response { band v { 700 1 400 1 } } }\n"),
+        "ascending wavelengths");
+    CHECK_CONTAINS(
+        parseError("camera { response { band v { 400 -1 700 1 } } }\n"),
+        "finite nonnegative value at 400 nm");
+  }
+  SUBCASE("A stray word among the knots is an error where it sits") {
+    CHECK_CONTAINS(parseError("camera { response { band v { 400 one "
+                              "700 1 } } }\n"),
+                   "expected a number or '}' in band 'v', got 'one'");
+  }
+  SUBCASE("A band name is an identifier other than 'row', declared once") {
+    CHECK_CONTAINS(parseError("camera { response { band 7 { 400 1 700 "
+                              "1 } } }\n"),
+                   "expected a band name after 'band'");
+    CHECK_CONTAINS(parseError("camera { response { band row { 400 1 "
+                              "700 1 } } }\n"),
+                   "expected a band name after 'band'");
+    CHECK_CONTAINS(parseError("camera { response { band v { 400 1 700 "
+                              "1 } band v { 400 1 700 1 } } }\n"),
+                   "band 'v' is declared twice");
+  }
+  SUBCASE("A response needs a band") {
+    CHECK_CONTAINS(parseError("camera { response { kind qe } }\n"),
+                   "at least one 'band'");
+  }
+  SUBCASE("The tile parses row by row into band indices, whatever order "
+          "the bands are declared in") {
+    const auto document{parseOK(diags, "camera {\n"
+                                       "  response {\n"
+                                       "    cfa { row R G  row G B }\n"
+                                       "    band R { 400 1 700 1 }\n"
+                                       "    band G { 400 1 700 1 }\n"
+                                       "    band B { 400 1 700 1 }\n"
+                                       "  }\n"
+                                       "}\n")};
+    const auto &response{*document.camera.response};
+    REQUIRE(response.hasCFA());
+    CHECK(response.cfaColumns == 2);
+    CHECK(response.cfaRows() == 2);
+    REQUIRE(response.cfa.size() == 4);
+    CHECK(response.cfa[0] == 0);
+    CHECK(response.cfa[1] == 1);
+    CHECK(response.cfa[2] == 1);
+    CHECK(response.cfa[3] == 2);
+  }
+  SUBCASE("The tile's rows agree in length, hold something, and name bands") {
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { row R R  row R } } }\n"),
+                   "expected 2 band name(s) in this row, as in the first, "
+                   "got 1");
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { row R row } } }\n"),
+                   "at least one band name after 'row'");
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { } } }\n"),
+                   "at least one 'row' in 'cfa'");
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { R R } } }\n"),
+                   "expected 'row' in 'cfa', got 'R'");
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { row R Q } } }\n"),
+                   "the tile names 'Q', which is not a band of this "
+                   "response");
+    CHECK_CONTAINS(parseError("camera { response { band R { 400 1 700 "
+                              "1 } cfa { row R } cfa { row R } } }\n"),
+                   "second 'cfa'");
+  }
+  SUBCASE("A quoted path names a sidecar instead") {
+    const auto document{
+        parseOK(diags, "camera { response \"sensors/body.response\" }\n")};
+    CHECK(!document.camera.response);
+    REQUIRE(document.camera.responseFile);
+    CHECK(*document.camera.responseFile == "sensors/body.response");
+  }
+  SUBCASE("Anything else after 'response' is an error") {
+    CHECK_CONTAINS(parseError("camera { response relative }\n"),
+                   "expected '{' or a quoted '.response' path after "
+                   "'response'");
+  }
+  SUBCASE("A second response of either form points at the first") {
+    for (const auto *text :
+         {"camera { response \"a.response\" response \"b.response\" }\n",
+          "camera { response \"a.response\" response { band v { 400 1 700 1 "
+          "} } }\n",
+          "camera { response { band v { 400 1 700 1 } } }\n"
+          "camera { response { band w { 400 1 700 1 } } }\n"}) {
+      LayoutDiagnostics twice{};
+      const auto &source{twice.addSource("test.camera", text)};
+      (void)parseCamera(twice, source);
+      REQUIRE(twice.errorCount() == 1);
+      const auto &error{twice.all().front()};
+      CHECK_CONTAINS(error.message, "second 'response'");
+      REQUIRE(!error.notes.empty());
+      CHECK_CONTAINS(error.notes.front().message, "the first one is here");
+    }
+  }
+  SUBCASE("It cannot be keyed, being the instrument rather than a value "
+          "in it") {
+    CHECK_CONTAINS(parseError("camera { motion { at 0 response "
+                              "\"a.response\" } }\n"),
+                   "not a quantity to interpolate");
+  }
+  SUBCASE("At the top level of a camera file it names where it belongs") {
+    LayoutDiagnostics top{};
+    const auto &source{top.addSource("test.camera", "response { band v { 400 "
+                                                    "1 700 1 } }\n")};
+    (void)parseCamera(top, source);
+    REQUIRE(top.errorCount() == 1);
+    const auto &error{top.all().front()};
+    CHECK_CONTAINS(error.message, "unknown directive 'response'");
+    REQUIRE(!error.notes.empty());
+    CHECK_CONTAINS(error.notes.front().message,
+                   "inside the 'camera' block, or in a '.response' file");
+  }
+  SUBCASE("The base parses, which is what makes the perturbations above "
+          "meaningful") {
+    const auto document{parseOK(diags, ONE_BAND)};
+    REQUIRE(document.camera.response);
+    CHECK(document.camera.response->bands.size() == 1);
+  }
+}
+
+TEST_CASE("CameraFile: the response sidecar") {
+  LayoutDiagnostics diags{};
+  SUBCASE("A response file is the block at the top level") {
+    const auto &source{diags.addSource("body.response",
+                                       "response {\n"
+                                       "  name \"Body\"\n"
+                                       "  band R { 400 0.1 700 0.9 }\n"
+                                       "  band G { 400 0.5 700 0.5 }\n"
+                                       "}\n")};
+    const auto document{parseResponse(diags, source)};
+    if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
+    REQUIRE(!diags.hasErrors());
+    CHECK(document.response.name == "Body");
+    REQUIRE(document.response.bands.size() == 2);
+    CHECK(document.response.bands[1].name == "G");
+    REQUIRE(document.responseLoc);
+    CHECK(document.source->lineAndColumn(document.responseLoc.offset).lineNo ==
+          1);
+  }
+  SUBCASE("A camera directive there names the file it belongs in") {
+    const auto &source{
+        diags.addSource("body.response", "camera { fovy 30 }\n")};
+    (void)parseResponse(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK_CONTAINS(error.message, "unknown directive 'camera'");
+    REQUIRE(!error.notes.empty());
+    CHECK_CONTAINS(error.notes.front().message,
+                   "the '.camera' file that names this one");
+  }
+  SUBCASE("A file with no block is an error, since a camera named it") {
+    const auto &source{diags.addSource("body.response", "# nothing\n")};
+    (void)parseResponse(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message, "has none");
+  }
+  SUBCASE("A second block is an error rather than a merge") {
+    const auto &source{diags.addSource(
+        "body.response", "response { band R { 400 1 700 1 } }\n"
+                         "response { band G { 400 1 700 1 } }\n")};
+    (void)parseResponse(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message, "second 'response' block");
+  }
+  SUBCASE("It reads from disk, and resolves relative to the camera that "
+          "names it") {
+    TempDir tmpDir{"camera-response"};
+    const auto cameraPath{tmpDir.write("shot.camera", "camera { response "
+                                                      "\"sensors/body.response"
+                                                      "\" }\n")};
+    const auto responsePath{tmpDir.write(
+        "sensors/body.response", "response { band R { 400 1 700 1 } }\n")};
+    const auto resolved{resolveResponseFileName("", cameraPath.string(),
+                                                "sensors/body.response")};
+    CHECK(std::filesystem::path(resolved) == responsePath);
+    const auto document{readResponse(resolved)};
+    REQUIRE(document.response.bands.size() == 1);
+    CHECK(document.response.bands[0].name == "R");
+    CHECK(resolveResponseFileName("", cameraPath.string(), "") == "");
+    CHECK_THROWS((void)resolveResponseFileName("", cameraPath.string(),
+                                               "missing.response"));
+    CHECK_THROWS((void)resolveResponseFileName("missing.response",
+                                               cameraPath.string(), ""));
+    // The flag wins over whatever the file states, as written.
+    CHECK(resolveResponseFileName(responsePath.string(), cameraPath.string(),
+                                  "other.response") == responsePath.string());
+  }
+  SUBCASE("A malformed file throws after reporting") {
+    TempDir tmpDir{"camera-response-bad"};
+    const auto path{
+        tmpDir.write("bad.response", "response { band R { 400 1 } }\n")};
+    CHECK_THROWS((void)readResponse(path.string()));
   }
 }

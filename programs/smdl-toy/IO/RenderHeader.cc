@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 
 #include "smdl/Support/Strings.h"
 
@@ -17,6 +18,14 @@ void spell(std::string &line, double value) { line += std::to_string(value); }
 void spell(std::string &line, bool value) { line += value ? '1' : '0'; }
 void spell(std::string &line, const std::string &value) { line += value; }
 
+// The format's `{a, b, c}` array form, for a list of names.
+void spell(std::string &line, const std::vector<std::string> &values) {
+  line += '{';
+  for (size_t i = 0; i < values.size(); i++)
+    line += (i > 0 ? ", " : "") + values[i];
+  line += '}';
+}
+
 void parse(const std::string &text, uint64_t &value) {
   value = std::strtoull(text.c_str(), nullptr, 10);
 }
@@ -33,6 +42,23 @@ void parse(const std::string &text, bool &value) { value = text != "0"; }
 
 void parse(const std::string &text, std::string &value) { value = text; }
 
+void parse(const std::string &text, std::vector<std::string> &values) {
+  values.clear();
+  auto list{text};
+  for (auto &c : list)
+    if (c == '{' || c == '}') c = ' ';
+  for (size_t pos{}; pos <= list.size();) {
+    auto end{list.find(',', pos)};
+    if (end == std::string::npos) end = list.size();
+    auto name{list.substr(pos, end - pos)};
+    const char *WS{" \t\r\n"};
+    name.erase(0, name.find_first_not_of(WS));
+    name.erase(name.find_last_not_of(WS) + 1);
+    if (!name.empty()) values.push_back(std::move(name));
+    pos = end + 1;
+  }
+}
+
 // The field table: one row per field, walked by both directions, which
 // is what keeps a name from being spelled twice. The order is the order
 // the lines appear in the file, and is the one thing here worth leaving
@@ -48,11 +74,20 @@ void visitFields(Self &self, Visitor &&visit) {
   visit("args", self.args);
 }
 
-} // namespace
+// The band film's table, under the same prefix.
+template <typename Self, typename Visitor>
+void visitResponseFields(Self &self, Visitor &&visit) {
+  visit("response kind", self.kind);
+  visit("response hash", self.hash);
+  visit("cfa columns", self.cfaColumns);
+  visit("cfa", self.cfa);
+}
 
-std::vector<std::string> RenderHeader::headerLines() const {
+// The two directions over either table.
+template <typename Self, typename Walk>
+[[nodiscard]] std::vector<std::string> linesOf(const Self &self, Walk &&walk) {
   auto lines{std::vector<std::string>()};
-  visitFields(*this, [&](const char *name, const auto &value) {
+  walk(self, [&](const char *name, const auto &value) {
     auto line{smdl::concat(PREFIX, name, " = ")};
     spell(line, value);
     lines.push_back(std::move(line));
@@ -60,9 +95,35 @@ std::vector<std::string> RenderHeader::headerLines() const {
   return lines;
 }
 
-void RenderHeader::readFrom(const std::map<std::string, std::string> &fields) {
-  visitFields(*this, [&](const char *name, auto &value) {
+template <typename Self, typename Walk>
+void readInto(Self &self, const std::map<std::string, std::string> &fields,
+              Walk &&walk) {
+  walk(self, [&](const char *name, auto &value) {
     if (auto itr{fields.find(smdl::concat(PREFIX, name))}; itr != fields.end())
       parse(itr->second, value);
   });
+}
+
+} // namespace
+
+std::vector<std::string> RenderHeader::headerLines() const {
+  return linesOf(*this,
+                 [](auto &self, auto &&visit) { visitFields(self, visit); });
+}
+
+void RenderHeader::readFrom(const std::map<std::string, std::string> &fields) {
+  readInto(*this, fields,
+           [](auto &self, auto &&visit) { visitFields(self, visit); });
+}
+
+std::vector<std::string> ResponseHeader::headerLines() const {
+  return linesOf(*this, [](auto &self, auto &&visit) {
+    visitResponseFields(self, visit);
+  });
+}
+
+void ResponseHeader::readFrom(
+    const std::map<std::string, std::string> &fields) {
+  readInto(*this, fields,
+           [](auto &self, auto &&visit) { visitResponseFields(self, visit); });
 }

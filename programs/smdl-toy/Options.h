@@ -75,6 +75,11 @@ struct CameraFlags final {
   /// Resolved relative to the camera file when that is what named it.
   Flag<std::string> lens{};
 
+  /// The '.response' file to read through, empty for whatever the camera
+  /// file states, which may be nothing. Resolved relative to the camera
+  /// file when that is what named it.
+  Flag<std::string> response{};
+
   /// With a lens, the sensor width and height in millimeters.
   Flag<float2> sensorMM{};
 
