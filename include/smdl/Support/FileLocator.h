@@ -18,6 +18,27 @@ namespace smdl {
 /// \{
 
 /// The file locator.
+///
+/// A relative file name resolves against the search directories, which
+/// are, in order:
+/// 1. the `priorityDirs` a lookup passes, which are the `#search_dir`
+///    declarations of the module doing the lookup;
+/// 2. `relativeTo` if it is a directory, or else its parent directory;
+/// 3. the present working directory, unless `setSearchPwd(false)`;
+/// 4. the directories given to `addSearchDir()`, in the order added;
+/// 5. the default search directories, unless
+///    `setSearchDefaultDirs(false)`.
+///
+/// A directory that appears more than once keeps its first position.
+///
+/// The default search directories are named by the environment variable
+/// `SMDL_DEFAULT_SEARCH_DIRS`, a list separated by `:` on POSIX and `;`
+/// on Windows, as `PATH` is. They let a system-wide install of resources
+/// work without a `#search_dir` in every module that uses it, and they
+/// come last so that they only resolve a name nothing else does. The
+/// variable is read on every lookup. A leading `~` in an entry expands
+/// but `$VAR` does not, an entry that is empty or not an existing
+/// directory is skipped, and no entry is searched recursively.
 class SMDL_EXPORT FileLocator final {
 public:
   FileLocator() = default;
@@ -27,6 +48,12 @@ public:
   /// directory.
   void setSearchPwd(bool shouldSearchPwd) {
     mShouldSearchPwd = shouldSearchPwd;
+  }
+
+  /// Set whether or not the locator should search the default search
+  /// directories named by `SMDL_DEFAULT_SEARCH_DIRS`.
+  void setSearchDefaultDirs(bool shouldSearchDefaultDirs) {
+    mShouldSearchDefaultDirs = shouldSearchDefaultDirs;
   }
 
   /// Add search directory.
@@ -62,9 +89,8 @@ public:
   /// module a resource is referenced by.
   ///
   /// \return
-  /// A vector of valid canonical directory paths, in the order
-  /// in which the directories were initially added, with redundant
-  /// paths removed.
+  /// The canonical directory paths in the search order described at
+  /// `FileLocator`, each appearing once.
   ///
   [[nodiscard]]
   std::vector<std::string>
@@ -200,6 +226,9 @@ public:
 private:
   /// Always search the present working directory?
   bool mShouldSearchPwd{true};
+
+  /// Search the directories named by `SMDL_DEFAULT_SEARCH_DIRS`?
+  bool mShouldSearchDefaultDirs{true};
 
   /// A search directory.
   class SearchDir final {

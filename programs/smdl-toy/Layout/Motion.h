@@ -120,10 +120,12 @@ public:
   float open{};
 
   /// The render clock at shutter shut, in seconds. Equal to `open` for
-  /// a shut shutter, which is what makes every track lower static.
+  /// a frame that spans no time, which is what makes every track lower
+  /// static.
   float shut{};
 
-  /// Is the shutter shut, so that both samples land on one instant?
+  /// Does the frame span no time, so that both samples land on one
+  /// instant?
   [[nodiscard]] bool isStill() const noexcept { return !(shut > open); }
 
   /// The same pair shifted later by `seconds`, which is what a place's

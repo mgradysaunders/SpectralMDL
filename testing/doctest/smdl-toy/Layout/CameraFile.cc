@@ -1,6 +1,7 @@
 #include "Fixtures.h"
 
 #include <string>
+#include <utility>
 
 #include "Layout/CameraFile.h"
 
@@ -58,6 +59,76 @@ TEST_CASE("CameraFile: the shutter setting") {
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message,
                    "not a quantity to interpolate");
+  }
+}
+
+TEST_CASE("CameraFile: the readout setting") {
+  LayoutDiagnostics diags{};
+  SUBCASE("It parses in seconds beside the shutter, and the direction "
+          "stays unset") {
+    const auto document{
+        parseOK(diags, "camera { shutter 0.01 readout 0.03 }\n")};
+    REQUIRE(document.camera.readout);
+    CHECK(*document.camera.readout == doctest::Approx(0.03f));
+    CHECK(!document.camera.readoutDirection);
+  }
+  SUBCASE("Absent, it stays unset") {
+    const auto document{parseOK(diags, "camera { shutter 0.01 }\n")};
+    CHECK(!document.camera.readout);
+    CHECK(!document.camera.readoutDirection);
+  }
+  SUBCASE("A zero readout is a global shutter, not an error") {
+    const auto document{parseOK(diags, "camera { readout 0 }\n")};
+    CHECK(*document.camera.readout == 0.0f);
+  }
+  SUBCASE("A negative readout is an error") {
+    const auto &source{
+        diags.addSource("test.camera", "camera { readout -1 }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message,
+                   "nonnegative number for 'readout'");
+  }
+  SUBCASE("A non-finite readout is an error") {
+    const auto &source{
+        diags.addSource("test.camera", "camera { readout nan }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message, "finite number for 'readout'");
+  }
+  SUBCASE("The direction is one of four words") {
+    for (const auto &[word, direction] :
+         {std::pair{"down", ReadoutDirection::DOWN},
+          std::pair{"up", ReadoutDirection::UP},
+          std::pair{"left", ReadoutDirection::LEFT},
+          std::pair{"right", ReadoutDirection::RIGHT}}) {
+      const auto document{parseOK(
+          diags, std::string("camera { readout_direction ") + word + " }\n")};
+      REQUIRE(document.camera.readoutDirection);
+      CHECK(*document.camera.readoutDirection == direction);
+    }
+  }
+  SUBCASE("Any other direction word is an error naming the four") {
+    const auto &source{diags.addSource(
+        "test.camera", "camera { readout_direction sideways }\n")};
+    (void)parseCamera(diags, source);
+    REQUIRE(diags.errorCount() == 1);
+    CHECK_CONTAINS(diags.all().front().message,
+                   "unknown readout direction 'sideways'");
+    CHECK_CONTAINS(diags.all().front().message, "down, up, left, or right");
+  }
+  SUBCASE("Neither can be keyed, since they describe the interval, not a "
+          "value in it") {
+    for (const auto *text :
+         {"camera { motion { at 0 readout 1 } }\n",
+          "camera { motion { at 0 readout_direction up } }\n"}) {
+      LayoutDiagnostics keyed{};
+      const auto &source{keyed.addSource("test.camera", text)};
+      (void)parseCamera(keyed, source);
+      REQUIRE(keyed.errorCount() == 1);
+      CHECK_CONTAINS(keyed.all().front().message,
+                     "not a quantity to interpolate");
+    }
   }
 }
 

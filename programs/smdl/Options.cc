@@ -310,10 +310,10 @@ Options parseCommandLine(int argc, char **argv) {
 
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
-  opts.utility.colorMode =
-      optColor == cl::boolOrDefault::BOU_TRUE    ? smdl::COLOR_MODE_ALWAYS
-      : optColor == cl::boolOrDefault::BOU_FALSE ? smdl::COLOR_MODE_NEVER
-                                                 : smdl::COLOR_MODE_AUTO;
+  opts.utility.ansiColorMode =
+      optColor == cl::boolOrDefault::BOU_TRUE    ? smdl::ANSI_COLOR_MODE_ALWAYS
+      : optColor == cl::boolOrDefault::BOU_FALSE ? smdl::ANSI_COLOR_MODE_NEVER
+                                                 : smdl::ANSI_COLOR_MODE_AUTO;
   opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl.trace.json")

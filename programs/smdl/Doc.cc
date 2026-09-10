@@ -224,13 +224,13 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   // documentation into a file, and JSON and Markdown are machine and
   // document formats. Otherwise honor '-color', and without it let
   // `WithColor` detect the terminal itself.
-  const auto colorMode{outputFile || opts.doc.format != DocFormat::TEXT
-                           ? llvm::ColorMode::Disable
-                       : opts.utility.colorMode == smdl::COLOR_MODE_ALWAYS
-                           ? llvm::ColorMode::Enable
-                       : opts.utility.colorMode == smdl::COLOR_MODE_NEVER
-                           ? llvm::ColorMode::Disable
-                           : llvm::ColorMode::Auto};
+  const auto ansiColorMode{opts.utility.ansiColorMode};
+  const auto colorMode{
+      outputFile || opts.doc.format != DocFormat::TEXT
+          ? llvm::ColorMode::Disable
+      : ansiColorMode == smdl::ANSI_COLOR_MODE_ALWAYS ? llvm::ColorMode::Enable
+      : ansiColorMode == smdl::ANSI_COLOR_MODE_NEVER  ? llvm::ColorMode::Disable
+                                                      : llvm::ColorMode::Auto};
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {
     // Whole-database output. Symbol queries only participate by loading
     // the builtin modules they name.

@@ -44,6 +44,10 @@ string(RANDOM LENGTH 8 ALPHABET "0123456789" SEED)
 # suites test inline header code (the spectral color predicates, the
 # fast-math approximations) that only means what it means under the
 # flags the library and the renderer compile it with.
+#
+# CTest runs the suite with 'SMDL_DEFAULT_SEARCH_DIRS' cleared: those
+# directories belong to the developer's shell, and what a test resolves
+# must not depend on them.
 function(smdl_add_doctest BIN_NAME)
   set(Options)
   set(OneValArgs)
@@ -68,6 +72,11 @@ function(smdl_add_doctest BIN_NAME)
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
   add_test(NAME ${BIN_NAME} COMMAND $<TARGET_FILE:${BIN_NAME}> -ob=rand -rs=${SEED})
+  set_tests_properties(
+    ${BIN_NAME}
+    PROPERTIES
+      ENVIRONMENT "SMDL_DEFAULT_SEARCH_DIRS="
+    )
 endfunction()
 
 add_subdirectory(smdl)

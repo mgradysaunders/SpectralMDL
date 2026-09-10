@@ -97,6 +97,13 @@ cl::opt<float> optShutter{
     cl::desc("The seconds the shutter stays open, overriding the camera "
              "file's 'shutter' (default: 0, shut)"),
     cl::init(0.0f), cl::cat(catCamera)};
+cl::opt<float> optReadout{
+    "readout",
+    cl::desc("The seconds the sensor takes to read the frame out, top to "
+             "bottom unless the camera file's 'readout_direction' says "
+             "otherwise, overriding its 'readout' (default: 0, global "
+             "shutter)"),
+    cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
     cl::init(0.0f), cl::cat(catCamera)};
@@ -615,6 +622,8 @@ Options parseCommandLine(int argc, char **argv) {
                                    MEDIAN_FILTER_MAX_RADIUS));
   if (!(std::isfinite(float(optShutter)) && float(optShutter) >= 0))
     throw smdl::Error("expected -shutter to be finite and nonnegative");
+  if (!(std::isfinite(float(optReadout)) && float(optReadout) >= 0))
+    throw smdl::Error("expected -readout to be finite and nonnegative");
   if (!std::isfinite(float(optTime)))
     throw smdl::Error("expected -time to be finite");
 
@@ -632,6 +641,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.sensorMM = flag(optSensor);
   opts.camera.shouldNormalizeLensExposure = flag(optNormalizeLensExposure);
   opts.camera.shutter = flag(optShutter);
+  opts.camera.readout = flag(optReadout);
   opts.camera.fStop = flag(optFStop);
   opts.camera.aperture = flag(optAperture);
   opts.camera.focus = flag(optFocus);

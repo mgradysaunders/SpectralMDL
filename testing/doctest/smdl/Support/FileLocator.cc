@@ -11,6 +11,13 @@ namespace fs = std::filesystem;
 namespace {
 // An empty file at `name`: the locator matches on names alone.
 void touch(const TempDir &dir, std::string_view name) { dir.write(name, "\n"); }
+
+// The list separator of 'SMDL_DEFAULT_SEARCH_DIRS', as 'PATH' has it.
+#if defined(_WIN32)
+constexpr char SEPARATOR{';'};
+#else
+constexpr char SEPARATOR{':'};
+#endif
 } // namespace
 
 TEST_CASE("FileLocator: the tile markers and the search order") {
@@ -36,6 +43,7 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
   touch(tmpDir, "dirB/tex_1002.png");
   auto locator{smdl::FileLocator()};
   locator.setSearchPwd(false);
+  locator.setSearchDefaultDirs(false);
   REQUIRE(locator.addSearchDir((tmpDir / "dirA").string()));
   REQUIRE(locator.addSearchDir((tmpDir / "dirB").string()));
   SUBCASE("Without tile marker") {
@@ -136,5 +144,60 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
                              smdl::FileLocator::REGULAR_FILES, priorityDirs);
     REQUIRE(located);
     CHECK(fs::path(*located).parent_path().filename() == "dirB");
+  }
+}
+
+TEST_CASE("FileLocator: the default search directories") {
+  TempDir tmpDir{"filelocator-default"};
+  touch(tmpDir, "added/both.png");
+  touch(tmpDir, "added/tex_1001.png");
+  touch(tmpDir, "default1/both.png");
+  touch(tmpDir, "default1/only_default.png");
+  touch(tmpDir, "default1/tex_1002.png");
+  touch(tmpDir, "default1/uv_u0_v0.png");
+  touch(tmpDir, "default2/only_default.png");
+  touch(tmpDir, "default2/only_default2.png");
+  // An empty entry and one that is not a directory sit between the two
+  // that are, and the list ends in a separator.
+  const ScopedEnv defaultDirs{"SMDL_DEFAULT_SEARCH_DIRS",
+                              (tmpDir / "default1").string() + SEPARATOR +
+                                  SEPARATOR + (tmpDir / "missing").string() +
+                                  SEPARATOR + (tmpDir / "default2").string() +
+                                  SEPARATOR};
+  auto locator{smdl::FileLocator()};
+  locator.setSearchPwd(false);
+  REQUIRE(locator.addSearchDir((tmpDir / "added").string()));
+  SUBCASE("Rank after every other search directory") {
+    auto located{locator.locate("both.png")};
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "added");
+    located = locator.locate("only_default.png");
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "default1");
+    located = locator.locate("only_default2.png");
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "default2");
+  }
+  SUBCASE("Keep their order and skip empty or missing entries") {
+    auto searchDirs{locator.getSearchDirs()};
+    REQUIRE(searchDirs.size() == 3);
+    CHECK(fs::path(searchDirs[0]) == fs::weakly_canonical(tmpDir / "added"));
+    CHECK(fs::path(searchDirs[1]) == fs::weakly_canonical(tmpDir / "default1"));
+    CHECK(fs::path(searchDirs[2]) == fs::weakly_canonical(tmpDir / "default2"));
+  }
+  SUBCASE("Supply tiles only when no earlier directory matches") {
+    // Both 'added' and 'default1' match the UDIM pattern, so 'added'
+    // provides every tile; only 'default1' matches the UVTILE0 pattern.
+    auto images{locator.locateImages("tex_<UDIM>.png")};
+    REQUIRE(images.size() == 1);
+    CHECK(fs::path(images[0].path).filename() == "tex_1001.png");
+    images = locator.locateImages("uv<UVTILE0>.png");
+    REQUIRE(images.size() == 1);
+    CHECK(fs::path(images[0].path).parent_path().filename() == "default1");
+  }
+  SUBCASE("Are skipped when disabled") {
+    locator.setSearchDefaultDirs(false);
+    CHECK(locator.getSearchDirs().size() == 1);
+    CHECK_FALSE(locator.locate("only_default.png"));
   }
 }

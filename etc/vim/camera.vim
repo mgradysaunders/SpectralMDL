@@ -97,9 +97,12 @@ syn keyword cameraStatement camera nextgroup=cameraBlock skipwhite skipempty
 "--}
 
 "--{ Settings
-" The framing, the lens, and the shutter. `distortion_fit` is bare, since the
-" flag it mirrors takes no value either.
+" The framing, the lens, the shutter, and the readout. `distortion_fit` is
+" bare, since the flag it mirrors takes no value either, and
+" `readout_direction` takes one of four words.
 syn keyword cameraSetting contained look_from look_to look_up fovy shutter
+syn keyword cameraSetting contained readout readout_direction
+syn keyword cameraReadoutDirection contained down up left right
 syn keyword cameraSetting contained fstop aperture focus blades blade_angle
 syn keyword cameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
@@ -113,7 +116,8 @@ syn keyword cameraSetting contained lens sensor
 
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
-" `distortion_fit`, and `shutter`, which are not quantities to interpolate.
+" `distortion_fit`, `lens`, `sensor`, `shutter`, `readout`, and
+" `readout_direction`, which are not quantities to interpolate.
 syn keyword cameraSetting contained motion
       \ nextgroup=cameraMotionBlock skipwhite skipempty
 syn keyword cameraMotionAt contained at
@@ -128,7 +132,7 @@ syn cluster cameraCommon
       \ contains=cameraComment,cameraString,cameraNumber,cameraBadWord
 
 syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
-      \ contains=@cameraCommon,cameraSetting
+      \ contains=@cameraCommon,cameraSetting,cameraReadoutDirection
 
 syn region cameraMotionBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraMotionAt,cameraMotionSetting
@@ -149,6 +153,7 @@ hi def link cameraMotionAt        Keyword
 
 hi def link cameraSetting         Label
 hi def link cameraMotionSetting   Label
+hi def link cameraReadoutDirection Constant
 
 hi def link cameraDelim           Delimiter
 

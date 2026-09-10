@@ -10,7 +10,7 @@
 void setUpCompiler(const Options &opts, smdl::Compiler &compiler) {
   compiler.isDebugEnabled = opts.compile.isDebugEnabled;
   compiler.shouldEmitUnitTests = true;
-  compiler.colorMode = opts.utility.colorMode;
+  compiler.ansiColorMode = opts.utility.ansiColorMode;
   compiler.wavelengthBaseMax = uint32_t(opts.compile.wavelengths.size());
   for (const auto &input : opts.inputs)
     if (auto error{compiler.add(input)}) error->printAndExit();

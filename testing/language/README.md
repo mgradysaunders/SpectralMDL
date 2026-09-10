@@ -14,6 +14,10 @@ iteration. Wavelength-dependent tests that need a grid other than the
 default say so beside themselves, as
 `smdl test -wavelength-range 900,2400 testing/language`.
 
+CTest runs the suite with `SMDL_DEFAULT_SEARCH_DIRS` cleared, so a resource
+can only resolve from the suite itself; a direct run inherits the shell's
+default search directories.
+
 ## What is where
 
     lang/        the language itself, and the `#smdl` dialect

@@ -123,3 +123,81 @@ TEST_CASE("wavelengthJitterOffset: the sequence a pixel draws") {
     CHECK(same == 0);
   }
 }
+
+TEST_CASE("Shutter: the frame fraction of a line") {
+  Shutter shutter{};
+  shutter.time = 2.0f;
+  shutter.exposure = 0.01f;
+  shutter.readout = 0.03f;
+  shutter.numReadoutLines = 7;
+  SUBCASE("Without a readout the draw is the fraction, bit for bit") {
+    shutter.readout = 0;
+    for (const float exposure : {0.0f, 0.01f, 0.3f, 7.0f}) {
+      shutter.exposure = exposure;
+      for (const float xi : {0.0f, 0.1f, 1.0f / 3.0f, 0.7f, 0.999f, 1.0f})
+        CHECK(shutter.fractionAt(3, 5, xi) == xi);
+    }
+  }
+  SUBCASE("The first line at xi 0 opens the frame and the last at xi 1 "
+          "shuts it") {
+    // Lengths whose sum and ratio are not representable, so that an
+    // offset spelled as the readout times the line over the count would
+    // not land on the readout at the last line.
+    shutter.exposure = 0.1f;
+    shutter.readout = 0.7f;
+    CHECK(shutter.fractionAt(4, 0, 0.0f) == 0.0f);
+    CHECK(shutter.fractionAt(4, 6, 1.0f) == 1.0f);
+    // Nothing leaves the frame, and a later line is never earlier.
+    for (const float xi : {0.0f, 0.25f, 0.999f, 1.0f}) {
+      float previous{-1.0f};
+      for (size_t y = 0; y < 7; y++) {
+        const float fraction{shutter.fractionAt(4, y, xi)};
+        CHECK(fraction >= 0.0f);
+        CHECK(fraction <= 1.0f);
+        CHECK(fraction > previous);
+        previous = fraction;
+      }
+    }
+  }
+  SUBCASE("A shut exposure lands each line at its own instant, whatever "
+          "the draw") {
+    shutter.exposure = 0;
+    for (size_t y = 0; y < 7; y++)
+      for (const float xi : {0.0f, 0.5f, 1.0f})
+        CHECK(shutter.fractionAt(2, y, xi) == float(y) / 6.0f);
+  }
+  SUBCASE("Each direction orders the lines its own way") {
+    shutter.exposure = 0;
+    for (size_t i = 0; i < 7; i++) {
+      const float forward{float(i) / 6.0f};
+      const float backward{float(6 - i) / 6.0f};
+      shutter.isReadoutAlongX = false;
+      shutter.isReadoutReversed = false;
+      CHECK(shutter.fractionAt(0, i, 0.5f) == forward); // down
+      shutter.isReadoutReversed = true;
+      CHECK(shutter.fractionAt(0, i, 0.5f) == backward); // up
+      shutter.isReadoutAlongX = true;
+      shutter.isReadoutReversed = false;
+      CHECK(shutter.fractionAt(i, 0, 0.5f) == forward); // right
+      shutter.isReadoutReversed = true;
+      CHECK(shutter.fractionAt(i, 0, 0.5f) == backward); // left
+    }
+  }
+  SUBCASE("One line has no sweep") {
+    shutter.numReadoutLines = 1;
+    CHECK(shutter.fractionAt(0, 0, 0.5f) ==
+          doctest::Approx(0.5f * 0.01f / 0.04f));
+  }
+  SUBCASE("The seconds follow the frame") {
+    CHECK(shutter.length() == doctest::Approx(0.04f));
+    CHECK(shutter.secondsAt(0.0f) == doctest::Approx(2.0f));
+    CHECK(shutter.secondsAt(1.0f) == doctest::Approx(2.04f));
+    CHECK(shutter.spansTime());
+    CHECK(shutter.hasExposure());
+    shutter.exposure = 0;
+    CHECK(shutter.spansTime());
+    CHECK(!shutter.hasExposure());
+    shutter.readout = 0;
+    CHECK(!shutter.spansTime());
+  }
+}

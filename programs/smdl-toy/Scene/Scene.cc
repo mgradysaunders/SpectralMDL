@@ -503,15 +503,15 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   // The node graph at the two keys of the shutter, on the render clock:
   // the authored pose with no clip, and one pose when the shutter is
   // shut, in which case every mesh holds the pose at the base time.
-  const bool isShutterOpen{gRenderShutter.isOpen()};
+  const bool frameSpansTime{gRenderShutter.spansTime()};
   const double ticksOpen{clip ? clipTime(*clip, animation, gRenderShutter.time)
                               : 0.0};
   const double ticksShut{
       clip ? clipTime(*clip, animation, gRenderShutter.secondsAt(1.0f)) : 0.0};
   const auto poseOpen{evaluatePose(assScene, clip, ticksOpen)};
-  const auto poseShut{clip && isShutterOpen ? std::optional(evaluatePose(
-                                                  assScene, clip, ticksShut))
-                                            : std::nullopt};
+  const auto poseShut{clip && frameSpansTime ? std::optional(evaluatePose(
+                                                   assScene, clip, ticksShut))
+                                             : std::nullopt};
   const auto meshBase{uint32_t(meshes.size())};
   uint32_t numDeforming{};
   for (unsigned int i = 0; i < assScene.mNumMeshes; i++) {

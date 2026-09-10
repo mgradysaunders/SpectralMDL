@@ -465,13 +465,16 @@ void renderSamples(const Options &opts, const Frame &frame,
             uint64_t numRecords{0};
             if (auto cameraSample{camera->sample(x, y, sampler)};
                 cameraSample.weight > 0) {
-              // The path's time. The shutter fraction is drawn only when
-              // the shutter is open, matching the lens-point precedent, so
-              // a default render's sampler sequence is unchanged; the
-              // camera ray is placed in the world only now, at that time.
-              float shutterFraction{};
-              if (gRenderShutter.isOpen()) shutterFraction = float(sampler);
-              const PathTime time{shutterFraction};
+              // The path's time: the sample's draw within its line's
+              // exposure, taken only when there is one to draw within,
+              // matching the lens-point precedent so a default render's
+              // sampler sequence is unchanged, and mapped onto the frame
+              // by the shutter, which is where a rolling readout enters.
+              // The camera ray is placed in the world only now, at that
+              // time.
+              float xi{};
+              if (gRenderShutter.hasExposure()) xi = float(sampler);
+              const PathTime time{gRenderShutter.fractionAt(x, y, xi)};
               camera->toWorld(cameraSample, time.fraction);
               gatherState.animationTime = time.seconds;
               walkState.animationTime = time.seconds;

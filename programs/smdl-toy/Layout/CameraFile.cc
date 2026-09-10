@@ -127,6 +127,32 @@ private:
           throw Recover();
         }
         camera.shutter = value;
+      } else if (key == "readout") {
+        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        if (!(value >= 0)) {
+          mDiags.error(keyLoc, "expected a nonnegative number for 'readout' "
+                               "(0 or omitted is a global shutter)");
+          throw Recover();
+        }
+        camera.readout = value;
+      } else if (key == "readout_direction") {
+        const auto word{
+            expect(Token::WORD, "a direction after 'readout_direction'")};
+        if (word == "down") {
+          camera.readoutDirection = ReadoutDirection::DOWN;
+        } else if (word == "up") {
+          camera.readoutDirection = ReadoutDirection::UP;
+        } else if (word == "left") {
+          camera.readoutDirection = ReadoutDirection::LEFT;
+        } else if (word == "right") {
+          camera.readoutDirection = ReadoutDirection::RIGHT;
+        } else {
+          mDiags.error(keyLoc,
+                       smdl::concat("unknown readout direction ",
+                                    smdl::Quoted(word),
+                                    " (expected down, up, left, or right)"));
+          throw Recover();
+        }
       } else if (key == "resolution") {
         mDiags
             .error(keyLoc, "'resolution' is a fact about this render, not "
@@ -141,7 +167,8 @@ private:
             keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
-                         "shutter, lens, sensor, fstop, aperture, focus, "
+                         "shutter, readout, readout_direction, lens, sensor, "
+                         "fstop, aperture, focus, "
                          "blades, blade_angle, distortion_k1, distortion_k2, "
                          "distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
@@ -238,7 +265,8 @@ private:
     } else if (setting == "cat_eye_radius") {
       key.catEyeRadius = positive(settingLoc, setting, numbers<1>()[0]);
     } else if (setting == "blades" || setting == "distortion_fit" ||
-               setting == "shutter" || setting == "resolution" ||
+               setting == "shutter" || setting == "readout" ||
+               setting == "readout_direction" || setting == "resolution" ||
                setting == "lens" || setting == "sensor") {
       mDiags
           .error(settingLoc,

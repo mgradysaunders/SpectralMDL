@@ -19,6 +19,11 @@ prints), so a case that only passes after another case ran shows up here
 rather than somewhere else. That is safe because nothing leaves
 process-wide state behind; see the fixtures below.
 
+CTest runs both suites, and `smdl-language`, with `SMDL_DEFAULT_SEARCH_DIRS`
+cleared, since the default search directories belong to the developer's
+shell and no test may depend on them. Running a binary directly inherits
+them.
+
 ## What each suite is for
 
     smdl/       the library: the test for lib/X/Y.cc lives at smdl/X/Y.cc

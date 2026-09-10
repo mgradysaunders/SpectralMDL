@@ -1072,9 +1072,9 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
     // that a test that crashes cannot leave the terminal colored.
     auto &os{llvm::errs()};
     const auto llvmColorMode{
-        colorMode == COLOR_MODE_ALWAYS  ? llvm::ColorMode::Enable
-        : colorMode == COLOR_MODE_NEVER ? llvm::ColorMode::Disable
-                                        : llvm::ColorMode::Auto};
+        ansiColorMode == ANSI_COLOR_MODE_ALWAYS  ? llvm::ColorMode::Enable
+        : ansiColorMode == ANSI_COLOR_MODE_NEVER ? llvm::ColorMode::Disable
+                                                 : llvm::ColorMode::Auto};
     forEachModuleGroup(
         mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
           os << "Running tests in ";

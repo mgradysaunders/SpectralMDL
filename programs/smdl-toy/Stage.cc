@@ -123,11 +123,46 @@ Frame resolveFrame(const Options &opts) {
       cameraFileName.empty() ? CameraDocument() : readCamera(cameraFileName)};
   // The two clocks. Which instant to photograph is the command line's
   // alone, so one camera file renders every frame of a shot; how long
-  // the shutter stays open is a fact about the camera, which the file
-  // may state and '-shutter' overrides.
+  // the shutter stays open and how long the readout takes to sweep the
+  // frame are facts about the camera, which the file may state and
+  // '-shutter' and '-readout' override. Which way it sweeps is the
+  // file's alone.
   gRenderShutter.time = opts.scene.time;
-  gRenderShutter.length =
+  gRenderShutter.exposure =
       pick(opts.camera.shutter, cameraDocument.camera.shutter);
+  gRenderShutter.readout =
+      pick(opts.camera.readout, cameraDocument.camera.readout);
+  {
+    const auto direction{cameraDocument.camera.readoutDirection.value_or(
+        ReadoutDirection::DOWN)};
+    gRenderShutter.isReadoutAlongX = direction == ReadoutDirection::LEFT ||
+                                     direction == ReadoutDirection::RIGHT;
+    gRenderShutter.isReadoutReversed = direction == ReadoutDirection::UP ||
+                                       direction == ReadoutDirection::LEFT;
+    gRenderShutter.numReadoutLines =
+        size_t(gRenderShutter.isReadoutAlongX ? opts.image.resolution.x
+                                              : opts.image.resolution.y);
+    // One line has nothing to spread a readout over, and a readout that
+    // stayed would still lengthen the frame for no line to reach.
+    if (gRenderShutter.readout > 0 && gRenderShutter.numReadoutLines <= 1) {
+      SMDL_LOG_INFO("Rolling shutter: one line along the sweep, so the "
+                    "frame reads out at once");
+      gRenderShutter.readout = 0;
+    }
+    if (gRenderShutter.readout > 0) {
+      const char *sweep{direction == ReadoutDirection::DOWN ? "top to bottom"
+                        : direction == ReadoutDirection::UP ? "bottom to top"
+                        : direction == ReadoutDirection::LEFT
+                            ? "right to left"
+                            : "left to right"};
+      SMDL_LOG_INFO(
+          "Rolling shutter: ", smdl::Brief(1000.0f * gRenderShutter.readout, 4),
+          " ms readout ", sweep, " over ",
+          smdl::Brief(1000.0f * gRenderShutter.exposure, 4),
+          " ms exposure, so the frame spans ",
+          smdl::Brief(1000.0f * gRenderShutter.length(), 4), " ms");
+    }
+  }
   // The file's own settings resolved at shutter open, which is where
   // everything but the framing is read: the renderer varies the framing
   // within one shutter and holds the rest. Resolved here, ahead of the
@@ -219,7 +254,7 @@ Frame resolveFrame(const Options &opts) {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
                     " replaces the framing the camera file's 'motion' "
                     "was written against");
-    } else if (!gRenderShutter.isOpen()) {
+    } else if (!gRenderShutter.spansTime()) {
       SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
                     "holds its framing at ",
                     gRenderShutter.time, " s");
@@ -233,7 +268,7 @@ Frame resolveFrame(const Options &opts) {
     }
     // What the shutter cannot carry: a lens setting the track varies
     // over the shutter is read once, at open, and held.
-    if (gRenderShutter.isOpen()) {
+    if (gRenderShutter.spansTime()) {
       if (const auto held{cameraDocument.camera.heldOverShutter(
               gRenderShutter.time, shutSeconds)};
           !held.empty()) {

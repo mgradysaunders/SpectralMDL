@@ -127,26 +127,80 @@ struct WavelengthGrid final {
 /// touch it from another translation unit's static initializer.
 inline WavelengthGrid gRenderGrid{};
 
-/// The render-wide shutter interval.
+/// The render-wide shutter interval: the frame.
 ///
-/// Set once in `main()` before rendering threads start. Setup-time
-/// evaluations sit at `time`; a path traced with an open shutter
-/// evaluates at its own offset into the interval, see `PathTime`.
+/// Set once in `main()` before rendering threads start. The frame opens
+/// when the first line does, at `time`, and shuts `exposure + readout`
+/// seconds later, when the last line does; every shut key in the render
+/// (the layout's motion, the camera's framing, a deforming mesh) is
+/// sampled at that instant. Setup-time evaluations sit at `time`; a path
+/// evaluates at its own fraction of the frame, see `PathTime`.
+///
+/// A global shutter exposes every line over the whole frame. A rolling
+/// shutter reads the lines out one after another, so line `i` of `N`
+/// opens `readout * i / (N - 1)` after the first and stays open for
+/// `exposure`; `fractionAt()` is where a sample's draw within its line's
+/// exposure becomes its fraction of the frame.
 struct Shutter final {
-  /// The animation time at shutter open, in seconds.
+  /// The animation time at which the first line opens, in seconds.
   float time{};
 
-  /// The shutter length in seconds.
-  float length{};
+  /// The seconds each line stays open: the camera file's `shutter`.
+  float exposure{};
 
-  /// Is the shutter open, so that paths spread over the interval rather
-  /// than all landing at shutter open?
-  [[nodiscard]] bool isOpen() const noexcept { return length > 0; }
+  /// The seconds the readout sweeps the frame, 0 for a global shutter.
+  float readout{};
 
-  /// The animation time `fraction` of the way through the interval, in
+  /// Does the readout sweep along x (left or right) rather than y?
+  bool isReadoutAlongX{};
+
+  /// Does the readout sweep toward the smaller pixel index (up or left)?
+  bool isReadoutReversed{};
+
+  /// The pixel lines along the sweep axis.
+  size_t numReadoutLines{1};
+
+  /// The frame interval in seconds.
+  [[nodiscard]] float length() const noexcept { return exposure + readout; }
+
+  /// Does the frame span time, so that motion has two keys to lower
+  /// between and a shut pose to bake, rather than everything landing on
+  /// `time`?
+  [[nodiscard]] bool spansTime() const noexcept { return length() > 0; }
+
+  /// Is there an exposure for a sample to draw its instant within? A
+  /// readout with a shut exposure spans time and draws nothing: each
+  /// line lands at its own instant.
+  [[nodiscard]] bool hasExposure() const noexcept { return exposure > 0; }
+
+  /// The animation time `fraction` of the way through the frame, in
   /// seconds.
   [[nodiscard]] float secondsAt(float fraction) const noexcept {
-    return time + length * fraction;
+    return time + length() * fraction;
+  }
+
+  /// The frame fraction of a sample of pixel `(x, y)` drawn at `xi`
+  /// within its line's exposure.
+  ///
+  /// Without a readout this is `xi` itself, by a branch rather than by
+  /// arithmetic, so that a global shutter renders bit for bit what it
+  /// did before there was a readout to speak of. With one, the ends are
+  /// exact: the first line at `xi = 0` is 0 and the last at `xi = 1` is
+  /// 1, and nothing in between exceeds 1, because Embree's motion domain
+  /// is `[0, 1]` and a ray whose time rounds past it misses every moving
+  /// geometry.
+  [[nodiscard]] float fractionAt(size_t x, size_t y, float xi) const noexcept {
+    if (readout <= 0) return xi;
+    if (numReadoutLines <= 1) return xi * exposure / length();
+    size_t line{isReadoutAlongX ? x : y};
+    SMDL_SANITY_CHECK(line < numReadoutLines);
+    if (isReadoutReversed) line = numReadoutLines - 1 - line;
+    const float u{float(line) / float(numReadoutLines - 1)};
+    if (exposure <= 0) return u;
+    // At `u = 1` the numerator is at most the denominator, since `xi`
+    // is at most 1 and rounding is monotone, so the quotient is at most
+    // 1.
+    return (u * readout + xi * exposure) / (readout + exposure);
   }
 };
 

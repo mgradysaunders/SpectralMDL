@@ -28,13 +28,18 @@
 /// the one beside a layout.
 constexpr std::string_view CAMERA_EXTENSION = ".camera";
 
+/// The direction a rolling readout sweeps the picture, named for where
+/// the sweep travels to: `DOWN` reads the top line first.
+enum class ReadoutDirection { DOWN, UP, LEFT, RIGHT };
+
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
 ///
-/// The three left out are left out because they are not: `blades`
-/// counts the aperture's edges, `distortion_fit` is a bare flag, and
-/// `shutter` is the interval a key is sampled over rather than
-/// something sampled within it.
+/// The ones left out are left out because they are not: `blades` counts
+/// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
+/// `sensor` are the instrument, and `shutter`, `readout`, and
+/// `readout_direction` describe the interval a key is sampled over
+/// rather than something sampled within it.
 ///
 class CameraKeyable {
 public:
@@ -100,6 +105,19 @@ public:
   /// a fact about the camera: how long it stays open. When it opens is
   /// not, which is why `-time` alone says that.
   std::optional<float> shutter{};
+
+  /// `readout`: the seconds the sensor takes to read the frame out,
+  /// nonnegative, which `-readout` overrides. Zero or unset is a global
+  /// shutter, where every line exposes over the same interval; with one,
+  /// the lines expose one after another, the frame spans `shutter` plus
+  /// `readout`, and motion during the sweep skews the picture.
+  std::optional<float> readout{};
+
+  /// `readout_direction`: the way the readout sweeps the picture, `down`
+  /// unless stated, so that `down` reads the top line first. Not keyable
+  /// and not a flag: which way a sensor reads is a fact about the camera
+  /// nobody changes per render.
+  std::optional<ReadoutDirection> readoutDirection{};
 
   /// The keys the `motion` block wrote, in ascending time, or empty for
   /// a still camera. See `CameraKey`.

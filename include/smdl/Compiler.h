@@ -95,11 +95,12 @@ enum DumpFormat : int {
   DUMP_FORMAT_OBJ  ///< Native object code.
 };
 
-/// The color mode for `Compiler::runUnitTests()`.
-enum ColorMode : int {
-  COLOR_MODE_AUTO,   ///< Colorize only if standard error is a terminal.
-  COLOR_MODE_ALWAYS, ///< Colorize even if standard error is redirected.
-  COLOR_MODE_NEVER   ///< Never colorize.
+/// Whether `Compiler::runUnitTests()` colors its report with ANSI escape
+/// codes.
+enum ANSIColorMode : int {
+  ANSI_COLOR_MODE_AUTO,   ///< Colorize only if standard error is a terminal.
+  ANSI_COLOR_MODE_ALWAYS, ///< Colorize even if standard error is redirected.
+  ANSI_COLOR_MODE_NEVER   ///< Never colorize.
 };
 
 /// The compiler.
@@ -128,7 +129,9 @@ public:
   /// Add MDL module file or directory.
   ///
   /// \param[in] fileOrDirName
-  /// The file or directory name.
+  /// The file or directory name. A relative name resolves through
+  /// `fileLocator`, so it may be found in any of its search directories,
+  /// the default search directories included.
   ///
   /// \param[out] addedModuleNames
   /// If non-null, the qualified names of the modules added by this call
@@ -475,7 +478,7 @@ public:
                          float *color) const noexcept;
 
   /// Run JIT-compiled unit tests and print results to standard error,
-  /// colorized according to `colorMode`. Stops at the first failure,
+  /// colorized according to `ansiColorMode`. Stops at the first failure,
   /// which is what the returned `Error` describes.
   [[nodiscard]] std::optional<Error> runUnitTests(const State &state) noexcept;
 
@@ -496,7 +499,7 @@ public:
   bool shouldEmitUnitTests{false};
 
   /// Colorize the unit test results printed by `runUnitTests()`?
-  ColorMode colorMode{COLOR_MODE_AUTO};
+  ANSIColorMode ansiColorMode{ANSI_COLOR_MODE_AUTO};
 
   /// The number of wavelengths per MDL `color`.
   uint32_t wavelengthBaseMax{16};

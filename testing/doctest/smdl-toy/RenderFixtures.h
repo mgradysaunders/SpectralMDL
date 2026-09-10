@@ -64,9 +64,9 @@ private:
 /// The render-wide shutter for the duration of a scope.
 class ScopedShutter final {
 public:
-  ScopedShutter(float time, float length) {
+  ScopedShutter(float time, float exposure) {
     gRenderShutter.time = time;
-    gRenderShutter.length = length;
+    gRenderShutter.exposure = exposure;
   }
 
   ScopedShutter(const ScopedShutter &) = delete;

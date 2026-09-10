@@ -831,3 +831,85 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
     }
   }
 }
+
+TEST_CASE("Scene: a rolling readout skews a translating bar") {
+  RigFixture fixture{0.25f, 0.5f};
+  // The rig's unit quad as a bar a tenth wide and four tall, its left
+  // edge on x = 0 at open and one unit over at shut, so that the edge's
+  // x at any instant is the frame fraction itself.
+  LayoutItem bar{};
+  bar.fileName = fixture.files.plain;
+  bar.materials.all = "paint";
+  bar.objectToWorld[0] = float4(0.1f, 0.0f, 0.0f, 0.0f);
+  bar.objectToWorld[1] = float4(0.0f, 4.0f, 0.0f, 0.0f);
+  bar.objectToWorld[3] = float4(0.0f, -2.0f, 0.0f, 1.0f);
+  bar.objectToWorldShut = bar.objectToWorld;
+  (*bar.objectToWorldShut)[3].x = 1.0f;
+  fixture.scene.add(bar);
+  fixture.commit();
+  // A shut exposure over a readout, so every line lands at its own
+  // instant and the skew is pure geometry. The shutter is a local: the
+  // instance motion reads the ray's time and nothing else.
+  Shutter shutter{};
+  shutter.readout = 0.02f;
+  shutter.numReadoutLines = 5;
+  const auto hits{[&](float x, float y, float time) {
+    Ray ray{float3(x, y, 5.0f), float3(0.0f, 0.0f, -1.0f), EPS, INF};
+    ray.time = time;
+    Hit hit{};
+    return fixture.scene.intersect(ray, hit);
+  }};
+  // The bar's left edge at height `y` and frame fraction `time`, by
+  // bisection between a miss left of every position the bar takes and
+  // a hit in the middle of the bar where the fraction puts it.
+  const auto leftEdgeAt{[&](float y, float time) {
+    float lo{-0.5f};
+    float hi{time + 0.05f};
+    REQUIRE(!hits(lo, y, time));
+    REQUIRE(hits(hi, y, time));
+    for (int i = 0; i < 40; i++) {
+      const float mid{0.5f * (lo + hi)};
+      (hits(mid, y, time) ? hi : lo) = mid;
+    }
+    return hi;
+  }};
+  // Five lines at heights inside the bar, the top line first as the
+  // picture counts them.
+  const auto heightOf{[](size_t line) { return 1.5f - 0.75f * float(line); }};
+  SUBCASE("Top to bottom, each line sees the bar where its instant puts it") {
+    for (size_t line = 0; line < 5; line++) {
+      const float time{shutter.fractionAt(0, line, 0.0f)};
+      const float edge{leftEdgeAt(heightOf(line), time)};
+      CHECK(std::abs(edge - float(line) / 4.0f) < 1e-4f);
+    }
+  }
+  SUBCASE("Bottom to top reverses the sweep") {
+    shutter.isReadoutReversed = true;
+    for (size_t line = 0; line < 5; line++) {
+      const float time{shutter.fractionAt(0, line, 0.0f)};
+      const float edge{leftEdgeAt(heightOf(line), time)};
+      CHECK(std::abs(edge - float(4 - line) / 4.0f) < 1e-4f);
+    }
+  }
+  SUBCASE("Left to right sweeps with the column instead") {
+    shutter.isReadoutAlongX = true;
+    for (size_t column = 0; column < 5; column++) {
+      // The middle of the bar at this column's own instant, which is
+      // where a ray of this column finds it and a ray of a column two
+      // over, at its instant, does not.
+      const float x{float(column) / 4.0f + 0.05f};
+      CHECK(hits(x, 0.0f, shutter.fractionAt(column, 2, 0.0f)));
+      CHECK(!hits(x, 0.0f, shutter.fractionAt((column + 2) % 5, 2, 0.0f)));
+    }
+  }
+  SUBCASE("Without a readout every line sees one bar") {
+    shutter.readout = 0;
+    for (size_t line = 0; line < 5; line++) {
+      CHECK(std::abs(leftEdgeAt(heightOf(line),
+                                shutter.fractionAt(0, line, 0.0f))) < 1e-4f);
+      CHECK(std::abs(
+                leftEdgeAt(heightOf(line), shutter.fractionAt(0, line, 1.0f)) -
+                1.0f) < 1e-4f);
+    }
+  }
+}

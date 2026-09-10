@@ -88,6 +88,10 @@ struct CameraFlags final {
   /// `SceneOptions::time`, which no camera file has a say in.
   Flag<float> shutter{};
 
+  /// The seconds the readout sweeps the frame, 0 for a global shutter.
+  /// Which way it sweeps is the camera file's alone.
+  Flag<float> readout{};
+
   Flag<float> fStop{};
 
   Flag<float> aperture{};

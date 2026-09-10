@@ -1,8 +1,11 @@
 #include "smdl/Support/FileLocator.h"
 
+#include <cstdlib>
 #include <filesystem>
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Support/Program.h"
 
 namespace smdl {
 
@@ -43,6 +46,18 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
            itr.increment(ec)) {
         if (auto subDir{itr->path().string()}; isDirectory(subDir)) {
           add(std::move(subDir));
+        }
+      }
+    }
+  }
+  if (mShouldSearchDefaultDirs) {
+    if (const char *value{std::getenv("SMDL_DEFAULT_SEARCH_DIRS")}) {
+      auto entries{llvm::SmallVector<llvm::StringRef>()};
+      llvm::StringRef(value).split(entries, llvm::sys::EnvPathSeparator,
+                                   /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+      for (auto entry : entries) {
+        if (auto dir{makePathCanonical(entry.str())}; isDirectory(dir)) {
+          add(std::move(dir));
         }
       }
     }
