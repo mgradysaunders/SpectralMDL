@@ -20,6 +20,7 @@ smdl_add_doctest(
     "RenderUtil/MajorantWalk.cc"
     "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
+    "RenderUtil/OpticalGlass.cc"
     "RenderUtil/SpectralFilm.cc"
     "RenderUtil/SunSky.cc"
     "Resource/BSDFMeasurement.cc"

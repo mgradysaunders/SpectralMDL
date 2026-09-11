@@ -39,6 +39,7 @@ add_library(
     "RenderUtil/Illuminant.cc"
     "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
+    "RenderUtil/OpticalGlass.cc"
     "RenderUtil/SpectralFilm.cc"
     "RenderUtil/SunSky.cc"
     "Resource/BSDFMeasurement.cc"
