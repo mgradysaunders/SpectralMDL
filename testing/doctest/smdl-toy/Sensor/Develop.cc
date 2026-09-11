@@ -84,10 +84,10 @@ void checkPlanes(const std::vector<float> &planes,
                        planeAt(bands[k], double(x), double(y))) < 1e-5);
 }
 
-// A body whose three bands are the builtin's observer over photons, so
-// that its responses are the observer's XYZ, with blue's scaled by
-// `blueScale`, which a fit absorbs; under the RGGB tile, or none. Knots
-// at 1 nm, where the fit integrates.
+// A body whose three bands are the observer over photons, so that its
+// responses are the observer's XYZ, with blue's scaled by `blueScale`,
+// which a fit absorbs; under the RGGB tile, or none. Knots at 1 nm,
+// where the fit integrates.
 [[nodiscard]] SensorSettings lutherBody(bool isTiled, double blueScale = 1.0) {
   auto value{SensorSettings{}};
   value.pixels = int2(8, 6);
@@ -100,7 +100,7 @@ void checkPlanes(const std::vector<float> &planes,
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
       band.values.push_back(float(std::max(
-          0.0, scale * builtinWymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+          0.0, scale * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   if (isTiled) {
@@ -169,14 +169,14 @@ responseOf(const Sensor &sensor, const SensorSpectrum &illuminant,
           sensor.electronRate(2, lit)};
 }
 
-// The builtin observer's XYZ of `reflectance` under `illuminant`, the
+// The observer's XYZ of `reflectance` under `illuminant`, the
 // illuminant's white at Y = 1.
 [[nodiscard]] smdl::double3 observerXYZ(const SensorSpectrum &illuminant,
                                         const SensorSpectrum &reflectance) {
   auto total{smdl::double3()};
   double whiteY{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
-    const auto xyz{builtinWymanXYZ(sensorWavelength(i))};
+    const auto xyz{wymanXYZ(sensorWavelength(i))};
     total += illuminant[i] * reflectance[i] * xyz;
     whiteY += illuminant[i] * xyz.y;
   }

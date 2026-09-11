@@ -31,28 +31,6 @@ constexpr double PI_DOUBLE{3.14159265358979323846};
 
 } // namespace
 
-smdl::double3 builtinWymanXYZ(double lambda) noexcept {
-  // exp(-u) as the builtin takes it, 1 / (1 + u + u^2/2 + u^3/6 +
-  // u^4/24), with its own rounding of the third.
-  const auto lobe{
-      [lambda](double center, double belowInverse, double aboveInverse) {
-        double x{(lambda - center) *
-                 (lambda < center ? belowInverse : aboveInverse)};
-        x *= 0.5 * x;
-        const double x2{x * x * 0.5};
-        const double x3{x2 * x * 0.333333};
-        const double x4{x3 * x * 0.25};
-        return 1.0 / (1.0 + x + x2 + x3 + x4);
-      }};
-  return {0.362 * lobe(442.0, 0.0624, 0.0374) +
-              1.056 * lobe(599.8, 0.0264, 0.0323) -
-              0.065 * lobe(501.1, 0.0490, 0.0382),
-          0.821 * lobe(568.8, 0.0213, 0.0247) +
-              0.286 * lobe(530.9, 0.0613, 0.0322),
-          1.217 * lobe(437.0, 0.0845, 0.0278) +
-              0.681 * lobe(459.0, 0.0385, 0.0725)};
-}
-
 smdl::double3x3 xyzToLinearSRGB() noexcept {
   return {smdl::double3(3.240450, -0.969266, 0.0556434),
           smdl::double3(-1.537140, 1.876010, -0.2040260),

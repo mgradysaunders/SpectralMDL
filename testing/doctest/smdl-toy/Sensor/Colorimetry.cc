@@ -122,23 +122,6 @@ TEST_CASE("Colorimetry: the two Gaussian efficiencies the display uses") {
   }
 }
 
-TEST_CASE("Colorimetry: the builtin's observer") {
-  SUBCASE("It is the exact fit near the peaks, where the series is the "
-          "exponential") {
-    for (int lambda = 540; lambda <= 580; lambda += 10)
-      CHECK(builtinWymanXYZ(lambda).y ==
-            doctest::Approx(wymanXYZ(lambda).y).epsilon(0.002));
-    CHECK(builtinWymanXYZ(600.0).x ==
-          doctest::Approx(wymanXYZ(600.0).x).epsilon(0.002));
-    CHECK(builtinWymanXYZ(445.0).z ==
-          doctest::Approx(wymanXYZ(445.0).z).epsilon(0.002));
-  }
-  SUBCASE("Its tails are fatter than the Gaussian's") {
-    CHECK(builtinWymanXYZ(700.0).y > 2.0 * wymanXYZ(700.0).y);
-    CHECK(builtinWymanXYZ(420.0).y > 2.0 * wymanXYZ(420.0).y);
-  }
-}
-
 TEST_CASE("Colorimetry: the sRGB white and Bradford") {
   const auto white{linearSRGBWhite()};
   SUBCASE("The builtin's matrix takes its white to (1, 1, 1), and the white "

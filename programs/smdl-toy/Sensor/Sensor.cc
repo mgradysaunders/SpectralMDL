@@ -93,7 +93,7 @@ smdl::double3 illuminantWhite(const SensorSpectrum &illuminant) {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
   auto white{smdl::double3()};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
-    white += illuminant[i] * builtinWymanXYZ(sensorWavelength(i));
+    white += illuminant[i] * wymanXYZ(sensorWavelength(i));
   return white.y > 0 ? white / white.y : white;
 }
 
@@ -289,7 +289,7 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   auto observer{std::vector<smdl::double3>(SENSOR_WAVELENGTH_COUNT)};
   double whiteY{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
-    observer[i] = illuminant[i] * builtinWymanXYZ(sensorWavelength(i));
+    observer[i] = illuminant[i] * wymanXYZ(sensorWavelength(i));
     whiteY += observer[i].y;
   }
   if (!(whiteCounts.x > 0 && whiteCounts.y > 0 && whiteCounts.z > 0 &&

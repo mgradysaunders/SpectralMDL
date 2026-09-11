@@ -78,9 +78,9 @@ namespace {
   return grid;
 }
 
-// A body whose three bands are the builtin's observer over photons, so
-// that its responses are the observer's XYZ: `QE_b lambda` is the curve.
-// Knots at 1 nm, where the fit integrates.
+// A body whose three bands are the observer over photons, so that its
+// responses are the observer's XYZ: `QE_b lambda` is the curve. Knots at
+// 1 nm, where the fit integrates.
 [[nodiscard]] SensorSettings lutherBody() {
   auto value{flatBody()};
   value.response.bands.clear();
@@ -90,7 +90,7 @@ namespace {
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
       band.values.push_back(float(std::max(
-          0.0, 0.25 * builtinWymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+          0.0, 0.25 * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   return value;
@@ -357,8 +357,7 @@ TEST_CASE("Sensor: the illuminants a white balance names") {
     CHECK(f2[481] == 0.0);
     CHECK(f2[245] > 2.0 * f2[235]);
   }
-  SUBCASE("A white is the illuminant through the builtin's observer, Y = "
-          "1") {
+  SUBCASE("A white is the illuminant through the observer, Y = 1") {
     const auto white{illuminantWhite(daylightSpectrum(D65_KELVIN))};
     CHECK(white.y == 1.0);
     const double sum{white.x + white.y + white.z};

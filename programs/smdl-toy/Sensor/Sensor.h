@@ -72,8 +72,8 @@ constexpr double ILLUMINANT_A_KELVIN{2856.0};
 [[nodiscard]] SensorSpectrum
 whiteBalanceSpectrum(const WhiteBalance &whiteBalance);
 
-/// The white of `illuminant` through the builtin's observer,
-/// `builtinWymanXYZ()`, scaled so that Y is 1.
+/// The white of `illuminant` through the observer, `wymanXYZ()`, scaled
+/// so that Y is 1.
 [[nodiscard]] smdl::double3 illuminantWhite(const SensorSpectrum &illuminant);
 
 /// The reflectances a color fit trains on: the 190 patches of
@@ -168,7 +168,7 @@ struct ColorFit final {
   /// taking (1, 1, 1) to `white` exactly.
   smdl::double3x3 cameraToXYZ{};
 
-  /// The illuminant's white through the builtin's observer, Y = 1.
+  /// The illuminant's white through the observer, Y = 1.
   smdl::double3 white{};
 
   /// The fit's error over the training reflectances in CIELAB about

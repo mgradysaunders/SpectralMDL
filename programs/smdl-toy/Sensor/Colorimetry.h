@@ -9,12 +9,9 @@
 
 /// The CIE 1931 observer as the piecewise Gaussian fits of Wyman, Sloan,
 /// and Shirley (2013), for wavelength in nanometers, unscaled: `y` peaks
-/// at 1 near 555 nm and integrates to 107 nm. The lobes are the ones the
-/// builtin `_wymanXYZ` uses, with the same constants; the builtin scales
-/// by 0.01 and takes the exponential through a short series whose tails
-/// are fatter than the Gaussian's, which `builtinWymanXYZ()` mirrors. A
-/// photometric integral, which stands in for the CIE table, takes this
-/// one.
+/// at 1 near 555 nm and integrates to 107 nm. The builtin `_wymanXYZ`
+/// evaluates the same fit scaled by 0.01, so the meter, the physical
+/// develop, and the observer's develop share one observer.
 [[nodiscard]] inline smdl::double3 wymanXYZ(double lambda) noexcept {
   // One lobe: a Gaussian with one width below its center and another
   // above, the widths as their reciprocals.
@@ -32,15 +29,6 @@
           1.217 * lobe(437.0, 0.0845, 0.0278) +
               0.681 * lobe(459.0, 0.0385, 0.0725)};
 }
-
-/// The same fit as the builtin `_wymanXYZ` evaluates it, unscaled: each
-/// lobe's exponential through the four-term series the builtin uses. It
-/// is what the observer's develop projects through, so the physical
-/// develop's color targets take it too, and the two develops share an
-/// observer. Over the training reflectances under D65 it differs from
-/// `wymanXYZ()` by half a CIEDE2000 on average, enough to show between
-/// a preview and a develop that took different ones.
-[[nodiscard]] smdl::double3 builtinWymanXYZ(double lambda) noexcept;
 
 /// The photopic luminous efficiency `V(lambda)` of the same fit, the `y`
 /// of `wymanXYZ()` alone, which is what a luminance and an illuminance
