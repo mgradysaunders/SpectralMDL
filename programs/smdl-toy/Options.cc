@@ -46,9 +46,17 @@ cl::opt<float3> optLookTo{
     cl::init(float3{0, 0, 0.5}), cl::cat(catCamera)};
 cl::opt<float3> optLookUp{"look-up", cl::desc("The up vector (default: 0,0,1)"),
                           cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
-cl::opt<float> optFOV{"fovy",
-                      cl::desc("The vertical FOV in degrees (default: 37.8)"),
-                      cl::init(37.8f), cl::cat(catCamera)};
+cl::opt<float> optFOV{
+    "fovy",
+    cl::desc("The vertical FOV in degrees (default: 37.8, or what "
+             "-focal-length implies over the frame)"),
+    cl::init(37.8f), cl::cat(catCamera)};
+cl::opt<float> optFocalLength{
+    "focal-length",
+    cl::desc("The thin lens's focal length in mm, which -fovy also states "
+             "over a frame 24 mm tall (or a body's); both together size the "
+             "observer's frame, and are refused over a body"),
+    cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<std::string> optLens{
     "lens",
     cl::desc("The '.lens' file to look through, or 'ideal' for the thin lens, "
@@ -115,11 +123,13 @@ cl::opt<float> optAperture{
     cl::desc("Enable DOF by aperture radius in scene units (mutually exclusive "
              "with -fstop)"),
     cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optFocus{
+cl::opt<std::string> optFocus{
     "focus",
-    cl::desc("The focus distance along the view axis in scene units (default: "
-             "distance between -look-from and -look-to)"),
-    cl::init(0.0f), cl::cat(catCamera)};
+    cl::desc("The focus: a distance along the view axis in scene units, "
+             "'infinity', or 'auto' to focus on what the center of the frame "
+             "sees once the scene is built (default: the distance between "
+             "-look-from and -look-to)"),
+    cl::cat(catCamera)};
 cl::opt<int> optBlades{
     "blades",
     cl::desc("The number of aperture blades (default: 0, a round lens)"),
@@ -609,8 +619,29 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected -fstop to be positive");
   if (optAperture.getNumOccurrences() > 0 && !(float(optAperture) > 0))
     throw smdl::Error("expected -aperture to be positive");
-  if (optFocus.getNumOccurrences() > 0 && !(float(optFocus) > 0))
-    throw smdl::Error("expected -focus to be positive");
+  if (optFocalLength.getNumOccurrences() > 0 && !(float(optFocalLength) > 0))
+    throw smdl::Error("expected -focal-length to be positive");
+  // The focus, in its three forms: a number is a distance, and the two
+  // words are the infinity and the measurement.
+  auto focus{Flag<float>{}};
+  bool shouldAutofocus{};
+  if (optFocus.getNumOccurrences() > 0) {
+    const auto &text{std::string(optFocus)};
+    if (text == "auto") {
+      shouldAutofocus = true;
+    } else if (text == "infinity" || text == "inf") {
+      focus = Flag<float>{INF, true};
+    } else {
+      char *end{};
+      const float value{std::strtof(text.c_str(), &end)};
+      if (text.empty() || *end != '\0' || !std::isfinite(value) || !(value > 0))
+        throw smdl::Error(smdl::concat(
+            "expected -focus to be a positive distance, 'infinity', or "
+            "'auto', got ",
+            smdl::Quoted(text)));
+      focus = Flag<float>{value, true};
+    }
+  }
   // The old spelling of the frame size, which now means a file.
   if (optSensor.getNumOccurrences() > 0) {
     const auto &value{std::string(optSensor)};
@@ -674,13 +705,15 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.lookTo = flag(optLookTo);
   opts.camera.lookUp = flag(optLookUp);
   opts.camera.fovYDeg = flag(optFOV);
+  opts.camera.focalLengthMM = flag(optFocalLength);
   opts.camera.lens = flag(optLens);
   opts.camera.sensor = flag(optSensor);
   opts.camera.shutter = flag(optShutter);
   opts.camera.readout = flag(optReadout);
   opts.camera.fStop = flag(optFStop);
   opts.camera.aperture = flag(optAperture);
-  opts.camera.focus = flag(optFocus);
+  opts.camera.focus = focus;
+  opts.camera.shouldAutofocus = shouldAutofocus;
   opts.camera.blades = flag(optBlades);
   opts.camera.bladeAngleDeg = flag(optBladeAngle);
   opts.camera.distortionK1 = flag(optDistortionK1);

@@ -16,6 +16,7 @@ smdl_add_doctest(
     "Layout/LensFile.cc"
     "Layout/Motion.cc"
     "Layout/SensorFile.cc"
+    "Render/Autolook.cc"
     "Render/Camera.cc"
     "Render/Lens.cc"
     "Render/Light.cc"

@@ -72,7 +72,14 @@ struct CameraFlags final {
 
   Flag<float3> lookUp{};
 
+  /// The thin lens's field, two ways: the vertical field of view in
+  /// degrees, and the focal length in millimeters. See
+  /// `CameraKeyable::fovYDeg`.
+  ///
+  /// \{
   Flag<float> fovYDeg{};
+  Flag<float> focalLengthMM{};
+  /// \}
 
   /// The '.lens' file to look through, or `ideal` for the thin lens,
   /// over whatever the camera file states. A file is resolved as typed.
@@ -95,7 +102,14 @@ struct CameraFlags final {
 
   Flag<float> aperture{};
 
+  /// `-focus DIST|infinity|auto`: the distance, `INF` for infinity, and
+  /// the autofocus flagged apart, since it is a measurement of the scene
+  /// rather than a value. One flag, so at most one of the two is set.
+  ///
+  /// \{
   Flag<float> focus{};
+  bool shouldAutofocus{};
+  /// \}
 
   Flag<int> blades{};
 

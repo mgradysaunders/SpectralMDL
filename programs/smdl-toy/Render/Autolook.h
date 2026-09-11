@@ -85,3 +85,58 @@ struct AutolookResult final {
 ///
 [[nodiscard]] AutolookResult solveAutolook(const Scene &scene,
                                            const AutolookOptions &options);
+
+/// How `focus auto` wants the focus measured. See `solveAutofocus()`.
+struct AutofocusOptions final {
+  /// The framing at shutter open, as the camera is about to be built
+  /// with it: after `-autolook` has had its say, when both are asked
+  /// for.
+  ///
+  /// \{
+  float3 lookFrom{};
+  float3 lookTo{};
+  float3 lookUp{};
+  /// \}
+
+  /// The focal length in units of the frame height, `0.5 / tan(fovy /
+  /// 2)` for the thin lens and `f / H` for a lens, which turns a frame
+  /// offset into a direction near the axis. Both optics image the
+  /// center of the frame through a pinhole to first order, which is as
+  /// far as the probe goes.
+  float focalLengthOverHeight{};
+};
+
+/// What `solveAutofocus()` measured.
+struct AutofocusResult final {
+  /// The focus distance along the view axis in scene units: the median
+  /// hit of the probe, or `INF` when every ray missed.
+  float distance{INF};
+
+  /// How many rays hit anything, out of how many were cast.
+  ///
+  /// \{
+  size_t hitCount{};
+  size_t rayCount{};
+  /// \}
+
+  /// The instance the median ray hit, or `INVALID_INDEX` for none, and
+  /// the material it hit it on, which is how the log names what the
+  /// center of the frame sees.
+  ///
+  /// \{
+  uint32_t instIndex{INVALID_INDEX};
+  uint32_t matIndex{INVALID_INDEX};
+  /// \}
+};
+
+/// Measure the focus distance for `focus auto`: the median distance,
+/// projected on the view axis, of the hits of a 5 by 5 grid of pinhole
+/// rays over the central 2 percent of the frame height, from the
+/// framing at shutter open. Infinity when every ray misses. The median
+/// rather than the mean, so that a thin foreground post or a gap onto
+/// the sky does not pull the focus off what fills the center.
+///
+/// Runs after `Scene::commit()`, and after `solveAutolook()` when both
+/// are asked for, since the framing is its input.
+[[nodiscard]] AutofocusResult solveAutofocus(const Scene &scene,
+                                             const AutofocusOptions &options);

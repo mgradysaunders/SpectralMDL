@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 
+#include "Layout/CameraFile.h"
 #include "Layout/SensorFile.h"
 #include "Render/Camera.h"
 
@@ -33,10 +34,26 @@ struct CameraModel final {
   /// alone.
   float temperature{25.0f};
 
+  /// Is the focus `auto`, from either source? Then `options.focus` is
+  /// not final: `solveAutofocus()` measures the committed scene and
+  /// writes the distance, and the camera is built after it, as it is
+  /// after `-autolook`.
+  bool shouldAutofocus{};
+
   /// What `Render/Camera` is built from: the framing and its motion,
   /// the optics, the frame, the picture's size in pixels, and the film
   /// quantity.
   CameraOptions options{};
+
+  /// The camera document the settings came from, kept for the
+  /// locations of its keys, and the sink that owns the text they point
+  /// into: a refusal made once the scene is built points at the key the
+  /// file stated. Both empty when no camera file was read.
+  ///
+  /// \{
+  CameraDocument document{};
+  LayoutDiagnostics cameraDiags{};
+  /// \}
 
   [[nodiscard]] bool hasPhysicalSensor() const noexcept {
     return sensor.has_value();
@@ -54,6 +71,12 @@ struct CameraModel final {
 /// The name of a film quantity as the headers spell it.
 [[nodiscard]] const char *filmQuantityName(FilmQuantity quantity) noexcept;
 
+/// The effective focal length of the model's thin lens in scene units:
+/// the frame height over twice the tangent of half the field of view,
+/// which is what `-fstop` is a fraction of and what the depth of field
+/// is taken at. Meaningless with a lens, whose focal length is its own.
+[[nodiscard]] float thinLensFocalLength(const CameraOptions &options) noexcept;
+
 /// Resolve the camera from the command line and the files it names, in
 /// the order defaults, sensor file, camera file, flags, each later source
 /// winning wherever it speaks. Nothing here needs the scene, so it runs
@@ -70,7 +93,8 @@ struct CameraModel final {
 [[nodiscard]] CameraModel resolveCameraModel(const Options &opts);
 
 /// The report `-describe-camera` prints: the frame and the field, the
-/// pixels and the pitch, the film quantity, the bands and the tile, and
-/// the detector, as `resolveCameraModel()` resolved them. Builds the lens
-/// to trace its field, which is the one slow thing in it.
+/// pixels and the pitch, the film quantity, the focus and the depth of
+/// field, the bands and the tile, and the detector, as
+/// `resolveCameraModel()` resolved them. Builds the lens to trace its
+/// field, which is the one slow thing in it.
 [[nodiscard]] std::string describeCamera(const CameraModel &model);

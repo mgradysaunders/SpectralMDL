@@ -32,6 +32,28 @@ namespace {
 }
 } // namespace
 
+DepthOfField depthOfField(float focalLength, float fNumber, float focus,
+                          float2 frameSize) noexcept {
+  auto result{DepthOfField{}};
+  result.circleOfConfusion = std::hypot(frameSize.x, frameSize.y) / 1500.0f;
+  result.hyperfocal = INF;
+  result.nearLimit = INF;
+  result.farLimit = INF;
+  if (!(fNumber > 0)) return result;
+  const float f{focalLength};
+  const float H{f * f / (fNumber * result.circleOfConfusion) + f};
+  result.hyperfocal = H;
+  if (std::isinf(focus)) {
+    // The limit of the near formula as the focus recedes.
+    result.nearLimit = H - f;
+    return result;
+  }
+  const float s{focus};
+  result.nearLimit = s * (H - f) / (H + s - 2 * f);
+  result.farLimit = s < H ? s * (H - f) / (H - s) : INF;
+  return result;
+}
+
 Camera::Camera(const CameraOptions &options) {
   if (options.blades != 0 && options.blades < 3)
     throw smdl::Error("expected -blades to be 0 (a round lens) or at "
@@ -85,12 +107,24 @@ Camera::Camera(const CameraOptions &options) {
   mFocusDistance = options.focus > 0
                        ? options.focus
                        : length(options.lookTo - options.lookFrom);
+  mIsFocusedAtInfinity = std::isinf(mFocusDistance);
   mNumBlades = options.blades;
   mBladeAngle = smdl::radians(options.bladeAngleDeg);
   if (options.lens) {
     buildLens(options);
   } else {
     buildThinLens(options);
+  }
+  if (const auto dof{depthOfField()}; dof.hasLimits()) {
+    SMDL_LOG_INFO("Depth of field: f/", fNumber(), " focused at ",
+                  mIsFocusedAtInfinity ? std::string("infinity")
+                                       : smdl::concat(mFocusDistance),
+                  " is sharp from ", dof.nearLimit, " to ",
+                  dof.farLimit < INF ? smdl::concat(dof.farLimit)
+                                     : std::string("infinity"),
+                  " scene units, hyperfocal ", dof.hyperfocal,
+                  ", at a circle of confusion of ",
+                  1e3f * dof.circleOfConfusion, " mm");
   }
   if (mIsMoving) {
     SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
@@ -107,8 +141,11 @@ Camera::Camera(const CameraOptions &options) {
 // field the frame looks out at, the pixel footprint that seeds the LOD
 // cone, and the two probes that say what actually reaches the film.
 void Camera::buildLens(const CameraOptions &options) {
-  mLens.emplace(*options.lens, LensOptions{mFocusDistance, options.fStop,
-                                           mNumBlades, mBladeAngle});
+  // The lens focuses at infinity for a distance of 0, which is what
+  // `INF` here means.
+  mLens.emplace(*options.lens,
+                LensOptions{mIsFocusedAtInfinity ? 0.0f : mFocusDistance,
+                            options.fStop, mNumBlades, mBladeAngle});
   const auto frameMM{1e3f * float2(mFrameWidth, mFrameHeight)};
   // The pixel's angular footprint, the same quantity the thin lens takes
   // from its field of view, now in the millimeters of a real frame over
@@ -225,8 +262,9 @@ void Camera::buildThinLens(const CameraOptions &options) {
       throw smdl::Error(smdl::concat(
           "the thin lens cannot focus at ", mFocusDistance,
           " scene units, inside its focal length of ", focalLength));
-    mImageDistance =
-        focalLength * mFocusDistance / (mFocusDistance - focalLength);
+    mImageDistance = mIsFocusedAtInfinity ? focalLength
+                                          : focalLength * mFocusDistance /
+                                                (mFocusDistance - focalLength);
     mPupilIrradiance =
         PI * mLensRadius * mLensRadius / (mImageDistance * mImageDistance);
     if (mVignetteStrength > 0) {
@@ -248,8 +286,7 @@ void Camera::buildThinLens(const CameraOptions &options) {
   mRimRadius = options.catEyeRadius > 0 ? options.catEyeRadius : mLensRadius;
   mRimSlope = options.catEye * mRimRadius / mRCorner;
   if (mLensRadius > 0) {
-    SMDL_LOG_INFO("Depth of field: lens radius ", mLensRadius,
-                  " scene units, focus at ", mFocusDistance,
+    SMDL_LOG_INFO("Thin lens: radius ", mLensRadius, " scene units",
                   mNumBlades >= 3 ? smdl::concat(", ", mNumBlades, " blades")
                                   : std::string());
   }
@@ -301,23 +338,28 @@ CameraSample Camera::sample(size_t x, size_t y,
   if (mLensRadius > 0) {
     // Thin lens: the pinhole direction locates the point of the focus
     // plane (camera-space z = -focusDistance) that this pixel images,
-    // and the ray runs to it from a point on the lens.
+    // and the ray runs to it from a point on the lens. At infinity
+    // there is no such point, and the rays through every lens point
+    // leave parallel to the pinhole's.
     float3 pointOnFocusPlane{result.ray.dir * (mFocusDistance / mFocalLength)};
     lens = mLensRadius * smdl::uniformApertureSample(mNumBlades, mBladeAngle,
                                                      float2(sampler));
     result.ray.org = float3(lens.x, lens.y, 0.0f);
-    result.ray.dir = pointOnFocusPlane - result.ray.org;
+    if (!mIsFocusedAtInfinity)
+      result.ray.dir = pointOnFocusPlane - result.ray.org;
   }
   // The estimator averages radiance with no geometric weight of its
   // own, so everything between the scene and the film lands on the
   // weight here.
   if (mVignetteStrength > 0) {
-    // Natural vignetting: cos^4 of the film-to-lens segment. The film
-    // point is the image point inverted, hence the sum. The strength
-    // enters as an exponent so it scales the falloff in stops.
+    // Natural vignetting: cos^4 of the film-to-lens segment, in image
+    // heights, which the lens point is scaled into. The film point is
+    // the image point inverted, hence the sum. The strength enters as
+    // an exponent so it scales the falloff in stops.
+    const float2 lensOverHeight{(1.0f / mFrameHeight) * lens};
     float cosSquared{
         mFocalLength * mFocalLength /
-        (lengthSquared(lens + image) + mFocalLength * mFocalLength)};
+        (lengthSquared(lensOverHeight + image) + mFocalLength * mFocalLength)};
     result.weight *= std::pow(cosSquared, 2 * mVignetteStrength);
   }
   if (mFilmQuantity == FilmQuantity::IRRADIANCE) {

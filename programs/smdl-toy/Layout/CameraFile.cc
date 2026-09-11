@@ -104,6 +104,7 @@ private:
     auto &camera{mDocument.camera};
     parseSettings("a camera setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
+      mDocument.keyLocs[key] = keyLoc;
       if (key == "look_from") {
         auto v{numbers<3>()};
         camera.lookFrom = float3(v[0], v[1], v[2]);
@@ -115,12 +116,14 @@ private:
         camera.lookUp = float3(v[0], v[1], v[2]);
       } else if (key == "fovy") {
         camera.fovYDeg = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "focal_length") {
+        camera.focalLengthMM = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "fstop") {
         camera.fStop = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "aperture") {
         camera.aperture = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "focus") {
-        camera.focus = positive(keyLoc, key, numbers<1>()[0]);
+        parseFocusSetting(camera, keyLoc);
       } else if (key == "lens") {
         camera.lens = parseFileOrWord(key, LENS_IDEAL, "'.lens'");
       } else if (key == "sensor") {
@@ -196,14 +199,60 @@ private:
             keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
-                         "shutter, readout, readout_direction, lens, sensor, "
-                         "temperature, fstop, aperture, focus, blades, "
-                         "blade_angle, distortion_k1, distortion_k2, "
+                         "focal_length, shutter, readout, readout_direction, "
+                         "lens, sensor, temperature, fstop, aperture, focus, "
+                         "blades, blade_angle, distortion_k1, distortion_k2, "
                          "distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
         throw Recover();
       }
     });
+    // The autofocus and a focus pull are two statements of the focus.
+    // Checked once the block is closed, since either may come first.
+    if (camera.shouldAutofocus) {
+      for (const auto &key : camera.motion) {
+        if (!key.focus) continue;
+        mDiags
+            .error(mDocument.keyLocs.at("focus"),
+                   "'focus auto' beside a 'motion' key that states 'focus': "
+                   "the autofocus measures the scene, and a key states a "
+                   "distance, so the two are two statements of the focus")
+            .note({}, "keep the keys and state a distance here, or drop "
+                      "'focus' from the keys");
+        throw Recover();
+      }
+    }
+  }
+
+  // The `focus` setting: a distance, `infinity`, or `auto`. The last
+  // statement wins, so a word clears a distance and a distance clears
+  // the autofocus.
+  //
+  // The words are matched before the number test, since a number parser
+  // reads 'infinity' as one; a distance is then a finite number.
+  void parseFocusSetting(CameraSettings &camera, const LayoutLocation &keyLoc) {
+    if (mToken.kind == Token::WORD && mToken.text == "infinity") {
+      advance();
+      camera.focus = INF;
+      camera.shouldAutofocus = false;
+      return;
+    }
+    if (mToken.kind == Token::WORD && mToken.text == "auto") {
+      advance();
+      camera.focus.reset();
+      camera.shouldAutofocus = true;
+      return;
+    }
+    if (mToken.kind != Token::WORD || !isNumber(mToken)) {
+      mDiags.error(location(),
+                   smdl::concat("expected a distance, 'infinity', or 'auto' "
+                                "after 'focus', got ",
+                                smdl::Quoted(mToken.text)));
+      throw Recover();
+    }
+    camera.focus =
+        positive(keyLoc, "focus", finite(keyLoc, "focus", numbers<1>()[0]));
+    camera.shouldAutofocus = false;
   }
 
   // A quoted path, or the one bare word that stands in for a file:
@@ -318,12 +367,29 @@ private:
       key.lookUp = float3(v[0], v[1], v[2]);
     } else if (setting == "fovy") {
       key.fovYDeg = positive(settingLoc, setting, numbers<1>()[0]);
+    } else if (setting == "focal_length") {
+      key.focalLengthMM = positive(settingLoc, setting, numbers<1>()[0]);
     } else if (setting == "fstop") {
       key.fStop = positive(settingLoc, setting, numbers<1>()[0]);
     } else if (setting == "aperture") {
       key.aperture = positive(settingLoc, setting, numbers<1>()[0]);
     } else if (setting == "focus") {
-      key.focus = positive(settingLoc, setting, numbers<1>()[0]);
+      if (mToken.kind == Token::WORD &&
+          (mToken.text == "auto" || mToken.text == "infinity")) {
+        mDiags
+            .error(settingLoc,
+                   smdl::concat("'focus ", mToken.text,
+                                "' cannot be keyed: a key states a distance "
+                                "for the focus pull to interpolate"))
+            .note({}, mToken.text == "auto"
+                          ? "state 'focus auto' once in the 'camera' block, "
+                            "with no 'focus' in the keys"
+                          : "state a far distance in the key, or 'focus "
+                            "infinity' once in the 'camera' block");
+        throw Recover();
+      }
+      key.focus = positive(settingLoc, setting,
+                           finite(settingLoc, setting, numbers<1>()[0]));
     } else if (setting == "blade_angle") {
       key.bladeAngleDeg = numbers<1>()[0];
     } else if (setting == "distortion_k1") {
@@ -374,6 +440,7 @@ private:
 
 #define CAMERA_HELD_SETTINGS(X)    \
   X(fovYDeg, "fovy")               \
+  X(focalLengthMM, "focal_length") \
   X(fStop, "fstop")                \
   X(aperture, "aperture")          \
   X(focus, "focus")                \
@@ -459,8 +526,8 @@ CameraDocument parseCamera(LayoutDiagnostics &diags,
   return document;
 }
 
-CameraDocument readCamera(const std::string &fileName) {
-  auto diags{LayoutDiagnostics()};
+CameraDocument readCamera(LayoutDiagnostics &diags,
+                          const std::string &fileName) {
   const auto &source{diags.loadSource(fileName)};
   auto document{parseCamera(diags, source)};
   if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());

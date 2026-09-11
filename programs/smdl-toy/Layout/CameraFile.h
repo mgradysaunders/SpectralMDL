@@ -23,6 +23,7 @@
 /// physical body decides for itself).
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,19 +52,40 @@ constexpr std::string_view LENS_IDEAL = "ideal";
 /// The ones left out are left out because they are not: `blades` counts
 /// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
 /// `sensor` are the instrument, `temperature` is the body's condition
-/// over the shot, and `shutter`, `readout`, and `readout_direction`
+/// over the shot, `shutter`, `readout`, and `readout_direction`
 /// describe the interval a key is sampled over rather than something
-/// sampled within it.
+/// sampled within it, and `focus auto` is a measurement rather than a
+/// value, as `focus infinity` is a value with no distance to
+/// interpolate toward.
 ///
 class CameraKeyable {
 public:
   std::optional<float3> lookFrom{};
   std::optional<float3> lookTo{};
   std::optional<float3> lookUp{};
+
+  /// `fovy` and `focal_length`: two ways of stating the thin lens's
+  /// field. Alone, either one implies the other over a frame 24 mm
+  /// tall, or over the body's frame when the camera names one; together
+  /// they state the frame height of the observer's camera, and are
+  /// refused as two statements of one fact over a body. Both are
+  /// refused with a lens, whose field is the frame and the glass.
+  ///
+  /// \{
   std::optional<float> fovYDeg{};
+  std::optional<float> focalLengthMM{};
+  /// \}
+
   std::optional<float> fStop{};
   std::optional<float> aperture{};
+
+  /// `focus`: the distance along the view axis in scene units, measured
+  /// from the camera origin, which is the entrance pupil of both optics;
+  /// or `INF` for `focus infinity`, which a `motion` key may not state,
+  /// there being no distance to interpolate toward. `focus auto` is
+  /// `CameraSettings::shouldAutofocus` instead, and clears this.
   std::optional<float> focus{};
+
   std::optional<float> bladeAngleDeg{};
   std::optional<float> distortionK1{};
   std::optional<float> distortionK2{};
@@ -97,6 +119,14 @@ class CameraSettings final : public CameraKeyable {
 public:
   std::optional<int> blades{};
   std::optional<bool> shouldFitDistortion{};
+
+  /// `focus auto`: focus on whatever the center of the frame sees,
+  /// measured once the scene is built, the way `-autolook` measures.
+  /// Not keyable, being a measurement rather than a value, and refused
+  /// beside a `motion` key that states `focus`, since the two would be
+  /// two statements of the focus. Stating a distance after it turns it
+  /// back off, as the last statement of a setting wins.
+  bool shouldAutofocus{};
 
   /// `lens`: the '.lens' file the camera looks through, as written, to be
   /// resolved relative to the camera file that names it; or `ideal`, the
@@ -181,6 +211,13 @@ public:
   /// Whatever the file's `camera` directives named, merged.
   CameraSettings camera{};
   LayoutLocation cameraLoc{};
+
+  /// Where each setting was last stated inside a `camera` block, by the
+  /// key as the grammar spells it, so that a refusal made after the
+  /// parse (a setting with no meaning beside the lens or the body the
+  /// camera names) can point a caret at the key rather than at the
+  /// block. A setting stated only in a `motion` key is not here.
+  std::map<std::string, LayoutLocation> keyLocs{};
 };
 
 /// Parse one camera source into a document.
@@ -195,10 +232,15 @@ public:
 /// Read a camera file: parse, print every diagnostic to standard error
 /// (colored when stderr is a terminal), and throw if any were errors.
 ///
+/// The document's locations point into `diags`, which the caller owns
+/// so that they outlive the read: a refusal made once the lens and the
+/// body are known points at the key the file stated.
+///
 /// \throws smdl::Error  If the file cannot be read, or on any parse
 ///                      error after printing the diagnostics.
 ///
-[[nodiscard]] CameraDocument readCamera(const std::string &fileName);
+[[nodiscard]] CameraDocument readCamera(LayoutDiagnostics &diags,
+                                        const std::string &fileName);
 
 /// The camera file a render should use, or empty for none: `given` if
 /// the command line named one, else the `.camera` file beside

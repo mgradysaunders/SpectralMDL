@@ -1,7 +1,11 @@
 #include "Render/Autolook.h"
 
+#include <algorithm>
+#include <vector>
+
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
+#include "smdl/Support/Strings.h"
 
 namespace {
 
@@ -262,5 +266,65 @@ AutolookResult solveAutolook(const Scene &scene,
                 result.lookFrom.z, "), visible area ", result.visibleArea,
                 ", fill ", 100.0f * result.fill, "%, backface ",
                 100.0f * result.backfaceFraction, "%");
+  return result;
+}
+
+AutofocusResult solveAutofocus(const Scene &scene,
+                               const AutofocusOptions &options) {
+  // The central 2 percent of the frame height, 5 rays across, so that a
+  // point subject at the very center and a surface filling the patch
+  // are both found by the median.
+  constexpr int STEPS = 5;
+  constexpr float HALF_EXTENT = 0.01f;
+  const auto cameraToWorld{
+      smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp)};
+  const auto forward{smdl::normalize(options.lookTo - options.lookFrom)};
+  // Each hit's distance along the view axis, with what it hit, sorted
+  // for the median.
+  struct Probe final {
+    float distance;
+    uint32_t instIndex;
+    uint32_t matIndex;
+  };
+  auto probes{std::vector<Probe>()};
+  auto result{AutofocusResult{}};
+  for (int j = 0; j < STEPS; j++) {
+    for (int i = 0; i < STEPS; i++) {
+      const float x{HALF_EXTENT * (2.0f * float(i) / (STEPS - 1) - 1.0f)};
+      const float y{HALF_EXTENT * (2.0f * float(j) / (STEPS - 1) - 1.0f)};
+      auto ray{
+          Ray{float3(0.0f),
+              smdl::normalize(float3(x, y, -options.focalLengthOverHeight)),
+              EPS, INF}};
+      ray.transform(cameraToWorld);
+      result.rayCount++;
+      auto hit{Hit()};
+      if (!scene.intersect(ray, hit)) continue;
+      probes.push_back(Probe{ray.tmax * smdl::dot(ray.dir, forward),
+                             hit.instIndex, hit.matIndex});
+    }
+  }
+  result.hitCount = probes.size();
+  if (probes.empty()) {
+    SMDL_LOG_INFO("Autofocus: nothing at the center of the frame, so the "
+                  "focus is at infinity");
+    return result;
+  }
+  std::sort(probes.begin(), probes.end(), [](const Probe &a, const Probe &b) {
+    return a.distance < b.distance;
+  });
+  const auto &median{probes[probes.size() / 2]};
+  result.distance = median.distance;
+  result.instIndex = median.instIndex;
+  result.matIndex = median.matIndex;
+  const auto materialName{median.matIndex < scene.materialNames.size()
+                              ? scene.materialNames[median.matIndex]
+                              : std::string()};
+  SMDL_LOG_INFO("Autofocus: ", result.hitCount, " of ", result.rayCount,
+                " rays at the center of the frame hit, the median at ",
+                result.distance, " scene units on instance ", result.instIndex,
+                materialName.empty()
+                    ? std::string()
+                    : smdl::concat(", material ", smdl::Quoted(materialName)));
   return result;
 }

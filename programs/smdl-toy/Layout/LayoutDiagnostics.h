@@ -114,6 +114,20 @@ public:
 ///
 class LayoutDiagnostics final {
 public:
+  LayoutDiagnostics() = default;
+
+  /// Movable and not copyable: every location handed out points into
+  /// the sources this owns, and a copy would leave them pointing at the
+  /// original. A move keeps them valid, since a deque's elements stay
+  /// where they are.
+  ///
+  /// \{
+  LayoutDiagnostics(LayoutDiagnostics &&) = default;
+  LayoutDiagnostics &operator=(LayoutDiagnostics &&) = default;
+  LayoutDiagnostics(const LayoutDiagnostics &) = delete;
+  LayoutDiagnostics &operator=(const LayoutDiagnostics &) = delete;
+  /// \}
+
   /// Load a file as a source.
   ///
   /// \throws smdl::Error  If the file cannot be read. That failure has no
@@ -154,6 +168,17 @@ public:
   /// prefix so the caret stays aligned however tabs display.
   [[nodiscard]] static std::string render(const LayoutDiagnostic &diagnostic,
                                           bool useColors);
+
+  /// The `file:line:col` a rendered diagnostic begins with, or empty
+  /// for a location with no source.
+  [[nodiscard]] static std::string where(const LayoutLocation &location);
+
+  /// The excerpt a rendered diagnostic shows under its message: the
+  /// marked line verbatim, a newline, and the marker under it, with no
+  /// trailing newline; empty for a location with no source. Public so
+  /// that a refusal raised after the parse, as an `smdl::Error`, can
+  /// point at the key it names the way the parser's own diagnostics do.
+  [[nodiscard]] static std::string excerpt(const LayoutLocation &location);
 
   /// Render every accumulated diagnostic, followed by `summary()` on its
   /// own line if there is anything to summarize.

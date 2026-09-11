@@ -94,8 +94,12 @@ struct CameraOptions final {
   /// Enable DOF by aperture radius in scene units, or 0.
   float aperture{};
 
-  /// The focus distance along the view axis in scene units, or 0 to
-  /// use the distance between `lookFrom` and `lookTo`.
+  /// The focus distance along the view axis in scene units, measured
+  /// from the camera origin, which is the entrance pupil of both optics;
+  /// `INF` to focus at infinity; or 0 to use the distance between
+  /// `lookFrom` and `lookTo`. Never `focus auto` here: the model settles
+  /// that into a distance by measuring the committed scene before the
+  /// camera is built, as it settles `-autolook`.
   float focus{};
 
   /// The number of aperture blades, or 0 for a round lens.
@@ -114,9 +118,11 @@ struct CameraOptions final {
   /// Refit so frame corner directions hold constant under distortion.
   bool shouldFitDistortion{};
 
-  /// The strength of cos^4 falloff: 0 is off, 1 is the physical law.
-  /// The observer's knob: a physical sensor's irradiance weight carries
-  /// the law exactly and ignores this.
+  /// The strength of cos^4 falloff: 0 is off, 1 is the physical law,
+  /// taken over the film-to-lens segment of each sample with the film at
+  /// the focal length. The observer's knob: a physical sensor's
+  /// irradiance weight carries the law exactly, at the image distance,
+  /// and ignores this.
   float vignetting{};
 
   /// Mechanical vignette from the lens barrel: relative displacement at
@@ -156,6 +162,42 @@ struct CameraSample final {
   /// end.
   float coneAngle{};
 };
+
+/// The depth of field of a lens, in scene units: what `depthOfField()`
+/// computes from the focal length, the f-number, the focus distance,
+/// and the frame, and what one log line per render and the camera
+/// report state.
+struct DepthOfField final {
+  /// The circle of confusion the limits are taken at: the frame
+  /// diagonal over 1500, the usual print-viewing criterion, which is
+  /// 0.029 mm on full frame.
+  float circleOfConfusion{};
+
+  /// The hyperfocal distance, `f^2 / (N c) + f`: focused here, the far
+  /// limit is at infinity and the near limit as close as it gets.
+  float hyperfocal{};
+
+  /// The near and far limits of acceptable sharpness. `farLimit` is
+  /// `INF` at or beyond the hyperfocal distance, and both are `INF` for
+  /// a pinhole, which has no aperture to blur with.
+  ///
+  /// \{
+  float nearLimit{};
+  float farLimit{};
+  /// \}
+
+  /// Does anything blur? False for a pinhole.
+  [[nodiscard]] bool hasLimits() const noexcept { return nearLimit < INF; }
+};
+
+/// The depth of field of a lens of focal length `focalLength` at
+/// f/`fNumber`, focused at `focus` (`INF` for infinity), on a frame of
+/// `frameSize`, all in scene units, by the thin-lens closed forms:
+/// `H = f^2 / (N c) + f`, near `s (H - f) / (H + s - 2 f)`, far
+/// `s (H - f) / (H - s)`. A `fNumber` of 0 is a pinhole, and reads as
+/// everything in focus.
+[[nodiscard]] DepthOfField depthOfField(float focalLength, float fNumber,
+                                        float focus, float2 frameSize) noexcept;
 
 /// The camera: everything between a pixel coordinate and a world-space
 /// ray carrying a response weight, which is the thin lens or the traced
@@ -210,6 +252,23 @@ public:
   /// and 0 for a pinhole, which has none.
   [[nodiscard]] float fNumber() const noexcept;
 
+  /// The effective focal length in scene units: a lens's own, or the
+  /// thin lens's over the frame its field of view spans.
+  [[nodiscard]] float focalLength() const noexcept {
+    return mLens ? mLens->focalLength() : mFocalLength * mFrameHeight;
+  }
+
+  /// The focus distance along the view axis in scene units, `INF` at
+  /// infinity.
+  [[nodiscard]] float focusDistance() const noexcept { return mFocusDistance; }
+
+  /// The depth of field, by `depthOfField()` over what this camera
+  /// resolved.
+  [[nodiscard]] DepthOfField depthOfField() const noexcept {
+    return ::depthOfField(focalLength(), fNumber(), mFocusDistance,
+                          frameSize());
+  }
+
 private:
   /// The two halves of the constructor that differ, one of which runs.
   /// Everything the two share, the framing and its motion, the focus
@@ -263,9 +322,9 @@ private:
 
   /// With the thin lens on a physical sensor's film, the image distance
   /// in scene units, `f s / (s - f)` for a focal length `f` and a focus
-  /// distance `s`, and the pupil area over its square: what one sample
-  /// weighs on axis before the `cos^4` of its own segment. Zero on the
-  /// observer's film.
+  /// distance `s` (`f` itself at infinity), and the pupil area over its
+  /// square: what one sample weighs on axis before the `cos^4` of its
+  /// own segment. Zero on the observer's film.
   float mImageDistance{};
   float mPupilIrradiance{};
 
@@ -310,8 +369,14 @@ private:
   /// The thin-lens radius in scene units, zero for the pinhole default.
   float mLensRadius{};
 
-  /// The focus distance along the view axis in scene units.
+  /// The focus distance along the view axis in scene units, `INF` at
+  /// infinity, where the thin lens sends the rays through every lens
+  /// point out parallel.
   float mFocusDistance{};
+
+  /// Is the focus at infinity? What `sample()` branches on, so that the
+  /// focus plane's point is never formed from an infinite distance.
+  bool mIsFocusedAtInfinity{};
 
   /// The number of aperture blades, 0 for a round lens.
   int mNumBlades{};

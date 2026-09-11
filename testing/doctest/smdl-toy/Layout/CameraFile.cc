@@ -1,5 +1,6 @@
 #include "Fixtures.h"
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -458,5 +459,118 @@ TEST_CASE("CameraFile: the temperature setting") {
     CHECK_CONTAINS(
         parseError("camera { motion { at 0 temperature 1 } }\n").message,
         "not a quantity to interpolate");
+  }
+}
+
+TEST_CASE("CameraFile: the focal length setting") {
+  LayoutDiagnostics diags{};
+  SUBCASE("It parses in millimeters beside the field of view") {
+    const auto document{parseOK(diags, "camera { focal_length 50 }\n")};
+    REQUIRE(document.camera.focalLengthMM);
+    CHECK(*document.camera.focalLengthMM == 50.0f);
+    CHECK(!document.camera.fovYDeg);
+  }
+  SUBCASE("Absent, it stays unset") {
+    CHECK(!parseOK(diags, "camera { fovy 30 }\n").camera.focalLengthMM);
+  }
+  SUBCASE("A zero is an error, like the field of view's") {
+    CHECK_CONTAINS(parseError("camera { focal_length 0 }\n").message,
+                   "positive number for 'focal_length'");
+  }
+  SUBCASE("It keys, being a quantity to interpolate: a zoom") {
+    const auto document{parseOK(diags, "camera { motion { at 0 focal_length "
+                                       "24 at 2 focal_length 70 } }\n")};
+    CHECK(*document.camera.at(1.0f).focalLengthMM == doctest::Approx(47.0f));
+    const auto held{document.camera.heldOverShutter(0.0f, 2.0f)};
+    REQUIRE(held.size() == 1);
+    CHECK(held.front() == "focal_length");
+  }
+}
+
+TEST_CASE("CameraFile: the focus setting") {
+  LayoutDiagnostics diags{};
+  SUBCASE("A distance") {
+    const auto document{parseOK(diags, "camera { focus 4 }\n")};
+    REQUIRE(document.camera.focus);
+    CHECK(*document.camera.focus == 4.0f);
+    CHECK(!document.camera.shouldAutofocus);
+  }
+  SUBCASE("Infinity") {
+    const auto document{parseOK(diags, "camera { focus infinity }\n")};
+    REQUIRE(document.camera.focus);
+    CHECK(std::isinf(*document.camera.focus));
+    CHECK(!document.camera.shouldAutofocus);
+  }
+  SUBCASE("The autofocus, which leaves no distance") {
+    const auto document{parseOK(diags, "camera { focus auto }\n")};
+    CHECK(!document.camera.focus);
+    CHECK(document.camera.shouldAutofocus);
+  }
+  SUBCASE("The last statement wins, either way round") {
+    const auto toAuto{parseOK(diags, "camera { focus 4 focus auto }\n")};
+    CHECK(!toAuto.camera.focus);
+    CHECK(toAuto.camera.shouldAutofocus);
+    const auto toDistance{parseOK(diags, "camera { focus auto }\n"
+                                         "camera { focus 4 }\n")};
+    CHECK(*toDistance.camera.focus == 4.0f);
+    CHECK(!toDistance.camera.shouldAutofocus);
+  }
+  SUBCASE("Any other word names the three forms") {
+    CHECK_CONTAINS(parseError("camera { focus near }\n").message,
+                   "expected a distance, 'infinity', or 'auto' after 'focus'");
+  }
+  SUBCASE("A key states a distance, and neither word") {
+    const auto document{
+        parseOK(diags, "camera { motion { at 0 focus 2 at 1 focus 4 } }\n")};
+    CHECK(*document.camera.at(0.5f).focus == doctest::Approx(3.0f));
+    for (const char *word : {"auto", "infinity"}) {
+      CAPTURE(word);
+      const auto error{parseError(std::string("camera { motion { at 0 focus ") +
+                                  word + " } }\n")};
+      CHECK_CONTAINS(error.message, "cannot be keyed");
+      REQUIRE(!error.notes.empty());
+      CHECK_CONTAINS(error.notes.front().message, "'camera' block");
+    }
+  }
+  SUBCASE("The autofocus beside a keyed focus is refused, whichever comes "
+          "first") {
+    for (const char *text :
+         {"camera { focus auto motion { at 0 focus 2 } }\n",
+          "camera { motion { at 0 focus 2 } focus auto }\n"}) {
+      CAPTURE(text);
+      const auto error{parseError(text)};
+      CHECK_CONTAINS(error.message, "two statements of the focus");
+      REQUIRE(!error.notes.empty());
+    }
+  }
+}
+
+TEST_CASE("CameraFile: the settings keep their locations") {
+  LayoutDiagnostics diags{};
+  const auto document{parseOK(diags, "camera {\n"
+                                     "  fovy 30\n"
+                                     "  focus 4\n"
+                                     "  motion { at 0 fstop 2 }\n"
+                                     "}\n"
+                                     "camera { fovy 40 }\n")};
+  SUBCASE("Each key's last statement, by line and column") {
+    const auto fovy{document.keyLocs.find("fovy")};
+    REQUIRE(fovy != document.keyLocs.end());
+    const auto where{document.source->lineAndColumn(fovy->second.offset)};
+    CHECK(where.lineNo == 6);
+    CHECK(where.charNo == 10);
+    CHECK(fovy->second.length == 4);
+    const auto focus{document.keyLocs.find("focus")};
+    REQUIRE(focus != document.keyLocs.end());
+    CHECK(document.source->lineAndColumn(focus->second.offset).lineNo == 3);
+  }
+  SUBCASE("A setting stated only in a key has none") {
+    CHECK(document.keyLocs.find("fstop") == document.keyLocs.end());
+  }
+  SUBCASE("The excerpt marks the key") {
+    CHECK(LayoutDiagnostics::excerpt(document.keyLocs.at("focus")) ==
+          "  focus 4\n  ^~~~~");
+    CHECK(LayoutDiagnostics::where(document.keyLocs.at("focus")) ==
+          "test.camera:3:3");
   }
 }

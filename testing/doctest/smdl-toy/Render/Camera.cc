@@ -431,3 +431,157 @@ TEST_CASE("Camera: the thin lens on a physical sensor's film") {
                 "inside its focal length");
   }
 }
+
+// The focus and the depth of field: the closed forms against hand
+// values, infinity as a focus, and the natural vignetting in the units
+// the lens point is drawn in.
+
+TEST_CASE("Camera: the depth of field") {
+  const float2 fullFrame{0.036f, 0.024f};
+  SUBCASE("50 mm at f/8 focused at 5 m, against the tables") {
+    const auto dof{depthOfField(0.05f, 8.0f, 5.0f, fullFrame)};
+    CHECK(dof.hasLimits());
+    CHECK(dof.circleOfConfusion == doctest::Approx(2.8844e-5f).epsilon(1e-3));
+    CHECK(dof.hyperfocal == doctest::Approx(10.884f).epsilon(1e-3));
+    CHECK(dof.nearLimit == doctest::Approx(3.432f).epsilon(1e-3));
+    CHECK(dof.farLimit == doctest::Approx(9.206f).epsilon(1e-3));
+  }
+  SUBCASE("Focused at infinity, sharp from the hyperfocal less one focal "
+          "length") {
+    const auto dof{depthOfField(0.05f, 8.0f, INF, fullFrame)};
+    CHECK(dof.nearLimit == doctest::Approx(10.834f).epsilon(1e-3));
+    CHECK(dof.farLimit == INF);
+  }
+  SUBCASE("Focused past the hyperfocal, the far limit is infinity") {
+    const auto dof{depthOfField(0.05f, 8.0f, 20.0f, fullFrame)};
+    CHECK(dof.nearLimit == doctest::Approx(7.039f).epsilon(1e-3));
+    CHECK(dof.farLimit == INF);
+    const auto atHyperfocal{
+        depthOfField(0.05f, 8.0f, dof.hyperfocal, fullFrame)};
+    CHECK(atHyperfocal.farLimit == INF);
+  }
+  SUBCASE("A pinhole has none") {
+    const auto dof{depthOfField(0.05f, 0.0f, 5.0f, fullFrame)};
+    CHECK(!dof.hasLimits());
+    CHECK(dof.nearLimit == INF);
+  }
+  SUBCASE("The camera reports its own, from what it resolved") {
+    auto options{openOptions()};
+    options.frameSize = fullFrame;
+    options.fStop = 8.0f;
+    options.focus = 5.0f;
+    const Camera thin{options};
+    CHECK(thin.focalLength() ==
+          doctest::Approx(0.024f * 0.5f /
+                          std::tan(smdl::radians(options.fovYDeg / 2))));
+    const auto dof{thin.depthOfField()};
+    const auto byHand{depthOfField(thin.focalLength(), 8.0f, 5.0f, fullFrame)};
+    CHECK(dof.nearLimit == byHand.nearLimit);
+    CHECK(dof.farLimit == byHand.farLimit);
+    auto lensed{lensOptions()};
+    lensed.focus = 5.0f;
+    const Camera traced{lensed};
+    CHECK(traced.depthOfField().hyperfocal ==
+          depthOfField(traced.focalLength(), traced.fNumber(), 5.0f,
+                       lensed.frameSize)
+              .hyperfocal);
+  }
+}
+
+TEST_CASE("Camera: focus at infinity") {
+  auto options{openOptions()};
+  options.fStop = 2.0f;
+  options.focus = INF;
+  SUBCASE("The thin lens sends the rays through every lens point out "
+          "parallel, along the pinhole's") {
+    const Camera camera{options};
+    const Camera pinhole{openOptions()};
+    CHECK(std::isinf(camera.focusDistance()));
+    // The same draw jitters the pixel the same way, so each lens point's
+    // ray runs along the pinhole's for that draw.
+    for (uint32_t sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+      const auto a{cameraSpaceSample(camera, 17, 9, sampleIndex)};
+      const auto b{cameraSpaceSample(pinhole, 17, 9, sampleIndex)};
+      CHECK(length(a.ray.org) > 0);
+      CHECK(isSame(normalize(a.ray.dir), normalize(b.ray.dir)));
+    }
+    CHECK(!isSame(cameraSpaceSample(camera, 17, 9, 0).ray.org,
+                  cameraSpaceSample(camera, 17, 9, 1).ray.org));
+  }
+  SUBCASE("Focused far, the rays converge on the focus plane instead") {
+    options.focus = 1000.0f;
+    const Camera camera{options};
+    const auto a{cameraSpaceSample(camera, 17, 9, 0)};
+    const auto b{cameraSpaceSample(camera, 17, 9, 1)};
+    CHECK(!isSame(normalize(a.ray.dir), normalize(b.ray.dir)));
+  }
+  SUBCASE("On a physical sensor's film the image distance is the focal "
+          "length, the limit of the far focus") {
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const auto atInfinity{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    options.focus = 100000.0f;
+    const auto far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    CHECK(atInfinity == doctest::Approx(far).epsilon(1e-4));
+    CHECK(atInfinity > far);
+  }
+  SUBCASE("A lens focuses at infinity too") {
+    auto lensed{lensOptions()};
+    lensed.focus = INF;
+    const Camera camera{lensed};
+    CHECK(std::isinf(camera.focusDistance()));
+    CHECK(passingSample(camera, 32, 24).weight > 0);
+  }
+}
+
+TEST_CASE("Camera: the natural vignetting is taken in image heights") {
+  constexpr double PI_DOUBLE{3.14159265358979323846};
+  auto options{openOptions()};
+  options.vignetting = 1.0f;
+  SUBCASE("With a pinhole the lens point is nothing, and the corner reads "
+          "the chief ray's cos^4") {
+    const Camera camera{options};
+    const float focalLength{0.5f /
+                            std::tan(smdl::radians(options.fovYDeg / 2))};
+    const auto middle{cameraSpaceSample(camera, 32, 24, 3)};
+    const auto corner{cameraSpaceSample(camera, 0, 0, 3)};
+    // Within the jitter of the middle pixel of 1.
+    CHECK(middle.weight == doctest::Approx(1.0).epsilon(1e-3));
+    const float2 image{-(corner.ray.dir.x), -(corner.ray.dir.y)};
+    const float cosSquared{focalLength * focalLength /
+                           (lengthSquared(image) + focalLength * focalLength)};
+    CHECK(corner.weight == doctest::Approx(cosSquared * cosSquared));
+  }
+  SUBCASE("With an aperture the middle of the frame reads the disk mean of "
+          "cos^4, which is not 1") {
+    // Over a disk of radius R in image heights at a focal length f, the
+    // mean of cos^4 is f^2 / (R^2 + f^2); at f/2.8 that is 4 N^2 over
+    // 4 N^2 + 1, three percent under 1. A lens point taken in meters
+    // would have read within a part in ten thousand of 1.
+    options.fStop = 2.8f;
+    options.focus = INF;
+    const Camera camera{options};
+    const auto middle{meanWeight(camera, 32, 24)};
+    CHECK(middle ==
+          doctest::Approx(4 * 2.8 * 2.8 / (4 * 2.8 * 2.8 + 1)).epsilon(0.005));
+    CHECK(middle < 0.98f);
+  }
+  SUBCASE("It is the physical sensor's weight over the pupil constant, "
+          "sample for sample, at infinity focus") {
+    options.fStop = 2.8f;
+    options.focus = INF;
+    const Camera observer{options};
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const Camera sensor{options};
+    const double R{0.5 * 0.024 * observer.focalLength() / 0.024 / 2.8};
+    const double pupil{
+        PI_DOUBLE * R * R /
+        (double(observer.focalLength()) * double(observer.focalLength()))};
+    for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
+      const auto a{
+          cameraSpaceSample(observer, size_t(pixel.x), size_t(pixel.y), 3)};
+      const auto b{
+          cameraSpaceSample(sensor, size_t(pixel.x), size_t(pixel.y), 3)};
+      CHECK(a.weight == doctest::Approx(b.weight / pupil).epsilon(1e-4));
+    }
+  }
+}

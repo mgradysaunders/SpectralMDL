@@ -1,3 +1,4 @@
+#include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
@@ -88,12 +89,14 @@ Frame resolveFrame(const Options &opts) {
       SMDL_LOG_INFO("Instance motion: ", numMovingItems, " placement(s) and ",
                     numMovingLights, " light(s) move over the shutter");
   }
-  // Under -autolook the position comes from measuring the committed scene,
-  // so construction (with the lens validation and the summary it logs)
-  // waits until the solve below. Every other path keeps constructing
-  // here, before anything slow loads, so a lens typo still fails fast.
+  // Under -autolook the position, and under 'focus auto' the focus, come
+  // from measuring the committed scene, so construction (with the lens
+  // validation and the summary it logs) waits until the solves in the
+  // stage. Every other path keeps constructing here, before anything
+  // slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
-  if (!opts.camera.autolook.isEnabled) camera.emplace(model.options);
+  if (!opts.camera.autolook.isEnabled && !model.shouldAutofocus)
+    camera.emplace(model.options);
   const auto resolution{model.options.resolution};
   const auto numPixelsX{size_t(resolution.x)};
   const auto numPixelsY{size_t(resolution.y)};
@@ -350,10 +353,11 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     SMDL_PROFILER_ENTRY("Scene::commit()");
     scene->commit(wavelengths);
   }
-  // The autolook solve, and the deferred camera construction it exists
-  // for. The solved azimuth also becomes the default sun azimuth below,
-  // so a batch of thumbnails is consistently lit however each one is
-  // framed.
+  // The two measurements the camera may wait on: the autolook solve,
+  // whose azimuth also becomes the default sun azimuth below so that a
+  // batch of thumbnails is consistently lit however each one is framed,
+  // and then the autofocus, which measures the framing the autolook
+  // chose. The camera is built once both have had their say.
   auto autolookSunAzimuth{std::optional<float>()};
   if (opts.camera.autolook.isEnabled) {
     auto autolookOptions{AutolookOptions{}};
@@ -383,10 +387,27 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     const auto autolook{solveAutolook(*scene, autolookOptions)};
     cameraOptions.lookFrom = autolook.lookFrom;
     cameraOptions.lookTo = autolook.lookTo;
-    camera.emplace(cameraOptions);
     // The key light over the camera's right shoulder.
     autolookSunAzimuth = autolook.azimuthDeg - 35.0f;
   }
+  if (frame.model.shouldAutofocus) {
+    auto autofocusOptions{AutofocusOptions{}};
+    autofocusOptions.lookFrom = cameraOptions.lookFrom;
+    autofocusOptions.lookTo = cameraOptions.lookTo;
+    autofocusOptions.lookUp = cameraOptions.lookUp;
+    if (cameraOptions.lens) {
+      // The prescription's paraxial focal length, solved at infinity
+      // since the focus is what this measures.
+      const Lens probe{*cameraOptions.lens, LensOptions{}};
+      autofocusOptions.focalLengthOverHeight =
+          probe.focalLength() / cameraOptions.frameSize.y;
+    } else {
+      autofocusOptions.focalLengthOverHeight =
+          0.5f / std::tan(smdl::radians(cameraOptions.fovYDeg / 2));
+    }
+    cameraOptions.focus = solveAutofocus(*scene, autofocusOptions).distance;
+  }
+  if (!camera) camera.emplace(cameraOptions);
 
   // The environment, merged from the same three sources as the camera and
   // in the same order: the defaults, the layout's 'sky' directive, and

@@ -118,30 +118,13 @@ constexpr std::string_view ANSI_GREEN = "\033[1;32m";
   return ANSI_BOLD;
 }
 
-// One diagnostic or note, without recursing into its notes.
-void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
-               bool useColors) {
-  const auto &location{diagnostic.location};
-  if (useColors) result += ANSI_BOLD;
-  if (location) {
-    const auto [lineNo,
-                charNo]{location.source->lineAndColumn(location.offset)};
-    result +=
-        smdl::concat(location.source->fileName, ":", lineNo, ":", charNo, ": ");
-  }
-  if (useColors) result += kindColor(diagnostic.kind);
-  result += kindLabel(diagnostic.kind);
-  result += ':';
-  if (useColors) result += ANSI_RESET, result += ANSI_BOLD;
-  result += ' ';
-  result += diagnostic.message;
-  if (useColors) result += ANSI_RESET;
-  result += '\n';
-  if (!location) return;
-  // The excerpt: the marked line verbatim, then the marker under it. The
-  // marker prefix copies the line's own tabs so the caret column agrees
-  // with the text however wide a tab displays; the marked range clamps to
-  // the end of the line it starts on.
+// The excerpt under a message: the marked line verbatim, then the
+// marker under it, the marker colored when asked. The marker prefix
+// copies the line's own tabs so the caret column agrees with the text
+// however wide a tab displays; the marked range clamps to the end of
+// the line it starts on.
+void renderExcerpt(std::string &result, const LayoutLocation &location,
+                   bool useColors) {
   const auto [lineNo, charNo]{location.source->lineAndColumn(location.offset)};
   const auto line{location.source->lineText(lineNo)};
   result += line;
@@ -157,10 +140,43 @@ void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
     result.append(tildes, '~');
   }
   if (useColors) result += ANSI_RESET;
+}
+
+// One diagnostic or note, without recursing into its notes.
+void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
+               bool useColors) {
+  const auto &location{diagnostic.location};
+  if (useColors) result += ANSI_BOLD;
+  if (location) {
+    result += LayoutDiagnostics::where(location);
+    result += ": ";
+  }
+  if (useColors) result += kindColor(diagnostic.kind);
+  result += kindLabel(diagnostic.kind);
+  result += ':';
+  if (useColors) result += ANSI_RESET, result += ANSI_BOLD;
+  result += ' ';
+  result += diagnostic.message;
+  if (useColors) result += ANSI_RESET;
+  result += '\n';
+  if (!location) return;
+  renderExcerpt(result, location, useColors);
   result += '\n';
 }
 
 } // namespace
+
+std::string LayoutDiagnostics::where(const LayoutLocation &location) {
+  if (!location) return {};
+  const auto [lineNo, charNo]{location.source->lineAndColumn(location.offset)};
+  return smdl::concat(location.source->fileName, ":", lineNo, ":", charNo);
+}
+
+std::string LayoutDiagnostics::excerpt(const LayoutLocation &location) {
+  auto result{std::string()};
+  if (location) renderExcerpt(result, location, false);
+  return result;
+}
 
 std::string LayoutDiagnostics::render(const LayoutDiagnostic &diagnostic,
                                       bool useColors) {

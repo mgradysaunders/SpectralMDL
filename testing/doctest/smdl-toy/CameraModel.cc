@@ -220,7 +220,10 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
                 "'vignetting' has no meaning with a lens");
     auto flagged{files.camera("camera { lens \"singlet.lens\" }\n")};
     flagged.camera.fovYDeg = Flag<float>{30.0f, true};
-    CHECK_ERROR(refused(flagged), "'fovy' has no meaning with a lens");
+    CHECK_ERROR(refused(flagged), "-fovy has no meaning with a lens");
+    flagged.camera.fovYDeg = Flag<float>{};
+    flagged.camera.focalLengthMM = Flag<float>{50.0f, true};
+    CHECK_ERROR(refused(flagged), "-focal-length has no meaning with a lens");
   }
   SUBCASE("A body over a pinhole") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" }\n")),
@@ -248,5 +251,167 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
   SUBCASE("Two spellings of the aperture") {
     CHECK_ERROR(refused(files.camera("camera { fstop 8 aperture 0.01 }\n")),
                 "at most one of -fstop and -aperture");
+  }
+}
+
+TEST_CASE("CameraModel: a refusal points at the key the file stated") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-caret"};
+  const auto refused{[&](const Options &opts) {
+    return smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); });
+  }};
+  SUBCASE("The message begins with the file, line, and column, and the "
+          "excerpt marks the key") {
+    const auto error{
+        refused(files.camera("camera {\n  lens \"singlet.lens\"\n  fovy 30\n"
+                             "}\n"))};
+    REQUIRE(error);
+    CHECK_CONTAINS(error->message, files.path("shot.camera") + ":3:3: ");
+    CHECK_CONTAINS(error->message, "'fovy' has no meaning with a lens");
+    CHECK_CONTAINS(error->snippet, "  fovy 30\n  ^~~~");
+  }
+  SUBCASE("The last statement of a key is the one marked") {
+    const auto error{refused(files.camera(
+        "camera { temperature 40 }\ncamera { temperature 41 }\n"))};
+    REQUIRE(error);
+    CHECK_CONTAINS(error->message, ":2:10: ");
+    CHECK_CONTAINS(error->snippet, "temperature 41");
+  }
+  SUBCASE("A flag is named as a flag, with no excerpt") {
+    auto flagged{files.camera("camera { lens \"singlet.lens\" }\n")};
+    flagged.camera.vignetting = Flag<float>{1.0f, true};
+    const auto error{refused(flagged)};
+    REQUIRE(error);
+    CHECK(error->message.rfind("-vignetting has no meaning", 0) == 0);
+    CHECK(error->snippet.empty());
+  }
+  SUBCASE("The pinhole over a body points at the body") {
+    const auto error{
+        refused(files.camera("camera {\n  sensor \"body.sensor\"\n}\n"))};
+    REQUIRE(error);
+    CHECK_CONTAINS(error->message, ":2:3: a physical sensor integrates");
+    CHECK_CONTAINS(error->snippet, "^~~~~~");
+  }
+}
+
+TEST_CASE("CameraModel: the thin lens's field, two ways") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-field"};
+  const auto refused{[&](const Options &opts) {
+    return smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); });
+  }};
+  SUBCASE("A focal length alone implies the field of view over 24 mm") {
+    const auto model{resolveCameraModel(files.camera("camera { focal_length "
+                                                     "50 }\n"))};
+    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.options.fovYDeg ==
+          doctest::Approx(2 * smdl::degrees(std::atan(12.0f / 50.0f))));
+    CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
+  }
+  SUBCASE("The flag implies it too, over the file's field of view") {
+    auto opts{files.camera("camera { fovy 30 }\n")};
+    opts.camera.focalLengthMM = Flag<float>{85.0f, true};
+    // Both stated, one from each source: the frame follows.
+    const auto model{resolveCameraModel(opts)};
+    CHECK(model.options.fovYDeg == 30.0f);
+    CHECK(model.options.frameSize.y ==
+          doctest::Approx(2 * 0.085f * std::tan(smdl::radians(15.0f))));
+    CHECK(model.options.frameSize.x ==
+          doctest::Approx(model.options.frameSize.y * 1280.0f / 720.0f));
+  }
+  SUBCASE("Both together size the observer's frame") {
+    const auto model{resolveCameraModel(
+        files.camera("camera { fovy 30 focal_length 50 }\n"))};
+    CHECK(model.options.fovYDeg == 30.0f);
+    CHECK(model.options.frameSize.y ==
+          doctest::Approx(2 * 0.05f * std::tan(smdl::radians(15.0f))));
+    CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
+    CHECK(!model.hasPhysicalSensor());
+  }
+  SUBCASE("Neither leaves the default field over 24 mm") {
+    const auto model{resolveCameraModel(files.camera("camera { }\n"))};
+    CHECK(model.options.fovYDeg == 37.8f);
+    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+  }
+  SUBCASE("Over a body the focal length states the field over the body's "
+          "frame") {
+    const auto model{resolveCameraModel(files.camera(
+        "camera { sensor \"body.sensor\" focal_length 4.8 fstop 2 }\n"))};
+    // A 2.4 mm frame under a 4.8 mm lens: the half height is a quarter
+    // of the focal length.
+    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.options.fovYDeg ==
+          doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
+    CHECK(thinLensFocalLength(model.options) == doctest::Approx(4.8e-3f));
+  }
+  SUBCASE("Over a body the field of view alone states it too, and both "
+          "are refused") {
+    const auto model{resolveCameraModel(
+        files.camera("camera { sensor \"body.sensor\" fovy 30 fstop 2 }\n"))};
+    CHECK(model.options.fovYDeg == 30.0f);
+    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" fovy 30 "
+                                     "focal_length 5 fstop 2 }\n")),
+                "'fovy' and 'focal_length' are two statements");
+    auto flagged{files.camera("camera { sensor \"body.sensor\" fovy 30 "
+                              "fstop 2 }\n")};
+    flagged.camera.focalLengthMM = Flag<float>{5.0f, true};
+    CHECK_ERROR(refused(flagged), "'fovy' and -focal-length are two");
+  }
+  SUBCASE("The observer over a body's frame follows the body's rule") {
+    auto opts{files.camera("camera { sensor \"body.sensor\" focal_length 4.8 "
+                           "fstop 2 }\n")};
+    opts.camera.sensor = Flag<std::string>{"human", true};
+    const auto model{resolveCameraModel(opts)};
+    CHECK(!model.hasPhysicalSensor());
+    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.options.fovYDeg ==
+          doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
+  }
+}
+
+TEST_CASE("CameraModel: the focus") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-focus"};
+  SUBCASE("A distance, infinity, or the autofocus, from the file") {
+    CHECK(resolveCameraModel(files.camera("camera { focus 4 }\n"))
+              .options.focus == 4.0f);
+    const auto atInfinity{
+        resolveCameraModel(files.camera("camera { focus infinity }\n"))};
+    CHECK(std::isinf(atInfinity.options.focus));
+    CHECK(!atInfinity.shouldAutofocus);
+    const auto automatic{
+        resolveCameraModel(files.camera("camera { focus auto }\n"))};
+    CHECK(automatic.shouldAutofocus);
+    CHECK(automatic.options.focus == 0.0f);
+  }
+  SUBCASE("The flag wins over the file, either way round") {
+    auto stated{files.camera("camera { focus auto }\n")};
+    stated.camera.focus = Flag<float>{3.0f, true};
+    const auto model{resolveCameraModel(stated)};
+    CHECK(!model.shouldAutofocus);
+    CHECK(model.options.focus == 3.0f);
+    auto automatic{files.camera("camera { focus 4 }\n")};
+    automatic.camera.shouldAutofocus = true;
+    CHECK(resolveCameraModel(automatic).shouldAutofocus);
+  }
+  SUBCASE("The report states the focus and the depth of field") {
+    const auto report{describeCamera(resolveCameraModel(
+        files.camera("camera { focal_length 50 fstop 8 focus 5 }\n")))};
+    CHECK_CONTAINS(report, "focus: 5 scene units");
+    // 50 mm at f/8 focused at 5 m on a 42.67 by 24 mm frame, whose
+    // circle of confusion is 0.0326 mm: hyperfocal at 9.63 m, sharp
+    // from 3.30 to 10.35 m.
+    CHECK_CONTAINS(report, "depth of field: 3.29");
+    CHECK_CONTAINS(report, " to 10.3");
+    CHECK_CONTAINS(report, "hyperfocal 9.62");
+    CHECK_CONTAINS(report, "circle of confusion of 0.0326");
+    const auto automatic{describeCamera(
+        resolveCameraModel(files.camera("camera { fstop 8 focus auto }\n")))};
+    CHECK_CONTAINS(automatic, "focus: auto, measured from the scene");
+    CHECK(automatic.find("depth of field") == std::string::npos);
+    const auto pinhole{
+        describeCamera(resolveCameraModel(files.camera("camera { }\n")))};
+    CHECK_CONTAINS(pinhole, "a pinhole, so everything is in focus");
   }
 }

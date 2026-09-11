@@ -60,10 +60,11 @@ struct Frame final {
 
   /// The camera itself.
   ///
-  /// Empty under `-autolook`, whose position comes from measuring the
-  /// committed scene: `StagedScene` fills it in after the solve. Every
-  /// other path constructs it here, before anything slow loads, so that
-  /// the lens validation in the constructor still fails fast.
+  /// Empty under `-autolook` and under `focus auto`, whose position and
+  /// focus come from measuring the committed scene: `StagedScene` fills
+  /// it in after the solves. Every other path constructs it here,
+  /// before anything slow loads, so that the lens validation in the
+  /// constructor still fails fast.
   std::optional<Camera> camera{};
 
   int2 resolution{};
@@ -134,13 +135,13 @@ class StagedScene final {
 public:
   /// Build the scene the compiled materials shade: import the layout,
   /// add the ground plane, commit the acceleration structures, solve the
-  /// autolook, and construct the environment, the media and the light
-  /// sampler.
+  /// autolook and the autofocus, and construct the environment, the
+  /// media and the light sampler.
   ///
   /// `compiler` is compiled and JIT-compiled here, and is borrowed for
   /// the object's whole lifetime. `frame.camera` is filled in under
-  /// `-autolook`, whose position is a measurement of the committed
-  /// scene.
+  /// `-autolook` and under `focus auto`, whose position and focus are
+  /// measurements of the committed scene.
   ///
   /// \throws smdl::Error  If a name the layout uses does not resolve, or
   ///                      the scene asks for two mutually exclusive

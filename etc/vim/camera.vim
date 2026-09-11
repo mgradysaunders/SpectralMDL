@@ -113,7 +113,8 @@ syn keyword cameraStatement sensor
 " The framing, the shutter, the readout, and what the photographer turned.
 " `distortion_fit` is bare, since the flag it mirrors takes no value either,
 " and `readout_direction` takes one of four words.
-syn keyword cameraSetting contained look_from look_to look_up fovy shutter
+syn keyword cameraSetting contained look_from look_to look_up fovy focal_length
+syn keyword cameraSetting contained shutter
 syn keyword cameraSetting contained readout readout_direction temperature
 syn keyword cameraReadoutDirection contained down up left right
 syn keyword cameraSetting contained fstop aperture focus blades blade_angle
@@ -128,6 +129,9 @@ syn keyword cameraSetting contained vignetting cat_eye cat_eye_radius
 " than a color can.
 syn keyword cameraSetting contained lens sensor
 syn keyword cameraStandIn contained human ideal
+
+" The two words `focus` takes in place of a distance.
+syn keyword cameraFocusWord contained infinity auto
 
 " The sensor block, the whole of a `.sensor` file: the pixels and the
 " pitch (or the size for the pitch to follow from), the response, the
@@ -166,11 +170,13 @@ syn keyword cameraDetectorSetting contained black_level bits gain max_iso
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
 " `distortion_fit`, `lens`, `sensor`, `temperature`, `shutter`, `readout`,
-" and `readout_direction`, which are not quantities to interpolate.
+" and `readout_direction`, which are not quantities to interpolate, and
+" states `focus` as a distance alone, never as `infinity` or `auto`.
 syn keyword cameraSetting contained motion
       \ nextgroup=cameraMotionBlock skipwhite skipempty
 syn keyword cameraMotionAt contained at
 syn keyword cameraMotionSetting contained look_from look_to look_up fovy
+syn keyword cameraMotionSetting contained focal_length
 syn keyword cameraMotionSetting contained fstop aperture focus blade_angle
 syn keyword cameraMotionSetting contained distortion_k1 distortion_k2
 syn keyword cameraMotionSetting contained vignetting cat_eye cat_eye_radius
@@ -182,7 +188,7 @@ syn cluster cameraCommon
 
 syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraSetting,cameraReadoutDirection,
-      \ cameraStandIn
+      \ cameraStandIn,cameraFocusWord
 
 syn region cameraMotionBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraMotionAt,cameraMotionSetting
@@ -228,6 +234,7 @@ hi def link cameraSetting         Label
 hi def link cameraMotionSetting   Label
 hi def link cameraReadoutDirection Constant
 hi def link cameraStandIn         Constant
+hi def link cameraFocusWord       Constant
 hi def link cameraSensorSetting   Label
 hi def link cameraResponseSetting Label
 hi def link cameraResponseKind    Constant
