@@ -26,8 +26,10 @@ smdl_add_doctest(
     "Render/PathStats.cc"
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
+    "Sensor/Colorimetry.cc"
     "Sensor/Detector.cc"
     "Sensor/Response.cc"
+    "Sensor/Sensor.cc"
   LINK
     "smdl-toy-objects"
   )

@@ -631,6 +631,21 @@ private:
 
 } // namespace
 
+double ResponseBand::at(double lambda) const noexcept {
+  if (!(lambda >= wavelengths.front() && lambda <= wavelengths.back()))
+    return 0.0;
+  const auto itr{
+      std::upper_bound(wavelengths.begin(), wavelengths.end(), float(lambda))};
+  const size_t i{size_t(itr - wavelengths.begin())};
+  if (i == 0) return double(values.front());
+  if (i == wavelengths.size()) return double(values.back());
+  const double w0{double(wavelengths[i - 1])};
+  const double w1{double(wavelengths[i])};
+  const double t{(lambda - w0) / (w1 - w0)};
+  return double(values[i - 1]) +
+         t * (double(values[i]) - double(values[i - 1]));
+}
+
 std::optional<size_t>
 ResponseSettings::bandIndex(std::string_view name) const noexcept {
   for (size_t i = 0; i < bands.size(); i++)

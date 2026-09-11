@@ -104,6 +104,10 @@ void visitDetectorFields(Self &self, Visitor &&visit) {
   visit("detector black level", self.blackLevel);
   visit("detector bits", self.bits);
   visit("detector electrons per film unit", self.electronsPerFilmUnit);
+  visit("detector iso", self.iso);
+  visit("detector base iso", self.baseISO);
+  visit("detector iso metered", self.wasISOMetered);
+  visit("detector white level", self.whiteLevel);
 }
 
 // The two directions over either table.

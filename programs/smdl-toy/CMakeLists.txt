@@ -54,6 +54,7 @@ target_sources(
     "Sensor/Detector.cc"
     "Sensor/Develop.cc"
     "Sensor/Response.cc"
+    "Sensor/Sensor.cc"
     "Render/Autolook.cc"
     "Render/Camera.cc"
     "Render/Guiding.cc"

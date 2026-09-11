@@ -111,6 +111,16 @@ struct CameraFlags final {
   bool shouldAutofocus{};
   /// \}
 
+  /// `-iso N|auto`: the ISO a physical sensor is read out at, and the
+  /// meter flagged apart, since it is a measurement of the film rather
+  /// than a value. One flag, so at most one of the two is set. See
+  /// `CameraSettings::iso`.
+  ///
+  /// \{
+  Flag<float> iso{};
+  bool shouldMeterISO{};
+  /// \}
+
   Flag<int> blades{};
 
   Flag<float> bladeAngleDeg{};

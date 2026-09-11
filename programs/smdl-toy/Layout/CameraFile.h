@@ -52,11 +52,11 @@ constexpr std::string_view LENS_IDEAL = "ideal";
 /// The ones left out are left out because they are not: `blades` counts
 /// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
 /// `sensor` are the instrument, `temperature` is the body's condition
-/// over the shot, `shutter`, `readout`, and `readout_direction`
-/// describe the interval a key is sampled over rather than something
-/// sampled within it, and `focus auto` is a measurement rather than a
-/// value, as `focus infinity` is a value with no distance to
-/// interpolate toward.
+/// over the shot, `iso` is applied after the render, `shutter`,
+/// `readout`, and `readout_direction` describe the interval a key is
+/// sampled over rather than something sampled within it, and `focus
+/// auto` is a measurement rather than a value, as `focus infinity` is a
+/// value with no distance to interpolate toward.
 ///
 class CameraKeyable {
 public:
@@ -150,6 +150,19 @@ public:
   /// in the sensor file. Meaningless to the observer, and refused with
   /// it.
   std::optional<float> temperature{};
+
+  /// `iso`: the ISO a physical sensor is read out at, positive; or
+  /// `auto`, which unset means too: the ISO is metered from the rendered
+  /// film as ISO 12232's saturation speed, never below the body's base.
+  /// The last statement wins, so a number clears `auto` and `auto`
+  /// clears a number. Not keyable, being applied after the render, and
+  /// refused with the observer, whose film holds radiance, and with a
+  /// body whose detector states its `gain`, which fixes the speed.
+  ///
+  /// \{
+  std::optional<float> iso{};
+  bool shouldMeterISO{};
+  /// \}
 
   /// `shutter`: the seconds from shutter open to shutter shut,
   /// nonnegative, which `-shutter` overrides. Zero or unset is a shut

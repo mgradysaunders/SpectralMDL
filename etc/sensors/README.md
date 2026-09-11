@@ -42,6 +42,22 @@ the rated base ISO are the makers' published figures. The rest of the
 detector (the read noise, the dark current, the black level) is the
 format's generic default, which the files do not restate.
 
+The well is derived from the rated base ISO: the exposure the well
+fills at is the saturation exposure ISO 12232 gives that speed, `78 /
+base_iso` lux-seconds of D55, counted through the body's most sensitive
+band at the stated peak. The full-frame bodies land in the tens of
+thousands of electrons (the a7 III at 52,000), which is the right order
+against the measured wells, and no better than the peak they rest on.
+The log and `-describe-camera` state every derived number as derived.
+
+An unstated ISO is metered from the rendered film as a reflected-light
+meter would set it, never below the base, and the log says what the
+meter asked for and, when the frame ran past the base or the top, the
+shutter or the stop that would bring it back; `iso` in the camera file
+or `-iso` states one instead. The gain follows the ISO from the same
+line: at the base it fills the well to the top code, and above the base
+the ADC clips before the well does.
+
 The Hasselblad L1D-20c is stated at 12 bits; its own raw files are
 16-bit DNG containers.
 
@@ -58,8 +74,10 @@ a copy of the file, or with `-readout`.
 `-output-dn` needs an exposure (`shutter`) and a pupil (`fstop` or
 `aperture` with the thin lens, or a `.lens`). A saved film reads out
 again with `-spp 0 -resume out.img -output-dn ...`, as many times as
-there are realizations to draw; `-detector-seed` picks the realization
-and `-detector-noise none|shot|all` isolates a term.
+there are realizations to draw, and at any ISO; `-detector-seed` picks
+the realization and `-detector-noise none|shot|all` isolates a term.
+The readout's header carries the ISO, the base ISO, whether the ISO was
+metered, and the white level beside the gain and the black level.
 
 The noise model assumes a converged film. It takes the band film's mean
 as the exact signal and draws the shot noise on it in full, so the

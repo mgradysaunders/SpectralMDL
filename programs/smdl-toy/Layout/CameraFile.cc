@@ -130,6 +130,8 @@ private:
         parseSensorSetting(camera, keyLoc);
       } else if (key == "temperature") {
         camera.temperature = finite(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "iso") {
+        parseISOSetting(camera, keyLoc);
       } else if (key == "blades") {
         camera.blades = int(numbers<1>()[0]);
       } else if (key == "blade_angle") {
@@ -200,9 +202,9 @@ private:
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
                          "focal_length, shutter, readout, readout_direction, "
-                         "lens, sensor, temperature, fstop, aperture, focus, "
-                         "blades, blade_angle, distortion_k1, distortion_k2, "
-                         "distortion_fit, vignetting, cat_eye, "
+                         "lens, sensor, temperature, iso, fstop, aperture, "
+                         "focus, blades, blade_angle, distortion_k1, "
+                         "distortion_k2, distortion_fit, vignetting, cat_eye, "
                          "cat_eye_radius, or motion)"));
         throw Recover();
       }
@@ -253,6 +255,27 @@ private:
     camera.focus =
         positive(keyLoc, "focus", finite(keyLoc, "focus", numbers<1>()[0]));
     camera.shouldAutofocus = false;
+  }
+
+  // The `iso` setting: a positive number, or `auto`. The last statement
+  // wins, as with `focus`.
+  void parseISOSetting(CameraSettings &camera, const LayoutLocation &keyLoc) {
+    if (mToken.kind == Token::WORD && mToken.text == "auto") {
+      advance();
+      camera.iso.reset();
+      camera.shouldMeterISO = true;
+      return;
+    }
+    if (mToken.kind != Token::WORD || !isNumber(mToken)) {
+      mDiags.error(location(),
+                   smdl::concat("expected a number or 'auto' after 'iso', "
+                                "got ",
+                                smdl::Quoted(mToken.text)));
+      throw Recover();
+    }
+    camera.iso =
+        positive(keyLoc, "iso", finite(keyLoc, "iso", numbers<1>()[0]));
+    camera.shouldMeterISO = false;
   }
 
   // A quoted path, or the one bare word that stands in for a file:
@@ -408,7 +431,7 @@ private:
                setting == "shutter" || setting == "readout" ||
                setting == "readout_direction" || setting == "resolution" ||
                setting == "lens" || setting == "sensor" ||
-               setting == "temperature") {
+               setting == "temperature" || setting == "iso") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),

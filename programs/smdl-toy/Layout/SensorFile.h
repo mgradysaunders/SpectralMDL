@@ -64,6 +64,10 @@ public:
   /// The curve's value at each knot, finite and nonnegative. The curve
   /// is zero outside its knots.
   std::vector<float> values{};
+
+  /// The curve at `lambda` nanometers, linear between the knots and zero
+  /// outside them.
+  [[nodiscard]] double at(double lambda) const noexcept;
 };
 
 /// The `response` a sensor reads through: its named bands as curves over

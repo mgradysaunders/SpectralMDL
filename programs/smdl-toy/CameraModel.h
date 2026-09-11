@@ -34,6 +34,12 @@ struct CameraModel final {
   /// alone.
   float temperature{25.0f};
 
+  /// The ISO the body is read out at, or nothing for auto: metered from
+  /// the rendered film, see `Sensor::meter()`, or the stated gain's own
+  /// speed when the body's detector fixes it. Meaningful to a physical
+  /// sensor alone.
+  std::optional<float> iso{};
+
   /// Is the focus `auto`, from either source? Then `options.focus` is
   /// not final: `solveAutofocus()` measures the committed scene and
   /// writes the distance, and the camera is built after it, as it is
@@ -94,7 +100,8 @@ struct CameraModel final {
 
 /// The report `-describe-camera` prints: the frame and the field, the
 /// pixels and the pitch, the film quantity, the focus and the depth of
-/// field, the bands and the tile, and the detector, as
-/// `resolveCameraModel()` resolved them. Builds the lens to trace its
-/// field, which is the one slow thing in it.
+/// field, the bands and the tile, the detector, and the well, the base
+/// ISO, and the ISO the body reads out at, as `resolveCameraModel()`
+/// resolved them. Builds the lens to trace its field, which is the one
+/// slow thing in it.
 [[nodiscard]] std::string describeCamera(const CameraModel &model);

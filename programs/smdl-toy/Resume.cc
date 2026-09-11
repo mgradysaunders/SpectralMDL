@@ -56,7 +56,8 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "threads",
                                                          "output-dn",
                                                          "detector-seed",
-                                                         "detector-noise"};
+                                                         "detector-noise",
+                                                         "iso"};
   static constexpr auto SESSION_ONLY_FLAGS = std::array{"guide",
                                                         "guide-adrrs",
                                                         "mnee",

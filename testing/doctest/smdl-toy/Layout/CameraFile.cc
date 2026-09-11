@@ -462,6 +462,48 @@ TEST_CASE("CameraFile: the temperature setting") {
   }
 }
 
+TEST_CASE("CameraFile: the iso setting") {
+  LayoutDiagnostics diags{};
+  SUBCASE("A number parses") {
+    const auto document{parseOK(diags, "camera { iso 400 }\n")};
+    REQUIRE(document.camera.iso);
+    CHECK(*document.camera.iso == 400.0f);
+    CHECK(!document.camera.shouldMeterISO);
+  }
+  SUBCASE("The word asks for the meter") {
+    const auto document{parseOK(diags, "camera { iso auto }\n")};
+    CHECK(!document.camera.iso);
+    CHECK(document.camera.shouldMeterISO);
+  }
+  SUBCASE("Absent, it stays unset, which is the meter too") {
+    const auto document{parseOK(diags, "camera { fovy 30 }\n")};
+    CHECK(!document.camera.iso);
+    CHECK(!document.camera.shouldMeterISO);
+  }
+  SUBCASE("The last statement wins, either way round") {
+    const auto toAuto{parseOK(diags, "camera { iso 400 iso auto }\n")};
+    CHECK(!toAuto.camera.iso);
+    CHECK(toAuto.camera.shouldMeterISO);
+    const auto toNumber{parseOK(diags, "camera { iso auto iso 200 }\n")};
+    REQUIRE(toNumber.camera.iso);
+    CHECK(*toNumber.camera.iso == 200.0f);
+    CHECK(!toNumber.camera.shouldMeterISO);
+  }
+  SUBCASE("A number is positive and finite, and anything else names the "
+          "two forms") {
+    CHECK_CONTAINS(parseError("camera { iso 0 }\n").message,
+                   "positive number for 'iso'");
+    CHECK_CONTAINS(parseError("camera { iso inf }\n").message,
+                   "finite number for 'iso'");
+    CHECK_CONTAINS(parseError("camera { iso bogus }\n").message,
+                   "expected a number or 'auto' after 'iso', got 'bogus'");
+  }
+  SUBCASE("It cannot be keyed, being applied after the render") {
+    CHECK_CONTAINS(parseError("camera { motion { at 0 iso 100 } }\n").message,
+                   "'iso' is not a quantity to interpolate");
+  }
+}
+
 TEST_CASE("CameraFile: the focal length setting") {
   LayoutDiagnostics diags{};
   SUBCASE("It parses in millimeters beside the field of view") {

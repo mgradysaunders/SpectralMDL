@@ -130,6 +130,13 @@ cl::opt<std::string> optFocus{
              "sees once the scene is built (default: the distance between "
              "-look-from and -look-to)"),
     cl::cat(catCamera)};
+cl::opt<std::string> optISO{
+    "iso",
+    cl::desc("The ISO a physical sensor is read out at, or 'auto' to meter it "
+             "from the rendered film as the saturation speed of ISO 12232, "
+             "never below the body's base ISO, overriding the camera file's "
+             "'iso' (default: the camera file's, else auto)"),
+    cl::cat(catCamera)};
 cl::opt<int> optBlades{
     "blades",
     cl::desc("The number of aperture blades (default: 0, a round lens)"),
@@ -642,6 +649,23 @@ Options parseCommandLine(int argc, char **argv) {
       focus = Flag<float>{value, true};
     }
   }
+  // The ISO, in its two forms: a number, or the meter.
+  auto iso{Flag<float>{}};
+  bool shouldMeterISO{};
+  if (optISO.getNumOccurrences() > 0) {
+    const auto &text{std::string(optISO)};
+    if (text == "auto") {
+      shouldMeterISO = true;
+    } else {
+      char *end{};
+      const float value{std::strtof(text.c_str(), &end)};
+      if (text.empty() || *end != '\0' || !std::isfinite(value) || !(value > 0))
+        throw smdl::Error(smdl::concat(
+            "expected -iso to be a positive number or 'auto', got ",
+            smdl::Quoted(text)));
+      iso = Flag<float>{value, true};
+    }
+  }
   // The old spelling of the frame size, which now means a file.
   if (optSensor.getNumOccurrences() > 0) {
     const auto &value{std::string(optSensor)};
@@ -714,6 +738,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.aperture = flag(optAperture);
   opts.camera.focus = focus;
   opts.camera.shouldAutofocus = shouldAutofocus;
+  opts.camera.iso = iso;
+  opts.camera.shouldMeterISO = shouldMeterISO;
   opts.camera.blades = flag(optBlades);
   opts.camera.bladeAngleDeg = flag(optBladeAngle);
   opts.camera.distortionK1 = flag(optDistortionK1);

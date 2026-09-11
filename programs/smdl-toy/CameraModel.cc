@@ -10,6 +10,7 @@
 #include "CameraModel.h"
 #include "Layout/LensFile.h"
 #include "Options.h"
+#include "Sensor/Sensor.h"
 
 namespace {
 
@@ -163,23 +164,60 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
   return line;
 }
 
-// One line naming the detector's chain.
-[[nodiscard]] std::string describeDetector(const DetectorSettings &detector) {
+// One line naming the detector's chain, with the well and the gain the
+// sensor's physics resolved.
+[[nodiscard]] std::string describeDetector(const Sensor &sensor) {
+  const auto &detector{sensor.settings().detector};
   return smdl::concat(
-      "well ",
-      detector.fullWell
-          ? smdl::concat(smdl::Brief(*detector.fullWell, 6), " e-")
-      : detector.baseISO
-          ? smdl::concat("from base ISO ", smdl::Brief(*detector.baseISO, 6))
-          : std::string("from the pitch"),
-      ", read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
+      "read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
       smdl::Brief(detector.darkCurrent, 4), " e-/s at ",
       smdl::Brief(detector.referenceTemperature, 4), " C doubling every ",
       smdl::Brief(detector.doublingTemperature, 4), " C; ", detector.bits,
-      " bits at ",
-      detector.gain ? smdl::concat(smdl::Brief(*detector.gain, 6), " DN/e-")
-                    : std::string("a gain filling the well"),
-      ", black level ", smdl::Brief(detector.blackLevel, 6), " DN");
+      " bits, black level ", smdl::Brief(detector.blackLevel, 6), " DN, ",
+      sensor.hasFixedGain()
+          ? smdl::concat("a stated gain of ", smdl::Brief(*detector.gain, 6),
+                         " DN/e-")
+          : smdl::concat(smdl::Brief(sensor.gain(sensor.baseISO()), 6),
+                         " DN/e- at the base ISO"));
+}
+
+// One line on the well and the base ISO, which are one fact, and what
+// they rest on: the most sensitive band's count under D55.
+[[nodiscard]] std::string describeWell(const Sensor &sensor) {
+  const auto &bands{sensor.settings().response.bands};
+  return smdl::concat(
+      smdl::Brief(sensor.fullWell(), 6), " e- ",
+      sensor.wellSource() == WellSource::STATED ? "stated"
+      : sensor.wellSource() == WellSource::FROM_BASE_ISO
+          ? "from the base ISO"
+          : "from the pitch, the generic well",
+      "; base ISO ", smdl::Brief(sensor.baseISO(), 5),
+      sensor.isBaseISOStated() ? " stated" : " from the well", ", ",
+      bands.empty() ? std::string("no band")
+                    : smdl::concat(smdl::Quoted(bands[sensor.peakBand()].name)),
+      " counting ", smdl::Brief(sensor.peakElectronsPerLuxSecond(), 4),
+      " e- per lux-second under D55");
+}
+
+// One line on the ISO the body reads out at: stated, the fixed gain's
+// own, or metered from the film, which cannot be known before it.
+[[nodiscard]] std::string describeISO(const Sensor &sensor,
+                                      const std::optional<float> &iso) {
+  if (sensor.hasFixedGain())
+    return smdl::concat(smdl::Brief(sensor.fixedGainISO(), 5),
+                        ", the saturation speed of the stated gain, so "
+                        "nothing is metered");
+  if (iso)
+    return smdl::concat(
+        smdl::Brief(*iso, 6), " stated, ", smdl::Brief(sensor.gain(*iso), 6),
+        " DN/e-",
+        *iso < sensor.baseISO()
+            ? ", below the base, so the well clips before the ADC does"
+            : "");
+  return smdl::concat("auto, metered from the film once it is rendered, "
+                      "from the base ",
+                      smdl::Brief(sensor.baseISO(), 5), " up to ",
+                      smdl::Brief(sensor.maxISO(), 6));
 }
 
 // The focus distance the camera will be built with, as the camera
@@ -434,6 +472,46 @@ CameraModel resolveCameraModel(const Options &opts) {
                      "this camera's sensor is 'human'");
     }
   }
+  // The ISO, which only a body reads out at: the flag over the file,
+  // and the meter when neither states a number. A body whose detector
+  // states its gain has one speed, which a number would contradict.
+  const auto physics{model.sensor ? std::optional<Sensor>(*model.sensor)
+                                  : std::optional<Sensor>()};
+  {
+    const bool wasFlagGiven{opts.camera.iso.wasGiven ||
+                            opts.camera.shouldMeterISO};
+    const bool wasStated{wasFlagGiven || fileCamera.iso.has_value() ||
+                         fileCamera.shouldMeterISO};
+    if (wasStated && !model.sensor) {
+      if (isBodyReplaced) {
+        SMDL_LOG_INFO("Sensor: 'iso' is ignored, since -sensor human "
+                      "replaced the body it was stated for");
+      } else {
+        refuser.refuse("iso", wasFlagGiven,
+                       smdl::concat(spellSetting("iso", wasFlagGiven),
+                                    " is a physical sensor's setting, and "
+                                    "this camera's sensor is 'human'"));
+      }
+    } else if (model.sensor) {
+      if (opts.camera.shouldMeterISO) {
+        if (fileCamera.iso)
+          SMDL_LOG_INFO("ISO: -iso auto replaces the camera file's 'iso ",
+                        smdl::Brief(*fileCamera.iso, 6), "'");
+      } else if (opts.camera.iso.wasGiven) {
+        model.iso = opts.camera.iso.value;
+      } else if (fileCamera.iso) {
+        model.iso = *fileCamera.iso;
+      }
+      if (model.iso && physics->hasFixedGain())
+        refuser.refuse(
+            "iso", opts.camera.iso.wasGiven,
+            smdl::concat(spellSetting("iso", opts.camera.iso.wasGiven),
+                         " has no meaning with a fixed gain: the body's "
+                         "detector states 'gain', whose saturation speed "
+                         "is ISO ",
+                         smdl::Brief(physics->fixedGainISO(), 5)));
+    }
+  }
   // What a readout needs, refused here for the same reason.
   if (!opts.image.outputDN.empty()) {
     if (!model.sensor)
@@ -504,7 +582,9 @@ CameraModel resolveCameraModel(const Options &opts) {
                   " mm frame; the film holds the irradiance at it");
     SMDL_LOG_INFO("Response: ", describeResponse(sensor.response));
     SMDL_LOG_INFO("Detector: ", sensor.hasDetectorBlock ? "" : "generic, ",
-                  describeDetector(sensor.detector));
+                  describeDetector(*physics));
+    SMDL_LOG_INFO("Well: ", describeWell(*physics));
+    SMDL_LOG_INFO("ISO: ", describeISO(*physics, model.iso));
   } else if (body) {
     const auto frameMM{1e3f * options.frameSize};
     SMDL_LOG_INFO("Sensor: the observer on a ", smdl::Brief(frameMM.x, 4),
@@ -632,9 +712,12 @@ std::string describeCamera(const CameraModel &model) {
          sensor.name.empty() ? std::string("(unnamed)")
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName));
+    const Sensor physics{sensor};
     line("  response: ", describeResponse(sensor.response));
     line("  detector: ", sensor.hasDetectorBlock ? "" : "generic, ",
-         describeDetector(sensor.detector));
+         describeDetector(physics));
+    line("  well: ", describeWell(physics));
+    line("  iso: ", describeISO(physics, model.iso));
     line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
   } else {
     line("sensor: the observer, so no bands and no readout");

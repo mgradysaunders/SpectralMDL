@@ -130,6 +130,20 @@ struct DetectorHeader final {
   /// electrons from the band film alone.
   double electronsPerFilmUnit{};
 
+  /// The ISO the gain follows, and the body's base ISO.
+  ///
+  /// \{
+  double iso{};
+  double baseISO{};
+  /// \}
+
+  /// Was the ISO metered from the film rather than stated?
+  bool wasISOMetered{};
+
+  /// The digital number a saturated pixel reads, which a develop takes
+  /// as white: the top code, unless the well clips below it.
+  uint64_t whiteLevel{};
+
   /// The lines to hand `smdl::writeENVIFileUInt16()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;
 

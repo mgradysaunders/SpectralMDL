@@ -16,7 +16,7 @@
 
 #include "Common.h"
 #include "IO/RenderHeader.h"
-#include "Layout/SensorFile.h"
+#include "Sensor/Sensor.h"
 
 /// Which noise the readout draws: none, so the digital numbers are a
 /// deterministic function of the film; the shot noise alone; or
@@ -43,11 +43,9 @@ struct DetectorReadoutOptions final {
   DetectorNoise noise{DetectorNoise::ALL};
 };
 
-/// What the readout takes from the body, the camera, and the shot.
-struct DetectorGeometry final {
-  /// The pixel's area in square meters.
-  double pixelArea{};
-
+/// The shot the readout is of: what the camera and the command line say
+/// about this exposure, beside the body `Sensor` is.
+struct DetectorShot final {
   /// The exposure in seconds: how long each line stays open.
   double exposure{};
 
@@ -59,8 +57,12 @@ struct DetectorGeometry final {
   /// header.
   double fNumber{};
 
-  /// The pixel pitch in micrometers, for the log and the header.
-  float2 pitchUM{};
+  /// The ISO the gain follows: stated, metered, or the fixed gain's own
+  /// speed. See `Sensor::gain()`.
+  double iso{};
+
+  /// Was the ISO metered rather than stated, for the header.
+  bool wasISOMetered{};
 };
 
 /// One readout: the digital numbers of every pixel of the frame, band
@@ -97,7 +99,8 @@ struct Readout final {
 /// `round(e * gain + black)` clips to the top code. The gain sits after
 /// the pixel-referred noise and before the ADC, the order that makes ISO
 /// invariance a phenomenon, and the black level sits after the gain, in
-/// digital numbers, as a camera's does.
+/// digital numbers, as a camera's does. The well and the gain are the
+/// sensor's, at the shot's ISO.
 ///
 /// The film's mean is taken as the exact signal: the shot noise is drawn
 /// on it in full, a Poisson below 25 electrons and a Gaussian of variance
@@ -119,17 +122,25 @@ struct Readout final {
 /// and bit for bit across runs.
 class Detector final {
 public:
-  /// Derive the well, the gain, the dark mean, and the electrons per
-  /// unit of film, and log the summary. The settings were validated at
-  /// parse, so nothing here throws; a stated gain that puts the top code
-  /// below the well is a warning, being what pushing the ISO does.
-  Detector(const DetectorSettings &settings, const DetectorGeometry &geometry);
+  /// Take the well and the gain at the shot's ISO from the sensor,
+  /// derive the dark mean and the electrons per unit of film, and log
+  /// the summary. The settings were validated at parse, so nothing here
+  /// throws; a gain that puts the top code below the well is a warning,
+  /// being what pushing the ISO does.
+  Detector(const Sensor &sensor, const DetectorShot &shot);
 
-  /// The well in electrons, stated or derived from the pitch.
+  /// The well in electrons.
   [[nodiscard]] double fullWell() const noexcept { return mFullWell; }
 
-  /// The gain in digital numbers per electron, stated or derived.
+  /// The gain in digital numbers per electron, at the shot's ISO.
   [[nodiscard]] double gain() const noexcept { return mGain; }
+
+  /// The shot's ISO, and the body's base.
+  ///
+  /// \{
+  [[nodiscard]] double iso() const noexcept { return mShot.iso; }
+  [[nodiscard]] double baseISO() const noexcept { return mBaseISO; }
+  /// \}
 
   /// The dark electrons at the exposure and temperature.
   [[nodiscard]] double darkElectrons() const noexcept { return mDarkElectrons; }
@@ -141,6 +152,11 @@ public:
 
   /// The ADC's top code, `2^bits - 1`.
   [[nodiscard]] uint16_t topCode() const noexcept { return mTopCode; }
+
+  /// The digital number a saturated pixel reads: the top code, or the
+  /// well through the gain where a gain leaves the well below the top
+  /// code. What a develop takes as white.
+  [[nodiscard]] uint16_t whiteLevel() const noexcept { return mWhiteLevel; }
 
   /// Read the film out. `window` bounds the tallies, not the readout,
   /// which covers the frame so that the unrendered rest reads as dark. A
@@ -163,9 +179,13 @@ private:
 
   DetectorSettings mSettings{};
 
-  DetectorGeometry mGeometry{};
+  DetectorShot mShot{};
+
+  float2 mPitchUM{};
 
   double mFullWell{};
+
+  double mBaseISO{};
 
   double mGain{};
 
@@ -174,4 +194,6 @@ private:
   double mElectronsPerFilmUnit{};
 
   uint16_t mTopCode{};
+
+  uint16_t mWhiteLevel{};
 };

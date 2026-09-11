@@ -17,10 +17,6 @@ namespace {
 // below costs a uniform per electron. ISETCam's own switch.
 constexpr double POISSON_LIMIT{25.0};
 
-// The generic well, electrons per square micrometer of pixel; see
-// `DetectorSettings::fullWell`.
-constexpr double ELECTRONS_PER_SQUARE_MICROMETER{1000.0};
-
 constexpr double TWO_PI_DOUBLE{6.283185307179586476925};
 
 // A uniform double in (0, 1) from one draw, never 0, so that its
@@ -73,44 +69,52 @@ const char *detectorNoiseName(DetectorNoise noise) noexcept {
   return "all";
 }
 
-Detector::Detector(const DetectorSettings &settings,
-                   const DetectorGeometry &geometry)
-    : mSettings(settings), mGeometry(geometry) {
-  const double pixelAreaUM2{geometry.pixelArea * 1e12};
-  mFullWell = settings.fullWell
-                  ? double(*settings.fullWell)
-                  : ELECTRONS_PER_SQUARE_MICROMETER * pixelAreaUM2;
+Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
+    : mSettings(sensor.settings().detector), mShot(shot),
+      mPitchUM(sensor.settings().pitchUM), mFullWell(sensor.fullWell()),
+      mBaseISO(sensor.baseISO()), mGain(sensor.gain(shot.iso)) {
+  const auto &settings{mSettings};
   mTopCode = uint16_t(settings.topCode());
-  const double codes{double(mTopCode) - double(settings.blackLevel)};
-  mGain = settings.gain ? double(*settings.gain) : codes / mFullWell;
+  const double black{double(settings.blackLevel)};
   mDarkElectrons =
-      double(settings.darkCurrent) * geometry.exposure *
-      std::exp2((geometry.temperature - double(settings.referenceTemperature)) /
+      double(settings.darkCurrent) * shot.exposure *
+      std::exp2((shot.temperature - double(settings.referenceTemperature)) /
                 double(settings.doublingTemperature));
-  mElectronsPerFilmUnit = geometry.pixelArea * geometry.exposure;
-  const double topCodeElectrons{codes / mGain};
-  SMDL_LOG_INFO("Readout: ", smdl::Brief(geometry.pitchUM.x, 4), " by ",
-                smdl::Brief(geometry.pitchUM.y, 4), " um pixels, ",
-                smdl::Brief(1e3 * geometry.exposure, 4), " ms at f/",
-                smdl::Brief(geometry.fNumber, 4), ", ",
-                smdl::Brief(mElectronsPerFilmUnit, 4),
-                " electrons per unit of film; dark ",
-                smdl::Brief(mDarkElectrons, 4), " e- at ",
-                smdl::Brief(geometry.temperature, 4), " C; well ",
-                smdl::Brief(mFullWell, 6), " e- ",
-                settings.fullWell ? "stated" : "from the pitch", ", ",
-                smdl::Brief(mGain, 6), " DN/e- over ", settings.bits,
-                " bits, black level ", smdl::Brief(settings.blackLevel, 6),
-                " DN, top code at ", smdl::Brief(topCodeElectrons, 6), " e-",
-                settings.baseISO
-                    ? smdl::concat("; base ISO ",
-                                   smdl::Brief(*settings.baseISO, 6), " stated")
-                    : std::string());
-  if (settings.gain && topCodeElectrons < mFullWell)
-    SMDL_LOG_WARN("the stated gain puts the top code at ",
+  mElectronsPerFilmUnit = sensor.pixelArea() * shot.exposure;
+  const double topCodeElectrons{(double(mTopCode) - black) / mGain};
+  mWhiteLevel = uint16_t(
+      std::min(double(mTopCode), std::round(mFullWell * mGain + black)));
+  const char *wellSource{sensor.wellSource() == WellSource::STATED ? "stated"
+                         : sensor.wellSource() == WellSource::FROM_BASE_ISO
+                             ? "from the base ISO"
+                             : "from the pitch"};
+  SMDL_LOG_INFO(
+      "Readout: ", smdl::Brief(mPitchUM.x, 4), " by ",
+      smdl::Brief(mPitchUM.y, 4), " um pixels, ",
+      smdl::Brief(1e3 * shot.exposure, 4), " ms at f/",
+      smdl::Brief(shot.fNumber, 4), ", ", smdl::Brief(mElectronsPerFilmUnit, 4),
+      " electrons per unit of film; dark ", smdl::Brief(mDarkElectrons, 4),
+      " e- at ", smdl::Brief(shot.temperature, 4), " C; well ",
+      smdl::Brief(mFullWell, 6), " e- ", wellSource, "; ISO ",
+      smdl::Brief(shot.iso, 6),
+      sensor.hasFixedGain() ? " of the stated gain"
+      : shot.wasISOMetered  ? " metered"
+                            : " stated",
+      ", ", smdl::Brief(mGain, 6), " DN/e- over ", settings.bits,
+      " bits, black level ", smdl::Brief(settings.blackLevel, 6),
+      " DN, white level ", mWhiteLevel, " DN, top code at ",
+      smdl::Brief(topCodeElectrons, 6), " e-");
+  if (topCodeElectrons < mFullWell)
+    SMDL_LOG_INFO("Readout: the top code sits at ",
                   smdl::Brief(topCodeElectrons, 6), " e-, below the well of ",
-                  smdl::Brief(mFullWell, 6),
-                  " e-, so the ADC clips before the pixel does");
+                  smdl::Brief(mFullWell, 6), " e-, so the ADC clips before ",
+                  "the pixel does, as it does above the base ISO of ",
+                  smdl::Brief(mBaseISO, 6));
+  else if (topCodeElectrons > 1.001 * mFullWell)
+    SMDL_LOG_WARN("the well clips at ", mWhiteLevel,
+                  " DN, below the top code of ", mTopCode, ", as it does ",
+                  sensor.hasFixedGain() ? "under the stated gain"
+                                        : "below the base ISO");
 }
 
 double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
@@ -208,10 +212,10 @@ DetectorHeader Detector::header(const DetectorReadoutOptions &options) const {
   auto header{DetectorHeader{}};
   header.seed = options.seed;
   header.noise = detectorNoiseName(options.noise);
-  header.exposure = mGeometry.exposure;
-  header.pixelWidth = mGeometry.pitchUM.x;
-  header.pixelHeight = mGeometry.pitchUM.y;
-  header.fNumber = mGeometry.fNumber;
+  header.exposure = mShot.exposure;
+  header.pixelWidth = mPitchUM.x;
+  header.pixelHeight = mPitchUM.y;
+  header.fNumber = mShot.fNumber;
   header.fullWell = mFullWell;
   header.readNoise = mSettings.readNoise;
   header.darkElectrons = mDarkElectrons;
@@ -219,5 +223,9 @@ DetectorHeader Detector::header(const DetectorReadoutOptions &options) const {
   header.blackLevel = mSettings.blackLevel;
   header.electronsPerFilmUnit = mElectronsPerFilmUnit;
   header.bits = uint64_t(mSettings.bits);
+  header.iso = mShot.iso;
+  header.baseISO = mBaseISO;
+  header.wasISOMetered = mShot.wasISOMetered;
+  header.whiteLevel = uint64_t(mWhiteLevel);
   return header;
 }

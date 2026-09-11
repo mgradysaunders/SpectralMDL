@@ -1,3 +1,5 @@
+#include <cmath>
+#include <optional>
 #include <string>
 
 #include "smdl/Support/Filesystem.h"
@@ -16,6 +18,7 @@
 #include "Sensor/Detector.h"
 #include "Sensor/Develop.h"
 #include "Sensor/Response.h"
+#include "Sensor/Sensor.h"
 #include "Stage.h"
 #include "Tonemap.h"
 
@@ -43,6 +46,87 @@ constexpr const char *ENVI_SOLAR_IRRADIANCE{"solar irradiance"};
 constexpr const char *ENVI_BAND_UNITS{"band units"};
 constexpr const char *ENVI_SENSOR_NAME{"render sensor name"};
 constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
+
+/// A shutter for the log, in seconds and as a reciprocal.
+[[nodiscard]] std::string spellShutter(double seconds) {
+  return seconds > 0 && seconds < 1
+             ? smdl::concat(smdl::Brief(seconds, 4), " s (1/",
+                            smdl::Brief(1.0 / seconds, 4), ")")
+             : smdl::concat(smdl::Brief(seconds, 4), " s");
+}
+
+/// The ISO the shot is read out at, and the log line that says why: the
+/// meter's reading against the base and the top, the shutter or the stop
+/// that would meter into range when the frame is outside it, and where
+/// a stated ISO or a fixed gain's speed sits against the meter.
+[[nodiscard]] double resolveISO(const Sensor &sensor,
+                                const std::optional<float> &stated,
+                                const MeteredExposure &metered,
+                                const DetectorShot &shot) {
+  const bool isDark{!(metered.luxSeconds > 0)};
+  const auto reading{
+      isDark
+          ? std::string("the film is dark, so the meter reads nothing")
+          : smdl::concat("the meter reads ", smdl::Brief(metered.luxSeconds, 4),
+                         " lux-seconds over the window and asks for ISO ",
+                         smdl::Brief(metered.wantedISO, 5))};
+  // Where a given ISO leaves the frame against the meter's wish.
+  const auto against{[&](double iso) {
+    if (isDark) return std::string();
+    const double stops{std::log2(double(iso) / metered.wantedISO)};
+    return smdl::concat(", so the frame comes out ",
+                        smdl::Brief(std::abs(stops), 3), " stops ",
+                        stops >= 0 ? "brighter" : "darker", " than metered");
+  }};
+  if (sensor.hasFixedGain()) {
+    const double iso{sensor.fixedGainISO()};
+    SMDL_LOG_INFO("ISO: ", smdl::Brief(iso, 5),
+                  ", the saturation speed of the stated gain; ", reading,
+                  against(iso));
+    return iso;
+  }
+  if (stated) {
+    const double iso{*stated};
+    SMDL_LOG_INFO("ISO: ", smdl::Brief(iso, 6), " stated; ", reading,
+                  against(iso));
+    if (iso < sensor.baseISO())
+      SMDL_LOG_WARN("ISO ", smdl::Brief(iso, 6), " is below the base ISO of ",
+                    smdl::Brief(sensor.baseISO(), 5),
+                    ", so the well clips before the ADC does");
+    else if (iso > sensor.maxISO())
+      SMDL_LOG_WARN("ISO ", smdl::Brief(iso, 6), " is above the top ISO of ",
+                    smdl::Brief(sensor.maxISO(), 6));
+    return iso;
+  }
+  if (metered.stopsOff != 0) {
+    // The exposure that would meter to the end of the range the frame
+    // ran past: the shutter scaled by the ISO ratio, or the stop by its
+    // square root.
+    const bool isOver{metered.isOverexposed()};
+    const double end{isOver ? sensor.baseISO() : sensor.maxISO()};
+    const auto fix{
+        isDark ? std::string()
+               : smdl::concat(
+                     ": a shutter of ",
+                     spellShutter(shot.exposure * metered.wantedISO / end),
+                     ", or f/",
+                     smdl::Brief(
+                         shot.fNumber * std::sqrt(end / metered.wantedISO), 4),
+                     ", would meter to it")};
+    SMDL_LOG_WARN(
+        "ISO ", smdl::Brief(metered.iso, 6),
+        isOver ? ", the base; " : ", the top; ", reading, ", so the frame is ",
+        isDark ? std::string("dark")
+               : smdl::concat(smdl::Brief(std::abs(metered.stopsOff), 3),
+                              " stops ", isOver ? "over" : "under", "exposed"),
+        " at the ", isOver ? "base" : "top", " ISO", fix);
+    return metered.iso;
+  }
+  SMDL_LOG_INFO("ISO: ", smdl::Brief(metered.iso, 5), " metered, from ",
+                smdl::Brief(metered.luxSeconds, 4),
+                " lux-seconds over the window");
+  return metered.iso;
+}
 
 } // namespace
 
@@ -184,42 +268,50 @@ void writeOutputs(const Options &opts, const Frame &frame,
         " wall, ", formatDuration(resumed.header.cpuSeconds), " compute over ",
         resumed.header.sessions, " session(s)");
   }
-  if (!opts.image.outputDN.empty()) {
-    // The readout: the band film through the detector, on its own pair
-    // under the same discipline. The model established the body, the
-    // exposure, and the pupil; the f-number comes off the camera here,
-    // which under -autolook exists only now.
-    SMDL_SANITY_CHECK(bandFilm && frame.camera && model.sensor);
-    const auto &sensor{*model.sensor};
-    auto geometry{DetectorGeometry{}};
-    geometry.pitchUM = sensor.pitchUM;
-    geometry.pixelArea = sensor.pixelArea();
-    geometry.exposure = gRenderShutter.exposure;
-    geometry.temperature = model.temperature;
-    geometry.fNumber = frame.camera->fNumber();
-    const Detector detector{sensor.detector, geometry};
-    const auto readout{detector.readOut(*bandFilm, opts.image.readout, window)};
-    const auto &dnName{opts.image.outputDN};
-    const auto dnPartName{dnName + ".part"};
-    auto dnLines{resumed.header.headerLines()};
-    for (const auto &line : responseLines) dnLines.push_back(line);
-    for (auto &line : detector.header(opts.image.readout).headerLines())
-      dnLines.push_back(std::move(line));
-    dnLines.push_back(
-        smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
-    const auto &bandNames{response->filmBandNames()};
-    smdl::writeENVIFileUInt16(
-        smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
-                                   readout.digitalNumbers.size()),
-        readout.bandCount, readout.pixelCountX, readout.pixelCountY, dnPartName,
-        smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
-        smdl::Span<const std::string>(dnLines.data(), dnLines.size()), window,
-        bandFilm->getNumSamples());
-    smdl::renameOnto(dnPartName, dnName);
-    smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
-    SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
-                  bandNames.size(), " band(s) of digital numbers up to ",
-                  detector.topCode());
+  // The exposure, which only a body has: the meter reads the film, the
+  // ISO follows (stated, metered, or the fixed gain's own), and the
+  // readout, when asked for, reads the band film out at it on its own
+  // pair under the same discipline. The model established the body,
+  // the exposure, and the pupil; the f-number comes off the camera
+  // here, which under -autolook exists only now.
+  if (model.sensor && gRenderShutter.hasExposure()) {
+    SMDL_SANITY_CHECK(frame.camera);
+    const Sensor sensor{*model.sensor};
+    auto shot{DetectorShot{}};
+    shot.exposure = gRenderShutter.exposure;
+    shot.temperature = model.temperature;
+    shot.fNumber = frame.camera->fNumber();
+    const auto metered{sensor.meter(film, wavelengths, window, shot.exposure)};
+    shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
+    shot.iso = resolveISO(sensor, model.iso, metered, shot);
+    if (!opts.image.outputDN.empty()) {
+      SMDL_SANITY_CHECK(bandFilm);
+      const Detector detector{sensor, shot};
+      const auto readout{
+          detector.readOut(*bandFilm, opts.image.readout, window)};
+      const auto &dnName{opts.image.outputDN};
+      const auto dnPartName{dnName + ".part"};
+      auto dnLines{resumed.header.headerLines()};
+      for (const auto &line : responseLines) dnLines.push_back(line);
+      for (auto &line : detector.header(opts.image.readout).headerLines())
+        dnLines.push_back(std::move(line));
+      dnLines.push_back(
+          smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
+      const auto &bandNames{response->filmBandNames()};
+      smdl::writeENVIFileUInt16(
+          smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
+                                     readout.digitalNumbers.size()),
+          readout.bandCount, readout.pixelCountX, readout.pixelCountY,
+          dnPartName,
+          smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
+          smdl::Span<const std::string>(dnLines.data(), dnLines.size()), window,
+          bandFilm->getNumSamples());
+      smdl::renameOnto(dnPartName, dnName);
+      smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
+      SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
+                    bandNames.size(), " band(s) of digital numbers up to ",
+                    detector.topCode());
+    }
   }
   {
     const auto ldrImage{

@@ -42,6 +42,14 @@ constexpr const char *BODY = "sensor {\n"
                              "  readout_direction up\n"
                              "}\n";
 
+// The same body with a stated gain, so that its speed is fixed.
+constexpr const char *FIXED_BODY = "sensor {\n"
+                                   "  pixels 600 400\n"
+                                   "  pitch 6\n"
+                                   "  response { band L { 400 1 700 1 } }\n"
+                                   "  detector { gain 0.5 }\n"
+                                   "}\n";
+
 // A biconvex singlet with the stop against its back, as a file.
 constexpr const char *SINGLET = "lens {\n"
                                 "  surface { radius 50 thickness 4 ior 1.5 "
@@ -56,6 +64,7 @@ class Files final {
 public:
   explicit Files(const char *stem) : mTmpDir(stem) {
     (void)mTmpDir.write("body.sensor", BODY);
+    (void)mTmpDir.write("fixed.sensor", FIXED_BODY);
     (void)mTmpDir.write("singlet.lens", SINGLET);
   }
 
@@ -233,6 +242,23 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
     CHECK_ERROR(refused(files.camera("camera { temperature 40 }\n")),
                 "'temperature' is a physical sensor's condition");
   }
+  SUBCASE("An ISO for the observer, from either source, in either form") {
+    CHECK_ERROR(refused(files.camera("camera { iso 400 }\n")),
+                "'iso' is a physical sensor's setting");
+    CHECK_ERROR(refused(files.camera("camera { iso auto }\n")),
+                "'iso' is a physical sensor's setting");
+    auto flagged{files.camera("camera { }\n")};
+    flagged.camera.iso = Flag<float>{400.0f, true};
+    CHECK_ERROR(refused(flagged), "-iso is a physical sensor's setting");
+  }
+  SUBCASE("An ISO for a body whose gain is fixed") {
+    CHECK_ERROR(refused(files.camera("camera { sensor \"fixed.sensor\" fstop 8 "
+                                     "iso 400 }\n")),
+                "'iso' has no meaning with a fixed gain");
+    // The meter is the default, so asking for it contradicts nothing.
+    CHECK_OK(refused(files.camera("camera { sensor \"fixed.sensor\" fstop 8 "
+                                  "iso auto }\n")));
+  }
   SUBCASE("A readout of the observer, or with no exposure") {
     auto human{files.camera("camera { }\n")};
     human.image.outputDN = "out-dn.img";
@@ -367,6 +393,58 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
     CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
     CHECK(model.options.fovYDeg ==
           doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
+  }
+}
+
+TEST_CASE("CameraModel: the ISO") {
+  ScopedShutter shutter{0.0f, 0.004f};
+  Files files{"camera-model-iso"};
+  SUBCASE("Stated in the file, by the flag, or metered when neither says") {
+    const auto stated{resolveCameraModel(
+        files.camera("camera { sensor \"body.sensor\" fstop 8 iso 400 }\n"))};
+    REQUIRE(stated.iso);
+    CHECK(*stated.iso == 400.0f);
+    auto flagged{
+        files.camera("camera { sensor \"body.sensor\" fstop 8 iso 400 }\n")};
+    flagged.camera.iso = Flag<float>{800.0f, true};
+    REQUIRE(resolveCameraModel(flagged).iso);
+    CHECK(*resolveCameraModel(flagged).iso == 800.0f);
+    flagged.camera.iso = Flag<float>{};
+    flagged.camera.shouldMeterISO = true;
+    CHECK(!resolveCameraModel(flagged).iso);
+    CHECK(!resolveCameraModel(
+               files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))
+               .iso);
+  }
+  SUBCASE("Stated for a body the flag replaced with the observer, it is "
+          "ignored") {
+    auto replaced{
+        files.camera("camera { sensor \"body.sensor\" fstop 8 iso 400 }\n")};
+    replaced.camera.sensor = Flag<std::string>{"human", true};
+    const auto model{resolveCameraModel(replaced)};
+    CHECK(!model.sensor);
+    CHECK(!model.iso);
+  }
+  SUBCASE("The report states the well, the base ISO, and the ISO") {
+    const auto metered{resolveCameraModel(
+        files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))};
+    const auto report{describeCamera(metered)};
+    CHECK_CONTAINS(report, "  well: 36000 e- from the pitch, the generic "
+                           "well; base ISO ");
+    CHECK_CONTAINS(report, " from the well, 'R' counting ");
+    CHECK_CONTAINS(report, " e- per lux-second under D55\n");
+    CHECK_CONTAINS(report, "  iso: auto, metered from the film once it is "
+                           "rendered, from the base ");
+    const auto stated{resolveCameraModel(
+        files.camera("camera { sensor \"body.sensor\" fstop 8 iso 800 }\n"))};
+    CHECK_CONTAINS(describeCamera(stated), "  iso: 800 stated, ");
+    CHECK_CONTAINS(describeCamera(stated), " DN/e-\n");
+    const auto fixed{resolveCameraModel(
+        files.camera("camera { sensor \"fixed.sensor\" fstop 8 }\n"))};
+    CHECK_CONTAINS(describeCamera(fixed),
+                   ", the saturation speed of the stated gain, so nothing "
+                   "is metered\n");
+    CHECK_CONTAINS(describeCamera(fixed), " a stated gain of 0.5 DN/e-\n");
   }
 }
 
