@@ -45,9 +45,10 @@ const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
     // broken files are not conflated.
     auto &fileHash{mFileHashes[std::pair(hash, !hash ? canonicalFileName
                                                      : std::string())]};
-    fileHash.hash = hash;
-    fileHash.canonicalFileNames.push_back(canonicalFileName);
-    nameItr->second = &fileHash;
+    if (!fileHash) fileHash = std::make_unique<MD5FileHash>();
+    fileHash->hash = hash;
+    fileHash->canonicalFileNames.push_back(canonicalFileName);
+    nameItr->second = fileHash.get();
   }
   return nameItr->second;
 }
