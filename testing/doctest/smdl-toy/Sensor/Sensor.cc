@@ -89,8 +89,8 @@ namespace {
     band.name = std::string(1, "RGB"[k]);
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
-      band.values.push_back(float(std::max(
-          0.0, 0.25 * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+      band.values.push_back(float(
+          std::max(0.0, 0.25 * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   return value;

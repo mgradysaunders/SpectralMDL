@@ -67,7 +67,7 @@
 
 /// The XYZ that matrix takes to (1, 1, 1), its D65 white, which the
 /// physical develop adapts every white to: a balanced white develops
-/// to exactly neutral, where the builtin's observer puts D65 0.4% off.
+/// to exactly neutral, where the observer's own D65 lands 0.3% off.
 [[nodiscard]] smdl::double3 linearSRGBWhite() noexcept;
 
 /// The linear Bradford adaptation from the white `from` to the white

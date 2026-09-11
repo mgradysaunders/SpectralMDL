@@ -99,8 +99,8 @@ void checkPlanes(const std::vector<float> &planes,
     const double scale{k == 2 ? 0.25 * blueScale : 0.25};
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
-      band.values.push_back(float(std::max(
-          0.0, scale * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+      band.values.push_back(float(
+          std::max(0.0, scale * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   if (isTiled) {

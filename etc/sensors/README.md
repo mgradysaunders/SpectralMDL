@@ -107,8 +107,8 @@ training reflectances of rawtoaces-data
 Apache-2.0), under the white balance's illuminant, against the CIE
 observer the renderer's own RGB conversion uses. `-describe-camera`
 reports each body's fit. Under D65 these bodies fit to a mean of 1.2 to
-1.9 CIEDE2000 and an index, `100 - 5.5` times the mean CIE 1976
-difference, of 81 (the 5D) to 88 (the 200D): a training error over this
+2.0 CIEDE2000 and an index, `100 - 5.5` times the mean CIE 1976
+difference, of 80 (the 5D) to 87 (the 200D): a training error over this
 set, which ISO 17321 computes over the ColorChecker instead, so it is
 optimistic and not comparable to a published one. A body whose bands
 fit the observer to worse than 10 CIEDE2000 develops as false color,
