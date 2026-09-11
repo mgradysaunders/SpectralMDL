@@ -9,6 +9,7 @@
 #include <filesystem>
 
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
@@ -559,12 +560,53 @@ size_t Compiler::dropUnusedImages() {
   return numDropped;
 }
 
+namespace {
+// Describe an error the JIT execution session reports. A symbol missing
+// because the host process does not define a '@(foreign)' function is
+// described at the function's declaration.
+[[nodiscard]] std::vector<Error>
+describeJITSessionError(llvm::Error error, char globalPrefix,
+                        const std::unordered_map<std::string, SourceLocation>
+                            &foreignFunctionSourceLocations) {
+  auto errors{std::vector<Error>()};
+  llvm::handleAllErrors(
+      std::move(error),
+      [&](const llvm::orc::SymbolsNotFound &notFound) {
+        auto otherNames{std::string()};
+        for (const auto &symbol : notFound.getSymbols()) {
+          auto name{*symbol};
+          if (globalPrefix != '\0')
+            name.consume_front(llvm::StringRef(&globalPrefix, 1));
+          if (auto itr{foreignFunctionSourceLocations.find(name.str())};
+              itr != foreignFunctionSourceLocations.end()) {
+            const auto &srcLoc{itr->second};
+            errors.emplace_back(srcLoc.formatMessage(concat(
+                                    "'@(foreign)' function ", Quoted(name),
+                                    " is not defined in the host process")),
+                                srcLoc.getSourceSnippet());
+          } else {
+            if (!otherNames.empty()) otherNames += ", ";
+            otherNames += concat(Quoted(name));
+          }
+        }
+        if (!otherNames.empty())
+          errors.emplace_back(
+              concat("JIT session error: symbols not found: ", otherNames));
+      },
+      [&](const llvm::ErrorInfoBase &info) {
+        errors.emplace_back(concat("JIT session error: ", info.message()));
+      });
+  return errors;
+}
+} // namespace
+
 void Compiler::resetForRecompile() {
   // Free the previous JIT first: this invalidates every function pointer
   // previously handed out, per the lifetime contract on the class.
   mLLVMJit.reset();
+  mForeignFunctionSourceLocations.clear();
   mJITSessionErrors.clear();
-  mWarnedResourceFileNames.clear();
+  mWarnedResourceKeys.clear();
   mImages.clear();
   mImageMipRequesters.clear();
   mImageSymbolNames.clear();
@@ -592,10 +634,15 @@ void Compiler::resetForRecompile() {
   mLLVMJit = llvmThrowIfError(
       llvm::orc::LLJITBuilder().setLinkProcessSymbolsByDefault(true).create());
   mLLVMJit->getExecutionSession().setErrorReporter([this](llvm::Error error) {
-    auto message{llvm::toString(std::move(error))};
-    SMDL_LOG_ERROR("JIT session error: ", message);
-    if (!mJITSessionErrors.empty()) mJITSessionErrors += '\n';
-    mJITSessionErrors += message;
+    for (auto &sessionError : describeJITSessionError(
+             std::move(error), mLLVMJit->getDataLayout().getGlobalPrefix(),
+             mForeignFunctionSourceLocations)) {
+      if (mIsJITCompiling) {
+        mJITSessionErrors.push_back(std::move(sessionError));
+      } else {
+        sessionError.print();
+      }
+    }
   });
 }
 
@@ -747,9 +794,9 @@ T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
 } // namespace
 
 void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
-                                      const std::string &fileName,
+                                      const std::string &key,
                                       std::string_view message) {
-  if (mWarnedResourceFileNames.insert(fileName).second) srcLoc.logWarn(message);
+  if (mWarnedResourceKeys.insert(key).second) srcLoc.logWarn(message);
 }
 
 const Image &Compiler::loadImage(const std::string &fileName,
@@ -780,8 +827,8 @@ const Image &Compiler::loadImage(const std::string &fileName,
       srcLoc.throwError(
           "cannot request a ", filterName(filter), " mip chain for ",
           QuotedPath(fileName), ": a ", filterName(image.getMipFilter()),
-          " mip chain was requested at ", itr->second.getModuleDisplayName(),
-          ":", itr->second.lineNo, ", and an image holds one chain");
+          " mip chain was requested at ", std::string(itr->second),
+          ", and an image holds one chain");
     }
   }
   return image;
@@ -852,15 +899,44 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
       }));
 }
 
+// A library that failed to load has no curves, and has said so already, so
+// the two lookups below only speak up about a library with curves to find.
 SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
                                     const SourceLocation &srcLoc) {
-  return loadSpectrumLibrary(fileName, srcLoc).getCurveByIndex(curveIndex);
+  const auto &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
+  auto spectrumView{spectrumLibrary.getCurveByIndex(curveIndex)};
+  if (const auto numCurves{spectrumLibrary.getNumCurves()};
+      spectrumView.curveValues.empty() && numCurves > 0) {
+    logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveIndex),
+                           concat("spectrum library ", QuotedPath(fileName),
+                                  " has no curve at index ", curveIndex,
+                                  " (it has ", numCurves,
+                                  numCurves == 1 ? " curve)" : " curves)"));
+  }
+  return spectrumView;
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const std::string &curveName,
                                     const SourceLocation &srcLoc) {
-  return loadSpectrumLibrary(fileName, srcLoc).getCurveByName(curveName);
+  const auto &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
+  auto spectrumView{spectrumLibrary.getCurveByName(curveName)};
+  if (spectrumView.curveValues.empty() && spectrumLibrary.getNumCurves() > 0) {
+    auto message{concat("spectrum library ", QuotedPath(fileName),
+                        " has no curve named ", Quoted(curveName))};
+    const auto curveNames{spectrumLibrary.getCurveNames()};
+    if (curveNames.empty()) {
+      message += " (its curves are unnamed)";
+    } else {
+      const auto candidates{
+          std::vector<std::string_view>(curveNames.begin(), curveNames.end())};
+      if (auto similar{suggestNearestName(curveName, candidates)};
+          !similar.empty())
+        message += concat("; did you mean ", Quoted(similar), "?");
+    }
+    logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveName), message);
+  }
+  return spectrumView;
 }
 
 const SpectrumLibrary &
@@ -902,6 +978,7 @@ std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
 
 std::optional<Error> Compiler::jitCompile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
+  mIsJITCompiling = true;
   auto error{catchAndReturnError([&] {
     if (!mLLVMJit || !mLLVMModule || !mLLVMContext)
       throw Error("nothing to JIT-compile: 'compile()' must be called first");
@@ -961,9 +1038,20 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     for (auto &mod : mModules) mod->reset();
     mAllocator.reset();
   })};
-  if (error && !mJITSessionErrors.empty()) {
-    error->message += "\nJIT session errors:\n";
-    error->message += mJITSessionErrors;
+  mIsJITCompiling = false;
+  mForeignFunctionSourceLocations.clear();
+  auto sessionErrors{std::move(mJITSessionErrors)};
+  mJITSessionErrors.clear();
+  if (!error) {
+    for (const auto &sessionError : sessionErrors) sessionError.print();
+  } else if (!sessionErrors.empty()) {
+    // A session error is the cause, and the lookup that failed is only
+    // how it surfaced, so the session errors lead.
+    auto cause{std::move(sessionErrors.front())};
+    for (size_t i = 1; i < sessionErrors.size(); i++)
+      cause.message += concat("\n  ", sessionErrors[i].message);
+    cause.message += concat("\n  ", error->message);
+    error = std::move(cause);
   }
   return error;
 }
@@ -996,12 +1084,11 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
   if (results.size() > 1) {
     auto message{concat("Material ", Quoted(materialName),
                         " is ambiguous with ", results.size(), " matches:")};
-    for (const auto *jitMaterial : results) {
-      message += "\n  ";
-      message +=
-          concat(jitMaterial->qualifiedName, " (",
-                 jitMaterial->moduleDisplayName, ":", jitMaterial->lineNo, ")");
-    }
+    for (const auto *jitMaterial : results)
+      message += concat("\n  ", jitMaterial->qualifiedName, " declared at ",
+                        LocationMarkup(jitMaterial->moduleDisplayName,
+                                       jitMaterial->lineNo, /*charNo=*/0,
+                                       !jitMaterial->moduleFileName.empty()));
     SMDL_LOG_ERROR(message);
     return nullptr;
   }
@@ -1136,8 +1223,9 @@ std::string Compiler::printMaterialSummary() const {
   std::string message{};
   forEachModuleGroup(
       mMaterialDefs.begin(), mMaterialDefs.end(), [&](auto itr0, auto itr1) {
+        const auto count{itr1 - itr0};
         message += concat(QuotedPath(itr0->moduleDisplayName), " contains ",
-                          itr1 - itr0, " materials:\n");
+                          count, count == 1 ? " material:\n" : " materials:\n");
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
           message += concat(Quoted(itr0->materialName), " (line ", itr0->lineNo,

@@ -169,6 +169,8 @@ std::optional<Error> Module::compile(Context &context) noexcept {
         SMDL_PROFILER_ENTRY("Module::compile()", mDisplayName.c_str());
         SMDL_PRESERVE(context.currentModule, context.currentNamespacePath);
         context.currentModule = this;
+        context.modulesInProgress.push_back(this);
+        SMDL_DEFER([&] { context.modulesInProgress.pop_back(); });
         // Always start from an empty namespace path: this module may be
         // compiled recursively from the middle of another module's
         // namespace, which must not leak into our material names.
@@ -212,7 +214,7 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("cannot format module extracted from archive in-place ",
-                   Quoted(mFileName)));
+                   QuotedPath(mFileName)));
       }
       auto stream{openOrThrow(mFileName, std::ios::out)};
       stream << formatted;

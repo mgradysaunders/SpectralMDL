@@ -296,7 +296,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
     image.requestMipLevels();
-    CHECK_THROWS(image.finishLoad());
+    CHECK_THROWS_AS(image.finishLoad(), smdl::Error);
     CHECK(image.getNumLevels() == 7);
     for (int level = 0; level < image.getNumLevels(); level++)
       for (int y = 0; y < image.getNumTexelsY(level); y++)
@@ -307,7 +307,11 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     auto fileName{(tmpDir / "test.txt").string()};
     std::ofstream(fileName) << "This is not an image!\n";
     smdl::Image image{};
-    CHECK(image.startLoad(fileName).has_value());
+    const auto error{image.startLoad(fileName)};
+    REQUIRE(error.has_value());
+    // The decoder's own reason, and not the C++ type it was thrown as.
+    CHECK_CONTAINS(error->message, "unknown image type");
+    CHECK_NOT_CONTAINS(error->message, "converted from");
     CHECK(image.startLoad((tmpDir / "missing.png").string()).has_value());
   }
   SUBCASE("Unrecognized extension must be a write error") {

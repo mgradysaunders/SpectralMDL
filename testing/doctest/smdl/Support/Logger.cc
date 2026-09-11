@@ -1,4 +1,4 @@
-#include "Fixtures.h"
+#include "CompileFixtures.h"
 
 #include "smdl/Support/Logger.h"
 
@@ -82,6 +82,23 @@ TEST_CASE("Logger: level labels") {
           CHECK(smdl::logLevelLabel(LEVELS[i], false, useUnicode) !=
                 smdl::logLevelLabel(LEVELS[j], false, useUnicode));
   }
+}
+
+TEST_CASE("Logger: a message below the minimum level is never built") {
+  const CollectedLog logged{"built"};
+  REQUIRE_FALSE(smdl::Logger::get().isEnabled(smdl::LOG_LEVEL_DEBUG));
+  REQUIRE(smdl::Logger::get().isEnabled(smdl::LOG_LEVEL_INFO));
+  auto numBuilt{0};
+  const auto build{[&] {
+    numBuilt++;
+    return std::string("built");
+  }};
+  SMDL_LOG_DEBUG(build());
+  CHECK(numBuilt == 0);
+  CHECK(logged.messages().empty());
+  SMDL_LOG_INFO(build());
+  CHECK(numBuilt == 1);
+  CHECK(logged.messages().size() == 1);
 }
 
 TEST_CASE("Logger: Unicode mode") {

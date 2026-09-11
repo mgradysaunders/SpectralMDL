@@ -175,7 +175,7 @@ public:
   /// does nothing. A decode failure leaves every level as well-defined
   /// zero texels.
   ///
-  /// \throw std::runtime_error If anything fails.
+  /// \throw Error If anything fails.
   ///
   void finishLoad();
 

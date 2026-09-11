@@ -5,7 +5,6 @@
 
 #include "Emitter.h"
 
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/QualifiedName.h"
 
 #include "llvm/IR/DerivedTypes.h"
@@ -37,17 +36,15 @@ std::string toSignatureString(std::string_view name,
 }
 
 // Drop the leading source location that `throwError` prepends to a message
-// thrown at `srcLoc`. Every candidate is probed against the same call site,
-// so repeating it on every note only obscures the candidate's own location.
-// This is a no-op if the message does not begin with that prefix.
+// thrown at `srcLoc`, which is what `formatMessage` puts before an empty
+// one. Every candidate is probed against the same call site, so repeating
+// it on every note only obscures the candidate's own location. This is a
+// no-op if the message does not begin with that prefix.
 std::string dropSourceLocation(std::string message,
                                const SourceLocation &srcLoc) {
-  auto prefix{std::string(srcLoc)};
-  if (!prefix.empty()) {
-    prefix += ' ';
-    if (llvm::StringRef(message).starts_with(prefix))
-      message.erase(0, prefix.size());
-  }
+  if (const auto prefix{srcLoc.formatMessage({})};
+      !prefix.empty() && llvm::StringRef(message).starts_with(prefix))
+    message.erase(0, prefix.size());
   return message;
 }
 
@@ -1534,12 +1531,12 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           compiler.mDesiredMaterialNames.end(), [&](const auto &desiredName) {
             return Compiler::matchesMaterialName(desiredName, qualifiedName);
           })) {
-    SMDL_LOG_DEBUG(std::string(decl.srcLoc), " Skipping material ",
-                   Quoted(decl.name), ": undesired by host program");
+    decl.srcLoc.logDebug(concat("Skipping material ", Quoted(qualifiedName),
+                                ": undesired by host program"));
     compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
     return;
   }
-  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
+  decl.srcLoc.logDebug(concat("New material ", Quoted(qualifiedName)));
   auto &jitMaterial{compiler.mMaterialDefs.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());

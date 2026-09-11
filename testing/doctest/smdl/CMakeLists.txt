@@ -35,6 +35,7 @@ smdl_add_doctest(
     "Support/FlatYAML.cc"
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
+    "Support/Profiler.cc"
     "Support/QualifiedName.cc"
     "Support/RNG.cc"
     "Support/Strings.cc"

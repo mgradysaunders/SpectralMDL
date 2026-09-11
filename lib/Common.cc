@@ -156,48 +156,39 @@ std::string SourceLocation::getSourceSnippet() const {
   return str;
 }
 
+std::string SourceLocation::formatMessage(std::string_view message) const {
+  auto str{std::string(*this)};
+  if (!str.empty()) str += ' ';
+  str += message;
+  return str;
+}
+
+void SourceLocation::logDebug(std::string_view message) const {
+  SMDL_LOG_DEBUG(formatMessage(message));
+}
+
+void SourceLocation::logInfo(std::string_view message) const {
+  SMDL_LOG_INFO(formatMessage(message));
+}
+
 void SourceLocation::logWarn(std::string_view message) const {
   // No source snippet: warnings come in bulk and mostly name what they are
   // about, so the caret costs more in noise than it returns in clarity.
-  auto str{std::string(*this)};
-  if (!str.empty()) str += ' ';
-  str += message;
-  SMDL_LOG_WARN(str);
+  SMDL_LOG_WARN(formatMessage(message));
 }
 
 void SourceLocation::logError(std::string_view message) const {
-  auto str{std::string(*this)};
-  if (!str.empty()) str += ' ';
-  str += message;
-  str += getSourceSnippet();
-  SMDL_LOG_ERROR(str);
+  SMDL_LOG_ERROR(formatMessage(message), getSourceSnippet());
 }
 
 void SourceLocation::throwError(std::string message) const {
-  auto str{std::string(*this)};
-  if (!str.empty()) str += ' ';
-  str += message;
-  throw Error(std::move(str), getSourceSnippet());
+  throw Error(formatMessage(message), getSourceSnippet());
 }
 
 SourceLocation::operator std::string() const {
-  std::string str{};
-  if (module_) {
-    str += '[';
-    // A module with no file prints its origin markup verbatim, e.g.,
-    // '<builtin ::df>'; only a real path is worth shortening.
-    if (module_->isFileBacked()) {
-      str += bestPathForPrinting(std::string(module_->getDisplayName()));
-    } else {
-      str += module_->getDisplayName();
-    }
-    str += ':';
-    str += std::to_string(lineNo);
-    str += ':';
-    str += std::to_string(charNo);
-    str += ']';
-  }
-  return str;
+  if (!module_) return {};
+  return concat(LocationMarkup(module_->getDisplayName(), lineNo, charNo,
+                               module_->isFileBacked()));
 }
 
 void State::finalize() noexcept {

@@ -31,10 +31,12 @@ void profilerEntryEnd(ProfilerEntry *entry) {
 void profilerFinalize(const char *outputFilename) {
   SMDL_SANITY_CHECK_MSG(isProfilerRunning,
                         "Must only call profiler_finalize() if initialized");
-  auto error{llvm::timeTraceProfilerWrite(outputFilename, "-")};
-  if (error) {
+  if (auto error{llvm::timeTraceProfilerWrite(outputFilename, "-")}) {
+    // Consumed out here, since the log macro only evaluates its arguments
+    // when the message is enabled.
+    const auto reason{llvm::toString(std::move(error))};
     SMDL_LOG_ERROR("cannot write profiler time-trace file ",
-                   QuotedPath(outputFilename));
+                   QuotedPath(outputFilename), ": ", reason);
   }
   llvm::timeTraceProfilerCleanup();
   isProfilerRunning = false;

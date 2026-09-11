@@ -13,6 +13,7 @@ formatter the builtin modules go through.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -77,6 +78,18 @@ def run_compiler(context, subcommand, source, arguments=()):
     return run.stderr + run.stdout, path, ""
 
 
+# The location an smdl diagnostic leads with: '[file:line:col]', or
+# '[file:line]' when the column is not known.
+LOCATION = re.compile(r"\[(.+?):(\d+)(?::\d+)?\]\s*")
+
+# How 'smdl list' reports the materials it compiled, under a heading for
+# each module:
+#   'material.smdl' contains 2 materials:
+#     'first' (line 3) [opaque]
+SUMMARY_HEADING = re.compile(r"'(.+)' contains \d+ materials?:$")
+SUMMARY_ENTRY = re.compile(r"\s+'([^']+)' \(line \d+\)")
+
+
 def diagnostics(output, path):
     """The `[error]` and `[warn]` lines of an smdl run, as (level, line,
     message), with the temporary path taken back out of them."""
@@ -89,15 +102,31 @@ def diagnostics(output, path):
                 continue
             body = line[len(level):].strip()
             number = 0
-            if body.startswith("["):
-                location, _, rest = body[1:].partition("]")
-                where, _, digits = location.rpartition(":")
-                if os.path.basename(where) == stem:
-                    number = int(digits) if digits.isdigit() else 0
-                    body = rest.strip()
+            location = LOCATION.match(body)
+            if location and os.path.basename(location.group(1)) == stem:
+                number = int(location.group(2))
+                body = body[location.end():]
             found.append((level.strip("[]"), number, body))
             break
     return found
+
+
+def material_names(output, path):
+    """The materials `smdl list` reports compiling from the file at `path`,
+    read from its summary rather than its log, which does not name them
+    at the default level."""
+    names = []
+    stem = os.path.basename(path)
+    inside = False
+    for line in output.splitlines():
+        heading = SUMMARY_HEADING.match(line)
+        if heading:
+            inside = os.path.basename(heading.group(1)) == stem
+            continue
+        entry = SUMMARY_ENTRY.match(line)
+        if inside and entry:
+            names.append(entry.group(1))
+    return names
 
 
 class SMDL_OT_new_material(bpy.types.Operator):
@@ -165,8 +194,7 @@ class SMDL_OT_check_material(bpy.types.Operator):
             self.report({"WARNING"}, f"{text.name} does not compile: "
                                      f"{len(errors)} error(s)")
         else:
-            materials = [line.split("'")[1] for line in output.splitlines()
-                         if "New material '" in line and "'" in line]
+            materials = material_names(output, path)
             self.report({"INFO"},
                         f"{text.name} compiles: "
                         + (", ".join(materials) if materials

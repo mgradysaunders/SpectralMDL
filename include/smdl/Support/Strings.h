@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -89,6 +90,28 @@ public:
   std::string_view str{};
 };
 
+/// A location in a source for use with `concat`, written the one way every
+/// diagnostic writes one: `[file:line:col]`, or `[file:line]` when the
+/// column is zero, meaning unknown. The file shortens as `QuotedPath`
+/// shortens it, unless `isPath` says the name is not a path at all, like
+/// the `<builtin ::df>` of a module with no file.
+class SMDL_EXPORT LocationMarkup final {
+public:
+  constexpr LocationMarkup(std::string_view name, uint32_t lineNo,
+                           uint32_t charNo = 0, bool isPath = true)
+      : name(name), lineNo(lineNo), charNo(charNo), isPath(isPath) {}
+  void appendTo(std::string &result) const;
+
+public:
+  std::string_view name{};
+
+  uint32_t lineNo{};
+
+  uint32_t charNo{};
+
+  bool isPath{true};
+};
+
 /// A number written with enough digits to read back exactly, for use
 /// with `concat`. This is what a number something will parse again
 /// needs: nine significant digits round-trip every `float`, and trailing
@@ -138,6 +161,7 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
     str += std::to_string(value);
   } else if constexpr (std::is_same_v<DecayT, Quoted> ||
                        std::is_same_v<DecayT, QuotedPath> ||
+                       std::is_same_v<DecayT, LocationMarkup> ||
                        std::is_same_v<DecayT, Precise> ||
                        std::is_same_v<DecayT, Brief>) {
     value.appendTo(str);

@@ -19,6 +19,22 @@ void QuotedPath::appendTo(std::string &result) const {
   result += '\'';
 }
 
+void LocationMarkup::appendTo(std::string &result) const {
+  result += '[';
+  if (isPath) {
+    result += bestPathForPrinting(std::string(name));
+  } else {
+    result += name;
+  }
+  result += ':';
+  result += std::to_string(lineNo);
+  if (charNo > 0) {
+    result += ':';
+    result += std::to_string(charNo);
+  }
+  result += ']';
+}
+
 // Both of these go through `snprintf` rather than the `<charconv>`
 // floating point overloads, which libstdc++ only grew in GCC 11 and
 // which this build's floor does not assume.

@@ -243,10 +243,20 @@ public:
   /// Returns the empty string if there is no source code to show.
   [[nodiscard]] std::string getSourceSnippet() const;
 
+  /// Get `message` as a diagnostic at this location reads: the location, a
+  /// space, and the message, or the message alone if there is no location.
+  [[nodiscard]] std::string formatMessage(std::string_view message) const;
+
+  /// Log a debug message.
+  void logDebug(std::string_view message) const;
+
+  /// Log an informational message.
+  void logInfo(std::string_view message) const;
+
   /// Log a warning.
   void logWarn(std::string_view message) const;
 
-  /// Log an error.
+  /// Log an error, with the source snippet beneath it.
   void logError(std::string_view message) const;
 
   /// Throw an `Error`.
@@ -265,7 +275,8 @@ public:
   /// Is valid?
   [[nodiscard]] operator bool() const { return module_; }
 
-  /// Convert to string.
+  /// Convert to the markup `LocationMarkup` writes, or to the empty string
+  /// if there is no module.
   [[nodiscard]] operator std::string() const;
 
 public:

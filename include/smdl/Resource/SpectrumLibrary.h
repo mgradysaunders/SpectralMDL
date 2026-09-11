@@ -45,6 +45,14 @@ public:
   [[nodiscard]]
   std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
+  /// Get the number of curves.
+  [[nodiscard]] size_t getNumCurves() const noexcept { return mNumCurves; }
+
+  /// Get the curve names, which are empty if the header names none.
+  [[nodiscard]] Span<const std::string> getCurveNames() const noexcept {
+    return mCurveNames;
+  }
+
   /// Get curve by name, or return empty view on failure.
   [[nodiscard]]
   SpectrumView getCurveByName(std::string_view name) const noexcept;

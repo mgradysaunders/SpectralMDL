@@ -3,6 +3,7 @@
 #include "smdl/Support/Strings.h"
 
 #include <array>
+#include <filesystem>
 #include <string>
 
 TEST_CASE("Strings: the suggestion and the float formatting") {
@@ -59,6 +60,19 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
           smdl::concat(smdl::Brief(1.0f / 3.0f, 1)));
     CHECK(smdl::concat(smdl::Brief(1.0f / 3.0f, 999)) ==
           smdl::concat(smdl::Brief(1.0f / 3.0f, 17)));
+  }
+  SUBCASE("A location is written the one way every diagnostic writes one") {
+    CHECK(smdl::concat(smdl::LocationMarkup("<builtin ::df>", 12, 5,
+                                            /*isPath=*/false)) ==
+          "[<builtin ::df>:12:5]");
+    // A column of zero is one nobody knows, and is left off.
+    CHECK(smdl::concat(smdl::LocationMarkup("<builtin ::df>", 12, 0,
+                                            /*isPath=*/false)) ==
+          "[<builtin ::df>:12]");
+    // A path shortens as 'QuotedPath' shortens it.
+    const auto path{(std::filesystem::current_path() / "main.mdl").string()};
+    CHECK(smdl::concat(smdl::LocationMarkup(path, 3, 1)) == "[main.mdl:3:1]");
+    CHECK(smdl::concat(smdl::QuotedPath(path)) == "'main.mdl'");
   }
   SUBCASE("The manipulators compose with everything else concat takes") {
     CHECK(smdl::concat("z = ", smdl::Brief(0.5f), " over ",

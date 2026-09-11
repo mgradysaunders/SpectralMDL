@@ -57,7 +57,7 @@ void Logger::close() {
 }
 
 void Logger::logMessage(LogLevel level, std::string_view message) {
-  if (level >= mMinLevel) {
+  if (isEnabled(level)) {
     std::scoped_lock guard{mMtx};
     for (auto &sink : mSinks) sink->logMessage(level, message);
   }

@@ -133,6 +133,20 @@ TEST_CASE("Compiler: the import resolution order") {
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
   }
+  SUBCASE("A cyclic import is reported at the import that closes it") {
+    // Host-supplied modules compile in the order they were added, so the
+    // cycle is always entered through '::a'.
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.addCode("::a", "#smdl\nimport ::b::*;\n"));
+    REQUIRE_OK(compiler.addCode("::b", "#smdl\nimport ::c::*;\n"));
+    REQUIRE_OK(compiler.addCode("::c", "#smdl\nimport ::a::*;\n"));
+    const auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
+    REQUIRE(error.has_value());
+    CHECK_CONTAINS(error->message,
+                   "[<string ::c>:2:1] cyclic import: '::a' imports '::b', "
+                   "which imports '::c', which imports '::a'");
+    CHECK_CONTAINS(error->snippet, "import ::a::*;");
+  }
   SUBCASE("Using aliases resolve through the same machinery") {
     tmpDir.write("root/target.mdl", "#smdl\nexport const int marker = 1;\n");
     tmpDir.write("root/sub/helper.mdl",
@@ -437,9 +451,16 @@ TEST_CASE("findMaterial: looking a material up by name") {
     CHECK(materialDef->lineNo > 0);
     // Absent name is null.
     CHECK(compiler.findMaterial("no_such_material") == nullptr);
-    // An ambiguous name is null and logs an error listing the
-    // candidates; 'findMaterials' enumerates them.
-    CHECK(compiler.findMaterial("dup") == nullptr);
+    // An ambiguous name is null and logs an error listing the candidates
+    // where they are declared; 'findMaterials' enumerates them.
+    {
+      const CollectedLog logged{"is ambiguous"};
+      CHECK(compiler.findMaterial("dup") == nullptr);
+      REQUIRE(logged.messages().size() == 1);
+      CHECK_CONTAINS(logged.messages()[0], "::alpha::dup declared at [");
+      CHECK_CONTAINS(logged.messages()[0], "alpha.mdl:7]");
+      CHECK_CONTAINS(logged.messages()[0], "beta.mdl:3]");
+    }
     CHECK(compiler.findMaterials("dup").size() == 2);
     // Module-qualified suffixes disambiguate.
     auto dupAlpha{compiler.findMaterial("alpha::dup")};
@@ -550,6 +571,42 @@ TEST_CASE("findMaterial: looking a material up by name") {
     }};
     CHECK(symbolNames() == symbolNames());
   }
+}
+
+TEST_CASE("printMaterialSummary: the materials of each module") {
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::one", "#smdl\nimport ::df::*;\n" +
+                                           minimalMaterial("m")));
+  REQUIRE_OK(compiler.addCode("::two", "#smdl\nimport ::df::*;\n" +
+                                           minimalMaterial("m1") +
+                                           minimalMaterial("m2")));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+  const auto summary{compiler.printMaterialSummary()};
+  CHECK_CONTAINS(summary, " contains 1 material:\n");
+  CHECK_CONTAINS(summary, " contains 2 materials:\n");
+}
+
+TEST_CASE("jitCompile: a '@(foreign)' function the host does not define") {
+  const CollectedLog logged{"smdlNoSuchSymbolAnywhere"};
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::host::foreign",
+                              "#smdl\n@(pure foreign)\n"
+                              "int smdlNoSuchSymbolAnywhere(int x);\n"
+                              "exec {\n"
+                              "  #println(smdlNoSuchSymbolAnywhere(3));\n"
+                              "}\n"));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+  const auto error{compiler.jitCompile()};
+  REQUIRE(error.has_value());
+  // The declaration is what there is to fix, so it leads, rather than the
+  // entry point whose lookup happened to fail first.
+  CHECK(smdl::startsWith(error->message, "[<string ::host::foreign>:3:1] "
+                                         "'@(foreign)' function "
+                                         "'smdlNoSuchSymbolAnywhere' is not "
+                                         "defined in the host process"));
+  CHECK_CONTAINS(error->snippet, "int smdlNoSuchSymbolAnywhere(int x);");
+  // Said once, in the error, and not logged on the way as well.
+  CHECK(logged.messages().empty());
 }
 
 TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
