@@ -51,6 +51,7 @@ target_sources(
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
     "Scene/Subdivide.cc"
+    "Sensor/Colorimetry.cc"
     "Sensor/Detector.cc"
     "Sensor/Develop.cc"
     "Sensor/Response.cc"

@@ -116,6 +116,7 @@ syn keyword cameraStatement sensor
 syn keyword cameraSetting contained look_from look_to look_up fovy focal_length
 syn keyword cameraSetting contained shutter
 syn keyword cameraSetting contained readout readout_direction temperature iso
+syn keyword cameraSetting contained white_balance
 syn keyword cameraReadoutDirection contained down up left right
 syn keyword cameraSetting contained fstop aperture focus blades blade_angle
 syn keyword cameraSetting contained distortion_k1 distortion_k2 distortion_fit
@@ -131,8 +132,13 @@ syn keyword cameraSetting contained lens sensor
 syn keyword cameraStandIn contained human ideal
 
 " The two words `focus` takes in place of a distance, the second of which
-" `iso` takes in place of a number too.
+" `iso` and `white_balance` take in place of a number too.
 syn keyword cameraFocusWord contained infinity auto
+
+" The white balance presets, which `white_balance` takes beside `auto` and
+" a temperature in kelvin.
+syn keyword cameraWhiteBalanceWord contained D65 daylight cloudy shade
+syn keyword cameraWhiteBalanceWord contained tungsten fluorescent
 
 " The sensor block, the whole of a `.sensor` file: the pixels and the
 " pitch (or the size for the pitch to follow from), the response, the
@@ -170,9 +176,9 @@ syn keyword cameraDetectorSetting contained black_level bits gain max_iso
 
 " motion { at <seconds> ... } inside camera: a track of keys at absolute times
 " on the render clock. A key restates any setting but `blades`,
-" `distortion_fit`, `lens`, `sensor`, `temperature`, `iso`, `shutter`,
-" `readout`, and `readout_direction`, which are not quantities to
-" interpolate, and
+" `distortion_fit`, `lens`, `sensor`, `temperature`, `iso`,
+" `white_balance`, `shutter`, `readout`, and `readout_direction`, which are
+" not quantities to interpolate, and
 " states `focus` as a distance alone, never as `infinity` or `auto`.
 syn keyword cameraSetting contained motion
       \ nextgroup=cameraMotionBlock skipwhite skipempty
@@ -190,7 +196,7 @@ syn cluster cameraCommon
 
 syn region cameraBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraSetting,cameraReadoutDirection,
-      \ cameraStandIn,cameraFocusWord
+      \ cameraStandIn,cameraFocusWord,cameraWhiteBalanceWord
 
 syn region cameraMotionBlock contained matchgroup=cameraDelim start="{" end="}"
       \ contains=@cameraCommon,cameraMotionAt,cameraMotionSetting
@@ -237,6 +243,7 @@ hi def link cameraMotionSetting   Label
 hi def link cameraReadoutDirection Constant
 hi def link cameraStandIn         Constant
 hi def link cameraFocusWord       Constant
+hi def link cameraWhiteBalanceWord Constant
 hi def link cameraSensorSetting   Label
 hi def link cameraResponseSetting Label
 hi def link cameraResponseKind    Constant

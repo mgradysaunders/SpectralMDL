@@ -9,7 +9,9 @@
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <utility>
 
 // The camera format's own vocabulary, over the syntax core in
 // `TextParser.h`. One directive and nothing else: what the picture is
@@ -132,6 +134,8 @@ private:
         camera.temperature = finite(keyLoc, key, numbers<1>()[0]);
       } else if (key == "iso") {
         parseISOSetting(camera, keyLoc);
+      } else if (key == "white_balance") {
+        parseWhiteBalanceSetting(camera);
       } else if (key == "blades") {
         camera.blades = int(numbers<1>()[0]);
       } else if (key == "blade_angle") {
@@ -202,10 +206,10 @@ private:
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
                          "focal_length, shutter, readout, readout_direction, "
-                         "lens, sensor, temperature, iso, fstop, aperture, "
-                         "focus, blades, blade_angle, distortion_k1, "
-                         "distortion_k2, distortion_fit, vignetting, cat_eye, "
-                         "cat_eye_radius, or motion)"));
+                         "lens, sensor, temperature, iso, white_balance, "
+                         "fstop, aperture, focus, blades, blade_angle, "
+                         "distortion_k1, distortion_k2, distortion_fit, "
+                         "vignetting, cat_eye, cat_eye_radius, or motion)"));
         throw Recover();
       }
     });
@@ -276,6 +280,35 @@ private:
     camera.iso =
         positive(keyLoc, "iso", finite(keyLoc, "iso", numbers<1>()[0]));
     camera.shouldMeterISO = false;
+  }
+
+  // The `white_balance` setting: a preset, a temperature, or `auto`. A
+  // number is a word to the tokenizer, so both go through the one
+  // spelling of the words.
+  void parseWhiteBalanceSetting(CameraSettings &camera) {
+    if (mToken.kind == Token::WORD) {
+      if (const auto whiteBalance{parseWhiteBalance(mToken.text)}) {
+        advance();
+        camera.whiteBalance = *whiteBalance;
+        return;
+      }
+      if (isNumber(mToken)) {
+        mDiags.error(location(),
+                     smdl::concat("expected a color temperature from ",
+                                  int(WHITE_BALANCE_KELVIN_MIN), " to ",
+                                  int(WHITE_BALANCE_KELVIN_MAX),
+                                  " K after 'white_balance', got ",
+                                  mToken.text));
+        throw Recover();
+      }
+    }
+    mDiags.error(location(),
+                 smdl::concat("expected D65, daylight, cloudy, shade, "
+                              "tungsten, fluorescent, auto, or a color "
+                              "temperature in kelvin after 'white_balance', "
+                              "got ",
+                              smdl::Quoted(mToken.text)));
+    throw Recover();
   }
 
   // A quoted path, or the one bare word that stands in for a file:
@@ -431,7 +464,8 @@ private:
                setting == "shutter" || setting == "readout" ||
                setting == "readout_direction" || setting == "resolution" ||
                setting == "lens" || setting == "sensor" ||
-               setting == "temperature" || setting == "iso") {
+               setting == "temperature" || setting == "iso" ||
+               setting == "white_balance") {
       mDiags
           .error(settingLoc,
                  smdl::concat(smdl::Quoted(setting),
@@ -508,6 +542,17 @@ sampleKeyed(const std::vector<CameraKey> &keys,
   return a.has_value() != b.has_value() || (a && *a != *b);
 }
 
+// The white balance words and what each names, the one spelling of
+// them that parsing and naming share.
+constexpr std::pair<std::string_view, WhiteBalanceKind> WHITE_BALANCE_WORDS[]{
+    {"D65", WhiteBalanceKind::D65},
+    {"daylight", WhiteBalanceKind::DAYLIGHT},
+    {"cloudy", WhiteBalanceKind::CLOUDY},
+    {"shade", WhiteBalanceKind::SHADE},
+    {"tungsten", WhiteBalanceKind::TUNGSTEN},
+    {"fluorescent", WhiteBalanceKind::FLUORESCENT},
+    {"auto", WhiteBalanceKind::AUTO}};
+
 } // namespace
 
 CameraSettings CameraSettings::at(float seconds) const {
@@ -539,6 +584,29 @@ CameraSettings::heldOverShutter(float open, float shut) const {
   CAMERA_HELD_SETTINGS(X)
 #undef X
   return held;
+}
+
+std::optional<WhiteBalance> parseWhiteBalance(std::string_view text) {
+  for (const auto &[word, kind] : WHITE_BALANCE_WORDS)
+    if (text == word) return WhiteBalance{kind, 0.0f};
+  // A temperature: the whole of the text a number within the range,
+  // which also turns away the 'infinity' that `strtof` reads as one.
+  const auto spelled{std::string(text)};
+  char *end{};
+  const float kelvin{std::strtof(spelled.c_str(), &end)};
+  if (spelled.empty() || *end != '\0' ||
+      !(kelvin >= WHITE_BALANCE_KELVIN_MIN &&
+        kelvin <= WHITE_BALANCE_KELVIN_MAX))
+    return std::nullopt;
+  return WhiteBalance{WhiteBalanceKind::KELVIN, kelvin};
+}
+
+std::string whiteBalanceName(const WhiteBalance &whiteBalance) {
+  if (whiteBalance.kind == WhiteBalanceKind::KELVIN)
+    return smdl::concat(smdl::Brief(whiteBalance.kelvin, 6), " K");
+  for (const auto &[word, kind] : WHITE_BALANCE_WORDS)
+    if (whiteBalance.kind == kind) return std::string(word);
+  return {};
 }
 
 CameraDocument parseCamera(LayoutDiagnostics &diags,

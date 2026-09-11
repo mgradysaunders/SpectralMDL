@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "smdl/Compiler.h"
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -15,9 +16,27 @@ class EnvLight;
 class Response;
 class STree;
 
+/// The picture as linear sRGB, developed the way the camera develops it:
+/// the observer's develop of the spectral film, or a physical sensor's
+/// of its band film read out noise-free, at the stated ISO or the one
+/// this film meters to. For a checkpoint, so nothing is logged and the
+/// preview differs from the final picture in its samples and its noise
+/// alone. `bandFilm` is the band film, which a physical sensor has.
+[[nodiscard]] std::vector<float>
+developPreview(const Options &opts, const Frame &frame,
+               const ResolvedGrid &grid, smdl::Compiler &compiler,
+               const smdl::SpectralFilm &film,
+               const smdl::SpectralFilm *bandFilm);
+
 /// Write everything the command line asked for: the linear RGB floating
-/// point image, the spectral ENVI pair, the guide tree beside it, and
-/// the tone mapped 8-bit image.
+/// point image, the spectral ENVI pair, the guide tree beside it, the
+/// readout, and the tone mapped 8-bit image.
+///
+/// The picture is developed by mode: the observer's develop of the
+/// spectral film, or a physical sensor's of its readout, which runs
+/// whether or not the digital numbers are written, since the picture is
+/// made from them. Both then take the same tail: the firefly filter, the
+/// floating point write, the tone map, and the 8-bit write.
 ///
 /// The film must already hold every sample the session took, resumed
 /// ones included. `outputSpectrum` is the resolved spectral path, empty

@@ -20,6 +20,7 @@
 
 #include "MedianFilter.h"
 #include "Options.h"
+#include "Output.h"
 #include "Progress.h"
 #include "Render.h"
 #include "Render/Guiding.h"
@@ -28,7 +29,6 @@
 #include "Render/PathTracing.h"
 #include "Render/Sampler.h"
 #include "Resume.h"
-#include "Sensor/Develop.h"
 #include "Sensor/Response.h"
 #include "Stage.h"
 #include "Tonemap.h"
@@ -209,10 +209,6 @@ void renderSamples(const Options &opts, const Frame &frame,
   // moves forward. The counters still show pixels, which is the number a
   // person pictures. Nothing is drawn unless stderr is a terminal, where
   // the summary below takes the bar's place.
-  // The radiance the renderer estimates, as linear RGB: what the floating
-  // point output holds, and what every tonemap displays. Resolved here
-  // rather than at the outputs because a checkpoint image runs the same
-  // path mid-render.
   // Rewriting the tone mapped output while the render runs, so that a tool
   // watching the file sees the image converge. The sums-plus-count film
   // is a valid mean at every moment, so a checkpoint is the finished write
@@ -231,7 +227,9 @@ void renderSamples(const Options &opts, const Frame &frame,
     const auto path{std::filesystem::path(opts.image.outputRGB)};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
-    auto rgb{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+    // Developed as the final picture is, a physical sensor's without its
+    // noise.
+    auto rgb{developPreview(opts, frame, grid, compiler, film, bandFilm)};
     // Filtered like the final write, so that a checkpoint differs from
     // it only in how many samples stand behind it.
     (void)medianFilterRGB(opts.image.medianFilter, rgb, numPixelsX, window);

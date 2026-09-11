@@ -40,6 +40,11 @@ struct CameraModel final {
   /// sensor alone.
   std::optional<float> iso{};
 
+  /// The white the body's develop balances to, `D65` unless the camera
+  /// file or `-white-balance` states another. Meaningful to a physical
+  /// sensor alone.
+  WhiteBalance whiteBalance{};
+
   /// Is the focus `auto`, from either source? Then `options.focus` is
   /// not final: `solveAutofocus()` measures the committed scene and
   /// writes the distance, and the camera is built after it, as it is
@@ -97,6 +102,15 @@ struct CameraModel final {
 ///                      size disagrees with the body's.
 ///
 [[nodiscard]] CameraModel resolveCameraModel(const Options &opts);
+
+/// Refuse what a render needs of the camera and a report does not: a
+/// physical sensor counts the electrons of an exposure, so a shut
+/// shutter renders nothing it can read out. Pointed at the `sensor` key
+/// when the camera file named the body.
+///
+/// \throws smdl::Error  If the camera cannot render.
+///
+void refuseUnrenderable(const CameraModel &model, const Options &opts);
 
 /// The report `-describe-camera` prints: the frame and the field, the
 /// pixels and the pitch, the film quantity, the focus and the depth of

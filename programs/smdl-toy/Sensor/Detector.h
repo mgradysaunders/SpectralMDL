@@ -122,12 +122,17 @@ struct Readout final {
 /// and bit for bit across runs.
 class Detector final {
 public:
-  /// Take the well and the gain at the shot's ISO from the sensor,
-  /// derive the dark mean and the electrons per unit of film, and log
-  /// the summary. The settings were validated at parse, so nothing here
-  /// throws; a gain that puts the top code below the well is a warning,
-  /// being what pushing the ISO does.
+  /// Take the well and the gain at the shot's ISO from the sensor, and
+  /// derive the dark mean and the electrons per unit of film. The
+  /// settings were validated at parse, so nothing here throws.
   Detector(const Sensor &sensor, const DetectorShot &shot);
+
+  /// Log the chain at the shot: the pixel, the exposure, the dark
+  /// electrons, the well, the ISO and its gain, and the levels; and
+  /// where the ADC clips against the well, which is what pushing the ISO
+  /// does. Apart from the constructor, so that a preview reads a film
+  /// out without saying so.
+  void logSummary() const;
 
   /// The well in electrons.
   [[nodiscard]] double fullWell() const noexcept { return mFullWell; }
@@ -152,6 +157,11 @@ public:
 
   /// The ADC's top code, `2^bits - 1`.
   [[nodiscard]] uint16_t topCode() const noexcept { return mTopCode; }
+
+  /// The digital number a pixel with no electrons reads.
+  [[nodiscard]] double blackLevel() const noexcept {
+    return double(mSettings.blackLevel);
+  }
 
   /// The digital number a saturated pixel reads: the top code, or the
   /// well through the gain where a gain leaves the well below the top
@@ -188,6 +198,10 @@ private:
   double mBaseISO{};
 
   double mGain{};
+
+  WellSource mWellSource{};
+
+  bool mHasFixedGain{};
 
   double mDarkElectrons{};
 

@@ -46,13 +46,67 @@ constexpr std::string_view SENSOR_HUMAN = "human";
 constexpr std::string_view LENS_IDEAL = "ideal";
 /// \}
 
+/// What a physical sensor's develop balances to: a named illuminant, a
+/// correlated color temperature, or the frame's own gray world.
+enum class WhiteBalanceKind {
+  /// CIE D65, the white the ideal pipeline's sRGB is referred to, so that
+  /// a develop agrees with the preview on color. The default.
+  D65,
+
+  /// The presets, after a camera's: D55, D65, D75, CIE illuminant A, and
+  /// CIE fluorescent F2.
+  ///
+  /// \{
+  DAYLIGHT,
+  CLOUDY,
+  SHADE,
+  TUNGSTEN,
+  FLUORESCENT,
+  /// \}
+
+  /// A correlated color temperature, `WhiteBalance::kelvin`.
+  KELVIN,
+
+  /// The frame's gray world, measured from the readout.
+  AUTO
+};
+
+/// The range of a stated color temperature: from candlelight up to where
+/// the CIE daylight locus stops.
+///
+/// \{
+constexpr float WHITE_BALANCE_KELVIN_MIN{1000.0f};
+constexpr float WHITE_BALANCE_KELVIN_MAX{25000.0f};
+/// \}
+
+/// A white balance, as the camera file's `white_balance` or
+/// `-white-balance` states it.
+struct WhiteBalance final {
+  WhiteBalanceKind kind{WhiteBalanceKind::D65};
+
+  /// With `KELVIN`, the temperature, within the range above.
+  float kelvin{};
+};
+
+/// The white balance `text` names: `D65`, `daylight`, `cloudy`, `shade`,
+/// `tungsten`, `fluorescent`, `auto`, or a temperature in kelvin within
+/// the range; nothing for anything else. The one spelling of the words,
+/// which the camera file and `-white-balance` share.
+[[nodiscard]] std::optional<WhiteBalance>
+parseWhiteBalance(std::string_view text);
+
+/// The name `parseWhiteBalance()` reads back, for the log and the
+/// report: the word, or the temperature and its unit.
+[[nodiscard]] std::string whiteBalanceName(const WhiteBalance &whiteBalance);
+
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
 ///
 /// The ones left out are left out because they are not: `blades` counts
 /// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
 /// `sensor` are the instrument, `temperature` is the body's condition
-/// over the shot, `iso` is applied after the render, `shutter`,
+/// over the shot, `iso` and `white_balance` are applied after the render,
+/// `shutter`,
 /// `readout`, and `readout_direction` describe the interval a key is
 /// sampled over rather than something sampled within it, and `focus
 /// auto` is a measurement rather than a value, as `focus infinity` is a
@@ -163,6 +217,12 @@ public:
   std::optional<float> iso{};
   bool shouldMeterISO{};
   /// \}
+
+  /// `white_balance`: the white a physical sensor's develop balances to,
+  /// `D65` unless stated; see `WhiteBalance`. Not keyable, being applied
+  /// after the render, and refused with the observer, which has no
+  /// develop to balance.
+  std::optional<WhiteBalance> whiteBalance{};
 
   /// `shutter`: the seconds from shutter open to shutter shut,
   /// nonnegative, which `-shutter` overrides. Zero or unset is a shut

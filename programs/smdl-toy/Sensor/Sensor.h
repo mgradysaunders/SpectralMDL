@@ -6,11 +6,13 @@
 /// the body's alone.
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
 
 #include "Color.h"
+#include "Layout/CameraFile.h"
 #include "Layout/SensorFile.h"
 
 /// The wavelengths every integral of the sensor's physics runs over: 1
@@ -40,13 +42,45 @@ using SensorSpectrum = std::vector<double>;
 /// `smdlEvalIlluminantD()`.
 [[nodiscard]] SensorSpectrum daylightSpectrum(double kelvin);
 
-/// The correlated color temperature of D55, the illuminant ISO 12232
-/// rates a sensor's speed under, and of D65.
+/// The correlated color temperatures of D55, the illuminant ISO 12232
+/// rates a sensor's speed under and the `daylight` white balance; of
+/// D65, the white of sRGB; of D75, the `shade` white balance; and of CIE
+/// illuminant A, the `tungsten` one.
 ///
 /// \{
 constexpr double D55_KELVIN{5503.0};
 constexpr double D65_KELVIN{6504.0};
+constexpr double D75_KELVIN{7504.0};
+constexpr double ILLUMINANT_A_KELVIN{2856.0};
 /// \}
+
+/// The Planckian radiator of temperature `kelvin` on the grid, relative,
+/// 1 at 560 nm, with the second radiation constant of CODATA 2018, so
+/// that at `ILLUMINANT_A_KELVIN` it is CIE illuminant A.
+[[nodiscard]] SensorSpectrum planckSpectrum(double kelvin);
+
+/// The illuminant of correlated color temperature `kelvin`: CIE daylight
+/// from 4000 K up, and below it, where the daylight locus stops, the
+/// Planckian radiator.
+[[nodiscard]] SensorSpectrum kelvinSpectrum(double kelvin);
+
+/// The illuminant a white balance names: D65 for `D65` and `cloudy`, D55
+/// for `daylight`, D75 for `shade`, illuminant A for `tungsten`, CIE
+/// fluorescent F2 for `fluorescent`, and `kelvinSpectrum()` of a stated
+/// temperature. `auto` names none until the frame is measured, and
+/// reads as D65.
+[[nodiscard]] SensorSpectrum
+whiteBalanceSpectrum(const WhiteBalance &whiteBalance);
+
+/// The white of `illuminant` through the builtin's observer,
+/// `builtinWymanXYZ()`, scaled so that Y is 1.
+[[nodiscard]] smdl::double3 illuminantWhite(const SensorSpectrum &illuminant);
+
+/// The reflectances a color fit trains on: the 190 patches of
+/// rawtoaces-data on the grid, linear between the table's 5 nm steps and
+/// held at its end values past 380 and 780 nm, where a surface does not
+/// stop reflecting.
+[[nodiscard]] const std::vector<SensorSpectrum> &trainingReflectances();
 
 /// Lumens per watt at the peak of the observer, which turns an integral
 /// against `V` into lux.
@@ -109,6 +143,62 @@ struct MeteredExposure final {
   /// Is the frame outside the instrument's range?
   [[nodiscard]] bool isOverexposed() const noexcept { return stopsOff > 0; }
   [[nodiscard]] bool isUnderexposed() const noexcept { return stopsOff < 0; }
+};
+
+/// The mean CIEDE2000 over the training reflectances past which a fit
+/// no longer sees color as the observer does, and a develop maps the
+/// bands to R, G, and B as they are: several times any camera's, which
+/// sit between 1 and 2, and far below what a sensor blind to part of
+/// the visible makes of the set.
+constexpr double FAITHFUL_FIT_DELTA_E00{10.0};
+
+/// How three of a sensor's bands see color against the observer under
+/// one illuminant. See `Sensor::fitColor()`.
+struct ColorFit final {
+  /// The bands mapped to R, G, and B, as indices into the response's.
+  std::array<size_t, 3> bands{};
+
+  /// The white balance: what each band is multiplied by so that the
+  /// illuminant's white reads the same in all three as in the second,
+  /// green, `n_G(S) / n_b(S)`.
+  smdl::double3 multipliers{};
+
+  /// The matrix from white-balanced camera RGB, in units where the
+  /// illuminant's white reads (1, 1, 1), to XYZ under the illuminant,
+  /// taking (1, 1, 1) to `white` exactly.
+  smdl::double3x3 cameraToXYZ{};
+
+  /// The illuminant's white through the builtin's observer, Y = 1.
+  smdl::double3 white{};
+
+  /// The fit's error over the training reflectances in CIELAB about
+  /// `white`: the mean and the largest CIEDE2000, and the mean CIE 1976
+  /// difference.
+  ///
+  /// \{
+  double meanDeltaE00{};
+  double maxDeltaE00{};
+  double meanDeltaEab{};
+  /// \}
+
+  /// Did the bands respond too much alike to the training reflectances,
+  /// or not at all to the illuminant, to tell three colors apart? Then
+  /// there is no matrix, and the errors are meaningless.
+  bool isSingular{};
+
+  /// The sensor metamerism index over the training reflectances, `100 -
+  /// 5.5 mean dE*ab`: ISO 17321's formula, which the standard applies to
+  /// the 18 chromatic ColorChecker patches. Over this set it is a
+  /// training error, optimistic, and not comparable to a published one.
+  [[nodiscard]] double index() const noexcept {
+    return 100.0 - 5.5 * meanDeltaEab;
+  }
+
+  /// Does the fit see color the way the observer does? See
+  /// `FAITHFUL_FIT_DELTA_E00`.
+  [[nodiscard]] bool isFaithful() const noexcept {
+    return !isSingular && meanDeltaE00 <= FAITHFUL_FIT_DELTA_E00;
+  }
 };
 
 /// The sensor: its settings resolved into the numbers the readout and
@@ -220,6 +310,17 @@ public:
   [[nodiscard]] MeteredExposure meter(const smdl::SpectralFilm &film,
                                       const Color &wavelengths, int4 window,
                                       double seconds) const;
+
+  /// Fit the color matrix of `bands` under `illuminant`: white-preserving
+  /// least squares (Finlayson and Drew 1997) from the bands' responses to
+  /// the training reflectances, white-balanced, to the observer's XYZ of
+  /// the same reflectances, `M = M_LS + (x_w - M_LS c_w) (c_w^T A^-1
+  /// c_w)^-1 c_w^T A^-1` with `A = C C^T` and `c_w = (1, 1, 1)`: the
+  /// white lands exactly, and the rest as closely as three by three
+  /// numbers can put it. The render grid has no part in it, so the fit
+  /// is the body's alone.
+  [[nodiscard]] ColorFit fitColor(const std::array<size_t, 3> &bands,
+                                  const SensorSpectrum &illuminant) const;
 
 private:
   SensorSettings mSettings{};

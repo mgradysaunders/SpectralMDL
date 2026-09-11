@@ -86,6 +86,35 @@ of it: render until the film's error is well under the shot noise, which
 is 1% at 10,000 electrons, before reading it out. A firefly or an
 unconverged caustic reads out as signal.
 
+## Developing a sensor
+
+A camera that names one of these bodies writes a developed picture to
+`-output-rgb` with no flag asked for: the readout, noise and all, goes
+through the steps a raw developer takes. The digital numbers over the
+black level, balanced to the camera's `white_balance` (`D65` unless
+stated, so that the develop agrees with the `-sensor human` preview;
+`daylight`, `cloudy`, `shade`, `tungsten`, `fluorescent`, a temperature
+in kelvin, or `auto` for the frame's gray world), held where a saturated
+white would lose its color, demosaicked (Hamilton-Adams on these RGGB
+tiles), and mapped to linear sRGB by a matrix fitted to the body's own
+curves. A metered neutral develops to 0.18, middle gray. `-output-rgbf`
+holds the same linear picture, and the tone map and `-exposure` apply to
+it as they do to the observer's.
+
+The matrix is a white-preserving least-squares fit over the 190
+training reflectances of rawtoaces-data
+(https://github.com/AcademySoftwareFoundation/rawtoaces-data,
+Apache-2.0), under the white balance's illuminant, against the CIE
+observer the renderer's own RGB conversion uses. `-describe-camera`
+reports each body's fit. Under D65 these bodies fit to a mean of 1.2 to
+1.9 CIEDE2000 and an index, `100 - 5.5` times the mean CIE 1976
+difference, of 81 (the 5D) to 88 (the 200D): a training error over this
+set, which ISO 17321 computes over the ColorChecker instead, so it is
+optimistic and not comparable to a published one. A body whose bands
+fit the observer to worse than 10 CIEDE2000 develops as false color,
+each band on its own channel, and one with fewer than three bands as
+gray; both say so.
+
 ## Source
 
 Winquist and Thurston, "Physlight - Camera Spectral Sensitivity

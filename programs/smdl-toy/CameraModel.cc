@@ -220,6 +220,47 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                       smdl::Brief(sensor.maxISO(), 6));
 }
 
+// One line on how the body sees color under its white balance: the fit
+// over the training reflectances, its index, and the multipliers; or
+// why the develop takes the bands as they are. An `auto` white balance
+// is read off the frame once it is rendered, so the fit here is the one
+// it starts from, under D65.
+[[nodiscard]] std::string describeColor(const Sensor &sensor,
+                                        const WhiteBalance &whiteBalance) {
+  const auto &response{sensor.settings().response};
+  const auto balance{
+      smdl::concat("white balance ", whiteBalanceName(whiteBalance),
+                   whiteBalance.kind == WhiteBalanceKind::AUTO
+                       ? ", the frame's gray world, fitted here under D65"
+                       : "")};
+  const auto rgb{response.rgbBands()};
+  if (!rgb)
+    return smdl::concat(response.bands.size(),
+                        " band(s) cannot carry color, so the develop is "
+                        "gray; ",
+                        balance);
+  const auto &r{response.bands[(*rgb)[0]].name};
+  const auto &g{response.bands[(*rgb)[1]].name};
+  const auto &b{response.bands[(*rgb)[2]].name};
+  const auto fit{sensor.fitColor(*rgb, whiteBalanceSpectrum(whiteBalance))};
+  if (fit.isSingular)
+    return smdl::concat(r, ", ", g, ", and ", b,
+                        " respond too much alike to tell colors apart, so "
+                        "the develop is false color; ",
+                        balance);
+  return smdl::concat(
+      r, ", ", g, ", ", b, " fitted over ", trainingReflectances().size(),
+      " training reflectances to a mean of ", smdl::Brief(fit.meanDeltaE00, 3),
+      " dE00 and a largest of ", smdl::Brief(fit.maxDeltaE00, 3),
+      ", an index of ", smdl::Brief(fit.index(), 3), " over this set",
+      fit.isFaithful()
+          ? std::string()
+          : smdl::concat(", past ", smdl::Brief(FAITHFUL_FIT_DELTA_E00, 3),
+                         " dE00, so the develop is false color"),
+      "; ", balance, ", ", r, " ", smdl::Brief(fit.multipliers.x, 4), " and ",
+      b, " ", smdl::Brief(fit.multipliers.z, 4), " against ", g);
+}
+
 // The focus distance the camera will be built with, as the camera
 // itself resolves an unstated one.
 [[nodiscard]] float focusDistanceOf(const CameraOptions &options) {
@@ -512,6 +553,24 @@ CameraModel resolveCameraModel(const Options &opts) {
                          smdl::Brief(physics->fixedGainISO(), 5)));
     }
   }
+  // The white balance, which only a body's develop has: the flag over
+  // the file.
+  if (opts.camera.whiteBalance.wasGiven || fileCamera.whiteBalance) {
+    const bool wasFlagGiven{opts.camera.whiteBalance.wasGiven};
+    if (model.sensor) {
+      model.whiteBalance =
+          pick(opts.camera.whiteBalance, fileCamera.whiteBalance);
+    } else if (isBodyReplaced) {
+      SMDL_LOG_INFO("Sensor: 'white_balance' is ignored, since -sensor human "
+                    "replaced the body it was stated for");
+    } else {
+      refuser.refuse(
+          "white_balance", wasFlagGiven,
+          smdl::concat(spellSetting("white_balance", wasFlagGiven),
+                       " is a physical sensor's setting, and this camera's "
+                       "sensor is 'human'"));
+    }
+  }
   // What a readout needs, refused here for the same reason.
   if (!opts.image.outputDN.empty()) {
     if (!model.sensor)
@@ -520,6 +579,21 @@ CameraModel resolveCameraModel(const Options &opts) {
                         "'sensor' in the camera file or with -sensor");
     if (!gRenderShutter.hasExposure())
       throw smdl::Error("-output-dn needs an exposure: state 'shutter'");
+  }
+  // What the observer's develop does and a body's does not.
+  if (model.sensor) {
+    if (opts.image.tonemap.isNight)
+      throw smdl::Error("-tonemap night models the observer's eyes at the "
+                        "scene's own luminance, and a physical sensor's "
+                        "film holds the irradiance at the sensor: preview "
+                        "the scene with -sensor human");
+    if (opts.image.rgbPolicy.shouldForceFalseColor)
+      throw smdl::Error(smdl::concat(
+          opts.image.rgbPolicy.falseColorWaves.empty() ? "-false-color"
+                                                       : "-rgb-wavelengths",
+          " maps the spectral film's bands to RGB, and a "
+          "physical sensor develops its own: preview the "
+          "spectrum with -sensor human"));
   }
   // The camera's framing at shutter shut. The keys are absolute readings
   // of the clock, so a flag that replaces the framing drops the track
@@ -585,6 +659,7 @@ CameraModel resolveCameraModel(const Options &opts) {
                   describeDetector(*physics));
     SMDL_LOG_INFO("Well: ", describeWell(*physics));
     SMDL_LOG_INFO("ISO: ", describeISO(*physics, model.iso));
+    SMDL_LOG_INFO("Color: ", describeColor(*physics, model.whiteBalance));
   } else if (body) {
     const auto frameMM{1e3f * options.frameSize};
     SMDL_LOG_INFO("Sensor: the observer on a ", smdl::Brief(frameMM.x, 4),
@@ -641,7 +716,11 @@ std::string describeCamera(const CameraModel &model) {
                                                          : "left to right")
                      : (gRenderShutter.isReadoutReversed ? "bottom to top"
                                                          : "top to bottom"))
-           : std::string(", global"));
+           : std::string(", global"),
+       model.sensor && !gRenderShutter.hasExposure()
+           ? "; a physical sensor cannot render with a shut shutter: state "
+             "'shutter'"
+           : "");
   // The focus as stated. The autofocus cannot know its distance until
   // the scene is built, so it has no depth of field to report here.
   const float focus{focusDistanceOf(options)};
@@ -718,9 +797,18 @@ std::string describeCamera(const CameraModel &model) {
          describeDetector(physics));
     line("  well: ", describeWell(physics));
     line("  iso: ", describeISO(physics, model.iso));
+    line("  color: ", describeColor(physics, model.whiteBalance));
     line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
   } else {
     line("sensor: the observer, so no bands and no readout");
   }
   return text;
+}
+
+void refuseUnrenderable(const CameraModel &model, const Options &opts) {
+  if (model.sensor && !gRenderShutter.hasExposure())
+    Refuser{model.document}.refuse(
+        "sensor", opts.camera.sensor.wasGiven,
+        "a physical sensor counts the electrons of an exposure, and the "
+        "shutter is shut: state 'shutter' in the camera file, or -shutter");
 }

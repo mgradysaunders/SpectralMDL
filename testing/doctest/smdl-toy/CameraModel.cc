@@ -493,3 +493,115 @@ TEST_CASE("CameraModel: the focus") {
     CHECK_CONTAINS(pinhole, "a pinhole, so everything is in focus");
   }
 }
+
+TEST_CASE("CameraModel: the white balance") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-white-balance"};
+  const auto refused{[&](const Options &opts) {
+    return smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); });
+  }};
+  SUBCASE("D65 unless stated, the file's, and the flag's over it") {
+    CHECK(resolveCameraModel(
+              files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))
+              .whiteBalance.kind == WhiteBalanceKind::D65);
+    auto opts{files.camera(
+        "camera { sensor \"body.sensor\" fstop 8 white_balance tungsten }\n")};
+    CHECK(resolveCameraModel(opts).whiteBalance.kind ==
+          WhiteBalanceKind::TUNGSTEN);
+    opts.camera.whiteBalance = Flag<WhiteBalance>{
+        WhiteBalance{WhiteBalanceKind::KELVIN, 4300.0f}, true};
+    const auto model{resolveCameraModel(opts)};
+    CHECK(model.whiteBalance.kind == WhiteBalanceKind::KELVIN);
+    CHECK(model.whiteBalance.kelvin == 4300.0f);
+  }
+  SUBCASE("Stated for the observer it is refused, pointed at the key") {
+    const auto error{
+        refused(files.camera("camera {\n  white_balance auto\n}\n"))};
+    CHECK_ERROR(error, ":2:3: 'white_balance' is a physical sensor's setting");
+    auto flagged{files.camera("camera { fovy 30 }\n")};
+    flagged.camera.whiteBalance = Flag<WhiteBalance>{WhiteBalance{}, true};
+    CHECK_ERROR(refused(flagged),
+                "-white-balance is a physical sensor's setting");
+  }
+  SUBCASE("Stated for a body the flag replaced with the observer, it is "
+          "ignored") {
+    auto replaced{files.camera(
+        "camera { sensor \"body.sensor\" fstop 8 white_balance shade }\n")};
+    replaced.camera.sensor = Flag<std::string>{"human", true};
+    const auto model{resolveCameraModel(replaced)};
+    CHECK(!model.sensor);
+    CHECK(model.whiteBalance.kind == WhiteBalanceKind::D65);
+  }
+  SUBCASE("The report states the fit and the white balance, and bands too "
+          "much alike to fit") {
+    const auto report{describeCamera(
+        resolveCameraModel(files.camera("camera { sensor \"body.sensor\" fstop "
+                                        "8 white_balance daylight }\n")))};
+    CHECK_CONTAINS(report, "  color: R, G, and B respond too much alike to "
+                           "tell colors apart, so the develop is false "
+                           "color; white balance daylight\n");
+  }
+}
+
+TEST_CASE("CameraModel: what only the observer's develop does is refused "
+          "with a body") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-develop"};
+  const auto refused{[&](const Options &opts) {
+    return smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); });
+  }};
+  auto opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
+  SUBCASE("The night tonemap") {
+    opts.image.tonemap.isNight = true;
+    CHECK_ERROR(refused(opts), "-tonemap night models the observer's eyes");
+  }
+  SUBCASE("False color, in either spelling") {
+    opts.image.rgbPolicy.shouldForceFalseColor = true;
+    CHECK_ERROR(refused(opts), "-false-color maps the spectral film's bands");
+    opts.image.rgbPolicy.falseColorWaves = {650.0f, 550.0f, 450.0f};
+    CHECK_ERROR(refused(opts),
+                "-rgb-wavelengths maps the spectral film's bands");
+  }
+  SUBCASE("Both are the observer's to have") {
+    auto observer{baseOptions()};
+    observer.image.tonemap.isNight = true;
+    observer.image.rgbPolicy.shouldForceFalseColor = true;
+    CHECK_OK(refused(observer));
+  }
+}
+
+TEST_CASE("CameraModel: a render of a physical sensor needs an exposure") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-render"};
+  const auto unrenderable{[&](const Options &opts) {
+    return smdl::catchAndReturnError(
+        [&] { refuseUnrenderable(resolveCameraModel(opts), opts); });
+  }};
+  SUBCASE("A body with the shutter shut is refused, pointed at the body") {
+    const auto error{unrenderable(
+        files.camera("camera {\n  sensor \"body.sensor\"\n  fstop 8\n}\n"))};
+    CHECK_ERROR(error, files.path("shot.camera") + ":2:3: a physical sensor "
+                                                   "counts the electrons of "
+                                                   "an exposure");
+  }
+  SUBCASE("A body the flag names is refused naming no file") {
+    auto flagged{baseOptions()};
+    flagged.camera.sensor = Flag<std::string>{files.path("body.sensor"), true};
+    flagged.camera.fStop = Flag<float>{8.0f, true};
+    const auto error{unrenderable(flagged)};
+    REQUIRE(error);
+    CHECK(error->message.rfind("a physical sensor counts", 0) == 0);
+  }
+  SUBCASE("A shutter, or the observer, renders") {
+    CHECK_OK(unrenderable(files.camera(
+        "camera { sensor \"body.sensor\" fstop 8 shutter 0.01 }\n")));
+    CHECK_OK(unrenderable(baseOptions()));
+  }
+  SUBCASE("The report says so where it states the shutter") {
+    CHECK_CONTAINS(
+        describeCamera(resolveCameraModel(
+            files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))),
+        "; a physical sensor cannot render with a shut shutter: state "
+        "'shutter'\n");
+  }
+}

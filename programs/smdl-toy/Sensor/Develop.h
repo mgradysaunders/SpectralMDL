@@ -1,20 +1,28 @@
 /// \file
-/// The observer's develop: the spectral film to linear sRGB through the
-/// CIE observer, or false color where the grid cannot carry color. What
-/// `-output-rgbf` holds, and what the display transform in `Tonemap.h`
-/// starts from.
+/// The two develops, each to linear sRGB: the observer's, from the
+/// spectral film through the CIE observer, or false color where the grid
+/// cannot carry color; and a physical sensor's, from its readout the way
+/// a raw developer takes one. What `-output-rgbf` holds, and what the
+/// display transform in `Tonemap.h` starts from.
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
+#include "smdl/Support/Span.h"
 
 #include "Color.h"
+#include "Layout/CameraFile.h"
+#include "Sensor/Detector.h"
+#include "Sensor/Sensor.h"
 
 namespace smdl {
 class Compiler;
 }
+
+//--{ The observer's develop
 
 /// How `resolveRGB()` maps the film to RGB when the CIE projection is
 /// not simply the right thing.
@@ -56,3 +64,85 @@ struct RGBPolicy final {
                                             const smdl::SpectralFilm &film,
                                             const Color &wavelengths,
                                             const RGBPolicy &policy = {});
+//--}
+
+//--{ The physical develop
+/// Where the physical develop puts a neutral the meter aimed at: 0.18,
+/// middle gray. The meter lands a frame's mean at `q K / 78`, 10.4% of
+/// saturation, so the develop's baseline exposure is 0.18 over that,
+/// +0.79 EV, close to darktable's +0.7 EV default.
+constexpr double DEVELOP_MIDDLE_GRAY{0.18};
+
+/// How a mosaic becomes one value per band at every pixel.
+enum class DemosaicMethod {
+  /// No tile: every pixel holds every band already.
+  NONE,
+
+  /// Any tile: normalized convolution per band with a separable tent as
+  /// wide and tall as the tile, keeping the pixel's own value where the
+  /// band sampled it. Exact bilinear for a band sampled on a lattice,
+  /// which is every band of a Bayer tile and of a tile with one pixel per
+  /// band.
+  BILINEAR,
+
+  /// A 2 by 2 Bayer tile of the three bands: green along the direction
+  /// with the smaller gradient, corrected by the sampled color's second
+  /// difference (Hamilton and Adams 1997, US 5629734, expired), then red
+  /// and blue as green plus the bilinear mean of their difference from
+  /// it.
+  HAMILTON_ADAMS
+};
+
+/// The method `response`'s tile interpolates `bands` by:
+/// `HAMILTON_ADAMS` when the tile is 2 by 2 and holds exactly the three
+/// bands, the second of them twice on a diagonal; `BILINEAR` for any
+/// other tile; `NONE` without one.
+[[nodiscard]] DemosaicMethod demosaicMethod(const ResponseSettings &response,
+                                            smdl::Span<const size_t> bands);
+
+/// Interpolate a mosaic, `mosaic` holding one value per pixel of a
+/// `numPixelsX` by `numPixelsY` frame under `response`'s tile, to
+/// `bands` at every pixel of `window`: `bands.size()` values per pixel,
+/// in the order given, and zero outside the window. Taps outside the
+/// window are dropped, since nothing was rendered there, and
+/// `HAMILTON_ADAMS` keeps the bilinear values within two pixels of its
+/// edge, where its taps would leave it.
+[[nodiscard]] std::vector<float>
+demosaic(DemosaicMethod method, const ResponseSettings &response,
+         smdl::Span<const size_t> bands, smdl::Span<const float> mosaic,
+         size_t numPixelsX, size_t numPixelsY, int4 window);
+
+/// Develop a physical sensor's readout to linear sRGB, the way a raw
+/// developer takes one:
+///
+/// 1. the digital numbers over the black level, as fractions of the top
+///    code, so that the ISO still decides how bright the picture is when
+///    the well clips below the top code;
+/// 2. balanced to `whiteBalance`, each band times `n_G(S) / n_b(S)`;
+/// 3. every sample held where the least multiplied band reaches the
+///    white level, so that a saturated white stays white, as dcraw's
+///    `-H 0` holds it;
+/// 4. demosaicked, see `demosaicMethod()`;
+/// 5. the matrix fitted to the body's curves under the illuminant, see
+///    `Sensor::fitColor()`, Bradford to the sRGB white, and the builtin's
+///    matrix to linear sRGB;
+/// 6. exposed so that a neutral the meter aimed at develops to
+///    `DEVELOP_MIDDLE_GRAY`: the baseline, and the ratio that holds it
+///    there under the white balance's illuminant whichever band
+///    saturates first, the most sensitive band's electrons per
+///    lux-second under D55 over green's under the illuminant.
+///
+/// An `auto` white balance reads the frame's gray world, the mean of
+/// each band's unsaturated samples, through the D65 fit; McCamy's cubic
+/// gives its temperature, the fit is taken there, and the white is put
+/// at the measured neutral itself. Three bands that fit the observer
+/// badly develop as false color, each band on its own channel, and fewer
+/// than three as gray, both balanced and exposed the same way.
+///
+/// The pixels outside `window` develop to black. `shouldLog` says what
+/// was done; a preview passes false.
+[[nodiscard]] std::vector<float>
+developReadout(const Sensor &sensor, const Detector &detector,
+               const Readout &readout, const WhiteBalance &whiteBalance,
+               int4 window, bool shouldLog);
+//--}

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -55,14 +56,12 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
              : smdl::concat(smdl::Brief(seconds, 4), " s");
 }
 
-/// The ISO the shot is read out at, and the log line that says why: the
-/// meter's reading against the base and the top, the shutter or the stop
-/// that would meter into range when the frame is outside it, and where
-/// a stated ISO or a fixed gain's speed sits against the meter.
-[[nodiscard]] double resolveISO(const Sensor &sensor,
-                                const std::optional<float> &stated,
-                                const MeteredExposure &metered,
-                                const DetectorShot &shot) {
+/// The log line that says why the shot reads out at its ISO: the meter's
+/// reading against the base and the top, the shutter or the stop that
+/// would meter into range when the frame is outside it, and where a
+/// stated ISO or a fixed gain's speed sits against the meter.
+void logISO(const Sensor &sensor, const std::optional<float> &stated,
+            const MeteredExposure &metered, const DetectorShot &shot) {
   const bool isDark{!(metered.luxSeconds > 0)};
   const auto reading{
       isDark
@@ -78,15 +77,14 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
                         smdl::Brief(std::abs(stops), 3), " stops ",
                         stops >= 0 ? "brighter" : "darker", " than metered");
   }};
+  const double iso{shot.iso};
   if (sensor.hasFixedGain()) {
-    const double iso{sensor.fixedGainISO()};
     SMDL_LOG_INFO("ISO: ", smdl::Brief(iso, 5),
                   ", the saturation speed of the stated gain; ", reading,
                   against(iso));
-    return iso;
+    return;
   }
   if (stated) {
-    const double iso{*stated};
     SMDL_LOG_INFO("ISO: ", smdl::Brief(iso, 6), " stated; ", reading,
                   against(iso));
     if (iso < sensor.baseISO())
@@ -96,7 +94,7 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
     else if (iso > sensor.maxISO())
       SMDL_LOG_WARN("ISO ", smdl::Brief(iso, 6), " is above the top ISO of ",
                     smdl::Brief(sensor.maxISO(), 6));
-    return iso;
+    return;
   }
   if (metered.stopsOff != 0) {
     // The exposure that would meter to the end of the range the frame
@@ -120,15 +118,57 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
                : smdl::concat(smdl::Brief(std::abs(metered.stopsOff), 3),
                               " stops ", isOver ? "over" : "under", "exposed"),
         " at the ", isOver ? "base" : "top", " ISO", fix);
-    return metered.iso;
+    return;
   }
   SMDL_LOG_INFO("ISO: ", smdl::Brief(metered.iso, 5), " metered, from ",
                 smdl::Brief(metered.luxSeconds, 4),
                 " lux-seconds over the window");
-  return metered.iso;
+}
+
+/// The shot the body takes of the film: the exposure, the temperature,
+/// the f-number, and the ISO, stated, the fixed gain's own, or what the
+/// film meters to. The model established the body and the exposure; the
+/// f-number comes off the camera, which under -autolook exists only
+/// once the scene does. The final picture logs where the ISO came from,
+/// and a preview does not.
+[[nodiscard]] DetectorShot takeShot(const Frame &frame, const Sensor &sensor,
+                                    const smdl::SpectralFilm &film,
+                                    const Color &wavelengths, bool shouldLog) {
+  SMDL_SANITY_CHECK(frame.camera && gRenderShutter.hasExposure());
+  const auto &model{frame.model};
+  auto shot{DetectorShot{}};
+  shot.exposure = gRenderShutter.exposure;
+  shot.temperature = model.temperature;
+  shot.fNumber = frame.camera->fNumber();
+  const auto metered{
+      sensor.meter(film, wavelengths, frame.window, shot.exposure)};
+  shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
+  shot.iso = sensor.hasFixedGain() ? sensor.fixedGainISO()
+             : model.iso           ? double(*model.iso)
+                                   : metered.iso;
+  if (shouldLog) logISO(sensor, model.iso, metered, shot);
+  return shot;
 }
 
 } // namespace
+
+std::vector<float> developPreview(const Options &opts, const Frame &frame,
+                                  const ResolvedGrid &grid,
+                                  smdl::Compiler &compiler,
+                                  const smdl::SpectralFilm &film,
+                                  const smdl::SpectralFilm *bandFilm) {
+  if (!frame.model.sensor)
+    return resolveRGB(compiler, film, grid.wavelengths, opts.image.rgbPolicy);
+  SMDL_SANITY_CHECK(bandFilm);
+  const Sensor sensor{*frame.model.sensor};
+  const Detector detector{
+      sensor, takeShot(frame, sensor, film, grid.wavelengths, false)};
+  auto noiseless{opts.image.readout};
+  noiseless.noise = DetectorNoise::NONE;
+  const auto readout{detector.readOut(*bandFilm, noiseless, frame.window)};
+  return developReadout(sensor, detector, readout, frame.model.whiteBalance,
+                        frame.window, false);
+}
 
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
@@ -146,7 +186,75 @@ void writeOutputs(const Options &opts, const Frame &frame,
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
   const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
-  auto rgbImage{resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy)};
+  // The tally accumulated above is the sequence's, but the fingerprint
+  // is this session's: the settings a later resume compares itself
+  // against are the ones the samples now in the film were drawn under.
+  resumed.header.sampler = SAMPLER_VERSION;
+  resumed.header.hasWavelengthJitter = shouldJitterWavelength;
+  resumed.header.args = opts.argsEcho;
+  resumed.header.quantity = filmQuantityName(model.filmQuantity());
+  // The response's fingerprint, which every film beside the spectral one
+  // carries, the readout included, and the body's name for the reader.
+  auto responseLines{std::vector<std::string>()};
+  if (response) {
+    auto responseHeader{ResponseHeader{}};
+    responseHeader.hash = response->hash();
+    responseHeader.cfaColumns = response->tileColumns();
+    responseHeader.cfa = response->tileNames();
+    responseLines = responseHeader.headerLines();
+    if (model.sensor && !model.sensor->name.empty())
+      responseLines.push_back(
+          smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->name));
+  }
+  // The picture as linear sRGB: the observer's develop of the spectral
+  // film, or the body's of its readout. The meter reads the film, the ISO
+  // follows (stated, metered, or the fixed gain's own), the readout
+  // reads the band film out at it, onto its own pair under the usual
+  // discipline when asked for, and the develop makes the picture of it.
+  auto rgbImage{std::vector<float>()};
+  if (model.sensor) {
+    SMDL_SANITY_CHECK(bandFilm);
+    const Sensor sensor{*model.sensor};
+    const Detector detector{sensor,
+                            takeShot(frame, sensor, film, wavelengths, true)};
+    detector.logSummary();
+    const auto readout{detector.readOut(*bandFilm, opts.image.readout, window)};
+    SMDL_LOG_INFO(
+        "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
+        " e- over the window, ",
+        smdl::Brief(100.0 * double(readout.wellCount) /
+                        double(std::max<uint64_t>(readout.windowCount, 1)),
+                    3),
+        "% of pixel bands at the well");
+    if (!opts.image.outputDN.empty()) {
+      const auto &dnName{opts.image.outputDN};
+      const auto dnPartName{dnName + ".part"};
+      auto dnLines{resumed.header.headerLines()};
+      for (const auto &line : responseLines) dnLines.push_back(line);
+      for (auto &line : detector.header(opts.image.readout).headerLines())
+        dnLines.push_back(std::move(line));
+      dnLines.push_back(
+          smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
+      const auto &bandNames{response->filmBandNames()};
+      smdl::writeENVIFileUInt16(
+          smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
+                                     readout.digitalNumbers.size()),
+          readout.bandCount, readout.pixelCountX, readout.pixelCountY,
+          dnPartName,
+          smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
+          smdl::Span<const std::string>(dnLines.data(), dnLines.size()), window,
+          bandFilm->getNumSamples());
+      smdl::renameOnto(dnPartName, dnName);
+      smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
+      SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
+                    bandNames.size(), " band(s) of digital numbers up to ",
+                    detector.topCode());
+    }
+    rgbImage = developReadout(sensor, detector, readout, model.whiteBalance,
+                              window, true);
+  } else {
+    rgbImage = resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy);
+  }
   {
     // Both RGB outputs see the same filtered pixels, and neither the
     // spectral file below nor the film it comes from sees any of it.
@@ -172,28 +280,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
       error->print();
     }
   }
-  // The tally accumulated above is the sequence's, but the fingerprint
-  // is this session's: the settings a later resume compares itself
-  // against are the ones the samples now in the film were drawn under.
-  resumed.header.sampler = SAMPLER_VERSION;
-  resumed.header.hasWavelengthJitter = shouldJitterWavelength;
-  resumed.header.args = opts.argsEcho;
-  resumed.header.quantity = filmQuantityName(model.filmQuantity());
-  // The response's fingerprint, which every film beside the spectral one
-  // carries, the readout included, and the body's name for the reader.
-  auto responseLines{std::vector<std::string>()};
-  if (response) {
-    auto responseHeader{ResponseHeader{}};
-    responseHeader.hash = response->hash();
-    responseHeader.cfaColumns = response->tileColumns();
-    responseHeader.cfa = response->tileNames();
-    responseLines = responseHeader.headerLines();
-    if (model.sensor && !model.sensor->name.empty())
-      responseLines.push_back(
-          smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->name));
-  }
   if (!outputSpectrum.empty()) {
-
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
     // be this very path.
@@ -267,51 +354,6 @@ void writeOutputs(const Options &opts, const Frame &frame,
         "Cumulative render time: ", formatDuration(resumed.header.seconds),
         " wall, ", formatDuration(resumed.header.cpuSeconds), " compute over ",
         resumed.header.sessions, " session(s)");
-  }
-  // The exposure, which only a body has: the meter reads the film, the
-  // ISO follows (stated, metered, or the fixed gain's own), and the
-  // readout, when asked for, reads the band film out at it on its own
-  // pair under the same discipline. The model established the body,
-  // the exposure, and the pupil; the f-number comes off the camera
-  // here, which under -autolook exists only now.
-  if (model.sensor && gRenderShutter.hasExposure()) {
-    SMDL_SANITY_CHECK(frame.camera);
-    const Sensor sensor{*model.sensor};
-    auto shot{DetectorShot{}};
-    shot.exposure = gRenderShutter.exposure;
-    shot.temperature = model.temperature;
-    shot.fNumber = frame.camera->fNumber();
-    const auto metered{sensor.meter(film, wavelengths, window, shot.exposure)};
-    shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
-    shot.iso = resolveISO(sensor, model.iso, metered, shot);
-    if (!opts.image.outputDN.empty()) {
-      SMDL_SANITY_CHECK(bandFilm);
-      const Detector detector{sensor, shot};
-      const auto readout{
-          detector.readOut(*bandFilm, opts.image.readout, window)};
-      const auto &dnName{opts.image.outputDN};
-      const auto dnPartName{dnName + ".part"};
-      auto dnLines{resumed.header.headerLines()};
-      for (const auto &line : responseLines) dnLines.push_back(line);
-      for (auto &line : detector.header(opts.image.readout).headerLines())
-        dnLines.push_back(std::move(line));
-      dnLines.push_back(
-          smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
-      const auto &bandNames{response->filmBandNames()};
-      smdl::writeENVIFileUInt16(
-          smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
-                                     readout.digitalNumbers.size()),
-          readout.bandCount, readout.pixelCountX, readout.pixelCountY,
-          dnPartName,
-          smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
-          smdl::Span<const std::string>(dnLines.data(), dnLines.size()), window,
-          bandFilm->getNumSamples());
-      smdl::renameOnto(dnPartName, dnName);
-      smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
-      SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
-                    bandNames.size(), " band(s) of digital numbers up to ",
-                    detector.topCode());
-    }
   }
   {
     const auto ldrImage{

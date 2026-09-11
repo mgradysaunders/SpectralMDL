@@ -137,6 +137,14 @@ cl::opt<std::string> optISO{
              "never below the body's base ISO, overriding the camera file's "
              "'iso' (default: the camera file's, else auto)"),
     cl::cat(catCamera)};
+cl::opt<std::string> optWhiteBalance{
+    "white-balance",
+    cl::desc("The white a physical sensor's develop balances to: D65, "
+             "daylight, cloudy, shade, tungsten, fluorescent, a color "
+             "temperature in kelvin, or 'auto' for the frame's gray world, "
+             "overriding the camera file's 'white_balance' (default: the "
+             "camera file's, else D65)"),
+    cl::cat(catCamera)};
 cl::opt<int> optBlades{
     "blades",
     cl::desc("The number of aperture blades (default: 0, a round lens)"),
@@ -666,6 +674,18 @@ Options parseCommandLine(int argc, char **argv) {
       iso = Flag<float>{value, true};
     }
   }
+  auto whiteBalance{Flag<WhiteBalance>{}};
+  if (optWhiteBalance.getNumOccurrences() > 0) {
+    const auto &text{std::string(optWhiteBalance)};
+    const auto parsed{parseWhiteBalance(text)};
+    if (!parsed)
+      throw smdl::Error(smdl::concat(
+          "expected -white-balance to be D65, daylight, cloudy, shade, "
+          "tungsten, fluorescent, auto, or a color temperature from ",
+          int(WHITE_BALANCE_KELVIN_MIN), " to ", int(WHITE_BALANCE_KELVIN_MAX),
+          " K, got ", smdl::Quoted(text)));
+    whiteBalance = Flag<WhiteBalance>{*parsed, true};
+  }
   // The old spelling of the frame size, which now means a file.
   if (optSensor.getNumOccurrences() > 0) {
     const auto &value{std::string(optSensor)};
@@ -740,6 +760,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.shouldAutofocus = shouldAutofocus;
   opts.camera.iso = iso;
   opts.camera.shouldMeterISO = shouldMeterISO;
+  opts.camera.whiteBalance = whiteBalance;
   opts.camera.blades = flag(optBlades);
   opts.camera.bladeAngleDeg = flag(optBladeAngle);
   opts.camera.distortionK1 = flag(optDistortionK1);

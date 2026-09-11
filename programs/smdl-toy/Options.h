@@ -21,6 +21,7 @@
 
 #include "../CommandLine.h"
 #include "Color.h"
+#include "Layout/CameraFile.h"
 #include "MedianFilter.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
@@ -120,6 +121,10 @@ struct CameraFlags final {
   Flag<float> iso{};
   bool shouldMeterISO{};
   /// \}
+
+  /// `-white-balance`: the white a physical sensor's develop balances
+  /// to. See `CameraSettings::whiteBalance`.
+  Flag<WhiteBalance> whiteBalance{};
 
   Flag<int> blades{};
 

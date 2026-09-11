@@ -72,7 +72,8 @@ const char *detectorNoiseName(DetectorNoise noise) noexcept {
 Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
     : mSettings(sensor.settings().detector), mShot(shot),
       mPitchUM(sensor.settings().pitchUM), mFullWell(sensor.fullWell()),
-      mBaseISO(sensor.baseISO()), mGain(sensor.gain(shot.iso)) {
+      mBaseISO(sensor.baseISO()), mGain(sensor.gain(shot.iso)),
+      mWellSource(sensor.wellSource()), mHasFixedGain(sensor.hasFixedGain()) {
   const auto &settings{mSettings};
   mTopCode = uint16_t(settings.topCode());
   const double black{double(settings.blackLevel)};
@@ -81,11 +82,17 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
       std::exp2((shot.temperature - double(settings.referenceTemperature)) /
                 double(settings.doublingTemperature));
   mElectronsPerFilmUnit = sensor.pixelArea() * shot.exposure;
-  const double topCodeElectrons{(double(mTopCode) - black) / mGain};
   mWhiteLevel = uint16_t(
       std::min(double(mTopCode), std::round(mFullWell * mGain + black)));
-  const char *wellSource{sensor.wellSource() == WellSource::STATED ? "stated"
-                         : sensor.wellSource() == WellSource::FROM_BASE_ISO
+}
+
+void Detector::logSummary() const {
+  const auto &settings{mSettings};
+  const auto &shot{mShot};
+  const double black{double(settings.blackLevel)};
+  const double topCodeElectrons{(double(mTopCode) - black) / mGain};
+  const char *wellSource{mWellSource == WellSource::STATED ? "stated"
+                         : mWellSource == WellSource::FROM_BASE_ISO
                              ? "from the base ISO"
                              : "from the pitch"};
   SMDL_LOG_INFO(
@@ -97,9 +104,9 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
       " e- at ", smdl::Brief(shot.temperature, 4), " C; well ",
       smdl::Brief(mFullWell, 6), " e- ", wellSource, "; ISO ",
       smdl::Brief(shot.iso, 6),
-      sensor.hasFixedGain() ? " of the stated gain"
-      : shot.wasISOMetered  ? " metered"
-                            : " stated",
+      mHasFixedGain        ? " of the stated gain"
+      : shot.wasISOMetered ? " metered"
+                           : " stated",
       ", ", smdl::Brief(mGain, 6), " DN/e- over ", settings.bits,
       " bits, black level ", smdl::Brief(settings.blackLevel, 6),
       " DN, white level ", mWhiteLevel, " DN, top code at ",
@@ -113,8 +120,8 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
   else if (topCodeElectrons > 1.001 * mFullWell)
     SMDL_LOG_WARN("the well clips at ", mWhiteLevel,
                   " DN, below the top code of ", mTopCode, ", as it does ",
-                  sensor.hasFixedGain() ? "under the stated gain"
-                                        : "below the base ISO");
+                  mHasFixedGain ? "under the stated gain"
+                                : "below the base ISO");
 }
 
 double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
@@ -198,13 +205,6 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
   }
   readout.meanElectrons =
       readout.windowCount > 0 ? electrons / double(readout.windowCount) : 0.0;
-  SMDL_LOG_INFO(
-      "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
-      " e- over the window, ",
-      smdl::Brief(100.0 * double(readout.wellCount) /
-                      double(std::max<uint64_t>(readout.windowCount, 1)),
-                  3),
-      "% of pixel bands at the well");
   return readout;
 }
 

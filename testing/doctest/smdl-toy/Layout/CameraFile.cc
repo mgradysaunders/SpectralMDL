@@ -504,6 +504,70 @@ TEST_CASE("CameraFile: the iso setting") {
   }
 }
 
+TEST_CASE("CameraFile: the white_balance setting") {
+  LayoutDiagnostics diags{};
+  SUBCASE("Each word names its white, and a number a temperature") {
+    const std::pair<const char *, WhiteBalanceKind> words[]{
+        {"D65", WhiteBalanceKind::D65},
+        {"daylight", WhiteBalanceKind::DAYLIGHT},
+        {"cloudy", WhiteBalanceKind::CLOUDY},
+        {"shade", WhiteBalanceKind::SHADE},
+        {"tungsten", WhiteBalanceKind::TUNGSTEN},
+        {"fluorescent", WhiteBalanceKind::FLUORESCENT},
+        {"auto", WhiteBalanceKind::AUTO}};
+    for (const auto &[word, kind] : words) {
+      LayoutDiagnostics each{};
+      const auto document{parseOK(each, std::string("camera { white_balance ") +
+                                            word + " }\n")};
+      REQUIRE(document.camera.whiteBalance);
+      CHECK(document.camera.whiteBalance->kind == kind);
+    }
+    const auto document{parseOK(diags, "camera { white_balance 3200 }\n")};
+    REQUIRE(document.camera.whiteBalance);
+    CHECK(document.camera.whiteBalance->kind == WhiteBalanceKind::KELVIN);
+    CHECK(document.camera.whiteBalance->kelvin == 3200.0f);
+  }
+  SUBCASE("Absent, it stays unset, and the last statement wins") {
+    CHECK(!parseOK(diags, "camera { fovy 30 }\n").camera.whiteBalance);
+    LayoutDiagnostics again{};
+    const auto document{
+        parseOK(again, "camera { white_balance 3200 white_balance shade }\n")};
+    CHECK(document.camera.whiteBalance->kind == WhiteBalanceKind::SHADE);
+  }
+  SUBCASE("A temperature out of range, and a word it does not know, are "
+          "errors") {
+    CHECK_CONTAINS(parseError("camera { white_balance 500 }\n").message,
+                   "expected a color temperature from 1000 to 25000 K after "
+                   "'white_balance', got 500");
+    CHECK_CONTAINS(parseError("camera { white_balance d65 }\n").message,
+                   "expected D65, daylight, cloudy, shade, tungsten, "
+                   "fluorescent, auto, or a color temperature in kelvin after "
+                   "'white_balance', got 'd65'");
+  }
+  SUBCASE("It cannot be keyed, being applied after the render") {
+    CHECK_CONTAINS(
+        parseError("camera { motion { at 0 white_balance shade } }\n").message,
+        "'white_balance' is not a quantity to interpolate");
+  }
+  SUBCASE("The names read back as they are spelled, and nothing else "
+          "reads") {
+    for (const char *word : {"D65", "daylight", "cloudy", "shade", "tungsten",
+                             "fluorescent", "auto"}) {
+      const auto whiteBalance{parseWhiteBalance(word)};
+      REQUIRE(whiteBalance);
+      CHECK(whiteBalanceName(*whiteBalance) == word);
+    }
+    CHECK(whiteBalanceName(WhiteBalance{WhiteBalanceKind::KELVIN, 3200.0f}) ==
+          "3200 K");
+    CHECK(parseWhiteBalance("1000"));
+    CHECK(parseWhiteBalance("25000"));
+    CHECK(!parseWhiteBalance("999"));
+    CHECK(!parseWhiteBalance("infinity"));
+    CHECK(!parseWhiteBalance("3200K"));
+    CHECK(!parseWhiteBalance(""));
+  }
+}
+
 TEST_CASE("CameraFile: the focal length setting") {
   LayoutDiagnostics diags{};
   SUBCASE("It parses in millimeters beside the field of view") {

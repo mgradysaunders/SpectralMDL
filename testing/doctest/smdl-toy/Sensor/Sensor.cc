@@ -1,6 +1,9 @@
 #include "RenderFixtures.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -73,6 +76,43 @@ namespace {
   auto grid{std::vector<float>()};
   for (float w = 400; w <= 700; w += 10) grid.push_back(w);
   return grid;
+}
+
+// A body whose three bands are the builtin's observer over photons, so
+// that its responses are the observer's XYZ: `QE_b lambda` is the curve.
+// Knots at 1 nm, where the fit integrates.
+[[nodiscard]] SensorSettings lutherBody() {
+  auto value{flatBody()};
+  value.response.bands.clear();
+  for (size_t k = 0; k < 3; k++) {
+    auto &band{value.response.bands.emplace_back()};
+    band.name = std::string(1, "RGB"[k]);
+    for (int lambda = 360; lambda <= 830; lambda++) {
+      band.wavelengths.push_back(float(lambda));
+      band.values.push_back(float(std::max(
+          0.0, 0.25 * builtinWymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+    }
+  }
+  return value;
+}
+
+// A body of three overlapping Gaussian bands, red, green, and blue: the
+// shape of a camera's curves and no camera's.
+[[nodiscard]] SensorSettings gaussianBody() {
+  auto value{flatBody()};
+  value.response.bands.clear();
+  constexpr double CENTERS[3]{600.0, 540.0, 460.0};
+  constexpr double WIDTHS[3]{40.0, 40.0, 30.0};
+  for (size_t k = 0; k < 3; k++) {
+    auto &band{value.response.bands.emplace_back()};
+    band.name = std::string(1, "RGB"[k]);
+    for (int lambda = 380; lambda <= 780; lambda += 5) {
+      const double x{(double(lambda) - CENTERS[k]) / WIDTHS[k]};
+      band.wavelengths.push_back(float(lambda));
+      band.values.push_back(float(0.5 * std::exp(-0.5 * x * x)));
+    }
+  }
+  return value;
 }
 
 } // namespace
@@ -280,5 +320,120 @@ TEST_CASE("Sensor: the meter") {
     film.addTotals(0, 0, poison.data());
     const auto poisoned{sensor.meter(film, wavelengths, window, 0.01)};
     CHECK(poisoned.luxSeconds == doctest::Approx(0.75 * 0.0203).epsilon(1e-4));
+  }
+}
+
+TEST_CASE("Sensor: the illuminants a white balance names") {
+  SUBCASE("The Planckian radiator at 2856 K is CIE illuminant A") {
+    const auto a{planckSpectrum(ILLUMINANT_A_KELVIN)};
+    CHECK(a[260] == doctest::Approx(1.0));
+    CHECK(a[100] == doctest::Approx(0.147080).epsilon(1e-3));
+    CHECK(a[200] == doctest::Approx(0.598611).epsilon(1e-3));
+    CHECK(a[400] == doctest::Approx(1.982612).epsilon(1e-3));
+  }
+  SUBCASE("A temperature is daylight from 4000 K up, and Planck below") {
+    CHECK(kelvinSpectrum(5000.0) == daylightSpectrum(5000.0));
+    CHECK(kelvinSpectrum(4000.0) == daylightSpectrum(4000.0));
+    CHECK(kelvinSpectrum(3200.0) == planckSpectrum(3200.0));
+  }
+  SUBCASE("Each preset names its illuminant") {
+    const auto of{[](WhiteBalanceKind kind) {
+      return whiteBalanceSpectrum(WhiteBalance{kind, 0.0f});
+    }};
+    CHECK(of(WhiteBalanceKind::D65) == daylightSpectrum(D65_KELVIN));
+    CHECK(of(WhiteBalanceKind::CLOUDY) == daylightSpectrum(D65_KELVIN));
+    CHECK(of(WhiteBalanceKind::AUTO) == daylightSpectrum(D65_KELVIN));
+    CHECK(of(WhiteBalanceKind::DAYLIGHT) == daylightSpectrum(D55_KELVIN));
+    CHECK(of(WhiteBalanceKind::SHADE) == daylightSpectrum(D75_KELVIN));
+    CHECK(of(WhiteBalanceKind::TUNGSTEN) ==
+          planckSpectrum(ILLUMINANT_A_KELVIN));
+    CHECK(whiteBalanceSpectrum(WhiteBalance{
+              WhiteBalanceKind::KELVIN, 3200.0f}) == planckSpectrum(3200.0));
+    // F2 is tabulated from 380 to 780 nm, and its mercury line at 546 nm
+    // stands out of its neighbors.
+    const auto f2{of(WhiteBalanceKind::FLUORESCENT)};
+    CHECK(f2[79] == 0.0);
+    CHECK(f2[80] > 0.0);
+    CHECK(f2[481] == 0.0);
+    CHECK(f2[245] > 2.0 * f2[235]);
+  }
+  SUBCASE("A white is the illuminant through the builtin's observer, Y = "
+          "1") {
+    const auto white{illuminantWhite(daylightSpectrum(D65_KELVIN))};
+    CHECK(white.y == 1.0);
+    const double sum{white.x + white.y + white.z};
+    CHECK(white.x / sum == doctest::Approx(0.3127).epsilon(0.002));
+    CHECK(white.y / sum == doctest::Approx(0.3290).epsilon(0.002));
+  }
+}
+
+TEST_CASE("Sensor: the training reflectances") {
+  const auto &patches{trainingReflectances()};
+  REQUIRE(patches.size() == 190);
+  REQUIRE(patches[0].size() == SENSOR_WAVELENGTH_COUNT);
+  SUBCASE("They are the table's at its own wavelengths, and linear between") {
+    CHECK(patches[0][80] == doctest::Approx(0.06));
+    CHECK(patches[0][85] == doctest::Approx(0.0501124));
+    CHECK(patches[0][82] ==
+          doctest::Approx(0.06 + 0.4 * (0.0501124 - 0.06)).epsilon(1e-6));
+  }
+  SUBCASE("Past either end they hold the end values") {
+    CHECK(patches[0][0] == doctest::Approx(0.06));
+    CHECK(patches[0][480] == doctest::Approx(0.8866));
+    CHECK(patches[0][530] == doctest::Approx(0.8866));
+  }
+}
+
+TEST_CASE("Sensor: the color fit") {
+  const auto d65{daylightSpectrum(D65_KELVIN)};
+  const std::array<size_t, 3> rgb{0, 1, 2};
+  SUBCASE("A body whose curves are the observer's fits it to nothing, an "
+          "index of 100") {
+    const auto fit{Sensor{lutherBody()}.fitColor(rgb, d65)};
+    CHECK(!fit.isSingular);
+    CHECK(fit.isFaithful());
+    CHECK(fit.meanDeltaE00 < 0.01);
+    CHECK(fit.maxDeltaE00 < 0.05);
+    CHECK(fit.index() > 99.9);
+  }
+  SUBCASE("The white lands exactly, and the multipliers balance it against "
+          "green") {
+    const Sensor sensor{gaussianBody()};
+    const auto fit{sensor.fitColor(rgb, d65)};
+    const auto white{fit.cameraToXYZ * smdl::double3(1.0)};
+    CHECK(white.x == doctest::Approx(fit.white.x).epsilon(1e-12));
+    CHECK(white.y == doctest::Approx(fit.white.y).epsilon(1e-12));
+    CHECK(white.z == doctest::Approx(fit.white.z).epsilon(1e-12));
+    CHECK(fit.multipliers.y == 1.0);
+    CHECK(fit.multipliers.x == doctest::Approx(sensor.electronRate(1, d65) /
+                                               sensor.electronRate(0, d65))
+                                   .epsilon(1e-12));
+    CHECK(fit.multipliers.z == doctest::Approx(sensor.electronRate(1, d65) /
+                                               sensor.electronRate(2, d65))
+                                   .epsilon(1e-12));
+  }
+  SUBCASE("A camera's shape of curves fits the way a camera's do") {
+    const auto fit{Sensor{gaussianBody()}.fitColor(rgb, d65)};
+    CHECK(fit.isFaithful());
+    CHECK(fit.meanDeltaE00 > 0.5);
+    CHECK(fit.meanDeltaE00 < 5.0);
+    CHECK(fit.index() > 60.0);
+    CHECK(fit.index() < 99.0);
+  }
+  SUBCASE("Bands too much alike have no fit, and are not faithful") {
+    auto settings{lutherBody()};
+    settings.response.bands[2] = settings.response.bands[1];
+    const auto fit{Sensor{settings}.fitColor(rgb, d65)};
+    CHECK(fit.isSingular);
+    CHECK(!fit.isFaithful());
+  }
+  SUBCASE("A band the illuminant does not reach has no fit") {
+    auto settings{lutherBody()};
+    auto &band{settings.response.bands[2]};
+    band.wavelengths = {840.0f, 900.0f};
+    band.values = {0.5f, 0.5f};
+    const auto fit{Sensor{settings}.fitColor(rgb, d65)};
+    CHECK(fit.isSingular);
+    CHECK(fit.multipliers.x == 1.0);
   }
 }

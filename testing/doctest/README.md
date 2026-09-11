@@ -154,12 +154,13 @@ and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
 (641 lines) has exactly one subcase, and it lives in `smdl/Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
-On the renderer side 17 of the 42 sources have no test, including
+On the renderer side 16 of the 43 sources have no test, including
 `Render/PathTracing.cc` (2239 lines), `Options.cc` (819), `Render/Guiding.cc`
 (747) and `Tonemap.cc` (728). The middle two of those are the cheap ones:
-both are input to output with no Embree and no JIT. `Sensor/Develop.cc`,
-the observer's develop, is reached only through `MedianFilter.cc`'s use
-of what it hands over.
+both are input to output with no Embree and no JIT. `Sensor/Develop.cc` is
+tested for the physical develop alone; the observer's develop beside it
+needs the JIT, and is reached only through `MedianFilter.cc`'s use of what
+it hands over.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero
 assertions when the build lacks NanoVDB, and doctest reports them as
