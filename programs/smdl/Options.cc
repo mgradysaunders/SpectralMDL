@@ -22,9 +22,6 @@ cl::SubCommand subVolume{"volume",
 cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                            &subTest};
 cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
-// The two that have anything colored to print: the unit test report and
-// the documentation text.
-cl::SubCommandGroup subsWithColor{&subTest, &subDoc};
 cl::SubCommandGroup allSubs{&subDump,   &subList, &subRun,   &subTest,
                             &subFormat, &subDoc,  &subVolume};
 
@@ -150,21 +147,21 @@ cl::OptionCategory catUtility{"Utility Options"};
 //--{ Utility Options
 // NOTE: LLVM registers a '--color' of its own on the top-level
 // subcommand, in a hidden category that `HideUnrelatedOptions` filters
-// out, so it never appears in any '--help'. It is nonetheless accepted
-// everywhere, because an option a subcommand does not recognize falls
-// back to the top-level lookup (`CommandLine.cpp`, `LookupLongOption`).
-// That is why 'smdl list --color' is quietly tolerated and does nothing.
-//
-// This option shadows it for the two subcommands that print something
-// colored, since the subcommand is searched first, and drives the
-// coloring explicitly, which keeps the behavior independent of that
+// out, so it never appears in any '--help'. This option shadows it in
+// every subcommand, since an option is looked up in the subcommand ahead
+// of the top level (`CommandLine.cpp`, `LookupLongOption`), and drives
+// the coloring explicitly, which keeps the behavior independent of that
 // LLVM-internal option. Keep it scoped to subcommands: registering a
 // '--color' at the top level would land in the same option map as
 // LLVM's, and `cl` aborts on a duplicate name. That is also why the
 // renderer, which has no subcommands, cannot have one at all.
 cl::opt<cl::boolOrDefault> optColor{
-    "color", cl::desc("Colorize the output (default: autodetect)"),
-    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(subsWithColor),
+    "color",
+    cl::desc("Colorize log messages, the unit test report, and the "
+             "documentation text (default: autodetect)\n"
+             "* autodetect colors a terminal, unless NO_COLOR is set or "
+             "TERM is 'dumb'"),
+    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
     cl::cat(catUtility)};
 cl::opt<std::string> optLogLevel{
     "log-level",

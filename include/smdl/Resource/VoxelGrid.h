@@ -151,6 +151,14 @@ public:
   /// Get the extent in voxels.
   [[nodiscard]] int3 getExtent() const noexcept { return mExtent; }
 
+  /// Get the memory the grid holds in bytes: the brick table, the brick
+  /// data, and the majorant table.
+  [[nodiscard]] size_t getSizeInBytes() const noexcept {
+    return mBrickTable.size() * sizeof(int32_t) +
+           mBrickData.size() * sizeof(float) +
+           mMajorantBounds.size() * sizeof(float2);
+  }
+
   /// Get the number of bricks per axis, i.e., the extent divided by
   /// `BRICK_EXTENT` rounded up.
   [[nodiscard]] int3 getBrickCount() const noexcept { return mBrickCount; }

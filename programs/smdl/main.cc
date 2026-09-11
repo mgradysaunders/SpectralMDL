@@ -25,6 +25,7 @@ int main(int argc, char **argv) try {
   // nothing has been missed.
   smdl::Logger::get().setMinLevel(opts.utility.logLevel);
   logSink.setUnicodeMode(opts.utility.unicodeMode);
+  logSink.setColorMode(opts.utility.ansiColorMode);
   // Before anything parallel: the thread pool is built by whichever
   // parallel operation runs first (the compile's image loads, usually)
   // and cannot be resized afterward.

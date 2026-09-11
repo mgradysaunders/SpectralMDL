@@ -16,6 +16,7 @@
 #include "smdl/Resource/VoxelGrid.h"
 #include "smdl/SceneData.h"
 #include "smdl/Support/FileLocator.h"
+#include "smdl/Support/Logger.h"
 #include "smdl/Support/MD5Hash.h"
 
 namespace smdl {
@@ -85,14 +86,6 @@ enum DumpFormat : int {
   DUMP_FORMAT_IR,  ///< LLVM-IR.
   DUMP_FORMAT_ASM, ///< Native assembly code.
   DUMP_FORMAT_OBJ  ///< Native object code.
-};
-
-/// Whether `Compiler::runUnitTests()` colors its report with ANSI escape
-/// codes.
-enum ANSIColorMode : int {
-  ANSI_COLOR_MODE_AUTO,   ///< Colorize only if standard error is a terminal.
-  ANSI_COLOR_MODE_ALWAYS, ///< Colorize even if standard error is redirected.
-  ANSI_COLOR_MODE_NEVER   ///< Never colorize.
 };
 
 /// The compiler.
@@ -283,7 +276,10 @@ private:
   /// The key leaves out the source location on purpose, so that a missing
   /// file is one warning however many materials name it.
   ///
-  void logResourceWarningOnce(const SourceLocation &srcLoc,
+  /// Returns whether this call logged the warning, so that anything said
+  /// alongside it is said once too.
+  ///
+  bool logResourceWarningOnce(const SourceLocation &srcLoc,
                               const std::string &key, std::string_view message);
 
   /// Load image.
@@ -488,7 +484,8 @@ public:
   /// Enable unit tests?
   bool shouldEmitUnitTests{false};
 
-  /// Colorize the unit test results printed by `runUnitTests()`?
+  /// Colorize the unit test results printed by `runUnitTests()`? This
+  /// resolves for standard error as `shouldUseColors()` does.
   ANSIColorMode ansiColorMode{ANSI_COLOR_MODE_AUTO};
 
   /// The number of wavelengths per MDL `color`.

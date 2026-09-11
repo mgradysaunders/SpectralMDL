@@ -53,6 +53,73 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
     itr = itrLast;
   }
 }
+
+// What the debug line for a loaded resource says about it. An image is
+// not here: `loadImage()` only probes the file, so an image is described
+// once it is decoded, at the end of `compile()`.
+[[nodiscard]] std::string describeResource(const Ptexture &ptexture) {
+  auto result{concat(ptexture.channelCount,
+                     ptexture.channelCount == 1 ? " channel" : " channels")};
+#if SMDL_HAS_PTEX
+  result = concat(static_cast<PtexTexture *>(ptexture.texture)->numFaces(),
+                  " faces, ", result);
+#endif // #if SMDL_HAS_PTEX
+  return result;
+}
+
+[[nodiscard]] std::string describeResource(const BSDFMeasurement &measurement) {
+  const auto numValues{measurement.numTheta * measurement.numTheta *
+                       measurement.numPhi};
+  return concat(
+      measurement.kind == BSDFMeasurement::KIND_REFLECTION ? "reflection"
+                                                           : "transmission",
+      ", ", measurement.numTheta, " x ", measurement.numTheta, " x ",
+      measurement.numPhi,
+      measurement.type == BSDFMeasurement::TYPE_FLOAT ? " float" : " float3",
+      ", ", Bytes(numValues * BSDFMeasurement::sizeOf(measurement.type)));
+}
+
+[[nodiscard]] std::string describeResource(const LightProfile &lightProfile) {
+  return concat(lightProfile.version, ", ", lightProfile.vertAngles.size(),
+                " vertical x ", lightProfile.horzAngles.size(),
+                " horizontal angles");
+}
+
+[[nodiscard]] std::string describeSamples(Span<const float> wavelengths) {
+  if (wavelengths.empty()) return "no samples";
+  return concat(wavelengths.size(), " samples from ", Brief(wavelengths[0]),
+                " to ", Brief(wavelengths[wavelengths.size() - 1]), " nm");
+}
+
+[[nodiscard]] std::string describeResource(const Spectrum &spectrum) {
+  return describeSamples(SpectrumView(spectrum).wavelengths);
+}
+
+[[nodiscard]] std::string
+describeResource(const SpectrumLibrary &spectrumLibrary) {
+  const auto numCurves{spectrumLibrary.getNumCurves()};
+  return concat(
+      numCurves, numCurves == 1 ? " curve of " : " curves of ",
+      describeSamples(spectrumLibrary.getCurveByIndex(0).wavelengths));
+}
+
+[[nodiscard]] std::string describeResource(const VoxelGrid &voxelGrid) {
+  const auto extent{voxelGrid.getExtent()};
+  return concat(extent.x, " x ", extent.y, " x ", extent.z, " voxels, values ",
+                Brief(voxelGrid.getMinValue()), " to ",
+                Brief(voxelGrid.getMaxValue()), ", ",
+                Bytes(voxelGrid.getSizeInBytes()));
+}
+
+[[nodiscard]] std::string describeImage(const Image &image) {
+  const auto numLevels{image.getNumLevels()};
+  return concat(image.getNumTexelsX(), " x ", image.getNumTexelsY(), ", ",
+                image.getNumChannels(), "-channel ",
+                Image::getFormatName(image.getFormat()),
+                numLevels > 1 ? concat(", ", numLevels, " mip levels")
+                              : std::string(),
+                ", ", Bytes(image.getSizeInBytes()));
+}
 } // namespace
 
 Compiler::~Compiler() = default;
@@ -247,6 +314,7 @@ Compiler::add(std::string fileOrDirName,
                           .string()};
       auto archive{Archive{fileName}};
       auto mainSource{std::optional<std::string>()};
+      auto numExtracted{0};
       for (int i = 0; i < archive.get_file_count(); i++) {
         auto entryName{archive.get_file_name(i)};
         if (entryName == "main.mdl") {
@@ -256,12 +324,17 @@ Compiler::add(std::string fileOrDirName,
           std::filesystem::create_directories(outPath.parent_path());
           openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
               << archive.extract_file(i);
+          numExtracted++;
         }
       }
       if (!mainSource) {
         throw Error(concat("MDLE ", QuotedPath(fileName),
                            " does not contain 'main.mdl'"));
       }
+      SMDL_LOG_DEBUG("Extracted ", numExtracted,
+                     numExtracted == 1 ? " resource" : " resources",
+                     " of MDLE ", QuotedPath(fileName), " into ",
+                     QuotedPath(extractDir));
       registerModule(Module::loadFromMDLE(fileName, *mainSource, qualifiedName,
                                           extractDir),
                      addedModuleNames);
@@ -717,8 +790,6 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
         auto image{imageEntries[i].second};
         SMDL_PROFILER_ENTRY("Load image",
                             fileHash->canonicalFileNames[0].c_str());
-        SMDL_LOG_DEBUG("Loading image ",
-                       QuotedPath(fileHash->canonicalFileNames[0]), " ...");
         // A decode failure must not unwind out of 'parallelFor'; warn
         // and continue with the image's pre-allocated (zeroed) texels,
         // matching the 'loadImage' policy.
@@ -726,6 +797,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
           SMDL_LOG_WARN("cannot load ",
                         QuotedPath(fileHash->canonicalFileNames[0]), ": ",
                         error->message);
+        } else {
+          SMDL_LOG_DEBUG("Loaded image ",
+                         QuotedPath(fileHash->canonicalFileNames[0]), ": ",
+                         describeImage(*image));
         }
       });
       auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
@@ -778,38 +853,49 @@ namespace {
 // exactly once per distinct key. The key is the content hash of the file,
 // possibly extended with load parameters (see `mImages`). A load failure
 // is a warning, not an error: the resource stays default-constructed and
-// rendering continues.
+// rendering continues. A load that succeeds says what it loaded at debug
+// level, naming `part` too if the file holds more than one thing to load.
 template <typename K, typename T, typename Hash, typename Eq, typename Loader>
 T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
-                const K &key, const SourceLocation &srcLoc, Loader &&loader) {
+                const K &key, const SourceLocation &srcLoc,
+                const std::string &fileName, Loader &&loader,
+                std::string_view part = {}) {
   auto [itr, inserted] = resources.try_emplace(key);
   if (inserted) {
     itr->second = std::make_unique<T>();
     if (auto error{std::invoke(std::forward<Loader>(loader), *itr->second)}) {
       srcLoc.logWarn(error->message);
+    } else if constexpr (!std::is_same_v<T, Image>) {
+      if (Logger::get().isEnabled(LOG_LEVEL_DEBUG))
+        srcLoc.logDebug(concat("Loaded ", QuotedPath(fileName),
+                               part.empty() ? "" : " ", part, ": ",
+                               describeResource(*itr->second)));
     }
   }
   return *itr->second;
 }
 } // namespace
 
-void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
+bool Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
                                       const std::string &key,
                                       std::string_view message) {
-  if (mWarnedResourceKeys.insert(key).second) srcLoc.logWarn(message);
+  if (!mWarnedResourceKeys.insert(key).second) return false;
+  srcLoc.logWarn(message);
+  return true;
 }
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc,
                                  bool useMipLevels, Image::MipFilter filter) {
   auto fileHash{mFileHasher[fileName]};
-  auto &image{loadResource(mImages, fileHash, srcLoc, [&](Image &image) {
-    SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
-    // Probes the file and nothing more: the texels are allocated and
-    // decoded at the end of the compile, by which point every reference
-    // has been seen and the level count is settled.
-    return image.startLoad(fileName);
-  })};
+  auto &image{
+      loadResource(mImages, fileHash, srcLoc, fileName, [&](Image &image) {
+        SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
+        // Probes the file and nothing more: the texels are allocated and
+        // decoded at the end of the compile, by which point every reference
+        // has been seen and the level count is settled.
+        return image.startLoad(fileName);
+      })};
   // Named by content hash, so every reference to the same file resolves
   // to one symbol and one set of texels.
   mImageSymbolNames.try_emplace(
@@ -837,7 +923,7 @@ const Image &Compiler::loadImage(const std::string &fileName,
 const Ptexture &Compiler::loadPtexture(const std::string &fileName,
                                        const SourceLocation &srcLoc) {
   return loadResource(
-      mPtextures, mFileHasher[fileName], srcLoc,
+      mPtextures, mFileHasher[fileName], srcLoc, fileName,
       [&](Ptexture &ptexture) -> std::optional<Error> {
 #if SMDL_HAS_PTEX
         SMDL_PROFILER_ENTRY("Compiler::loadPtexture()", fileName.c_str());
@@ -862,7 +948,7 @@ const BSDFMeasurement &
 Compiler::loadBSDFMeasurement(const std::string &fileName,
                               const SourceLocation &srcLoc) {
   return loadResource(mBSDFMeasurements, mFileHasher[fileName], srcLoc,
-                      [&](BSDFMeasurement &bsdfMeasurement) {
+                      fileName, [&](BSDFMeasurement &bsdfMeasurement) {
                         SMDL_PROFILER_ENTRY("Compiler::loadBSDFMeasurement()",
                                             fileName.c_str());
                         return bsdfMeasurement.loadFromFile(fileName);
@@ -871,7 +957,7 @@ Compiler::loadBSDFMeasurement(const std::string &fileName,
 
 const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
                                                const SourceLocation &srcLoc) {
-  return loadResource(mLightProfiles, mFileHasher[fileName], srcLoc,
+  return loadResource(mLightProfiles, mFileHasher[fileName], srcLoc, fileName,
                       [&](LightProfile &lightProfile) {
                         SMDL_PROFILER_ENTRY("Compiler::loadLightProfile()",
                                             fileName.c_str());
@@ -882,18 +968,20 @@ const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
 const VoxelGrid &Compiler::loadVoxelGrid(const std::string &fileName,
                                          const std::string &gridName,
                                          const SourceLocation &srcLoc) {
-  return loadResource(mVoxelGrids, std::pair(mFileHasher[fileName], gridName),
-                      srcLoc, [&](VoxelGrid &voxelGrid) {
-                        SMDL_PROFILER_ENTRY("Compiler::loadVoxelGrid()",
-                                            fileName.c_str());
-                        return voxelGrid.loadFromFile(fileName, gridName);
-                      });
+  return loadResource(
+      mVoxelGrids, std::pair(mFileHasher[fileName], gridName), srcLoc, fileName,
+      [&](VoxelGrid &voxelGrid) {
+        SMDL_PROFILER_ENTRY("Compiler::loadVoxelGrid()", fileName.c_str());
+        return voxelGrid.loadFromFile(fileName, gridName);
+      },
+      gridName.empty() ? std::string() : concat("grid ", Quoted(gridName)));
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const SourceLocation &srcLoc) {
   return SpectrumView(loadResource(
-      mSpectrums, mFileHasher[fileName], srcLoc, [&](Spectrum &spectrum) {
+      mSpectrums, mFileHasher[fileName], srcLoc, fileName,
+      [&](Spectrum &spectrum) {
         SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
         return spectrum.loadFromFile(fileName);
       }));
@@ -943,7 +1031,7 @@ const SpectrumLibrary &
 Compiler::loadSpectrumLibrary(const std::string &fileName,
                               const SourceLocation &srcLoc) {
   return loadResource(mSpectrumLibraries, mFileHasher[fileName], srcLoc,
-                      [&](SpectrumLibrary &spectrumLibrary) {
+                      fileName, [&](SpectrumLibrary &spectrumLibrary) {
                         SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()",
                                             fileName.c_str());
                         return spectrumLibrary.loadFromFile(fileName);
@@ -1146,18 +1234,19 @@ constexpr auto testColorFailure{llvm::HighlightColor::Error};
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
     // NOTE: Print through `llvm::errs()` rather than `std::cerr` so that
-    // `WithColor` can colorize. It detects the terminal itself, so piped
-    // and redirected output stays plain text. Both streams write to file
-    // descriptor 2 unbuffered, so this stays correctly interleaved with
-    // the logger, which still prints through `std::cerr`.
+    // `WithColor` can colorize. The mode is resolved here rather than
+    // left to its own detection, so that the report and the log sink
+    // agree on whether standard error is colored. Both streams write to
+    // file descriptor 2 unbuffered, so this stays correctly interleaved
+    // with the logger, which still prints through `std::cerr`.
     //
     // NOTE: Each colored span opens and closes before the test runs, so
     // that a test that crashes cannot leave the terminal colored.
     auto &os{llvm::errs()};
     const auto llvmColorMode{
-        ansiColorMode == ANSI_COLOR_MODE_ALWAYS  ? llvm::ColorMode::Enable
-        : ansiColorMode == ANSI_COLOR_MODE_NEVER ? llvm::ColorMode::Disable
-                                                 : llvm::ColorMode::Auto};
+        shouldUseColors(ansiColorMode, cerrSupportsANSIColors())
+            ? llvm::ColorMode::Enable
+            : llvm::ColorMode::Disable};
     forEachModuleGroup(
         mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
           os << "Running tests in ";

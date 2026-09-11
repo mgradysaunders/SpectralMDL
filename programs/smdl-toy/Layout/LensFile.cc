@@ -257,7 +257,7 @@ LensDocument readLens(const std::string &fileName) {
   auto diags{LayoutDiagnostics()};
   const auto &source{diags.loadSource(fileName)};
   auto document{parseLens(diags, source)};
-  if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());
+  if (!diags.empty()) diags.printAll();
   if (diags.hasErrors())
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
                                    ": ", diags.summary()));

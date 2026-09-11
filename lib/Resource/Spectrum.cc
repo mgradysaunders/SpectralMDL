@@ -16,9 +16,14 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
     auto line{std::string()};
     auto units{WAVE_UNITS_MICROMETERS};
     bool hasUnitsYet{false};
+    auto lineNo{0};
     while (std::getline(file, line)) {
+      lineNo++;
       auto lineRef{llvm::StringRef(line).trim()};
       if (lineRef.empty() || lineRef[0] == '#') continue;
+      // The first row may name the units instead, so a first row that is
+      // neither is refused as both.
+      const bool isFirstRow{!hasUnitsYet};
       if (!hasUnitsYet) {
         hasUnitsYet = true;
         if (lineRef.equals_insensitive("angstroms")) {
@@ -44,8 +49,9 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
       float wavelength{};
       float curveValue{};
       if (std::sscanf(lineRef.data(), "%f %f", &wavelength, &curveValue) != 2)
-        throw Error(concat("cannot load ", QuotedPath(fileName),
-                           ": expected 'wavelength value'"));
+        throw Error(concat("cannot load ", QuotedPath(fileName), ": expected ",
+                           isFirstRow ? "wavelength units or " : "",
+                           "'wavelength value' on line ", lineNo));
       mWavelengths.push_back(toNanometers(units, wavelength));
       mCurveValues.push_back(curveValue);
     }

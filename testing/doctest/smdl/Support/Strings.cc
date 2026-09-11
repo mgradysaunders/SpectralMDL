@@ -61,6 +61,21 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     CHECK(smdl::concat(smdl::Brief(1.0f / 3.0f, 999)) ==
           smdl::concat(smdl::Brief(1.0f / 3.0f, 17)));
   }
+  SUBCASE("Bytes takes the largest binary unit that keeps the number at 1 or "
+          "more") {
+    CHECK(smdl::concat(smdl::Bytes(0)) == "0 B");
+    CHECK(smdl::concat(smdl::Bytes(1023)) == "1023 B");
+    CHECK(smdl::concat(smdl::Bytes(1024)) == "1 KiB");
+    CHECK(smdl::concat(smdl::Bytes(1536)) == "1.5 KiB");
+    CHECK(smdl::concat(smdl::Bytes(2'800'000)) == "2.67 MiB");
+    CHECK(smdl::concat(smdl::Bytes(size_t(3) << 30)) == "3 GiB");
+    // Where three significant digits would go exponential, the number is
+    // written whole instead.
+    CHECK(smdl::concat(smdl::Bytes(1023 * 1024)) == "1023 KiB");
+    CHECK(smdl::concat(smdl::Bytes(1'023'590)) == "1000 KiB");
+    // There is no unit past TiB.
+    CHECK(smdl::concat(smdl::Bytes(size_t(5000) << 40)) == "5000 TiB");
+  }
   SUBCASE("A location is written the one way every diagnostic writes one") {
     CHECK(smdl::concat(smdl::LocationMarkup("<builtin ::df>", 12, 5,
                                             /*isPath=*/false)) ==

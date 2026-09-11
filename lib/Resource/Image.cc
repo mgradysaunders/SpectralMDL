@@ -169,6 +169,20 @@ Image::image_realloc_t Image::image_realloc = &std::realloc;
 
 Image::image_free_t Image::image_free = &std::free;
 
+std::string_view Image::getFormatName(Format format) noexcept {
+  switch (format) {
+  case UINT8:
+    return "uint8";
+  case UINT16:
+    return "uint16";
+  case FLOAT16:
+    return "float16";
+  case FLOAT32:
+    return "float32";
+  }
+  return "unknown";
+}
+
 void Image::clear() {
   mFormat = UINT8;
   mNumTexelsX = 0;

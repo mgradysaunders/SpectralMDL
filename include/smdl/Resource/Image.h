@@ -83,6 +83,9 @@ public:
     FLOAT32 = 4  ///< 32-bit floating point, AKA single precision.
   };
 
+  /// Get the name of `format` as a message spells it, e.g., `uint8`.
+  [[nodiscard]] static std::string_view getFormatName(Format format) noexcept;
+
   /// The reduction that builds each mip level from the level below it.
   enum MipFilter : int {
     /// The box filter: each texel is the mean of the texels it covers,

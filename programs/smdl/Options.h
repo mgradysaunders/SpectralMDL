@@ -114,8 +114,9 @@ struct UtilityOptions final {
   /// logger before anything else can say anything.
   smdl::LogLevel logLevel{smdl::LOG_LEVEL_INFO};
 
-  /// Whether the unit test report and the documentation text colorize,
-  /// which they decide for themselves when this is `ANSI_COLOR_MODE_AUTO`.
+  /// Whether log messages, the unit test report, and the documentation
+  /// text are colored, which each resolves for its own stream with
+  /// `smdl::shouldUseColors()`.
   smdl::ANSIColorMode ansiColorMode{smdl::ANSI_COLOR_MODE_AUTO};
 
   /// Whether log messages are labeled with Unicode symbols, which the

@@ -29,6 +29,15 @@ enum UnicodeMode : int {
   UNICODE_MODE_NEVER   ///< Always the bracketed words.
 };
 
+/// Whether output is colored with ANSI escape codes: the default log
+/// sinks' messages, and the report `Compiler::runUnitTests()` prints. See
+/// `shouldUseColors()`.
+enum ANSIColorMode : int {
+  ANSI_COLOR_MODE_AUTO,   ///< Colorize a terminal, if the environment allows.
+  ANSI_COLOR_MODE_ALWAYS, ///< Colorize even if the stream is redirected.
+  ANSI_COLOR_MODE_NEVER   ///< Never colorize.
+};
+
 /// A log sink to receive log messages.
 class SMDL_EXPORT LogSink {
 public:
@@ -131,11 +140,39 @@ private:
 [[nodiscard]] SMDL_EXPORT std::string_view
 logLevelLabel(LogLevel level, bool useColors, bool useUnicode) noexcept;
 
-/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
+/// A message as the default log sinks print it, `logLevelLabel()` and
+/// then the message, without the trailing newline.
+///
+/// Without colors the message is exactly as given. With them, a debug
+/// message is dimmed whole, and any other has its locations (as
+/// `LocationMarkup` writes them) in bold and its single-quoted strings in
+/// cyan. A source line followed by a caret line is left as written,
+/// except that its gutter is dimmed and the caret is green. A message
+/// that already contains an escape code is left as it is.
+///
+/// This reads the finished text, so the message a sink is handed stays
+/// plain, and a host with its own sink renders the same by calling this.
+[[nodiscard]] SMDL_EXPORT std::string formatLogMessage(LogLevel level,
+                                                       std::string_view message,
+                                                       bool useColors,
+                                                       bool useUnicode);
+
+/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal. See
+/// `shouldUseColors()` for whether it should be colored.
 [[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors() noexcept;
 
-/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal.
+/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal. See
+/// `shouldUseColors()` for whether it should be colored.
 [[nodiscard]] SMDL_EXPORT bool coutSupportsANSIColors() noexcept;
+
+/// Resolve `mode` for a stream, given whether the stream is a terminal.
+///
+/// `ANSI_COLOR_MODE_AUTO` also wants the environment to allow colors:
+/// `NO_COLOR` unset or empty (the no-color.org convention), and `TERM`
+/// set to something other than `dumb`. The explicit modes override both,
+/// as that convention asks.
+[[nodiscard]] SMDL_EXPORT bool shouldUseColors(ANSIColorMode mode,
+                                               bool isTerminal) noexcept;
 
 /// Does the environment claim UTF-8? Tests the locale variables in the
 /// order the C library resolves them, `LC_ALL`, `LC_CTYPE`, then `LANG`,
@@ -151,18 +188,19 @@ logLevelLabel(LogLevel level, bool useColors, bool useUnicode) noexcept;
 [[nodiscard]] SMDL_EXPORT bool shouldUseUnicode(UnicodeMode mode,
                                                 bool isTerminal) noexcept;
 
-/// The default log-sinks for convenience, which label each message as
-/// `logLevelLabel()` does:
+/// The default log-sinks for convenience, which print each message as
+/// `formatLogMessage()` does, labeled as `logLevelLabel()` does:
 ///
 /// | Level   | ASCII     | Unicode                     | Color      |
 /// |---------|-----------|-----------------------------|------------|
-/// | `Debug` | `[debug]` | U+2699, a gear              | cyan       |
+/// | `Debug` | `[debug]` | U+2699, a gear              | cyan, dim  |
 /// | `Info`  | `[info]`  | U+2139, an information sign | green      |
 /// | `Warn`  | `[warn]`  | U+26A0, a warning sign      | yellow     |
 /// | `Error` | `[error]` | U+2718, a heavy ballot X    | bright red |
 ///
-/// The label is colored when the stream is a terminal, and is a symbol
-/// when the sink's `UnicodeMode` resolves to one.
+/// The message is colored when the sink's `ANSIColorMode` resolves to
+/// colors, and labeled with a symbol when its `UnicodeMode` resolves to
+/// one.
 namespace LogSinks {
 
 /// A default log sink to print to `std::cerr`.
@@ -176,6 +214,10 @@ public:
   /// protected and, like `Logger::setMinLevel()`, is understood to be set
   /// once at program startup, before anything logs from another thread.
   void setUnicodeMode(UnicodeMode unicodeMode) noexcept;
+
+  /// Set whether messages are colored, which is `ANSI_COLOR_MODE_AUTO`
+  /// until this is called. See `setUnicodeMode()` for when to call it.
+  void setColorMode(ANSIColorMode colorMode) noexcept;
 
 private:
   bool mUseColors{};
@@ -194,6 +236,9 @@ public:
 
   /// See `PrintToCerr::setUnicodeMode()`.
   void setUnicodeMode(UnicodeMode unicodeMode) noexcept;
+
+  /// See `PrintToCerr::setColorMode()`.
+  void setColorMode(ANSIColorMode colorMode) noexcept;
 
 private:
   bool mUseColors{};

@@ -13,6 +13,15 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
   std::replace(file.begin(), file.end(), ',', ' ');
   auto error{catchAndReturnError([&] {
     auto text{llvm::StringRef(file).trim()};
+    // The line `rest` starts on, and where the parse stands, for an error.
+    const auto lineOf{[&](llvm::StringRef rest) {
+      const char *end{rest.data() ? rest.data() : file.c_str() + file.size()};
+      return 1 + std::count(file.c_str(), end, '\n');
+    }};
+    const auto where{[&] {
+      return text.empty() ? std::string("at the end of the file")
+                          : concat("on line ", lineOf(text));
+    }};
     if (!text.starts_with("IESNA")) throw Error("not an IES file");
     // Parse version
     {
@@ -44,21 +53,24 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
           value = result;
           text = text.drop_front(num.size());
         } else {
-          throw Error(concat("expected float: ", what));
+          throw Error(concat("expected a float for ", what, " ", where()));
         }
       } else {
         if (text.consumeInteger(/*Radix=*/0, value)) {
-          throw Error(concat("expected int: ", what));
+          throw Error(concat("expected an int for ", what, " ", where()));
         }
       }
     }};
     // Parse tilt
     {
-      auto [line, remainder] = text.ltrim().split('\n');
-      if (!line.consume_front("TILT=")) throw Error("expected 'TILT='");
+      text = text.ltrim();
+      auto [line, remainder] = text.split('\n');
+      if (!line.consume_front("TILT="))
+        throw Error(concat("expected 'TILT=' ", where()));
       auto tiltKind{std::string(line.trim())};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
-        throw Error(concat("unsupported tilt ", Quoted(tiltKind)));
+        throw Error(concat("unsupported tilt ", Quoted(tiltKind), " on line ",
+                           lineOf(line)));
       text = remainder;
       if (tiltKind == "INCLUDE") {
         tilt = Tilt();
@@ -84,14 +96,16 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
     parseNumberOrThrow("num vertical angles", numVertAngles);
     parseNumberOrThrow("num horizontal angles", numHorzAngles);
     parseNumberOrThrow("photometric type", photometryType);
+    if (photometryType != 1 && photometryType != 2 && photometryType != 3)
+      throw Error(concat("unknown photometric type ", photometryType,
+                         " on line ", lineOf(text)));
     parseNumberOrThrow("units type", unitsType);
+    if (unitsType != 1 && unitsType != 2)
+      throw Error(
+          concat("unknown units type ", unitsType, " on line ", lineOf(text)));
     parseNumberOrThrow("width", width);
     parseNumberOrThrow("length", length);
     parseNumberOrThrow("height", height);
-    if (photometryType != 1 && photometryType != 2 && photometryType != 3)
-      throw Error(concat("unknown photometric type ", photometryType));
-    if (unitsType != 1 && unitsType != 2)
-      throw Error(concat("unknown units type ", unitsType));
 
     // Unit conversion of feet to meters
     float unitConversion{unitsType == 1 ? 0.3048f : 1.0f};

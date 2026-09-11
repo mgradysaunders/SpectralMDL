@@ -188,8 +188,9 @@ public:
   /// nothing has been reported.
   [[nodiscard]] std::string summary() const;
 
-  /// Print `renderAll()` to standard error.
-  void printAll(bool useColors) const;
+  /// Print `renderAll()` to standard error, colored when
+  /// `smdl::shouldUseColors()` says standard error is, as the log is.
+  void printAll() const;
 
 private:
   std::deque<LayoutSource> mSources{};

@@ -53,6 +53,19 @@ TEST_CASE("Spectrum: the text format and its failures") {
       CHECK(view.curveValues.data()[0] == 1.0f);
     }
   }
+  SUBCASE("A row that does not parse is named by its line") {
+    auto error{spectrum.loadFromFile(
+        tmpDir.write("row.txt", "# A comment\n0.4 4\n\n0.5 abc\n").string())};
+    REQUIRE(error.has_value());
+    CHECK_CONTAINS(error->message, ": expected 'wavelength value' on line 4");
+    // The first row may name the units instead, so it is refused as both.
+    error = spectrum.loadFromFile(
+        tmpDir.write("units_typo.txt", "# A comment\nnm\n400 4\n").string());
+    REQUIRE(error.has_value());
+    CHECK_CONTAINS(error->message,
+                   ": expected wavelength units or 'wavelength value' on "
+                   "line 2");
+  }
   SUBCASE("Failure leaves the spectrum empty") {
     (void)loadText(spectrum, tmpDir, "good.txt", "0.4 4\n");
     const auto fileName{tmpDir.write("bad.txt", "0.4 4\n0.5 abc\n").string()};
