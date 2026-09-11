@@ -128,6 +128,7 @@ public:
   int digits{6};
 };
 
+#if !SMDL_DOXYGEN
 namespace detail {
 
 template <typename T, typename... Ts>
@@ -147,6 +148,7 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
 }
 
 } // namespace detail
+#endif // #if !SMDL_DOXYGEN
 
 /// \name Functions (strings)
 /// \{
