@@ -149,10 +149,13 @@ struct CameraModel final {
 ///
 void refuseUnrenderable(const CameraModel &model);
 
-/// The report `-describe-camera` prints: the frame and the field, the
-/// pixels and the pitch, the film quantity, the focus and the depth of
-/// field, the bands and the tile, the detector, and the well, the base
-/// ISO, and the ISO the body reads out at, as `resolveCameraModel()`
-/// resolved them. Builds the lens to trace its field, which is the one
-/// slow thing in it.
+/// The report `-describe-camera` prints, as `resolveCameraModel()`
+/// resolved the camera: the frame and the field, the pixels and the
+/// pitch, the film quantity, the focus and the depth of field; a lens's
+/// image circle, the share of the frame it leaves dark, and the thin lens
+/// `-ideal` fits to it with how closely it lands; the bands and the tile,
+/// the detector, the well, the base ISO, the ISO the body reads out at,
+/// the exposure in a photographer's terms, the dynamic range, and the
+/// color fit. Builds the lens to trace its field and fit it, which are the
+/// slow things in it.
 [[nodiscard]] std::string describeCamera(const CameraModel &model);

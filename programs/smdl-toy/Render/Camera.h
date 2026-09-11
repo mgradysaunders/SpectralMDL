@@ -199,6 +199,12 @@ struct DepthOfField final {
 [[nodiscard]] DepthOfField depthOfField(float focalLength, float fNumber,
                                         float focus, float2 frameSize) noexcept;
 
+/// The share of a frame `frameSize` across, centered on the axis, that
+/// lies outside the circle of radius `radius` about the axis: what a lens
+/// whose image circle that is leaves dark. 0 once the circle reaches the
+/// corners, and 1 for a circle of no radius.
+[[nodiscard]] float darkShareOfFrame(float2 frameSize, float radius) noexcept;
+
 /// The thin lens fitted to a traced one, and how closely it fits: what
 /// `approximateLens()` returns, and what the preview of a camera with a
 /// lens looks through.

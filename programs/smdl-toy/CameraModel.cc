@@ -1,4 +1,5 @@
 #include <cmath>
+#include <iterator>
 #include <string>
 
 #include "smdl/Support/Error.h"
@@ -10,6 +11,7 @@
 #include "CameraModel.h"
 #include "Layout/LensFile.h"
 #include "Options.h"
+#include "Sensor/Detector.h"
 #include "Sensor/Sensor.h"
 
 namespace {
@@ -226,6 +228,126 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                          " dE00, so the develop is false color"),
       "; ", balance, ", ", r, " ", smdl::Brief(fit.multipliers.x, 4), " and ",
       b, " ", smdl::Brief(fit.multipliers.z, 4), " against ", g);
+}
+
+// A shutter time as a photographer spells it: a fraction of a second
+// below half a second, to the whole denominator from a tenth down.
+[[nodiscard]] std::string spellShutter(double seconds) {
+  if (seconds >= 0.5) return smdl::concat(smdl::Brief(seconds, 3), " s");
+  const double denominator{1.0 / seconds};
+  return smdl::concat("1/",
+                      denominator >= 10.0
+                          ? smdl::Brief(std::round(denominator), 7)
+                          : smdl::Brief(denominator, 2),
+                      " s");
+}
+
+// An exposure value to a tenth of a stop.
+[[nodiscard]] smdl::Brief spellEV(double ev) {
+  return smdl::Brief(std::round(10.0 * ev) / 10.0, 3);
+}
+
+// The light a scene metered at `ev100` is typically in, by the usual
+// exposure tables: bright sun at 15, overcast at 12, a bright interior at
+// 8.
+[[nodiscard]] std::string describeLight(double ev100) {
+  struct Light final {
+    double ev100;
+    const char *name;
+  };
+  // Brightest first, so that a tie goes to the brighter.
+  static constexpr Light LIGHTS[]{{16.0, "sun on snow or sand"},
+                                  {15.0, "bright sun"},
+                                  {14.0, "hazy sun"},
+                                  {13.0, "bright overcast"},
+                                  {12.0, "overcast"},
+                                  {11.0, "open shade"},
+                                  {10.0, "just after sunset"},
+                                  {8.0, "a bright interior"},
+                                  {6.0, "a home interior"},
+                                  {4.0, "candlelight"},
+                                  {2.0, "a lit skyline at night"},
+                                  {0.0, "dim artificial light"},
+                                  {-3.0, "a landscape under the full moon"},
+                                  {-6.0, "starlight"}};
+  const auto &brightest{LIGHTS[0]};
+  const auto &darkest{LIGHTS[std::size(LIGHTS) - 1]};
+  if (ev100 > brightest.ev100 + 1.0)
+    return smdl::concat("brighter than ", brightest.name);
+  if (ev100 < darkest.ev100 - 1.0)
+    return smdl::concat("darker than ", darkest.name);
+  const Light *nearest{&brightest};
+  for (const auto &light : LIGHTS)
+    if (std::abs(light.ev100 - ev100) < std::abs(nearest->ev100 - ev100))
+      nearest = &light;
+  return smdl::concat("about ", nearest->name);
+}
+
+// One line on the exposure in a photographer's terms: the f-number and
+// the shutter as one exposure value, and the scene it suits at the ISO
+// the body reads out at, by the reflected-light meter's `N^2 / t = L S /
+// K`, or across the range the meter chooses the ISO from.
+[[nodiscard]] std::string describeExposure(const Sensor &sensor,
+                                           const std::optional<float> &iso,
+                                           double fNumber, double seconds) {
+  const double ev{std::log2(fNumber * fNumber / seconds)};
+  const auto settings{smdl::concat("EV ", spellEV(ev), " (f/",
+                                   smdl::Brief(fNumber, 3), " at ",
+                                   spellShutter(seconds), ")")};
+  const auto ev100At{
+      [&](double speed) { return ev - std::log2(speed / 100.0); }};
+  if (sensor.hasFixedGain() || iso) {
+    const double speed{sensor.hasFixedGain() ? sensor.fixedGainISO()
+                                             : double(*iso)};
+    const double ev100{ev100At(speed)};
+    return smdl::concat(
+        settings, ": at ISO ", smdl::Brief(speed, 5), " it suits EV100 ",
+        spellEV(ev100), ", ", describeLight(ev100),
+        ", a mean scene luminance of ",
+        smdl::Brief(METER_K * fNumber * fNumber / (seconds * speed), 3),
+        " cd/m^2");
+  }
+  const double top{ev100At(sensor.baseISO())};
+  const double bottom{ev100At(sensor.maxISO())};
+  return smdl::concat(
+      settings, ": the meter's ISO fits it to scenes from EV100 ", spellEV(top),
+      " at the base ISO ", smdl::Brief(sensor.baseISO(), 5), ", ",
+      describeLight(top), ", down to EV100 ", spellEV(bottom), " at ISO ",
+      smdl::Brief(sensor.maxISO(), 6), ", ", describeLight(bottom));
+}
+
+// One line on the dynamic range at the ISO the body reads out at, or at
+// the base when the meter has yet to choose one: the electrons a pixel
+// clips at, the well or the ADC's white level, whichever comes first,
+// over the noise of a pixel no light reaches, which is the read noise, the
+// dark current's shot noise over the shutter, and the ADC's step, a
+// uniform one digital number wide.
+[[nodiscard]] std::string describeDynamicRange(const Sensor &sensor,
+                                               const std::optional<float> &iso,
+                                               double temperature) {
+  const bool isChosen{sensor.hasFixedGain() || iso};
+  auto shot{DetectorShot{}};
+  shot.exposure = gRenderShutter.exposure;
+  shot.temperature = temperature;
+  shot.iso = sensor.hasFixedGain() ? sensor.fixedGainISO()
+             : iso                 ? double(*iso)
+                                   : sensor.baseISO();
+  const Detector detector{sensor, shot};
+  const double gain{detector.gain()};
+  const double clip{(double(detector.whiteLevel()) - detector.blackLevel()) /
+                    gain};
+  const double readNoise{sensor.settings().detector.readNoise};
+  const double floor{std::sqrt(readNoise * readNoise +
+                               detector.darkElectrons() +
+                               1.0 / (12.0 * gain * gain))};
+  return smdl::concat(
+      smdl::Brief(std::log2(clip / floor), 3), " stops at ",
+      isChosen ? "ISO " : "the base ISO ", smdl::Brief(shot.iso, 5), ": ",
+      smdl::Brief(std::round(clip), 7), " e- over a floor of ",
+      smdl::Brief(floor, 3), " e- of read, dark, and quantization noise",
+      isChosen ? ""
+               : ", less by about a stop for each stop the meter goes "
+                 "above the base");
 }
 
 // The thin lens fitted to a lens, and how closely it fits, for the log
@@ -697,8 +819,12 @@ std::string describeCamera(const CameraModel &model) {
                : describeDepthOfField(depthOfField(focalLength, fNumber, focus,
                                                    options.frameSize));
   }};
+  // The f-number the exposure is taken at: the lens's own, stopped down,
+  // or the thin lens's, which a pinhole has none of.
+  float fNumber{};
   if (options.lens) {
     const auto lens{buildLens(model)};
+    fNumber = lens.fNumber();
     const float halfHeight{0.5f * options.frameSize.y};
     const float halfDiagonal{
         0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
@@ -730,16 +856,25 @@ std::string describeCamera(const CameraModel &model) {
     line("  image circle: ", smdl::Brief(2e3f * circle, 4),
          " mm across, against a frame diagonal of ",
          smdl::Brief(2e3f * halfDiagonal, 4), " mm",
-         circle >= halfDiagonal ? ", which it covers"
-                                : ", which reaches past it");
-    if (model.shouldApproximateLens())
-      line("  preview: the thin lens fitted to it, ",
-           describeFit(approximateLens(options), options));
+         circle >= halfDiagonal
+             ? std::string(", which it covers")
+             : smdl::concat(
+                   ", which reaches past it and leaves ",
+                   smdl::Brief(
+                       100 * darkShareOfFrame(options.frameSize, circle), 3),
+                   "% of the frame dark"));
+    const auto fit{approximateLens(options)};
+    const float pitch{options.frameSize.y / float(options.resolution.y)};
+    line("  ideal fit: the thin lens -ideal looks through, ",
+         describeFit(fit, options),
+         fit.doesFold ? "; the corners look out elsewhere than the lens's do"
+         : fit.maxChiefRayError > pitch
+             ? "; what it frames near the edges sits elsewhere in the render"
+             : "");
   } else {
     const float focalLength{thinLensFocalLength(options)};
-    const float fNumber{options.aperture > 0
-                            ? focalLength / (2 * options.aperture)
-                            : options.fStop};
+    fNumber = options.aperture > 0 ? focalLength / (2 * options.aperture)
+                                   : options.fStop;
     line("lens: the thin lens");
     line("  field ", smdl::Brief(options.fovYDeg, 4),
          " degrees top to bottom, a focal length of ",
@@ -763,6 +898,11 @@ std::string describeCamera(const CameraModel &model) {
          describeDetector(physics));
     line("  well: ", describeWell(physics));
     line("  iso: ", describeISO(physics, model.iso));
+    if (gRenderShutter.hasExposure() && fNumber > 0)
+      line("  exposure: ", describeExposure(physics, model.iso, fNumber,
+                                            gRenderShutter.exposure));
+    line("  dynamic range: ",
+         describeDynamicRange(physics, model.iso, model.temperature));
     line("  color: ", describeColor(physics, model.whiteBalance));
     line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
   } else if (model.previewedSensor) {
@@ -772,7 +912,11 @@ std::string describeCamera(const CameraModel &model) {
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName),
          " and exposing the picture as its develop would");
-    line("  iso: ", describeISO(Sensor{sensor}, model.iso));
+    const Sensor physics{sensor};
+    line("  iso: ", describeISO(physics, model.iso));
+    if (gRenderShutter.hasExposure() && fNumber > 0)
+      line("  exposure: ", describeExposure(physics, model.iso, fNumber,
+                                            gRenderShutter.exposure));
   } else {
     line("sensor: the observer, so no bands and no readout");
   }

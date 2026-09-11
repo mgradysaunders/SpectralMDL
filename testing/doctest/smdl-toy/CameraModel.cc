@@ -52,6 +52,24 @@ constexpr const char *FIXED_BODY = "sensor {\n"
                                    "  detector { gain 0.5 }\n"
                                    "}\n";
 
+// A body whose noise floor is its read noise alone, 4 e- under a 16384 e-
+// well read out over 16 bits from a black level of 0: 12 stops.
+constexpr const char *QUIET_BODY =
+    "sensor {\n"
+    "  pixels 600 400\n"
+    "  pitch 6\n"
+    "  response { band L { 400 1 700 1 } }\n"
+    "  detector { full_well 16384 read_noise 4 dark_current 0 black_level 0 "
+    "bits 16 }\n"
+    "}\n";
+
+// A frame of 120 by 80 mm, far past what the tube lens below covers.
+constexpr const char *LARGE_BODY = "sensor {\n"
+                                   "  pixels 600 400\n"
+                                   "  pitch 200\n"
+                                   "  response { band L { 400 1 700 1 } }\n"
+                                   "}\n";
+
 // A biconvex singlet with the stop against its back, as a file.
 constexpr const char *SINGLET = "lens {\n"
                                 "  surface { radius 50 thickness 4 ior 1.5 "
@@ -60,6 +78,15 @@ constexpr const char *SINGLET = "lens {\n"
                                 "  stop { diameter 20 }\n"
                                 "}\n";
 
+// A singlet 100 mm behind a narrow stop, which lets it see a few degrees
+// of field and no more: an image circle a few millimeters across.
+constexpr const char *TUBE = "lens {\n"
+                             "  stop { diameter 4 thickness 100 }\n"
+                             "  surface { radius 50 thickness 4 ior 1.5 "
+                             "diameter 10 }\n"
+                             "  surface { radius -50 diameter 10 }\n"
+                             "}\n";
+
 // A scratch directory holding the body and the lens, and a camera file
 // written per case.
 class Files final {
@@ -67,7 +94,10 @@ public:
   explicit Files(const char *stem) : mTmpDir(stem) {
     (void)mTmpDir.write("body.sensor", BODY);
     (void)mTmpDir.write("fixed.sensor", FIXED_BODY);
+    (void)mTmpDir.write("quiet.sensor", QUIET_BODY);
+    (void)mTmpDir.write("large.sensor", LARGE_BODY);
     (void)mTmpDir.write("singlet.lens", SINGLET);
+    (void)mTmpDir.write("tube.lens", TUBE);
   }
 
   [[nodiscard]] Options camera(const std::string &text) {
@@ -203,6 +233,19 @@ TEST_CASE("CameraModel: the stand-ins") {
         resolveCameraModel(files.camera("camera { lens \"singlet.lens\" }\n"))};
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
     CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+  }
+  SUBCASE("The report fits the thin lens to a lens whether or not it "
+          "previews") {
+    const auto report{describeCamera(resolveCameraModel(
+        files.camera("camera { lens \"singlet.lens\" }\n")))};
+    CHECK_CONTAINS(report, "  ideal fit: the thin lens -ideal looks through, "
+                           "a focal length of ");
+  }
+  SUBCASE("The report says how much of a frame a lens leaves dark") {
+    const auto report{describeCamera(resolveCameraModel(files.camera(
+        "camera { sensor \"large.sensor\" lens \"tube.lens\" }\n")))};
+    CHECK_CONTAINS(report, ", which reaches past it and leaves ");
+    CHECK_CONTAINS(report, "% of the frame dark\n");
   }
 }
 
@@ -417,6 +460,33 @@ TEST_CASE("CameraModel: the ISO") {
                    ", the saturation speed of the stated gain, so nothing "
                    "is metered\n");
     CHECK_CONTAINS(describeCamera(fixed), " a stated gain of 0.5 DN/e-\n");
+  }
+  SUBCASE("The report states the exposure in a photographer's terms") {
+    // f/8 at 1/250 s is EV 14, two stops of which ISO 400 spends, and the
+    // meter's `N^2 / t = L S / K` makes it 12.5 * 64 / (0.004 * 400) = 500
+    // cd/m^2 on average.
+    const auto stated{describeCamera(resolveCameraModel(files.camera(
+        "camera { sensor \"body.sensor\" fstop 8 shutter 0.004 iso 400 }\n")))};
+    CHECK_CONTAINS(stated, "  exposure: EV 14 (f/8 at 1/250 s): at ISO 400 it "
+                           "suits EV100 12, about overcast, a mean scene "
+                           "luminance of 500 cd/m^2\n");
+    const auto metered{describeCamera(resolveCameraModel(files.camera(
+        "camera { sensor \"body.sensor\" fstop 8 shutter 0.004 }\n")))};
+    CHECK_CONTAINS(metered, "  exposure: EV 14 (f/8 at 1/250 s): the meter's "
+                            "ISO fits it to scenes from EV100 ");
+    CHECK_CONTAINS(metered, " at ISO 102400, about ");
+  }
+  SUBCASE("The report states the dynamic range, at the base until an ISO is "
+          "chosen") {
+    const auto base{describeCamera(resolveCameraModel(
+        files.camera("camera { sensor \"quiet.sensor\" fstop 8 }\n")))};
+    CHECK_CONTAINS(base, "  dynamic range: 12 stops at the base ISO ");
+    CHECK_CONTAINS(base, ": 16384 e- over a floor of 4 e- of read, dark, and "
+                         "quantization noise, less by about a stop for each "
+                         "stop the meter goes above the base\n");
+    const auto stated{describeCamera(resolveCameraModel(
+        files.camera("camera { sensor \"quiet.sensor\" fstop 8 iso 800 }\n")))};
+    CHECK_CONTAINS(stated, " stops at ISO 800: ");
   }
 }
 
@@ -637,8 +707,8 @@ TEST_CASE("CameraModel: the preview") {
     const auto report{describeCamera(resolveCameraModel(
         preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" }\n")))};
     CHECK_CONTAINS(report, ", previewed with -ideal\n");
-    CHECK_CONTAINS(report, "  preview: the thin lens fitted to it, a focal "
-                           "length of ");
+    CHECK_CONTAINS(report, "  ideal fit: the thin lens -ideal looks through, "
+                           "a focal length of ");
     CHECK_CONTAINS(report, "sensor: the observer, previewing 'Test body' ");
   }
 }

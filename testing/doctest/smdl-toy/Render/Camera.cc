@@ -490,6 +490,37 @@ TEST_CASE("Camera: the depth of field") {
   }
 }
 
+TEST_CASE("Camera: the share of a frame an image circle leaves dark") {
+  SUBCASE("None once the circle reaches the corners, and all without one") {
+    CHECK(darkShareOfFrame(float2(0.036f, 0.024f), 0.0217f) == 0.0f);
+    CHECK(darkShareOfFrame(float2(0.036f, 0.024f), 0.0f) == 1.0f);
+  }
+  SUBCASE("A circle inside the frame lights its own area and no more") {
+    CHECK(darkShareOfFrame(float2(4.0f, 2.0f), 0.5f) ==
+          doctest::Approx(1.0 - PI * 0.25 / 8.0).epsilon(1e-5));
+  }
+  SUBCASE("The circle inscribed in a square leaves the corners, 1 - pi / 4") {
+    CHECK(darkShareOfFrame(float2(2.0f, 2.0f), 1.0f) ==
+          doctest::Approx(1.0 - PI / 4.0).epsilon(1e-5));
+  }
+  SUBCASE("A circle past the short sides and short of the corners leaves "
+          "what a count of the frame's points does") {
+    const float2 frame{3.0f, 2.0f};
+    const float radius{1.3f};
+    constexpr int N{1000};
+    int numDark{};
+    for (int i = 0; i < N; i++) {
+      for (int j = 0; j < N; j++) {
+        const float x{frame.x * ((float(i) + 0.5f) / N - 0.5f)};
+        const float y{frame.y * ((float(j) + 0.5f) / N - 0.5f)};
+        numDark += x * x + y * y > radius * radius;
+      }
+    }
+    CHECK(darkShareOfFrame(frame, radius) ==
+          doctest::Approx(double(numDark) / (N * N)).epsilon(2e-3));
+  }
+}
+
 TEST_CASE("Camera: focus at infinity") {
   auto options{openOptions()};
   options.fStop = 2.0f;

@@ -495,9 +495,10 @@ cl::opt<bool> optListObjects{
     cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optDescribeCamera{
     "describe-camera",
-    cl::desc("Print what the camera resolves to (the frame, the field, the "
-             "pixels, the film, the bands, the detector) and exit, before "
-             "any scene is read; needs no scene when -camera is given"),
+    cl::desc("Print what the camera resolves to and exit, before any scene "
+             "is read: the frame, the lens and its ideal fit, the focus, the "
+             "body, the exposure, the dynamic range, and the color fit; "
+             "needs no scene when -camera is given"),
     cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optJSON{"json",
                       cl::desc("With -list-objects, -list-materials, or "

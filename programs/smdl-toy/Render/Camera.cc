@@ -98,6 +98,25 @@ DepthOfField depthOfField(float focalLength, float fNumber, float focus,
   return result;
 }
 
+float darkShareOfFrame(float2 frameSize, float radius) noexcept {
+  const double a{0.5 * double(frameSize.x)};
+  const double b{0.5 * double(frameSize.y)};
+  const double r{radius};
+  if (!(r > 0)) return 1;
+  if (r * r >= a * a + b * b) return 0;
+  // One quadrant of the frame, `[0, a]` by `[0, b]`, is lit where it lies
+  // under the circle: the integral of `min(b, sqrt(r^2 - x^2))` over `x`
+  // in `[0, min(a, r)]`, flat at `b` out to where the arc drops below it.
+  const auto underArc{[r](double x) {
+    return 0.5 * (x * std::sqrt(std::max(0.0, r * r - x * x)) +
+                  r * r * std::asin(std::min(1.0, x / r)));
+  }};
+  const double end{std::min(a, r)};
+  const double knee{std::min(end, r > b ? std::sqrt(r * r - b * b) : 0.0)};
+  const double lit{b * knee + underArc(end) - underArc(knee)};
+  return float(1.0 - lit / (a * b));
+}
+
 LensApproximation approximateLens(const CameraOptions &options) {
   SMDL_SANITY_CHECK(options.lens.has_value());
   auto result{LensApproximation{}};
@@ -319,9 +338,14 @@ void Camera::buildLens(const CameraOptions &options) {
                       "are diameters");
   const auto atCorner{mLens->transmittedArea(halfDiagonal)};
   if (!(atCorner > 0)) {
-    SMDL_LOG_WARN("Lens: nothing reaches the corner of the frame through "
-                  "this lens, so the frame is dark outside the circle it "
-                  "covers; a smaller sensor is what fits it");
+    SMDL_LOG_WARN(
+        "Lens: nothing reaches the corner of the frame through "
+        "this lens, so ",
+        smdl::Brief(100 * darkShareOfFrame(float2(mFrameWidth, mFrameHeight),
+                                           mLens->imageCircleRadius()),
+                    3),
+        "% of the frame is dark outside the circle it covers; a "
+        "smaller sensor is what fits it");
   } else {
     SMDL_LOG_INFO("Lens vignetting: the frame corner sees ",
                   100 * atCorner / onAxis,
