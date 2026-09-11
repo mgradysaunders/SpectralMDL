@@ -97,6 +97,11 @@ syn match sensorBadWord display "\<\h\w*\>"
 " The tile's own: every identifier there is a band name, so what a row refuses
 " is a word of any other shape, such as a number or a quoted string.
 syn match sensorCFABad contained display "[^ \t{}=#]\+"
+
+" The band's own: a word after `band` that is no name, `row` among them. It is
+" still followed into the knots, so the blocks after it keep their meaning.
+syn match sensorBandBadName contained "[^ \t{}=#]\+"
+      \ nextgroup=sensorBandBlock skipwhite skipempty
 "--}
 
 "--{ Directives
@@ -130,7 +135,7 @@ syn keyword sensorResponseSetting contained kind
       \ nextgroup=sensorResponseKind skipwhite skipempty
 syn keyword sensorResponseKind contained relative qe
 syn keyword sensorResponseSetting contained band
-      \ nextgroup=sensorBandName skipwhite skipempty
+      \ nextgroup=sensorBandName,sensorBandBadName skipwhite skipempty
 syn match sensorBandName contained "\<\%(row\>\)\@!\h\w*\>"
       \ nextgroup=sensorBandBlock skipwhite skipempty
 syn keyword sensorResponseSetting contained cfa
@@ -210,6 +215,7 @@ hi def link sensorDelim            Delimiter
 if !exists("g:sensor_no_error_highlight")
   hi def link sensorBadWord        Error
   hi def link sensorCFABad         Error
+  hi def link sensorBandBadName    Error
 endif
 "--}
 
