@@ -70,6 +70,21 @@ constexpr const char *LARGE_BODY = "sensor {\n"
                                    "  response { band L { 400 1 700 1 } }\n"
                                    "}\n";
 
+// A tiled body whose bands are zero for a way past their ends, and a
+// fourth band, which the tile does not lay down, wider than the three.
+constexpr const char *SHAPED_BODY =
+    "sensor {\n"
+    "  pixels 600 400\n"
+    "  pitch 6\n"
+    "  response {\n"
+    "    band R { 500 0 560 0 580 1 680 1 700 0 780 0 }\n"
+    "    band G { 460 0 480 1 600 1 620 0 }\n"
+    "    band B { 300 0 360 0 380 0 400 1 500 1 520 0 }\n"
+    "    band IR { 300 1 1000 1 }\n"
+    "    cfa { row R G  row G B }\n"
+    "  }\n"
+    "}\n";
+
 // A biconvex singlet with the stop against its back, as a file.
 constexpr const char *SINGLET = "lens {\n"
                                 "  surface { radius 50 thickness 4 ior 1.5 "
@@ -77,6 +92,14 @@ constexpr const char *SINGLET = "lens {\n"
                                 "  surface { radius -50 diameter 20 }\n"
                                 "  stop { diameter 20 }\n"
                                 "}\n";
+
+// The same singlet in a catalog glass, which disperses.
+constexpr const char *GLASS_SINGLET = "lens {\n"
+                                      "  surface { radius 50 thickness 4 "
+                                      "glass N-BK7 diameter 20 }\n"
+                                      "  surface { radius -50 diameter 20 }\n"
+                                      "  stop { diameter 20 }\n"
+                                      "}\n";
 
 // A singlet 100 mm behind a narrow stop, which lets it see a few degrees
 // of field and no more: an image circle a few millimeters across.
@@ -96,7 +119,9 @@ public:
     (void)mTmpDir.write("fixed.sensor", FIXED_BODY);
     (void)mTmpDir.write("quiet.sensor", QUIET_BODY);
     (void)mTmpDir.write("large.sensor", LARGE_BODY);
+    (void)mTmpDir.write("shaped.sensor", SHAPED_BODY);
     (void)mTmpDir.write("singlet.lens", SINGLET);
+    (void)mTmpDir.write("glass.lens", GLASS_SINGLET);
     (void)mTmpDir.write("tube.lens", TUBE);
   }
 
@@ -742,5 +767,38 @@ TEST_CASE("CameraModel: the resolution scale") {
     CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
     CHECK(model.options.frameSize.x ==
           doctest::Approx(1e-3f * 24.0f * 1280.0f / 720.0f));
+  }
+}
+
+TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-trace-range"};
+  SUBCASE("A tiled body and a lens whose glasses disperse set the span of "
+          "the bands the tile lays down") {
+    const auto model{resolveCameraModel(files.camera(
+        "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n"))};
+    // B is zero up to 380 nm and R from 700 nm on, whatever knots are
+    // stated past them, and the band the tile leaves out reaches past
+    // both.
+    REQUIRE(model.options.traceWavelengthRange);
+    CHECK(model.options.traceWavelengthRange->x == 380.0f);
+    CHECK(model.options.traceWavelengthRange->y == 700.0f);
+  }
+  SUBCASE("A lens whose glasses do not disperse sets none") {
+    const auto model{resolveCameraModel(files.camera(
+        "camera { sensor \"shaped.sensor\" lens \"singlet.lens\" }\n"))};
+    CHECK(!model.options.traceWavelengthRange);
+  }
+  SUBCASE("Nor does a body without a tile, the observer, or the preview") {
+    CHECK(!resolveCameraModel(
+               files.camera(
+                   "camera { sensor \"quiet.sensor\" lens \"glass.lens\" }\n"))
+               .options.traceWavelengthRange);
+    CHECK(!resolveCameraModel(files.camera("camera { lens \"glass.lens\" }\n"))
+               .options.traceWavelengthRange);
+    auto preview{files.camera(
+        "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")};
+    preview.camera.isIdeal = true;
+    CHECK(!resolveCameraModel(preview).options.traceWavelengthRange);
   }
 }

@@ -274,6 +274,11 @@ TEST_CASE("LensFile: naming a glass") {
       CHECK(hasSameBits(surface.medium.indexAt(wavelength),
                         entry->glass.indexAt(wavelength)));
   }
+  SUBCASE("A glass that disperses makes the prescription disperse, and an "
+          "index alone does not") {
+    CHECK(parseOK(diags, singletOf("N-BK7")).lens.isDispersive());
+    CHECK(!parseOK(diags, SINGLET).lens.isDispersive());
+  }
   SUBCASE("A name matches whatever its case or alias, and reads as the "
           "catalog spells it") {
     CHECK(parseOK(diags, singletOf("n-bk7")).lens.surfaces[0].glassName ==

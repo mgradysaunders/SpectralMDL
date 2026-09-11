@@ -628,6 +628,12 @@ size_t LensPrescription::stopIndex() const noexcept {
   return surfaces.size();
 }
 
+bool LensPrescription::isDispersive() const noexcept {
+  for (const auto &surface : surfaces)
+    if (!surface.isStop && surface.medium.isDispersive()) return true;
+  return false;
+}
+
 LensDocument parseLens(LayoutDiagnostics &diags, const LayoutSource &source) {
   auto document{LensDocument()};
   document.source = &source;

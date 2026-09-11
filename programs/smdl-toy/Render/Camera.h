@@ -62,6 +62,13 @@ struct CameraOptions final {
   /// them, so nothing here has to.
   std::optional<LensPrescription> lens{};
 
+  /// With a lens whose glasses disperse, the shortest and the longest
+  /// wavelength in nanometers that its exit pupil is bounded over, or
+  /// none to bound it at the reference alone. The model sets it for a
+  /// tiled body only: it is the span of the bands the tile lays down,
+  /// which every pixel reads through one of.
+  std::optional<float2> traceWavelengthRange{};
+
   /// The frame's physical size in scene units, which are meters: a
   /// physical sensor's pixels times its pitch, or for the observer a
   /// frame 24 mm tall whose width follows the picture. With a lens it is

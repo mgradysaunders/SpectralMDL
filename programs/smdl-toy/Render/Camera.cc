@@ -188,6 +188,7 @@ LensApproximation approximateLens(const CameraOptions &options) {
   auto &thin{result.options};
   thin = options;
   thin.lens.reset();
+  thin.traceWavelengthRange.reset();
   thin.fovYDeg = 2 * smdl::degrees(std::atan(0.5f / float(focalLength)));
   thin.fStop = 0;
   thin.aperture = lens.entrancePupilRadius();
@@ -294,7 +295,7 @@ void Camera::buildLens(const CameraOptions &options) {
           : std::atan(mFrameHeight / (mNumPixelsY * mLens->focalLength()));
   mLens->logSummary();
   const auto halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
-  mExitPupil.emplace(*mLens, halfDiagonal);
+  mExitPupil.emplace(*mLens, halfDiagonal, options.traceWavelengthRange);
   mExitPupil->logSummary();
   // What one unit of drawn pupil area is worth. Irradiance at a film
   // point is the pupil integral of `L cos^4(theta) dA / d^2`, with `d`

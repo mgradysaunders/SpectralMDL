@@ -396,6 +396,32 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                       smdl::Brief(1e3f * dof.circleOfConfusion, 4), " mm\n");
 }
 
+// The span over which some band the tile lays down is not zero, shortest
+// first, or none when every one of them is zero everywhere. A curve is
+// linear between its knots and zero outside them, so a band's span runs
+// from the knot before its first positive value to the knot after its
+// last.
+[[nodiscard]] std::optional<float2>
+tileSpanOf(const ResponseSettings &response) {
+  auto span{float2(INF, -INF)};
+  for (const auto index : response.cfa) {
+    const auto &band{response.bands[index]};
+    const auto numKnots{band.values.size()};
+    auto first{numKnots}, last{size_t(0)};
+    for (size_t i = 0; i < numKnots; i++) {
+      if (!(band.values[i] > 0)) continue;
+      first = std::min(first, i);
+      last = i;
+    }
+    if (first == numKnots) continue;
+    span.x = std::min(span.x, band.wavelengths[first > 0 ? first - 1 : 0]);
+    span.y =
+        std::max(span.y, band.wavelengths[std::min(last + 1, numKnots - 1)]);
+  }
+  if (!(span.x <= span.y)) return std::nullopt;
+  return span;
+}
+
 // The lens the model names, built as the camera builds it, for the
 // report.
 [[nodiscard]] Lens buildLens(const CameraModel &model) {
@@ -522,6 +548,13 @@ CameraModel resolveCameraModel(const Options &opts) {
                         : smdl::concat(smdl::Quoted(options.lens->name)),
                     " through the thin lens fitted to it");
   }
+  // Under a tile every pixel reads through one band, so a lens whose
+  // glasses disperse is bounded over the span of the bands the tile lays
+  // down. Without a tile, and under -ideal, whose observer has none, the
+  // lens is bounded at its reference alone.
+  if (model.sensor && model.sensor->response.hasCFA() && options.lens &&
+      options.lens->isDispersive())
+    options.traceWavelengthRange = tileSpanOf(model.sensor->response);
   // The camera: the defaults in `CameraOptions`, whatever the camera
   // file's 'camera' directive named over them, and the framing flags
   // over both. A framing flag that was not given must not override the
