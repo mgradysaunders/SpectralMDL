@@ -33,17 +33,14 @@ class STree;
 /// when there was a procedural one. That is written for a reader and
 /// never read back, which is why it is not part of `resumed.header`.
 ///
-/// `response`, `bandFilm`, and `bandSquares` are the detector's
-/// response, the film its bands accumulated into, and the film of their
-/// squares, all null for none; the band film is written as its own ENVI
-/// pair beside the spectral one, at `bandFilmFileName()`, with the bands
-/// named and the response's fingerprint in its header for a later resume
-/// to check, and the squares film as another at `bandSquaresFileName()`
-/// under the same header but for its units.
+/// `response` and `bandFilm` are the detector's response and the film
+/// its bands accumulated into, both null for none; the band film is
+/// written as its own ENVI pair beside the spectral one, at
+/// `bandFilmFileName()`, with the bands named and the response's
+/// fingerprint in its header for a later resume to check.
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
                   const EnvLight *envLight, const smdl::SpectralFilm &film,
                   const Response *response, const smdl::SpectralFilm *bandFilm,
-                  const smdl::SpectralFilm *bandSquares,
                   ResumedSequence &resumed, const std::string &outputSpectrum,
                   const STree *sdtree);

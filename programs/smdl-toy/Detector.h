@@ -19,12 +19,10 @@
 #include "Layout/CameraFile.h"
 
 /// Which noise the readout draws: none, so the digital numbers are a
-/// deterministic function of the film; the shot noise alone; everything,
-/// the read noise included, the shot noise as the deficit against the
-/// film's own estimate of its variance; or everything with the shot
-/// noise in full, for a render the film's estimate cannot tell is
-/// converged, see `Detector`.
-enum class DetectorNoise { NONE, SHOT, ALL, FULL };
+/// deterministic function of the film; the shot noise alone; or
+/// everything, the read noise included. Each term is drawn in full on
+/// the film's mean, see `Detector`.
+enum class DetectorNoise { NONE, SHOT, ALL };
 
 /// The '-detector-noise' name as `DetectorNoise` spells it.
 ///
@@ -67,7 +65,7 @@ struct DetectorGeometry final {
 
 /// One readout: the digital numbers of every pixel of the frame, band
 /// interleaved by pixel as the file is written, and the tallies the log
-/// and the header state, which are over the window alone.
+/// states, which are over the window alone.
 struct Readout final {
   size_t bandCount{};
 
@@ -81,21 +79,11 @@ struct Readout final {
   /// the dark current and the noise.
   double meanElectrons{};
 
-  /// The window's pixel bands whose render noise, by the film's own
-  /// estimate, exceeded their shot noise, which the deficit draw leaves
-  /// alone.
-  uint64_t noiseLimitedCount{};
-
   /// The window's pixel bands that read the well.
   uint64_t wellCount{};
 
   /// The window's pixel bands.
   uint64_t windowCount{};
-
-  [[nodiscard]] double noiseLimitedShare() const noexcept {
-    return windowCount > 0 ? double(noiseLimitedCount) / double(windowCount)
-                           : 0.0;
-  }
 };
 
 /// The detector: the chain from the electrons a `qe` band counts to the
@@ -110,30 +98,19 @@ struct Readout final {
 /// code. The gain sits after the pixel-referred noise and before the
 /// ADC, the order that makes ISO invariance a phenomenon.
 ///
-/// The render's own noise is not shot noise, and the two would add, so
-/// the readout draws only the deficit: below 25 electrons a Poisson on
-/// the mean, where the render's noise is negligible against the shot
-/// noise; above it a Gaussian with variance `max(0, mu - sigma_MC^2)`,
-/// with `sigma_MC^2` the film's own estimate of its variance from the
-/// squares film. Below zero the electrons stay what they are until the
+/// The film's mean is taken as the exact signal: the shot noise is drawn
+/// on it in full, a Poisson below 25 electrons and a Gaussian of variance
+/// `mu` above, and the electrons stay what they are below zero until the
 /// ADC, since the black level is there to keep the read noise's lower
-/// half. The output variance then equals the mean in electrons
-/// wherever the render is converged against the shot noise, and a pixel
-/// band whose render noise already exceeds its shot noise is left alone
-/// and counted. Three limitations: the estimate assumes independent
-/// samples, and the Owen-scrambled Sobol sampler's are not, so it is an
-/// upper bound that loosens with spp and the top-up is conservative
-/// wherever the two noises are comparable; a firefly is not Gaussian, so
-/// the top-up cannot make an unconverged caustic look like shot noise;
-/// and a pixel band under 25 electrons gets the Poisson on its noisy
-/// mean whatever its render noise, and is not counted. The first is the
-/// one that bites: on a sunlit diffuse ground at 256 spp the film's
-/// estimate exceeds the shot noise by twenty times while the render's
-/// error is a twelfth of it, so the deficit draw adds nothing and the
-/// readout is a twelfth as noisy as the sensor. `DetectorNoise::FULL`
-/// draws the shot noise in full on the mean instead, which double-counts
-/// only the render's actual noise: the honest choice for a render that
-/// is converged by any measure but the film's.
+/// half. The render's own noise is not shot noise and adds to it, so the
+/// output variance is the mean in electrons plus the render's error, and
+/// a readout wants a film whose error is well under the shot noise, 1% at
+/// 10,000 electrons. Nothing compensates for a film that is not: a
+/// firefly or an unconverged caustic reads as signal. Drawing only the
+/// difference against the film's own variance is deliberately not done:
+/// the per-pixel estimate assumes independent samples, the Owen-scrambled
+/// Sobol sampler beats it by five to twenty-five times, and a draw that
+/// trusted it would add a fraction of the shot noise to a converged film.
 ///
 /// The draws are per pixel band from a generator seeded by the flag's
 /// seed and the pixel band's index, so a realization is a function of
@@ -164,28 +141,24 @@ public:
   /// The ADC's top code, `2^bits - 1`.
   [[nodiscard]] uint16_t topCode() const noexcept { return mTopCode; }
 
-  /// Read the film out. `squares` holds the mean squared projection with
-  /// the same bands and count; `window` bounds the tallies, not the
-  /// readout, which covers the frame so that the unrendered rest reads
-  /// as dark. A film with no samples reads as a dark frame.
+  /// Read the film out. `window` bounds the tallies, not the readout,
+  /// which covers the frame so that the unrendered rest reads as dark. A
+  /// film with no samples reads as a dark frame.
   [[nodiscard]] Readout readOut(const smdl::SpectralFilm &film,
-                                const smdl::SpectralFilm &squares,
                                 const DetectorReadoutOptions &options,
                                 int4 window) const;
 
-  /// The header of a readout, see `DetectorHeader`.
+  /// The header of a readout drawn under `options`, see `DetectorHeader`.
   [[nodiscard]] DetectorHeader
-  header(const Readout &readout, const DetectorReadoutOptions &options) const;
+  header(const DetectorReadoutOptions &options) const;
 
 private:
   /// One pixel band's electrons at the ADC, clipped to the well, from
-  /// the film's `mean` and `squared` over `numSamples`. `signal` is the
-  /// signal electrons before the dark current and the noise, and
-  /// `isNoiseLimited` says the render's noise exceeded the shot noise.
-  [[nodiscard]] double electronsOf(double mean, double squared,
-                                   uint64_t numSamples, DetectorNoise noise,
-                                   smdl::RNG &rng, double &signal,
-                                   bool &isNoiseLimited) const noexcept;
+  /// the film's `mean`. `signal` is the signal electrons before the dark
+  /// current and the noise.
+  [[nodiscard]] double electronsOf(double mean, DetectorNoise noise,
+                                   smdl::RNG &rng,
+                                   double &signal) const noexcept;
 
   DetectorSettings mSettings{};
 

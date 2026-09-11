@@ -483,12 +483,12 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "RGB outputs project through CIE color matching, so they darken "
         "wherever the grid misses the visible; the ENVI output is the "
         "radiometric record");
-  // The accumulation buffers scale as bands times pixels, the band film
-  // and its squares counting twice; say so before allocating gigabytes.
+  // The accumulation buffers scale as bands times pixels; say so before
+  // allocating gigabytes.
   const double bandFilmBytes{
-      frame.response ? 16.0 * double(frame.response->hasCFA()
-                                         ? 1
-                                         : frame.response->bands.size())
+      frame.response ? 8.0 * double(frame.response->hasCFA()
+                                        ? 1
+                                        : frame.response->bands.size())
                      : 0.0};
   if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
                        (8.0 + 8.0 * double(wavelengths.size()) + bandFilmBytes +

@@ -263,13 +263,13 @@ cl::opt<unsigned> optDetectorSeed{
     cl::init(0), cl::cat(catImage)};
 cl::opt<std::string> optDetectorNoise{
     "detector-noise",
-    cl::desc("With -output-dn, which noise to draw: 'none', 'shot', 'all', "
-             "or 'full' (default: all)\n"
+    cl::desc("With -output-dn, which noise to draw: 'none', 'shot', or "
+             "'all' (default: all), each in full on the film's mean, which "
+             "the readout takes as converged\n"
              "* 'none' makes the digital numbers a function of the film "
              "alone\n"
-             "* 'all' draws the shot noise the render did not already put "
-             "there by the film's own estimate, which the sampler beats\n"
-             "* 'full' draws it in full, for a render that is converged"),
+             "* 'shot' draws the shot noise alone\n"
+             "* 'all' adds the read noise"),
     cl::init(std::string("all")), cl::cat(catImage)};
 cl::opt<std::string> optTonemap{
     "tonemap",

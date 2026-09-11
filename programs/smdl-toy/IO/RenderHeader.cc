@@ -104,7 +104,6 @@ void visitDetectorFields(Self &self, Visitor &&visit) {
   visit("detector black level", self.blackLevel);
   visit("detector bits", self.bits);
   visit("detector electrons per film unit", self.electronsPerFilmUnit);
-  visit("detector noise limited share", self.noiseLimitedShare);
 }
 
 // The two directions over either table.

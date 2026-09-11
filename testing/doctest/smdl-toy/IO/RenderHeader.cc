@@ -113,7 +113,6 @@ TEST_CASE("DetectorHeader: round trip") {
   written.blackLevel = 64;
   written.bits = 14;
   written.electronsPerFilmUnit = 1.96349541e-16;
-  written.noiseLimitedShare = 0.125;
   const auto fields{asFields(written.headerLines())};
   SUBCASE("Every field survives the header at its digits") {
     CHECK(fields.at("render detector gain") == "0.00341");
@@ -134,10 +133,9 @@ TEST_CASE("DetectorHeader: round trip") {
     CHECK(read.blackLevel == 64);
     CHECK(read.bits == 14);
     CHECK(read.electronsPerFilmUnit == doctest::Approx(1.96349541e-16));
-    CHECK(read.noiseLimitedShare == 0.125);
   }
   SUBCASE("Every field is written, under the 'render detector' prefix") {
-    CHECK(fields.size() == 14);
+    CHECK(fields.size() == 13);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render detector ", 0) == 0);

@@ -62,10 +62,6 @@ std::string bandFilmFileName(const std::string &spectrumName) {
   return besideSpectrum(spectrumName, "-bands");
 }
 
-std::string bandSquaresFileName(const std::string &spectrumName) {
-  return besideSpectrum(spectrumName, "-bands-squares");
-}
-
 Response::Response(const ResponseSettings &settings, const Color &wavelengths)
     : mKind(settings.kind), mName(settings.name), mHash(responseHash(settings)),
       mFilmBandNames(responseFilmBandNames(settings)),
@@ -214,18 +210,14 @@ double Response::project(const Band &band, smdl::Span<const float> wavelengths,
 
 void Response::accumulate(smdl::Span<const float> wavelengths,
                           smdl::Span<const float> L, size_t x, size_t y,
-                          double *sums, double *squares) const noexcept {
+                          double *sums) const noexcept {
   SMDL_SANITY_CHECK(wavelengths.size() == L.size());
-  const auto add{[&](size_t b, const Band &band) {
-    const double value{project(band, wavelengths, L)};
-    sums[b] += value;
-    if (squares) squares[b] += value * value;
-  }};
   if (hasTile()) {
-    add(0, mBands[bandAt(x, y)]);
+    sums[0] += project(mBands[bandAt(x, y)], wavelengths, L);
     return;
   }
-  for (size_t b = 0; b < mBands.size(); b++) add(b, mBands[b]);
+  for (size_t b = 0; b < mBands.size(); b++)
+    sums[b] += project(mBands[b], wavelengths, L);
 }
 
 std::optional<Response>

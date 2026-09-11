@@ -104,11 +104,9 @@ void renderSamples(const Options &opts, const Frame &frame,
                    const StagedScene &staged, ResumedSequence &resumed,
                    smdl::SpectralFilm &film, const Response *response,
                    smdl::SpectralFilm *bandFilm,
-                   smdl::SpectralFilm *bandSquares,
                    const std::string &outputSpectrum,
                    std::unique_ptr<STree> &sdtree) {
   SMDL_SANITY_CHECK(!bandFilm || response);
-  SMDL_SANITY_CHECK(!bandFilm == !bandSquares);
   const auto &wavelengths{grid.wavelengths};
   const auto &scene{*staged.scene};
   const auto &lights{*staged.lights};
@@ -197,17 +195,14 @@ void renderSamples(const Options &opts, const Frame &frame,
   // sums-plus-count invariant makes safe; every read below divides by
   // the combined count.
   if (resumed.wasLoaded && !combiner) film.add(resumed.film);
-  // The band films accumulate straight through, guided or not, so the
-  // resumed ones merge the same way on both paths.
-  if (bandFilm && resumed.bandFilm.getNumSamples() > 0) {
+  // The band film accumulates straight through, guided or not, so the
+  // resumed one merges the same way on both paths.
+  if (bandFilm && resumed.bandFilm.getNumSamples() > 0)
     bandFilm->add(resumed.bandFilm);
-    bandSquares->add(resumed.bandSquares);
-  }
   // Nothing reads them again, and they are the size of the films being
   // rendered into.
   resumed.film.clear();
   resumed.bandFilm.clear();
-  resumed.bandSquares.clear();
   // Progress is counted in samples rather than pixels, so that the
   // geometrically growing passes below read as one bar that only ever
   // moves forward. The counters still show pixels, which is the number a
@@ -447,10 +442,9 @@ void renderSamples(const Options &opts, const Frame &frame,
           path.stats = &*blockStats;
         }
         const auto walk{makePathWalk(render, path)};
-        // The block's per-pixel band sums and their squares, when there
-        // is a response to project onto.
+        // The block's per-pixel band sums, when there is a response to
+        // project onto.
         std::vector<double> bandSums(bandFilm ? response->filmBandCount() : 0);
-        std::vector<double> bandSquareSums(bandSums.size());
         const size_t kBegin{block * blockSize};
         const size_t kEnd{std::min(numWindowPixels, kBegin + blockSize)};
         for (size_t k = kBegin; k < kEnd; k++) {
@@ -463,7 +457,6 @@ void renderSamples(const Options &opts, const Frame &frame,
           const size_t y{i / numPixelsX};
           Color Lsum{};
           std::fill(bandSums.begin(), bandSums.end(), 0.0);
-          std::fill(bandSquareSums.begin(), bandSquareSums.end(), 0.0);
           PassCombiner::PixelHalves halves{};
           guiding.pixelEstimate = combiner && opts.render.guide.useADRRS
                                       ? combiner->pixelEstimate(i)
@@ -512,7 +505,7 @@ void renderSamples(const Options &opts, const Frame &frame,
             if (bandFilm)
               response->accumulate(smdl::Span<const float>(blockWavelengths),
                                    smdl::Span<const float>(Lsample), x, y,
-                                   bandSums.data(), bandSquareSums.data());
+                                   bandSums.data());
             if (combiner) {
               // Split the samples into two half images so the combination can
               // cross-weight each half by the other's variance estimate.
@@ -534,10 +527,7 @@ void renderSamples(const Options &opts, const Frame &frame,
           } else {
             film.addTotals(x, y, Lsum.data());
           }
-          if (bandFilm) {
-            bandFilm->addTotals(x, y, bandSums.data());
-            bandSquares->addTotals(x, y, bandSquareSums.data());
-          }
+          if (bandFilm) bandFilm->addTotals(x, y, bandSums.data());
         }
         if (blockStats) {
           blockStats->addSamples(chunk * (kEnd - kBegin));
@@ -553,10 +543,7 @@ void renderSamples(const Options &opts, const Frame &frame,
       // once here where the chunk is finished. It has to land before the
       // checkpoint below, which divides by it.
       if (!combiner) film.addSamples(chunk);
-      if (bandFilm) {
-        bandFilm->addSamples(chunk);
-        bandSquares->addSamples(chunk);
-      }
+      if (bandFilm) bandFilm->addSamples(chunk);
       passDone += chunk;
       if (isChunked) {
         // Aim the next chunk at the interval from what this one cost,

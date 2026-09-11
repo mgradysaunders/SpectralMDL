@@ -17,10 +17,9 @@ smdl-toy shot.layout -response etc/sensors/canon-eos-5d-mark-ii.response \
 
 The render then writes a second ENVI pair beside the spectral one,
 `out-bands.img`, holding each band's integral of the radiance against
-its curve, with the bands named in the header, and a third,
-`out-bands-squares.img`, holding the squares from which the film knows
-its own variance. Add `cfa { row R G  row G B }` to a copy of the file
-to get the Bayer mosaic a real sensor reads instead.
+its curve, with the bands named in the header. Add
+`cfa { row R G  row G B }` to a copy of the file to get the Bayer mosaic
+a real sensor reads instead.
 
 Every curve here runs from 380 to 780 nm at 5 nm, so a render wants
 `-wavelength-range 380,780`; the default grid stops at 720 nm and the
@@ -62,6 +61,13 @@ left out; `-detector-seed` picks the noise realization and
 `-detector-noise none|shot|all` isolates a term. A saved film reads out
 again with `-spp 0 -resume out.img -output-dn ...`, as many times as
 there are realizations to draw.
+
+The noise model assumes a converged film. It takes the band film's mean
+as the exact signal and draws the shot noise on it in full, so the
+render's own noise adds to the sensor's rather than standing in for any
+of it: render until the film's error is well under the shot noise, which
+is 1% at 10,000 electrons, before reading it out. A firefly or an
+unconverged caustic reads out as signal.
 
 ## Source
 

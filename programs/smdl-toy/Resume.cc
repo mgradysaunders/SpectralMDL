@@ -115,51 +115,48 @@ namespace {
   return text + "}";
 }
 
-// One of the films beside the accumulation, the band film or its
-// squares, with what its header carried.
-struct Companion final {
+// The band film beside the accumulation, with what its header carried.
+struct BandFilm final {
   smdl::SpectralFilm film{};
   smdl::SpectralFilm::ENVIFileInfo info{};
 };
 
-// Load the companion at `name`, called `what` in a message, and hold it
-// to the accumulation: present as a pair, the same resolution and
-// window, the same sample count, and the bands `names`. Everything is a
-// hard error; see `resumeSequence()`.
-[[nodiscard]] Companion loadCompanion(const std::string &name, const char *what,
-                                      int2 resolution, int4 window,
-                                      uint64_t samplesPerPixel,
-                                      const std::vector<std::string> &names) {
+// Load the band film at `name` and hold it to the accumulation: present
+// as a pair, the same resolution and window, the same sample count, and
+// the bands `names`. Everything is a hard error; see `resumeSequence()`.
+[[nodiscard]] BandFilm loadBandFilm(const std::string &name, int2 resolution,
+                                    int4 window, uint64_t samplesPerPixel,
+                                    const std::vector<std::string> &names) {
   const bool hasData{smdl::exists(name)};
   const bool hasHeader{smdl::exists(name + ".hdr")};
   if (!hasData || !hasHeader)
     throw smdl::Error(smdl::concat(
-        "cannot resume: the ", what, " ", smdl::Quoted(name),
+        "cannot resume: the band film ", smdl::Quoted(name),
         " beside the accumulation ",
         hasData || hasHeader ? "is half a pair" : "does not exist",
         "; the sequence was rendered without a response, or its last "
         "session was interrupted between the files"));
-  auto result{Companion{}};
+  auto result{BandFilm{}};
   result.info = result.film.readENVIFile(name);
   if (result.film.getNumPixelsX() != size_t(resolution.x) ||
       result.film.getNumPixelsY() != size_t(resolution.y))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the ", what, " is ", result.film.getNumPixelsX(), "x",
+        "cannot resume: the band film is ", result.film.getNumPixelsX(), "x",
         result.film.getNumPixelsY(), " against -resolution ", resolution.x, ",",
         resolution.y));
   if (result.info.samplesPerPixel != samplesPerPixel)
     throw smdl::Error(smdl::concat(
-        "cannot resume: the ", what, " holds ", result.info.samplesPerPixel,
+        "cannot resume: the band film holds ", result.info.samplesPerPixel,
         " samples per pixel against the accumulation's ", samplesPerPixel,
         "; the last session was interrupted between the files, or rendered "
         "without the response"));
   if (!smdl::isAllTrue(result.info.cropWindow == window))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the ", what, " was rendered with -crop-window ",
+        "cannot resume: the band film was rendered with -crop-window ",
         spellVector(result.info.cropWindow), " against this session's ",
         spellVector(window)));
   if (result.info.bandNames != names)
-    throw smdl::Error(smdl::concat("cannot resume: the ", what, "'s bands are ",
+    throw smdl::Error(smdl::concat("cannot resume: the band film's bands are ",
                                    spellNames(result.info.bandNames),
                                    " against this response's ",
                                    spellNames(names)));
@@ -260,24 +257,19 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
                 smdl::Quoted(opts.image.resume), " (sample offset ",
                 header.sampleOffset, ")");
-  // The band film beside the accumulation and its squares beside that.
-  // Without a response they are left where they are, and said so, since
-  // they fall behind from here on.
+  // The band film beside the accumulation. Without a response it is left
+  // where it is, and said so, since it falls behind from here on.
   const auto bandName{bandFilmFileName(opts.image.resume)};
-  const auto squaresName{bandSquaresFileName(opts.image.resume)};
   if (!response) {
     if (smdl::exists(bandName) || smdl::exists(bandName + ".hdr"))
-      SMDL_LOG_WARN("the band films ", smdl::Quoted(bandName), " and ",
-                    smdl::Quoted(squaresName),
-                    " beside the accumulation are not continued: this "
-                    "session has no response, so they fall behind");
+      SMDL_LOG_WARN("the band film ", smdl::Quoted(bandName),
+                    " beside the accumulation is not continued: this "
+                    "session has no response, so it falls behind");
     return result;
   }
   const auto names{responseFilmBandNames(*response)};
-  auto bands{loadCompanion(bandName, "band film", resolution, window,
-                           info.samplesPerPixel, names)};
-  auto squares{loadCompanion(squaresName, "squares film", resolution, window,
-                             info.samplesPerPixel, names)};
+  auto bands{
+      loadBandFilm(bandName, resolution, window, info.samplesPerPixel, names)};
   result.responseHeader.readFrom(bands.info.fields);
   if (result.responseHeader.hash != responseHash(*response))
     throw smdl::Error(
@@ -286,9 +278,7 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
         "without the response");
   result.bandFilm = std::move(bands.film);
   result.bandInfo = std::move(bands.info);
-  result.bandSquares = std::move(squares.film);
-  result.squaresInfo = std::move(squares.info);
-  SMDL_LOG_INFO("Resuming the band films: ", smdl::Quoted(bandName), " and ",
-                smdl::Quoted(squaresName), ", ", names.size(), " band(s)");
+  SMDL_LOG_INFO("Resuming the band film: ", smdl::Quoted(bandName), ", ",
+                names.size(), " band(s)");
   return result;
 }

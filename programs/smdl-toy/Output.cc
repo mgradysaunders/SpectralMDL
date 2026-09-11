@@ -50,11 +50,9 @@ void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
                   const EnvLight *envLight, const smdl::SpectralFilm &film,
                   const Response *response, const smdl::SpectralFilm *bandFilm,
-                  const smdl::SpectralFilm *bandSquares,
                   ResumedSequence &resumed, const std::string &outputSpectrum,
                   const STree *sdtree) {
   SMDL_SANITY_CHECK(!bandFilm || response);
-  SMDL_SANITY_CHECK(!bandFilm == !bandSquares);
   const auto &wavelengths{grid.wavelengths};
   const auto numPixelsX{frame.numPixelsX};
   const auto numPixelsY{frame.numPixelsY};
@@ -163,31 +161,22 @@ void writeOutputs(const Options &opts, const Frame &frame,
       // The band film beside the spectral one, under the same
       // discipline: the sequence's own fingerprint, so the pair stands
       // on its own, then the response's, which a resume must match, and
-      // the reader-only lines. The squares film follows with the same
-      // header but for its units.
+      // the reader-only lines.
+      const auto bandName{bandFilmFileName(outputSpectrum)};
+      const auto bandPartName{bandName + ".part"};
       auto bandLines{resumed.header.headerLines()};
       for (const auto &line : responseLines) bandLines.push_back(line);
+      bandLines.push_back(
+          smdl::concat(ENVI_BAND_UNITS, " = ", response->units()));
+      if (!response->name().empty())
+        bandLines.push_back(
+            smdl::concat(ENVI_RESPONSE_NAME, " = ", response->name()));
       const auto &bandNames{response->filmBandNames()};
-      const auto writeCompanion{[&](const smdl::SpectralFilm &companion,
-                                    const std::string &name, const char *units,
-                                    const char *what) {
-        const auto companionPartName{name + ".part"};
-        auto lines{bandLines};
-        lines.push_back(smdl::concat(ENVI_BAND_UNITS, " = ", units));
-        if (!response->name().empty())
-          lines.push_back(
-              smdl::concat(ENVI_RESPONSE_NAME, " = ", response->name()));
-        companion.writeENVIFile({}, companionPartName, lines, window,
-                                bandNames);
-        smdl::renameOnto(companionPartName, name);
-        smdl::renameOnto(companionPartName + ".hdr", name + ".hdr");
-        SMDL_LOG_INFO("Wrote the ", what, ": ", smdl::Quoted(name), ", ",
-                      bandNames.size(), " band(s) in ", units);
-      }};
-      writeCompanion(*bandFilm, bandFilmFileName(outputSpectrum),
-                     response->units(), "band film");
-      writeCompanion(*bandSquares, bandSquaresFileName(outputSpectrum),
-                     response->squaredUnits(), "squares film");
+      bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames);
+      smdl::renameOnto(bandPartName, bandName);
+      smdl::renameOnto(bandPartName + ".hdr", bandName + ".hdr");
+      SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(bandName), ", ",
+                    bandNames.size(), " band(s) in ", response->units());
     }
     SMDL_LOG_INFO(
         "Cumulative render time: ", formatDuration(resumed.header.seconds),
@@ -199,7 +188,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // under the same discipline. Staging established the response, the
     // exposure, and the f-number; the pitch comes off the camera here,
     // which under -autolook exists only now.
-    SMDL_SANITY_CHECK(bandFilm && bandSquares && frame.camera);
+    SMDL_SANITY_CHECK(bandFilm && frame.camera);
     const auto &camera{*frame.camera};
     const auto sensor{camera.sensorSize()};
     auto geometry{DetectorGeometry{}};
@@ -212,14 +201,12 @@ void writeOutputs(const Options &opts, const Frame &frame,
     geometry.fNumber = camera.fNumber();
     const Detector detector{frame.detector.value_or(DetectorSettings{}),
                             geometry};
-    const auto readout{
-        detector.readOut(*bandFilm, *bandSquares, opts.image.readout, window)};
+    const auto readout{detector.readOut(*bandFilm, opts.image.readout, window)};
     const auto &dnName{opts.image.outputDN};
     const auto dnPartName{dnName + ".part"};
     auto dnLines{resumed.header.headerLines()};
     for (const auto &line : responseLines) dnLines.push_back(line);
-    for (auto &line :
-         detector.header(readout, opts.image.readout).headerLines())
+    for (auto &line : detector.header(opts.image.readout).headerLines())
       dnLines.push_back(std::move(line));
     dnLines.push_back(
         smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));

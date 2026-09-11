@@ -1,9 +1,8 @@
 /// \file
 /// The detector's response: the per-sample projection of spectral
 /// radiance onto named bands, and the tile that picks one band per
-/// pixel. The band film this fills, and the squares film beside it that
-/// holds its variance, are written beside the spectral film and resumed
-/// with it.
+/// pixel. The band film this fills is written beside the spectral film
+/// and resumed with it.
 #pragma once
 
 #include <optional>
@@ -33,15 +32,6 @@ constexpr const char *RELATIVE_BAND_UNITS{"W/(m^2 sr nm)"};
 constexpr const char *QE_BAND_UNITS{"electrons/(m^2 sr s)"};
 /// \}
 
-/// The units of the squares film beside the band film, which holds the
-/// mean of the squared projection so that the film knows each band's
-/// own Monte Carlo variance.
-///
-/// \{
-constexpr const char *SQUARED_RELATIVE_BAND_UNITS{"(W/(m^2 sr nm))^2"};
-constexpr const char *SQUARED_QE_BAND_UNITS{"(electrons/(m^2 sr s))^2"};
-/// \}
-
 /// The name of the one band a tiled response writes.
 constexpr const char *MOSAIC_BAND_NAME{"mosaic"};
 
@@ -61,10 +51,6 @@ responseFilmBandNames(const ResponseSettings &settings);
 /// on the whole name, because a reader that finds the header by
 /// replacing the extension would open the spectral film's.
 [[nodiscard]] std::string bandFilmFileName(const std::string &spectrumName);
-
-/// Where the squares film goes beside it: `out.img` becomes
-/// `out-bands-squares.img`. See `Response::accumulate()`.
-[[nodiscard]] std::string bandSquaresFileName(const std::string &spectrumName);
 
 /// A response resolved against the render-wide wavelength grid: what
 /// each sample of spectral radiance contributes to each band.
@@ -131,12 +117,6 @@ public:
     return mKind == ResponseKind::QE ? QE_BAND_UNITS : RELATIVE_BAND_UNITS;
   }
 
-  /// The squares film's units, as its header states them.
-  [[nodiscard]] const char *squaredUnits() const noexcept {
-    return mKind == ResponseKind::QE ? SQUARED_QE_BAND_UNITS
-                                     : SQUARED_RELATIVE_BAND_UNITS;
-  }
-
   /// The sensor's name from the settings, possibly empty.
   [[nodiscard]] const std::string &name() const noexcept { return mName; }
 
@@ -152,15 +132,11 @@ public:
 
   /// Add one sample's radiance `L`, evaluated at `wavelengths`, into the
   /// film-band sums of pixel `(x, y)`: every band without a tile, the
-  /// tile's one band with it. `sums` holds `filmBandCount()` values, and
-  /// so does `squares` when given, which takes the same projections
-  /// squared: what the squares film accumulates, so that the film knows
-  /// each band's own Monte Carlo variance and a readout can draw only
-  /// the shot noise the render did not already put there. Spans rather
-  /// than `Color`s, so a heap-sized grid builds nothing.
+  /// tile's one band with it. `sums` holds `filmBandCount()` values.
+  /// Spans rather than `Color`s, so a heap-sized grid builds nothing.
   void accumulate(smdl::Span<const float> wavelengths,
-                  smdl::Span<const float> L, size_t x, size_t y, double *sums,
-                  double *squares = nullptr) const noexcept;
+                  smdl::Span<const float> L, size_t x, size_t y,
+                  double *sums) const noexcept;
 
 private:
   /// One curve and what the constructor derived from it.

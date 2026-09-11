@@ -13,8 +13,8 @@
 // with the shot, read, and dark noise of a stated detector drawn onto
 // them. What matters is that with no noise it is a function of the film
 // alone, that each noise term has the statistics its model states, that
-// the deficit draw leaves a flat field the shot noise's variance at any
-// spp, and that the tallies are over the window.
+// nothing compensates for a film's own noise, and that the tallies are
+// over the window.
 
 namespace {
 
@@ -48,30 +48,22 @@ constexpr double PI_DOUBLE{3.14159265358979323846};
   return int4{0, 0, int(numX), int(numY)};
 }
 
-// The band film and its squares over a `numX` by `numY` frame, every
-// pixel band inside `window` at `electrons` of signal (in film units
-// through the detector's own factor) over `spp` samples, and dark
-// outside it. With `renderVariance`, each pixel's mean is scattered by
-// a Gaussian of that variance in electrons squared, which the squares
-// film then claims as the film's variance of its mean: what a render
-// that noisy would hand the readout.
-struct Films final {
-  smdl::SpectralFilm film{};
-  smdl::SpectralFilm squares{};
-};
-
-[[nodiscard]] Films flatFilms(const Detector &detector, size_t numBands,
-                              size_t numX, size_t numY, double electrons,
-                              uint64_t spp, double renderVariance = 0.0,
-                              std::optional<int4> window = {}) {
+// The band film over a `numX` by `numY` frame, every pixel band inside
+// `window` at `electrons` of signal (in film units through the
+// detector's own factor), and dark outside it. With `renderVariance`,
+// each pixel's mean is scattered by a Gaussian of that variance in
+// electrons squared: what a render that noisy would hand the readout.
+[[nodiscard]] smdl::SpectralFilm flatFilm(const Detector &detector,
+                                          size_t numBands, size_t numX,
+                                          size_t numY, double electrons,
+                                          double renderVariance = 0.0,
+                                          std::optional<int4> window = {}) {
+  constexpr uint64_t NUM_SAMPLES{16};
   const double k{detector.electronsPerFilmUnit()};
   const auto lit{window.value_or(wholeFrame(numX, numY))};
-  auto films{Films{}};
-  films.film.resize(numBands, numX, numY);
-  films.squares.resize(numBands, numX, numY);
+  auto film{smdl::SpectralFilm(numBands, numX, numY)};
   auto rng{smdl::RNG(12345)};
   auto sums{std::vector<double>(numBands)};
-  auto squares{std::vector<double>(numBands)};
   for (size_t y = 0; y < numY; y++) {
     for (size_t x = 0; x < numX; x++) {
       const bool isLit{int(x) >= lit[0] && int(x) < lit[2] &&
@@ -81,29 +73,23 @@ struct Films final {
         if (isLit && renderVariance > 0)
           mean += std::sqrt(renderVariance) / k *
                   double(smdl::standardNormalSample(rng.generateFloat()));
-        // The per-sample variance whose mean over `spp` samples is the
-        // render variance asked for.
-        const double perSample{renderVariance / (k * k) * double(spp)};
-        sums[b] = mean * double(spp);
-        squares[b] = (perSample + mean * mean) * double(spp);
+        sums[b] = mean * double(NUM_SAMPLES);
       }
-      films.film.addTotals(x, y, sums.data());
-      films.squares.addTotals(x, y, squares.data());
+      film.addTotals(x, y, sums.data());
     }
   }
-  films.film.addSamples(spp);
-  films.squares.addSamples(spp);
-  return films;
+  film.addSamples(NUM_SAMPLES);
+  return film;
 }
 
-[[nodiscard]] Readout readOut(const Detector &detector, const Films &films,
+[[nodiscard]] Readout readOut(const Detector &detector,
+                              const smdl::SpectralFilm &film,
                               DetectorNoise noise, uint64_t seed = 0) {
   auto options{DetectorReadoutOptions{}};
   options.seed = seed;
   options.noise = noise;
   return detector.readOut(
-      films.film, films.squares, options,
-      wholeFrame(films.film.getNumPixelsX(), films.film.getNumPixelsY()));
+      film, options, wholeFrame(film.getNumPixelsX(), film.getNumPixelsY()));
 }
 
 struct Stats final {
@@ -142,9 +128,9 @@ TEST_CASE("Detector: zero noise is a function of the film") {
   CHECK(detector.gain() == 0.5);
   CHECK(detector.topCode() == 4095);
   SUBCASE("Two readouts agree bit for bit and equal the hand chain") {
-    const auto films{flatFilms(detector, 3, 4, 3, 1000.0, 16)};
-    const auto first{readOut(detector, films, DetectorNoise::NONE)};
-    const auto second{readOut(detector, films, DetectorNoise::NONE, 99)};
+    const auto film{flatFilm(detector, 3, 4, 3, 1000.0)};
+    const auto first{readOut(detector, film, DetectorNoise::NONE)};
+    const auto second{readOut(detector, film, DetectorNoise::NONE, 99)};
     CHECK(first.digitalNumbers == second.digitalNumbers);
     CHECK(first.bandCount == 3);
     CHECK(first.pixelCountX == 4);
@@ -153,12 +139,11 @@ TEST_CASE("Detector: zero noise is a function of the film") {
     for (const auto value : first.digitalNumbers)
       CHECK(value == uint16_t(std::round((1000.0 + 0.1 + 10.0) * 0.5)));
     CHECK(first.windowCount == 36);
-    CHECK(first.noiseLimitedCount == 0);
     CHECK(first.meanElectrons == doctest::Approx(1000.0));
   }
   SUBCASE("A one-band film reads out as one band") {
-    const auto films{flatFilms(detector, 1, 2, 2, 100.0, 4)};
-    const auto readout{readOut(detector, films, DetectorNoise::NONE)};
+    const auto film{flatFilm(detector, 1, 2, 2, 100.0)};
+    const auto readout{readOut(detector, film, DetectorNoise::NONE)};
     CHECK(readout.bandCount == 1);
     CHECK(readout.digitalNumbers.size() == 4);
   }
@@ -168,10 +153,10 @@ TEST_CASE("Detector: two seeds differ and one repeats") {
   auto settings{plain()};
   settings.readNoise = 2.0f;
   const Detector detector{settings, geometry()};
-  const auto films{flatFilms(detector, 1, 32, 32, 1000.0, 16)};
-  const auto one{readOut(detector, films, DetectorNoise::ALL, 1)};
-  const auto oneAgain{readOut(detector, films, DetectorNoise::ALL, 1)};
-  const auto two{readOut(detector, films, DetectorNoise::ALL, 2)};
+  const auto film{flatFilm(detector, 1, 32, 32, 1000.0)};
+  const auto one{readOut(detector, film, DetectorNoise::ALL, 1)};
+  const auto oneAgain{readOut(detector, film, DetectorNoise::ALL, 1)};
+  const auto two{readOut(detector, film, DetectorNoise::ALL, 2)};
   CHECK(one.digitalNumbers == oneAgain.digitalNumbers);
   CHECK(one.digitalNumbers != two.digitalNumbers);
 }
@@ -179,17 +164,26 @@ TEST_CASE("Detector: two seeds differ and one repeats") {
 TEST_CASE("Detector: shot noise alone has the variance of its mean") {
   const Detector detector{plain(), geometry()};
   SUBCASE("In the Gaussian regime") {
-    const auto films{flatFilms(detector, 1, 512, 512, 1000.0, 16)};
-    const auto stats{statsOf(readOut(detector, films, DetectorNoise::SHOT))};
+    const auto film{flatFilm(detector, 1, 512, 512, 1000.0)};
+    const auto stats{statsOf(readOut(detector, film, DetectorNoise::SHOT))};
     CHECK(stats.mean == doctest::Approx(1000.0).epsilon(0.005));
     CHECK(stats.variance == doctest::Approx(1000.0).epsilon(0.01));
   }
   SUBCASE("In the Poisson regime") {
-    const auto films{flatFilms(detector, 1, 512, 512, 8.0, 16)};
-    const auto stats{statsOf(readOut(detector, films, DetectorNoise::SHOT))};
+    const auto film{flatFilm(detector, 1, 512, 512, 8.0)};
+    const auto stats{statsOf(readOut(detector, film, DetectorNoise::SHOT))};
     CHECK(stats.mean == doctest::Approx(8.0).epsilon(0.02));
     CHECK(stats.variance == doctest::Approx(8.0).epsilon(0.02));
   }
+}
+
+TEST_CASE("Detector: a film's own noise adds to the shot noise") {
+  // The film's mean is the signal, so a render with noise of its own
+  // reads out with the shot noise on top of it.
+  const Detector detector{plain(), geometry()};
+  const auto film{flatFilm(detector, 1, 256, 256, 1000.0, 2000.0)};
+  const auto stats{statsOf(readOut(detector, film, DetectorNoise::SHOT))};
+  CHECK(stats.variance == doctest::Approx(3000.0).epsilon(0.05));
 }
 
 TEST_CASE("Detector: a photon transfer curve recovers the gain and the read "
@@ -203,8 +197,7 @@ TEST_CASE("Detector: a photon transfer curve recovers the gain and the read "
   settings.blackLevel = 200.0f;
   const Detector detector{settings, geometry()};
   const auto at{[&](double electrons) {
-    return statsOf(readOut(detector,
-                           flatFilms(detector, 1, 128, 128, electrons, 16),
+    return statsOf(readOut(detector, flatFilm(detector, 1, 128, 128, electrons),
                            DetectorNoise::ALL));
   }};
   SUBCASE("The slope of variance against mean is the gain") {
@@ -242,8 +235,8 @@ TEST_CASE("Detector: dark frames are linear in the exposure and double at "
     auto shape{geometry()};
     shape.exposure = exposure;
     const Detector detector{at, shape};
-    const auto films{flatFilms(detector, 1, 2, 2, 0.0, 4)};
-    return readOut(detector, films, DetectorNoise::NONE).digitalNumbers[0];
+    const auto film{flatFilm(detector, 1, 2, 2, 0.0)};
+    return readOut(detector, film, DetectorNoise::NONE).digitalNumbers[0];
   }};
   CHECK(darkFrame(settings, 0.01) == 10);
   CHECK(darkFrame(settings, 0.02) == 20);
@@ -255,10 +248,8 @@ TEST_CASE("Detector: dark frames are linear in the exposure and double at "
     auto shape{geometry()};
     shape.exposure = 0.01;
     const Detector detector{settings, shape};
-    auto films{Films{}};
-    films.film.resize(1, 2, 2);
-    films.squares.resize(1, 2, 2);
-    const auto readout{readOut(detector, films, DetectorNoise::NONE)};
+    const auto film{smdl::SpectralFilm(1, 2, 2)};
+    const auto readout{readOut(detector, film, DetectorNoise::NONE)};
     for (const auto value : readout.digitalNumbers) CHECK(value == 10);
   }
 }
@@ -271,8 +262,8 @@ TEST_CASE("Detector: the well clips and the ADC has a top code") {
     settings.gain = {};
     const Detector detector{settings, geometry()};
     CHECK(detector.gain() == doctest::Approx(65535.0 / 60000.0));
-    const auto films{flatFilms(detector, 1, 32, 32, 120000.0, 16)};
-    const auto readout{readOut(detector, films, DetectorNoise::ALL)};
+    const auto film{flatFilm(detector, 1, 32, 32, 120000.0)};
+    const auto readout{readOut(detector, film, DetectorNoise::ALL)};
     for (const auto value : readout.digitalNumbers) CHECK(value == 65535);
     CHECK(statsOf(readout).variance == 0.0);
     CHECK(readout.wellCount == readout.windowCount);
@@ -283,40 +274,9 @@ TEST_CASE("Detector: the well clips and the ADC has a top code") {
     settings.gain = 2.0f;
     const Detector detector{settings, geometry()};
     CHECK(double(detector.topCode()) / detector.gain() < detector.fullWell());
-    const auto films{flatFilms(detector, 1, 2, 2, 50000.0, 16)};
-    const auto readout{readOut(detector, films, DetectorNoise::NONE)};
+    const auto film{flatFilm(detector, 1, 2, 2, 50000.0)};
+    const auto readout{readOut(detector, film, DetectorNoise::NONE)};
     for (const auto value : readout.digitalNumbers) CHECK(value == 65535);
-  }
-}
-
-TEST_CASE("Detector: the deficit draw leaves a flat field the shot noise's "
-          "variance at any spp") {
-  const Detector detector{plain(), geometry()};
-  SUBCASE("A render a quarter as noisy as the shot noise is topped up to "
-          "it, at 16 spp and at 1024") {
-    for (const uint64_t spp : {uint64_t(16), uint64_t(1024)}) {
-      CAPTURE(spp);
-      const auto films{flatFilms(detector, 1, 256, 256, 1000.0, spp, 250.0)};
-      const auto readout{readOut(detector, films, DetectorNoise::SHOT)};
-      const auto stats{statsOf(readout)};
-      CHECK(stats.variance == doctest::Approx(1000.0).epsilon(0.03));
-      CHECK(readout.noiseLimitedCount == 0);
-    }
-  }
-  SUBCASE("A render noisier than the shot noise is left alone and counted") {
-    const auto films{flatFilms(detector, 1, 256, 256, 1000.0, 16, 2000.0)};
-    const auto readout{readOut(detector, films, DetectorNoise::SHOT)};
-    const auto stats{statsOf(readout)};
-    CHECK(stats.variance == doctest::Approx(2000.0).epsilon(0.05));
-    CHECK(readout.noiseLimitedShare() == 1.0);
-  }
-  SUBCASE("Asked for the shot noise in full, the readout adds it whatever "
-          "the film claims, and still counts") {
-    const auto films{flatFilms(detector, 1, 256, 256, 1000.0, 16, 2000.0)};
-    const auto readout{readOut(detector, films, DetectorNoise::FULL)};
-    const auto stats{statsOf(readout)};
-    CHECK(stats.variance == doctest::Approx(3000.0).epsilon(0.05));
-    CHECK(readout.noiseLimitedShare() == 1.0);
   }
 }
 
@@ -326,11 +286,10 @@ TEST_CASE("Detector: the tallies are over the window and the rest reads as "
   settings.darkCurrent = 1000.0f;
   const Detector detector{settings, geometry()};
   const int4 window{0, 0, 2, 2};
-  const auto films{flatFilms(detector, 2, 4, 4, 1000.0, 16, 0.0, window)};
+  const auto film{flatFilm(detector, 2, 4, 4, 1000.0, 0.0, window)};
   auto options{DetectorReadoutOptions{}};
   options.noise = DetectorNoise::NONE;
-  const auto readout{
-      detector.readOut(films.film, films.squares, options, window)};
+  const auto readout{detector.readOut(film, options, window)};
   CHECK(readout.windowCount == 8);
   CHECK(readout.meanElectrons == doctest::Approx(1000.0));
   for (size_t y = 0; y < 4; y++) {

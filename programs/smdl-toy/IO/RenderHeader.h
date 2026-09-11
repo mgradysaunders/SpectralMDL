@@ -127,10 +127,6 @@ struct DetectorHeader final {
   /// reader recovers the electrons from the band film alone.
   double electronsPerFilmUnit{};
 
-  /// The share of the window's pixel bands whose render noise, by the
-  /// film's own estimate, exceeded their shot noise.
-  double noiseLimitedShare{};
-
   /// The lines to hand `smdl::writeENVIFileUInt16()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;
 

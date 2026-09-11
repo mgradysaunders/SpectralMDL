@@ -31,13 +31,12 @@ class STree;
 /// every sample the session took when this returns, resumed ones
 /// included, and `resumed.header` has been charged for the time it cost.
 ///
-/// `response`, `bandFilm`, and `bandSquares` are the detector's
-/// response, the film its bands accumulate into, and the film of their
-/// squares, all null for none: every sample's radiance is projected onto
-/// the bands beside the spectral sum, at every pass alike, since the
-/// guided combination resolves to the plain mean anyway. When this
-/// returns the band films hold every sample the spectral film does,
-/// resumed ones included.
+/// `response` and `bandFilm` are the detector's response and the film
+/// its bands accumulate into, both null for none: every sample's
+/// radiance is projected onto the bands beside the spectral sum, at every
+/// pass alike, since the guided combination resolves to the plain mean
+/// anyway. When this returns the band film holds every sample the
+/// spectral film does, resumed ones included.
 ///
 /// `outputSpectrum` is where a checkpoint writes, empty for none, and
 /// `sdtree` is filled in when guiding is on, whether or not it is going
@@ -47,6 +46,5 @@ void renderSamples(const Options &opts, const Frame &frame,
                    const StagedScene &staged, ResumedSequence &resumed,
                    smdl::SpectralFilm &film, const Response *response,
                    smdl::SpectralFilm *bandFilm,
-                   smdl::SpectralFilm *bandSquares,
                    const std::string &outputSpectrum,
                    std::unique_ptr<STree> &sdtree);
