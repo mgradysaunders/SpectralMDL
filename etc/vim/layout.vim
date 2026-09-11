@@ -5,9 +5,9 @@
 " The scene layout format that `smdl-toy` reads: `asset` and `light`
 " declarations, reusable `group` arrangements, `place` and `import`
 " statements, and the `material`, `medium`, `sky`, and `haze` directives.
-" The viewpoint, the lens, and the render clock are not here: they live in a
-" `.camera` file, which `camera.vim` covers, and in the `.lens` that camera
-" names, which `lens.vim` covers.
+" The viewpoint, the shutter, the lens, and the body are not here: they live
+" in a `.camera` file, which `camera.vim` covers, and in the `.lens` and the
+" `.sensor` that camera names, which `lens.vim` and `sensor.vim` cover.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/Layout/LayoutParser.cc`, so the words it knows inside a
 " block are exactly the ones that block accepts, and anything else there is
@@ -18,10 +18,11 @@
 " Install (drop-in, single file):
 "
 "   mkdir -p ~/.vim/syntax ~/.vim/ftdetect
-"   cp layout.vim camera.vim lens.vim ~/.vim/syntax/
+"   cp layout.vim camera.vim lens.vim sensor.vim ~/.vim/syntax/
 "   echo 'au BufRead,BufNewFile *.layout setf layout' > ~/.vim/ftdetect/layout.vim
-"   echo 'au BufRead,BufNewFile *.camera,*.sensor setf camera' > ~/.vim/ftdetect/camera.vim
+"   echo 'au BufRead,BufNewFile *.camera setf camera' > ~/.vim/ftdetect/camera.vim
 "   echo 'au BufRead,BufNewFile *.lens setf lens' > ~/.vim/ftdetect/lens.vim
+"   echo 'au BufRead,BufNewFile *.sensor setf sensor' > ~/.vim/ftdetect/sensor.vim
 "
 " For Neovim, use ~/.config/nvim/syntax and ~/.config/nvim/ftdetect instead.
 "

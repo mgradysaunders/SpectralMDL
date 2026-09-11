@@ -6,7 +6,7 @@
 " the surfaces light passes through between the scene and the film, front
 " first, with exactly one `stop` among them. A `.camera` names a `.lens` and
 " says where the picture is taken from and on what sensor; `camera.vim` covers
-" that file and `layout.vim` the scene itself.
+" that file, `sensor.vim` the sensor, and `layout.vim` the scene itself.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/Layout/LensFile.cc`, so the words it knows inside a block
 " are exactly the ones that block accepts, and anything else there is flagged
@@ -17,7 +17,7 @@
 " A lens file is identified by its `.lens` extension. Every number in one is
 " in millimeters, which is what published prescriptions are written in.
 "
-" Install: see the header of `layout.vim`, which covers all three files.
+" Install: see the header of `layout.vim`, which covers all four files.
 "
 " Options:
 "
