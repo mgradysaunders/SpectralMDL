@@ -2,8 +2,9 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -115,14 +116,29 @@ public:
   [[nodiscard]] const MD5FileHash *operator[](const std::string &fileName);
 
 private:
+  /// The hasher for the file hash key.
+  struct FileHashKeyHash final {
+    [[nodiscard]] size_t
+    operator()(const std::pair<MD5Hash, std::string> &key) const noexcept {
+      auto hash{std::hash<std::string>()(key.second)};
+      hash ^= size_t(key.first.getLowerBits()) + 0x9E3779B97F4A7C15ULL +
+              (hash << 6) + (hash >> 2);
+      hash ^= size_t(key.first.getUpperBits()) + 0x9E3779B97F4A7C15ULL +
+              (hash << 6) + (hash >> 2);
+      return hash;
+    }
+  };
+
   /// The file hashes, keyed by hash code so identical files at different
   /// paths deduplicate to one entry. Unreadable files hash to zero and are
   /// keyed by canonical file name instead (the second pair element, empty
   /// otherwise).
-  std::map<std::pair<MD5Hash, std::string>, MD5FileHash> mFileHashes{};
+  std::unordered_map<std::pair<MD5Hash, std::string>,
+                     std::unique_ptr<MD5FileHash>, FileHashKeyHash>
+      mFileHashes{};
 
   /// Canonical file name to entry in `mFileHashes`.
-  std::map<std::string, const MD5FileHash *> mFileHashesByName{};
+  std::unordered_map<std::string, const MD5FileHash *> mFileHashesByName{};
 };
 
 /// \}
