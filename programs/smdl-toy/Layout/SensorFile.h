@@ -206,8 +206,8 @@ public:
   bool hasDetectorBlock{};
 
   /// `readout`: the seconds the sensor takes to read the frame out,
-  /// nonnegative; 0 is a global shutter. The camera's `readout` and
-  /// `-readout` override it.
+  /// nonnegative; 0 is a global shutter. The camera's `readout`
+  /// overrides it.
   float readout{};
 
   /// `readout_direction`: the way the readout sweeps the picture, `down`
@@ -255,18 +255,15 @@ public:
 ///
 [[nodiscard]] SensorDocument readSensor(const std::string &fileName);
 
-/// The sensor file a camera should land its picture on, or empty for
-/// none: `given` if the command line named one, else `stated` if the
-/// camera file did, resolved relative to `cameraFileName` so that a scene
-/// directory stays self-contained. `human`, the observer, is no file and
-/// is the caller's to recognize before asking.
+/// The sensor file a camera file names, or empty for none: `stated` as
+/// the camera file wrote it, resolved relative to `cameraFileName` so
+/// that a scene directory stays self-contained. `human`, the observer, is
+/// no file and is the caller's to recognize before asking.
 ///
-/// \throws smdl::Error  If either names a file that does not exist,
-///                      since neither may be quietly ignored; or names a
-///                      `.response` file, whose meaning moved into this
-///                      format.
+/// \throws smdl::Error  If it names a file that does not exist, which
+///                      may not be quietly ignored; or a `.response`
+///                      file, whose meaning moved into this format.
 ///
 [[nodiscard]] std::string
-resolveSensorFileName(const std::string &given,
-                      const std::string &cameraFileName,
-                      const std::string &stated);
+resolveSensorFileName(const std::string &stated,
+                      const std::string &cameraFileName);

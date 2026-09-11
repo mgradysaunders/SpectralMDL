@@ -183,13 +183,13 @@ LensApproximation approximateLens(const CameraOptions &options) {
 
 Camera::Camera(const CameraOptions &options) {
   if (options.blades != 0 && options.blades < 3)
-    throw smdl::Error("expected -blades to be 0 (a round lens) or at "
+    throw smdl::Error("expected 'blades' to be 0 (a round lens) or at "
                       "least 3");
   if (!(options.vignetting >= 0 && options.vignetting <= 1))
-    throw smdl::Error("expected -vignetting to be between 0 (off) "
+    throw smdl::Error("expected 'vignetting' to be between 0 (off) "
                       "and 1 (the physical cos^4 law)");
   if (!(options.catEye >= 0 && options.catEye <= 1))
-    throw smdl::Error("expected -cat-eye to be between 0 (off) and 1 "
+    throw smdl::Error("expected 'cat_eye' to be between 0 (off) and 1 "
                       "(fully dark corners)");
   if (!(options.frameSize.x > 0 && options.frameSize.y > 0))
     throw smdl::Error("expected the frame to have a size");
@@ -202,8 +202,8 @@ Camera::Camera(const CameraOptions &options) {
     throw smdl::Error(smdl::concat(
         "the distortion folds the image at ", t,
         " of the corner radius, where the radial map stops increasing. "
-        "Reduce -distortion-k1, which must exceed -1/3 on its own, or "
-        "-distortion-k2"));
+        "Reduce 'distortion_k1', which must exceed -1/3 on its own, or "
+        "'distortion_k2'"));
   mNumPixelsX = float(options.resolution.x);
   mNumPixelsY = float(options.resolution.y);
   mAspectRatio = mNumPixelsX / mNumPixelsY;

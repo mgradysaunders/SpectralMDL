@@ -38,13 +38,6 @@ struct CameraModel final {
   /// empty when `sensor` is not.
   std::optional<SensorSettings> previewedSensor{};
 
-  /// Does the render look through the thin lens fitted to `options.lens`
-  /// rather than through the lens? Under `-ideal`, and under `-lens
-  /// ideal` over a camera file's lens. The prescription stays in the
-  /// options for `buildCamera()` to fit, at the focus the autofocus may
-  /// have yet to measure.
-  bool shouldApproximateLens{};
-
   /// Under `-ideal` with a body, what the preview's film is multiplied by
   /// to be the irradiance the body's own optics would have put on it: the
   /// pupil integral at the middle of the frame, per unit of the scene
@@ -68,8 +61,8 @@ struct CameraModel final {
   /// sensor alone.
   WhiteBalance whiteBalance{};
 
-  /// Is the focus `auto`, from either source? Then `options.focus` is
-  /// not final: `solveAutofocus()` measures the committed scene and
+  /// Is the camera file's focus `auto`? Then `options.focus` is not
+  /// final: `solveAutofocus()` measures the committed scene and
   /// writes the distance, and the camera is built after it, as it is
   /// after `-autolook`.
   bool shouldAutofocus{};
@@ -93,6 +86,14 @@ struct CameraModel final {
     return sensor.has_value();
   }
 
+  /// Does the render look through the thin lens fitted to `options.lens`
+  /// rather than through the lens? Under `-ideal`: the prescription
+  /// stays in the options for `buildCamera()` to fit, at the focus the
+  /// autofocus may have yet to measure.
+  [[nodiscard]] bool shouldApproximateLens() const noexcept {
+    return isPreview && options.lens.has_value();
+  }
+
   /// What the film holds. See `CameraOptions::filmQuantity`.
   [[nodiscard]] FilmQuantity filmQuantity() const noexcept {
     return options.filmQuantity;
@@ -107,14 +108,17 @@ struct CameraModel final {
 
 /// The effective focal length of the model's thin lens in scene units:
 /// the frame height over twice the tangent of half the field of view,
-/// which is what `-fstop` is a fraction of and what the depth of field
+/// which is what `fstop` is a fraction of and what the depth of field
 /// is taken at. Meaningless with a lens, whose focal length is its own.
 [[nodiscard]] float thinLensFocalLength(const CameraOptions &options) noexcept;
 
-/// Resolve the camera from the command line and the files it names, in
-/// the order defaults, sensor file, camera file, flags, each later source
-/// winning wherever it speaks. Nothing here needs the scene, so it runs
-/// before anything slow loads and a typo fails fast.
+/// Resolve the camera from the files and the command line: the defaults,
+/// the sensor file over them, and the camera file over both, which is
+/// where the lens, the body, and the shot are stated. The command line
+/// then frames the picture over the file's framing, sizes it, previews
+/// it with `-ideal`, and states the ISO and the white balance over the
+/// file's. Nothing here needs the scene, so it runs before anything slow
+/// loads and a typo fails fast.
 ///
 /// This also settles the camera's half of the clock: `gRenderShutter`'s
 /// exposure, readout, and sweep, which what a layout's motion means
@@ -128,7 +132,7 @@ struct CameraModel final {
 
 /// Build the camera the render looks through from the model's options,
 /// as `-autolook` and the autofocus left them: the model's own, or the
-/// thin lens fitted to its lens when `shouldApproximateLens` says so,
+/// thin lens fitted to its lens when `shouldApproximateLens()` says so,
 /// logging the fit. Under `-ideal` with a body this settles
 /// `previewIrradianceScale`.
 ///
@@ -139,12 +143,11 @@ struct CameraModel final {
 /// Refuse what a render needs of the camera and a report does not: a
 /// physical sensor counts the electrons of an exposure, and the preview
 /// of one exposes the picture as it would, so a shut shutter renders
-/// nothing either can use. Pointed at the `sensor` key when the camera
-/// file named the body.
+/// nothing either can use. Pointed at the camera file's `sensor` key.
 ///
 /// \throws smdl::Error  If the camera cannot render.
 ///
-void refuseUnrenderable(const CameraModel &model, const Options &opts);
+void refuseUnrenderable(const CameraModel &model);
 
 /// The report `-describe-camera` prints: the frame and the field, the
 /// pixels and the pitch, the film quantity, the focus and the depth of

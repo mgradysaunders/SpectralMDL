@@ -34,44 +34,25 @@ cl::OptionCategory catCamera{"Camera Options"};
 //--{ Camera Options
 cl::opt<std::string> optCameraFile{
     "camera",
-    cl::desc("The '.camera' file holding the viewpoint, the lens, and the "
-             "shutter (default: the '.camera' beside the input layout, if "
-             "there is one)"),
+    cl::desc("The '.camera' file: the framing, the lens, the sensor, and the "
+             "shot (default: the '.camera' beside the input layout, if there "
+             "is one)"),
     cl::cat(catCamera)};
 cl::opt<float3> optLookFrom{
-    "look-from", cl::desc("The position to look from (default: -6,0,2)"),
+    "look-from",
+    cl::desc("The position to look from, overriding the camera file's "
+             "'look_from' (default: the camera file's, else -6,0,2)"),
     cl::init(float3{-6, 0, 2}), cl::cat(catCamera)};
 cl::opt<float3> optLookTo{
-    "look-to", cl::desc("The position to look to (default: 0,0,0.5)"),
+    "look-to",
+    cl::desc("The position to look to, overriding the camera file's "
+             "'look_to' (default: the camera file's, else 0,0,0.5)"),
     cl::init(float3{0, 0, 0.5}), cl::cat(catCamera)};
-cl::opt<float3> optLookUp{"look-up", cl::desc("The up vector (default: 0,0,1)"),
-                          cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
-cl::opt<float> optFOV{
-    "fovy",
-    cl::desc("The vertical FOV in degrees (default: 37.8, or what "
-             "-focal-length implies over the frame)"),
-    cl::init(37.8f), cl::cat(catCamera)};
-cl::opt<float> optFocalLength{
-    "focal-length",
-    cl::desc("The thin lens's focal length in mm, which -fovy also states "
-             "over a frame 24 mm tall (or a body's); both together size the "
-             "observer's frame, and are refused over a body"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<std::string> optLens{
-    "lens",
-    cl::desc("The '.lens' file to look through, or 'ideal' for the thin lens, "
-             "overriding the camera file's 'lens' (default: the camera "
-             "file's, else ideal)"),
-    cl::cat(catCamera)};
-cl::opt<std::string> optSensor{
-    "sensor",
-    cl::desc("The '.sensor' file holding the body the picture lands on, or "
-             "'human' for the CIE observer, overriding the camera file's "
-             "'sensor' (default: the camera file's, else human)\n"
-             "* a body renders exactly its own pixels, its film holds the "
-             "irradiance at the sensor, and its bands accumulate beside "
-             "the spectral film"),
-    cl::cat(catCamera)};
+cl::opt<float3> optLookUp{
+    "look-up",
+    cl::desc("The up vector, overriding the camera file's 'look_up' "
+             "(default: the camera file's, else 0,0,1)"),
+    cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
 cl::opt<bool> optIdeal{
     "ideal",
     cl::desc("Preview the camera: a '.lens' becomes the thin lens fitted to "
@@ -81,7 +62,8 @@ cl::opt<bool> optIdeal{
     cl::init(false), cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
     "autolook",
-    cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
+    cl::desc("Solve -look-from/-look-to to fit the scene at the camera's "
+             "field of view"),
     cl::init(false), cl::cat(catCamera)};
 // Kept apart from -autolook on purpose: folding the azimuth into an
 // optional value of -autolook would make LLVM demand '-autolook=N' (a
@@ -107,36 +89,6 @@ cl::opt<bool> optAutolookIgnoreBackfaces{
     cl::desc("With -autolook, neither avoid nor warn about views of backfacing "
              "geometry"),
     cl::init(false), cl::cat(catCamera)};
-cl::opt<float> optShutter{
-    "shutter",
-    cl::desc("The seconds the shutter stays open, overriding the camera "
-             "file's 'shutter' (default: 0, shut)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optReadout{
-    "readout",
-    cl::desc("The seconds the sensor takes to read the frame out, top to "
-             "bottom unless the camera file's 'readout_direction' says "
-             "otherwise, overriding its 'readout' (default: 0, global "
-             "shutter)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optFStop{
-    "fstop",
-    cl::desc("Enable DOF by f-number: with the thin lens, of the focal length "
-             "its frame makes real (24 mm tall unless a body says "
-             "otherwise); with a lens, its working stop"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optAperture{
-    "aperture",
-    cl::desc("Enable DOF by aperture radius in scene units (mutually exclusive "
-             "with -fstop)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<std::string> optFocus{
-    "focus",
-    cl::desc("The focus: a distance along the view axis in scene units, "
-             "'infinity', or 'auto' to focus on what the center of the frame "
-             "sees once the scene is built (default: the distance between "
-             "-look-from and -look-to)"),
-    cl::cat(catCamera)};
 cl::opt<std::string> optISO{
     "iso",
     cl::desc("The ISO a physical sensor is read out at, or 'auto' to meter it "
@@ -152,45 +104,6 @@ cl::opt<std::string> optWhiteBalance{
              "overriding the camera file's 'white_balance' (default: the "
              "camera file's, else D65)"),
     cl::cat(catCamera)};
-cl::opt<int> optBlades{
-    "blades",
-    cl::desc("The number of aperture blades (default: 0, a round lens)"),
-    cl::init(0), cl::cat(catCamera)};
-cl::opt<float> optBladeAngle{
-    "blade-angle",
-    cl::desc("With -blades, the rotation of the aperture polygon in "
-             "degrees (default: 0, vertex at screen right)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optDistortionK1{
-    "distortion-k1",
-    cl::desc("The radial distortion, in relative corner displacement (barrel "
-             ">0, pincushion <0, default: 0)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optDistortionK2{
-    "distortion-k2",
-    cl::desc("The quartic term of radial distortion, same units as "
-             "-distortion-k1 (default: 0)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<bool> optDistortionFit{
-    "distortion-fit",
-    cl::desc("Refit so frame corner directions hold constant under distortion"),
-    cl::init(false), cl::cat(catCamera)};
-cl::opt<float> optVignetting{
-    "vignetting",
-    cl::desc("The strength of cos^4 falloff (default: 0 is off, 1 is the "
-             "physical law)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optCatEye{
-    "cat-eye",
-    cl::desc(
-        "With -fstop or -aperture, mechanical vignette from the lens barrel\n"
-        "* corner displacement in rim radii (0 is off, 1 is fully dark)"),
-    cl::init(0.0f), cl::cat(catCamera)};
-cl::opt<float> optCatEyeRadius{
-    "cat-eye-radius",
-    cl::desc("With -cat-eye, the barrel rim radius in scene units (default: "
-             "the aperture radius, i.e., wide-open)"),
-    cl::init(0.0f), cl::cat(catCamera)};
 //--}
 
 cl::OptionCategory catCompile{"Compile Options"};
@@ -636,40 +549,6 @@ Options parseCommandLine(int argc, char **argv) {
   // registers but leaves to the tool to act on; it prints nothing unless
   // one of them was given.
   cl::PrintOptionValues();
-  // Validate the occurrence-dependent lens flags here at the CLI, where
-  // "was this given at all" is knowable; in the `CameraOptions` built
-  // later zero means unset, so an explicit value has to be positive to
-  // stay distinguishable.
-  if (optFStop.getNumOccurrences() > 0 && optAperture.getNumOccurrences() > 0)
-    throw smdl::Error("expected at most one of -fstop and -aperture "
-                      "(they are two spellings of the same quantity)");
-  if (optFStop.getNumOccurrences() > 0 && !(float(optFStop) > 0))
-    throw smdl::Error("expected -fstop to be positive");
-  if (optAperture.getNumOccurrences() > 0 && !(float(optAperture) > 0))
-    throw smdl::Error("expected -aperture to be positive");
-  if (optFocalLength.getNumOccurrences() > 0 && !(float(optFocalLength) > 0))
-    throw smdl::Error("expected -focal-length to be positive");
-  // The focus, in its three forms: a number is a distance, and the two
-  // words are the infinity and the measurement.
-  auto focus{Flag<float>{}};
-  bool shouldAutofocus{};
-  if (optFocus.getNumOccurrences() > 0) {
-    const auto &text{std::string(optFocus)};
-    if (text == "auto") {
-      shouldAutofocus = true;
-    } else if (text == "infinity" || text == "inf") {
-      focus = Flag<float>{INF, true};
-    } else {
-      char *end{};
-      const float value{std::strtof(text.c_str(), &end)};
-      if (text.empty() || *end != '\0' || !std::isfinite(value) || !(value > 0))
-        throw smdl::Error(smdl::concat(
-            "expected -focus to be a positive distance, 'infinity', or "
-            "'auto', got ",
-            smdl::Quoted(text)));
-      focus = Flag<float>{value, true};
-    }
-  }
   // The ISO, in its two forms: a number, or the meter.
   auto iso{Flag<float>{}};
   bool shouldMeterISO{};
@@ -699,24 +578,9 @@ Options parseCommandLine(int argc, char **argv) {
           " K, got ", smdl::Quoted(text)));
     whiteBalance = Flag<WhiteBalance>{*parsed, true};
   }
-  // The old spelling of the frame size, which now means a file.
-  if (optSensor.getNumOccurrences() > 0) {
-    const auto &value{std::string(optSensor)};
-    if (!value.empty() &&
-        value.find_first_not_of("0123456789.,") == std::string::npos &&
-        value.find(',') != std::string::npos)
-      throw smdl::Error(smdl::concat(
-          "-sensor ", smdl::Quoted(value),
-          " no longer takes a width and a height in millimeters: the thin "
-          "lens spans a frame 24 mm tall whose width follows the picture, "
-          "and a physical frame is a '.sensor' file's 'pixels' and "
-          "'pitch', which -sensor names"));
-  }
   if (!(float(optResolutionScale) > 0 && float(optResolutionScale) <= 1))
     throw smdl::Error("expected -resolution-scale to be greater than 0 and at "
                       "most 1");
-  if (optCatEyeRadius.getNumOccurrences() > 0 && !(float(optCatEyeRadius) > 0))
-    throw smdl::Error("expected -cat-eye-radius to be positive");
   if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
                       optLookTo.getNumOccurrences() > 0))
     throw smdl::Error("expected at most one of -autolook and "
@@ -748,10 +612,6 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error(smdl::concat("expected -median-filter-radius between 1 "
                                    "and ",
                                    MEDIAN_FILTER_MAX_RADIUS));
-  if (!(std::isfinite(float(optShutter)) && float(optShutter) >= 0))
-    throw smdl::Error("expected -shutter to be finite and nonnegative");
-  if (!(std::isfinite(float(optReadout)) && float(optReadout) >= 0))
-    throw smdl::Error("expected -readout to be finite and nonnegative");
   if (!std::isfinite(float(optTime)))
     throw smdl::Error("expected -time to be finite");
 
@@ -764,28 +624,10 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.lookFrom = flag(optLookFrom);
   opts.camera.lookTo = flag(optLookTo);
   opts.camera.lookUp = flag(optLookUp);
-  opts.camera.fovYDeg = flag(optFOV);
-  opts.camera.focalLengthMM = flag(optFocalLength);
-  opts.camera.lens = flag(optLens);
-  opts.camera.sensor = flag(optSensor);
   opts.camera.isIdeal = bool(optIdeal);
-  opts.camera.shutter = flag(optShutter);
-  opts.camera.readout = flag(optReadout);
-  opts.camera.fStop = flag(optFStop);
-  opts.camera.aperture = flag(optAperture);
-  opts.camera.focus = focus;
-  opts.camera.shouldAutofocus = shouldAutofocus;
   opts.camera.iso = iso;
   opts.camera.shouldMeterISO = shouldMeterISO;
   opts.camera.whiteBalance = whiteBalance;
-  opts.camera.blades = flag(optBlades);
-  opts.camera.bladeAngleDeg = flag(optBladeAngle);
-  opts.camera.distortionK1 = flag(optDistortionK1);
-  opts.camera.distortionK2 = flag(optDistortionK2);
-  opts.camera.shouldFitDistortion = flag(optDistortionFit);
-  opts.camera.vignetting = flag(optVignetting);
-  opts.camera.catEye = flag(optCatEye);
-  opts.camera.catEyeRadius = flag(optCatEyeRadius);
   opts.camera.autolook.isEnabled = bool(optAutolook);
   opts.camera.autolook.azimuthDeg = flag(optAutolookAzimuth);
   opts.camera.autolook.zenithDeg = float(optAutolookZenith);

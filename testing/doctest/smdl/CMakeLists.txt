@@ -13,6 +13,7 @@ smdl_add_doctest(
     "Module.cc"
     "Parser.cc"
     "RenderUtil/SpectralColor.cc"
+    "RenderUtil/Colorimetry.cc"
     "RenderUtil/FastMath.cc"
     "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"

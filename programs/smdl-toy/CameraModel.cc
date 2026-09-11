@@ -23,92 +23,59 @@ namespace {
   return 1e-3f * float2(heightMM * aspect, heightMM);
 }
 
-// A setting as the source that stated it spells it: the flag, or the
-// key in quotes. Every flag is its key with the underscores replaced.
-[[nodiscard]] std::string spellSetting(std::string_view key, bool asFlag) {
-  if (!asFlag) return smdl::concat("'", key, "'");
-  auto flag{"-" + std::string(key)};
-  for (auto &c : flag)
-    if (c == '_') c = '-';
-  return flag;
+// A refusal of a setting the camera file stated, once the lens and the
+// body are known: pointed at the key with a caret, reading as the
+// compiler's own located errors do, the file, line, and column ahead of
+// the message and the excerpt beneath it. A setting stated only in a
+// 'motion' key has no location of its own, and is refused plainly.
+[[noreturn]] void refuse(const CameraDocument &document, std::string_view key,
+                         const std::string &message) {
+  if (auto itr{document.keyLocs.find(std::string(key))};
+      itr != document.keyLocs.end())
+    throw smdl::Error(
+        smdl::concat(LayoutDiagnostics::where(itr->second), ": ", message),
+        "\n" + LayoutDiagnostics::excerpt(itr->second));
+  throw smdl::Error(message);
 }
-
-// A refusal of a setting the camera file or the command line stated,
-// once the lens and the body are known: pointed at the key with a caret
-// when the file stated it and the command line did not override it,
-// and a plain error naming the flag otherwise. The pointed form reads
-// as the compiler's own located errors do, the file, line, and column
-// ahead of the message and the excerpt beneath it.
-class Refuser final {
-public:
-  explicit Refuser(const CameraDocument &document) : mDocument(document) {}
-
-  [[noreturn]] void refuse(std::string_view key, bool wasFlagGiven,
-                           const std::string &message) const {
-    if (!wasFlagGiven) {
-      if (auto itr{mDocument.keyLocs.find(std::string(key))};
-          itr != mDocument.keyLocs.end())
-        throw smdl::Error(
-            smdl::concat(LayoutDiagnostics::where(itr->second), ": ", message),
-            "\n" + LayoutDiagnostics::excerpt(itr->second));
-    }
-    throw smdl::Error(message);
-  }
-
-private:
-  const CameraDocument &mDocument;
-};
 
 // With a lens the frame is the body and the prescription together, and
 // every setting the thin lens uses to stand in for a real one is either
-// meaningless or now emergent. Naming one anyway is a mistake worth
-// reporting rather than a value to quietly drop, and this is the one
-// place both sources have had their say: an explicit flag and whatever
-// the camera file resolved to at shutter open.
-void refuseThinLensSettings(const Options &opts,
-                            const CameraSettings &fileCamera,
-                            const Refuser &refuser) {
+// meaningless or emergent. Naming one anyway is a mistake worth
+// reporting rather than a value to quietly drop.
+void refuseThinLensSettings(const CameraDocument &document,
+                            const CameraSettings &fileCamera) {
   struct Refusal final {
     const char *key;
-    bool wasFlagGiven;
-    bool wasFileStated;
+    bool wasStated;
     const char *why;
   };
   const Refusal refusals[]{
-      {"fovy", opts.camera.fovYDeg.wasGiven, fileCamera.fovYDeg.has_value(),
+      {"fovy", fileCamera.fovYDeg.has_value(),
        "the field of view is the frame and the glass together, and the log "
        "reports it"},
-      {"focal_length", opts.camera.focalLengthMM.wasGiven,
-       fileCamera.focalLengthMM.has_value(),
+      {"focal_length", fileCamera.focalLengthMM.has_value(),
        "the focal length is the prescription's own, and the log reports it"},
-      {"aperture", opts.camera.aperture.wasGiven,
-       fileCamera.aperture.has_value(),
+      {"aperture", fileCamera.aperture.has_value(),
        "the aperture is the lens's own stop, which 'fstop' still narrows"},
-      {"distortion_k1", opts.camera.distortionK1.wasGiven,
-       fileCamera.distortionK1.has_value(),
+      {"distortion_k1", fileCamera.distortionK1.has_value(),
        "the distortion is whatever the surfaces do"},
-      {"distortion_k2", opts.camera.distortionK2.wasGiven,
-       fileCamera.distortionK2.has_value(),
+      {"distortion_k2", fileCamera.distortionK2.has_value(),
        "the distortion is whatever the surfaces do"},
-      {"distortion_fit", opts.camera.shouldFitDistortion.wasGiven,
-       fileCamera.shouldFitDistortion.has_value(),
+      {"distortion_fit", fileCamera.shouldFitDistortion.has_value(),
        "there is no distortion polynomial to refit"},
-      {"vignetting", opts.camera.vignetting.wasGiven,
-       fileCamera.vignetting.has_value(),
+      {"vignetting", fileCamera.vignetting.has_value(),
        "the cos^4 falloff comes out of the pupil integral, and is not "
        "optional there"},
-      {"cat_eye", opts.camera.catEye.wasGiven, fileCamera.catEye.has_value(),
+      {"cat_eye", fileCamera.catEye.has_value(),
        "the barrel vignette is whatever the clear apertures do"},
-      {"cat_eye_radius", opts.camera.catEyeRadius.wasGiven,
-       fileCamera.catEyeRadius.has_value(),
+      {"cat_eye_radius", fileCamera.catEyeRadius.has_value(),
        "the barrel vignette is whatever the clear apertures do"},
   };
   for (const auto &refusal : refusals)
-    if (refusal.wasFlagGiven || refusal.wasFileStated)
-      refuser.refuse(
-          refusal.key, refusal.wasFlagGiven,
-          smdl::concat(spellSetting(refusal.key, refusal.wasFlagGiven),
-                       " has no meaning with a lens: ", refusal.why));
+    if (refusal.wasStated)
+      refuse(document, refusal.key,
+             smdl::concat("'", refusal.key,
+                          "' has no meaning with a lens: ", refusal.why));
 }
 
 // The readout's sweep over the picture, which is where the direction
@@ -342,22 +309,14 @@ CameraModel resolveCameraModel(const Options &opts) {
     model.document = readCamera(model.cameraDiags, model.cameraFileName);
   const auto &document{model.document};
   const auto fileCamera{document.camera.at(opts.scene.time)};
-  const Refuser refuser{document};
-  // The body: the flag if it spoke, else the file, else the observer. A
-  // body the flag replaces with the observer still decides the frame and
-  // the pixels, so the framing never changes between the two.
-  const auto sensorWord{
-      opts.camera.sensor.wasGiven
-          ? opts.camera.sensor.value
-          : fileCamera.sensor.value_or(std::string(SENSOR_HUMAN))};
-  auto body{std::optional<SensorSettings>()};
-  bool isBodyReplaced{false};
+  // The body the camera file names, else the observer. Under -ideal the
+  // observer stands in for the body on its frame and pixels, so the
+  // framing never changes between the preview and the render.
   model.isPreview = opts.camera.isIdeal;
-  if (sensorWord != SENSOR_HUMAN) {
-    model.sensorFileName = resolveSensorFileName(
-        opts.camera.sensor.wasGiven ? sensorWord : std::string(),
-        model.cameraFileName,
-        opts.camera.sensor.wasGiven ? std::string() : sensorWord);
+  auto body{std::optional<SensorSettings>()};
+  if (fileCamera.sensor && *fileCamera.sensor != SENSOR_HUMAN) {
+    model.sensorFileName =
+        resolveSensorFileName(*fileCamera.sensor, model.cameraFileName);
     body = readSensor(model.sensorFileName).sensor;
     if (model.isPreview) {
       model.previewedSensor = body;
@@ -370,26 +329,10 @@ CameraModel resolveCameraModel(const Options &opts) {
     } else {
       model.sensor = body;
     }
-  } else if (opts.camera.sensor.wasGiven && fileCamera.sensor &&
-             *fileCamera.sensor != SENSOR_HUMAN) {
-    body = readSensor(resolveSensorFileName(std::string(), model.cameraFileName,
-                                            *fileCamera.sensor))
-               .sensor;
-    isBodyReplaced = true;
-    SMDL_LOG_INFO(
-        "Sensor: -sensor human replaces the camera file's ",
-        smdl::Quoted(body->name.empty() ? *fileCamera.sensor : body->name),
-        " with the observer, on that body's frame and pixels");
   }
   // The body the shot is exposed for: the physical sensor, or the one the
-  // preview stands in for. What only a body has is dropped rather than
-  // refused when a body was named and the observer stands in for it.
+  // preview stands in for.
   const auto &shotBody{model.sensor ? model.sensor : model.previewedSensor};
-  const bool hasStandIn{isBodyReplaced || model.previewedSensor.has_value()};
-  const char *standIn{model.previewedSensor
-                          ? "-ideal previews the body through the observer"
-                          : "-sensor human replaced the body it was stated "
-                            "for"};
   // The picture's size and the frame: a body's own, or -resolution's
   // over the observer's frame, 24 mm tall unless the field of view and
   // the focal length together say otherwise below.
@@ -430,101 +373,65 @@ CameraModel resolveCameraModel(const Options &opts) {
       model.sensor ? FilmQuantity::IRRADIANCE : FilmQuantity::RADIANCE;
   // The two clocks. Which instant to photograph is the command line's
   // alone, so one camera file renders every frame of a shot; how long
-  // the shutter stays open is the camera's, which the file may state
-  // and '-shutter' overrides; how long the readout takes to sweep the
-  // frame and which way is the body's, which the camera file overrides
-  // and '-readout' overrides again.
+  // the shutter stays open is the camera's; how long the readout takes
+  // to sweep the frame and which way is the body's, which the camera
+  // file overrides.
   gRenderShutter.time = opts.scene.time;
-  gRenderShutter.exposure = pick(opts.camera.shutter, fileCamera.shutter);
-  gRenderShutter.readout = opts.camera.readout.wasGiven
-                               ? opts.camera.readout.value
-                           : fileCamera.readout ? *fileCamera.readout
-                           : body               ? body->readout
-                                                : 0.0f;
+  gRenderShutter.exposure = fileCamera.shutter.value_or(0.0f);
+  gRenderShutter.readout = fileCamera.readout ? *fileCamera.readout
+                           : body             ? body->readout
+                                              : 0.0f;
   settleReadoutLines(fileCamera.readoutDirection ? *fileCamera.readoutDirection
                      : body                      ? body->readoutDirection
                                                  : ReadoutDirection::DOWN,
                      options.resolution);
-  // The lens: the flag if it spoke, else the file, else the thin lens.
-  const auto lensWord{opts.camera.lens.wasGiven
-                          ? opts.camera.lens.value
-                          : fileCamera.lens.value_or(std::string(LENS_IDEAL))};
-  if (lensWord != LENS_IDEAL) {
-    model.lensFileName = resolveLensFileName(
-        opts.camera.lens.wasGiven ? lensWord : std::string(),
-        model.cameraFileName,
-        opts.camera.lens.wasGiven ? std::string() : lensWord);
+  // The lens the camera file names, else the thin lens. Under -ideal
+  // the prescription stays in the options for the thin lens fitted to
+  // it.
+  if (fileCamera.lens && *fileCamera.lens != LENS_IDEAL) {
+    model.lensFileName =
+        resolveLensFileName(*fileCamera.lens, model.cameraFileName);
     options.lens = readLens(model.lensFileName).lens;
-    refuseThinLensSettings(opts, fileCamera, refuser);
-    if (model.isPreview) {
-      model.shouldApproximateLens = true;
+    refuseThinLensSettings(document, fileCamera);
+    if (model.isPreview)
       SMDL_LOG_INFO("Lens: -ideal previews ",
                     options.lens->name.empty()
                         ? smdl::concat(smdl::QuotedPath(model.lensFileName))
                         : smdl::concat(smdl::Quoted(options.lens->name)),
                     " through the thin lens fitted to it");
-    }
-  } else if (opts.camera.lens.wasGiven && fileCamera.lens &&
-             *fileCamera.lens != LENS_IDEAL) {
-    // The lens stays in the options for the fit, which is what the
-    // thin lens stands in for it with.
-    model.lensFileName = resolveLensFileName(
-        std::string(), model.cameraFileName, *fileCamera.lens);
-    options.lens = readLens(model.lensFileName).lens;
-    refuseThinLensSettings(opts, fileCamera, refuser);
-    model.shouldApproximateLens = true;
-    SMDL_LOG_INFO("Lens: -lens ideal replaces the camera file's ",
-                  smdl::Quoted(*fileCamera.lens),
-                  " with the thin lens fitted to it");
   }
-  // The camera, merged from three sources in increasing order of
-  // priority: the defaults in `CameraOptions`, whatever the camera file's
-  // 'camera' directive named, and whatever the command line explicitly
-  // gave. A flag that was not given must not override the file, so what
-  // decides is the occurrence count rather than the value.
+  // The camera: the defaults in `CameraOptions`, whatever the camera
+  // file's 'camera' directive named over them, and the framing flags
+  // over both. A framing flag that was not given must not override the
+  // file, so what decides is the occurrence count rather than the value.
   options.lookFrom = pick(opts.camera.lookFrom, fileCamera.lookFrom);
   options.lookTo = pick(opts.camera.lookTo, fileCamera.lookTo);
   options.lookUp = pick(opts.camera.lookUp, fileCamera.lookUp);
-  options.fovYDeg = pick(opts.camera.fovYDeg, fileCamera.fovYDeg);
-  options.fStop = pick(opts.camera.fStop, fileCamera.fStop);
-  options.aperture = pick(opts.camera.aperture, fileCamera.aperture);
-  options.blades = pick(opts.camera.blades, fileCamera.blades);
+  options.fovYDeg = fileCamera.fovYDeg.value_or(options.fovYDeg);
+  options.fStop = fileCamera.fStop.value_or(options.fStop);
+  options.aperture = fileCamera.aperture.value_or(options.aperture);
+  options.focus = fileCamera.focus.value_or(options.focus);
+  options.blades = fileCamera.blades.value_or(options.blades);
   options.bladeAngleDeg =
-      pick(opts.camera.bladeAngleDeg, fileCamera.bladeAngleDeg);
-  options.distortionK1 =
-      pick(opts.camera.distortionK1, fileCamera.distortionK1);
-  options.distortionK2 =
-      pick(opts.camera.distortionK2, fileCamera.distortionK2);
+      fileCamera.bladeAngleDeg.value_or(options.bladeAngleDeg);
+  options.distortionK1 = fileCamera.distortionK1.value_or(options.distortionK1);
+  options.distortionK2 = fileCamera.distortionK2.value_or(options.distortionK2);
   options.shouldFitDistortion =
-      pick(opts.camera.shouldFitDistortion, fileCamera.shouldFitDistortion);
-  options.vignetting = pick(opts.camera.vignetting, fileCamera.vignetting);
-  options.catEye = pick(opts.camera.catEye, fileCamera.catEye);
-  options.catEyeRadius =
-      pick(opts.camera.catEyeRadius, fileCamera.catEyeRadius);
+      fileCamera.shouldFitDistortion.value_or(options.shouldFitDistortion);
+  options.vignetting = fileCamera.vignetting.value_or(options.vignetting);
+  options.catEye = fileCamera.catEye.value_or(options.catEye);
+  options.catEyeRadius = fileCamera.catEyeRadius.value_or(options.catEyeRadius);
   options.noLOD = opts.render.sampling.noLOD;
-  // The thin lens's field, from the two ways of stating it. Over a body
-  // the frame is the body's, so either one states the focal length and
-  // both is two statements of one fact. Over the observer's frame,
-  // either one alone implies the other on 24 mm, and both together size
-  // the frame itself.
-  if (!options.lens) {
-    const bool wasFovYGiven{opts.camera.fovYDeg.wasGiven ||
-                            fileCamera.fovYDeg.has_value()};
-    const bool wasFocalLengthGiven{opts.camera.focalLengthMM.wasGiven ||
-                                   fileCamera.focalLengthMM.has_value()};
-    const float focalLength{
-        1e-3f * pick(opts.camera.focalLengthMM, fileCamera.focalLengthMM)};
-    if (body && wasFovYGiven && wasFocalLengthGiven) {
-      const bool asFlag{opts.camera.focalLengthMM.wasGiven};
-      refuser.refuse(
-          "focal_length", asFlag,
-          smdl::concat(spellSetting("fovy", opts.camera.fovYDeg.wasGiven),
-                       " and ", spellSetting("focal_length", asFlag),
-                       " are two statements of the thin lens's "
-                       "field over a body, whose frame is its own: "
-                       "state one"));
-    }
-    if (wasFocalLengthGiven && !wasFovYGiven) {
+  // The autofocus is a measurement of the committed scene, so it leaves
+  // the distance to the stage.
+  model.shouldAutofocus = fileCamera.shouldAutofocus;
+  // The thin lens's field, from the two ways of stating it. The focal
+  // length alone implies the field of view over the frame. Both together
+  // are two statements of one fact over a body, whose frame is its own,
+  // and size the frame itself over the observer's.
+  if (!options.lens && fileCamera.focalLengthMM) {
+    const float focalLength{1e-3f * *fileCamera.focalLengthMM};
+    if (!fileCamera.fovYDeg) {
       options.fovYDeg =
           2 *
           smdl::degrees(std::atan(0.5f * options.frameSize.y / focalLength));
@@ -533,7 +440,11 @@ CameraModel resolveCameraModel(const Options &opts) {
                     smdl::Brief(1e3f * focalLength, 4), " mm over the ",
                     body ? "body's " : "observer's ",
                     smdl::Brief(1e3f * options.frameSize.y, 4), " mm frame");
-    } else if (wasFocalLengthGiven && wasFovYGiven) {
+    } else if (body) {
+      refuse(document, "focal_length",
+             "'fovy' and 'focal_length' are two statements of the thin "
+             "lens's field over a body, whose frame is its own: state one");
+    } else {
       const float heightMM{2e3f * focalLength *
                            std::tan(smdl::radians(options.fovYDeg / 2))};
       options.frameSize = observerFrameSize(picture, heightMM);
@@ -544,107 +455,78 @@ CameraModel resolveCameraModel(const Options &opts) {
                     smdl::Brief(options.fovYDeg, 4), " degrees");
     }
   }
-  // The same exclusivity the command line checks, now that the file has
-  // had its say: either source can supply either spelling, so only the
-  // merged pair can be checked for naming both.
+  // Either spelling of the aperture may come from the block or from a key
+  // of its motion, so only the settings at shutter open can be checked
+  // for naming both.
   if (options.fStop > 0 && options.aperture > 0)
-    refuser.refuse(
-        fileCamera.aperture ? "aperture" : "fstop",
-        opts.camera.fStop.wasGiven && opts.camera.aperture.wasGiven,
-        "expected at most one of -fstop and -aperture between the command "
-        "line and the camera file's 'camera' directive (they are two "
-        "spellings of the same quantity)");
+    refuse(document, "aperture",
+           "expected at most one of 'fstop' and 'aperture' (they are two "
+           "spellings of the same quantity)");
   // What a physical sensor needs of the optics, refused here so that it
   // fails before anything slow loads, since under -autolook the camera
   // is built after the scene.
   if (shotBody && !options.lens && !(options.fStop > 0) &&
       !(options.aperture > 0))
-    refuser.refuse("sensor", opts.camera.sensor.wasGiven,
-                   "a physical sensor integrates the irradiance over a "
-                   "pupil, and a pinhole has none: state 'fstop' or "
-                   "'aperture'");
-  // The focus: a distance, infinity, or the autofocus, the flag over the
-  // file. The autofocus is a measurement of the committed scene, so it
-  // leaves the distance to the stage.
-  if (opts.camera.shouldAutofocus) {
-    model.shouldAutofocus = true;
-  } else if (opts.camera.focus.wasGiven) {
-    options.focus = opts.camera.focus.value;
-    if (fileCamera.shouldAutofocus)
-      SMDL_LOG_INFO("Focus: -focus replaces the camera file's 'focus auto'");
-  } else if (fileCamera.shouldAutofocus) {
-    model.shouldAutofocus = true;
-  } else {
-    options.focus = fileCamera.focus.value_or(0.0f);
-  }
-  // The body's condition over the shot, which only a body has.
+    refuse(document, "sensor",
+           "a physical sensor integrates the irradiance over a pupil, and a "
+           "pinhole has none: state 'fstop' or 'aperture'");
+  // The body's condition over the shot, which only a body has, and which
+  // the preview, drawing no noise, has no use for.
   if (fileCamera.temperature) {
     if (model.sensor) {
       model.temperature = *fileCamera.temperature;
-    } else if (hasStandIn) {
-      SMDL_LOG_INFO("Sensor: 'temperature' is ignored, since ", standIn);
+    } else if (model.previewedSensor) {
+      SMDL_LOG_INFO("Sensor: 'temperature' is ignored, since -ideal "
+                    "previews the body through the observer");
     } else {
-      refuser.refuse("temperature", false,
-                     "'temperature' is a physical sensor's condition, and "
-                     "this camera's sensor is 'human'");
+      refuse(document, "temperature",
+             "'temperature' is a physical sensor's condition, and this "
+             "camera's sensor is 'human'");
     }
   }
-  // The ISO, which only a body reads out at: the flag over the file,
-  // and the meter when neither states a number. A body whose detector
-  // states its gain has one speed, which a number would contradict.
+  // The ISO, which only a body reads out at: -iso over the file, and the
+  // meter when neither states a number. A body whose detector states its
+  // gain has one speed, which a number would contradict.
   const auto physics{shotBody ? std::optional<Sensor>(*shotBody)
                               : std::optional<Sensor>()};
-  {
-    const bool wasFlagGiven{opts.camera.iso.wasGiven ||
-                            opts.camera.shouldMeterISO};
-    const bool wasStated{wasFlagGiven || fileCamera.iso.has_value() ||
-                         fileCamera.shouldMeterISO};
-    if (wasStated && !shotBody) {
-      if (isBodyReplaced) {
-        SMDL_LOG_INFO("Sensor: 'iso' is ignored, since -sensor human "
-                      "replaced the body it was stated for");
-      } else {
-        refuser.refuse("iso", wasFlagGiven,
-                       smdl::concat(spellSetting("iso", wasFlagGiven),
-                                    " is a physical sensor's setting, and "
-                                    "this camera's sensor is 'human'"));
-      }
-    } else if (shotBody) {
-      if (opts.camera.shouldMeterISO) {
-        if (fileCamera.iso)
-          SMDL_LOG_INFO("ISO: -iso auto replaces the camera file's 'iso ",
-                        smdl::Brief(*fileCamera.iso, 6), "'");
-      } else if (opts.camera.iso.wasGiven) {
-        model.iso = opts.camera.iso.value;
-      } else if (fileCamera.iso) {
-        model.iso = *fileCamera.iso;
-      }
-      if (model.iso && physics->hasFixedGain())
-        refuser.refuse(
-            "iso", opts.camera.iso.wasGiven,
-            smdl::concat(spellSetting("iso", opts.camera.iso.wasGiven),
-                         " has no meaning with a fixed gain: the body's "
-                         "detector states 'gain', whose saturation speed "
-                         "is ISO ",
-                         smdl::Brief(physics->fixedGainISO(), 5)));
+  if (!shotBody) {
+    if (opts.camera.iso.wasGiven || opts.camera.shouldMeterISO)
+      throw smdl::Error("-iso is a physical sensor's setting, and this "
+                        "camera's sensor is 'human'");
+    if (fileCamera.iso || fileCamera.shouldMeterISO)
+      refuse(document, "iso",
+             "'iso' is a physical sensor's setting, and this camera's "
+             "sensor is 'human'");
+  } else {
+    if (opts.camera.iso.wasGiven)
+      model.iso = opts.camera.iso.value;
+    else if (!opts.camera.shouldMeterISO)
+      model.iso = fileCamera.iso;
+    if (model.iso && physics->hasFixedGain()) {
+      const auto why{smdl::concat(
+          " has no meaning with a fixed gain: the body's detector states "
+          "'gain', whose saturation speed is ISO ",
+          smdl::Brief(physics->fixedGainISO(), 5))};
+      if (opts.camera.iso.wasGiven) throw smdl::Error("-iso" + why);
+      refuse(document, "iso", "'iso'" + why);
     }
   }
-  // The white balance, which only a body's develop has: the flag over
-  // the file.
-  if (opts.camera.whiteBalance.wasGiven || fileCamera.whiteBalance) {
-    const bool wasFlagGiven{opts.camera.whiteBalance.wasGiven};
-    if (model.sensor) {
-      model.whiteBalance =
-          pick(opts.camera.whiteBalance, fileCamera.whiteBalance);
-    } else if (hasStandIn) {
-      SMDL_LOG_INFO("Sensor: 'white_balance' is ignored, since ", standIn);
-    } else {
-      refuser.refuse(
-          "white_balance", wasFlagGiven,
-          smdl::concat(spellSetting("white_balance", wasFlagGiven),
-                       " is a physical sensor's setting, and this camera's "
-                       "sensor is 'human'"));
-    }
+  // The white balance, which only a body's develop has: -white-balance
+  // over the file.
+  if (model.sensor) {
+    model.whiteBalance =
+        pick(opts.camera.whiteBalance, fileCamera.whiteBalance);
+  } else if (opts.camera.whiteBalance.wasGiven || fileCamera.whiteBalance) {
+    if (model.previewedSensor)
+      SMDL_LOG_INFO("Sensor: 'white_balance' is ignored, since -ideal "
+                    "previews the body through the observer");
+    else if (opts.camera.whiteBalance.wasGiven)
+      throw smdl::Error("-white-balance is a physical sensor's setting, and "
+                        "this camera's sensor is 'human'");
+    else
+      refuse(document, "white_balance",
+             "'white_balance' is a physical sensor's setting, and this "
+             "camera's sensor is 'human'");
   }
   // What a readout needs, refused here for the same reason.
   if (!opts.image.outputDN.empty()) {
@@ -654,7 +536,7 @@ CameraModel resolveCameraModel(const Options &opts) {
     if (!model.sensor)
       throw smdl::Error("-output-dn reads a body out, and this camera's "
                         "sensor is 'human': name a '.sensor' file with "
-                        "'sensor' in the camera file or with -sensor");
+                        "'sensor' in the camera file");
     if (!gRenderShutter.hasExposure())
       throw smdl::Error("-output-dn needs an exposure: state 'shutter'");
   }
@@ -663,15 +545,16 @@ CameraModel resolveCameraModel(const Options &opts) {
     if (opts.image.tonemap.isNight)
       throw smdl::Error("-tonemap night models the observer's eyes at the "
                         "scene's own luminance, and a physical sensor's "
-                        "film holds the irradiance at the sensor: preview "
-                        "the scene with -sensor human");
+                        "film holds the irradiance at the sensor: render "
+                        "the scene through a camera whose sensor is "
+                        "'human'");
     if (opts.image.rgbPolicy.shouldForceFalseColor)
       throw smdl::Error(smdl::concat(
           opts.image.rgbPolicy.falseColorWaves.empty() ? "-false-color"
                                                        : "-rgb-wavelengths",
-          " maps the spectral film's bands to RGB, and a "
-          "physical sensor develops its own: preview the "
-          "spectrum with -sensor human"));
+          " maps the spectral film's bands to RGB, and a physical sensor "
+          "develops its own: map the spectrum through a camera whose "
+          "sensor is 'human'"));
   }
   // The camera's framing at shutter shut. The keys are absolute readings
   // of the clock, so a flag that replaces the framing drops the track
@@ -849,7 +732,7 @@ std::string describeCamera(const CameraModel &model) {
          smdl::Brief(2e3f * halfDiagonal, 4), " mm",
          circle >= halfDiagonal ? ", which it covers"
                                 : ", which reaches past it");
-    if (model.shouldApproximateLens)
+    if (model.shouldApproximateLens())
       line("  preview: the thin lens fitted to it, ",
            describeFit(approximateLens(options), options));
   } else {
@@ -898,7 +781,7 @@ std::string describeCamera(const CameraModel &model) {
 
 Camera buildCamera(CameraModel &model) {
   auto options{model.options};
-  if (model.shouldApproximateLens) {
+  if (model.shouldApproximateLens()) {
     const auto fit{approximateLens(options)};
     const auto lensName{options.lens->name.empty()
                             ? smdl::concat(smdl::QuotedPath(model.lensFileName))
@@ -931,7 +814,7 @@ Camera buildCamera(CameraModel &model) {
     const double f{thinLensFocalLength(options)};
     const double R{options.aperture > 0 ? double(options.aperture)
                                         : f / (2 * double(options.fStop))};
-    if (model.shouldApproximateLens) {
+    if (model.shouldApproximateLens()) {
       model.previewIrradianceScale = PI * R * R / (f * f);
     } else {
       const double s{focusDistanceOf(options)};
@@ -947,15 +830,14 @@ Camera buildCamera(CameraModel &model) {
   return Camera{options};
 }
 
-void refuseUnrenderable(const CameraModel &model, const Options &opts) {
-  if (model.sensor && !gRenderShutter.hasExposure())
-    Refuser{model.document}.refuse(
-        "sensor", opts.camera.sensor.wasGiven,
-        "a physical sensor counts the electrons of an exposure, and the "
-        "shutter is shut: state 'shutter' in the camera file, or -shutter");
-  if (model.previewedSensor && !gRenderShutter.hasExposure())
-    Refuser{model.document}.refuse(
-        "sensor", opts.camera.sensor.wasGiven,
-        "-ideal exposes the picture as the body would, and the shutter is "
-        "shut: state 'shutter' in the camera file, or -shutter");
+void refuseUnrenderable(const CameraModel &model) {
+  if (gRenderShutter.hasExposure()) return;
+  if (model.sensor)
+    refuse(model.document, "sensor",
+           "a physical sensor counts the electrons of an exposure, and the "
+           "shutter is shut: state 'shutter' in the camera file");
+  if (model.previewedSensor)
+    refuse(model.document, "sensor",
+           "-ideal exposes the picture as the body would, and the shutter "
+           "is shut: state 'shutter' in the camera file");
 }

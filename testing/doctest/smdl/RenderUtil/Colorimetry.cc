@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include "Sensor/Colorimetry.h"
+#include "smdl/RenderUtil/Colorimetry.h"
 
 // The observer is a fit, and what matters is that it is the fit it claims
 // to be: the peaks where the CIE curves peak, the integral of y-bar that
@@ -80,9 +80,9 @@ TEST_CASE("Colorimetry: the observer's fit") {
     double peakLambda{};
     for (int half = 760; half <= 1560; half++) {
       const double lambda{0.5 * double(half)};
-      CHECK(wymanY(lambda) == doctest::Approx(wymanXYZ(lambda).y));
-      if (wymanY(lambda) > peak) {
-        peak = wymanY(lambda);
+      CHECK(smdl::wymanY(lambda) == doctest::Approx(smdl::wymanXYZ(lambda).y));
+      if (smdl::wymanY(lambda) > peak) {
+        peak = smdl::wymanY(lambda);
         peakLambda = lambda;
       }
     }
@@ -90,43 +90,43 @@ TEST_CASE("Colorimetry: the observer's fit") {
     CHECK(peakLambda == doctest::Approx(556.0).epsilon(0.01));
   }
   SUBCASE("The x-bar and z-bar peak where the CIE curves do") {
-    CHECK(wymanXYZ(600.0).x == doctest::Approx(1.06).epsilon(0.01));
-    CHECK(wymanXYZ(445.0).z == doctest::Approx(1.78).epsilon(0.01));
-    CHECK(wymanXYZ(445.0).x == doctest::Approx(0.35).epsilon(0.05));
+    CHECK(smdl::wymanXYZ(600.0).x == doctest::Approx(1.06).epsilon(0.01));
+    CHECK(smdl::wymanXYZ(445.0).z == doctest::Approx(1.78).epsilon(0.01));
+    CHECK(smdl::wymanXYZ(445.0).x == doctest::Approx(0.35).epsilon(0.05));
   }
   SUBCASE("The y-bar integrates to the 107 nm the lit world's lux rest on") {
-    CHECK(integral(wymanY) == doctest::Approx(106.9).epsilon(0.002));
+    CHECK(integral(smdl::wymanY) == doctest::Approx(106.9).epsilon(0.002));
   }
   SUBCASE("An equal-energy white reads neutral: the three integrals agree") {
-    const double x{integral([](double l) { return wymanXYZ(l).x; })};
-    const double y{integral([](double l) { return wymanXYZ(l).y; })};
-    const double z{integral([](double l) { return wymanXYZ(l).z; })};
+    const double x{integral([](double l) { return smdl::wymanXYZ(l).x; })};
+    const double y{integral([](double l) { return smdl::wymanXYZ(l).y; })};
+    const double z{integral([](double l) { return smdl::wymanXYZ(l).z; })};
     CHECK(x == doctest::Approx(y).epsilon(0.005));
     CHECK(z == doctest::Approx(y).epsilon(0.005));
   }
   SUBCASE("Nothing outside the visible") {
-    CHECK(wymanY(300.0) < 1e-6);
-    CHECK(wymanY(830.0) < 1e-6);
-    CHECK(wymanXYZ(300.0).z < 1e-3);
+    CHECK(smdl::wymanY(300.0) < 1e-6);
+    CHECK(smdl::wymanY(830.0) < 1e-6);
+    CHECK(smdl::wymanXYZ(300.0).z < 1e-3);
   }
 }
 
 TEST_CASE("Colorimetry: the two Gaussian efficiencies the display uses") {
-  CHECK(photopicV(559.0) == doctest::Approx(1.019).epsilon(1e-3));
-  CHECK(scotopicV(503.0) == doctest::Approx(0.992).epsilon(1e-3));
+  CHECK(smdl::photopicV(559.0) == doctest::Approx(1.019).epsilon(1e-3));
+  CHECK(smdl::scotopicV(503.0) == doctest::Approx(0.992).epsilon(1e-3));
   SUBCASE("The photopic Gaussian tracks the fit to a few percent where it "
           "matters") {
     for (int lambda = 500; lambda <= 620; lambda += 10)
-      CHECK(photopicV(double(lambda)) ==
-            doctest::Approx(wymanY(double(lambda))).epsilon(0.08));
+      CHECK(smdl::photopicV(double(lambda)) ==
+            doctest::Approx(smdl::wymanY(double(lambda))).epsilon(0.08));
   }
 }
 
 TEST_CASE("Colorimetry: the sRGB white and Bradford") {
-  const auto white{linearSRGBWhite()};
+  const auto white{smdl::linearSRGBWhite()};
   SUBCASE("The builtin's matrix takes its white to (1, 1, 1), and the white "
           "is D65") {
-    const auto rgb{xyzToLinearSRGB() * white};
+    const auto rgb{smdl::xyzToLinearSRGB() * white};
     CHECK(rgb.x == doctest::Approx(1.0).epsilon(1e-9));
     CHECK(rgb.y == doctest::Approx(1.0).epsilon(1e-9));
     CHECK(rgb.z == doctest::Approx(1.0).epsilon(1e-9));
@@ -135,11 +135,11 @@ TEST_CASE("Colorimetry: the sRGB white and Bradford") {
     CHECK(white.z == doctest::Approx(1.08883).epsilon(1e-4));
   }
   SUBCASE("From a white to itself is the identity") {
-    CHECK(isIdentity(bradfordAdaptation(white, white), 1e-12));
+    CHECK(isIdentity(smdl::bradfordAdaptation(white, white), 1e-12));
   }
   SUBCASE("It takes the one white to the other") {
     const auto d50{smdl::double3(0.96422, 1.0, 0.82521)};
-    const auto adapted{bradfordAdaptation(d50, white) * d50};
+    const auto adapted{smdl::bradfordAdaptation(d50, white) * d50};
     CHECK(adapted.x == doctest::Approx(white.x).epsilon(1e-12));
     CHECK(adapted.y == doctest::Approx(white.y).epsilon(1e-12));
     CHECK(adapted.z == doctest::Approx(white.z).epsilon(1e-12));
@@ -147,54 +147,39 @@ TEST_CASE("Colorimetry: the sRGB white and Bradford") {
 }
 
 TEST_CASE("Colorimetry: McCamy's temperature") {
-  CHECK(mccamyKelvin(smdl::double2(0.31271, 0.32902)) ==
+  CHECK(smdl::mccamyKelvin(smdl::double2(0.31271, 0.32902)) ==
         doctest::Approx(6504.0).epsilon(2e-4));
-  CHECK(mccamyKelvin(smdl::double2(0.34567, 0.35850)) ==
+  CHECK(smdl::mccamyKelvin(smdl::double2(0.34567, 0.35850)) ==
         doctest::Approx(5003.0).epsilon(2e-4));
   // CIE illuminant A.
-  CHECK(mccamyKelvin(smdl::double2(0.44757, 0.40745)) ==
+  CHECK(smdl::mccamyKelvin(smdl::double2(0.44757, 0.40745)) ==
         doctest::Approx(2856.0).epsilon(1e-3));
 }
 
 TEST_CASE("Colorimetry: CIELAB and the color differences") {
-  const auto white{linearSRGBWhite()};
+  const auto white{smdl::linearSRGBWhite()};
   SUBCASE("The white is L 100 and neutral, black is L 0, and a gray is "
           "neutral") {
-    const auto lab{xyzToLab(white, white)};
+    const auto lab{smdl::xyzToLab(white, white)};
     CHECK(lab.x == doctest::Approx(100.0));
     CHECK(std::abs(lab.y) < 1e-9);
     CHECK(std::abs(lab.z) < 1e-9);
-    CHECK(std::abs(xyzToLab(smdl::double3(0.0), white).x) < 1e-12);
-    const auto gray{xyzToLab(0.18 * white, white)};
+    CHECK(std::abs(smdl::xyzToLab(smdl::double3(0.0), white).x) < 1e-12);
+    const auto gray{smdl::xyzToLab(0.18 * white, white)};
     CHECK(gray.x == doctest::Approx(49.496).epsilon(1e-4));
     CHECK(std::abs(gray.y) < 1e-9);
     CHECK(std::abs(gray.z) < 1e-9);
   }
   SUBCASE("CIE 1976 is the distance") {
-    CHECK(deltaEab(smdl::double3(50, 0, 0), smdl::double3(53, 4, 0)) ==
+    CHECK(smdl::deltaEab(smdl::double3(50, 0, 0), smdl::double3(53, 4, 0)) ==
           doctest::Approx(5.0));
   }
   SUBCASE("CIEDE2000 reproduces the published pairs, either way round") {
     for (const auto &pair : SHARMA_PAIRS) {
-      CHECK(std::abs(deltaE00(pair.lab0, pair.lab1) - pair.expected) < 1e-4);
-      CHECK(std::abs(deltaE00(pair.lab1, pair.lab0) - pair.expected) < 1e-4);
+      CHECK(std::abs(smdl::deltaE00(pair.lab0, pair.lab1) - pair.expected) <
+            1e-4);
+      CHECK(std::abs(smdl::deltaE00(pair.lab1, pair.lab0) - pair.expected) <
+            1e-4);
     }
-  }
-}
-
-TEST_CASE("Colorimetry: the three by three inverse") {
-  SUBCASE("A matrix times its inverse is the identity") {
-    const auto m{xyzToLinearSRGB()};
-    auto inverse{m};
-    REQUIRE(tryInvert(inverse));
-    CHECK(isIdentity(m * inverse, 1e-12));
-  }
-  SUBCASE("A singular one is left alone") {
-    auto m{smdl::double3x3(smdl::double3(1, 2, 3), smdl::double3(2, 4, 6),
-                           smdl::double3(0, 0, 1))};
-    const auto before{m};
-    CHECK(!tryInvert(m));
-    for (size_t j = 0; j < 3; j++)
-      for (size_t i = 0; i < 3; i++) CHECK(m[j][i] == before[j][i]);
   }
 }

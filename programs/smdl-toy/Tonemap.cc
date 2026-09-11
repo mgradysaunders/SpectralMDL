@@ -8,10 +8,10 @@
 #include "Tonemap.h"
 
 #include "smdl/Compiler.h"
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
-#include "Sensor/Colorimetry.h"
 #include "Sensor/Develop.h"
 
 //--{ Order statistics
@@ -490,8 +490,8 @@ namespace {
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};
-    weightPhotopic[i] = 683.0 * photopicV(lambda) * widths[i];
-    weightScotopic[i] = 1700.0 * scotopicV(lambda) * widths[i];
+    weightPhotopic[i] = 683.0 * smdl::photopicV(lambda) * widths[i];
+    weightScotopic[i] = 1700.0 * smdl::scotopicV(lambda) * widths[i];
     photopicMass += weightPhotopic[i];
   }
   // A grid that misses the visible has no photopic signal to model an

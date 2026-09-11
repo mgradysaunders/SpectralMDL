@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/RenderUtil/SpectralFilm.h"
 
-#include "Sensor/Colorimetry.h"
 #include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
 
@@ -49,7 +49,7 @@ namespace {
 [[nodiscard]] double integralOfY() {
   double total{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
-    total += wymanY(sensorWavelength(i));
+    total += smdl::wymanY(sensorWavelength(i));
   return total;
 }
 
@@ -89,8 +89,8 @@ namespace {
     band.name = std::string(1, "RGB"[k]);
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
-      band.values.push_back(float(
-          std::max(0.0, 0.25 * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+      band.values.push_back(float(std::max(
+          0.0, 0.25 * smdl::wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   return value;
@@ -257,7 +257,8 @@ TEST_CASE("Sensor: the meter") {
       still += weight;
     double expected{};
     for (double lambda = 400; lambda <= 700; lambda += 1)
-      expected += wymanY(lambda) * (lambda == 400 || lambda == 700 ? 0.5 : 1.0);
+      expected +=
+          smdl::wymanY(lambda) * (lambda == 400 || lambda == 700 ? 0.5 : 1.0);
     CHECK(still == doctest::Approx(expected).epsilon(0.002));
     ScopedGrid jittered{grid, true};
     double moving{};

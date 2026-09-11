@@ -72,7 +72,7 @@ constexpr double ILLUMINANT_A_KELVIN{2856.0};
 [[nodiscard]] SensorSpectrum
 whiteBalanceSpectrum(const WhiteBalance &whiteBalance);
 
-/// The white of `illuminant` through the observer, `wymanXYZ()`, scaled
+/// The white of `illuminant` through the observer, `smdl::wymanXYZ()`, scaled
 /// so that Y is 1.
 [[nodiscard]] smdl::double3 illuminantWhite(const SensorSpectrum &illuminant);
 
@@ -238,7 +238,7 @@ public:
                                     const SensorSpectrum &illuminant) const;
 
   /// The illuminance of `illuminant` at unit scale, `683 integral(S V)`,
-  /// in lux per W/(m^2 nm) of `S`, under the observer of `wymanY()`.
+  /// in lux per W/(m^2 nm) of `S`, under the observer of `smdl::wymanY()`.
   [[nodiscard]] static double illuminance(const SensorSpectrum &illuminant);
 
   /// The electrons the pixel's band `band` counts per lux-second of

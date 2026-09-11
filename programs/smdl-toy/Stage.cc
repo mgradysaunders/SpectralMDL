@@ -58,7 +58,7 @@ Frame resolveFrame(const Options &opts) {
   // itself is a text parse and a paraxial solve, so fail-fast ordering
   // costs nothing.
   auto model{resolveCameraModel(opts)};
-  refuseUnrenderable(model, opts);
+  refuseUnrenderable(model);
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.

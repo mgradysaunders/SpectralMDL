@@ -165,9 +165,9 @@ public:
 /// The camera a file's `camera` directive describes.
 ///
 /// Everything is optional and unset by default. The built-in defaults
-/// are the base, the sensor file overrides those where it speaks, the
-/// camera file overrides both, and explicit command-line flags override
-/// everything.
+/// are the base, the sensor file overrides those where it speaks, and the
+/// camera file overrides both. Of the command line, only the framing
+/// flags, `-iso`, and `-white-balance` override the file.
 ///
 class CameraSettings final : public CameraKeyable {
 public:
@@ -225,9 +225,9 @@ public:
   std::optional<WhiteBalance> whiteBalance{};
 
   /// `shutter`: the seconds from shutter open to shutter shut,
-  /// nonnegative, which `-shutter` overrides. Zero or unset is a shut
-  /// shutter, and every path then renders the one instant `-time`
-  /// names, whatever motion the scene carries.
+  /// nonnegative. Zero or unset is a shut shutter, and every path then
+  /// renders the one instant `-time` names, whatever motion the scene
+  /// carries.
   ///
   /// This is the one exposure quantity the file carries, because it is
   /// a fact about the camera: how long it stays open. When it opens is
@@ -235,17 +235,16 @@ public:
   std::optional<float> shutter{};
 
   /// `readout`: the seconds the sensor takes to read the frame out,
-  /// nonnegative, overriding the body's own and overridden by
-  /// `-readout`. Zero is a global shutter, where every line exposes over
-  /// the same interval; with one, the lines expose one after another,
-  /// the frame spans `shutter` plus `readout`, and motion during the
-  /// sweep skews the picture.
+  /// nonnegative, overriding the body's own. Zero is a global shutter,
+  /// where every line exposes over the same interval; with one, the lines
+  /// expose one after another, the frame spans `shutter` plus `readout`,
+  /// and motion during the sweep skews the picture.
   std::optional<float> readout{};
 
   /// `readout_direction`: the way the readout sweeps the picture,
   /// overriding the body's own, which is `down` unless stated, so that
-  /// `down` reads the top line first. Not keyable and not a flag: which
-  /// way a sensor reads is a fact nobody changes per render.
+  /// `down` reads the top line first. Not keyable: which way a sensor
+  /// reads is a fact nobody changes over a shot.
   std::optional<ReadoutDirection> readoutDirection{};
 
   /// The keys the `motion` block wrote, in ascending time, or empty for

@@ -8,11 +8,13 @@
 #include "Render/Sampler.h"
 
 // The model is the one place the camera file, the body and the lens it
-// names, and the command line meet. What matters is the order they win
-// in, that a body decides the pixels and the frame and the observer's
-// frame follows the picture, that each stand-in keeps what the plan says
-// it keeps, that what has no meaning with the instrument is refused, and
-// that the film quantity follows the sensor and nothing else.
+// names, and the few flags that frame and preview the picture meet. What
+// matters is that the files speak for the instrument and the flags only
+// where they may, that a body decides the pixels and the frame and the
+// observer's frame follows the picture, that the preview keeps of the
+// body what its exposure needs, that what has no meaning with the
+// instrument is refused, and that the film quantity follows the sensor
+// and nothing else.
 
 namespace {
 
@@ -23,7 +25,6 @@ namespace {
   opts.camera.lookFrom.value = float3(-6.0f, 0.0f, 2.0f);
   opts.camera.lookTo.value = float3(0.0f, 0.0f, 0.5f);
   opts.camera.lookUp.value = float3(0.0f, 0.0f, 1.0f);
-  opts.camera.fovYDeg.value = 37.8f;
   opts.image.resolution.value = int2(1280, 720);
   return opts;
 }
@@ -108,13 +109,16 @@ TEST_CASE("CameraModel: the observer's frame follows the picture") {
     CHECK(model.options.frameSize.x == 1e-3f * 36.0f);
     CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
   }
-  SUBCASE("The defaults, the file, and the flags win in that order") {
+  SUBCASE("The defaults, the file, and the framing flags win in that "
+          "order") {
     Files files{"camera-model-order"};
     CHECK(resolveCameraModel(baseOptions()).options.fovYDeg == 37.8f);
-    auto fromFile{files.camera("camera { fovy 30 }\n")};
-    CHECK(resolveCameraModel(fromFile).options.fovYDeg == 30.0f);
-    fromFile.camera.fovYDeg = Flag<float>{50.0f, true};
-    CHECK(resolveCameraModel(fromFile).options.fovYDeg == 50.0f);
+    auto fromFile{files.camera("camera { fovy 30 look_from 1 2 3 }\n")};
+    const auto model{resolveCameraModel(fromFile)};
+    CHECK(model.options.fovYDeg == 30.0f);
+    CHECK(model.options.lookFrom.x == 1.0f);
+    fromFile.camera.lookFrom = Flag<float3>{float3(4.0f, 5.0f, 6.0f), true};
+    CHECK(resolveCameraModel(fromFile).options.lookFrom.x == 4.0f);
   }
 }
 
@@ -144,19 +148,16 @@ TEST_CASE("CameraModel: a body decides the pixels and the frame") {
         smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
         "is not the sensor's 600,400");
   }
-  SUBCASE("The readout is the body's, then the camera file's, then the "
-          "flag's") {
+  SUBCASE("The readout is the body's, then the camera file's") {
     (void)resolveCameraModel(opts);
     CHECK(gRenderShutter.readout == doctest::Approx(0.03f));
     CHECK(gRenderShutter.isReadoutReversed);
-    auto fromFile{files.camera("camera { sensor \"body.sensor\" fstop 8 "
-                               "readout 0.01 readout_direction left }\n")};
+    const auto fromFile{
+        files.camera("camera { sensor \"body.sensor\" fstop 8 "
+                     "readout 0.01 readout_direction left }\n")};
     (void)resolveCameraModel(fromFile);
     CHECK(gRenderShutter.readout == doctest::Approx(0.01f));
     CHECK(gRenderShutter.isReadoutAlongX);
-    fromFile.camera.readout = Flag<float>{0.002f, true};
-    (void)resolveCameraModel(fromFile);
-    CHECK(gRenderShutter.readout == doctest::Approx(0.002f));
   }
   SUBCASE("The temperature reaches the model") {
     const auto warm{files.camera("camera { sensor \"body.sensor\" fstop 8 "
@@ -176,44 +177,26 @@ TEST_CASE("CameraModel: a body decides the pixels and the frame") {
 TEST_CASE("CameraModel: the stand-ins") {
   ScopedShutter shutter{0.0f, 0.0f};
   Files files{"camera-model-stand-ins"};
-  SUBCASE("-sensor human replaces a body with the observer on the body's "
-          "frame and pixels") {
-    auto opts{files.camera("camera { sensor \"body.sensor\" fstop 8 "
-                           "temperature 40 }\n")};
-    opts.camera.sensor = Flag<std::string>{"human", true};
-    const auto model{resolveCameraModel(opts)};
-    CHECK(!model.hasPhysicalSensor());
-    CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
-    CHECK(model.resolution().x == 600);
-    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
-    CHECK(model.sensorFileName.empty());
-    CHECK_CONTAINS(describeCamera(model), "the observer");
-  }
   SUBCASE("A camera whose own sensor is human is the plain observer") {
     const auto model{
         resolveCameraModel(files.camera("camera { sensor human }\n"))};
     CHECK(!model.hasPhysicalSensor());
     CHECK(model.resolution().x == 1280);
   }
-  SUBCASE("A lens file is read, and -lens ideal fits the thin lens to it") {
-    auto opts{files.camera("camera { lens \"singlet.lens\" }\n")};
-    const auto lensed{resolveCameraModel(opts)};
-    REQUIRE(lensed.options.lens);
-    CHECK(lensed.options.lens->surfaces.size() == 3);
-    CHECK(lensed.lensFileName == files.path("singlet.lens"));
-    CHECK(!lensed.shouldApproximateLens);
-    opts.camera.lens = Flag<std::string>{"ideal", true};
-    const auto ideal{resolveCameraModel(opts)};
-    CHECK(ideal.shouldApproximateLens);
-    REQUIRE(ideal.options.lens);
-    CHECK(ideal.lensFileName == files.path("singlet.lens"));
+  SUBCASE("A lens file is read and looked through") {
+    const auto model{
+        resolveCameraModel(files.camera("camera { lens \"singlet.lens\" }\n"))};
+    REQUIRE(model.options.lens);
+    CHECK(model.options.lens->surfaces.size() == 3);
+    CHECK(model.lensFileName == files.path("singlet.lens"));
+    CHECK(!model.shouldApproximateLens());
   }
   SUBCASE("A camera whose own lens is ideal has nothing to fit") {
     auto opts{files.camera("camera { lens ideal }\n")};
-    opts.camera.lens = Flag<std::string>{"ideal", true};
+    opts.camera.isIdeal = true;
     const auto model{resolveCameraModel(opts)};
     CHECK(!model.options.lens);
-    CHECK(!model.shouldApproximateLens);
+    CHECK(!model.shouldApproximateLens());
   }
   SUBCASE("A lens on the observer keeps the observer's frame") {
     const auto model{
@@ -237,12 +220,9 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
     CHECK_ERROR(refused(files.camera("camera { lens \"singlet.lens\" "
                                      "vignetting 1 }\n")),
                 "'vignetting' has no meaning with a lens");
-    auto flagged{files.camera("camera { lens \"singlet.lens\" }\n")};
-    flagged.camera.fovYDeg = Flag<float>{30.0f, true};
-    CHECK_ERROR(refused(flagged), "-fovy has no meaning with a lens");
-    flagged.camera.fovYDeg = Flag<float>{};
-    flagged.camera.focalLengthMM = Flag<float>{50.0f, true};
-    CHECK_ERROR(refused(flagged), "-focal-length has no meaning with a lens");
+    CHECK_ERROR(refused(files.camera("camera { lens \"singlet.lens\" "
+                                     "focal_length 50 }\n")),
+                "'focal_length' has no meaning with a lens");
   }
   SUBCASE("A body over a pinhole") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" }\n")),
@@ -277,16 +257,13 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
     shut.image.outputDN = "out-dn.img";
     CHECK_ERROR(refused(shut), "-output-dn needs an exposure");
   }
-  SUBCASE("The old response sidecar, from either source") {
+  SUBCASE("The old response sidecar") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.response\" }\n")),
                 "names a '.response' file");
-    auto flagged{baseOptions()};
-    flagged.camera.sensor = Flag<std::string>{"body.response", true};
-    CHECK_ERROR(refused(flagged), "names a '.response' file");
   }
   SUBCASE("Two spellings of the aperture") {
     CHECK_ERROR(refused(files.camera("camera { fstop 8 aperture 0.01 }\n")),
-                "at most one of -fstop and -aperture");
+                "at most one of 'fstop' and 'aperture'");
   }
 }
 
@@ -314,11 +291,18 @@ TEST_CASE("CameraModel: a refusal points at the key the file stated") {
     CHECK_CONTAINS(error->snippet, "temperature 41");
   }
   SUBCASE("A flag is named as a flag, with no excerpt") {
-    auto flagged{files.camera("camera { lens \"singlet.lens\" }\n")};
-    flagged.camera.vignetting = Flag<float>{1.0f, true};
+    auto flagged{files.camera("camera {\n  fovy 30\n}\n")};
+    flagged.camera.iso = Flag<float>{400.0f, true};
     const auto error{refused(flagged)};
     REQUIRE(error);
-    CHECK(error->message.rfind("-vignetting has no meaning", 0) == 0);
+    CHECK(error->message.rfind("-iso is a physical sensor's setting", 0) == 0);
+    CHECK(error->snippet.empty());
+  }
+  SUBCASE("A setting stated only in a motion key has no key to mark") {
+    const auto error{refused(files.camera(
+        "camera {\n  lens \"singlet.lens\"\n  motion { at 0 fovy 30 }\n}\n"))};
+    REQUIRE(error);
+    CHECK(error->message.rfind("'fovy' has no meaning with a lens", 0) == 0);
     CHECK(error->snippet.empty());
   }
   SUBCASE("The pinhole over a body points at the body") {
@@ -344,23 +328,14 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
           doctest::Approx(2 * smdl::degrees(std::atan(12.0f / 50.0f))));
     CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
   }
-  SUBCASE("The flag implies it too, over the file's field of view") {
-    auto opts{files.camera("camera { fovy 30 }\n")};
-    opts.camera.focalLengthMM = Flag<float>{85.0f, true};
-    // Both stated, one from each source: the frame follows.
-    const auto model{resolveCameraModel(opts)};
-    CHECK(model.options.fovYDeg == 30.0f);
-    CHECK(model.options.frameSize.y ==
-          doctest::Approx(2 * 0.085f * std::tan(smdl::radians(15.0f))));
-    CHECK(model.options.frameSize.x ==
-          doctest::Approx(model.options.frameSize.y * 1280.0f / 720.0f));
-  }
   SUBCASE("Both together size the observer's frame") {
     const auto model{resolveCameraModel(
         files.camera("camera { fovy 30 focal_length 50 }\n"))};
     CHECK(model.options.fovYDeg == 30.0f);
     CHECK(model.options.frameSize.y ==
           doctest::Approx(2 * 0.05f * std::tan(smdl::radians(15.0f))));
+    CHECK(model.options.frameSize.x ==
+          doctest::Approx(model.options.frameSize.y * 1280.0f / 720.0f));
     CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
     CHECK(!model.hasPhysicalSensor());
   }
@@ -389,15 +364,11 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" fovy 30 "
                                      "focal_length 5 fstop 2 }\n")),
                 "'fovy' and 'focal_length' are two statements");
-    auto flagged{files.camera("camera { sensor \"body.sensor\" fovy 30 "
-                              "fstop 2 }\n")};
-    flagged.camera.focalLengthMM = Flag<float>{5.0f, true};
-    CHECK_ERROR(refused(flagged), "'fovy' and -focal-length are two");
   }
-  SUBCASE("The observer over a body's frame follows the body's rule") {
+  SUBCASE("The preview of a body follows the body's rule") {
     auto opts{files.camera("camera { sensor \"body.sensor\" focal_length 4.8 "
                            "fstop 2 }\n")};
-    opts.camera.sensor = Flag<std::string>{"human", true};
+    opts.camera.isIdeal = true;
     const auto model{resolveCameraModel(opts)};
     CHECK(!model.hasPhysicalSensor());
     CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
@@ -425,15 +396,6 @@ TEST_CASE("CameraModel: the ISO") {
     CHECK(!resolveCameraModel(
                files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))
                .iso);
-  }
-  SUBCASE("Stated for a body the flag replaced with the observer, it is "
-          "ignored") {
-    auto replaced{
-        files.camera("camera { sensor \"body.sensor\" fstop 8 iso 400 }\n")};
-    replaced.camera.sensor = Flag<std::string>{"human", true};
-    const auto model{resolveCameraModel(replaced)};
-    CHECK(!model.sensor);
-    CHECK(!model.iso);
   }
   SUBCASE("The report states the well, the base ISO, and the ISO") {
     const auto metered{resolveCameraModel(
@@ -472,16 +434,6 @@ TEST_CASE("CameraModel: the focus") {
         resolveCameraModel(files.camera("camera { focus auto }\n"))};
     CHECK(automatic.shouldAutofocus);
     CHECK(automatic.options.focus == 0.0f);
-  }
-  SUBCASE("The flag wins over the file, either way round") {
-    auto stated{files.camera("camera { focus auto }\n")};
-    stated.camera.focus = Flag<float>{3.0f, true};
-    const auto model{resolveCameraModel(stated)};
-    CHECK(!model.shouldAutofocus);
-    CHECK(model.options.focus == 3.0f);
-    auto automatic{files.camera("camera { focus 4 }\n")};
-    automatic.camera.shouldAutofocus = true;
-    CHECK(resolveCameraModel(automatic).shouldAutofocus);
   }
   SUBCASE("The report states the focus and the depth of field") {
     const auto report{describeCamera(resolveCameraModel(
@@ -533,15 +485,6 @@ TEST_CASE("CameraModel: the white balance") {
     CHECK_ERROR(refused(flagged),
                 "-white-balance is a physical sensor's setting");
   }
-  SUBCASE("Stated for a body the flag replaced with the observer, it is "
-          "ignored") {
-    auto replaced{files.camera(
-        "camera { sensor \"body.sensor\" fstop 8 white_balance shade }\n")};
-    replaced.camera.sensor = Flag<std::string>{"human", true};
-    const auto model{resolveCameraModel(replaced)};
-    CHECK(!model.sensor);
-    CHECK(model.whiteBalance.kind == WhiteBalanceKind::D65);
-  }
   SUBCASE("The report states the fit and the white balance, and bands too "
           "much alike to fit") {
     const auto report{describeCamera(
@@ -585,7 +528,7 @@ TEST_CASE("CameraModel: a render of a physical sensor needs an exposure") {
   Files files{"camera-model-render"};
   const auto unrenderable{[&](const Options &opts) {
     return smdl::catchAndReturnError(
-        [&] { refuseUnrenderable(resolveCameraModel(opts), opts); });
+        [&] { refuseUnrenderable(resolveCameraModel(opts)); });
   }};
   SUBCASE("A body with the shutter shut is refused, pointed at the body") {
     const auto error{unrenderable(
@@ -593,14 +536,6 @@ TEST_CASE("CameraModel: a render of a physical sensor needs an exposure") {
     CHECK_ERROR(error, files.path("shot.camera") + ":2:3: a physical sensor "
                                                    "counts the electrons of "
                                                    "an exposure");
-  }
-  SUBCASE("A body the flag names is refused naming no file") {
-    auto flagged{baseOptions()};
-    flagged.camera.sensor = Flag<std::string>{files.path("body.sensor"), true};
-    flagged.camera.fStop = Flag<float>{8.0f, true};
-    const auto error{unrenderable(flagged)};
-    REQUIRE(error);
-    CHECK(error->message.rfind("a physical sensor counts", 0) == 0);
   }
   SUBCASE("A shutter, or the observer, renders") {
     CHECK_OK(unrenderable(files.camera(
@@ -633,7 +568,7 @@ TEST_CASE("CameraModel: the preview") {
     REQUIRE(model.previewedSensor);
     CHECK(model.previewedSensor->name == "Test body");
     CHECK(model.sensorFileName == files.path("body.sensor"));
-    CHECK(model.shouldApproximateLens);
+    CHECK(model.shouldApproximateLens());
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
     CHECK(model.resolution().x == 600);
     CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
@@ -653,7 +588,7 @@ TEST_CASE("CameraModel: the preview") {
     const auto model{resolveCameraModel(preview("camera { fovy 30 }\n"))};
     CHECK(model.isPreview);
     CHECK(!model.previewedSensor);
-    CHECK(!model.shouldApproximateLens);
+    CHECK(!model.shouldApproximateLens());
   }
   SUBCASE("A readout has no body to read") {
     auto opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
@@ -694,9 +629,8 @@ TEST_CASE("CameraModel: the preview") {
   SUBCASE("A shut shutter leaves no exposure to simulate") {
     ScopedShutter shut{0.0f, 0.0f};
     auto opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
-    CHECK_ERROR(smdl::catchAndReturnError([&] {
-                  refuseUnrenderable(resolveCameraModel(opts), opts);
-                }),
+    CHECK_ERROR(smdl::catchAndReturnError(
+                    [&] { refuseUnrenderable(resolveCameraModel(opts)); }),
                 "-ideal exposes the picture as the body would");
   }
   SUBCASE("The report says what the preview stands in for") {

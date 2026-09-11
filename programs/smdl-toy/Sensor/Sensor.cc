@@ -3,10 +3,10 @@
 #include <cmath>
 #include <cstddef>
 
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/RenderUtil/Illuminant.h"
 #include "smdl/Support/Parallel.h"
 
-#include "Sensor/Colorimetry.h"
 #include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
 
@@ -37,7 +37,8 @@ template <typename F> [[nodiscard]] SensorSpectrum tabulated(F &&evaluate) {
   constexpr int NUM_STEPS{64};
   double total{};
   for (int k = 0; k < NUM_STEPS; k++)
-    total += wymanY(lo + (hi - lo) * (double(k) + 0.5) / double(NUM_STEPS));
+    total +=
+        smdl::wymanY(lo + (hi - lo) * (double(k) + 0.5) / double(NUM_STEPS));
   return total / double(NUM_STEPS);
 }
 
@@ -93,7 +94,7 @@ smdl::double3 illuminantWhite(const SensorSpectrum &illuminant) {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
   auto white{smdl::double3()};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
-    white += illuminant[i] * wymanXYZ(sensorWavelength(i));
+    white += illuminant[i] * smdl::wymanXYZ(sensorWavelength(i));
   return white.y > 0 ? white / white.y : white;
 }
 
@@ -170,7 +171,7 @@ double Sensor::illuminance(const SensorSpectrum &illuminant) {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
   double total{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
-    total += illuminant[i] * wymanY(sensorWavelength(i));
+    total += illuminant[i] * smdl::wymanY(sensorWavelength(i));
   return LUMENS_PER_WATT * total;
 }
 
@@ -210,7 +211,7 @@ std::vector<double> Sensor::luminanceWeights(const Color &wavelengths) {
   if (edges.empty()) {
     const auto widths{wavelengthTrapezoidWidths(wavelengths)};
     for (size_t i = 0; i < numBands; i++)
-      weights[i] = wymanY(double(wavelengths[i])) * widths[i];
+      weights[i] = smdl::wymanY(double(wavelengths[i])) * widths[i];
   } else {
     for (size_t i = 0; i < numBands; i++) {
       const double lo{double(edges[i])};
@@ -289,7 +290,7 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   auto observer{std::vector<smdl::double3>(SENSOR_WAVELENGTH_COUNT)};
   double whiteY{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
-    observer[i] = illuminant[i] * wymanXYZ(sensorWavelength(i));
+    observer[i] = illuminant[i] * smdl::wymanXYZ(sensorWavelength(i));
     whiteY += observer[i].y;
   }
   if (!(whiteCounts.x > 0 && whiteCounts.y > 0 && whiteCounts.z > 0 &&
@@ -325,7 +326,7 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
     targets[j] = target;
   }
   auto normalInverse{normal};
-  if (!tryInvert(normalInverse)) {
+  if (!smdl::tryInvert(normalInverse)) {
     fit.isSingular = true;
     return fit;
   }
@@ -341,12 +342,13 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   for (size_t k = 0; k < 3; k++)
     fit.cameraToXYZ[k] += miss * (direction[k] / weight);
   for (size_t j = 0; j < patches.size(); j++) {
-    const auto truth{xyzToLab(targets[j], fit.white)};
-    const auto fitted{xyzToLab(fit.cameraToXYZ * responses[j], fit.white)};
-    const double difference{deltaE00(truth, fitted)};
+    const auto truth{smdl::xyzToLab(targets[j], fit.white)};
+    const auto fitted{
+        smdl::xyzToLab(fit.cameraToXYZ * responses[j], fit.white)};
+    const double difference{smdl::deltaE00(truth, fitted)};
     fit.meanDeltaE00 += difference;
     fit.maxDeltaE00 = std::max(fit.maxDeltaE00, difference);
-    fit.meanDeltaEab += deltaEab(truth, fitted);
+    fit.meanDeltaEab += smdl::deltaEab(truth, fitted);
   }
   fit.meanDeltaE00 /= double(patches.size());
   fit.meanDeltaEab /= double(patches.size());

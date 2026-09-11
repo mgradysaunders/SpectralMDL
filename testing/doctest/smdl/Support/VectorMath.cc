@@ -78,3 +78,25 @@ TEST_CASE("VectorMath: transforming points and directions") {
     CHECK(direction.z == 1.0f);
   }
 }
+
+TEST_CASE("VectorMath: the three by three inverse") {
+  // The XYZ to linear sRGB matrix, well conditioned and of mixed signs.
+  const double3x3 m{double3(3.240450, -0.969266, 0.0556434),
+                    double3(-1.537140, 1.876010, -0.2040260),
+                    double3(-0.498532, 0.041556, 1.0572300)};
+  SUBCASE("A matrix times its inverse is the identity") {
+    auto inverse{m};
+    REQUIRE(smdl::tryInvert(inverse));
+    const auto product{m * inverse};
+    for (size_t j = 0; j < 3; j++)
+      for (size_t i = 0; i < 3; i++)
+        CHECK(std::abs(product[j][i] - (i == j ? 1.0 : 0.0)) < 1e-12);
+  }
+  SUBCASE("A singular one is left alone") {
+    double3x3 singular{double3(1, 2, 3), double3(2, 4, 6), double3(0, 0, 1)};
+    const auto before{singular};
+    CHECK(!smdl::tryInvert(singular));
+    for (size_t j = 0; j < 3; j++)
+      for (size_t i = 0; i < 3; i++) CHECK(singular[j][i] == before[j][i]);
+  }
+}

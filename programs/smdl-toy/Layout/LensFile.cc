@@ -265,15 +265,8 @@ LensDocument readLens(const std::string &fileName) {
   return document;
 }
 
-std::string resolveLensFileName(const std::string &given,
-                                const std::string &cameraFileName,
-                                const std::string &stated) {
-  if (!given.empty()) {
-    if (!std::filesystem::exists(given))
-      throw smdl::Error(
-          smdl::concat("-lens ", smdl::QuotedPath(given), " does not exist"));
-    return given;
-  }
+std::string resolveLensFileName(const std::string &stated,
+                                const std::string &cameraFileName) {
   if (stated.empty()) return {};
   auto path{std::filesystem::path(stated)};
   if (path.is_relative() && !cameraFileName.empty())

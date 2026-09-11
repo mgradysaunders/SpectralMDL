@@ -661,6 +661,29 @@ constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   return mI;
 }
 
+/// Invert the three by three matrix `m` in place, unless its determinant
+/// is within 1e-12 of zero against the cube of its largest entry, where it
+/// is left alone.
+template <typename T>
+[[nodiscard]] inline bool tryInvert(Matrix<T, 3, 3> &m) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  // The inverse's rows are the cross products of the columns over the
+  // determinant.
+  const auto row0{cross(m[1], m[2])};
+  const auto row1{cross(m[2], m[0])};
+  const auto row2{cross(m[0], m[1])};
+  const T determinant{dot(m[0], row0)};
+  T largest{};
+  for (size_t j = 0; j < 3; j++)
+    for (size_t i = 0; i < 3; i++)
+      largest = std::max(largest, std::abs(m[j][i]));
+  if (!(std::abs(determinant) > T(1e-12) * largest * largest * largest))
+    return false;
+  m = transpose(Matrix<T, 3, 3>(row0 / determinant, row1 / determinant,
+                                row2 / determinant));
+  return true;
+}
+
 /// Calculate orthonormal coordinate system with the given vector as the Z axis.
 template <typename T = float>
 [[nodiscard]] inline Matrix<T, 3, 3> coordinateSystem(Vector<T, 3> w) noexcept {

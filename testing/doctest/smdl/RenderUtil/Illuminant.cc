@@ -1,18 +1,9 @@
 #include "Fixtures.h"
 
-#include <cmath>
-
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/RenderUtil/Illuminant.h"
 
 namespace {
-// Piecewise-Gaussian fits of the CIE 1931 XYZ color matching functions by
-// Wyman et al, used to integrate spectra to chromaticities independently of
-// the illuminant tables under test.
-double wymanGaussian(double w, double mu, double invSigmaL, double invSigmaR) {
-  double t{(w - mu) * (w < mu ? invSigmaL : invSigmaR)};
-  return std::exp(-0.5 * t * t);
-}
-
 smdl::float2 kelvinToChromaticity(float kelvin) {
   smdl::float2 xy{};
   smdl::smdlKelvinToChromaticity(kelvin, &xy);
@@ -44,21 +35,14 @@ float evalIlluminantLED(int number, float wavelen) {
 }
 
 // Integrate the given spectral power distribution against the CIE 1931
-// color matching functions and return the resulting chromaticity.
+// color matching functions, as the Wyman fit, and return the resulting
+// chromaticity: independent of the illuminant tables under test.
 template <typename Spd> smdl::float2 integrateChromaticity(Spd &&spd) {
-  double sumX{}, sumY{}, sumZ{};
-  for (int w = 300; w <= 830; w++) {
-    double illum{spd(float(w))};
-    sumX += illum * (1.056 * wymanGaussian(w, 599.8, 0.0264, 0.0323) +
-                     0.362 * wymanGaussian(w, 442.0, 0.0624, 0.0374) -
-                     0.065 * wymanGaussian(w, 501.1, 0.0490, 0.0382));
-    sumY += illum * (0.821 * wymanGaussian(w, 568.8, 0.0213, 0.0247) +
-                     0.286 * wymanGaussian(w, 530.9, 0.0613, 0.0322));
-    sumZ += illum * (1.217 * wymanGaussian(w, 437.0, 0.0845, 0.0278) +
-                     0.681 * wymanGaussian(w, 459.0, 0.0385, 0.0725));
-  }
-  double sum{sumX + sumY + sumZ};
-  return {float(sumX / sum), float(sumY / sum)};
+  auto xyz{smdl::double3(0.0)};
+  for (int w = 300; w <= 830; w++)
+    xyz += double(spd(float(w))) * smdl::wymanXYZ(double(w));
+  const double sum{xyz.x + xyz.y + xyz.z};
+  return {float(xyz.x / sum), float(xyz.y / sum)};
 }
 } // namespace
 

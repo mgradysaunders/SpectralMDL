@@ -7,9 +7,9 @@
 #include <string_view>
 #include <vector>
 
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/RenderUtil/SpectralFilm.h"
 
-#include "Sensor/Colorimetry.h"
 #include "Sensor/Detector.h"
 #include "Sensor/Develop.h"
 #include "Sensor/Sensor.h"
@@ -99,8 +99,8 @@ void checkPlanes(const std::vector<float> &planes,
     const double scale{k == 2 ? 0.25 * blueScale : 0.25};
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
-      band.values.push_back(float(
-          std::max(0.0, scale * wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
+      band.values.push_back(float(std::max(
+          0.0, scale * smdl::wymanXYZ(lambda)[k] * 555.0 / double(lambda))));
     }
   }
   if (isTiled) {
@@ -176,7 +176,7 @@ responseOf(const Sensor &sensor, const SensorSpectrum &illuminant,
   auto total{smdl::double3()};
   double whiteY{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
-    const auto xyz{wymanXYZ(sensorWavelength(i))};
+    const auto xyz{smdl::wymanXYZ(sensorWavelength(i))};
     total += illuminant[i] * reflectance[i] * xyz;
     whiteY += illuminant[i] * xyz.y;
   }
@@ -376,17 +376,18 @@ TEST_CASE("Develop: a body whose curves are the observer's develops the "
   // Back to XYZ through the builtin's matrix; each patch against the
   // observer's own XYZ of it, adapted as the develop adapts, both in
   // CIELAB about their white, so that the exposure cancels.
-  auto toXYZ{xyzToLinearSRGB()};
-  REQUIRE(tryInvert(toXYZ));
+  auto toXYZ{smdl::xyzToLinearSRGB()};
+  REQUIRE(smdl::tryInvert(toXYZ));
   const auto developedWhite{toXYZ * pixelOf(rgbImage, patches.size())};
-  const auto adapt{bradfordAdaptation(illuminantWhite(d65), linearSRGBWhite())};
+  const auto adapt{
+      smdl::bradfordAdaptation(illuminantWhite(d65), smdl::linearSRGBWhite())};
   double worst{};
   for (size_t j = 0; j < patches.size(); j++) {
-    const auto truth{
-        xyzToLab(adapt * observerXYZ(d65, patches[j]), linearSRGBWhite())};
+    const auto truth{smdl::xyzToLab(adapt * observerXYZ(d65, patches[j]),
+                                    smdl::linearSRGBWhite())};
     const auto developed{
-        xyzToLab(toXYZ * pixelOf(rgbImage, j), developedWhite)};
-    worst = std::max(worst, deltaE00(truth, developed));
+        smdl::xyzToLab(toXYZ * pixelOf(rgbImage, j), developedWhite)};
+    worst = std::max(worst, smdl::deltaE00(truth, developed));
   }
   CHECK(worst < 0.5);
 }

@@ -94,8 +94,8 @@ private:
   }
 
   // A `camera { ... }` block. Last one wins per field within the file; a
-  // field no directive names is left unset for the command line, or
-  // failing that the built-in default, to fill in.
+  // field no directive names is left unset for the built-in default to
+  // fill in.
   void parseCameraBlock() {
     if (!mDocument.cameraLoc) mDocument.cameraLoc = location();
     advance();
@@ -145,8 +145,7 @@ private:
       } else if (key == "distortion_k2") {
         camera.distortionK2 = numbers<1>()[0];
       } else if (key == "distortion_fit") {
-        // A bare keyword, since the flag it mirrors takes no value
-        // either.
+        // A bare keyword: stating it turns the refit on.
         camera.shouldFitDistortion = true;
       } else if (key == "vignetting") {
         camera.vignetting = numbers<1>()[0];

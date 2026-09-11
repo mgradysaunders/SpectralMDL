@@ -118,14 +118,13 @@ public:
 ///
 [[nodiscard]] LensDocument readLens(const std::string &fileName);
 
-/// The lens file a camera should look through, or empty for none:
-/// `given` if the command line named one, else `stated` if the camera
-/// file did, resolved relative to `cameraFileName` so that a scene
-/// directory stays self-contained.
+/// The lens file a camera file names, or empty for none: `stated` as the
+/// camera file wrote it, resolved relative to `cameraFileName` so that a
+/// scene directory stays self-contained.
 ///
-/// \throws smdl::Error  If either names a file that does not exist,
-///                      since neither may be quietly ignored.
+/// \throws smdl::Error  If it names a file that does not exist, which
+///                      may not be quietly ignored.
 ///
-[[nodiscard]] std::string resolveLensFileName(const std::string &given,
-                                              const std::string &cameraFileName,
-                                              const std::string &stated);
+[[nodiscard]] std::string
+resolveLensFileName(const std::string &stated,
+                    const std::string &cameraFileName);

@@ -700,29 +700,18 @@ SensorDocument readSensor(const std::string &fileName) {
   return document;
 }
 
-std::string resolveSensorFileName(const std::string &given,
-                                  const std::string &cameraFileName,
-                                  const std::string &stated) {
-  // The sidecar this format replaced gets a note saying where its
-  // meaning went, whichever source named it.
-  const auto refuseResponse{[](const std::string &name, const char *source) {
-    if (std::filesystem::path(name).extension() == RESPONSE_EXTENSION)
-      throw smdl::Error(smdl::concat(
-          source, " ", smdl::QuotedPath(name),
-          " names a '.response' file, a format that no longer exists: the "
-          "response is now the 'response' block of a '.sensor' file, which "
-          "holds the body's 'pixels' and 'pitch' beside it (see "
-          "etc/sensors)"));
-  }};
-  if (!given.empty()) {
-    refuseResponse(given, "-sensor");
-    if (!std::filesystem::exists(given))
-      throw smdl::Error(
-          smdl::concat("-sensor ", smdl::QuotedPath(given), " does not exist"));
-    return given;
-  }
+std::string resolveSensorFileName(const std::string &stated,
+                                  const std::string &cameraFileName) {
   if (stated.empty()) return {};
-  refuseResponse(stated, "the camera file's 'sensor'");
+  // The sidecar this format replaced gets a note saying where its
+  // meaning went.
+  if (std::filesystem::path(stated).extension() == RESPONSE_EXTENSION)
+    throw smdl::Error(smdl::concat(
+        "the camera file's 'sensor' ", smdl::QuotedPath(stated),
+        " names a '.response' file, a format that no longer exists: the "
+        "response is now the 'response' block of a '.sensor' file, which "
+        "holds the body's 'pixels' and 'pitch' beside it (see "
+        "etc/sensors)"));
   auto path{std::filesystem::path(stated)};
   if (path.is_relative() && !cameraFileName.empty())
     path = std::filesystem::path(cameraFileName).parent_path() / path;

@@ -4,7 +4,8 @@ Camera bodies in the renderer's `.sensor` format, for `smdl-toy` to land
 a picture on: the pixel array and its pitch, the measured spectral
 sensitivity of each band and the Bayer tile that lays them over the
 pixels, and the detector that turns electrons into digital numbers. A
-camera file names one beside itself, or the command line does:
+camera file names one, and a render of the layout it sits beside lands
+the picture on it:
 
 ```
 camera {
@@ -14,8 +15,7 @@ camera {
 ```
 
 ```
-smdl-toy shot.layout -sensor etc/sensors/sony-ilce-7m3.sensor \
-    -shutter 0.004 -fstop 8 -output-spectrum out.img -output-dn out-dn.img
+smdl-toy shot.layout -output-spectrum out.img -output-dn out-dn.img
 ```
 
 A body decides the picture: the render is exactly its pixels (leave
@@ -67,7 +67,7 @@ in the files, since they are one enthusiast's measurements rather than
 the makers' figures; for reference, at their electronic shutters the
 a6400 reads out in about 46 ms, the a7 III in 62 ms, the a7R III in 70
 ms, the a9 in 6.6 ms, and the R5 in 16 ms. State one with `readout` in
-a copy of the file, or with `-readout`.
+a copy of the file, or in the camera file.
 
 ## Reading a sensor out
 
@@ -92,7 +92,7 @@ A camera that names one of these bodies writes a developed picture to
 `-output-rgb` with no flag asked for: the readout, noise and all, goes
 through the steps a raw developer takes. The digital numbers over the
 black level, balanced to the camera's `white_balance` (`D65` unless
-stated, so that the develop agrees with the `-sensor human` preview;
+stated, so that the develop agrees with the `-ideal` preview;
 `daylight`, `cloudy`, `shade`, `tungsten`, `fluorescent`, a temperature
 in kelvin, or `auto` for the frame's gray world), held where a saturated
 white would lose its color, demosaicked (Hamilton-Adams on these RGGB

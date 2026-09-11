@@ -55,73 +55,40 @@ struct AutolookFlags final {
   bool ignoreBackfaces{};
 };
 
-/// The camera: where the picture is taken from, on what body, and
-/// through what lens.
+/// The camera: which file describes it, and the few things the command
+/// line may say about it.
 ///
-/// Every setting but the file itself and the autolook solve may also
-/// come from the `.camera` file's `camera` directive, which is what the
-/// `Flag`s are for. The picture's size is not here: that is a fact about
+/// The instrument and the shot are the files' alone: the lens, the body,
+/// the stop, the focus, and the shutter are keys of the `.camera` file
+/// and of the `.sensor` and `.lens` files it names. What stays here
+/// frames the picture, previews the camera, or acts after the last
+/// sample. The picture's size is not here either: that is a fact about
 /// this render rather than about the camera, and no camera file carries
 /// it.
 struct CameraFlags final {
   /// The '.camera' file, or empty to take the one beside the layout.
   std::string file{};
 
-  Flag<float3> lookFrom{};
-
-  Flag<float3> lookTo{};
-
-  Flag<float3> lookUp{};
-
-  /// The thin lens's field, two ways: the vertical field of view in
-  /// degrees, and the focal length in millimeters. See
-  /// `CameraKeyable::fovYDeg`.
+  /// The framing, over the camera file's.
   ///
   /// \{
-  Flag<float> fovYDeg{};
-  Flag<float> focalLengthMM{};
+  Flag<float3> lookFrom{};
+  Flag<float3> lookTo{};
+  Flag<float3> lookUp{};
   /// \}
 
-  /// The '.lens' file to look through, or `ideal` for the thin lens,
-  /// over whatever the camera file states. A file is resolved as typed.
-  Flag<std::string> lens{};
-
-  /// The '.sensor' file the picture lands on, or `human` for the CIE
-  /// observer, over whatever the camera file states. A file is resolved
-  /// as typed.
-  Flag<std::string> sensor{};
-
-  /// `-ideal`: preview the camera. The model resolves from the files and
-  /// the other flags as it would without it, and is then projected: a
-  /// traced lens becomes the thin lens fitted to it, a body becomes the
-  /// observer on the body's frame and pixels, and the picture is exposed
-  /// as the body would expose it. See `CameraModel::isPreview`.
+  /// `-ideal`: preview the camera. The model resolves from the files as
+  /// it would without it, and is then projected: a traced lens becomes
+  /// the thin lens fitted to it, a body becomes the observer on the
+  /// body's frame and pixels, and the picture is exposed as the body
+  /// would expose it. See `CameraModel::isPreview`.
   bool isIdeal{};
 
-  /// The seconds the shutter stays open, 0 for shut. When it opens is
-  /// `SceneOptions::time`, which no camera file has a say in.
-  Flag<float> shutter{};
-
-  /// The seconds the readout sweeps the frame, 0 for a global shutter.
-  /// Which way it sweeps is the camera file's alone.
-  Flag<float> readout{};
-
-  Flag<float> fStop{};
-
-  Flag<float> aperture{};
-
-  /// `-focus DIST|infinity|auto`: the distance, `INF` for infinity, and
-  /// the autofocus flagged apart, since it is a measurement of the scene
-  /// rather than a value. One flag, so at most one of the two is set.
-  ///
-  /// \{
-  Flag<float> focus{};
-  bool shouldAutofocus{};
-  /// \}
-
-  /// `-iso N|auto`: the ISO a physical sensor is read out at, and the
-  /// meter flagged apart, since it is a measurement of the film rather
-  /// than a value. One flag, so at most one of the two is set. See
+  /// `-iso N|auto`: the ISO a physical sensor is read out at, over the
+  /// camera file's, and the meter flagged apart, since it is a
+  /// measurement of the film rather than a value. One flag, so at most
+  /// one of the two is set. It acts after the last sample, so a readout
+  /// of a saved film turns it without editing the file. See
   /// `CameraSettings::iso`.
   ///
   /// \{
@@ -130,24 +97,9 @@ struct CameraFlags final {
   /// \}
 
   /// `-white-balance`: the white a physical sensor's develop balances
-  /// to. See `CameraSettings::whiteBalance`.
+  /// to, over the camera file's; like the ISO, it acts after the last
+  /// sample. See `CameraSettings::whiteBalance`.
   Flag<WhiteBalance> whiteBalance{};
-
-  Flag<int> blades{};
-
-  Flag<float> bladeAngleDeg{};
-
-  Flag<float> distortionK1{};
-
-  Flag<float> distortionK2{};
-
-  Flag<bool> shouldFitDistortion{};
-
-  Flag<float> vignetting{};
-
-  Flag<float> catEye{};
-
-  Flag<float> catEyeRadius{};
 
   AutolookFlags autolook{};
 };

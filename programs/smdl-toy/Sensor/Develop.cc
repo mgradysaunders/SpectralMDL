@@ -5,11 +5,11 @@
 #include <string>
 
 #include "smdl/Compiler.h"
+#include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
 #include "smdl/Support/Strings.h"
 
-#include "Sensor/Colorimetry.h"
 #include "Sensor/Develop.h"
 
 //--{ The observer's develop
@@ -24,7 +24,7 @@ namespace {
   double total{};
   double covered{};
   for (double lambda = 380.0; lambda <= 780.0; lambda += 5.0) {
-    const double mass{photopicV(lambda)};
+    const double mass{smdl::photopicV(lambda)};
     total += mass;
     for (size_t i = 0; i < wavelengths.size(); i++) {
       if (std::abs(double(wavelengths[i]) - lambda) <= 30.0) {
@@ -445,9 +445,9 @@ std::vector<float> developReadout(const Sensor &sensor,
       for (size_t k = 0; k < 3; k++) balanced[k] = gray[k] * fit.multipliers[k];
       const auto xyz{fit.cameraToXYZ * balanced};
       if (const double sum{xyz.x + xyz.y + xyz.z}; sum > 0) {
-        measuredKelvin =
-            std::clamp(mccamyKelvin(smdl::double2(xyz.x / sum, xyz.y / sum)),
-                       AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
+        measuredKelvin = std::clamp(
+            smdl::mccamyKelvin(smdl::double2(xyz.x / sum, xyz.y / sum)),
+            AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
         illuminant = kelvinSpectrum(measuredKelvin);
         fit = sensor.fitColor(*rgb, illuminant);
         for (size_t k = 0; k < 3; k++) fit.multipliers[k] = gray[1] / gray[k];
@@ -513,8 +513,8 @@ std::vector<float> developReadout(const Sensor &sensor,
   // Bradford to the sRGB white, and the builtin's matrix out.
   const auto toSRGB{
       mode == Mode::COLOR
-          ? xyzToLinearSRGB() *
-                (bradfordAdaptation(fit.white, linearSRGBWhite()) *
+          ? smdl::xyzToLinearSRGB() *
+                (smdl::bradfordAdaptation(fit.white, smdl::linearSRGBWhite()) *
                  fit.cameraToXYZ)
           : smdl::double3x3(1.0)};
   auto rgbImage{std::vector<float>(numPixelsX * numPixelsY * 3)};

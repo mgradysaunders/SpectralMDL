@@ -491,30 +491,25 @@ TEST_CASE("SensorFile: the file as a whole") {
                                        "}\n")};
     const auto sensorPath{tmpDir.write("bodies/body.sensor", BASE)};
     const auto resolved{
-        resolveSensorFileName("", cameraPath.string(), "bodies/body.sensor")};
+        resolveSensorFileName("bodies/body.sensor", cameraPath.string())};
     CHECK(std::filesystem::path(resolved) == sensorPath);
     const auto document{readSensor(resolved)};
     CHECK(document.sensor.pixels.x == 4);
-    CHECK(resolveSensorFileName("", cameraPath.string(), "") == "");
+    CHECK(resolveSensorFileName("", cameraPath.string()) == "");
     CHECK_THROWS(
-        (void)resolveSensorFileName("", cameraPath.string(), "missing.sensor"));
-    CHECK_THROWS(
-        (void)resolveSensorFileName("missing.sensor", cameraPath.string(), ""));
-    // The flag wins over whatever the file states, as written.
-    CHECK(resolveSensorFileName(sensorPath.string(), cameraPath.string(),
-                                "other.sensor") == sensorPath.string());
+        (void)resolveSensorFileName("missing.sensor", cameraPath.string()));
+    // An absolute path is taken as written.
+    CHECK(resolveSensorFileName(sensorPath.string(), cameraPath.string()) ==
+          sensorPath.string());
   }
   SUBCASE("The old response sidecar is named for what it became") {
     TempDir tmpDir{"sensor-file-response"};
     const auto path{tmpDir.write("body.response", "response { }\n")};
-    CHECK_ERROR(smdl::catchAndReturnError([&] {
-                  (void)resolveSensorFileName(path.string(), "", "");
-                }),
+    const auto error{smdl::catchAndReturnError(
+        [&] { (void)resolveSensorFileName(path.string(), ""); })};
+    CHECK_ERROR(error,
                 "names a '.response' file, a format that no longer exists");
-    CHECK_ERROR(smdl::catchAndReturnError([&] {
-                  (void)resolveSensorFileName("", "", path.string());
-                }),
-                "the 'response' block of a '.sensor' file");
+    CHECK_ERROR(error, "the 'response' block of a '.sensor' file");
   }
   SUBCASE("A malformed file throws after reporting") {
     TempDir tmpDir{"sensor-file-bad"};
