@@ -1251,3 +1251,58 @@ TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   CHECK(filmRadius / MM ==
         doctest::Approx(2.03 * std::tan(smdl::radians(39.5f))).epsilon(0.02));
 }
+
+namespace {
+// Two lenses of about 50 mm at f/8, each with its stop in front, so that
+// the chief ray crosses the glass off the axis, where the glass's color
+// bends it: a singlet of N-SF57, the most dispersive glass in the
+// catalog, and an N-BK7/F2 achromat.
+LensPrescription singletBehindStop() {
+  auto lens{LensPrescription{}};
+  lens.surfaces.push_back(stopOf(20, 6));
+  lens.surfaces.push_back(surfaceOf(84.7f, 5, 1, 30));
+  lens.surfaces.push_back(surfaceOf(-84.7f, 0, 1, 30));
+  lens.surfaces[1].medium = catalogGlass("N-SF57");
+  return lens;
+}
+
+LensPrescription achromatBehindStop() {
+  auto lens{LensPrescription{}};
+  lens.surfaces.push_back(stopOf(10, 6));
+  lens.surfaces.push_back(surfaceOf(22.39f, 5, 1, 16));
+  lens.surfaces.push_back(surfaceOf(-22.39f, 2, 1, 16));
+  lens.surfaces.push_back(surfaceOf(-406, 0, 1, 16));
+  lens.surfaces[1].medium = catalogGlass("N-BK7");
+  lens.surfaces[2].medium = catalogGlass("F2");
+  return lens;
+}
+} // namespace
+
+TEST_CASE("Lens: the lateral color") {
+  SUBCASE("A lens with no dispersion data has none") {
+    const Lens lens{dgauss50mm(), {2.0f, 0}};
+    CHECK(lens.lateralColorAt(FULL_FRAME_CORNER) == 0);
+  }
+  SUBCASE("On the axis there is none, whatever the glass") {
+    // To within a nanometer: the chief ray is found by a scan, whose
+    // rounding leaves it a hair off the axis.
+    const Lens lens{singletBehindStop(), {2.0f, 0}};
+    CHECK(std::abs(lens.lateralColorAt(0)) < 1e-9f);
+  }
+  SUBCASE("A singlet behind its stop lands blue inside red, by tenths of a "
+          "millimeter at the corner of full frame") {
+    // Blue is bent the more, and the chief ray crosses the glass above
+    // the axis, so blue is turned further back toward it.
+    const Lens lens{singletBehindStop(), {2.0f, 0}};
+    const auto lateral{lens.lateralColorAt(FULL_FRAME_CORNER)};
+    CHECK(lateral < 0);
+    CHECK(-lateral / MM > 0.2f);
+    CHECK(-lateral / MM < 1.0f);
+  }
+  SUBCASE("An achromat of that focal length cancels nearly all of it") {
+    const Lens singlet{singletBehindStop(), {2.0f, 0}};
+    const Lens achromat{achromatBehindStop(), {2.0f, 0}};
+    CHECK(std::abs(achromat.lateralColorAt(FULL_FRAME_CORNER)) <
+          0.1f * std::abs(singlet.lateralColorAt(FULL_FRAME_CORNER)));
+  }
+}

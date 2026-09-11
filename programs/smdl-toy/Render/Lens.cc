@@ -360,16 +360,71 @@ template <typename F>
   return radius * std::max(std::abs(lo), std::abs(hi));
 }
 
-// The middle of the window at the reference, which is the chief ray
-// where the lens does not vignette and the middle of what survives where
-// it does.
-[[nodiscard]] bool chiefPointOf(const Lens &lens, float filmRadius,
-                                float &x) noexcept {
+// The middle of the window, which is the chief ray where the lens does
+// not vignette and the middle of what survives where it does.
+[[nodiscard]] bool chiefPointOf(const Lens &lens,
+                                smdl::Span<const float> indices,
+                                float filmRadius, float &x) noexcept {
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(lens, lens.referenceIndices(), filmRadius, lo, hi))
-    return false;
+  if (!pupilWindowOf(lens, indices, filmRadius, lo, hi)) return false;
   x = 0.5f * (lo + hi);
   return true;
+}
+
+// The angle off the axis that light reaching a film point `filmRadius`
+// off the axis comes in at, the chief ray traced out: see
+// `Lens::fieldAngleAt()`. Negative when nothing reaches that far.
+[[nodiscard]] float fieldAngleOf(const Lens &lens,
+                                 smdl::Span<const float> indices,
+                                 float filmRadius) noexcept {
+  auto x{0.0f};
+  if (!chiefPointOf(lens, indices, filmRadius, x)) return -1;
+  const float3 film{filmRadius, 0, lens.filmZ()};
+  auto ray{Ray{film, float3(x, 0, lens.rearZ()) - film, EPS, INF}};
+  if (!lens.traceFromFilm(ray, indices)) return -1;
+  return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
+}
+
+// The largest film radius anything reaches: see
+// `Lens::imageCircleRadius()`. Grow until nothing gets out, then halve
+// the gap. A film point further off the axis needs its light to clear
+// more of the glass and never less, so where the light stops is one place
+// and not several.
+[[nodiscard]] float imageCircleOf(const Lens &lens,
+                                  smdl::Span<const float> indices) noexcept {
+  const auto cap{16 * lens.focalLength()};
+  auto x{0.0f};
+  auto inside{0.0f}, outside{0.25f * lens.focalLength()};
+  while (outside < cap && chiefPointOf(lens, indices, outside, x))
+    inside = outside, outside *= 2;
+  if (!(outside < cap)) return inside;
+  for (int i = 0; i < 30; i++) {
+    const auto middle{0.5f * (inside + outside)};
+    if (chiefPointOf(lens, indices, middle, x))
+      inside = middle;
+    else
+      outside = middle;
+  }
+  return inside;
+}
+
+// The film radius that looks out at `angle` radians off the axis: see
+// `Lens::filmRadiusForFieldAngle()`.
+[[nodiscard]] float filmRadiusOf(const Lens &lens,
+                                 smdl::Span<const float> indices,
+                                 float angle) noexcept {
+  if (!(angle > 0)) return 0;
+  const auto largest{imageCircleOf(lens, indices)};
+  if (!(fieldAngleOf(lens, indices, largest) >= angle)) return -1;
+  auto lo{0.0f}, hi{largest};
+  for (int i = 0; i < 30; i++) {
+    const auto middle{0.5f * (lo + hi)};
+    if (fieldAngleOf(lens, indices, middle) < angle)
+      lo = middle;
+    else
+      hi = middle;
+  }
+  return 0.5f * (lo + hi);
 }
 
 // How many rays a bundle carries while the film plane is being solved,
@@ -1025,32 +1080,11 @@ void ExitPupil::logSummary() const {
 }
 
 float Lens::fieldAngleAt(float filmRadius) const noexcept {
-  auto x{0.0f};
-  if (!chiefPointOf(*this, filmRadius, x)) return -1;
-  const float3 film{filmRadius, 0, mFilmZ};
-  auto ray{Ray{film, float3(x, 0, rearZ()) - film, EPS, INF}};
-  if (!traceFromFilm(ray)) return -1;
-  return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
+  return fieldAngleOf(*this, mReferenceIndices, filmRadius);
 }
 
 float Lens::imageCircleRadius() const noexcept {
-  // Grow until nothing gets out, then halve the gap. A film point
-  // further off the axis needs its light to clear more of the glass and
-  // never less, so where the light stops is one place and not several.
-  const auto cap{16 * mFocalLength};
-  auto x{0.0f};
-  auto inside{0.0f}, outside{0.25f * mFocalLength};
-  while (outside < cap && chiefPointOf(*this, outside, x))
-    inside = outside, outside *= 2;
-  if (!(outside < cap)) return inside;
-  for (int i = 0; i < 30; i++) {
-    const auto middle{0.5f * (inside + outside)};
-    if (chiefPointOf(*this, middle, x))
-      inside = middle;
-    else
-      outside = middle;
-  }
-  return inside;
+  return imageCircleOf(*this, mReferenceIndices);
 }
 
 float Lens::transmittedArea(float filmRadius) const noexcept {
@@ -1066,16 +1100,16 @@ float Lens::transmittedArea(float filmRadius) const noexcept {
 }
 
 float Lens::filmRadiusForFieldAngle(float angle) const noexcept {
-  if (!(angle > 0)) return 0;
-  const auto largest{imageCircleRadius()};
-  if (!(fieldAngleAt(largest) >= angle)) return -1;
-  auto lo{0.0f}, hi{largest};
-  for (int i = 0; i < 30; i++) {
-    const auto middle{0.5f * (lo + hi)};
-    if (fieldAngleAt(middle) < angle)
-      lo = middle;
-    else
-      hi = middle;
-  }
-  return 0.5f * (lo + hi);
+  return filmRadiusOf(*this, mReferenceIndices, angle);
+}
+
+float Lens::lateralColorAt(float filmRadius) const noexcept {
+  const auto angle{fieldAngleAt(filmRadius)};
+  const auto radiusF{
+      filmRadiusOf(*this, indicesAt(smdl::FRAUNHOFER_F_LINE), angle)};
+  const auto radiusC{
+      filmRadiusOf(*this, indicesAt(smdl::FRAUNHOFER_C_LINE), angle)};
+  if (!(angle >= 0 && radiusF >= 0 && radiusC >= 0))
+    return std::numeric_limits<float>::quiet_NaN();
+  return radiusF - radiusC;
 }

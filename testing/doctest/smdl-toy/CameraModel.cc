@@ -801,4 +801,26 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
     preview.camera.isIdeal = true;
     CHECK(!resolveCameraModel(preview).options.traceWavelengthRange);
   }
+  SUBCASE("The report states the glasses, the color, and what each band "
+          "traces the lens at") {
+    const auto report{describeCamera(resolveCameraModel(files.camera(
+        "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")))};
+    CHECK_CONTAINS(report, "  after surface 1: 'N-BK7', nd 1.5168, Vd 64.17");
+    CHECK_CONTAINS(report, "  color: the F line focuses ");
+    // Over the band's own curve, which R is zero outside of from 560 to
+    // 700 nm.
+    CHECK_CONTAINS(report, "  traced: at a wavelength each pixel draws from "
+                           "its band: 'R' 560-700 nm, median ");
+  }
+  SUBCASE("Without a tile the report says the d line, and under the preview "
+          "nothing") {
+    CHECK_CONTAINS(describeCamera(resolveCameraModel(
+                       files.camera("camera { lens \"glass.lens\" }\n"))),
+                   "  traced: at the d line (588 nm) alone");
+    auto preview{files.camera(
+        "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")};
+    preview.camera.isIdeal = true;
+    CHECK_CONTAINS(describeCamera(resolveCameraModel(preview)),
+                   "  traced: not at all");
+  }
 }

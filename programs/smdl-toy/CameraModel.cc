@@ -12,6 +12,7 @@
 #include "Layout/LensFile.h"
 #include "Options.h"
 #include "Sensor/Detector.h"
+#include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
 
 namespace {
@@ -371,6 +372,60 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
       fit.numDroppedRadii > 0 ? smdl::concat(", ", fit.numDroppedRadii,
                                              " past the image circle dropped")
                               : std::string());
+}
+
+// The glass a surface leads into, for the report: its name, nd, Vd, and
+// partial dispersion, and whether they came from its Sellmeier or from
+// nd and Vd; a scalar index, which does not disperse; or nothing, for
+// air and for the stop.
+[[nodiscard]] std::string describeGlass(const LensSurface &surface) {
+  const auto &medium{surface.medium};
+  if (surface.isStop) return {};
+  if (!medium.isDispersive())
+    return medium.nd() == 1
+               ? std::string()
+               : smdl::concat("an index of ", smdl::Brief(medium.nd(), 6),
+                              ", which does not disperse");
+  return smdl::concat(surface.glassName.empty()
+                          ? std::string("a glass")
+                          : smdl::concat(smdl::Quoted(surface.glassName)),
+                      ", nd ", smdl::Brief(medium.nd(), 6), ", Vd ",
+                      smdl::Brief(medium.abbeNumber(), 4), ", PgF ",
+                      smdl::Brief(medium.partialDispersion(), 4),
+                      medium.kind() == smdl::OpticalGlass::Kind::SELLMEIER
+                          ? ", by its Sellmeier"
+                          : ", by nd and Vd");
+}
+
+// What a lens whose glasses disperse is traced at: under a tile, a
+// wavelength each pixel draws from its band, spanned here over the
+// band's own curve, which is what the default grid sees; else the d line
+// alone; and under -ideal nothing, the thin lens having no color.
+[[nodiscard]] std::string describeTracing(const CameraModel &model) {
+  if (model.shouldApproximateLens())
+    return "not at all, since -ideal looks through the thin lens fitted to "
+           "it, which has no color";
+  if (!model.options.traceWavelengthRange)
+    return "at the d line (588 nm) alone, the film having no color filter "
+           "array to draw a wavelength from";
+  const auto &response{model.sensor->response};
+  const auto illuminant{whiteBalanceSpectrum(model.whiteBalance)};
+  auto text{std::string("at a wavelength each pixel draws from its band")};
+  const char *separator{": "};
+  auto isDescribed{std::vector<bool>(response.bands.size())};
+  for (const auto index : response.cfa) {
+    if (isDescribed[index]) continue;
+    isDescribed[index] = true;
+    const auto &band{response.bands[index]};
+    if (const auto span{tracedSpanOf(band, illuminant)}) {
+      text +=
+          smdl::concat(separator, smdl::Quoted(band.name), " ",
+                       smdl::Brief(span->lo, 4), "-", smdl::Brief(span->hi, 4),
+                       " nm, median ", smdl::Brief(span->median, 4));
+      separator = "; ";
+    }
+  }
+  return text;
 }
 
 // The focus distance the camera will be built with, as the camera
@@ -904,6 +959,29 @@ std::string describeCamera(const CameraModel &model) {
          : fit.maxChiefRayError > pitch
              ? "; what it frames near the edges sits elsewhere in the render"
              : "");
+    // The glasses, which are the column a transcription is read against,
+    // and what they make of the lens's color when they disperse.
+    for (size_t i = 0; i < options.lens->surfaces.size(); i++)
+      if (const auto glass{describeGlass(options.lens->surfaces[i])};
+          !glass.empty())
+        line("  after surface ", i + 1, ": ", glass);
+    if (options.lens->isDispersive()) {
+      const float apartMM{1e3f *
+                          (lens.paraxialFilmZAt(smdl::FRAUNHOFER_F_LINE) -
+                           lens.paraxialFilmZAt(smdl::FRAUNHOFER_C_LINE))};
+      const float lateral{lens.lateralColorAt(halfDiagonal) / pitch};
+      if (std::isfinite(apartMM))
+        line("  color: the F line focuses ", smdl::Brief(std::abs(apartMM), 3),
+             " mm ", apartMM > 0 ? "behind" : "in front of",
+             " the C line, paraxially, and ",
+             std::isfinite(lateral)
+                 ? smdl::concat("lands ", smdl::Brief(std::abs(lateral), 3),
+                                " pixels ", lateral > 0 ? "outside" : "inside",
+                                " it at the frame's corner")
+                 : std::string("the frame's corner is past the image circle "
+                               "at one of them"));
+      line("  traced: ", describeTracing(model));
+    }
   } else {
     const float focalLength{thinLensFocalLength(options)};
     fNumber = options.aperture > 0 ? focalLength / (2 * options.aperture)

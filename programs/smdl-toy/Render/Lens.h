@@ -277,6 +277,17 @@ public:
   /// that far.
   [[nodiscard]] float filmRadiusForFieldAngle(float angle) const noexcept;
 
+  /// How far apart the F and C lines land on the film, in scene units,
+  /// from what a film point `filmRadius` off the axis sees at the d line:
+  /// the film radius the F line's chief ray from there reaches, less the
+  /// C line's. That is the lens's lateral color at that radius, zero for a
+  /// lens with no dispersion data, and NaN where the field runs past the
+  /// image circle at either line.
+  ///
+  /// Traced, as `filmRadiusForFieldAngle()` is at each line, so it costs
+  /// about a hundred thousand rays.
+  [[nodiscard]] float lateralColorAt(float filmRadius) const noexcept;
+
   /// The radius of the image circle: the largest film radius anything
   /// reaches at all. A sensor larger than this is dark in the corners
   /// however long the exposure.

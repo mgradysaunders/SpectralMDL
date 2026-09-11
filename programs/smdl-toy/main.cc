@@ -88,8 +88,13 @@ int main(int argc, char **argv) try {
                               responseSettings ? &*responseSettings : nullptr)};
   const auto grid{resolveWavelengthGrid(opts, frame, resumed)};
   // The response against the grid, here rather than later, so that a
-  // band the grid cannot see fails before anything compiles.
-  const auto response{resolveResponse(responseSettings, grid.wavelengths)};
+  // band the grid cannot see fails before anything compiles. Under a tile
+  // it draws the wavelengths a lens whose glasses disperse is traced at,
+  // under the white balance's illuminant, which `auto` reads as D65 until
+  // the frame is measured.
+  const auto response{
+      resolveResponse(responseSettings, grid.wavelengths,
+                      whiteBalanceSpectrum(frame.model.whiteBalance))};
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
   auto compiler{smdl::Compiler{}};

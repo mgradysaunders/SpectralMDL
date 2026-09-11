@@ -297,6 +297,23 @@ void Camera::buildLens(const CameraOptions &options) {
   const auto halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
   mExitPupil.emplace(*mLens, halfDiagonal, options.traceWavelengthRange);
   mExitPupil->logSummary();
+  // A lens whose glasses disperse shows its color only under a tile,
+  // whose pixels each trace it at a wavelength of their own band's.
+  mDisperses = options.traceWavelengthRange && mLens->isDispersive();
+  if (mDisperses) mTraceWavelengthRange = *options.traceWavelengthRange;
+  if (mLens->isDispersive()) {
+    const auto pitch{mFrameHeight / mNumPixelsY};
+    if (const auto lateral{mLens->lateralColorAt(halfDiagonal) / pitch};
+        std::isfinite(lateral))
+      SMDL_LOG_INFO("Lens color: at the frame's corner the F line (486 nm) "
+                    "lands ",
+                    smdl::Brief(std::abs(lateral), 3), " pixels ",
+                    lateral > 0 ? "outside" : "inside", " the C line (656 nm)");
+    if (!mDisperses)
+      SMDL_LOG_INFO("Lens color: the film has no color filter array to draw "
+                    "a wavelength from, so the lens is traced at the d line "
+                    "(588 nm) and shows no chromatic aberration");
+  }
   // What one unit of drawn pupil area is worth. Irradiance at a film
   // point is the pupil integral of `L cos^4(theta) dA / d^2`, with `d`
   // the axial distance from the film to the plane the point is drawn on.
@@ -456,13 +473,13 @@ float Camera::fNumber() const noexcept {
                          : 0.0f;
 }
 
-CameraSample Camera::sample(size_t x, size_t y,
-                            Sampler &sampler) const noexcept {
+CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
+                            float wavelength) const noexcept {
   // The pixel jitter is always dimensions 0-1 of the sequence.
   const auto xi{float2(sampler)};
   const float u{(float(x) + xi.x) / mNumPixelsX};
   const float v{(float(y) + xi.y) / mNumPixelsY};
-  if (mLens) return sampleThroughLens(u, v, sampler);
+  if (mLens) return sampleThroughLens(u, v, sampler, wavelength);
   // The image-plane point: the film point inverted through the lens.
   const float2 image{+(u - 0.5f) * mAspectRatio, -(v - 0.5f)};
   // Distortion remaps only the direction this sensor point looks in;
@@ -534,8 +551,8 @@ CameraSample Camera::sample(size_t x, size_t y,
   return result;
 }
 
-CameraSample Camera::sampleThroughLens(float u, float v,
-                                       Sampler &sampler) const noexcept {
+CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
+                                       float wavelength) const noexcept {
   auto result{CameraSample{}};
   result.coneAngle = mConeAngleBase;
   // The film point: the sensor coordinate, with the image inverted on it
@@ -564,7 +581,15 @@ CameraSample Camera::sampleThroughLens(float u, float v,
   const auto cosTheta{-result.ray.dir.z / length(result.ray.dir)};
   const auto cosSquared{cosTheta * cosTheta};
   result.weight = mExposurePerPupilArea * pupilArea * cosSquared * cosSquared;
-  if (!mLens->traceFromFilm(result.ray)) result.weight = 0;
+  // A lens that disperses is traced at the wavelength drawn for this
+  // sample, which the exit pupil's table was bounded to hold.
+  SMDL_DEBUG_CHECK(!(mDisperses && wavelength > 0) ||
+                   (wavelength >= mTraceWavelengthRange.x &&
+                    wavelength <= mTraceWavelengthRange.y));
+  const bool passes{mDisperses && wavelength > 0
+                        ? mLens->traceFromFilm(result.ray, wavelength)
+                        : mLens->traceFromFilm(result.ray)};
+  if (!passes) result.weight = 0;
   return result;
 }
 
