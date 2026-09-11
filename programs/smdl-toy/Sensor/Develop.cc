@@ -128,19 +128,21 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
                   100.0 * coverage);
     std::cerr << note;
   }
-  for (size_t y{}; y < numPixelsY; y++) {
+  // The JIT'd conversion reads only the state it is handed, so the rows
+  // go in parallel.
+  smdl::parallelFor(0, numPixelsY, [&](size_t y) {
+    const auto state{makeRenderState(wavelengths)};
     for (size_t x{}; x < numPixelsX; x++) {
       auto color{Color()};
       for (size_t i = 0; i < color.size(); i++)
         color[i] = float(filmMean(film, x, y, i));
-      auto state{makeRenderState(wavelengths)};
-      auto rgb{compiler.convertColorToRGB(state, color.data())};
+      const auto rgb{compiler.convertColorToRGB(state, color.data())};
       auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
       texel[0] = rgb[0];
       texel[1] = rgb[1];
       texel[2] = rgb[2];
     }
-  }
+  });
   return rgbImage;
 }
 
