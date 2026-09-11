@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "smdl/RenderUtil/OpticalGlass.h"
 #include "smdl/Support/Span.h"
 
 #include "Common.h"
@@ -43,7 +44,7 @@ struct LensOptions final {
 };
 
 /// One surface as the trace sees it: on the camera's z axis, in scene
-/// units, with the index on each side spelled out.
+/// units, with the medium on each side named.
 class LensElement final {
 public:
   /// The camera-space z of the vertex. Surfaces run from the front
@@ -75,10 +76,11 @@ public:
   /// On the stop it is the working radius, so stopping down narrows it.
   float semiDiameter{};
 
-  /// The refractive index on the scene side and on the film side. Both
-  /// are stored because a refraction needs both, and reading one off the
-  /// neighbor at every surface is how the two come apart.
-  float iorBefore{1}, iorAfter{1};
+  /// The medium on the scene side and on the film side, as indices into
+  /// `Lens::media()`. Both are named because a refraction needs both. The
+  /// film side of one surface and the scene side of the next are one
+  /// space, and so one index, by construction.
+  int mediumBefore{}, mediumAfter{};
 
   /// Is this the aperture stop? It refracts nothing. What it does is
   /// block whatever falls outside `semiDiameter`.
@@ -94,16 +96,21 @@ public:
 /// also the check on a transcription: a prescription typed wrong almost
 /// never reproduces its own focal length.
 ///
+/// Every space is a medium, and a glass's medium disperses. Everything the
+/// constructor derives is taken at the d line, and so is every trace that
+/// names no other wavelength. The paraxial solve can be asked again at any
+/// wavelength, which is where the lens's color is read from.
+///
 class Lens final {
 public:
   /// Lay the prescription out on the axis, solve the cardinal points and
   /// the pupils, stop the lens down, and place the film.
   ///
   /// \throws smdl::Error  If the prescription cannot be a camera lens:
-  ///                      no stop, no net power, glass against the film,
-  ///                      a pupil at infinity, an aperture wider than the
-  ///                      stop, or a focus distance the lens cannot
-  ///                      reach.
+  ///                      no stop, more than `LENS_MAX_SURFACES` surfaces,
+  ///                      no net power, glass against the film, a pupil at
+  ///                      infinity, an aperture wider than the stop, or a
+  ///                      focus distance the lens cannot reach.
   ///
   Lens(const LensPrescription &prescription, const LensOptions &options);
 
@@ -116,7 +123,16 @@ public:
   /// departing it, both in camera space. False means the ray was
   /// blocked, which the caller weights zero rather than redrawing, so
   /// that the trace consumes no sampler dimensions of its own.
+  ///
+  /// Every medium refracts at its index at the d line, unless
+  /// `wavelength` names another in nanometers. A medium that does not
+  /// disperse has one index at every wavelength, so a lens with no
+  /// dispersion data traces the same ray either way, bit for bit.
+  ///
+  /// \{
   [[nodiscard]] bool traceFromFilm(Ray &ray) const noexcept;
+  [[nodiscard]] bool traceFromFilm(Ray &ray, float wavelength) const noexcept;
+  /// \}
 
   /// Log what the prescription turned out to be: the line that says a
   /// transcription is right, and the only place the numbers appear in
@@ -143,6 +159,23 @@ public:
 
   /// The index of the aperture stop within `elements()`.
   [[nodiscard]] size_t stopIndex() const noexcept { return mStopIndex; }
+
+  /// The media, one per space: the air in front of the first surface,
+  /// then the space after each surface but the stop, which stands in a
+  /// space rather than ending one. `LensElement::mediumBefore` and
+  /// `mediumAfter` index into this.
+  [[nodiscard]] smdl::Span<const smdl::OpticalGlass> media() const noexcept {
+    return mMedia;
+  }
+
+  /// Each medium's index at the d line, which the lens is laid out and
+  /// solved at, and traced at unless a trace names another wavelength.
+  [[nodiscard]] smdl::Span<const float> referenceIndices() const noexcept {
+    return mReferenceIndices;
+  }
+
+  /// Does any medium disperse?
+  [[nodiscard]] bool isDispersive() const noexcept { return mIsDispersive; }
 
   /// The effective focal length.
   [[nodiscard]] float focalLength() const noexcept { return mFocalLength; }
@@ -197,6 +230,20 @@ public:
   /// can be read separately.
   [[nodiscard]] float paraxialFilmZ() const noexcept { return mParaxialFilmZ; }
 
+  /// The effective focal length, and the paraxial image plane of the
+  /// focus distance, at `wavelength` nanometers. They come from the solve
+  /// the constructor runs, so at the d line they are `focalLength()` and
+  /// `paraxialFilmZ()` to the last bit. Elsewhere they differ from those by
+  /// the lens's longitudinal color.
+  ///
+  /// The image plane is NaN at a wavelength whose front focal point the
+  /// focus distance falls inside.
+  ///
+  /// \{
+  [[nodiscard]] float focalLengthAt(float wavelength) const noexcept;
+  [[nodiscard]] float paraxialFilmZAt(float wavelength) const noexcept;
+  /// \}
+
   /// The angle off the axis, in radians, that light reaching a film
   /// point `filmRadius` off the axis comes in at. That is what a field
   /// of view is made of, and it is traced rather than taken from the
@@ -237,8 +284,33 @@ public:
   [[nodiscard]] float rearZ() const noexcept { return mElements.back().z; }
 
 private:
+  /// Room for every medium a prescription can have: the air in front,
+  /// and one space per surface. A trace at a wavelength holds its indices
+  /// in one of these on the stack, so that a camera sample never
+  /// allocates.
+  using Indices = std::array<float, LENS_MAX_SURFACES + 1>;
+
+  /// Each medium's index at `wavelength` nanometers.
+  [[nodiscard]] Indices indicesAt(float wavelength) const noexcept;
+
+  /// The trace itself, with every medium at `indices`.
+  [[nodiscard]] bool traceThrough(Ray &ray,
+                                  const float *indices) const noexcept;
+
   std::string mName{};
   std::vector<LensElement> mElements{};
+  std::vector<smdl::OpticalGlass> mMedia{};
+  std::vector<float> mReferenceIndices{};
+  bool mIsDispersive{};
+
+  /// Each vertex's z in the frame the prescription was laid out in, the
+  /// front vertex at zero, and the entrance pupil's z in that frame,
+  /// which is how far the origin moved onto it. The paraxial solve runs
+  /// in this frame, the constructor's and every later one alike, so that
+  /// a solve at the d line repeats the constructor's arithmetic exactly.
+  std::vector<float> mLayoutZ{};
+  float mLayoutEntrancePupilZ{};
+
   size_t mStopIndex{};
   float mFocalLength{};
   float mBackFocalDistance{};

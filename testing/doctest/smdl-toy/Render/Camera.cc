@@ -127,7 +127,7 @@ LensPrescription singlet() {
     auto value{LensSurface{}};
     value.radius = radius;
     value.thickness = thickness;
-    value.ior = ior;
+    value.medium = smdl::OpticalGlass::constant(ior);
     value.diameter = 20.0f;
     value.isStop = isStop;
     return value;

@@ -13,6 +13,31 @@
 /// prescription is written in, so a patent table transcribes without
 /// arithmetic. The conversion to scene units happens once, downstream,
 /// where the traced system is built.
+///
+/// A space between two surfaces is air unless the surface in front of it
+/// states otherwise: by `ior`, one index at every wavelength, or by
+/// `glass NAME`, a glass that disperses. A name is either the built-in
+/// catalog's (`smdl::findOpticalGlass()`), one definition shared by every
+/// lens that names it, or one the `lens` block defines beside its surfaces,
+/// in one of three ways:
+///
+///     glass NAME { ior <nd> abbe <Vd> }
+///     glass NAME { ior <nd> abbe <Vd> partial_dispersion <PgF> }
+///     glass NAME { sellmeier { b <B1> <B2> <B3> c <C1> <C2> <C3> } }
+///
+/// The first takes its partial dispersion from Schott's normal line (see
+/// `smdl::OpticalGlass::abbe()`). The third may state `ior` and `abbe` as
+/// well, as the printed values its coefficients are checked against rather
+/// than as values. Its rows are in the order a maker's datasheet prints
+/// them, so that a transcription is a copy, and its `c` terms are squared
+/// wavelengths in square micrometers, the one length in the file that is
+/// not in millimeters.
+///
+/// A glass name is a letter, then letters, digits, `-`, and `_`. It matches
+/// ignoring case, since designations are spelled inconsistently, and a
+/// file's own glass may not take a built-in name. Names resolve when the
+/// `lens` block closes, so a definition may follow the first surface that
+/// names it.
 #pragma once
 
 #include <cstddef>
@@ -20,10 +45,17 @@
 #include <string_view>
 #include <vector>
 
+#include "smdl/RenderUtil/OpticalGlass.h"
+
 #include "Layout/LayoutDiagnostics.h"
 
 /// The extension that marks a lens file.
 constexpr std::string_view LENS_EXTENSION = ".lens";
+
+/// The most surfaces one prescription may have, the stop among them. No
+/// prime lens comes close; the cap is here so that whatever a trace keeps
+/// per space can be held in fixed storage.
+constexpr size_t LENS_MAX_SURFACES = 64;
 
 /// The most even aspheric coefficients one surface may carry. Published
 /// designs rarely go past the `r^16` term; the cap is here so that a
@@ -37,7 +69,7 @@ constexpr size_t LENS_MAX_ASPHERIC_TERMS = 8;
 ///
 class LensSurface final {
 public:
-  /// Is this the aperture stop? The stop is flat, states no index of its
+  /// Is this the aperture stop? The stop is flat, states no medium of its
   /// own, and there is exactly one of them in a parsed prescription.
   bool isStop{};
 
@@ -52,10 +84,18 @@ public:
   /// focus solve rather than an input to it, and may be omitted.
   float thickness{};
 
-  /// The refractive index of the space following this surface in file
-  /// order. One is air, which is why it is the default: an air gap is
-  /// one key shorter to write than a glass.
-  float ior{1};
+  /// The medium of the space following this surface in file order: `ior`,
+  /// the index at the d line and so at every wavelength, since it states
+  /// no dispersion; or the glass `glass` names. Air is the default, which
+  /// makes an air gap one key shorter to write than a glass.
+  ///
+  /// It is held by value, as the file resolved it, so tracing the
+  /// prescription needs no catalog.
+  smdl::OpticalGlass medium{};
+
+  /// The name of the glass `medium` is, spelled as the catalog or the
+  /// file's own definition spells it, or empty for `ior` and air.
+  std::string glassName{};
 
   /// The clear aperture diameter. Prescriptions state a diameter and a
   /// trace wants a radius, so the halving happens once, downstream.

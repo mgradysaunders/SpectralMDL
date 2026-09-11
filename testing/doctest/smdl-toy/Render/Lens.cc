@@ -197,14 +197,17 @@ TEST_CASE("Lens: the camera-space origin is the entrance pupil") {
     CHECK(lens.stopIndex() == 5);
     CHECK(elements[5].isStop);
   }
-  SUBCASE("The index carries across the stop, which ends no space") {
+  SUBCASE("The medium carries across the stop, which ends no space") {
     const auto elements{lens.elements()};
-    CHECK(elements[4].iorAfter == doctest::Approx(1.0f));
-    CHECK(elements[5].iorBefore == doctest::Approx(1.0f));
-    CHECK(elements[5].iorAfter == doctest::Approx(1.0f));
-    CHECK(elements[6].iorBefore == doctest::Approx(1.0f));
-    CHECK(elements[0].iorAfter == doctest::Approx(1.67f));
-    CHECK(elements[1].iorBefore == doctest::Approx(1.67f));
+    const auto indices{lens.referenceIndices()};
+    for (size_t i = 1; i < elements.size(); i++)
+      CHECK(elements[i].mediumBefore == elements[i - 1].mediumAfter);
+    CHECK(elements[5].mediumBefore == elements[5].mediumAfter);
+    CHECK(indices[elements[4].mediumAfter] == doctest::Approx(1.0f));
+    CHECK(indices[elements[0].mediumAfter] == doctest::Approx(1.67f));
+    // The air in front, and the space after each surface but the stop.
+    CHECK(lens.media().size() == elements.size());
+    CHECK(!lens.isDispersive());
   }
 }
 
@@ -343,6 +346,193 @@ TEST_CASE("Lens: the stop is what the trace tests, not the prescription") {
   }
 }
 
+namespace {
+// A glass of the built-in catalog.
+const smdl::OpticalGlass &catalogGlass(const char *name) {
+  const auto *entry{smdl::findOpticalGlass(name)};
+  REQUIRE(entry != nullptr);
+  return entry->glass;
+}
+
+// An equiconvex singlet of `glass`, with the stop against its back, as
+// `equiconvex()` lays it out.
+LensPrescription singletOf(const smdl::OpticalGlass &glass,
+                           float thickness = 4) {
+  auto lens{equiconvex(50, thickness, 1, 20)};
+  lens.surfaces[0].medium = glass;
+  return lens;
+}
+
+// Do two rays carry the same bits?
+bool isSameRay(const Ray &a, const Ray &b) {
+  return hasSameBits(a.org.x, b.org.x) && hasSameBits(a.org.y, b.org.y) &&
+         hasSameBits(a.org.z, b.org.z) && hasSameBits(a.dir.x, b.dir.x) &&
+         hasSameBits(a.dir.y, b.dir.y) && hasSameBits(a.dir.z, b.dir.z);
+}
+} // namespace
+
+TEST_CASE("Lens: a named glass") {
+  // An equiconvex N-BK7 singlet, by the glass's name.
+  const auto &glass{catalogGlass("N-BK7")};
+  const auto nd{glass.indexAt(smdl::FRAUNHOFER_D_LINE)};
+  auto named{singletOf(glass)};
+  named.surfaces[0].glassName = "N-BK7";
+  const Lens lens{named, {AT_INFINITY, 0}};
+  SUBCASE("It is laid out at its index at the d line") {
+    const auto elements{lens.elements()};
+    const auto indices{lens.referenceIndices()};
+    CHECK(hasSameBits(indices[elements[0].mediumAfter], nd));
+    CHECK(hasSameBits(indices[elements[1].mediumBefore], nd));
+    CHECK(lens.isDispersive());
+  }
+  SUBCASE("It is the same lens, bit for bit, as that index stated alone") {
+    const Lens indexed{equiconvex(50, 4, nd, 20), {AT_INFINITY, 0}};
+    CHECK(hasSameBits(lens.filmZ(), indexed.filmZ()));
+  }
+}
+
+TEST_CASE("Lens: tracing at a wavelength") {
+  const auto &glass{catalogGlass("N-BK7")};
+  SUBCASE("A lens with no dispersion data traces the same ray at every "
+          "wavelength, bit for bit") {
+    const Lens lens{dgauss50mm(), {5.0f, 0}};
+    for (const auto filmMM : {0.0f, 8.0f, 16.0f}) {
+      const float3 film{filmMM * MM, 0, lens.filmZ()};
+      for (const auto x : {-4.0f, 0.0f, 3.0f}) {
+        auto reference{rayToPupil(lens, film, x * MM, 1 * MM)};
+        const auto passes{lens.traceFromFilm(reference)};
+        for (const auto wavelength : {380.0f, 550.0f, 780.0f, 2000.0f}) {
+          auto ray{rayToPupil(lens, film, x * MM, 1 * MM)};
+          CHECK(lens.traceFromFilm(ray, wavelength) == passes);
+          CHECK(isSameRay(ray, reference));
+        }
+      }
+    }
+  }
+  SUBCASE("The reference trace is the trace at the d line, bit for bit") {
+    const Lens lens{singletOf(glass), {1.0f, 0}};
+    const float3 film{1 * MM, 2 * MM, lens.filmZ()};
+    for (const auto x : {-6.0f, 0.0f, 2.0f, 7.0f}) {
+      auto reference{rayToPupil(lens, film, x * MM, 0)};
+      auto atD{rayToPupil(lens, film, x * MM, 0)};
+      REQUIRE(lens.traceFromFilm(reference));
+      REQUIRE(lens.traceFromFilm(atD, smdl::FRAUNHOFER_D_LINE));
+      CHECK(isSameRay(reference, atD));
+    }
+  }
+  SUBCASE("A glass that disperses bends blue further than red") {
+    // Traced back from a film point on the axis, a ray through the rim of
+    // a positive singlet leaves toward the axis, and the more steeply the
+    // higher the index.
+    const Lens lens{singletOf(glass), {1.0f, 0}};
+    const float3 film{0, 0, lens.filmZ()};
+    const auto slopeAt{[&](float wavelength) {
+      auto ray{rayToPupil(lens, film, 6 * MM, 0)};
+      REQUIRE(lens.traceFromFilm(ray, wavelength));
+      return ray.dir.x / -ray.dir.z;
+    }};
+    CHECK(slopeAt(450) < slopeAt(550));
+    CHECK(slopeAt(550) < slopeAt(650));
+  }
+}
+
+TEST_CASE("Lens: the paraxial solve at a wavelength") {
+  const auto &crown{catalogGlass("N-BK7")};
+  const auto &flint{catalogGlass("F2")};
+  SUBCASE("At the d line it is the constructor's solve, bit for bit") {
+    const Lens lens{singletOf(crown), {1.0f, 0}};
+    CHECK(hasSameBits(lens.focalLengthAt(smdl::FRAUNHOFER_D_LINE),
+                      lens.focalLength()));
+    CHECK(hasSameBits(lens.paraxialFilmZAt(smdl::FRAUNHOFER_D_LINE),
+                      lens.paraxialFilmZ()));
+  }
+  SUBCASE("Without dispersion data it solves the same at every wavelength") {
+    const Lens lens{dgauss50mm(), {2.0f, 0}};
+    for (const auto wavelength : {380.0f, 700.0f, 2000.0f}) {
+      CHECK(hasSameBits(lens.focalLengthAt(wavelength), lens.focalLength()));
+      CHECK(
+          hasSameBits(lens.paraxialFilmZAt(wavelength), lens.paraxialFilmZ()));
+    }
+  }
+  SUBCASE("A singlet's focal length follows its glass's index at every "
+          "wavelength") {
+    // The thick lens equation of the closed forms above, at each
+    // wavelength's own index.
+    constexpr float R = 50, T = 6;
+    const Lens lens{singletOf(crown, T), {AT_INFINITY, 0}};
+    for (const auto wavelength :
+         {400.0f, smdl::FRAUNHOFER_F_LINE, smdl::FRAUNHOFER_D_LINE,
+          smdl::FRAUNHOFER_C_LINE, 700.0f}) {
+      CAPTURE(wavelength);
+      const auto n{double(crown.indexAt(wavelength))};
+      const auto expected{
+          1 / ((n - 1) * (2 / double(R) - (n - 1) * T / (n * R * R)))};
+      CHECK(lens.focalLengthAt(wavelength) / MM ==
+            doctest::Approx(expected).epsilon(1e-5));
+    }
+  }
+  SUBCASE("A singlet brings blue to a focus short of red") {
+    const Lens lens{singletOf(crown), {AT_INFINITY, 0}};
+    CHECK(lens.paraxialFilmZAt(smdl::FRAUNHOFER_F_LINE) <
+          lens.paraxialFilmZAt(smdl::FRAUNHOFER_D_LINE));
+    CHECK(lens.paraxialFilmZAt(smdl::FRAUNHOFER_D_LINE) <
+          lens.paraxialFilmZAt(smdl::FRAUNHOFER_C_LINE));
+  }
+  SUBCASE("An achromat designed on its glasses' nd and Vd brings F and C "
+          "together, and leaves the secondary spectrum") {
+    // Thin elements in contact, 50 mm together, each powered in proportion
+    // to its Abbe number so that the two dispersions cancel between F and
+    // C: the crown carries `V1 / (V1 - V2)` of the whole power and the
+    // flint `-V2 / (V1 - V2)`. The crown is equiconvex and the flint is
+    // cemented to it. At zero thickness the design is exact for the
+    // paraxial solve, though it is no solid a ray could be traced through.
+    const auto n1{double(crown.nd())}, v1{double(crown.abbeNumber())};
+    const auto n2{double(flint.nd())}, v2{double(flint.abbeNumber())};
+    const auto power1{v1 / (v1 - v2) / 50}, power2{-v2 / (v1 - v2) / 50};
+    const auto r1{float(2 * (n1 - 1) / power1)};
+    const auto r3{float(1 / (-1 / double(r1) - power2 / (n2 - 1)))};
+    auto doublet{LensPrescription{}};
+    doublet.surfaces.push_back(surfaceOf(r1, 0, 1, 20));
+    doublet.surfaces.push_back(surfaceOf(-r1, 0, 1, 20));
+    doublet.surfaces.push_back(surfaceOf(r3, 0, 1, 20));
+    doublet.surfaces.push_back(stopOf(0, 20));
+    doublet.surfaces[0].medium = crown;
+    doublet.surfaces[1].medium = flint;
+    const Lens lens{doublet, {AT_INFINITY, 0}};
+    // How far the focal length moves from the d line's, in micrometers,
+    // and what thin lenses in contact predict of it from the same indices.
+    const auto shiftUM{[&](float wavelength) {
+      return 1e3 *
+             (double(lens.focalLengthAt(wavelength)) -
+              double(lens.focalLength())) /
+             MM;
+    }};
+    const auto predictedUM{[&](float wavelength) {
+      const auto powerAt{[&](float at) {
+        return (double(crown.indexAt(at)) - 1) * (2 / double(r1)) +
+               (double(flint.indexAt(at)) - 1) *
+                   (-1 / double(r1) - 1 / double(r3));
+      }};
+      return 1e3 *
+             (1 / powerAt(wavelength) - 1 / powerAt(smdl::FRAUNHOFER_D_LINE));
+    }};
+    CHECK(lens.focalLength() / MM == doctest::Approx(50).epsilon(1e-4));
+    CHECK_NEAR(shiftUM(smdl::FRAUNHOFER_F_LINE),
+               shiftUM(smdl::FRAUNHOFER_C_LINE), 0.2);
+    for (const auto wavelength : {420.0f, smdl::FRAUNHOFER_F_LINE, 550.0f,
+                                  smdl::FRAUNHOFER_C_LINE, 700.0f}) {
+      CAPTURE(wavelength);
+      CHECK_NEAR(shiftUM(wavelength), predictedUM(wavelength), 0.2);
+    }
+    // What is left is the secondary spectrum every achromat of ordinary
+    // glasses has, about a two-thousandth of its focal length: F and C
+    // focus together 25 micrometers beyond the d line, and the ends of the
+    // visible well beyond that.
+    CHECK_NEAR(shiftUM(smdl::FRAUNHOFER_F_LINE), 25.0, 0.5);
+    CHECK(shiftUM(420) > 5 * shiftUM(smdl::FRAUNHOFER_F_LINE));
+  }
+}
+
 TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
   SUBCASE("One with no stop is refused") {
     auto lens{LensPrescription{}};
@@ -363,6 +553,14 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
                 "expected air behind the last surface");
   }
+  SUBCASE("One that leaves the film in a named glass is refused by name") {
+    // The stop stands in the space before it, so the glass carries
+    // across it to the film.
+    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    lens.surfaces[1].medium = smdl::findOpticalGlass("N-BK7")->glass;
+    lens.surfaces[1].glassName = "N-BK7";
+    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the glass 'N-BK7'");
+  }
   SUBCASE("One with more aspheric coefficients than a surface holds is "
           "refused") {
     // The reader caps the list, so this is the guard on a prescription
@@ -371,6 +569,14 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     lens.surfaces.front().aspheric.assign(LENS_MAX_ASPHERIC_TERMS + 1, 0.0f);
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
                 "at most 8 aspheric coefficients");
+  }
+  SUBCASE("One with more surfaces than a lens holds is refused") {
+    // The reader caps the count too, so this is again the guard on a
+    // prescription built in code.
+    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    lens.surfaces.insert(lens.surfaces.begin(), LENS_MAX_SURFACES - 2,
+                         surfaceOf(0, 1, 1, 20));
+    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "at most 64 surfaces");
   }
   SUBCASE("One with no net power has no focal length") {
     auto lens{LensPrescription{}};

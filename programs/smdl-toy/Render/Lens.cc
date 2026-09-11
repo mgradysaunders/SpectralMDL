@@ -1,6 +1,8 @@
 #include "Render/Lens.h"
 
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <string>
 
 #include "smdl/RenderUtil/MonteCarlo.h"
@@ -40,17 +42,85 @@ public:
   }
 };
 
-[[nodiscard]] float powerOf(const LensElement &element) noexcept {
-  return element.radius == 0
-             ? 0.0f
-             : (element.iorAfter - element.iorBefore) / element.radius;
+// The first-order model of a laid-out prescription, with every medium at
+// one set of indices. It runs in the frame the prescription was laid out
+// in, the front vertex at zero, so that the constructor's solve at the d
+// line and a later solve at any wavelength are the same arithmetic.
+class Paraxial final {
+public:
+  smdl::Span<const LensElement> elements{};
+  smdl::Span<const float> layoutZ{};
+  const float *indices{};
+
+  [[nodiscard]] ABCD refractionAt(size_t i) const noexcept {
+    const auto &element{elements[i]};
+    return ABCD::refraction(
+        element.radius == 0
+            ? 0.0f
+            : (indices[element.mediumAfter] - indices[element.mediumBefore]) /
+                  element.radius);
+  }
+
+  // The transfer from vertex `i` to the next, through the space the
+  // surface at `i` names.
+  [[nodiscard]] ABCD transferAfter(size_t i) const noexcept {
+    return ABCD::transfer(layoutZ[i + 1] - layoutZ[i],
+                          indices[elements[i].mediumAfter]);
+  }
+
+  // The whole system, from the plane of the front vertex to the plane of
+  // the rear one.
+  [[nodiscard]] ABCD system() const noexcept {
+    auto system{ABCD{}};
+    for (size_t i = 0; i < elements.size(); i++) {
+      system = system.then(refractionAt(i));
+      if (i + 1 < elements.size()) system = system.then(transferAfter(i));
+    }
+    return system;
+  }
+};
+
+// The cardinal points of a system whose vertices stand at `frontZ` and
+// `rearZ`. Air stands at both ends, so the system's determinant is 1 and
+// every point is one of its elements over another.
+class CardinalPoints final {
+public:
+  float focalLength{};
+  float backFocalDistance{};
+  float frontPrincipalZ{};
+  float rearPrincipalZ{};
+};
+
+[[nodiscard]] CardinalPoints cardinalPointsOf(const ABCD &system, float frontZ,
+                                              float rearZ) noexcept {
+  auto points{CardinalPoints{}};
+  points.focalLength = -1 / system.c;
+  points.backFocalDistance = -system.a / system.c;
+  points.frontPrincipalZ = frontZ + (system.d - 1) / system.c;
+  points.rearPrincipalZ = rearZ + (system.a - 1) * points.focalLength;
+  return points;
 }
 
-// The transfer from one vertex to the next, through the space between
-// them, which is the space the earlier surface names.
-[[nodiscard]] ABCD transferBetween(const LensElement &from,
-                                   const LensElement &to) noexcept {
-  return ABCD::transfer(to.z - from.z, from.iorAfter);
+// The same points, with the origin moved to `originZ`.
+[[nodiscard]] CardinalPoints movedTo(CardinalPoints points,
+                                     float originZ) noexcept {
+  points.frontPrincipalZ -= originZ;
+  points.rearPrincipalZ -= originZ;
+  return points;
+}
+
+// The paraxial image plane of an object `focusDistance` ahead of the
+// origin, zero being an object at infinity, which lands on the rear focal
+// point. The thick lens images an object `s` ahead of the front principal
+// plane at `f s / (s - f)` behind the rear one. Nothing is an object
+// inside the front focal point, which no film position images.
+[[nodiscard]] std::optional<float> imagePlaneOf(const CardinalPoints &points,
+                                                float focusDistance) noexcept {
+  if (focusDistance == 0) return points.rearPrincipalZ + points.focalLength;
+  const auto objectDistance{points.frontPrincipalZ + focusDistance};
+  if (!(objectDistance > points.focalLength)) return std::nullopt;
+  return points.rearPrincipalZ + points.focalLength * objectDistance /
+                                     (objectDistance - points.focalLength);
 }
 
 // How many passes the aspheric intersection may take, and how close to
@@ -532,21 +602,28 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   const auto &surfaces{prescription.surfaces};
   if (surfaces.empty())
     throw smdl::Error("expected a lens with at least one surface");
+  if (surfaces.size() > LENS_MAX_SURFACES)
+    throw smdl::Error(smdl::concat("expected at most ", LENS_MAX_SURFACES,
+                                   " surfaces in a lens, got ",
+                                   surfaces.size()));
   mStopIndex = prescription.stopIndex();
   if (mStopIndex == surfaces.size())
     throw smdl::Error("expected a lens with an aperture stop, which is what "
                       "decides how much light it gathers");
   mName = prescription.name;
-  // Lay the surfaces out on the axis from the front vertex, carrying the
-  // index of a space across the stop, which stands in a space rather than
-  // ending one.
+  // Lay the surfaces out on the axis from the front vertex, one medium to
+  // a space: the air in front, then the space after each surface. The stop
+  // stands in a space rather than ending one, so it names that space's
+  // medium on both sides.
   mElements.resize(surfaces.size());
-  auto ior{1.0f};
+  mLayoutZ.resize(surfaces.size());
+  mMedia.emplace_back();
+  auto glassName{std::string_view()};
   auto z{0.0f};
   for (size_t i = 0; i < surfaces.size(); i++) {
     const auto &surface{surfaces[i]};
     auto &element{mElements[i]};
-    element.z = z * MM_TO_SCENE;
+    element.z = mLayoutZ[i] = z * MM_TO_SCENE;
     element.radius = surface.radius * MM_TO_SCENE;
     element.conic = surface.conic;
     if (surface.aspheric.size() > LENS_MAX_ASPHERIC_TERMS)
@@ -563,36 +640,42 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     for (size_t j = 0; j < numTerms; j++)
       element.aspheric[j] = surface.aspheric[j];
     element.semiDiameter = 0.5f * surface.diameter * MM_TO_SCENE;
-    element.iorBefore = ior;
-    element.iorAfter = surface.isStop ? ior : surface.ior;
+    element.mediumBefore = int(mMedia.size() - 1);
+    if (!surface.isStop) {
+      mMedia.push_back(surface.medium);
+      glassName = surface.glassName;
+    }
+    element.mediumAfter = int(mMedia.size() - 1);
     element.isStop = surface.isStop;
-    ior = element.iorAfter;
     z += surface.thickness;
   }
-  if (mElements.back().iorAfter != 1)
+  // Everything below is solved at the d line, and every trace that names
+  // no other wavelength refracts there. A medium that does not disperse
+  // has that index at every wavelength.
+  for (const auto &medium : mMedia) {
+    mReferenceIndices.push_back(medium.indexAt(smdl::FRAUNHOFER_D_LINE));
+    mIsDispersive = mIsDispersive || medium.isDispersive();
+  }
+  if (mReferenceIndices.back() != 1 || !glassName.empty())
     throw smdl::Error(smdl::concat(
-        "expected air behind the last surface, got an index of ",
-        mElements.back().iorAfter,
+        "expected air behind the last surface, got ",
+        glassName.empty()
+            ? smdl::concat("an index of ", mReferenceIndices.back())
+            : smdl::concat("the glass ", smdl::Quoted(glassName)),
         ": the film is not immersed, so the prescription is missing the "
         "surface that brings the light back out"));
   mDesignBackFocus = surfaces.back().thickness * MM_TO_SCENE;
 
   // The system, from the plane of the front vertex to the plane of the
-  // rear one. Air stands at both ends, so its determinant is 1 and every
-  // cardinal point below is one of its elements over another.
-  auto system{ABCD{}};
-  for (size_t i = 0; i < mElements.size(); i++) {
-    system = system.then(ABCD::refraction(powerOf(mElements[i])));
-    if (i + 1 < mElements.size())
-      system = system.then(transferBetween(mElements[i], mElements[i + 1]));
-  }
+  // rear one, in the frame the surfaces were just laid out in.
+  const auto paraxial{Paraxial{mElements, mLayoutZ, mReferenceIndices.data()}};
+  const auto system{paraxial.system()};
   if (system.c == 0)
     throw smdl::Error("the surfaces have no net power between them, so the "
                       "prescription forms no image and has no focal length");
-  mFocalLength = -1 / system.c;
-  mBackFocalDistance = -system.a / system.c;
-  auto frontPrincipalZ{mElements.front().z + (system.d - 1) / system.c};
-  auto rearPrincipalZ{mElements.back().z + (system.a - 1) * mFocalLength};
+  auto points{cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back())};
+  mFocalLength = points.focalLength;
+  mBackFocalDistance = points.backFocalDistance;
 
   // The entrance pupil is the image of the stop through whatever stands
   // in front of it, so the matrix carrying a ray from the front vertex to
@@ -602,35 +685,34 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   // `a`).
   auto front{ABCD{}};
   for (size_t i = 0; i < mStopIndex; i++) {
-    front = front.then(ABCD::refraction(powerOf(mElements[i])));
-    front = front.then(transferBetween(mElements[i], mElements[i + 1]));
+    front = front.then(paraxial.refractionAt(i));
+    front = front.then(paraxial.transferAfter(i));
   }
   if (front.a == 0)
     throw smdl::Error("the stop sits at the front focal point of the "
                       "surfaces before it, which puts the entrance pupil at "
                       "infinity; the renderer cannot sample a telecentric "
                       "lens");
-  const auto entrancePupilZ{mElements.front().z + front.b / front.a};
+  mLayoutEntrancePupilZ = mLayoutZ.front() + front.b / front.a;
 
   // The exit pupil, the same solve through whatever stands behind the
   // stop, read from the other end of the matrix.
   auto rear{ABCD{}};
   for (size_t i = mStopIndex; i + 1 < mElements.size(); i++) {
-    rear = rear.then(transferBetween(mElements[i], mElements[i + 1]));
-    rear = rear.then(ABCD::refraction(powerOf(mElements[i + 1])));
+    rear = rear.then(paraxial.transferAfter(i));
+    rear = rear.then(paraxial.refractionAt(i + 1));
   }
   if (rear.d == 0)
     throw smdl::Error("the stop sits at the rear focal point of the surfaces "
                       "behind it, which puts the exit pupil at infinity");
-  mExitPupilZ = mElements.back().z - rear.b / rear.d;
+  mExitPupilZ = mLayoutZ.back() - rear.b / rear.d;
 
   // The entrance pupil is the origin, which is what `look_from` names and
   // what `focus` is measured from, so everything shifts onto it now that
   // it is known.
-  for (auto &element : mElements) element.z -= entrancePupilZ;
-  mExitPupilZ -= entrancePupilZ;
-  frontPrincipalZ -= entrancePupilZ;
-  rearPrincipalZ -= entrancePupilZ;
+  for (auto &element : mElements) element.z -= mLayoutEntrancePupilZ;
+  mExitPupilZ -= mLayoutEntrancePupilZ;
+  points = movedTo(points, mLayoutEntrancePupilZ);
 
   const auto pupilMagnification{std::abs(front.a)};
   const auto stopRadius{mElements[mStopIndex].semiDiameter};
@@ -674,27 +756,18 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   }
 
   // Focus by moving the film, which is what a lens whose elements do not
-  // move does. The thick lens images an object `objectDistance` ahead of
-  // the front principal plane at `f s / (s - f)` behind the rear one, and
-  // an object at infinity lands exactly on the rear focal point.
+  // move does.
   mFocusDistance = options.focusDistance;
   if (!(mFocusDistance >= 0))
     throw smdl::Error("expected a nonnegative focus distance");
-  if (mFocusDistance == 0) {
-    // Focus at infinity, which is the limit of the solve below and is
-    // what the film sitting on the rear focal point means.
-    mParaxialFilmZ = rearPrincipalZ + mFocalLength;
-  } else {
-    const auto objectDistance{frontPrincipalZ + mFocusDistance};
-    if (!(objectDistance > mFocalLength))
-      throw smdl::Error(smdl::concat(
-          "cannot focus at ", mFocusDistance,
-          " scene units: that is inside the lens's front focal point, ",
-          (mFocalLength - frontPrincipalZ),
-          " scene units out, and no film position images it"));
-    mParaxialFilmZ = rearPrincipalZ + mFocalLength * objectDistance /
-                                          (objectDistance - mFocalLength);
-  }
+  const auto imageZ{imagePlaneOf(points, mFocusDistance)};
+  if (!imageZ)
+    throw smdl::Error(smdl::concat(
+        "cannot focus at ", mFocusDistance,
+        " scene units: that is inside the lens's front focal point, ",
+        (mFocalLength - points.frontPrincipalZ),
+        " scene units out, and no film position images it"));
+  mParaxialFilmZ = *imageZ;
   // The paraxial plane is where the film starts and not where it ends:
   // the trace moves it onto the focus the whole cone comes to, which is
   // the film position the design itself was drawn around. It is set
@@ -704,6 +777,39 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
 }
 
 bool Lens::traceFromFilm(Ray &ray) const noexcept {
+  return traceThrough(ray, mReferenceIndices.data());
+}
+
+bool Lens::traceFromFilm(Ray &ray, float wavelength) const noexcept {
+  const auto indices{indicesAt(wavelength)};
+  return traceThrough(ray, indices.data());
+}
+
+Lens::Indices Lens::indicesAt(float wavelength) const noexcept {
+  auto indices{Indices{}};
+  for (size_t i = 0; i < mMedia.size(); i++)
+    indices[i] = mMedia[i].indexAt(wavelength);
+  return indices;
+}
+
+float Lens::focalLengthAt(float wavelength) const noexcept {
+  const auto indices{indicesAt(wavelength)};
+  const auto system{Paraxial{mElements, mLayoutZ, indices.data()}.system()};
+  return cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back())
+      .focalLength;
+}
+
+float Lens::paraxialFilmZAt(float wavelength) const noexcept {
+  const auto indices{indicesAt(wavelength)};
+  const auto system{Paraxial{mElements, mLayoutZ, indices.data()}.system()};
+  const auto points{
+      movedTo(cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back()),
+              mLayoutEntrancePupilZ)};
+  return imagePlaneOf(points, mFocusDistance)
+      .value_or(std::numeric_limits<float>::quiet_NaN());
+}
+
+bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
   ray.dir = normalize(ray.dir);
   // Backward through the list, since the file runs front to film and the
   // light here runs the other way: at every surface the ray leaves the
@@ -729,7 +835,8 @@ bool Lens::traceFromFilm(Ray &ray) const noexcept {
       continue;
     }
     ray.org = point;
-    if (!refract(ray.dir, normal, element.iorAfter / element.iorBefore))
+    if (!refract(ray.dir, normal,
+                 indices[element.mediumAfter] / indices[element.mediumBefore]))
       return false;
   }
   return true;
@@ -767,6 +874,21 @@ void Lens::logSummary() const {
                   std::abs(correction), " mm ",
                   correction > 0 ? "behind" : "in front of",
                   " the paraxial image plane, which is where the film sits");
+  // Longitudinal color: how far apart the paraxial images of the F and C
+  // lines stand. Like the back focus below, it is a check on a
+  // transcription that costs nothing: an achromat brings the two
+  // together, so a design meant as one that comes out with millimeters
+  // between them has a glass typed wrong.
+  if (mIsDispersive) {
+    const auto imageF{paraxialFilmZAt(smdl::FRAUNHOFER_F_LINE)};
+    const auto imageC{paraxialFilmZAt(smdl::FRAUNHOFER_C_LINE)};
+    if (std::isfinite(imageF) && std::isfinite(imageC)) {
+      const auto apart{(imageF - imageC) * SCENE_TO_MM};
+      SMDL_LOG_INFO("Lens color: the F line (486 nm) focuses ", std::abs(apart),
+                    " mm ", apart > 0 ? "behind" : "in front of",
+                    " the C line (656 nm), paraxially");
+    }
+  }
   // A design that states its own back focus is stating where it puts the
   // film, which is the one check on a transcription that costs nothing.
   // It is not the paraxial point, though: a design left with spherical

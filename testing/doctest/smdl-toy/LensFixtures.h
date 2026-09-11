@@ -13,7 +13,7 @@
   auto surface{LensSurface{}};
   surface.radius = radius;
   surface.thickness = thickness;
-  surface.ior = ior;
+  surface.medium = smdl::OpticalGlass::constant(ior);
   surface.diameter = diameter;
   return surface;
 }
