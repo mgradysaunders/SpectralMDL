@@ -673,3 +673,71 @@ TEST_CASE("Camera: the thin lens fitted to a lens") {
           doctest::Approx(lens.focalLength()).epsilon(1e-4));
   }
 }
+
+namespace {
+// The singlet in N-BK7, a glass that disperses.
+CameraOptions glassOptions() {
+  auto options{lensOptions()};
+  options.lens->surfaces[0].medium = smdl::findOpticalGlass("N-BK7")->glass;
+  options.lens->surfaces[0].glassName = "N-BK7";
+  return options;
+}
+
+// One pixel's ray in camera space at a wavelength, from a fixed sampler
+// state.
+CameraSample sampleAt(const Camera &camera, int2 pixel, uint32_t sampleIndex,
+                      float wavelength) {
+  Sampler sampler{};
+  sampler.startPixelSample(uint32_t(pixel.y * 64 + pixel.x), sampleIndex);
+  return camera.sample(size_t(pixel.x), size_t(pixel.y), sampler, wavelength);
+}
+} // namespace
+
+TEST_CASE("Camera: a lens whose glasses disperse") {
+  auto options{glassOptions()};
+  options.traceWavelengthRange = float2(400, 700);
+  const Camera camera{options};
+  SUBCASE("It disperses only with a range and a glass that disperses") {
+    CHECK(camera.disperses());
+    CHECK(!Camera{glassOptions()}.disperses());
+    auto constant{lensOptions()};
+    constant.traceWavelengthRange = float2(400, 700);
+    CHECK(!Camera{constant}.disperses());
+    auto thin{openOptions()};
+    thin.traceWavelengthRange = float2(400, 700);
+    CHECK(!Camera{thin}.disperses());
+  }
+  SUBCASE("A wavelength of 0 traces the reference, which is the d line") {
+    auto numDiffering{0};
+    for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
+      for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
+        const auto a{sampleAt(camera, pixel, sampleIndex, 0)};
+        const auto b{
+            sampleAt(camera, pixel, sampleIndex, smdl::FRAUNHOFER_D_LINE)};
+        if (!isSameRay(a.ray, b.ray) || a.weight != b.weight) numDiffering++;
+      }
+    }
+    CHECK(numDiffering == 0);
+  }
+  SUBCASE("Blue and red leave the glass in different directions") {
+    auto numCompared{0};
+    for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
+      const auto blue{sampleAt(camera, int2(60, 4), sampleIndex, 420)};
+      const auto red{sampleAt(camera, int2(60, 4), sampleIndex, 680)};
+      if (!(blue.weight > 0 && red.weight > 0)) continue;
+      CHECK(!isSame(blue.ray.dir, red.ray.dir));
+      numCompared++;
+    }
+    CHECK(numCompared > 0);
+  }
+  SUBCASE("A camera that does not disperse ignores the wavelength") {
+    const Camera plain{glassOptions()};
+    auto numDiffering{0};
+    for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
+      const auto a{sampleAt(plain, int2(60, 4), sampleIndex, 420)};
+      const auto b{sampleAt(plain, int2(60, 4), sampleIndex, 0)};
+      if (!isSameRay(a.ray, b.ray) || a.weight != b.weight) numDiffering++;
+    }
+    CHECK(numDiffering == 0);
+  }
+}

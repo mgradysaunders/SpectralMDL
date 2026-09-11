@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -125,14 +126,29 @@ public:
   /// that the trace consumes no sampler dimensions of its own.
   ///
   /// Every medium refracts at its index at the d line, unless
-  /// `wavelength` names another in nanometers. A medium that does not
-  /// disperse has one index at every wavelength, so a lens with no
-  /// dispersion data traces the same ray either way, bit for bit.
+  /// `wavelength` names another in nanometers, or `indices` holds every
+  /// medium's index at one as `indicesAt()` evaluates them, which is how a
+  /// caller tracing many rays at one wavelength evaluates the glasses
+  /// once. A medium that does not disperse has one index at every
+  /// wavelength, so a lens with no dispersion data traces the same ray
+  /// either way, bit for bit.
   ///
   /// \{
   [[nodiscard]] bool traceFromFilm(Ray &ray) const noexcept;
   [[nodiscard]] bool traceFromFilm(Ray &ray, float wavelength) const noexcept;
+  [[nodiscard]] bool
+  traceFromFilm(Ray &ray, smdl::Span<const float> indices) const noexcept;
   /// \}
+
+  /// Room for every medium a prescription can have: the air in front,
+  /// and one space per surface. A trace at a wavelength holds its indices
+  /// in one of these on the stack, so that a camera sample never
+  /// allocates.
+  using Indices = std::array<float, LENS_MAX_SURFACES + 1>;
+
+  /// Each medium's index at `wavelength` nanometers, in the order of
+  /// `media()`.
+  [[nodiscard]] Indices indicesAt(float wavelength) const noexcept;
 
   /// Log what the prescription turned out to be: the line that says a
   /// transcription is right, and the only place the numbers appear in
@@ -261,6 +277,17 @@ public:
   /// that far.
   [[nodiscard]] float filmRadiusForFieldAngle(float angle) const noexcept;
 
+  /// How far apart the F and C lines land on the film, in scene units,
+  /// from what a film point `filmRadius` off the axis sees at the d line:
+  /// the film radius the F line's chief ray from there reaches, less the
+  /// C line's. That is the lens's lateral color at that radius, zero for a
+  /// lens with no dispersion data, and NaN where the field runs past the
+  /// image circle at either line.
+  ///
+  /// Traced, as `filmRadiusForFieldAngle()` is at each line, so it costs
+  /// about a hundred thousand rays.
+  [[nodiscard]] float lateralColorAt(float filmRadius) const noexcept;
+
   /// The radius of the image circle: the largest film radius anything
   /// reaches at all. A sensor larger than this is dark in the corners
   /// however long the exposure.
@@ -284,15 +311,6 @@ public:
   [[nodiscard]] float rearZ() const noexcept { return mElements.back().z; }
 
 private:
-  /// Room for every medium a prescription can have: the air in front,
-  /// and one space per surface. A trace at a wavelength holds its indices
-  /// in one of these on the stack, so that a camera sample never
-  /// allocates.
-  using Indices = std::array<float, LENS_MAX_SURFACES + 1>;
-
-  /// Each medium's index at `wavelength` nanometers.
-  [[nodiscard]] Indices indicesAt(float wavelength) const noexcept;
-
   /// The trace itself, with every medium at `indices`.
   [[nodiscard]] bool traceThrough(Ray &ray,
                                   const float *indices) const noexcept;
@@ -357,9 +375,19 @@ public:
   /// Trace the table out. `maxFilmRadius` is how far off axis the film
   /// point can be, which is half the sensor diagonal.
   ///
+  /// `wavelengthRange` is the shortest and the longest wavelength in
+  /// nanometers the lens is to be traced at. When its glasses disperse,
+  /// what a film point sees through moves with the wavelength, and each
+  /// entry bounds it at the reference and at both ends of the range
+  /// together, which holds it at every wavelength between. A lens whose
+  /// glasses do not disperse sees through one region at every wavelength
+  /// and is bounded at the reference alone.
+  ///
   /// This is the one part of building a camera that is not instant: it
-  /// is a few million rays through the prescription, run in parallel.
-  ExitPupil(const Lens &lens, float maxFilmRadius);
+  /// is a few million rays through the prescription, run in parallel,
+  /// and three times that over a range.
+  ExitPupil(const Lens &lens, float maxFilmRadius,
+            const std::optional<float2> &wavelengthRange = {});
 
   /// Draw a point on the plane of the rear vertex for the film point
   /// `film`, out of the two numbers `xi`, and report in `area` the area
@@ -368,6 +396,13 @@ public:
   /// aperture, which is blocked and need not be traced.
   [[nodiscard]] float2 sample(float2 film, float2 xi,
                               float &area) const noexcept;
+
+  /// Does the ellipse `sample()` draws from for the film point `film`
+  /// hold the point `point` of the plane of the rear vertex? It is built
+  /// to hold every point a ray from `film` gets out through, at every
+  /// wavelength it was bounded over, and that is what leaves the
+  /// estimator alone.
+  [[nodiscard]] bool contains(float2 film, float2 point) const noexcept;
 
   /// Log what the table bought: the share of the rear aperture the
   /// middle of the frame and the corner of it draw from.
@@ -408,6 +443,9 @@ private:
   float mBoundsPerRadius{};
   float mInvApertureArea{};
 
-  /// The largest film radius the table covers, kept for the log.
+  /// The largest film radius the table covers, and the range of
+  /// wavelengths it was bounded over, or none for the reference alone,
+  /// kept for the log.
   float mMaxFilmRadius{};
+  std::optional<float2> mWavelengthRange{};
 };

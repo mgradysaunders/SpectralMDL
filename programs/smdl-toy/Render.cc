@@ -293,6 +293,13 @@ void renderSamples(const Options &opts, const Frame &frame,
   // Whether every sample draws its own wavelength grid; see
   // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
   const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
+  // Whether every sample traces the lens at a wavelength of its own, drawn
+  // from its pixel's band; see `Response::traceWavelengthAt()`. Only a
+  // tile sets the range a camera needs to disperse, so there is always a
+  // tile to draw from.
+  const bool disperses{camera->disperses()};
+  SMDL_SANITY_CHECK(!disperses || (response && response->hasTile()));
+  if (disperses) response->logTracedSpans();
   // The window row length, which turns a window pixel index into a frame
   // pixel index below.
   const size_t windowWidth{size_t(window[2] - window[0])};
@@ -475,7 +482,15 @@ void renderSamples(const Options &opts, const Frame &frame,
             // walk but let it still count in the average below, keeping the
             // darkening unbiased.
             uint64_t numRecords{0};
-            if (auto cameraSample{camera->sample(x, y, sampler)};
+            // A lens whose glasses disperse is traced at a wavelength drawn
+            // from the band this pixel reads through.
+            const float lensWavelength{
+                disperses
+                    ? response->traceWavelengthAt(
+                          x, y, lensWavelengthOffset(uint32_t(i), sampleIndex))
+                    : 0.0f};
+            if (auto cameraSample{
+                    camera->sample(x, y, sampler, lensWavelength)};
                 cameraSample.weight > 0) {
               // The path's time: the sample's draw within its line's
               // exposure, taken only when there is one to draw within,

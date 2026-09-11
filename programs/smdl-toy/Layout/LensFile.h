@@ -129,6 +129,11 @@ public:
   /// The index of the aperture stop, or `surfaces.size()` if there is
   /// none, which a prescription that parsed never has.
   [[nodiscard]] size_t stopIndex() const noexcept;
+
+  /// Does the medium any surface but the stop leads into disperse? The
+  /// stop stands in a space rather than ending one, so its own medium
+  /// names nothing.
+  [[nodiscard]] bool isDispersive() const noexcept;
 };
 
 /// A parsed lens file, as written.

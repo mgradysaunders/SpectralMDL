@@ -62,6 +62,14 @@ struct CameraOptions final {
   /// them, so nothing here has to.
   std::optional<LensPrescription> lens{};
 
+  /// With a lens whose glasses disperse, the shortest and the longest
+  /// wavelength in nanometers it is traced at, which its exit pupil is
+  /// bounded over; or none, to trace it at the reference alone. The model
+  /// sets it for a tiled body only: it is the span of the bands the tile
+  /// lays down, and every sample draws its wavelength from the band of
+  /// its own pixel.
+  std::optional<float2> traceWavelengthRange{};
+
   /// The frame's physical size in scene units, which are meters: a
   /// physical sensor's pixels times its pitch, or for the observer a
   /// frame 24 mm tall whose width follows the picture. With a lens it is
@@ -282,8 +290,18 @@ public:
   /// code at all. The ray stays in camera space until `toWorld()`, so
   /// that the caller can draw the shutter fraction after the lens
   /// point and before the frame is chosen.
-  [[nodiscard]] CameraSample sample(size_t x, size_t y,
-                                    Sampler &sampler) const noexcept;
+  ///
+  /// `wavelength` is the wavelength in nanometers to trace a lens whose
+  /// glasses disperse at, which the caller draws, or 0 for the reference.
+  /// A camera that does not disperse ignores it.
+  [[nodiscard]] CameraSample sample(size_t x, size_t y, Sampler &sampler,
+                                    float wavelength = 0) const noexcept;
+
+  /// Does the camera trace its lens at a wavelength of each sample's own?
+  /// Only a lens whose glasses disperse, bounded over a range of
+  /// wavelengths, which `CameraOptions::traceWavelengthRange` gives for a
+  /// tiled body alone.
+  [[nodiscard]] bool disperses() const noexcept { return mDisperses; }
 
   /// Place the ray `sample()` built into the world at shutter fraction
   /// `u`: apply the camera frame at `u`, normalize the direction, and
@@ -339,8 +357,8 @@ private:
 
   /// The lens half of `sample()`, out of line as `toWorldMoving()` is,
   /// so that the thin lens keeps the smaller body.
-  [[nodiscard]] SMDL_NO_INLINE CameraSample
-  sampleThroughLens(float u, float v, Sampler &sampler) const noexcept;
+  [[nodiscard]] SMDL_NO_INLINE CameraSample sampleThroughLens(
+      float u, float v, Sampler &sampler, float wavelength) const noexcept;
 
   /// The moving half of `toWorld()`: the look-at of the framing vectors
   /// interpolated to `u`, see `mLookFrom`.
@@ -361,6 +379,12 @@ private:
   /// film point has any chance of getting a ray out. Present whenever
   /// `mLens` is.
   std::optional<ExitPupil> mExitPupil{};
+
+  /// Does the lens trace at each sample's own wavelength? See
+  /// `disperses()`. The range its exit pupil was bounded over, which
+  /// every drawn wavelength has to lie in, is kept for a debug check.
+  bool mDisperses{};
+  float2 mTraceWavelengthRange{};
 
   /// The frame's physical size in scene units.
   float mFrameWidth{}, mFrameHeight{};

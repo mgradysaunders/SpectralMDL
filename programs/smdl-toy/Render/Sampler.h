@@ -186,3 +186,23 @@ wavelengthJitterOffset(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
       smdl::reverseBits(sampleIndex),
       smdl::mixBits(pixelIndex ^ uint32_t(0x5CE4B17DU))));
 }
+
+/// The offset a lens whose glasses disperse draws the wavelength it is
+/// traced at from, for one sample: see `Response::traceWavelengthAt()`.
+/// The second Sobol dimension of the sample index, Owen-scrambled under a
+/// seed of its own, so that it and `wavelengthJitterOffset()`, the first,
+/// are the two dimensions of one scrambled (0,2)-sequence: each sample is
+/// uniform over the pair, and the square is stratified as well as both of
+/// its sides.
+///
+/// Drawn outside `Sampler` for the jitter's reasons: turning dispersion
+/// on moves no path dimension, and a resumed session continues the
+/// sequence. It must not covary with the jitter offset, or the grid's
+/// shift and the traced wavelength would move together and a band's
+/// expectation would no longer factor into its integral.
+[[nodiscard]] inline float lensWavelengthOffset(uint32_t pixelIndex,
+                                                uint32_t sampleIndex) noexcept {
+  return smdl::canonicalFromBits(smdl::nestedUniformScramble(
+      smdl::sobolDim1(sampleIndex),
+      smdl::mixBits(pixelIndex ^ uint32_t(0x8A51D3E9U))));
+}

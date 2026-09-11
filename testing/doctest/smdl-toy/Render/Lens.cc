@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <vector>
 
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Parallel.h"
 
 #include "LensFixtures.h"
 #include "Render/Lens.h"
@@ -1096,6 +1098,150 @@ TEST_CASE("ExitPupil: a cone that is a thousandth of the aperture it is "
   }
 }
 
+namespace {
+// A singlet of N-SF57, the most dispersive glass in the catalog, 15 mm
+// behind an 8 mm stop. What a film point sees through is the stop as the
+// glass images it, and the glass's color moves that image across the
+// plane the pupil points are drawn on.
+LensPrescription flintBehindStop() {
+  auto lens{LensPrescription{}};
+  lens.name = "N-SF57 behind a stop";
+  lens.surfaces.push_back(stopOf(15, 8));
+  lens.surfaces.push_back(surfaceOf(40, 6, 1, 30));
+  lens.surfaces.push_back(surfaceOf(-80, 0, 1, 30));
+  lens.surfaces[1].medium = catalogGlass("N-SF57");
+  return lens;
+}
+
+// What gets out through a lens at a set of wavelengths, and how much of
+// it the table's domain does not hold.
+struct PupilSweep final {
+  size_t numPassed{};
+  size_t numOutside{};
+};
+
+// Sweep the film radii out to `corner`, every entry's boundary among
+// them, at each of `wavelengths`. A grid over the whole rear aperture
+// finds what each film point sees through, and a second grid, over a box
+// twice the size of that, counts it where its edges are.
+PupilSweep sweepPupil(const Lens &lens, const ExitPupil &pupil, float corner,
+                      const std::vector<float> &wavelengths) {
+  constexpr size_t NUM_RADII = 65;
+  constexpr int NUM_STEPS = 128;
+  const auto radius{lens.rearApertureRadius()};
+  auto sweeps{std::vector<PupilSweep>(NUM_RADII)};
+  smdl::parallelFor(size_t(0), NUM_RADII, [&](size_t k) {
+    const auto filmRadius{corner * float(k) / float(NUM_RADII - 1)};
+    const float3 film{filmRadius, 0, lens.filmZ()};
+    for (const auto wavelength : wavelengths) {
+      const auto indices{lens.indicesAt(wavelength)};
+      const auto passes{[&](float x, float y) {
+        if (x * x + y * y > radius * radius) return false;
+        auto ray{rayToPupil(lens, film, x, y)};
+        return lens.traceFromFilm(ray, indices);
+      }};
+      auto loX{FLOAT_MAX}, hiX{-FLOAT_MAX}, loY{FLOAT_MAX}, hiY{-FLOAT_MAX};
+      for (int i = 0; i < NUM_STEPS; i++) {
+        const auto x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
+        for (int j = 0; j < NUM_STEPS; j++) {
+          const auto y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
+          if (!passes(x, y)) continue;
+          loX = std::min(loX, x), hiX = std::max(hiX, x);
+          loY = std::min(loY, y), hiY = std::max(hiY, y);
+        }
+      }
+      if (!(loX <= hiX)) continue;
+      const auto cell{2 * radius / NUM_STEPS};
+      const auto marginX{0.5f * (hiX - loX) + cell};
+      const auto marginY{0.5f * (hiY - loY) + cell};
+      loX -= marginX, hiX += marginX, loY -= marginY, hiY += marginY;
+      for (int i = 0; i < NUM_STEPS; i++) {
+        const auto x{loX + (hiX - loX) * (i + 0.5f) / NUM_STEPS};
+        for (int j = 0; j < NUM_STEPS; j++) {
+          const auto y{loY + (hiY - loY) * (j + 0.5f) / NUM_STEPS};
+          if (!passes(x, y)) continue;
+          sweeps[k].numPassed++;
+          if (!pupil.contains(float2(filmRadius, 0), float2(x, y)))
+            sweeps[k].numOutside++;
+        }
+      }
+    }
+  });
+  auto total{PupilSweep{}};
+  for (const auto &sweep : sweeps) {
+    total.numPassed += sweep.numPassed;
+    total.numOutside += sweep.numOutside;
+  }
+  return total;
+}
+} // namespace
+
+TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
+  const Lens lens{flintBehindStop(), {AT_INFINITY, 0}};
+  const auto corner{12 * MM};
+  const ExitPupil pupil{lens, corner, float2(380, 780)};
+  SUBCASE("Every draw lies in the domain it reports holding, whatever the "
+          "film point's azimuth") {
+    auto numOutside{0};
+    for (const auto azimuth : {0.0f, 1.0f, 2.5f, 4.0f}) {
+      const auto film{0.8f * corner *
+                      float2(std::cos(azimuth), std::sin(azimuth))};
+      for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+          auto area{0.0f};
+          const auto point{pupil.sample(
+              film, float2((i + 0.5f) / 16, (j + 0.5f) / 16), area)};
+          if (!pupil.contains(film, point)) numOutside++;
+        }
+      }
+    }
+    CHECK(numOutside == 0);
+    CHECK_FALSE(
+        pupil.contains(float2(0, 0), float2(lens.rearApertureRadius(), 0)));
+  }
+  SUBCASE("It holds every ray that gets out, at every wavelength across the "
+          "range and every film radius") {
+    auto wavelengths{std::vector<float>()};
+    for (int i = 0; i <= 16; i++) wavelengths.push_back(380.0f + 25.0f * i);
+    const auto sweep{sweepPupil(lens, pupil, corner, wavelengths)};
+    CHECK(sweep.numPassed > 0);
+    CHECK(sweep.numOutside == 0);
+  }
+  SUBCASE("Bounded at the reference alone, it holds the reference and misses "
+          "the blue end") {
+    // Which is what the sweep above is there to see: the index is steeper
+    // in the blue, so the blue end strays past the reference's padding
+    // where the red end does not.
+    const ExitPupil reference{lens, corner};
+    CHECK(sweepPupil(lens, reference, corner, {smdl::FRAUNHOFER_D_LINE})
+              .numOutside == 0);
+    CHECK(sweepPupil(lens, reference, corner, {380.0f}).numOutside > 0);
+    CHECK(pupil.areaFraction(corner) > reference.areaFraction(corner));
+  }
+  SUBCASE("A lens whose glasses do not disperse draws the same points with a "
+          "range as without, bit for bit") {
+    const Lens constant{dgauss50mm(), {5.0f, 0}};
+    const ExitPupil without{constant, FULL_FRAME_CORNER};
+    const ExitPupil with{constant, FULL_FRAME_CORNER, float2(380, 780)};
+    auto numDiffering{0};
+    for (const auto fraction : {0.0f, 0.5f, 1.0f}) {
+      const auto film{float2(fraction * FULL_FRAME_CORNER, 0)};
+      for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+          const auto xi{float2((i + 0.5f) / 8, (j + 0.5f) / 8)};
+          auto areaWithout{0.0f}, areaWith{0.0f};
+          const auto one{without.sample(film, xi, areaWithout)};
+          const auto two{with.sample(film, xi, areaWith)};
+          if (!hasSameBits(one.x, two.x) || !hasSameBits(one.y, two.y) ||
+              !hasSameBits(areaWithout, areaWith))
+            numDiffering++;
+        }
+      }
+    }
+    CHECK(numDiffering == 0);
+  }
+}
+
 TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   // The patent gives a half field of 39.5 degrees, which is the one
   // number of the three printed on it that only a traced ray can check.
@@ -1104,4 +1250,59 @@ TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   CHECK(filmRadius > 0);
   CHECK(filmRadius / MM ==
         doctest::Approx(2.03 * std::tan(smdl::radians(39.5f))).epsilon(0.02));
+}
+
+namespace {
+// Two lenses of about 50 mm at f/8, each with its stop in front, so that
+// the chief ray crosses the glass off the axis, where the glass's color
+// bends it: a singlet of N-SF57, the most dispersive glass in the
+// catalog, and an N-BK7/F2 achromat.
+LensPrescription singletBehindStop() {
+  auto lens{LensPrescription{}};
+  lens.surfaces.push_back(stopOf(20, 6));
+  lens.surfaces.push_back(surfaceOf(84.7f, 5, 1, 30));
+  lens.surfaces.push_back(surfaceOf(-84.7f, 0, 1, 30));
+  lens.surfaces[1].medium = catalogGlass("N-SF57");
+  return lens;
+}
+
+LensPrescription achromatBehindStop() {
+  auto lens{LensPrescription{}};
+  lens.surfaces.push_back(stopOf(10, 6));
+  lens.surfaces.push_back(surfaceOf(22.39f, 5, 1, 16));
+  lens.surfaces.push_back(surfaceOf(-22.39f, 2, 1, 16));
+  lens.surfaces.push_back(surfaceOf(-406, 0, 1, 16));
+  lens.surfaces[1].medium = catalogGlass("N-BK7");
+  lens.surfaces[2].medium = catalogGlass("F2");
+  return lens;
+}
+} // namespace
+
+TEST_CASE("Lens: the lateral color") {
+  SUBCASE("A lens with no dispersion data has none") {
+    const Lens lens{dgauss50mm(), {2.0f, 0}};
+    CHECK(lens.lateralColorAt(FULL_FRAME_CORNER) == 0);
+  }
+  SUBCASE("On the axis there is none, whatever the glass") {
+    // To within a nanometer: the chief ray is found by a scan, whose
+    // rounding leaves it a hair off the axis.
+    const Lens lens{singletBehindStop(), {2.0f, 0}};
+    CHECK(std::abs(lens.lateralColorAt(0)) < 1e-9f);
+  }
+  SUBCASE("A singlet behind its stop lands blue inside red, by tenths of a "
+          "millimeter at the corner of full frame") {
+    // Blue is bent the more, and the chief ray crosses the glass above
+    // the axis, so blue is turned further back toward it.
+    const Lens lens{singletBehindStop(), {2.0f, 0}};
+    const auto lateral{lens.lateralColorAt(FULL_FRAME_CORNER)};
+    CHECK(lateral < 0);
+    CHECK(-lateral / MM > 0.2f);
+    CHECK(-lateral / MM < 1.0f);
+  }
+  SUBCASE("An achromat of that focal length cancels nearly all of it") {
+    const Lens singlet{singletBehindStop(), {2.0f, 0}};
+    const Lens achromat{achromatBehindStop(), {2.0f, 0}};
+    CHECK(std::abs(achromat.lateralColorAt(FULL_FRAME_CORNER)) <
+          0.1f * std::abs(singlet.lateralColorAt(FULL_FRAME_CORNER)));
+  }
 }
