@@ -199,6 +199,57 @@ struct DepthOfField final {
 [[nodiscard]] DepthOfField depthOfField(float focalLength, float fNumber,
                                         float focus, float2 frameSize) noexcept;
 
+/// The thin lens fitted to a traced one, and how closely it fits: what
+/// `approximateLens()` returns, and what the preview of a camera with a
+/// lens looks through.
+struct LensApproximation final {
+  /// The thin lens: the options the fit was taken from, with the lens
+  /// gone and the field of view, the distortion, and the aperture in its
+  /// place. The frame, the framing, the focus, the blades, and the film
+  /// quantity are the lens camera's.
+  CameraOptions options{};
+
+  /// How many film radii out to the frame's corner the projection was
+  /// fitted at, and how many were dropped for lying past the image
+  /// circle.
+  ///
+  /// \{
+  size_t numFittedRadii{};
+  size_t numDroppedRadii{};
+  /// \}
+
+  /// Did the fitted projection fold over the frame, or leave too few
+  /// radii to fit? Then the thin lens is the pinhole at the lens's
+  /// paraxial focal length, with no distortion, and the corners look out
+  /// elsewhere than the lens's do.
+  bool doesFold{};
+
+  /// The largest distance on the film, in scene units, between where the
+  /// thin lens and the lens image the same chief ray, over the fitted
+  /// radii.
+  float maxChiefRayError{};
+};
+
+/// Fit the thin lens to the lens `options` names, at its focus and stop,
+/// over its frame:
+///
+/// - the projection, `tan(theta) = r (a + b s^2 + c s^4)` by least
+///   squares over 32 film radii out to the frame's corner, the chief
+///   ray's angle `theta` traced at each and `s` the radius over the
+///   corner's, so that the focal length is `1 / a` and the distortion is
+///   `k1 = b / a` and `k2 = c / a` in the thin lens's corner-normalized
+///   model;
+/// - the aperture, the entrance pupil's radius, which makes the depth of
+///   field the lens's own.
+///
+/// The thin lens takes no vignetting and no cat's eye: the approximation
+/// is of where the lens looks and what it blurs, not of how its corners
+/// darken. Builds the lens without logging, so that the report can call
+/// it too.
+///
+/// \throws smdl::Error  If the prescription cannot be a camera lens.
+[[nodiscard]] LensApproximation approximateLens(const CameraOptions &options);
+
 /// The camera: everything between a pixel coordinate and a world-space
 /// ray carrying a response weight, which is the thin lens or the traced
 /// one, the radial distortion, and the natural and mechanical

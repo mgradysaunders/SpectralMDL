@@ -6,27 +6,10 @@
 
 #include "smdl/Support/Error.h"
 
+#include "LensFixtures.h"
 #include "Render/Lens.h"
 
 namespace {
-// A surface, spelled the way the file spells one: millimeters, radius
-// signed toward the film, index of the space behind it.
-LensSurface surfaceOf(float radius, float thickness, float ior,
-                      float diameter) {
-  auto surface{LensSurface{}};
-  surface.radius = radius;
-  surface.thickness = thickness;
-  surface.ior = ior;
-  surface.diameter = diameter;
-  return surface;
-}
-
-LensSurface stopOf(float thickness, float diameter) {
-  auto surface{surfaceOf(0, thickness, 1, diameter)};
-  surface.isStop = true;
-  return surface;
-}
-
 // A biconvex lens of equal radii in air, with the stop against its back.
 //
 // The thin limit is the one case with a closed form for every paraxial
@@ -41,29 +24,6 @@ LensPrescription equiconvex(float radius, float thickness, float ior,
   lens.surfaces.push_back(surfaceOf(radius, thickness, ior, diameter));
   lens.surfaces.push_back(surfaceOf(-radius, 0, 1, diameter));
   lens.surfaces.push_back(stopOf(0, diameter));
-  return lens;
-}
-
-// The double Gauss pbrt distributes, from US 2,673,491 (Tronnier) by way
-// of Modern Lens Design p.312, scaled to 50 mm. A real design whose
-// focal length and f-number are printed on it, which is what makes it
-// the transcription check.
-LensPrescription dgauss50mm() {
-  auto lens{LensPrescription{}};
-  lens.name = "Double Gauss 50mm f/2";
-  lens.surfaces = {
-      surfaceOf(29.475f, 3.76f, 1.67f, 25.2f),
-      surfaceOf(84.83f, 0.12f, 1, 25.2f),
-      surfaceOf(19.275f, 4.025f, 1.67f, 23.0f),
-      surfaceOf(40.77f, 3.275f, 1.699f, 23.0f),
-      surfaceOf(12.75f, 5.705f, 1, 18.0f),
-      stopOf(4.5f, 17.1f),
-      surfaceOf(-14.495f, 1.18f, 1.603f, 17.0f),
-      surfaceOf(40.77f, 6.065f, 1.658f, 20.0f),
-      surfaceOf(-20.385f, 0.19f, 1, 20.0f),
-      surfaceOf(437.065f, 3.22f, 1.717f, 20.0f),
-      surfaceOf(-39.73f, 0, 1, 20.0f),
-  };
   return lens;
 }
 

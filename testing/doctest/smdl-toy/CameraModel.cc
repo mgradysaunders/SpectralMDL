@@ -5,6 +5,7 @@
 
 #include "CameraModel.h"
 #include "Options.h"
+#include "Render/Sampler.h"
 
 // The model is the one place the camera file, the body and the lens it
 // names, and the command line meet. What matters is the order they win
@@ -194,16 +195,25 @@ TEST_CASE("CameraModel: the stand-ins") {
     CHECK(!model.hasPhysicalSensor());
     CHECK(model.resolution().x == 1280);
   }
-  SUBCASE("A lens file is read, and -lens ideal puts the thin lens back") {
+  SUBCASE("A lens file is read, and -lens ideal fits the thin lens to it") {
     auto opts{files.camera("camera { lens \"singlet.lens\" }\n")};
     const auto lensed{resolveCameraModel(opts)};
     REQUIRE(lensed.options.lens);
     CHECK(lensed.options.lens->surfaces.size() == 3);
     CHECK(lensed.lensFileName == files.path("singlet.lens"));
+    CHECK(!lensed.shouldApproximateLens);
     opts.camera.lens = Flag<std::string>{"ideal", true};
     const auto ideal{resolveCameraModel(opts)};
-    CHECK(!ideal.options.lens);
-    CHECK(ideal.lensFileName.empty());
+    CHECK(ideal.shouldApproximateLens);
+    REQUIRE(ideal.options.lens);
+    CHECK(ideal.lensFileName == files.path("singlet.lens"));
+  }
+  SUBCASE("A camera whose own lens is ideal has nothing to fit") {
+    auto opts{files.camera("camera { lens ideal }\n")};
+    opts.camera.lens = Flag<std::string>{"ideal", true};
+    const auto model{resolveCameraModel(opts)};
+    CHECK(!model.options.lens);
+    CHECK(!model.shouldApproximateLens);
   }
   SUBCASE("A lens on the observer keeps the observer's frame") {
     const auto model{
@@ -603,5 +613,130 @@ TEST_CASE("CameraModel: a render of a physical sensor needs an exposure") {
             files.camera("camera { sensor \"body.sensor\" fstop 8 }\n"))),
         "; a physical sensor cannot render with a shut shutter: state "
         "'shutter'\n");
+  }
+}
+
+TEST_CASE("CameraModel: the preview") {
+  ScopedShutter shutter{0.0f, 0.01f};
+  Files files{"camera-model-preview"};
+  const auto preview{[&](const std::string &text) {
+    auto opts{files.camera(text)};
+    opts.camera.isIdeal = true;
+    return opts;
+  }};
+  SUBCASE("-ideal puts the observer on the body's frame and pixels, and "
+          "fits the thin lens to the lens") {
+    const auto model{resolveCameraModel(
+        preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" }\n"))};
+    CHECK(model.isPreview);
+    CHECK(!model.hasPhysicalSensor());
+    REQUIRE(model.previewedSensor);
+    CHECK(model.previewedSensor->name == "Test body");
+    CHECK(model.sensorFileName == files.path("body.sensor"));
+    CHECK(model.shouldApproximateLens);
+    CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
+    CHECK(model.resolution().x == 600);
+    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
+  }
+  SUBCASE("The ISO stays for the exposure, and what only the develop and "
+          "the noise use goes") {
+    const auto model{
+        resolveCameraModel(preview("camera { sensor \"body.sensor\" fstop 8 "
+                                   "iso 400 white_balance shade temperature "
+                                   "40 }\n"))};
+    REQUIRE(model.iso);
+    CHECK(*model.iso == 400.0f);
+    CHECK(model.whiteBalance.kind == WhiteBalanceKind::D65);
+    CHECK(model.temperature == 25.0f);
+  }
+  SUBCASE("A camera whose sensor is human has nothing to preview") {
+    const auto model{resolveCameraModel(preview("camera { fovy 30 }\n"))};
+    CHECK(model.isPreview);
+    CHECK(!model.previewedSensor);
+    CHECK(!model.shouldApproximateLens);
+  }
+  SUBCASE("A readout has no body to read") {
+    auto opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
+    opts.image.outputDN = files.path("shot.img");
+    CHECK_ERROR(
+        smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
+        "-output-dn reads a body out, and -ideal previews it");
+  }
+  SUBCASE("Through the thin lens, the body's film would hold its pupil "
+          "integral on axis") {
+    // At f/8 the aperture's radius is a sixteenth of the focal length, and
+    // focused at infinity the pupil integral is pi R^2 / (R^2 + f^2).
+    auto model{resolveCameraModel(
+        preview("camera { sensor \"body.sensor\" fstop 8 focus infinity }\n"))};
+    (void)buildCamera(model);
+    CHECK(model.previewIrradianceScale ==
+          doctest::Approx(3.14159265358979 / 257).epsilon(1e-5));
+  }
+  SUBCASE("Through a lens, what the lens puts on the middle of a body's "
+          "film") {
+    auto model{resolveCameraModel(
+        preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" focus "
+                "infinity }\n"))};
+    auto irradiance{model.options};
+    irradiance.filmQuantity = FilmQuantity::IRRADIANCE;
+    const Camera traced{irradiance};
+    constexpr uint32_t NUM_SAMPLES = 256;
+    double total{};
+    for (uint32_t i = 0; i < NUM_SAMPLES; i++) {
+      Sampler sampler{};
+      sampler.startPixelSample(uint32_t(200 * 600 + 300), i);
+      total += double(traced.sample(300, 200, sampler).weight);
+    }
+    (void)buildCamera(model);
+    CHECK(model.previewIrradianceScale ==
+          doctest::Approx(total / NUM_SAMPLES).epsilon(0.02));
+  }
+  SUBCASE("A shut shutter leaves no exposure to simulate") {
+    ScopedShutter shut{0.0f, 0.0f};
+    auto opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
+    CHECK_ERROR(smdl::catchAndReturnError([&] {
+                  refuseUnrenderable(resolveCameraModel(opts), opts);
+                }),
+                "-ideal exposes the picture as the body would");
+  }
+  SUBCASE("The report says what the preview stands in for") {
+    const auto report{describeCamera(resolveCameraModel(
+        preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" }\n")))};
+    CHECK_CONTAINS(report, ", previewed with -ideal\n");
+    CHECK_CONTAINS(report, "  preview: the thin lens fitted to it, a focal "
+                           "length of ");
+    CHECK_CONTAINS(report, "sensor: the observer, previewing 'Test body' ");
+  }
+}
+
+TEST_CASE("CameraModel: the resolution scale") {
+  ScopedShutter shutter{0.0f, 0.0f};
+  Files files{"camera-model-resolution-scale"};
+  SUBCASE("A body renders exactly its own pixels, so it is refused") {
+    auto opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
+    opts.image.resolutionScale = Flag<float>{0.25f, true};
+    CHECK_ERROR(
+        smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
+        "-resolution-scale renders a smaller picture of the frame, "
+        "and a body renders exactly its own pixels");
+  }
+  SUBCASE("Under -ideal the body's frame keeps its size over fewer pixels") {
+    auto opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
+    opts.camera.isIdeal = true;
+    opts.image.resolutionScale = Flag<float>{0.25f, true};
+    const auto model{resolveCameraModel(opts)};
+    CHECK(model.resolution().x == 150);
+    CHECK(model.resolution().y == 100);
+    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
+  }
+  SUBCASE("For the observer it scales -resolution over the same frame") {
+    auto opts{baseOptions()};
+    opts.image.resolutionScale = Flag<float>{0.5f, true};
+    const auto model{resolveCameraModel(opts)};
+    CHECK(model.resolution().x == 640);
+    CHECK(model.resolution().y == 360);
+    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.options.frameSize.x ==
+          doctest::Approx(1e-3f * 24.0f * 1280.0f / 720.0f));
   }
 }

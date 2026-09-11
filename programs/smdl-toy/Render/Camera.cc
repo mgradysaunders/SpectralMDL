@@ -1,6 +1,8 @@
 #include "Render/Camera.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Support/Error.h"
@@ -30,6 +32,48 @@ namespace {
       std::sqrt(std::max(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
   return imageIdeal;
 }
+
+// Where the radial distortion map `1 + k1 t^2 + k2 t^4` of the
+// corner-normalized radius `t` stops increasing, which folds the image
+// over itself, or a negative number for a map that stays monotone out to
+// the corner. Scanned rather than solved, so combinations of the two
+// coefficients are covered as well as either alone.
+[[nodiscard]] float distortionFoldAt(float k1, float k2) noexcept {
+  constexpr int NUM_STEPS = 512;
+  const float k1Times3 = 3 * k1;
+  const float k2Times5 = 5 * k2;
+  for (int i = 0; i <= NUM_STEPS; i++) {
+    const float t = float(i) / float(NUM_STEPS);
+    const float t2 = t * t;
+    if (!(1 + t2 * (k1Times3 + t2 * k2Times5) > 0)) return t;
+  }
+  return -1;
+}
+
+// The film radii out to the corner `approximateLens()` fits the
+// projection at.
+constexpr int NUM_FIT_RADII = 32;
+
+// Solve the normal equations `m x = b` of a three-term least squares fit
+// by Cramer's rule, or say they are singular.
+[[nodiscard]] bool solveNormalEquations(const double (&m)[3][3],
+                                        const double (&b)[3],
+                                        double (&x)[3]) noexcept {
+  const auto det{[](const double (&a)[3][3]) {
+    return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+           a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+           a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  }};
+  const double d{det(m)};
+  if (!(std::abs(d) > 0)) return false;
+  for (int k = 0; k < 3; k++) {
+    double replaced[3][3]{};
+    for (int i = 0; i < 3; i++)
+      for (int j = 0; j < 3; j++) replaced[i][j] = j == k ? b[i] : m[i][j];
+    x[k] = det(replaced) / d;
+  }
+  return true;
+}
 } // namespace
 
 DepthOfField depthOfField(float focalLength, float fNumber, float focus,
@@ -54,6 +98,89 @@ DepthOfField depthOfField(float focalLength, float fNumber, float focus,
   return result;
 }
 
+LensApproximation approximateLens(const CameraOptions &options) {
+  SMDL_SANITY_CHECK(options.lens.has_value());
+  auto result{LensApproximation{}};
+  const float focus{options.focus > 0
+                        ? options.focus
+                        : length(options.lookTo - options.lookFrom)};
+  const Lens lens{*options.lens,
+                  LensOptions{std::isinf(focus) ? 0.0f : focus, options.fStop,
+                              options.blades,
+                              smdl::radians(options.bladeAngleDeg)}};
+  const float frameHeight{options.frameSize.y};
+  const float halfDiagonal{
+      0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
+  // The projection in units of the corner radius: the chief ray's tangent
+  // at `s` is `A s + B s^3 + C s^5`, whose coefficients are the corner
+  // radius times `a`, `b`, and `c`. Fitting the tangent rather than the
+  // tangent over the radius weighs each radius by how far a mismatch
+  // moves the image on the film.
+  auto radii{std::vector<double>()};
+  auto tangents{std::vector<double>()};
+  double normal[3][3]{};
+  double moment[3]{};
+  for (int i = 1; i <= NUM_FIT_RADII; i++) {
+    const double s{double(i) / NUM_FIT_RADII};
+    const float theta{lens.fieldAngleAt(float(s) * halfDiagonal)};
+    if (!(theta >= 0 && theta < 0.5f * PI)) {
+      result.numDroppedRadii++;
+      continue;
+    }
+    const double basis[3]{s, s * s * s, s * s * s * s * s};
+    const double tangent{std::tan(double(theta))};
+    for (int k = 0; k < 3; k++) {
+      for (int l = 0; l < 3; l++) normal[k][l] += basis[k] * basis[l];
+      moment[k] += basis[k] * tangent;
+    }
+    radii.push_back(s);
+    tangents.push_back(tangent);
+  }
+  result.numFittedRadii = radii.size();
+  double coefficients[3]{};
+  const bool hasFit{radii.size() >= 3 &&
+                    solveNormalEquations(normal, moment, coefficients) &&
+                    coefficients[0] > 0};
+  auto k1{hasFit ? float(coefficients[1] / coefficients[0]) : 0.0f};
+  auto k2{hasFit ? float(coefficients[2] / coefficients[0]) : 0.0f};
+  if (!hasFit || distortionFoldAt(k1, k2) >= 0) {
+    result.doesFold = true;
+    coefficients[0] = double(halfDiagonal) / double(lens.focalLength());
+    coefficients[1] = coefficients[2] = 0;
+    k1 = k2 = 0;
+  }
+  const double A{coefficients[0]}, B{coefficients[1]}, C{coefficients[2]};
+  // The thin lens's focal length in image heights, `1 / (a H)`.
+  const double focalLength{double(halfDiagonal) / (A * double(frameHeight))};
+  // Where the thin lens images each traced chief ray: the radius whose
+  // tangent it is, by Newton's method on the monotone map.
+  for (size_t i = 0; i < radii.size(); i++) {
+    auto s{radii[i]};
+    for (int iteration = 0; iteration < 16; iteration++) {
+      const double s2{s * s};
+      const double slope{A + s2 * (3 * B + s2 * 5 * C)};
+      if (!(slope > 0)) break;
+      s -= (s * (A + s2 * (B + s2 * C)) - tangents[i]) / slope;
+    }
+    result.maxChiefRayError =
+        std::max(result.maxChiefRayError,
+                 float(std::abs(s - radii[i]) * double(halfDiagonal)));
+  }
+  auto &thin{result.options};
+  thin = options;
+  thin.lens.reset();
+  thin.fovYDeg = 2 * smdl::degrees(std::atan(0.5f / float(focalLength)));
+  thin.fStop = 0;
+  thin.aperture = lens.entrancePupilRadius();
+  thin.distortionK1 = k1;
+  thin.distortionK2 = k2;
+  thin.shouldFitDistortion = false;
+  thin.vignetting = 0;
+  thin.catEye = 0;
+  thin.catEyeRadius = 0;
+  return result;
+}
+
 Camera::Camera(const CameraOptions &options) {
   if (options.blades != 0 && options.blades < 3)
     throw smdl::Error("expected -blades to be 0 (a round lens) or at "
@@ -67,24 +194,16 @@ Camera::Camera(const CameraOptions &options) {
   if (!(options.frameSize.x > 0 && options.frameSize.y > 0))
     throw smdl::Error("expected the frame to have a size");
   // The radial distortion map must stay monotone over the frame or the
-  // image folds over itself. Scan rather than solve, so combinations of
-  // the two coefficients are covered as well as either alone; the radius
-  // is corner-normalized, so this is aspect independent.
-  if (options.distortionK1 != 0 || options.distortionK2 != 0) {
-    constexpr int NUM_STEPS = 512;
-    const float k1Times3 = 3 * options.distortionK1;
-    const float k2Times5 = 5 * options.distortionK2;
-    for (int i = 0; i <= NUM_STEPS; i++) {
-      const float t = float(i) / float(NUM_STEPS);
-      const float t2 = t * t;
-      if (!(1 + t2 * (k1Times3 + t2 * k2Times5) > 0))
-        throw smdl::Error(smdl::concat(
-            "the distortion folds the image at ", t,
-            " of the corner radius, where the radial map stops increasing. "
-            "Reduce -distortion-k1, which must exceed -1/3 on its own, or "
-            "-distortion-k2"));
-    }
-  }
+  // image folds over itself; the radius is corner-normalized, so this is
+  // aspect independent.
+  if (const float t{
+          distortionFoldAt(options.distortionK1, options.distortionK2)};
+      t >= 0)
+    throw smdl::Error(smdl::concat(
+        "the distortion folds the image at ", t,
+        " of the corner radius, where the radial map stops increasing. "
+        "Reduce -distortion-k1, which must exceed -1/3 on its own, or "
+        "-distortion-k2"));
   mNumPixelsX = float(options.resolution.x);
   mNumPixelsY = float(options.resolution.y);
   mAspectRatio = mNumPixelsX / mNumPixelsY;

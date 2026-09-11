@@ -72,6 +72,13 @@ cl::opt<std::string> optSensor{
              "irradiance at the sensor, and its bands accumulate beside "
              "the spectral film"),
     cl::cat(catCamera)};
+cl::opt<bool> optIdeal{
+    "ideal",
+    cl::desc("Preview the camera: a '.lens' becomes the thin lens fitted to "
+             "it, a '.sensor' body becomes the CIE observer on the body's "
+             "frame and pixels, and the picture is exposed as the body would "
+             "expose it"),
+    cl::init(false), cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -212,6 +219,12 @@ cl::opt<int2> optResolution{
     "resolution",
     cl::desc("The image dimensions in pixels (default: 1280,720)"),
     cl::init(int2{1280, 720}), cl::cat(catImage)};
+cl::opt<float> optResolutionScale{
+    "resolution-scale",
+    cl::desc("Render this fraction of the frame's pixels, a smaller picture "
+             "of the same frame, for the observer and under -ideal; a body "
+             "renders exactly its own pixels (default: 1)"),
+    cl::init(1.0f), cl::cat(catImage)};
 cl::opt<int4> optCropWindow{
     "crop-window",
     cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
@@ -699,6 +712,9 @@ Options parseCommandLine(int argc, char **argv) {
           "and a physical frame is a '.sensor' file's 'pixels' and "
           "'pitch', which -sensor names"));
   }
+  if (!(float(optResolutionScale) > 0 && float(optResolutionScale) <= 1))
+    throw smdl::Error("expected -resolution-scale to be greater than 0 and at "
+                      "most 1");
   if (optCatEyeRadius.getNumOccurrences() > 0 && !(float(optCatEyeRadius) > 0))
     throw smdl::Error("expected -cat-eye-radius to be positive");
   if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
@@ -752,6 +768,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.focalLengthMM = flag(optFocalLength);
   opts.camera.lens = flag(optLens);
   opts.camera.sensor = flag(optSensor);
+  opts.camera.isIdeal = bool(optIdeal);
   opts.camera.shutter = flag(optShutter);
   opts.camera.readout = flag(optReadout);
   opts.camera.fStop = flag(optFStop);
@@ -776,6 +793,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
 
   opts.image.resolution = flag(optResolution);
+  opts.image.resolutionScale = flag(optResolutionScale);
   opts.image.cropWindow = flag(optCropWindow);
   opts.image.rgbPolicy.shouldForceFalseColor =
       bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;

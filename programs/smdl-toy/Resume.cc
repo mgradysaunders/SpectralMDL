@@ -45,6 +45,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "wavelength-range",
                                                          "wavelengths",
                                                          "crop-window",
+                                                         "resolution-scale",
                                                          "guide-bsdf-fraction",
                                                          "guide-split",
                                                          "mnee-depth",

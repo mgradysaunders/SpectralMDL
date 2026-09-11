@@ -91,6 +91,13 @@ struct CameraFlags final {
   /// as typed.
   Flag<std::string> sensor{};
 
+  /// `-ideal`: preview the camera. The model resolves from the files and
+  /// the other flags as it would without it, and is then projected: a
+  /// traced lens becomes the thin lens fitted to it, a body becomes the
+  /// observer on the body's frame and pixels, and the picture is exposed
+  /// as the body would expose it. See `CameraModel::isPreview`.
+  bool isIdeal{};
+
   /// The seconds the shutter stays open, 0 for shut. When it opens is
   /// `SceneOptions::time`, which no camera file has a say in.
   Flag<float> shutter{};
@@ -154,6 +161,11 @@ struct ImageOptions final {
   /// physical sensor renders exactly its own pixels, and a `-resolution`
   /// that disagrees is refused rather than stretched.
   Flag<int2> resolution{};
+
+  /// The fraction of the frame's pixels to render: a smaller picture of
+  /// the same frame, the body's or the observer's. A body renders exactly
+  /// its own pixels, so it is refused in realistic mode.
+  Flag<float> resolutionScale{};
 
   /// The sub-rectangle to render, `x0,y0,x1,y1`. The default is not a
   /// window at all, so `given` is what says whether to narrow the frame.

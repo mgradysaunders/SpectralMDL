@@ -47,8 +47,8 @@ struct Frame final {
   Layout layout{};
 
   /// The camera resolved from the camera file, the files it names, and
-  /// the command line; see `CameraModel`. Its options are what the
-  /// camera below is built from, once `-autolook` has had its say.
+  /// the command line; see `CameraModel`. `buildCamera()` builds the
+  /// camera below from it, once `-autolook` has had its say.
   CameraModel model{};
 
   /// Does each sample draw its own wavelength grid? `-wavelength-jitter`

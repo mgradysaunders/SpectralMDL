@@ -1,5 +1,7 @@
 #include "Fixtures.h"
 
+#include "LensFixtures.h"
+
 #include <cmath>
 
 #include "Render/Camera.h"
@@ -583,5 +585,60 @@ TEST_CASE("Camera: the natural vignetting is taken in image heights") {
           cameraSpaceSample(sensor, size_t(pixel.x), size_t(pixel.y), 3)};
       CHECK(a.weight == doctest::Approx(b.weight / pupil).epsilon(1e-4));
     }
+  }
+}
+
+TEST_CASE("Camera: the thin lens fitted to a lens") {
+  auto options{openOptions()};
+  options.lens = dgauss50mm();
+  options.frameSize = float2(0.036f, 0.024f);
+  options.focus = INF;
+  const Lens lens{*options.lens, LensOptions{}};
+  SUBCASE("On full frame its chief rays land within a sixth of a 6 um "
+          "pixel, and the edge of its field is the lens's") {
+    const auto fit{approximateLens(options)};
+    CHECK(!fit.doesFold);
+    CHECK(fit.numFittedRadii == 32);
+    CHECK(fit.numDroppedRadii == 0);
+    CHECK(fit.maxChiefRayError < 1e-6f);
+    // The middle of the top edge through the thin lens's own map: the
+    // half height over the focal length, stretched by the distortion at
+    // that radius.
+    const float focalLength{0.5f /
+                            std::tan(smdl::radians(fit.options.fovYDeg / 2))};
+    const float s{0.012f / (0.5f * std::hypot(0.036f, 0.024f))};
+    const float stretch{
+        1 +
+        s * s * (fit.options.distortionK1 + s * s * fit.options.distortionK2)};
+    CHECK(0.5f * stretch / focalLength ==
+          doctest::Approx(std::tan(lens.fieldAngleAt(0.012f))).epsilon(1e-4));
+  }
+  SUBCASE("It takes the lens's entrance pupil and none of its vignetting") {
+    const auto fit{approximateLens(options)};
+    CHECK(!fit.options.lens);
+    CHECK(fit.options.aperture == lens.entrancePupilRadius());
+    CHECK(fit.options.fStop == 0);
+    CHECK(fit.options.vignetting == 0);
+    CHECK(fit.options.catEye == 0);
+    CHECK(!fit.options.shouldFitDistortion);
+    // So its f-number is the lens's, over the fitted focal length.
+    CHECK(Camera{fit.options}.fNumber() ==
+          doctest::Approx(lens.fNumber()).epsilon(0.005));
+  }
+  SUBCASE("Radii past the image circle are dropped") {
+    options.frameSize = float2(0.06f, 0.04f);
+    const auto fit{approximateLens(options)};
+    CHECK(fit.numDroppedRadii > 0);
+    CHECK(fit.numFittedRadii + fit.numDroppedRadii == 32);
+  }
+  SUBCASE("Too few radii to fit fall back to the paraxial pinhole") {
+    // Two of the radii land inside the 55 mm circle of a frame this size.
+    options.frameSize = float2(0.7f, 0.5f);
+    const auto fit{approximateLens(options)};
+    CHECK(fit.doesFold);
+    CHECK(fit.options.distortionK1 == 0);
+    CHECK(fit.options.distortionK2 == 0);
+    CHECK(0.5f * 0.5f / std::tan(smdl::radians(fit.options.fovYDeg / 2)) ==
+          doctest::Approx(lens.focalLength()).epsilon(1e-4));
   }
 }

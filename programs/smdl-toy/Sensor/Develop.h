@@ -73,6 +73,16 @@ struct RGBPolicy final {
 /// +0.79 EV, close to darktable's +0.7 EV default.
 constexpr double DEVELOP_MIDDLE_GRAY{0.18};
 
+/// The linear luminance the physical develop gives a neutral whose
+/// focal-plane exposure is `luxSeconds` at ISO `iso`, whatever the body:
+/// `0.18 S H / (q K)`, which puts the exposure the meter aims at on
+/// middle gray. `developReadout()` exposes to it, and so does the preview
+/// of a body under -ideal.
+[[nodiscard]] constexpr double developedLuminance(double iso,
+                                                  double luxSeconds) noexcept {
+  return DEVELOP_MIDDLE_GRAY * iso * luxSeconds / (METER_Q * METER_K);
+}
+
 /// How a mosaic becomes one value per band at every pixel.
 enum class DemosaicMethod {
   /// No tile: every pixel holds every band already.

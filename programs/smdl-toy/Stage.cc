@@ -97,7 +97,7 @@ Frame resolveFrame(const Options &opts) {
   // slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
   if (!opts.camera.autolook.isEnabled && !model.shouldAutofocus)
-    camera.emplace(model.options);
+    camera.emplace(buildCamera(model));
   const auto resolution{model.options.resolution};
   const auto numPixelsX{size_t(resolution.x)};
   const auto numPixelsY{size_t(resolution.y)};
@@ -408,7 +408,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     }
     cameraOptions.focus = solveAutofocus(*scene, autofocusOptions).distance;
   }
-  if (!camera) camera.emplace(cameraOptions);
+  if (!camera) camera.emplace(buildCamera(frame.model));
 
   // The environment, merged from the same three sources as the camera and
   // in the same order: the defaults, the layout's 'sky' directive, and

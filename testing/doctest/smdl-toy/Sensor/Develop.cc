@@ -430,13 +430,23 @@ TEST_CASE("Develop: a metered neutral develops to middle gray") {
   shot.exposure = seconds;
   shot.fNumber = 8;
   shot.iso = metered.iso;
+  // What `developedLuminance()` says the neutral develops to, at the
+  // exposure of 2.03 lux for 10 ms: middle gray at the metered ISO.
+  auto expected{developedLuminance(metered.iso, 0.0203)};
+  CHECK(expected == doctest::Approx(DEVELOP_MIDDLE_GRAY).epsilon(0.01));
+  SUBCASE("At the ISO the meter asks for") {}
+  SUBCASE("At a stated ISO, where developedLuminance() puts it") {
+    shot.iso = 800;
+    expected = developedLuminance(800, 0.0203);
+    CHECK(expected == doctest::Approx(2 * DEVELOP_MIDDLE_GRAY).epsilon(0.01));
+  }
   const Detector detector{sensor, shot};
   const auto readout{detector.readOut(
       bandFilm, DetectorReadoutOptions{0, DetectorNoise::NONE}, whole)};
   const auto rgbImage{
       developReadout(sensor, detector, readout, WhiteBalance{}, whole, false)};
   for (const auto value : rgbImage)
-    CHECK(double(value) == doctest::Approx(DEVELOP_MIDDLE_GRAY).epsilon(0.01));
+    CHECK(double(value) == doctest::Approx(expected).epsilon(0.01));
 }
 
 TEST_CASE("Develop: a body that cannot carry color still develops") {

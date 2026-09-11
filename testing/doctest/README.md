@@ -94,17 +94,19 @@ body meaningless. `CHECK` is for the claim itself.
 
 ## Fixtures
 
-Three headers, layered the way `lib/Support/` -> `lib/` -> `programs/` is,
-because the two suites cannot share renderer types.
+Headers in three layers, the way `lib/Support/` -> `lib/` -> `programs/`
+is, because the two suites cannot share renderer types.
 
     Fixtures.h                    both suites; needs only the public library
     smdl/CompileFixtures.h        the library suite
     smdl-toy/RenderFixtures.h     the renderer suite
     smdl-toy/RigFixtures.h        the glTF rigs the deformation tests read
+    smdl-toy/LensFixtures.h       the published prescriptions the lens and
+                                  camera tests share
 
 `Fixtures.h` is reachable as `#include "Fixtures.h"` from any depth in
 either suite, because the framework's own include directory is exported.
-The other three sit beside the suite they serve, which is on that suite's
+The others sit beside the suite they serve, which is on that suite's
 include path.
 
 **A test owns nothing global.** Anything process-wide that a test installs
