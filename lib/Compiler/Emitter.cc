@@ -210,6 +210,8 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       srcLoc.throwError("conflicting definitions of '@(foreign)' function ",
                         Quoted(name));
     }
+    context.compiler.mForeignFunctionSourceLocations.try_emplace(
+        std::string(name), srcLoc);
     llvmFunc = static_cast<llvm::Function *>(llvmCallee.getCallee());
     return;
   }
@@ -515,8 +517,7 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
   if (importPath.size() < 2)
     decl.srcLoc.throwError("invalid import path (missing '::*'?)");
   auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
-  auto importedModule{
-      resolveModule(importPath.dropBack(), isAbs, decl.srcLoc.module_)};
+  auto importedModule{resolveModule(importPath.dropBack(), isAbs, decl.srcLoc)};
   if (!importedModule)
     decl.srcLoc.throwError("cannot resolve import identifier ",
                            Quoted(join(importPath, "::")),
@@ -2982,11 +2983,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   // prologue: a file that cannot be found is a warning, and the
   // resource type is default-constructed.
   //
-  // The warning goes through 'logMissingFileOnce' rather than
-  // 'srcLoc.logWarn' because this runs at emission time and a material
-  // body is emitted three times (see 'Type.cc': the 'evaluate',
-  // 'opacityEvaluate' and 'thinWalledProbe' functions each inline it),
-  // which would otherwise report the same missing file three times over.
+  // The warning goes through 'logResourceWarningOnce' rather than
+  // 'srcLoc.logWarn' because this runs at emission time, and a material
+  // body is emitted once for each function 'Type.cc' generates from it.
   // Resources that are found but fail to load already report once,
   // memoized by file hash in 'loadResource'.
   auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
@@ -3119,8 +3118,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto gridName{std::string(args[2].value.getComptimeString())};
     return withLocatedFile(
         fileName, texture3DType, [&](const std::string &resolvedFileName) {
-          auto &voxelGrid{context.compiler.loadVoxelGrid(resolvedFileName,
-                                                         gridName, srcLoc)};
+          auto &voxelGrid{context.compiler.loadVoxelGrid(
+              resolvedFileName, gridName, resourceSourceLocation(srcLoc))};
           // A load failure was already reported as a warning by
           // 'loadVoxelGrid', so quietly return the default (invalid)
           // texture, matching the missing-file behavior.
@@ -3168,8 +3167,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     return withLocatedFile(
         fileNameAndGamma.first, texturePtexType,
         [&](const std::string &resolvedFileName) {
-          auto &ptexture{
-              context.compiler.loadPtexture(resolvedFileName, srcLoc)};
+          auto &ptexture{context.compiler.loadPtexture(
+              resolvedFileName, resourceSourceLocation(srcLoc))};
           auto valuePtr{
               context.getComptimePtr(context.getVoidPointerType(),
                                      ptexture.texture ? &ptexture : nullptr)};
@@ -3185,8 +3184,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     return withLocatedFile(
         fileName, bsdfMeasurementType,
         [&](const std::string &resolvedFileName) {
-          auto &bsdfMeasurement{
-              context.compiler.loadBSDFMeasurement(resolvedFileName, srcLoc)};
+          auto &bsdfMeasurement{context.compiler.loadBSDFMeasurement(
+              resolvedFileName, resourceSourceLocation(srcLoc))};
           auto bufferPtrType{context.getPointerType(context.getFloatType(
               bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
           return invoke(
@@ -3226,8 +3225,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                    &smdlLightProfileDirectionSample);
     return withLocatedFile(
         fileName, lightProfileType, [&](const std::string &resolvedFileName) {
-          auto &lightProfile{
-              context.compiler.loadLightProfile(resolvedFileName, srcLoc)};
+          auto &lightProfile{context.compiler.loadLightProfile(
+              resolvedFileName, resourceSourceLocation(srcLoc))};
           return invoke(
               lightProfileType,
               {Argument{"ptr",
@@ -3265,16 +3264,18 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         fileName, spectralCurveType,
         [&](const std::string &resolvedFileName) -> Value {
           auto spectrumView{SpectrumView{}};
+          const auto userSrcLoc{resourceSourceLocation(srcLoc)};
           if (args.size() == 1) {
             spectrumView =
-                context.compiler.loadSpectrum(resolvedFileName, srcLoc);
+                context.compiler.loadSpectrum(resolvedFileName, userSrcLoc);
           } else if (args[1].value.isComptimeString()) {
             spectrumView = context.compiler.loadSpectrum(
                 resolvedFileName,
-                std::string(args[1].value.getComptimeString()), srcLoc);
+                std::string(args[1].value.getComptimeString()), userSrcLoc);
           } else if (args[1].value.isComptimeInt()) {
             spectrumView = context.compiler.loadSpectrum(
-                resolvedFileName, int(args[1].value.getComptimeInt()), srcLoc);
+                resolvedFileName, int(args[1].value.getComptimeInt()),
+                userSrcLoc);
           }
           if (spectrumView.curveValues.empty()) {
             return invoke(spectralCurveType, {}, srcLoc);
@@ -3988,11 +3989,29 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
 }
 
 Module *Emitter::resolveModule(Span<const std::string_view> importPath,
-                               bool isAbs, Module *thisModule) {
+                               bool isAbs, const SourceLocation &srcLoc) {
+  auto thisModule{srcLoc.module_};
   llvm::SmallVector<std::string_view> resolvedImportPath{};
   resolveImportUsingAliases(std::numeric_limits<uint64_t>::max(), importPath,
                             resolvedImportPath);
   SMDL_SANITY_CHECK(!resolvedImportPath.empty());
+  // A module still in progress is one that imports this one, directly or
+  // not, so importing it back closes a cycle.
+  auto compileImportedModule{[&](Module &otherModule) {
+    const auto &inProgress{context.modulesInProgress};
+    if (auto itr{std::find(inProgress.begin(), inProgress.end(), &otherModule)};
+        itr != inProgress.end()) {
+      auto message{
+          concat("cyclic import: ", Quoted(otherModule.getQualifiedName()))};
+      for (auto next{itr + 1}; next != inProgress.end(); ++next)
+        message += concat(next == itr + 1 ? " imports " : ", which imports ",
+                          Quoted((*next)->getQualifiedName()));
+      message +=
+          concat(", which imports ", Quoted(otherModule.getQualifiedName()));
+      srcLoc.throwError(std::move(message));
+    }
+    if (auto error{otherModule.compile(context)}) throw std::move(*error);
+  }};
 
   auto findModuleInDirectory{[&](std::string dirPath) -> Module * {
     for (auto resolvedImportDirPath :
@@ -4027,7 +4046,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
           otherModule->getName() == resolvedImportPath.back() &&
           (isPathEquivalent(dirPath, otherDirPath) ||
            lexicalDirPath == normalizePath(otherDirPath))) {
-        if (auto error{otherModule->compile(context)}) throw std::move(*error);
+        compileImportedModule(*otherModule);
         return otherModule.get();
       }
     }
@@ -4055,9 +4074,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     if (auto itr{modules.find(qualifiedName)};
         itr != modules.end() && itr->second != thisModule) {
       auto otherModule{itr->second};
-      if (auto error{otherModule->compile(context)}) {
-        throw std::move(*error);
-      }
+      compileImportedModule(*otherModule);
       return otherModule;
     }
     return nullptr;

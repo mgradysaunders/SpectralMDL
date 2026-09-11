@@ -264,29 +264,27 @@ private:
   /// `compile()` has not run yet or `jitCompile()` already consumed it).
   [[nodiscard]] llvm::Module &getLLVMModule();
 
-  /// Warn about the resource `fileName`, at most once per distinct file
-  /// name per `compile()`.
+  /// Warn about a resource at most once per distinct `key` per `compile()`.
+  /// The key is the file name, or the file name and what was looked up
+  /// inside the file.
   ///
   /// This is for diagnostics raised while emitting a `#load_*` intrinsic,
   /// which is not once per mention in the source: a material body is
-  /// emitted three times (once each for the `evaluate`, `opacityEvaluate`
-  /// and `thinWalledProbe` functions that `Type.cc` generates), so a
+  /// emitted once for each function `Type.cc` generates from it (the
+  /// `evaluate` and `opacityEvaluate` entry points and the probes), so a
   /// `texture_2d("missing.png")` in a material would otherwise report the
-  /// same warning three times over.
+  /// same warning several times over.
   ///
-  /// The `load*()` functions below need no such thing: they memoize by file
-  /// hash, so a resource that is found but fails to load already reports
-  /// exactly once. A file that is never found has no hash to key on, which
-  /// is how it slips past that memo.
+  /// The `load*()` functions below need no such thing for the file itself:
+  /// they memoize by file hash, so a resource that is found but fails to
+  /// load already reports exactly once. A file that is never found has no
+  /// hash to key on, which is how it slips past that memo.
   ///
-  /// Deduplication is by file name alone, deliberately. The source location
-  /// cannot help: all three reports carry the same one, the builtin
-  /// `texture_2d` constructor in `api.smdl`, not the call site in the
-  /// user's module.
+  /// The key leaves out the source location on purpose, so that a missing
+  /// file is one warning however many materials name it.
   ///
   void logResourceWarningOnce(const SourceLocation &srcLoc,
-                              const std::string &fileName,
-                              std::string_view message);
+                              const std::string &key, std::string_view message);
 
   /// Load image.
   ///
@@ -539,11 +537,11 @@ private:
   ///
   MD5FileHasher mFileHasher{};
 
-  /// The file names already reported by `logResourceWarningOnce()`. Not
-  /// keyed on `MD5FileHash` like the resource tables below, because the
-  /// usual reason to warn is that the file does not exist, and a file that
-  /// does not exist has nothing to hash.
-  std::unordered_set<std::string> mWarnedResourceFileNames;
+  /// The keys already reported by `logResourceWarningOnce()`. Not keyed on
+  /// `MD5FileHash` like the resource tables below, because the usual reason
+  /// to warn is that the file does not exist, and a file that does not
+  /// exist has nothing to hash.
+  std::unordered_set<std::string> mWarnedResourceKeys;
 
   /// The images used by textures, keyed by content hash alone: one
   /// decoded image per file, however its references differ in gamma or
@@ -656,10 +654,19 @@ private:
   /// The LLVM JIT.
   std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
 
-  /// Asynchronous errors reported by the LLVM JIT execution session,
-  /// accumulated so they can be surfaced in the `Error` returned by
-  /// `jitCompile()` instead of only going to standard error.
-  std::string mJITSessionErrors;
+  /// Where each `@(foreign)` function was declared, so that one the host
+  /// process does not define is reported at its declaration. Cleared by
+  /// `jitCompile()`, which frees the builtin modules these may point into.
+  std::unordered_map<std::string, SourceLocation>
+      mForeignFunctionSourceLocations;
+
+  /// Is `jitCompile()` running? While it is, the errors the JIT execution
+  /// session reports collect in `mJITSessionErrors`, and lead the `Error`
+  /// it returns; at any other time they are logged as they arrive.
+  bool mIsJITCompiling{};
+
+  /// See `mIsJITCompiling`.
+  std::vector<Error> mJITSessionErrors;
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>

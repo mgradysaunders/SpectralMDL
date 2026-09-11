@@ -1,13 +1,16 @@
 /// \file
 /// The resources a compile loads and caches: the warning a missing one
-/// raises and how often, the mip chain a texture bakes, the images an
-/// optimized module drops, and the one symbol per file the JIT defines.
+/// raises and how often, the curve a spectrum library does not have, the
+/// mip chain a texture bakes, the images an optimized module drops, and
+/// the one symbol per file the JIT defines.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
 
 #include "CompileFixtures.h"
 
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -18,10 +21,10 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
   TempDir tmpDir{"missing-resource"};
   // A missing texture is a warning, not an error, and the texture reads
   // black -- so the interesting question is how many times it is reported.
-  // A material body is emitted three times ('evaluate', 'opacityEvaluate'
-  // and 'thinWalledProbe' in 'Type.cc'), and the not-found path cannot be
-  // memoized by file hash the way an actual load failure is, so without
-  // 'Compiler::logResourceWarningOnce' it would be reported three times.
+  // A material body is emitted once for each function 'Type.cc' generates
+  // from it, and the not-found path cannot be memoized by file hash the way
+  // an actual load failure is, so without 'Compiler::logResourceWarningOnce'
+  // it would be reported once per emission.
   auto materialUsing{[](std::string_view fileName) {
     auto text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
                           "export material M() = let {\n  auto t = "
@@ -60,6 +63,50 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
     CHECK(warnings.count("gone_b.png") == 1);
     CHECK(warnings.messages().size() == 2);
   }
+}
+
+TEST_CASE("Compiler: the curve a spectrum library does not have") {
+  TempDir tmpDir{"spectrum-library-curve"};
+  // Two named curves over two wavelengths, as little-endian floats.
+  tmpDir.write("lib.sli.hdr", "ENVI\n"
+                              "file type = ENVI Spectral Library\n"
+                              "samples = 2\nlines = 2\nbands = 1\n"
+                              "header offset = 0\ndata type = 4\n"
+                              "byte order = 0\n"
+                              "wavelength units = Nanometers\n"
+                              "wavelength = {400, 700}\n"
+                              "spectra names = {grass, sand}\n");
+  auto data{std::string()};
+  for (float value : {0.1f, 0.2f, 0.3f, 0.4f}) {
+    uint32_t bits{};
+    std::memcpy(&bits, &value, sizeof(bits));
+    for (int k = 0; k < 4; k++) data += char((bits >> (8 * k)) & 0xFF);
+  }
+  tmpDir.write("lib.sli", data);
+  auto materialUsing{[](std::string_view name, std::string_view curve) {
+    return smdl::concat("export material ", name,
+                        "() = material(surface: material_surface(\n"
+                        "  scattering: df::diffuse_reflection_bsdf(\n"
+                        "    tint: color(spectral_curve(\"lib.sli\", ",
+                        curve, ")))));\n");
+  }};
+  tmpDir.write("main.mdl", smdl::concat("#smdl\nimport ::df::*;\n",
+                                        materialUsing("byName", "\"grasss\""),
+                                        materialUsing("byIndex", "7"),
+                                        materialUsing("found", "\"grass\"")));
+  const CollectedLog warnings{"spectrum library"};
+  smdl::Compiler compiler{};
+  CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
+  // Once each, however many times the material bodies were emitted, and
+  // at the line in the user's module rather than in the builtin that did
+  // the lookup.
+  REQUIRE(warnings.messages().size() == 2);
+  CHECK(warnings.count("main.mdl:5:") == 1);
+  CHECK(warnings.count("main.mdl:8:") == 1);
+  CHECK(warnings.count("<builtin") == 0);
+  CHECK(warnings.count("has no curve named 'grasss'; did you mean "
+                       "'grass'?") == 1);
+  CHECK(warnings.count("has no curve at index 7 (it has 2 curves)") == 1);
 }
 
 TEST_CASE("Compiler: the mip levels a texture bakes") {

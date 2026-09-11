@@ -260,7 +260,13 @@ public:
   }
 
   /// Maybe issue warning about an unused value.
+  ///
+  /// Builtin modules are exempt: the user cannot act on the warning, and a
+  /// compile-time condition routinely folds away a builtin's only use of a
+  /// value, as the null pointer of a resource that failed to load does.
   void maybeWarnAboutUnusedValue() const {
+    const auto *module_{getSourceLocation().module_};
+    if (module_ && module_->isBuiltin()) return;
     if (isUsed == 0 && name.size() == 1) {
       if (llvm::isa_and_present<AST::Parameter>(node)) {
         auto astParam{static_cast<AST::Parameter *>(node)};

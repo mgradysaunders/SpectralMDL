@@ -257,6 +257,37 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     CHECK_NOT_CONTAINS(warned.messages()[0], "<builtin");
     CHECK_CONTAINS(warned.messages()[0], "<string ::diag>:2:");
   }
+  SUBCASE("A malformed resource blames the line that asked for it") {
+    TempDir tmpDir{"diagnostics-malformed"};
+    tmpDir.write("bad.ies", "This is not an IES file!\n");
+    const CollectedLog warned{"bad.ies"};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(
+        compiler.addCode("::diag",
+                         "#smdl\nexport material m(uniform light_profile p = "
+                         "light_profile(\"bad.ies\")) = material();\n",
+                         tmpDir.path().string()));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(warned.messages().size() == 1);
+    CHECK_CONTAINS(warned.messages()[0], "not an IES file");
+    CHECK_NOT_CONTAINS(warned.messages()[0], "<builtin");
+    CHECK_CONTAINS(warned.messages()[0], "<string ::diag>:2:");
+  }
+  SUBCASE("An unused value is reported in user code, never in builtin code") {
+    const CollectedLog warned{"unused"};
+    smdl::Compiler compiler{};
+    // The measurement fails to load, and the null pointer it leaves folds
+    // away the only use of a variable inside the builtin 'measured_bsdf'.
+    REQUIRE_OK(compiler.addCode(
+        "::diag", "#smdl\nimport ::df::*;\n"
+                  "export material m() = material(surface: material_surface(\n"
+                  "  scattering: df::measured_bsdf(\n"
+                  "    measurement: bsdf_measurement(\"nope.mbsdf\"))));\n"
+                  "exec { int unusedLocal = 1; }\n"));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(warned.messages().size() == 1);
+    CHECK_CONTAINS(warned.messages()[0], "unused variable 'unusedLocal'");
+  }
 }
 
 TEST_CASE("Compiler: where a color and a float3 may convert") {

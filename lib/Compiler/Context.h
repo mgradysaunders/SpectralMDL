@@ -492,6 +492,11 @@ public:
   /// names.
   llvm::SmallVector<std::string_view, 4> currentNamespacePath{};
 
+  /// The modules being compiled, outermost first, each one imported by the
+  /// one before it. Maintained by `Module::compile()`, and read by
+  /// `Emitter::resolveModule()` to report a cyclic import.
+  llvm::SmallVector<const Module *, 8> modulesInProgress{};
+
 private:
   /// The builtin modules. See `get_builtin_module()`
   llvm::StringMap<BumpPtr<Module>> mBuiltinModules;

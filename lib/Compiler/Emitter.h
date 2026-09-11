@@ -1276,9 +1276,11 @@ public:
     return false;
   }
 
-  /// Resolve module.
+  /// Resolve the module `importPath` names, compiling it first if it is not
+  /// compiled yet. The import is at `srcLoc`, which is where a cyclic
+  /// import is reported.
   [[nodiscard]] Module *resolveModule(Span<const std::string_view> importPath,
-                                      bool isAbs, Module *thisModule);
+                                      bool isAbs, const SourceLocation &srcLoc);
 
   /// Resolve import using aliases in the import path. Aliases with a
   /// declaration sequence number at or above `seqLimit` are ignored: an

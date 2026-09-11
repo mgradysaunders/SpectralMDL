@@ -127,6 +127,14 @@ void ForEachPixel(
 
 namespace smdl {
 
+namespace {
+// The reason stb_image recorded for its last failure on this thread.
+[[nodiscard]] std::string stbFailureReason() {
+  const char *reason{stbi_failure_reason()};
+  return reason ? reason : "unknown error";
+}
+} // namespace
+
 float unpackHalf(const void *ptr) noexcept {
 #if __clang__
   return float(*static_cast<const _Float16 *>(ptr));
@@ -223,9 +231,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
               stbi_loadf(fileName.c_str(), &nX, &nY, &nChannels, mNumChannels);
           break;
         }
-        if (!ptr)
-          throw std::runtime_error(std::string("stb image failure: ") +
-                                   stbi_failure_reason());
+        if (!ptr) throw Error(stbFailureReason());
         // Copy into the pre-allocated texel buffer, then free the pointer.
         SMDL_SANITY_CHECK(mTexels != nullptr);
         SMDL_SANITY_CHECK(mNumTexelsX == nX);
@@ -240,7 +246,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                TINYEXR_SUCCESS) {
       // Fail if deep or multipart!
       if (version.non_image || version.multipart)
-        throw std::runtime_error("deep or multipart EXR is not supported");
+        throw Error("deep or multipart EXR is not supported");
       // Parse the header. Hold it in a shared pointer, so that exactly
       // 1 'FreeEXRHeader()' happens no matter whether the finish
       // function below runs, throws, is copied, or is dropped without
@@ -254,18 +260,19 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
       const char *err{};
       if (ParseEXRHeaderFromFile(header.get(), &version, fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
+        auto message{
+            concat("cannot parse EXR header: ", err ? err : "unknown error")};
         FreeEXRErrorMessage(err);
-        throw std::runtime_error("cannot parse EXR header");
+        throw Error(std::move(message));
       }
       int nX{header->data_window.max_x - header->data_window.min_x + 1};
       int nY{header->data_window.max_y - header->data_window.min_y + 1};
       if (nX < 0 || nY < 0)
-        throw std::runtime_error(
-            "cannot parse EXR header: invalid data window");
+        throw Error("cannot parse EXR header: invalid data window");
 
       const auto setFormatFromPixelType{[&](int pixelType) {
         if (pixelType == TINYEXR_PIXELTYPE_UINT)
-          throw std::runtime_error("uint EXR is not supported");
+          throw Error("uint EXR is not supported");
         else if (pixelType == TINYEXR_PIXELTYPE_HALF)
           mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
         else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
@@ -285,16 +292,13 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
             tinyexr::FindChannel(*header, "G"),
             tinyexr::FindChannel(*header, "B"),
             tinyexr::FindChannel(*header, "A")};
-        if (!channels[0])
-          throw std::runtime_error("expected EXR channel 'R' is missing");
-        if (!channels[1])
-          throw std::runtime_error("expected EXR channel 'G' is missing");
-        if (!channels[2])
-          throw std::runtime_error("expected EXR channel 'B' is missing");
+        if (!channels[0]) throw Error("expected EXR channel 'R' is missing");
+        if (!channels[1]) throw Error("expected EXR channel 'G' is missing");
+        if (!channels[2]) throw Error("expected EXR channel 'B' is missing");
         // NOTE: We allow missing 'A' channel!
         for (auto channel : channels)
           if (channel && channel->pixel_type != channels[0]->pixel_type)
-            throw std::runtime_error("inconsistent EXR pixel types");
+            throw Error("inconsistent EXR pixel types");
         setFormatFromPixelType(channels[0]->pixel_type);
       }
       mNumTexelsX = nX;
@@ -305,9 +309,10 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         const char *err{};
         if (LoadEXRImageFromFile(&image, header.get(), fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
-          auto message{std::string("tinyexr failed: ") + err};
+          auto message{
+              concat("cannot decode EXR: ", err ? err : "unknown error")};
           FreeEXRErrorMessage(err);
-          throw std::runtime_error(message);
+          throw Error(std::move(message));
         }
         SMDL_DEFER([&image]() { FreeEXRImage(&image); });
         SMDL_SANITY_CHECK(mNumTexelsX == image.width);
@@ -373,7 +378,10 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         }
       };
     } else {
-      throw std::runtime_error("failed to open file or recognize image format");
+      // What stb_image said on the way in speaks for tinyexr too: it is
+      // "can't fopen" exactly when tinyexr could not open the file either,
+      // and otherwise "unknown image type".
+      throw Error(stbFailureReason());
     }
     // How many levels the extent implies, which is all of the layout
     // that can be settled here: whether anything wants them is not known
