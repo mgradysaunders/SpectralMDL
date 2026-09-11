@@ -15,10 +15,6 @@ namespace {
 // contrast threshold, so the extinction it names is -ln(0.02) over it.
 constexpr float KOSCHMIEDER{3.912f};
 
-// The 550nm Rayleigh scattering coefficient in inverse meters, which is
-// the share of the Koschmieder extinction that is not aerosol.
-constexpr float RAYLEIGH_REFERENCE{float(hazeRural::RAYLEIGH_550) / 1000.0f};
-
 // The largest exponent `extinctionAt` will raise the reference
 // extinction by, which bounds a scene whose origin sits far below the
 // reference height instead of letting it become an opaque wall.
@@ -169,8 +165,8 @@ struct ChannelLerp final {
 
 [[nodiscard]] ChannelLerp channelOf(float wave) noexcept {
   ChannelLerp lerp{};
-  const float t{std::clamp((wave - float(hazeRural::WAVELENGTH_MIN)) /
-                               float(hazeRural::WAVELENGTH_DELTA),
+  const float t{std::clamp((wave - hazeRural::WAVELENGTH_MIN) /
+                               hazeRural::WAVELENGTH_DELTA,
                            0.0f, float(hazeRural::WAVELENGTH_COUNT - 1))};
   lerp.i0 = int(t);
   lerp.i1 = std::min(lerp.i0 + 1, int(hazeRural::WAVELENGTH_COUNT) - 1);
@@ -200,7 +196,7 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
   // volume.
   const float sigmaTotal{KOSCHMIEDER /
                          (1000.0f * std::max(options.visibility, 1e-3f))};
-  const float sigmaRayleigh{std::min(RAYLEIGH_REFERENCE, sigmaTotal) *
+  const float sigmaRayleigh{std::min(hazeRural::RAYLEIGH_550, sigmaTotal) *
                             metersPerSceneUnit};
   const float sigmaAerosol{sigmaTotal * metersPerSceneUnit - sigmaRayleigh};
   mSigmaRef = SpectralColor(wavelens.size());
