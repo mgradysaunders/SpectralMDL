@@ -442,7 +442,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
 
   // Channel sums of the mean shape and modes let each texel of the
   // sampling grid evaluate its broadband (channel-mean) radiance in
-  // O(1) instead of summing 421 channels. In moonlight mode the sums
+  // O(1) instead of summing every channel. In moonlight mode the sums
   // carry the per-channel lunar multiplier, so the sampling weights
   // follow the moonlit spectrum. The per-channel clamp at zero is
   // skipped here, which only perturbs the sampling weights, never the

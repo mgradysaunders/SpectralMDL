@@ -115,27 +115,27 @@ private:
 };
 
 /// An empirical clear-sky sun and sky model fitted to MODTRAN
-/// simulations, spanning the VNIR-SWIR range of 400nm to 2500nm with
-/// the rural boundary-layer aerosol family.
+/// simulations, spanning 380nm to 2500nm, the visible through the SWIR,
+/// with the rural boundary-layer aerosol family.
 ///
 /// The model is a pair of sparse polynomial fits on a universal
-/// spectral grid of 421 channels in 5nm steps: scattered sky radiance
+/// spectral grid of 425 channels in 5nm steps: scattered sky radiance
 /// as a function of view direction, and direct solar irradiance, which
 /// is exposed as the uniform radiance of a sun disk of angular radius
 /// 0.2665 degrees. Evaluation at arbitrary wavelengths linearly
-/// interpolates the grid, and wavelengths outside 400-2500nm clamp to
+/// interpolates the grid, and wavelengths outside 380-2500nm clamp to
 /// the end channels. All radiance outputs are in W/(m^2 sr nm), the
 /// library-wide spectral radiance convention, see
 /// `SunSkyOptions::scaleFactor`. Directions use +Z as the zenith. View
 /// directions beyond the trained zenith range of 88 degrees clamp to
 /// it, so the sky continues the horizon-ring values below the horizon.
 ///
-/// Held-out accuracy vs MODTRAN: sky 1.5% median spectral error (CIE
-/// dE 0.71 median), direct beam 1.7% median with 0.8% median broadband
-/// irradiance error. Baked assumptions: sea level, mid-latitude
-/// summer, surface albedo 0.15.
+/// Held-out accuracy vs MODTRAN: sky 1.0% median spectral error (CIE
+/// dE 0.50 median), direct beam 1.1% median for bright suns with 0.3%
+/// median broadband irradiance error. Baked assumptions: sea level,
+/// mid-latitude summer, surface albedo 0.15.
 ///
-/// Moonlight mode (`SunSkyOptions::moon`) reuses both fits untouched
+/// Moonlight mode (`SunSkyOptions::isMoon`) reuses both fits untouched
 /// with the source at the moon's position and multiplies every output
 /// per wavelength by the ROLO lunar-to-solar irradiance multiplier
 /// (Kieffer & Stone 2005), see `moonMultiplier()`. Not included:
@@ -161,7 +161,7 @@ public:
 
   /// The wavelength range of the model grid in nanometers. Wavelengths
   /// outside it clamp to the end channels.
-  static constexpr float WAVELENGTH_MIN_NM = 400.0f;
+  static constexpr float WAVELENGTH_MIN_NM = 380.0f;
   static constexpr float WAVELENGTH_MAX_NM = 2500.0f;
 
   /// The trained sun zenith angle range in degrees.
@@ -197,7 +197,7 @@ public:
   /// sun disk. The direction must be normalized.
   ///
   /// The wavelengths in `wavelens` must be in nanometers, need not be
-  /// sorted, and clamp to the model grid of 400-2500nm. The resulting
+  /// sorted, and clamp to the model grid of 380-2500nm. The resulting
   /// `radiance` is in W/(m^2 sr nm) times the `scaleFactor` option.
   void skyRadiance(const float3 &direction, int numWavelens,
                    const float *wavelens, float *radiance) const;

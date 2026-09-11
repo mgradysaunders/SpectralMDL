@@ -19,8 +19,17 @@ smdl::float3 makeDirection(double zenithDeg, double azimuthDeg) {
           float(std::sin(zenith) * std::sin(azimuth)), float(std::cos(zenith))};
 }
 
+// The model grid: the public wavelength range in the fit tables' 5nm steps.
+constexpr float CHANNEL_SPACING_NM{5.0f};
+constexpr int CHANNEL_COUNT{
+    int((smdl::SunSky::WAVELENGTH_MAX_NM - smdl::SunSky::WAVELENGTH_MIN_NM) /
+        CHANNEL_SPACING_NM) +
+    1};
+
 // The wavelength in nanometers of the given model channel.
-float channelWavelength(int channel) { return 400.0f + 5.0f * channel; }
+float channelWavelength(int channel) {
+  return smdl::SunSky::WAVELENGTH_MIN_NM + CHANNEL_SPACING_NM * float(channel);
+}
 
 } // namespace
 
@@ -106,10 +115,15 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
         smdl::SunSky(smdl::SunSkyOptions{makeDirection(40.0, 0.0)})};
     const auto direction{makeDirection(60.0, 120.0)};
     // A wavelength midway between grid channels must equal the average
-    // of the neighbors, and wavelengths outside 400-2500nm must clamp
-    // to the end channels.
-    const float wavelens[7] = {500.0f, 505.0f,  502.5f, 380.0f,
-                               400.0f, 2600.0f, 2500.0f};
+    // of the neighbors, and wavelengths outside the grid must clamp to
+    // the end channels.
+    const float wavelens[7] = {500.0f,
+                               505.0f,
+                               502.5f,
+                               smdl::SunSky::WAVELENGTH_MIN_NM - 10.0f,
+                               smdl::SunSky::WAVELENGTH_MIN_NM,
+                               smdl::SunSky::WAVELENGTH_MAX_NM + 100.0f,
+                               smdl::SunSky::WAVELENGTH_MAX_NM};
     float radiance[7]{};
     sunSky.skyRadiance(direction, 7, wavelens, radiance);
     CHECK(radiance[2] ==
@@ -152,13 +166,13 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
   SUBCASE("The sun disk and its solid angle agree") {
     // Broadband direct-normal irradiance at mid sun elevation must land
     // in the clear-sky range (a MODTRAN run at these parameters gives
-    // 662 W/m^2 over 0.4-2.5um), and it must decrease with airmass.
+    // 669 W/m^2 over 380-2500nm), and it must decrease with airmass.
     auto directNormalIrradiance{[](double sunZenithDeg) {
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(sunZenithDeg, 70.0);
       const auto sunSky{smdl::SunSky(options)};
       double sum{0.0};
-      for (int i = 0; i < 421; i++) {
+      for (int i = 0; i < CHANNEL_COUNT; i++) {
         const float wavelen{channelWavelength(i)};
         float radiance{};
         sunSky.sunRadiance(1, &wavelen, &radiance);
@@ -240,7 +254,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     options.moonPhase = 30.0f;
     options.moonDistanceScale = 1.1f;
     const auto moonSky{smdl::SunSky(options)};
-    const int channels[5] = {0, 30, 110, 240, 420};
+    const int channels[5] = {0, 30, 110, 240, CHANNEL_COUNT - 1};
     float wavelens[5]{};
     for (int j = 0; j < 5; j++) wavelens[j] = channelWavelength(channels[j]);
     for (const auto &direction :
