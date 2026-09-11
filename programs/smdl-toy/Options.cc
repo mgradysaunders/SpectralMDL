@@ -51,27 +51,19 @@ cl::opt<float> optFOV{"fovy",
                       cl::init(37.8f), cl::cat(catCamera)};
 cl::opt<std::string> optLens{
     "lens",
-    cl::desc("The '.lens' file to look through, overriding the camera file's "
-             "'lens' (default: none, the thin lens model)"),
+    cl::desc("The '.lens' file to look through, or 'ideal' for the thin lens, "
+             "overriding the camera file's 'lens' (default: the camera "
+             "file's, else ideal)"),
     cl::cat(catCamera)};
-cl::opt<std::string> optResponse{
-    "response",
-    cl::desc("The '.response' file holding the detector's bands to read "
-             "through, overriding the camera file's 'response' (default: "
-             "none, the spectral film alone)"),
-    cl::cat(catCamera)};
-cl::opt<float2> optSensor{
+cl::opt<std::string> optSensor{
     "sensor",
-    cl::desc("The sensor width and height in mm (default: 36,24, full "
-             "frame): with a lens it decides the field of view, with the "
-             "thin lens it sizes the pixels and what -fstop is a fraction "
-             "of"),
-    cl::init(float2{0, 0}), cl::cat(catCamera)};
-cl::opt<bool> optNormalizeLensExposure{
-    "normalize-lens-exposure",
-    cl::desc("With a lens, hold the frame's brightness when the lens or the "
-             "aperture changes, instead of exposing it by the f-number"),
-    cl::init(false), cl::cat(catCamera)};
+    cl::desc("The '.sensor' file holding the body the picture lands on, or "
+             "'human' for the CIE observer, overriding the camera file's "
+             "'sensor' (default: the camera file's, else human)\n"
+             "* a body renders exactly its own pixels, its film holds the "
+             "irradiance at the sensor, and its bands accumulate beside "
+             "the spectral film"),
+    cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -114,8 +106,9 @@ cl::opt<float> optReadout{
     cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optFStop{
     "fstop",
-    cl::desc("Enable DOF by f-number of the frame -sensor sizes (default: "
-             "35mm format)"),
+    cl::desc("Enable DOF by f-number: with the thin lens, of the focal length "
+             "its frame makes real (24 mm tall unless a body says "
+             "otherwise); with a lens, its working stop"),
     cl::init(0.0f), cl::cat(catCamera)};
 cl::opt<float> optAperture{
     "aperture",
@@ -254,8 +247,7 @@ cl::opt<std::string> optResume{
 cl::opt<std::string> optOutputDN{
     "output-dn",
     cl::desc("Also write the detector readout to this 16-bit ENVI file of "
-             "digital numbers, through the camera file's 'detector' and a "
-             "'qe' response"),
+             "digital numbers, through the camera's '.sensor' body"),
     cl::cat(catImage)};
 cl::opt<unsigned> optDetectorSeed{
     "detector-seed",
@@ -542,6 +534,12 @@ cl::opt<bool> optListObjects{
     "list-objects",
     cl::desc("List objects present in each scene file and exit"),
     cl::init(false), cl::cat(catUtility)};
+cl::opt<bool> optDescribeCamera{
+    "describe-camera",
+    cl::desc("Print what the camera resolves to (the frame, the field, the "
+             "pixels, the film, the bands, the detector) and exit, before "
+             "any scene is read; needs no scene when -camera is given"),
+    cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optJSON{"json",
                       cl::desc("With -list-objects, -list-materials, or "
                                "-report, print JSON instead of a table"),
@@ -613,10 +611,19 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected -aperture to be positive");
   if (optFocus.getNumOccurrences() > 0 && !(float(optFocus) > 0))
     throw smdl::Error("expected -focus to be positive");
-  if (optSensor.getNumOccurrences() > 0 &&
-      !(float2(optSensor).x > 0 && float2(optSensor).y > 0))
-    throw smdl::Error("expected -sensor to be a positive width and height "
-                      "in millimeters");
+  // The old spelling of the frame size, which now means a file.
+  if (optSensor.getNumOccurrences() > 0) {
+    const auto &value{std::string(optSensor)};
+    if (!value.empty() &&
+        value.find_first_not_of("0123456789.,") == std::string::npos &&
+        value.find(',') != std::string::npos)
+      throw smdl::Error(smdl::concat(
+          "-sensor ", smdl::Quoted(value),
+          " no longer takes a width and a height in millimeters: the thin "
+          "lens spans a frame 24 mm tall whose width follows the picture, "
+          "and a physical frame is a '.sensor' file's 'pixels' and "
+          "'pitch', which -sensor names"));
+  }
   if (optCatEyeRadius.getNumOccurrences() > 0 && !(float(optCatEyeRadius) > 0))
     throw smdl::Error("expected -cat-eye-radius to be positive");
   if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
@@ -668,9 +675,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.lookUp = flag(optLookUp);
   opts.camera.fovYDeg = flag(optFOV);
   opts.camera.lens = flag(optLens);
-  opts.camera.response = flag(optResponse);
-  opts.camera.sensorMM = flag(optSensor);
-  opts.camera.shouldNormalizeLensExposure = flag(optNormalizeLensExposure);
+  opts.camera.sensor = flag(optSensor);
   opts.camera.shutter = flag(optShutter);
   opts.camera.readout = flag(optReadout);
   opts.camera.fStop = flag(optFStop);
@@ -690,7 +695,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.autolook.margin = float(optAutolookMargin);
   opts.camera.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
 
-  opts.image.resolution = int2(optResolution);
+  opts.image.resolution = flag(optResolution);
   opts.image.cropWindow = flag(optCropWindow);
   opts.image.rgbPolicy.shouldForceFalseColor =
       bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
@@ -750,7 +755,7 @@ Options parseCommandLine(int argc, char **argv) {
       parseWavelengths(std::string(optWavelengths));
   opts.render.grid.wasGiven = optWavelengthRange.getNumOccurrences() > 0 ||
                               optWavelengths.getNumOccurrences() > 0;
-  opts.render.grid.shouldJitter = bool(optWavelengthJitter);
+  opts.render.grid.shouldJitter = flag(optWavelengthJitter);
   // The manifold estimator, minus what needs a scene.
   opts.render.useMNEE = bool(optMNEE);
   opts.render.shouldReportStats = bool(optReport);
@@ -787,6 +792,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.outputPlaces = std::string(optOutputPlaces);
   opts.utility.shouldListMaterials = bool(optListMaterials);
   opts.utility.shouldListObjects = bool(optListObjects);
+  opts.utility.shouldDescribeCamera = bool(optDescribeCamera);
   opts.utility.useJSON = bool(optJSON);
   opts.utility.allMaterials = bool(optCompileAllMaterials);
   opts.utility.threads = unsigned(optThreads);

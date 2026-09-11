@@ -27,8 +27,9 @@
 #include "Render/PathStats.h"
 #include "Render/PathTracing.h"
 #include "Render/Sampler.h"
-#include "Response.h"
 #include "Resume.h"
+#include "Sensor/Develop.h"
+#include "Sensor/Response.h"
 #include "Stage.h"
 #include "Tonemap.h"
 

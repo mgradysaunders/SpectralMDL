@@ -7,8 +7,15 @@
 #include "Render/Lens.h"
 #include "Render/Sampler.h"
 
-/// The camera and lens parameters, merged from the scene file's `camera`
-/// directive and the command line into plain values. The
+/// What one unit of film holds, which the sensor decides and never the
+/// lens: the observer's film holds spectral radiance, and a physical
+/// sensor's holds the spectral irradiance at the focal plane, which is
+/// what a photon-counting detector integrates. See
+/// `CameraOptions::filmQuantity`.
+enum class FilmQuantity { RADIANCE, IRRADIANCE };
+
+/// The camera and lens parameters, merged from the camera file, the
+/// files it names, and the command line into plain values. The
 /// occurrence-dependent CLI checks (mutually exclusive flags, explicitly
 /// given values that must be positive) run before this is built, so here
 /// zero uniformly means "unset" for every quantity that derives a default
@@ -48,43 +55,40 @@ struct CameraOptions final {
 
   /// The lens to look through, or none for the thin lens model.
   ///
-  /// With one, the field of view is a consequence of the sensor and the
-  /// prescription rather than an input, so `fovYDeg` becomes a way of
-  /// asking for a sensor, and the distortion, the vignetting and the
-  /// cat's eye are all emergent rather than settings. The caller refuses
-  /// those combinations rather than silently ignoring them, so nothing
-  /// here has to.
+  /// With one, the field of view is a consequence of the frame and the
+  /// prescription rather than an input, and the distortion, the
+  /// vignetting and the cat's eye are all emergent rather than settings.
+  /// The caller refuses those combinations rather than silently ignoring
+  /// them, so nothing here has to.
   std::optional<LensPrescription> lens{};
 
-  /// The sensor width and height in millimeters. With `lens`, zero
-  /// solves it from `fovYDeg`, or takes the 36 by 24 of full frame when
-  /// that is zero too; without, zero is full frame, and the size sets
-  /// the pixel pitch and the frame height `fStop` is a fraction of.
-  float2 sensorMM{};
+  /// The frame's physical size in scene units, which are meters: a
+  /// physical sensor's pixels times its pitch, or for the observer a
+  /// frame 24 mm tall whose width follows the picture. With a lens it is
+  /// what the prescription images onto and so decides the field of view;
+  /// with the thin lens it sizes the pixels a readout counts over and
+  /// makes the focal length `fStop` is a fraction of real. Never zero:
+  /// the caller decides it.
+  float2 frameSize{1e-3f * 36.0f, 1e-3f * 24.0f};
 
-  /// With `lens`, normalize the exposure to the lens's own f-number, so
-  /// that the frame holds its brightness whatever lens is on it and
-  /// however far it is stopped down. That is what the thin lens does,
-  /// where `fStop` buys depth of field and costs nothing.
+  /// What the film holds, which decides the weight a sample carries.
   ///
-  /// Otherwise, and by default, the response is the physical one: an
-  /// ideal f/1 lens reads 1 on axis and a slower one reads `1 / N^2`, so
-  /// two lenses and two apertures are on the same exposure and a fast
-  /// lens is worth what it is worth.
-  bool shouldNormalizeLensExposure{};
+  /// Radiance is the observer's: the thin lens weights by its vignetting
+  /// factor alone, and a lens is normalized to its own f-number so that
+  /// it reads the scene radiance on axis. Irradiance is a physical
+  /// sensor's: the pupil integral exactly, `(A / d^2) cos^4` for a lens
+  /// and `(pi R^2 / z^2) cos^4` for the thin lens, so that a readout
+  /// counting electrons from the film is exact.
+  FilmQuantity filmQuantity{FilmQuantity::RADIANCE};
 
-  /// The vertical field of view in degrees.
-  ///
-  /// With a lens it is not a setting but a request: the sensor height
-  /// that looks out at it is solved from the traced field angle, and the
-  /// width follows from the picture's shape. Zero takes the default
-  /// sensor instead, and `sensorMM` states the sensor outright; the two
-  /// contradict, and stating both is refused before this is built.
+  /// The vertical field of view in degrees, which the thin lens spans
+  /// over `frameSize`. Refused with a lens, whose field is the frame and
+  /// the glass together.
   float fovYDeg{37.8f};
 
   /// Enable DOF by f-number, or 0: with a lens its working stop, with
   /// the thin lens the aperture radius as a fraction of the focal length
-  /// `sensorMM` makes real. Mutually exclusive with `aperture`.
+  /// `frameSize` makes real. Mutually exclusive with `aperture`.
   float fStop{};
 
   /// Enable DOF by aperture radius in scene units, or 0.
@@ -111,6 +115,8 @@ struct CameraOptions final {
   bool shouldFitDistortion{};
 
   /// The strength of cos^4 falloff: 0 is off, 1 is the physical law.
+  /// The observer's knob: a physical sensor's irradiance weight carries
+  /// the law exactly and ignores this.
   float vignetting{};
 
   /// Mechanical vignette from the lens barrel: relative displacement at
@@ -137,11 +143,12 @@ struct CameraSample final {
   /// blocks. A zero-weight sample must still count in the pixel average
   /// to keep the darkening unbiased.
   ///
-  /// The thin lens reads 1 unless a vignetting mechanism is on. A real
-  /// lens reads the pupil integral instead, which is `1 / N^2` on axis
-  /// for an ideal lens of f-number `N` and less wherever the glass takes
-  /// something, unless `CameraOptions::shouldNormalizeLensExposure`
-  /// takes the f-number back out.
+  /// On the observer's film the thin lens reads 1 unless a vignetting
+  /// mechanism is on, and a lens reads its pupil integral normalized to
+  /// its f-number, which is 1 on axis for an ideal lens. On a physical
+  /// sensor's film both read the pupil integral itself, the thin lens's
+  /// `pi / (4 N^2)` on axis at infinity focus; see
+  /// `CameraOptions::filmQuantity`.
   float weight{1};
 
   /// The ray cone spread that seeds the LOD state, already scaled by
@@ -151,13 +158,15 @@ struct CameraSample final {
 };
 
 /// The camera: everything between a pixel coordinate and a world-space
-/// ray carrying a response weight, which is the thin lens, the radial
-/// distortion, and the natural and mechanical vignetting.
+/// ray carrying a response weight, which is the thin lens or the traced
+/// one, the radial distortion, and the natural and mechanical
+/// vignetting.
 class Camera final {
 public:
   /// Validate the value-dependent constraints (blade count, vignetting
-  /// ranges, the distortion map staying monotone over the frame),
-  /// derive everything else, and log the enabled lens effects.
+  /// ranges, the distortion map staying monotone over the frame, a pupil
+  /// to integrate irradiance over), derive everything else, and log the
+  /// enabled lens effects.
   ///
   /// Nothing here depends on the scene, so construct this before
   /// anything slow loads and a typo fails fast.
@@ -189,45 +198,26 @@ public:
     sample.ray.time = u;
   }
 
-  /// The frame's physical size in scene units: the sensor a lens covers,
-  /// or the frame the thin lens's field of view spans, which
-  /// `CameraOptions::sensorMM` states and full frame stands in for.
-  [[nodiscard]] float2 sensorSize() const noexcept {
-    return float2(mSensorWidth, mSensorHeight);
+  /// The frame's physical size in scene units, as `CameraOptions::frameSize`
+  /// gave it.
+  [[nodiscard]] float2 frameSize() const noexcept {
+    return float2(mFrameWidth, mFrameHeight);
   }
 
   /// The working f-number: a lens's own, stopped down by `fStop`; a thin
-  /// lens's aperture radius against the focal length its sensor height
+  /// lens's aperture radius against the focal length its frame height
   /// makes real, which is `fStop` back again when that set the radius;
   /// and 0 for a pinhole, which has none.
   [[nodiscard]] float fNumber() const noexcept;
-
-  /// Does the film hold radiance? The thin lens and a lens normalized to
-  /// its f-number average radiance; a lens on the physical exposure
-  /// averages the pupil integral instead, `4 / pi` times the spectral
-  /// irradiance at the sensor, which is what the spectral output's units
-  /// line has to say.
-  [[nodiscard]] bool holdsRadiance() const noexcept {
-    return !mLens || mIsLensExposureNormalized;
-  }
-
-  /// What turns one unit of film into spectral irradiance at the sensor
-  /// in W/(m^2 nm), for a readout that counts electrons. A lens on the
-  /// physical exposure holds `4 / pi` times the irradiance exactly, on
-  /// and off axis, so this is `pi / 4`; normalized to its f-number, and
-  /// for a thin lens with an aperture, it is `pi / (4 N^2)`, the paraxial
-  /// form for a lens focused at infinity, which the exact circular
-  /// pupil's `pi / (4 N^2 + 1)` sits under by 0.4% at f/8; and 0 for a
-  /// pinhole, whose film is radiance with no pupil to turn it into
-  /// anything.
-  [[nodiscard]] double irradianceScale() const noexcept;
 
 private:
   /// The two halves of the constructor that differ, one of which runs.
   /// Everything the two share, the framing and its motion, the focus
   /// distance and the aperture polygon, is settled before either.
   ///
-  /// \throws smdl::Error if the prescription cannot be a camera lens.
+  /// \throws smdl::Error if the prescription cannot be a camera lens, or
+  ///                     a physical sensor is asked to integrate over a
+  ///                     pinhole.
   void buildLens(const CameraOptions &options);
   void buildThinLens(const CameraOptions &options);
 
@@ -256,23 +246,28 @@ private:
   /// `mLens` is.
   std::optional<ExitPupil> mExitPupil{};
 
-  /// The frame's physical size in scene units: the sensor a lens
-  /// covers, or the frame the thin lens spans, which sizes its pixels
-  /// and makes its focal length real.
-  float mSensorWidth{}, mSensorHeight{};
+  /// The frame's physical size in scene units.
+  float mFrameWidth{}, mFrameHeight{};
+
+  /// What the film holds. See `CameraOptions::filmQuantity`.
+  FilmQuantity mFilmQuantity{FilmQuantity::RADIANCE};
 
   /// With `mLens`, the response one unit of drawn pupil area carries:
-  /// the pupil integral's own `1 / d^2`, over the constant that sets the
-  /// exposure convention. See `CameraOptions`.
+  /// the pupil integral's own `1 / d^2`, over the constant the film
+  /// quantity sets. See `CameraOptions`.
   float mExposurePerPupilArea{};
-
-  /// With `mLens`, is the exposure normalized to its f-number? See
-  /// `CameraOptions::shouldNormalizeLensExposure`.
-  bool mIsLensExposureNormalized{};
 
   /// The image plane distance in units of image height. Unused with a
   /// lens, whose film distance is a real one and lives in `mLens`.
   float mFocalLength{};
+
+  /// With the thin lens on a physical sensor's film, the image distance
+  /// in scene units, `f s / (s - f)` for a focal length `f` and a focus
+  /// distance `s`, and the pupil area over its square: what one sample
+  /// weighs on axis before the `cos^4` of its own segment. Zero on the
+  /// observer's film.
+  float mImageDistance{};
+  float mPupilIrradiance{};
 
   /// One pixel of the image plane (height 1 at distance `mFocalLength`)
   /// subtends this angle, or 0 when LOD is disabled.

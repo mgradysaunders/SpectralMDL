@@ -4,9 +4,9 @@ lens {
   # Scaled to 22 mm from the published 100 mm.
   # Converted from wide.22mm.dat by etc/scripts/lens_convert.py.
   # Covers an image circle 42.7 mm across at infinity focus, a whisker
-  # short of the 43.3 mm diagonal of full frame, so APS-C is what fits:
-  # at 'sensor 23.6 15.7' the frame is 39.4 degrees top to bottom and
-  # 66.1 across the diagonal.
+  # short of the 43.3 mm diagonal of full frame, so an APS-C body is
+  # what fits (the a6400 in etc/sensors): at 23.6 by 15.7 mm the frame
+  # is 39.4 degrees top to bottom and 66.1 across the diagonal.
   surface { radius 35.98738  thickness 1.21638 ior 1.54  diameter 23.716 }
   surface { radius 11.69718  thickness 9.9957            diameter 17.996 }
   surface { radius 13.08714  thickness 5.12622 ior 1.772 diameter 12.364 }

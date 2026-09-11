@@ -20,7 +20,7 @@
 "   mkdir -p ~/.vim/syntax ~/.vim/ftdetect
 "   cp layout.vim camera.vim lens.vim ~/.vim/syntax/
 "   echo 'au BufRead,BufNewFile *.layout setf layout' > ~/.vim/ftdetect/layout.vim
-"   echo 'au BufRead,BufNewFile *.camera,*.response setf camera' > ~/.vim/ftdetect/camera.vim
+"   echo 'au BufRead,BufNewFile *.camera,*.sensor setf camera' > ~/.vim/ftdetect/camera.vim
 "   echo 'au BufRead,BufNewFile *.lens setf lens' > ~/.vim/ftdetect/lens.vim
 "
 " For Neovim, use ~/.config/nvim/syntax and ~/.config/nvim/ftdetect instead.

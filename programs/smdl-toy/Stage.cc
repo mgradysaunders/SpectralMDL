@@ -10,9 +10,7 @@
 
 #include "../CommandLine.h"
 
-#include "Layout/CameraFile.h"
 #include "Layout/LayoutTables.h"
-#include "Layout/LensFile.h"
 #include "Options.h"
 #include "Render/Autolook.h"
 #include "Resume.h"
@@ -42,64 +40,6 @@ export material default_ground() = material(
 // names of the two materials in it.
 constexpr const char *DEFAULT_MATERIAL_MODULE = "::smdl_toy_default";
 
-// With a lens the frame is the sensor and the prescription together, and
-// every setting the thin lens uses to stand in for a real one is either
-// meaningless or now emergent. Naming one anyway is a mistake worth
-// reporting rather than a value to quietly drop, and this is the one
-// place both sources have had their say: an explicit flag and whatever
-// the camera file resolved to at shutter open.
-void refuseThinLensSettings(const Options &opts,
-                            const CameraSettings &fileCamera, bool hasLens) {
-  struct Refusal final {
-    const char *name;
-    bool wasStated;
-    const char *why;
-  };
-  const Refusal refusals[]{
-      {"aperture",
-       opts.camera.aperture.wasGiven || fileCamera.aperture.has_value(),
-       "the aperture is the lens's own stop, which 'fstop' still narrows"},
-      {"distortion_k1",
-       opts.camera.distortionK1.wasGiven || fileCamera.distortionK1.has_value(),
-       "the distortion is whatever the surfaces do"},
-      {"distortion_k2",
-       opts.camera.distortionK2.wasGiven || fileCamera.distortionK2.has_value(),
-       "the distortion is whatever the surfaces do"},
-      {"distortion_fit",
-       opts.camera.shouldFitDistortion.wasGiven ||
-           fileCamera.shouldFitDistortion.has_value(),
-       "there is no distortion polynomial to refit"},
-      {"vignetting",
-       opts.camera.vignetting.wasGiven || fileCamera.vignetting.has_value(),
-       "the cos^4 falloff comes out of the pupil integral, and is not "
-       "optional there"},
-      {"cat_eye", opts.camera.catEye.wasGiven || fileCamera.catEye.has_value(),
-       "the barrel vignette is whatever the clear apertures do"},
-      {"cat_eye_radius",
-       opts.camera.catEyeRadius.wasGiven || fileCamera.catEyeRadius.has_value(),
-       "the barrel vignette is whatever the clear apertures do"},
-  };
-  if (hasLens) {
-    for (const auto &refusal : refusals)
-      if (refusal.wasStated)
-        throw smdl::Error(smdl::concat(
-            "'", refusal.name, "' has no meaning with a lens: ", refusal.why));
-    // Both say how wide the frame is, in the two directions the solve
-    // runs, and there is nothing sensible to do when they disagree.
-    if ((opts.camera.sensorMM.wasGiven || fileCamera.sensorMM) &&
-        (opts.camera.fovYDeg.wasGiven || fileCamera.fovYDeg.has_value()))
-      throw smdl::Error("'sensor' and 'fovy' both say how wide the frame "
-                        "is: state the sensor and read the field of view "
-                        "off the log, or state the field of view and let "
-                        "the sensor be solved for it");
-  } else if (opts.camera.shouldNormalizeLensExposure.wasGiven) {
-    throw smdl::Error("'-normalize-lens-exposure' needs a lens to mean "
-                      "anything: the thin lens already holds its brightness, "
-                      "'fstop' there buying depth of field and costing no "
-                      "light");
-  }
-}
-
 Frame resolveFrame(const Options &opts) {
   // Everything the command line asks for, lowered into one layout: the
   // positional argument first, then each -mesh. Either may name a mesh
@@ -110,122 +50,13 @@ Frame resolveFrame(const Options &opts) {
   auto assetSearchPath{AssetSearchPath()};
   for (const auto &directory : opts.scene.assetDirs)
     assetSearchPath.push_back(smdl::makePathCanonical(directory));
-  // The camera file first: '-camera' if it was given, else the '.camera'
-  // beside the layout. It carries the clock, and the clock has to be
-  // settled before the scene is read, since what a layout's motion means
-  // is the transform at these two instants.
-  const auto cameraFileName{
-      resolveCameraFileName(opts.camera.file, opts.scene.inputSceneFile)};
-  const auto cameraDocument{
-      cameraFileName.empty() ? CameraDocument() : readCamera(cameraFileName)};
-  // The two clocks. Which instant to photograph is the command line's
-  // alone, so one camera file renders every frame of a shot; how long
-  // the shutter stays open and how long the readout takes to sweep the
-  // frame are facts about the camera, which the file may state and
-  // '-shutter' and '-readout' override. Which way it sweeps is the
-  // file's alone.
-  gRenderShutter.time = opts.scene.time;
-  gRenderShutter.exposure =
-      pick(opts.camera.shutter, cameraDocument.camera.shutter);
-  gRenderShutter.readout =
-      pick(opts.camera.readout, cameraDocument.camera.readout);
-  {
-    const auto direction{cameraDocument.camera.readoutDirection.value_or(
-        ReadoutDirection::DOWN)};
-    gRenderShutter.isReadoutAlongX = direction == ReadoutDirection::LEFT ||
-                                     direction == ReadoutDirection::RIGHT;
-    gRenderShutter.isReadoutReversed = direction == ReadoutDirection::UP ||
-                                       direction == ReadoutDirection::LEFT;
-    gRenderShutter.numReadoutLines =
-        size_t(gRenderShutter.isReadoutAlongX ? opts.image.resolution.x
-                                              : opts.image.resolution.y);
-    // One line has nothing to spread a readout over, and a readout that
-    // stayed would still lengthen the frame for no line to reach.
-    if (gRenderShutter.readout > 0 && gRenderShutter.numReadoutLines <= 1) {
-      SMDL_LOG_INFO("Rolling shutter: one line along the sweep, so the "
-                    "frame reads out at once");
-      gRenderShutter.readout = 0;
-    }
-    if (gRenderShutter.readout > 0) {
-      const char *sweep{direction == ReadoutDirection::DOWN ? "top to bottom"
-                        : direction == ReadoutDirection::UP ? "bottom to top"
-                        : direction == ReadoutDirection::LEFT
-                            ? "right to left"
-                            : "left to right"};
-      SMDL_LOG_INFO(
-          "Rolling shutter: ", smdl::Brief(1000.0f * gRenderShutter.readout, 4),
-          " ms readout ", sweep, " over ",
-          smdl::Brief(1000.0f * gRenderShutter.exposure, 4),
-          " ms exposure, so the frame spans ",
-          smdl::Brief(1000.0f * gRenderShutter.length(), 4), " ms");
-    }
-  }
-  // The file's own settings resolved at shutter open, which is where
-  // everything but the framing is read: the renderer varies the framing
-  // within one shutter and holds the rest. Resolved here, ahead of the
-  // scene, because the lens it may name is read here too and a typo in
-  // either should not wait on a layout.
-  const auto fileCamera{cameraDocument.camera.at(gRenderShutter.time)};
-  const auto lensFileName{
-      resolveLensFileName(opts.camera.lens.value, cameraFileName,
-                          fileCamera.lens ? *fileCamera.lens : std::string())};
-  refuseThinLensSettings(opts, fileCamera, !lensFileName.empty());
-  auto lensPrescription{std::optional<LensPrescription>()};
-  if (!lensFileName.empty()) lensPrescription = readLens(lensFileName).lens;
-  // The detector's response, resolved beside the lens for the same
-  // reason. The flag wins over the file's own block, whichever form the
-  // file wrote it in.
-  const auto responseFileName{
-      resolveResponseFileName(opts.camera.response.value, cameraFileName,
-                              fileCamera.responseFile.value_or(std::string()))};
-  auto response{std::optional<ResponseSettings>()};
-  if (!responseFileName.empty()) {
-    if (fileCamera.response)
-      SMDL_LOG_INFO("Response: -response replaces the camera file's own "
-                    "'response' block");
-    response = readResponse(responseFileName).response;
-  } else if (fileCamera.response) {
-    response = fileCamera.response;
-  }
-  if (response) {
-    auto line{smdl::concat("Response: ", response->bands.size(), " band(s)")};
-    for (size_t i = 0; i < response->bands.size(); i++)
-      line += smdl::concat(i == 0 ? " " : ", ", response->bands[i].name);
-    line += response->kind == ResponseKind::QE ? " in electrons per photon"
-                                               : " as relative weights";
-    if (!response->name.empty())
-      line += smdl::concat(" of ", smdl::Quoted(response->name));
-    if (!responseFileName.empty())
-      line += smdl::concat(" from ", smdl::QuotedPath(responseFileName));
-    if (response->hasCFA()) {
-      line += smdl::concat(", tiled ", response->cfaColumns, "x",
-                           response->cfaRows(), " as");
-      for (size_t i = 0; i < response->cfa.size(); i++)
-        line += smdl::concat(i > 0 && i % response->cfaColumns == 0 ? " /" : "",
-                             " ", response->bands[response->cfa[i]].name);
-    }
-    SMDL_LOG_INFO(line);
-  }
-  // The detector the camera reads out with, as the file states it; the
-  // generic one when the file states none and a readout is asked for.
-  const auto describeDetector{[](const DetectorSettings &detector) {
-    return smdl::concat(
-        "full well ",
-        detector.fullWell
-            ? smdl::concat(smdl::Brief(*detector.fullWell, 6), " e-")
-            : std::string("from the pitch"),
-        ", read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
-        smdl::Brief(detector.darkCurrent, 4), " e-/s at ",
-        smdl::Brief(detector.referenceTemperature, 4), " C doubling every ",
-        smdl::Brief(detector.doublingTemperature, 4), " C, at ",
-        smdl::Brief(detector.temperature, 4), " C; ", detector.bits,
-        " bits at ",
-        detector.gain ? smdl::concat(smdl::Brief(*detector.gain, 6), " DN/e-")
-                      : std::string("a gain filling the well"),
-        ", black level ", smdl::Brief(detector.blackLevel, 4), " e-");
-  }};
-  if (fileCamera.detector)
-    SMDL_LOG_INFO("Detector: ", describeDetector(*fileCamera.detector));
+  // The camera first, and with it the clock: how long the shutter stays
+  // open and how long the readout sweeps are the camera's and the body's,
+  // and what a layout's motion means is the transform at those two
+  // instants, so they are settled before the scene is read. The camera
+  // itself is a text parse and a paraxial solve, so fail-fast ordering
+  // costs nothing.
+  auto model{resolveCameraModel(opts)};
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
@@ -244,115 +75,6 @@ Frame resolveFrame(const Options &opts) {
                                        more.entryMaterialAliases.end());
   }
   smdl::profilerEntryEnd(profReadLayout);
-  // The camera, merged from three sources in increasing order of priority:
-  // the defaults in `CameraOptions`, whatever the camera file's 'camera'
-  // directive named, and whatever the command line explicitly gave. A flag
-  // that was not given must not override the file, so what decides is the
-  // occurrence count rather than the value.
-  auto cameraOptions{CameraOptions{}};
-  cameraOptions.resolution = opts.image.resolution;
-  cameraOptions.lens = std::move(lensPrescription);
-  cameraOptions.sensorMM = pick(opts.camera.sensorMM, fileCamera.sensorMM);
-  cameraOptions.lookFrom = pick(opts.camera.lookFrom, fileCamera.lookFrom);
-  cameraOptions.lookTo = pick(opts.camera.lookTo, fileCamera.lookTo);
-  cameraOptions.lookUp = pick(opts.camera.lookUp, fileCamera.lookUp);
-  cameraOptions.fovYDeg = pick(opts.camera.fovYDeg, fileCamera.fovYDeg);
-  // With a lens the field of view is a request to solve the sensor for,
-  // so nobody asking has to be distinguishable from asking for the
-  // default, which the thin lens has no need of.
-  if (cameraOptions.lens && !opts.camera.fovYDeg.wasGiven &&
-      !fileCamera.fovYDeg.has_value())
-    cameraOptions.fovYDeg = 0;
-  cameraOptions.fStop = pick(opts.camera.fStop, fileCamera.fStop);
-  cameraOptions.aperture = pick(opts.camera.aperture, fileCamera.aperture);
-  cameraOptions.focus = pick(opts.camera.focus, fileCamera.focus);
-  cameraOptions.blades = pick(opts.camera.blades, fileCamera.blades);
-  cameraOptions.bladeAngleDeg =
-      pick(opts.camera.bladeAngleDeg, fileCamera.bladeAngleDeg);
-  cameraOptions.distortionK1 =
-      pick(opts.camera.distortionK1, fileCamera.distortionK1);
-  cameraOptions.distortionK2 =
-      pick(opts.camera.distortionK2, fileCamera.distortionK2);
-  cameraOptions.shouldFitDistortion =
-      pick(opts.camera.shouldFitDistortion, fileCamera.shouldFitDistortion);
-  cameraOptions.shouldNormalizeLensExposure =
-      opts.camera.shouldNormalizeLensExposure.value;
-  cameraOptions.vignetting =
-      pick(opts.camera.vignetting, fileCamera.vignetting);
-  cameraOptions.catEye = pick(opts.camera.catEye, fileCamera.catEye);
-  cameraOptions.catEyeRadius =
-      pick(opts.camera.catEyeRadius, fileCamera.catEyeRadius);
-  cameraOptions.noLOD = opts.render.sampling.noLOD;
-  // The same exclusivity the command line checks above, now that the file
-  // has had its say: either source can supply either spelling, so only the
-  // merged pair can be checked for naming both.
-  if (cameraOptions.fStop > 0 && cameraOptions.aperture > 0)
-    throw smdl::Error("expected at most one of -fstop and -aperture between "
-                      "the command line and the camera file's 'camera' "
-                      "directive (they are two spellings of the same "
-                      "quantity)");
-  // What a readout needs of the camera, refused here so that a missing
-  // f-number fails before anything slow loads. The pitch is read off the
-  // camera at the readout, since under -autolook the camera is built
-  // after the scene.
-  if (!opts.image.outputDN.empty()) {
-    if (!response || response->kind != ResponseKind::QE)
-      throw smdl::Error(
-          "-output-dn counts electrons, which needs a 'qe' response");
-    if (!gRenderShutter.hasExposure())
-      throw smdl::Error("-output-dn needs an exposure: state 'shutter'");
-    if (!cameraOptions.lens && !(cameraOptions.fStop > 0) &&
-        !(cameraOptions.aperture > 0))
-      throw smdl::Error("-output-dn needs an f-number to turn radiance into "
-                        "irradiance: state 'fstop'");
-    if (!fileCamera.detector)
-      SMDL_LOG_INFO("Detector: none in the camera file, so the generic one: ",
-                    describeDetector(DetectorSettings{}));
-  }
-  // The camera's framing at shutter shut. The keys are absolute readings
-  // of the clock, so a flag that replaces the framing drops the track
-  // rather than moving a camera the file never described.
-  if (!cameraDocument.camera.motion.empty()) {
-    const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
-    const char *framingFlag{opts.camera.autolook.isEnabled  ? "-autolook"
-                            : opts.camera.lookFrom.wasGiven ? "-look-from"
-                            : opts.camera.lookTo.wasGiven   ? "-look-to"
-                            : opts.camera.lookUp.wasGiven   ? "-look-up"
-                                                            : nullptr};
-    if (framingFlag) {
-      SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
-                    " replaces the framing the camera file's 'motion' "
-                    "was written against");
-    } else if (!gRenderShutter.spansTime()) {
-      SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
-                    "holds its framing at ",
-                    gRenderShutter.time, " s");
-    } else {
-      const auto shutCamera{cameraDocument.camera.at(shutSeconds)};
-      cameraOptions.hasMotion = true;
-      cameraOptions.lookFromShut =
-          pick(opts.camera.lookFrom, shutCamera.lookFrom);
-      cameraOptions.lookToShut = pick(opts.camera.lookTo, shutCamera.lookTo);
-      cameraOptions.lookUpShut = pick(opts.camera.lookUp, shutCamera.lookUp);
-    }
-    // What the shutter cannot carry: a lens setting the track varies
-    // over the shutter is read once, at open, and held.
-    if (gRenderShutter.spansTime()) {
-      if (const auto held{cameraDocument.camera.heldOverShutter(
-              gRenderShutter.time, shutSeconds)};
-          !held.empty()) {
-        auto names{std::string()};
-        for (const auto &name : held)
-          names += (names.empty() ? "" : ", ") + std::string(name);
-        SMDL_LOG_INFO("Camera motion: ", names,
-                      " vary over the shutter, which only the framing does; "
-                      "they hold the value at shutter open");
-      }
-      if (cameraDocument.camera.hasKeyBetween(gRenderShutter.time, shutSeconds))
-        SMDL_LOG_INFO("Camera motion: a key sits inside the shutter, so the "
-                      "camera moves along the chord of its two ends");
-    }
-  }
   // What actually moved. A shut shutter needs no clearing: both samples
   // land on one instant, so every track lowered to one key already.
   {
@@ -371,8 +93,8 @@ Frame resolveFrame(const Options &opts) {
   // waits until the solve below. Every other path keeps constructing
   // here, before anything slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
-  if (!opts.camera.autolook.isEnabled) camera.emplace(cameraOptions);
-  const auto resolution{cameraOptions.resolution};
+  if (!opts.camera.autolook.isEnabled) camera.emplace(model.options);
+  const auto resolution{model.options.resolution};
   const auto numPixelsX{size_t(resolution.x)};
   const auto numPixelsY{size_t(resolution.y)};
   const auto spp{size_t(opts.render.sampling.spp)};
@@ -393,10 +115,11 @@ Frame resolveFrame(const Options &opts) {
                              size_t(window[3] - window[1])};
   auto frame{Frame{}};
   frame.layout = std::move(layout);
-  frame.cameraOptions = cameraOptions;
-  frame.response = std::move(response);
-  frame.responseFileName = responseFileName;
-  frame.detector = fileCamera.detector;
+  frame.shouldJitterWavelength =
+      opts.render.grid.shouldJitter.wasGiven || !model.sensor
+          ? opts.render.grid.shouldJitter.value
+          : true;
+  frame.model = std::move(model);
   frame.camera = std::move(camera);
   frame.resolution = resolution;
   frame.numPixelsX = numPixelsX;
@@ -424,7 +147,21 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
     gridSpec = resumed.info.wavelengths;
   }
   if (gridSpec.empty()) {
-    const auto &range{opts.render.grid.range};
+    auto range{opts.render.grid.range};
+    // With a physical sensor and no grid flags, the grid spans the union
+    // of its curves at the default band count, so that no band is cut
+    // off by the visible default: a user should not have to know that
+    // the curves must lie inside the grid.
+    if (frame.model.sensor && !opts.render.grid.wasGiven) {
+      range.range = float2(INF, -INF);
+      for (const auto &band : frame.model.sensor->response.bands) {
+        range.range.x = std::min(range.range.x, band.wavelengths.front());
+        range.range.y = std::max(range.range.y, band.wavelengths.back());
+      }
+      SMDL_LOG_INFO("Wavelength grid: ", range.bandCount, " bands over ",
+                    range.range.x, "-", range.range.y,
+                    " nm, the span of the sensor's curves");
+    }
     gridSpec.resize(size_t(range.bandCount));
     for (size_t i = 0; i < gridSpec.size(); i++) {
       const float t{float(i) / float(gridSpec.size() - 1)};
@@ -433,9 +170,14 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   }
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
+  const bool shouldJitter{frame.shouldJitterWavelength};
+  if (shouldJitter && !opts.render.grid.shouldJitter.wasGiven)
+    SMDL_LOG_INFO("Wavelength jitter: on for a physical sensor, so a band "
+                  "narrower than the grid's spacing integrates without "
+                  "aliasing; -wavelength-jitter=false turns it off");
   gRenderGrid.reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
-                    opts.render.grid.shouldJitter);
-  if (opts.render.grid.shouldJitter && gRenderGrid.bandEdges.empty())
+                    shouldJitter);
+  if (shouldJitter && gRenderGrid.bandEdges.empty())
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
   const auto wavelengths{
@@ -485,11 +227,12 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
+  const auto &sensor{frame.model.sensor};
   const double bandFilmBytes{
-      frame.response ? 8.0 * double(frame.response->hasCFA()
-                                        ? 1
-                                        : frame.response->bands.size())
-                     : 0.0};
+      sensor ? 8.0 * double(sensor->response.hasCFA()
+                                ? 1
+                                : sensor->response.bands.size())
+             : 0.0};
   if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
                        (8.0 + 8.0 * double(wavelengths.size()) + bandFilmBytes +
                         (opts.render.guide.isEnabled
@@ -532,7 +275,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   const auto &layout{frame.layout};
   const auto &wavelengths{grid.wavelengths};
   const bool isGridBeyondVisible{grid.isBeyondVisible};
-  auto &cameraOptions{frame.cameraOptions};
+  auto &cameraOptions{frame.model.options};
   auto &camera{frame.camera};
   const auto resolution{frame.resolution};
   // A scene given no MDL at all is a layout that has not been shaded yet,
@@ -616,22 +359,15 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
-    if (cameraOptions.lens && cameraOptions.fovYDeg <= 0) {
-      // A lens that was not asked for a field of view has one that
-      // follows from the sensor and the prescription, which is what the
-      // fit needs. The prescription is solved once here, focused at
-      // infinity, since the focus the real lens takes is the distance
-      // this very solve is about to choose. A lens that was asked for one
-      // keeps it: the sensor is what gets solved then, and the answer is
-      // the angle already in hand.
-      const auto sensorMM{cameraOptions.sensorMM.x > 0 &&
-                                  cameraOptions.sensorMM.y > 0
-                              ? cameraOptions.sensorMM
-                              : float2(36.0f, 24.0f)};
+    if (cameraOptions.lens) {
+      // A lens's field follows from the frame and the prescription,
+      // which is what the fit needs. The prescription is solved once
+      // here, focused at infinity, since the focus the real lens takes
+      // is the distance this very solve is about to choose.
       const Lens probe{*cameraOptions.lens, LensOptions{}};
       autolookOptions.fovYDeg =
-          2 * smdl::degrees(probe.fieldAngleAt(0.5e-3f * sensorMM.y));
-      autolookOptions.aspectRatio = sensorMM.x / sensorMM.y;
+          2 *
+          smdl::degrees(probe.fieldAngleAt(0.5f * cameraOptions.frameSize.y));
     }
     autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;
     if (opts.camera.autolook.azimuthDeg.wasGiven) {

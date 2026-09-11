@@ -31,6 +31,7 @@ asFields(const std::vector<std::string> &lines) {
   header.sampleOffset = 4096;
   header.hasWavelengthJitter = true;
   header.args = "scene.layout -spp 64 -resume out.envi";
+  header.quantity = "irradiance";
   return header;
 }
 
@@ -49,12 +50,13 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.sampleOffset == written.sampleOffset);
     CHECK(read.hasWavelengthJitter == written.hasWavelengthJitter);
     CHECK(read.args == written.args);
+    CHECK(read.quantity == written.quantity);
   }
   SUBCASE("Every field is written, under the 'render' prefix") {
     // The count is the guard against a field being added to the struct
     // and left out of the table, which is the drift this type exists to
     // prevent; bump it when a field is genuinely added.
-    CHECK(fields.size() == 7);
+    CHECK(fields.size() == 8);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render ", 0) == 0);
@@ -95,6 +97,9 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.sampleOffset == 0);
     CHECK(!read.hasWavelengthJitter);
     CHECK(read.args.empty());
+    // A file written before the film could hold anything but radiance
+    // says nothing, which a resume reads as radiance.
+    CHECK(read.quantity.empty());
   }
 }
 
@@ -145,7 +150,6 @@ TEST_CASE("DetectorHeader: round trip") {
 
 TEST_CASE("ResponseHeader: round trip") {
   auto written{ResponseHeader()};
-  written.kind = "qe";
   written.hash = "0123456789abcdef0123456789abcdef";
   written.cfaColumns = 2;
   written.cfa = {"R", "G", "G", "B"};
@@ -154,13 +158,12 @@ TEST_CASE("ResponseHeader: round trip") {
     CHECK(fields.at("render cfa") == "{R, G, G, B}");
     auto read{ResponseHeader()};
     read.readFrom(fields);
-    CHECK(read.kind == written.kind);
     CHECK(read.hash == written.hash);
     CHECK(read.cfaColumns == 2);
     CHECK(read.cfa == written.cfa);
   }
   SUBCASE("Every field is written, under the 'render' prefix") {
-    CHECK(fields.size() == 4);
+    CHECK(fields.size() == 3);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render ", 0) == 0);
@@ -168,7 +171,6 @@ TEST_CASE("ResponseHeader: round trip") {
   }
   SUBCASE("No tile spells an empty list and reads back as none") {
     auto plain{ResponseHeader()};
-    plain.kind = "relative";
     const auto plainFields{asFields(plain.headerLines())};
     CHECK(plainFields.at("render cfa") == "{}");
     CHECK(plainFields.at("render cfa columns") == "0");
@@ -176,7 +178,6 @@ TEST_CASE("ResponseHeader: round trip") {
     read.readFrom(plainFields);
     CHECK(read.cfa.empty());
     CHECK(read.cfaColumns == 0);
-    CHECK(read.kind == "relative");
   }
   SUBCASE("A field the file does not carry leaves the value alone") {
     auto read{written};

@@ -1,10 +1,10 @@
 /// \file
-/// The detector readout: what a stated instrument reads of the band
-/// film, as digital numbers. A post-process over the converged film, so
-/// the spectral film and its resume are untouched and a saved film reads
-/// out any number of times for any number of noise realizations. Scene
-/// units are meters, so the pixel area is in square meters and every
-/// electron count follows from it.
+/// The detector readout: what a body reads of the band film, as digital
+/// numbers. A post-process over the converged film, so the spectral film
+/// and its resume are untouched and a saved film reads out any number of
+/// times for any number of noise realizations. Scene units are meters,
+/// so the pixel area is in square meters and every electron count
+/// follows from it.
 #pragma once
 
 #include <cstdint>
@@ -16,7 +16,7 @@
 
 #include "Common.h"
 #include "IO/RenderHeader.h"
-#include "Layout/CameraFile.h"
+#include "Layout/SensorFile.h"
 
 /// Which noise the readout draws: none, so the digital numbers are a
 /// deterministic function of the film; the shot noise alone; or
@@ -34,7 +34,7 @@ enum class DetectorNoise { NONE, SHOT, ALL };
 [[nodiscard]] const char *detectorNoiseName(DetectorNoise noise) noexcept;
 
 /// The readout's flags: about this render rather than the instrument,
-/// which the camera file's `detector` block is.
+/// which the sensor file's `detector` block is.
 struct DetectorReadoutOptions final {
   /// The realization: the same seed on the same film draws the same
   /// noise, bit for bit, on any thread count.
@@ -43,7 +43,7 @@ struct DetectorReadoutOptions final {
   DetectorNoise noise{DetectorNoise::ALL};
 };
 
-/// What the readout takes from the camera and the shutter.
+/// What the readout takes from the body, the camera, and the shot.
 struct DetectorGeometry final {
   /// The pixel's area in square meters.
   double pixelArea{};
@@ -51,9 +51,9 @@ struct DetectorGeometry final {
   /// The exposure in seconds: how long each line stays open.
   double exposure{};
 
-  /// What turns one unit of film into spectral irradiance at the sensor
-  /// in W/(m^2 nm); see `Camera::irradianceScale()`.
-  double irradianceScale{};
+  /// The body's degrees Celsius at the exposure, which the dark current
+  /// follows.
+  double temperature{25.0};
 
   /// The f-number the irradiance came through, for the log and the
   /// header.
@@ -86,17 +86,18 @@ struct Readout final {
   uint64_t windowCount{};
 };
 
-/// The detector: the chain from the electrons a `qe` band counts to the
+/// The detector: the chain from the electrons a band counts to the
 /// digital number the instrument writes, EMVA 1288 in electrons
 /// throughout.
 ///
-/// A pixel band's signal is `A_pixel * t_exp * irradianceScale` times
-/// the band film's mean, in electrons; the dark current adds `mu_I *
-/// t_exp * 2^((T - T_ref) / T_d)`; one draw of shot noise covers the
-/// sum, since a sum of Poissons is Poisson; Gaussian read noise adds;
-/// the well clips; and `(e + black) * gain` rounds and clips to the top
-/// code. The gain sits after the pixel-referred noise and before the
-/// ADC, the order that makes ISO invariance a phenomenon.
+/// A pixel band's signal is `A_pixel * t_exp` times the band film's
+/// mean, in electrons; the dark current adds `mu_I * t_exp * 2^((T -
+/// T_ref) / T_d)`; one draw of shot noise covers the sum, since a sum of
+/// Poissons is Poisson; Gaussian read noise adds; the well clips; and
+/// `round(e * gain + black)` clips to the top code. The gain sits after
+/// the pixel-referred noise and before the ADC, the order that makes ISO
+/// invariance a phenomenon, and the black level sits after the gain, in
+/// digital numbers, as a camera's does.
 ///
 /// The film's mean is taken as the exact signal: the shot noise is drawn
 /// on it in full, a Poisson below 25 electrons and a Gaussian of variance

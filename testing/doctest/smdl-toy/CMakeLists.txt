@@ -3,10 +3,9 @@
 smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
+    "CameraModel.cc"
     "Color.cc"
-    "Detector.cc"
     "MedianFilter.cc"
-    "Response.cc"
     "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"
@@ -16,6 +15,7 @@ smdl_add_doctest(
     "Layout/LayoutParser.cc"
     "Layout/LensFile.cc"
     "Layout/Motion.cc"
+    "Layout/SensorFile.cc"
     "Render/Camera.cc"
     "Render/Lens.cc"
     "Render/Light.cc"
@@ -25,6 +25,8 @@ smdl_add_doctest(
     "Render/PathStats.cc"
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
+    "Sensor/Detector.cc"
+    "Sensor/Response.cc"
   LINK
     "smdl-toy-objects"
   )

@@ -141,7 +141,7 @@ LensPrescription singlet() {
 CameraOptions lensOptions() {
   auto options{openOptions()};
   options.lens = singlet();
-  options.sensorMM = float2(36.0f, 27.0f);
+  options.frameSize = float2(0.036f, 0.027f);
   options.focus = 8.0f;
   return options;
 }
@@ -265,75 +265,81 @@ float fNumberOf(const LensPrescription &prescription) {
 }
 } // namespace
 
-TEST_CASE("Camera: a lens is exposed by its f-number and nothing else") {
+TEST_CASE("Camera: what a lens's film holds is the sensor's decision") {
+  constexpr double PI_DOUBLE{3.14159265358979323846};
   const auto fNumber{fNumberOf(singlet())};
-  const auto ideal{1 / (fNumber * fNumber)};
-  SUBCASE("An ideal lens reads one over the f-number squared, and a real "
-          "one a little under") {
-    const auto middle{meanWeight(Camera{lensOptions()}, 32, 24)};
-    CHECK(middle < 1.02f * ideal);
-    CHECK(middle > 0.8f * ideal);
-  }
-  SUBCASE("A wider rear element changes nothing, the exposure being an "
-          "integral over the pupil and not over the glass") {
+  SUBCASE("On the observer's film the lens is normalized to its f-number, so "
+          "the frame holds its brightness however far it is stopped down") {
     auto options{lensOptions()};
-    options.lens = singletBehindWindow();
-    const auto behindWindow{meanWeight(Camera{options}, 32, 24)};
-    const auto bare{meanWeight(Camera{lensOptions()}, 32, 24)};
-    CHECK(behindWindow == doctest::Approx(bare).epsilon(0.02));
-  }
-  SUBCASE("Stopping down darkens by the square of the f-number") {
-    auto options{lensOptions()};
-    options.fStop = 2 * fNumber;
-    const auto stopped{meanWeight(Camera{options}, 32, 24)};
-    const auto wideOpen{meanWeight(Camera{lensOptions()}, 32, 24)};
-    CHECK(stopped == doctest::Approx(wideOpen / 4).epsilon(0.1));
-  }
-  SUBCASE("Normalizing takes the f-number back out, so the frame holds its "
-          "brightness") {
-    auto options{lensOptions()};
-    options.shouldNormalizeLensExposure = true;
     const auto wideOpen{meanWeight(Camera{options}, 32, 24)};
     options.fStop = 2 * fNumber;
     const auto stopped{meanWeight(Camera{options}, 32, 24)};
     CHECK(wideOpen == doctest::Approx(1.0).epsilon(0.2));
     CHECK(stopped == doctest::Approx(wideOpen).epsilon(0.1));
   }
+  SUBCASE("On a physical sensor's film an ideal lens reads pi over four "
+          "f-numbers squared, and a real one a little under") {
+    auto options{lensOptions()};
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const auto ideal{PI_DOUBLE / (4 * fNumber * fNumber)};
+    const auto middle{meanWeight(Camera{options}, 32, 24)};
+    CHECK(middle < 1.02f * ideal);
+    CHECK(middle > 0.8f * ideal);
+  }
+  SUBCASE("There, stopping down darkens by the square of the f-number") {
+    auto options{lensOptions()};
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const auto wideOpen{meanWeight(Camera{options}, 32, 24)};
+    options.fStop = 2 * fNumber;
+    const auto stopped{meanWeight(Camera{options}, 32, 24)};
+    CHECK(stopped == doctest::Approx(wideOpen / 4).epsilon(0.1));
+  }
+  SUBCASE("And a wider rear element changes nothing, the exposure being an "
+          "integral over the pupil and not over the glass") {
+    auto options{lensOptions()};
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const auto bare{meanWeight(Camera{options}, 32, 24)};
+    options.lens = singletBehindWindow();
+    const auto behindWindow{meanWeight(Camera{options}, 32, 24)};
+    CHECK(behindWindow == doctest::Approx(bare).epsilon(0.02));
+  }
+  SUBCASE("The two films differ by exactly four f-numbers squared over pi, "
+          "sample for sample") {
+    auto options{lensOptions()};
+    options.fStop = 2 * fNumber;
+    const Camera observer{options};
+    options.filmQuantity = FilmQuantity::IRRADIANCE;
+    const Camera sensor{options};
+    const double N{sensor.fNumber()};
+    for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
+      const auto a{
+          cameraSpaceSample(observer, size_t(pixel.x), size_t(pixel.y), 3)};
+      const auto b{
+          cameraSpaceSample(sensor, size_t(pixel.x), size_t(pixel.y), 3)};
+      CHECK(a.weight ==
+            doctest::Approx(b.weight * 4 * N * N / PI_DOUBLE).epsilon(1e-5));
+    }
+  }
 }
 
-TEST_CASE("Camera: the frame's size and what turns its film into "
-          "irradiance") {
-  constexpr double PI_DOUBLE{3.14159265358979323846};
-  SUBCASE("A lens on the physical exposure holds four over pi times the "
-          "irradiance, whatever its f-number") {
+TEST_CASE("Camera: the frame's size and the f-number") {
+  SUBCASE("A lens reports its own f-number, and the frame it was given") {
     const Camera camera{lensOptions()};
     CHECK(camera.fNumber() == doctest::Approx(fNumberOf(singlet())));
-    CHECK(camera.irradianceScale() == PI_DOUBLE / 4);
-    CHECK(camera.sensorSize().x == doctest::Approx(0.036f));
-    CHECK(camera.sensorSize().y == doctest::Approx(0.027f));
+    CHECK(camera.frameSize().x == doctest::Approx(0.036f));
+    CHECK(camera.frameSize().y == doctest::Approx(0.027f));
   }
-  SUBCASE("Normalized to its f-number, the lens's film is radiance again") {
-    auto options{lensOptions()};
-    options.shouldNormalizeLensExposure = true;
-    options.fStop = 2 * fNumberOf(singlet());
-    const Camera camera{options};
-    const double N{camera.fNumber()};
-    CHECK(N == doctest::Approx(options.fStop));
-    CHECK(camera.irradianceScale() == doctest::Approx(PI_DOUBLE / (4 * N * N)));
-  }
-  SUBCASE("The thin lens spans full frame unless the sensor is stated, and "
-          "its f-number is what set the aperture") {
+  SUBCASE("The thin lens spans the frame it was given, full frame by "
+          "default, and its f-number is what set the aperture") {
     auto options{openOptions()};
     options.fStop = 2.8f;
     const Camera fullFrame{options};
-    CHECK(fullFrame.sensorSize().x == 1e-3f * 36.0f);
-    CHECK(fullFrame.sensorSize().y == 1e-3f * 24.0f);
+    CHECK(fullFrame.frameSize().x == 1e-3f * 36.0f);
+    CHECK(fullFrame.frameSize().y == 1e-3f * 24.0f);
     CHECK(fullFrame.fNumber() == doctest::Approx(2.8f));
-    CHECK(fullFrame.irradianceScale() ==
-          doctest::Approx(PI_DOUBLE / (4 * 2.8 * 2.8)));
-    options.sensorMM = float2(7.68f, 5.76f);
+    options.frameSize = float2(7.68e-3f, 5.76e-3f);
     const Camera phone{options};
-    CHECK(phone.sensorSize().x == doctest::Approx(0.00768f));
+    CHECK(phone.frameSize().x == doctest::Approx(0.00768f));
     CHECK(phone.fNumber() == doctest::Approx(2.8f));
     // The same f-number on a frame a quarter the height is a lens a
     // quarter the radius: the lens point of one draw scales with it.
@@ -350,15 +356,13 @@ TEST_CASE("Camera: the frame's size and what turns its film into "
     options.aperture = 0.5f * 0.024f * focalLength / 4.0f;
     const Camera stated{options};
     CHECK(stated.fNumber() == doctest::Approx(4.0f));
-    CHECK(stated.irradianceScale() == doctest::Approx(PI_DOUBLE / 64));
     const Camera pinhole{openOptions()};
     CHECK(pinhole.fNumber() == 0.0f);
-    CHECK(pinhole.irradianceScale() == 0.0);
   }
-  SUBCASE("With the sensor unstated the thin lens's aperture is what it "
-          "always was") {
+  SUBCASE("On the default frame the thin lens's aperture is what it always "
+          "was") {
     // The frame height the f-number is a fraction of is spelled as the
-    // same float the old constant was, so a render that states no sensor
+    // same float the old constant was, so a render that names no body
     // draws the same lens point bit for bit.
     CHECK(1e-3f * 24.0f == 0.024f);
     auto byFStop{openOptions()};
@@ -372,37 +376,58 @@ TEST_CASE("Camera: the frame's size and what turns its film into "
   }
 }
 
-TEST_CASE("Camera: a field of view stated with a lens solves the sensor") {
-  SUBCASE("The sensor it picks is the one that looks out at what was "
-          "asked") {
-    auto options{lensOptions()};
-    options.sensorMM = float2(0.0f);
-    options.fovYDeg = 30.0f;
-    const Camera camera{options};
-    const Lens lens{singlet(), LensOptions{8.0f, 0, 0, 0}};
-    // The camera keeps the sensor to itself, so what it did is read back
-    // out of the lens: the half-height that looks out at 15 degrees,
-    // doubled, against a frame this many pixels wide for its height.
-    const auto halfHeight{lens.filmRadiusForFieldAngle(smdl::radians(15.0f))};
-    CHECK(halfHeight > 0);
-    CHECK(smdl::degrees(2 * lens.fieldAngleAt(halfHeight)) ==
-          doctest::Approx(30.0).epsilon(1e-3));
-  }
-  SUBCASE("A sensor stated outright wins, the field of view then being a "
-          "consequence") {
-    auto options{lensOptions()};
-    options.fovYDeg = 30.0f;
-    const auto stated{meanWeight(Camera{options}, 32, 24)};
-    options.fovYDeg = 90.0f;
-    CHECK(meanWeight(Camera{options}, 32, 24) == doctest::Approx(stated));
-  }
-  SUBCASE("Asking for more than the lens covers is an error rather than a "
-          "dark frame") {
-    auto options{lensOptions()};
-    options.sensorMM = float2(0.0f);
-    options.fovYDeg = 175.0f;
+TEST_CASE("Camera: the thin lens on a physical sensor's film") {
+  constexpr double PI_DOUBLE{3.14159265358979323846};
+  auto options{openOptions()};
+  options.filmQuantity = FilmQuantity::IRRADIANCE;
+  SUBCASE("A pinhole has no pupil to integrate over, and is refused") {
     CHECK_ERROR(smdl::catchAndReturnError(
                     [&] { [[maybe_unused]] const Camera camera{options}; }),
-                "cannot look out at 'fovy'");
+                "a pinhole has none");
+  }
+  SUBCASE("Focused far, the middle of the frame reads the exact disk "
+          "integral, pi over four f-numbers squared plus one") {
+    options.fStop = 2.8f;
+    options.focus = 1000.0f;
+    const Camera camera{options};
+    // Each sample carries the cos^4 of its own pupil point, so one draw
+    // reads under the paraxial constant and the mean over the pupil
+    // reads the exact integral, which at f/2.8 is 3% under it.
+    const auto middle{meanWeight(camera, 32, 24)};
+    CHECK(middle ==
+          doctest::Approx(PI_DOUBLE / (4 * 2.8 * 2.8 + 1)).epsilon(0.01));
+    CHECK(cameraSpaceSample(camera, 32, 24, 3).weight <
+          PI_DOUBLE / (4 * 2.8 * 2.8));
+  }
+  SUBCASE("Focused near, the bellows factor darkens the whole frame") {
+    options.fStop = 2.8f;
+    options.focus = 1000.0f;
+    const auto far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    // A focal length of about 35 mm focused at 0.35 m puts the film a
+    // tenth further back, which costs a fifth of the light.
+    options.focus = 0.35f;
+    const auto near{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    CHECK(near < far);
+    CHECK(near == doctest::Approx(far / 1.21).epsilon(0.05));
+  }
+  SUBCASE("The corner reads less than the middle, by the cos^4 of its own "
+          "segment, with 'vignetting' not applied on top") {
+    options.fStop = 2.8f;
+    options.focus = 1000.0f;
+    const Camera plain{options};
+    options.vignetting = 1.0f;
+    const Camera vignetted{options};
+    const auto middle{cameraSpaceSample(plain, 32, 24, 3).weight};
+    const auto corner{cameraSpaceSample(plain, 1, 1, 3).weight};
+    CHECK(corner < middle);
+    CHECK(corner > 0.5f * middle);
+    CHECK(cameraSpaceSample(vignetted, 1, 1, 3).weight == corner);
+  }
+  SUBCASE("A focus inside the focal length cannot be imaged") {
+    options.fStop = 2.8f;
+    options.focus = 0.01f;
+    CHECK_ERROR(smdl::catchAndReturnError(
+                    [&] { [[maybe_unused]] const Camera camera{options}; }),
+                "inside its focal length");
   }
 }

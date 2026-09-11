@@ -4,8 +4,9 @@ lens {
   # Scaled to 250 mm from the published 100 mm.
   # Converted from telephoto.250mm.dat by etc/scripts/lens_convert.py.
   # Covers an image circle 134.4 mm across at infinity focus, far more
-  # than any modern detector asks for: at a full frame 'sensor 36 24'
-  # the frame is 5.5 degrees top to bottom and 9.9 across the diagonal.
+  # than any modern detector asks for: on a full frame body (36 by 24
+  # mm) the frame is 5.5 degrees top to bottom and 9.9 across the
+  # diagonal.
   surface { radius 54.6275  thickness 12.52   ior 1.529 diameter 47.5 }
   surface { radius -86.365  thickness 3.755   ior 1.599 diameter 44.5 }
   surface { radius 271.7625 thickness 2.8175            diameter 41.5 }

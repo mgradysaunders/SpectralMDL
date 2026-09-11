@@ -21,10 +21,11 @@
 
 #include "../CommandLine.h"
 #include "Color.h"
-#include "Detector.h"
 #include "MedianFilter.h"
 #include "Progress.h"
 #include "Render/PathTracing.h"
+#include "Sensor/Detector.h"
+#include "Sensor/Develop.h"
 #include "Tonemap.h"
 
 //--{ Compile Options
@@ -53,7 +54,8 @@ struct AutolookFlags final {
   bool ignoreBackfaces{};
 };
 
-/// The camera: where the picture is taken from and with what lens.
+/// The camera: where the picture is taken from, on what body, and
+/// through what lens.
 ///
 /// Every setting but the file itself and the autolook solve may also
 /// come from the `.camera` file's `camera` directive, which is what the
@@ -72,25 +74,14 @@ struct CameraFlags final {
 
   Flag<float> fovYDeg{};
 
-  /// The '.lens' file to look through, empty for the thin lens model.
-  /// Resolved relative to the camera file when that is what named it.
+  /// The '.lens' file to look through, or `ideal` for the thin lens,
+  /// over whatever the camera file states. A file is resolved as typed.
   Flag<std::string> lens{};
 
-  /// The '.response' file to read through, empty for whatever the camera
-  /// file states, which may be nothing. Resolved relative to the camera
-  /// file when that is what named it.
-  Flag<std::string> response{};
-
-  /// The sensor width and height in millimeters: with a lens what
-  /// decides the field of view, with the thin lens what sizes the frame
-  /// `fovy` spans.
-  Flag<float2> sensorMM{};
-
-  /// With a lens, take the lens's own f-number back out of the exposure,
-  /// so that the frame holds its brightness whatever lens takes it and
-  /// however far it is stopped down. About this render rather than about
-  /// the camera, so no camera file carries it.
-  Flag<bool> shouldNormalizeLensExposure{};
+  /// The '.sensor' file the picture lands on, or `human` for the CIE
+  /// observer, over whatever the camera file states. A file is resolved
+  /// as typed.
+  Flag<std::string> sensor{};
 
   /// The seconds the shutter stays open, 0 for shut. When it opens is
   /// `SceneOptions::time`, which no camera file has a say in.
@@ -130,8 +121,10 @@ struct CameraFlags final {
 /// The picture: how big it is, how it is tone mapped, and where it goes.
 /// No scene file has a say in any of it.
 struct ImageOptions final {
-  /// The image dimensions in pixels.
-  int2 resolution{};
+  /// The image dimensions in pixels. Whether it was given matters: a
+  /// physical sensor renders exactly its own pixels, and a `-resolution`
+  /// that disagrees is refused rather than stretched.
+  Flag<int2> resolution{};
 
   /// The sub-rectangle to render, `x0,y0,x1,y1`. The default is not a
   /// window at all, so `given` is what says whether to narrow the frame.
@@ -160,7 +153,7 @@ struct ImageOptions final {
   std::string resume{};
 
   /// The detector readout, empty for none: a 16-bit ENVI pair of digital
-  /// numbers through the camera file's `detector` and a `qe` response.
+  /// numbers through the camera's body.
   std::string outputDN{};
 
   /// The readout's realization and which noise it draws.
@@ -254,8 +247,9 @@ struct GridOptions final {
   /// the grid recorded in the file it resumes from.
   bool wasGiven{};
 
-  /// Draw each sample's own grid from within the bands.
-  bool shouldJitter{};
+  /// Draw each sample's own grid from within the bands. Whether it was
+  /// given matters: a physical sensor turns it on unless told not to.
+  Flag<bool> shouldJitter{};
 };
 
 /// How the picture is computed: the budget, the estimators, and the
@@ -341,6 +335,10 @@ struct UtilityOptions final {
   bool shouldListMaterials{};
 
   bool shouldListObjects{};
+
+  /// Print what the camera resolves to and exit, before any layout is
+  /// read.
+  bool shouldDescribeCamera{};
 
   bool useJSON{};
 

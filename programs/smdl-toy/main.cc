@@ -6,6 +6,7 @@
 #include "../CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 
+#include "CameraModel.h"
 #include "IO/PlacesFile.h"
 #include "Layout/LayoutTables.h"
 #include "Options.h"
@@ -14,8 +15,8 @@
 #include "Render.h"
 #include "Render/Guiding.h"
 #include "Render/Manifold.h"
-#include "Response.h"
 #include "Resume.h"
+#include "Sensor/Response.h"
 #include "Stage.h"
 
 #include "smdl/Compiler.h"
@@ -57,6 +58,14 @@ int main(int argc, char **argv) try {
     packPlaces(opts.utility.packPlaces, opts.utility.outputPlaces);
     return EXIT_SUCCESS;
   }
+  // The camera report needs the camera and the files it names, and no
+  // scene: with -camera it runs on that file alone, and without one on
+  // the '.camera' beside the scene, if any.
+  if (opts.utility.shouldDescribeCamera) {
+    const auto model{resolveCameraModel(opts)};
+    std::cout << describeCamera(model);
+    return EXIT_SUCCESS;
+  }
   // The positional scene argument is required for everything that
   // remains; see the note on its declaration.
   if (opts.scene.inputSceneFile.empty())
@@ -72,12 +81,15 @@ int main(int argc, char **argv) try {
   const auto &profileFileName{opts.utility.profile};
   if (isProfiling) smdl::profilerInitialize();
   auto frame{resolveFrame(opts)};
-  auto resumed{resumeSequence(opts, frame.resolution, frame.window,
-                              frame.response ? &*frame.response : nullptr)};
+  // The body's response, which exists exactly when a body does.
+  auto responseSettings{std::optional<ResponseSettings>()};
+  if (frame.model.sensor) responseSettings = frame.model.sensor->response;
+  auto resumed{resumeSequence(opts, frame,
+                              responseSettings ? &*responseSettings : nullptr)};
   const auto grid{resolveWavelengthGrid(opts, frame, resumed)};
   // The response against the grid, here rather than later, so that a
   // band the grid cannot see fails before anything compiles.
-  const auto response{resolveResponse(frame.response, grid.wavelengths)};
+  const auto response{resolveResponse(responseSettings, grid.wavelengths)};
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
   auto compiler{smdl::Compiler{}};
@@ -132,19 +144,13 @@ int main(int argc, char **argv) try {
                                     !resumed.wasRequested
                                 ? opts.image.outputSpectrum
                                 : opts.image.resume};
-  // The band film, which goes beside the spectral one and into the
-  // readout and nowhere else, so a response with neither has nothing to
-  // fill.
+  // The band film, which a physical sensor always accumulates: it goes
+  // beside the spectral one and into the readout, and a resumed
+  // sequence needs it whether or not this session writes either.
   auto bandFilm{std::optional<smdl::SpectralFilm>()};
-  if (response) {
-    if (outputSpectrum.empty() && opts.image.outputDN.empty()) {
-      SMDL_LOG_WARN("a response is present but neither -output-spectrum nor "
-                    "-output-dn is, so the band film is not written");
-    } else {
-      bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
-                       frame.numPixelsY);
-    }
-  }
+  if (response)
+    bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
+                     frame.numPixelsY);
   const Response *responseOrNull{response ? &*response : nullptr};
   smdl::SpectralFilm *bandFilmOrNull{bandFilm ? &*bandFilm : nullptr};
   auto sdtree{std::unique_ptr<STree>()};

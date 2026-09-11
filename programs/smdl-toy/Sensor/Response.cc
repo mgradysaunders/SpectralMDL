@@ -9,7 +9,7 @@
 #include "smdl/Support/MD5Hash.h"
 #include "smdl/Support/Strings.h"
 
-#include "Response.h"
+#include "Sensor/Response.h"
 
 namespace {
 
@@ -42,14 +42,14 @@ responseFilmBandNames(const ResponseSettings &settings) {
 }
 
 std::string responseHash(const ResponseSettings &settings) {
-  auto text{std::string(settings.kind == ResponseKind::QE ? "qe" : "relative")};
-  text += '\n';
+  const double scale{settings.qeScale()};
+  auto text{std::string()};
   for (const auto &band : settings.bands) {
     text += band.name;
     text += ' ';
     for (size_t i = 0; i < band.wavelengths.size(); i++) {
       appendNumber(text, band.wavelengths[i]);
-      appendNumber(text, band.values[i]);
+      appendNumber(text, scale * double(band.values[i]));
     }
     text += '\n';
   }
@@ -63,7 +63,7 @@ std::string bandFilmFileName(const std::string &spectrumName) {
 }
 
 Response::Response(const ResponseSettings &settings, const Color &wavelengths)
-    : mKind(settings.kind), mName(settings.name), mHash(responseHash(settings)),
+    : mHash(responseHash(settings)),
       mFilmBandNames(responseFilmBandNames(settings)),
       mCFAColumns(settings.cfaColumns), mCFARows(settings.cfaRows()),
       mCFA(settings.cfa), mIsJittering(!gRenderGrid.bandEdges.empty()) {
@@ -90,11 +90,13 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths)
   for (size_t i = 1; i < numBands; i++)
     minSpacing = std::min(minSpacing,
                           double(wavelengths[i]) - double(wavelengths[i - 1]));
+  const double scale{settings.qeScale()};
   for (const auto &curve : settings.bands) {
     auto band{Band{}};
     band.name = curve.name;
     band.wavelengths.assign(curve.wavelengths.begin(), curve.wavelengths.end());
-    band.values.assign(curve.values.begin(), curve.values.end());
+    for (const auto value : curve.values)
+      band.values.push_back(scale * double(value));
     const double whole{
         integrate(band, band.wavelengths.front(), band.wavelengths.back())};
     const double inside{integrate(band, gridLo, gridHi)};
@@ -130,29 +132,23 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths)
                     smdl::Brief(minSpacing, 3),
                     " nm; without -wavelength-jitter the band comb aliases "
                     "against it");
-    // The normalizer, under the sample's own rule.
-    double normalizer{1.0};
-    if (mKind == ResponseKind::RELATIVE) {
-      if (mIsJittering) {
-        normalizer = inside;
-      } else {
-        normalizer = 0.0;
-        for (size_t i = 0; i < numBands; i++)
-          normalizer += evaluate(band, double(wavelengths[i])) * widths[i];
-        if (!(normalizer > 0))
-          throw smdl::Error(smdl::concat(
-              "response band ", smdl::Quoted(band.name),
-              " falls between the wavelengths of the grid, so no sample "
-              "can see it; use -wavelength-jitter, or a finer grid"));
-      }
-    }
-    band.scale = 1.0 / normalizer;
     if (!mIsJittering) {
+      // A grid held still sees the curve at its own wavelengths and
+      // nowhere else, so a band that falls between them is invisible
+      // to every sample.
+      double seen{0.0};
+      for (size_t i = 0; i < numBands; i++)
+        seen += evaluate(band, double(wavelengths[i])) * widths[i];
+      if (!(seen > 0))
+        throw smdl::Error(smdl::concat(
+            "response band ", smdl::Quoted(band.name),
+            " falls between the wavelengths of the grid, so no sample "
+            "can see it; use -wavelength-jitter, or a finer grid"));
       band.fixedWeights.resize(numBands);
       for (size_t i = 0; i < numBands; i++) {
         const double lambda{double(wavelengths[i])};
-        band.fixedWeights[i] = evaluate(band, lambda) * widths[i] *
-                               photonsPerJoule(lambda) * band.scale;
+        band.fixedWeights[i] =
+            evaluate(band, lambda) * widths[i] * photonsPerJoule(lambda);
       }
     }
     mBands.push_back(std::move(band));
@@ -187,37 +183,36 @@ double Response::integrate(const Band &band, double lo, double hi) noexcept {
   return total;
 }
 
-double Response::photonsPerJoule(double lambda) const noexcept {
-  return mKind == ResponseKind::QE ? lambda * 1e-9 / (PLANCK * SPEED_OF_LIGHT)
-                                   : 1.0;
+double Response::photonsPerJoule(double lambda) noexcept {
+  return lambda * 1e-9 / (PLANCK * SPEED_OF_LIGHT);
 }
 
 double Response::project(const Band &band, smdl::Span<const float> wavelengths,
-                         smdl::Span<const float> L) const noexcept {
+                         smdl::Span<const float> E) const noexcept {
   double total{};
   if (!mIsJittering) {
-    for (size_t i = 0; i < L.size(); i++)
-      total += band.fixedWeights[i] * double(L[i]);
+    for (size_t i = 0; i < E.size(); i++)
+      total += band.fixedWeights[i] * double(E[i]);
     return total;
   }
-  for (size_t i = 0; i < L.size(); i++) {
+  for (size_t i = 0; i < E.size(); i++) {
     const double lambda{double(wavelengths[i])};
     total += evaluate(band, lambda) * mWidths[i] * photonsPerJoule(lambda) *
-             double(L[i]);
+             double(E[i]);
   }
-  return total * band.scale;
+  return total;
 }
 
 void Response::accumulate(smdl::Span<const float> wavelengths,
-                          smdl::Span<const float> L, size_t x, size_t y,
+                          smdl::Span<const float> E, size_t x, size_t y,
                           double *sums) const noexcept {
-  SMDL_SANITY_CHECK(wavelengths.size() == L.size());
+  SMDL_SANITY_CHECK(wavelengths.size() == E.size());
   if (hasTile()) {
-    sums[0] += project(mBands[bandAt(x, y)], wavelengths, L);
+    sums[0] += project(mBands[bandAt(x, y)], wavelengths, E);
     return;
   }
   for (size_t b = 0; b < mBands.size(); b++)
-    sums[b] += project(mBands[b], wavelengths, L);
+    sums[b] += project(mBands[b], wavelengths, E);
 }
 
 std::optional<Response>

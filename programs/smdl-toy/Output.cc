@@ -4,7 +4,7 @@
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
-#include "Detector.h"
+#include "CameraModel.h"
 #include "MedianFilter.h"
 #include "Options.h"
 #include "Output.h"
@@ -12,36 +12,36 @@
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Sampler.h"
-#include "Response.h"
 #include "Resume.h"
+#include "Sensor/Detector.h"
+#include "Sensor/Develop.h"
+#include "Sensor/Response.h"
 #include "Stage.h"
 #include "Tonemap.h"
 
 namespace {
 
-/// The spectral radiance the film holds, which is the library-wide
-/// convention; see `smdl::SunSky`. Through a lens on the physical
-/// exposure the film holds `4 / pi` times the spectral irradiance at
-/// the sensor instead, an ideal f/1 lens reading 1 on axis; see
-/// `Camera::holdsRadiance()`.
+/// The units of what the film holds, by `FilmQuantity`: the observer's
+/// spectral radiance, the library-wide convention (see `smdl::SunSky`),
+/// or a physical sensor's spectral irradiance at the focal plane.
 ///
 /// \{
 constexpr const char *SPECTRAL_RADIANCE_UNITS{"W/(m^2 sr nm)"};
-constexpr const char *LENS_FILM_UNITS{"4/pi W/(m^2 nm)"};
+constexpr const char *SPECTRAL_IRRADIANCE_UNITS{"W/(m^2 nm)"};
 /// \}
 
 /// The header fields written for a reader rather than for a resume.
-/// `radiance units` is not an ENVI standard field; the three solar ones
-/// are, and carry the units ENVI states them in.
-constexpr const char *ENVI_RADIANCE_UNITS{"radiance units"};
+/// `radiometric units` is not an ENVI standard field; the three solar
+/// ones are, and carry the units ENVI states them in.
+constexpr const char *ENVI_RADIOMETRIC_UNITS{"radiometric units"};
 constexpr const char *ENVI_SUN_AZIMUTH{"sun azimuth"};
 constexpr const char *ENVI_SUN_ELEVATION{"sun elevation"};
 constexpr const char *ENVI_SOLAR_IRRADIANCE{"solar irradiance"};
 
 /// The band film's reader-only fields: what its numbers are, and whose
-/// response they came from. The readout's units are the same field.
+/// body they came from. The readout's units are the same field.
 constexpr const char *ENVI_BAND_UNITS{"band units"};
-constexpr const char *ENVI_RESPONSE_NAME{"render response name"};
+constexpr const char *ENVI_SENSOR_NAME{"render sensor name"};
 constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
 
 } // namespace
@@ -54,6 +54,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
                   const STree *sdtree) {
   SMDL_SANITY_CHECK(!bandFilm || response);
   const auto &wavelengths{grid.wavelengths};
+  const auto &model{frame.model};
   const auto numPixelsX{frame.numPixelsX};
   const auto numPixelsY{frame.numPixelsY};
   const auto window{frame.window};
@@ -93,16 +94,19 @@ void writeOutputs(const Options &opts, const Frame &frame,
   resumed.header.sampler = SAMPLER_VERSION;
   resumed.header.hasWavelengthJitter = shouldJitterWavelength;
   resumed.header.args = opts.argsEcho;
+  resumed.header.quantity = filmQuantityName(model.filmQuantity());
   // The response's fingerprint, which every film beside the spectral one
-  // carries, the readout included.
+  // carries, the readout included, and the body's name for the reader.
   auto responseLines{std::vector<std::string>()};
   if (response) {
     auto responseHeader{ResponseHeader{}};
-    responseHeader.kind = response->kindName();
     responseHeader.hash = response->hash();
     responseHeader.cfaColumns = response->tileColumns();
     responseHeader.cfa = response->tileNames();
     responseLines = responseHeader.headerLines();
+    if (model.sensor && !model.sensor->name.empty())
+      responseLines.push_back(
+          smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->name));
   }
   if (!outputSpectrum.empty()) {
 
@@ -114,10 +118,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // whoever opens the file next, and never read back, so none of it
     // joins the fingerprint a resumed session compares.
     auto headerLines{resumed.header.headerLines()};
-    headerLines.push_back(smdl::concat(ENVI_RADIANCE_UNITS, " = ",
-                                       frame.camera->holdsRadiance()
-                                           ? SPECTRAL_RADIANCE_UNITS
-                                           : LENS_FILM_UNITS));
+    headerLines.push_back(
+        smdl::concat(ENVI_RADIOMETRIC_UNITS, " = ",
+                     model.filmQuantity() == FilmQuantity::IRRADIANCE
+                         ? SPECTRAL_IRRADIANCE_UNITS
+                         : SPECTRAL_RADIANCE_UNITS));
     {
       float azimuthDeg{};
       float elevationDeg{};
@@ -166,17 +171,13 @@ void writeOutputs(const Options &opts, const Frame &frame,
       const auto bandPartName{bandName + ".part"};
       auto bandLines{resumed.header.headerLines()};
       for (const auto &line : responseLines) bandLines.push_back(line);
-      bandLines.push_back(
-          smdl::concat(ENVI_BAND_UNITS, " = ", response->units()));
-      if (!response->name().empty())
-        bandLines.push_back(
-            smdl::concat(ENVI_RESPONSE_NAME, " = ", response->name()));
+      bandLines.push_back(smdl::concat(ENVI_BAND_UNITS, " = ", BAND_UNITS));
       const auto &bandNames{response->filmBandNames()};
       bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames);
       smdl::renameOnto(bandPartName, bandName);
       smdl::renameOnto(bandPartName + ".hdr", bandName + ".hdr");
       SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(bandName), ", ",
-                    bandNames.size(), " band(s) in ", response->units());
+                    bandNames.size(), " band(s) in ", BAND_UNITS);
     }
     SMDL_LOG_INFO(
         "Cumulative render time: ", formatDuration(resumed.header.seconds),
@@ -185,22 +186,18 @@ void writeOutputs(const Options &opts, const Frame &frame,
   }
   if (!opts.image.outputDN.empty()) {
     // The readout: the band film through the detector, on its own pair
-    // under the same discipline. Staging established the response, the
-    // exposure, and the f-number; the pitch comes off the camera here,
+    // under the same discipline. The model established the body, the
+    // exposure, and the pupil; the f-number comes off the camera here,
     // which under -autolook exists only now.
-    SMDL_SANITY_CHECK(bandFilm && frame.camera);
-    const auto &camera{*frame.camera};
-    const auto sensor{camera.sensorSize()};
+    SMDL_SANITY_CHECK(bandFilm && frame.camera && model.sensor);
+    const auto &sensor{*model.sensor};
     auto geometry{DetectorGeometry{}};
-    geometry.pitchUM = float2(1e6f * sensor.x / float(numPixelsX),
-                              1e6f * sensor.y / float(numPixelsY));
-    geometry.pixelArea = (double(sensor.x) / double(numPixelsX)) *
-                         (double(sensor.y) / double(numPixelsY));
+    geometry.pitchUM = sensor.pitchUM;
+    geometry.pixelArea = sensor.pixelArea();
     geometry.exposure = gRenderShutter.exposure;
-    geometry.irradianceScale = camera.irradianceScale();
-    geometry.fNumber = camera.fNumber();
-    const Detector detector{frame.detector.value_or(DetectorSettings{}),
-                            geometry};
+    geometry.temperature = model.temperature;
+    geometry.fNumber = frame.camera->fNumber();
+    const Detector detector{sensor.detector, geometry};
     const auto readout{detector.readOut(*bandFilm, opts.image.readout, window)};
     const auto &dnName{opts.image.outputDN};
     const auto dnPartName{dnName + ".part"};
@@ -210,9 +207,6 @@ void writeOutputs(const Options &opts, const Frame &frame,
       dnLines.push_back(std::move(line));
     dnLines.push_back(
         smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
-    if (!response->name().empty())
-      dnLines.push_back(
-          smdl::concat(ENVI_RESPONSE_NAME, " = ", response->name()));
     const auto &bandNames{response->filmBandNames()};
     smdl::writeENVIFileUInt16(
         smdl::Span<const uint16_t>(readout.digitalNumbers.data(),

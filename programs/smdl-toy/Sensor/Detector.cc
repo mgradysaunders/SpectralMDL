@@ -8,7 +8,7 @@
 #include "smdl/Support/Parallel.h"
 #include "smdl/Support/Strings.h"
 
-#include "Detector.h"
+#include "Sensor/Detector.h"
 
 namespace {
 
@@ -80,29 +80,32 @@ Detector::Detector(const DetectorSettings &settings,
   mFullWell = settings.fullWell
                   ? double(*settings.fullWell)
                   : ELECTRONS_PER_SQUARE_MICROMETER * pixelAreaUM2;
-  mTopCode = uint16_t((uint32_t(1) << settings.bits) - 1);
-  mGain = settings.gain
-              ? double(*settings.gain)
-              : double(mTopCode) / (mFullWell + double(settings.blackLevel));
-  mDarkElectrons = double(settings.darkCurrent) * geometry.exposure *
-                   std::exp2((double(settings.temperature) -
-                              double(settings.referenceTemperature)) /
-                             double(settings.doublingTemperature));
-  mElectronsPerFilmUnit =
-      geometry.pixelArea * geometry.exposure * geometry.irradianceScale;
-  const double topCodeElectrons{double(mTopCode) / mGain -
-                                double(settings.blackLevel)};
+  mTopCode = uint16_t(settings.topCode());
+  const double codes{double(mTopCode) - double(settings.blackLevel)};
+  mGain = settings.gain ? double(*settings.gain) : codes / mFullWell;
+  mDarkElectrons =
+      double(settings.darkCurrent) * geometry.exposure *
+      std::exp2((geometry.temperature - double(settings.referenceTemperature)) /
+                double(settings.doublingTemperature));
+  mElectronsPerFilmUnit = geometry.pixelArea * geometry.exposure;
+  const double topCodeElectrons{codes / mGain};
   SMDL_LOG_INFO("Readout: ", smdl::Brief(geometry.pitchUM.x, 4), " by ",
                 smdl::Brief(geometry.pitchUM.y, 4), " um pixels, ",
                 smdl::Brief(1e3 * geometry.exposure, 4), " ms at f/",
                 smdl::Brief(geometry.fNumber, 4), ", ",
                 smdl::Brief(mElectronsPerFilmUnit, 4),
                 " electrons per unit of film; dark ",
-                smdl::Brief(mDarkElectrons, 4), " e-; well ",
+                smdl::Brief(mDarkElectrons, 4), " e- at ",
+                smdl::Brief(geometry.temperature, 4), " C; well ",
                 smdl::Brief(mFullWell, 6), " e- ",
                 settings.fullWell ? "stated" : "from the pitch", ", ",
                 smdl::Brief(mGain, 6), " DN/e- over ", settings.bits,
-                " bits, top code at ", smdl::Brief(topCodeElectrons, 6), " e-");
+                " bits, black level ", smdl::Brief(settings.blackLevel, 6),
+                " DN, top code at ", smdl::Brief(topCodeElectrons, 6), " e-",
+                settings.baseISO
+                    ? smdl::concat("; base ISO ",
+                                   smdl::Brief(*settings.baseISO, 6), " stated")
+                    : std::string());
   if (settings.gain && topCodeElectrons < mFullWell)
     SMDL_LOG_WARN("the stated gain puts the top code at ",
                   smdl::Brief(topCodeElectrons, 6), " e-, below the well of ",
@@ -157,6 +160,7 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
     uint64_t inWindow{};
   };
   auto rows{std::vector<RowTally>(numPixelsY)};
+  const double black{double(mSettings.blackLevel)};
   smdl::parallelFor(0, numPixelsY, [&](size_t y) {
     auto &tally{rows[y]};
     const bool isRowInWindow{int(y) >= window[1] && int(y) < window[3]};
@@ -171,8 +175,7 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
         double signal{};
         const double electrons{
             electronsOf(film.mean(x, y, b), options.noise, rng, signal)};
-        const double code{
-            std::round((electrons + double(mSettings.blackLevel)) * mGain)};
+        const double code{std::round(electrons * mGain + black)};
         readout.digitalNumbers[index] =
             uint16_t(std::clamp(code, 0.0, double(mTopCode)));
         if (isInWindow) {

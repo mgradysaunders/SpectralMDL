@@ -7,38 +7,37 @@
 #include "smdl/RenderUtil/SpectralFilm.h"
 #include "smdl/Support/RNG.h"
 
-#include "Detector.h"
+#include "Sensor/Detector.h"
 
 // The readout is a chain from the film's electrons to a digital number,
 // with the shot, read, and dark noise of a stated detector drawn onto
 // them. What matters is that with no noise it is a function of the film
 // alone, that each noise term has the statistics its model states, that
-// nothing compensates for a film's own noise, and that the tallies are
-// over the window.
+// nothing compensates for a film's own noise, that the black level is a
+// digital number added after the gain, and that the tallies are over
+// the window.
 
 namespace {
 
-constexpr double PI_DOUBLE{3.14159265358979323846};
-
-// The 4 um pixel at 1 ms and f/8 of the sunny-16 arithmetic.
+// The 4 um pixel at 1 ms of the sunny-16 arithmetic, at f/8 for the log.
 [[nodiscard]] DetectorGeometry geometry() {
   auto value{DetectorGeometry{}};
   value.pixelArea = 16e-12;
   value.exposure = 1e-3;
   value.fNumber = 8;
-  value.irradianceScale = PI_DOUBLE / (4 * 64);
   value.pitchUM = float2(4.0f, 4.0f);
   return value;
 }
 
 // A detector that reads one digital number per electron with no dark
-// current and no read noise, so a digital number is an electron: the
-// base every case perturbs.
+// current, no read noise, and no black level, so a digital number is an
+// electron: the base every case perturbs.
 [[nodiscard]] DetectorSettings plain() {
   auto value{DetectorSettings{}};
   value.fullWell = 60000.0f;
   value.readNoise = 0.0f;
   value.darkCurrent = 0.0f;
+  value.blackLevel = 0.0f;
   value.bits = 16;
   value.gain = 1.0f;
   return value;
@@ -121,13 +120,13 @@ TEST_CASE("Detector: zero noise is a function of the film") {
   settings.bits = 12;
   settings.gain = 0.5f;
   const Detector detector{settings, geometry()};
-  CHECK(detector.electronsPerFilmUnit() ==
-        doctest::Approx(16e-12 * 1e-3 * PI_DOUBLE / 256));
+  CHECK(detector.electronsPerFilmUnit() == doctest::Approx(16e-12 * 1e-3));
   CHECK(detector.darkElectrons() == doctest::Approx(0.1));
   CHECK(detector.fullWell() == 60000.0);
   CHECK(detector.gain() == 0.5);
   CHECK(detector.topCode() == 4095);
-  SUBCASE("Two readouts agree bit for bit and equal the hand chain") {
+  SUBCASE("Two readouts agree bit for bit and equal the hand chain, the "
+          "black level in digital numbers after the gain") {
     const auto film{flatFilm(detector, 3, 4, 3, 1000.0)};
     const auto first{readOut(detector, film, DetectorNoise::NONE)};
     const auto second{readOut(detector, film, DetectorNoise::NONE, 99)};
@@ -137,7 +136,7 @@ TEST_CASE("Detector: zero noise is a function of the film") {
     CHECK(first.pixelCountY == 3);
     REQUIRE(first.digitalNumbers.size() == 36);
     for (const auto value : first.digitalNumbers)
-      CHECK(value == uint16_t(std::round((1000.0 + 0.1 + 10.0) * 0.5)));
+      CHECK(value == uint16_t(std::round((1000.0 + 0.1) * 0.5 + 10.0)));
     CHECK(first.windowCount == 36);
     CHECK(first.meanElectrons == doctest::Approx(1000.0));
   }
@@ -188,13 +187,13 @@ TEST_CASE("Detector: a film's own noise adds to the shot noise") {
 
 TEST_CASE("Detector: a photon transfer curve recovers the gain and the read "
           "noise") {
-  // A pedestal of 200 electrons, so the read noise's lower half is not
-  // clipped at the ADC, as a real camera's black level keeps it.
+  // A pedestal of 50 digital numbers, so the read noise's lower half is
+  // not clipped at the ADC, as a real camera's black level keeps it.
   auto settings{plain()};
   settings.fullWell = 200000.0f;
   settings.gain = 0.25f;
   settings.readNoise = 20.0f;
-  settings.blackLevel = 200.0f;
+  settings.blackLevel = 50.0f;
   const Detector detector{settings, geometry()};
   const auto at{[&](double electrons) {
     return statsOf(readOut(detector, flatFilm(detector, 1, 128, 128, electrons),
@@ -231,19 +230,18 @@ TEST_CASE("Detector: dark frames are linear in the exposure and double at "
           "T + T_d") {
   auto settings{plain()};
   settings.darkCurrent = 1000.0f;
-  const auto darkFrame{[&](const DetectorSettings &at, double exposure) {
+  const auto darkFrame{[&](double exposure, double temperature) {
     auto shape{geometry()};
     shape.exposure = exposure;
-    const Detector detector{at, shape};
+    shape.temperature = temperature;
+    const Detector detector{settings, shape};
     const auto film{flatFilm(detector, 1, 2, 2, 0.0)};
     return readOut(detector, film, DetectorNoise::NONE).digitalNumbers[0];
   }};
-  CHECK(darkFrame(settings, 0.01) == 10);
-  CHECK(darkFrame(settings, 0.02) == 20);
-  auto warmer{settings};
-  warmer.temperature =
-      settings.referenceTemperature + settings.doublingTemperature;
-  CHECK(darkFrame(warmer, 0.01) == 20);
+  const double reference{settings.referenceTemperature};
+  CHECK(darkFrame(0.01, reference) == 10);
+  CHECK(darkFrame(0.02, reference) == 20);
+  CHECK(darkFrame(0.01, reference + settings.doublingTemperature) == 20);
   SUBCASE("A film with no samples reads as a dark frame") {
     auto shape{geometry()};
     shape.exposure = 0.01;
@@ -256,12 +254,13 @@ TEST_CASE("Detector: dark frames are linear in the exposure and double at "
 
 TEST_CASE("Detector: the well clips and the ADC has a top code") {
   SUBCASE("A field past the well reads the top code with no variance, the "
-          "gain filling the well") {
+          "gain filling the well above the black level") {
     auto settings{plain()};
     settings.readNoise = 3.0f;
+    settings.blackLevel = 535.0f;
     settings.gain = {};
     const Detector detector{settings, geometry()};
-    CHECK(detector.gain() == doctest::Approx(65535.0 / 60000.0));
+    CHECK(detector.gain() == doctest::Approx(65000.0 / 60000.0));
     const auto film{flatFilm(detector, 1, 32, 32, 120000.0)};
     const auto readout{readOut(detector, film, DetectorNoise::ALL)};
     for (const auto value : readout.digitalNumbers) CHECK(value == 65535);

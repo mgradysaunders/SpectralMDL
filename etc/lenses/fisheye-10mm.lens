@@ -5,7 +5,7 @@ lens {
   # Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
   # Covers an image circle 26.8 mm across at infinity focus, which is
   # the whole 155.9 degrees and wider than any sensor is tall, so the
-  # circle is always cropped. At a four thirds 'sensor 17.3 13' it
+  # circle is always cropped. On a Four Thirds body (17.3 by 13 mm) it
   # fills the frame: 74.3 degrees top to bottom and 123.3 across the
   # diagonal.
   surface { radius 30.2249  thickness 0.8335  ior 1.62  diameter 30.34 }

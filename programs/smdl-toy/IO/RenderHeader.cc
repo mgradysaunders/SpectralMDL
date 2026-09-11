@@ -77,12 +77,12 @@ void visitFields(Self &self, Visitor &&visit) {
   visit("sample offset", self.sampleOffset);
   visit("wavelength jitter", self.hasWavelengthJitter);
   visit("args", self.args);
+  visit("quantity", self.quantity);
 }
 
 // The band film's table, under the same prefix.
 template <typename Self, typename Visitor>
 void visitResponseFields(Self &self, Visitor &&visit) {
-  visit("response kind", self.kind);
   visit("response hash", self.hash);
   visit("cfa columns", self.cfaColumns);
   visit("cfa", self.cfa);

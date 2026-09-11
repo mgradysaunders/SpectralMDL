@@ -1,66 +1,65 @@
 # Sensors
 
-Measured spectral sensitivities of camera bodies, in the renderer's
-`.response` format, for `smdl-toy` to read a scene through. A camera
-file names one beside itself, or the command line does:
+Camera bodies in the renderer's `.sensor` format, for `smdl-toy` to land
+a picture on: the pixel array and its pitch, the measured spectral
+sensitivity of each band and the Bayer tile that lays them over the
+pixels, and the detector that turns electrons into digital numbers. A
+camera file names one beside itself, or the command line does:
 
 ```
 camera {
-  response "../../etc/sensors/canon-eos-5d-mark-ii.response"
+  sensor "../../etc/sensors/sony-ilce-7m3.sensor"
+  shutter 0.004  fstop 8
 }
 ```
 
 ```
-smdl-toy shot.layout -response etc/sensors/canon-eos-5d-mark-ii.response \
-    -wavelength-range 380,780 -output-spectrum out.img
+smdl-toy shot.layout -sensor etc/sensors/sony-ilce-7m3.sensor \
+    -shutter 0.004 -fstop 8 -output-spectrum out.img -output-dn out-dn.img
 ```
 
-The render then writes a second ENVI pair beside the spectral one,
-`out-bands.img`, holding each band's integral of the radiance against
-its curve, with the bands named in the header. Add
-`cfa { row R G  row G B }` to a copy of the file to get the Bayer mosaic
-a real sensor reads instead.
+A body decides the picture: the render is exactly its pixels (leave
+`-resolution` out, or use `-crop-window` for part of the frame), the
+spectral film holds the irradiance at the sensor rather than the scene
+radiance, the wavelength grid spans the body's curves with the jitter on
+unless the flags say otherwise, and the band film beside the spectral
+one (`out-bands.img`) holds the mosaic the tile reads, in photoelectrons
+per square meter and second. `-output-dn` reads it out through the
+detector as a 16-bit ENVI pair of digital numbers, with every factor in
+its header. `-describe-camera` prints what a camera resolves to before
+anything renders.
 
-Every curve here runs from 380 to 780 nm at 5 nm, so a render wants
-`-wavelength-range 380,780`; the default grid stops at 720 nm and the
-render says so.
+Every curve here runs from 380 to 780 nm at 5 nm.
+
+## What is measured and what is not
+
+The curves are Weta Digital's measurements, relative and
+peak-normalized, and carry no absolute scale. Each file states
+`peak_qe 0.5`, a generic peak quantum efficiency the renderer scales the
+set to, keeping the ratios the measurement carries; a readout is no
+better than that guess. The pixel count, the pitch, the bit depth, and
+the rated base ISO are the makers' published figures. The rest of the
+detector (the read noise, the dark current, the black level) is the
+format's generic default, which the files do not restate.
+
+The Hasselblad L1D-20c is stated at 12 bits; its own raw files are
+16-bit DNG containers.
+
+The rolling readout times measured by Horshack
+(https://horshack-dpreview.github.io/RollingShutter/) are not stated
+in the files, since they are one enthusiast's measurements rather than
+the makers' figures; for reference, at their electronic shutters the
+a6400 reads out in about 46 ms, the a7 III in 62 ms, the a7R III in 70
+ms, the a9 in 6.6 ms, and the R5 in 16 ms. State one with `readout` in
+a copy of the file, or with `-readout`.
 
 ## Reading a sensor out
 
-A readout counts electrons, which a relative curve cannot do: it needs
-a `qe` response, the curve in electrons per photon. The measurement
-carries no absolute scale, so the converter takes the peak quantum
-efficiency as a stated guess and writes the same curves scaled to it:
-
-```
-etc/scripts/response_convert.py canon-eos-5d-mark-ii.json --peak-qe 0.5 \
-    -o canon-eos-5d-mark-ii-qe.response
-```
-
-The result is no better than that peak. With it, a camera file that
-states the exposure, the f-number, the sensor size, and what it reads
-out with, and a command line that asks for the readout, get a 16-bit
-ENVI pair of the digital numbers the instrument would write, with every
-factor in its header:
-
-```
-camera {
-  response "canon-eos-5d-mark-ii-qe.response"
-  shutter 0.001  fstop 8  sensor 36 24
-  detector { full_well 60000 read_noise 3 bits 14 }
-}
-```
-
-```
-smdl-toy shot.layout -resolution 1800,1200 -output-spectrum out.img \
-    -output-dn out-dn.img
-```
-
-Every field of `detector` has a generic default and the block may be
-left out; `-detector-seed` picks the noise realization and
-`-detector-noise none|shot|all` isolates a term. A saved film reads out
+`-output-dn` needs an exposure (`shutter`) and a pupil (`fstop` or
+`aperture` with the thin lens, or a `.lens`). A saved film reads out
 again with `-spp 0 -resume out.img -output-dn ...`, as many times as
-there are realizations to draw.
+there are realizations to draw; `-detector-seed` picks the realization
+and `-detector-noise none|shot|all` isolates a term.
 
 The noise model assumes a converged film. It takes the band film's mean
 as the exact signal and draws the shot noise on it in full, so the
@@ -74,10 +73,11 @@ unconverged caustic reads out as signal.
 Winquist and Thurston, "Physlight - Camera Spectral Sensitivity
 Curves" (Weta Digital, 2022), https://doi.org/10.5281/zenodo.6590768,
 measured with Weta's "lightsaber" system: 17 bodies, relative and
-peak-normalized. Converted by `etc/scripts/response_convert.py` from the
-record's JSON files, which the header comment of each file names. The
-data set is Apache License 2.0, a copy of which is `LICENSE` beside this
-file.
+peak-normalized, pinned to the Zenodo v1.0.0 record. Converted by
+`etc/scripts/sensor_convert.py` from the record's JSON files, which the
+header comment of each file names, with the body facts given as flags.
+The data set is Apache License 2.0, a copy of which is `LICENSE` beside
+this file.
 
 A published curve is a starting point rather than a calibration: the one
 validation of a rendered sensor against a real phone in the literature

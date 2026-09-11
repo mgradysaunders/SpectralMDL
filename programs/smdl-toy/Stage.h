@@ -17,9 +17,9 @@
 
 #include "smdl/RenderUtil/Haze.h"
 
+#include "CameraModel.h"
 #include "Color.h"
 #include "Common.h"
-#include "Layout/CameraFile.h"
 #include "Layout/Layout.h"
 #include "Render/Camera.h"
 #include "Render/Light.h"
@@ -46,25 +46,17 @@ struct Frame final {
   /// one. Either may name a mesh file or a `.layout`.
   Layout layout{};
 
-  /// The camera settings, merged from three sources in increasing order
-  /// of priority: the defaults, the camera file's `camera` directive, and
-  /// whatever the command line explicitly gave.
-  CameraOptions cameraOptions{};
+  /// The camera resolved from the camera file, the files it names, and
+  /// the command line; see `CameraModel`. Its options are what the
+  /// camera below is built from, once `-autolook` has had its say.
+  CameraModel model{};
 
-  /// The detector's response: `-response`, else the camera file's
-  /// `response` (the sidecar it names, or its inline block), else
-  /// nothing. The parsed settings alone; what the render makes of them
-  /// needs the wavelength grid, which is resolved after the frame.
-  std::optional<ResponseSettings> response{};
-
-  /// The file `response` came from, or empty for an inline block.
-  std::string responseFileName{};
-
-  /// The detector the camera file reads out with, or nothing, which a
-  /// readout takes as the generic defaults. The parsed settings alone;
-  /// what the readout makes of them needs the pitch, which the camera
-  /// decides.
-  std::optional<DetectorSettings> detector{};
+  /// Does each sample draw its own wavelength grid? `-wavelength-jitter`
+  /// when it was given, and otherwise on for a physical sensor, whose
+  /// bands may be narrower than the grid's spacing, and off for the
+  /// observer. Decided here rather than with the grid because a resume
+  /// compares it before the grid exists.
+  bool shouldJitterWavelength{};
 
   /// The camera itself.
   ///

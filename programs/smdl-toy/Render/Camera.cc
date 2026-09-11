@@ -42,6 +42,8 @@ Camera::Camera(const CameraOptions &options) {
   if (!(options.catEye >= 0 && options.catEye <= 1))
     throw smdl::Error("expected -cat-eye to be between 0 (off) and 1 "
                       "(fully dark corners)");
+  if (!(options.frameSize.x > 0 && options.frameSize.y > 0))
+    throw smdl::Error("expected the frame to have a size");
   // The radial distortion map must stay monotone over the frame or the
   // image folds over itself. Scan rather than solve, so combinations of
   // the two coefficients are covered as well as either alone; the radius
@@ -64,6 +66,9 @@ Camera::Camera(const CameraOptions &options) {
   mNumPixelsX = float(options.resolution.x);
   mNumPixelsY = float(options.resolution.y);
   mAspectRatio = mNumPixelsX / mNumPixelsY;
+  mFrameWidth = options.frameSize.x;
+  mFrameHeight = options.frameSize.y;
+  mFilmQuantity = options.filmQuantity;
   mCameraToWorld =
       smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp);
   mLookFrom = options.lookFrom;
@@ -99,102 +104,70 @@ Camera::Camera(const CameraOptions &options) {
 }
 
 // The lens the file names, and everything that follows from it: the
-// sensor it covers, the pixel footprint that seeds the LOD cone, and the
-// two probes that say what actually reaches the film.
+// field the frame looks out at, the pixel footprint that seeds the LOD
+// cone, and the two probes that say what actually reaches the film.
 void Camera::buildLens(const CameraOptions &options) {
   mLens.emplace(*options.lens, LensOptions{mFocusDistance, options.fStop,
                                            mNumBlades, mBladeAngle});
-  if (options.sensorMM.x > 0 && options.sensorMM.y > 0) {
-    mSensorWidth = 1e-3f * options.sensorMM.x;
-    mSensorHeight = 1e-3f * options.sensorMM.y;
-  } else if (options.fovYDeg > 0) {
-    // A field of view stated with a lens is a request rather than a
-    // setting: the sensor is however tall it has to be to look out at
-    // it, which is a solve on the traced field angle and so carries
-    // whatever distortion the surfaces have. The width follows from the
-    // picture's own shape, there being nothing else to take it from.
-    const auto halfHeight{
-        mLens->filmRadiusForFieldAngle(smdl::radians(0.5f * options.fovYDeg))};
-    if (!(halfHeight > 0)) {
-      const auto circle{mLens->imageCircleRadius()};
-      throw smdl::Error(smdl::concat(
-          "cannot look out at 'fovy' ", options.fovYDeg,
-          " degrees through this lens: it covers an image circle ",
-          2e3f * circle, " mm across, which is ",
-          2 * smdl::degrees(mLens->fieldAngleAt(circle)),
-          " degrees at its widest, and nothing behind it reaches further"));
-    }
-    mSensorHeight = 2 * halfHeight;
-    mSensorWidth = mSensorHeight * mAspectRatio;
-  } else {
-    mSensorWidth = 1e-3f * 36.0f;
-    mSensorHeight = 1e-3f * 24.0f;
-  }
-  const auto sensorMM{1e3f * float2(mSensorWidth, mSensorHeight)};
+  const auto frameMM{1e3f * float2(mFrameWidth, mFrameHeight)};
   // The pixel's angular footprint, the same quantity the thin lens takes
-  // from its field of view, now in the millimeters of a real sensor over
+  // from its field of view, now in the millimeters of a real frame over
   // a real focal length.
   mConeAngleBase =
       options.noLOD
           ? 0.0f
-          : std::atan(mSensorHeight / (mNumPixelsY * mLens->focalLength()));
+          : std::atan(mFrameHeight / (mNumPixelsY * mLens->focalLength()));
   mLens->logSummary();
-  const auto halfDiagonal{0.5f * std::hypot(mSensorWidth, mSensorHeight)};
+  const auto halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
   mExitPupil.emplace(*mLens, halfDiagonal);
   mExitPupil->logSummary();
   // What one unit of drawn pupil area is worth. Irradiance at a film
   // point is the pupil integral of `L cos^4(theta) dA / d^2`, with `d`
-  // the axial distance from the film to the plane the point is drawn on,
-  // and the constant in front sets where the scale sits: this one makes
-  // an ideal f/1 lens read 1 on axis, so that two lenses, and one lens at
-  // two apertures, are on the same exposure.
+  // the axial distance from the film to the plane the point is drawn on.
+  // A physical sensor's film holds exactly that. The observer's holds
+  // the scene radiance instead, so the integral is normalized to the
+  // lens's own f-number: an ideal lens then reads 1 on axis, and the
+  // frame holds its brightness whatever lens takes it and however far it
+  // is stopped down.
   const auto filmToPupil{mLens->filmZ() - mLens->rearZ()};
-  mExposurePerPupilArea = 4 / (PI * filmToPupil * filmToPupil);
-  mIsLensExposureNormalized = options.shouldNormalizeLensExposure;
-  if (options.shouldNormalizeLensExposure) {
+  if (mFilmQuantity == FilmQuantity::IRRADIANCE) {
+    mExposurePerPupilArea = 1 / (filmToPupil * filmToPupil);
+    SMDL_LOG_INFO("Lens exposure: f/", mLens->fNumber(),
+                  ", the film holds the irradiance at the sensor");
+  } else {
+    mExposurePerPupilArea = 4 / (PI * filmToPupil * filmToPupil);
     mExposurePerPupilArea *= mLens->fNumber() * mLens->fNumber();
     SMDL_LOG_INFO("Lens exposure: normalized to f/", mLens->fNumber(),
-                  ", so the frame holds its brightness whatever lens takes "
-                  "it and however far it is stopped down");
-  } else {
-    SMDL_LOG_INFO("Lens exposure: f/", mLens->fNumber(), " gathers ",
-                  1 / (mLens->fNumber() * mLens->fNumber()),
-                  " of what an ideal f/1 lens would, before what the glass "
-                  "takes");
+                  ", so the film holds the scene radiance on axis whatever "
+                  "lens takes it and however far it is stopped down");
   }
   // Traced rather than taken from the focal length, so what it reports
   // is the frame the picture actually has, distortion and all.
   const auto verticalDeg{
-      2 * smdl::degrees(mLens->fieldAngleAt(0.5f * mSensorHeight))};
+      2 * smdl::degrees(mLens->fieldAngleAt(0.5f * mFrameHeight))};
   const auto diagonalDeg{2 * smdl::degrees(mLens->fieldAngleAt(halfDiagonal))};
-  SMDL_LOG_INFO("Lens frame: a ", sensorMM.x, " by ", sensorMM.y,
-                " mm sensor, ", verticalDeg, " degrees top to bottom",
+  SMDL_LOG_INFO("Lens frame: a ", frameMM.x, " by ", frameMM.y, " mm frame, ",
+                verticalDeg, " degrees top to bottom",
                 diagonalDeg > 0 ? smdl::concat(" and ", diagonalDeg,
                                                " degrees across the diagonal")
                                 : std::string(" and dark in the corners"));
-  if (const auto sensorAspect{mSensorWidth / mSensorHeight};
-      std::abs(sensorAspect - mAspectRatio) > 0.01f * mAspectRatio)
-    SMDL_LOG_WARN("Lens: the sensor is ", sensorAspect,
-                  " wide for its height and -resolution is ", mAspectRatio,
-                  ", so the picture is stretched out of the shape of the "
-                  "sensor it names");
   // The two ends of the frame, as areas on the plane of the rear vertex
   // rather than shares of it: what the corner gets against what the
   // middle gets is the mechanical vignette, which the thin lens can only
   // approximate with its cat's eye.
   const auto onAxis{mLens->transmittedArea(0.0f)};
   if (!(onAxis > 0))
-    throw smdl::Error("no ray from the middle of the sensor reaches the "
+    throw smdl::Error("no ray from the middle of the frame reaches the "
                       "scene through this lens: check that the surfaces are "
                       "in front-to-film order and that the clear apertures "
                       "are diameters");
   const auto atCorner{mLens->transmittedArea(halfDiagonal)};
   if (!(atCorner > 0)) {
-    SMDL_LOG_WARN("Lens: nothing reaches the corner of the sensor through "
+    SMDL_LOG_WARN("Lens: nothing reaches the corner of the frame through "
                   "this lens, so the frame is dark outside the circle it "
-                  "covers; a smaller 'sensor' is what fits it");
+                  "covers; a smaller sensor is what fits it");
   } else {
-    SMDL_LOG_INFO("Lens vignetting: the sensor corner sees ",
+    SMDL_LOG_INFO("Lens vignetting: the frame corner sees ",
                   100 * atCorner / onAxis,
                   "% of what its middle sees, measured through the glass");
   }
@@ -205,21 +178,6 @@ void Camera::buildLens(const CameraOptions &options) {
 // that stand in for what a real lens does on its own.
 void Camera::buildThinLens(const CameraOptions &options) {
   mFocalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
-  // The frame's physical size, which the field of view does not need but
-  // the pixel pitch and the f-number do: what `sensor` states, else the
-  // 36 by 24 of full frame.
-  if (options.sensorMM.x > 0 && options.sensorMM.y > 0) {
-    mSensorWidth = 1e-3f * options.sensorMM.x;
-    mSensorHeight = 1e-3f * options.sensorMM.y;
-    if (const auto sensorAspect{mSensorWidth / mSensorHeight};
-        std::abs(sensorAspect - mAspectRatio) > 0.01f * mAspectRatio)
-      SMDL_LOG_WARN("Camera: the sensor is ", sensorAspect,
-                    " wide for its height and -resolution is ", mAspectRatio,
-                    ", so its pixels are not square");
-  } else {
-    mSensorWidth = 1e-3f * 36.0f;
-    mSensorHeight = 1e-3f * 24.0f;
-  }
   // One pixel's subtended angle, the ray cone spread that seeds the LOD
   // state; zero switches the cone off end to end.
   mConeAngleBase =
@@ -247,11 +205,42 @@ void Camera::buildThinLens(const CameraOptions &options) {
     mLensRadius = options.aperture;
   } else if (options.fStop > 0) {
     // `mFocalLength` is in units of image height, so the lens is
-    // `mSensorHeight * mFocalLength` long and `1 / fstop` of that across:
-    // the 24 mm of a 35mm frame unless `sensor` says otherwise.
-    mLensRadius = 0.5f * mSensorHeight * mFocalLength / options.fStop;
+    // `mFrameHeight * mFocalLength` long and `1 / fstop` of that across:
+    // the 24 mm of a 35mm frame unless a body says otherwise.
+    mLensRadius = 0.5f * mFrameHeight * mFocalLength / options.fStop;
   }
   mVignetteStrength = options.vignetting;
+  if (mFilmQuantity == FilmQuantity::IRRADIANCE) {
+    // The pupil integral of the thin lens itself: a disk of the lens's
+    // radius at the image distance behind it, bellows factor included,
+    // which reduces to the paraxial `pi / (4 N^2)` on axis at infinity
+    // focus. The `cos^4` of each sample's own segment lands in
+    // `sample()`.
+    if (!(mLensRadius > 0))
+      throw smdl::Error("a physical sensor integrates the irradiance over a "
+                        "pupil, and a pinhole has none: state 'fstop' or "
+                        "'aperture'");
+    const float focalLength{mFocalLength * mFrameHeight};
+    if (!(mFocusDistance > focalLength))
+      throw smdl::Error(smdl::concat(
+          "the thin lens cannot focus at ", mFocusDistance,
+          " scene units, inside its focal length of ", focalLength));
+    mImageDistance =
+        focalLength * mFocusDistance / (mFocusDistance - focalLength);
+    mPupilIrradiance =
+        PI * mLensRadius * mLensRadius / (mImageDistance * mImageDistance);
+    if (mVignetteStrength > 0) {
+      SMDL_LOG_INFO("Natural vignetting: the irradiance at the sensor "
+                    "carries the cos^4 law exactly, so 'vignetting' is not "
+                    "applied on top of it");
+      mVignetteStrength = 0;
+    }
+    SMDL_LOG_INFO("Thin lens exposure: f/", fNumber(), ", the film holds ",
+                  mPupilIrradiance,
+                  " of the scene radiance on axis, the pupil integral at an "
+                  "image distance of ",
+                  1e3f * mImageDistance, " mm");
+  }
   // The barrel rim radius and the rim displacement per unit of image
   // radius, both zero when mechanical vignetting is off. Parameterizing
   // the barrel half-length by its corner displacement is exact, since the
@@ -282,15 +271,8 @@ void Camera::buildThinLens(const CameraOptions &options) {
 
 float Camera::fNumber() const noexcept {
   if (mLens) return mLens->fNumber();
-  return mLensRadius > 0 ? mFocalLength * mSensorHeight / (2 * mLensRadius)
+  return mLensRadius > 0 ? mFocalLength * mFrameHeight / (2 * mLensRadius)
                          : 0.0f;
-}
-
-double Camera::irradianceScale() const noexcept {
-  constexpr double pi{3.14159265358979323846};
-  if (mLens && !mIsLensExposureNormalized) return pi / 4;
-  const double N{fNumber()};
-  return N > 0 ? pi / (4 * N * N) : 0.0;
 }
 
 CameraSample Camera::sample(size_t x, size_t y,
@@ -338,6 +320,17 @@ CameraSample Camera::sample(size_t x, size_t y,
         (lengthSquared(lens + image) + mFocalLength * mFocalLength)};
     result.weight *= std::pow(cosSquared, 2 * mVignetteStrength);
   }
+  if (mFilmQuantity == FilmQuantity::IRRADIANCE) {
+    // The pupil integral: the disk over the image distance squared, and
+    // the `cos^4` of this sample's own film-to-lens segment, in meters
+    // throughout. The film point is the image point inverted and scaled
+    // to the frame, hence the sum.
+    const float2 filmOffset{mFrameHeight * image};
+    const float cosSquared{
+        mImageDistance * mImageDistance /
+        (lengthSquared(lens + filmOffset) + mImageDistance * mImageDistance)};
+    result.weight *= mPupilIrradiance * cosSquared * cosSquared;
+  }
   if (mRimSlope > 0 && mLensRadius > 0) {
     // Mechanical vignetting: the barrel rims, projected onto the
     // lens plane and displaced either way along the image point's
@@ -362,7 +355,7 @@ CameraSample Camera::sampleThroughLens(float u, float v,
   // The film point: the sensor coordinate, with the image inverted on it
   // the way a lens leaves it, which is why both signs run against the
   // pixel coordinate.
-  const float3 film{-(u - 0.5f) * mSensorWidth, (v - 0.5f) * mSensorHeight,
+  const float3 film{-(u - 0.5f) * mFrameWidth, (v - 0.5f) * mFrameHeight,
                     mLens->filmZ()};
   // The pupil point, drawn inside the part of the rear aperture this
   // film point can see out through. These are the two dimensions the

@@ -1,26 +1,26 @@
 /// \file
-/// The camera format: where the picture is taken from, with what lens,
-/// and when.
+/// The camera format: the shot. Where the picture is taken from, on what
+/// body and through what lens, and what the photographer turned.
 ///
 /// A `.camera` file is the second format of the layout family and is
 /// parsed by the same syntax core (`TextParser.h`). The split is a
 /// separation of concerns: a `.layout` says what is in the world and how
-/// it moves, on an absolute clock, and a `.camera` says what it is
-/// photographed with. One scene then takes as many viewpoints as there
-/// are files, and neither file has to restate the other.
+/// it moves, on an absolute clock; a `.camera` says what it is
+/// photographed with; a `.sensor` says what the picture lands on; and a
+/// `.lens` says what the light came through. One scene then takes as
+/// many viewpoints as there are camera files, one body serves every shot
+/// taken with it, and no file restates another.
+///
+/// The camera names its body and its lens, each a file beside it or the
+/// ideal stand-in: `sensor human`, the CIE observer, and `lens ideal`,
+/// the thin lens, which are both the defaults. It never writes a body
+/// inline: a body is a fact shared by every shot, so it gets a file.
 ///
 /// What the file deliberately does not carry: which instant to
 /// photograph (`-time`, so one camera renders every frame of a shot) and
 /// how big the picture is (`-resolution` and `-crop-window`, which are
-/// facts about this render rather than about the camera).
-///
-/// The detector's response is the one thing the file may hold in either
-/// of two places: a `response { ... }` block inline, or a `.response`
-/// file holding that block alone, named by `response "path"` and
-/// resolved relative to the camera. The sidecar is for curves that run
-/// to hundreds of points and for a sensor several cameras share; it is
-/// parsed by this same vocabulary with `response` as its one top-level
-/// directive, so the two forms cannot drift apart.
+/// facts about this render rather than about the camera, and which a
+/// physical body decides for itself).
 #pragma once
 
 #include <optional>
@@ -31,138 +31,29 @@
 #include "Common.h"
 
 #include "Layout/LayoutDiagnostics.h"
+#include "Layout/SensorFile.h"
 
 /// The extension that marks a camera file, which is how the render finds
 /// the one beside a layout.
 constexpr std::string_view CAMERA_EXTENSION = ".camera";
 
-/// The extension that marks a response file: a `response` block on its
-/// own, which a camera names in place of writing the block inline.
-constexpr std::string_view RESPONSE_EXTENSION = ".response";
-
-/// The direction a rolling readout sweeps the picture, named for where
-/// the sweep travels to: `DOWN` reads the top line first.
-enum class ReadoutDirection { DOWN, UP, LEFT, RIGHT };
-
-/// What a response curve's values are, which decides what its band
-/// integrates to.
-enum class ResponseKind {
-  /// A unitless weighting, the convention of every published camera
-  /// curve. The band is the normalized energy integral: the radiance
-  /// averaged over the curve, in the film's own units.
-  RELATIVE,
-
-  /// Electrons per photon. The band is the photon integral weighted by
-  /// the curve, in electrons per square meter, steradian, and second,
-  /// which is what a detector readout counts from.
-  QE
-};
-
-/// One response band: a named piecewise-linear curve over wavelength.
-class ResponseBand final {
-public:
-  /// The name, an identifier, carried verbatim into the ENVI header's
-  /// `band names`.
-  std::string name{};
-
-  /// The knots' wavelengths in nanometers, positive and strictly
-  /// ascending, at least two of them.
-  std::vector<float> wavelengths{};
-
-  /// The curve's value at each knot, finite and nonnegative. The curve
-  /// is zero outside its knots.
-  std::vector<float> values{};
-};
-
-/// The `response` a camera reads through: the detector's named bands as
-/// curves over wavelength, and the tile that lays them over the pixels
-/// when there is one. As parsed; what the render makes of it against
-/// the wavelength grid is decided after the frame, where the grid is.
-class ResponseSettings final {
-public:
-  /// `name`: the sensor's name, free text, or empty.
-  std::string name{};
-
-  /// `kind`: what the values are, `relative` unless stated. One kind per
-  /// response, so its bands share their units.
-  ResponseKind kind{ResponseKind::RELATIVE};
-
-  /// `band`: the bands in file order, at least one.
-  std::vector<ResponseBand> bands{};
-
-  /// `cfa`: the tile's width in pixels, or 0 without a tile.
-  size_t cfaColumns{};
-
-  /// `cfa`: the tile row by row, each entry an index into `bands`, or
-  /// empty without a tile. Pixel `(x, y)` of the frame reads through
-  /// `cfa[(y % rows) * cfaColumns + x % cfaColumns]`.
-  std::vector<size_t> cfa{};
-
-  [[nodiscard]] bool hasCFA() const noexcept { return cfaColumns > 0; }
-
-  [[nodiscard]] size_t cfaRows() const noexcept {
-    return cfaColumns > 0 ? cfa.size() / cfaColumns : 0;
-  }
-
-  /// The index of the band named `name`, or nothing.
-  [[nodiscard]] std::optional<size_t>
-  bandIndex(std::string_view name) const noexcept;
-};
-
-/// The `detector` a camera reads out with: what turns the electrons a
-/// `qe` response counts into the digital numbers a stated instrument
-/// writes. Every field has a generic default from a modern CMOS sensor,
-/// so an empty block, or none at all, is a usable detector and a block
-/// names what differs; a vendor's EMVA 1288 data sheet carries the whole
-/// vector in exactly these units.
-class DetectorSettings final {
-public:
-  /// `full_well`: the electrons a pixel holds before it clips, positive.
-  /// Unset is 1000 electrons per square micrometer of pixel, which the
-  /// readout derives from the pitch, so that a phone pixel and a
-  /// full-frame one both get a plausible well.
-  std::optional<float> fullWell{};
-
-  /// `read_noise`: the read noise in electrons rms, nonnegative.
-  float readNoise{1.5f};
-
-  /// `dark_current`: the dark current in electrons per second at
-  /// `reference_temperature`, nonnegative.
-  float darkCurrent{0.1f};
-
-  /// `reference_temperature`: the degrees Celsius `dark_current` is
-  /// stated at.
-  float referenceTemperature{25.0f};
-
-  /// `doubling_temperature`: the degrees Celsius per doubling of the dark
-  /// current, positive. A field rather than a constant: the textbook 7
-  /// and the 12.7 measured on current back-illuminated parts differ by
-  /// a factor of four in dark current extrapolated to room temperature.
-  float doublingTemperature{7.0f};
-
-  /// `temperature`: the sensor's degrees Celsius at the exposure.
-  float temperature{25.0f};
-
-  /// `black_level`: the electrons added before the ADC so that the noise
-  /// around zero is not clipped away, nonnegative.
-  float blackLevel{};
-
-  /// `bits`: the ADC's depth, 1 to 16, so the top code is `2^bits - 1`.
-  int bits{12};
-
-  /// `gain`: digital numbers per electron, positive. Unset fills the
-  /// well to the top code: `(2^bits - 1) / (full_well + black_level)`.
-  std::optional<float> gain{};
-};
+/// The word that names the observer in place of a body, and the word
+/// that names the thin lens in place of a prescription.
+///
+/// \{
+constexpr std::string_view SENSOR_HUMAN = "human";
+constexpr std::string_view LENS_IDEAL = "ideal";
+/// \}
 
 /// The camera settings a `motion` key may restate, which is every one
 /// that is a quantity to interpolate over the life of a shot.
 ///
 /// The ones left out are left out because they are not: `blades` counts
-/// the aperture's edges, `distortion_fit` is a bare flag, `lens`,
-/// `sensor`, `response`, and `detector` are the instrument, and
-/// `shutter`, `readout`, and `readout_direction` describe the interval a
-/// key is sampled over rather than something sampled within it.
+/// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
+/// `sensor` are the instrument, `temperature` is the body's condition
+/// over the shot, and `shutter`, `readout`, and `readout_direction`
+/// describe the interval a key is sampled over rather than something
+/// sampled within it.
 ///
 class CameraKeyable {
 public:
@@ -198,8 +89,9 @@ public:
 /// The camera a file's `camera` directive describes.
 ///
 /// Everything is optional and unset by default. The built-in defaults
-/// are the base, the file overrides those, and explicit command-line
-/// flags override the file.
+/// are the base, the sensor file overrides those where it speaks, the
+/// camera file overrides both, and explicit command-line flags override
+/// everything.
 ///
 class CameraSettings final : public CameraKeyable {
 public:
@@ -207,19 +99,27 @@ public:
   std::optional<bool> shouldFitDistortion{};
 
   /// `lens`: the '.lens' file the camera looks through, as written, to be
-  /// resolved relative to the camera file that names it. Not keyable: it
-  /// is the lens, not a quantity to interpolate.
+  /// resolved relative to the camera file that names it; or `ideal`, the
+  /// thin lens, which unset means too. Not keyable: it is the lens, not
+  /// a quantity to interpolate.
   ///
-  /// With one, the frame is the sensor and the prescription together, so
-  /// `fovy` and every setting that stands in for what a real lens does on
-  /// its own are refused rather than ignored.
+  /// With a prescription, the field of view is the body and the glass
+  /// together, so `fovy` and every setting that stands in for what a
+  /// real lens does on its own are refused rather than ignored.
   std::optional<std::string> lens{};
 
-  /// `sensor`: the sensor width and height in millimeters, full frame
-  /// when unset. With a lens it decides the field of view; with the thin
-  /// lens it sizes the frame `fovy` spans, which sets the pixel pitch a
-  /// readout counts over and the focal length `fstop` is a fraction of.
-  std::optional<float2> sensorMM{};
+  /// `sensor`: the '.sensor' file the picture lands on, as written, to be
+  /// resolved relative to the camera file that names it; or `human`, the
+  /// CIE observer, which unset means too. Not keyable, and never a
+  /// block: a body is a file.
+  std::optional<std::string> sensor{};
+
+  /// `temperature`: the body's degrees Celsius over the shot, which its
+  /// dark current follows; 25 unless stated. A condition of the shot
+  /// rather than a fact about the body, which is why it is here and not
+  /// in the sensor file. Meaningless to the observer, and refused with
+  /// it.
+  std::optional<float> temperature{};
 
   /// `shutter`: the seconds from shutter open to shutter shut,
   /// nonnegative, which `-shutter` overrides. Zero or unset is a shut
@@ -232,33 +132,18 @@ public:
   std::optional<float> shutter{};
 
   /// `readout`: the seconds the sensor takes to read the frame out,
-  /// nonnegative, which `-readout` overrides. Zero or unset is a global
-  /// shutter, where every line exposes over the same interval; with one,
-  /// the lines expose one after another, the frame spans `shutter` plus
-  /// `readout`, and motion during the sweep skews the picture.
+  /// nonnegative, overriding the body's own and overridden by
+  /// `-readout`. Zero is a global shutter, where every line exposes over
+  /// the same interval; with one, the lines expose one after another,
+  /// the frame spans `shutter` plus `readout`, and motion during the
+  /// sweep skews the picture.
   std::optional<float> readout{};
 
-  /// `readout_direction`: the way the readout sweeps the picture, `down`
-  /// unless stated, so that `down` reads the top line first. Not keyable
-  /// and not a flag: which way a sensor reads is a fact about the camera
-  /// nobody changes per render.
+  /// `readout_direction`: the way the readout sweeps the picture,
+  /// overriding the body's own, which is `down` unless stated, so that
+  /// `down` reads the top line first. Not keyable and not a flag: which
+  /// way a sensor reads is a fact nobody changes per render.
   std::optional<ReadoutDirection> readoutDirection{};
-
-  /// `response { ... }`: the detector's bands, written inline. Not
-  /// keyable, and not merged: a second `response` in either form is an
-  /// error, since two sets of bands have no meaningful union. See
-  /// `ResponseSettings`.
-  std::optional<ResponseSettings> response{};
-
-  /// `response "path"`: the '.response' file holding the block instead,
-  /// as written, to be resolved relative to the camera file that names
-  /// it. `-response` overrides it as `-lens` overrides `lens`.
-  std::optional<std::string> responseFile{};
-
-  /// `detector { ... }`: what the camera reads out with, see
-  /// `DetectorSettings`. Not keyable, and not merged: a second `detector`
-  /// is an error, as a second `response` is.
-  std::optional<DetectorSettings> detector{};
 
   /// The keys the `motion` block wrote, in ascending time, or empty for
   /// a still camera. See `CameraKey`.
@@ -329,42 +214,3 @@ public:
 [[nodiscard]] std::string
 resolveCameraFileName(const std::string &given,
                       const std::string &sceneFileName);
-
-/// A parsed response file, as written: the camera's `response` block on
-/// its own.
-class ResponseDocument final {
-public:
-  /// The source the document was parsed from, owned by the
-  /// `LayoutDiagnostics` that loaded it.
-  const LayoutSource *source{};
-
-  /// What the file's `response` block described.
-  ResponseSettings response{};
-  LayoutLocation responseLoc{};
-};
-
-/// Parse one response source into a document, as `parseCamera()` does a
-/// camera: pure, best effort, every diagnostic in `diags`. A file with
-/// no `response` block is an error, since a camera named it for one.
-[[nodiscard]] ResponseDocument parseResponse(LayoutDiagnostics &diags,
-                                             const LayoutSource &source);
-
-/// Read a response file, as `readCamera()` reads a camera.
-///
-/// \throws smdl::Error  If the file cannot be read, or on any parse
-///                      error after printing the diagnostics.
-///
-[[nodiscard]] ResponseDocument readResponse(const std::string &fileName);
-
-/// The response file a camera should read through, or empty for none:
-/// `given` if the command line named one, else `stated` if the camera
-/// file did, resolved relative to `cameraFileName` so that a scene
-/// directory stays self-contained.
-///
-/// \throws smdl::Error  If either names a file that does not exist,
-///                      since neither may be quietly ignored.
-///
-[[nodiscard]] std::string
-resolveResponseFileName(const std::string &given,
-                        const std::string &cameraFileName,
-                        const std::string &stated);

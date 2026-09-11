@@ -10,6 +10,7 @@
 #include "IO/RenderHeader.h"
 
 struct Options;
+struct Frame;
 class ResponseSettings;
 
 /// What `-resume` found: a prior session's accumulation, and the record
@@ -68,7 +69,11 @@ struct ResumedSequence final {
 /// constant (the resolution, the window) is a hard error; everything it
 /// merely ought to (the sampler, the jitter, the flags) is a warning.
 ///
-/// `response` is this render's detector response, or null for none.
+/// `frame` is this render's resolved frame: the resolution and the
+/// window the file must match, the film quantity it must hold, and the
+/// jitter it is compared against.
+///
+/// `response` is this render's sensor response, or null for none.
 /// With one, the band film beside the accumulation is loaded too, and
 /// everything about it is a hard error: that it exists, that it holds the
 /// accumulation's sample count, that its bands are this response's, and
@@ -79,5 +84,5 @@ struct ResumedSequence final {
 /// \throws smdl::Error  If the file cannot be resumed from.
 ///
 [[nodiscard]] ResumedSequence resumeSequence(const Options &opts,
-                                             int2 resolution, int4 window,
+                                             const Frame &frame,
                                              const ResponseSettings *response);

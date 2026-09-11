@@ -45,6 +45,12 @@ struct RenderHeader final {
   /// The command line that started the first session.
   std::string args{};
 
+  /// What the film holds, `radiance` or `irradiance`, which a resume
+  /// holds constant: a physical sensor's film and the observer's are
+  /// different quantities and cannot be summed. Empty in a file written
+  /// before there was a choice, which is radiance.
+  std::string quantity{};
+
   /// The lines to hand `smdl::SpectralFilm::writeENVIFile()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;
 
@@ -60,9 +66,6 @@ struct RenderHeader final {
 /// what its pixels are. Written and read through one table, as
 /// `RenderHeader` is and for the same reason.
 struct ResponseHeader final {
-  /// The response's kind, `relative` or `qe`.
-  std::string kind{};
-
   /// The hash of the curve set; see `responseHash()`.
   std::string hash{};
 
@@ -116,15 +119,15 @@ struct DetectorHeader final {
   /// The gain in digital numbers per electron, stated or derived.
   double gain{};
 
-  /// The black level in electrons.
+  /// The black level in digital numbers.
   double blackLevel{};
 
   /// The ADC's depth.
   uint64_t bits{};
 
   /// The signal electrons one unit of the band film is worth: the pixel
-  /// area, the exposure, and the irradiance scale together, so that a
-  /// reader recovers the electrons from the band film alone.
+  /// area and the exposure together, so that a reader recovers the
+  /// electrons from the band film alone.
   double electronsPerFilmUnit{};
 
   /// The lines to hand `smdl::writeENVIFileUInt16()`.

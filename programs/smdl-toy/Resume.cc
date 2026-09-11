@@ -9,10 +9,12 @@
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
+#include "CameraModel.h"
 #include "Options.h"
 #include "Render/Sampler.h"
-#include "Response.h"
 #include "Resume.h"
+#include "Sensor/Response.h"
+#include "Stage.h"
 
 namespace {
 
@@ -165,8 +167,10 @@ struct BandFilm final {
 
 } // namespace
 
-ResumedSequence resumeSequence(const Options &opts, int2 resolution,
-                               int4 window, const ResponseSettings *response) {
+ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
+                               const ResponseSettings *response) {
+  const auto resolution{frame.resolution};
+  const auto window{frame.window};
   auto result{ResumedSequence{}};
   result.wasRequested = !opts.image.resume.empty();
   result.sampleIndexBase = opts.render.sampling.sampleOffset;
@@ -236,12 +240,24 @@ ResumedSequence resumeSequence(const Options &opts, int2 resolution,
   // this session here and replaced by it when it is written back.
   header.sampleOffset = 0;
   header.readFrom(info.fields);
+  // A file written before the film could hold anything but radiance
+  // says nothing, and means radiance.
+  const std::string fileQuantity{header.quantity.empty() ? "radiance"
+                                                         : header.quantity};
+  if (fileQuantity != filmQuantityName(frame.model.filmQuantity()))
+    throw smdl::Error(smdl::concat(
+        "cannot resume: the file holds ", fileQuantity,
+        " and this camera's film holds ",
+        filmQuantityName(frame.model.filmQuantity()),
+        " (a physical sensor's film and the observer's are different "
+        "quantities); render with the same sensor, or start a fresh "
+        "-output-spectrum"));
   if (header.sampler != SAMPLER_VERSION)
     SMDL_LOG_WARN("resuming a file from a different sampler: the continuation "
                   "samples are independent of the first session's rather than "
                   "jointly stratified (still unbiased, noise just improves "
                   "more slowly)");
-  if (header.hasWavelengthJitter != opts.render.grid.shouldJitter)
+  if (header.hasWavelengthJitter != frame.shouldJitterWavelength)
     SMDL_LOG_WARN(
         "resuming across a -wavelength-jitter change: a jittered band "
         "holds the mean radiance over the band and an unjittered one holds "
