@@ -240,6 +240,11 @@ template <typename T, size_t N>
   return true;
 }
 
+/// Is `a` within `tolerance` of `b`?
+[[nodiscard]] inline bool isNear(double a, double b, double tolerance = 1e-5) {
+  return std::abs(a - b) <= tolerance;
+}
+
 /// Is every component of `a` within `tolerance` of `b`'s?
 template <typename T, size_t N>
 [[nodiscard]] inline bool isNear(const smdl::Vector<T, N> &a,
