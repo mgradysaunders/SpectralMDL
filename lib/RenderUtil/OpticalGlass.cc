@@ -65,6 +65,10 @@ struct CatalogData final {
 // I. H. Malitson, "A redetermination of some optical properties of calcium
 // fluoride", Appl. Opt. 2, 1103-1107 (1963), fitted from 0.23 to 9.7 um,
 // at 24 C.
+//
+// etc/scripts/lens_convert.py keeps a copy of these names and of the
+// aliases below, so that a converted lens names a built-in glass rather
+// than defining it again. A name added here goes there too.
 constexpr CatalogData CATALOG[] = {
     {"CAF2",
      {0.5675888f, 0.4710914f, 3.8484723f},

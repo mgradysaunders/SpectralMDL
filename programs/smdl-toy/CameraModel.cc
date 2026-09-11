@@ -915,8 +915,8 @@ std::string describeCamera(const CameraModel &model) {
     const float halfHeight{0.5f * options.frameSize.y};
     const float halfDiagonal{
         0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
-    const float vertical{lens.fieldAngleAt(halfHeight)};
-    const float diagonal{lens.fieldAngleAt(halfDiagonal)};
+    const auto vertical{lens.fieldAngleAt(halfHeight)};
+    const auto diagonal{lens.fieldAngleAt(halfDiagonal)};
     const float circle{lens.imageCircleRadius()};
     line("lens: ",
          options.lens->name.empty()
@@ -932,12 +932,11 @@ std::string describeCamera(const CameraModel &model) {
     line("  focus: ", focusText);
     text += dofText(lens.focalLength(), lens.fNumber());
     line("  field: ",
-         vertical > 0
-             ? smdl::concat(smdl::Brief(2 * smdl::degrees(vertical), 4),
-                            " degrees top to bottom")
-             : std::string("dark at the top and bottom"),
-         diagonal > 0
-             ? smdl::concat(", ", smdl::Brief(2 * smdl::degrees(diagonal), 4),
+         vertical ? smdl::concat(smdl::Brief(2 * smdl::degrees(*vertical), 4),
+                                 " degrees top to bottom")
+                  : std::string("dark at the top and bottom"),
+         diagonal
+             ? smdl::concat(", ", smdl::Brief(2 * smdl::degrees(*diagonal), 4),
                             " degrees across the diagonal")
              : std::string(", dark in the corners"));
     line("  image circle: ", smdl::Brief(2e3f * circle, 4),

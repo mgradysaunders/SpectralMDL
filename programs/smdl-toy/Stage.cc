@@ -365,9 +365,18 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
       // here, focused at infinity, since the focus the real lens takes
       // is the distance this very solve is about to choose.
       const Lens probe{*cameraOptions.lens, LensOptions{}};
-      autolookOptions.fovYDeg =
-          2 *
-          smdl::degrees(probe.fieldAngleAt(0.5f * cameraOptions.frameSize.y));
+      auto angle{probe.fieldAngleAt(0.5f * cameraOptions.frameSize.y)};
+      if (!angle) {
+        // A frame taller than the lens's image circle is framed to the
+        // circle, which is where the picture ends at the sides as much as
+        // at the top and bottom. A lens nothing gets out of at all is the
+        // camera's to refuse, once it is built.
+        angle = probe.fieldAngleAt(probe.imageCircleRadius());
+        if (angle)
+          autolookOptions.aspectRatio =
+              std::min(autolookOptions.aspectRatio, 1.0f);
+      }
+      if (angle) autolookOptions.fovYDeg = 2 * smdl::degrees(*angle);
     }
     autolookOptions.zenithDeg = opts.camera.autolook.zenithDeg;
     if (opts.camera.autolook.azimuthDeg.wasGiven) {

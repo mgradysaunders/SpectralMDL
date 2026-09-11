@@ -641,8 +641,10 @@ TEST_CASE("Camera: the thin lens fitted to a lens") {
     const float stretch{
         1 +
         s * s * (fit.options.distortionK1 + s * s * fit.options.distortionK2)};
+    const auto angle{lens.fieldAngleAt(0.012f)};
+    REQUIRE(angle);
     CHECK(0.5f * stretch / focalLength ==
-          doctest::Approx(std::tan(lens.fieldAngleAt(0.012f))).epsilon(1e-4));
+          doctest::Approx(std::tan(*angle)).epsilon(1e-4));
   }
   SUBCASE("It takes the lens's entrance pupil and none of its vignetting") {
     const auto fit{approximateLens(options)};

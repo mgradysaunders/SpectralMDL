@@ -1001,34 +1001,40 @@ TEST_CASE("Lens: the field a sensor of a given size looks out at") {
   const auto circle{lens.imageCircleRadius()};
   SUBCASE("The angle grows with the film radius, which is what lets it be "
           "inverted") {
-    auto previous{-1.0f};
+    auto previous{0.0f};
     for (int i = 1; i <= 10; i++) {
       const auto angle{lens.fieldAngleAt(circle * i / 12)};
-      CHECK(angle > previous);
-      previous = angle;
+      REQUIRE(angle);
+      CHECK(*angle > previous);
+      previous = *angle;
     }
   }
   SUBCASE("A sensor half-height and its field angle are each other's "
           "inverse") {
     for (const auto fraction : {0.2f, 0.5f, 0.8f}) {
       const auto filmRadius{fraction * circle};
-      CHECK(lens.filmRadiusForFieldAngle(lens.fieldAngleAt(filmRadius)) ==
-            doctest::Approx(filmRadius).epsilon(1e-3));
+      const auto angle{lens.fieldAngleAt(filmRadius)};
+      REQUIRE(angle);
+      const auto inverted{lens.filmRadiusForFieldAngle(*angle)};
+      REQUIRE(inverted);
+      CHECK(*inverted == doctest::Approx(filmRadius).epsilon(1e-3));
     }
   }
   SUBCASE("Past the image circle nothing reaches the film at all") {
-    CHECK(lens.fieldAngleAt(0.99f * circle) > 0);
-    CHECK(lens.fieldAngleAt(1.05f * circle) < 0);
-    CHECK(lens.filmRadiusForFieldAngle(1.2f *
-                                       lens.fieldAngleAt(0.99f * circle)) < 0);
+    const auto inside{lens.fieldAngleAt(0.99f * circle)};
+    REQUIRE(inside);
+    CHECK(*inside > 0);
+    CHECK(!lens.fieldAngleAt(1.05f * circle));
+    CHECK(!lens.filmRadiusForFieldAngle(1.2f * *inside));
   }
   SUBCASE("A 50mm standard lens covers full frame with room to spare") {
     // Half the diagonal of 36 by 24 is 21.6 mm, and the design has an
     // image circle wider than that; the vertical field of a 24 mm high
     // sensor is what a 50 is known for.
     CHECK(circle / MM > 21.7f);
-    CHECK(smdl::degrees(2 * lens.fieldAngleAt(12 * MM)) ==
-          doctest::Approx(26.9).epsilon(0.02));
+    const auto vertical{lens.fieldAngleAt(12 * MM)};
+    REQUIRE(vertical);
+    CHECK(smdl::degrees(2 * *vertical) == doctest::Approx(26.9).epsilon(0.02));
   }
 }
 
@@ -1247,8 +1253,9 @@ TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   // number of the three printed on it that only a traced ray can check.
   const Lens lens{phone2mm(), {AT_INFINITY, 0}};
   const auto filmRadius{lens.filmRadiusForFieldAngle(smdl::radians(39.5f))};
-  CHECK(filmRadius > 0);
-  CHECK(filmRadius / MM ==
+  REQUIRE(filmRadius);
+  CHECK(*filmRadius > 0);
+  CHECK(*filmRadius / MM ==
         doctest::Approx(2.03 * std::tan(smdl::radians(39.5f))).epsilon(0.02));
 }
 

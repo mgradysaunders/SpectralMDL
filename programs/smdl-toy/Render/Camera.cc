@@ -141,13 +141,13 @@ LensApproximation approximateLens(const CameraOptions &options) {
   double moment[3]{};
   for (int i = 1; i <= NUM_FIT_RADII; i++) {
     const double s{double(i) / NUM_FIT_RADII};
-    const float theta{lens.fieldAngleAt(float(s) * halfDiagonal)};
-    if (!(theta >= 0 && theta < 0.5f * PI)) {
+    const auto theta{lens.fieldAngleAt(float(s) * halfDiagonal)};
+    if (!(theta && *theta < 0.5f * PI)) {
       result.numDroppedRadii++;
       continue;
     }
     const double basis[3]{s, s * s * s, s * s * s * s * s};
-    const double tangent{std::tan(double(theta))};
+    const double tangent{std::tan(double(*theta))};
     for (int k = 0; k < 3; k++) {
       for (int l = 0; l < 3; l++) normal[k][l] += basis[k] * basis[l];
       moment[k] += basis[k] * tangent;
@@ -336,14 +336,15 @@ void Camera::buildLens(const CameraOptions &options) {
   }
   // Traced rather than taken from the focal length, so what it reports
   // is the frame the picture actually has, distortion and all.
-  const auto verticalDeg{
-      2 * smdl::degrees(mLens->fieldAngleAt(0.5f * mFrameHeight))};
-  const auto diagonalDeg{2 * smdl::degrees(mLens->fieldAngleAt(halfDiagonal))};
+  const auto vertical{mLens->fieldAngleAt(0.5f * mFrameHeight)};
+  const auto diagonal{mLens->fieldAngleAt(halfDiagonal)};
   SMDL_LOG_INFO("Lens frame: a ", frameMM.x, " by ", frameMM.y, " mm frame, ",
-                verticalDeg, " degrees top to bottom",
-                diagonalDeg > 0 ? smdl::concat(" and ", diagonalDeg,
-                                               " degrees across the diagonal")
-                                : std::string(" and dark in the corners"));
+                vertical ? smdl::concat(2 * smdl::degrees(*vertical),
+                                        " degrees top to bottom")
+                         : std::string("dark at the top and bottom"),
+                diagonal ? smdl::concat(" and ", 2 * smdl::degrees(*diagonal),
+                                        " degrees across the diagonal")
+                         : std::string(" and dark in the corners"));
   // The two ends of the frame, as areas on the plane of the rear vertex
   // rather than shares of it: what the corner gets against what the
   // middle gets is the mechanical vignette, which the thin lens can only

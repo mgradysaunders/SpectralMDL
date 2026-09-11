@@ -1,23 +1,39 @@
 lens {
   name "Wide angle 22mm, 38 degrees"
-  # Nakamura. Modern Lens Design p.360.
+  # US 4,211,472 (Nakamura). Modern Lens Design p.360.
   # Scaled to 22 mm from the published 100 mm.
   # Converted from wide.22mm.dat by etc/scripts/lens_convert.py.
   # Covers an image circle 42.7 mm across at infinity focus, a whisker
   # short of the 43.3 mm diagonal of full frame, so an APS-C body is
   # what fits (the a6400 in etc/sensors): at 23.6 by 15.7 mm the frame
   # is 39.4 degrees top to bottom and 66.1 across the diagonal.
-  surface { radius 35.98738  thickness 1.21638 ior 1.54  diameter 23.716 }
-  surface { radius 11.69718  thickness 9.9957            diameter 17.996 }
-  surface { radius 13.08714  thickness 5.12622 ior 1.772 diameter 12.364 }
-  surface { radius -22.63294 thickness 1.76924 ior 1.617 diameter 9.812 }
-  surface { radius 71.05802  thickness 0.8184            diameter 9.152 }
-  stop    {                  thickness 2.27766           diameter 8.756 }
-  surface { radius -9.58584  thickness 2.43254 ior 1.617 diameter 8.184 }
-  surface { radius -11.28864 thickness 0.11506           diameter 9.152 }
-  surface { radius -166.7765 thickness 3.09606 ior 1.713 diameter 10.648 }
-  surface { radius -7.5911   thickness 1.32682 ior 1.805 diameter 11.44 }
-  surface { radius -16.7662  thickness 3.98068           diameter 12.276 }
-  surface { radius -7.70286  thickness 1.21638 ior 1.617 diameter 13.42 }
-  surface { radius -11.97328                             diameter 17.996 }
+  # The glasses the book names. SF6 is SCHOTT's Sellmeier fit, as the
+  # refractiveindex.info database carries it, checked against the nd
+  # and Vd SCHOTT prints. LAFL4 is HOYA's glass: the nd and Vd of HOYA's
+  # Zemax catalog, with the partial dispersion its formula there gives.
+  # KF1, LSF16, and F4 are the book's nd and V, on the normal line:
+  # neither source has the first two, nor SCHOTT's F4, and HOYA's F4
+  # sits 0.0004 from that line.
+  glass KF1 { ior 1.54 abbe 51.0 }
+  glass LSF16 { ior 1.772 abbe 49.6 }
+  glass F4 { ior 1.617 abbe 36.6 }
+  glass LAFL4 { ior 1.712704 abbe 43.295113 partial_dispersion 0.5658 }
+  glass SF6 {
+    sellmeier { b 1.72448482 0.390104889 1.04572858
+                c 0.0134871947 0.0569318095 118.557185 }
+    ior 1.80518 abbe 25.43
+  }
+  surface { radius 35.98738  thickness 1.21638 glass KF1   diameter 23.716 }
+  surface { radius 11.69718  thickness 9.9957              diameter 17.996 }
+  surface { radius 13.08714  thickness 5.12622 glass LSF16 diameter 12.364 }
+  surface { radius -22.63294 thickness 1.76924 glass F4    diameter 9.812 }
+  surface { radius 71.05802  thickness 0.8184              diameter 9.152 }
+  stop    {                  thickness 2.27766             diameter 8.756 }
+  surface { radius -9.58584  thickness 2.43254 glass F4    diameter 8.184 }
+  surface { radius -11.28864 thickness 0.11506             diameter 9.152 }
+  surface { radius -166.7765 thickness 3.09606 glass LAFL4 diameter 10.648 }
+  surface { radius -7.5911   thickness 1.32682 glass SF6   diameter 11.44 }
+  surface { radius -16.7662  thickness 3.98068             diameter 12.276 }
+  surface { radius -7.70286  thickness 1.21638 glass F4    diameter 13.42 }
+  surface { radius -11.97328                               diameter 17.996 }
 }

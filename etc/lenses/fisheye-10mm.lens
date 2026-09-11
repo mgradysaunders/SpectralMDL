@@ -1,6 +1,6 @@
 lens {
   name "Muller 10mm f/4 fisheye, 155.9 degrees"
-  # Muller. Modern Lens Design p.164.
+  # US 4,647,161 (Muller), first embodiment. Modern Lens Design p.164.
   # Scaled to 10 mm from the published 100 mm.
   # Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
   # Covers an image circle 26.8 mm across at infinity focus, which is
@@ -8,16 +8,24 @@ lens {
   # circle is always cropped. On a Four Thirds body (17.3 by 13 mm) it
   # fills the frame: 74.3 degrees top to bottom and 123.3 across the
   # diagonal.
-  surface { radius 30.2249  thickness 0.8335  ior 1.62  diameter 30.34 }
-  surface { radius 11.3931  thickness 7.4136            diameter 20.68 }
-  surface { radius 75.2019  thickness 1.0654  ior 1.639 diameter 17.8 }
-  surface { radius 8.3349   thickness 11.1549           diameter 13.42 }
-  surface { radius 9.5882   thickness 2.0054  ior 1.654 diameter 9.02 }
-  surface { radius 43.8677  thickness 5.3895            diameter 8.14 }
-  stop    {                 thickness 1.4163            diameter 6.08 }
-  surface { radius 29.4541  thickness 2.1934  ior 1.517 diameter 5.96 }
-  surface { radius -5.2265  thickness 0.9714  ior 1.805 diameter 5.84 }
-  surface { radius -14.2884 thickness 0.0627            diameter 5.96 }
-  surface { radius -22.3726 thickness 0.94    ior 1.673 diameter 5.96 }
-  surface { radius -15.0404                             diameter 6.52 }
+  # The glasses, by the nd and Vd the patent states, each named for its
+  # glass code; the patent names none.
+  glass GLASS-620603 { ior 1.62041 abbe 60.33 }
+  glass GLASS-639554 { ior 1.63854 abbe 55.42 }
+  glass GLASS-654337 { ior 1.65446 abbe 33.65 }
+  glass GLASS-517642 { ior 1.5168 abbe 64.17 }
+  glass GLASS-805254 { ior 1.80518 abbe 25.43 }
+  glass GLASS-673322 { ior 1.6727 abbe 32.21 }
+  surface { radius 30.2249  thickness 0.8335  glass GLASS-620603 diameter 30.34 }
+  surface { radius 11.3931  thickness 7.4136                     diameter 20.68 }
+  surface { radius 75.2019  thickness 1.0654  glass GLASS-639554 diameter 17.8 }
+  surface { radius 8.3349   thickness 11.1549                    diameter 13.42 }
+  surface { radius 9.5882   thickness 2.0054  glass GLASS-654337 diameter 9.02 }
+  surface { radius 43.8677  thickness 5.3895                     diameter 8.14 }
+  stop    {                 thickness 1.4163                     diameter 6.08 }
+  surface { radius 29.4541  thickness 2.1934  glass GLASS-517642 diameter 5.96 }
+  surface { radius -5.2265  thickness 0.9714  glass GLASS-805254 diameter 5.84 }
+  surface { radius -14.2884 thickness 0.0627                     diameter 5.96 }
+  surface { radius -22.3726 thickness 0.94    glass GLASS-673322 diameter 5.96 }
+  surface { radius -15.0404                                      diameter 6.52 }
 }
