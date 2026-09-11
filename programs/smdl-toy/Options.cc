@@ -190,6 +190,14 @@ cl::opt<std::string> optOutputSpectrum{
     "output-spectrum",
     cl::desc("Also write linear spectral radiance to this ENVI file"),
     cl::cat(catImage)};
+cl::opt<bool> optOutputSpectrumDouble{
+    "output-spectrum-double",
+    cl::desc("Write -output-spectrum, and the band film beside it, as 64-bit "
+             "floats rather than 32-bit\n"
+             "* for a byte-for-byte comparison of two renders: a 32-bit mean "
+             "is far finer than any render's noise, and -resume reads "
+             "either"),
+    cl::cat(catImage)};
 cl::opt<std::string> optResume{
     "resume",
     cl::desc("Resume accumulating from this ENVI file written by a previous "
@@ -652,6 +660,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.outputRGBFloat = std::string(optOutputRGBf);
   opts.image.outputSpectrum = std::string(optOutputSpectrum);
   opts.image.wasOutputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
+  opts.image.shouldWriteDouble = optOutputSpectrumDouble;
   opts.image.resume = std::string(optResume);
   opts.image.outputDN = std::string(optOutputDN);
   opts.image.readout.seed = unsigned(optDetectorSeed);

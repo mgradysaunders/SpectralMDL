@@ -143,6 +143,11 @@ struct ImageOptions final {
 
   bool wasOutputSpectrumGiven{};
 
+  /// Write the spectral output, and the band film beside it, as 64-bit
+  /// floats rather than 32-bit: for a byte-for-byte comparison that must
+  /// see every bit the accumulation holds.
+  bool shouldWriteDouble{};
+
   std::string resume{};
 
   /// The detector readout, empty for none: a 16-bit ENVI pair of digital

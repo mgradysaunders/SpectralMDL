@@ -135,10 +135,10 @@ public:
   /// `smdl spp` header field inside the window the file records, with
   /// zero totals outside it.
   ///
-  /// The header is read from `fileName + ".hdr"`. Only the exact
-  /// format the writer emits is accepted (`data type = 5`, `interleave
-  /// = bip`); a byte order other than the native one is swapped on
-  /// load.
+  /// The header is read from `fileName + ".hdr"`. Only the formats the
+  /// writer emits are accepted (`data type` 4 or 5, 32-bit or 64-bit
+  /// floats, and `interleave = bip`); a byte order other than the native
+  /// one is swapped on load.
   ///
   /// \return
   /// The header information that does not become part of the film.
@@ -183,13 +183,21 @@ public:
   /// The `band names`, one per band, or empty to write none: what a
   /// band is when it has no wavelength.
   ///
+  /// \param[in] shouldWriteDouble
+  /// Write the means as 64-bit floats (`data type = 5`) rather than
+  /// 32-bit (`data type = 4`). The totals are doubles either way; a mean
+  /// needs no more than a float, whose rounding (at most 6e-8 of it) is
+  /// far under a render's noise, so the default halves the file. Double
+  /// is for a comparison that must see every bit the accumulation holds.
+  ///
   /// \throws Error if the window is empty or out of bounds, or the
   /// names do not number the bands.
   ///
   void writeENVIFile(Span<const float> wavelengths, const std::string &fileName,
                      Span<const std::string> extraHeaderLines = {},
                      std::optional<int4> window = {},
-                     Span<const std::string> bandNames = {}) const;
+                     Span<const std::string> bandNames = {},
+                     bool shouldWriteDouble = false) const;
 
 private:
   size_t mNumBands{};

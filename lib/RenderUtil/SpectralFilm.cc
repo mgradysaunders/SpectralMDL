@@ -62,6 +62,11 @@ constexpr const char *ENVI_BAND_NAMES{"band names"};
 constexpr const char *ENVI_SPP{"render spp"};
 constexpr const char *ENVI_CROP_WINDOW{"render crop window"};
 
+// The data types, as the format numbers them.
+constexpr uint64_t ENVI_FLOAT32{4};
+constexpr uint64_t ENVI_FLOAT64{5};
+constexpr uint64_t ENVI_UINT16{12};
+
 // Write one `key = value` line.
 template <typename... Ts>
 void writeField(std::ostream &stream, const char *name, Ts &&...values) {
@@ -150,7 +155,8 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                                  const std::string &fileName,
                                  Span<const std::string> extraHeaderLines,
                                  std::optional<int4> cropWindow,
-                                 Span<const std::string> bandNames) const {
+                                 Span<const std::string> bandNames,
+                                 bool shouldWriteDouble) const {
   const auto noCrop{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
   checkWindowAndNames(fileName, cropWindow, mNumPixelsX, mNumPixelsY, bandNames,
                       mNumBands);
@@ -160,7 +166,8 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
     auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     writeField(file, ENVI_FILE_TYPE, "ENVI Standard");
-    writeField(file, ENVI_DATA_TYPE, 5);
+    writeField(file, ENVI_DATA_TYPE,
+               shouldWriteDouble ? ENVI_FLOAT64 : ENVI_FLOAT32);
     writeField(file, ENVI_BYTE_ORDER, hostByteOrder());
     writeField(file, ENVI_SAMPLES, mNumPixelsX);
     writeField(file, ENVI_LINES, mNumPixelsY);
@@ -184,18 +191,27 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
     }
     for (const auto &line : extraHeaderLines) file << line << '\n';
   }
-  // Write the binary file. The pixel values are means, not the raw
-  // accumulated totals, so the file holds physically meaningful
-  // radiance at any sample count.
+  // Write the binary file a row at a time. The pixel values are means,
+  // not the raw accumulated totals, so the file holds physically
+  // meaningful radiance at any sample count.
   {
+    const size_t valueSize{shouldWriteDouble ? sizeof(double) : sizeof(float)};
+    auto row{std::vector<char>(mNumPixelsX * mNumBands * valueSize)};
     auto file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
     for (size_t iY = 0; iY < mNumPixelsY; iY++) {
+      char *ptr{row.data()};
       for (size_t iX = 0; iX < mNumPixelsX; iX++) {
-        for (size_t i = 0; i < mNumBands; i++) {
-          double pixelValue{mean(iX, iY, i)};
-          file.write(reinterpret_cast<const char *>(&pixelValue), 8);
+        for (size_t i = 0; i < mNumBands; i++, ptr += valueSize) {
+          const double value{mean(iX, iY, i)};
+          if (shouldWriteDouble) {
+            std::memcpy(ptr, &value, 8);
+          } else {
+            const float valueFloat{float(value)};
+            std::memcpy(ptr, &valueFloat, 4);
+          }
         }
       }
+      file.write(row.data(), std::streamsize(row.size()));
     }
   }
 }
@@ -218,7 +234,7 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
     auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     writeField(file, ENVI_FILE_TYPE, "ENVI Standard");
-    writeField(file, ENVI_DATA_TYPE, 12);
+    writeField(file, ENVI_DATA_TYPE, ENVI_UINT16);
     writeField(file, ENVI_BYTE_ORDER, hostByteOrder());
     writeField(file, ENVI_SAMPLES, numPixelsX);
     writeField(file, ENVI_LINES, numPixelsY);
@@ -309,13 +325,14 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   const auto nX{requiredCount(fileName, fields, ENVI_SAMPLES)};
   const auto nY{requiredCount(fileName, fields, ENVI_LINES)};
   const auto nBands{requiredCount(fileName, fields, ENVI_BANDS)};
-  // Accept exactly the format the writer emits: 64-bit floats,
-  // band-interleaved-by-pixel. The byte order is the one thing worth
-  // fixing up rather than rejecting.
-  if (auto type{requiredCount(fileName, fields, ENVI_DATA_TYPE)}; type != 5) {
+  // Accept exactly the formats the writer emits: 32-bit or 64-bit
+  // floats, band-interleaved-by-pixel. The byte order is the one thing
+  // worth fixing up rather than rejecting.
+  const auto type{requiredCount(fileName, fields, ENVI_DATA_TYPE)};
+  if (type != ENVI_FLOAT32 && type != ENVI_FLOAT64)
     throw Error(concat("cannot load ", Quoted(fileName), ": data type ", type,
-                       " (expected 5, 64-bit float)"));
-  }
+                       " (expected 4 or 5, a 32-bit or 64-bit float)"));
+  const size_t valueSize{type == ENVI_FLOAT64 ? sizeof(double) : sizeof(float)};
   if (auto itr{fields.find(ENVI_INTERLEAVE)};
       itr != fields.end() && itr->second == "bip") {
     fields.erase(itr);
@@ -369,27 +386,36 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   fields.erase(ENVI_FILE_TYPE);
   fields.erase(ENVI_WAVELENGTH_UNITS);
   result.fields = std::move(fields);
-  // Read the binary file, reconstructing the accumulator invariant:
-  // totals are means times the sample count, or the means themselves
-  // at a count of 1 when the header does not record the count.
+  // Read the binary file a row at a time, reconstructing the accumulator
+  // invariant: totals are means times the sample count, or the means
+  // themselves at a count of 1 when the header does not record the count.
   const auto count{std::max(result.samplesPerPixel, uint64_t(1))};
   auto file{openOrThrow(fileName, std::ios::in | std::ios::binary)};
   file.ignore(std::streamsize(headerOffset));
   resize(nBands, nX, nY);
   addSamples(count);
   const bool shouldSwapBytes{byteOrder != hostByteOrder()};
+  auto row{std::vector<char>(nX * nBands * valueSize)};
   auto values{std::vector<double>(nBands)};
   for (size_t iY = 0; iY < nY; iY++) {
+    if (!file.read(row.data(), std::streamsize(row.size())))
+      throw Error(
+          concat("cannot load ", Quoted(fileName), ": unexpected end of file"));
+    const char *ptr{row.data()};
     for (size_t iX = 0; iX < nX; iX++) {
-      for (size_t i = 0; i < nBands; i++) {
+      for (size_t i = 0; i < nBands; i++, ptr += valueSize) {
         // NOLINTNEXTLINE
         char bytes[8]{};
-        if (!file.read(bytes, 8))
-          throw Error(concat("cannot load ", Quoted(fileName),
-                             ": unexpected end of file"));
-        if (shouldSwapBytes) std::reverse(bytes, bytes + 8);
+        std::memcpy(bytes, ptr, valueSize);
+        if (shouldSwapBytes) std::reverse(bytes, bytes + valueSize);
         double mean{};
-        std::memcpy(&mean, bytes, 8);
+        if (valueSize == 8) {
+          std::memcpy(&mean, bytes, 8);
+        } else {
+          float meanFloat{};
+          std::memcpy(&meanFloat, bytes, 4);
+          mean = meanFloat;
+        }
         values[i] = mean * double(count);
       }
       // The count belongs to the window, so whatever the file holds

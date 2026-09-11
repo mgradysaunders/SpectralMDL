@@ -1,5 +1,6 @@
 #include "Fixtures.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <filesystem>
@@ -83,6 +84,67 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     film.add(loadedFilm);
     CHECK(film.getNumSamples() == 2 * SPP);
     CHECK(film.mean(1, 1, 2) == doctest::Approx(112.0).epsilon(1e-12));
+  }
+  SUBCASE("Means are stored in single precision unless double is asked "
+          "for, and either reads back") {
+    // A mean a float cannot hold, so that the two precisions differ.
+    auto tenth{smdl::SpectralFilm(1, 1, 1)};
+    tenth.addSamples(SPP);
+    const double total{double(SPP) * 0.1};
+    tenth.addTotals(0, 0, &total);
+    for (const bool shouldWriteDouble : {false, true}) {
+      auto fileName{(tmpDir / "precision.envi").string()};
+      tenth.writeENVIFile({}, fileName, {}, {}, {}, shouldWriteDouble);
+      auto text{std::string()};
+      {
+        auto file{std::ifstream(fileName + ".hdr")};
+        for (std::string line; std::getline(file, line);) text += line + "\n";
+      }
+      CHECK_CONTAINS(text,
+                     shouldWriteDouble ? "data type = 5" : "data type = 4");
+      CHECK(fs::file_size(fileName) ==
+            (shouldWriteDouble ? sizeof(double) : sizeof(float)));
+      auto loadedFilm{smdl::SpectralFilm{}};
+      loadedFilm.readENVIFile(fileName);
+      CHECK(loadedFilm.mean(0, 0, 0) ==
+            (shouldWriteDouble ? 0.1 : double(0.1f)));
+    }
+  }
+  SUBCASE("A film in the other byte order is swapped on load") {
+    for (const bool shouldWriteDouble : {false, true}) {
+      auto fileName{(tmpDir / "swapped.envi").string()};
+      film.writeENVIFile({}, fileName, {}, {}, {}, shouldWriteDouble);
+      // Reverse the bytes of every value, and the header's byte order
+      // with them.
+      const size_t valueSize{shouldWriteDouble ? sizeof(double)
+                                               : sizeof(float)};
+      auto bytes{std::string()};
+      {
+        auto file{std::ifstream(fileName, std::ios::binary)};
+        bytes.assign(std::istreambuf_iterator<char>(file),
+                     std::istreambuf_iterator<char>());
+      }
+      for (size_t i = 0; i < bytes.size(); i += valueSize)
+        std::reverse(bytes.begin() + i, bytes.begin() + i + valueSize);
+      std::ofstream(fileName, std::ios::binary) << bytes;
+      auto text{std::string()};
+      {
+        auto file{std::ifstream(fileName + ".hdr")};
+        for (std::string line; std::getline(file, line);) {
+          if (line == "byte order = 0") {
+            line = "byte order = 1";
+          } else if (line == "byte order = 1") {
+            line = "byte order = 0";
+          }
+          text += line + "\n";
+        }
+      }
+      std::ofstream(fileName + ".hdr") << text;
+      auto loadedFilm{smdl::SpectralFilm{}};
+      loadedFilm.readENVIFile(fileName);
+      CHECK(loadedFilm.mean(2, 1, 3) == 213.0);
+      CHECK(loadedFilm.mean(1, 0, 2) == 102.0);
+    }
   }
   SUBCASE("A windowed film round-trips through an ENVI pair") {
     // The window is the middle column, which is where a windowed render
@@ -203,7 +265,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     auto fileName{(tmpDir / "short.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
-    fs::resize_file(fileName, 8 * (NUM_BANDS * NUM_X * NUM_Y - 1));
+    fs::resize_file(fileName, fs::file_size(fileName) - sizeof(float));
     // A read that fails part way through must leave the film cleared
     // rather than holding the rows that made it in.
     auto loadedFilm{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};

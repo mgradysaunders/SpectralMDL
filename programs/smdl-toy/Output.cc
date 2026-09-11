@@ -366,7 +366,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // does not know: a windowed render still carries a full frame of
     // pixels, and the header must not describe the untouched ones as
     // samples.
-    film.writeENVIFile(wavelengths, partName, headerLines, window);
+    film.writeENVIFile(wavelengths, partName, headerLines, window, {},
+                       opts.image.shouldWriteDouble);
     // Both members of the ENVI pair; `writeENVIFile()` wrote them under
     // the temporary name and its own '.hdr' suffix.
     smdl::renameOnto(partName, outputSpectrum);
@@ -394,7 +395,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
       for (const auto &line : responseLines) bandLines.push_back(line);
       bandLines.push_back(smdl::concat(ENVI_BAND_UNITS, " = ", BAND_UNITS));
       const auto &bandNames{response->filmBandNames()};
-      bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames);
+      bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames,
+                              opts.image.shouldWriteDouble);
       smdl::renameOnto(bandPartName, bandName);
       smdl::renameOnto(bandPartName + ".hdr", bandName + ".hdr");
       SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(bandName), ", ",
