@@ -58,11 +58,9 @@ Compiler::~Compiler() = default;
 
 void Ptexture::release() noexcept {
 #if SMDL_HAS_PTEX
-  if (textureFilter) static_cast<PtexFilter *>(textureFilter)->release();
   if (texture) static_cast<PtexTexture *>(texture)->release();
 #endif // #if SMDL_HAS_PTEX
   texture = nullptr;
-  textureFilter = nullptr;
   channelCount = 0;
   alphaIndex = -1;
 }
@@ -803,8 +801,6 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
           return Error(concat("cannot load ", QuotedPath(fileName), ": ",
                               message.c_str()));
         ptexture.texture = texture;
-        // NOTE: No shared 'PtexFilter': 'PtexFilter::eval' mutates filter
-        // members, so 'smdlPtexEvaluate' maintains per-thread filters.
         ptexture.channelCount = texture->numChannels();
         ptexture.alphaIndex = texture->alphaChannel();
         return std::nullopt;
@@ -1165,18 +1161,17 @@ public:
   ~ThreadLocalPtexFilters() {
     for (auto &[texture, filter] : mFilters) filter->release();
   }
-
-  [[nodiscard]] PtexFilter *get(const smdl::Ptexture &ptex) {
-    auto &filter{mFilters[ptex.texture]};
-    if (!filter)
-      filter =
-          PtexFilter::getFilter(static_cast<PtexTexture *>(ptex.texture),
-                                PtexFilter::Options(PtexFilter::f_bilinear));
+  [[nodiscard]] SMDL_NO_INLINE PtexFilter *get(const smdl::Ptexture &ptex) {
+    PtexTexture *texture{static_cast<PtexTexture *>(ptex.texture)};
+    PtexFilter *&filter{mFilters[texture]};
+    if (SMDL_UNLIKELY(!filter))
+      filter = PtexFilter::getFilter(
+          texture, PtexFilter::Options(PtexFilter::f_bilinear));
     return filter;
   }
 
 private:
-  std::map<const void *, PtexFilter *> mFilters{};
+  std::unordered_map<const void *, PtexFilter *> mFilters{};
 };
 
 } // namespace

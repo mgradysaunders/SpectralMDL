@@ -36,7 +36,6 @@ public:
 
   Ptexture(Ptexture &&other) noexcept
       : texture(std::exchange(other.texture, nullptr)),
-        textureFilter(std::exchange(other.textureFilter, nullptr)),
         channelCount(std::exchange(other.channelCount, 0)),
         alphaIndex(std::exchange(other.alphaIndex, -1)) {}
 
@@ -46,7 +45,6 @@ public:
     if (this != &other) {
       release();
       texture = std::exchange(other.texture, nullptr);
-      textureFilter = std::exchange(other.textureFilter, nullptr);
       channelCount = std::exchange(other.channelCount, 0);
       alphaIndex = std::exchange(other.alphaIndex, -1);
     }
@@ -61,11 +59,6 @@ public:
 public:
   /// The pointer to the `PtexTexture`.
   void *texture{};
-
-  /// The pointer to the `PtexFilter`. May be null: `smdlPtexEvaluate`
-  /// maintains per-thread filters because `PtexFilter::eval` is not
-  /// thread-safe.
-  void *textureFilter{};
 
   /// The channel count.
   int channelCount{};
