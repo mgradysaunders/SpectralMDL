@@ -28,30 +28,24 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
   SUBCASE("The sky radiance matches the generator") {
     // The golden spectra come from the Python fit at exact grid
     // wavelengths, so the port must reproduce them to float roundoff;
-    // the tolerance only absorbs the float3 direction round trip. The
-    // golden data is in the fit's native W/(cm^2 sr um), so the scale
-    // factor converts the model's W/(m^2 sr nm) back to it.
+    // the tolerance only absorbs the float3 direction round trip.
     for (size_t c = 0; c < GOLDEN_CASE_COUNT; c++) {
       const double sunAzimuthDeg{25.0};
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(SKY_CASES[c][0], sunAzimuthDeg);
       options.visibility = float(SKY_CASES[c][3]);
       options.waterVaporScale = float(SKY_CASES[c][4]);
-      options.scaleFactor = 0.1f;
       const auto sunSky{smdl::SunSky(options)};
       const auto direction{
           makeDirection(SKY_CASES[c][1], sunAzimuthDeg + SKY_CASES[c][2])};
-      std::vector<float> wavelens(GOLDEN_CHANNEL_COUNT);
-      std::vector<float> radiance(GOLDEN_CHANNEL_COUNT);
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
-        wavelens[j] = channelWavelength(GOLDEN_CHANNELS[j]);
-      sunSky.skyRadiance(direction, int(GOLDEN_CHANNEL_COUNT), wavelens.data(),
-                         radiance.data());
+      std::vector<float> radiance(GOLDEN_WAVELENGTH_COUNT);
+      sunSky.skyRadiance(direction, int(GOLDEN_WAVELENGTH_COUNT),
+                         GOLDEN_WAVELENGTHS, radiance.data());
       float peak{0.0f};
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
+      for (size_t j = 0; j < GOLDEN_WAVELENGTH_COUNT; j++)
         peak = std::max(peak, SKY_EXPECTED[c][j]);
       float worst{0.0f};
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
+      for (size_t j = 0; j < GOLDEN_WAVELENGTH_COUNT; j++)
         worst =
             std::max(worst, std::abs(radiance[j] - SKY_EXPECTED[c][j]) / peak);
       CAPTURE(c);
@@ -60,26 +54,21 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
   }
   SUBCASE("The sun radiance matches the generator") {
     // The golden direct irradiance is recovered from the disk radiance
-    // by multiplying the solid angle back, in the fit's native units
-    // exactly as in the sky case above.
+    // by multiplying the solid angle back.
     for (size_t c = 0; c < GOLDEN_CASE_COUNT; c++) {
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(SUN_CASES[c][0], 0.0);
       options.visibility = float(SUN_CASES[c][1]);
       options.waterVaporScale = float(SUN_CASES[c][2]);
-      options.scaleFactor = 0.1f;
       const auto sunSky{smdl::SunSky(options)};
-      std::vector<float> wavelens(GOLDEN_CHANNEL_COUNT);
-      std::vector<float> radiance(GOLDEN_CHANNEL_COUNT);
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
-        wavelens[j] = channelWavelength(GOLDEN_CHANNELS[j]);
-      sunSky.sunRadiance(int(GOLDEN_CHANNEL_COUNT), wavelens.data(),
+      std::vector<float> radiance(GOLDEN_WAVELENGTH_COUNT);
+      sunSky.sunRadiance(int(GOLDEN_WAVELENGTH_COUNT), GOLDEN_WAVELENGTHS,
                          radiance.data());
       float peak{0.0f};
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
+      for (size_t j = 0; j < GOLDEN_WAVELENGTH_COUNT; j++)
         peak = std::max(peak, SUN_EXPECTED[c][j]);
       float worst{0.0f};
-      for (size_t j = 0; j < GOLDEN_CHANNEL_COUNT; j++)
+      for (size_t j = 0; j < GOLDEN_WAVELENGTH_COUNT; j++)
         worst = std::max(worst, std::abs(radiance[j] * sunSky.sunSolidAngle() -
                                          SUN_EXPECTED[c][j]) /
                                     peak);

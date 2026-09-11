@@ -13,9 +13,11 @@
 #include "SunSkyRural.h"
 #include "Support/SIMD.h"
 
-// The lunar multiplier is generated on the same 421-channel grid as
-// the sun-sky fit, so the channels line up one-to-one.
-static_assert(rolo_moon::WAVELENGTH_COUNT == rural::WAVELENGTH_COUNT);
+// The lunar multiplier is generated on the same grid as the sun-sky fit,
+// so the channels line up one-to-one.
+static_assert(roloMoon::WAVELENGTH_COUNT == rural::WAVELENGTH_COUNT &&
+              roloMoon::WAVELENGTH_MIN == rural::WAVELENGTH_MIN &&
+              roloMoon::WAVELENGTH_DELTA == rural::WAVELENGTH_DELTA);
 
 namespace smdl {
 
@@ -286,8 +288,10 @@ void viewGeometry(const float3 &dir, float &cosView, float &viewZenithDeg,
 void SunSky::evalSkyFit(float cosView, float viewZenithDeg,
                         float cosRelativeAzimuth,
                         float (&outputs)[SKY_FIT_OUTPUT_COUNT]) const noexcept {
-  // The header cannot name the fit tables, so the counts it declares are
-  // checked against them here.
+  // The header cannot name the fit tables, so the grid and the counts it
+  // declares are checked against them here.
+  static_assert(WAVELENGTH_MIN_NM == rural::WAVELENGTH_MIN &&
+                WAVELENGTH_MAX_NM == rural::WAVELENGTH_MAX);
   static_assert(SKY_FIT_OUTPUT_COUNT == int(rural::SKY_OUTPUT_COUNT));
   static_assert(SKY_FIT_TERM_COUNT == int(SKY_TERM_STRIDE));
   static_assert(SKY_FIT_OUTPUT_STRIDE == int(SKY_PACK_WIDTH));
@@ -412,7 +416,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // moon's position. Scattered radiance is linear in the source
   // irradiance, so this is exact for the atmosphere.
   if (options.isMoon) {
-    const auto multiplier = rolo_moon::evaluateMoonMultiplier(
+    const auto multiplier = roloMoon::evaluateMoonMultiplier(
         std::clamp(double(options.moonPhase), -180.0, 180.0),
         std::max(double(options.moonDistanceScale), 0.0));
     mChannelScale.assign(multiplier.begin(), multiplier.end());
@@ -595,6 +599,7 @@ void SunSky::skyRadiance(const float3 &direction, const SkyBasis &basis,
 }
 
 namespace {
+
 // The sun disk added onto the sky, see `contractSkyModes` for why the
 // pointers are parameters.
 SMDL_ALWAYS_INLINE void addSunDisk(float *SMDL_RESTRICT out,
@@ -602,6 +607,7 @@ SMDL_ALWAYS_INLINE void addSunDisk(float *SMDL_RESTRICT out,
                                    int numBands, float scale) noexcept {
   for (int j = 0; j < numBands; j++) out[j] += disk[j] * scale;
 }
+
 } // namespace
 
 void SunSky::radiance(const float3 &direction, const SkyBasis &basis,
@@ -653,7 +659,7 @@ void SunSky::radiance(const float3 &direction, int numWavelens,
 
 double SunSky::moonMultiplier(double wavelenNm, double phaseDeg,
                               double distanceScale) {
-  return rolo_moon::moonMultiplier(wavelenNm * 1.0e-3, phaseDeg, distanceScale);
+  return roloMoon::moonMultiplier(wavelenNm, phaseDeg, distanceScale);
 }
 
 float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
