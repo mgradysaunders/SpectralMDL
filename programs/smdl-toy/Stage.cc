@@ -87,8 +87,10 @@ Frame resolveFrame(const Options &opts) {
     for (const auto &light : layout.lights)
       numMovingLights += light.lightToWorldShut.has_value();
     if (numMovingItems + numMovingLights > 0)
-      SMDL_LOG_INFO("Instance motion: ", numMovingItems, " placement(s) and ",
-                    numMovingLights, " light(s) move over the shutter");
+      SMDL_LOG_INFO(
+          "Instance motion: ", smdl::Counted(numMovingItems, "placement"),
+          " and ", smdl::Counted(numMovingLights, "light"),
+          " move over the shutter");
   }
   // Under -autolook the position, and under 'focus auto' the focus, come
   // from measuring the committed scene, so construction (with the lens
@@ -460,8 +462,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     const auto *materialDef{compiler.findMaterial(layout.exteriorMediumName)};
     if (!materialDef)
       throw smdl::Error(smdl::concat(
-          "cannot resolve 'medium' directive material ",
-          smdl::Quoted(layout.exteriorMediumName),
+          "cannot resolve the material of the 'medium' directive: ",
+          compiler.explainMaterialLookup(layout.exteriorMediumName),
           opts.scene.inputMDLFiles.empty() ? " (no MDL modules were given)"
                                            : ""));
     if (!materialDef->hasVolume())

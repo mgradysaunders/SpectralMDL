@@ -255,7 +255,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     CHECK_CONTAINS(error.message, "because it is not a variable");
   }
   SUBCASE("A missing resource blames the line that asked for it") {
-    const CollectedLog warned{"no image(s) found"};
+    const CollectedLog warned{"cannot load 'nope.png': file not found"};
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addCode(
         "::diag", "#smdl\nexport material m(uniform texture_2d t = "

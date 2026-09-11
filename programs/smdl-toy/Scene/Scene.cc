@@ -278,13 +278,15 @@ void Scene::addMesh(const std::string &fileName,
     for (size_t i = meshBase; i < meshes.size(); i++)
       numFaces += meshes[i]->faces.size() + meshes[i]->baseFaceCounts.size();
     SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
-                   meshes.size() - meshBase, " meshes, ",
-                   file.placements.size(), " placement(s), ", numFaces,
-                   subdiv.levels > 0 ? " base polygons" : " triangles");
+                   smdl::Counted(meshes.size() - meshBase, "mesh", "meshes"),
+                   ", ", smdl::Counted(file.placements.size(), "placement"),
+                   ", ",
+                   smdl::Counted(numFaces, subdiv.levels > 0 ? "base polygon"
+                                                             : "triangle"));
     entry = importCache.emplace(std::move(key), std::move(file)).first;
   } else {
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
-                   entry->second.placements.size(), " placement(s)");
+                   smdl::Counted(entry->second.placements.size(), "placement"));
   }
   const auto &file{entry->second};
   const auto selectedRoot{resolveSelection(file.nodes, selection, fileName)};
@@ -359,12 +361,13 @@ void Scene::addMesh(const std::string &fileName,
   }
   if (numSkippedOnRoot > 0)
     SMDL_LOG_WARN("Selection in ", smdl::QuotedPath(fileName), " skipped ",
-                  numSkippedOnRoot,
-                  " mesh(es) that sit directly on the file's root node, which "
-                  "has no name to select it by.");
+                  smdl::Counted(numSkippedOnRoot, "mesh", "meshes"),
+                  numSkippedOnRoot == 1 ? " that sits" : " that sit",
+                  " directly on the file's root node, which has no name to "
+                  "select it by.");
   if (!selection.patterns.empty())
-    SMDL_LOG_DEBUG("Selected ", numInstances, " instance(s) from ",
-                   smdl::QuotedPath(fileName));
+    SMDL_LOG_DEBUG("Selected ", smdl::Counted(numInstances, "instance"),
+                   " from ", smdl::QuotedPath(fileName));
 }
 
 void Scene::add(const LayoutItem &item) {
@@ -420,8 +423,9 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
     primitives.push_back(makePrimitive(device, spec, internMaterial(baseName),
                                        useRobustIntersection));
     primitiveCache.emplace(std::move(key), primIndex);
-    SMDL_LOG_DEBUG("Built ", spec.key(), ": ", primitivePieceCount(spec),
-                   " piece(s), area ", primitives.back()->objectArea);
+    SMDL_LOG_DEBUG("Built ", spec.key(), ": ",
+                   smdl::Counted(primitivePieceCount(spec), "piece"), ", area ",
+                   primitives.back()->objectArea);
   } else {
     primIndex = entry->second;
   }
@@ -462,15 +466,16 @@ uint32_t Scene::addCurves(const std::string &fileName,
                                 internMaterial(baseName),
                                 useRobustIntersection));
     curvesCache.emplace(std::move(key), curvesIndex);
-    SMDL_LOG_DEBUG(
-        "Read ", smdl::QuotedPath(fileName), ": ", curves.back()->strandCount(),
-        " strand(s), ", curves.back()->segCount(), " segment(s), ",
-        CurvesFile::basisName(curves.back()->basis), " basis, ",
-        spec.mode == CurvesSpec::Mode::RIBBON ? "ribbon" : "tube", " mode");
+    SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
+                   smdl::Counted(curves.back()->strandCount(), "strand"), ", ",
+                   smdl::Counted(curves.back()->segCount(), "segment"), ", ",
+                   CurvesFile::basisName(curves.back()->basis), " basis, ",
+                   spec.mode == CurvesSpec::Mode::RIBBON ? "ribbon" : "tube",
+                   " mode");
   } else {
     curvesIndex = entry->second;
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
-                   curves[curvesIndex]->strandCount(), " strand(s)");
+                   smdl::Counted(curves[curvesIndex]->strandCount(), "strand"));
   }
   auto matIndex{INVALID_INDEX};
   if (auto itr{materials.renames.find(baseName)};
@@ -550,13 +555,14 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
     SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " plays ",
                   smdl::Quoted(clip->mName.C_Str()), " at ", at, " s (",
                   animation.shouldPlayOnce ? "once" : "looping", ", ", duration,
-                  " s long): ", numDeforming, " mesh(es) deform and ",
-                  numMoving, " node(s) move over the shutter");
+                  " s long): ", smdl::Counted(numDeforming, "mesh", "meshes"),
+                  " deform and ", smdl::Counted(numMoving, "node"),
+                  " move over the shutter");
   } else {
     SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " holds ",
                   smdl::Quoted(clip->mName.C_Str()), " at ", at,
-                  " s, the shutter being shut: ", numDeforming,
-                  " mesh(es) posed");
+                  " s, the shutter being shut: ",
+                  smdl::Counted(numDeforming, "mesh", "meshes"), " posed");
   }
   return file;
 }
@@ -733,8 +739,8 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   if (instanceBaseByGeomID.size() <= geomID)
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
   instanceBaseByGeomID[geomID] = base;
-  SMDL_LOG_DEBUG("Instance array: ", worldXfs.size(), " element(s) of ",
-                 fileName, isMoving ? ", moving" : "");
+  SMDL_LOG_DEBUG("Instance array: ", smdl::Counted(worldXfs.size(), "element"),
+                 " of ", fileName, isMoving ? ", moving" : "");
   return base;
 }
 
@@ -833,12 +839,15 @@ void Scene::commit(const Color &wavelengths) {
   boundRadius = 0.5f * length(upper - lower);
   uint64_t numTriangles{};
   for (const auto &mesh : meshes) numTriangles += mesh->faces.size();
-  SMDL_LOG_DEBUG("Committed ", fileNames.size(), " file(s): ", meshes.size(),
-                 " meshes, ", primitives.size(), " primitives, ", curves.size(),
-                 " grooms, ", meshInstances.size(), " instances, ",
-                 materialDefs.size(), " materials, ", numTriangles,
-                 " triangles, center (", boundCenter.x, ", ", boundCenter.y,
-                 ", ", boundCenter.z, ") radius ", boundRadius,
+  SMDL_LOG_DEBUG("Committed ", smdl::Counted(fileNames.size(), "file"), ": ",
+                 smdl::Counted(meshes.size(), "mesh", "meshes"), ", ",
+                 smdl::Counted(primitives.size(), "primitive"), ", ",
+                 smdl::Counted(curves.size(), "groom"), ", ",
+                 smdl::Counted(meshInstances.size(), "instance"), ", ",
+                 smdl::Counted(materialDefs.size(), "material"), ", ",
+                 smdl::Counted(numTriangles, "triangle"), ", center (",
+                 boundCenter.x, ", ", boundCenter.y, ", ", boundCenter.z,
+                 ") radius ", boundRadius,
                  useOpaqueShadows ? ", boolean shadows" : "");
 }
 
@@ -862,24 +871,21 @@ void Scene::resolveMaterials() {
   if (!fallbackMaterialName.empty()) {
     fallback = compiler.findMaterial(fallbackMaterialName);
     if (!fallback)
-      throw smdl::Error(smdl::concat("no MDL material matches the fallback ",
-                                     smdl::Quoted(fallbackMaterialName)));
+      throw smdl::Error(
+          smdl::concat("cannot resolve the fallback material: ",
+                       compiler.explainMaterialLookup(fallbackMaterialName)));
   }
   // Only a material some instance actually shades with can ever be hit,
   // so only those resolve; the rest stay null. Scene files routinely
   // declare materials nothing uses, and a mesh whose every instance
   // overrides its material away leaves the mesh's own name legitimately
-  // unresolved. Unused names are not even looked up: under the
-  // desired-material filter they may name a deliberately skipped
-  // material, which `findMaterial()` reports as a loud error.
+  // unresolved.
   const auto isUsed{computeUsedMaterials()};
   auto unresolved{std::vector<std::string>()};
   for (size_t i = 0; i < materialDefs.size(); i++) {
     if (!isUsed[i]) continue;
     materialDefs[i] = compiler.findMaterial(materialNames[i]);
     if (!materialDefs[i]) {
-      // `findMaterial()` also returns null when more than one material
-      // matches, having logged the candidates itself.
       if (fallback) {
         materialDefs[i] = fallback;
       } else {
@@ -889,12 +895,22 @@ void Scene::resolveMaterials() {
   }
   if (!unresolved.empty()) {
     // Anything else is a null material pointer for the hit path to walk
-    // into, so stop here and say exactly which names need attention.
-    auto message{smdl::concat(
-        unresolved.size(), " material name(s) in the scene do not resolve to "
-                           "an MDL material:")};
-    for (const auto &name : unresolved)
-      message += smdl::concat("\n  ", smdl::Quoted(name));
+    // into, so stop here and say exactly which names need attention, and
+    // why, each explanation's own list of candidates indented under it.
+    auto message{smdl::concat("cannot resolve ",
+                              smdl::Counted(unresolved.size(), "material name"),
+                              " in the scene to an MDL material:")};
+    for (const auto &name : unresolved) {
+      const auto explanation{
+          name.empty() ? std::string("a primitive or groom has no material "
+                                     "name, so only a fallback can shade it")
+                       : compiler.explainMaterialLookup(name)};
+      message += "\n  ";
+      for (char c : explanation) {
+        message += c;
+        if (c == '\n') message += "  ";
+      }
+    }
     message += "\nRun with -list-materials to see how each name resolves, or "
                "pass -fallback-material=<name> to substitute a material.";
     throw smdl::Error(std::move(message));
@@ -1130,7 +1146,8 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   const auto seconds{std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - startTime)
                          .count()};
-  SMDL_LOG_INFO("Subdivision/displacement: ", pending.size(), " mesh(es), ",
+  SMDL_LOG_INFO("Subdivision/displacement: ",
+                smdl::Counted(pending.size(), "mesh", "meshes"), ", ",
                 facesBefore, " faces to ", facesAfter, " triangles, ",
                 numDisplaced.load(), " displaced, in ", seconds, "s");
   // 'displace' with nothing to displace usually means the scene resolved

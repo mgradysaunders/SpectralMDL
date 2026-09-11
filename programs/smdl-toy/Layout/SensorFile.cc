@@ -430,10 +430,11 @@ private:
     }
     advance(); // '}'
     if (values.size() % 2 != 0) {
-      mDiags.error(bandLoc, smdl::concat("expected wavelength and value pairs "
-                                         "in band ",
-                                         smdl::Quoted(band.name), ", got ",
-                                         values.size(), " number(s)"));
+      mDiags.error(bandLoc,
+                   smdl::concat("expected wavelength and value pairs "
+                                "in band ",
+                                smdl::Quoted(band.name), ", got ",
+                                smdl::Counted(values.size(), "number")));
       throw Recover();
     }
     if (values.size() < 4) {
@@ -513,10 +514,11 @@ private:
       if (numRows == 0) {
         response.cfaColumns = numColumns;
       } else if (numColumns != response.cfaColumns) {
-        mDiags.error(keyLoc, smdl::concat("expected ", response.cfaColumns,
-                                          " band name(s) in this row, as in "
-                                          "the first, got ",
-                                          numColumns));
+        mDiags.error(
+            keyLoc,
+            smdl::concat("expected ",
+                         smdl::Counted(response.cfaColumns, "band name"),
+                         " in this row, as in the first, got ", numColumns));
         throw Recover();
       }
       numRows++;

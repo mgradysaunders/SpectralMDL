@@ -766,7 +766,7 @@ Value Emitter::emit(AST::Variable &decl) {
         if (structType->params.size() != declarator.names.size())
           declarator.srcLoc.throwError(
               "cannot destructure ", Quoted(structType->displayName),
-              ", expected ", structType->params.size(), " names");
+              ", expected ", Counted(structType->params.size(), "name"));
         if (!isConst) {
           auto valueAlloca{createAlloca(value.type)};
           createLifetimeStart(valueAlloca);
@@ -2997,8 +2997,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       return;
     constexpr size_t MAX_LISTED{10};
     const auto searchDirs{context.getSearchDirs()};
-    auto message{concat("Searched ", searchDirs.size(),
-                        searchDirs.size() == 1 ? " directory" : " directories",
+    auto message{concat("Searched ",
+                        Counted(searchDirs.size(), "directory", "directories"),
                         " for ", Quoted(fileName))};
     for (size_t i = 0; i < std::min(searchDirs.size(), MAX_LISTED); i++)
       message += concat(i == 0 ? ":\n  " : "\n  ", QuotedPath(searchDirs[i]));
@@ -3039,7 +3039,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     if (resolvedImagePaths.empty()) {
       if (context.compiler.logResourceWarningOnce(
               resourceSourceLocation(srcLoc), fileName,
-              concat("no image(s) found for ", Quoted(fileName))))
+              concat("cannot load ", Quoted(fileName), ": file not found")))
         logSearchedDirs(fileName);
       return invoke(texture2DType, {}, srcLoc);
     }

@@ -71,10 +71,17 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     CHECK(smdl::concat(smdl::Bytes(size_t(3) << 30)) == "3 GiB");
     // Where three significant digits would go exponential, the number is
     // written whole instead.
-    CHECK(smdl::concat(smdl::Bytes(1023 * 1024)) == "1023 KiB");
+    CHECK(smdl::concat(smdl::Bytes(size_t(1023) * 1024)) == "1023 KiB");
     CHECK(smdl::concat(smdl::Bytes(1'023'590)) == "1000 KiB");
     // There is no unit past TiB.
     CHECK(smdl::concat(smdl::Bytes(size_t(5000) << 40)) == "5000 TiB");
+  }
+  SUBCASE("Counted is singular for exactly one") {
+    CHECK(smdl::concat(smdl::Counted(0, "image")) == "0 images");
+    CHECK(smdl::concat(smdl::Counted(1, "image")) == "1 image");
+    CHECK(smdl::concat(smdl::Counted(2, "image")) == "2 images");
+    CHECK(smdl::concat(smdl::Counted(1, "mesh", "meshes")) == "1 mesh");
+    CHECK(smdl::concat(smdl::Counted(3, "mesh", "meshes")) == "3 meshes");
   }
   SUBCASE("A location is written the one way every diagnostic writes one") {
     CHECK(smdl::concat(smdl::LocationMarkup("<builtin ::df>", 12, 5,
@@ -93,5 +100,7 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     CHECK(smdl::concat("z = ", smdl::Brief(0.5f), " over ",
                        smdl::Quoted("thing"), " x",
                        3) == "z = 0.5 over 'thing' x3");
+    CHECK(smdl::concat("has ", smdl::Counted(1, "curve"), " of ",
+                       smdl::Bytes(2048)) == "has 1 curve of 2 KiB");
   }
 }

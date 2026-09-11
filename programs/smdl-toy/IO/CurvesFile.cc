@@ -63,8 +63,9 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
            " is empty or out of order)");
     if (curves.strandOffsets[i + 1] - curves.strandOffsets[i] < minPoints)
       fail("strand ", i, " has ",
-           curves.strandOffsets[i + 1] - curves.strandOffsets[i],
-           " point(s), but the ", CurvesFile::basisName(curves.basis),
+           smdl::Counted(curves.strandOffsets[i + 1] - curves.strandOffsets[i],
+                         "point"),
+           ", but the ", CurvesFile::basisName(curves.basis),
            " basis needs at least ", minPoints);
   }
   if (!curves.rootUVs.empty() && curves.rootUVs.size() != curves.strandCount())
@@ -105,8 +106,9 @@ CurvesFile readCurvesFile(const std::string &fileName) {
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot read curves ", smdl::QuotedPath(fileName),
-                     ": truncated (the header promises ", header.strandCount,
-                     " strand(s) and ", header.pointCount, " point(s))"));
+                     ": truncated (the header promises ",
+                     smdl::Counted(header.strandCount, "strand"), " and ",
+                     smdl::Counted(header.pointCount, "point"), ")"));
   validateCurvesShape(curves, fileName, "read");
   return curves;
 }

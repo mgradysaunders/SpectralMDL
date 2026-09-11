@@ -155,7 +155,7 @@ AssetFile readAssetFile(const std::string &fileName) {
     asset.proxyFileName = (directory / asset.proxyFileName).string();
   SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": render ",
                  smdl::QuotedPath(asset.renderFileName), ", ",
-                 asset.objects.size(), " object(s)");
+                 smdl::Counted(asset.objects.size(), "object"));
   return asset;
 }
 

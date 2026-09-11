@@ -72,12 +72,9 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
     mode = Mode::FALSE_COLOR;
   }
   if (mode == Mode::GRAYSCALE) {
-    char note[96]{};
-    std::snprintf(note, sizeof(note),
-                  "spectral to RGB: %zu band(s) cannot carry color, "
-                  "writing the grayscale mean radiance\n",
-                  numBands);
-    std::cerr << note;
+    std::cerr << smdl::concat(
+        "spectral to RGB: ", smdl::Counted(numBands, "band"),
+        " cannot carry color, writing the grayscale mean radiance\n");
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
       const size_t x{p % numPixelsX}, y{p / numPixelsX};
       double mean{};
@@ -578,9 +575,8 @@ std::vector<float> developReadout(const Sensor &sensor,
           ", so the picture is false color, each band on its own channel; ",
           how);
     else
-      SMDL_LOG_INFO("Develop: ", bands.size(),
-                    " band(s) cannot carry color, so the picture is gray; ",
-                    how);
+      SMDL_LOG_INFO("Develop: ", smdl::Counted(bands.size(), "band"),
+                    " cannot carry color, so the picture is gray; ", how);
   }
   return rgbImage;
 }

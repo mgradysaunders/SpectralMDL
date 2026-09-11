@@ -71,7 +71,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
                                    ": truncated (the header "
                                    "promises ",
-                                   header.count, " record(s))"));
+                                   smdl::Counted(header.count, "record"), ")"));
   return places;
 }
 

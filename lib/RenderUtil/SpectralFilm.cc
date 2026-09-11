@@ -225,8 +225,8 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
   const auto noCrop{int4{0, 0, int(numPixelsX), int(numPixelsY)}};
   if (data.size() != numBands * numPixelsX * numPixelsY)
     throw Error(concat("cannot write ", QuotedPath(fileName), ": ", data.size(),
-                       " values for ", numBands, " bands over ", numPixelsX,
-                       "x", numPixelsY, " pixels"));
+                       " values for ", Counted(numBands, "band"), " over ",
+                       numPixelsX, "x", numPixelsY, " pixels"));
   checkWindowAndNames(fileName, window, numPixelsX, numPixelsY, bandNames,
                       numBands);
   const auto pixelWindow{window.value_or(noCrop)};
@@ -354,8 +354,8 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     const auto bounds{parseArrayValue(itr->second)};
     if (bounds.size() != 4)
       throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
-                         bounds.size(), " values in ", Quoted(ENVI_CROP_WINDOW),
-                         " (expected 4)"));
+                         Counted(bounds.size(), "value"), " in ",
+                         Quoted(ENVI_CROP_WINDOW), " (expected 4)"));
     for (size_t i = 0; i < 4; i++) result.cropWindow[i] = int(bounds[i]);
     if (const auto &cropWindow{result.cropWindow};
         !isSubWindow(cropWindow, nX, nY))
@@ -372,8 +372,8 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     fields.erase(itr);
     if (result.wavelengths.size() != nBands)
       throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
-                         result.wavelengths.size(), " wavelengths for ", nBands,
-                         " bands"));
+                         Counted(result.wavelengths.size(), "wavelength"),
+                         " for ", Counted(nBands, "band")));
   }
   if (auto itr{fields.find(ENVI_BAND_NAMES)}; itr != fields.end()) {
     result.bandNames = parseNameList(itr->second);

@@ -204,12 +204,10 @@ std::string LayoutDiagnostics::summary() const {
   if (mDiagnostics.empty()) return {};
   auto result{std::string()};
   if (mErrorCount > 0)
-    result +=
-        smdl::concat(mErrorCount, mErrorCount == 1 ? " error" : " errors");
+    result += smdl::concat(smdl::Counted(mErrorCount, "error"));
   if (mWarningCount > 0) {
     if (!result.empty()) result += ", ";
-    result += smdl::concat(mWarningCount,
-                           mWarningCount == 1 ? " warning" : " warnings");
+    result += smdl::concat(smdl::Counted(mWarningCount, "warning"));
   }
   return result;
 }

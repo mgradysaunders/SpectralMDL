@@ -58,8 +58,7 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 // not here: `loadImage()` only probes the file, so an image is described
 // once it is decoded, at the end of `compile()`.
 [[nodiscard]] std::string describeResource(const Ptexture &ptexture) {
-  auto result{concat(ptexture.channelCount,
-                     ptexture.channelCount == 1 ? " channel" : " channels")};
+  auto result{concat(Counted(ptexture.channelCount, "channel"))};
 #if SMDL_HAS_PTEX
   result = concat(static_cast<PtexTexture *>(ptexture.texture)->numFaces(),
                   " faces, ", result);
@@ -87,8 +86,9 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 
 [[nodiscard]] std::string describeSamples(Span<const float> wavelengths) {
   if (wavelengths.empty()) return "no samples";
-  return concat(wavelengths.size(), " samples from ", Brief(wavelengths[0]),
-                " to ", Brief(wavelengths[wavelengths.size() - 1]), " nm");
+  return concat(Counted(wavelengths.size(), "sample"), " from ",
+                Brief(wavelengths[0]), " to ",
+                Brief(wavelengths[wavelengths.size() - 1]), " nm");
 }
 
 [[nodiscard]] std::string describeResource(const Spectrum &spectrum) {
@@ -99,7 +99,7 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 describeResource(const SpectrumLibrary &spectrumLibrary) {
   const auto numCurves{spectrumLibrary.getNumCurves()};
   return concat(
-      numCurves, numCurves == 1 ? " curve of " : " curves of ",
+      Counted(numCurves, "curve"), " of ",
       describeSamples(spectrumLibrary.getCurveByIndex(0).wavelengths));
 }
 
@@ -119,6 +119,61 @@ describeResource(const SpectrumLibrary &spectrumLibrary) {
                 numLevels > 1 ? concat(", ", numLevels, " mip levels")
                               : std::string(),
                 ", ", Bytes(image.getSizeInBytes()));
+}
+
+// A duration for the log, in milliseconds below a second. The thresholds
+// sit where three significant digits would round up into exponent form.
+[[nodiscard]] std::string describeDuration(double seconds) {
+  if (seconds < 0.9995) return concat(Brief(seconds * 1e3, 3), " ms");
+  return concat(Brief(seconds, seconds < 999.5 ? 3 : 6), " s");
+}
+
+// The entries of a resource cache in file name order. The caches are keyed
+// by pointer, so their own order changes from run to run, and so would any
+// log that followed it.
+template <typename Map>
+[[nodiscard]] auto sortedByFileName(const Map &resources) {
+  using Resource = typename Map::mapped_type::element_type;
+  auto entries{std::vector<std::pair<const MD5FileHash *, Resource *>>()};
+  entries.reserve(resources.size());
+  for (const auto &[key, resource] : resources)
+    entries.emplace_back(key, resource.get());
+  std::sort(entries.begin(), entries.end(),
+            [](const auto &lhs, const auto &rhs) {
+              return lhs.first->canonicalFileNames[0] <
+                     rhs.first->canonicalFileNames[0];
+            });
+  return entries;
+}
+
+// The material name nearest `materialName`, or empty if none is close.
+// Each material is spelled with as many components as `materialName` has,
+// so that a typo in a bare name suggests a bare name. The materials the
+// desired-material filter skipped count too, since a misspelled desired
+// name is exactly what leaves the intended material skipped.
+[[nodiscard]] std::string suggestMaterialName(const Compiler &compiler,
+                                              std::string_view materialName) {
+  const auto isAbsolute{materialName.substr(0, 2) == "::"};
+  const auto numComponents{splitQualifiedName(materialName).size()};
+  auto spellings{std::vector<std::string>()};
+  auto addSpelling{[&](std::string_view qualifiedName) {
+    if (isAbsolute) {
+      spellings.emplace_back(qualifiedName);
+      return;
+    }
+    auto components{splitQualifiedName(qualifiedName)};
+    components.erase(components.begin(),
+                     components.end() -
+                         ptrdiff_t(std::min(components.size(), numComponents)));
+    spellings.emplace_back(joinQualifiedName(components)).erase(0, 2);
+  }};
+  for (const auto &jitMaterial : compiler.getMaterials())
+    if (!jitMaterial.moduleIsShadowed) addSpelling(jitMaterial.qualifiedName);
+  for (const auto &skippedName : compiler.getSkippedMaterialNames())
+    addSpelling(skippedName);
+  const auto candidates{
+      std::vector<std::string_view>(spellings.begin(), spellings.end())};
+  return std::string(suggestNearestName(materialName, candidates));
 }
 } // namespace
 
@@ -331,8 +386,7 @@ Compiler::add(std::string fileOrDirName,
         throw Error(concat("MDLE ", QuotedPath(fileName),
                            " does not contain 'main.mdl'"));
       }
-      SMDL_LOG_DEBUG("Extracted ", numExtracted,
-                     numExtracted == 1 ? " resource" : " resources",
+      SMDL_LOG_DEBUG("Extracted ", Counted(numExtracted, "resource"),
                      " of MDLE ", QuotedPath(fileName), " into ",
                      QuotedPath(extractDir));
       registerModule(Module::loadFromMDLE(fileName, *mainSource, qualifiedName,
@@ -608,8 +662,8 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
 // never references its symbol in the first place.
 size_t Compiler::dropUnusedImages() {
   auto numDropped{size_t(0)};
-  for (auto &[fileHash, image] : mImages) {
-    auto itr{mImageSymbolNames.find(image.get())};
+  for (auto [fileHash, image] : sortedByFileName(mImages)) {
+    auto itr{mImageSymbolNames.find(image)};
     if (itr == mImageSymbolNames.end()) continue;
     // Absent as well as unused: an image loaded by a texture that failed
     // to construct never reached `getImageTexelBase()` at all.
@@ -752,8 +806,12 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                          return matchesMaterialName(desiredName,
                                                     jitMaterial.qualifiedName);
                        })) {
-        SMDL_LOG_WARN("Desired material ", Quoted(desiredName),
-                      " does not match any material in the added modules");
+        auto suggestion{suggestMaterialName(*this, desiredName)};
+        SMDL_LOG_WARN("desired material ", Quoted(desiredName),
+                      " does not match any material in the added modules",
+                      suggestion.empty()
+                          ? std::string()
+                          : concat("; did you mean ", Quoted(suggestion), "?"));
       }
     }
     if (optLevel != OPT_LEVEL_NONE) {
@@ -771,43 +829,56 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     // needs the optimized module, after 'deriveStaticMaterialFlags' has
     // erased the probe scaffolding whose references must not keep an
     // image alive.
-    if (auto numDropped{dropUnusedImages()}) {
-      SMDL_LOG_INFO("Dropped ", numDropped,
-                    " image(s) never read by the compiled code");
-    }
+    const auto numDropped{dropUnusedImages()};
     // Finish loading the images that still have a decode pending, i.e.,
     // neither failed 'startLoad()' nor were dropped above.
-    auto imageEntries{std::vector<std::pair<const MD5FileHash *, Image *>>()};
-    imageEntries.reserve(mImages.size());
-    for (auto &[key, image] : mImages)
-      if (image->hasPendingLoad()) imageEntries.emplace_back(key, image.get());
+    auto imageEntries{sortedByFileName(mImages)};
+    imageEntries.erase(std::remove_if(imageEntries.begin(), imageEntries.end(),
+                                      [](const auto &entry) {
+                                        return !entry.second->hasPendingLoad();
+                                      }),
+                       imageEntries.end());
     if (!imageEntries.empty()) {
       SMDL_PROFILER_ENTRY("Load images in parallel");
-      SMDL_LOG_INFO("Loading images ...");
-      auto now{std::chrono::steady_clock::now()};
+      const auto startTime{std::chrono::steady_clock::now()};
+      // A decode failure must not unwind out of 'parallelFor'; the image
+      // keeps its pre-allocated (zeroed) texels, matching the 'loadImage'
+      // policy. The workers only record what happened, and the log is
+      // written afterward in file name order, so that it reads the same
+      // from run to run.
+      auto errors{std::vector<std::optional<Error>>(imageEntries.size())};
       parallelFor(0, imageEntries.size(), [&](size_t i) {
-        auto fileHash{imageEntries[i].first};
-        auto image{imageEntries[i].second};
-        SMDL_PROFILER_ENTRY("Load image",
-                            fileHash->canonicalFileNames[0].c_str());
-        // A decode failure must not unwind out of 'parallelFor'; warn
-        // and continue with the image's pre-allocated (zeroed) texels,
-        // matching the 'loadImage' policy.
-        if (auto error{catchAndReturnError([&] { image->finishLoad(); })}) {
-          SMDL_LOG_WARN("cannot load ",
-                        QuotedPath(fileHash->canonicalFileNames[0]), ": ",
-                        error->message);
-        } else {
-          SMDL_LOG_DEBUG("Loaded image ",
-                         QuotedPath(fileHash->canonicalFileNames[0]), ": ",
-                         describeImage(*image));
-        }
+        SMDL_PROFILER_ENTRY(
+            "Load image", imageEntries[i].first->canonicalFileNames[0].c_str());
+        errors[i] =
+            catchAndReturnError([&] { imageEntries[i].second->finishLoad(); });
       });
-      auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - now)
-                        .count()};
-      SMDL_LOG_INFO("Loading images done. [", std::to_string(duration * 1e-6),
-                    " seconds]");
+      const auto seconds{std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - startTime)
+                             .count()};
+      auto numLoaded{size_t(0)};
+      auto numBytes{size_t(0)};
+      for (size_t i = 0; i < imageEntries.size(); i++) {
+        const auto &fileName{imageEntries[i].first->canonicalFileNames[0]};
+        const auto &image{*imageEntries[i].second};
+        if (errors[i]) {
+          SMDL_LOG_WARN("cannot load ", QuotedPath(fileName), ": ",
+                        errors[i]->message);
+          continue;
+        }
+        SMDL_LOG_DEBUG("Loaded image ", QuotedPath(fileName), ": ",
+                       describeImage(image));
+        numLoaded++;
+        numBytes += image.getSizeInBytes();
+      }
+      if (numLoaded > 0) {
+        SMDL_LOG_INFO("Loaded ", Counted(numLoaded, "image"), " (",
+                      Bytes(numBytes), ") in ", describeDuration(seconds),
+                      numDropped > 0
+                          ? concat(", skipping ", numDropped,
+                                   " that the compiled code never reads")
+                          : std::string());
+      }
     }
   });
 }
@@ -998,8 +1069,8 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
     logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveIndex),
                            concat("spectrum library ", QuotedPath(fileName),
                                   " has no curve at index ", curveIndex,
-                                  " (it has ", numCurves,
-                                  numCurves == 1 ? " curve)" : " curves)"));
+                                  " (it has ", Counted(numCurves, "curve"),
+                                  ")"));
   }
   return spectrumView;
 }
@@ -1155,34 +1226,39 @@ void *Compiler::jitLookup(std::string_view name) {
 const JIT::MaterialDef *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{findMaterials(materialName)};
-  if (results.empty()) {
-    // Distinguish "never existed" from "excluded by the desired-material
-    // filter", so a host that forgot a name gets an actionable error.
-    for (const auto &skippedName : mSkippedMaterialNames) {
-      if (matchesMaterialName(materialName, skippedName)) {
-        SMDL_LOG_ERROR("Material ", Quoted(materialName), " matches ",
-                       Quoted(skippedName),
-                       ", which was skipped because it is not a desired "
-                       "material, see 'Compiler::setDesiredMaterials()'");
-        break;
-      }
-    }
-    return nullptr;
-  }
-  if (results.size() > 1) {
-    auto message{concat("Material ", Quoted(materialName),
-                        " is ambiguous with ", results.size(), " matches:")};
-    for (const auto *jitMaterial : results)
-      message += concat("\n  ", jitMaterial->qualifiedName, " declared at ",
-                        LocationMarkup(jitMaterial->moduleDisplayName,
-                                       jitMaterial->lineNo, /*charNo=*/0,
-                                       !jitMaterial->moduleFileName.empty()));
-    SMDL_LOG_ERROR(message);
-    return nullptr;
-  }
-  return results.front();
+  return results.size() == 1 ? results.front() : nullptr;
 } catch (...) {
   return nullptr;
+}
+
+std::string
+Compiler::explainMaterialLookup(std::string_view materialName) const {
+  auto results{findMaterials(materialName)};
+  if (results.size() == 1) return {};
+  if (results.size() > 1) {
+    auto message{concat("material name ", Quoted(materialName),
+                        " is ambiguous, matching ", results.size(),
+                        " materials:")};
+    for (const auto *jitMaterial : results)
+      message += concat(
+          "\n  ", Quoted(jitMaterial->qualifiedName), " declared at ",
+          LocationMarkup(jitMaterial->moduleDisplayName, jitMaterial->lineNo,
+                         /*charNo=*/0, !jitMaterial->moduleFileName.empty()));
+    return message;
+  }
+  // Distinguish "never existed" from "excluded by the desired-material
+  // filter", so a host that forgot a name gets an actionable error.
+  for (const auto &skippedName : mSkippedMaterialNames)
+    if (matchesMaterialName(materialName, skippedName))
+      return concat("material name ", Quoted(materialName), " matches ",
+                    Quoted(skippedName),
+                    ", which was not compiled because it is not a desired "
+                    "material (see 'Compiler::setDesiredMaterials()')");
+  auto message{concat("no material matches ", Quoted(materialName))};
+  if (auto suggestion{suggestMaterialName(*this, materialName)};
+      !suggestion.empty())
+    message += concat("; did you mean ", Quoted(suggestion), "?");
+  return message;
 }
 
 std::vector<const JIT::MaterialDef *>
@@ -1312,9 +1388,8 @@ std::string Compiler::printMaterialSummary() const {
   std::string message{};
   forEachModuleGroup(
       mMaterialDefs.begin(), mMaterialDefs.end(), [&](auto itr0, auto itr1) {
-        const auto count{itr1 - itr0};
         message += concat(QuotedPath(itr0->moduleDisplayName), " contains ",
-                          count, count == 1 ? " material:\n" : " materials:\n");
+                          Counted(size_t(itr1 - itr0), "material"), ":\n");
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
           message += concat(Quoted(itr0->materialName), " (line ", itr0->lineNo,

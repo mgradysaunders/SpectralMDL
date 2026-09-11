@@ -129,7 +129,8 @@ int main(int argc, char **argv) try {
     if (failures == 0)
       std::cout << "All unmapped instances agree\n";
     else
-      std::cout << failures << " instance(s) disagree\n";
+      std::cout << smdl::concat(smdl::Counted(failures, "instance"),
+                                failures == 1 ? " disagrees\n" : " disagree\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
   // The render loop is deliberately outside the trace; see -profile.

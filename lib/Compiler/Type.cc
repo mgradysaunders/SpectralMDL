@@ -1532,7 +1532,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
             return Compiler::matchesMaterialName(desiredName, qualifiedName);
           })) {
     decl.srcLoc.logDebug(concat("Skipping material ", Quoted(qualifiedName),
-                                ": undesired by host program"));
+                                ": not a desired material"));
     compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
     return;
   }

@@ -296,8 +296,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
       smdl::renameOnto(dnPartName, dnName);
       smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
       SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
-                    bandNames.size(), " band(s) of digital numbers up to ",
-                    detector.topCode());
+                    smdl::Counted(bandNames.size(), "band"),
+                    " of digital numbers up to ", detector.topCode());
     }
     rgbImage = developReadout(sensor, detector, readout, model.whiteBalance,
                               window, true);
@@ -401,12 +401,13 @@ void writeOutputs(const Options &opts, const Frame &frame,
       smdl::renameOnto(bandPartName, bandName);
       smdl::renameOnto(bandPartName + ".hdr", bandName + ".hdr");
       SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(bandName), ", ",
-                    bandNames.size(), " band(s) in ", BAND_UNITS);
+                    smdl::Counted(bandNames.size(), "band"), " in ",
+                    BAND_UNITS);
     }
     SMDL_LOG_INFO(
         "Cumulative render time: ", formatDuration(resumed.header.seconds),
         " wall, ", formatDuration(resumed.header.cpuSeconds), " compute over ",
-        resumed.header.sessions, " session(s)");
+        smdl::Counted(resumed.header.sessions, "session"));
   }
   {
     const auto ldrImage{

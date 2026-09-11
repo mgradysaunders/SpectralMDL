@@ -269,8 +269,8 @@ void renderSamples(const Options &opts, const Frame &frame,
   if (opts.render.useMNEE) {
     mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
     mneeOptions.casters = &mneeCasters;
-    SMDL_LOG_DEBUG("MNEE casters: ", mneeCasters.casters.size(),
-                   " instance(s)");
+    SMDL_LOG_DEBUG("MNEE casters: ",
+                   smdl::Counted(mneeCasters.casters.size(), "instance"));
     if (opts.render.useMNEESunOnly && envLight)
       mneeOptions.isSunOnly =
           envLight->sunCone(mneeOptions.sunDirection, mneeOptions.cosSunRadius);

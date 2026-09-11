@@ -73,7 +73,7 @@ buildAll(smdl::Compiler &compiler,
 [[nodiscard]] inline const smdl::JIT::MaterialDef *
 requireMaterial(smdl::Compiler &compiler, std::string_view name) {
   const auto *materialDef{compiler.findMaterial(name)};
-  REQUIRE_MESSAGE(materialDef != nullptr, "no material named ", name);
+  REQUIRE_MESSAGE(materialDef != nullptr, compiler.explainMaterialLookup(name));
   return materialDef;
 }
 

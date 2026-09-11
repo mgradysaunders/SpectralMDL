@@ -300,6 +300,6 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   result.bandFilm = std::move(bands.film);
   result.bandInfo = std::move(bands.info);
   SMDL_LOG_INFO("Resuming the band film: ", smdl::Quoted(bandName), ", ",
-                names.size(), " band(s)");
+                smdl::Counted(names.size(), "band"));
   return result;
 }

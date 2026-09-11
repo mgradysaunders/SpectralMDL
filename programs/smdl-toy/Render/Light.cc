@@ -736,16 +736,18 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
   // leaving every emitter unmarked is far more often a layout that has
   // not been marked yet, and gets one line.
   if (numSampledArea == 0 && numUnsampledArea > 0)
-    SMDL_LOG_INFO("No emitter is marked 'light': ", numUnsampledArea,
-                  " emissive instance(s) render through path hits alone; "
-                  "mark them in the layout, or pass -mark-all-lights.");
-  SMDL_LOG_DEBUG("Light sampler: ", numSampledArea, " area light(s), ",
-                 numUnsampledArea, " unsampled emitter(s), ",
-                 mAnalyticLights.size(), " analytic light(s)",
+    SMDL_LOG_INFO("No emitter is marked 'light': ",
+                  smdl::Counted(numUnsampledArea, "emissive instance"),
+                  numUnsampledArea == 1 ? " renders" : " render",
+                  " through path hits alone; mark emitters in the layout, "
+                  "or pass -mark-all-lights.");
+  SMDL_LOG_DEBUG("Light sampler: ", smdl::Counted(numSampledArea, "area light"),
+                 ", ", smdl::Counted(numUnsampledArea, "unsampled emitter"),
+                 ", ", smdl::Counted(mAnalyticLights.size(), "analytic light"),
                  envLight ? ", plus the environment" : "");
   if (const auto *tree{mSelection.tree()})
-    SMDL_LOG_DEBUG("Light tree: ", tree->nodeCount(), " node(s), depth ",
-                   tree->depth());
+    SMDL_LOG_DEBUG("Light tree: ", smdl::Counted(tree->nodeCount(), "node"),
+                   ", depth ", tree->depth());
 }
 
 bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,

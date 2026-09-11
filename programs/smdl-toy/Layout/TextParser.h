@@ -128,9 +128,9 @@ protected:
     std::array<float, N> values{};
     for (size_t i = 0; i < N; i++) {
       if (mToken.kind != Token::WORD) {
-        mDiags.error(
-            location(),
-            smdl::concat("expected ", N, " number(s), got ", i, " of them"));
+        mDiags.error(location(),
+                     smdl::concat("expected ", smdl::Counted(N, "number"),
+                                  ", got ", i, " of them"));
         throw Recover();
       }
       if (!tryNumber(mToken, values[i])) {

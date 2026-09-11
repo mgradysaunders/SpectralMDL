@@ -79,6 +79,19 @@ void Bytes::appendTo(std::string &result) const {
   result += UNITS[unit];
 }
 
+void Counted::appendTo(std::string &result) const {
+  result += std::to_string(count);
+  result += ' ';
+  if (count == 1) {
+    result += singular;
+  } else if (plural.empty()) {
+    result += singular;
+    result += 's';
+  } else {
+    result += plural;
+  }
+}
+
 std::string_view suggestNearestName(std::string_view name,
                                     Span<const std::string_view> candidates) {
   auto tailOf{[](std::string_view str) {

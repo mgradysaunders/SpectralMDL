@@ -112,7 +112,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 
 // One line naming the body's bands and their tile.
 [[nodiscard]] std::string describeResponse(const ResponseSettings &response) {
-  auto line{smdl::concat(response.bands.size(), " band(s)")};
+  auto line{smdl::concat(smdl::Counted(response.bands.size(), "band"))};
   for (size_t i = 0; i < response.bands.size(); i++)
     line += smdl::concat(i == 0 ? " " : ", ", response.bands[i].name);
   if (response.kind == ResponseKind::QE) {
@@ -204,9 +204,8 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                        : "")};
   const auto rgb{response.rgbBands()};
   if (!rgb)
-    return smdl::concat(response.bands.size(),
-                        " band(s) cannot carry color, so the develop is "
-                        "gray; ",
+    return smdl::concat(smdl::Counted(response.bands.size(), "band"),
+                        " cannot carry color, so the develop is gray; ",
                         balance);
   const auto &r{response.bands[(*rgb)[0]].name};
   const auto &g{response.bands[(*rgb)[1]].name};

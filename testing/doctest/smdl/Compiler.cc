@@ -456,17 +456,37 @@ TEST_CASE("findMaterial: looking a material up by name") {
     CHECK(materialDef->lineNo > 0);
     // Absent name is null.
     CHECK(compiler.findMaterial("no_such_material") == nullptr);
-    // An ambiguous name is null and logs an error listing the candidates
-    // where they are declared; 'findMaterials' enumerates them.
+    // An ambiguous name is null, and the lookup logs nothing about it;
+    // the explanation lists the candidates where they are declared, and
+    // 'findMaterials' enumerates them.
     {
-      const CollectedLog logged{"is ambiguous"};
+      const CollectedLog logged{""};
       CHECK(compiler.findMaterial("dup") == nullptr);
-      REQUIRE(logged.messages().size() == 1);
-      CHECK_CONTAINS(logged.messages()[0], "::alpha::dup declared at [");
-      CHECK_CONTAINS(logged.messages()[0], "alpha.mdl:7]");
-      CHECK_CONTAINS(logged.messages()[0], "beta.mdl:3]");
+      CHECK(logged.messages().empty());
     }
+    const auto ambiguous{compiler.explainMaterialLookup("dup")};
+    CHECK(smdl::startsWith(ambiguous,
+                           "material name 'dup' is ambiguous, matching 2 "
+                           "materials:\n  '::alpha::dup' declared at ["));
+    CHECK_CONTAINS(ambiguous, "alpha.mdl:7]\n  '::beta::dup' declared at [");
+    CHECK_CONTAINS(ambiguous, "beta.mdl:3]");
+    CHECK(std::count(ambiguous.begin(), ambiguous.end(), '\n') == 2);
     CHECK(compiler.findMaterials("dup").size() == 2);
+    // A name that matches nothing is offered the nearest material, spelled
+    // with as many components as the name was, and a unique match needs no
+    // explanation.
+    CHECK(compiler.explainMaterialLookup("unique_mat") == "");
+    CHECK(compiler.explainMaterialLookup("unique_mta") ==
+          "no material matches 'unique_mta'; did you mean 'unique_mat'?");
+    CHECK(compiler.explainMaterialLookup("alpha::unique_mta") ==
+          "no material matches 'alpha::unique_mta'; did you mean "
+          "'alpha::unique_mat'?");
+    CHECK(compiler.explainMaterialLookup("::alpha::uniqe_mat") ==
+          "no material matches '::alpha::uniqe_mat'; did you mean "
+          "'::alpha::unique_mat'?");
+    CHECK(compiler.explainMaterialLookup("no_such_material") ==
+          "no material matches 'no_such_material'");
+    CHECK(compiler.explainMaterialLookup("") == "no material matches ''");
     // Module-qualified suffixes disambiguate.
     auto dupAlpha{compiler.findMaterial("alpha::dup")};
     auto dupBeta{compiler.findMaterial("beta::dup")};
@@ -620,18 +640,41 @@ TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
                                     minimalMaterial("wanted") +
                                     minimalMaterial("unwanted"));
   SUBCASE("Filter compiles only the desired materials") {
+    const CollectedLog skipped{"Skipping material",
+                               /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"wanted"});
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    REQUIRE(skipped.messages().size() == 1);
+    CHECK_CONTAINS(skipped.messages()[0],
+                   "Skipping material '::mats::unwanted': not a desired "
+                   "material");
     REQUIRE(compiler.getMaterials().size() == 1);
     CHECK(compiler.getMaterials()[0].qualifiedName == "::mats::wanted");
     CHECK(compiler.findMaterial("wanted") != nullptr);
     // The skipped material is unreachable, and remembered by qualified
-    // name so 'findMaterial' can log the exclusion.
+    // name so that the exclusion can be given as the reason.
     CHECK(compiler.findMaterial("unwanted") == nullptr);
+    CHECK(compiler.explainMaterialLookup("unwanted") ==
+          "material name 'unwanted' matches '::mats::unwanted', which was "
+          "not compiled because it is not a desired material (see "
+          "'Compiler::setDesiredMaterials()')");
     REQUIRE(compiler.getSkippedMaterialNames().size() == 1);
     CHECK(compiler.getSkippedMaterialNames()[0] == "::mats::unwanted");
     // Names that match nothing anywhere only warn; the build succeeds.
+  }
+  SUBCASE("A misspelled desired name is offered the material it missed") {
+    const CollectedLog logged{"desired material"};
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"wanted", "unwnated"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    REQUIRE(logged.messages().size() == 1);
+    CHECK(logged.messages()[0] ==
+          "desired material 'unwnated' does not match any material in the "
+          "added modules; did you mean 'unwanted'?");
+    // The skipped material is still offered when the host looks it up.
+    CHECK(compiler.explainMaterialLookup("unwnated") ==
+          "no material matches 'unwnated'; did you mean 'unwanted'?");
   }
   SUBCASE("Skipped materials emit no entry points at all") {
     smdl::Compiler compiler{};

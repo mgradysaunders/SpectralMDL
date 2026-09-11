@@ -159,10 +159,10 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
   for (size_t j = 0; j < selection.patterns.size(); j++)
     if (!patternMatched[j]) unmatched.push_back(selection.patterns[j]);
   if (!unmatched.empty()) {
-    auto message{smdl::concat(unmatched.size(),
-                              " selection pattern(s) match "
-                              "nothing in ",
-                              smdl::QuotedPath(fileName), ":")};
+    auto message{
+        smdl::concat(smdl::Counted(unmatched.size(), "selection pattern"),
+                     unmatched.size() == 1 ? " matches" : " match",
+                     " nothing in ", smdl::QuotedPath(fileName), ":")};
     for (const auto &pattern : unmatched)
       message += smdl::concat("\n  ", smdl::Quoted(pattern));
     message += "\nThe file contains:";

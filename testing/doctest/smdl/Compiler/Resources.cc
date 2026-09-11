@@ -1,8 +1,9 @@
 /// \file
 /// The resources a compile loads and caches: the warning a missing one
 /// raises and how often, the curve a spectrum library does not have, what
-/// each says at debug level, the mip chain a texture bakes, the images an
-/// optimized module drops, and the one symbol per file the JIT defines.
+/// each says in the log and in what order, the mip chain a texture bakes,
+/// the images an optimized module drops, and the one symbol per file the
+/// JIT defines.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
@@ -179,12 +180,46 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     const CollectedLog logged{"Loaded", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
-    // Once each, however many times the material body was emitted.
-    REQUIRE(logged.messages().size() == 2);
+    // Once each, however many times the material body was emitted, and
+    // then the summary of the images decoded.
+    REQUIRE(logged.messages().size() == 3);
     CHECK(logged.count("main.smdl:9:") == 1);
     CHECK(logged.count("curve.txt': 3 samples from 400 to 600 nm") == 1);
     CHECK(logged.count("Loaded image '") == 1);
     CHECK(logged.count("gray.png': 2 x 2, 1-channel uint8, 4 B") == 1);
+    CHECK_CONTAINS(logged.messages()[2], "Loaded 1 image (4 B) in ");
+  }
+  SUBCASE("Decoded images are logged in file name order, then summed up") {
+    // Enough images that the order of the cache, which is keyed by
+    // pointer, is almost never the sorted one by chance.
+    auto declarations{std::string()};
+    auto sum{std::string("float3(0)")};
+    for (char letter = 'a'; letter <= 'h'; letter++) {
+      const auto name{std::string(1, letter)};
+      const uint8_t texels[4] = {uint8_t(letter), 0, 0, 0};
+      REQUIRE(!smdl::write8bitImage((tmpDir / (name + ".png")).string(), 2, 2,
+                                    1, texels));
+      declarations +=
+          smdl::concat("  auto ", name, " = ::tex::lookup_float3(texture_2d(\"",
+                       name, ".png\"), float2(0.5));\n");
+      sum += smdl::concat(" + ", name);
+    }
+    tmpDir.write("main.smdl",
+                 smdl::concat("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+                              "export material M() = let {\n",
+                              declarations,
+                              "} in material(surface: material_surface(\n"
+                              "  scattering: df::diffuse_reflection_bsdf(\n"
+                              "    tint: color(",
+                              sum, "))));\n"));
+    const CollectedLog logged{"Loaded", /*shouldCollectDebug=*/true};
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    REQUIRE(logged.messages().size() == 9);
+    for (size_t i = 0; i < 8; i++)
+      CHECK_CONTAINS(logged.messages()[i],
+                     std::string(1, char('a' + i)) + ".png': 2 x 2");
+    CHECK_CONTAINS(logged.messages()[8], "Loaded 8 images (32 B) in ");
   }
   SUBCASE("A file not found is followed by where it was looked for") {
     tmpDir.write("main.smdl", materialUsing("nowhere.png"));
@@ -258,10 +293,13 @@ TEST_CASE("Compiler: dropping an image nothing reads") {
     return std::string();
   }};
   SUBCASE("An unread image is dropped at O2 and a sampled one is kept") {
-    const CollectedLog dropped{"Dropping image", true};
+    const CollectedLog logged{"image", true};
     CHECK(build(smdl::OPT_LEVEL_O2) == "");
-    REQUIRE(dropped.messages().size() == 1);
-    CHECK_CONTAINS(dropped.messages()[0], "dead.png");
+    REQUIRE(logged.count("Dropping image") == 1);
+    CHECK(logged.count("dead.png': never read by the compiled code") == 1);
+    // The summary of the one image decoded counts the drop too.
+    CHECK(logged.count("Loaded 1 image (") == 1);
+    CHECK(logged.count(", skipping 1 that the compiled code never reads") == 1);
     // The declaration goes with the image, so the JIT is never asked to
     // define a symbol for texels that were never loaded.
     CHECK(countImageSymbols(ir) == 1);

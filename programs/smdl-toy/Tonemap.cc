@@ -614,9 +614,9 @@ namespace {
     values.push_back(value);
   }
   if (values.size() > maxCount)
-    throw smdl::Error(smdl::concat("expected at most ", maxCount,
-                                   " parameter(s) for -tonemap ",
-                                   smdl::Quoted(stage)));
+    throw smdl::Error(smdl::concat("expected at most ",
+                                   smdl::Counted(maxCount, "parameter"),
+                                   " for -tonemap ", smdl::Quoted(stage)));
   return values;
 }
 } // namespace

@@ -163,6 +163,25 @@ public:
   size_t count{};
 };
 
+/// A count and the noun it counts, for use with `concat`: the noun is
+/// singular for exactly one and plural otherwise, as in `1 image` and
+/// `0 images`.
+class SMDL_EXPORT Counted final {
+public:
+  constexpr Counted(size_t count, std::string_view singular,
+                    std::string_view plural = {})
+      : count(count), singular(singular), plural(plural) {}
+  void appendTo(std::string &result) const;
+
+public:
+  size_t count{};
+
+  std::string_view singular{};
+
+  /// The plural, if it is not the singular followed by `s`.
+  std::string_view plural{};
+};
+
 #if !SMDL_DOXYGEN
 namespace detail {
 
@@ -176,7 +195,8 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
                        std::is_same_v<DecayT, LocationMarkup> ||
                        std::is_same_v<DecayT, Precise> ||
                        std::is_same_v<DecayT, Brief> ||
-                       std::is_same_v<DecayT, Bytes>) {
+                       std::is_same_v<DecayT, Bytes> ||
+                       std::is_same_v<DecayT, Counted>) {
     value.appendTo(str);
   } else {
     str += value;

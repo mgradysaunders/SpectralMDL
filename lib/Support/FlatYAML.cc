@@ -366,7 +366,7 @@ std::vector<float> FlatYAML::toFloats(const Entry &entry, size_t count) const {
     }
   }
   if (result.size() != count)
-    fail(entry, concat("expected a list of ", count, " reals for ",
+    fail(entry, concat("expected a list of ", Counted(count, "real"), " for ",
                        Quoted(entry.key)));
   return result;
 }

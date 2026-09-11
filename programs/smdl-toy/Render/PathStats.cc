@@ -582,12 +582,13 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
   const auto gate{uint64_t(std::max(path.maxContributionBounces, 1))};
   const uint64_t gatedCount{contributionCountFrom(gate)};
   os << "\nBound on the largest band of a contribution, over the " << gatedCount
-     << " non-zero contributions of at least " << gate
-     << (gate == 1 ? " bounce" : " bounces")
+     << " non-zero contributions of at least "
+     << smdl::concat(smdl::Counted(gate, "bounce"))
      << ", energy as a share of the contribution energy:\n";
   if (gatedCount == 0) {
-    os << "  No contribution reaches " << gate
-       << " bounces, so no bound would apply.\n";
+    os << "  No contribution reaches "
+       << smdl::concat(smdl::Counted(gate, "bounce"))
+       << ", so no bound would apply.\n";
   } else {
     // From the top populated bin of the gated rows downward.
     size_t top{};
@@ -617,9 +618,9 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
 
   if (hasBound)
     os << "\nThe bound in force, -max-contribution "
-       << smdl::concat(smdl::Brief(path.maxContribution)) << " from " << gate
-       << (gate == 1 ? " bounce" : " bounces") << ", scaled " << clampedCount()
-       << " contributions ("
+       << smdl::concat(smdl::Brief(path.maxContribution)) << " from "
+       << smdl::concat(smdl::Counted(gate, "bounce")) << ", scaled "
+       << clampedCount() << " contributions ("
        << spellPercent(ratio(double(clampedCount()), double(gatedCount)))
        << ") and removed " << spellPercent(ratio(energyClamped(), energy))
        << " of the energy.\n";

@@ -65,7 +65,7 @@ void printObjectUsageRows(llvm::raw_ostream &os,
     names.push_back(smdl::concat(std::string(2 * entry.depth, ' '),
                                  smdl::Quoted(entry.path)));
     counts.push_back(smdl::concat(
-        entry.triangleCount, entry.triangleCount == 1 ? " tri" : " tris",
+        smdl::Counted(entry.triangleCount, "tri"),
         entry.instanceCount == 1
             ? std::string()
             : smdl::concat(" in ", entry.instanceCount, " meshes"),
@@ -125,8 +125,9 @@ void printObjectTable(const Layout &layout) {
     // hole, so it gets its one-line summary.
     if (item.curves.isActive) {
       const auto file{readCurvesFile(item.fileName)};
-      os << smdl::concat(item.fileName, ": curves, ", file.strandCount(),
-                         " strand(s), ", file.points.size(), " point(s), ",
+      os << smdl::concat(item.fileName, ": curves, ",
+                         smdl::Counted(file.strandCount(), "strand"), ", ",
+                         smdl::Counted(file.points.size(), "point"), ", ",
                          CurvesFile::basisName(file.basis), " basis",
                          file.hasRootUVs() ? ", root UVs" : "", "\n\n");
       continue;
@@ -136,8 +137,9 @@ void printObjectTable(const Layout &layout) {
     uint64_t numTriangles{};
     for (const auto &entry : usage)
       if (entry.depth == 0) numTriangles += entry.triangleCount;
-    os << smdl::concat(item.fileName, ": ", usage.size(), " object(s), ",
-                       numTriangles, " triangles\n");
+    os << smdl::concat(item.fileName, ": ",
+                       smdl::Counted(usage.size(), "object"), ", ",
+                       smdl::Counted(numTriangles, "triangle"), "\n");
     if (!info.animations.empty()) {
       os << "  animations:";
       for (size_t i = 0; i < info.animations.size(); i++) {
@@ -255,8 +257,9 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
     for (const auto &fileName : seenFiles)
       os << (i++ == 0 ? "" : ", ") << fileName;
   }
-  os << smdl::concat(": ", usage.size(), " material(s) on ", numMeshes,
-                     " mesh(es), ", numInstances, " instance(s)\n");
+  os << smdl::concat(": ", smdl::Counted(usage.size(), "material"), " on ",
+                     smdl::Counted(numMeshes, "mesh", "meshes"), ", ",
+                     smdl::Counted(numInstances, "instance"), "\n");
   if (usage.empty()) return;
   // Pad the name and count fields to a common width so the statuses line up
   // in a column, which is the thing being scanned for.
@@ -266,9 +269,9 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
   size_t countWidth{};
   for (const auto &entry : usage) {
     names.push_back(smdl::concat(smdl::Quoted(entry.name)));
-    counts.push_back(smdl::concat(
-        entry.meshCount, entry.meshCount == 1 ? " mesh, " : " meshes,", " ",
-        entry.triangleCount, entry.triangleCount == 1 ? " tri" : " tris"));
+    counts.push_back(
+        smdl::concat(smdl::Counted(entry.meshCount, "mesh", "meshes"), ", ",
+                     smdl::Counted(entry.triangleCount, "tri")));
     nameWidth = std::max(nameWidth, names.back().size());
     countWidth = std::max(countWidth, counts.back().size());
   }
@@ -328,7 +331,7 @@ void dumpPlaces(const std::string &fileName) {
   const auto places{readPlacesFile(fileName)};
   auto &os{llvm::outs()};
   os << smdl::concat("# ", fileName, ": version ", places.version, ", ",
-                     places.transforms.size(), " record(s)",
+                     smdl::Counted(places.transforms.size(), "record"),
                      places.hasVariants() ? ", with a variant column" : "",
                      "\n# 'thing' stands for whatever asset or group the "
                      "buffer scatters.\n");
@@ -355,14 +358,15 @@ void dumpCurves(const std::string &fileName) {
     maxRadius = std::max(maxRadius, point.w);
   }
   auto &os{llvm::outs()};
-  os << smdl::concat(
-      fileName, ": version ", file.version, ", ",
-      CurvesFile::basisName(file.basis), " basis\n  ", file.strandCount(),
-      " strand(s), ", file.points.size(), " point(s)",
-      file.hasRootUVs() ? ", with a root UV column" : "", "\n  bounds [",
-      bound.lower.x, ", ", bound.lower.y, ", ", bound.lower.z, "] to [",
-      bound.upper.x, ", ", bound.upper.y, ", ", bound.upper.z, "]\n  radius ",
-      minRadius, " to ", maxRadius, "\n");
+  os << smdl::concat(fileName, ": version ", file.version, ", ",
+                     CurvesFile::basisName(file.basis), " basis\n  ",
+                     smdl::Counted(file.strandCount(), "strand"), ", ",
+                     smdl::Counted(file.points.size(), "point"),
+                     file.hasRootUVs() ? ", with a root UV column" : "",
+                     "\n  bounds [", bound.lower.x, ", ", bound.lower.y, ", ",
+                     bound.lower.z, "] to [", bound.upper.x, ", ",
+                     bound.upper.y, ", ", bound.upper.z, "]\n  radius ",
+                     minRadius, " to ", maxRadius, "\n");
 }
 
 void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
@@ -439,9 +443,10 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
   // The wrapper the buffer wants to live under, ready to paste.
   auto &os{llvm::outs()};
   os << smdl::concat(
-      "Packed ", places.transforms.size(), " record(s)",
-      anyVariant ? smdl::concat(" over ", variants.size(), " variant(s)")
-                 : std::string(),
+      "Packed ", smdl::Counted(places.transforms.size(), "record"),
+      anyVariant
+          ? smdl::concat(" over ", smdl::Counted(variants.size(), "variant"))
+          : std::string(),
       " into ", smdl::QuotedPath(outputFileName), ". Scatter it with:\n\n");
   const auto relative{
       std::filesystem::path(outputFileName).filename().string()};

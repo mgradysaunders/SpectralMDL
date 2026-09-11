@@ -143,13 +143,13 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     }
     if (mWavelengths.size() != size_t(samples)) {
       throwError(concat("'samples'", onLine(samplesLine), " is ", samples,
-                        ", but 'wavelength' lists ", mWavelengths.size(),
-                        " wavelengths"));
+                        ", but 'wavelength' lists ",
+                        Counted(mWavelengths.size(), "wavelength")));
     }
     if (mCurveNames.size() != size_t(lines) && !mCurveNames.empty()) {
       throwError(concat("'lines'", onLine(linesLine), " is ", lines,
-                        ", but 'spectra names' lists ", mCurveNames.size(),
-                        " names"));
+                        ", but 'spectra names' lists ",
+                        Counted(mCurveNames.size(), "name")));
     }
     // Of the ENVI data types, only 4 (32-bit float) and 5 (64-bit float)
     // make sense for a spectral library.

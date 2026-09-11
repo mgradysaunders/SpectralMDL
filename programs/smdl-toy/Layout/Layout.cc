@@ -440,8 +440,11 @@ private:
           mDiags.error(placement.placesPathLoc,
                        smdl::concat("record ", i, " picks variant ",
                                     places.variants[i], ", but only ",
-                                    placement.variants.size(),
-                                    " variant block(s) are declared"));
+                                    smdl::Counted(placement.variants.size(),
+                                                  "variant block"),
+                                    placement.variants.size() == 1
+                                        ? " is declared"
+                                        : " are declared"));
           throw SkipPlacement();
         }
       // The composed rename layer per variant, folded once rather than
@@ -451,8 +454,9 @@ private:
       outerByVariant.reserve(placement.variants.size());
       for (const auto &variant : placement.variants)
         outerByVariant.push_back(composeRename(variant, baseOuter));
-      SMDL_LOG_DEBUG("Scattering ", places.transforms.size(),
-                     " record(s) from ", smdl::QuotedPath(resolved.string()));
+      SMDL_LOG_DEBUG("Scattering ",
+                     smdl::Counted(places.transforms.size(), "record"),
+                     " from ", smdl::QuotedPath(resolved.string()));
       const auto recordXf{
           [&](size_t i) { return placeXf * MotionXf(places.transforms[i]); }};
       const auto outerFor{[&](size_t i) -> const RenameMap & {
@@ -942,8 +946,8 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
   if (diags.hasErrors())
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
                                    ": ", diags.summary()));
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ", result.items.size(),
-                 " item(s)");
+  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
+                 smdl::Counted(result.items.size(), "item"));
   return result;
 }
 

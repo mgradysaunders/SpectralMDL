@@ -640,8 +640,8 @@ VoxelGrid::saveToFile(const std::string &fileName,
       throw Error("several named grids need a '.nvdb' file");
     if (voxelGrids.empty()) throw Error("no grids to save");
     if (voxelGrids.size() != gridNames.size())
-      throw Error(concat("have ", voxelGrids.size(), " grid(s) but ",
-                         gridNames.size(), " name(s)"));
+      throw Error(concat("have ", Counted(voxelGrids.size(), "grid"), " but ",
+                         Counted(gridNames.size(), "name")));
     for (size_t i = 0; i < voxelGrids.size(); i++) {
       if (!voxelGrids[i] || !voxelGrids[i]->isValid())
         throw Error(concat("grid ", i, " is empty"));

@@ -226,7 +226,7 @@ public:
   /// materials that instantiate it compile unaffected, and unit tests
   /// and execs are unaffected entirely. The skipped material itself is
   /// absent from `getMaterials()` and unreachable by `findMaterial()`,
-  /// which logs the exclusion when asked for it (see
+  /// and `explainMaterialLookup()` gives the exclusion as the reason (see
   /// `getSkippedMaterialNames()`). Desired names that match no material
   /// at all are warned about during `compile()`. Note that a skipped
   /// material's body is never emitted, so errors inside it may go
@@ -392,19 +392,32 @@ public:
   /// `Module::isShadowed()`.
   ///
   /// \return
-  /// The unique match, or `nullptr` if nothing matches. Also
-  /// returns `nullptr` if more than one material matches, in which
-  /// case an error is logged that lists every candidate. Use a longer
-  /// suffix to disambiguate, or use `findMaterials()` to get all
-  /// candidates.
+  /// The unique match, or `nullptr` if nothing matches or more than one
+  /// material matches. Nothing is logged either way; a host that wants
+  /// to say why asks `explainMaterialLookup()`. Use a longer suffix to
+  /// disambiguate, or use `findMaterials()` to get all candidates.
   ///
   [[nodiscard]] const JIT::MaterialDef *
   findMaterial(std::string_view materialName) const noexcept;
 
+  /// Explain why `findMaterial()` returns `nullptr` for `materialName`,
+  /// for a host to put in its own error: no material matches, with the
+  /// nearest name if one is close enough to be a typo; the name matches
+  /// a material that `setDesiredMaterials()` kept out of the compile; or
+  /// more than one material matches, each listed with where it is
+  /// declared.
+  ///
+  /// \return
+  /// The explanation, or an empty string if `findMaterial()` finds a
+  /// unique match.
+  ///
+  [[nodiscard]] std::string
+  explainMaterialLookup(std::string_view materialName) const;
+
   /// Find all JIT-compiled materials matching `materialName`, by the
   /// same matching rules as `findMaterial()`. This is useful for
   /// tooling, and for disambiguating the candidates when
-  /// `findMaterial()` reports an ambiguity.
+  /// `findMaterial()` finds more than one.
   [[nodiscard]] std::vector<const JIT::MaterialDef *>
   findMaterials(std::string_view materialName) const;
 

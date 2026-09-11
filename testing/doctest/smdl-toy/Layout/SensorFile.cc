@@ -292,7 +292,7 @@ TEST_CASE("SensorFile: the response block") {
              cfa + " } }\n";
     }};
     CHECK_CONTAINS(parseError(tileWith("cfa { row R R  row R }")).message,
-                   "expected 2 band name(s) in this row, as in the first, "
+                   "expected 2 band names in this row, as in the first, "
                    "got 1");
     CHECK_CONTAINS(parseError(tileWith("cfa { row R row }")).message,
                    "at least one band name after 'row'");
@@ -438,7 +438,7 @@ TEST_CASE("SensorFile: the detector block") {
     CHECK_CONTAINS(parseError(detectorWith("gain 0")).message,
                    "positive number for 'gain'");
     CHECK_CONTAINS(parseError(detectorWith("gain")).message,
-                   "expected 1 number(s)");
+                   "expected 1 number, got 0 of them");
     CHECK_CONTAINS(parseError(detectorWith("well 3")).message,
                    "unknown detector setting 'well'");
     CHECK_CONTAINS(parseError(sensorWith("detector 3")).message,
