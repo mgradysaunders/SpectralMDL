@@ -61,6 +61,16 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
         compileError("#smdl\nexec { const float f = 1.0 / 0.0; }\n").message ==
         "compiled without error");
   }
+  SUBCASE("A debug line leads with the same location markup") {
+    const CollectedLog logged{"New material", /*shouldCollectDebug=*/true};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.addCode("::diag", "#smdl\nimport ::df::*;\n" +
+                                              minimalMaterial("m")));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(logged.messages().size() == 1);
+    CHECK(smdl::startsWith(logged.messages()[0], "[<string ::diag>:3:"));
+    CHECK_CONTAINS(logged.messages()[0], "] New material '::diag::m'");
+  }
   SUBCASE("A run-time assertion failure reports where it failed") {
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;

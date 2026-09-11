@@ -3,6 +3,7 @@
 #include <string>
 
 #include "smdl/Support/FlatYAML.h"
+#include "smdl/Support/Strings.h"
 
 using smdl::FlatYAML;
 
@@ -19,8 +20,9 @@ FlatYAML parseOK(const std::string &source) {
   return doc;
 }
 
-// Parse, require failure, and require the message to name the line and
-// contain the expected fragment.
+// Parse, require failure, and require the message to lead with the line,
+// as the location markup every diagnostic uses, and to contain the
+// expected fragment.
 void parseFail(const std::string &source, int lineNo,
                const std::string &fragment) {
   try {
@@ -29,7 +31,8 @@ void parseFail(const std::string &source, int lineNo,
   } catch (const smdl::Error &error) {
     CAPTURE(error.message);
     CHECK_CONTAINS(error.message, fragment);
-    CHECK_CONTAINS(error.message, "line " + std::to_string(lineNo) + ":");
+    CHECK(smdl::startsWith(error.message,
+                           "[test.yaml:" + std::to_string(lineNo) + "] "));
   }
 }
 

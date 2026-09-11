@@ -451,9 +451,16 @@ TEST_CASE("findMaterial: looking a material up by name") {
     CHECK(materialDef->lineNo > 0);
     // Absent name is null.
     CHECK(compiler.findMaterial("no_such_material") == nullptr);
-    // An ambiguous name is null and logs an error listing the
-    // candidates; 'findMaterials' enumerates them.
-    CHECK(compiler.findMaterial("dup") == nullptr);
+    // An ambiguous name is null and logs an error listing the candidates
+    // where they are declared; 'findMaterials' enumerates them.
+    {
+      const CollectedLog logged{"is ambiguous"};
+      CHECK(compiler.findMaterial("dup") == nullptr);
+      REQUIRE(logged.messages().size() == 1);
+      CHECK_CONTAINS(logged.messages()[0], "::alpha::dup declared at [");
+      CHECK_CONTAINS(logged.messages()[0], "alpha.mdl:7]");
+      CHECK_CONTAINS(logged.messages()[0], "beta.mdl:3]");
+    }
     CHECK(compiler.findMaterials("dup").size() == 2);
     // Module-qualified suffixes disambiguate.
     auto dupAlpha{compiler.findMaterial("alpha::dup")};

@@ -64,6 +64,11 @@ public:
   /// is `LOG_LEVEL_INFO`.
   void setMinLevel(LogLevel minLevel) { mMinLevel = minLevel; }
 
+  /// Would a message at `level` reach the sinks?
+  [[nodiscard]] bool isEnabled(LogLevel level) const noexcept {
+    return level >= mMinLevel;
+  }
+
   /// Add a new sink.
   template <typename T, typename... Args> T &addSink(Args &&...args) {
     return static_cast<T &>(
@@ -93,25 +98,29 @@ private:
   LogLevel mMinLevel{LOG_LEVEL_INFO};
 };
 
-/// Log a message with `LOG_LEVEL_DEBUG`.
-#define SMDL_LOG_DEBUG(...)                                 \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_DEBUG, \
-                                   ::smdl::concat(__VA_ARGS__))
+/// Log a message with `level`, which `concat` builds from the remaining
+/// arguments. The arguments are only evaluated if the message reaches the
+/// sinks, so a disabled message costs nothing to write, and an argument
+/// must not have a side effect the program depends on.
+#define SMDL_LOG(level, ...)                                            \
+  do {                                                                  \
+    const auto smdlLogLevel{level};                                     \
+    if (auto &smdlLogger{::smdl::Logger::get()};                        \
+        smdlLogger.isEnabled(smdlLogLevel))                             \
+      smdlLogger.logMessage(smdlLogLevel, ::smdl::concat(__VA_ARGS__)); \
+  } while (false)
 
-/// Log a message with `LOG_LEVEL_INFO`.
-#define SMDL_LOG_INFO(...)                                 \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_INFO, \
-                                   ::smdl::concat(__VA_ARGS__))
+/// Log a message with `LOG_LEVEL_DEBUG`. See `SMDL_LOG`.
+#define SMDL_LOG_DEBUG(...) SMDL_LOG(::smdl::LOG_LEVEL_DEBUG, __VA_ARGS__)
 
-/// Log a message with `LOG_LEVEL_WARN`.
-#define SMDL_LOG_WARN(...)                                 \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_WARN, \
-                                   ::smdl::concat(__VA_ARGS__))
+/// Log a message with `LOG_LEVEL_INFO`. See `SMDL_LOG`.
+#define SMDL_LOG_INFO(...) SMDL_LOG(::smdl::LOG_LEVEL_INFO, __VA_ARGS__)
 
-/// Log a message with `LOG_LEVEL_ERROR`.
-#define SMDL_LOG_ERROR(...)                                 \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_ERROR, \
-                                   ::smdl::concat(__VA_ARGS__))
+/// Log a message with `LOG_LEVEL_WARN`. See `SMDL_LOG`.
+#define SMDL_LOG_WARN(...) SMDL_LOG(::smdl::LOG_LEVEL_WARN, __VA_ARGS__)
+
+/// Log a message with `LOG_LEVEL_ERROR`. See `SMDL_LOG`.
+#define SMDL_LOG_ERROR(...) SMDL_LOG(::smdl::LOG_LEVEL_ERROR, __VA_ARGS__)
 
 /// The label prefix for the given log level, as the default log sinks
 /// print it: a symbol or a bracketed word, with or without ANSI color

@@ -319,7 +319,7 @@ FlatYAML FlatYAML::parse(std::string_view source, std::string sourceName) {
 }
 
 void FlatYAML::fail(int lineNo, std::string_view message) const {
-  throw Error(concat(QuotedPath(sourceName), ": line ", lineNo, ": ", message));
+  throw Error(concat(LocationMarkup(sourceName, lineNo), " ", message));
 }
 
 const std::string &FlatYAML::toString(const Entry &entry) const {

@@ -140,12 +140,12 @@ void checkWindowAndNames(const std::string &fileName,
                          std::optional<int4> window, size_t nX, size_t nY,
                          Span<const std::string> bandNames, size_t nBands) {
   if (window && !isSubWindow(*window, nX, nY))
-    throw Error(concat("cannot write ", Quoted(fileName), ": the window ",
+    throw Error(concat("cannot write ", QuotedPath(fileName), ": the window ",
                        (*window)[0], ",", (*window)[1], ",", (*window)[2], ",",
                        (*window)[3], " is not a non-empty sub-rectangle of ",
                        nX, "x", nY));
   if (!bandNames.empty() && bandNames.size() != nBands)
-    throw Error(concat("cannot write ", Quoted(fileName), ": ",
+    throw Error(concat("cannot write ", QuotedPath(fileName), ": ",
                        bandNames.size(), " band names for ", nBands, " bands"));
 }
 
@@ -224,7 +224,7 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
                          std::optional<int4> window, uint64_t numSamples) {
   const auto noCrop{int4{0, 0, int(numPixelsX), int(numPixelsY)}};
   if (data.size() != numBands * numPixelsX * numPixelsY)
-    throw Error(concat("cannot write ", Quoted(fileName), ": ", data.size(),
+    throw Error(concat("cannot write ", QuotedPath(fileName), ": ", data.size(),
                        " values for ", numBands, " bands over ", numPixelsX,
                        "x", numPixelsY, " pixels"));
   checkWindowAndNames(fileName, window, numPixelsX, numPixelsY, bandNames,
@@ -282,7 +282,7 @@ std::map<std::string, std::string> parseENVIHeader(const std::string &fileName,
     return line;
   }};
   if (trim(nextLine()) != "ENVI")
-    throw Error(concat("cannot load ", Quoted(fileName + ".hdr"),
+    throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
                        ": missing 'ENVI' magic line"));
   while (pos < text.size()) {
     auto line{nextLine()};
@@ -309,8 +309,8 @@ uint64_t requiredCount(const std::string &fileName,
                        const char *key) {
   auto itr{fields.find(key)};
   if (itr == fields.end())
-    throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": missing ",
-                       Quoted(key), " field"));
+    throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
+                       ": missing ", Quoted(key), " field"));
   auto value{std::strtoull(itr->second.c_str(), nullptr, 10)};
   fields.erase(itr);
   return value;
@@ -330,14 +330,14 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   // worth fixing up rather than rejecting.
   const auto type{requiredCount(fileName, fields, ENVI_DATA_TYPE)};
   if (type != ENVI_FLOAT32 && type != ENVI_FLOAT64)
-    throw Error(concat("cannot load ", Quoted(fileName), ": data type ", type,
-                       " (expected 4 or 5, a 32-bit or 64-bit float)"));
+    throw Error(concat("cannot load ", QuotedPath(fileName), ": data type ",
+                       type, " (expected 4 or 5, a 32-bit or 64-bit float)"));
   const size_t valueSize{type == ENVI_FLOAT64 ? sizeof(double) : sizeof(float)};
   if (auto itr{fields.find(ENVI_INTERLEAVE)};
       itr != fields.end() && itr->second == "bip") {
     fields.erase(itr);
   } else {
-    throw Error(concat("cannot load ", Quoted(fileName),
+    throw Error(concat("cannot load ", QuotedPath(fileName),
                        ": expected 'interleave = bip'"));
   }
   const auto byteOrder{requiredCount(fileName, fields, ENVI_BYTE_ORDER)};
@@ -353,13 +353,13 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   if (auto itr{fields.find(ENVI_CROP_WINDOW)}; itr != fields.end()) {
     const auto bounds{parseArrayValue(itr->second)};
     if (bounds.size() != 4)
-      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
+      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          bounds.size(), " values in ", Quoted(ENVI_CROP_WINDOW),
                          " (expected 4)"));
     for (size_t i = 0; i < 4; i++) result.cropWindow[i] = int(bounds[i]);
     if (const auto &cropWindow{result.cropWindow};
         !isSubWindow(cropWindow, nX, nY))
-      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
+      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Quoted(ENVI_CROP_WINDOW), " ",          //
                          cropWindow[0], ",", cropWindow[1], ",", //
                          cropWindow[2], ",", cropWindow[3],      //
@@ -371,7 +371,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
       result.wavelengths.push_back(float(w));
     fields.erase(itr);
     if (result.wavelengths.size() != nBands)
-      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
+      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          result.wavelengths.size(), " wavelengths for ", nBands,
                          " bands"));
   }
@@ -379,7 +379,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     result.bandNames = parseNameList(itr->second);
     fields.erase(itr);
     if (result.bandNames.size() != nBands)
-      throw Error(concat("cannot load ", Quoted(fileName + ".hdr"), ": ",
+      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          result.bandNames.size(), " band names for ", nBands,
                          " bands"));
   }
@@ -399,8 +399,8 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   auto values{std::vector<double>(nBands)};
   for (size_t iY = 0; iY < nY; iY++) {
     if (!file.read(row.data(), std::streamsize(row.size())))
-      throw Error(
-          concat("cannot load ", Quoted(fileName), ": unexpected end of file"));
+      throw Error(concat("cannot load ", QuotedPath(fileName),
+                         ": unexpected end of file"));
     const char *ptr{row.data()};
     for (size_t iX = 0; iX < nX; iX++) {
       for (size_t i = 0; i < nBands; i++, ptr += valueSize) {

@@ -580,11 +580,10 @@ describeJITSessionError(llvm::Error error, char globalPrefix,
           if (auto itr{foreignFunctionSourceLocations.find(name.str())};
               itr != foreignFunctionSourceLocations.end()) {
             const auto &srcLoc{itr->second};
-            auto message{std::string(srcLoc)};
-            if (!message.empty()) message += ' ';
-            message += concat("'@(foreign)' function ", Quoted(name),
-                              " is not defined in the host process");
-            errors.emplace_back(std::move(message), srcLoc.getSourceSnippet());
+            errors.emplace_back(srcLoc.formatMessage(concat(
+                                    "'@(foreign)' function ", Quoted(name),
+                                    " is not defined in the host process")),
+                                srcLoc.getSourceSnippet());
           } else {
             if (!otherNames.empty()) otherNames += ", ";
             otherNames += concat(Quoted(name));
@@ -828,8 +827,8 @@ const Image &Compiler::loadImage(const std::string &fileName,
       srcLoc.throwError(
           "cannot request a ", filterName(filter), " mip chain for ",
           QuotedPath(fileName), ": a ", filterName(image.getMipFilter()),
-          " mip chain was requested at ", itr->second.getModuleDisplayName(),
-          ":", itr->second.lineNo, ", and an image holds one chain");
+          " mip chain was requested at ", std::string(itr->second),
+          ", and an image holds one chain");
     }
   }
   return image;
@@ -1085,12 +1084,11 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
   if (results.size() > 1) {
     auto message{concat("Material ", Quoted(materialName),
                         " is ambiguous with ", results.size(), " matches:")};
-    for (const auto *jitMaterial : results) {
-      message += "\n  ";
-      message +=
-          concat(jitMaterial->qualifiedName, " (",
-                 jitMaterial->moduleDisplayName, ":", jitMaterial->lineNo, ")");
-    }
+    for (const auto *jitMaterial : results)
+      message += concat("\n  ", jitMaterial->qualifiedName, " declared at ",
+                        LocationMarkup(jitMaterial->moduleDisplayName,
+                                       jitMaterial->lineNo, /*charNo=*/0,
+                                       !jitMaterial->moduleFileName.empty()));
     SMDL_LOG_ERROR(message);
     return nullptr;
   }

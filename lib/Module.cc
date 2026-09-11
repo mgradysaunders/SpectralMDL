@@ -214,7 +214,7 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("cannot format module extracted from archive in-place ",
-                   Quoted(mFileName)));
+                   QuotedPath(mFileName)));
       }
       auto stream{openOrThrow(mFileName, std::ios::out)};
       stream << formatted;
