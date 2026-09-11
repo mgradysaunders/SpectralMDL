@@ -1,6 +1,7 @@
 #include "Layout/LayoutDiagnostics.h"
 
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include <algorithm>
@@ -213,6 +214,7 @@ std::string LayoutDiagnostics::summary() const {
   return result;
 }
 
-void LayoutDiagnostics::printAll(bool useColors) const {
-  std::cerr << renderAll(useColors);
+void LayoutDiagnostics::printAll() const {
+  std::cerr << renderAll(smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO,
+                                               smdl::cerrSupportsANSIColors()));
 }

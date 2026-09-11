@@ -1,8 +1,8 @@
 /// \file
 /// The resources a compile loads and caches: the warning a missing one
-/// raises and how often, the curve a spectrum library does not have, the
-/// mip chain a texture bakes, the images an optimized module drops, and
-/// the one symbol per file the JIT defines.
+/// raises and how often, the curve a spectrum library does not have, what
+/// each says at debug level, the mip chain a texture bakes, the images an
+/// optimized module drops, and the one symbol per file the JIT defines.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
@@ -151,6 +151,69 @@ TEST_CASE("Compiler: the mip levels a texture bakes") {
     // And the level count really is what is asserted, rather than the
     // check above passing for some unrelated reason.
     CHECK(checkNumLevels(", tex::gamma_linear", 3) != "");
+  }
+}
+
+TEST_CASE("Compiler: what a resource says at debug level") {
+  TempDir tmpDir{"resource-debug"};
+  const uint8_t gray[4] = {0, 64, 128, 255};
+  const uint8_t rgba[16] = {};
+  REQUIRE(!smdl::write8bitImage((tmpDir / "gray.png").string(), 2, 2, 1, gray));
+  tmpDir.write("curve.txt", "nanometers\n400 0.1\n500 0.5\n600 0.9\n");
+  // A material that samples `fileName`, so that the image survives to be
+  // decoded, tinted by the curve in 'curve.txt' on line 9.
+  auto materialUsing{[](std::string_view fileName) {
+    return smdl::concat(
+        "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+        "export material M() = let {\n"
+        "  auto t = texture_2d(\"",
+        fileName,
+        "\", tex::gamma_linear);\n"
+        "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(\n"
+        "    tint: color(c) * color(spectral_curve(\"curve.txt\")))));\n");
+  }};
+  SUBCASE("A loaded resource says what it is, and an image once decoded") {
+    tmpDir.write("main.smdl", materialUsing("gray.png"));
+    const CollectedLog logged{"Loaded", /*shouldCollectDebug=*/true};
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    // Once each, however many times the material body was emitted.
+    REQUIRE(logged.messages().size() == 2);
+    CHECK(logged.count("main.smdl:9:") == 1);
+    CHECK(logged.count("curve.txt': 3 samples from 400 to 600 nm") == 1);
+    CHECK(logged.count("Loaded image '") == 1);
+    CHECK(logged.count("gray.png': 2 x 2, 1-channel uint8, 4 B") == 1);
+  }
+  SUBCASE("A file not found is followed by where it was looked for") {
+    tmpDir.write("main.smdl", materialUsing("nowhere.png"));
+    const CollectedLog logged{"nowhere.png", /*shouldCollectDebug=*/true};
+    smdl::Compiler compiler{};
+    compiler.fileLocator.setSearchPwd(false);
+    compiler.fileLocator.setSearchDefaultDirs(false);
+    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    // The warning, then the one directory searched, once each.
+    REQUIRE(logged.messages().size() == 2);
+    CHECK(logged.warningCount() == 1);
+    CHECK_CONTAINS(logged.messages()[1],
+                   "Searched 1 directory for 'nowhere.png':\n  '");
+    CHECK_CONTAINS(logged.messages()[1], "smdl-test-resource-debug'");
+  }
+  SUBCASE("Tiles that disagree on their format say which and how") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1001.png").string(), 2, 2, 1,
+                                  gray));
+    REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1002.png").string(), 2, 2, 4,
+                                  rgba));
+    tmpDir.write("main.smdl", materialUsing("tile_<UDIM>.png"));
+    const CollectedLog logged{"inconsistent"};
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    REQUIRE(logged.messages().size() == 1);
+    CHECK_CONTAINS(logged.messages()[0],
+                   "inconsistent image formats for 'tile_<UDIM>.png': "
+                   "'tile_1001.png' is 1-channel uint8, but 'tile_1002.png' "
+                   "is 4-channel uint8");
   }
 }
 

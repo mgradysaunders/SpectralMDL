@@ -1,4 +1,4 @@
-#include "Fixtures.h"
+#include "CompileFixtures.h"
 
 #include <filesystem>
 #include <string>
@@ -200,4 +200,24 @@ TEST_CASE("FileLocator: the default search directories") {
     CHECK(locator.getSearchDirs().size() == 1);
     CHECK_FALSE(locator.locate("only_default.png"));
   }
+}
+
+TEST_CASE("FileLocator: a default search directory that is not one") {
+  TempDir tmpDir{"filelocator-not-a-dir"};
+  touch(tmpDir, "a-file.txt");
+  // Names used by no other test, since each is reported once per process.
+  const auto missing{(tmpDir / "missing-for-the-warning").string()};
+  const auto file{(tmpDir / "a-file.txt").string()};
+  const ScopedEnv defaultDirs{"SMDL_DEFAULT_SEARCH_DIRS",
+                              missing + SEPARATOR + file};
+  const CollectedLog logged{"SMDL_DEFAULT_SEARCH_DIRS"};
+  auto locator{smdl::FileLocator()};
+  // The variable is read on every lookup, and each entry is reported
+  // once however many lookups read it.
+  for (int i = 0; i < 3; i++) CHECK(locator.getSearchDirs().size() == 1);
+  REQUIRE(logged.messages().size() == 2);
+  CHECK(logged.warningCount() == 2);
+  CHECK(logged.messages()[0] == "SMDL_DEFAULT_SEARCH_DIRS names '" + missing +
+                                    "', which is not a directory");
+  CHECK_CONTAINS(logged.messages()[1], "'" + file + "'");
 }

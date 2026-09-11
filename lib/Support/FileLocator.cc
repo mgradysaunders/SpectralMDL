@@ -1,13 +1,30 @@
 #include "smdl/Support/FileLocator.h"
+#include "smdl/Support/Logger.h"
 
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Program.h"
 
 namespace smdl {
+
+namespace {
+// The default search directories are read on every lookup, so an entry
+// that names no directory is reported once per process, not per lookup.
+void warnAboutDefaultSearchDir(llvm::StringRef entry) {
+  static std::mutex mutex{};
+  static llvm::StringSet<> warnedEntries{};
+  {
+    std::scoped_lock guard{mutex};
+    if (!warnedEntries.insert(entry).second) return;
+  }
+  SMDL_LOG_WARN("SMDL_DEFAULT_SEARCH_DIRS names ", Quoted(entry),
+                ", which is not a directory");
+}
+} // namespace
 
 std::vector<std::string>
 FileLocator::getSearchDirs(std::string_view relativeTo,
@@ -58,6 +75,8 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
       for (auto entry : entries) {
         if (auto dir{makePathCanonical(entry.str())}; isDirectory(dir)) {
           add(std::move(dir));
+        } else {
+          warnAboutDefaultSearchDir(entry);
         }
       }
     }

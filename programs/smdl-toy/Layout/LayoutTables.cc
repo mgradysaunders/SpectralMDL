@@ -8,7 +8,6 @@
 #include "llvm/Support/WithColor.h"
 
 #include "smdl/Compiler.h"
-#include "smdl/Support/Logger.h"
 
 #include <cctype>
 #include <filesystem>
@@ -376,7 +375,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
   const auto document{parseLayout(
       diags, source,
       std::filesystem::path(layoutFileName).parent_path().string())};
-  if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());
+  if (!diags.empty()) diags.printAll();
   if (diags.hasErrors())
     throw smdl::Error(smdl::concat("cannot pack ",
                                    smdl::QuotedPath(layoutFileName), ": ",

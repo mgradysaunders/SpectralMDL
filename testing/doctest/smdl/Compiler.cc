@@ -414,13 +414,18 @@ TEST_CASE("Compiler: an MDLE container") {
               {"wood.png", pngBytes}});
     auto hash{std::string(
         smdl::MD5Hash::hashFile((tmpDir / "Textured.mdle").string()))};
+    const CollectedLog extracted{"Extracted", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
     REQUIRE(buildAll(compiler, {tmpDir / "Textured.mdle"}) == "");
     CHECK(compiler.findMaterial("main") != nullptr);
-    // The resource was extracted to the content-addressed cache.
+    // The resource was extracted to the content-addressed cache, and the
+    // debug log says where that is.
     CHECK(fs::is_regular_file(fs::temp_directory_path() /
                               ("smdl-mdle-" + hash) / "wood.png"));
+    REQUIRE(extracted.messages().size() == 1);
+    CHECK_CONTAINS(extracted.messages()[0], "Extracted 1 resource of MDLE '");
+    CHECK_CONTAINS(extracted.messages()[0], "smdl-mdle-" + hash + "'");
     // Run the in-container unit test: it asserts the texture actually
     // loaded (a resource that failed to resolve would only have
     // produced a warning and a default texture).

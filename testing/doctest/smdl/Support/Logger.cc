@@ -3,13 +3,81 @@
 #include "smdl/Support/Logger.h"
 
 #include <cstddef>
+#include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
+#include <string_view>
 
 namespace {
 
 constexpr smdl::LogLevel LEVELS[]{smdl::LOG_LEVEL_DEBUG, smdl::LOG_LEVEL_INFO,
                                   smdl::LOG_LEVEL_WARN, smdl::LOG_LEVEL_ERROR};
+
+const std::string RESET{"\033[0m"};
+const std::string BOLD{"\033[1m"};
+const std::string DIM{"\033[2m"};
+const std::string CYAN{"\033[36m"};
+const std::string CARET{"\033[1;32m"};
+
+// `str` with its escape sequences taken out, which for anything
+// `formatLogMessage()` colors must be the uncolored rendering.
+[[nodiscard]] std::string stripEscapes(std::string_view str) {
+  auto result{std::string()};
+  for (size_t i = 0; i < str.size(); i++) {
+    if (str[i] == '\033') {
+      i = str.find('m', i);
+      if (i == std::string_view::npos) break;
+      continue;
+    }
+    result += str[i];
+  }
+  return result;
+}
+
+// What `formatLogMessage()` makes of `message` as a colored warning,
+// with the label taken off the front.
+[[nodiscard]] std::string highlighted(std::string_view message) {
+  const auto label{smdl::logLevelLabel(smdl::LOG_LEVEL_WARN, true, false)};
+  auto str{smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message, true, false)};
+  REQUIRE(smdl::startsWith(str, label));
+  return str.substr(label.size());
+}
+
+// Point a standard stream at a string for a scope.
+class CapturedStream final {
+public:
+  explicit CapturedStream(std::ostream &stream)
+      : mStream(stream), mPrevious(stream.rdbuf(mBuffer.rdbuf())) {}
+
+  CapturedStream(const CapturedStream &) = delete;
+
+  CapturedStream &operator=(const CapturedStream &) = delete;
+
+  ~CapturedStream() { mStream.rdbuf(mPrevious); }
+
+  [[nodiscard]] std::string str() const { return mBuffer.str(); }
+
+private:
+  std::ostream &mStream;
+
+  std::ostringstream mBuffer;
+
+  std::streambuf *mPrevious{};
+};
+
+// The two variables `shouldUseColors()` reads, pinned for a scope. An
+// empty value counts as unset, the same as for the locale variables.
+class ScopedColorEnv final {
+public:
+  ScopedColorEnv(const std::string &term, const std::string &noColor)
+      : mTerm("TERM", term), mNoColor("NO_COLOR", noColor) {}
+
+private:
+  ScopedEnv mTerm;
+
+  ScopedEnv mNoColor;
+};
 
 // The length of the UTF-8 sequence that `lead` begins, or 0 if it does
 // not begin one.
@@ -143,5 +211,149 @@ TEST_CASE("Logger: Unicode mode") {
     }
     const ScopedLocale locale{"", "", "en_US.ISO-8859-1"};
     CHECK_FALSE(smdl::localeIsUTF8());
+  }
+}
+
+TEST_CASE("Logger: color mode") {
+  SUBCASE("Always and never ignore the terminal and the environment") {
+    for (const char *term : {"xterm-256color", "dumb", ""}) {
+      for (const char *noColor : {"", "1"}) {
+        const ScopedColorEnv env{term, noColor};
+        for (const bool isTerminal : {false, true}) {
+          CHECK(
+              smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_ALWAYS, isTerminal));
+          CHECK_FALSE(
+              smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_NEVER, isTerminal));
+        }
+      }
+    }
+  }
+  SUBCASE("Auto needs a terminal") {
+    const ScopedColorEnv env{"xterm-256color", ""};
+    CHECK(smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO, true));
+    CHECK_FALSE(smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO, false));
+  }
+  SUBCASE("Auto honors NO_COLOR whatever its value, unless it is empty") {
+    for (const char *noColor : {"1", "0", "false"}) {
+      const ScopedColorEnv env{"xterm-256color", noColor};
+      CHECK_FALSE_MESSAGE(
+          smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO, true), noColor);
+    }
+  }
+  SUBCASE("Auto wants a TERM that is set and is not dumb") {
+    for (const char *term : {"dumb", ""}) {
+      const ScopedColorEnv env{term, ""};
+      CHECK_FALSE_MESSAGE(
+          smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO, true), term);
+    }
+  }
+}
+
+TEST_CASE("Logger: message formatting") {
+  const std::string_view samples[]{
+      "plain words",
+      "[a.mdl:3:1] cannot load 'x.png': file not found",
+      "::a::m declared at [a.mdl:12]\n  ::b::m declared at [b.mdl:4]",
+      "don't split 'bob's.png' or an unclosed 'quote",
+      "done [0.5 seconds] at [12:30]",
+      "[a.mdl:2:5] error\n  2 | int i = 'x';\n    |         ^",
+      "",
+      "\n"};
+  SUBCASE("Without colors the message is exactly as given") {
+    for (const bool useUnicode : {false, true})
+      for (const auto level : LEVELS)
+        for (const auto message : samples)
+          CHECK(smdl::formatLogMessage(level, message, false, useUnicode) ==
+                std::string(smdl::logLevelLabel(level, false, useUnicode)) +
+                    std::string(message));
+  }
+  SUBCASE("Taking the colors out gives back the plain rendering") {
+    for (const bool useUnicode : {false, true})
+      for (const auto level : LEVELS)
+        for (const auto message : samples)
+          CHECK(stripEscapes(
+                    smdl::formatLogMessage(level, message, true, useUnicode)) ==
+                smdl::formatLogMessage(level, message, false, useUnicode));
+  }
+  SUBCASE("A location is bold wherever it is") {
+    CHECK(highlighted("[a.mdl:3:1] x") == BOLD + "[a.mdl:3:1]" + RESET + " x");
+    CHECK(highlighted("::m declared at [a.mdl:12]") ==
+          "::m declared at " + BOLD + "[a.mdl:12]" + RESET);
+    CHECK(highlighted("[<builtin ::df>:1036:12] y") ==
+          BOLD + "[<builtin ::df>:1036:12]" + RESET + " y");
+  }
+  SUBCASE("A bracket that is not a location is left alone") {
+    for (const char *message :
+         {"done [0.5 seconds]", "at [12:30]", "[12:30:45] x", "[opaque]",
+          "x[a.mdl:3]", "[a.mdl:3", "[a.mdl:x]", "[:3]"})
+      CHECK(highlighted(message) == message);
+  }
+  SUBCASE("A quoted string is cyan, apostrophes and all") {
+    CHECK(highlighted("cannot load 'x.png': y") ==
+          "cannot load " + CYAN + "'x.png'" + RESET + ": y");
+    CHECK(highlighted("'bob's.png'") == CYAN + "'bob's.png'" + RESET);
+    CHECK(highlighted("'::a' imports '::b'") ==
+          CYAN + "'::a'" + RESET + " imports " + CYAN + "'::b'" + RESET);
+  }
+  SUBCASE("An apostrophe is not a quote") {
+    for (const char *message :
+         {"don't", "the materials' names", "an unclosed 'quote"})
+      CHECK(highlighted(message) == message);
+  }
+  SUBCASE("A source snippet keeps its source line as written") {
+    const auto error{
+        compileError("#smdl\nexec { int i = nope; } // not 'this' [a:1]\n")};
+    const auto str{highlighted(error.message + error.snippet)};
+    CHECK(smdl::startsWith(str, BOLD + "[<string ::diag>:2:16]" + RESET));
+    CHECK_CONTAINS(str, DIM + "  2 |" + RESET +
+                            " exec { int i = nope; } // not 'this' [a:1]\n");
+    CHECK_CONTAINS(str, DIM + "    |" + RESET);
+    const auto tail{CARET + "^" + RESET};
+    REQUIRE(str.size() > tail.size());
+    CHECK(str.substr(str.size() - tail.size()) == tail);
+  }
+  SUBCASE("A caret line without a gutter marks its source line too") {
+    CHECK(highlighted("refused\n  fovy 'x'\n  ^~~~") ==
+          "refused\n  fovy 'x'\n  " + CARET + "^~~~" + RESET);
+  }
+  SUBCASE("A debug message is dimmed whole and nothing in it highlighted") {
+    const auto message{std::string_view("New material '::m' at [a.mdl:3]")};
+    CHECK(smdl::formatLogMessage(smdl::LOG_LEVEL_DEBUG, message, true, false) ==
+          DIM +
+              std::string(
+                  smdl::logLevelLabel(smdl::LOG_LEVEL_DEBUG, true, false)) +
+              DIM + std::string(message) + RESET);
+  }
+  SUBCASE("A message with escape codes of its own is left as it is") {
+    const auto message{std::string_view("already \033[1mbold\033[0m 'x'")};
+    for (const auto level : LEVELS)
+      CHECK(smdl::formatLogMessage(level, message, true, false) ==
+            std::string(smdl::logLevelLabel(level, true, false)) +
+                std::string(message));
+  }
+}
+
+TEST_CASE("Logger: the default sinks print what formatLogMessage renders") {
+  const auto message{std::string_view("cannot load 'x.png'")};
+  for (const auto colorMode :
+       {smdl::ANSI_COLOR_MODE_ALWAYS, smdl::ANSI_COLOR_MODE_NEVER}) {
+    const bool useColors{colorMode == smdl::ANSI_COLOR_MODE_ALWAYS};
+    const auto expected{smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message,
+                                               useColors, false) +
+                        "\n"};
+    {
+      smdl::LogSinks::PrintToCerr sink{smdl::UNICODE_MODE_NEVER};
+      sink.setColorMode(colorMode);
+      const CapturedStream captured{std::cerr};
+      sink.logMessage(smdl::LOG_LEVEL_WARN, message);
+      CHECK(captured.str() == expected);
+    }
+    {
+      smdl::LogSinks::PrintToCout sink{smdl::UNICODE_MODE_NEVER};
+      sink.setColorMode(colorMode);
+      const CapturedStream captured{std::cout};
+      sink.logMessage(smdl::LOG_LEVEL_WARN, message);
+      CHECK(captured.str() == expected);
+    }
   }
 }

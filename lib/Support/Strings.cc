@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iterator>
 #include <vector>
 
 namespace smdl {
@@ -35,7 +36,7 @@ void LocationMarkup::appendTo(std::string &result) const {
   result += ']';
 }
 
-// Both of these go through `snprintf` rather than the `<charconv>`
+// The numbers below go through `snprintf` rather than the `<charconv>`
 // floating point overloads, which libstdc++ only grew in GCC 11 and
 // which this build's floor does not assume.
 void Precise::appendTo(std::string &result) const {
@@ -54,6 +55,28 @@ void Brief::appendTo(std::string &result) const {
   std::snprintf(buffer, sizeof(buffer), "%.*g", std::clamp(digits, 1, 17),
                 value);
   result += buffer;
+}
+
+void Bytes::appendTo(std::string &result) const {
+  // NOLINTNEXTLINE
+  constexpr const char *UNITS[]{"KiB", "MiB", "GiB", "TiB"};
+  if (count < 1024) {
+    result += std::to_string(count);
+    result += " B";
+    return;
+  }
+  auto value{double(count) / 1024.0};
+  auto unit{size_t(0)};
+  for (; value >= 1024.0 && unit + 1 < std::size(UNITS); unit++)
+    value /= 1024.0;
+  // Three significant digits, except that a value that rounds to 1000 or
+  // more is written whole rather than going exponential.
+  // NOLINTNEXTLINE
+  char buffer[32]{};
+  std::snprintf(buffer, sizeof(buffer), value < 999.5 ? "%.3g" : "%.0f", value);
+  result += buffer;
+  result += ' ';
+  result += UNITS[unit];
 }
 
 std::string_view suggestNearestName(std::string_view name,

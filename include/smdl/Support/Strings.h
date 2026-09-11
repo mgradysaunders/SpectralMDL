@@ -151,6 +151,18 @@ public:
   int digits{6};
 };
 
+/// A size in bytes, for use with `concat`: whole bytes below a KiB, and
+/// otherwise the largest binary unit that keeps the number at least one,
+/// to three significant digits, as in `2.67 MiB`.
+class SMDL_EXPORT Bytes final {
+public:
+  constexpr Bytes(size_t count) : count(count) {}
+  void appendTo(std::string &result) const;
+
+public:
+  size_t count{};
+};
+
 #if !SMDL_DOXYGEN
 namespace detail {
 
@@ -163,7 +175,8 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
                        std::is_same_v<DecayT, QuotedPath> ||
                        std::is_same_v<DecayT, LocationMarkup> ||
                        std::is_same_v<DecayT, Precise> ||
-                       std::is_same_v<DecayT, Brief>) {
+                       std::is_same_v<DecayT, Brief> ||
+                       std::is_same_v<DecayT, Bytes>) {
     value.appendTo(str);
   } else {
     str += value;

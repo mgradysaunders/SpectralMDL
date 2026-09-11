@@ -938,7 +938,7 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
                   const MotionSampling &sampling) {
   auto diags{LayoutDiagnostics()};
   auto result{lowerLayout(diags, fileName, search, sampling)};
-  if (!diags.empty()) diags.printAll(smdl::cerrSupportsANSIColors());
+  if (!diags.empty()) diags.printAll();
   if (diags.hasErrors())
     throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
                                    ": ", diags.summary()));

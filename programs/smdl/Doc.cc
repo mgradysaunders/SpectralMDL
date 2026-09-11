@@ -24,10 +24,10 @@ constexpr auto docColorMetadata{llvm::HighlightColor::Note};
 // and JSON printers live in the library, but this one colors as it goes,
 // which a `std::string` cannot carry.
 //
-// NOTE: All coloring must go through `WithColor`, which is what detects
-// the terminal. On POSIX, `raw_ostream::changeColor()` writes escape
-// codes whether or not the stream is a terminal, so calling it directly
-// would corrupt piped and redirected output.
+// NOTE: All coloring must go through `WithColor` and the resolved color
+// mode. On POSIX, `raw_ostream::changeColor()` writes escape codes
+// whether or not the stream is a terminal, so calling it directly would
+// corrupt piped and redirected output.
 class DocTextPrinter final {
 public:
   DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
@@ -222,15 +222,14 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
                       : llvm::outs()};
   // Colors are for a human reading a terminal: '-output' captures the
   // documentation into a file, and JSON and Markdown are machine and
-  // document formats. Otherwise honor '-color', and without it let
-  // `WithColor` detect the terminal itself.
-  const auto ansiColorMode{opts.utility.ansiColorMode};
+  // document formats. Otherwise '-color' resolves for standard output as
+  // it does for the log on standard error.
   const auto colorMode{
-      outputFile || opts.doc.format != DocFormat::TEXT
-          ? llvm::ColorMode::Disable
-      : ansiColorMode == smdl::ANSI_COLOR_MODE_ALWAYS ? llvm::ColorMode::Enable
-      : ansiColorMode == smdl::ANSI_COLOR_MODE_NEVER  ? llvm::ColorMode::Disable
-                                                      : llvm::ColorMode::Auto};
+      !outputFile && opts.doc.format == DocFormat::TEXT &&
+              smdl::shouldUseColors(opts.utility.ansiColorMode,
+                                    smdl::coutSupportsANSIColors())
+          ? llvm::ColorMode::Enable
+          : llvm::ColorMode::Disable};
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {
     // Whole-database output. Symbol queries only participate by loading
     // the builtin modules they name.

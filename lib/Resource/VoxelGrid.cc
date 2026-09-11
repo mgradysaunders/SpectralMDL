@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -202,6 +203,46 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   finalizeValueBounds(flat, sawAnyValue);
   return true;
 }
+
+// NanoVDB reports failure with standard exceptions of its own, which would
+// reach the user worded after their C++ type, so they become `Error`s.
+template <typename F> auto callNanoVDB(F &&f) {
+  try {
+    return std::forward<F>(f)();
+  } catch (const Error &) {
+    throw;
+  } catch (const std::exception &error) {
+    throw Error(error.what());
+  }
+}
+
+[[nodiscard]] std::string nanoGridTypeName(nanovdb::GridType gridType) {
+  // NOLINTNEXTLINE
+  char name[int(nanovdb::GridType::StrLen)]{};
+  return nanovdb::toStr(name, gridType);
+}
+
+[[nodiscard]] bool isFloatNanoGridType(nanovdb::GridType gridType) noexcept {
+  return gridType == nanovdb::GridType::Float ||
+         gridType == nanovdb::GridType::Fp4 ||
+         gridType == nanovdb::GridType::Fp8 ||
+         gridType == nanovdb::GridType::Fp16 ||
+         gridType == nanovdb::GridType::FpN;
+}
+
+// The names of the grids a NanoVDB file holds, as a sentence lists them.
+[[nodiscard]] std::string
+listNanoGridNames(const std::vector<nanovdb::io::FileGridMetaData> &grids) {
+  auto result{std::string()};
+  for (size_t i = 0; i < grids.size(); i++) {
+    if (i > 0)
+      result += grids.size() == 2       ? " and "
+                : i + 1 == grids.size() ? ", and "
+                                        : ", ";
+    Quoted(grids[i].gridName).appendTo(result);
+  }
+  return result;
+}
 } // namespace
 
 #endif // #if SMDL_HAS_NANOVDB
@@ -210,20 +251,47 @@ namespace {
 void loadNanoVDB(const std::string &fileName, const std::string &gridName,
                  FlatGrid &flat) {
 #if SMDL_HAS_NANOVDB
-  auto handle{
-      gridName.empty()
-          ? nanovdb::io::readGrid<nanovdb::HostBuffer>(fileName)
-          : nanovdb::io::readGrid<nanovdb::HostBuffer>(fileName, gridName)};
-  if (!handle)
-    throw Error(gridName.empty() ? std::string("no grid in NanoVDB file")
-                                 : concat("no grid named ", Quoted(gridName),
-                                          " in NanoVDB file"));
+  // NanoVDB never returns from a stream shorter than the grid header it
+  // probes for first, because its segment reader then loops on the failed
+  // read, so such a file is refused before NanoVDB sees it.
+  auto stream{openOrThrow(fileName, std::ios::in | std::ios::binary)};
+  stream.seekg(0, std::ios::end);
+  if (stream.tellg() < std::streamoff(sizeof(nanovdb::GridData)))
+    throw Error("too short to be a NanoVDB file");
+  stream.seekg(0);
+  // The grid list comes first, so that a grid the file does not hold, or
+  // holds in a type this cannot read, is refused by name before any of
+  // it is read.
+  const auto grids{
+      callNanoVDB([&] { return nanovdb::io::readGridMetaData(stream); })};
+  if (grids.empty()) throw Error("no grid in NanoVDB file");
+  auto index{size_t(0)};
+  if (!gridName.empty()) {
+    while (index < grids.size() && grids[index].gridName != gridName) index++;
+    if (index == grids.size())
+      throw Error(concat("no grid named ", Quoted(gridName),
+                         " in NanoVDB file, which holds ",
+                         listNanoGridNames(grids)));
+  }
+  if (const auto gridType{grids[index].gridType};
+      !isFloatNanoGridType(gridType))
+    throw Error(concat("NanoVDB grid ", Quoted(grids[index].gridName),
+                       " has unsupported type ",
+                       Quoted(nanoGridTypeName(gridType)),
+                       "; expected a float or quantized-float grid"));
+  stream.clear();
+  stream.seekg(0);
+  const auto handle{callNanoVDB([&] {
+    return nanovdb::io::readGrid<nanovdb::HostBuffer>(stream, int(index),
+                                                      nanovdb::HostBuffer());
+  })};
   if (!(tryFlattenNanoGrid<float>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp4>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp8>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp16>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::FpN>(handle, flat)))
-    throw Error(concat("unsupported NanoVDB grid type ", int(handle.gridType()),
+    throw Error(concat("unsupported NanoVDB grid type ",
+                       Quoted(nanoGridTypeName(handle.gridType())),
                        "; expected a float or quantized-float grid"));
 #else
   (void)fileName, (void)gridName, (void)flat;

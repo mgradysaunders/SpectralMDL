@@ -452,6 +452,12 @@ public:
                                              currentModule->getSearchDirs());
   }
 
+  /// The directories `locate()` and `locateImages()` search, in order.
+  [[nodiscard]] std::vector<std::string> getSearchDirs() {
+    return compiler.fileLocator.getSearchDirs(
+        currentModule->getResourceAnchor(), currentModule->getSearchDirs());
+  }
+
 public:
   /// The compiler.
   Compiler &compiler;

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 #include "smdl/Resource/SpectrumLibrary.h"
 
@@ -143,31 +144,47 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     auto goodName{(tmpDir / "good.sli").string()};
     writeLibrary(goodName, {});
     REQUIRE_OK(library.loadFromFile(goodName));
-    auto reject{[&](const char *name, const LibraryOptions &opts) {
+    // Each message names the header line of the key at fault, counting
+    // the 'ENVI' magic as line 1.
+    auto reject{[&](const char *name, const LibraryOptions &opts,
+                    std::string_view message) {
       CAPTURE(name);
       auto fileName{(tmpDir / name).string()};
       writeLibrary(fileName, opts);
-      CHECK(library.loadFromFile(fileName).has_value());
+      const auto error{library.loadFromFile(fileName)};
+      REQUIRE(error.has_value());
+      CHECK_CONTAINS(error->message, message);
       CHECK(library.getCurveByIndex(0).curveValues.empty());
     }};
     LibraryOptions opts{};
     opts.fileType = "ENVI Standard";
-    reject("file_type.sli", opts);
+    reject("file_type.sli", opts,
+           "'file type' on line 7 of its header is 'ENVI Standard', not "
+           "'ENVI Spectral Library'");
     opts = {};
     opts.bands = 2;
-    reject("bands.sli", opts);
+    reject("bands.sli", opts,
+           "'bands' on line 5 of its header is 2, but a spectral library has "
+           "1");
     opts = {};
     opts.samples = 5;
-    reject("samples.sli", opts);
+    reject("samples.sli", opts,
+           "'samples' on line 3 of its header is 5, but 'wavelength' lists 4 "
+           "wavelengths");
     opts = {};
     opts.dataType = 2;
-    reject("data_type.sli", opts);
+    reject("data_type.sli", opts,
+           "unsupported 'data type' 2 on line 8 of its header, expected 4 or "
+           "5");
     opts = {};
     opts.wavelengthUnits = "Furlongs";
-    reject("units.sli", opts);
+    reject("units.sli", opts,
+           "unsupported 'wavelength units' 'Furlongs' on line 11 of its "
+           "header");
     opts = {};
     opts.isTruncated = true;
-    reject("truncated.sli", opts);
+    reject("truncated.sli", opts,
+           "the data holds 11 of the 12 values its header describes");
     // No header file at all.
     std::ofstream((tmpDir / "headerless.sli").string()) << "";
     CHECK(

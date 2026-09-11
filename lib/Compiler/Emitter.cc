@@ -2988,13 +2988,32 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   // body is emitted once for each function 'Type.cc' generates from it.
   // Resources that are found but fail to load already report once,
   // memoized by file hash in 'loadResource'.
+  //
+  // At debug level the warning is followed by where the file was looked
+  // for, the question it raises. An absolute name is never searched for.
+  auto logSearchedDirs{[&](const std::string &fileName) {
+    if (!Logger::get().isEnabled(LOG_LEVEL_DEBUG) ||
+        std::filesystem::path(fileName).is_absolute())
+      return;
+    constexpr size_t MAX_LISTED{10};
+    const auto searchDirs{context.getSearchDirs()};
+    auto message{concat("Searched ", searchDirs.size(),
+                        searchDirs.size() == 1 ? " directory" : " directories",
+                        " for ", Quoted(fileName))};
+    for (size_t i = 0; i < std::min(searchDirs.size(), MAX_LISTED); i++)
+      message += concat(i == 0 ? ":\n  " : "\n  ", QuotedPath(searchDirs[i]));
+    if (searchDirs.size() > MAX_LISTED)
+      message += concat("\n  and ", searchDirs.size() - MAX_LISTED, " more");
+    resourceSourceLocation(srcLoc).logDebug(message);
+  }};
   auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
                            auto &&buildFromFile) -> Value {
     auto resolvedFileName{context.locate(fileName)};
     if (!resolvedFileName) {
-      context.compiler.logResourceWarningOnce(
-          resourceSourceLocation(srcLoc), fileName,
-          concat("cannot load ", Quoted(fileName), ": file not found"));
+      if (context.compiler.logResourceWarningOnce(
+              resourceSourceLocation(srcLoc), fileName,
+              concat("cannot load ", Quoted(fileName), ": file not found")))
+        logSearchedDirs(fileName);
       return invoke(resultType, {}, srcLoc);
     }
     return buildFromFile(*resolvedFileName);
@@ -3018,9 +3037,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     const auto mipFilter{maxMipmap ? Image::MIP_MAX : Image::MIP_MEAN};
     auto resolvedImagePaths{context.locateImages(fileName)};
     if (resolvedImagePaths.empty()) {
-      context.compiler.logResourceWarningOnce(
-          resourceSourceLocation(srcLoc), fileName,
-          concat("no image(s) found for ", Quoted(fileName)));
+      if (context.compiler.logResourceWarningOnce(
+              resourceSourceLocation(srcLoc), fileName,
+              concat("no image(s) found for ", Quoted(fileName))))
+        logSearchedDirs(fileName);
       return invoke(texture2DType, {}, srcLoc);
     }
     auto tileCountU{uint32_t(1)};
@@ -3035,9 +3055,19 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           filePath, resourceSourceLocation(srcLoc), useMipLevels, mipFilter));
       if (images.back()->getFormat() != images.front()->getFormat() ||
           images.back()->getNumChannels() != images.front()->getNumChannels()) {
+        // The tiles all come from one directory, so the file name is
+        // enough to tell them apart.
+        const auto describeTile{[&](size_t i) {
+          return concat(Quoted(std::filesystem::path(resolvedImagePaths[i].path)
+                                   .filename()
+                                   .string()),
+                        " is ", images[i]->getNumChannels(), "-channel ",
+                        Image::getFormatName(images[i]->getFormat()));
+        }};
         context.compiler.logResourceWarningOnce(
             resourceSourceLocation(srcLoc), fileName,
-            concat("inconsistent image formats for ", Quoted(fileName)));
+            concat("inconsistent image formats for ", Quoted(fileName), ": ",
+                   describeTile(0), ", but ", describeTile(images.size() - 1)));
         return invoke(texture2DType, {}, srcLoc);
       }
     }

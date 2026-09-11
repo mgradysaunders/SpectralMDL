@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #include "smdl/Common.h"
@@ -277,8 +278,14 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       CHECK(isSameGrid(source, grid));
       REQUIRE_OK(grid.loadFromFile(fileName, "temperature"));
       CHECK(isSameGrid(temperature, grid));
-      // A name the file does not carry is an error, not the first grid.
-      CHECK(grid.loadFromFile(fileName, "flame").has_value());
+      // A name the file does not carry is an error, not the first grid,
+      // and the error says which names it does carry.
+      const auto error{grid.loadFromFile(fileName, "flame")};
+      REQUIRE(error.has_value());
+      CHECK_CONTAINS(error->message,
+                     "no grid named 'flame' in NanoVDB file, which holds "
+                     "'density' and 'temperature'");
+      CHECK_NOT_CONTAINS(error->message, "converted from");
     }
     SUBCASE("An unwritable target is refused") {
       CHECK(source.saveToFile((tmpDir / "nope.xyz").string()).has_value());
@@ -329,6 +336,23 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     writeVol((tmpDir / "short.vol").string(), 4, 4, 4,
              std::vector<float>(10, 1.0f));
     CHECK(grid.loadFromFile((tmpDir / "short.vol").string()).has_value());
+    // A NanoVDB file that is missing or cannot be one is refused in the
+    // library's own words, and a short one is refused before NanoVDB,
+    // which never returns from reading it, can see it.
+    if (hasNanoVDB()) {
+      auto error{grid.loadFromFile((tmpDir / "missing.nvdb").string())};
+      REQUIRE(error.has_value());
+      CHECK_CONTAINS(error->message, "cannot open");
+      CHECK_NOT_CONTAINS(error->message, "converted from");
+      std::ofstream((tmpDir / "short.nvdb").string()) << "not a NanoVDB file";
+      error = grid.loadFromFile((tmpDir / "short.nvdb").string());
+      REQUIRE(error.has_value());
+      CHECK_CONTAINS(error->message, "too short to be a NanoVDB file");
+      std::ofstream((tmpDir / "junk.nvdb").string()) << std::string(4096, 'x');
+      error = grid.loadFromFile((tmpDir / "junk.nvdb").string());
+      REQUIRE(error.has_value());
+      CHECK_NOT_CONTAINS(error->message, "converted from");
+    }
     // Grid names are a NanoVDB concept.
     writeVol((tmpDir / "named.vol").string(), 2, 2, 2,
              std::vector<float>(8, 1.0f));
