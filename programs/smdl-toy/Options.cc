@@ -411,7 +411,8 @@ cl::opt<bool> optWavelengthJitter{
     "wavelength-jitter",
     cl::desc("Jitter each wavelength to estimate the mean radiance over the "
              "band rather than the radiance at one wavelength\n"
-             "* the outermost bands reach half a band past the grid ends"),
+             "* each band reaches halfway to its neighbors, and the end bands "
+             "stop at the grid's ends"),
     cl::init(false), cl::cat(catRendering)};
 //--}
 

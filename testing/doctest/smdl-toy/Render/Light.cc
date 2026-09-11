@@ -259,11 +259,11 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   Fixture fixture{};
   // A point light whose radiant power per band is the exitance sphere's:
   // intensity 2 per band over the sphere's area pi, so 2 pi per band,
-  // spread over the fixture's 320 nm band. The power-mode sphere emits
-  // 2 per band outright, so it must draw 1/pi as often.
+  // spread over the 300 nm the fixture's grid spans. The power-mode
+  // sphere emits 2 per band outright, so it must draw 1/pi as often.
   LayoutLight lamp{};
   lamp.decl.kind = LayoutLightDecl::Kind::POINT;
-  lamp.decl.power = 2.0f * PI * 320.0f;
+  lamp.decl.power = 2.0f * PI * 300.0f;
   lamp.decl.isPowerSet = true;
   lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
   const LightSampler lights{
@@ -490,9 +490,10 @@ public:
   static constexpr float3 RECEIVER{0.0f, 0.0f, 0.0f};
 
   /// Sixteen bands 20 nm apart: the flat spectral shape integrates to 1
-  /// over 320 nm, so a light's `power` watts spread to `power / 320`
-  /// per band, while a material's `color(2.0)` is 2 in every band.
-  static constexpr float BAND_TOTAL{320.0f};
+  /// over the 300 nm they span, by the trapezoid, so a light's `power`
+  /// watts spread to `power / 300` per band, while a material's
+  /// `color(2.0)` is 2 in every band.
+  static constexpr float BAND_TOTAL{300.0f};
 
   /// The `power` that puts the disk light at the lamp's per-band
   /// radiance, and that radiance, `2 / (pi A)`.

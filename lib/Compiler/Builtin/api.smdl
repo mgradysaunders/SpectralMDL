@@ -277,6 +277,9 @@ export float3 _colorToRgb(const color c) {
   } else {
     // The uniform quadrature: every band weighs
     // `(wavelength_max - wavelength_min) / WAVELENGTH_BASE_MAX`.
+    // TODO: That fits samples centered in equal bands between the two
+    // ends, not a grid whose end samples clamp to them, whose end bands
+    // are half width; such a host passes trapezoid weights for now.
     result = _spectralFold(
       float3(0.0),
       c,

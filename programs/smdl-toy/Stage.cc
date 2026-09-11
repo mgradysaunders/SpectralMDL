@@ -204,31 +204,24 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         shouldAdoptResumedGrid ? " bands adopted from the resumed file, "
                                : " bands, ",
         wavelengths[0], "-", wavelengths[wavelengths.size() - 1], " nm");
-  // The spectral extent the render actually reaches, which the jitter
-  // widens to the outermost band edges.
-  const auto &bandEdges{gRenderGrid.bandEdges};
-  const float gridLower{bandEdges.empty() ? wavelengths[0] : bandEdges.front()};
-  const float gridUpper{bandEdges.empty() ? wavelengths[wavelengths.size() - 1]
-                                          : bandEdges.back()};
-  if (!bandEdges.empty())
-    SMDL_LOG_INFO("Wavelength jitter: bands tile ", gridLower, "-", gridUpper,
-                  " nm, each holding its own mean");
   if (wavelengths.size() > 256)
     SMDL_LOG_WARN(wavelengths.size(),
                   " bands: JIT compile time and per-sample cost both grow "
                   "with the band count, expect a slow start and a slow "
                   "render");
-  // Everything RGB-sourced degrades outside the visible; say so once
-  // rather than rendering a mysteriously dark image.
-  const bool isBeyondVisible{gridLower < 379.0f || gridUpper > 781.0f};
+  // Outside the visible, RGB-sourced spectra are extrapolated and the RGB
+  // outputs see little; say so once rather than rendering a mysteriously
+  // dark image.
+  const bool isBeyondVisible{wavelengths[0] < 379.0f ||
+                             wavelengths[wavelengths.size() - 1] > 781.0f};
   if (isBeyondVisible)
     SMDL_LOG_WARN(
-        "the wavelength grid leaves the visible (380-780nm): colored RGB "
-        "textures and images contribute nothing outside it (gray extends "
-        "flat), metal IOR tables clamp to their measured ranges, and the "
-        "RGB outputs project through CIE color matching, so they darken "
-        "wherever the grid misses the visible; the ENVI output is the "
-        "radiometric record");
+        "the wavelength grid leaves the visible (380-780nm): RGB colors, "
+        "textures, and images extend flat from their 380 and 780nm values "
+        "(a convention, not data), metal IOR tables clamp to their measured "
+        "ranges, and the RGB outputs project through CIE color matching, so "
+        "they darken wherever the grid misses the visible; the ENVI output "
+        "is the radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
   const auto &sensor{frame.model.sensor};

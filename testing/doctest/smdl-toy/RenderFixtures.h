@@ -49,7 +49,13 @@ public:
 
   ScopedGrid &operator=(const ScopedGrid &) = delete;
 
-  ~ScopedGrid() { gRenderGrid = mSaved; }
+  ~ScopedGrid() {
+    gRenderGrid = mSaved;
+    // The saved state's weight pointer names the buffer the grid had when
+    // it was saved, which this scope's `reset()` may have freed.
+    gRenderGrid.stateBase.wavelengthWeight =
+        gRenderGrid.weights.empty() ? nullptr : gRenderGrid.weights.data();
+  }
 
   /// The wavelengths installed, which every `Color` in scope is sized to.
   [[nodiscard]] const Color &wavelengths() const noexcept {

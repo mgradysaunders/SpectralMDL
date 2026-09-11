@@ -158,10 +158,11 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
 /// for would expose it: the ISO the body would take, and the gain that
 /// puts a unit of the film where `developedLuminance()` puts the
 /// focal-plane exposure the body's optics would have made of it. The
-/// observer's develop is measured rather than assumed: the JIT integrates
-/// with a quadrature of its own, so the gain is taken against what it
-/// gives a flat spectrum on this grid, whose luminance the meter's
-/// weights state.
+/// observer's develop is measured rather than assumed: the gain is taken
+/// against what the JIT gives a flat spectrum on this grid, whose
+/// luminance the meter's weights state, so whatever separates the two
+/// integrations (the observer taken at each wavelength or averaged over
+/// each band) cancels.
 void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                    const smdl::SpectralFilm &film, const Color &wavelengths,
                    std::vector<float> &rgbImage, bool shouldLog) {

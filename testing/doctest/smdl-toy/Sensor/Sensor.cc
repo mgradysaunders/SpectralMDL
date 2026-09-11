@@ -264,8 +264,9 @@ TEST_CASE("Sensor: the meter") {
     double moving{};
     for (const auto weight : Sensor::luminanceWeights(jittered.wavelengths()))
       moving += weight;
-    // The jitter's rectangles reach half a band past each end.
-    CHECK(moving == doctest::Approx(still).epsilon(0.01));
+    // The jitter's rectangles tile the same span and average y-bar over
+    // each, which integrates it more closely than the trapezoid does.
+    CHECK(moving == doctest::Approx(expected).epsilon(1e-4));
   }
   SUBCASE("A flat field of known luminance meters to q K over its exposure") {
     // 2.03 lux at 10 ms is 0.0203 lux-seconds, which wants ISO 400.

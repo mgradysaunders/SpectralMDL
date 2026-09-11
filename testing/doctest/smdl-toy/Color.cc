@@ -8,13 +8,14 @@
 
 // The wavelength jitter: the band rectangles the grid implies, the
 // per-sample grid drawn inside them, and the offset sequence that draws
-// it. What matters is that the rectangles tile the render band with no
-// gap or overlap and that a band's samples are uniform over its own
-// rectangle, since that is what makes the accumulated band the mean
-// radiance over the band.
+// it. What matters is that the rectangles tile the grid's span with no
+// gap or overlap, each as wide as the trapezoid weighs its band, and
+// that a band's samples are uniform over its own rectangle, since that
+// is what makes the accumulated band the mean radiance over the band and
+// the jittered grid integrate what the grid held still does.
 
-TEST_CASE("wavelengthTrapezoidWidths: what a grid held still integrates "
-          "against") {
+TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
+          "weighs") {
   SUBCASE("A uniform grid weighs every band its spacing, halved at the ends") {
     ScopedGrid scoped{{400, 500, 600, 700}, false};
     const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
@@ -25,34 +26,55 @@ TEST_CASE("wavelengthTrapezoidWidths: what a grid held still integrates "
     CHECK(widths[3] == 50.0);
     CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
   }
-  SUBCASE("A non-uniform grid weighs by the render-wide quadrature weights") {
-    ScopedGrid scoped{{400, 450, 600, 700}, false};
-    REQUIRE(gRenderGrid.weights.size() == 4);
-    const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+  SUBCASE("A non-uniform grid weighs each band half the distance between its "
+          "neighbors") {
+    const auto grid{std::vector<float>{400, 450, 600, 700}};
+    const auto widths{wavelengthTrapezoidWidths(
+        smdl::Span<const float>(grid.data(), grid.size()))};
     REQUIRE(widths.size() == 4);
-    double total{};
-    for (size_t i = 0; i < 4; i++) {
-      CHECK(widths[i] == double(gRenderGrid.weights[i]));
-      total += widths[i];
+    CHECK(widths[0] == 25.0);
+    CHECK(widths[1] == 100.0);
+    CHECK(widths[2] == 125.0);
+    CHECK(widths[3] == 50.0);
+    CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
+  }
+  SUBCASE("A grid of one band is half a unit wide") {
+    const auto grid{std::vector<float>{550}};
+    const auto widths{wavelengthTrapezoidWidths(
+        smdl::Span<const float>(grid.data(), grid.size()))};
+    REQUIRE(widths.size() == 1);
+    CHECK(widths[0] == 0.5);
+  }
+  SUBCASE("The JIT is handed the same widths, on any grid") {
+    for (const auto &grid : {std::vector<float>{400, 500, 600, 700},
+                             std::vector<float>{400, 450, 600, 700}}) {
+      const ScopedGrid scoped{grid, false};
+      const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+      REQUIRE(gRenderGrid.weights.size() == widths.size());
+      CHECK(gRenderGrid.stateBase.wavelengthWeight ==
+            gRenderGrid.weights.data());
+      for (size_t i = 0; i < widths.size(); i++)
+        CHECK(gRenderGrid.weights[i] == float(widths[i]));
     }
-    CHECK(total == doctest::Approx(300.0));
   }
 }
 
 TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
-  SUBCASE("A uniform grid tiles with bands of the spacing") {
+  SUBCASE("A uniform grid tiles its span with bands of the spacing, halved "
+          "at the ends") {
     const auto wavelens{std::vector<float>{400, 500, 600, 700}};
     const auto edges{wavelengthBandEdges(
         smdl::Span<const float>(wavelens.data(), wavelens.size()))};
     REQUIRE(edges.size() == wavelens.size() + 1);
-    // Mirrored ends, so every band is the spacing wide and centered on
-    // its nominal wavelength.
-    CHECK(edges[0] == doctest::Approx(350.0f));
+    // The end bands stop at the grid's ends, half the spacing wide; the
+    // inner ones are the spacing wide and centered on their nominal
+    // wavelengths.
+    CHECK(edges[0] == doctest::Approx(400.0f));
     CHECK(edges[1] == doctest::Approx(450.0f));
     CHECK(edges[2] == doctest::Approx(550.0f));
     CHECK(edges[3] == doctest::Approx(650.0f));
-    CHECK(edges[4] == doctest::Approx(750.0f));
-    for (size_t i = 0; i < wavelens.size(); i++) {
+    CHECK(edges[4] == doctest::Approx(700.0f));
+    for (size_t i = 1; i + 1 < wavelens.size(); i++) {
       CHECK(edges[i + 1] - edges[i] == doctest::Approx(100.0f));
       CHECK(0.5f * (edges[i] + edges[i + 1]) == doctest::Approx(wavelens[i]));
     }
@@ -62,11 +84,23 @@ TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
     const auto edges{wavelengthBandEdges(
         smdl::Span<const float>(wavelens.data(), wavelens.size()))};
     REQUIRE(edges.size() == wavelens.size() + 1);
-    CHECK(edges[0] == doctest::Approx(390.0f));
+    CHECK(edges[0] == doctest::Approx(400.0f));
     CHECK(edges[1] == doctest::Approx(410.0f));
     CHECK(edges[2] == doctest::Approx(460.0f));
     CHECK(edges[3] == doctest::Approx(700.0f));
-    CHECK(edges[4] == doctest::Approx(1100.0f));
+    CHECK(edges[4] == doctest::Approx(900.0f));
+  }
+  SUBCASE("Every band is as wide as the trapezoid weighs it") {
+    for (const auto &wavelens : {std::vector<float>{400, 500, 600, 700},
+                                 std::vector<float>{400, 420, 500, 900}}) {
+      const ScopedGrid grid{wavelens, true};
+      const auto &edges{gRenderGrid.bandEdges};
+      const auto widths{wavelengthTrapezoidWidths(grid.wavelengths())};
+      REQUIRE(edges.size() == widths.size() + 1);
+      for (size_t i = 0; i < widths.size(); i++)
+        CHECK(double(edges[i + 1]) - double(edges[i]) ==
+              doctest::Approx(widths[i]));
+    }
   }
   SUBCASE("A grid with no band width has no rectangles") {
     const auto wavelens{std::vector<float>{550}};
@@ -90,15 +124,15 @@ TEST_CASE("jitterWavelengths: every sample inside its own band") {
     jitterWavelengths(wavelengths, 1.0f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] == doctest::Approx(edges[i + 1]));
-    // The midpoint is the band center, which on a non-uniform grid is
-    // NOT the nominal wavelength: the bands have to tile, so a band whose
-    // neighbors sit at unequal distances holds its nominal wavelength off
-    // center.
+    // The midpoint is the band center, which is NOT the nominal
+    // wavelength of an end band, or of a band whose neighbors sit at
+    // unequal distances: the bands have to tile the grid's span, so the
+    // first runs from its nominal wavelength to the halfway point.
     jitterWavelengths(wavelengths, 0.5f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] ==
             doctest::Approx(0.5f * (edges[i] + edges[i + 1])));
-    CHECK(wavelengths[0] == doctest::Approx(400.0f));
+    CHECK(wavelengths[0] == doctest::Approx(405.0f));
     CHECK(wavelengths[1] == doctest::Approx(435.0f));
     // Still increasing, which the library requires of the grid: the
     // rectangles tile, so a shared offset cannot reorder them.

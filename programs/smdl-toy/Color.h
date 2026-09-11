@@ -24,10 +24,30 @@ wavelengthBandEdges(smdl::Span<const float> wavelens) {
   auto edges{std::vector<float>(numBands + 1)};
   for (size_t i = 1; i < numBands; i++)
     edges[i] = 0.5f * (wavelens[i - 1] + wavelens[i]);
-  edges.front() = wavelens[0] - (edges[1] - wavelens[0]);
-  edges.back() =
-      wavelens[numBands - 1] + (wavelens[numBands - 1] - edges[numBands - 1]);
+  edges.front() = wavelens[0];
+  edges.back() = wavelens[numBands - 1];
   return edges;
+}
+
+/// The trapezoid quadrature widths of the wavelength grid `wavelens` in
+/// nanometers, one per band: half the distance between the band's two
+/// neighbors, an end band counting itself as the missing one, so that
+/// the widths sum to the span of the grid however it is spaced. What a
+/// grid held still integrates against, the widths of the rectangles of
+/// `WavelengthGrid::bandEdges`, so what a jittered one integrates
+/// against too, and what `State::wavelengthWeight` hands the JIT. A grid
+/// of one band is half a unit wide, by convention.
+[[nodiscard]] inline std::vector<double>
+wavelengthTrapezoidWidths(smdl::Span<const float> wavelens) {
+  const size_t numBands{wavelens.size()};
+  if (numBands == 1) return {0.5};
+  auto widths{std::vector<double>(numBands)};
+  for (size_t i = 0; i < numBands; i++) {
+    const double lo{wavelens[i > 0 ? i - 1 : i]};
+    const double hi{wavelens[i + 1 < numBands ? i + 1 : i]};
+    widths[i] = 0.5 * (hi - lo);
+  }
+  return widths;
 }
 
 /// The render-wide wavelength grid: the bands every `Color` is sized by,
@@ -50,13 +70,13 @@ struct WavelengthGrid final {
   /// one, such as the geometry-normal queries inside a manifold walk.
   smdl::SpectralColor wavelengths{};
 
-  /// The per-band quadrature weights in nanometers, empty for a
-  /// uniformly spaced grid.
-  ///
-  /// Empty keeps `State::wavelengthWeight` null, which the library
-  /// treats as uniform quadrature; a non-uniform `-wavelengths` grid
-  /// fills this with trapezoid band widths, which both the JIT
-  /// color-to-RGB conversion and the night tonemap integrate against.
+  /// The per-band quadrature weights in nanometers: the grid's
+  /// `wavelengthTrapezoidWidths()`, which `State::wavelengthWeight`
+  /// points to on every grid, evenly spaced or not, so that the JIT's
+  /// color to RGB integrates with the same widths as every integral the
+  /// renderer takes itself. The library's rule for no weights gives
+  /// every band the same width, end bands included, which a grid ending
+  /// on its own samples does not have.
   std::vector<float> weights{};
 
   /// The `smdl::State` every evaluation starts from: the library
@@ -70,12 +90,16 @@ struct WavelengthGrid final {
   /// empty when `-wavelength-jitter` is off.
   ///
   /// Band `i` spans `[bandEdges[i], bandEdges[i + 1]]`, the halfway
-  /// points to its neighbors, so the bands tile the grid with no gap and
-  /// no overlap. The outermost edges mirror the inner half-width, which
-  /// keeps the end bands full width instead of half at the cost of
-  /// reaching half a band past each end of the grid. Tiling comes first,
-  /// so a band of a non-uniform grid holds its nominal wavelength off
-  /// center and averages about its own center instead. Empty is how the
+  /// points to its neighbors, and the two end bands stop at the grid's
+  /// own ends, so the bands tile exactly the span of the grid with no gap
+  /// and no overlap, each as wide as its trapezoid weight (see
+  /// `wavelengthTrapezoidWidths()`): the jitter integrates what a grid
+  /// held still does, only without aliasing. Full-width end bands would
+  /// center every band of a uniform grid, at the cost of sampling half a
+  /// band past each end, outside the span asked for. Tiling comes first,
+  /// so a band's nominal wavelength sits off its center wherever its
+  /// neighbors are unequally far, and on the outer edge of each end band;
+  /// the band averages about its own center instead. Empty is how the
   /// renderer asks whether the jitter is on at all, so a grid with too
   /// few bands to have a width leaves it empty.
   std::vector<float> bandEdges{};
@@ -85,36 +109,19 @@ struct WavelengthGrid final {
   void reset(smdl::Span<const float> grid, bool shouldJitter) {
     numBands = grid.size();
     wavelengths = smdl::SpectralColor(grid);
-    // Trapezoid band widths for a non-uniform grid. A uniform grid keeps
-    // the weights empty and `State::wavelengthWeight` null, which the
-    // library treats as uniform quadrature, so the default render is
-    // unchanged to the bit.
-    weights.clear();
-    bool isUniform{true};
-    for (size_t i = 2; i < grid.size(); i++)
-      if (std::abs((grid[i] - grid[i - 1]) - (grid[1] - grid[0])) >
-          1e-3f * (grid[1] - grid[0]))
-        isUniform = false;
-    if (!isUniform) {
-      weights.resize(grid.size());
-      for (size_t i = 0; i < grid.size(); i++) {
-        const float lo{i > 0 ? grid[i - 1] : grid[0]};
-        const float hi{i + 1 < grid.size() ? grid[i + 1]
-                                           : grid[grid.size() - 1]};
-        weights[i] = 0.5f * (hi - lo);
-      }
-    }
+    const auto widths{wavelengthTrapezoidWidths(grid)};
+    weights.resize(widths.size());
+    for (size_t i = 0; i < widths.size(); i++) weights[i] = float(widths[i]);
     bandEdges = shouldJitter ? wavelengthBandEdges(grid) : std::vector<float>{};
     // The endpoints come from the nominal grid rather than from the
     // wavelengths an evaluation carries, which under
     // `-wavelength-jitter` is the sample's own perturbed grid:
     // `state::wavelength_min()` and `wavelength_max()` are render-wide
-    // constants, and the library's uniform quadrature falls back on
-    // their difference, which must not wobble per sample.
+    // constants, which must not wobble per sample.
     stateBase = smdl::State{};
     stateBase.wavelengthMin = grid[0];
     stateBase.wavelengthMax = grid[grid.size() - 1];
-    stateBase.wavelengthWeight = weights.empty() ? nullptr : weights.data();
+    stateBase.wavelengthWeight = weights.data();
   }
 };
 
@@ -126,32 +133,6 @@ struct WavelengthGrid final {
 /// initialized during startup instead of on first use, so nothing may
 /// touch it from another translation unit's static initializer.
 inline WavelengthGrid gRenderGrid{};
-
-/// The trapezoid quadrature widths of the render grid `wavelens` in
-/// nanometers, one per band: on a uniform grid the spacing, halved at
-/// the two ends, and on a non-uniform grid `gRenderGrid.weights`, which
-/// are that rule. What a grid held still integrates against, as the
-/// rectangles of `WavelengthGrid::bandEdges` are what a jittered one
-/// does.
-///
-/// The uniform arithmetic is spelled out rather than taken from the
-/// weights so that a default render is unchanged to the bit; a grid of
-/// one band has half a unit of width, as the end of any grid does.
-[[nodiscard]] inline std::vector<double>
-wavelengthTrapezoidWidths(smdl::Span<const float> wavelens) {
-  const size_t numBands{wavelens.size()};
-  auto widths{std::vector<double>(numBands)};
-  const double dLambda{
-      numBands > 1 ? (double(wavelens[numBands - 1]) - double(wavelens[0])) /
-                         double(numBands - 1)
-                   : 1.0};
-  const auto &quadWeights{gRenderGrid.weights};
-  for (size_t i = 0; i < numBands; i++) {
-    const double trap{i == 0 || i == numBands - 1 ? 0.5 : 1.0};
-    widths[i] = quadWeights.empty() ? dLambda * trap : double(quadWeights[i]);
-  }
-  return widths;
-}
 
 /// The render-wide shutter interval: the frame.
 ///
@@ -299,8 +280,10 @@ makeRenderState(const smdl::SpectralColor &wavelengths,
 ///
 /// One shared `xi` rather than one per band: each band still covers its
 /// own rectangle uniformly either way, so the mean is the same, and the
-/// rigid shift keeps the spectrum of a single sample correlated, which
-/// is what stops the RGB outputs from gaining color noise.
+/// shared shift keeps the spectrum of a single sample correlated, which
+/// is what stops the RGB outputs from gaining color noise. Every band
+/// moves the same way across its own rectangle, so the grid stays
+/// strictly increasing, as the library requires.
 inline void jitterWavelengths(Color &wavelengths, float xi) noexcept {
   const auto &edges{gRenderGrid.bandEdges};
   for (size_t i = 0; i < wavelengths.size(); i++)

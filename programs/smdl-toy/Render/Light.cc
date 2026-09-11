@@ -126,25 +126,6 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   return wi;
 }
 
-namespace {
-// The quadrature width of each wavelength band in nanometers, for
-// normalizing a spectral shape to unit integral over the render band:
-// the render-wide trapezoid weights when the grid is non-uniform, the
-// uniform spacing otherwise, and 1 for a single-band render, where
-// "per nanometer" degenerates to a plain per-band value.
-[[nodiscard]] std::vector<float> bandWidths(const Color &wavelengths) {
-  if (const auto &weights{gRenderGrid.weights}; !weights.empty())
-    return weights;
-  auto widths{std::vector<float>(wavelengths.size(), 1.0f)};
-  if (wavelengths.size() > 1) {
-    const float spacing{(wavelengths[wavelengths.size() - 1] - wavelengths[0]) /
-                        float(wavelengths.size() - 1)};
-    for (auto &width : widths) width = spacing;
-  }
-  return widths;
-}
-} // namespace
-
 AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                              const Color &wavelengths, const LayoutLight &light,
                              std::shared_ptr<const smdl::LightProfile> profile)
@@ -165,8 +146,9 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   }
   mPlacement = derivePlacement(mLightToWorld);
   // The spectral shape: blackbody or flat, normalized to unit integral
-  // over the render band, then the RGB tint applied WITHOUT
-  // renormalizing, so tinting dims the way dimming a lamp does.
+  // over the grid by the trapezoid widths the meter and the response
+  // integrate with, then the RGB tint applied WITHOUT renormalizing, so
+  // tinting dims the way dimming a lamp does.
   auto shape{Color(1.0f)};
   if (decl.temperature > 0) {
     for (size_t i = 0; i < wavelengths.size(); i++) {
@@ -176,7 +158,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                          std::expm1(c2 / (lambda * decl.temperature)));
     }
   }
-  const auto widths{bandWidths(wavelengths)};
+  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
   double integral{};
   for (size_t i = 0; i < wavelengths.size(); i++)
     integral += double(shape[i]) * widths[i];

@@ -111,14 +111,17 @@ TEST_CASE("Response: a band counts the photoelectrons its curve turns the "
     CHECK(expected > 1e19);
     CHECK(expected < 1e21);
   }
-  SUBCASE("And under the jitter, averaged over the offset, it is the "
-          "integral over the rectangles") {
+  SUBCASE("And under the jitter, averaged over the offset, it is the same "
+          "integral") {
     ScopedGrid scoped{coarseGrid(), true};
     const Response response{qe, scoped.wavelengths()};
-    // The rectangles run 387.5 to 712.5 nm, over which the integral of
-    // lambda is closed form.
-    const double integralOfLambda{(712.5 * 712.5 - 387.5 * 387.5) / 2};
+    // The rectangles tile the grid's own 400 to 700 nm, over which the
+    // integral of lambda is closed form, and which the trapezoid of the
+    // grid held still takes exactly, lambda being a line.
+    const double integralOfLambda{(700.0 * 700.0 - 400.0 * 400.0) / 2};
     const double expected{0.5 * 2.0 * integralOfLambda * PHOTONS_PER_JOULE_NM};
+    CHECK(flatOnStillGrid(scoped.wavelengths(), 0.5, 2.0) ==
+          doctest::Approx(expected).epsilon(1e-12));
     const auto sums{projectSwept(response, scoped.wavelengths(),
                                  [](const Color &) { return Color(2.0f); })};
     CHECK(sums[0] == doctest::Approx(expected).epsilon(1e-4));

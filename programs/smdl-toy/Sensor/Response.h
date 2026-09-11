@@ -55,18 +55,18 @@ responseFilmBandNames(const ResponseSettings &settings);
 /// Without `-wavelength-jitter` the wavelengths are the grid's and the
 /// rule is the trapezoid over it, so the band film is exactly the dot
 /// product of the spectral film's means with fixed weights; with the
-/// jitter each band of the sample covers its own rectangle, whose width
-/// is the weight, and the curve is evaluated at the sample's own
-/// wavelengths, which is what lets a band narrower than the grid
-/// integrate without bias. The photon factor `lambda / (h c)` sits
+/// jitter each band of the sample covers its own rectangle, as wide as
+/// the trapezoid weighs the band, and the curve is evaluated at the
+/// sample's own wavelengths, which is what lets a band narrower than the
+/// grid integrate without bias. The photon factor `lambda / (h c)` sits
 /// inside the integral, which is what makes a readout exact.
 ///
 /// Construction is where the curves meet the grid, and where a band the
 /// grid cannot see is refused.
 class Response final {
 public:
-  /// Resolve `settings` against `wavelengths`, the render grid, and
-  /// `gRenderGrid`'s jitter rectangles. Warns about a band the grid only
+  /// Resolve `settings` against `wavelengths`, the render grid, jittered
+  /// when `gRenderGrid` has band edges. Warns about a band the grid only
   /// partly sees and about one narrow enough to alias against a grid
   /// held still.
   ///

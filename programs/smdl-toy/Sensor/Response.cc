@@ -70,22 +70,12 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths)
   for (const auto index : mCFA)
     mTileNames.push_back(settings.bands[index].name);
   const size_t numBands{wavelengths.size()};
-  const auto &edges{gRenderGrid.bandEdges};
-  // What the grid can see: the jitter's outer rectangle edges, else the
-  // grid's own ends. And what each grid band weighs.
-  const double gridLo{mIsJittering ? double(edges.front())
-                                   : double(wavelengths[0])};
-  const double gridHi{mIsJittering ? double(edges.back())
-                                   : double(wavelengths[numBands - 1])};
-  auto widths{std::vector<double>()};
-  if (mIsJittering) {
-    widths.resize(numBands);
-    for (size_t i = 0; i < numBands; i++)
-      widths[i] = double(edges[i + 1]) - double(edges[i]);
-    mWidths = widths;
-  } else {
-    widths = wavelengthTrapezoidWidths(wavelengths);
-  }
+  // What the grid can see and what each band weighs, which the jitter
+  // leaves alone: its rectangles tile the same span with the same widths.
+  const double gridLo{double(wavelengths[0])};
+  const double gridHi{double(wavelengths[numBands - 1])};
+  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
+  if (mIsJittering) mWidths = widths;
   double minSpacing{gridHi - gridLo};
   for (size_t i = 1; i < numBands; i++)
     minSpacing = std::min(minSpacing,
