@@ -199,7 +199,7 @@ constexpr CatalogAlias ALIASES[] = {
 
 OpticalGlass OpticalGlass::constant(float index) {
   if (!(std::isfinite(index) && index >= 1))
-    throw Error(concat("expected an index of at least 1, got ", Brief(index)));
+    throw Error(concat("Expected an index of at least 1, got ", Brief(index)));
   OpticalGlass glass{};
   glass.mCoefficients[0] = index;
   return glass;
@@ -208,12 +208,12 @@ OpticalGlass OpticalGlass::constant(float index) {
 OpticalGlass OpticalGlass::abbe(float nd, float abbeNumber,
                                 std::optional<float> partialDispersion) {
   if (!(std::isfinite(nd) && nd > 1))
-    throw Error(concat("expected an index greater than 1, got ", Brief(nd)));
+    throw Error(concat("Expected an index greater than 1, got ", Brief(nd)));
   if (!(std::isfinite(abbeNumber) && abbeNumber > 0))
     throw Error(
-        concat("expected a positive Abbe number, got ", Brief(abbeNumber)));
+        concat("Expected a positive Abbe number, got ", Brief(abbeNumber)));
   if (partialDispersion && !(*partialDispersion > 0 && *partialDispersion < 1))
-    throw Error(concat("expected a partial dispersion between 0 and 1, got ",
+    throw Error(concat("Expected a partial dispersion between 0 and 1, got ",
                        Brief(*partialDispersion)));
   const double pgF{partialDispersion
                        ? double(*partialDispersion)
@@ -231,7 +231,7 @@ OpticalGlass OpticalGlass::sellmeier(const std::array<float, 3> &b,
                                      const std::array<float, 3> &c) {
   for (size_t i = 0; i < 3; i++) {
     if (!(std::isfinite(b[i]) && std::isfinite(c[i])))
-      throw Error("expected finite Sellmeier coefficients");
+      throw Error("Expected finite Sellmeier coefficients");
     // A term with no weight has no pole, wherever its C would put one.
     if (b[i] != 0 && c[i] >= DOMAIN_MIN_SQUARED && c[i] <= DOMAIN_MAX_SQUARED)
       throw Error(concat("Sellmeier term ", i + 1, " has its pole at ",
@@ -246,7 +246,7 @@ OpticalGlass OpticalGlass::sellmeier(const std::array<float, 3> &b,
   glass.validate();
   if (!(glass.evaluate(double(FRAUNHOFER_F_LINE)) >
         glass.evaluate(double(FRAUNHOFER_C_LINE))))
-    throw Error("the Sellmeier coefficients describe a glass that does not "
+    throw Error("The Sellmeier coefficients describe a glass that does not "
                 "disperse, which is stated by its index alone");
   return glass;
 }
@@ -261,12 +261,12 @@ void OpticalGlass::validate() const {
     const double index{evaluate(double(wavelength))};
     if (!std::isfinite(index))
       throw Error(
-          concat("the index is not a finite number at ", wavelength, " nm"));
+          concat("The index is not a finite number at ", wavelength, " nm"));
     if (index < 1)
-      throw Error(concat("the index falls to ", Brief(index), " at ",
+      throw Error(concat("The index falls to ", Brief(index), " at ",
                          wavelength, " nm, below the index of air"));
     if (index > previous)
-      throw Error(concat("the index rises with wavelength at ", wavelength,
+      throw Error(concat("The index rises with wavelength at ", wavelength,
                          " nm, which the index of a glass never does where "
                          "the glass transmits"));
     previous = index;

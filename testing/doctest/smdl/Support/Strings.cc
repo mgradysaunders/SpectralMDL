@@ -95,41 +95,16 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     const std::string path{
         (std::filesystem::current_path() / "main.mdl").string()};
     CHECK(smdl::concat(smdl::LocationMarkup(path, 3, 1)) == "[main.mdl:3:1]");
-    CHECK(smdl::concat(smdl::QuotedPath(path)) == "'main.mdl'");
+    // Both quote the same way; what separates them is that 'QuotedPath'
+    // shortens the path and 'Quoted' takes the string as it is.
+    CHECK(smdl::concat(smdl::QuotedPath(path)) == "\"main.mdl\"");
+    CHECK(smdl::concat(smdl::Quoted(path)) == "\"" + path + "\"");
   }
   SUBCASE("The manipulators compose with everything else concat takes") {
     CHECK(smdl::concat("z = ", smdl::Brief(0.5f), " over ",
                        smdl::Quoted("thing"), " x",
-                       3) == "z = 0.5 over 'thing' x3");
+                       3) == "z = 0.5 over \"thing\" x3");
     CHECK(smdl::concat("has ", smdl::Counted(1, "curve"), " of ",
                        smdl::Bytes(2048)) == "has 1 curve of 2 KiB");
-  }
-}
-
-TEST_CASE("decapitalized: a message reworded as a clause") {
-  // The ordinary case: a message spliced in after a colon reads as part of
-  // the sentence around it.
-  CHECK(smdl::decapitalized("Cannot open 'x.vol'") == "cannot open 'x.vol'");
-  CHECK(smdl::decapitalized("Expected a type") == "expected a type");
-  SUBCASE("A name keeps the capital it came with") {
-    // An interior capital marks the first word as a name rather than the
-    // start of a sentence, which is what separates 'NanoVDB' from 'Cannot'.
-    CHECK(smdl::decapitalized("NanoVDB grid is empty") ==
-          "NanoVDB grid is empty");
-    CHECK(smdl::decapitalized("UTF-8 encoding failed") ==
-          "UTF-8 encoding failed");
-    CHECK(smdl::decapitalized("MDLE has no main module") ==
-          "MDLE has no main module");
-  }
-  SUBCASE("Anything that does not start with a letter is left alone") {
-    CHECK(smdl::decapitalized("'exec' has an empty body") ==
-          "'exec' has an empty body");
-    CHECK(smdl::decapitalized("2 grids share a name") ==
-          "2 grids share a name");
-    CHECK(smdl::decapitalized("already a clause") == "already a clause");
-    CHECK(smdl::decapitalized("").empty());
-  }
-  SUBCASE("A one-word message is still a word") {
-    CHECK(smdl::decapitalized("Truncated") == "truncated");
   }
 }

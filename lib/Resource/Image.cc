@@ -260,7 +260,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                TINYEXR_SUCCESS) {
       // Fail if deep or multipart!
       if (version.non_image || version.multipart)
-        throw Error("deep or multipart EXR is not supported");
+        throw Error("Deep or multipart EXR is not supported");
       // Parse the header. Hold it in a shared pointer, so that exactly
       // 1 'FreeEXRHeader()' happens no matter whether the finish
       // function below runs, throws, is copied, or is dropped without
@@ -274,18 +274,18 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
       if (ParseEXRHeaderFromFile(header.get(), &version, fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
         std::string message{
-            concat("cannot parse EXR header: ", err ? err : "unknown error")};
+            concat("Cannot parse EXR header: ", err ? err : "unknown error")};
         FreeEXRErrorMessage(err);
         throw Error(std::move(message));
       }
       int nX{header->data_window.max_x - header->data_window.min_x + 1};
       int nY{header->data_window.max_y - header->data_window.min_y + 1};
       if (nX < 0 || nY < 0)
-        throw Error("cannot parse EXR header: invalid data window");
+        throw Error("Cannot parse EXR header: invalid data window");
 
       const auto setFormatFromPixelType{[&](int pixelType) {
         if (pixelType == TINYEXR_PIXELTYPE_UINT)
-          throw Error("uint EXR is not supported");
+          throw Error("Uint EXR is not supported");
         else if (pixelType == TINYEXR_PIXELTYPE_HALF)
           mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
         else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
@@ -305,13 +305,13 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
             tinyexr::FindChannel(*header, "G"),
             tinyexr::FindChannel(*header, "B"),
             tinyexr::FindChannel(*header, "A")};
-        if (!channels[0]) throw Error("expected EXR channel 'R' is missing");
-        if (!channels[1]) throw Error("expected EXR channel 'G' is missing");
-        if (!channels[2]) throw Error("expected EXR channel 'B' is missing");
+        if (!channels[0]) throw Error("Expected EXR channel 'R' is missing");
+        if (!channels[1]) throw Error("Expected EXR channel 'G' is missing");
+        if (!channels[2]) throw Error("Expected EXR channel 'B' is missing");
         // NOTE: We allow missing 'A' channel!
         for (auto channel : channels)
           if (channel && channel->pixel_type != channels[0]->pixel_type)
-            throw Error("inconsistent EXR pixel types");
+            throw Error("Inconsistent EXR pixel types");
         setFormatFromPixelType(channels[0]->pixel_type);
       }
       mNumTexelsX = nX;
@@ -323,7 +323,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         if (LoadEXRImageFromFile(&image, header.get(), fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
           std::string message{
-              concat("cannot decode EXR: ", err ? err : "unknown error")};
+              concat("Cannot decode EXR: ", err ? err : "unknown error")};
           FreeEXRErrorMessage(err);
           throw Error(std::move(message));
         }
@@ -406,8 +406,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   })};
   if (error) {
     clear();
-    error->message = concat("Cannot load ", QuotedPath(fileName), ": ",
-                            decapitalized(error->message));
+    error->message =
+        concat("Cannot load ", QuotedPath(fileName), ": ", error->message);
   }
   return error;
 }

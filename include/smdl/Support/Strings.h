@@ -72,7 +72,9 @@ namespace smdl {
 
 inline namespace string_markup {
 
-/// A quoted string for use with `concat`.
+/// A double-quoted string for use with `concat`. Everything a message
+/// quotes goes through this or `QuotedPath`, so that the quoting does
+/// not vary with who wrote the message.
 class SMDL_EXPORT Quoted final {
 public:
   constexpr Quoted(std::string_view str) : str(str) {}
@@ -82,7 +84,9 @@ public:
   std::string_view str{};
 };
 
-/// A quoted path string for use with `concat`.
+/// A quoted path string for use with `concat`. This quotes like
+/// `Quoted` and differs only in shortening the path first, as
+/// `bestPathForPrinting()` shortens it.
 class SMDL_EXPORT QuotedPath final {
 public:
   constexpr QuotedPath(std::string_view str) : str(str) {}
@@ -249,13 +253,6 @@ template <typename T, typename... Ts>
   }
   return str;
 }
-
-/// The same message worded as a clause instead of a line, for splicing
-/// into a larger message after a colon or a semicolon. This lowercases
-/// the first letter, and does nothing when the first word carries an
-/// interior capital, which is what keeps a name like `NanoVDB` or a
-/// leading quoted token intact.
-[[nodiscard]] SMDL_EXPORT std::string decapitalized(std::string message);
 
 /// The did-you-mean helper: the nearest candidate to `name` within
 /// `maxDistance` edits (Levenshtein), or empty if none is close enough.

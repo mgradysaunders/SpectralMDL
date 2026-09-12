@@ -113,9 +113,7 @@ private:
 /// must not have a side effect the program depends on.
 ///
 /// The library words a message as a sentence whose first word is
-/// capitalized and which does not end in a period. Text spliced into a
-/// message after a colon or a semicolon is a clause rather than a line,
-/// and stays lowercase.
+/// capitalized and which does not end in a period.
 #define SMDL_LOG(level, ...)                                            \
   do {                                                                  \
     const auto smdlLogLevel{level};                                     \
@@ -150,9 +148,9 @@ logLevelLabel(LogLevel level, bool useColors, bool useUnicode) noexcept;
 ///
 /// Without colors the message is exactly as given. With them, a debug
 /// message is dimmed whole, and any other has its locations (as
-/// `LocationMarkup` writes them) in bold and its single-quoted strings in
-/// cyan. A source line followed by a caret line is left as written,
-/// except that its gutter is dimmed and the caret is green. A message
+/// `LocationMarkup` writes them) in bold and its quoted strings, single
+/// or double, in cyan. A source line followed by a caret line is left as
+/// written, except that its gutter is dimmed and the caret is green. A message
 /// that already contains an escape code is left as it is.
 ///
 /// This reads the finished text, so the message a sink is handed stays

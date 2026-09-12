@@ -53,7 +53,8 @@ TEST_CASE("CameraFile: the shutter setting") {
         diags.addSource("test.camera", "camera { shutter inf }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK_CONTAINS(diags.all().front().message, "finite number for 'shutter'");
+    CHECK_CONTAINS(diags.all().front().message,
+                   "finite number for \"shutter\"");
   }
   SUBCASE("It cannot be keyed, since it is the interval, not a value in it") {
     const LayoutSource &source{diags.addSource(
@@ -97,7 +98,8 @@ TEST_CASE("CameraFile: the readout setting") {
         diags.addSource("test.camera", "camera { readout nan }\n")};
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK_CONTAINS(diags.all().front().message, "finite number for 'readout'");
+    CHECK_CONTAINS(diags.all().front().message,
+                   "finite number for \"readout\"");
   }
   SUBCASE("The direction is one of four words") {
     for (const auto &[word, direction] :
@@ -117,7 +119,7 @@ TEST_CASE("CameraFile: the readout setting") {
     (void)parseCamera(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message,
-                   "unknown readout direction 'sideways'");
+                   "unknown readout direction \"sideways\"");
     CHECK_CONTAINS(diags.all().front().message, "down, up, left, or right");
   }
   SUBCASE("Neither can be keyed, since they describe the interval, not a "
@@ -367,8 +369,9 @@ TEST_CASE("CameraFile: the lens and the sensor") {
     const CameraDocument ideal{parseOK(diags, "camera { lens ideal }\n")};
     REQUIRE(ideal.camera.lens);
     CHECK(*ideal.camera.lens == LENS_IDEAL);
-    CHECK_CONTAINS(parseError("camera { lens 50 }\n").message,
-                   "expected a quoted '.lens' path or 'ideal' after 'lens'");
+    CHECK_CONTAINS(
+        parseError("camera { lens 50 }\n").message,
+        "expected a quoted '.lens' path or \"ideal\" after \"lens\"");
   }
   SUBCASE("A sensor is a path, or the observer by name") {
     const CameraDocument document{
@@ -380,7 +383,7 @@ TEST_CASE("CameraFile: the lens and the sensor") {
     CHECK(*human.camera.sensor == SENSOR_HUMAN);
     CHECK_CONTAINS(
         parseError("camera { sensor sony }\n").message,
-        "expected a quoted '.sensor' path or 'human' after 'sensor'");
+        "expected a quoted '.sensor' path or \"human\" after \"sensor\"");
   }
   SUBCASE("Absent, both stay unset for the stand-ins to fill") {
     const CameraDocument document{parseOK(diags, "camera { fovy 30 }\n")};
@@ -419,31 +422,33 @@ TEST_CASE("CameraFile: the keys that moved into the sensor file") {
           "camera { response \"body.response\" }\n",
           "camera { motion { at 0 response \"a.response\" } }\n"}) {
       const LayoutDiagnostic error{parseError(text)};
-      CHECK_CONTAINS(error.message, "'response' is no longer a camera setting");
+      CHECK_CONTAINS(error.message,
+                     "\"response\" is no longer a camera setting");
       REQUIRE(!error.notes.empty());
       CHECK_CONTAINS(error.notes.front().message,
-                     "'response' block of the '.sensor' file");
+                     "\"response\" block of the '.sensor' file");
     }
   }
   SUBCASE("A detector block likewise") {
     for (const char *text : {"camera { detector { bits 14 } }\n",
                              "camera { motion { at 0 detector { } } }\n"}) {
       const LayoutDiagnostic error{parseError(text)};
-      CHECK_CONTAINS(error.message, "'detector' is no longer a camera setting");
+      CHECK_CONTAINS(error.message,
+                     "\"detector\" is no longer a camera setting");
       REQUIRE(!error.notes.empty());
       CHECK_CONTAINS(error.notes.front().message,
-                     "'detector' block of the '.sensor' file");
+                     "\"detector\" block of the '.sensor' file");
     }
   }
   SUBCASE("At the top level, each names the block it belongs in") {
     const LayoutDiagnostic error{
         parseError("response { band v { 400 1 700 1 } }\n")};
-    CHECK_CONTAINS(error.message, "unknown directive 'response'");
+    CHECK_CONTAINS(error.message, "unknown directive \"response\"");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message,
                    "block inside the 'sensor' block of the '.sensor' file");
     const LayoutDiagnostic stray{parseError("sensor \"a.sensor\"\n")};
-    CHECK_CONTAINS(stray.message, "unknown directive 'sensor'");
+    CHECK_CONTAINS(stray.message, "unknown directive \"sensor\"");
     REQUIRE(!stray.notes.empty());
     CHECK_CONTAINS(stray.notes.front().message,
                    "a setting inside the 'camera' block");
@@ -463,7 +468,7 @@ TEST_CASE("CameraFile: the temperature setting") {
   }
   SUBCASE("A non-finite temperature is an error") {
     CHECK_CONTAINS(parseError("camera { temperature nan }\n").message,
-                   "finite number for 'temperature'");
+                   "finite number for \"temperature\"");
   }
   SUBCASE("It cannot be keyed, being the body's condition over the whole "
           "shot") {
@@ -505,15 +510,15 @@ TEST_CASE("CameraFile: the iso setting") {
   SUBCASE("A number is positive and finite, and anything else names the "
           "two forms") {
     CHECK_CONTAINS(parseError("camera { iso 0 }\n").message,
-                   "positive number for 'iso'");
+                   "positive number for \"iso\"");
     CHECK_CONTAINS(parseError("camera { iso inf }\n").message,
-                   "finite number for 'iso'");
+                   "finite number for \"iso\"");
     CHECK_CONTAINS(parseError("camera { iso bogus }\n").message,
-                   "expected a number or 'auto' after 'iso', got 'bogus'");
+                   "expected a number or 'auto' after 'iso', got \"bogus\"");
   }
   SUBCASE("It cannot be keyed, being applied after the render") {
     CHECK_CONTAINS(parseError("camera { motion { at 0 iso 100 } }\n").message,
-                   "'iso' is not a quantity to interpolate");
+                   "\"iso\" is not a quantity to interpolate");
   }
 }
 
@@ -556,12 +561,12 @@ TEST_CASE("CameraFile: the white_balance setting") {
     CHECK_CONTAINS(parseError("camera { white_balance d65 }\n").message,
                    "expected D65, daylight, cloudy, shade, tungsten, "
                    "fluorescent, auto, or a color temperature in kelvin after "
-                   "'white_balance', got 'd65'");
+                   "'white_balance', got \"d65\"");
   }
   SUBCASE("It cannot be keyed, being applied after the render") {
     CHECK_CONTAINS(
         parseError("camera { motion { at 0 white_balance shade } }\n").message,
-        "'white_balance' is not a quantity to interpolate");
+        "\"white_balance\" is not a quantity to interpolate");
   }
   SUBCASE("The names read back as they are spelled, and nothing else "
           "reads") {
@@ -596,7 +601,7 @@ TEST_CASE("CameraFile: the focal length setting") {
   }
   SUBCASE("A zero is an error, like the field of view's") {
     CHECK_CONTAINS(parseError("camera { focal_length 0 }\n").message,
-                   "positive number for 'focal_length'");
+                   "positive number for \"focal_length\"");
   }
   SUBCASE("It keys, being a quantity to interpolate: a zoom") {
     const CameraDocument document{parseOK(diags,

@@ -549,7 +549,7 @@ Compiler::add(std::string fileOrDirName,
         return;
       }
     }
-    throw Error(concat("Cannot locate ", Quoted(fileOrDirName)));
+    throw Error(concat("Cannot locate ", QuotedPath(fileOrDirName)));
   });
 }
 
@@ -1012,7 +1012,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
         const Image &image{*imageEntries[i].second};
         if (errors[i]) {
           SMDL_LOG_WARN("Cannot load ", QuotedPath(fileName), ": ",
-                        decapitalized(errors[i]->message));
+                        errors[i]->message);
           continue;
         }
         SMDL_LOG_DEBUG("Loaded image ", QuotedPath(fileName), ": ",
@@ -1392,7 +1392,7 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
   std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
   if (results.size() == 1) return {};
   if (results.size() > 1) {
-    std::string message{concat("material name ", Quoted(materialName),
+    std::string message{concat("Material name ", Quoted(materialName),
                                " is ambiguous, matching ", results.size(),
                                " materials:")};
     for (const auto *jitMaterial : results)
@@ -1406,11 +1406,11 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
   // filter", so a host that forgot a name gets an actionable error.
   for (const auto &skippedName : mSkippedMaterialNames)
     if (matchesMaterialName(materialName, skippedName))
-      return concat("material name ", Quoted(materialName), " matches ",
+      return concat("Material name ", Quoted(materialName), " matches ",
                     Quoted(skippedName),
                     ", which was not compiled because it is not a desired "
                     "material (see 'Compiler::setDesiredMaterials()')");
-  std::string message{concat("no material matches ", Quoted(materialName))};
+  std::string message{concat("No material matches ", Quoted(materialName))};
   if (std::string suggestion{suggestMaterialName(*this, materialName)};
       !suggestion.empty())
     message += concat("; did you mean ", Quoted(suggestion), "?");

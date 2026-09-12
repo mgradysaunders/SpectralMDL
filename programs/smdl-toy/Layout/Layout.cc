@@ -216,7 +216,7 @@ public:
       source = &mDiags.loadSource(fileName);
     } catch (const smdl::Error &error) {
       if (!importSite) throw;
-      mDiags.error(importSite, smdl::decapitalized(error.message));
+      mDiags.error(importSite, error.message);
       return;
     }
     const LayoutDocument document{
@@ -428,8 +428,7 @@ private:
       try {
         places = readPlacesFile(resolved.string());
       } catch (const smdl::Error &error) {
-        mDiags.error(placement.placesPathLoc,
-                     smdl::decapitalized(error.message));
+        mDiags.error(placement.placesPathLoc, error.message);
         throw SkipPlacement();
       }
       if (!placement.variants.empty() && !places.hasVariants())
@@ -666,8 +665,8 @@ private:
     const bool isCaster{marks.isCaster.value_or(decl.isCaster)};
     if (isCaster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
-                   smdl::concat("'caster' applies to a mesh file or a shape, "
-                                "but ",
+                   smdl::concat(smdl::Quoted("caster"),
+                                " applies to a mesh file or a shape, but ",
                                 smdl::QuotedPath(decl.path),
                                 " is a curves file"));
       throw SkipPlacement();
@@ -693,8 +692,8 @@ private:
     const bool isLight{marks.isLight.value_or(decl.isLight) || decl.isCaustic};
     if (isLight && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
-                   smdl::concat("'light' applies to a mesh file or a shape, "
-                                "but ",
+                   smdl::concat(smdl::Quoted("light"),
+                                " applies to a mesh file or a shape, but ",
                                 smdl::QuotedPath(decl.path),
                                 " is a curves file"));
       throw SkipPlacement();
@@ -770,8 +769,8 @@ private:
       const auto refuseMark{[&](const LayoutLocation &markLoc,
                                 std::string_view word) {
         mDiags.error(markLoc ? markLoc : placement.importPathLoc,
-                     smdl::concat("'", word,
-                                  "' applies to a mesh file or a shape, but ",
+                     smdl::concat(smdl::Quoted(word),
+                                  " applies to a mesh file or a shape, but ",
                                   smdl::QuotedPath(placement.importPath),
                                   " is a curves file"));
         throw SkipPlacement();
@@ -859,7 +858,7 @@ private:
         target.correction = asset.correction;
       }
     } catch (const smdl::Error &error) {
-      mDiags.error(location, smdl::decapitalized(error.message));
+      mDiags.error(location, error.message);
       throw SkipPlacement();
     }
     if (resolved.extension() == ".scene") {

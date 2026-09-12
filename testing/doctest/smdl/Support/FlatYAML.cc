@@ -27,7 +27,7 @@ void parseFail(const std::string &source, int lineNo,
                const std::string &fragment) {
   try {
     (void)FlatYAML::parse(source, "test.yaml");
-    FAIL("expected a parse error containing '" << fragment << "'");
+    FAIL("expected a parse error containing '" << fragment << "\"");
   } catch (const smdl::Error &error) {
     CAPTURE(error.message);
     CHECK_CONTAINS(error.message, fragment);
@@ -66,22 +66,22 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     CHECK(FlatYAML::find(doc.root, "missing") == nullptr);
     // A quoted number is a string, and a scalar is not a list or a block.
     CHECK(doc.toString(entryOf(doc, "text")) == "1.5");
-    CHECK_THROWS_WITH_AS((void)doc.toFloat(entryOf(doc, "text")),
-                         doctest::Contains("expected a real number for 'text'"),
-                         smdl::Error);
-    CHECK_THROWS_WITH_AS((void)doc.toInt(entryOf(doc, "number")),
-                         doctest::Contains("expected an integer for 'number'"),
-                         smdl::Error);
+    CHECK_THROWS_WITH_AS(
+        (void)doc.toFloat(entryOf(doc, "text")),
+        doctest::Contains("Expected a real number for \"text\""), smdl::Error);
+    CHECK_THROWS_WITH_AS(
+        (void)doc.toInt(entryOf(doc, "number")),
+        doctest::Contains("Expected an integer for \"number\""), smdl::Error);
     CHECK_THROWS_WITH_AS(
         (void)doc.toList(entryOf(doc, "number")),
-        doctest::Contains("expected an inline list '[...]' for 'number'"),
+        doctest::Contains("Expected an inline list '[...]' for \"number\""),
         smdl::Error);
     CHECK_THROWS_WITH_AS(
         (void)doc.toMap(entryOf(doc, "number")),
-        doctest::Contains("expected an indented block after 'number':"),
+        doctest::Contains("Expected an indented block after \"number\":"),
         smdl::Error);
     CHECK_THROWS_WITH_AS((void)doc.toSequence(entryOf(doc, "number")),
-                         doctest::Contains("expected an indented sequence"),
+                         doctest::Contains("Expected an indented sequence"),
                          smdl::Error);
   }
 
@@ -108,18 +108,18 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     CHECK(doc.toFloat(entryOf(doc, "nested"), nested[1].items[2]) ==
           doctest::Approx(0.7f));
     CHECK_THROWS_WITH_AS((void)doc.toFloats(entryOf(doc, "reals"), 2),
-                         doctest::Contains("expected a list of 2 reals"),
+                         doctest::Contains("Expected a list of 2 reals"),
                          smdl::Error);
     CHECK_THROWS_WITH_AS((void)doc.toFloats(entryOf(doc, "words"), 3),
-                         doctest::Contains("expected a list of 3 reals"),
+                         doctest::Contains("Expected a list of 3 reals"),
                          smdl::Error);
     CHECK_THROWS_WITH_AS((void)doc.toString(entryOf(doc, "reals")),
-                         doctest::Contains("expected a string for 'reals'"),
+                         doctest::Contains("Expected a string for \"reals\""),
                          smdl::Error);
-    parseFail("a: [1, 2\n", 1, "expected ']' to close the inline list");
-    parseFail("a: [1, , 2]\n", 1, "empty list item");
-    parseFail("a: [1, [2, [3]]]\n", 1, "lists nest only one level deep");
-    parseFail("a: [1]]\n", 1, "unexpected ']'");
+    parseFail("a: [1, 2\n", 1, "Expected ']' to close the inline list");
+    parseFail("a: [1, , 2]\n", 1, "Empty list item");
+    parseFail("a: [1, [2, [3]]]\n", 1, "Lists nest only one level deep");
+    parseFail("a: [1]]\n", 1, "Unexpected ']'");
   }
 
   SUBCASE("A block map parses to its entries") {
@@ -135,14 +135,14 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     CHECK(entryOf(doc, "normal").value.kind == FlatYAML::Node::MAP);
     CHECK(doc.toString(entryOf(doc, "after")) == "yes");
     parseFail("normal:\n  file: n.png\n   over: x\n", 3,
-              "inconsistent indentation");
-    parseFail("name: x\n  stray: y\n", 2, "unexpected indentation");
-    parseFail("normal:\n", 1, "expected a value or an indented block after");
+              "Inconsistent indentation");
+    parseFail("name: x\n  stray: y\n", 2, "Unexpected indentation");
+    parseFail("normal:\n", 1, "Expected a value or an indented block after");
     parseFail("normal:\nafter: x\n", 1,
-              "expected a value or an indented block after");
+              "Expected a value or an indented block after");
     parseFail("a:\n  b:\n    c: 1\n", 3,
-              "nested blocks are only supported one level deep");
-    parseFail("\tname: x\n", 1, "tab in indentation");
+              "Nested blocks are only supported one level deep");
+    parseFail("\tname: x\n", 1, "Tab in indentation");
   }
 
   SUBCASE("A block sequence of maps parses to its entries") {
@@ -165,26 +165,26 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     CHECK(sequence[1][0].value.text == "rock_04");
     CHECK(sequence[1][1].lineNo == 6);
     CHECK(doc.toString(entryOf(doc, "name")) == "after");
-    parseFail("- select: x\n", 1, "unexpected '-'");
+    parseFail("- select: x\n", 1, "Unexpected '-'");
     parseFail("objects:\n  - select: x\n   triangles: 1\n", 3,
-              "inconsistent indentation");
+              "Inconsistent indentation");
     parseFail("objects:\n  - select:\n      nested: 1\n", 2,
-              "nested blocks are not supported inside sequence items");
+              "Nested blocks are not supported inside sequence items");
     parseFail("objects:\n  - select: x\n  triangles: 1\n", 3,
-              "expected '- ' to start a sequence item");
-    parseFail("objects:\n  - select: x\n    select: y\n", 3, "duplicate key");
-    parseFail("objects:\n  -\n", 2, "expected 'key: value' after '-'");
+              "Expected '- ' to start a sequence item");
+    parseFail("objects:\n  - select: x\n    select: y\n", 3, "Duplicate key");
+    parseFail("objects:\n  -\n", 2, "Expected 'key: value' after '-'");
   }
 
   SUBCASE("A malformed key or structure is refused") {
-    parseFail("just some text\n", 1, "expected 'key: value'");
-    parseFail("basecolor:a.png\n", 1, "expected a space after ':'");
-    parseFail(": x\n", 1, "expected 'key: value'");
-    parseFail("a: 1\na: 2\n", 2, "duplicate key 'a' (already on line 1)");
-    parseFail("n:\n  f: 1\n  f: 2\n", 3, "duplicate key");
-    parseFail("name: \"unterminated\n", 1, "unterminated string");
-    parseFail("name: \"x\" y\n", 1, "unexpected text after string");
-    parseFail("name: \"bad \\n escape\"\n", 1, "invalid escape");
+    parseFail("just some text\n", 1, "Expected 'key: value'");
+    parseFail("basecolor:a.png\n", 1, "Expected a space after ':'");
+    parseFail(": x\n", 1, "Expected 'key: value'");
+    parseFail("a: 1\na: 2\n", 2, "Duplicate key \"a\" (already on line 1)");
+    parseFail("n:\n  f: 1\n  f: 2\n", 3, "Duplicate key");
+    parseFail("name: \"unterminated\n", 1, "Unterminated string");
+    parseFail("name: \"x\" y\n", 1, "Unexpected text after string");
+    parseFail("name: \"bad \\n escape\"\n", 1, "Invalid escape");
   }
 
   SUBCASE("A number parses in every spelling the format admits") {

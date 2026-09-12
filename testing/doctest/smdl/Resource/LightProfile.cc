@@ -145,21 +145,21 @@ TEST_CASE("LightProfile: where a malformed file goes wrong") {
   }};
   SUBCASE("A number that does not parse names its line and its field") {
     CHECK(refusal(withLine(6, "0 45 ninety 135 180")) ==
-          "expected a float for vertical angle on line 6");
+          "Expected a float for vertical angle on line 6");
     CHECK(refusal(withLine(4, "one 1000 1 5 1 1 2 0.1 0.1 0.1")) ==
-          "expected an int for num lamps on line 4");
+          "Expected an int for num lamps on line 4");
   }
   SUBCASE("A file that stops short says so") {
     CHECK(refusal(withLine(8, "")) ==
-          "expected a float for candela value at the end of the file");
+          "Expected a float for candela value at the end of the file");
   }
   SUBCASE("The tilt line and the type codes name their lines") {
-    CHECK(refusal(withLine(3, "TILTED")) == "expected 'TILT=' on line 3");
+    CHECK(refusal(withLine(3, "TILTED")) == "Expected 'TILT=' on line 3");
     CHECK(refusal(withLine(3, "TILT=SOMETIMES")) ==
-          "unsupported tilt 'SOMETIMES' on line 3");
+          "Unsupported tilt \"SOMETIMES\" on line 3");
     CHECK(refusal(withLine(4, "1 1000 1 5 1 4 2 0.1 0.1 0.1")) ==
-          "unknown photometric type 4 on line 4");
+          "Unknown photometric type 4 on line 4");
     CHECK(refusal(withLine(4, "1 1000 1 5 1 1 3 0.1 0.1 0.1")) ==
-          "unknown units type 3 on line 4");
+          "Unknown units type 3 on line 4");
   }
 }

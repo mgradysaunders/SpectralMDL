@@ -9,15 +9,15 @@
 namespace smdl {
 
 void Quoted::appendTo(std::string &result) const {
-  result += '\'';
+  result += '"';
   result += str;
-  result += '\'';
+  result += '"';
 }
 
 void QuotedPath::appendTo(std::string &result) const {
-  result += '\'';
+  result += '"';
   result += bestPathForPrinting(std::string(str));
-  result += '\'';
+  result += '"';
 }
 
 void LocationMarkup::appendTo(std::string &result) const {
@@ -143,15 +143,6 @@ std::string_view suggestNearest(std::string_view name,
     }
   }
   return best;
-}
-
-std::string decapitalized(std::string message) {
-  if (message.empty() || !('A' <= message[0] && message[0] <= 'Z'))
-    return message;
-  for (size_t i = 1; i < message.size() && message[i] != ' '; i++)
-    if ('A' <= message[i] && message[i] <= 'Z') return message;
-  message[0] = char(message[0] - 'A' + 'a');
-  return message;
 }
 
 } // namespace smdl

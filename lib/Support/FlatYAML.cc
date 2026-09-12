@@ -36,7 +36,7 @@ public:
     size_t i{0};
     mDoc.root = parseMap(i, 0);
     if (i < mLines.size())
-      mDoc.fail(mLines[i].lineNo, "unexpected indentation");
+      mDoc.fail(mLines[i].lineNo, "Unexpected indentation");
   }
 
 private:
@@ -67,7 +67,7 @@ private:
       size_t indent{0};
       while (indent < text.size() && text[indent] == ' ') indent++;
       if (indent < text.size() && text[indent] == '\t')
-        mDoc.fail(lineNo, "tab in indentation (use spaces)");
+        mDoc.fail(lineNo, "Tab in indentation (use spaces)");
       std::string_view content{trimRight(stripComment(text.substr(indent)))};
       if (content.empty()) continue;
       Line line{};
@@ -81,16 +81,16 @@ private:
         line.keyColumn = int(indent + 1 + (afterDash.size() - stripped.size()));
         content = stripped;
         if (content.empty())
-          mDoc.fail(lineNo, "expected 'key: value' after '-'");
+          mDoc.fail(lineNo, "Expected 'key: value' after '-'");
       }
       size_t colon{content.find(':')};
       if (colon == std::string_view::npos)
-        mDoc.fail(lineNo, "expected 'key: value'");
+        mDoc.fail(lineNo, "Expected 'key: value'");
       std::string_view key{trimRight(content.substr(0, colon))};
       std::string_view after{content.substr(colon + 1)};
-      if (key.empty()) mDoc.fail(lineNo, "expected 'key: value'");
+      if (key.empty()) mDoc.fail(lineNo, "Expected 'key: value'");
       if (!after.empty() && after[0] != ' ')
-        mDoc.fail(lineNo, "expected a space after ':'");
+        mDoc.fail(lineNo, "Expected a space after ':'");
       line.key = key;
       line.value = trim(after);
       mLines.push_back(line);
@@ -124,7 +124,7 @@ private:
                       std::string_view key, int lineNo) {
     auto [itr, inserted] = seen.try_emplace(std::string(key), lineNo);
     if (!inserted)
-      mDoc.fail(lineNo, concat("duplicate key ", Quoted(key),
+      mDoc.fail(lineNo, concat("Duplicate key ", Quoted(key),
                                " (already on line ", itr->second, ")"));
   }
 
@@ -137,10 +137,10 @@ private:
       const Line &line{mLines[i]};
       if (line.indent < indent) break;
       if (line.indent > indent)
-        mDoc.fail(line.lineNo, indent > 0 ? "inconsistent indentation"
-                                          : "unexpected indentation");
+        mDoc.fail(line.lineNo, indent > 0 ? "Inconsistent indentation"
+                                          : "Unexpected indentation");
       if (line.hasDash)
-        mDoc.fail(line.lineNo, "unexpected '-' (not inside a sequence)");
+        mDoc.fail(line.lineNo, "Unexpected '-' (not inside a sequence)");
       checkDuplicate(seen, line.key, line.lineNo);
       FlatYAML::Entry &entry{map.emplace_back()};
       entry.key = std::string(line.key);
@@ -151,11 +151,11 @@ private:
       } else {
         if (i >= mLines.size() || mLines[i].indent <= indent)
           mDoc.fail(line.lineNo,
-                    concat("expected a value or an indented block after ",
+                    concat("Expected a value or an indented block after ",
                            Quoted(line.key), ":"));
         if (indent > 0)
           mDoc.fail(mLines[i].lineNo,
-                    "nested blocks are only supported one level deep");
+                    "Nested blocks are only supported one level deep");
         entry.value.lineNo = line.lineNo;
         if (mLines[i].hasDash) {
           entry.value.kind = FlatYAML::Node::SEQUENCE;
@@ -176,13 +176,13 @@ private:
     while (i < mLines.size() && mLines[i].indent >= dashIndent) {
       const Line &first{mLines[i]};
       if (!first.hasDash || first.indent != dashIndent)
-        mDoc.fail(first.lineNo, "expected '- ' to start a sequence item");
+        mDoc.fail(first.lineNo, "Expected '- ' to start a sequence item");
       std::map<std::string, int, std::less<>> seen{};
       FlatYAML::Map &item{sequence.emplace_back()};
       auto addEntry{[&](const Line &line) {
         if (line.value.empty())
           mDoc.fail(line.lineNo,
-                    "nested blocks are not supported inside sequence items");
+                    "Nested blocks are not supported inside sequence items");
         checkDuplicate(seen, line.key, line.lineNo);
         FlatYAML::Entry &entry{item.emplace_back()};
         entry.key = std::string(line.key);
@@ -194,7 +194,7 @@ private:
       while (i < mLines.size() && !mLines[i].hasDash &&
              mLines[i].indent > dashIndent) {
         if (mLines[i].indent != first.keyColumn)
-          mDoc.fail(mLines[i].lineNo, "inconsistent indentation");
+          mDoc.fail(mLines[i].lineNo, "Inconsistent indentation");
         addEntry(mLines[i]);
         i++;
       }
@@ -208,7 +208,7 @@ private:
     node.lineNo = lineNo;
     if (startsWith(value, "[")) {
       if (value.back() != ']')
-        mDoc.fail(lineNo, "expected ']' to close the inline list");
+        mDoc.fail(lineNo, "Expected ']' to close the inline list");
       node.kind = FlatYAML::Node::LIST;
       node.items = parseListItems(lineNo, value.substr(1, value.size() - 2),
                                   /*canNest=*/true);
@@ -231,13 +231,13 @@ private:
     bool isInEscape{false};
     auto flush{[&](size_t end) {
       std::string_view text{trim(inside.substr(start, end - start))};
-      if (text.empty()) mDoc.fail(lineNo, "empty list item");
+      if (text.empty()) mDoc.fail(lineNo, "Empty list item");
       FlatYAML::Node item{};
       item.lineNo = lineNo;
       if (startsWith(text, "[")) {
-        if (!canNest) mDoc.fail(lineNo, "lists nest only one level deep");
+        if (!canNest) mDoc.fail(lineNo, "Lists nest only one level deep");
         if (text.back() != ']')
-          mDoc.fail(lineNo, "expected ']' to close the inline list");
+          mDoc.fail(lineNo, "Expected ']' to close the inline list");
         item.kind = FlatYAML::Node::LIST;
         item.items = parseListItems(lineNo, text.substr(1, text.size() - 2),
                                     /*canNest=*/false);
@@ -262,13 +262,13 @@ private:
       } else if (ch == '[') {
         depth++;
       } else if (ch == ']') {
-        if (depth == 0) mDoc.fail(lineNo, "unexpected ']' in the inline list");
+        if (depth == 0) mDoc.fail(lineNo, "Unexpected ']' in the inline list");
         depth--;
       } else if (ch == ',' && depth == 0) {
         flush(i);
       }
     }
-    if (depth != 0) mDoc.fail(lineNo, "expected ']' to close the inline list");
+    if (depth != 0) mDoc.fail(lineNo, "Expected ']' to close the inline list");
     flush(inside.size());
     return items;
   }
@@ -285,20 +285,20 @@ private:
       char ch{value[i]};
       if (isInEscape) {
         if (ch != '"' && ch != '\\')
-          mDoc.fail(lineNo, "invalid escape (only '\\\"' and '\\\\')");
+          mDoc.fail(lineNo, "Invalid escape (only '\\\"' and '\\\\')");
         result += ch;
         isInEscape = false;
       } else if (ch == '\\') {
         isInEscape = true;
       } else if (ch == '"') {
         if (i + 1 != value.size())
-          mDoc.fail(lineNo, "unexpected text after string");
+          mDoc.fail(lineNo, "Unexpected text after string");
         return result;
       } else {
         result += ch;
       }
     }
-    mDoc.fail(lineNo, "unterminated string");
+    mDoc.fail(lineNo, "Unterminated string");
   }
 
 private:
@@ -324,7 +324,7 @@ void FlatYAML::fail(int lineNo, std::string_view message) const {
 
 const std::string &FlatYAML::toString(const Entry &entry) const {
   if (entry.value.kind != Node::SCALAR)
-    fail(entry, concat("expected a string for ", Quoted(entry.key)));
+    fail(entry, concat("Expected a string for ", Quoted(entry.key)));
   return entry.value.text;
 }
 
@@ -336,7 +336,7 @@ float FlatYAML::toFloat(const Entry &entry, const Node &item) const {
   if (item.kind == Node::SCALAR && !item.isQuoted)
     if (std::optional<double> number{parseNumber(item.text)})
       return float(*number);
-  fail(entry, concat("expected a real number for ", Quoted(entry.key)));
+  fail(entry, concat("Expected a real number for ", Quoted(entry.key)));
 }
 
 long FlatYAML::toInt(const Entry &entry) const {
@@ -346,13 +346,13 @@ long FlatYAML::toInt(const Entry &entry) const {
     long result{std::strtol(text.c_str(), &end, 10)};
     if (!text.empty() && end == text.c_str() + text.size()) return result;
   }
-  fail(entry, concat("expected an integer for ", Quoted(entry.key)));
+  fail(entry, concat("Expected an integer for ", Quoted(entry.key)));
 }
 
 const std::vector<FlatYAML::Node> &FlatYAML::toList(const Entry &entry) const {
   if (entry.value.kind != Node::LIST)
     fail(entry,
-         concat("expected an inline list '[...]' for ", Quoted(entry.key)));
+         concat("Expected an inline list '[...]' for ", Quoted(entry.key)));
   return entry.value.items;
 }
 
@@ -367,7 +367,7 @@ std::vector<float> FlatYAML::toFloats(const Entry &entry, size_t count) const {
     }
   }
   if (result.size() != count)
-    fail(entry, concat("expected a list of ", Counted(count, "real"), " for ",
+    fail(entry, concat("Expected a list of ", Counted(count, "real"), " for ",
                        Quoted(entry.key)));
   return result;
 }
@@ -375,14 +375,14 @@ std::vector<float> FlatYAML::toFloats(const Entry &entry, size_t count) const {
 const FlatYAML::Map &FlatYAML::toMap(const Entry &entry) const {
   if (entry.value.kind != Node::MAP)
     fail(entry,
-         concat("expected an indented block after ", Quoted(entry.key), ":"));
+         concat("Expected an indented block after ", Quoted(entry.key), ":"));
   return entry.value.map;
 }
 
 const std::vector<FlatYAML::Map> &
 FlatYAML::toSequence(const Entry &entry) const {
   if (entry.value.kind != Node::SEQUENCE)
-    fail(entry, concat("expected an indented sequence of '- key: value' "
+    fail(entry, concat("Expected an indented sequence of '- key: value' "
                        "items after ",
                        Quoted(entry.key), ":"));
   return entry.value.sequence;

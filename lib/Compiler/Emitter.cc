@@ -906,7 +906,7 @@ void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
               declaration->node)};
       declarator && declarator->decl && declarator->decl->type)
     isConst = declarator->decl->type->hasQualifier("const");
-  std::string message{concat("cannot assign to ", Quoted(names[0]),
+  std::string message{concat("Cannot assign to ", Quoted(names[0]),
                              isConst ? " because it is declared 'const'"
                                      : " because it is not a variable")};
   if (SourceLocation declSrcLoc{declaration->getSourceLocation()})
@@ -2154,7 +2154,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     builder.SetInsertPoint(blockPanic);
     handleScope(nullptr, nullptr, [&] {
       if (args.size() == 1) {
-        std::string message{"assertion failed"};
+        std::string message{"Assertion failed"};
         if (!args[0].getSource().empty()) {
           message += ": ";
           message += args[0].getSource();
@@ -3897,8 +3897,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           !Span<const std::string_view>(paramNames).contains(arg.name))
         invalidNames.push_back(arg.name);
     std::string message{std::string(invalidNames.size() == 1
-                                        ? "no parameter named "
-                                        : "no parameters named ")};
+                                        ? "No parameter named "
+                                        : "No parameters named ")};
     for (size_t i{}; i < invalidNames.size(); i++) {
       if (i > 0) message += ", ";
       message += concat(Quoted(invalidNames[i]));

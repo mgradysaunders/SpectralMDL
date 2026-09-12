@@ -57,8 +57,8 @@ private:
                        "picture is taken from and through what belongs in "
                        "the '.camera' file that names this one");
       } else if (mToken.text == "response" || mToken.text == "detector") {
-        error.note({}, smdl::concat("'", mToken.text,
-                                    "' is a block inside 'sensor', not a "
+        error.note({}, smdl::concat(smdl::Quoted(mToken.text),
+                                    " is a block inside 'sensor', not a "
                                     "directive of its own"));
       } else {
         error.note({}, "a sensor file holds one 'sensor' block: the pixels, "
@@ -401,8 +401,10 @@ private:
     }
     advance();
     if (mToken.kind != Token::OPEN) {
-      mDiags.error(location(),
-                   smdl::concat("expected '{' after 'band ", band.name, "'"));
+      mDiags.error(
+          location(),
+          smdl::concat("expected '{' after ",
+                       smdl::Quoted(smdl::concat("band ", band.name))));
       throw Recover();
     }
     advance(); // '{'

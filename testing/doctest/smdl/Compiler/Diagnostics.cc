@@ -28,8 +28,8 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
   SUBCASE("A quoted candidate note does not repeat the caret") {
     smdl::Error error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
                                    "exec { auto s = S(alhpa: 2); }\n")};
-    CHECK_CONTAINS(error.message, "no parameter named 'alhpa'; did you mean "
-                                  "'alpha'?");
+    CHECK_CONTAINS(error.message, "No parameter named \"alhpa\"; did you mean "
+                                  "\"alpha\"?");
     // The caret belongs to the primary error, not to the note quoting the
     // rejected candidate.
     CHECK_NOT_CONTAINS(error.message, '^');
@@ -69,7 +69,7 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(logged.messages().size() == 1);
     CHECK(smdl::startsWith(logged.messages()[0], "[<string ::diag>:3:"));
-    CHECK_CONTAINS(logged.messages()[0], "] New material '::diag::m'");
+    CHECK_CONTAINS(logged.messages()[0], "] New material \"::diag::m\"");
   }
   SUBCASE("A run-time assertion failure reports where it failed") {
     smdl::Compiler compiler{};
@@ -84,7 +84,7 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
     const std::optional<smdl::Error> error{compiler.runUnitTests(state)};
     REQUIRE(error.has_value());
     CHECK_CONTAINS(error->message, "[<string ::diag>:4:");
-    CHECK_CONTAINS(error->message, "assertion failed: i == 2");
+    CHECK_CONTAINS(error->message, "Assertion failed: i == 2");
     CHECK_CONTAINS(error->snippet, "#assert(i == 2);");
   }
 }
@@ -94,24 +94,24 @@ TEST_CASE("Compiler: the name a misspelling is corrected to") {
     return compileError("#smdl\nexec {\n" + std::move(body) + "\n}\n").message;
   }};
   SUBCASE("The C spelling of an intrinsic suggests the intrinsic") {
-    CHECK_CONTAINS(errorFor(" assert(1 == 1);"), "did you mean '#assert'?");
-    CHECK_CONTAINS(errorFor(" printf(\"hi\");"), "did you mean '#print'?");
+    CHECK_CONTAINS(errorFor(" assert(1 == 1);"), "did you mean \"#assert\"?");
+    CHECK_CONTAINS(errorFor(" printf(\"hi\");"), "did you mean \"#print\"?");
     // Wins over 'size_t', which is a keyword two edits away, because the
     // candidates are weighed together instead of list by list.
     CHECK_CONTAINS(errorFor(" #print(sizeof(int));"),
-                   "did you mean '#sizeOf'?");
+                   "did you mean \"#sizeOf\"?");
   }
   SUBCASE("A word-shaped literal is suggested") {
     CHECK_CONTAINS(errorFor(" bool b = True; #print(b);"),
-                   "did you mean 'true'?");
+                   "did you mean \"true\"?");
   }
   SUBCASE("A bare 'state' suggests '$state'") {
-    CHECK_CONTAINS(errorFor(" #print(state);"), "did you mean '$state'?");
+    CHECK_CONTAINS(errorFor(" #print(state);"), "did you mean \"$state\"?");
   }
   SUBCASE("A qualified name suggests within its module") {
     smdl::Error error{compileError("#smdl\nimport ::math::*;\n"
                                    "exec { #print(math::sqr(4.0)); }\n")};
-    CHECK_CONTAINS(error.message, "did you mean 'math::sqrt'?");
+    CHECK_CONTAINS(error.message, "did you mean \"math::sqrt\"?");
   }
   SUBCASE("A suggestion keeps the kind of what was typed") {
     // 'diffuse_edf' is nearer to 'diffuse_bsdf' by edit distance, and is
@@ -124,24 +124,24 @@ TEST_CASE("Compiler: the name a misspelling is corrected to") {
   SUBCASE("An imported module that is not opened says so") {
     smdl::Error error{compileError("#smdl\nimport ::math::*;\n"
                                    "exec { #print(sqrt(4.0)); }\n")};
-    CHECK_CONTAINS(error.message, "'math' is imported but not opened");
-    CHECK_CONTAINS(error.message, "'math::sqrt'");
+    CHECK_CONTAINS(error.message, "\"math\" is imported but not opened");
+    CHECK_CONTAINS(error.message, "\"math::sqrt\"");
     CHECK_CONTAINS(error.message, "using ::math import sqrt;");
   }
   SUBCASE("A misspelled module suggests the builtin") {
     smdl::Error error{
         compileError("#smdl\nimport ::maths::*;\nexec { #print(1); }\n")};
-    CHECK_CONTAINS(error.message, "did you mean '::math'?");
+    CHECK_CONTAINS(error.message, "did you mean \"::math\"?");
   }
   SUBCASE("A misspelled imported name suggests within the module") {
     smdl::Error error{compileError("#smdl\nusing ::math import sqrtt;\n"
                                    "exec { #print(1); }\n")};
-    CHECK_CONTAINS(error.message, "did you mean 'sqrt'?");
+    CHECK_CONTAINS(error.message, "did you mean \"sqrt\"?");
   }
   SUBCASE("A misspelled field suggests the field") {
     smdl::Error error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
                                    "exec { #print(S().alhpa); }\n")};
-    CHECK_CONTAINS(error.message, "did you mean 'alpha'?");
+    CHECK_CONTAINS(error.message, "did you mean \"alpha\"?");
   }
   SUBCASE("A swizzle off the end lists the components") {
     smdl::Error error{compileError("#smdl\nexec { float2 v; #print(v.z); }\n")};
@@ -150,8 +150,9 @@ TEST_CASE("Compiler: the name a misspelling is corrected to") {
   SUBCASE("'=' where ':' was meant names the mistake") {
     smdl::Error error{
         compileError("#smdl\nexport material m() = material(ior = 1.5);\n")};
-    CHECK_CONTAINS(error.message, "a named argument is written 'ior: ...', not "
-                                  "'ior = ...'");
+    CHECK_CONTAINS(error.message,
+                   "a named argument is written \"ior: ...\", not "
+                   "\"ior = ...\"");
   }
   SUBCASE("An empty 'exec' is skipped with a warning") {
     const CollectedLog warned{"empty body does nothing"};
@@ -200,10 +201,10 @@ TEST_CASE("Compiler: the overloads a rejected call names") {
     // caller wrote, not with the internal callee and the two arguments the
     // forwarder injects.
     CHECK_CONTAINS(error.message,
-                   "Cannot call 'microfacet_ggx_smith_bsdf' with "
-                   "arguments '(roughness: float)'");
+                   "Cannot call \"microfacet_ggx_smith_bsdf\" with "
+                   "arguments \"(roughness: float)\"");
     CHECK_CONTAINS(error.message, "forwards to:");
-    CHECK_CONTAINS(error.message, "did you mean 'roughness_u'?");
+    CHECK_CONTAINS(error.message, "did you mean \"roughness_u\"?");
   }
   SUBCASE("A builtin type says what it accepts") {
     CHECK_CONTAINS(
@@ -228,7 +229,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     smdl::Error error{
         compileError("#smdl\nexec { float4x3 a; float4x3 b; auto c = a "
                      "* b; #print(c); }\n")};
-    CHECK_CONTAINS(error.message, "No binary operator '*'");
+    CHECK_CONTAINS(error.message, "No binary operator \"*\"");
     CHECK_CONTAINS(error.message,
                    "columns of the left (4) to match the rows of "
                    "the right (3)");
@@ -241,14 +242,15 @@ TEST_CASE("Compiler: how a refusal is phrased") {
         compileError("#smdl\n@(pure) int f() { return \"hello\"; }\n"
                      "exec { #print(f()); }\n")};
     CHECK_CONTAINS(error.message,
-                   "Cannot convert return value of type 'string' "
-                   "to 'int'");
+                   "Cannot convert return value of type \"string\" "
+                   "to \"int\"");
   }
   SUBCASE("Assigning to a 'const' says 'const', not 'rvalue'") {
     smdl::Error error{
         compileError("#smdl\nexec { const int i = 1; i = 2; }\n")};
-    CHECK_CONTAINS(error.message, "cannot assign to 'i' because it is declared "
-                                  "'const'");
+    CHECK_CONTAINS(error.message,
+                   "Cannot assign to \"i\" because it is declared "
+                   "'const'");
     CHECK_CONTAINS(error.message, "declared at [<string ::diag>:2:");
     CHECK_NOT_CONTAINS(error.message, "rvalue");
   }
@@ -259,7 +261,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     CHECK_CONTAINS(error.message, "because it is not a variable");
   }
   SUBCASE("A missing resource blames the line that asked for it") {
-    const CollectedLog warned{"load 'nope.png': file not found"};
+    const CollectedLog warned{"load \"nope.png\": file not found"};
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addCode(
         "::diag", "#smdl\nexport material m(uniform texture_2d t = "
@@ -283,7 +285,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
                          tmpDir.path().string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(warned.messages().size() == 1);
-    CHECK_CONTAINS(warned.messages()[0], "not an IES file");
+    CHECK_CONTAINS(warned.messages()[0], "Not an IES file");
     CHECK_NOT_CONTAINS(warned.messages()[0], "<builtin");
     CHECK_CONTAINS(warned.messages()[0], "<string ::diag>:2:");
   }
@@ -300,7 +302,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
                   "exec { int unusedLocal = 1; }\n"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(warned.messages().size() == 1);
-    CHECK_CONTAINS(warned.messages()[0], "variable 'unusedLocal'");
+    CHECK_CONTAINS(warned.messages()[0], "variable \"unusedLocal\"");
   }
 }
 
@@ -308,7 +310,7 @@ TEST_CASE("Compiler: where a color and a float3 may convert") {
   SUBCASE("'color' to 'float3' is refused in a pure context") {
     smdl::Error error{compileError(
         "#smdl\nexec { color c = color(1.0); float3 v = c; #print(v); }\n")};
-    CHECK_CONTAINS(error.message, "Cannot convert 'color' to 'float3' in a "
+    CHECK_CONTAINS(error.message, "Cannot convert 'color' to \"float3\" in a "
                                   "'@(pure)' context");
     // Naming the internal function the conversion reaches is what this
     // replaced.

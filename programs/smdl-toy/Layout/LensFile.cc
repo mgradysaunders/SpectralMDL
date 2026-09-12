@@ -367,7 +367,8 @@ private:
     }
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(),
-                   smdl::concat("expected '{' after 'medium ", name, "'"));
+                   smdl::concat("expected '{' after ",
+                                smdl::Quoted(smdl::concat("medium ", name))));
       throw Recover();
     }
     std::optional<float> nd{};
@@ -510,8 +511,7 @@ private:
     if (!error) return nullptr;
     return &mDiags.error(definition.nameLoc,
                          smdl::concat("medium ", smdl::Quoted(definition.name),
-                                      ": ",
-                                      smdl::decapitalized(error->message)));
+                                      ": ", error->message));
   }
 
   // Warn where a printed value stated beside 'sellmeier' disagrees with

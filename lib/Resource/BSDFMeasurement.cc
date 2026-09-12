@@ -16,7 +16,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
   std::optional<Error> error{catchAndReturnError([&] {
     llvm::StringRef mem{file};
     if (!mem.consume_front("NVIDIA ARC MBSDF V1\n")) {
-      throw Error("not an MBSDF file");
+      throw Error("Not an MBSDF file");
     }
     size_t dataBlockOffset{[&]() -> size_t {
       kind = KIND_REFLECTION;
@@ -26,7 +26,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
       kind = KIND_TRANSMISSION;
       if (size_t i{mem.find("MBSDF_DATA_TRANSMISSION=\n")}; i < mem.size())
         return i;
-      throw Error("missing data block");
+      throw Error("Missing data block");
       return 0;
     }()};
     {
@@ -61,7 +61,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
     mem = mem.drop_until([](char ch) { return ch == '\n'; });
     mem = mem.drop_front(1);
     if (mem.size() < 12) {
-      throw Error("invalid data block");
+      throw Error("Invalid data block");
     }
     type = Type(llvm::support::endian::read32le(mem.data()));
     numTheta = llvm::support::endian::read32le(mem.data() + 4);
@@ -88,7 +88,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
       }
       break;
     default:
-      throw Error("unknown type");
+      throw Error("Unknown type");
       break;
     }
   })};
@@ -266,8 +266,8 @@ BSDFMeasurement::loadFromFile(const std::string &fileName) noexcept {
           catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
   if (std::optional<Error> error{loadFromFileMemory(file)})
-    return Error(concat("Cannot load ", QuotedPath(fileName), ": ",
-                        decapitalized(error->message)));
+    return Error(
+        concat("Cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
 }
 

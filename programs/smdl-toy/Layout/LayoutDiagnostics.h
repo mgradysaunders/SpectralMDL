@@ -144,8 +144,9 @@ public:
   /// A message here follows `error:` on the same line, so it is worded
   /// as a lowercase clause and may lead with the directive it is about
   /// (`'sensor' names a body`), unlike a logged message, which is a
-  /// capitalized sentence. An `smdl::Error` crossing into this channel
-  /// is reworded by `smdl::decapitalized()`.
+  /// capitalized sentence. A directive spelled out in the message text
+  /// is single quoted as the format writes it; a name or value that
+  /// comes from the file goes through `smdl::Quoted`.
   LayoutDiagnostic &error(LayoutLocation location, std::string message);
 
   /// Report a warning. Returns the diagnostic so notes can chain.

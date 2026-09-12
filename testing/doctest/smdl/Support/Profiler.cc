@@ -11,5 +11,5 @@ TEST_CASE("Profiler: a trace that cannot be written") {
   // Said once, and with the reason, which is also what consumes the error
   // LLVM hands back rather than leaving it to abort a checked build.
   REQUIRE(logged.messages().size() == 1);
-  CHECK_CONTAINS(logged.messages()[0], "trace.json': ");
+  CHECK_CONTAINS(logged.messages()[0], "trace.json\": ");
 }

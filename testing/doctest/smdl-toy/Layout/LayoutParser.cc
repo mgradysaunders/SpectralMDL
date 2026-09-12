@@ -154,7 +154,7 @@ asset plain = box { material wood }
           std::pair{"light a = point { radius 1 }\n",
                     "'radius' applies to a disk"},
           std::pair{"light a = rect { angle 30 }\n",
-                    "'angle' applies to a spot"},
+                    "\"angle\" applies to a spot"},
           std::pair{"light a = rect { scale 2 }\n",
                     "the place line's 'scale' stretches it"},
           std::pair{"light a = disk { frobnicate }\n", "radius, caustic"}}) {
@@ -240,10 +240,10 @@ import "b.gltf" { caster light }
                        "import \"b.gltf\" { light light }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 4);
-    const char *expected[]{"'caster' appears twice in one place",
-                           "'light' appears twice in one place",
-                           "'caster' appears twice in one import",
-                           "'light' appears twice in one import"};
+    const char *expected[]{"\"caster\" appears twice in one place",
+                           "\"light\" appears twice in one place",
+                           "\"caster\" appears twice in one import",
+                           "\"light\" appears twice in one import"};
     for (size_t i = 0; i < 4; i++) {
       CAPTURE(i);
       CHECK_CONTAINS(diags.all()[i].message, expected[i]);
@@ -566,7 +566,7 @@ TEST_CASE("LayoutParser: the offset on a place") {
                                 "place h offset fast\n"),
                    "expected a number");
     CHECK_CONTAINS(firstErrorOf("import \"h.glb\" { offset 1 }\n"),
-                   "'offset' is a place operation");
+                   "\"offset\" is a place operation");
     CHECK_CONTAINS(firstErrorOf("asset h = \"h.glb\"\n"
                                 "place h frobnicate\n"),
                    "offset");

@@ -298,6 +298,20 @@ TEST_CASE("Logger: message formatting") {
     CHECK(highlighted("'::a' imports '::b'") ==
           CYAN + "'::a'" + RESET + " imports " + CYAN + "'::b'" + RESET);
   }
+  SUBCASE("A double-quoted path is cyan the same way") {
+    // 'QuotedPath' double quotes, so a path highlights like the code
+    // identifiers 'Quoted' single quotes, and the two mix in one message.
+    CHECK(highlighted("Cannot load \"x.png\": y") ==
+          "Cannot load " + CYAN + "\"x.png\"" + RESET + ": y");
+    CHECK(highlighted("Unused variable 'v' in \"a.mdl\"") ==
+          "Unused variable " + CYAN + "'v'" + RESET + " in " + CYAN +
+              "\"a.mdl\"" + RESET);
+    CHECK(highlighted("\"bob's.png\"") == CYAN + "\"bob's.png\"" + RESET);
+  }
+  SUBCASE("A double quote that never closes is left alone") {
+    for (const char *message : {"begins with \"SMDLPLCS", "a \" b"})
+      CHECK(highlighted(message) == message);
+  }
   SUBCASE("An apostrophe is not a quote") {
     for (const char *message :
          {"don't", "the materials' names", "an unclosed 'quote"})

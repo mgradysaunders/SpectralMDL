@@ -22,7 +22,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
       return text.empty() ? std::string("at the end of the file")
                           : concat("on line ", lineOf(text));
     }};
-    if (!text.starts_with("IESNA")) throw Error("not an IES file");
+    if (!text.starts_with("IESNA")) throw Error("Not an IES file");
     // Parse version
     {
       auto [line, remainder] = text.split('\n');
@@ -53,11 +53,11 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
           value = result;
           text = text.drop_front(num.size());
         } else {
-          throw Error(concat("expected a float for ", what, " ", where()));
+          throw Error(concat("Expected a float for ", what, " ", where()));
         }
       } else {
         if (text.consumeInteger(/*Radix=*/0, value)) {
-          throw Error(concat("expected an int for ", what, " ", where()));
+          throw Error(concat("Expected an int for ", what, " ", where()));
         }
       }
     }};
@@ -66,10 +66,10 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
       text = text.ltrim();
       auto [line, remainder] = text.split('\n');
       if (!line.consume_front("TILT="))
-        throw Error(concat("expected 'TILT=' ", where()));
+        throw Error(concat("Expected 'TILT=' ", where()));
       std::string tiltKind{line.trim()};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
-        throw Error(concat("unsupported tilt ", Quoted(tiltKind), " on line ",
+        throw Error(concat("Unsupported tilt ", Quoted(tiltKind), " on line ",
                            lineOf(line)));
       text = remainder;
       if (tiltKind == "INCLUDE") {
@@ -97,12 +97,12 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
     parseNumberOrThrow("num horizontal angles", numHorzAngles);
     parseNumberOrThrow("photometric type", photometryType);
     if (photometryType != 1 && photometryType != 2 && photometryType != 3)
-      throw Error(concat("unknown photometric type ", photometryType,
+      throw Error(concat("Unknown photometric type ", photometryType,
                          " on line ", lineOf(text)));
     parseNumberOrThrow("units type", unitsType);
     if (unitsType != 1 && unitsType != 2)
       throw Error(
-          concat("unknown units type ", unitsType, " on line ", lineOf(text)));
+          concat("Unknown units type ", unitsType, " on line ", lineOf(text)));
     parseNumberOrThrow("width", width);
     parseNumberOrThrow("length", length);
     parseNumberOrThrow("height", height);
@@ -174,8 +174,8 @@ LightProfile::loadFromFile(const std::string &fileName) noexcept {
           catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
   if (std::optional<Error> error{loadFromFileMemory(std::move(file))})
-    return Error(concat("Cannot load ", QuotedPath(fileName), ": ",
-                        decapitalized(error->message)));
+    return Error(
+        concat("Cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
 }
 

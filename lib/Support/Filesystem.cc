@@ -92,7 +92,7 @@ std::string expandPathVariables(std::string_view path) {
     char *value{std::getenv(std::string(name).c_str())};
     if (!value)
       throw Error(concat("Undefined environment variable ", Quoted(name),
-                         " in path ", Quoted(fullPath)));
+                         " in path ", QuotedPath(fullPath)));
     result += value;
     path.remove_prefix(lenConsumed);
   }

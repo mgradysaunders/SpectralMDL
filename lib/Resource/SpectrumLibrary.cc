@@ -17,8 +17,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
   clear();
   std::optional<Error> error{catchAndReturnError([&] {
     auto throwError{[&](std::string_view message) {
-      throw Error(concat("Cannot load ", QuotedPath(fileName), ": ",
-                         decapitalized(std::string(message))));
+      throw Error(concat("Cannot load ", QuotedPath(fileName), ": ", message));
     }};
     std::string hdrFile{readOrThrow(fileName + ".hdr")};
     llvm::StringRef hdr{hdrFile};
@@ -29,7 +28,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
                         : std::string();
     }};
     if (!hdr.consume_front("ENVI")) {
-      throwError("not an ENVI header file");
+      throwError("Not an ENVI header file");
     }
     auto split{[&](char ch) {
       if (ch == '\n') {
@@ -119,7 +118,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
         } else if (value.equals_insensitive("ghz")) {
           units = WAVE_UNITS_GIGAHERTZ;
         } else {
-          throwError(concat("unsupported 'wavelength units' ", Quoted(value),
+          throwError(concat("Unsupported 'wavelength units' ", Quoted(value),
                             onLine(keyLine)));
         }
       } else if (key.equals_insensitive("wavelength")) {
@@ -155,7 +154,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     // Of the ENVI data types, only 4 (32-bit float) and 5 (64-bit float)
     // make sense for a spectral library.
     if (!(dataType == 4 || dataType == 5)) {
-      throwError(concat("unsupported 'data type' ", dataType,
+      throwError(concat("Unsupported 'data type' ", dataType,
                         onLine(dataTypeLine), ", expected 4 or 5"));
     }
     for (auto &wavelength : mWavelengths) {
@@ -170,7 +169,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     size_t numCurveValues{size_t(samples) * size_t(lines)};
     if (const size_t valueSize{size_t(dataType == 4 ? 4 : 8)};
         bin.size() < numCurveValues * valueSize) {
-      throwError(concat("the data holds ", bin.size() / valueSize, " of the ",
+      throwError(concat("The data holds ", bin.size() / valueSize, " of the ",
                         numCurveValues, " values its header describes"));
     }
     mNumCurves = size_t(lines);

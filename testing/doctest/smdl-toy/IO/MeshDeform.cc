@@ -71,7 +71,7 @@ TEST_CASE("MeshDeform: the spec's key") {
   spec.clipName = "walk";
   spec.offset = 0.25f;
   CHECK(spec.hasClip());
-  CHECK(spec.key() == "clip 'walk' offset 0.25");
+  CHECK(spec.key() == "clip \"walk\" offset 0.25");
   spec = {};
   spec.clipIndex = 2;
   spec.speed = 2.0f;

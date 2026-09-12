@@ -169,16 +169,16 @@ TEST_CASE("LensFile: the aperture stop") {
   }
   SUBCASE("It has no shape of its own to state") {
     CHECK_CONTAINS(parseError(diags, "lens { stop { radius 50 diameter 12 } }"),
-                   "'radius' has no meaning on the aperture stop");
+                   "\"radius\" has no meaning on the aperture stop");
   }
   SUBCASE("It has no index of its own, being in the space before it") {
     CHECK_CONTAINS(parseError(diags, "lens { stop { ior 1.5 diameter 12 } }"),
-                   "'ior' has no meaning on the aperture stop");
+                   "\"ior\" has no meaning on the aperture stop");
   }
   SUBCASE("It names no medium either, for the same reason") {
     CHECK_CONTAINS(
         parseError(diags, "lens { stop { medium N-BK7 diameter 12 } }"),
-        "'medium' has no meaning on the aperture stop");
+        "\"medium\" has no meaning on the aperture stop");
   }
 }
 
@@ -206,12 +206,12 @@ TEST_CASE("LensFile: the values a surface may take") {
   SUBCASE("A non-finite number is an error wherever it appears") {
     CHECK_CONTAINS(parseError(diags, "lens { surface { radius inf "
                                      "diameter 20 } stop { diameter 12 } }"),
-                   "finite number for 'radius'");
+                   "finite number for \"radius\"");
   }
   SUBCASE("An unknown surface setting names the ones that exist") {
     CHECK_CONTAINS(parseError(diags, "lens { surface { curvature 50 "
                                      "diameter 20 } stop { diameter 12 } }"),
-                   "unknown surface setting 'curvature'");
+                   "unknown surface setting \"curvature\"");
   }
   SUBCASE("The stop's message names only the two settings it takes") {
     CHECK_CONTAINS(parseError(diags, "lens { stop { blades 6 diameter 12 } }"),
@@ -298,9 +298,9 @@ TEST_CASE("LensFile: naming a medium") {
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     const LayoutDiagnostic &error{diags.all().front()};
-    CHECK_CONTAINS(error.message, "unknown medium 'N-BK8'");
+    CHECK_CONTAINS(error.message, "unknown medium \"N-BK8\"");
     REQUIRE(error.notes.size() == 2);
-    CHECK_CONTAINS(error.notes[0].message, "did you mean 'N-BK7'?");
+    CHECK_CONTAINS(error.notes[0].message, "did you mean \"N-BK7\"?");
     CHECK_CONTAINS(error.notes[1].message,
                    "the built-in glasses are CAF2, N-FK51A,");
   }
@@ -316,7 +316,7 @@ TEST_CASE("LensFile: naming a medium") {
     REQUIRE(diags.errorCount() == 1);
     REQUIRE(!diags.all().front().notes.empty());
     CHECK_CONTAINS(diags.all().front().notes.front().message,
-                   "did you mean 'Crown_A'?");
+                   "did you mean \"Crown_A\"?");
   }
   SUBCASE("'medium' beside 'ior' is an error, since a named medium states "
           "index") {
@@ -396,13 +396,13 @@ TEST_CASE("LensFile: defining a medium") {
                              "{ ", BK7_SELLMEIER, " ior 1.5268 abbe 64.17 }")));
     REQUIRE(diags.warningCount() == 1);
     CHECK_CONTAINS(diags.all().front().message,
-                   "'ior' 1.5268 disagrees with the Sellmeier coefficients");
+                   "\"ior\" 1.5268 disagrees with the Sellmeier coefficients");
     CHECK_CONTAINS(diags.all().front().message, "which give 1.5168");
     LayoutDiagnostics abbe{};
     (void)parseOK(abbe, definingCrown(smdl::concat("{ ", BK7_SELLMEIER,
                                                    " ior 1.5168 abbe 64.5 }")));
     REQUIRE(abbe.warningCount() == 1);
-    CHECK_CONTAINS(abbe.all().front().message, "'abbe' 64.5 disagrees");
+    CHECK_CONTAINS(abbe.all().front().message, "\"abbe\" 64.5 disagrees");
   }
   SUBCASE("A use matches its definition whatever the case, and reads as the "
           "definition spells it") {
@@ -439,7 +439,8 @@ TEST_CASE("LensFile: defining a medium") {
                                      "}\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK_CONTAINS(diags.all().front().message, "medium 'a' is defined twice");
+    CHECK_CONTAINS(diags.all().front().message,
+                   "medium \"a\" is defined twice");
     REQUIRE(diags.all().front().notes.size() == 1);
     CHECK_CONTAINS(diags.all().front().notes.front().message,
                    "the first definition is here");
@@ -454,7 +455,7 @@ TEST_CASE("LensFile: defining a medium") {
     CHECK_CONTAINS(refusalOf("{ }"), "needs 'ior' and 'abbe', or 'sellmeier'");
     CHECK_CONTAINS(refusalOf("{ sellmeier { b 1 0 0 } }"), "both rows");
     CHECK_CONTAINS(refusalOf("{ refractive_index 1.5 }"),
-                   "unknown medium setting 'refractive_index'");
+                   "unknown medium setting \"refractive_index\"");
   }
   SUBCASE("An index alone is refused, with a note that it belongs on the "
           "surface") {
@@ -474,12 +475,12 @@ TEST_CASE("LensFile: defining a medium") {
     REQUIRE(diags.errorCount() == 1);
     const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message,
-                   "medium 'CROWN': expected a positive Abbe number");
+                   "medium \"CROWN\": Expected a positive Abbe number");
     CHECK(source.lineAndColumn(error.location.offset).lineNo == 4);
   }
   SUBCASE("Every refusal of the dispersion model reaches the file") {
     CHECK_CONTAINS(refusalOf("{ ior 0.9 abbe 60 }"),
-                   "expected an index greater than 1");
+                   "Expected an index greater than 1");
     CHECK_CONTAINS(refusalOf("{ sellmeier { b 1 0 0 c 0.25 0 0 } }"),
                    "pole at 500 nm");
     CHECK_CONTAINS(refusalOf("{ ior 1.5 abbe 60 partial_dispersion 0.3 }"),
@@ -506,7 +507,7 @@ TEST_CASE("LensFile: defining a medium") {
                          "}\n");
     REQUIRE(diags.warningCount() == 1);
     CHECK_CONTAINS(diags.all().front().message,
-                   "medium 'SPARE' is defined, and no surface names it");
+                   "medium \"SPARE\" is defined, and no surface names it");
   }
 }
 
@@ -527,7 +528,8 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
         diags.addSource("test.lens", "surface { radius 50 diameter 20 }\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    CHECK_CONTAINS(diags.all().front().message, "unknown directive 'surface'");
+    CHECK_CONTAINS(diags.all().front().message,
+                   "unknown directive \"surface\"");
     REQUIRE(diags.all().front().notes.size() == 1);
     CHECK_CONTAINS(diags.all().front().notes.front().message,
                    "belongs inside the 'lens' block");
@@ -560,7 +562,7 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
   }
   SUBCASE("An unknown lens setting names the ones that exist") {
     CHECK_CONTAINS(parseError(diags, "lens { element { diameter 12 } }"),
-                   "unknown lens setting 'element'");
+                   "unknown lens setting \"element\"");
   }
 }
 

@@ -320,7 +320,7 @@ exec {
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};
-    CHECK_CONTAINS(message, "but found 'int'");
+    CHECK_CONTAINS(message, "but found \"int\"");
   }
   SUBCASE("End of file is said plainly") {
     std::string message{parseError("#smdl\nexec {\n  int i = 1;\n")};
@@ -354,10 +354,10 @@ TEST_CASE("Parser: the token that stopped the parse") {
   }
   SUBCASE("An extension in a conformant file says to use '#smdl'") {
     CHECK_CONTAINS(parseError("mdl 1.8;\nunit_test \"x\" {}\n"),
-                   "'unit_test' is a SpectralMDL extension");
+                   "\"unit_test\" is a SpectralMDL extension");
     CHECK_CONTAINS(
         parseError("mdl 1.8;\nexport int f() { return #sizeOf(int); }\n"),
-        "'#sizeOf' is a SpectralMDL extension");
+        "\"#sizeOf\" is a SpectralMDL extension");
   }
   SUBCASE("An extension in an SMDL file is not blamed on the dialect") {
     CHECK_NOT_CONTAINS(parseError("#smdl\nexec { int i = 1 unit_test; }\n"),

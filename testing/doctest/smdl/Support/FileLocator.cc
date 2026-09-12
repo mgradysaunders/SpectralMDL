@@ -225,7 +225,7 @@ TEST_CASE("FileLocator: a default search directory that is not one") {
   for (int i = 0; i < 3; i++) CHECK(locator.getSearchDirs().size() == 1);
   REQUIRE(logged.messages().size() == 2);
   CHECK(logged.warningCount() == 2);
-  CHECK(logged.messages()[0] == "SMDL_DEFAULT_SEARCH_DIRS names '" + missing +
-                                    "', which is not a directory");
-  CHECK_CONTAINS(logged.messages()[1], "'" + file + "'");
+  CHECK(logged.messages()[0] == "SMDL_DEFAULT_SEARCH_DIRS names \"" + missing +
+                                    "\", which is not a directory");
+  CHECK_CONTAINS(logged.messages()[1], "\"" + file + "\"");
 }
