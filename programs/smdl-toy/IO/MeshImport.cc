@@ -319,7 +319,7 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
     usage[i].pivot = float3(file.nodes[i].nodeToFile[3]);
     for (auto matIndex : materialIndices[i])
       if (matIndex < assScene->mNumMaterials)
-        usage[i].materialNames.push_back(
+        usage[i].materialNames.emplace_back(
             assScene->mMaterials[matIndex]->GetName().C_Str());
   }
   // The root aggregates the whole file, which is what a caller asking about
