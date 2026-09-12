@@ -56,6 +56,14 @@ namespace smdl::simd {
 /// template it silently degrades to the scalar type on GCC.
 template <typename T, std::size_t N> struct RawVector;
 
+/// One float, so that a kernel written over a pack can be instantiated
+/// at width one for a caller with a single item and stay the same code.
+/// The compiler emits the scalar instruction for each operation, which
+/// is what a hand-written scalar version would have been.
+template <> struct RawVector<float, 1> {
+  typedef float Type __attribute__((vector_size(4)));
+};
+
 template <> struct RawVector<float, 4> {
   typedef float Type __attribute__((vector_size(16)));
 };
@@ -67,6 +75,10 @@ template <> struct RawVector<float, 8> {
 /// The raw storage behind `Mask`: the integer vector a comparison of
 /// `RawVector<T, N>` yields, whose elements are all ones or all zeros.
 template <typename T, std::size_t N> struct RawMask;
+
+template <> struct RawMask<float, 1> {
+  typedef int Type __attribute__((vector_size(4)));
+};
 
 template <> struct RawMask<float, 4> {
   typedef int Type __attribute__((vector_size(16)));
@@ -372,6 +384,9 @@ template <typename T, std::size_t N>
   return max(pack, -pack);
 }
 /// \}
+
+/// A pack of one float, for instantiating a packed kernel at width one.
+using float1 = Pack<float, 1>;
 
 /// A pack of 4 floats: one SSE or NEON register.
 using float4 = Pack<float, 4>;

@@ -381,6 +381,18 @@ public:
 
 private:
   /// The trace itself, with every medium at `indices`.
+  /// The trace, over `W` rays at once. Both the one-ray and the batched
+  /// entry points are this, at width one and at `TRACE_WIDTH`, so there
+  /// is one implementation of the optics rather than two to keep in
+  /// step. A width-one pack compiles to the scalar instruction for each
+  /// operation, so the one-ray path costs what a scalar one would.
+  template <size_t W>
+  void traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                  smdl::Span<const smdl::Span<const float>> indices)
+      const noexcept;
+
+  /// Trace the ray through every element, refracting at each.
+
   [[nodiscard]] bool traceThrough(Ray &ray,
                                   const float *indices) const noexcept;
 
