@@ -133,10 +133,11 @@ public:
 constexpr int MAX_SOLVE_STEPS = 32;
 constexpr float SOLVE_TOLERANCE = 1e-6f;
 
-// How many pieces the span of a ray over a surface is walked in when the
-// ends of it leave the crossing in doubt. A lens surface is met once by
-// a ray that is not grazing it, so this is for the oblate rim that lifts
-// back over an oblique one and is crossed twice.
+// How many pieces the span of a ray over a surface is walked in to reach
+// the crossing the ray meets first. A lens surface is met once by a ray
+// that is not grazing it, so the walk is there for the oblate rim that
+// lifts back over an oblique one and is crossed twice; what it cannot
+// see is a pair of crossings inside one piece.
 constexpr int NUM_SPAN_STEPS = 8;
 
 // The sag of a surface at squared radius `u`, and its derivative with
@@ -171,13 +172,18 @@ constexpr int NUM_SPAN_STEPS = 8;
 
 // Where the surface stops being one, which is what `radialLimit` holds:
 // the clear aperture, or the radius the base conic turns back on itself
-// at if that comes first. The turn is left just outside, since the sag
-// stands vertical there and the solve divides by its slope.
+// at if that comes first. The turn is held well clear rather than barely
+// clear. The sag stands vertical there, and the last sliver before it
+// takes rays that reach the wall at near-tangency, letting them through
+// a piece of the pupil a hundredth of a micron wide that no scan can
+// resolve; the exit pupil bound then misses what the trace passes.
+// Stopping short keeps the two answering the same question, and costs a
+// few rays at the very rim, which a mounted element would have taken.
 [[nodiscard]] float radialLimitOf(const LensElement &element) noexcept {
   auto uLimit{element.semiDiameter * element.semiDiameter};
   const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
   if (const auto turn{(1 + element.conic) * curvature * curvature}; turn > 0)
-    uLimit = std::min(uLimit, (1 - 1e-4f) / turn);
+    uLimit = std::min(uLimit, (1 - 1e-2f) / turn);
   return std::sqrt(uLimit);
 }
 

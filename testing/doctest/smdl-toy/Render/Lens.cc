@@ -1248,18 +1248,16 @@ TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
   }
 }
 
-TEST_CASE("ExitPupil: the domain holds what gets out, but for a speckle at "
-          "the edge of the field") {
-  // The phone lens wide open, whose surfaces are aspheric to the
-  // fourteenth order. Near the edge of the field two isolated rays get
-  // out tens of microns past where the region ends, points a fraction of
-  // a micron wide with nothing passing on either side of them. What puts
-  // them there is not known. They are not the intersection answering
-  // from the wrong root: they survive a solve held inside the surface's
-  // own extent and walked to the crossing the ray reaches first, which
-  // is the one thing that was ruled out by trying it. A domain scanned
-  // off the region cannot hold what stands isolated off it, and at a
-  // part in a hundred thousand of the rays they move nothing.
+TEST_CASE("ExitPupil: the domain holds what gets out, on the lens whose "
+          "rim stands vertical") {
+  // The phone lens wide open. Its fourth surface is oblate enough that
+  // the sag turns back on itself at exactly its own clear aperture,
+  // which leaves that rim a vertical wall. A ray reaching the wall at
+  // near-tangency gets through a sliver of the pupil a hundredth of a
+  // micron wide, disconnected from the region and tens of microns off
+  // it, and no scan that builds the bound resolves such a thing. Holding
+  // the intersection clear of the turn is what keeps the trace from
+  // passing them, and this is the case that says so.
   const auto corner{1.15f * MM};
   const Lens lens{phone2mm(), {AT_INFINITY, 0}};
   const ExitPupil pupil{lens, corner};
@@ -1267,7 +1265,7 @@ TEST_CASE("ExitPupil: the domain holds what gets out, but for a speckle at "
   MESSAGE("of " << sweep.numPassed << " rays out, " << sweep.numOutside
                 << " lie outside the domain");
   CHECK(sweep.numPassed > 0);
-  CHECK(double(sweep.numOutside) < 1e-4 * double(sweep.numPassed));
+  CHECK(sweep.numOutside == 0);
 }
 
 TEST_CASE("Lens: the field a transcribed design states is the field it has") {

@@ -79,12 +79,14 @@ public:
 
   /// Where the surface stops being one: the clear aperture, or the
   /// radius at which the base conic turns back on itself if that comes
-  /// first, held a hair inside the turn because the sag stands vertical
-  /// there. The intersection searches inside this and nowhere else. Out
-  /// past it an aspheric polynomial is a fit read beyond the data it was
-  /// made from, where a term worth microns at the rim is worth meters,
-  /// and the roots it grows there are the formula's rather than the
-  /// lens's.
+  /// first, held well inside that turn. The sag stands vertical there,
+  /// and a ray reaching the wall at near-tangency gets through a sliver
+  /// of the pupil far too fine for the exit pupil's scan to find, so the
+  /// bound would miss what the trace passes. The intersection searches
+  /// inside this and nowhere else. Out past it an aspheric polynomial is
+  /// a fit read beyond the data it was made from, where a term worth
+  /// microns at the rim is worth meters, and the roots it grows there
+  /// are the formula's rather than the lens's.
   float radialLimit{};
 
   /// The band of sag the surface covers inside `radialLimit`, which is
