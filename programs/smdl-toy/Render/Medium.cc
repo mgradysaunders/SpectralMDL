@@ -302,7 +302,7 @@ constexpr int MAX_TENTATIVE_COLLISIONS{65536};
 void warnMissingMajorantOnce(const smdl::JIT::MaterialDef *materialDef) {
   static std::mutex mutex{};
   static std::unordered_set<const smdl::JIT::MaterialDef *> warned{};
-  const auto lock{std::scoped_lock(mutex)};
+  const std::scoped_lock lock{mutex};
   if (warned.insert(materialDef).second)
     SMDL_LOG_WARN(
         "material ", smdl::Quoted(materialDef->materialName),
@@ -321,7 +321,7 @@ void warnMissingMajorantOnce(const smdl::JIT::MaterialDef *materialDef) {
 void warnDeformedVolumeOnce(const smdl::JIT::MaterialDef *materialDef) {
   static std::mutex mutex{};
   static std::unordered_set<const smdl::JIT::MaterialDef *> warned{};
-  const auto lock{std::scoped_lock(mutex)};
+  const std::scoped_lock lock{mutex};
   if (warned.insert(materialDef).second)
     SMDL_LOG_WARN("material ", smdl::Quoted(materialDef->materialName),
                   " has a spatially varying volume inside an instance that "
@@ -332,9 +332,9 @@ void warnDeformedVolumeOnce(const smdl::JIT::MaterialDef *materialDef) {
 // Is the density acceleration hint of the given instance usable? The
 // material must declare all three fields and they must be coherent.
 [[nodiscard]] bool hasUsableDensityGrid(const smdl::JIT::Material &material) {
-  const auto *densityGrid{material.getVolumeDensityGrid()};
-  const auto *boundMin{material.getVolumeDensityBoundMin()};
-  const auto *boundMax{material.getVolumeDensityBoundMax()};
+  const smdl::VoxelGrid *densityGrid{material.getVolumeDensityGrid()};
+  const float3 *boundMin{material.getVolumeDensityBoundMin()};
+  const float3 *boundMax{material.getVolumeDensityBoundMax()};
   return densityGrid && boundMin && boundMax && densityGrid->isValid() &&
          densityGrid->getMaxValue() > 0.0f && //
          boundMax->x > boundMin->x &&         //
@@ -377,7 +377,7 @@ bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
   if (!mIsHaze) {
     size_t count{0};
     for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-      const auto &material{*entry->material};
+      const smdl::JIT::Material &material{*entry->material};
       if (material.hasMedium() ||
           !material.getVolumeEmissionIntensity().empty()) {
         if (count == mComponents.size() || !matches(mComponents[count], *entry))
@@ -406,7 +406,7 @@ bool Medium::matches(const Component &comp,
                      const MediumStack &entry) const noexcept {
   // The cheap fields first, the spectra last: a mismatch is usually a
   // different material, and the compare runs once per path.
-  const auto &material{*entry.material};
+  const smdl::JIT::Material &material{*entry.material};
   if (comp.materialDef != material.def) return false;
   if (comp.presence != presenceOf(material)) return false;
   if (!comp.isHeterogeneous)
@@ -414,9 +414,9 @@ bool Medium::matches(const Component &comp,
            valuesMatch(material.getScatteringCoefficient(), comp.sigmaS) &&
            valuesMatch(material.getVolumeEmissionIntensity(), comp.emission);
   if (comp.meshInstance != entry.meshInstance) return false;
-  const auto *grid{hasUsableDensityGrid(material)
-                       ? material.getVolumeDensityGrid()
-                       : nullptr};
+  const smdl::VoxelGrid *grid{hasUsableDensityGrid(material)
+                                  ? material.getVolumeDensityGrid()
+                                  : nullptr};
   if (comp.grid != grid) return false;
   if (grid &&
       (!smdl::isAllTrue(comp.boundMin ==
@@ -457,7 +457,8 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
     return;
   }
 
-  const auto renderState{makeRenderState(wavelengths, nullptr, time.seconds)};
+  const smdl::State renderState{
+      makeRenderState(wavelengths, nullptr, time.seconds)};
   // Coefficients are in inverse meters per the MDL specification, and
   // the toy's scene unit is the meter, so they are in inverse scene
   // units as they come.
@@ -469,10 +470,10 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   // still terminate the walk when non-additive.
   int hintCandidates{0};
   for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-    const auto &material{*entry->material};
+    const smdl::JIT::Material &material{*entry->material};
     if (material.hasMedium() ||
         !material.getVolumeEmissionIntensity().empty()) {
-      auto &comp{mComponents.emplace_back()};
+      Component &comp{mComponents.emplace_back()};
       comp.material = &material;
       comp.materialDef = material.def;
       comp.presence = presenceOf(material);
@@ -557,7 +558,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   // majorant is the constant global span, whose lower bound the walk
   // reports as zero, so the control goes unread.
   if (hintCandidates == 1) {
-    auto &comp{mComponents[size_t(mHint.component)]};
+    Component &comp{mComponents[size_t(mHint.component)]};
     comp.isScaledByGrid = true;
     mHint.majorant = comp.maxSigmaA + comp.maxSigmaS;
     mMajorantGrid = mHint.majorant.maxComponent();
@@ -573,9 +574,9 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
 }
 
 void Medium::setHint(const Component &comp) noexcept {
-  const auto &boundMin{comp.boundMin};
-  const auto &boundMax{comp.boundMax};
-  const auto extent{comp.grid->getExtent()};
+  const float3 &boundMin{comp.boundMin};
+  const float3 &boundMax{comp.boundMax};
+  const int3 extent{comp.grid->getExtent()};
   const float cellExtent{float(comp.grid->getMajorantExtent())};
   mHint.grid = comp.grid;
   mHint.boundMin = boundMin;
@@ -605,7 +606,7 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
     projectSegment(org, dir);
   }
   if (mHint.grid) {
-    const auto &comp{mComponents[size_t(mHint.component)]};
+    const Component &comp{mComponents[size_t(mHint.component)]};
     for (int axis = 0; axis < 3; axis++) {
       mHint.cellOrg[axis] =
           (comp.orgR[axis] - mHint.boundMin[axis]) * mHint.cellScale[axis];
@@ -645,8 +646,8 @@ SMDL_ALWAYS_INLINE void Medium::query(const Component &comp, float t,
     return;
   }
   comp.state->position = comp.orgR + t * comp.dirR;
-  comp.material->def->volumeEvaluate(*comp.state, sigmaA.data(),
-                                             sigmaS.data(), emission.data());
+  comp.material->def->volumeEvaluate(*comp.state, sigmaA.data(), sigmaS.data(),
+                                     emission.data());
   // Clamp so a lying majorant or density hint renders a clamped medium
   // instead of accumulating negative-weight bias. The emission
   // coefficient never gates sampling, so it needs no bound for
@@ -804,7 +805,7 @@ SMDL_NO_INLINE bool Medium::sampleDistanceHomogeneous(Sampler &sampler,
   // where scattering is sampled below. The extinction-free limit is
   // linear in distance, so an unbounded segment through an emissive
   // vacuum is clamped rather than infinite.
-  const auto &mu{mSigmaT};
+  const smdl::SpectralColor &mu{mSigmaT};
   if (SMDL_UNLIKELY(mHasEmission))
     accumulateHomogeneousEmission(emitted, mEmission, mu, std::min(tEnd, 1e8f));
   // The closed-form estimator: the free-flight distance against one

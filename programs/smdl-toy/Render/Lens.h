@@ -226,6 +226,13 @@ public:
 
   /// The distance from the rear vertex to the rear focal point, which is
   /// where the film sits when the lens is focused at infinity.
+  ///
+  /// Named "back" where the geometry around it is named "rear" because
+  /// the back focal distance is a published quantity under that name, as
+  /// the entrance and exit pupils are under theirs; front and rear name
+  /// the ends of the lens the renderer measures from. "Rear focal
+  /// distance" would also read as the distance from the rear principal
+  /// plane, which is the focal length instead.
   [[nodiscard]] float backFocalDistance() const noexcept {
     return mBackFocalDistance;
   }
@@ -460,7 +467,7 @@ private:
   /// The entry covering a film point `filmRadius` off axis, which is the
   /// last one for anything past the corner the table was built for.
   [[nodiscard]] const Bound &boundAt(float filmRadius) const noexcept {
-    const auto index{size_t(filmRadius * mBoundsPerRadius)};
+    const size_t index{size_t(filmRadius * mBoundsPerRadius)};
     return mBounds[index < mBounds.size() ? index : mBounds.size() - 1];
   }
 

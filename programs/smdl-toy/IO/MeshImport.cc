@@ -55,7 +55,7 @@ const aiScene *readLossless(Assimp::Importer &importer,
   // lights at the source, and those are exactly what a report about the
   // file has to see.
   importer.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
-  auto assScene{importer.ReadFile(fileName.c_str(), 0)};
+  const aiScene *assScene{importer.ReadFile(fileName.c_str(), 0)};
   if (!assScene)
     throw smdl::Error(smdl::concat("assimp failed to read ",
                                    smdl::QuotedPath(fileName), ": ",
@@ -67,9 +67,9 @@ void flattenNodes(const aiNode &assNode, const float4x4 &parentXf,
                   uint32_t parentIndex, std::string_view parentPath,
                   uint32_t meshBase, ImportFile &file) {
   // The file transform composes on the left of the whole node chain.
-  const auto xf{parentXf * fromAssimp(assNode.mTransformation)};
-  const auto nodeIndex{uint32_t(file.nodes.size())};
-  auto &node{file.nodes.emplace_back()};
+  const float4x4 xf{parentXf * fromAssimp(assNode.mTransformation)};
+  const uint32_t nodeIndex{uint32_t(file.nodes.size())};
+  ImportNode &node{file.nodes.emplace_back()};
   node.parent = parentIndex;
   node.nodeToFile = xf;
   node.nodeToFileShut = xf;
@@ -82,7 +82,7 @@ void flattenNodes(const aiNode &assNode, const float4x4 &parentXf,
   }
   // Copy the path before recursing: `file.nodes` reallocates, so a reference
   // into it cannot outlive the child calls that append to it.
-  const auto path{node.path};
+  const std::string path{node.path};
   for (unsigned int i = 0; i < assNode.mNumMeshes; i++)
     file.placements.push_back({meshBase + assNode.mMeshes[i], nodeIndex});
   for (unsigned int i = 0; i < assNode.mNumChildren; i++)
@@ -125,7 +125,7 @@ namespace {
 [[nodiscard]] bool matchNodePath(std::string_view pattern,
                                  std::string_view path) {
   if (pattern.find('/') == std::string_view::npos) {
-    const auto slash{path.rfind('/')};
+    const size_t slash{path.rfind('/')};
     if (slash != std::string_view::npos) path.remove_prefix(slash + 1);
   }
   return matchGlob(pattern, path);
@@ -136,7 +136,7 @@ namespace {
 std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
                                        const ObjectSelection &selection,
                                        std::string_view fileName) {
-  auto selectedRoot{std::vector<uint32_t>(nodes.size(), INVALID_INDEX)};
+  std::vector<uint32_t> selectedRoot(nodes.size(), INVALID_INDEX);
   if (nodes.empty()) return selectedRoot;
   if (selection.patterns.empty()) {
     // The whole file, selected through the root, so that `recenter` still
@@ -144,8 +144,8 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
     std::fill(selectedRoot.begin(), selectedRoot.end(), 0);
     return selectedRoot;
   }
-  auto isMatched{std::vector<bool>(nodes.size(), false)};
-  auto patternMatched{std::vector<bool>(selection.patterns.size(), false)};
+  std::vector<bool> isMatched(nodes.size(), false);
+  std::vector<bool> patternMatched(selection.patterns.size(), false);
   for (size_t i = 0; i < nodes.size(); i++) {
     if (nodes[i].path.empty()) continue; // The root, which has no name.
     for (size_t j = 0; j < selection.patterns.size(); j++) {
@@ -155,11 +155,11 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
       }
     }
   }
-  auto unmatched{std::vector<std::string>()};
+  std::vector<std::string> unmatched{};
   for (size_t j = 0; j < selection.patterns.size(); j++)
     if (!patternMatched[j]) unmatched.push_back(selection.patterns[j]);
   if (!unmatched.empty()) {
-    auto message{
+    std::string message{
         smdl::concat(smdl::Counted(unmatched.size(), "selection pattern"),
                      unmatched.size() == 1 ? " matches" : " match",
                      " nothing in ", smdl::QuotedPath(fileName), ":")};
@@ -184,9 +184,9 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
   // another match is folded into the outer one instead of being
   // instantiated a second time.
   for (size_t i = 0; i < nodes.size(); i++) {
-    const auto parent{nodes[i].parent};
-    const auto inherited{parent == INVALID_INDEX ? INVALID_INDEX
-                                                 : selectedRoot[parent]};
+    const uint32_t parent{nodes[i].parent};
+    const uint32_t inherited{parent == INVALID_INDEX ? INVALID_INDEX
+                                                     : selectedRoot[parent]};
     selectedRoot[i] = inherited != INVALID_INDEX ? inherited
                       : isMatched[i]             ? uint32_t(i)
                                                  : INVALID_INDEX;
@@ -218,7 +218,7 @@ const aiScene *readForListing(Assimp::Importer &assImporter,
   configureImporter(assImporter, aiComponent_NORMALS |
                                      aiComponent_TANGENTS_AND_BITANGENTS |
                                      aiComponent_TEXCOORDS);
-  auto assScene{
+  const aiScene *assScene{
       assImporter.ReadFile(fileName.c_str(), MATERIAL_POSTPROCESS_FLAGS)};
   if (!assScene)
     throw smdl::Error(smdl::concat("assimp failed to read ",
@@ -234,22 +234,23 @@ const aiScene *readForListing(Assimp::Importer &assImporter,
 std::vector<MaterialUsage>
 importMaterialUsage(const std::string &fileName,
                     const ObjectSelection &selection) {
-  auto assImporter{Assimp::Importer{}};
-  auto file{ImportFile()};
-  auto assScene{readForListing(assImporter, fileName, file)};
-  auto selectedRoot{resolveSelection(file.nodes, selection, fileName)};
-  auto usage{std::vector<MaterialUsage>(assScene->mNumMaterials)};
+  Assimp::Importer assImporter{};
+  ImportFile file{};
+  const aiScene *assScene{readForListing(assImporter, fileName, file)};
+  const std::vector<uint32_t> selectedRoot{
+      resolveSelection(file.nodes, selection, fileName)};
+  std::vector<MaterialUsage> usage(assScene->mNumMaterials);
   for (unsigned int i = 0; i < assScene->mNumMaterials; i++)
     usage[i].name = assScene->mMaterials[i]->GetName().C_Str();
   // A mesh that no selected node references is never hit, so it needs no
   // material; and a mesh referenced several times contributes its triangles
   // once but its instances every time.
-  auto isCounted{std::vector<bool>(assScene->mNumMeshes, false)};
+  std::vector<bool> isCounted(assScene->mNumMeshes, false);
   for (const auto &placement : file.placements) {
     if (selectedRoot[placement.nodeIndex] == INVALID_INDEX) continue;
-    const auto &assMesh{*assScene->mMeshes[placement.meshIndex]};
+    const aiMesh &assMesh{*assScene->mMeshes[placement.meshIndex]};
     if (assMesh.mMaterialIndex >= usage.size()) continue;
-    auto &entry{usage[assMesh.mMaterialIndex]};
+    MaterialUsage &entry{usage[assMesh.mMaterialIndex]};
     entry.instanceCount++;
     if (!isCounted[placement.meshIndex]) {
       isCounted[placement.meshIndex] = true;
@@ -267,9 +268,9 @@ importMaterialUsage(const std::string &fileName,
 
 std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
                                            ObjectFileInfo *info) {
-  auto assImporter{Assimp::Importer{}};
-  auto file{ImportFile()};
-  auto assScene{readForListing(assImporter, fileName, file)};
+  Assimp::Importer assImporter{};
+  ImportFile file{};
+  const aiScene *assScene{readForListing(assImporter, fileName, file)};
   // Whatever the file says about itself, for a caller writing it down. The
   // FBX reader fills these from the file's own `GlobalSettings`; most other
   // formats leave them absent, either because the format fixes the answer or
@@ -282,30 +283,30 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
     if (assScene->mMetaData->Get("UnitScaleFactor", unitScale) && unitScale > 0)
       info->metersPerUnit = unitScale / 100.0f;
   }
-  auto usage{std::vector<ObjectUsage>(file.nodes.size())};
-  auto materialIndices{std::vector<std::vector<uint32_t>>(file.nodes.size())};
+  std::vector<ObjectUsage> usage(file.nodes.size());
+  std::vector<std::vector<uint32_t>> materialIndices(file.nodes.size());
   for (const auto &placement : file.placements) {
-    const auto &assMesh{*assScene->mMeshes[placement.meshIndex]};
+    const aiMesh &assMesh{*assScene->mMeshes[placement.meshIndex]};
     // Bound the placed vertices once, then merge that box into each
     // ancestor. Merging boxes is exact for a union, so this costs one pass
     // over the vertices rather than one per level.
-    const auto &nodeToFile{file.nodes[placement.nodeIndex].nodeToFile};
+    const float4x4 &nodeToFile{file.nodes[placement.nodeIndex].nodeToFile};
     BoundBox3 bound{};
     for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
-      const auto &vertex{assMesh.mVertices[i]};
+      const aiVector3D &vertex{assMesh.mVertices[i]};
       bound.extend(
           transformPoint(nodeToFile, float3(vertex.x, vertex.y, vertex.z)));
     }
     // Charge the geometry to the node that places it and to every ancestor,
     // so that a subtree reports what selecting it would instantiate.
-    for (auto i{placement.nodeIndex}; i != INVALID_INDEX;
+    for (uint32_t i{placement.nodeIndex}; i != INVALID_INDEX;
          i = file.nodes[i].parent) {
       usage[i].instanceCount++;
       usage[i].triangleCount += assMesh.mNumFaces;
       usage[i].hasColors |= assMesh.mColors[0] != nullptr;
       usage[i].deforms |= assMesh.HasBones() || assMesh.mNumAnimMeshes > 0;
       usage[i].bound.extend(bound);
-      auto &indices{materialIndices[i]};
+      std::vector<uint32_t> &indices{materialIndices[i]};
       if (std::find(indices.begin(), indices.end(), assMesh.mMaterialIndex) ==
           indices.end())
         indices.push_back(assMesh.mMaterialIndex);

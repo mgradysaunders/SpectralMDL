@@ -573,9 +573,9 @@ public:
   /// target: light selection never aims at it, so no gather claims its
   /// transport and its arrivals keep their ordinary weights.
   [[nodiscard]] bool isCausticLight(uint32_t instIndex) const noexcept {
-    const auto lightIndex{instIndex < mInstanceToLight.size()
-                              ? mInstanceToLight[instIndex]
-                              : INVALID_INDEX};
+    const uint32_t lightIndex{instIndex < mInstanceToLight.size()
+                                  ? mInstanceToLight[instIndex]
+                                  : INVALID_INDEX};
     return lightIndex != INVALID_INDEX && mAreaLights[lightIndex].isSampled &&
            mAreaLights[lightIndex].isCaustic;
   }

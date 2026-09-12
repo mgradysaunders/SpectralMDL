@@ -25,8 +25,8 @@ void appendNumber(std::string &text, double value) {
 // The name beside a spectral film with `suffix` before its extension.
 [[nodiscard]] std::string besideSpectrum(const std::string &spectrumName,
                                          const char *suffix) {
-  auto path{std::filesystem::path(spectrumName)};
-  const auto extension{path.extension().string()};
+  std::filesystem::path path{spectrumName};
+  const std::string extension{path.extension().string()};
   path.replace_extension();
   return path.string() + suffix + extension;
 }
@@ -36,14 +36,14 @@ void appendNumber(std::string &text, double value) {
 std::vector<std::string>
 responseFilmBandNames(const ResponseSettings &settings) {
   if (settings.hasCFA()) return {MOSAIC_BAND_NAME};
-  auto names{std::vector<std::string>()};
+  std::vector<std::string> names{};
   for (const auto &band : settings.bands) names.push_back(band.name);
   return names;
 }
 
 std::string responseHash(const ResponseSettings &settings) {
   const double scale{settings.qeScale()};
-  auto text{std::string()};
+  std::string text{};
   for (const auto &band : settings.bands) {
     text += band.name;
     text += ' ';
@@ -71,9 +71,9 @@ LensWavelengthDraw::LensWavelengthDraw(smdl::Span<const double> knots,
   lo = std::max(lo, knots.front());
   hi = std::min(hi, knots.back());
   if (!(lo < hi)) return;
-  auto &w{mWavelengths};
+  std::vector<double> &w{mWavelengths};
   w.push_back(lo);
-  for (auto nm{int64_t(std::floor(lo)) + 1}; double(nm) < hi; nm++)
+  for (int64_t nm{int64_t(std::floor(lo)) + 1}; double(nm) < hi; nm++)
     w.push_back(double(nm));
   for (const auto knot : knots)
     if (knot > lo && knot < hi) w.push_back(knot);
@@ -127,10 +127,9 @@ std::string spellTracedSpan(const TracedSpan &span) {
 
 std::optional<TracedSpan> tracedSpanOf(const ResponseBand &band,
                                        const SensorSpectrum &illuminant) {
-  const auto knots{
-      std::vector<double>(band.wavelengths.begin(), band.wavelengths.end())};
-  const auto values{
-      std::vector<double>(band.values.begin(), band.values.end())};
+  const std::vector<double> knots(band.wavelengths.begin(),
+                                  band.wavelengths.end());
+  const std::vector<double> values(band.values.begin(), band.values.end());
   const LensWavelengthDraw draw{knots, values, knots.front(), knots.back(),
                                 illuminant};
   if (draw.isEmpty()) return std::nullopt;
@@ -150,7 +149,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
   // leaves alone: its rectangles tile the same span with the same widths.
   const double gridLo{double(wavelengths[0])};
   const double gridHi{double(wavelengths[numBands - 1])};
-  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
+  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
   if (mIsJittering) mWidths = widths;
   double minSpacing{gridHi - gridLo};
   for (size_t i = 1; i < numBands; i++)
@@ -158,7 +157,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
                           double(wavelengths[i]) - double(wavelengths[i - 1]));
   const double scale{settings.qeScale()};
   for (const auto &curve : settings.bands) {
-    auto band{Band{}};
+    Band band{};
     band.name = curve.name;
     band.wavelengths.assign(curve.wavelengths.begin(), curve.wavelengths.end());
     for (const auto value : curve.values)
@@ -223,7 +222,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
   // even when the grid holds still: a lens's geometry is continuous in the
   // wavelength, so it has no comb to alias against.
   for (const auto index : tileBands(mCFA)) {
-    auto &band{mBands[index]};
+    Band &band{mBands[index]};
     band.draw = LensWavelengthDraw(band.wavelengths, band.values, gridLo,
                                    gridHi, illuminant);
     if (band.draw.isEmpty())
@@ -235,8 +234,8 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
 }
 
 double Response::integrate(const Band &band, double lo, double hi) noexcept {
-  const auto &w{band.wavelengths};
-  const auto &v{band.values};
+  const std::vector<double> &w{band.wavelengths};
+  const std::vector<double> &v{band.values};
   double total{};
   for (size_t i = 0; i + 1 < w.size(); i++) {
     const double a{std::max(w[i], lo)};
@@ -280,13 +279,13 @@ void Response::accumulate(smdl::Span<const float> wavelengths,
 
 float Response::traceWavelengthAt(size_t x, size_t y, float xi) const noexcept {
   SMDL_DEBUG_CHECK(hasTile());
-  const auto &draw{mBands[bandAt(x, y)].draw};
+  const LensWavelengthDraw &draw{mBands[bandAt(x, y)].draw};
   return draw.isEmpty() ? 0.0f : float(draw.at(double(xi)));
 }
 
 void Response::logTracedSpans() const {
   for (const auto index : tileBands(mCFA)) {
-    const auto &band{mBands[index]};
+    const Band &band{mBands[index]};
     if (band.draw.isEmpty()) continue;
     SMDL_LOG_INFO("Lens color: the ", smdl::Quoted(band.name),
                   " pixels trace the lens at ",
@@ -297,7 +296,7 @@ void Response::logTracedSpans() const {
 std::optional<Response>
 resolveResponse(const std::optional<ResponseSettings> &settings,
                 const Color &wavelengths, const SensorSpectrum &illuminant) {
-  auto response{std::optional<Response>()};
+  std::optional<Response> response{};
   if (settings) response.emplace(*settings, wavelengths, illuminant);
   return response;
 }

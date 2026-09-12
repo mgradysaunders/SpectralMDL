@@ -15,7 +15,7 @@ std::string resolveSiblingFile(const std::string &stated,
                                const std::string &cameraFileName,
                                std::string_view what) {
   if (stated.empty()) return {};
-  auto path{std::filesystem::path(stated)};
+  std::filesystem::path path{stated};
   if (path.is_relative() && !cameraFileName.empty())
     path = std::filesystem::path(cameraFileName).parent_path() / path;
   if (!std::filesystem::exists(path))
@@ -26,14 +26,14 @@ std::string resolveSiblingFile(const std::string &stated,
 }
 
 Token Lexer::next() {
-  const auto &text{mSource.text};
+  const std::string &text{mSource.text};
   for (;;) {
     while (mPos < text.size() && smdl::isSpace(text[mPos])) mPos++;
     if (mPos >= text.size()) return {Token::END, {}, position(), 1};
     if (text[mPos] != '#') break;
     while (mPos < text.size() && text[mPos] != '\n') mPos++;
   }
-  const auto start{position()};
+  const uint32_t start{position()};
   const char ch{text[mPos]};
   if (ch == '{') return mPos++, Token{Token::OPEN, "{", start, 1};
   if (ch == '}') return mPos++, Token{Token::CLOSE, "}", start, 1};
@@ -84,7 +84,7 @@ bool TextParser::isTopLevelKeyword(const Token &token) const noexcept {
 
 uint32_t TextParser::lastDiagnosticLine() const noexcept {
   if (mDiags.all().empty()) return 0;
-  const auto &location{mDiags.all().back().location};
+  const LayoutLocation &location{mDiags.all().back().location};
   if (location.source != &mSource) return 0;
   return mSource.lineAndColumn(location.offset).lineNo;
 }
@@ -113,13 +113,13 @@ float TextParser::finite(const LayoutLocation &keyLoc, std::string_view key,
 bool TextParser::parseTransformOp(const std::string &op,
                                   const LayoutLocation &opLoc, float4x4 &xf) {
   if (op == "translate") {
-    auto v{numbers<3>()};
+    std::array<float, 3> v{numbers<3>()};
     xf = translation(v[0], v[1], v[2]) * xf;
   } else if (op == "scale") {
     // One number scales uniformly and three scale per axis. Operation
     // names are never numbers, so looking at whether a number follows
     // tells the two apart with no ambiguity.
-    auto scale{float3()};
+    float3 scale{};
     scale[0] = numbers<1>()[0];
     if (isNumber(mToken)) {
       scale[1] = numbers<1>()[0];
@@ -136,17 +136,17 @@ bool TextParser::parseTransformOp(const std::string &op,
                   float4{0, 0, scale[2], 0}, float4{0, 0, 0, 1}} *
          xf;
   } else if (op == "rotate_x" || op == "rotate_y" || op == "rotate_z") {
-    auto axis{float3{}};
+    float3 axis{};
     axis[op.back() - 'x'] = 1.0f;
     xf = rotation(axis, numbers<1>()[0]) * xf;
   } else if (op == "rotate") {
-    auto v{numbers<4>()};
+    std::array<float, 4> v{numbers<4>()};
     xf = rotation(float3(v[0], v[1], v[2]), v[3]) * xf;
   } else if (op == "matrix") {
-    auto v{numbers<16>()};
+    std::array<float, 16> v{numbers<16>()};
     // Written row-major, which is how anyone lays a matrix out on the
     // page; `float4x4` stores columns.
-    auto m{float4x4()};
+    float4x4 m{};
     for (size_t i = 0; i < 4; i++)
       for (size_t j = 0; j < 4; j++) m[j][i] = v[4 * i + j];
     xf = m * xf;
@@ -179,7 +179,7 @@ std::string TextParser::expect(Token::Kind kind, std::string_view what) {
     mDiags.error(location(), smdl::concat("expected ", what));
     throw Recover();
   }
-  auto text{mToken.text};
+  std::string text{mToken.text};
   advance();
   return text;
 }

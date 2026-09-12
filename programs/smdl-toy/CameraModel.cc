@@ -113,7 +113,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 
 // One line naming the body's bands and their tile.
 [[nodiscard]] std::string describeResponse(const ResponseSettings &response) {
-  auto line{smdl::concat(smdl::Counted(response.bands.size(), "band"))};
+  std::string line{smdl::concat(smdl::Counted(response.bands.size(), "band"))};
   for (size_t i = 0; i < response.bands.size(); i++)
     line += smdl::concat(i == 0 ? " " : ", ", response.bands[i].name);
   if (response.kind == ResponseKind::QE) {
@@ -137,7 +137,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 // One line naming the detector's chain, with the well and the gain the
 // sensor's physics resolved.
 [[nodiscard]] std::string describeDetector(const Sensor &sensor) {
-  const auto &detector{sensor.settings().detector};
+  const DetectorSettings &detector{sensor.settings().detector};
   return smdl::concat(
       "read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
       smdl::Brief(detector.darkCurrent, 4), " e-/s at ",
@@ -154,7 +154,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 // One line on the well and the base ISO, which are one fact, and what
 // they rest on: the most sensitive band's count under D55.
 [[nodiscard]] std::string describeWell(const Sensor &sensor) {
-  const auto &bands{sensor.settings().response.bands};
+  const std::vector<ResponseBand> &bands{sensor.settings().response.bands};
   return smdl::concat(
       smdl::Brief(sensor.fullWell(), 6), " e- ",
       sensor.wellSource() == WellSource::STATED ? "stated"
@@ -197,21 +197,21 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 // it starts from, under D65.
 [[nodiscard]] std::string describeColor(const Sensor &sensor,
                                         const WhiteBalance &whiteBalance) {
-  const auto &response{sensor.settings().response};
-  const auto balance{
+  const ResponseSettings &response{sensor.settings().response};
+  const std::string balance{
       smdl::concat("white balance ", whiteBalanceName(whiteBalance),
                    whiteBalance.kind == WhiteBalanceKind::AUTO
                        ? ", the frame's gray world, fitted here under D65"
                        : "")};
-  const auto rgb{response.rgbBands()};
+  const std::optional<std::array<size_t, 3>> rgb{response.rgbBands()};
   if (!rgb)
     return smdl::concat(smdl::Counted(response.bands.size(), "band"),
                         " cannot carry color, so the develop is gray; ",
                         balance);
-  const auto &r{response.bands[(*rgb)[0]].name};
-  const auto &g{response.bands[(*rgb)[1]].name};
-  const auto &b{response.bands[(*rgb)[2]].name};
-  const auto fit{sensor.fitColor(*rgb, whiteBalanceSpectrum(whiteBalance))};
+  const std::string &r{response.bands[(*rgb)[0]].name};
+  const std::string &g{response.bands[(*rgb)[1]].name};
+  const std::string &b{response.bands[(*rgb)[2]].name};
+  const ColorFit fit{sensor.fitColor(*rgb, whiteBalanceSpectrum(whiteBalance))};
   if (fit.isSingular)
     return smdl::concat(r, ", ", g, ", and ", b,
                         " respond too much alike to tell colors apart, so "
@@ -244,7 +244,7 @@ struct SensorLines final {
 
 [[nodiscard]] SensorLines sensorLinesOf(const Sensor &physics,
                                         const CameraModel &model) {
-  const auto &settings{physics.settings()};
+  const SensorSettings &settings{physics.settings()};
   return SensorLines{describeResponse(settings.response),
                      smdl::concat(settings.hasDetectorBlock ? "" : "generic, ",
                                   describeDetector(physics)),
@@ -292,8 +292,8 @@ struct SensorLines final {
                                   {0.0, "dim artificial light"},
                                   {-3.0, "a landscape under the full moon"},
                                   {-6.0, "starlight"}};
-  const auto &brightest{LIGHTS[0]};
-  const auto &darkest{LIGHTS[std::size(LIGHTS) - 1]};
+  const Light &brightest{LIGHTS[0]};
+  const Light &darkest{LIGHTS[std::size(LIGHTS) - 1]};
   if (ev100 > brightest.ev100 + 1.0)
     return smdl::concat("brighter than ", brightest.name);
   if (ev100 < darkest.ev100 - 1.0)
@@ -313,9 +313,9 @@ struct SensorLines final {
                                            const std::optional<float> &iso,
                                            double fNumber, double seconds) {
   const double ev{std::log2(fNumber * fNumber / seconds)};
-  const auto settings{smdl::concat("EV ", spellEV(ev), " (f/",
-                                   smdl::Brief(fNumber, 3), " at ",
-                                   spellShutter(seconds), ")")};
+  const std::string settings{smdl::concat("EV ", spellEV(ev), " (f/",
+                                          smdl::Brief(fNumber, 3), " at ",
+                                          spellShutter(seconds), ")")};
   const auto ev100At{
       [&](double speed) { return ev - std::log2(speed / 100.0); }};
   if (sensor.hasFixedGain() || iso) {
@@ -348,7 +348,7 @@ struct SensorLines final {
                                                const std::optional<float> &iso,
                                                double temperature) {
   const bool isChosen{sensor.hasFixedGain() || iso};
-  auto shot{DetectorShot{}};
+  DetectorShot shot{};
   shot.exposure = gRenderShutter.exposure;
   shot.temperature = temperature;
   shot.iso = sensor.hasFixedGain() ? sensor.fixedGainISO()
@@ -400,7 +400,7 @@ struct SensorLines final {
 // nd and Vd; a scalar index, which does not disperse; or nothing, for
 // air and for the stop.
 [[nodiscard]] std::string describeMedium(const LensSurface &surface) {
-  const auto &medium{surface.medium};
+  const smdl::OpticalGlass &medium{surface.medium};
   if (surface.isStop) return {};
   if (!medium.isDispersive())
     return medium.nd() == 1
@@ -429,13 +429,13 @@ struct SensorLines final {
   if (!model.options.traceWavelengthRange)
     return "at the d line (588 nm) alone, the film having no color filter "
            "array to draw a wavelength from";
-  const auto &response{model.sensor->response};
-  const auto illuminant{whiteBalanceSpectrum(model.whiteBalance)};
-  auto text{std::string("at a wavelength each pixel draws from its band")};
+  const ResponseSettings &response{model.sensor->response};
+  const SensorSpectrum illuminant{whiteBalanceSpectrum(model.whiteBalance)};
+  std::string text{"at a wavelength each pixel draws from its band"};
   const char *separator{": "};
   for (const auto index : tileBands(response.cfa)) {
-    const auto &band{response.bands[index]};
-    if (const auto span{tracedSpanOf(band, illuminant)}) {
+    const ResponseBand &band{response.bands[index]};
+    if (const std::optional<TracedSpan> span{tracedSpanOf(band, illuminant)}) {
       text += smdl::concat(separator, smdl::Quoted(band.name), " ",
                            spellTracedSpan(*span));
       separator = "; ";
@@ -467,11 +467,11 @@ struct SensorLines final {
 // last.
 [[nodiscard]] std::optional<float2>
 tileSpanOf(const ResponseSettings &response) {
-  auto span{float2(INF, -INF)};
+  float2 span{INF, -INF};
   for (const auto index : response.cfa) {
-    const auto &band{response.bands[index]};
-    const auto numKnots{band.values.size()};
-    auto first{numKnots}, last{size_t(0)};
+    const ResponseBand &band{response.bands[index]};
+    const size_t numKnots{band.values.size()};
+    size_t first{numKnots}, last{0};
     for (size_t i = 0; i < numKnots; i++) {
       if (!(band.values[i] > 0)) continue;
       first = std::min(first, i);
@@ -504,8 +504,8 @@ float thinLensFocalLength(const CameraOptions &options) noexcept {
 }
 
 CameraModel resolveCameraModel(const Options &opts) {
-  auto model{CameraModel{}};
-  auto &options{model.options};
+  CameraModel model{};
+  CameraOptions &options{model.options};
   // The camera file first: '-camera' if it was given, else the '.camera'
   // beside the layout. Its settings are resolved at shutter open, which
   // is where everything but the framing is read: the renderer varies the
@@ -515,13 +515,13 @@ CameraModel resolveCameraModel(const Options &opts) {
       resolveCameraFileName(opts.camera.file, opts.scene.inputSceneFile);
   if (!model.cameraFileName.empty())
     model.document = readCamera(model.cameraDiags, model.cameraFileName);
-  const auto &document{model.document};
-  const auto fileCamera{document.camera.at(opts.scene.time)};
+  const CameraDocument &document{model.document};
+  const CameraSettings fileCamera{document.camera.at(opts.scene.time)};
   // The body the camera file names, else the observer. Under -ideal the
   // observer stands in for the body on its frame and pixels, so the
   // framing never changes between the preview and the render.
   model.isPreview = opts.camera.isIdeal;
-  auto body{std::optional<SensorSettings>()};
+  std::optional<SensorSettings> body{};
   if (fileCamera.sensor && *fileCamera.sensor != SENSOR_HUMAN) {
     model.sensorFileName =
         resolveSensorFileName(*fileCamera.sensor, model.cameraFileName);
@@ -529,7 +529,7 @@ CameraModel resolveCameraModel(const Options &opts) {
     // rather than again with the camera's. Only the body outlives it,
     // which carries no locations; a refusal here is made while the
     // document is still in hand.
-    auto sensorDiags{LayoutDiagnostics()};
+    LayoutDiagnostics sensorDiags{};
     body = readSensor(sensorDiags, model.sensorFileName).sensor;
     if (model.isPreview) {
       model.previewedSensor = body;
@@ -545,7 +545,8 @@ CameraModel resolveCameraModel(const Options &opts) {
   }
   // The body the shot is exposed for: the physical sensor, or the one the
   // preview stands in for.
-  const auto &shotBody{model.sensor ? model.sensor : model.previewedSensor};
+  const std::optional<SensorSettings> &shotBody{
+      model.sensor ? model.sensor : model.previewedSensor};
   // The picture's size and the frame: a body's own, or -resolution's
   // over the observer's frame, 24 mm tall unless the field of view and
   // the focal length together say otherwise below.
@@ -605,7 +606,7 @@ CameraModel resolveCameraModel(const Options &opts) {
     model.lensFileName =
         resolveLensFileName(*fileCamera.lens, model.cameraFileName);
     // A sink of its own, for the reason the body's is.
-    auto lensDiags{LayoutDiagnostics()};
+    LayoutDiagnostics lensDiags{};
     options.lens = readLens(lensDiags, model.lensFileName).lens;
     refuseThinLensSettings(document, fileCamera);
     if (model.isPreview)
@@ -710,7 +711,7 @@ CameraModel resolveCameraModel(const Options &opts) {
   // meter when neither states a number. A body whose detector states its
   // gain has one speed, which a number would contradict.
   if (shotBody) model.physics.emplace(*shotBody);
-  const auto &physics{model.physics};
+  const std::optional<Sensor> &physics{model.physics};
   if (!shotBody) {
     if (opts.camera.iso.wasGiven || opts.camera.shouldMeterISO)
       throw smdl::Error("-iso is a physical sensor's setting, and this "
@@ -725,7 +726,7 @@ CameraModel resolveCameraModel(const Options &opts) {
     else if (!opts.camera.shouldMeterISO)
       model.iso = fileCamera.iso;
     if (model.iso && physics->hasFixedGain()) {
-      const auto why{smdl::concat(
+      const std::string why{smdl::concat(
           " has no meaning with a fixed gain: the body's detector states "
           "'gain', whose saturation speed is ISO ",
           smdl::Brief(physics->fixedGainISO(), 5))};
@@ -782,7 +783,7 @@ CameraModel resolveCameraModel(const Options &opts) {
   // of the clock, so a flag that replaces the framing drops the track
   // rather than moving a camera the file never described.
   if (!document.camera.motion.empty()) {
-    const auto shutSeconds{gRenderShutter.secondsAt(1.0f)};
+    const float shutSeconds{gRenderShutter.secondsAt(1.0f)};
     const char *framingFlag{opts.camera.autolook.isEnabled  ? "-autolook"
                             : opts.camera.lookFrom.wasGiven ? "-look-from"
                             : opts.camera.lookTo.wasGiven   ? "-look-to"
@@ -797,7 +798,7 @@ CameraModel resolveCameraModel(const Options &opts) {
                     "holds its framing at ",
                     gRenderShutter.time, " s");
     } else {
-      const auto shutCamera{document.camera.at(shutSeconds)};
+      const CameraSettings shutCamera{document.camera.at(shutSeconds)};
       options.hasMotion = true;
       options.lookFromShut = pick(opts.camera.lookFrom, shutCamera.lookFrom);
       options.lookToShut = pick(opts.camera.lookTo, shutCamera.lookTo);
@@ -806,10 +807,11 @@ CameraModel resolveCameraModel(const Options &opts) {
     // What the shutter cannot carry: a lens setting the track varies
     // over the shutter is read once, at open, and held.
     if (gRenderShutter.spansTime()) {
-      if (const auto held{document.camera.heldOverShutter(gRenderShutter.time,
-                                                          shutSeconds)};
+      if (const std::vector<std::string_view> held{
+              document.camera.heldOverShutter(gRenderShutter.time,
+                                              shutSeconds)};
           !held.empty()) {
-        auto names{std::string()};
+        std::string names{};
         for (const auto &name : held)
           names += (names.empty() ? "" : ", ") + std::string(name);
         SMDL_LOG_INFO("Camera motion: ", names,
@@ -823,8 +825,8 @@ CameraModel resolveCameraModel(const Options &opts) {
   }
   // What was resolved, one line per part.
   if (model.sensor) {
-    const auto &sensor{*model.sensor};
-    const auto sizeMM{sensor.sizeMM()};
+    const SensorSettings &sensor{*model.sensor};
+    const float2 sizeMM{sensor.sizeMM()};
     SMDL_LOG_INFO("Sensor: ",
                   sensor.name.empty() ? std::string("(unnamed)")
                                       : smdl::concat(smdl::Quoted(sensor.name)),
@@ -837,14 +839,14 @@ CameraModel resolveCameraModel(const Options &opts) {
                   " um, a ", smdl::Brief(sizeMM.x, 4), " by ",
                   smdl::Brief(sizeMM.y, 4),
                   " mm frame; the film holds the irradiance at it");
-    const auto lines{sensorLinesOf(*physics, model)};
+    const SensorLines lines{sensorLinesOf(*physics, model)};
     SMDL_LOG_INFO("Response: ", lines.response);
     SMDL_LOG_INFO("Detector: ", lines.detector);
     SMDL_LOG_INFO("Well: ", lines.well);
     SMDL_LOG_INFO("ISO: ", lines.iso);
     SMDL_LOG_INFO("Color: ", lines.color);
   } else if (body) {
-    const auto frameMM{1e3f * options.frameSize};
+    const float2 frameMM{1e3f * options.frameSize};
     SMDL_LOG_INFO("Sensor: the observer on a ", smdl::Brief(frameMM.x, 4),
                   " by ", smdl::Brief(frameMM.y, 4), " mm frame of ",
                   options.resolution.x, " by ", options.resolution.y,
@@ -854,8 +856,8 @@ CameraModel resolveCameraModel(const Options &opts) {
 }
 
 std::string describeCamera(const CameraModel &model) {
-  const auto &options{model.options};
-  auto text{std::string()};
+  const CameraOptions &options{model.options};
+  std::string text{};
   const auto line{[&](auto &&...parts) {
     text += smdl::concat(parts...);
     text += '\n';
@@ -864,12 +866,12 @@ std::string describeCamera(const CameraModel &model) {
     return smdl::concat(smdl::Brief(v.x, 5), " ", smdl::Brief(v.y, 5), " ",
                         smdl::Brief(v.z, 5));
   }};
-  const auto frameMM{1e3f * options.frameSize};
+  const float2 frameMM{1e3f * options.frameSize};
   // The body's own pitch, or the observer's square one off the frame's
   // height, which is what its width was made from.
-  const auto pitchUM{model.sensor ? model.sensor->pitchUM
-                                  : float2(1e6f * options.frameSize.y /
-                                           float(options.resolution.y))};
+  const float2 pitchUM{model.sensor ? model.sensor->pitchUM
+                                    : float2(1e6f * options.frameSize.y /
+                                             float(options.resolution.y))};
   line("camera: ",
        model.cameraFileName.empty()
            ? std::string("the defaults and the command line")
@@ -909,10 +911,10 @@ std::string describeCamera(const CameraModel &model) {
   // The focus as stated. The autofocus cannot know its distance until
   // the scene is built, so it has no depth of field to report here.
   const float focus{focusDistanceOf(options)};
-  const auto focusText{model.shouldAutofocus
-                           ? std::string("auto, measured from the scene once "
-                                         "it is built")
-                           : spellDistance(focus)};
+  const std::string focusText{
+      model.shouldAutofocus ? std::string("auto, measured from the scene once "
+                                          "it is built")
+                            : spellDistance(focus)};
   const auto dofText{[&](float focalLength, float fNumber) {
     return model.shouldAutofocus
                ? std::string()
@@ -923,7 +925,7 @@ std::string describeCamera(const CameraModel &model) {
   // or the thin lens's, which a pinhole has none of.
   float fNumber{};
   if (options.lens) {
-    const auto lens{buildLens(model)};
+    const Lens lens{buildLens(model)};
     fNumber = lens.fNumber();
     const float halfDiagonal{
         0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
@@ -952,7 +954,7 @@ std::string describeCamera(const CameraModel &model) {
                    smdl::Brief(
                        100 * darkShareOfFrame(options.frameSize, circle), 3),
                    "% of the frame dark"));
-    const auto fit{approximateLens(lens, options)};
+    const LensApproximation fit{approximateLens(lens, options)};
     const float pitch{pixelPitch(options)};
     line("  ideal fit: the thin lens -ideal looks through, ",
          describeFit(fit, options),
@@ -963,7 +965,7 @@ std::string describeCamera(const CameraModel &model) {
     // The media, which are the column a transcription is read against,
     // and what they make of the lens's color when they disperse.
     for (size_t i = 0; i < options.lens->surfaces.size(); i++)
-      if (const auto medium{describeMedium(options.lens->surfaces[i])};
+      if (const std::string medium{describeMedium(options.lens->surfaces[i])};
           !medium.empty())
         line("  after surface ", i + 1, ": ", medium);
     if (options.lens->isDispersive()) {
@@ -999,13 +1001,13 @@ std::string describeCamera(const CameraModel &model) {
     }
   }
   if (model.sensor) {
-    const auto &sensor{*model.sensor};
+    const SensorSettings &sensor{*model.sensor};
     line("sensor: ",
          sensor.name.empty() ? std::string("(unnamed)")
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName));
-    const auto &physics{*model.physics};
-    const auto lines{sensorLinesOf(physics, model)};
+    const Sensor &physics{*model.physics};
+    const SensorLines lines{sensorLinesOf(physics, model)};
     line("  response: ", lines.response);
     line("  detector: ", lines.detector);
     line("  well: ", lines.well);
@@ -1018,13 +1020,13 @@ std::string describeCamera(const CameraModel &model) {
     line("  color: ", lines.color);
     line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
   } else if (model.previewedSensor) {
-    const auto &sensor{*model.previewedSensor};
+    const SensorSettings &sensor{*model.previewedSensor};
     line("sensor: the observer, previewing ",
          sensor.name.empty() ? std::string("(unnamed)")
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName),
          " and exposing the picture as its develop would");
-    const auto &physics{*model.physics};
+    const Sensor &physics{*model.physics};
     line("  iso: ", describeISO(physics, model.iso));
     if (gRenderShutter.hasExposure() && fNumber > 0)
       line("  exposure: ", describeExposure(physics, model.iso, fNumber,
@@ -1036,12 +1038,13 @@ std::string describeCamera(const CameraModel &model) {
 }
 
 Camera buildCamera(CameraModel &model) {
-  auto options{model.options};
+  CameraOptions options{model.options};
   if (model.shouldApproximateLens()) {
-    const auto fit{approximateLens(options)};
-    const auto lensName{options.lens->name.empty()
-                            ? smdl::concat(smdl::QuotedPath(model.lensFileName))
-                            : smdl::concat(smdl::Quoted(options.lens->name))};
+    const LensApproximation fit{approximateLens(options)};
+    const std::string lensName{
+        options.lens->name.empty()
+            ? smdl::concat(smdl::QuotedPath(model.lensFileName))
+            : smdl::concat(smdl::Quoted(options.lens->name))};
     SMDL_LOG_INFO("Lens: the thin lens fitted to ", lensName, " is ",
                   describeFit(fit, options));
     const float pitch{pixelPitch(options)};

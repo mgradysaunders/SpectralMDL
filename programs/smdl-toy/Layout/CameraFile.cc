@@ -42,7 +42,7 @@ private:
     if (mToken.text == "camera") {
       parseCameraBlock();
     } else {
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
       if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(), mToken.text) !=
@@ -96,18 +96,18 @@ private:
       mDiags.error(location(), "expected '{' after 'camera'");
       throw Recover();
     }
-    auto &camera{mDocument.camera};
+    CameraSettings &camera{mDocument.camera};
     parseSettings("a camera setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
       mDocument.keyLocs[key] = keyLoc;
       if (key == "look_from") {
-        auto v{numbers<3>()};
+        std::array<float, 3> v{numbers<3>()};
         camera.lookFrom = float3(v[0], v[1], v[2]);
       } else if (key == "look_to") {
-        auto v{numbers<3>()};
+        std::array<float, 3> v{numbers<3>()};
         camera.lookTo = float3(v[0], v[1], v[2]);
       } else if (key == "look_up") {
-        auto v{numbers<3>()};
+        std::array<float, 3> v{numbers<3>()};
         camera.lookUp = float3(v[0], v[1], v[2]);
       } else if (key == "fovy") {
         camera.fovYDeg = positive(keyLoc, key, numbers<1>()[0]);
@@ -147,7 +147,7 @@ private:
       } else if (key == "cat_eye_radius") {
         camera.catEyeRadius = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "shutter") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
           mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
                                "(0 or omitted is a shut shutter)");
@@ -155,7 +155,7 @@ private:
         }
         camera.shutter = value;
       } else if (key == "readout") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
           mDiags.error(keyLoc, "expected a nonnegative number for 'readout' "
                                "(0 or omitted is a global shutter)");
@@ -163,7 +163,7 @@ private:
         }
         camera.readout = value;
       } else if (key == "readout_direction") {
-        const auto word{
+        const std::string word{
             expect(Token::WORD, "a direction after 'readout_direction'")};
         if (word == "down") {
           camera.readoutDirection = ReadoutDirection::DOWN;
@@ -279,7 +279,8 @@ private:
   // spelling of the words.
   void parseWhiteBalanceSetting(CameraSettings &camera) {
     if (mToken.kind == Token::WORD) {
-      if (const auto whiteBalance{parseWhiteBalance(mToken.text)}) {
+      if (const std::optional<WhiteBalance> whiteBalance{
+              parseWhiteBalance(mToken.text)}) {
         advance();
         camera.whiteBalance = *whiteBalance;
         return;
@@ -310,7 +311,7 @@ private:
                                             std::string_view word,
                                             const char *extension) {
     if (mToken.kind == Token::STRING) {
-      auto path{mToken.text};
+      std::string path{mToken.text};
       advance();
       return path;
     }
@@ -363,7 +364,7 @@ private:
         "'at' or a camera setting",
         [&](const std::string &word, const LayoutLocation &wordLoc) {
           if (word == "at") {
-            const auto time{finite(wordLoc, "at", numbers<1>()[0])};
+            const float time{finite(wordLoc, "at", numbers<1>()[0])};
             if (!camera.motion.empty() && !(time > camera.motion.back().time)) {
               mDiags.error(wordLoc, "the keys of a 'motion' block are written "
                                     "in ascending time");
@@ -394,13 +395,13 @@ private:
   void parseCameraKeySetting(CameraKey &key, const std::string &setting,
                              const LayoutLocation &settingLoc) {
     if (setting == "look_from") {
-      auto v{numbers<3>()};
+      std::array<float, 3> v{numbers<3>()};
       key.lookFrom = float3(v[0], v[1], v[2]);
     } else if (setting == "look_to") {
-      auto v{numbers<3>()};
+      std::array<float, 3> v{numbers<3>()};
       key.lookTo = float3(v[0], v[1], v[2]);
     } else if (setting == "look_up") {
-      auto v{numbers<3>()};
+      std::array<float, 3> v{numbers<3>()};
       key.lookUp = float3(v[0], v[1], v[2]);
     } else if (setting == "fovy") {
       key.fovYDeg = positive(settingLoc, setting, numbers<1>()[0]);
@@ -537,7 +538,7 @@ constexpr std::pair<std::string_view, WhiteBalanceKind> WHITE_BALANCE_WORDS[]{
 } // namespace
 
 CameraSettings CameraSettings::at(float seconds) const {
-  auto result{*this};
+  CameraSettings result{*this};
   result.motion.clear();
   if (motion.empty()) return result;
 #define X(member, name) \
@@ -556,10 +557,10 @@ bool CameraSettings::hasKeyBetween(float open, float shut) const {
 
 std::vector<std::string_view>
 CameraSettings::heldOverShutter(float open, float shut) const {
-  auto held{std::vector<std::string_view>()};
+  std::vector<std::string_view> held{};
   if (motion.empty()) return held;
-  const auto a{at(open)};
-  const auto b{at(shut)};
+  const CameraSettings a{at(open)};
+  const CameraSettings b{at(shut)};
 #define X(member, name) \
   if (differs(a.member, b.member)) held.push_back(name);
   CAMERA_HELD_SETTINGS(X)
@@ -572,7 +573,7 @@ std::optional<WhiteBalance> parseWhiteBalance(std::string_view text) {
     if (text == word) return WhiteBalance{kind, 0.0f};
   // A temperature: the whole of the text a number within the range,
   // which also turns away the 'infinity' that `strtof` reads as one.
-  const auto spelled{std::string(text)};
+  const std::string spelled{text};
   char *end{};
   const float kelvin{std::strtof(spelled.c_str(), &end)};
   if (spelled.empty() || *end != '\0' ||
@@ -592,7 +593,7 @@ std::string whiteBalanceName(const WhiteBalance &whiteBalance) {
 
 CameraDocument parseCamera(LayoutDiagnostics &diags,
                            const LayoutSource &source) {
-  auto document{CameraDocument()};
+  CameraDocument document{};
   document.source = &source;
   Parser(diags, source, document).parse();
   return document;
@@ -612,7 +613,7 @@ std::string resolveCameraFileName(const std::string &given,
     return given;
   }
   if (sceneFileName.empty()) return {};
-  auto path{std::filesystem::path(sceneFileName)};
+  std::filesystem::path path{sceneFileName};
   if (path.extension() != LAYOUT_EXTENSION) return {};
   path.replace_extension(CAMERA_EXTENSION);
   if (!std::filesystem::exists(path)) return {};

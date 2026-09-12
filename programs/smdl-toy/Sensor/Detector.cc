@@ -74,7 +74,7 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
       mPitchUM(sensor.settings().pitchUM), mFullWell(sensor.fullWell()),
       mBaseISO(sensor.baseISO()), mGain(sensor.gain(shot.iso)),
       mWellSource(sensor.wellSource()), mHasFixedGain(sensor.hasFixedGain()) {
-  const auto &settings{mSettings};
+  const DetectorSettings &settings{mSettings};
   mTopCode = uint16_t(settings.topCode());
   const double black{double(settings.blackLevel)};
   mDarkElectrons =
@@ -87,8 +87,8 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
 }
 
 void Detector::logSummary() const {
-  const auto &settings{mSettings};
-  const auto &shot{mShot};
+  const DetectorSettings &settings{mSettings};
+  const DetectorShot &shot{mShot};
   const double topCodeElectrons{mSettings.codeRange() / mGain};
   const char *wellSource{mWellSource == WellSource::STATED ? "stated"
                          : mWellSource == WellSource::FROM_BASE_ISO
@@ -129,7 +129,7 @@ double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
   const double mu{signal + mDarkElectrons};
   double electrons{mu};
   if (noise != DetectorNoise::NONE) {
-    auto normals{std::pair<double, double>()};
+    std::pair<double, double> normals{};
     bool hasNormals{false};
     if (mu < POISSON_LIMIT) {
       electrons = poisson(mu, rng);
@@ -154,7 +154,7 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
   const size_t numBands{film.getNumBands()};
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
-  auto readout{Readout{}};
+  Readout readout{};
   readout.bandCount = numBands;
   readout.pixelCountX = numPixelsX;
   readout.pixelCountY = numPixelsY;
@@ -165,20 +165,19 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
     uint64_t inWindow{};
   };
   const double black{double(mSettings.blackLevel)};
-  const auto tally{parallelRowFold(
+  const RowTally tally{parallelRowFold(
       size_t(0), numPixelsY, RowTally{},
       [&](size_t y) {
-        auto tally{RowTally{}};
+        RowTally tally{};
         const bool isRowInWindow{int(y) >= window[1] && int(y) < window[3]};
         for (size_t x = 0; x < numPixelsX; x++) {
           const bool isInWindow{isRowInWindow && int(x) >= window[0] &&
                                 int(x) < window[2]};
           for (size_t b = 0; b < numBands; b++) {
             const size_t index{(y * numPixelsX + x) * numBands + b};
-            auto rng{
-                smdl::RNG(smdl::mixBits(options.seed ^
+            smdl::RNG rng{smdl::mixBits(options.seed ^
                                         smdl::mixBits(uint64_t(index + 1))),
-                          uint64_t(index))};
+                          uint64_t(index)};
             double signal{};
             const double electrons{electronsOf(filmMean(film, x, y, b),
                                                options.noise, rng, signal)};
@@ -207,7 +206,7 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
 }
 
 DetectorHeader Detector::header(const DetectorReadoutOptions &options) const {
-  auto header{DetectorHeader{}};
+  DetectorHeader header{};
   header.seed = options.seed;
   header.noise = detectorNoiseName(options.noise);
   header.exposure = mShot.exposure;

@@ -56,7 +56,7 @@ public:
   /// A key that distinguishes two selections of the same file, for
   /// callers that cache or merge by (file, selection).
   [[nodiscard]] std::string key() const {
-    auto result{std::string(shouldRecenter ? "recenter" : "")};
+    std::string result{shouldRecenter ? "recenter" : ""};
     for (const auto &pattern : patterns) result += '\n', result += pattern;
     return result;
   }

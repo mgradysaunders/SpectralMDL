@@ -30,8 +30,8 @@ int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   // Prints exactly like 'PrintToCerr', except that it knows to step
   // around a progress bar while one is on screen.
-  auto &logSink{smdl::Logger::get().addSink<ProgressLogSink>()};
-  const auto opts{parseCommandLine(argc, argv)};
+  ProgressLogSink &logSink{smdl::Logger::get().addSink<ProgressLogSink>()};
+  const Options opts{parseCommandLine(argc, argv)};
   // Before anything is logged: the sink above is already in place, and
   // the parse itself says nothing, so this is the first point at which a
   // message could be filtered and labeled as asked, and the last at which
@@ -62,7 +62,7 @@ int main(int argc, char **argv) try {
   // scene: with -camera it runs on that file alone, and without one on
   // the '.camera' beside the scene, if any.
   if (opts.utility.shouldDescribeCamera) {
-    const auto model{resolveCameraModel(opts)};
+    const CameraModel model{resolveCameraModel(opts)};
     std::cout << describeCamera(model);
     return EXIT_SUCCESS;
   }
@@ -78,26 +78,26 @@ int main(int argc, char **argv) try {
   // entries are only ever begun on this thread; parallel work is timed by
   // hand and reported through logging instead.
   const bool isProfiling{opts.utility.isProfiling};
-  const auto &profileFileName{opts.utility.profile};
+  const std::string &profileFileName{opts.utility.profile};
   if (isProfiling) smdl::profilerInitialize();
-  auto frame{resolveFrame(opts)};
+  Frame frame{resolveFrame(opts)};
   // The body's response, which exists exactly when a body does.
-  auto responseSettings{std::optional<ResponseSettings>()};
+  std::optional<ResponseSettings> responseSettings{};
   if (frame.model.sensor) responseSettings = frame.model.sensor->response;
-  auto resumed{resumeSequence(opts, frame,
-                              responseSettings ? &*responseSettings : nullptr)};
-  const auto grid{resolveWavelengthGrid(opts, frame, resumed)};
+  ResumedSequence resumed{resumeSequence(
+      opts, frame, responseSettings ? &*responseSettings : nullptr)};
+  const ResolvedGrid grid{resolveWavelengthGrid(opts, frame, resumed)};
   // The response against the grid, here rather than later, so that a
   // band the grid cannot see fails before anything compiles. Under a tile
   // it draws the wavelengths a lens whose glasses disperse is traced at,
   // under the white balance's illuminant, which `auto` reads as D65 until
   // the frame is measured.
-  const auto response{
+  const std::optional<Response> response{
       resolveResponse(responseSettings, grid.wavelengths,
                       whiteBalanceSpectrum(frame.model.whiteBalance))};
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
-  auto compiler{smdl::Compiler{}};
+  smdl::Compiler compiler{};
   setUpCompiler(opts, frame, grid, compiler);
   if (opts.utility.shouldListObjects) {
     if (opts.utility.useJSON) {
@@ -113,7 +113,8 @@ int main(int argc, char **argv) try {
     // compile() alone is enough.
     const smdl::Compiler *compilerOrNull{};
     if (!opts.scene.inputMDLFiles.empty()) {
-      if (auto error{compiler.compile(opts.compile.optLevel)})
+      if (std::optional<smdl::Error> error{
+              compiler.compile(opts.compile.optLevel)})
         error->printAndExit();
       compilerOrNull = &compiler;
     }
@@ -140,26 +141,26 @@ int main(int argc, char **argv) try {
   }
   // The render loop is deliberately outside the trace; see -profile.
   if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
-  auto film{smdl::SpectralFilm(grid.wavelengths.size(), frame.numPixelsX,
-                               frame.numPixelsY)};
+  smdl::SpectralFilm film{grid.wavelengths.size(), frame.numPixelsX,
+                          frame.numPixelsY};
   // -resume implies writing back to the file being resumed, so one
   // command line re-runs to keep accumulating; an explicitly given
   // -output-spectrum wins verbatim, redirecting or (when empty)
   // suppressing the write.
-  const auto outputSpectrum{opts.image.wasOutputSpectrumGiven ||
-                                    !resumed.wasRequested
-                                ? opts.image.outputSpectrum
-                                : opts.image.resume};
+  const std::string outputSpectrum{opts.image.wasOutputSpectrumGiven ||
+                                           !resumed.wasRequested
+                                       ? opts.image.outputSpectrum
+                                       : opts.image.resume};
   // The band film, which a physical sensor always accumulates: it goes
   // beside the spectral one and into the readout, and a resumed
   // sequence needs it whether or not this session writes either.
-  auto bandFilm{std::optional<smdl::SpectralFilm>()};
+  std::optional<smdl::SpectralFilm> bandFilm{};
   if (response)
     bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
                      frame.numPixelsY);
   const Response *responseOrNull{response ? &*response : nullptr};
   smdl::SpectralFilm *bandFilmOrNull{bandFilm ? &*bandFilm : nullptr};
-  auto sdtree{std::unique_ptr<STree>()};
+  std::unique_ptr<STree> sdtree{};
   renderSamples(opts, frame, grid, compiler, staged, resumed, film,
                 responseOrNull, bandFilmOrNull, outputSpectrum, sdtree);
   writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), film,

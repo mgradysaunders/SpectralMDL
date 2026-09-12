@@ -63,7 +63,7 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
 void logISO(const Sensor &sensor, const std::optional<float> &stated,
             const MeteredExposure &metered, const DetectorShot &shot) {
   const bool isDark{!(metered.luxSeconds > 0)};
-  const auto reading{
+  const std::string reading{
       isDark
           ? std::string("the film is dark, so the meter reads nothing")
           : smdl::concat("the meter reads ", smdl::Brief(metered.luxSeconds, 4),
@@ -102,7 +102,7 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
     // square root.
     const bool isOver{metered.isOverexposed()};
     const double end{isOver ? sensor.baseISO() : sensor.maxISO()};
-    const auto fix{
+    const std::string fix{
         isDark ? std::string()
                : smdl::concat(
                      ": a shutter of ",
@@ -137,15 +137,15 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
                                     const smdl::SpectralFilm &film,
                                     const Color &wavelengths, bool shouldLog) {
   SMDL_SANITY_CHECK(frame.camera && gRenderShutter.hasExposure());
-  const auto &model{frame.model};
-  auto shot{DetectorShot{}};
+  const CameraModel &model{frame.model};
+  DetectorShot shot{};
   shot.exposure = gRenderShutter.exposure;
   shot.temperature = model.temperature;
   shot.fNumber = frame.camera->fNumber();
   const double irradianceScale{model.sensor ? 1.0
                                             : model.previewIrradianceScale};
-  const auto metered{sensor.meter(film, wavelengths, frame.window,
-                                  shot.exposure * irradianceScale)};
+  const MeteredExposure metered{sensor.meter(film, wavelengths, frame.window,
+                                             shot.exposure * irradianceScale)};
   shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
   shot.iso = sensor.hasFixedGain() ? sensor.fixedGainISO()
              : model.iso           ? double(*model.iso)
@@ -166,12 +166,13 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
 void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                    const smdl::SpectralFilm &film, const Color &wavelengths,
                    std::vector<float> &rgbImage, bool shouldLog) {
-  const auto &model{frame.model};
-  const auto &sensor{*model.physics};
-  const auto shot{takeShot(frame, sensor, film, wavelengths, shouldLog)};
-  auto flat{Color()};
+  const CameraModel &model{frame.model};
+  const Sensor &sensor{*model.physics};
+  const DetectorShot shot{
+      takeShot(frame, sensor, film, wavelengths, shouldLog)};
+  Color flat{};
   for (size_t i = 0; i < flat.size(); i++) flat[i] = 1;
-  const auto rgb{
+  const float3 rgb{
       compiler.convertColorToRGB(makeRenderState(wavelengths), flat.data())};
   const double developed{0.2126 * double(rgb[0]) + 0.7152 * double(rgb[1]) +
                          0.0722 * double(rgb[2])};
@@ -207,11 +208,11 @@ struct BodyReadout final {
 readOutBody(const Frame &frame, const smdl::SpectralFilm &film,
             const smdl::SpectralFilm &bandFilm, const Color &wavelengths,
             const DetectorReadoutOptions &options, bool shouldLog) {
-  const auto &sensor{*frame.model.physics};
+  const Sensor &sensor{*frame.model.physics};
   const Detector detector{
       sensor, takeShot(frame, sensor, film, wavelengths, shouldLog)};
   if (shouldLog) detector.logSummary();
-  auto readout{detector.readOut(bandFilm, options, frame.window)};
+  Readout readout{detector.readOut(bandFilm, options, frame.window)};
   return BodyReadout{detector, std::move(readout)};
 }
 
@@ -223,16 +224,16 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
                                   const smdl::SpectralFilm &film,
                                   const smdl::SpectralFilm *bandFilm) {
   if (!frame.model.sensor) {
-    auto rgbImage{
+    std::vector<float> rgbImage{
         resolveRGB(compiler, film, grid.wavelengths, opts.image.rgbPolicy)};
     if (frame.model.previewedSensor)
       exposePreview(frame, compiler, film, grid.wavelengths, rgbImage, false);
     return rgbImage;
   }
   SMDL_SANITY_CHECK(bandFilm);
-  auto noiseless{opts.image.readout};
+  DetectorReadoutOptions noiseless{opts.image.readout};
   noiseless.noise = DetectorNoise::NONE;
-  const auto body{
+  const BodyReadout body{
       readOutBody(frame, film, *bandFilm, grid.wavelengths, noiseless, false)};
   return developReadout(*frame.model.physics, body.detector, body.readout,
                         frame.model.whiteBalance, frame.window, false);
@@ -245,12 +246,12 @@ void writeOutputs(const Options &opts, const Frame &frame,
                   ResumedSequence &resumed, const std::string &outputSpectrum,
                   const STree *sdtree) {
   SMDL_SANITY_CHECK(!bandFilm || response);
-  const auto &wavelengths{grid.wavelengths};
-  const auto &model{frame.model};
-  const auto numPixelsX{frame.numPixelsX};
-  const auto numPixelsY{frame.numPixelsY};
-  const auto window{frame.window};
-  const auto spp{frame.spp};
+  const Color &wavelengths{grid.wavelengths};
+  const CameraModel &model{frame.model};
+  const size_t numPixelsX{frame.numPixelsX};
+  const size_t numPixelsY{frame.numPixelsY};
+  const int4 window{frame.window};
+  const size_t spp{frame.spp};
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
   const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
@@ -263,9 +264,9 @@ void writeOutputs(const Options &opts, const Frame &frame,
   resumed.header.quantity = filmQuantityName(model.filmQuantity());
   // The response's fingerprint, which every film beside the spectral one
   // carries, the readout included, and the body's name for the reader.
-  auto responseLines{std::vector<std::string>()};
+  std::vector<std::string> responseLines{};
   if (response) {
-    auto responseHeader{ResponseHeader{}};
+    ResponseHeader responseHeader{};
     responseHeader.hash = response->hash();
     responseHeader.cfaColumns = response->tileColumns();
     responseHeader.cfa = response->tileNames();
@@ -280,13 +281,13 @@ void writeOutputs(const Options &opts, const Frame &frame,
   // follows (stated, metered, or the fixed gain's own), the readout
   // reads the band film out at it, onto its own pair under the usual
   // discipline when asked for, and the develop makes the picture of it.
-  auto rgbImage{std::vector<float>()};
+  std::vector<float> rgbImage{};
   if (model.sensor) {
     SMDL_SANITY_CHECK(bandFilm);
-    const auto body{readOutBody(frame, film, *bandFilm, wavelengths,
-                                opts.image.readout, true)};
-    const auto &detector{body.detector};
-    const auto &readout{body.readout};
+    const BodyReadout body{readOutBody(frame, film, *bandFilm, wavelengths,
+                                       opts.image.readout, true)};
+    const Detector &detector{body.detector};
+    const Readout &readout{body.readout};
     SMDL_LOG_INFO(
         "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
         " e- over the window, ",
@@ -295,15 +296,15 @@ void writeOutputs(const Options &opts, const Frame &frame,
                     3),
         "% of pixel bands at the well");
     if (!opts.image.outputDN.empty()) {
-      const auto &dnName{opts.image.outputDN};
-      const auto dnPartName{dnName + ".part"};
-      auto dnLines{resumed.header.headerLines()};
+      const std::string &dnName{opts.image.outputDN};
+      const std::string dnPartName{dnName + ".part"};
+      std::vector<std::string> dnLines{resumed.header.headerLines()};
       for (const auto &line : responseLines) dnLines.push_back(line);
       for (auto &line : detector.header(opts.image.readout).headerLines())
         dnLines.push_back(std::move(line));
       dnLines.push_back(
           smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
-      const auto &bandNames{response->filmBandNames()};
+      const std::vector<std::string> &bandNames{response->filmBandNames()};
       smdl::writeENVIFileUInt16(
           smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
                                      readout.digitalNumbers.size()),
@@ -328,7 +329,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   {
     // Both RGB outputs see the same filtered pixels, and neither the
     // spectral file below nor the film it comes from sees any of it.
-    const auto report{
+    const MedianFilterReport report{
         medianFilterRGB(opts.image.medianFilter, rgbImage, numPixelsX, window)};
     if (report.replacedCount > 0) {
       const double sharePixels{100.0 * double(report.replacedCount) /
@@ -344,9 +345,9 @@ void writeOutputs(const Options &opts, const Frame &frame,
     }
   }
   if (!opts.image.outputRGBFloat.empty()) {
-    if (auto error{smdl::writeFloatImage(opts.image.outputRGBFloat,
-                                         int(numPixelsX), int(numPixelsY), 3,
-                                         rgbImage.data())}) {
+    if (std::optional<smdl::Error> error{
+            smdl::writeFloatImage(opts.image.outputRGBFloat, int(numPixelsX),
+                                  int(numPixelsY), 3, rgbImage.data())}) {
       error->print();
     }
   }
@@ -354,11 +355,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
     // be this very path.
-    const auto partName{outputSpectrum + ".part"};
+    const std::string partName{outputSpectrum + ".part"};
     // What the numbers mean, and where the light came from: written for
     // whoever opens the file next, and never read back, so none of it
     // joins the fingerprint a resumed session compares.
-    auto headerLines{resumed.header.headerLines()};
+    std::vector<std::string> headerLines{resumed.header.headerLines()};
     headerLines.push_back(
         smdl::concat(ENVI_RADIOMETRIC_UNITS, " = ",
                      model.filmQuantity() == FilmQuantity::IRRADIANCE
@@ -367,7 +368,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     {
       float azimuthDeg{};
       float elevationDeg{};
-      auto irradiance{std::vector<float>()};
+      std::vector<float> irradiance{};
       // Only the procedural sun says any of this: an image environment
       // has no sun to place, and moonlight's source is not the sun.
       if (envLight && envLight->sunMetadata(wavelengths, azimuthDeg,
@@ -376,7 +377,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
             smdl::concat(ENVI_SUN_AZIMUTH, " = ", azimuthDeg));
         headerLines.push_back(
             smdl::concat(ENVI_SUN_ELEVATION, " = ", elevationDeg));
-        auto line{smdl::concat(ENVI_SOLAR_IRRADIANCE, " = {")};
+        std::string line{smdl::concat(ENVI_SOLAR_IRRADIANCE, " = {")};
         for (size_t i = 0; i < irradiance.size(); i++)
           line += smdl::concat(i > 0 ? ", " : "", irradiance[i]);
         headerLines.push_back(line + "}");
@@ -397,8 +398,9 @@ void writeOutputs(const Options &opts, const Frame &frame,
       // temporary-and-rename discipline, stamped with the merged sample
       // count so a resumed session can tell how far behind a stale tree
       // is.
-      const auto treeName{outputSpectrum + std::string(GUIDE_TREE_EXTENSION)};
-      const auto treePartName{treeName + ".part"};
+      const std::string treeName{outputSpectrum +
+                                 std::string(GUIDE_TREE_EXTENSION)};
+      const std::string treePartName{treeName + ".part"};
       sdtree->writeFile(treePartName, resumed.info.samplesPerPixel + spp);
       smdl::renameOnto(treePartName, treeName);
       SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
@@ -409,12 +411,12 @@ void writeOutputs(const Options &opts, const Frame &frame,
       // discipline: the sequence's own fingerprint, so the pair stands
       // on its own, then the response's, which a resume must match, and
       // the reader-only lines.
-      const auto bandName{bandFilmFileName(outputSpectrum)};
-      const auto bandPartName{bandName + ".part"};
-      auto bandLines{resumed.header.headerLines()};
+      const std::string bandName{bandFilmFileName(outputSpectrum)};
+      const std::string bandPartName{bandName + ".part"};
+      std::vector<std::string> bandLines{resumed.header.headerLines()};
       for (const auto &line : responseLines) bandLines.push_back(line);
       bandLines.push_back(smdl::concat(ENVI_BAND_UNITS, " = ", BAND_UNITS));
-      const auto &bandNames{response->filmBandNames()};
+      const std::vector<std::string> &bandNames{response->filmBandNames()};
       bandFilm->writeENVIFile({}, bandPartName, bandLines, window, bandNames,
                               opts.image.shouldWriteDouble);
       smdl::renameOnto(bandPartName, bandName);
@@ -429,10 +431,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
         smdl::Counted(resumed.header.sessions, "session"));
   }
   {
-    const auto ldrImage{
+    const std::vector<uint8_t> ldrImage{
         tonemap(opts.image.tonemap, rgbImage, film, wavelengths)};
-    if (auto error{smdl::write8bitImage(opts.image.outputRGB, int(numPixelsX),
-                                        int(numPixelsY), 3, ldrImage.data())}) {
+    if (std::optional<smdl::Error> error{
+            smdl::write8bitImage(opts.image.outputRGB, int(numPixelsX),
+                                 int(numPixelsY), 3, ldrImage.data())}) {
       error->print();
     }
   }

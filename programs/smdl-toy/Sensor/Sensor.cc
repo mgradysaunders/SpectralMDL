@@ -5,7 +5,6 @@
 
 #include "smdl/RenderUtil/Colorimetry.h"
 #include "smdl/RenderUtil/Illuminant.h"
-#include "smdl/Support/Parallel.h"
 
 #include "Sensor/Sensor.h"
 
@@ -17,8 +16,8 @@ namespace {
 // which evaluate in single precision: `evaluate(count, wavelengths,
 // values)`.
 template <typename F> [[nodiscard]] SensorSpectrum tabulated(F &&evaluate) {
-  auto wavelengths{std::vector<float>(SENSOR_WAVELENGTH_COUNT)};
-  auto values{std::vector<float>(SENSOR_WAVELENGTH_COUNT)};
+  std::vector<float> wavelengths(SENSOR_WAVELENGTH_COUNT);
+  std::vector<float> values(SENSOR_WAVELENGTH_COUNT);
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
     wavelengths[i] = float(sensorWavelength(i));
   evaluate(int(SENSOR_WAVELENGTH_COUNT), wavelengths.data(), values.data());
@@ -39,7 +38,7 @@ template <typename F> [[nodiscard]] SensorSpectrum tabulated(F &&evaluate) {
 } // namespace
 
 SensorSpectrum daylightSpectrum(double kelvin) {
-  auto xy{float2()};
+  float2 xy{};
   smdlKelvinToChromaticity(float(kelvin), &xy);
   return tabulated([&](int count, const float *wavelengths, float *values) {
     smdlEvalIlluminantD(count, wavelengths, values, xy);
@@ -55,7 +54,7 @@ SensorSpectrum planckSpectrum(double kelvin) {
                   std::expm1(SECOND_RADIATION_CONSTANT / (meters * kelvin)));
   }};
   const double at560{radiance(560.0)};
-  auto spectrum{SensorSpectrum(SENSOR_WAVELENGTH_COUNT)};
+  SensorSpectrum spectrum(SENSOR_WAVELENGTH_COUNT);
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
     spectrum[i] = radiance(sensorWavelength(i)) / at560;
   return spectrum;
@@ -84,25 +83,24 @@ SensorSpectrum whiteBalanceSpectrum(const WhiteBalance &whiteBalance) {
   }
 }
 
-smdl::double3 illuminantWhite(const SensorSpectrum &illuminant) {
+double3 illuminantWhite(const SensorSpectrum &illuminant) {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
-  auto white{smdl::double3()};
+  double3 white{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
     white += illuminant[i] * smdl::wymanXYZ(sensorWavelength(i));
   return white.y > 0 ? white / white.y : white;
 }
 
 const std::vector<SensorSpectrum> &trainingReflectances() {
-  static const auto patches{[] {
-    auto result{std::vector<SensorSpectrum>(TRAINING_PATCH_COUNT)};
+  static const std::vector<SensorSpectrum> patches{[] {
+    std::vector<SensorSpectrum> result(TRAINING_PATCH_COUNT);
     for (size_t j = 0; j < TRAINING_PATCH_COUNT; j++) {
-      const auto &table{TRAINING_REFLECTANCES[j]};
-      auto &patch{result[j]};
+      SensorSpectrum &patch{result[j]};
       patch.resize(SENSOR_WAVELENGTH_COUNT);
       for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
-        patch[i] =
-            tableAt(table, TRAINING_WAVELENGTH_COUNT, TRAINING_WAVELENGTH_MIN,
-                    TRAINING_WAVELENGTH_STEP, sensorWavelength(i));
+        patch[i] = tableAt(TRAINING_REFLECTANCES[j], TRAINING_WAVELENGTH_COUNT,
+                           TRAINING_WAVELENGTH_MIN, TRAINING_WAVELENGTH_STEP,
+                           sensorWavelength(i));
     }
     return result;
   }()};
@@ -111,8 +109,8 @@ const std::vector<SensorSpectrum> &trainingReflectances() {
 
 Sensor::Sensor(const SensorSettings &settings)
     : mSettings(settings), mMaxISO(settings.detector.maxISO) {
-  const auto d55{daylightSpectrum(D55_KELVIN)};
-  const auto &bands{settings.response.bands};
+  const SensorSpectrum d55{daylightSpectrum(D55_KELVIN)};
+  const std::vector<ResponseBand> &bands{settings.response.bands};
   for (size_t b = 0; b < bands.size(); b++) {
     const double value{electronsPerLuxSecond(b, d55)};
     if (b == 0 || value > mPeakElectronsPerLuxSecond) {
@@ -120,7 +118,7 @@ Sensor::Sensor(const SensorSettings &settings)
       mPeakElectronsPerLuxSecond = value;
     }
   }
-  const auto &detector{settings.detector};
+  const DetectorSettings &detector{settings.detector};
   const double pixelAreaUM2{pixelArea() * 1e12};
   if (detector.fullWell) {
     mFullWell = double(*detector.fullWell);
@@ -146,7 +144,7 @@ Sensor::Sensor(const SensorSettings &settings)
 double Sensor::electronRate(size_t band,
                             const SensorSpectrum &illuminant) const {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
-  const auto &curve{mSettings.response.bands[band]};
+  const ResponseBand &curve{mSettings.response.bands[band]};
   const double scale{mSettings.response.qeScale()};
   double total{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
@@ -171,13 +169,13 @@ double Sensor::electronsPerLuxSecond(size_t band,
 }
 
 double Sensor::gain(double iso) const noexcept {
-  const auto &detector{mSettings.detector};
+  const DetectorSettings &detector{mSettings.detector};
   if (detector.gain) return double(*detector.gain);
   return detector.codeRange() / topCodeElectrons(iso);
 }
 
 double Sensor::fixedGainISO() const noexcept {
-  const auto &detector{mSettings.detector};
+  const DetectorSettings &detector{mSettings.detector};
   return mPeakElectronsPerLuxSecond > 0
              ? double(detector.gain.value_or(1.0f)) *
                    ISO_SATURATION_LUX_SECONDS * mPeakElectronsPerLuxSecond /
@@ -194,10 +192,10 @@ double Sensor::topCodeElectrons(double iso) const noexcept {
 
 std::vector<double> Sensor::luminanceWeights(const Color &wavelengths) {
   const size_t numBands{wavelengths.size()};
-  auto weights{std::vector<double>(numBands)};
-  const auto &edges{gRenderGrid.bandEdges};
+  std::vector<double> weights(numBands);
+  const std::vector<float> &edges{gRenderGrid.bandEdges};
   if (edges.empty()) {
-    const auto widths{wavelengthTrapezoidWidths(wavelengths)};
+    const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
     for (size_t i = 0; i < numBands; i++)
       weights[i] = smdl::wymanY(double(wavelengths[i])) * widths[i];
   } else {
@@ -213,7 +211,7 @@ std::vector<double> Sensor::luminanceWeights(const Color &wavelengths) {
 MeteredExposure Sensor::meter(const smdl::SpectralFilm &film,
                               const Color &wavelengths, int4 window,
                               double seconds) const {
-  const auto weights{luminanceWeights(wavelengths)};
+  const std::vector<double> weights{luminanceWeights(wavelengths)};
   const size_t numBands{film.getNumBands()};
   SMDL_SANITY_CHECK(numBands == weights.size());
   const size_t numRows{size_t(std::max(window[3] - window[1], 0))};
@@ -228,7 +226,7 @@ MeteredExposure Sensor::meter(const smdl::SpectralFilm &film,
       },
       [](double &running, double sum) { running += sum; })};
   const size_t numPixels{numRows * size_t(std::max(window[2] - window[0], 0))};
-  auto metered{MeteredExposure{}};
+  MeteredExposure metered{};
   metered.luxSeconds =
       numPixels > 0 ? seconds * LUMENS_PER_WATT * total / double(numPixels)
                     : 0.0;
@@ -246,16 +244,16 @@ MeteredExposure Sensor::meter(const smdl::SpectralFilm &film,
 ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
                           const SensorSpectrum &illuminant) const {
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
-  auto fit{ColorFit{}};
+  ColorFit fit{};
   fit.bands = bands;
   // What each band counts of the illuminant, wavelength by wavelength,
   // and of its white altogether, which normalizes the responses so that
   // the white reads (1, 1, 1).
   const double scale{mSettings.response.qeScale()};
-  auto counts{std::array<std::vector<double>, 3>()};
-  auto whiteCounts{smdl::double3()};
+  std::array<std::vector<double>, 3> counts{};
+  double3 whiteCounts{};
   for (size_t k = 0; k < 3; k++) {
-    const auto &curve{mSettings.response.bands[bands[k]]};
+    const ResponseBand &curve{mSettings.response.bands[bands[k]]};
     counts[k].resize(SENSOR_WAVELENGTH_COUNT);
     for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
       const double lambda{sensorWavelength(i)};
@@ -268,8 +266,8 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   // unit of, so that the white's Y is 1. Its own sum is the illuminant's
   // white, which is `illuminantWhite()` accumulated here rather than
   // over again.
-  auto observer{std::vector<smdl::double3>(SENSOR_WAVELENGTH_COUNT)};
-  auto white{smdl::double3()};
+  std::vector<double3> observer(SENSOR_WAVELENGTH_COUNT);
+  double3 white{};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
     observer[i] = illuminant[i] * smdl::wymanXYZ(sensorWavelength(i));
     white += observer[i];
@@ -279,22 +277,22 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   if (!(whiteCounts.x > 0 && whiteCounts.y > 0 && whiteCounts.z > 0 &&
         whiteY > 0)) {
     fit.isSingular = true;
-    fit.multipliers = smdl::double3(1.0);
+    fit.multipliers = double3(1.0);
     return fit;
   }
   for (size_t k = 0; k < 3; k++)
     fit.multipliers[k] = whiteCounts.y / whiteCounts[k];
   // The responses C and the targets X, and the normal matrices C C^T and
   // X C^T, a patch at a time.
-  const auto &patches{trainingReflectances()};
-  auto responses{std::vector<smdl::double3>(patches.size())};
-  auto targets{std::vector<smdl::double3>(patches.size())};
-  auto normal{smdl::double3x3()};
-  auto crossed{smdl::double3x3()};
+  const std::vector<SensorSpectrum> &patches{trainingReflectances()};
+  std::vector<double3> responses(patches.size());
+  std::vector<double3> targets(patches.size());
+  double3x3 normal{};
+  double3x3 crossed{};
   for (size_t j = 0; j < patches.size(); j++) {
-    const auto &patch{patches[j]};
-    auto response{smdl::double3()};
-    auto target{smdl::double3()};
+    const SensorSpectrum &patch{patches[j]};
+    double3 response{};
+    double3 target{};
     for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
       for (size_t k = 0; k < 3; k++) response[k] += patch[i] * counts[k][i];
       target += patch[i] * observer[i];
@@ -308,7 +306,7 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
     responses[j] = response;
     targets[j] = target;
   }
-  auto normalInverse{normal};
+  double3x3 normalInverse{normal};
   if (!smdl::tryInvert(normalInverse)) {
     fit.isSingular = true;
     return fit;
@@ -316,17 +314,17 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   // The least-squares matrix, then the rank-one correction that moves
   // the white onto its target along the direction least squares cares
   // least about.
-  const auto leastSquares{crossed * normalInverse};
-  const auto ones{smdl::double3(1.0)};
-  const auto direction{normalInverse * ones};
-  const auto miss{fit.white - leastSquares * ones};
+  const double3x3 leastSquares{crossed * normalInverse};
+  const double3 ones{1.0};
+  const double3 direction{normalInverse * ones};
+  const double3 miss{fit.white - leastSquares * ones};
   const double weight{smdl::dot(ones, direction)};
   fit.cameraToXYZ = leastSquares;
   for (size_t k = 0; k < 3; k++)
     fit.cameraToXYZ[k] += miss * (direction[k] / weight);
   for (size_t j = 0; j < patches.size(); j++) {
-    const auto truth{smdl::xyzToLab(targets[j], fit.white)};
-    const auto fitted{
+    const double3 truth{smdl::xyzToLab(targets[j], fit.white)};
+    const double3 fitted{
         smdl::xyzToLab(fit.cameraToXYZ * responses[j], fit.white)};
     const double difference{smdl::deltaE00(truth, fitted)};
     fit.meanDeltaE00 += difference;

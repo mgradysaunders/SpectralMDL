@@ -86,7 +86,7 @@ public:
   /// The mean incident radiance implied by the recorded flux: the total
   /// over the record count and the sphere area.
   [[nodiscard]] float meanRadiance() const noexcept {
-    const auto w{uint64_t(statisticalWeight)};
+    const uint64_t w{uint64_t(statisticalWeight)};
     return w > 0 ? totalFlux() / (2.0f * TWO_PI * float(w)) : 0.0f;
   }
 

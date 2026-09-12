@@ -111,7 +111,7 @@ public:
 /// each walks them in. Empty without a tile.
 [[nodiscard]] inline std::vector<size_t>
 tileBands(const std::vector<size_t> &cfa) {
-  auto bands{std::vector<size_t>()};
+  std::vector<size_t> bands{};
   for (const auto index : cfa)
     if (std::find(bands.begin(), bands.end(), index) == bands.end())
       bands.push_back(index);

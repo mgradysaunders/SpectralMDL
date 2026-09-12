@@ -27,7 +27,7 @@ constexpr size_t MAX_TAPS = MAX_TAPS_PER_SIDE * MAX_TAPS_PER_SIDE;
 MedianFilterReport medianFilterRGB(const MedianFilterOptions &options,
                                    std::vector<float> &rgbImage,
                                    size_t numPixelsX, int4 window) {
-  auto report{MedianFilterReport{}};
+  MedianFilterReport report{};
   if (!options.isEnabled) return report;
   SMDL_SANITY_CHECK(options.radius >= 1 &&
                     options.radius <= MEDIAN_FILTER_MAX_RADIUS);
@@ -37,18 +37,18 @@ MedianFilterReport medianFilterRGB(const MedianFilterOptions &options,
   const size_t numRows{size_t(window[3] - window[1])};
   report.examinedCount = numRows * size_t(window[2] - window[0]);
   // The pass reads the image it is rewriting, so it reads a copy.
-  const auto source{rgbImage};
+  const std::vector<float> source{rgbImage};
   // One accumulator per row, folded in row order afterward, so that the
   // totals are the same however the rows are scheduled.
-  auto rowCounts{std::vector<uint32_t>(numRows)};
-  auto rowRemoved{std::vector<double>(numRows)};
-  auto rowTotals{std::vector<double>(numRows)};
+  std::vector<uint32_t> rowCounts(numRows);
+  std::vector<double> rowRemoved(numRows);
+  std::vector<double> rowTotals(numRows);
   smdl::parallelFor(0, numRows, [&](size_t row) {
     const int y{window[1] + int(row)};
     // The taps, paired with their pixel index so that the pair orders
     // totally: two taps of equal peak resolve by position, and the
     // replacement is the same pixel in every build.
-    auto taps{std::array<std::pair<float, size_t>, MAX_TAPS>()};
+    std::array<std::pair<float, size_t>, MAX_TAPS> taps{};
     for (int x = window[0]; x < window[2]; x++) {
       const size_t center{size_t(x) + numPixelsX * size_t(y)};
       const float centerPeak{pixelPeak(&source[3 * center])};
@@ -69,7 +69,7 @@ MedianFilterReport medianFilterRGB(const MedianFilterOptions &options,
       // Written as a multiply, so a neighborhood median of zero flags any
       // positive center instead of dividing by it.
       if (!(centerPeak > factor * middle->first)) continue;
-      const auto texel{&source[3 * middle->second]};
+      const float *texel{&source[3 * middle->second]};
       std::copy(texel, texel + 3, &rgbImage[3 * center]);
       rowCounts[row]++;
       rowRemoved[row] += double(centerPeak) - double(middle->first);

@@ -64,7 +64,7 @@ private:
     } else if (mToken.text == "haze") {
       parseHaze();
     } else {
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.text == CAMERA_FILE_KEYWORD) {
@@ -78,7 +78,7 @@ private:
                            mToken.text) != TRANSFORM_OPS.end()) {
         error.note({}, "transform operations belong on a 'place' line or "
                        "inside its block");
-      } else if (const auto nearest{
+      } else if (const std::string_view nearest{
                      smdl::suggestNearest(mToken.text, TOP_LEVEL_KEYWORDS)};
                  !nearest.empty()) {
         error.note({},
@@ -90,7 +90,7 @@ private:
 
   void parseAsset() {
     advance();
-    auto &decl{mDocument.assets.emplace_back()};
+    LayoutAssetDecl &decl{mDocument.assets.emplace_back()};
     if (mToken.kind != Token::WORD || !isIdentifier(mToken.text)) {
       mDiags.error(location(), "expected an asset name after 'asset'");
       mDocument.assets.pop_back();
@@ -98,7 +98,7 @@ private:
     }
     decl.name = mToken.text;
     decl.nameLoc = location();
-    if (const auto previous{findDeclaration(decl.name, &decl)}) {
+    if (const LayoutLocation previous{findDeclaration(decl.name, &decl)}) {
       mDiags
           .error(decl.nameLoc, smdl::concat("redeclaration of asset ",
                                             smdl::Quoted(decl.name)))
@@ -191,7 +191,7 @@ private:
           throw Recover();
         }
         if (op == "size") {
-          const auto values{numbers<3>()};
+          const std::array<float, 3> values{numbers<3>()};
           if (!(values[0] > 0 && values[1] > 0 && values[2] > 0)) {
             mDiags.error(opLoc, "expected three positive numbers for 'size'");
             throw Recover();
@@ -291,7 +291,7 @@ private:
                     "<factor> once', or 'animation off'");
       throw Recover();
     }
-    auto &spec{decl.animation};
+    AnimationSpec &spec{decl.animation};
     const auto isSetting{[&] {
       return mToken.kind == Token::STRING ||
              (mToken.kind == Token::WORD &&
@@ -299,9 +299,9 @@ private:
                mToken.text == "once" || mToken.text == "off" ||
                isNumber(mToken)));
     }};
-    auto anySetting{false};
+    bool anySetting{false};
     while (isSetting()) {
-      const auto settingLoc{location()};
+      const LayoutLocation settingLoc{location()};
       if (mToken.kind == Token::STRING || isNumber(mToken)) {
         if (spec.hasClip()) {
           mDiags.error(settingLoc, "'animation' names two clips");
@@ -334,9 +334,9 @@ private:
         spec.shouldPlayOnce = true;
         advance();
       } else {
-        const auto setting{mToken.text};
+        const std::string setting{mToken.text};
         advance();
-        const auto value{finite(settingLoc, setting, numbers<1>()[0])};
+        const float value{finite(settingLoc, setting, numbers<1>()[0])};
         if (setting == "speed" && value == 0) {
           mDiags.error(settingLoc, "'speed' must be nonzero");
           throw Recover();
@@ -353,7 +353,7 @@ private:
   // each setting.
   void parseLight() {
     advance();
-    auto &decl{mDocument.lights.emplace_back()};
+    LayoutLightDecl &decl{mDocument.lights.emplace_back()};
     if (mToken.kind != Token::WORD || !isIdentifier(mToken.text)) {
       mDiags.error(location(), "expected a light name after 'light'");
       mDocument.lights.pop_back();
@@ -361,7 +361,7 @@ private:
     }
     decl.name = mToken.text;
     decl.nameLoc = location();
-    if (const auto previous{findDeclaration(decl.name, &decl)}) {
+    if (const LayoutLocation previous{findDeclaration(decl.name, &decl)}) {
       mDiags
           .error(decl.nameLoc, smdl::concat("redeclaration of light ",
                                             smdl::Quoted(decl.name)))
@@ -405,10 +405,10 @@ private:
   }
 
   void parseLightBody(LayoutLightDecl &decl) {
-    const auto isSpot{decl.kind == LayoutLightDecl::Kind::SPOT};
-    const auto isProfile{decl.kind == LayoutLightDecl::Kind::PROFILE};
-    const auto isRect{decl.kind == LayoutLightDecl::Kind::RECT};
-    const auto isDisk{decl.kind == LayoutLightDecl::Kind::DISK};
+    const bool isSpot{decl.kind == LayoutLightDecl::Kind::SPOT};
+    const bool isProfile{decl.kind == LayoutLightDecl::Kind::PROFILE};
+    const bool isRect{decl.kind == LayoutLightDecl::Kind::RECT};
+    const bool isDisk{decl.kind == LayoutLightDecl::Kind::DISK};
     parseSettings("a light setting", [&](const std::string &op,
                                          const LayoutLocation &opLoc) {
       if (op == "power") {
@@ -417,7 +417,7 @@ private:
       } else if (op == "temperature") {
         decl.temperature = positive(opLoc, op, numbers<1>()[0]);
       } else if (op == "color") {
-        const auto v{numbers<3>()};
+        const std::array<float, 3> v{numbers<3>()};
         if (!(v[0] >= 0 && v[1] >= 0 && v[2] >= 0)) {
           mDiags.error(opLoc,
                        "expected three non-negative numbers for 'color'");
@@ -433,7 +433,7 @@ private:
                                     decl.kindName()));
           throw Recover();
         }
-        const auto value{numbers<1>()[0]};
+        const float value{numbers<1>()[0]};
         if (op == "angle") {
           if (!(value > 0 && value <= 180)) {
             mDiags.error(opLoc, "expected an 'angle' between 0 and 180 "
@@ -468,7 +468,7 @@ private:
                                            decl.kindName()));
           throw Recover();
         }
-        const auto v{numbers<2>()};
+        const std::array<float, 2> v{numbers<2>()};
         if (!(v[0] > 0 && v[1] > 0)) {
           mDiags.error(opLoc, "expected two positive numbers for 'size'");
           throw Recover();
@@ -509,7 +509,7 @@ private:
   // becomes a scope.
   void parseGroup() {
     advance();
-    auto &group{mDocument.groups.emplace_back()};
+    LayoutGroupDecl &group{mDocument.groups.emplace_back()};
     if (mToken.kind != Token::WORD || !isIdentifier(mToken.text)) {
       mDiags.error(location(), "expected a group name after 'group'");
       mDocument.groups.pop_back();
@@ -517,7 +517,7 @@ private:
     }
     group.name = mToken.text;
     group.nameLoc = location();
-    if (const auto previous{findDeclaration(group.name, &group)}) {
+    if (const LayoutLocation previous{findDeclaration(group.name, &group)}) {
       mDiags
           .error(group.nameLoc, smdl::concat("redeclaration of group ",
                                              smdl::Quoted(group.name)))
@@ -540,7 +540,7 @@ private:
         parsePlaceInto(group.placements);
         continue;
       }
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("expected 'place' or '}', got ",
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.kind == Token::WORD &&
@@ -560,9 +560,9 @@ private:
   // boundary is what keeps the next top-level directive from reading as
   // more operations.
   void parsePlaceInto(std::vector<LayoutPlacement> &into) {
-    const auto placeLine{lineOf(mToken)};
+    const uint32_t placeLine{lineOf(mToken)};
     advance();
-    auto &placement{into.emplace_back()};
+    LayoutPlacement &placement{into.emplace_back()};
     placement.kind = LayoutPlacement::Kind::PLACE;
     if (mToken.kind != Token::WORD || !isIdentifier(mToken.text)) {
       mDiags.error(location(), "expected an asset or group name after "
@@ -635,8 +635,8 @@ private:
   // <to>` override. The operations an asset declaration takes are
   // pointed back at it.
   void parsePlaceOp(LayoutPlacement &placement) {
-    const auto op{mToken.text};
-    const auto opLoc{location()};
+    const std::string op{mToken.text};
+    const LayoutLocation opLoc{location()};
     advance();
     if (op == "select" || op == "recenter" || op == "subdivide" ||
         op == "displace" || op == "tube" || op == "ribbon" ||
@@ -666,7 +666,8 @@ private:
         throw Recover();
       }
       advance(); // '{'
-      auto &variant{placement.variants.emplace_back()};
+      std::map<std::string, std::string, std::less<>> &variant{
+          placement.variants.emplace_back()};
       while (mToken.kind != Token::CLOSE) {
         if (mToken.kind == Token::END) {
           mDiags.error(location(), "expected '}' before end of file");
@@ -677,7 +678,7 @@ private:
                                    "overrides and nothing else");
           throw Recover();
         }
-        const auto pairLoc{location()};
+        const LayoutLocation pairLoc{location()};
         advance();
         std::string from{};
         if (mToken.kind == Token::WORD || mToken.kind == Token::STRING) {
@@ -694,7 +695,7 @@ private:
           throw Recover();
         }
         advance(); // '='
-        auto to{expect(Token::WORD, "an MDL material name after '='")};
+        std::string to{expect(Token::WORD, "an MDL material name after '='")};
         if (!variant.try_emplace(from, std::move(to)).second) {
           mDiags.error(pairLoc,
                        smdl::concat("the material ", smdl::Quoted(from),
@@ -737,7 +738,7 @@ private:
         throw Recover();
       }
       advance(); // '='
-      auto to{expect(Token::WORD, "an MDL material name after '='")};
+      std::string to{expect(Token::WORD, "an MDL material name after '='")};
       if (!placement.overrides.try_emplace(from, std::move(to)).second) {
         mDiags.error(opLoc, smdl::concat("the material ", smdl::Quoted(from),
                                          " is overridden twice in one place"));
@@ -774,7 +775,7 @@ private:
           .note(placement.animationOffsetLoc, "first written here");
       throw Recover();
     }
-    const auto value{numbers<1>()[0]};
+    const float value{numbers<1>()[0]};
     if (!std::isfinite(value)) {
       mDiags.error(opLoc, "expected a finite number of seconds for 'offset'");
       throw Recover();
@@ -800,7 +801,7 @@ private:
       throw Recover();
     }
     advance(); // '{'
-    auto &track{placement.motion};
+    MotionTrack &track{placement.motion};
     while (mToken.kind != Token::CLOSE) {
       if (mToken.kind == Token::END) {
         mDiags.error(location(), "expected '}' before end of file");
@@ -810,11 +811,11 @@ private:
         mDiags.error(location(), "expected 'at' or a transform operation");
         throw Recover();
       }
-      const auto word{mToken.text};
-      const auto wordLoc{location()};
+      const std::string word{mToken.text};
+      const LayoutLocation wordLoc{location()};
       advance();
       if (word == "at") {
-        const auto time{finite(wordLoc, "at", numbers<1>()[0])};
+        const float time{finite(wordLoc, "at", numbers<1>()[0])};
         if (!track.keys.empty() && !(time > track.keys.back().time)) {
           mDiags.error(wordLoc, "the keys of a 'motion' block are written in "
                                 "ascending time");
@@ -872,7 +873,7 @@ private:
 
   void parseImport() {
     advance();
-    auto &placement{mDocument.placements.emplace_back()};
+    LayoutPlacement &placement{mDocument.placements.emplace_back()};
     placement.kind = LayoutPlacement::Kind::IMPORT;
     placement.importPathLoc = location();
     placement.importPath =
@@ -888,8 +889,8 @@ private:
         mDiags.error(location(), "expected an import operation or '}'");
         throw Recover();
       }
-      const auto op{mToken.text};
-      const auto opLoc{location()};
+      const std::string op{mToken.text};
+      const LayoutLocation opLoc{location()};
       advance();
       if (op == "select" || op == "recenter" || op == "subdivide" ||
           op == "displace" || op == "tube" || op == "ribbon" ||
@@ -946,12 +947,12 @@ private:
   // shades one. Unambiguous by what follows: a slot is quoted because it
   // is a name out of the mesh file, an MDL material name is bare.
   void parseMaterialOps(MaterialAssignment &materials, std::string_view where) {
-    const auto opLoc{location()};
+    const LayoutLocation opLoc{location()};
     if (mToken.kind == Token::STRING) {
-      auto slot{mToken.text};
+      std::string slot{mToken.text};
       advance();
       expect(Token::EQUALS, "'=' after the material slot name");
-      auto target{expect(Token::WORD, "an MDL material name after '='")};
+      std::string target{expect(Token::WORD, "an MDL material name after '='")};
       if (!materials.bySlot.try_emplace(slot, std::move(target)).second) {
         mDiags.error(opLoc,
                      smdl::concat("the material slot ", smdl::Quoted(slot),
@@ -992,11 +993,11 @@ private:
     // other: 'loop' selects the triangle split, and 'linear' turns
     // smoothing off. Operation names are never numbers, and no operation
     // is called 'loop' or 'linear', so peeking is unambiguous.
-    auto hasSeenLoop{false};
-    auto hasSeenLinear{false};
+    bool hasSeenLoop{false};
+    bool hasSeenLinear{false};
     while (mToken.kind == Token::WORD &&
            (mToken.text == "loop" || mToken.text == "linear")) {
-      auto &saw{mToken.text == "loop" ? hasSeenLoop : hasSeenLinear};
+      bool &saw{mToken.text == "loop" ? hasSeenLoop : hasSeenLinear};
       if (saw) {
         mDiags.error(location(),
                      smdl::concat(smdl::Quoted(mToken.text),
@@ -1012,17 +1013,17 @@ private:
 
   void parseAlias() {
     advance();
-    auto name{expect(Token::STRING, "a quoted material name after "
-                                    "'material'")};
+    std::string name{expect(Token::STRING, "a quoted material name after "
+                                           "'material'")};
     expect(Token::EQUALS, "'=' after the material name");
-    auto target{expect(Token::WORD, "an MDL material name after '='")};
+    std::string target{expect(Token::WORD, "an MDL material name after '='")};
     // Last one wins within the file; the scope ends at the file.
     mDocument.materialAliases.insert_or_assign(std::move(name),
                                                std::move(target));
   }
 
   void parseMedium() {
-    const auto opLoc{location()};
+    const LayoutLocation opLoc{location()};
     advance();
     // Last one wins within the file, like the 'material' aliasing.
     mDocument.mediumName =
@@ -1038,7 +1039,7 @@ private:
       mDiags.error(location(), "expected '{' after 'sky'");
       throw Recover();
     }
-    auto &sky{mDocument.sky};
+    LayoutSky &sky{mDocument.sky};
     parseSettings("a sky setting", [&](const std::string &key,
                                        const LayoutLocation &keyLoc) {
       if (key == "none") {
@@ -1090,7 +1091,7 @@ private:
       mDiags.error(location(), "expected '{' after 'haze'");
       throw Recover();
     }
-    auto &haze{mDocument.haze};
+    LayoutHaze &haze{mDocument.haze};
     parseSettings("a haze setting", [&](const std::string &key,
                                         const LayoutLocation &keyLoc) {
       if (key == "none") {
@@ -1138,7 +1139,7 @@ private:
 
 LayoutDocument parseLayout(LayoutDiagnostics &diags, const LayoutSource &source,
                            std::string directory) {
-  auto document{LayoutDocument()};
+  LayoutDocument document{};
   document.source = &source;
   document.directory = std::move(directory);
   Parser(diags, source, document).parse();

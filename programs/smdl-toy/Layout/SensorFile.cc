@@ -49,7 +49,7 @@ private:
     if (mToken.text == "sensor") {
       parseSensorBlock();
     } else {
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.text == "camera" || mToken.text == "lens") {
@@ -85,20 +85,20 @@ private:
       mDiags.error(location(), "expected '{' after 'sensor'");
       throw Recover();
     }
-    auto &sensor{mDocument.sensor};
-    auto pixelsLoc{LayoutLocation()};
-    auto pitchLoc{LayoutLocation()};
-    auto sizeLoc{LayoutLocation()};
-    auto responseLoc{LayoutLocation()};
-    auto detectorLoc{LayoutLocation()};
-    auto sizeMM{float2()};
+    SensorSettings &sensor{mDocument.sensor};
+    LayoutLocation pixelsLoc{};
+    LayoutLocation pitchLoc{};
+    LayoutLocation sizeLoc{};
+    LayoutLocation responseLoc{};
+    LayoutLocation detectorLoc{};
+    float2 sizeMM{};
     parseSettings("a sensor setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
       if (key == "name") {
         sensor.name = expect(Token::STRING, "a quoted name after 'name'");
       } else if (key == "pixels") {
         pixelsLoc = keyLoc;
-        const auto v{numbers<2>()};
+        const std::array<float, 2> v{numbers<2>()};
         for (const auto value : v) {
           if (!(value >= 1 && value == std::floor(value) && value < 1e9f)) {
             mDiags.error(keyLoc, "expected two positive integers for "
@@ -111,20 +111,20 @@ private:
         pitchLoc = keyLoc;
         // One number for square pixels, two for the rare rectangular
         // ones, so the count is read off the tokens.
-        auto across{0.0f};
+        float across{0.0f};
         if (mToken.kind != Token::WORD || !tryNumber(mToken, across)) {
           mDiags.error(location(), "expected one or two positive numbers in "
                                    "micrometers after 'pitch'");
           throw Recover();
         }
         advance();
-        auto down{across};
+        float down{across};
         if (mToken.kind == Token::WORD && tryNumber(mToken, down)) advance();
         sensor.pitchUM =
             float2(positive(keyLoc, key, across), positive(keyLoc, key, down));
       } else if (key == "size") {
         sizeLoc = keyLoc;
-        const auto v{numbers<2>()};
+        const std::array<float, 2> v{numbers<2>()};
         sizeMM =
             float2(positive(keyLoc, key, v[0]), positive(keyLoc, key, v[1]));
       } else if (key == "response") {
@@ -163,7 +163,7 @@ private:
         sensor.hasDetectorBlock = true;
         parseDetectorBlock(sensor.detector);
       } else if (key == "readout") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
           mDiags.error(keyLoc, "expected a nonnegative number for 'readout' "
                                "(0 or omitted is a global shutter)");
@@ -171,7 +171,7 @@ private:
         }
         sensor.readout = value;
       } else if (key == "readout_direction") {
-        const auto word{
+        const std::string word{
             expect(Token::WORD, "a direction after 'readout_direction'")};
         if (word == "down") {
           sensor.readoutDirection = ReadoutDirection::DOWN;
@@ -235,8 +235,8 @@ private:
       throw Recover();
     }
     if (sizeLoc) {
-      const auto pitch{float2(1e3f * sizeMM.x / float(sensor.pixels.x),
-                              1e3f * sizeMM.y / float(sensor.pixels.y))};
+      const float2 pitch{1e3f * sizeMM.x / float(sensor.pixels.x),
+                         1e3f * sizeMM.y / float(sensor.pixels.y)};
       if (std::abs(pitch.x - pitch.y) >
           PITCH_TOLERANCE * std::max(pitch.x, pitch.y)) {
         mDiags
@@ -266,17 +266,18 @@ private:
   // closes, so either may name a band declared below it. `{` is current.
   void parseResponseBlock(ResponseSettings &response,
                           const LayoutLocation &responseLoc) {
-    auto tileNames{std::vector<std::string>()};
-    auto tileLocs{std::vector<LayoutLocation>()};
-    auto rgbNames{std::vector<std::string>()};
-    auto rgbLocs{std::vector<LayoutLocation>()};
-    auto cfaLoc{LayoutLocation()};
-    auto rgbLoc{LayoutLocation()};
-    auto peakLoc{LayoutLocation()};
+    std::vector<std::string> tileNames{};
+    std::vector<LayoutLocation> tileLocs{};
+    std::vector<std::string> rgbNames{};
+    std::vector<LayoutLocation> rgbLocs{};
+    LayoutLocation cfaLoc{};
+    LayoutLocation rgbLoc{};
+    LayoutLocation peakLoc{};
     parseSettings("a response setting", [&](const std::string &key,
                                             const LayoutLocation &keyLoc) {
       if (key == "kind") {
-        const auto word{expect(Token::WORD, "'relative' or 'qe' after 'kind'")};
+        const std::string word{
+            expect(Token::WORD, "'relative' or 'qe' after 'kind'")};
         if (word == "relative") {
           response.kind = ResponseKind::RELATIVE;
         } else if (word == "qe") {
@@ -289,7 +290,7 @@ private:
         }
       } else if (key == "peak_qe") {
         peakLoc = keyLoc;
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value > 0 && value <= 1)) {
           mDiags.error(keyLoc, "expected 'peak_qe' between 0 and 1 "
                                "(electrons per photon at the curve's peak)");
@@ -352,7 +353,7 @@ private:
       throw Recover();
     }
     for (size_t i = 0; i < tileNames.size(); i++) {
-      const auto index{response.bandIndex(tileNames[i])};
+      const std::optional<size_t> index{response.bandIndex(tileNames[i])};
       if (!index) {
         mDiags.error(tileLocs[i],
                      smdl::concat("the tile names ", smdl::Quoted(tileNames[i]),
@@ -362,9 +363,9 @@ private:
       response.cfa.push_back(*index);
     }
     if (rgbLoc) {
-      auto rgb{std::array<size_t, 3>{}};
+      std::array<size_t, 3> rgb{};
       for (size_t i = 0; i < 3; i++) {
-        const auto index{response.bandIndex(rgbNames[i])};
+        const std::optional<size_t> index{response.bandIndex(rgbNames[i])};
         if (!index) {
           mDiags.error(rgbLocs[i],
                        smdl::concat("'rgb' names ", smdl::Quoted(rgbNames[i]),
@@ -391,7 +392,7 @@ private:
                                "other than 'row', which is the tile's own");
       throw Recover();
     }
-    auto band{ResponseBand{}};
+    ResponseBand band{};
     band.name = mToken.text;
     if (response.bandIndex(band.name)) {
       mDiags.error(location(), smdl::concat("band ", smdl::Quoted(band.name),
@@ -405,7 +406,7 @@ private:
       throw Recover();
     }
     advance(); // '{'
-    auto values{std::vector<float>()};
+    std::vector<float> values{};
     for (float value{}; mToken.kind != Token::CLOSE;) {
       if (mToken.kind == Token::END) {
         mDiags.error(location(), "expected '}' before end of file");
@@ -526,10 +527,10 @@ private:
   // last one wins. What ties two keys together is checked once the
   // block closes, so the order they are written in does not matter.
   void parseDetectorBlock(DetectorSettings &detector) {
-    auto baseISOLoc{LayoutLocation()};
-    auto fullWellLoc{LayoutLocation()};
-    auto blackLevelLoc{LayoutLocation()};
-    auto maxISOLoc{LayoutLocation()};
+    LayoutLocation baseISOLoc{};
+    LayoutLocation fullWellLoc{};
+    LayoutLocation blackLevelLoc{};
+    LayoutLocation maxISOLoc{};
     parseSettings("a detector setting", [&](const std::string &key,
                                             const LayoutLocation &settingLoc) {
       const auto nonnegative{[&](float value) {
@@ -564,7 +565,7 @@ private:
         blackLevelLoc = settingLoc;
         detector.blackLevel = nonnegative(numbers<1>()[0]);
       } else if (key == "bits") {
-        const auto value{numbers<1>()[0]};
+        const float value{numbers<1>()[0]};
         if (!(value >= 1 && value <= 16 && value == std::floor(value))) {
           mDiags.error(settingLoc,
                        "expected an integer from 1 to 16 for 'bits'");
@@ -634,9 +635,9 @@ ResponseSettings::bandIndex(std::string_view name) const noexcept {
 std::optional<std::array<size_t, 3>>
 ResponseSettings::rgbBands() const noexcept {
   if (rgb) return rgb;
-  const auto r{bandIndex("R")};
-  const auto g{bandIndex("G")};
-  const auto b{bandIndex("B")};
+  const std::optional<size_t> r{bandIndex("R")};
+  const std::optional<size_t> g{bandIndex("G")};
+  const std::optional<size_t> b{bandIndex("B")};
   if (r && g && b) return std::array<size_t, 3>{*r, *g, *b};
   if (bands.size() >= 3) return std::array<size_t, 3>{0, 1, 2};
   return std::nullopt;
@@ -644,7 +645,7 @@ ResponseSettings::rgbBands() const noexcept {
 
 double ResponseSettings::qeScale() const noexcept {
   if (kind == ResponseKind::QE) return 1.0;
-  auto peak{0.0f};
+  float peak{0.0f};
   for (const auto &band : bands)
     for (const auto value : band.values) peak = std::max(peak, value);
   return peak > 0 ? double(peakQE.value_or(DEFAULT_PEAK_QE)) / double(peak)
@@ -653,7 +654,7 @@ double ResponseSettings::qeScale() const noexcept {
 
 SensorDocument parseSensor(LayoutDiagnostics &diags,
                            const LayoutSource &source) {
-  auto document{SensorDocument()};
+  SensorDocument document{};
   document.source = &source;
   Parser(diags, source, document).parse();
   // A camera named this file for its body, so a file with none is an

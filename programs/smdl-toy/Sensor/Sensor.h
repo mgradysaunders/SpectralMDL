@@ -112,7 +112,7 @@ whiteBalanceSpectrum(const WhiteBalance &whiteBalance);
 
 /// The white of `illuminant` through the observer, `smdl::wymanXYZ()`, scaled
 /// so that Y is 1.
-[[nodiscard]] smdl::double3 illuminantWhite(const SensorSpectrum &illuminant);
+[[nodiscard]] double3 illuminantWhite(const SensorSpectrum &illuminant);
 
 /// The reflectances a color fit trains on: the 190 patches of
 /// rawtoaces-data on the grid, linear between the table's 5 nm steps and
@@ -170,7 +170,7 @@ template <typename Tally, typename TallyRow, typename Fold>
 [[nodiscard]] Tally parallelRowFold(size_t rowBegin, size_t rowEnd, Tally total,
                                     TallyRow &&tallyRow, Fold &&fold) {
   if (rowEnd <= rowBegin) return total;
-  auto tallies{std::vector<Tally>(rowEnd - rowBegin)};
+  std::vector<Tally> tallies(rowEnd - rowBegin);
   smdl::parallelFor(rowBegin, rowEnd, [&](size_t row) {
     tallies[row - rowBegin] = tallyRow(row);
   });
@@ -229,15 +229,15 @@ struct ColorFit final {
   /// The white balance: what each band is multiplied by so that the
   /// illuminant's white reads the same in all three as in the second,
   /// green, `n_G(S) / n_b(S)`.
-  smdl::double3 multipliers{};
+  double3 multipliers{};
 
   /// The matrix from white-balanced camera RGB, in units where the
   /// illuminant's white reads (1, 1, 1), to XYZ under the illuminant,
   /// taking (1, 1, 1) to `white` exactly.
-  smdl::double3x3 cameraToXYZ{};
+  double3x3 cameraToXYZ{};
 
   /// The illuminant's white through the observer, Y = 1.
-  smdl::double3 white{};
+  double3 white{};
 
   /// The fit's error over the training reflectances in CIELAB about
   /// `white`: the mean and the largest CIEDE2000, and the mean CIE 1976

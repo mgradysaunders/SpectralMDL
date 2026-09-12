@@ -48,7 +48,7 @@ Frame resolveFrame(const Options &opts) {
   // describe one; it is only a text parse, so fail-fast ordering costs
   // nothing. Tilde is expanded here because a search path is typed by a
   // person.
-  auto assetSearchPath{AssetSearchPath()};
+  AssetSearchPath assetSearchPath{};
   for (const auto &directory : opts.scene.assetDirs)
     assetSearchPath.push_back(smdl::makePathCanonical(directory));
   // The camera first, and with it the clock: how long the shutter stays
@@ -57,18 +57,18 @@ Frame resolveFrame(const Options &opts) {
   // instants, so they are settled before the scene is read. The camera
   // itself is a text parse and a paraxial solve, so fail-fast ordering
   // costs nothing.
-  auto model{resolveCameraModel(opts)};
+  CameraModel model{resolveCameraModel(opts)};
   refuseUnrenderable(model);
   // What every 'motion' track is evaluated at. A shut shutter lands both
   // samples on one instant, so every track lowers static and the render
   // takes the path it takes with no motion at all.
   const MotionSampling sampling{gRenderShutter.time,
                                 gRenderShutter.secondsAt(1.0f)};
-  auto profReadLayout{smdl::profilerEntryBegin("Read layout")};
-  auto layout{resolveLayoutArgument(opts.scene.inputSceneFile, assetSearchPath,
-                                    sampling)};
+  smdl::ProfilerEntry *profReadLayout{smdl::profilerEntryBegin("Read layout")};
+  Layout layout{resolveLayoutArgument(opts.scene.inputSceneFile,
+                                      assetSearchPath, sampling)};
   for (const auto &fileName : opts.scene.inputMeshFiles) {
-    auto more{resolveLayoutArgument(fileName, assetSearchPath, sampling)};
+    Layout more{resolveLayoutArgument(fileName, assetSearchPath, sampling)};
     layout.items.insert(layout.items.end(), more.items.begin(),
                         more.items.end());
     layout.lights.insert(layout.lights.end(), more.lights.begin(),
@@ -97,13 +97,13 @@ Frame resolveFrame(const Options &opts) {
   // validation and the summary it logs) waits until the solves in the
   // stage. Every other path keeps constructing here, before anything
   // slow loads, so a lens typo still fails fast.
-  auto camera{std::optional<Camera>()};
+  std::optional<Camera> camera{};
   if (!opts.camera.autolook.isEnabled && !model.shouldAutofocus)
     camera.emplace(buildCamera(model));
-  const auto resolution{model.options.resolution};
-  const auto numPixelsX{size_t(resolution.x)};
-  const auto numPixelsY{size_t(resolution.y)};
-  const auto spp{size_t(opts.render.sampling.spp)};
+  const int2 resolution{model.options.resolution};
+  const size_t numPixelsX{size_t(resolution.x)};
+  const size_t numPixelsY{size_t(resolution.y)};
+  const size_t spp{size_t(opts.render.sampling.spp)};
   // The pixel window to render, the whole frame unless -crop-window
   // narrows it.
   int4 window{0, 0, resolution.x, resolution.y};
@@ -117,9 +117,9 @@ Frame resolveFrame(const Options &opts) {
                        " is not a non-empty sub-rectangle of -resolution ",
                        resolution.x, ",", resolution.y));
   }
-  const auto numWindowPixels{size_t(window[2] - window[0]) *
-                             size_t(window[3] - window[1])};
-  auto frame{Frame{}};
+  const size_t numWindowPixels{size_t(window[2] - window[0]) *
+                               size_t(window[3] - window[1])};
+  Frame frame{};
   frame.layout = std::move(layout);
   frame.shouldJitterWavelength =
       opts.render.grid.shouldJitter.wasGiven || !model.sensor
@@ -144,7 +144,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // seeds every 'Color' constructed from here on.
   const bool shouldAdoptResumedGrid{!opts.render.grid.wasGiven &&
                                     resumed.wasLoaded};
-  auto gridSpec{opts.render.grid.explicitWavelengths};
+  std::vector<float> gridSpec{opts.render.grid.explicitWavelengths};
   if (shouldAdoptResumedGrid) {
     if (resumed.info.wavelengths.empty())
       throw smdl::Error(
@@ -153,7 +153,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
     gridSpec = resumed.info.wavelengths;
   }
   if (gridSpec.empty()) {
-    auto range{opts.render.grid.range};
+    WavelengthRange range{opts.render.grid.range};
     // With a physical sensor and no grid flags, the grid spans the union
     // of its curves at the default band count, so that no band is cut
     // off by the visible default: a user should not have to know that
@@ -186,8 +186,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   if (shouldJitter && gRenderGrid.bandEdges.empty())
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
-  const auto wavelengths{
-      Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
+  const Color wavelengths{
+      smdl::Span<const float>(gridSpec.data(), gridSpec.size())};
   if (resumed.wasLoaded) {
     if (resumed.film.getNumBands() != wavelengths.size())
       throw smdl::Error(smdl::concat(
@@ -226,7 +226,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "is the radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
-  const auto &sensor{frame.model.sensor};
+  const std::optional<SensorSettings> &sensor{frame.model.sensor};
   const double bandFilmBytes{
       sensor ? 8.0 * double(sensor->response.hasCFA()
                                 ? 1
@@ -261,27 +261,28 @@ void setUpCompiler(const Options &opts, const Frame &frame,
   // resolve has somewhere to fall back to. It is added even when MDL
   // modules are given, so that '-fallback-material default_object' works
   // alongside them.
-  if (auto error{
+  if (std::optional<smdl::Error> error{
           compiler.addCode(DEFAULT_MATERIAL_MODULE, DEFAULT_MATERIAL_SOURCE)})
     error->printAndExit();
   for (auto &inputMDLFile : opts.scene.inputMDLFiles)
-    if (auto error{compiler.add(std::string(inputMDLFile))})
+    if (std::optional<smdl::Error> error{
+            compiler.add(std::string(inputMDLFile))})
       error->printAndExit();
 }
 
 StagedScene::StagedScene(const Options &opts, Frame &frame,
                          const ResolvedGrid &grid, smdl::Compiler &compiler) {
-  const auto &layout{frame.layout};
-  const auto &wavelengths{grid.wavelengths};
+  const Layout &layout{frame.layout};
+  const Color &wavelengths{grid.wavelengths};
   const bool isGridBeyondVisible{grid.isBeyondVisible};
-  auto &cameraOptions{frame.model.options};
-  auto &camera{frame.camera};
-  const auto resolution{frame.resolution};
+  CameraOptions &cameraOptions{frame.model.options};
+  std::optional<Camera> &camera{frame.camera};
+  const int2 resolution{frame.resolution};
   // A scene given no MDL at all is a layout that has not been shaded yet,
   // so it falls back to the built-in material rather than refusing to
   // render. Given MDL, an unresolved name stays an error, since there it
   // means a name that was meant to resolve and did not.
-  auto fallbackMaterial{opts.scene.fallbackMaterial};
+  std::string fallbackMaterial{opts.scene.fallbackMaterial};
   if (fallbackMaterial.empty() && opts.scene.inputMDLFiles.empty())
     fallbackMaterial = DEFAULT_OBJECT_MATERIAL_NAME;
   // The lowering folds every alias and override into the items
@@ -297,7 +298,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // because the Embree bounds do not exist yet. Displacement can still
   // push geometry slightly below the pre-displacement minimum; -ground-z
   // is the override, and thumbnails do not care.
-  auto groundInstance{INVALID_INDEX};
+  uint32_t groundInstance{INVALID_INDEX};
   // The pre-ground geometry bounds, remembered because the SD-tree below
   // must NOT be sized by the ground plane: the plane is a backdrop three
   // orders of magnitude wider than the subject, and cubifying over it
@@ -314,7 +315,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     // the visual horizon, small enough to stay in float precision.
     const float halfExtent{std::clamp(
         1000.0f * 0.5f * smdl::length(guideBound.extent()), 100.0f, 20000.0f)};
-    auto groundMaterial{opts.scene.groundMaterial};
+    std::string groundMaterial{opts.scene.groundMaterial};
     if (groundMaterial.empty()) groundMaterial = DEFAULT_GROUND_MATERIAL_NAME;
     // The one command-line-facing name the entry file's aliases still
     // reach, now that the aliases themselves are folded into the items.
@@ -331,7 +332,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // MDL modules there is only the built-in default module, nothing worth
   // filtering, and the unshaded-scene workflow would warn for every name.
   if (!opts.utility.allMaterials && !opts.scene.inputMDLFiles.empty()) {
-    auto desiredMaterials{scene->usedMaterialNames()};
+    std::vector<std::string> desiredMaterials{scene->usedMaterialNames()};
     if (!fallbackMaterial.empty()) desiredMaterials.push_back(fallbackMaterial);
     if (!layout.exteriorMediumName.empty())
       desiredMaterials.push_back(layout.exteriorMediumName);
@@ -342,9 +343,10 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
                            desiredMaterials.end());
     compiler.setDesiredMaterials(std::move(desiredMaterials));
   }
-  if (auto error{compiler.compile(opts.compile.optLevel)})
+  if (std::optional<smdl::Error> error{compiler.compile(opts.compile.optLevel)})
     error->printAndExit();
-  if (auto error{compiler.jitCompile()}) error->printAndExit();
+  if (std::optional<smdl::Error> error{compiler.jitCompile()})
+    error->printAndExit();
   {
     SMDL_PROFILER_ENTRY("Scene::commit()");
     scene->commit(wavelengths);
@@ -357,19 +359,20 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // What both ask of a prescription is what it does focused at infinity,
   // since the focus a real lens takes is the distance these very
   // measurements are about to choose, so one solve answers both.
-  auto probe{std::optional<Lens>()};
+  std::optional<Lens> probe{};
   if (cameraOptions.lens &&
       (opts.camera.autolook.isEnabled || frame.model.shouldAutofocus))
     probe.emplace(*cameraOptions.lens, LensOptions{});
-  auto autolookSunAzimuth{std::optional<float>()};
+  std::optional<float> autolookSunAzimuth{};
   if (opts.camera.autolook.isEnabled) {
-    auto autolookOptions{AutolookOptions{}};
+    AutolookOptions autolookOptions{};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
     if (probe) {
       // A lens's field follows from the frame and the prescription,
       // which is what the fit needs.
-      auto angle{probe->fieldAngleAt(0.5f * cameraOptions.frameSize.y)};
+      std::optional<float> angle{
+          probe->fieldAngleAt(0.5f * cameraOptions.frameSize.y)};
       if (!angle) {
         // A frame taller than the lens's image circle is framed to the
         // circle, which is where the picture ends at the sides as much as
@@ -393,14 +396,14 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     autolookOptions.margin = opts.camera.autolook.margin;
     autolookOptions.ignoreBackfaces = opts.camera.autolook.ignoreBackfaces;
     autolookOptions.skipInstance = groundInstance;
-    const auto autolook{solveAutolook(*scene, autolookOptions)};
+    const AutolookResult autolook{solveAutolook(*scene, autolookOptions)};
     cameraOptions.lookFrom = autolook.lookFrom;
     cameraOptions.lookTo = autolook.lookTo;
     // The key light over the camera's right shoulder.
     autolookSunAzimuth = autolook.azimuthDeg - 35.0f;
   }
   if (frame.model.shouldAutofocus) {
-    auto autofocusOptions{AutofocusOptions{}};
+    AutofocusOptions autofocusOptions{};
     autofocusOptions.lookFrom = cameraOptions.lookFrom;
     autofocusOptions.lookTo = cameraOptions.lookTo;
     autofocusOptions.lookUp = cameraOptions.lookUp;
@@ -419,9 +422,10 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // The environment, merged from the same three sources as the camera and
   // in the same order: the defaults, the layout's 'sky' directive, and
   // whatever the command line explicitly gave.
-  const auto &fileSky{layout.sky};
-  const auto iblFileName{pick(opts.light.sky.iblFileName, fileSky.iblFileName)};
-  const auto moonGiven{opts.light.sky.moonPhase.wasGiven ||
+  const LayoutSky &fileSky{layout.sky};
+  const std::string iblFileName{
+      pick(opts.light.sky.iblFileName, fileSky.iblFileName)};
+  const bool moonGiven{opts.light.sky.moonPhase.wasGiven ||
                        bool(fileSky.moonPhase)};
   if (!iblFileName.empty()) {
     envLight = std::make_unique<EnvLight>(
@@ -430,7 +434,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
       SMDL_LOG_WARN("-ibl is an RGB image: on this wavelength grid it "
                     "contributes only inside the visible");
   } else if (!pick(opts.light.sky.none, fileSky.none)) {
-    auto options{smdl::SunSkyOptions{}};
+    smdl::SunSkyOptions options{};
     float zenith{
         smdl::radians(pick(opts.light.sky.sunZenithDeg, fileSky.sunZenith))};
     float azimuthDeg{pick(opts.light.sky.sunAzimuthDeg, fileSky.sunAzimuth)};
@@ -470,7 +474,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // coefficients (per-point heterogeneous queries still see the path
   // time).
   if (!layout.exteriorMediumName.empty()) {
-    const auto *materialDef{compiler.findMaterial(layout.exteriorMediumName)};
+    const smdl::JIT::MaterialDef *materialDef{
+        compiler.findMaterial(layout.exteriorMediumName)};
     if (!materialDef)
       throw smdl::Error(smdl::concat(
           "cannot resolve the material of the 'medium' directive: ",
@@ -481,7 +486,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
       throw smdl::Error(smdl::concat("'medium' directive material ",
                                      smdl::Quoted(layout.exteriorMediumName),
                                      " has no 'volume'"));
-    auto state{makeRenderState(wavelengths, &mMediumAllocator)};
+    smdl::State state{makeRenderState(wavelengths, &mMediumAllocator)};
     state.finalize();
     exteriorMedium = new (mMediumAllocator) MediumStack{
         nullptr,
@@ -496,14 +501,14 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // and no majorant. It is the medium of everything outside all
   // geometry, which is where the 'medium' directive puts its material
   // too, so the two cannot both be asked for.
-  const auto &fileHaze{layout.haze};
+  const LayoutHaze &fileHaze{layout.haze};
   bool isHazeEnabled{opts.light.haze.isOn || layout.hasHaze};
   if (pick(opts.light.haze.none, fileHaze.none)) isHazeEnabled = false;
   if (isHazeEnabled) {
     if (exteriorMedium)
       throw smdl::Error("the exterior haze and the 'medium' directive both "
                         "describe the medium outside all geometry; keep one");
-    auto options{smdl::HazeOptions{}};
+    smdl::HazeOptions options{};
     // An unwritten visibility follows the sky's, so that distant
     // terrain does not read hazier or clearer than the horizon sky
     // immediately behind it. The two models overlap toward the sky; see
@@ -524,7 +529,8 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   }
   // Every light in one selection path: each emissive mesh instance plus
   // the environment, weighted by power.
-  auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
+  smdl::ProfilerEntry *profLightSampler{
+      smdl::profilerEntryBegin("Build light sampler")};
   lights.emplace(compiler, *scene, envLight.get(), layout.lights, wavelengths,
                  opts.render.allLights, !opts.render.noLightTree);
   smdl::profilerEntryEnd(profLightSampler);

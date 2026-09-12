@@ -40,7 +40,7 @@ constexpr int FIRST_DECADE{-10};
   return edges;
 }
 
-constexpr auto BIN_EDGES{makeBinEdges()};
+constexpr std::array<double, NUM_EDGES> BIN_EDGES{makeBinEdges()};
 
 static_assert(BIN_EDGES.back() == 1e10);
 
@@ -120,7 +120,7 @@ void attributeDouble(llvm::json::OStream &json, const char *key, double value) {
 // entry and two spaces apart, the whole table indented by two.
 void printTable(llvm::raw_ostream &os, const std::vector<std::string> &header,
                 const std::vector<std::vector<std::string>> &rows) {
-  auto widths{std::vector<size_t>(header.size())};
+  std::vector<size_t> widths(header.size());
   for (size_t c = 0; c < header.size(); c++) widths[c] = header[c].size();
   for (const auto &row : rows)
     for (size_t c = 0; c < row.size(); c++)
@@ -145,7 +145,7 @@ void MNEEStats::recordEstimate(Kind kind, bool isFirstWalkConverged) noexcept {
 
 void MNEEStats::recordWalk(const smdl::ManifoldWalkReport &report) noexcept {
   using Outcome = smdl::ManifoldWalkReport::Outcome;
-  const auto iterations{uint64_t(std::max(report.iterations, 0))};
+  const uint64_t iterations{uint64_t(std::max(report.iterations, 0))};
   walkCount++;
   walkIterations += iterations;
   walkIterationsMax = std::max(walkIterationsMax, iterations);
@@ -175,8 +175,8 @@ void MNEEStats::recordCover(bool isMatched) noexcept {
 }
 
 void MNEEStats::recordTrials(Kind kind, int trials, bool wasDropped) noexcept {
-  auto &counts{kinds[kind]};
-  const auto count{uint64_t(std::max(trials, 0))};
+  KindCounts &counts{kinds[kind]};
+  const uint64_t count{uint64_t(std::max(trials, 0))};
   counts.trialEstimateCount++;
   counts.trialCount += count;
   counts.trialsMax = std::max(counts.trialsMax, count);
@@ -220,7 +220,7 @@ size_t MNEEStats::iterationsPercentile(double p) const noexcept {
   uint64_t total{};
   for (const auto count : convergedIterationCounts) total += count;
   if (total == 0) return 0;
-  const auto want{uint64_t(p * double(total - 1))};
+  const uint64_t want{uint64_t(p * double(total - 1))};
   uint64_t seen{};
   for (size_t b = 0; b < NUM_ITERATION_BINS; b++) {
     seen += convergedIterationCounts[b];
@@ -233,9 +233,9 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
   os << "Manifold estimators by gather kind, the first walk's convergence "
         "over the estimates and the reciprocal trials over the nonzero "
         "ones:\n";
-  auto rows{std::vector<std::vector<std::string>>()};
+  std::vector<std::vector<std::string>> rows{};
   for (size_t k = 0; k < kinds.size(); k++) {
-    const auto &counts{kinds[k]};
+    const KindCounts &counts{kinds[k]};
     rows.push_back(
         {KIND_NAMES[k], std::to_string(counts.estimateCount),
          smdl::concat(counts.firstConvergedCount, " (",
@@ -293,7 +293,7 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
 void MNEEStats::printJSON(llvm::json::OStream &json) const {
   json.attributeArray("kinds", [&] {
     for (size_t k = 0; k < kinds.size(); k++) {
-      const auto &counts{kinds[k]};
+      const KindCounts &counts{kinds[k]};
       json.object([&] {
         json.attribute("kind", KIND_NAMES[k]);
         json.attribute("estimates", int64_t(counts.estimateCount));
@@ -320,7 +320,7 @@ void MNEEStats::printJSON(llvm::json::OStream &json) const {
     // converged in `i` iterations and the last every count from it up.
     json.attributeBegin("converged_iterations");
     {
-      auto counts{std::string("[")};
+      std::string counts{"["};
       for (size_t b = 0; b < NUM_ITERATION_BINS; b++)
         counts += smdl::concat(b > 0 ? ", " : "", convergedIterationCounts[b]);
       json.rawValue(counts + "]");
@@ -506,7 +506,7 @@ uint64_t PathStats::maxBouncesReached() const noexcept {
 void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
                       const PathOptions &path,
                       const MNEEOptions &mneeOptions) const {
-  const auto &window{session.window};
+  const int4 &window{session.window};
   os << "Path statistics for this session: " << mNumSamples
      << " samples over window " << window[0] << ',' << window[1] << ','
      << window[2] << ',' << window[3] << " at " << session.spp
@@ -549,27 +549,27 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
 
   const bool hasBound{path.maxContribution > 0.0f};
   {
-    auto header{std::vector<std::string>{"bounce", "paths ending", "paths past",
-                                         "contributions", "energy",
-                                         "cumulative", "largest"}};
+    std::vector<std::string> header{
+        "bounce", "paths ending", "paths past", "contributions",
+        "energy", "cumulative",   "largest"};
     if (hasBound)
       header.push_back(
           smdl::concat("removed at ", smdl::Brief(path.maxContribution)));
-    auto rows{std::vector<std::vector<std::string>>()};
+    std::vector<std::vector<std::string>> rows{};
     uint64_t pathsPast{mNumPaths};
     double cumulative{};
     for (size_t i = 0; i < mRows.size(); i++) {
       const Row &row{mRows[i]};
       pathsPast -= row.pathCount();
       cumulative += row.energy();
-      auto cells{std::vector<std::string>{
+      std::vector<std::string> cells{
           std::to_string(i),
           spellPercent(ratio(double(row.pathCount()), double(mNumPaths))),
           spellPercent(ratio(double(pathsPast), double(mNumPaths))),
           std::to_string(row.contributionCount()),
           spellPercent(ratio(row.energy(), energy)),
           spellPercent(ratio(cumulative, energy)),
-          spell("%.3g", row.maxContribution)}};
+          spell("%.3g", row.maxContribution)};
       if (hasBound)
         cells.push_back(spellPercent(ratio(row.energyClamped, energy)));
       rows.push_back(std::move(cells));
@@ -579,7 +579,7 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
     printTable(os, header, rows);
   }
 
-  const auto gate{uint64_t(std::max(path.maxContributionBounces, 1))};
+  const uint64_t gate{uint64_t(std::max(path.maxContributionBounces, 1))};
   const uint64_t gatedCount{contributionCountFrom(gate)};
   os << "\nBound on the largest band of a contribution, over the " << gatedCount
      << " non-zero contributions of at least "
@@ -598,7 +598,7 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
           top = std::max(top, b);
           break;
         }
-    auto rows{std::vector<std::vector<std::string>>()};
+    std::vector<std::vector<std::string>> rows{};
     for (size_t b = top; b > 0 && rows.size() < MAX_BOUND_ROWS; b--) {
       const double bound{binEdge(b)};
       const uint64_t above{countAbove(bound, gate)};
@@ -677,7 +677,7 @@ void PathStats::printJSON(llvm::raw_ostream &os,
     // against `edges[b]`.
     json.attributeBegin("edges");
     {
-      auto edges{std::string("[")};
+      std::string edges{"["};
       for (size_t b = 0; b < NUM_BINS; b++)
         edges += (b > 0 ? ", " : "") + spellDouble(binEdge(b));
       json.rawValue(edges + "]");
@@ -699,7 +699,7 @@ void PathStats::printJSON(llvm::raw_ostream &os,
           // Each bin as its count and two sums, in that order.
           json.attributeBegin("bins");
           {
-            auto bins{std::string("[")};
+            std::string bins{"["};
             for (size_t b = 0; b < NUM_BINS; b++) {
               const Bin &bin{row.bins[b]};
               bins += smdl::concat(b > 0 ? ", [" : "[", bin.count, ", ",

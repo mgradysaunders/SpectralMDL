@@ -22,9 +22,9 @@ public:
 
   void read() {
     for (const auto &entry : mDoc.root) {
-      const auto &key{entry.key};
+      const std::string &key{entry.key};
       if (key == "asset") {
-        auto version{mDoc.toInt(entry)};
+        const long version{mDoc.toInt(entry)};
         if (version != 1)
           mDoc.fail(entry,
                     smdl::concat("unsupported manifest version ", version,
@@ -36,7 +36,7 @@ public:
       } else if (key == "proxy") {
         mAsset.proxyFileName = checkRelative(entry, mDoc.toString(entry));
       } else if (key == "up") {
-        const auto &up{mDoc.toString(entry)};
+        const std::string &up{mDoc.toString(entry)};
         if (up != "y" && up != "z")
           mDoc.fail(entry, smdl::concat("expected 'y' or 'z' for 'up', got ",
                                         smdl::Quoted(up)));
@@ -76,15 +76,15 @@ public:
 private:
   void readObjects(const FlatYAML::Entry &entry) {
     for (const auto &item : mDoc.toSequence(entry)) {
-      auto &object{mAsset.objects.emplace_back()};
+      AssetFile::Object &object{mAsset.objects.emplace_back()};
       for (const auto &sub : item) {
-        const auto &key{sub.key};
+        const std::string &key{sub.key};
         if (key == "select") {
           object.select = mDoc.toString(sub);
         } else if (key == "materials") {
           object.materials = names(sub);
         } else if (key == "pivot") {
-          auto pivot{mDoc.toFloats(sub, 3)};
+          const std::vector<float> pivot{mDoc.toFloats(sub, 3)};
           object.pivot = float3(pivot[0], pivot[1], pivot[2]);
         } else if (key == "triangles") {
           object.triangleCount = uint64_t(std::max(0L, mDoc.toInt(sub)));
@@ -103,7 +103,7 @@ private:
   // An inline list of names.
   [[nodiscard]] std::vector<std::string>
   names(const FlatYAML::Entry &entry) const {
-    auto result{std::vector<std::string>()};
+    std::vector<std::string> result{};
     for (const auto &item : mDoc.toList(entry)) {
       if (item.kind != FlatYAML::Node::SCALAR)
         mDoc.fail(entry, smdl::concat("expected a list of names for ",
@@ -139,12 +139,13 @@ private:
 } // namespace
 
 AssetFile readAssetFile(const std::string &fileName) {
-  auto sourceCode{smdl::readOrThrow(fileName)};
-  auto doc{FlatYAML::parse(sourceCode, fileName)};
-  auto asset{AssetFile()};
+  const std::string sourceCode{smdl::readOrThrow(fileName)};
+  const FlatYAML doc{FlatYAML::parse(sourceCode, fileName)};
+  AssetFile asset{};
   AssetReader(asset, doc).read();
-  auto directory{std::filesystem::path(fileName).parent_path()};
-  auto renderPath{directory / asset.renderFileName};
+  const std::filesystem::path directory{
+      std::filesystem::path(fileName).parent_path()};
+  const std::filesystem::path renderPath{directory / asset.renderFileName};
   if (!std::filesystem::exists(renderPath))
     throw smdl::Error(smdl::concat(fileName, ": the 'render' mesh ",
                                    smdl::QuotedPath(asset.renderFileName),
@@ -160,13 +161,13 @@ AssetFile readAssetFile(const std::string &fileName) {
 }
 
 std::string findAssetManifest(const std::string &directory) {
-  auto errorCode{std::error_code{}};
-  auto dirItr{std::filesystem::directory_iterator(directory, errorCode)};
+  std::error_code errorCode{};
+  const std::filesystem::directory_iterator dirItr{directory, errorCode};
   if (errorCode)
     throw smdl::Error(smdl::concat("cannot read directory ",
                                    smdl::QuotedPath(directory), ": ",
                                    errorCode.message()));
-  auto candidates{std::vector<std::string>()};
+  std::vector<std::string> candidates{};
   for (const auto &entry : dirItr)
     if (entry.is_regular_file(errorCode) &&
         entry.path().extension() == ASSET_EXTENSION)
@@ -174,9 +175,9 @@ std::string findAssetManifest(const std::string &directory) {
   if (candidates.empty()) return {};
   if (candidates.size() > 1) {
     std::sort(candidates.begin(), candidates.end());
-    auto message{smdl::concat("cannot resolve asset ",
-                              smdl::QuotedPath(directory),
-                              ": more than one '.asset' manifest:")};
+    std::string message{smdl::concat("cannot resolve asset ",
+                                     smdl::QuotedPath(directory),
+                                     ": more than one '.asset' manifest:")};
     for (const auto &candidate : candidates)
       message += smdl::concat("\n  ", smdl::QuotedPath(candidate));
     throw smdl::Error(std::move(message));

@@ -86,8 +86,8 @@ std::string describeField(const Lens &lens, float2 frameSize) {
                                 " degrees ", where)
                  : std::string(dark);
   }};
-  const auto vertical{lens.fieldAngleAt(0.5f * frameSize.y)};
-  const auto diagonal{
+  const std::optional<float> vertical{lens.fieldAngleAt(0.5f * frameSize.y)};
+  const std::optional<float> diagonal{
       lens.fieldAngleAt(0.5f * std::hypot(frameSize.x, frameSize.y))};
   return smdl::concat(
       spell(vertical, "top to bottom", "dark at the top and bottom"), ", ",
@@ -96,7 +96,7 @@ std::string describeField(const Lens &lens, float2 frameSize) {
 
 DepthOfField depthOfField(float focalLength, float fNumber, float focus,
                           float2 frameSize) noexcept {
-  auto result{DepthOfField{}};
+  DepthOfField result{};
   result.circleOfConfusion = std::hypot(frameSize.x, frameSize.y) / 1500.0f;
   result.hyperfocal = INF;
   result.nearLimit = INF;
@@ -143,7 +143,7 @@ LensApproximation approximateLens(const CameraOptions &options) {
 LensApproximation approximateLens(const Lens &lens,
                                   const CameraOptions &options) {
   SMDL_SANITY_CHECK(options.lens.has_value());
-  auto result{LensApproximation{}};
+  LensApproximation result{};
   const float frameHeight{options.frameSize.y};
   const float halfDiagonal{
       0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
@@ -152,13 +152,14 @@ LensApproximation approximateLens(const Lens &lens,
   // radius times `a`, `b`, and `c`. Fitting the tangent rather than the
   // tangent over the radius weighs each radius by how far a mismatch
   // moves the image on the film.
-  auto radii{std::vector<double>()};
-  auto tangents{std::vector<double>()};
+  std::vector<double> radii{};
+  std::vector<double> tangents{};
   double normal[3][3]{};
   double moment[3]{};
   for (int i = 1; i <= NUM_FIT_RADII; i++) {
     const double s{double(i) / NUM_FIT_RADII};
-    const auto theta{lens.fieldAngleAt(float(s) * halfDiagonal)};
+    const std::optional<float> theta{
+        lens.fieldAngleAt(float(s) * halfDiagonal)};
     if (!(theta && *theta < 0.5f * PI)) {
       result.numDroppedRadii++;
       continue;
@@ -177,8 +178,8 @@ LensApproximation approximateLens(const Lens &lens,
   const bool hasFit{radii.size() >= 3 &&
                     solveNormalEquations(normal, moment, coefficients) &&
                     coefficients[0] > 0};
-  auto k1{hasFit ? float(coefficients[1] / coefficients[0]) : 0.0f};
-  auto k2{hasFit ? float(coefficients[2] / coefficients[0]) : 0.0f};
+  float k1{hasFit ? float(coefficients[1] / coefficients[0]) : 0.0f};
+  float k2{hasFit ? float(coefficients[2] / coefficients[0]) : 0.0f};
   if (!hasFit || distortionFoldAt(k1, k2) >= 0) {
     result.doesFold = true;
     coefficients[0] = double(halfDiagonal) / double(lens.focalLength());
@@ -191,7 +192,7 @@ LensApproximation approximateLens(const Lens &lens,
   // Where the thin lens images each traced chief ray: the radius whose
   // tangent it is, by Newton's method on the monotone map.
   for (size_t i = 0; i < radii.size(); i++) {
-    auto s{radii[i]};
+    double s{radii[i]};
     for (int iteration = 0; iteration < 16; iteration++) {
       const double s2{s * s};
       const double slope{A + s2 * (3 * B + s2 * 5 * C)};
@@ -202,7 +203,7 @@ LensApproximation approximateLens(const Lens &lens,
         std::max(result.maxChiefRayError,
                  float(std::abs(s - radii[i]) * double(halfDiagonal)));
   }
-  auto &thin{result.options};
+  CameraOptions &thin{result.options};
   thin = options;
   thin.lens.reset();
   thin.traceWavelengthRange.reset();
@@ -269,7 +270,7 @@ Camera::Camera(const CameraOptions &options) {
   } else {
     buildThinLens(options);
   }
-  if (const auto dof{depthOfField()}; dof.hasLimits()) {
+  if (const DepthOfField dof{depthOfField()}; dof.hasLimits()) {
     SMDL_LOG_INFO("Depth of field: f/", fNumber(), " focused at ",
                   mIsFocusedAtInfinity ? std::string("infinity")
                                        : smdl::concat(mFocusDistance),
@@ -296,7 +297,7 @@ Camera::Camera(const CameraOptions &options) {
 // cone, and the two probes that say what actually reaches the film.
 void Camera::buildLens(const CameraOptions &options) {
   mLens.emplace(*options.lens, lensOptionsOf(options));
-  const auto frameMM{1e3f * float2(mFrameWidth, mFrameHeight)};
+  const float2 frameMM{1e3f * float2(mFrameWidth, mFrameHeight)};
   // The pixel's angular footprint, the same quantity the thin lens takes
   // from its field of view, now in the millimeters of a real frame over
   // a real focal length.
@@ -305,7 +306,7 @@ void Camera::buildLens(const CameraOptions &options) {
           ? 0.0f
           : std::atan(mFrameHeight / (mNumPixelsY * mLens->focalLength()));
   mLens->logSummary();
-  const auto halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
+  const float halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
   mExitPupil.emplace(*mLens, halfDiagonal, options.traceWavelengthRange);
   mExitPupil->logSummary();
   // A lens whose glasses disperse shows its color only under a tile,
@@ -313,8 +314,8 @@ void Camera::buildLens(const CameraOptions &options) {
   mDisperses = options.traceWavelengthRange && mLens->isDispersive();
   if (mDisperses) mTraceWavelengthRange = *options.traceWavelengthRange;
   if (mLens->isDispersive()) {
-    const auto pitch{pixelPitch(options)};
-    if (const auto lateral{mLens->lateralColorAt(halfDiagonal) / pitch};
+    const float pitch{pixelPitch(options)};
+    if (const float lateral{mLens->lateralColorAt(halfDiagonal) / pitch};
         std::isfinite(lateral))
       SMDL_LOG_INFO("Lens color: at the frame's corner the F line (486 nm) "
                     "lands ",
@@ -333,7 +334,7 @@ void Camera::buildLens(const CameraOptions &options) {
   // lens's own f-number: an ideal lens then reads 1 on axis, and the
   // frame holds its brightness whatever lens takes it and however far it
   // is stopped down.
-  const auto filmToPupil{mLens->filmZ() - mLens->rearZ()};
+  const float filmToPupil{mLens->filmZ() - mLens->rearZ()};
   if (mFilmQuantity == FilmQuantity::IRRADIANCE) {
     mExposurePerPupilArea = 1 / (filmToPupil * filmToPupil);
     SMDL_LOG_INFO("Lens exposure: f/", mLens->fNumber(),
@@ -352,13 +353,13 @@ void Camera::buildLens(const CameraOptions &options) {
   // rather than shares of it: what the corner gets against what the
   // middle gets is the mechanical vignette, which the thin lens can only
   // approximate with its cat's eye.
-  const auto onAxis{mLens->transmittedArea(0.0f)};
+  const float onAxis{mLens->transmittedArea(0.0f)};
   if (!(onAxis > 0))
     throw smdl::Error("no ray from the middle of the frame reaches the "
                       "scene through this lens: check that the surfaces are "
                       "in front-to-film order and that the clear apertures "
                       "are diameters");
-  const auto atCorner{mLens->transmittedArea(halfDiagonal)};
+  const float atCorner{mLens->transmittedArea(halfDiagonal)};
   if (!(atCorner > 0)) {
     SMDL_LOG_WARN(
         "Lens: nothing reaches the corner of the frame through "
@@ -480,7 +481,7 @@ float Camera::fNumber() const noexcept {
 CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
                             float wavelength) const noexcept {
   // The pixel jitter is always dimensions 0-1 of the sequence.
-  const auto xi{float2(sampler)};
+  const float2 xi{float2(sampler)};
   const float u{(float(x) + xi.x) / mNumPixelsX};
   const float v{(float(y) + xi.y) / mNumPixelsY};
   if (mLens) return sampleThroughLens(u, v, sampler, wavelength);
@@ -497,7 +498,7 @@ CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
                                     mDistortionScale, mRCorner, mFocalLength,
                                     distortConeScale);
   float2 lens{};
-  auto result{CameraSample{}};
+  CameraSample result{};
   result.ray = Ray{float3(0.0f),
                    float3(imageIdeal.x, imageIdeal.y, -mFocalLength), EPS, INF};
   if (mLensRadius > 0) {
@@ -557,7 +558,7 @@ CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
 
 CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
                                        float wavelength) const noexcept {
-  auto result{CameraSample{}};
+  CameraSample result{};
   result.coneAngle = mConeAngleBase;
   // The film point: the sensor coordinate, with the image inverted on it
   // the way a lens leaves it, which is why both signs run against the
@@ -569,8 +570,8 @@ CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
   // thin lens point takes, in the same place, so no existing sequence
   // moves; a blocked ray is weight 0 rather than a redraw, so the count
   // is fixed as well.
-  auto pupilArea{0.0f};
-  const auto pupil{
+  float pupilArea{0.0f};
+  const float2 pupil{
       mExitPupil->sample(float2(film.x, film.y), float2(sampler), pupilArea)};
   result.ray =
       Ray{film, float3(pupil.x, pupil.y, mLens->rearZ()) - film, EPS, INF};
@@ -582,8 +583,8 @@ CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
   // drawn with, times the `cos^4` falloff. Unlike the thin lens's, that
   // falloff is not an effect to switch on; it is the estimator, and the
   // whole of the natural vignetting comes out of it.
-  const auto cosTheta{-result.ray.dir.z / length(result.ray.dir)};
-  const auto cosSquared{cosTheta * cosTheta};
+  const float cosTheta{-result.ray.dir.z / length(result.ray.dir)};
+  const float cosSquared{cosTheta * cosTheta};
   result.weight = mExposurePerPupilArea * pupilArea * cosSquared * cosSquared;
   // A lens that disperses is traced at the wavelength drawn for this
   // sample, which the exit pupil's table was bounded to hold.

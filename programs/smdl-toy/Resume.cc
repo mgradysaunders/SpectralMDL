@@ -70,22 +70,22 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                  "output-spectrum-double",
                  "report",
                  "json"};
-  auto tokens{std::vector<std::string>()};
+  std::vector<std::string> tokens{};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
     if (end == std::string::npos) end = args.size();
     if (end > pos) tokens.push_back(args.substr(pos, end - pos));
     pos = end + 1;
   }
-  auto result{std::vector<std::string>()};
+  std::vector<std::string> result{};
   for (size_t i = 0; i < tokens.size(); i++) {
-    const auto &token{tokens[i]};
+    const std::string &token{tokens[i]};
     bool isSessionOnly{false};
     bool doesTakeValue{false};
     bool hasAttachedValue{false};
     if (!token.empty() && token[0] == '-') {
-      auto name{token.substr(token.find_first_not_of('-'))};
-      auto equals{name.find('=')};
+      std::string name{token.substr(token.find_first_not_of('-'))};
+      const size_t equals{name.find('=')};
       hasAttachedValue = equals != std::string::npos;
       name = name.substr(0, equals);
       for (const auto *sessionOnlyName : SESSION_ONLY_VALUES)
@@ -116,7 +116,7 @@ namespace {
 
 // The names of a band list, for a message.
 [[nodiscard]] std::string spellNames(const std::vector<std::string> &names) {
-  auto text{std::string("{")};
+  std::string text{"{"};
   for (size_t i = 0; i < names.size(); i++)
     text += (i > 0 ? ", " : "") + names[i];
   return text + "}";
@@ -143,7 +143,7 @@ struct BandFilm final {
         hasData || hasHeader ? "is half a pair" : "does not exist",
         "; the sequence was rendered without a response, or its last "
         "session was interrupted between the files"));
-  auto result{BandFilm{}};
+  BandFilm result{};
   result.info = result.film.readENVIFile(name);
   if (result.film.getNumPixelsX() != size_t(resolution.x) ||
       result.film.getNumPixelsY() != size_t(resolution.y))
@@ -174,9 +174,9 @@ struct BandFilm final {
 
 ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
                                const ResponseSettings *response) {
-  const auto resolution{frame.resolution};
-  const auto window{frame.window};
-  auto result{ResumedSequence{}};
+  const int2 resolution{frame.resolution};
+  const int4 window{frame.window};
+  ResumedSequence result{};
   result.wasRequested = !opts.image.resume.empty();
   result.sampleIndexBase = opts.render.sampling.sampleOffset;
   // A fresh sequence begins where `-sample-offset` says with an empty
@@ -188,7 +188,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
     // from scratch and writing the file for the next -resume. Half a
     // pair is a damaged prior session, and starting fresh over it
     // would clobber what is left, so that stays fatal.
-    const auto &resumeName{opts.image.resume};
+    const std::string &resumeName{opts.image.resume};
     const bool hasData{smdl::exists(resumeName)};
     const bool hasHeader{smdl::exists(resumeName + ".hdr")};
     if (hasData != hasHeader)
@@ -213,9 +213,9 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
     result.wasLoaded = hasData;
   }
   if (!result.wasLoaded) return result;
-  auto &film{result.film};
-  auto &info{result.info};
-  auto &header{result.header};
+  smdl::SpectralFilm &film{result.film};
+  smdl::SpectralFilm::ENVIFileInfo &info{result.info};
+  RenderHeader &header{result.header};
   info = film.readENVIFile(opts.image.resume);
   if (film.getNumPixelsX() != size_t(resolution.x) ||
       film.getNumPixelsY() != size_t(resolution.y))
@@ -280,7 +280,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
                 header.sampleOffset, ")");
   // The band film beside the accumulation. Without a response it is left
   // where it is, and said so, since it falls behind from here on.
-  const auto bandName{bandFilmFileName(opts.image.resume)};
+  const std::string bandName{bandFilmFileName(opts.image.resume)};
   if (!response) {
     if (smdl::exists(bandName) || smdl::exists(bandName + ".hdr"))
       SMDL_LOG_WARN("the band film ", smdl::Quoted(bandName),
@@ -288,8 +288,8 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
                     "session has no response, so it falls behind");
     return result;
   }
-  const auto names{responseFilmBandNames(*response)};
-  auto bands{
+  const std::vector<std::string> names{responseFilmBandNames(*response)};
+  BandFilm bands{
       loadBandFilm(bandName, resolution, window, info.samplesPerPixel, names)};
   result.responseHeader.readFrom(bands.info.fields);
   if (result.responseHeader.hash != responseHash(*response))

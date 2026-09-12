@@ -541,7 +541,7 @@ cl::opt<double> optPreviewEvery{
 
 Options parseCommandLine(int argc, char **argv) {
   cl::SetVersionPrinter([](llvm::raw_ostream &os) {
-    auto info{smdl::BuildInfo::get()};
+    smdl::BuildInfo info{smdl::BuildInfo::get()};
     info.thirdparty.push_back({"Embree", RTC_VERSION_STRING});
     info.thirdparty.push_back(
         {"Assimp", smdl::concat(aiGetVersionMajor(), ".", aiGetVersionMinor(),
@@ -560,10 +560,10 @@ Options parseCommandLine(int argc, char **argv) {
   // one of them was given.
   cl::PrintOptionValues();
   // The ISO, in its two forms: a number, or the meter.
-  auto iso{Flag<float>{}};
+  Flag<float> iso{};
   bool shouldMeterISO{};
   if (optISO.getNumOccurrences() > 0) {
-    const auto &text{std::string(optISO)};
+    const std::string text{optISO};
     if (text == "auto") {
       shouldMeterISO = true;
     } else {
@@ -576,10 +576,10 @@ Options parseCommandLine(int argc, char **argv) {
       iso = Flag<float>{value, true};
     }
   }
-  auto whiteBalance{Flag<WhiteBalance>{}};
+  Flag<WhiteBalance> whiteBalance{};
   if (optWhiteBalance.getNumOccurrences() > 0) {
-    const auto &text{std::string(optWhiteBalance)};
-    const auto parsed{parseWhiteBalance(text)};
+    const std::string text{optWhiteBalance};
+    const std::optional<WhiteBalance> parsed{parseWhiteBalance(text)};
     if (!parsed)
       throw smdl::Error(smdl::concat(
           "expected -white-balance to be D65, daylight, cloudy, shade, "
@@ -610,7 +610,7 @@ Options parseCommandLine(int argc, char **argv) {
   if (parseWavelengthRange(std::string(optWavelengthRange)).bandCount < 2)
     throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
   if (optRGBWavelengths.getNumOccurrences() > 0) {
-    const auto waves{float3(optRGBWavelengths)};
+    const float3 waves{float3(optRGBWavelengths)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
       throw smdl::Error("expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
@@ -625,7 +625,7 @@ Options parseCommandLine(int argc, char **argv) {
   if (!std::isfinite(float(optTime)))
     throw smdl::Error("expected -time to be finite");
 
-  auto opts{Options{}};
+  Options opts{};
 
   opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
   opts.compile.isDebugEnabled = bool(optDebug);
@@ -650,7 +650,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.rgbPolicy.shouldForceFalseColor =
       bool(optFalseColor) || optRGBWavelengths.getNumOccurrences() > 0;
   if (optRGBWavelengths.getNumOccurrences() > 0) {
-    const auto waves{float3(optRGBWavelengths)};
+    const float3 waves{float3(optRGBWavelengths)};
     opts.image.rgbPolicy.falseColorWaves = {waves.x, waves.y, waves.z};
   }
   opts.image.tonemap = parseTonemapOptions(std::string(optTonemap));

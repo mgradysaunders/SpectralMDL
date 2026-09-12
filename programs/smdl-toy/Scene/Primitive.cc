@@ -48,9 +48,9 @@ enum : uint32_t {
 // normal partials vanish.
 [[nodiscard]] PrimitiveSurface boxFaceSurface(const float3 &size,
                                               uint32_t primID, float2 uv) {
-  const auto axis{boxFaceAxis(primID)};
-  const auto axisU{(axis + 1) % 3};
-  const auto axisV{(axis + 2) % 3};
+  const size_t axis{boxFaceAxis(primID)};
+  const size_t axisU{(axis + 1) % 3};
+  const size_t axisV{(axis + 2) % 3};
   PrimitiveSurface surface{};
   surface.point[axis] = 0.5f * boxFaceSign(primID) * size[axis];
   surface.point[axisU] = size[axisU] * (uv.x - 0.5f);
@@ -183,14 +183,14 @@ template <typename F>
 [[nodiscard]] bool intersectBoxFace(const float3 &size, uint32_t primID,
                                     const float3 &org, const float3 &dir,
                                     float tnear, float tfar, PieceHit &hit) {
-  const auto axis{boxFaceAxis(primID)};
+  const size_t axis{boxFaceAxis(primID)};
   if (std::fabs(dir[axis]) < 1e-12f) return false;
   const float plane{0.5f * boxFaceSign(primID) * size[axis]};
   const float t{(plane - org[axis]) / dir[axis]};
   if (!(t > tnear && t < tfar)) return false;
-  auto point{org + t * dir};
-  const auto axisU{(axis + 1) % 3};
-  const auto axisV{(axis + 2) % 3};
+  float3 point{org + t * dir};
+  const size_t axisU{(axis + 1) % 3};
+  const size_t axisV{(axis + 2) % 3};
   if (std::fabs(point[axisU]) > 0.5f * size[axisU] ||
       std::fabs(point[axisV]) > 0.5f * size[axisV])
     return false;
@@ -211,11 +211,11 @@ template <typename F>
   case PrimitiveSpec::Shape::BOX:
     return intersectBoxFace(spec.size, primID, org, dir, tnear, tfar, hit);
   case PrimitiveSpec::Shape::SPHERE: {
-    const auto roots{solveQuadratic(smdl::lengthSquared(dir),
-                                    2.0f * smdl::dot(org, dir),
-                                    smdl::lengthSquared(org) - r * r)};
+    const RootPair roots{solveQuadratic(smdl::lengthSquared(dir),
+                                        2.0f * smdl::dot(org, dir),
+                                        smdl::lengthSquared(org) - r * r)};
     return acceptRoot(roots, tnear, tfar, [&](float t) {
-      const auto point{org + t * dir};
+      const float3 point{org + t * dir};
       hit.t = t;
       hit.point = point;
       return true;
@@ -228,9 +228,9 @@ template <typename F>
       return intersectCap(r, 0.0f, -1.0f, org, dir, tnear, tfar, hit);
     if (primID == CYLINDER_TOP)
       return intersectCap(r, h, 1.0f, org, dir, tnear, tfar, hit);
-    const auto roots{solveQuadratic(dir.x * dir.x + dir.y * dir.y,
-                                    2.0f * (org.x * dir.x + org.y * dir.y),
-                                    org.x * org.x + org.y * org.y - r * r)};
+    const RootPair roots{solveQuadratic(dir.x * dir.x + dir.y * dir.y,
+                                        2.0f * (org.x * dir.x + org.y * dir.y),
+                                        org.x * org.x + org.y * org.y - r * r)};
     return acceptRoot(roots, tnear, tfar, [&](float t) {
       const float z{org.z + t * dir.z};
       if (!(z >= 0.0f && z <= h)) return false;
@@ -248,7 +248,7 @@ template <typename F>
     // mirror cone above the apex, which the z range rejects.
     const float k{r / h};
     const float m{r - k * org.z};
-    const auto roots{
+    const RootPair roots{
         solveQuadratic(dir.x * dir.x + dir.y * dir.y - k * k * dir.z * dir.z,
                        2.0f * (org.x * dir.x + org.y * dir.y + k * m * dir.z),
                        org.x * org.x + org.y * org.y - m * m)};
@@ -280,16 +280,17 @@ template <typename F>
 }
 
 void primitiveBounds(const RTCBoundsFunctionArguments *args) {
-  const auto *primitive{static_cast<const Primitive *>(args->geometryUserPtr)};
-  const auto &spec{primitive->spec};
+  const Primitive *primitive{
+      static_cast<const Primitive *>(args->geometryUserPtr)};
+  const PrimitiveSpec &spec{primitive->spec};
   const float r{spec.radius};
   const float h{spec.height};
-  auto &bounds{*args->bounds_o};
+  RTCBounds &bounds{*args->bounds_o};
   if (spec.shape == PrimitiveSpec::Shape::BOX) {
     // Each face is a slab of the whole box, flat along its own axis.
-    auto lower{-0.5f * spec.size};
-    auto upper{0.5f * spec.size};
-    const auto axis{boxFaceAxis(args->primID)};
+    float3 lower{-0.5f * spec.size};
+    float3 upper{0.5f * spec.size};
+    const size_t axis{boxFaceAxis(args->primID)};
     lower[axis] = upper[axis] =
         0.5f * boxFaceSign(args->primID) * spec.size[axis];
     bounds.lower_x = lower.x, bounds.upper_x = upper.x;
@@ -322,11 +323,12 @@ void primitiveBounds(const RTCBoundsFunctionArguments *args) {
 void primitiveIntersect(const RTCIntersectFunctionNArguments *args) {
   // Single-ray queries only, which is all this renderer ever issues.
   if (args->N != 1 || !args->valid[0]) return;
-  const auto *primitive{static_cast<const Primitive *>(args->geometryUserPtr)};
-  auto *rayHit{reinterpret_cast<RTCRayHit *>(args->rayhit)};
-  auto &ray{rayHit->ray};
-  const auto org{float3(ray.org_x, ray.org_y, ray.org_z)};
-  const auto dir{float3(ray.dir_x, ray.dir_y, ray.dir_z)};
+  const Primitive *primitive{
+      static_cast<const Primitive *>(args->geometryUserPtr)};
+  RTCRayHit *rayHit{reinterpret_cast<RTCRayHit *>(args->rayhit)};
+  RTCRay &ray{rayHit->ray};
+  const float3 org{ray.org_x, ray.org_y, ray.org_z};
+  const float3 dir{ray.dir_x, ray.dir_y, ray.dir_z};
   PieceHit hit{};
   if (!intersectPiece(primitive->spec, args->primID, org, dir, ray.tnear,
                       ray.tfar, hit))
@@ -352,10 +354,11 @@ void primitiveIntersect(const RTCIntersectFunctionNArguments *args) {
 
 void primitiveOccluded(const RTCOccludedFunctionNArguments *args) {
   if (args->N != 1 || !args->valid[0]) return;
-  const auto *primitive{static_cast<const Primitive *>(args->geometryUserPtr)};
-  auto *ray{reinterpret_cast<RTCRay *>(args->ray)};
-  const auto org{float3(ray->org_x, ray->org_y, ray->org_z)};
-  const auto dir{float3(ray->dir_x, ray->dir_y, ray->dir_z)};
+  const Primitive *primitive{
+      static_cast<const Primitive *>(args->geometryUserPtr)};
+  RTCRay *ray{reinterpret_cast<RTCRay *>(args->ray)};
+  const float3 org{ray->org_x, ray->org_y, ray->org_z};
+  const float3 dir{ray->dir_x, ray->dir_y, ray->dir_z};
   PieceHit hit{};
   if (intersectPiece(primitive->spec, args->primID, org, dir, ray->tnear,
                      ray->tfar, hit))
@@ -370,7 +373,7 @@ void primitiveOccluded(const RTCOccludedFunctionNArguments *args) {
   case PrimitiveSpec::Shape::SPHERE:
     return 4.0f * PI * r * r;
   case PrimitiveSpec::Shape::BOX: {
-    const auto axis{boxFaceAxis(primID)};
+    const size_t axis{boxFaceAxis(primID)};
     return spec.size[(axis + 1) % 3] * spec.size[(axis + 2) % 3];
   }
   case PrimitiveSpec::Shape::DISK:
@@ -491,7 +494,7 @@ PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
   case PrimitiveSpec::Shape::BOX: {
     // A planar face has nothing that varies over it, so only the point
     // has to land on the plane.
-    const auto axis{boxFaceAxis(primID)};
+    const size_t axis{boxFaceAxis(primID)};
     surface = boxFaceSurface(spec.size, primID, float2(0.5f, 0.5f));
     surface.point = point;
     surface.point[axis] = 0.5f * boxFaceSign(primID) * spec.size[axis];
@@ -524,9 +527,9 @@ PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
 float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
                    const float3 &p) {
   if (spec.shape == PrimitiveSpec::Shape::BOX) {
-    const auto axis{boxFaceAxis(primID)};
-    const auto axisU{(axis + 1) % 3};
-    const auto axisV{(axis + 2) % 3};
+    const size_t axis{boxFaceAxis(primID)};
+    const size_t axisU{(axis + 1) % 3};
+    const size_t axisV{(axis + 2) % 3};
     return float2(p[axisU] / spec.size[axisU] + 0.5f,
                   p[axisV] / spec.size[axisV] + 0.5f);
   }
@@ -543,7 +546,7 @@ float2 primitiveUV(const PrimitiveSpec &spec, uint32_t primID,
 PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
   // Pick the piece proportionally to its area, rescaling the used
   // coordinate so the pick costs no stratification within the piece.
-  const auto pieceCount{primitivePieceCount(spec)};
+  const uint32_t pieceCount{primitivePieceCount(spec)};
   const float totalArea{primitiveObjectArea(spec)};
   uint32_t primID{0};
   float accum{};
@@ -560,7 +563,7 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
   // parameter warps by the piece's area element.
   PrimitiveAreaSample sample{};
   sample.primID = primID;
-  auto uv{float2(xi.x, xi.y)};
+  float2 uv{xi.x, xi.y};
   if (spec.shape == PrimitiveSpec::Shape::SPHERE) {
     // Uniform area on the sphere is uniform in the zenith cosine, so the
     // point is built from that cosine directly; only the reported `v`
@@ -608,7 +611,7 @@ std::unique_ptr<Primitive> makePrimitive(RTCDevice device,
                                          ? RTC_SCENE_FLAG_ROBUST
                                          : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(primitive->scene, RTC_BUILD_QUALITY_HIGH);
-  auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER)};
+  RTCGeometry geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER)};
   rtcSetGeometryUserPrimitiveCount(geometry, primitivePieceCount(spec));
   rtcSetGeometryUserData(geometry, primitive.get());
   rtcSetGeometryBoundsFunction(geometry, primitiveBounds, nullptr);

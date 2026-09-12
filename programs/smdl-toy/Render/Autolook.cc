@@ -17,9 +17,9 @@ public:
   AutolookBasis(float zenithDeg, float azimuthDeg) {
     const float zenith{smdl::radians(zenithDeg)};
     const float azimuth{smdl::radians(azimuthDeg)};
-    const auto toCamera{float3(std::sin(zenith) * std::cos(azimuth),
-                               std::sin(zenith) * std::sin(azimuth),
-                               std::cos(zenith))};
+    const float3 toCamera{std::sin(zenith) * std::cos(azimuth),
+                          std::sin(zenith) * std::sin(azimuth),
+                          std::cos(zenith)};
     forward = -toCamera;
     right = smdl::normalize(smdl::cross(forward, float3(0, 0, 1)));
     up = smdl::cross(right, forward);
@@ -48,16 +48,16 @@ namespace {
 // already in the vertices.
 [[nodiscard]] std::vector<float3>
 gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
-  auto points{std::vector<float3>()};
+  std::vector<float3> points{};
   for (size_t i = 0; i < scene.meshInstances.size(); i++) {
     if (uint32_t(i) == skipInstance) continue;
-    const auto &instance{scene.meshInstances[i]};
+    const MeshInstance &instance{scene.meshInstances[i]};
     auto fold{[&](const float4x4 &xf, const float3 &objectPoint) {
-      const auto point{transformPoint(xf, objectPoint)};
+      const float3 point{transformPoint(xf, objectPoint)};
       points.push_back(point);
       bound.extend(point);
     }};
-    const auto &open{instance.frame.objectToWorld};
+    const float4x4 &open{instance.frame.objectToWorld};
     // A primitive or a groom stands in with its coarse proxy points.
     if (instance.isPrimitive()) {
       for (const auto &point :
@@ -67,13 +67,13 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
       for (const auto &point : scene.curves[instance.curvesIndex]->proxyPoints)
         fold(open, point);
     } else {
-      const auto &mesh{*scene.meshes[instance.meshIndex]};
+      const Mesh &mesh{*scene.meshes[instance.meshIndex]};
       for (const auto &vert : mesh.verts) fold(open, vert.point);
       // A deforming mesh frames both keys, the shut one under the shut
       // frame when the instance moves too.
       if (mesh.deforms()) {
         std::optional<InstanceFrame> scratch{};
-        const auto &shut{instance.frameAt(1.0f, scratch).objectToWorld};
+        const float4x4 &shut{instance.frameAt(1.0f, scratch).objectToWorld};
         for (const auto &vert : mesh.vertsShut) fold(shut, vert.point);
       }
     }
@@ -149,13 +149,13 @@ namespace {
   float visibleArea{};
   for (int j = 0; j < RESOLUTION; j++) {
     for (int i = 0; i < RESOLUTION; i++) {
-      auto ray{Ray()};
+      Ray ray{};
       ray.org = position;
       ray.dir = smdl::normalize(
           basis.forward +
           (2.0f * (float(i) + 0.5f) / RESOLUTION - 1.0f) * tanX * basis.right +
           (2.0f * (float(j) + 0.5f) / RESOLUTION - 1.0f) * tanY * basis.up);
-      auto hit{Hit()};
+      Hit hit{};
       if (!scene.intersect(ray, hit)) continue;
       if (hit.instIndex == skipInstance) continue;
       numHits++;
@@ -175,7 +175,7 @@ namespace {
       if (smdl::dot(hit.Ng, ray.dir) > 0) numBackfacing++;
     }
   }
-  auto result{ProbeResult{}};
+  ProbeResult result{};
   result.coverage = float(numHits) / float(RESOLUTION * RESOLUTION);
   result.visibleArea = visibleArea;
   result.backfaceFraction =
@@ -187,13 +187,14 @@ namespace {
 AutolookResult solveAutolook(const Scene &scene,
                              const AutolookOptions &options) {
   BoundBox3 bound{};
-  const auto points{gatherWorldPoints(scene, options.skipInstance, bound)};
+  const std::vector<float3> points{
+      gatherWorldPoints(scene, options.skipInstance, bound)};
   if (points.empty())
     throw smdl::Error("cannot -autolook: the scene has no geometry");
   const float usable{1.0f - options.margin};
   const float tanY{std::tan(smdl::radians(0.5f * options.fovYDeg)) * usable};
   const float tanX{tanY * options.aspectRatio};
-  auto azimuths{std::vector<float>()};
+  std::vector<float> azimuths{};
   if (options.azimuthDeg) {
     azimuths.push_back(*options.azimuthDeg);
   } else {
@@ -201,13 +202,13 @@ AutolookResult solveAutolook(const Scene &scene,
     for (int i = 0; i < STEPS; i++)
       azimuths.push_back(float(i) * (360.0f / STEPS));
   }
-  auto candidates{std::vector<Candidate>(azimuths.size())};
+  std::vector<Candidate> candidates(azimuths.size());
   smdl::parallelFor(0, azimuths.size(), [&](size_t i) {
-    const auto basis{AutolookBasis(options.zenithDeg, azimuths[i])};
-    auto &candidate{candidates[i]};
+    const AutolookBasis basis{options.zenithDeg, azimuths[i]};
+    Candidate &candidate{candidates[i]};
     candidate.position = solvePosition(points, basis, tanX, tanY);
-    const auto probe{probeFrame(scene, basis, candidate.position, tanX, tanY,
-                                options.skipInstance)};
+    const ProbeResult probe{probeFrame(scene, basis, candidate.position, tanX,
+                                       tanY, options.skipInstance)};
     candidate.fill = probe.coverage;
     candidate.visibleArea = probe.visibleArea;
     candidate.backfaceFraction = probe.backfaceFraction;
@@ -249,10 +250,10 @@ AutolookResult solveAutolook(const Scene &scene,
         "% of the visible surface is backfacing, which looks like the "
         "side of an open mesh that is never meant to be seen");
   }
-  const auto &chosen{candidates[best]};
-  const auto basis{AutolookBasis(options.zenithDeg, azimuths[best])};
-  const auto center{bound.center()};
-  auto result{AutolookResult{}};
+  const Candidate &chosen{candidates[best]};
+  const AutolookBasis basis{options.zenithDeg, azimuths[best]};
+  const float3 center{bound.center()};
+  AutolookResult result{};
   result.lookFrom = chosen.position;
   result.lookTo =
       chosen.position +
@@ -276,9 +277,9 @@ AutofocusResult solveAutofocus(const Scene &scene,
   // are both found by the median.
   constexpr int STEPS = 5;
   constexpr float HALF_EXTENT = 0.01f;
-  const auto cameraToWorld{
+  const float4x4 cameraToWorld{
       smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp)};
-  const auto forward{smdl::normalize(options.lookTo - options.lookFrom)};
+  const float3 forward{smdl::normalize(options.lookTo - options.lookFrom)};
   // Each hit's distance along the view axis, with what it hit, sorted
   // for the median.
   struct Probe final {
@@ -286,19 +287,18 @@ AutofocusResult solveAutofocus(const Scene &scene,
     uint32_t instIndex;
     uint32_t matIndex;
   };
-  auto probes{std::vector<Probe>()};
-  auto result{AutofocusResult{}};
+  std::vector<Probe> probes{};
+  AutofocusResult result{};
   for (int j = 0; j < STEPS; j++) {
     for (int i = 0; i < STEPS; i++) {
       const float x{HALF_EXTENT * (2.0f * float(i) / (STEPS - 1) - 1.0f)};
       const float y{HALF_EXTENT * (2.0f * float(j) / (STEPS - 1) - 1.0f)};
-      auto ray{
-          Ray{float3(0.0f),
+      Ray ray{float3(0.0f),
               smdl::normalize(float3(x, y, -options.focalLengthOverHeight)),
-              EPS, INF}};
+              EPS, INF};
       ray.transform(cameraToWorld);
       result.rayCount++;
-      auto hit{Hit()};
+      Hit hit{};
       if (!scene.intersect(ray, hit)) continue;
       probes.push_back(Probe{ray.tmax * smdl::dot(ray.dir, forward),
                              hit.instIndex, hit.matIndex});
@@ -313,13 +313,13 @@ AutofocusResult solveAutofocus(const Scene &scene,
   std::sort(probes.begin(), probes.end(), [](const Probe &a, const Probe &b) {
     return a.distance < b.distance;
   });
-  const auto &median{probes[probes.size() / 2]};
+  const Probe &median{probes[probes.size() / 2]};
   result.distance = median.distance;
   result.instIndex = median.instIndex;
   result.matIndex = median.matIndex;
-  const auto materialName{median.matIndex < scene.materialNames.size()
-                              ? scene.materialNames[median.matIndex]
-                              : std::string()};
+  const std::string materialName{median.matIndex < scene.materialNames.size()
+                                     ? scene.materialNames[median.matIndex]
+                                     : std::string()};
   SMDL_LOG_INFO("Autofocus: ", result.hitCount, " of ", result.rayCount,
                 " rays at the center of the frame hit, the median at ",
                 result.distance, " scene units on instance ", result.instIndex,

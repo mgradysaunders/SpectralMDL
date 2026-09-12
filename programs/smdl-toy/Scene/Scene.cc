@@ -86,7 +86,7 @@ void registerSceneData(smdl::Compiler &compiler) {
       [&compiler](smdl::State *state, smdl::SceneData::Kind kind, int size,
                   void *out) {
         if (state->vertexColorCount == 0) return;
-        const auto &rgba{state->vertexColor[0]};
+        const float4 &rgba{state->vertexColor[0]};
         if (kind == smdl::SceneData::Kind::Float && (size == 3 || size == 4)) {
           for (int i = 0; i < size; i++) static_cast<float *>(out)[i] = rgba[i];
         } else if (kind == smdl::SceneData::Kind::Color) {
@@ -102,9 +102,9 @@ InstanceFrame::InstanceFrame(const float4x4 &xf) noexcept {
   // allowed even though MDL prohibits shear between coordinate spaces,
   // and for where the deformation is confined to.
   objectToWorld = xf;
-  const auto axis0{float3(xf[0])};
-  const auto axis1{float3(xf[1])};
-  const auto axis2{float3(xf[2])};
+  const float3 axis0{float3(xf[0])};
+  const float3 axis1{float3(xf[1])};
+  const float3 axis2{float3(xf[2])};
   // The cofactor matrix, whose columns are the cross products of the other
   // two axes. This is `det(A) A^-T` without ever forming either factor,
   // which is both cheaper and better behaved: it stays finite as the
@@ -115,7 +115,7 @@ InstanceFrame::InstanceFrame(const float4x4 &xf) noexcept {
   flipsWinding = determinant < 0;
   // The rigid frame, computed with the same helper the library uses, from
   // the same matrix the library is handed. See `rigidToWorld`.
-  const auto rigidAxes{smdl::orthonormalize(float3x3(axis0, axis1, axis2))};
+  const float3x3 rigidAxes{smdl::orthonormalize(float3x3(axis0, axis1, axis2))};
   rigidToWorld =
       float4x4{float4(rigidAxes[0], 0.0f), float4(rigidAxes[1], 0.0f),
                float4(rigidAxes[2], 0.0f), xf[3]};
@@ -142,7 +142,7 @@ void MeshInstance::setObjectToWorld(const float4x4 &xf,
   // interior to shade and no well defined normal anywhere on it, and Embree
   // cannot invert it either. Nothing sensible is renderable, so say so
   // rather than emit whatever the arithmetic happens to produce.
-  const auto axis0{float3(xf[0])};
+  const float3 axis0{float3(xf[0])};
   const float determinant{dot(axis0, frame.normalMatrix[0])};
   const float scale{
       (length(axis0) + length(float3(xf[1])) + length(float3(xf[2]))) / 3.0f};
@@ -215,18 +215,19 @@ void Scene::addMesh(const std::string &fileName,
   // renamed material's `geometry.displacement` bakes into the vertices
   // at commit, so under `subdiv.displace` the renames stay in the key
   // and the meshes genuinely differ.
-  auto meshLevel{materials};
+  MaterialAssignment meshLevel{materials};
   const bool hasRenamesPerInstance{!subdiv.isDisplaced &&
                                    !meshLevel.renames.empty()};
   if (hasRenamesPerInstance) meshLevel.renames.clear();
   std::error_code ignored{};
-  auto key{std::filesystem::weakly_canonical(fileName, ignored).string()};
+  std::string key{
+      std::filesystem::weakly_canonical(fileName, ignored).string()};
   if (key.empty()) key = fileName;
   if (subdiv.isActive()) key += "|" + subdiv.key();
   if (!meshLevel.empty()) key += "|" + meshLevel.key();
   // The pose a file is baked in is part of what its meshes are: two
   // phases of one asset are two mesh sets and two BVHs.
-  if (const auto animationKey{animation.key()}; !animationKey.empty())
+  if (const std::string animationKey{animation.key()}; !animationKey.empty())
     key += "|anim " + animationKey;
   if (subdiv.levels >= 5)
     SMDL_LOG_WARN("'subdivide ", subdiv.levels, "' in ",
@@ -235,7 +236,7 @@ void Scene::addMesh(const std::string &fileName,
                   "; expect memory and build time to match.");
   auto entry{importCache.find(key)};
   if (entry == importCache.end()) {
-    auto assImporter{Assimp::Importer{}};
+    Assimp::Importer assImporter{};
     configureImporter(assImporter);
     const unsigned flags{subdiv.levels == 0 ? POSTPROCESS_FLAGS
                          : subdiv.scheme == SubdivSpec::Scheme::LOOP
@@ -252,14 +253,14 @@ void Scene::addMesh(const std::string &fileName,
     // second pass is the same sequence over the same data as one read.
     constexpr unsigned DEFERRED_FLAGS =
         aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality;
-    auto assScene{
+    const aiScene *assScene{
         assImporter.ReadFile(fileName.c_str(), flags & ~DEFERRED_FLAGS)};
     if (!assScene)
       throw smdl::Error(smdl::concat("assimp failed to read ",
                                      smdl::QuotedPath(fileName), ": ",
                                      assImporter.GetErrorString()));
-    const auto *clip{resolveClip(*assScene, animation, fileName)};
-    auto anyDeforms{false};
+    const aiAnimation *clip{resolveClip(*assScene, animation, fileName)};
+    bool anyDeforms{false};
     for (unsigned i = 0; i < assScene->mNumMeshes && !anyDeforms; i++)
       anyDeforms = meshDeforms(*assScene, i, clip);
     if (!anyDeforms) {
@@ -269,9 +270,9 @@ void Scene::addMesh(const std::string &fileName,
                                        smdl::QuotedPath(fileName), ": ",
                                        assImporter.GetErrorString()));
     }
-    const auto meshBase{meshes.size()};
-    auto file{load(*assScene, subdiv, meshLevel, clip, animation, anyDeforms,
-                   fileName)};
+    const size_t meshBase{meshes.size()};
+    ImportFile file{load(*assScene, subdiv, meshLevel, clip, animation,
+                         anyDeforms, fileName)};
     // A subdivided mesh holds base polygons rather than triangles at this
     // point; count whichever the mesh has, and say which it was.
     uint64_t numFaces{};
@@ -288,18 +289,19 @@ void Scene::addMesh(const std::string &fileName,
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
                    smdl::Counted(entry->second.placements.size(), "placement"));
   }
-  const auto &file{entry->second};
-  const auto selectedRoot{resolveSelection(file.nodes, selection, fileName)};
+  const ImportFile &file{entry->second};
+  const std::vector<uint32_t> selectedRoot{
+      resolveSelection(file.nodes, selection, fileName)};
   fileNames.push_back(fileName);
   // The instance-level binding: what the renames turn each mesh's own
   // material into, interned on first use and memoized per mesh, or
   // `INVALID_INDEX` where the renames have nothing to say.
-  auto overrideForMesh{std::map<uint32_t, uint32_t>()};
+  std::map<uint32_t, uint32_t> overrideForMesh{};
   auto instanceMaterial{[&](uint32_t meshIndex) {
     if (!hasRenamesPerInstance) return INVALID_INDEX;
     auto [entry2, isNew]{overrideForMesh.try_emplace(meshIndex, INVALID_INDEX)};
     if (isNew) {
-      const auto &baseName{materialNames[meshes[meshIndex]->matIndex]};
+      const std::string &baseName{materialNames[meshes[meshIndex]->matIndex]};
       if (auto itr{materials.renames.find(baseName)};
           itr != materials.renames.end() && itr->second != baseName)
         entry2->second = internMaterial(itr->second);
@@ -309,7 +311,7 @@ void Scene::addMesh(const std::string &fileName,
   uint32_t numInstances{};
   uint32_t numSkippedOnRoot{};
   for (const auto &placement : file.placements) {
-    const auto root{selectedRoot[placement.nodeIndex]};
+    const uint32_t root{selectedRoot[placement.nodeIndex]};
     if (root == INVALID_INDEX) {
       // Geometry hanging directly off the root has no name to select it by,
       // so a selection can only ever drop it. Say so rather than quietly
@@ -317,14 +319,14 @@ void Scene::addMesh(const std::string &fileName,
       if (file.nodes[placement.nodeIndex].path.empty()) numSkippedOnRoot++;
       continue;
     }
-    const auto &node{file.nodes[placement.nodeIndex]};
-    const auto &mesh{*meshes[placement.meshIndex]};
+    const ImportNode &node{file.nodes[placement.nodeIndex]};
+    const Mesh &mesh{*meshes[placement.meshIndex]};
     // A skinned mesh was baked into file space, its bones carrying the
     // node's transform (FBX bakes it into the offsets, glTF ignores it
     // by specification), so the placing node applies to it as the
     // identity, at both keys.
-    auto nodeXf{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFile};
-    auto nodeXfShut{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFileShut};
+    float4x4 nodeXf{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFile};
+    float4x4 nodeXfShut{mesh.isSkinned ? float4x4(1.0f) : node.nodeToFileShut};
     const bool doesNodeMove{!mesh.isSkinned && node.moves};
     if (selection.shouldRecenter) {
       // Left-multiplying by the inverse translation of the subtree root
@@ -333,14 +335,14 @@ void Scene::addMesh(const std::string &fileName,
       // the subtree shifts by the same amount, so the subtree stays rigid;
       // the open key's origin comes off both keys, since recentering is a
       // static correction.
-      const auto origin{float3(file.nodes[root].nodeToFile[3])};
+      const float3 origin{float3(file.nodes[root].nodeToFile[3])};
       nodeXf[3] = float4(float3(nodeXf[3]) - origin, nodeXf[3].w);
       nodeXfShut[3] = float4(float3(nodeXfShut[3]) - origin, nodeXfShut[3].w);
     }
     if (worldXfs.size() == 1) {
       // The shut key when either the place or the node moves: the
       // place's shut key (or its open key) over the node's.
-      auto shutXf{firstKey(worldXfsShut)};
+      std::optional<float4x4> shutXf{firstKey(worldXfsShut)};
       if (shutXf) {
         *shutXf = *shutXf * nodeXfShut;
       } else if (doesNodeMove) {
@@ -371,18 +373,18 @@ void Scene::addMesh(const std::string &fileName,
 }
 
 void Scene::add(const LayoutItem &item) {
-  const auto worldXfs{item.batchXfs.empty()
-                          ? smdl::Span<const float4x4>(&item.objectToWorld, 1)
-                          : smdl::Span<const float4x4>(item.batchXfs.data(),
-                                                       item.batchXfs.size())};
-  const auto worldXfsShut{
+  const smdl::Span<const float4x4> worldXfs{
+      item.batchXfs.empty() ? smdl::Span<const float4x4>(&item.objectToWorld, 1)
+                            : smdl::Span<const float4x4>(item.batchXfs.data(),
+                                                         item.batchXfs.size())};
+  const smdl::Span<const float4x4> worldXfsShut{
       item.batchXfs.empty()
           ? (item.objectToWorldShut
                  ? smdl::Span<const float4x4>(&*item.objectToWorldShut, 1)
                  : smdl::Span<const float4x4>())
           : smdl::Span<const float4x4>(item.batchXfsShut.data(),
                                        item.batchXfsShut.size())};
-  const auto firstInstance{meshInstances.size()};
+  const size_t firstInstance{meshInstances.size()};
   if (item.primitive.isActive()) {
     addPrimitive(item.primitive, worldXfs, worldXfsShut, item.materials);
   } else if (item.curves.isActive) {
@@ -412,10 +414,10 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   // The same split `add()` gives meshes, without the displacement
   // exception: an analytic shape has no vertices for a material to
   // move, so the renames are always an instance-level fact.
-  auto meshLevel{materials};
+  MaterialAssignment meshLevel{materials};
   meshLevel.renames.clear();
-  const auto baseName{std::string(meshLevel.resolve(""))};
-  auto key{spec.key() + "|" + baseName};
+  const std::string baseName{meshLevel.resolve("")};
+  std::string key{spec.key() + "|" + baseName};
   auto entry{primitiveCache.find(key)};
   uint32_t primIndex{};
   if (entry == primitiveCache.end()) {
@@ -429,7 +431,7 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   } else {
     primIndex = entry->second;
   }
-  auto matIndex{INVALID_INDEX};
+  uint32_t matIndex{INVALID_INDEX};
   if (auto itr{materials.renames.find(baseName)};
       itr != materials.renames.end() && itr->second != baseName)
     matIndex = internMaterial(itr->second);
@@ -451,11 +453,12 @@ uint32_t Scene::addCurves(const std::string &fileName,
   // implicit slot and no vertices for a material to move, so the
   // whole-asset binding joins the cache key and the renames are always
   // an instance-level fact.
-  auto meshLevel{materials};
+  MaterialAssignment meshLevel{materials};
   meshLevel.renames.clear();
-  const auto baseName{std::string(meshLevel.resolve(""))};
+  const std::string baseName{meshLevel.resolve("")};
   std::error_code ignored{};
-  auto key{std::filesystem::weakly_canonical(fileName, ignored).string()};
+  std::string key{
+      std::filesystem::weakly_canonical(fileName, ignored).string()};
   if (key.empty()) key = fileName;
   key += "|" + spec.key() + "|" + baseName;
   auto entry{curvesCache.find(key)};
@@ -477,7 +480,7 @@ uint32_t Scene::addCurves(const std::string &fileName,
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
                    smdl::Counted(curves[curvesIndex]->strandCount(), "strand"));
   }
-  auto matIndex{INVALID_INDEX};
+  uint32_t matIndex{INVALID_INDEX};
   if (auto itr{materials.renames.find(baseName)};
       itr != materials.renames.end() && itr->second != baseName)
     matIndex = internMaterial(itr->second);
@@ -500,7 +503,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   // still distinguishable from every other file's: a name the import
   // reassigns is interned under the name it was given, so nothing
   // downstream can tell it apart from a file that named it that way.
-  auto materialRemap{std::vector<uint32_t>()};
+  std::vector<uint32_t> materialRemap{};
   materialRemap.reserve(assScene.mNumMaterials);
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++)
     materialRemap.push_back(internMaterial(std::string(
@@ -513,15 +516,16 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
                               : 0.0};
   const double ticksShut{
       clip ? clipTime(*clip, animation, gRenderShutter.secondsAt(1.0f)) : 0.0};
-  const auto poseOpen{evaluatePose(assScene, clip, ticksOpen)};
-  const auto poseShut{clip && frameSpansTime ? std::optional(evaluatePose(
-                                                   assScene, clip, ticksShut))
-                                             : std::nullopt};
-  const auto meshBase{uint32_t(meshes.size())};
+  const NodePose poseOpen{evaluatePose(assScene, clip, ticksOpen)};
+  const std::optional<NodePose> poseShut{
+      clip && frameSpansTime
+          ? std::optional(evaluatePose(assScene, clip, ticksShut))
+          : std::nullopt};
+  const uint32_t meshBase{uint32_t(meshes.size())};
   uint32_t numDeforming{};
   for (unsigned int i = 0; i < assScene.mNumMeshes; i++) {
-    auto bakeOpen{std::optional<MeshBake>()};
-    auto bakeShut{std::optional<MeshBake>()};
+    std::optional<MeshBake> bakeOpen{};
+    std::optional<MeshBake> bakeShut{};
     if (meshDeforms(assScene, i, clip)) {
       bakeOpen = bakeMesh(assScene, i, poseOpen, clip, ticksOpen, fileName);
       if (poseShut)
@@ -532,7 +536,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
          bakeOpen ? &*bakeOpen : nullptr, bakeShut ? &*bakeShut : nullptr,
          shouldJoinCorners);
   }
-  auto file{ImportFile()};
+  ImportFile file{};
   flattenNodes(*assScene.mRootNode, float4x4(1.0f), INVALID_INDEX, {}, meshBase,
                file);
   if (!clip) return file;
@@ -541,7 +545,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   SMDL_SANITY_CHECK(file.nodes.size() == poseOpen.nodeToFile.size());
   uint32_t numMoving{};
   for (size_t i = 0; i < file.nodes.size(); i++) {
-    auto &node{file.nodes[i]};
+    ImportNode &node{file.nodes[i]};
     node.nodeToFile = poseOpen.nodeToFile[i];
     node.nodeToFileShut = poseShut ? poseShut->nodeToFile[i] : node.nodeToFile;
     for (size_t j = 0; j < 4 && !node.moves; j++)
@@ -569,7 +573,7 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
 
 RTCQuaternionDecomposition
 quaternionDecompositionOf(const float4x4 &xf) noexcept {
-  const auto parts{decomposeTransform(xf)};
+  const TransformDecomposition parts{decomposeTransform(xf)};
   RTCQuaternionDecomposition qd{};
   rtcInitQuaternionDecomposition(&qd);
   rtcQuaternionDecompositionSetScale(&qd, parts.scale.x, parts.scale.y,
@@ -613,7 +617,7 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
   // invariant, so a sheared or non-uniformly scaled instance costs nothing
   // here and `makeHit()` rebuilds the world-space geometry from the same
   // matrix.
-  auto instance{MeshInstance()};
+  MeshInstance instance{};
   instance.setObjectToWorld(xf, fileName);
   instance.meshIndex = meshIndex;
   instance.primIndex = primIndex;
@@ -621,7 +625,7 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
   instance.matIndex = matIndex;
   instance.isDeforming =
       meshIndex != INVALID_INDEX && meshes[meshIndex]->deforms();
-  auto inst{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE)};
+  RTCGeometry inst{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE)};
   rtcSetGeometryBuildQuality(inst, RTC_BUILD_QUALITY_HIGH);
   if (xfShut && keysInterpolate(xf, *xfShut, fileName)) {
     // A moving instance takes the quaternion form at both keys, so a
@@ -629,8 +633,8 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
     // chord of its matrices: Embree slerps the rotation and lerps the
     // rest. A static instance keeps the matrix form and one step, so
     // its traversal and its transform are exactly the static ones.
-    const auto open{quaternionDecompositionOf(xf)};
-    const auto shut{quaternionDecompositionOf(*xfShut)};
+    const RTCQuaternionDecomposition open{quaternionDecompositionOf(xf)};
+    const RTCQuaternionDecomposition shut{quaternionDecompositionOf(*xfShut)};
     rtcSetGeometryTimeStepCount(inst, 2);
     rtcSetGeometryTransformQuaternion(inst, 0, &open);
     rtcSetGeometryTransformQuaternion(inst, 1, &shut);
@@ -646,11 +650,11 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
             : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
                                          : meshes[meshIndex]->scene);
   rtcCommitGeometry(inst);
-  const auto geomID{rtcAttachGeometry(scene, inst)};
+  const unsigned int geomID{rtcAttachGeometry(scene, inst)};
   instanceGeometries.push_back(inst);
   instance.geometry = inst;
   instance.instPrimID = 0;
-  const auto base{uint32_t(meshInstances.size())};
+  const uint32_t base{uint32_t(meshInstances.size())};
   meshInstances.push_back(instance);
   if (instanceBaseByGeomID.size() <= geomID)
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
@@ -688,7 +692,8 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   }};
   for (size_t i = 0; isMoving && i < worldXfs.size(); i++)
     isMoving = keysInterpolate(worldXfs[i] * nodeXf, shutOf(i), fileName);
-  auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY)};
+  RTCGeometry geometry{
+      rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY)};
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
   rtcSetGeometryTimeStepCount(geometry, isMoving ? 2 : 1);
   rtcSetGeometryInstancedScene(
@@ -709,9 +714,9 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
               RTC_FORMAT_QUATERNION_DECOMPOSITION,
               sizeof(RTCQuaternionDecomposition), worldXfs.size()));
   }
-  const auto base{uint32_t(meshInstances.size())};
+  const uint32_t base{uint32_t(meshInstances.size())};
   for (size_t i = 0; i < worldXfs.size(); i++) {
-    const auto xf{worldXfs[i] * nodeXf};
+    const float4x4 xf{worldXfs[i] * nodeXf};
     if (!isMoving) {
       for (int row = 0; row < 3; row++)
         for (int column = 0; column < 4; column++)
@@ -720,7 +725,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
       keys[0][i] = quaternionDecompositionOf(xf);
       keys[1][i] = quaternionDecompositionOf(shutOf(i));
     }
-    auto instance{MeshInstance()};
+    MeshInstance instance{};
     instance.setObjectToWorld(xf, fileName);
     instance.meshIndex = meshIndex;
     instance.primIndex = primIndex;
@@ -734,7 +739,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
     meshInstances.push_back(instance);
   }
   rtcCommitGeometry(geometry);
-  const auto geomID{rtcAttachGeometry(scene, geometry)};
+  const unsigned int geomID{rtcAttachGeometry(scene, geometry)};
   instanceGeometries.push_back(geometry);
   if (instanceBaseByGeomID.size() <= geomID)
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
@@ -746,7 +751,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
 
 uint32_t Scene::addGroundPlane(float z, float halfExtent,
                                const std::string &materialName) {
-  auto &mesh{meshes.emplace_back(new Mesh())};
+  std::unique_ptr<Mesh> &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
   rtcSetSceneFlags(mesh->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
                                                       : RTC_SCENE_FLAG_NONE);
@@ -754,7 +759,7 @@ uint32_t Scene::addGroundPlane(float z, float halfExtent,
   mesh->matIndex = internMaterial(materialName);
   mesh->verts.resize(4);
   for (uint32_t i = 0; i < 4; i++) {
-    auto &vert{mesh->verts[i]};
+    Mesh::Vert &vert{mesh->verts[i]};
     vert.point.x = i == 1 || i == 2 ? +halfExtent : -halfExtent;
     vert.point.y = i == 2 || i == 3 ? +halfExtent : -halfExtent;
     vert.point.z = z;
@@ -774,7 +779,7 @@ BoundBox3 Scene::preCommitBounds() const {
     auto fold{[&](const float4x4 &xf, const float3 &point) {
       bound.extend(transformPoint(xf, point));
     }};
-    const auto &open{instance.frame.objectToWorld};
+    const float4x4 &open{instance.frame.objectToWorld};
     if (instance.isPrimitive()) {
       for (const auto &point : primitives[instance.primIndex]->proxyPoints)
         fold(open, point);
@@ -785,14 +790,14 @@ BoundBox3 Scene::preCommitBounds() const {
         fold(open, point);
       continue;
     }
-    const auto &mesh{*meshes[instance.meshIndex]};
+    const Mesh &mesh{*meshes[instance.meshIndex]};
     for (const auto &vert : mesh.verts) fold(open, vert.point);
     for (const auto &point : mesh.basePoints) fold(open, point);
     // A deforming mesh covers both keys, its shut key under the shut
     // frame when the instance moves too.
     if (mesh.deforms()) {
       std::optional<InstanceFrame> scratch{};
-      const auto &shut{instance.frameAt(1.0f, scratch).objectToWorld};
+      const float4x4 &shut{instance.frameAt(1.0f, scratch).objectToWorld};
       for (const auto &vert : mesh.vertsShut) fold(shut, vert.point);
       for (const auto &point : mesh.basePointsShut) fold(shut, point);
     }
@@ -820,7 +825,7 @@ void Scene::commit(const Color &wavelengths) {
   // query.
   {
     useOpaqueShadows = true;
-    const auto used{computeUsedMaterials()};
+    const std::vector<bool> used{computeUsedMaterials()};
     for (size_t i = 0; i < materialDefs.size(); i++) {
       if (!used[i] || !materialDefs[i]) continue;
       if (!materialDefs[i]->isAlwaysOpaque()) {
@@ -833,8 +838,8 @@ void Scene::commit(const Color &wavelengths) {
   rtcCommitScene(scene);
   RTCBounds bounds{};
   rtcGetSceneBounds(scene, &bounds);
-  auto lower{float3(bounds.lower_x, bounds.lower_y, bounds.lower_z)};
-  auto upper{float3(bounds.upper_x, bounds.upper_y, bounds.upper_z)};
+  float3 lower{bounds.lower_x, bounds.lower_y, bounds.lower_z};
+  float3 upper{bounds.upper_x, bounds.upper_y, bounds.upper_z};
   boundCenter = 0.5f * (lower + upper);
   boundRadius = 0.5f * length(upper - lower);
   uint64_t numTriangles{};
@@ -852,15 +857,15 @@ void Scene::commit(const Color &wavelengths) {
 }
 
 std::vector<bool> Scene::computeUsedMaterials() const {
-  auto isUsed{std::vector<bool>(materialDefs.size(), false)};
+  std::vector<bool> isUsed(materialDefs.size(), false);
   for (const auto &meshInstance : meshInstances)
     isUsed[materialIndexOf(meshInstance)] = true;
   return isUsed;
 }
 
 std::vector<std::string> Scene::usedMaterialNames() const {
-  const auto isUsed{computeUsedMaterials()};
-  auto names{std::vector<std::string>()};
+  const std::vector<bool> isUsed{computeUsedMaterials()};
+  std::vector<std::string> names{};
   for (size_t i = 0; i < materialNames.size(); i++)
     if (isUsed[i]) names.push_back(materialNames[i]);
   return names;
@@ -880,8 +885,8 @@ void Scene::resolveMaterials() {
   // declare materials nothing uses, and a mesh whose every instance
   // overrides its material away leaves the mesh's own name legitimately
   // unresolved.
-  const auto isUsed{computeUsedMaterials()};
-  auto unresolved{std::vector<std::string>()};
+  const std::vector<bool> isUsed{computeUsedMaterials()};
+  std::vector<std::string> unresolved{};
   for (size_t i = 0; i < materialDefs.size(); i++) {
     if (!isUsed[i]) continue;
     materialDefs[i] = compiler.findMaterial(materialNames[i]);
@@ -897,11 +902,11 @@ void Scene::resolveMaterials() {
     // Anything else is a null material pointer for the hit path to walk
     // into, so stop here and say exactly which names need attention, and
     // why, each explanation's own list of candidates indented under it.
-    auto message{smdl::concat("cannot resolve ",
-                              smdl::Counted(unresolved.size(), "material name"),
-                              " in the scene to an MDL material:")};
+    std::string message{smdl::concat(
+        "cannot resolve ", smdl::Counted(unresolved.size(), "material name"),
+        " in the scene to an MDL material:")};
     for (const auto &name : unresolved) {
-      const auto explanation{
+      const std::string explanation{
           name.empty() ? std::string("a primitive or groom has no material "
                                      "name, so only a fallback can shade it")
                        : compiler.explainMaterialLookup(name)};
@@ -924,10 +929,9 @@ namespace {
 // The weld is by the open key, and serves the shut key of a deforming
 // mesh too: what was one authored vertex is one vertex at both keys.
 [[nodiscard]] WeldMap weldByPosition(const Mesh &mesh) {
-  auto groups{
-      std::unordered_map<std::array<uint32_t, 3>, uint32_t, WeldHash>()};
+  std::unordered_map<std::array<uint32_t, 3>, uint32_t, WeldHash> groups{};
   groups.reserve(mesh.verts.size());
-  auto weld{WeldMap()};
+  WeldMap weld{};
   weld.groupOf.resize(mesh.verts.size());
   for (size_t i = 0; i < mesh.verts.size(); i++)
     weld.groupOf[i] = groups
@@ -958,14 +962,14 @@ void appendBits(std::string &key, const Mesh::Vert &vert) {
 // that move apart, which the join would, since it looks at the bind pose
 // alone. Output indices number in first-encounter order.
 void shouldJoinCorners(Mesh &mesh) {
-  const auto numCorners{mesh.verts.size()};
-  auto indexOf{std::unordered_map<std::string, uint32_t>()};
+  const size_t numCorners{mesh.verts.size()};
+  std::unordered_map<std::string, uint32_t> indexOf{};
   indexOf.reserve(numCorners);
-  auto remap{std::vector<uint32_t>(numCorners)};
-  auto verts{std::vector<Mesh::Vert>()};
-  auto vertsShut{std::vector<Mesh::Vert>()};
-  auto colors{std::vector<float4>()};
-  auto key{std::string()};
+  std::vector<uint32_t> remap(numCorners);
+  std::vector<Mesh::Vert> verts{};
+  std::vector<Mesh::Vert> vertsShut{};
+  std::vector<float4> colors{};
+  std::string key{};
   for (size_t i = 0; i < numCorners; i++) {
     key.clear();
     appendBits(key, mesh.verts[i]);
@@ -989,15 +993,15 @@ void shouldJoinCorners(Mesh &mesh) {
 // The same weld over the base polygons of a subdivided read, whose
 // records are a point per key, a texture coordinate, and a color.
 void joinBaseCorners(Mesh &mesh) {
-  const auto numCorners{mesh.basePoints.size()};
-  auto indexOf{std::unordered_map<std::string, uint32_t>()};
+  const size_t numCorners{mesh.basePoints.size()};
+  std::unordered_map<std::string, uint32_t> indexOf{};
   indexOf.reserve(numCorners);
-  auto remap{std::vector<uint32_t>(numCorners)};
-  auto points{std::vector<float3>()};
-  auto pointsShut{std::vector<float3>()};
-  auto texcoords{std::vector<float2>()};
-  auto colors{std::vector<float4>()};
-  auto key{std::string()};
+  std::vector<uint32_t> remap(numCorners);
+  std::vector<float3> points{};
+  std::vector<float3> pointsShut{};
+  std::vector<float2> texcoords{};
+  std::vector<float4> colors{};
+  std::string key{};
   for (size_t i = 0; i < numCorners; i++) {
     key.clear();
     appendBits(key, &mesh.basePoints[i].x, 3);
@@ -1029,7 +1033,7 @@ void joinBaseCorners(Mesh &mesh) {
 // is no key: the mesh renders through the static path.
 [[nodiscard]] bool hasSameKeys(const std::vector<Mesh::Vert> &a,
                                const std::vector<Mesh::Vert> &b) {
-  auto keyA{std::string()}, keyB{std::string()};
+  std::string keyA{}, keyB{};
   for (size_t i = 0; i < a.size(); i++) {
     keyA.clear(), keyB.clear();
     appendBits(keyA, a[i]);
@@ -1055,22 +1059,22 @@ void joinBaseCorners(Mesh &mesh) {
 void recomputeNormals(std::vector<Mesh::Vert> &verts,
                       const std::vector<Mesh::Face> &faces,
                       const WeldMap &weld) {
-  const auto &weldOf{weld.groupOf};
-  auto sums{std::vector<float3>(weld.numGroups)};
+  const std::vector<uint32_t> &weldOf{weld.groupOf};
+  std::vector<float3> sums(weld.numGroups);
   for (const auto &face : faces) {
-    const auto &p0{verts[face[0]].point};
-    const auto &p1{verts[face[1]].point};
-    const auto &p2{verts[face[2]].point};
+    const float3 &p0{verts[face[0]].point};
+    const float3 &p1{verts[face[1]].point};
+    const float3 &p2{verts[face[2]].point};
     // Unnormalized: the cross product's length is twice the area, which
     // is exactly the weighting wanted.
-    const auto faceNormal{smdl::cross(p1 - p0, p2 - p0)};
+    const float3 faceNormal{smdl::cross(p1 - p0, p2 - p0)};
     sums[weldOf[face[0]]] = sums[weldOf[face[0]]] + faceNormal;
     sums[weldOf[face[1]]] = sums[weldOf[face[1]]] + faceNormal;
     sums[weldOf[face[2]]] = sums[weldOf[face[2]]] + faceNormal;
   }
   for (size_t i = 0; i < verts.size(); i++) {
-    auto normal{sums[weldOf[i]]};
-    const auto len{smdl::length(normal)};
+    float3 normal{sums[weldOf[i]]};
+    const float len{smdl::length(normal)};
     verts[i].normal = len > 0 ? normal / len : float3(0.0f, 0.0f, 1.0f);
   }
 }
@@ -1081,26 +1085,26 @@ void recomputeNormals(std::vector<Mesh::Vert> &verts,
 // the normal, with a perpendicular fallback where the UVs are degenerate.
 void recomputeTangents(std::vector<Mesh::Vert> &verts,
                        const std::vector<Mesh::Face> &faces) {
-  auto sums{std::vector<float3>(verts.size())};
+  std::vector<float3> sums(verts.size());
   for (const auto &face : faces) {
-    const auto &v0{verts[face[0]]};
-    const auto &v1{verts[face[1]]};
-    const auto &v2{verts[face[2]]};
-    const auto edge1{v1.point - v0.point};
-    const auto edge2{v2.point - v0.point};
-    const auto duv1{v1.texcoord - v0.texcoord};
-    const auto duv2{v2.texcoord - v0.texcoord};
+    const Mesh::Vert &v0{verts[face[0]]};
+    const Mesh::Vert &v1{verts[face[1]]};
+    const Mesh::Vert &v2{verts[face[2]]};
+    const float3 edge1{v1.point - v0.point};
+    const float3 edge2{v2.point - v0.point};
+    const float2 duv1{v1.texcoord - v0.texcoord};
+    const float2 duv2{v2.texcoord - v0.texcoord};
     const float det{duv1.x * duv2.y - duv1.y * duv2.x};
     if (!(std::fabs(det) > 1e-12f)) continue;
-    const auto tangent{(duv2.y * edge1 - duv1.y * edge2) * (1.0f / det)};
+    const float3 tangent{(duv2.y * edge1 - duv1.y * edge2) * (1.0f / det)};
     sums[face[0]] = sums[face[0]] + tangent;
     sums[face[1]] = sums[face[1]] + tangent;
     sums[face[2]] = sums[face[2]] + tangent;
   }
   for (size_t i = 0; i < verts.size(); i++) {
-    auto &vert{verts[i]};
-    auto tangent{sums[i] - smdl::dot(sums[i], vert.normal) * vert.normal};
-    const auto len{smdl::length(tangent)};
+    Mesh::Vert &vert{verts[i]};
+    float3 tangent{sums[i] - smdl::dot(sums[i], vert.normal) * vert.normal};
+    const float len{smdl::length(tangent)};
     vert.tangent =
         len > 1e-12f ? tangent / len : smdl::perpendicularTo(vert.normal);
   }
@@ -1111,11 +1115,11 @@ void recomputeTangents(std::vector<Mesh::Vert> &verts,
 void Scene::finalizeMeshes(const Color &wavelengths) {
   // Only instantiated meshes: nothing can ever hit the rest, and their
   // materials may legitimately be unresolved.
-  auto isInstanced{std::vector<bool>(meshes.size(), false)};
+  std::vector<bool> isInstanced(meshes.size(), false);
   for (const auto &meshInstance : meshInstances)
     if (!meshInstance.isPrimitive() && !meshInstance.isCurves())
       isInstanced[meshInstance.meshIndex] = true;
-  auto pending{std::vector<uint32_t>()};
+  std::vector<uint32_t> pending{};
   for (uint32_t i = 0; i < meshes.size(); i++)
     if (meshes[i]->needsFinalize && isInstanced[i]) pending.push_back(i);
   if (pending.empty()) return;
@@ -1131,7 +1135,7 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   // displacement within each. A scene that subdivides at all usually
   // takes the second path, since 'subdivide' is marked per asset and one
   // asset is one mesh however many times it is placed.
-  const auto perMesh{pending.size() >= smdl::getThreadCount()};
+  const bool perMesh{pending.size() >= smdl::getThreadCount()};
   std::atomic<uint32_t> numDisplaced{0};
   if (perMesh) {
     smdl::parallelFor(0, pending.size(), [&](size_t k) {
@@ -1143,9 +1147,9 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   }
   uint64_t facesAfter{};
   for (auto i : pending) facesAfter += meshes[i]->faces.size();
-  const auto seconds{std::chrono::duration<double>(
-                         std::chrono::steady_clock::now() - startTime)
-                         .count()};
+  const double seconds{std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - startTime)
+                           .count()};
   SMDL_LOG_INFO("Subdivision/displacement: ",
                 smdl::Counted(pending.size(), "mesh", "meshes"), ", ",
                 facesBefore, " faces to ", facesAfter, " triangles, ",
@@ -1167,7 +1171,7 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths,
   // about as much as displacing the mesh does, and a smoothly subdivided
   // mesh that is never displaced needs none at all. Subdivision replaces
   // the vertices outright, so nothing may weld ahead of it.
-  auto weld{std::optional<WeldMap>()};
+  std::optional<WeldMap> weld{};
   const auto weldOnce{[&]() -> const WeldMap & {
     if (!weld) weld = weldByPosition(mesh);
     return *weld;
@@ -1190,7 +1194,7 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths,
       recomputeTangents(verts, mesh.faces);
     });
   }
-  auto isDisplaced{false};
+  bool isDisplaced{false};
   if (mesh.subdiv.isDisplaced) {
     eachKey([&](std::vector<Mesh::Vert> &verts, float seconds) {
       if (!displaceMesh(mesh, verts, seconds, wavelengths, shouldSpreadWork,
@@ -1217,37 +1221,37 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
                          float seconds, const Color &wavelengths,
                          bool shouldSpreadWork, const WeldMap &weld) {
   SMDL_SANITY_CHECK(mesh.matIndex < materialDefs.size());
-  const auto *materialDef{materialDefs[mesh.matIndex]};
+  const smdl::JIT::MaterialDef *materialDef{materialDefs[mesh.matIndex]};
   if (!materialDef || materialDef->hasZeroDisplacement()) return false;
   // One offset per position-welded vertex, averaged over the split
   // copies (whose UVs may disagree along texture seams) and applied to
   // every copy, so the displaced surface cannot crack. Well-authored
   // displacement matches across seams, where the averaging is a no-op.
-  const auto &weldOf{weld.groupOf};
-  auto offsets{std::vector<float3>(weld.numGroups)};
-  auto counts{std::vector<uint32_t>(weld.numGroups)};
+  const std::vector<uint32_t> &weldOf{weld.groupOf};
+  std::vector<float3> offsets(weld.numGroups);
+  std::vector<uint32_t> counts(weld.numGroups);
   // Evaluating the material is the expensive half and is independent per
   // vertex; the weld accumulation below is neither, and is left in vertex
   // order so that the sums do not depend on how this was scheduled.
-  auto vertOffsets{std::vector<float3>(verts.size())};
+  std::vector<float3> vertOffsets(verts.size());
   const auto evaluate{[&](size_t i) {
-    const auto &vert{verts[i]};
+    const Mesh::Vert &vert{verts[i]};
     // The orthonormal shading frame, built here exactly as the state
     // finalize would Gram-Schmidt it, so that mapping the displacement
     // back out of internal (tangent) space is exact.
-    auto normal{vert.normal};
+    float3 normal{vert.normal};
     if (!(smdl::length(normal) > 0)) normal = float3(0.0f, 0.0f, 1.0f);
     normal = smdl::normalize(normal);
-    auto tangent{vert.tangent - smdl::dot(vert.tangent, normal) * normal};
-    const auto tangentLen{smdl::length(tangent)};
+    float3 tangent{vert.tangent - smdl::dot(vert.tangent, normal) * normal};
+    const float tangentLen{smdl::length(tangent)};
     tangent = tangentLen > 1e-12f ? tangent / tangentLen
                                   : smdl::perpendicularTo(normal);
-    const auto bitangent{smdl::cross(normal, tangent)};
+    const float3 bitangent{smdl::cross(normal, tangent)};
     // A partial state, like an opacity query: no allocator, and the
     // geometry handed over in the mesh's own space with the identity
     // instance transform, so internal space comes back out to mesh
     // space through the frame alone.
-    auto state{makeRenderState(wavelengths, nullptr, seconds)};
+    smdl::State state{makeRenderState(wavelengths, nullptr, seconds)};
     state.position = vert.point;
     state.normal = normal;
     state.geometryNormal = normal;
@@ -1261,7 +1265,7 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
       state.vertexColor[0] = mesh.colors[i];
     }
     state.finalize();
-    auto displacement{float3()};
+    float3 displacement{};
     materialDef->displacementEvaluate(state, displacement);
     // Internal space is the tangent frame, so the vector maps back
     // through it: `d.x` along U, `d.y` along V, `d.z` along the normal.
@@ -1277,7 +1281,7 @@ bool Scene::displaceMesh(Mesh &mesh, std::vector<Mesh::Vert> &verts,
     offsets[weldOf[i]] = offsets[weldOf[i]] + vertOffsets[i];
     counts[weldOf[i]]++;
   }
-  auto anyMoved{false};
+  bool anyMoved{false};
   for (uint32_t g = 0; g < weld.numGroups; g++) {
     if (counts[g] > 1) offsets[g] = offsets[g] / float(counts[g]);
     anyMoved |= smdl::length(offsets[g]) > 0;
@@ -1292,7 +1296,7 @@ void Scene::load(const aiMesh &assMesh,
                  const std::vector<uint32_t> &materialRemap,
                  const SubdivSpec &subdiv, const MeshBake *bakeOpen,
                  const MeshBake *bakeShut, bool shouldJoinCorners) {
-  auto &mesh{meshes.emplace_back(new Mesh())};
+  std::unique_ptr<Mesh> &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
   rtcSetSceneFlags(mesh->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
                                                       : RTC_SCENE_FLAG_NONE);
@@ -1335,13 +1339,13 @@ void Scene::load(const aiMesh &assMesh,
     if (assMesh.mColors[0]) {
       mesh->baseColors.resize(assMesh.mNumVertices);
       for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
-        const auto &color{assMesh.mColors[0][i]};
+        const aiColor4D &color{assMesh.mColors[0][i]};
         mesh->baseColors[i] = float4(color.r, color.g, color.b, color.a);
       }
     }
     mesh->baseFaceCounts.reserve(assMesh.mNumFaces);
     for (unsigned int i = 0; i < assMesh.mNumFaces; i++) {
-      const auto &face{assMesh.mFaces[i]};
+      const aiFace &face{assMesh.mFaces[i]};
       mesh->baseFaceCounts.push_back(face.mNumIndices);
       for (unsigned int j = 0; j < face.mNumIndices; j++)
         mesh->baseIndices.push_back(face.mIndices[j]);
@@ -1368,7 +1372,7 @@ void Scene::load(const aiMesh &assMesh,
                            const MeshBake *bake) {
     verts.resize(assMesh.mNumVertices);
     for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
-      auto &vert = verts[i];
+      Mesh::Vert &vert = verts[i];
       vert.point = bake ? bake->points[i]
                         : float3(assMesh.mVertices[i].x, assMesh.mVertices[i].y,
                                  assMesh.mVertices[i].z);
@@ -1396,7 +1400,7 @@ void Scene::load(const aiMesh &assMesh,
   if (assMesh.mColors[0]) {
     mesh->colors.resize(assMesh.mNumVertices);
     for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
-      const auto &color{assMesh.mColors[0][i]};
+      const aiColor4D &color{assMesh.mColors[0][i]};
       mesh->colors[i] = float4(color.r, color.g, color.b, color.a);
     }
   }
@@ -1423,7 +1427,7 @@ void Scene::buildMeshGeometry(Mesh &mesh) {
     rtcCommitScene(mesh.scene);
     return;
   }
-  auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE)};
+  RTCGeometry geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE)};
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
   // A deforming mesh gives Embree its shut key as a second time step,
   // which it lerps per vertex; a still mesh keeps the one step, so its
@@ -1494,7 +1498,7 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
 }
 
 bool Scene::intersect(Ray &ray, RawHit &raw) const {
-  auto rayHit{toRTCRayHit(ray)};
+  RTCRayHit rayHit{toRTCRayHit(ray)};
   rtcIntersect1(scene, &rayHit, nullptr);
   if (rayHit.hit.primID == unsigned(-1)) return false;
   ray.tmax = rayHit.ray.tfar;
@@ -1508,7 +1512,7 @@ bool Scene::intersect(Ray &ray, RawHit &raw) const {
 }
 
 void Scene::makeHit(const RawHit &raw, const Ray &ray, Hit &hit) const {
-  const auto &meshInstance{meshInstances[raw.instIndex]};
+  const MeshInstance &meshInstance{meshInstances[raw.instIndex]};
   if (meshInstance.isMoving || meshInstance.isDeforming) {
     makeHitMoving(raw.instIndex, raw.primID, raw.u, raw.v, raw.objectNg, ray,
                   hit);
@@ -1521,20 +1525,20 @@ void Scene::makeHit(const RawHit &raw, const Ray &ray, Hit &hit) const {
 void Scene::makeHitMoving(uint32_t instIndex, uint32_t primID, float u, float v,
                           const float3 &objectNg, const Ray &ray,
                           Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAt(ray.time, scratch)};
+  const InstanceFrame &frame{meshInstance.frameAt(ray.time, scratch)};
   if (!meshInstance.isDeforming)
     return makeHit(frame, instIndex, primID, u, v, objectNg, ray, hit);
   // Only a mesh deforms, so the barycentric clamp of the body applies.
-  const auto bary{baryFromUV(u, v)};
+  const float3 bary{baryFromUV(u, v)};
   return makeHitDeforming(frame, instIndex, primID, bary, ray.time, hit);
 }
 
 void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
                     uint32_t primID, float u, float v, const float3 &objectNg,
                     const Ray &ray, Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   // A curve hit needs the ray: the point comes from `tmax`, the tube
   // normal from the object-space `Ng`, and the ribbon normal from the
   // ray direction. The (u, v) are the curve parameters, NOT
@@ -1546,7 +1550,7 @@ void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
   // A primitive reports its object-space point in the normal slots,
   // and the hit is built from that, parameters included.
   if (meshInstance.isPrimitive()) {
-    const auto &primitive{*primitives[meshInstance.primIndex]};
+    const Primitive &primitive{*primitives[meshInstance.primIndex]};
     return makePrimitiveHitFrom(
         frame, instIndex, primID, ray.time,
         evalPrimitiveSurfaceAt(primitive.spec, primID, objectNg), hit);
@@ -1555,19 +1559,19 @@ void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
 }
 
 bool Scene::isOccluded(const Ray &ray) const {
-  auto rtcRay{toRTCRay(ray)};
+  RTCRay rtcRay{toRTCRay(ray)};
   rtcOccluded1(scene, &rtcRay, nullptr);
   return rtcRay.tfar < 0.0f;
 }
 
 bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
-  auto rayHit{toRTCRayHit(ray)};
+  RTCRayHit rayHit{toRTCRayHit(ray)};
   rtcIntersect1(scene, &rayHit, nullptr);
   if (rayHit.hit.primID == unsigned(-1)) return false;
   ray.tmax = rayHit.ray.tfar;
-  const auto instIndex{
+  const uint32_t instIndex{
       instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   hit.instance = &meshInstance;
   hit.materialDef = materialDefs[materialIndexOf(meshInstance)];
   hit.vertex.surface = instIndex;
@@ -1584,17 +1588,17 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   // which is the point itself under the frame and the parameters
   // through the inverse of the surface.
   if (meshInstance.isPrimitive()) {
-    const auto &primitive{*primitives[meshInstance.primIndex]};
-    const auto objectPoint{
-        float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)};
-    const auto uv{primitiveUV(primitive.spec, rayHit.hit.primID, objectPoint)};
+    const Primitive &primitive{*primitives[meshInstance.primIndex]};
+    const float3 objectPoint{rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z};
+    const float2 uv{
+        primitiveUV(primitive.spec, rayHit.hit.primID, objectPoint)};
     std::optional<InstanceFrame> scratch{};
-    const auto &frame{meshInstance.frameAt(ray.time, scratch)};
+    const InstanceFrame &frame{meshInstance.frameAt(ray.time, scratch)};
     hit.vertex.coords = float3(0.0f, uv.x, uv.y);
     hit.vertex.point = transformPoint(frame.objectToWorld, objectPoint);
     return true;
   }
-  const auto bary{baryFromUV(rayHit.hit.u, rayHit.hit.v)};
+  const float3 bary{baryFromUV(rayHit.hit.u, rayHit.hit.v)};
   hit.vertex.coords = bary;
   hit.vertex.point = meshInstance.isMoving || meshInstance.isDeforming
                          ? manifoldHitPointMoving(
@@ -1608,35 +1612,35 @@ float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
                                      uint32_t primID, const float3 &bary,
                                      float time) const {
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAt(time, scratch)};
+  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
   if (!meshInstance.isDeforming)
     return manifoldHitPoint(frame, meshInstance, primID, bary);
   // The three points at the time, by the expression `makeHitFrom()`
   // interpolates its own with.
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[primID]};
-  const auto vert0{mesh.vertAt(face[0], time)};
-  const auto vert1{mesh.vertAt(face[1], time)};
-  const auto vert2{mesh.vertAt(face[2], time)};
-  const auto point0{transformPoint(objectToWorld, vert0.point)};
-  const auto point1{transformPoint(objectToWorld, vert1.point)};
-  const auto point2{transformPoint(objectToWorld, vert2.point)};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[primID]};
+  const Mesh::Vert vert0{mesh.vertAt(face[0], time)};
+  const Mesh::Vert vert1{mesh.vertAt(face[1], time)};
+  const Mesh::Vert vert2{mesh.vertAt(face[2], time)};
+  const float3 point0{transformPoint(objectToWorld, vert0.point)};
+  const float3 point1{transformPoint(objectToWorld, vert1.point)};
+  const float3 point2{transformPoint(objectToWorld, vert2.point)};
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
 float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
                                const MeshInstance &meshInstance,
                                uint32_t primID, const float3 &bary) const {
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[primID]};
-  const auto &vert0{mesh.verts[face[0]]};
-  const auto &vert1{mesh.verts[face[1]]};
-  const auto &vert2{mesh.verts[face[2]]};
-  const auto point0{transformPoint(objectToWorld, vert0.point)};
-  const auto point1{transformPoint(objectToWorld, vert1.point)};
-  const auto point2{transformPoint(objectToWorld, vert2.point)};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[primID]};
+  const Mesh::Vert &vert0{mesh.verts[face[0]]};
+  const Mesh::Vert &vert1{mesh.verts[face[1]]};
+  const Mesh::Vert &vert2{mesh.verts[face[2]]};
+  const float3 point0{transformPoint(objectToWorld, vert0.point)};
+  const float3 point1{transformPoint(objectToWorld, vert1.point)};
+  const float3 point2{transformPoint(objectToWorld, vert2.point)};
   return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
 }
 
@@ -1648,11 +1652,11 @@ namespace {
 [[nodiscard]] float3 faceNg(const InstanceFrame &frame, const Mesh::Vert &vert0,
                             const Mesh::Vert &vert1,
                             const Mesh::Vert &vert2) noexcept {
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto point0{transformPoint(objectToWorld, vert0.point)};
-  const auto point1{transformPoint(objectToWorld, vert1.point)};
-  const auto point2{transformPoint(objectToWorld, vert2.point)};
-  auto Ng{cross(point1 - point0, point2 - point0)};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const float3 point0{transformPoint(objectToWorld, vert0.point)};
+  const float3 point1{transformPoint(objectToWorld, vert1.point)};
+  const float3 point2{transformPoint(objectToWorld, vert2.point)};
+  float3 Ng{cross(point1 - point0, point2 - point0)};
   if (!smdl::tryNormalize(Ng)) Ng = float3(0.0f, 0.0f, 1.0f);
   return frame.flipsWinding ? -Ng : Ng;
 }
@@ -1660,22 +1664,22 @@ namespace {
 } // namespace
 
 float3 Scene::hitNg(const RawHit &raw, float time) const {
-  const auto &meshInstance{meshInstances[raw.instIndex]};
+  const MeshInstance &meshInstance{meshInstances[raw.instIndex]};
   SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
   if (meshInstance.isMoving || meshInstance.isDeforming)
     return hitNgMoving(raw, time);
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[raw.primID]};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[raw.primID]};
   return faceNg(meshInstance.frame, mesh.verts[face[0]], mesh.verts[face[1]],
                 mesh.verts[face[2]]);
 }
 
 float3 Scene::hitNgMoving(const RawHit &raw, float time) const {
-  const auto &meshInstance{meshInstances[raw.instIndex]};
+  const MeshInstance &meshInstance{meshInstances[raw.instIndex]};
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAt(time, scratch)};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[raw.primID]};
+  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[raw.primID]};
   if (!meshInstance.isDeforming)
     return faceNg(frame, mesh.verts[face[0]], mesh.verts[face[1]],
                   mesh.verts[face[2]]);
@@ -1685,7 +1689,7 @@ float3 Scene::hitNgMoving(const RawHit &raw, float time) const {
 
 void Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
                     float time, Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   if (meshInstance.isMoving || meshInstance.isDeforming)
     return makeHitMoving(instIndex, faceIndex, bary, time, hit);
   if (meshInstance.isPrimitive())
@@ -1696,9 +1700,9 @@ void Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
 
 void Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
                           const float3 &bary, float time, Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAt(time, scratch)};
+  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
   if (meshInstance.isPrimitive())
     return makePrimitiveHit(frame, instIndex, faceIndex, bary, time, hit);
   if (meshInstance.isDeforming)
@@ -1709,12 +1713,12 @@ void Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
 void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
                     uint32_t faceIndex, const float3 &bary, float time,
                     Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   // Curve hits need the ray and only ever come from `intersect()`,
   // which builds them itself; nothing may rebuild one from indices.
   SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[faceIndex]};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[faceIndex]};
   return makeHitFrom(frame, instIndex, faceIndex, bary, time,
                      mesh.verts[face[0]], mesh.verts[face[1]],
                      mesh.verts[face[2]], hit);
@@ -1723,10 +1727,10 @@ void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
 void Scene::makeHitDeforming(const InstanceFrame &frame, uint32_t instIndex,
                              uint32_t faceIndex, const float3 &bary, float time,
                              Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
   SMDL_SANITY_CHECK(mesh.deforms());
-  const auto &face{mesh.faces[faceIndex]};
+  const Mesh::Face &face{mesh.faces[faceIndex]};
   return makeHitFrom(frame, instIndex, faceIndex, bary, time,
                      mesh.vertAt(face[0], time), mesh.vertAt(face[1], time),
                      mesh.vertAt(face[2], time), hit);
@@ -1736,23 +1740,23 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
                         uint32_t faceIndex, const float3 &bary, float time,
                         const Mesh::Vert &vert0, const Mesh::Vert &vert1,
                         const Mesh::Vert &vert2, Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
-  const auto &face{mesh.faces[faceIndex]};
-  const auto &objectToWorld{frame.objectToWorld};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[faceIndex]};
+  const float4x4 &objectToWorld{frame.objectToWorld};
   // World space first, everything else after. Interpolating the transformed
   // points is the same as transforming the interpolated point, so this
   // costs three matrix-vector products and buys exactness under scale.
-  auto point0{transformPoint(objectToWorld, vert0.point)};
-  auto point1{transformPoint(objectToWorld, vert1.point)};
-  auto point2{transformPoint(objectToWorld, vert2.point)};
+  float3 point0{transformPoint(objectToWorld, vert0.point)};
+  float3 point1{transformPoint(objectToWorld, vert1.point)};
+  float3 point2{transformPoint(objectToWorld, vert2.point)};
   // `Ng` from the raw edges: scaling either one only scales the cross
   // product, which the normalize divides back out, so the edges need not be
   // unit for it. `Tg` does need a unit edge, and is the only reason one of
   // them is normalized at all. `Scene::manifoldGeometry()` forms `Ng` by
   // this same expression, so the two agree bit for bit.
-  const auto faceNormal{cross(point1 - point0, point2 - point0)};
-  auto edge1{point1 - point0};
+  const float3 faceNormal{cross(point1 - point0, point2 - point0)};
+  float3 edge1{point1 - point0};
   auto barycentric{[&](auto member) {
     return bary[0] * vert0.*member + bary[1] * vert1.*member +
            bary[2] * vert2.*member;
@@ -1773,8 +1777,8 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // cofactor image of the object-space geometry normal. So both normals
   // pick up the sign of the determinant, and both are flipped back
   // together.
-  auto normal{frame.normalMatrix * barycentric(&Mesh::Vert::normal)};
-  auto Ng{faceNormal};
+  float3 normal{frame.normalMatrix * barycentric(&Mesh::Vert::normal)};
+  float3 Ng{faceNormal};
   if (!smdl::tryNormalize(Ng)) Ng = float3(0.0f, 0.0f, 1.0f);
   if (!smdl::tryNormalize(normal)) normal = Ng;
   if (frame.flipsWinding) {
@@ -1788,7 +1792,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // construction, the edge lying in the face, and a degenerate vector
   // falls back to a perpendicular rather than to a repair in the
   // library.
-  auto tangent{
+  float3 tangent{
       transformDirection(objectToWorld, barycentric(&Mesh::Vert::tangent))};
   tangent = tangent - dot(tangent, normal) * normal;
   if (!smdl::tryNormalize(tangent)) tangent = smdl::perpendicularTo(normal);
@@ -1818,7 +1822,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
 void Scene::makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
                              uint32_t primID, const float3 &bary, float time,
                              Hit &hit) const {
-  const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
+  const Primitive &primitive{*primitives[meshInstances[instIndex].primIndex]};
   // The (u, v) ride in the barycentric slots, exactly as
   // `Scene::intersect()` packed them; see `Primitive.h`.
   return makePrimitiveHitFrom(
@@ -1831,8 +1835,8 @@ void Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
                                  uint32_t primID, float time,
                                  const PrimitiveSurface &surface,
                                  Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &objectToWorld{frame.objectToWorld};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  const float4x4 &objectToWorld{frame.objectToWorld};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
@@ -1850,9 +1854,9 @@ void Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // Shading and geometric agree by construction: that is the point of
   // an analytic surface.
   hit.Ng = hit.normal;
-  const auto dPduWorld{transformDirection(objectToWorld, surface.dPdu)};
-  const auto dPdvWorld{transformDirection(objectToWorld, surface.dPdv)};
-  auto tangent{dPduWorld};
+  const float3 dPduWorld{transformDirection(objectToWorld, surface.dPdu)};
+  const float3 dPdvWorld{transformDirection(objectToWorld, surface.dPdv)};
+  float3 tangent{dPduWorld};
   hit.tangent =
       smdl::tryNormalize(tangent) ? tangent : smdl::perpendicularTo(hit.normal);
   hit.Tg = hit.tangent;
@@ -1860,7 +1864,7 @@ void Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // UV area per world area, which is what the ray-cone footprint
   // multiplies into a texture-space filter width: exactly the triangle
   // path's quantity, from the parametric partials instead of the edges.
-  const auto patchArea{length(cross(dPduWorld, dPdvWorld))};
+  const float patchArea{length(cross(dPduWorld, dPdvWorld))};
   hit.textureDensity = patchArea > 1e-12f ? 1.0f / patchArea : 0.0f;
   hit.fiberThickness = 0.0f;
   hit.textureSpaces = 1;
@@ -1876,7 +1880,7 @@ ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
 
 ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
                                          const float3 &bary, float time) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   if (meshInstance.isMoving || meshInstance.isDeforming)
     return manifoldGeometryMoving(instIndex, faceIndex, bary, time);
   return manifoldGeometry(meshInstance.frame, instIndex, faceIndex, bary, time);
@@ -1886,9 +1890,9 @@ ManifoldGeometry Scene::manifoldGeometryMoving(uint32_t instIndex,
                                                uint32_t faceIndex,
                                                const float3 &bary,
                                                float time) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{meshInstance.frameAt(time, scratch)};
+  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
   return meshInstance.isDeforming
              ? manifoldGeometryDeforming(frame, instIndex, faceIndex, bary,
                                          time)
@@ -1940,11 +1944,11 @@ void finishManifoldGeometry(const InstanceFrame &frame,
 ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
                                          uint32_t instIndex, uint32_t faceIndex,
                                          const float3 &bary, float time) const {
-  const auto &meshInstance{meshInstances[instIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
   SMDL_SANITY_CHECK(!meshInstance.isCurves());
   if (!meshInstance.isPrimitive()) {
-    const auto &mesh{*meshes[meshInstance.meshIndex]};
-    const auto &face{mesh.faces[faceIndex]};
+    const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+    const Mesh::Face &face{mesh.faces[faceIndex]};
     return manifoldGeometryFrom(frame, bary, mesh.verts[face[0]],
                                 mesh.verts[face[1]], mesh.verts[face[2]]);
   }
@@ -1954,10 +1958,10 @@ ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
   // transforms the normal itself; the winding flip on the shading field
   // is applied at the end, where it negates the unit normal and its
   // partials together.
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto &primitive{*primitives[meshInstance.primIndex]};
-  const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
-                                          float2(bary[1], bary[2]))};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const Primitive &primitive{*primitives[meshInstance.primIndex]};
+  const PrimitiveSurface surface{evalPrimitiveSurface(
+      primitive.spec, faceIndex, float2(bary[1], bary[2]))};
   ManifoldGeometry geometry;
   geometry.point = transformPoint(objectToWorld, surface.point);
   geometry.dPdu = transformDirection(objectToWorld, surface.dPdu);
@@ -1975,10 +1979,10 @@ ManifoldGeometry Scene::manifoldGeometryDeforming(const InstanceFrame &frame,
                                                   uint32_t faceIndex,
                                                   const float3 &bary,
                                                   float time) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &mesh{*meshes[meshInstance.meshIndex]};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
   SMDL_SANITY_CHECK(mesh.deforms());
-  const auto &face{mesh.faces[faceIndex]};
+  const Mesh::Face &face{mesh.faces[faceIndex]};
   return manifoldGeometryFrom(frame, bary, mesh.vertAt(face[0], time),
                               mesh.vertAt(face[1], time),
                               mesh.vertAt(face[2], time));
@@ -1990,10 +1994,10 @@ ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
                                              const Mesh::Vert &vert1,
                                              const Mesh::Vert &vert2) const {
   // See the primitive half of `manifoldGeometry()` for the conventions.
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto point0{transformPoint(objectToWorld, vert0.point)};
-  const auto point1{transformPoint(objectToWorld, vert1.point)};
-  const auto point2{transformPoint(objectToWorld, vert2.point)};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const float3 point0{transformPoint(objectToWorld, vert0.point)};
+  const float3 point1{transformPoint(objectToWorld, vert1.point)};
+  const float3 point2{transformPoint(objectToWorld, vert2.point)};
   ManifoldGeometry geometry;
   geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
   // The parameterization is the barycentric pair (bary[1], bary[2]).
@@ -2015,20 +2019,20 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
                           uint32_t primID, float u, float v, float time,
                           const float3 &objectNg, const float3 &worldPoint,
                           const float3 &rayDir, Hit &hit) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &groom{*curves[meshInstance.curvesIndex]};
-  const auto &objectToWorld{frame.objectToWorld};
-  const auto matIndex{materialIndexOf(meshInstance)};
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  const Curves &groom{*curves[meshInstance.curvesIndex]};
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  const uint32_t matIndex{materialIndexOf(meshInstance)};
   SMDL_SANITY_CHECK(matIndex < materialDefs.size());
-  const auto *materialDef{materialDefs[matIndex]};
+  const smdl::JIT::MaterialDef *materialDef{materialDefs[matIndex]};
   // The fiber tangent, root toward tip: the axis derivative transforms
   // by the linear part like any tangent. Degenerate windows (repeated
   // control points) fall back to any perpendicular so the frame stays a
   // frame.
-  const auto axis{groom.axisAt(primID, u)};
-  auto tangent{transformDirection(objectToWorld, axis.tangent)};
+  const CurveAxis axis{groom.axisAt(primID, u)};
+  float3 tangent{transformDirection(objectToWorld, axis.tangent)};
   const bool isRibbon{groom.spec.mode == CurvesSpec::Mode::RIBBON};
-  auto normal{float3()};
+  float3 normal{};
   if (isRibbon) {
     // The camera-facing ribbon normal: the ray direction reversed and
     // made perpendicular to the fiber. Embree's flat-curve `Ng` is the
@@ -2045,11 +2049,11 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
     // grooms with surface materials render exactly as before.
     if (materialDef->hasHair()) {
       const float sinGamma{std::min(std::fabs(v), 1.0f)};
-      auto widthDir{worldPoint - transformPoint(objectToWorld, axis.point)};
+      float3 widthDir{worldPoint - transformPoint(objectToWorld, axis.point)};
       widthDir = widthDir - dot(widthDir, tangent) * tangent;
       if (sinGamma > 0.0f && smdl::tryNormalize(widthDir)) {
-        auto tilted{std::sqrt(1.0f - sinGamma * sinGamma) * normal +
-                    sinGamma * widthDir};
+        float3 tilted{std::sqrt(1.0f - sinGamma * sinGamma) * normal +
+                      sinGamma * widthDir};
         if (smdl::tryNormalize(tilted)) normal = tilted;
       }
     }
@@ -2068,11 +2072,11 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   // The strand parameter: a strand's segments partition it uniformly,
   // so root-to-tip is the segment's place in the strand plus the hit's
   // place in the segment.
-  const auto strand{groom.segStrand[primID]};
-  const auto firstSeg{groom.strandFirstSeg[strand]};
-  const auto numSegs{groom.strandFirstSeg[strand + 1] - firstSeg};
-  const auto strandU{(float(primID - firstSeg) + u) / float(numSegs)};
-  const auto vAcross{isRibbon ? 0.5f * (v + 1.0f) : 0.0f};
+  const uint32_t strand{groom.segStrand[primID]};
+  const uint32_t firstSeg{groom.strandFirstSeg[strand]};
+  const uint32_t numSegs{groom.strandFirstSeg[strand + 1] - firstSeg};
+  const float strandU{(float(primID - firstSeg) + u) / float(numSegs)};
+  const float vAcross{isRibbon ? 0.5f * (v + 1.0f) : 0.0f};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
   hit.faceIndex = primID;
@@ -2091,9 +2095,9 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   // The world-space fiber diameter, scaled by the isotropic part of the
   // instance transform (the cube root of the linear determinant), which
   // is exact for the rigid and uniformly scaled placements grooms use.
-  const auto lx{float3(objectToWorld[0])};
-  const auto ly{float3(objectToWorld[1])};
-  const auto lz{float3(objectToWorld[2])};
+  const float3 lx{float3(objectToWorld[0])};
+  const float3 ly{float3(objectToWorld[1])};
+  const float3 lz{float3(objectToWorld[2])};
   hit.fiberThickness =
       2.0f * axis.radius * std::cbrt(std::fabs(dot(lx, smdl::cross(ly, lz))));
   if (!groom.rootUVs.empty()) {

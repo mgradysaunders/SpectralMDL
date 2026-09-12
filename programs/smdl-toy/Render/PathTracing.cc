@@ -228,9 +228,9 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     if (!hasHitSurface) {
       return false;
     }
-    const auto &scene{mRender.scene};
-    const auto &instance{scene.meshInstances[raw.instIndex]};
-    const auto *materialDef{
+    const Scene &scene{mRender.scene};
+    const MeshInstance &instance{scene.meshInstances[raw.instIndex]};
+    const smdl::JIT::MaterialDef *materialDef{
         scene.materialDefs[scene.materialIndexOf(instance)]};
     // A null interface passes shadow rays straight through: no opacity
     // and no blocking, only the medium-stack bookkeeping. Leaving needs
@@ -252,7 +252,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
         }
       }
       scene.makeHit(raw, mRay, found);
-      auto &state{mPath.shadeHit(found, mShadowDir)};
+      smdl::State &state{mPath.shadeHit(found, mShadowDir)};
       passThrough(mPath.allocator.allocate<smdl::JIT::Material>(
                       state, found.materialDef),
                   found);
@@ -268,7 +268,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     // Only the ray direction is populated; the LOD fields stay zero so
     // opacity evaluates at full fidelity, the conservative choice for
     // shadow rays.
-    auto &state{mPath.shadeHit(found, mShadowDir)};
+    smdl::State &state{mPath.shadeHit(found, mShadowDir)};
     if (float opacity{found.materialDef->opacityEvaluate(state)};
         opacity == 1 || float(mPath.sampler) < opacity) {
       return true; // Blocks visibility!
@@ -321,7 +321,7 @@ bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
   }
   // Everything but a volume vertex is a material's, the haze being the
   // one scatterer with no material behind it.
-  const auto &material{scatterer.material()};
+  const smdl::JIT::Material &material{scatterer.material()};
   if (kind == VertexKind::HAIR) {
     return material.hairScatterEvaluate(wo, wi, pdf, pdfRevUnused, f);
   } else {
@@ -347,11 +347,11 @@ bool sampleDiracCrossing(const smdl::JIT::Material &material, Sampler &sampler,
                          const float3 &wPrev, int diracMask, float3 &wi,
                          Color &f, float &chance) {
   float pdfFwd{}, pdfRev{};
-  int sampledLobe{};
+  int lobe{};
   chance = 1.0f;
   return material.scatterSample(float4(sampler), wPrev, wi, pdfFwd, pdfRev, f,
-                                sampledLobe, diracMask, &chance) &&
-         (sampledLobe & smdl::DF_DIRAC) != 0;
+                                lobe, diracMask, &chance) &&
+         (lobe & smdl::DF_DIRAC) != 0;
 }
 
 // One vertex of the walk, as the gathers and the manifold estimators
@@ -491,7 +491,7 @@ Color MNEEGather::gatherReflection() const {
   // re-find what the first walk found. Its selection probability is the
   // one start density the estimate divides out.
   float casterPdf{};
-  const auto *caster{
+  const MNEECaster *caster{
       render.mneeOptions.casters->sampleCaster(path.sampler, casterPdf)};
   if (!caster) return {};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
@@ -508,7 +508,7 @@ Color MNEEGather::gatherReflection() const {
     // half vector.
     ManifoldChain chain{};
     chain.count = 1;
-    auto &seed{chain[0]};
+    ManifoldVertexSeed &seed{chain[0]};
     seed.etaPrev = seed.etaNext = 1.0f;
     seed.isReflect = true;
     seed.isGlossy = kindLobe == smdl::DF_GLOSSY_BRDF;
@@ -529,8 +529,8 @@ Color MNEEGather::gatherReflection() const {
                                      smdl::DF_GLOSSY_BRDF, seed))
       continue;
     chain.residualTolerance = reciprocalResidualTolerance(chain);
-    const auto statKind{seed.isGlossy ? MNEEStats::GLOSSY_REFLECT
-                                      : MNEEStats::DIRAC_REFLECT};
+    const MNEEStats::Kind statKind{seed.isGlossy ? MNEEStats::GLOSSY_REFLECT
+                                                 : MNEEStats::DIRAC_REFLECT};
     // The first walk starts at the hit the offset was drawn at, which is a
     // start like any other: the offset's density cancels pointwise
     // whichever start it was drawn at, so nothing is gained by discarding
@@ -588,15 +588,16 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
   // One state for every crossing the discovery walks in turn; see
   // `Hit::applyGeometryToState()`.
-  auto state{makeRenderState(path.wavelengths, &path.allocator,
-                             gatherState.animationTime)};
+  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
+                                    gatherState.animationTime)};
   while (true) {
     if (chain.count == std::min(maxDepth, MANIFOLD_MAX_DEPTH)) return {};
     if (blocker.instance->isCurves()) return {};
     blocker.applyGeometryToState(state, lightSample.wi);
-    auto &interfaceMaterial{*path.allocator.allocate<smdl::JIT::Material>(
-        state, blocker.materialDef)};
-    auto &seed{chain[chain.count]};
+    smdl::JIT::Material &interfaceMaterial{
+        *path.allocator.allocate<smdl::JIT::Material>(state,
+                                                      blocker.materialDef)};
+    ManifoldVertexSeed &seed{chain[chain.count]};
     seedMedium[chain.count] = walk.mediumStack();
     seedHits[chain.count] = blocker;
     if (!makeManifoldSeed(walk.mediumStack(), interfaceMaterial, blocker,
@@ -761,10 +762,10 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   float3 segStart{vertex.point};
   // One state for every converged crossing in turn; see
   // `Hit::applyGeometryToState()`.
-  auto crossState{makeRenderState(path.wavelengths, &path.allocator,
-                                  gatherState.animationTime)};
+  smdl::State crossState{makeRenderState(path.wavelengths, &path.allocator,
+                                         gatherState.animationTime)};
   for (int i = 0; i < connection.count; i++) {
-    const auto &crossing{connection.vertices[i]};
+    const ManifoldConnectionVertex &crossing{connection.vertices[i]};
     VisibilityWalk segWalk{
         render, path, segMedium, segStart, crossing.geometry.point, Tr};
     if (segWalk.nextBlocker() || !(Tr.maxComponent() > 0.0f)) return {};
@@ -774,8 +775,9 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     hitOf(render.scene, crossing.vertex, path.time.fraction, crossHit);
     if (!crossHit.instance) return {};
     crossHit.applyGeometryToState(crossState, -crossing.wPrev);
-    auto &crossMaterial{*path.allocator.allocate<smdl::JIT::Material>(
-        crossState, crossHit.materialDef)};
+    smdl::JIT::Material &crossMaterial{
+        *path.allocator.allocate<smdl::JIT::Material>(crossState,
+                                                      crossHit.materialDef)};
     segMedium = segWalk.mediumStack();
     crossMaterial.setExteriorIOR(
         ExteriorIOR(segMedium, crossMaterial, crossing.wPrev));
@@ -796,7 +798,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     // chance of the branch its own draw took rather than the sum over
     // every branch producing the direction, and the two MIS weights stop
     // summing to exactly one.
-    const auto &vertexSeed{chain[i]};
+    const ManifoldVertexSeed &vertexSeed{chain[i]};
     const int diracMask{vertexSeed.isReflect ? smdl::DF_DIRAC_BRDF
                                              : smdl::DF_DIRAC_BTDF};
     const int glossyMask{vertexSeed.isReflect ? smdl::DF_GLOSSY_BRDF
@@ -815,8 +817,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       beta *= fCross;
       if (beta.isAllZero()) return {};
     } else {
-      float3 wiDirac{};
       float vertexChance{};
+      float3 wiDirac{};
       Color fDirac{};
       if (!sampleDiracCrossing(crossMaterial, path.sampler, crossing.wPrev,
                                diracMask, wiDirac, fDirac, vertexChance))
@@ -916,7 +918,7 @@ bool MNEEGather::drawOffset(const ManifoldSurfaces &surfaces, const Hit &hit,
                             const MediumStack *medium, const float3 &wState,
                             const float3 &wo, int lobeMask,
                             ManifoldVertexSeed &vertexSeed) const {
-  auto &state{path.shadeHit(hit, wState)};
+  smdl::State &state{path.shadeHit(hit, wState)};
   smdl::JIT::Material offsetMaterial{state, hit.materialDef};
   if (medium)
     offsetMaterial.setExteriorIOR(ExteriorIOR(medium, offsetMaterial, wo));
@@ -1069,7 +1071,7 @@ public:
       mChainHits[mChainLength] = hit;
     }
     mChainLength++;
-    const auto kind{isGlossy ? ChainKind::GLOSSY : ChainKind::DIRAC};
+    const ChainKind kind{isGlossy ? ChainKind::GLOSSY : ChainKind::DIRAC};
     mChainKind = mChainKind == ChainKind::NONE || mChainKind == kind
                      ? kind
                      : ChainKind::MIXED;
@@ -1185,9 +1187,10 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   const float3 &isReceiver{mReceiver};
   const MediumStack *receiverMedium{mReceiverMedium};
   const float receiverPdf{mReceiverPdf};
-  const auto &chainHits{mChainHits};
-  const auto &chainInstances{mChainInstances};
-  const auto &chainPieces{mChainPieces};
+  const std::array<Hit, MANIFOLD_MAX_DEPTH> &chainHits{mChainHits};
+  const std::array<const MeshInstance *, MANIFOLD_MAX_DEPTH> &chainInstances{
+      mChainInstances};
+  const std::array<uint32_t, MANIFOLD_MAX_DEPTH> &chainPieces{mChainPieces};
   const int chainLength{mChainLength};
   // Whether the re-walk reproduced the crossings the path took; every
   // other exit keeps the arrival at weight 1, so the matched fraction
@@ -1214,7 +1217,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   float3 origin{isReceiver};
   // One state for every interface the cast crosses in turn, and for the
   // crossings re-asked below; see `Hit::applyGeometryToState()`.
-  auto state{
+  smdl::State state{
       makeRenderState(path.wavelengths, &path.allocator, path.time.seconds)};
   bool hasReached{false};
   for (int skip = 0; skip < 64; skip++) {
@@ -1233,7 +1236,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
       break;
     }
     hit.applyGeometryToState(state, wl);
-    auto &interfaceInst{
+    smdl::JIT::Material &interfaceInst{
         *path.allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
     if (hit.materialDef->isNullInterface()) {
       MediumStack::Update(medium, path.allocator, &interfaceInst, hit.instance,
@@ -1352,7 +1355,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
 [[nodiscard]]
 Color gatherDirect(const RenderContext &render, PathContext &path,
                    const smdl::State &gatherState, const PathVertex &vertex) {
-  const auto mneeDepth{
+  const int mneeDepth{
       vertex.kind == VertexKind::HAIR ? 0 : render.mneeOptions.depth};
   const bool shouldRunManifold{
       gatherRunsManifold(render.mneeOptions, vertex.kind, vertex.isReceiver)};
@@ -1568,7 +1571,7 @@ private:
   // tree trains toward the clamped field it steers.
   [[nodiscard]] float clampScale(const Color &contribution,
                                  uint64_t bounces) const noexcept {
-    const auto &bounds{mRender.pathOptions};
+    const PathOptions &bounds{mRender.pathOptions};
     if (!(bounds.maxContribution > 0.0f) ||
         bounces < uint64_t(bounds.maxContributionBounces))
       return 1.0f;
@@ -1956,8 +1959,9 @@ Color PathWalk::trace(const CameraSample &camera) {
     // The vertex's instance lives in the path's allocator, beside the
     // coefficients the evaluate keeps there, so the stack entry a
     // crossing pushes and the vertex record share it by address.
-    auto &material{*mPath.allocator.allocate<smdl::JIT::Material>(
-        mState, hit.materialDef)};
+    smdl::JIT::Material &material{
+        *mPath.allocator.allocate<smdl::JIT::Material>(mState,
+                                                       hit.materialDef)};
     material.setExteriorIOR(ExteriorIOR(mMediumStack, material, -ray.dir));
     // A null interface, a boundary that scatters nothing itself but
     // encloses a participating medium (e.g., a smoke container), and a
@@ -2063,12 +2067,12 @@ Color PathWalk::trace(const CameraSample &camera) {
     // claim, narrowed to what the gathers behind can actually reach from
     // here. This vertex gathers the rest, and the claimed share of its
     // continuation is dropped at the light.
-    const auto claim{mRender.mneeOptions.isEnabled() && !isHair
-                         ? manifoldClaim(material, isBackface,
-                                         hit.instance->isCausticCaster,
-                                         mRender.mneeOptions.maxRoughness)
-                         : ManifoldClaim()};
-    const auto reachable{
+    const ManifoldClaim claim{
+        mRender.mneeOptions.isEnabled() && !isHair
+            ? manifoldClaim(material, isBackface, hit.instance->isCausticCaster,
+                            mRender.mneeOptions.maxRoughness)
+            : ManifoldClaim()};
+    const ManifoldClaim reachable{
         mCoverage.reach(claim, mRender.mneeOptions, mPrev.isDirac)};
     // Whether this vertex is a manifold receiver: the gathers run from it
     // and it arms for the claims behind, or neither.

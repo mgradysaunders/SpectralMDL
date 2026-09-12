@@ -45,7 +45,7 @@ namespace {
 // Scale, then rotate, then translate: the order assimp's channels compose in.
 [[nodiscard]] float4x4 composeTRS(const float3 &t, const float4 &r,
                                   const float3 &s) noexcept {
-  const auto R{rotationOf(r)};
+  const float3x3 R{rotationOf(r)};
   return float4x4(float4(s.x * R[0], 0.0f), float4(s.y * R[1], 0.0f),
                   float4(s.z * R[2], 0.0f), float4(t, 1.0f));
 }
@@ -108,7 +108,7 @@ public:
 template <typename Key>
 [[nodiscard]] Bracket bracket(const KeyTrack<Key> &track,
                               double ticks) noexcept {
-  const auto n{track.size()};
+  const unsigned n{track.size()};
   if (ticks <= track.timeAt(0)) return {0, 0, 0.0f};
   if (ticks >= track.timeAt(n - 1)) return {n - 1, n - 1, 0.0f};
   unsigned lo{0}, hi{n - 1};
@@ -127,9 +127,9 @@ template <typename Key>
                                   double ticks, double tps) noexcept {
   const KeyTrack<aiVectorKey> track{keys, count};
   const auto [i0, i1, s]{bracket(track, ticks)};
-  const auto v0{fromAssimp(track.valueAt(i0).mValue)};
+  const float3 v0{fromAssimp(track.valueAt(i0).mValue)};
   if (i0 == i1) return v0;
-  const auto v1{fromAssimp(track.valueAt(i1).mValue)};
+  const float3 v1{fromAssimp(track.valueAt(i1).mValue)};
   if (track.isCubic) {
     const float td{float((track.timeAt(i1) - track.timeAt(i0)) / tps)};
     return hermite(v0, fromAssimp(track.outTangentAt(i0).mValue), v1,
@@ -143,9 +143,9 @@ template <typename Key>
                                     double ticks, double tps) noexcept {
   const KeyTrack<aiQuatKey> track{keys, count};
   const auto [i0, i1, s]{bracket(track, ticks)};
-  const auto q0{normalizeQuat(fromAssimp(track.valueAt(i0).mValue))};
+  const float4 q0{normalizeQuat(fromAssimp(track.valueAt(i0).mValue))};
   if (i0 == i1) return q0;
-  const auto q1{normalizeQuat(fromAssimp(track.valueAt(i1).mValue))};
+  const float4 q1{normalizeQuat(fromAssimp(track.valueAt(i1).mValue))};
   if (track.isCubic) {
     const float td{float((track.timeAt(i1) - track.timeAt(i0)) / tps)};
     return normalizeQuat(hermite(q0, fromAssimp(track.outTangentAt(i0).mValue),
@@ -162,7 +162,7 @@ template <typename Key>
   for (unsigned i = 0; i < node.mNumMeshes; i++)
     if (node.mMeshes[i] == meshIndex) return &node;
   for (unsigned i = 0; i < node.mNumChildren; i++)
-    if (auto found{findPlacingNode(*node.mChildren[i], meshIndex)})
+    if (const aiNode *found{findPlacingNode(*node.mChildren[i], meshIndex)})
       return found;
   return nullptr;
 }
@@ -175,7 +175,7 @@ template <typename Key>
   if (!assScene.mMetaData) return false;
   aiString format{};
   if (!assScene.mMetaData->Get(AI_METADATA_SOURCE_FORMAT, format)) return false;
-  auto text{std::string(format.C_Str())};
+  std::string text{format.C_Str()};
   for (auto &ch : text) ch = char(std::tolower(uint8_t(ch)));
   return text.find("gltf") != std::string::npos ||
          text.find("glb") != std::string::npos;
@@ -189,7 +189,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
                  const aiNode *placingNode) noexcept {
   const aiMeshMorphAnim *byMeshName{};
   for (unsigned j = 0; j < clip.mNumMorphMeshChannels; j++) {
-    const auto &channel{*clip.mMorphMeshChannels[j]};
+    const aiMeshMorphAnim &channel{*clip.mMorphMeshChannels[j]};
     if (placingNode && channel.mName == placingNode->mName) return &channel;
     if (!byMeshName && channel.mName == assMesh.mName) byMeshName = &channel;
   }
@@ -202,7 +202,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
                                               const aiMeshMorphAnim *channel,
                                               double ticks,
                                               std::string_view fileName) {
-  auto weights{std::vector<float>(assMesh.mNumAnimMeshes, 0.0f)};
+  std::vector<float> weights(assMesh.mNumAnimMeshes, 0.0f);
   if (!channel) {
     if (isGLTF(assScene))
       for (unsigned i = 0; i < assMesh.mNumAnimMeshes; i++)
@@ -211,7 +211,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
   }
   if (channel->mNumKeys == 0) return weights;
   const auto weightsOf{[&](const aiMeshMorphKey &key) {
-    auto result{std::vector<float>(assMesh.mNumAnimMeshes, 0.0f)};
+    std::vector<float> result(assMesh.mNumAnimMeshes, 0.0f);
     for (unsigned k = 0; k < key.mNumValuesAndWeights; k++) {
       if (key.mValues[k] >= assMesh.mNumAnimMeshes)
         throw smdl::Error(smdl::concat(
@@ -222,8 +222,8 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
     }
     return result;
   }};
-  const auto *keys{channel->mKeys};
-  const auto n{channel->mNumKeys};
+  const aiMeshMorphKey *keys{channel->mKeys};
+  const unsigned n{channel->mNumKeys};
   if (ticks <= keys[0].mTime) return weightsOf(keys[0]);
   if (ticks >= keys[n - 1].mTime) return weightsOf(keys[n - 1]);
   unsigned lo{0}, hi{n - 1};
@@ -234,8 +234,8 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
     else
       hi = mid;
   }
-  const auto w0{weightsOf(keys[lo])};
-  const auto w1{weightsOf(keys[hi])};
+  const std::vector<float> w0{weightsOf(keys[lo])};
+  const std::vector<float> w1{weightsOf(keys[hi])};
   const double t0{keys[lo].mTime}, t1{keys[hi].mTime};
   const float s{t1 > t0 ? float((ticks - t0) / (t1 - t0)) : 0.0f};
   for (size_t i = 0; i < weights.size(); i++)
@@ -245,9 +245,9 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
 
 // Every clip on its own line, for the errors that have to name them.
 [[nodiscard]] std::string clipListing(const aiScene &assScene) {
-  auto listing{std::string()};
+  std::string listing{};
   for (unsigned i = 0; i < assScene.mNumAnimations; i++) {
-    const auto &clip{*assScene.mAnimations[i]};
+    const aiAnimation &clip{*assScene.mAnimations[i]};
     listing += smdl::concat(
         "\n  ", i, ": ", smdl::Quoted(clip.mName.C_Str()), " (",
         smdl::Brief(clip.mDuration / ticksPerSecond(clip), 3), " s)");
@@ -259,7 +259,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
 
 std::string AnimationSpec::key() const {
   if (isOff) return "off";
-  auto parts{std::vector<std::string>()};
+  std::vector<std::string> parts{};
   if (!clipName.empty())
     parts.push_back(smdl::concat("clip ", smdl::Quoted(clipName)));
   else if (clipIndex != INVALID_INDEX)
@@ -268,7 +268,7 @@ std::string AnimationSpec::key() const {
     parts.push_back(smdl::concat("offset ", smdl::Precise(offset)));
   if (speed != 1) parts.push_back(smdl::concat("speed ", smdl::Precise(speed)));
   if (shouldPlayOnce) parts.push_back("once");
-  auto result{std::string()};
+  std::string result{};
   for (const auto &part : parts) {
     if (!result.empty()) result += ' ';
     result += part;
@@ -277,11 +277,11 @@ std::string AnimationSpec::key() const {
 }
 
 std::vector<ClipInfo> listClips(const aiScene &assScene) {
-  auto clips{std::vector<ClipInfo>()};
+  std::vector<ClipInfo> clips{};
   clips.reserve(assScene.mNumAnimations);
   for (unsigned i = 0; i < assScene.mNumAnimations; i++) {
-    const auto &clip{*assScene.mAnimations[i]};
-    auto &info{clips.emplace_back()};
+    const aiAnimation &clip{*assScene.mAnimations[i]};
+    ClipInfo &info{clips.emplace_back()};
     info.name = clip.mName.C_Str();
     info.duration = float(clip.mDuration / ticksPerSecond(clip));
     info.nodeChannelCount = clip.mNumChannels;
@@ -364,33 +364,33 @@ void walkPose(
     const aiNode &node, const float4x4 &parentXf,
     const std::unordered_map<std::string_view, const aiNodeAnim *> &channels,
     double ticks, double tps, NodePose &pose) {
-  auto local{float4x4()};
+  float4x4 local{};
   if (const auto entry{channels.find(node.mName.C_Str())};
       entry != channels.end()) {
-    const auto &channel{*entry->second};
+    const aiNodeAnim &channel{*entry->second};
     // A channel replaces the whole local transform, so a component it has
     // no keys for comes from the authored transform, decomposed.
     aiVector3D scaling{}, position{};
     aiQuaternion rotation{};
     node.mTransformation.Decompose(scaling, rotation, position);
-    const auto t{channel.mNumPositionKeys > 0
-                     ? sampleVector(channel.mPositionKeys,
-                                    channel.mNumPositionKeys, ticks, tps)
-                     : fromAssimp(position)};
-    const auto r{channel.mNumRotationKeys > 0
-                     ? sampleRotation(channel.mRotationKeys,
-                                      channel.mNumRotationKeys, ticks, tps)
-                     : normalizeQuat(fromAssimp(rotation))};
-    const auto s{channel.mNumScalingKeys > 0
-                     ? sampleVector(channel.mScalingKeys,
-                                    channel.mNumScalingKeys, ticks, tps)
-                     : fromAssimp(scaling)};
+    const float3 t{channel.mNumPositionKeys > 0
+                       ? sampleVector(channel.mPositionKeys,
+                                      channel.mNumPositionKeys, ticks, tps)
+                       : fromAssimp(position)};
+    const float4 r{channel.mNumRotationKeys > 0
+                       ? sampleRotation(channel.mRotationKeys,
+                                        channel.mNumRotationKeys, ticks, tps)
+                       : normalizeQuat(fromAssimp(rotation))};
+    const float3 s{channel.mNumScalingKeys > 0
+                       ? sampleVector(channel.mScalingKeys,
+                                      channel.mNumScalingKeys, ticks, tps)
+                       : fromAssimp(scaling)};
     local = composeTRS(t, r, s);
   } else {
     local = fromAssimp(node.mTransformation);
   }
-  const auto xf{parentXf * local};
-  const auto index{uint32_t(pose.nodeToFile.size())};
+  const float4x4 xf{parentXf * local};
+  const uint32_t index{uint32_t(pose.nodeToFile.size())};
   pose.nodeToFile.push_back(xf);
   pose.indexByName.try_emplace(node.mName.C_Str(), index);
   for (unsigned i = 0; i < node.mNumChildren; i++)
@@ -401,12 +401,12 @@ void walkPose(
 
 NodePose evaluatePose(const aiScene &assScene, const aiAnimation *clip,
                       double ticks) {
-  auto channels{std::unordered_map<std::string_view, const aiNodeAnim *>()};
+  std::unordered_map<std::string_view, const aiNodeAnim *> channels{};
   if (clip)
     for (unsigned i = 0; i < clip->mNumChannels; i++)
       channels.try_emplace(clip->mChannels[i]->mNodeName.C_Str(),
                            clip->mChannels[i]);
-  auto pose{NodePose()};
+  NodePose pose{};
   if (assScene.mRootNode)
     walkPose(*assScene.mRootNode, float4x4(1.0f), channels, ticks,
              clip ? ticksPerSecond(*clip) : 1.0, pose);
@@ -415,7 +415,7 @@ NodePose evaluatePose(const aiScene &assScene, const aiAnimation *clip,
 
 bool meshDeforms(const aiScene &assScene, uint32_t meshIndex,
                  const aiAnimation *clip) {
-  const auto &assMesh{*assScene.mMeshes[meshIndex]};
+  const aiMesh &assMesh{*assScene.mMeshes[meshIndex]};
   if (clip && assMesh.HasBones()) return true;
   if (assMesh.mNumAnimMeshes == 0) return false;
   if (clip && findMorphChannel(*clip, assMesh,
@@ -430,9 +430,9 @@ bool meshDeforms(const aiScene &assScene, uint32_t meshIndex,
 MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
                   const NodePose &pose, const aiAnimation *clip, double ticks,
                   std::string_view fileName) {
-  const auto &assMesh{*assScene.mMeshes[meshIndex]};
-  const auto numVerts{assMesh.mNumVertices};
-  auto bake{MeshBake()};
+  const aiMesh &assMesh{*assScene.mMeshes[meshIndex]};
+  const unsigned numVerts{assMesh.mNumVertices};
+  MeshBake bake{};
   bake.points.resize(numVerts);
   for (unsigned i = 0; i < numVerts; i++)
     bake.points[i] = fromAssimp(assMesh.mVertices[i]);
@@ -447,17 +447,17 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       bake.tangents[i] = fromAssimp(assMesh.mTangents[i]);
   }
   if (assMesh.mNumAnimMeshes > 0) {
-    const auto *channel{
+    const aiMeshMorphAnim *channel{
         clip ? findMorphChannel(*clip, assMesh,
                                 findPlacingNode(*assScene.mRootNode, meshIndex))
              : nullptr};
-    const auto weights{
+    const std::vector<float> weights{
         morphWeights(assScene, assMesh, channel, ticks, fileName)};
-    auto anyMoved{false};
+    bool anyMoved{false};
     for (unsigned t = 0; t < assMesh.mNumAnimMeshes; t++) {
       const float w{weights[t]};
       if (w == 0) continue;
-      const auto &target{*assMesh.mAnimMeshes[t]};
+      const aiAnimMesh &target{*assMesh.mAnimMeshes[t]};
       if (target.mNumVertices != numVerts)
         throw smdl::Error(smdl::concat("morph target ", t, " of mesh ",
                                        smdl::Quoted(assMesh.mName.C_Str()),
@@ -491,9 +491,9 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
   }
   if (clip && assMesh.HasBones()) {
     // The weights vertex-major, since assimp stores them bone-major.
-    auto offsets{std::vector<uint32_t>(numVerts + 1, 0)};
+    std::vector<uint32_t> offsets(numVerts + 1, 0);
     for (unsigned b = 0; b < assMesh.mNumBones; b++) {
-      const auto &bone{*assMesh.mBones[b]};
+      const aiBone &bone{*assMesh.mBones[b]};
       for (unsigned k = 0; k < bone.mNumWeights; k++) {
         if (bone.mWeights[k].mVertexId >= numVerts)
           throw smdl::Error(smdl::concat(
@@ -510,12 +510,12 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       uint32_t bone{};
       float weight{};
     };
-    auto influences{std::vector<Influence>(offsets[numVerts])};
-    auto cursor{std::vector<uint32_t>(offsets.begin(), offsets.end() - 1)};
-    auto boneXfs{std::vector<float4x4>(assMesh.mNumBones)};
+    std::vector<Influence> influences(offsets[numVerts]);
+    std::vector<uint32_t> cursor(offsets.begin(), offsets.end() - 1);
+    std::vector<float4x4> boneXfs(assMesh.mNumBones);
     for (unsigned b = 0; b < assMesh.mNumBones; b++) {
-      const auto &bone{*assMesh.mBones[b]};
-      const auto nodeIndex{pose.find(bone.mName.C_Str())};
+      const aiBone &bone{*assMesh.mBones[b]};
+      const uint32_t nodeIndex{pose.find(bone.mName.C_Str())};
       if (nodeIndex == INVALID_INDEX)
         throw smdl::Error(smdl::concat(
             "bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
@@ -528,28 +528,28 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
     }
     for (unsigned i = 0; i < numVerts; i++) {
       float weightSum{};
-      for (auto k = offsets[i]; k < offsets[i + 1]; k++)
+      for (uint32_t k = offsets[i]; k < offsets[i + 1]; k++)
         weightSum += influences[k].weight;
       if (!(weightSum > 0)) continue;
-      auto xf{float4x4()};
-      for (auto k = offsets[i]; k < offsets[i + 1]; k++) {
+      float4x4 xf{};
+      for (uint32_t k = offsets[i]; k < offsets[i + 1]; k++) {
         const float w{influences[k].weight / weightSum};
-        const auto &boneXf{boneXfs[influences[k].bone]};
+        const float4x4 &boneXf{boneXfs[influences[k].bone]};
         for (size_t j = 0; j < 4; j++) xf[j] += w * boneXf[j];
       }
       bake.points[i] = transformPoint(xf, bake.points[i]);
-      const auto axis0{float3(xf[0])}, axis1{float3(xf[1])},
+      const float3 axis0{float3(xf[0])}, axis1{float3(xf[1])},
           axis2{float3(xf[2])};
       if (!bake.normals.empty()) {
         // The cofactor matrix, `det(A) A^-T` without forming either
         // factor, as `InstanceFrame` builds it.
-        auto normal{float3x3(cross(axis1, axis2), cross(axis2, axis0),
-                             cross(axis0, axis1)) *
-                    bake.normals[i]};
+        float3 normal{float3x3(cross(axis1, axis2), cross(axis2, axis0),
+                               cross(axis0, axis1)) *
+                      bake.normals[i]};
         if (smdl::tryNormalize(normal)) bake.normals[i] = normal;
       }
       if (!bake.tangents.empty()) {
-        auto tangent{float3x3(axis0, axis1, axis2) * bake.tangents[i]};
+        float3 tangent{float3x3(axis0, axis1, axis2) * bake.tangents[i]};
         if (smdl::tryNormalize(tangent)) bake.tangents[i] = tangent;
       }
     }

@@ -21,7 +21,7 @@ inline std::vector<float>
 wavelengthBandEdges(smdl::Span<const float> wavelens) {
   const size_t numBands{wavelens.size()};
   if (numBands < 2) return {};
-  auto edges{std::vector<float>(numBands + 1)};
+  std::vector<float> edges(numBands + 1);
   for (size_t i = 1; i < numBands; i++)
     edges[i] = 0.5f * (wavelens[i - 1] + wavelens[i]);
   edges.front() = wavelens[0];
@@ -41,7 +41,7 @@ wavelengthBandEdges(smdl::Span<const float> wavelens) {
 wavelengthTrapezoidWidths(smdl::Span<const float> wavelens) {
   const size_t numBands{wavelens.size()};
   if (numBands == 1) return {0.5};
-  auto widths{std::vector<double>(numBands)};
+  std::vector<double> widths(numBands);
   for (size_t i = 0; i < numBands; i++) {
     const double lo{wavelens[i > 0 ? i - 1 : i]};
     const double hi{wavelens[i + 1 < numBands ? i + 1 : i]};
@@ -109,7 +109,7 @@ struct WavelengthGrid final {
   void reset(smdl::Span<const float> grid, bool shouldJitter) {
     numBands = grid.size();
     wavelengths = smdl::SpectralColor(grid);
-    const auto widths{wavelengthTrapezoidWidths(grid)};
+    const std::vector<double> widths{wavelengthTrapezoidWidths(grid)};
     weights.resize(widths.size());
     for (size_t i = 0; i < widths.size(); i++) weights[i] = float(widths[i]);
     bandEdges = shouldJitter ? wavelengthBandEdges(grid) : std::vector<float>{};
@@ -285,7 +285,7 @@ makeRenderState(const smdl::SpectralColor &wavelengths,
 /// moves the same way across its own rectangle, so the grid stays
 /// strictly increasing, as the library requires.
 inline void jitterWavelengths(Color &wavelengths, float xi) noexcept {
-  const auto &edges{gRenderGrid.bandEdges};
+  const std::vector<float> &edges{gRenderGrid.bandEdges};
   for (size_t i = 0; i < wavelengths.size(); i++)
     wavelengths[i] = edges[i] + xi * (edges[i + 1] - edges[i]);
 }

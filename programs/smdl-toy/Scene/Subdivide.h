@@ -13,7 +13,7 @@
 /// authored vertex and have bit-identical positions, and anything less
 /// than exact welding would move them apart.
 [[nodiscard]] inline std::array<uint32_t, 3> positionKey(const float3 &point) {
-  auto result{std::array<uint32_t, 3>{}};
+  std::array<uint32_t, 3> result{};
   std::memcpy(&result[0], &point.x, sizeof(float));
   std::memcpy(&result[1], &point.y, sizeof(float));
   std::memcpy(&result[2], &point.z, sizeof(float));

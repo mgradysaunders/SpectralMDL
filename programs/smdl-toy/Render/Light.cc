@@ -10,20 +10,21 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
   // Never mipped: the environment is sampled by direction through the
   // tabulated density below, never with a texture-space footprint. So
   // nothing here requests a chain, and none is allocated.
-  if (auto error{mImage.startLoad(fileName)}) error->printAndExit();
+  if (std::optional<smdl::Error> error{mImage.startLoad(fileName)})
+    error->printAndExit();
   mImage.finishLoad();
-  auto weights{std::vector<float>{}};
+  std::vector<float> weights{};
   const int numTexelsX{mImage.getNumTexelsX()};
   const int numTexelsY{mImage.getNumTexelsY()};
   weights.reserve(numTexelsX * numTexelsY);
   double lumSum{};
   double sinThetaSum{};
   for (int iY = 0; iY < numTexelsY; iY++) {
-    auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
-    auto sinTheta{std::sin(theta)};
+    float theta{PI * (iY + 0.5f) / float(numTexelsY)};
+    float sinTheta{std::sin(theta)};
     for (int iX = 0; iX < numTexelsX; iX++) {
-      auto value{mImage.fetchUnsafe(iX, iY)};
-      auto lum{(value.x + value.y + value.z) / 3.0f};
+      float4 value{mImage.fetchUnsafe(iX, iY)};
+      float lum{(value.x + value.y + value.z) / 3.0f};
       weights.push_back(sinTheta * lum);
       lumSum += double(sinTheta) * lum;
       sinThetaSum += sinTheta;
@@ -36,14 +37,14 @@ EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
   // back to the uncompensated weights if compensation removes everything
   // (a constant environment).
   {
-    auto compensated{weights};
+    std::vector<float> compensated{weights};
     double compensatedSum{};
     size_t texel{};
     for (int iY = 0; iY < numTexelsY; iY++) {
-      auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
-      auto sinTheta{std::sin(theta)};
+      float theta{PI * (iY + 0.5f) / float(numTexelsY)};
+      float sinTheta{std::sin(theta)};
       for (int iX = 0; iX < numTexelsX; iX++, texel++) {
-        auto lum{sinTheta > 0 ? weights[texel] / sinTheta : 0.0f};
+        float lum{sinTheta > 0 ? weights[texel] / sinTheta : 0.0f};
         compensated[texel] = sinTheta * std::max(lum - mMeanRadiance, 0.0f);
         compensatedSum += compensated[texel];
       }
@@ -64,7 +65,7 @@ bool EnvLight::sunMetadata(smdl::Span<const float> wavelens, float &azimuthDeg,
                            float &elevationDeg,
                            std::vector<float> &irradiance) const {
   if (!mSunSky || !mSunSky->hasSun() || mIsMoon) return false;
-  const auto direction{mSunSky->sunDirection()};
+  const float3 direction{mSunSky->sunDirection()};
   azimuthDeg = smdl::degrees(std::atan2(direction.y, direction.x));
   elevationDeg = smdl::degrees(std::asin(std::clamp(direction.z, -1.0f, 1.0f)));
   // The disk is uniform, so its irradiance is its radiance over the
@@ -131,7 +132,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                              std::shared_ptr<const smdl::LightProfile> profile)
     : mKind(light.decl.kind), mIntensity(wavelengths.size()),
       mProfile(std::move(profile)) {
-  const auto &decl{light.decl};
+  const LayoutLightDecl &decl{light.decl};
   mLightToWorld = light.lightToWorld;
   if (light.lightToWorldShut) {
     mIsMoving = true;
@@ -149,7 +150,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   // over the grid by the trapezoid widths the meter and the response
   // integrate with, then the RGB tint applied WITHOUT renormalizing, so
   // tinting dims the way dimming a lamp does.
-  auto shape{Color(1.0f)};
+  Color shape{1.0f};
   if (decl.temperature > 0) {
     for (size_t i = 0; i < wavelengths.size(); i++) {
       const float lambda{wavelengths[i] * 1.0e-3f}; // micrometers
@@ -158,13 +159,13 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                          std::expm1(c2 / (lambda * decl.temperature)));
     }
   }
-  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
+  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
   double integral{};
   for (size_t i = 0; i < wavelengths.size(); i++)
     integral += double(shape[i]) * widths[i];
   if (integral > 0) shape *= float(1.0 / integral);
   if (decl.color.x != 1.0f || decl.color.y != 1.0f || decl.color.z != 1.0f) {
-    auto tint{Color()};
+    Color tint{};
     compiler.convertRGBToColor(state, decl.color, tint.data());
     shape *= tint;
   }
@@ -226,10 +227,10 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
 
 AnalyticLight::Placement
 AnalyticLight::derivePlacement(const float4x4 &xf) const noexcept {
-  auto result{Placement()};
+  Placement result{};
   result.position = float3(xf[3]);
   auto column{[&](int i) {
-    auto v{float3(xf[i])};
+    float3 v{float3(xf[i])};
     return smdl::tryNormalize(v) ? v : float3(i == 0, i == 1, i == 2);
   }};
   result.localX = column(0);
@@ -242,7 +243,7 @@ AnalyticLight::derivePlacement(const float4x4 &xf) const noexcept {
     // the one the placement maps local -Z into.
     result.axisU = float3(xf[0]);
     result.axisV = float3(xf[1]);
-    auto planeNormal{cross(result.axisU, result.axisV)};
+    float3 planeNormal{cross(result.axisU, result.axisV)};
     const float stretch{length(planeNormal)};
     result.worldArea = mObjectArea * stretch;
     if (result.worldArea > 0) {
@@ -261,7 +262,7 @@ AnalyticLight::placementAt(float time,
   // The lerp of the two keys, spelled so that the ends reproduce them
   // exactly; the placement then follows from the lerped matrix as it
   // does from a static one.
-  auto xf{float4x4()};
+  float4x4 xf{};
   for (int j = 0; j < 4; j++)
     xf[j] = (1.0f - time) * mLightToWorld[j] + time * mLightToWorldShut[j];
   return scratch.emplace(derivePlacement(xf));
@@ -275,10 +276,10 @@ Color AnalyticLight::Li(const float3 &point, float metersPerSceneUnit,
 Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
                         float metersPerSceneUnit, float time) const noexcept {
   std::optional<Placement> scratch{};
-  const auto &placed{placementAt(time, scratch)};
+  const Placement &placed{placementAt(time, scratch)};
   const float distSq{lengthSquared(point - placed.position)};
   if (!(distSq > 0)) return Color(0.0f);
-  auto direction{incidencePoint - placed.position};
+  float3 direction{incidencePoint - placed.position};
   if (!(lengthSquared(direction) > 0)) return Color(0.0f);
   direction = normalize(direction);
   float factor{1.0f};
@@ -302,7 +303,7 @@ Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
     if (!(factor > 0)) return Color(0.0f);
   }
   const float distSqMeters{distSq * metersPerSceneUnit * metersPerSceneUnit};
-  auto Li{Color(mIntensity)};
+  Color Li{mIntensity};
   Li *= factor / distSqMeters;
   return Li;
 }
@@ -382,7 +383,7 @@ namespace {
 float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
                                   float time) const noexcept {
   std::optional<Placement> scratch{};
-  const auto &placed{placementAt(time, scratch)};
+  const Placement &placed{placementAt(time, scratch)};
   pdf = 0.0f;
   if (mKind == LayoutLightDecl::Kind::RECT) {
     // Over the spherical rectangle when the placed axes are orthogonal;
@@ -429,9 +430,9 @@ namespace {
 // `AreaLight::invCofactor`.
 [[nodiscard]]
 float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
-  const auto column0{float3(objectToWorld[0])};
-  const auto column1{float3(objectToWorld[1])};
-  const auto column2{float3(objectToWorld[2])};
+  const float3 column0{float3(objectToWorld[0])};
+  const float3 column1{float3(objectToWorld[1])};
+  const float3 column2{float3(objectToWorld[2])};
   const float det{dot(column0, cross(column1, column2))};
   return {float3(column0.x, column1.x, column2.x) / det,
           float3(column0.y, column1.y, column2.y) / det,
@@ -440,7 +441,7 @@ float3x3 inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
 } // namespace
 
 BoundBox3 AnalyticLight::bounds() const noexcept {
-  auto box{BoundBox3()};
+  BoundBox3 box{};
   const auto extend{[&](const Placement &placed) {
     if (isDirac()) {
       box.extend(placed.position);
@@ -461,7 +462,7 @@ BoundBox3 AnalyticLight::bounds() const noexcept {
 LightSelection::LightSelection(smdl::Span<const LightBounds> lights,
                                bool hasEnv, float envWeight, bool useTree)
     : mLightCount(int(lights.size())), mHasEnv(hasEnv) {
-  auto weights{std::vector<float>()};
+  std::vector<float> weights{};
   weights.reserve(lights.size() + 1);
   for (const auto &light : lights) weights.push_back(light.phi);
   if (hasEnv) weights.push_back(envWeight);
@@ -504,31 +505,31 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                            const Color &wavelengths, bool allLights,
                            bool useTree)
     : mCompiler(compiler), mScene(scene), mEnvLight(envLight) {
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto bounds{std::vector<LightBounds>()};
-  auto warnedCurveMaterials{std::set<uint32_t>()};
-  auto warnedMarkMaterials{std::set<uint32_t>()};
+  smdl::BumpPtrAllocator allocator{};
+  std::vector<LightBounds> bounds{};
+  std::set<uint32_t> warnedCurveMaterials{};
+  std::set<uint32_t> warnedMarkMaterials{};
   size_t numSampledArea{};
   size_t numUnsampledArea{};
   mInstanceToLight.resize(scene.meshInstances.size(), INVALID_INDEX);
   for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
        instIndex++) {
-    const auto &instance{scene.meshInstances[instIndex]};
+    const MeshInstance &instance{scene.meshInstances[instIndex]};
     // The instance-resolved material: an instance whose override maps a
     // plain material to an emissive one is an emitter, and one that maps
     // an emissive material away is not.
-    const auto matIndex{scene.materialIndexOf(instance)};
-    const auto *materialDef{scene.materialDefs[matIndex]};
+    const uint32_t matIndex{scene.materialIndexOf(instance)};
+    const smdl::JIT::MaterialDef *materialDef{scene.materialDefs[matIndex]};
     if (!materialDef) continue;
     // Evaluate the material once with a placeholder state to read the
     // structural emission flags and a representative intensity. The flags
     // are decided by whether the emission EDF is non-default, so they do
     // not depend on the state; the intensity may be spatially varying, in
     // which case its value here is only a representative selection weight.
-    auto state{makeRenderState(wavelengths, &allocator)};
+    smdl::State state{makeRenderState(wavelengths, &allocator)};
     state.textureSpaceCount = 1;
     state.finalize();
-    auto material{smdl::JIT::Material(state, materialDef)};
+    smdl::JIT::Material material{state, materialDef};
     if (!material.hasEmission()) {
       // The mark is scene judgment about an emitter; on anything else it
       // is a mistake worth one line, as the caster mark's is.
@@ -554,7 +555,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       allocator.reset();
       continue;
     }
-    auto light{AreaLight()};
+    AreaLight light{};
     light.instIndex = instIndex;
     light.isSampled = instance.isLight || allLights;
     light.isCaustic = instance.isCausticLight;
@@ -564,7 +565,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // instance rather than per mesh, transforming the vertices here is
     // exact even under non-uniform scale, where no single area factor
     // would do.
-    const auto &objectToWorld{instance.frame.objectToWorld};
+    const float4x4 &objectToWorld{instance.frame.objectToWorld};
     // A moving emitter's shut frame: its box covers both keys, so that
     // the light tree sees where it can be (a proxy rather than a hull
     // for a turn, and consistent between `select()` and `pmf()`, which
@@ -575,9 +576,9 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     const InstanceFrame *shutFrame{
         instance.isMoving ? &instance.frameAt(1.0f, shutScratch) : nullptr};
     const bool isMovingLike{instance.isMoving || instance.isDeforming};
-    auto box{BoundBox3()};
+    BoundBox3 box{};
     if (instance.isPrimitive()) {
-      const auto &primitive{*scene.primitives[instance.primIndex]};
+      const Primitive &primitive{*scene.primitives[instance.primIndex]};
       light.isPrimitive = true;
       light.objectArea = primitive.objectArea;
       for (const auto &point : primitive.proxyPoints) {
@@ -600,7 +601,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       for (int i = 0; i < STRETCH_SAMPLES; i++) {
         const float x1{(float(i) + 0.5f) / float(STRETCH_SAMPLES)};
         const float x2{float(i) * 0.6180339887f};
-        const auto areaSample{samplePrimitiveArea(
+        const PrimitiveAreaSample areaSample{samplePrimitiveArea(
             primitive.spec, float2(x1, x2 - std::floor(x2)))};
         stretchSum += double(
             length(instance.frame.normalMatrix * areaSample.surface.normal));
@@ -608,7 +609,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       light.totalArea = light.objectArea * float(stretchSum / STRETCH_SAMPLES);
       light.invCofactor = inverseCofactorOf(objectToWorld);
     } else {
-      const auto &mesh{*scene.meshes[instance.meshIndex]};
+      const Mesh &mesh{*scene.meshes[instance.meshIndex]};
       auto toWorld{[&](const float3 &point) {
         return transformPoint(objectToWorld, point);
       }};
@@ -617,32 +618,33 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       // moving or deforming light's is over object area at the open
       // key, since its world area is a function of time; see
       // `sampleAreaMoving()`.
-      auto faceAreas{std::vector<float>()};
-      auto objectFaceAreas{std::vector<float>()};
+      std::vector<float> faceAreas{};
+      std::vector<float> objectFaceAreas{};
       if (light.isSampled) faceAreas.reserve(mesh.faces.size());
       if (isMovingLike) objectFaceAreas.reserve(mesh.faces.size());
-      const auto &shutXf{shutFrame ? shutFrame->objectToWorld : objectToWorld};
+      const float4x4 &shutXf{shutFrame ? shutFrame->objectToWorld
+                                       : objectToWorld};
       for (const auto &face : mesh.faces) {
-        const auto point0{toWorld(mesh.verts[face[0]].point)};
-        const auto point1{toWorld(mesh.verts[face[1]].point)};
-        const auto point2{toWorld(mesh.verts[face[2]].point)};
+        const float3 point0{toWorld(mesh.verts[face[0]].point)};
+        const float3 point1{toWorld(mesh.verts[face[1]].point)};
+        const float3 point2{toWorld(mesh.verts[face[2]].point)};
         box.extend(point0);
         box.extend(point1);
         box.extend(point2);
-        auto area{triangleArea(point0, point1, point2)};
+        float area{triangleArea(point0, point1, point2)};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
         if (isMovingLike) {
-          const auto &object0{mesh.verts[face[0]].point};
-          const auto &object1{mesh.verts[face[1]].point};
-          const auto &object2{mesh.verts[face[2]].point};
+          const float3 &object0{mesh.verts[face[0]].point};
+          const float3 &object1{mesh.verts[face[1]].point};
+          const float3 &object2{mesh.verts[face[2]].point};
           const float objectArea{triangleArea(object0, object1, object2)};
           objectFaceAreas.push_back(objectArea);
           light.objectArea += objectArea;
           // The shut key's corners under the shut frame: the shut
           // vertices of a deforming mesh, the open ones otherwise.
-          const auto &shutVerts{instance.isDeforming ? mesh.vertsShut
-                                                     : mesh.verts};
+          const std::vector<Mesh::Vert> &shutVerts{
+              instance.isDeforming ? mesh.vertsShut : mesh.verts};
           for (const auto index : face)
             box.extend(transformPoint(shutXf, shutVerts[index].point));
         }
@@ -684,23 +686,24 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // One profile per distinct resolved path, shared between its
     // placements: a layout that scatters a hundred streetlights loads
     // the IES file once.
-    auto profiles{
-        std::map<std::string, std::shared_ptr<const smdl::LightProfile>>()};
-    auto state{makeRenderState(wavelengths)};
+    std::map<std::string, std::shared_ptr<const smdl::LightProfile>> profiles{};
+    smdl::State state{makeRenderState(wavelengths)};
     mAnalyticLights.reserve(layoutLights.size());
     for (const auto &layoutLight : layoutLights) {
-      auto profile{std::shared_ptr<const smdl::LightProfile>()};
+      std::shared_ptr<const smdl::LightProfile> profile{};
       if (layoutLight.decl.kind == LayoutLightDecl::Kind::PROFILE) {
-        auto &cached{profiles[layoutLight.decl.profilePath]};
+        std::shared_ptr<const smdl::LightProfile> &cached{
+            profiles[layoutLight.decl.profilePath]};
         if (!cached) {
           auto loaded{std::make_shared<smdl::LightProfile>()};
-          if (auto error{loaded->loadFromFile(layoutLight.decl.profilePath)})
+          if (std::optional<smdl::Error> error{
+                  loaded->loadFromFile(layoutLight.decl.profilePath)})
             error->printAndExit();
           cached = std::move(loaded);
         }
         profile = cached;
       }
-      auto &light{mAnalyticLights.emplace_back(
+      AnalyticLight &light{mAnalyticLights.emplace_back(
           compiler, state, wavelengths, layoutLight, std::move(profile))};
       light.isCaustic = layoutLight.decl.isCaustic;
       bounds.push_back({light.bounds(), light.weight()});
@@ -745,7 +748,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                  ", ", smdl::Counted(numUnsampledArea, "unsampled emitter"),
                  ", ", smdl::Counted(mAnalyticLights.size(), "analytic light"),
                  envLight ? ", plus the environment" : "");
-  if (const auto *tree{mSelection.tree()})
+  if (const LightTree *tree{mSelection.tree()})
     SMDL_LOG_DEBUG("Light tree: ", smdl::Counted(tree->nodeCount(), "node"),
                    ", depth ", tree->depth());
 }
@@ -783,7 +786,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   if (lightIndex >= int(mAreaLights.size())) {
     const uint32_t analyticIndex{uint32_t(lightIndex) -
                                  uint32_t(mAreaLights.size())};
-    const auto &light{mAnalyticLights[analyticIndex]};
+    const AnalyticLight &light{mAnalyticLights[analyticIndex]};
     lightSample.isReachable = false;
     lightSample.analyticIndex = analyticIndex;
     lightSample.isCaustic = light.isCaustic;
@@ -791,7 +794,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
       // A punctual light: the direction is a Dirac, so the pdf is the
       // selection PMF alone and `Li` carries the inverse-square falloff.
       const float3 position{light.position(time)};
-      auto direction{position - point};
+      float3 direction{position - point};
       if (!(lengthSquared(direction) > 0)) return false;
       lightSample.Li = light.Li(point, state.metersPerSceneUnit, time);
       if (lightSample.Li.isAllZero() && !shouldKeepDark) return false;
@@ -808,7 +811,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     const float3 lightPoint{
         light.sampleShape(point, float2(sampler), shapePDF, time)};
     if (!(shapePDF > 0.0f)) return false;
-    auto direction{lightPoint - point};
+    float3 direction{lightPoint - point};
     if (!(lengthSquared(direction) > 0.0f)) return false;
     lightSample.wi = normalize(direction);
     lightSample.Li = light.Le(lightPoint, point, time);
@@ -818,20 +821,20 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     lightSample.normal = light.normal(time);
     return true;
   }
-  const auto &light{mAreaLights[lightIndex]};
+  const AreaLight &light{mAreaLights[lightIndex]};
   // The zero selection weight is what keeps an unsampled emitter out.
   SMDL_SANITY_CHECK(light.isSampled);
   Hit &hit{lightSample.hit};
   lightSample.isCaustic = light.isCaustic;
   float positionPDF{}; // world-space area density at the sampled point
   float conePDF{};     // solid-angle density instead, when drawn by cone
-  const auto &instance{mScene.meshInstances[light.instIndex]};
+  const MeshInstance &instance{mScene.meshInstances[light.instIndex]};
   if (SMDL_UNLIKELY(instance.isMoving || instance.isDeforming)) {
     if (!sampleAreaMoving(light, instance, sampler, point, time, shouldKeepDark,
                           hit, positionPDF, conePDF))
       return false;
   } else if (SMDL_LIKELY(light.isPrimitive)) {
-    const auto &primitive{*mScene.primitives[instance.primIndex]};
+    const Primitive &primitive{*mScene.primitives[instance.primIndex]};
     const float2 xi{sampler};
     // A sphere is drawn by its cone from the receiver, except for a
     // manifold gather, which keeps the uniform area draw: a cone never
@@ -845,7 +848,8 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
       // Sample the shape uniformly by OBJECT area and pay the placement's
       // exact area stretch in the pdf: still unbiased under any affine
       // placement, and exactly uniform under a similarity.
-      const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
+      const PrimitiveAreaSample areaSample{
+          samplePrimitiveArea(primitive.spec, xi)};
       const float stretch{
           length(instance.frame.normalMatrix * areaSample.surface.normal)};
       if (!(stretch > 0)) return false;
@@ -860,7 +864,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
     // world-space area, so this is uniform over the instance as it stands
     // in the world, and `Scene::makeHit` reports the point in the same
     // space.
-    const auto bary{smdl::uniformTriangleSample(float2(sampler))};
+    const float3 bary{smdl::uniformTriangleSample(float2(sampler))};
     mScene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time, hit);
     positionPDF = 1.0f / light.totalArea;
   }
@@ -874,7 +878,7 @@ bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
   // are the caller's, zero by its contract, so emission evaluates at
   // full fidelity.
   hit.applyGeometryToState(state, lightSample.wi);
-  auto material{smdl::JIT::Material(state, hit.materialDef)};
+  smdl::JIT::Material material{state, hit.materialDef};
   if (!emittedRadiance(material, light.instIndex, -lightSample.wi,
                        lightSample.Li)) {
     if (!shouldKeepDark) return false;
@@ -900,16 +904,16 @@ namespace {
 float faceAreaDensity(const Scene &scene, const AreaLight &light,
                       const MeshInstance &instance, const InstanceFrame &frame,
                       uint32_t faceIndex, float time) {
-  const auto &mesh{*scene.meshes[instance.meshIndex]};
-  const auto &face{mesh.faces[faceIndex]};
+  const Mesh &mesh{*scene.meshes[instance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[faceIndex]};
   const auto worldPoint{[&](uint32_t index) {
-    const auto object{instance.isDeforming ? mesh.vertAt(index, time).point
-                                           : mesh.verts[index].point};
+    const float3 object{instance.isDeforming ? mesh.vertAt(index, time).point
+                                             : mesh.verts[index].point};
     return transformPoint(frame.objectToWorld, object);
   }};
-  const auto point0{worldPoint(face[0])};
-  const auto point1{worldPoint(face[1])};
-  const auto point2{worldPoint(face[2])};
+  const float3 point0{worldPoint(face[0])};
+  const float3 point1{worldPoint(face[1])};
+  const float3 point2{worldPoint(face[2])};
   const float worldArea{triangleArea(point0, point1, point2)};
   if (!(worldArea > 0)) return 0.0f;
   return light.faceDistr.indexPMF(int(faceIndex)) / worldArea;
@@ -971,13 +975,13 @@ SMDL_NO_INLINE float solidAnglePDFMoving(
     uint32_t faceIndex, const float3 &lightPoint, const float3 &lightNormal,
     const float3 &point, bool isAreaSampled, float time, float selectPMF) {
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{instance.frameAt(time, scratch)};
-  const auto &objectToWorld{frame.objectToWorld};
+  const InstanceFrame &frame{instance.frameAt(time, scratch)};
+  const float4x4 &objectToWorld{frame.objectToWorld};
   if (light.sphereObjectRadius > 0.0f && !isAreaSampled)
-    if (auto conePDF{sphereConePDF(float3(objectToWorld[3]),
-                                   light.sphereObjectRadius *
-                                       length(float3(objectToWorld[0])),
-                                   lightPoint, lightNormal, point, selectPMF)})
+    if (std::optional<float> conePDF{sphereConePDF(
+            float3(objectToWorld[3]),
+            light.sphereObjectRadius * length(float3(objectToWorld[0])),
+            lightPoint, lightNormal, point, selectPMF)})
       return *conePDF;
   const float positionPDF{
       light.isPrimitive
@@ -996,9 +1000,9 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
                                     float time, bool shouldKeepDark, Hit &hit,
                                     float &positionPDF, float &conePDF) const {
   std::optional<InstanceFrame> scratch{};
-  const auto &frame{instance.frameAt(time, scratch)};
+  const InstanceFrame &frame{instance.frameAt(time, scratch)};
   if (light.isPrimitive) {
-    const auto &primitive{*mScene.primitives[instance.primIndex]};
+    const Primitive &primitive{*mScene.primitives[instance.primIndex]};
     const float2 xi{sampler};
     if (light.sphereObjectRadius > 0.0f && !shouldKeepDark &&
         sampleSphereCone(light, frame, float3(frame.objectToWorld[3]),
@@ -1006,7 +1010,8 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
                              length(float3(frame.objectToWorld[0])),
                          point, time, xi, hit, conePDF))
       return true;
-    const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
+    const PrimitiveAreaSample areaSample{
+        samplePrimitiveArea(primitive.spec, xi)};
     const float stretch{length(frame.normalMatrix * areaSample.surface.normal)};
     if (!(stretch > 0)) return false;
     mScene.makePrimitiveHitFrom(frame, light.instIndex, areaSample.primID, time,
@@ -1053,8 +1058,8 @@ bool LightSampler::sampleSphereCone(const AreaLight &light,
   const float b{dot(wi, toCenter)};
   const float t{b - std::sqrt(std::max(b * b - (distSq - radiusSq), 0.0f))};
   const float3 normal{normalize(point + t * wi - center)};
-  const auto &instance{mScene.meshInstances[light.instIndex]};
-  const auto &primitive{*mScene.primitives[instance.primIndex]};
+  const MeshInstance &instance{mScene.meshInstances[light.instIndex]};
+  const Primitive &primitive{*mScene.primitives[instance.primIndex]};
   const float3 objectNormal{
       normalize(transformDirection(frame.worldToRigid, normal))};
   const float3 objectPoint{primitive.spec.radius * objectNormal};
@@ -1072,19 +1077,19 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
   if (lightSample.isInfinite) return lightSample.Li;
   if (lightSample.analyticIndex != INVALID_INDEX) {
     if (lightSample.analyticIndex >= mAnalyticLights.size()) return 0.0f;
-    const auto &light{mAnalyticLights[lightSample.analyticIndex]};
+    const AnalyticLight &light{mAnalyticLights[lightSample.analyticIndex]};
     return light.isDirac()
                ? light.Li(point, incidencePoint, state.metersPerSceneUnit, time)
                : light.Le(lightSample.target, incidencePoint, time);
   }
-  const auto &hit{lightSample.hit};
+  const Hit &hit{lightSample.hit};
   if (!hit.materialDef) return 0.0f;
-  auto wEmit{incidencePoint - hit.point};
+  float3 wEmit{incidencePoint - hit.point};
   if (!smdl::tryNormalize(wEmit)) return 0.0f;
   // The arriving ray travels the other way down the same segment, which
   // is the sense `sample()` applies the geometry in.
   hit.applyGeometryToState(state, -wEmit);
-  auto material{smdl::JIT::Material(state, hit.materialDef)};
+  smdl::JIT::Material material{state, hit.materialDef};
   Color Le{};
   if (!emittedRadiance(material, hit.instIndex, wEmit, Le)) return 0.0f;
   return Le;
@@ -1122,18 +1127,19 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, uint32_t faceIndex,
                     mInstanceToLight[instIndex] == INVALID_INDEX)) {
     return 0.0f;
   }
-  auto lightIndex{mInstanceToLight[instIndex]};
-  const auto &light{mAreaLights[lightIndex]};
+  const uint32_t lightIndex{mInstanceToLight[instIndex]};
+  const AreaLight &light{mAreaLights[lightIndex]};
   if (!light.isSampled) return 0.0f;
   const float selectPMF{mSelection.pmf(int(lightIndex), point)};
-  if (const auto &instance{mScene.meshInstances[light.instIndex]};
+  if (const MeshInstance &instance{mScene.meshInstances[light.instIndex]};
       SMDL_UNLIKELY(instance.isMoving || instance.isDeforming))
     return solidAnglePDFMoving(mScene, light, instance, faceIndex, lightPoint,
                                lightNormal, point, isAreaSampled, time,
                                selectPMF);
   if (light.sphereRadius > 0.0f && !isAreaSampled)
-    if (auto conePDF{sphereConePDF(light.sphereCenter, light.sphereRadius,
-                                   lightPoint, lightNormal, point, selectPMF)})
+    if (std::optional<float> conePDF{
+            sphereConePDF(light.sphereCenter, light.sphereRadius, lightPoint,
+                          lightNormal, point, selectPMF)})
       return *conePDF;
   // A primitive light's position density is object-uniform through the
   // placement's area stretch, recovered exactly from the world normal:

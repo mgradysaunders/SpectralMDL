@@ -205,7 +205,7 @@ namespace {
   constexpr float K[5]{1.0f / 16, 4.0f / 16, 6.0f / 16, 4.0f / 16, 1.0f / 16};
   const size_t sizeX{std::max<size_t>((src.sizeX + 1) / 2, 1)};
   const size_t sizeY{std::max<size_t>((src.sizeY + 1) / 2, 1)};
-  auto rows{Plane::zeros(sizeX, src.sizeY)};
+  Plane rows{Plane::zeros(sizeX, src.sizeY)};
   for (size_t y{}; y < src.sizeY; y++)
     for (size_t x{}; x < sizeX; x++) {
       float sum{};
@@ -213,7 +213,7 @@ namespace {
         sum += K[k + 2] * src.at(clampIndex(long(2 * x) + k, src.sizeX), y);
       rows.values[x + sizeX * y] = sum;
     }
-  auto dst{Plane::zeros(sizeX, sizeY)};
+  Plane dst{Plane::zeros(sizeX, sizeY)};
   for (size_t y{}; y < sizeY; y++)
     for (size_t x{}; x < sizeX; x++) {
       float sum{};
@@ -240,7 +240,7 @@ namespace {
         return plane.at(clampIndex(long(x) + offsetX, plane.sizeX),
                         clampIndex(long(y) + offsetY, plane.sizeY));
       }};
-  auto cols{Plane::zeros(sizeX, src.sizeY)};
+  Plane cols{Plane::zeros(sizeX, src.sizeY)};
   for (size_t y{}; y < src.sizeY; y++)
     for (size_t x{}; x < sizeX; x++) {
       const size_t m{x / 2};
@@ -250,7 +250,7 @@ namespace {
                            8.0f
                      : (tap(src, m, y, 0, 0) + tap(src, m, y, +1, 0)) / 2.0f;
     }
-  auto dst{Plane::zeros(sizeX, sizeY)};
+  Plane dst{Plane::zeros(sizeX, sizeY)};
   for (size_t y{}; y < sizeY; y++)
     for (size_t x{}; x < sizeX; x++) {
       const size_t m{y / 2};
@@ -274,10 +274,10 @@ namespace {
 }
 
 [[nodiscard]] std::vector<Plane> buildGaussian(Plane image, size_t numLevels) {
-  auto levels{std::vector<Plane>()};
+  std::vector<Plane> levels{};
   levels.reserve(numLevels);
   for (size_t l = 0; l + 1 < numLevels; l++) {
-    auto next{pyramidDown(image)};
+    Plane next{pyramidDown(image)};
     levels.push_back(std::move(image));
     image = std::move(next);
   }
@@ -289,11 +289,11 @@ namespace {
 // level l, and the last level is the residual that everything is
 // rebuilt on top of.
 [[nodiscard]] std::vector<Plane> buildLaplacian(Plane image, size_t numLevels) {
-  auto levels{std::vector<Plane>()};
+  std::vector<Plane> levels{};
   levels.reserve(numLevels);
   for (size_t l = 0; l + 1 < numLevels; l++) {
-    auto next{pyramidDown(image)};
-    auto expanded{pyramidUp(next, image.sizeX, image.sizeY)};
+    Plane next{pyramidDown(image)};
+    Plane expanded{pyramidUp(next, image.sizeX, image.sizeY)};
     for (size_t i = 0; i < image.values.size(); i++)
       image.values[i] -= expanded.values[i];
     levels.push_back(std::move(image));
@@ -304,9 +304,9 @@ namespace {
 }
 
 [[nodiscard]] Plane collapseLaplacian(const std::vector<Plane> &levels) {
-  auto image{levels.back()};
+  Plane image{levels.back()};
   for (size_t l = levels.size() - 1; l-- > 0;) {
-    auto expanded{pyramidUp(image, levels[l].sizeX, levels[l].sizeY)};
+    Plane expanded{pyramidUp(image, levels[l].sizeX, levels[l].sizeY)};
     for (size_t i = 0; i < expanded.values.size(); i++)
       expanded.values[i] += levels[l].values[i];
     image = std::move(expanded);
@@ -342,16 +342,16 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
                   size_t numPixelsY, const DisplayCurve &curve,
                   const TonemapOptions &options, float &autoExposure) {
   const size_t numPixels{numPixelsX * numPixelsY};
-  auto luminance{std::vector<float>(numPixels)};
+  std::vector<float> luminance(numPixels);
   for (size_t p = 0; p < numPixels; p++) {
-    const auto texel{&image[3 * p]};
+    const float *texel{&image[3 * p]};
     luminance[p] = std::max(
         0.2126f * texel[0] + 0.7152f * texel[1] + 0.0722f * texel[2], 0.0f);
   }
   // The ladder spans the 1st to 99th percentile of the luminance that
   // is actually there. Percentiles rather than extremes, so one firefly
   // or one black pixel cannot set the range.
-  auto sorted{std::vector<float>()};
+  std::vector<float> sorted{};
   sorted.reserve(numPixels);
   for (size_t p = 0; p < numPixels; p++)
     if (luminance[p] > 0.0f) sorted.push_back(luminance[p]);
@@ -378,7 +378,7 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
   spanInEV = std::round(std::clamp(spanInEV, 2.0f, 16.0f) * 4.0f) / 4.0f;
   const size_t numExposures{
       std::clamp<size_t>(size_t(std::lround(spanInEV / 2.0f)) + 1, 2, 9)};
-  auto exposureGain{std::vector<float>(numExposures)};
+  std::vector<float> exposureGain(numExposures);
   for (size_t k = 0; k < numExposures; k++)
     exposureGain[k] =
         autoExposure *
@@ -391,23 +391,24 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
     const float d{display - 0.5f};
     return std::exp(-d * d / (2.0f * 0.2f * 0.2f)) + 1e-6f;
   }};
-  auto weightSum{std::vector<float>(numPixels)};
+  std::vector<float> weightSum(numPixels);
   for (size_t k = 0; k < numExposures; k++)
     for (size_t p = 0; p < numPixels; p++)
       weightSum[p] += wellExposed(curve.apply(exposureGain[k] * luminance[p]));
   // Accumulate the blend one exposure at a time, so only two pyramids
   // plus the accumulator are ever live.
   const size_t numLevels{pyramidDepth(numPixelsX, numPixelsY)};
-  auto fused{std::vector<Plane>()};
+  std::vector<Plane> fused{};
   for (size_t k = 0; k < numExposures; k++) {
-    auto display{Plane::zeros(numPixelsX, numPixelsY)};
-    auto weight{Plane::zeros(numPixelsX, numPixelsY)};
+    Plane display{Plane::zeros(numPixelsX, numPixelsY)};
+    Plane weight{Plane::zeros(numPixelsX, numPixelsY)};
     for (size_t p = 0; p < numPixels; p++) {
       display.values[p] = curve.apply(exposureGain[k] * luminance[p]);
       weight.values[p] = wellExposed(display.values[p]) / weightSum[p];
     }
-    const auto detail{buildLaplacian(std::move(display), numLevels)};
-    const auto score{buildGaussian(std::move(weight), numLevels)};
+    const std::vector<Plane> detail{
+        buildLaplacian(std::move(display), numLevels)};
+    const std::vector<Plane> score{buildGaussian(std::move(weight), numLevels)};
     if (fused.empty()) {
       fused.reserve(numLevels);
       for (const auto &level : detail)
@@ -417,11 +418,11 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
       for (size_t i = 0; i < fused[l].values.size(); i++)
         fused[l].values[i] += score[l].values[i] * detail[l].values[i];
   }
-  const auto fusedDisplay{collapseLaplacian(fused)};
+  const Plane fusedDisplay{collapseLaplacian(fused)};
   // Read the fused lightness back as an exposure: what the curve would
   // have needed at this pixel to land there, relative to the reference.
-  auto gain{std::vector<float>(numPixels, 1.0f)};
-  auto deviation{std::vector<float>()};
+  std::vector<float> gain(numPixels, 1.0f);
+  std::vector<float> deviation{};
   deviation.reserve(numPixels);
   for (size_t p = 0; p < numPixels; p++) {
     if (!(luminance[p] > 0.0f)) continue; // Black stays black at any gain.
@@ -484,9 +485,9 @@ namespace {
   // photopic and 1700 lm/W scotopic, integrated over the render's band
   // grid by trapezoid weights.
   const size_t numBands{wavelengths.size()};
-  auto weightPhotopic{std::vector<double>(numBands)};
-  auto weightScotopic{std::vector<double>(numBands)};
-  const auto widths{wavelengthTrapezoidWidths(wavelengths)};
+  std::vector<double> weightPhotopic(numBands);
+  std::vector<double> weightScotopic(numBands);
+  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};
@@ -509,7 +510,7 @@ namespace {
   // ~3, gone below ~0.005, smoothstepped in log luminance.
   const double logConesOut{std::log10(0.005)};
   const double logRodsSaturate{std::log10(3.0)};
-  auto nightImage{std::vector<float>(rgbImage.size())};
+  std::vector<float> nightImage(rgbImage.size());
   double luminanceSum{0.0};
   double coneWeightSum{0.0};
   for (size_t y{}; y < numPixelsY; y++) {
@@ -532,14 +533,14 @@ namespace {
       // scale: pixel luminance times the spectrum's scotopic-to-
       // photopic ratio, so the blend is immune to any calibration
       // constant in the spectral-to-RGB conversion.
-      const auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
+      const float *texel{&rgbImage[3 * (x + numPixelsX * y)]};
       const double r{std::max(0.0, double(texel[0]))};
       const double g{std::max(0.0, double(texel[1]))};
       const double b{std::max(0.0, double(texel[2]))};
       const double yImage{0.2126 * r + 0.7152 * g + 0.0722 * b};
       const double rodY{yPhotopic > 0.0 ? yImage * (yScotopic / yPhotopic)
                                         : 0.0};
-      const auto out{&nightImage[3 * (x + numPixelsX * y)]};
+      float *out{&nightImage[3 * (x + numPixelsX * y)]};
       out[0] = float(coneWeight * r + (1.0 - coneWeight) * rodY * ROD_TINT[0]);
       out[1] = float(coneWeight * g + (1.0 - coneWeight) * rodY * ROD_TINT[1]);
       out[2] = float(coneWeight * b + (1.0 - coneWeight) * rodY * ROD_TINT[2]);
@@ -549,7 +550,7 @@ namespace {
   // folded into the image rather than left in the scale because it is an
   // exposure decision, and so is exactly what fusion should be free to
   // supersede.
-  auto peaks{std::vector<float>(numPixelsX * numPixelsY)};
+  std::vector<float> peaks(numPixelsX * numPixelsY);
   for (size_t p = 0; p < peaks.size(); p++)
     peaks[p] = std::max(
         {nightImage[3 * p + 0], nightImage[3 * p + 1], nightImage[3 * p + 2]});
@@ -584,7 +585,7 @@ namespace {
 // like 'filmic+' is caught by the empty-name check rather than ignored.
 [[nodiscard]] std::vector<std::string> splitSpec(std::string_view text,
                                                  char separator) {
-  auto pieces{std::vector<std::string>()};
+  std::vector<std::string> pieces{};
   for (size_t pos{};;) {
     const size_t end{text.find(separator, pos)};
     if (end == std::string_view::npos) {
@@ -602,7 +603,7 @@ namespace {
 [[nodiscard]] std::vector<float> parseStageParams(const std::string &stage,
                                                   const std::string &params,
                                                   size_t maxCount) {
-  auto values{std::vector<float>()};
+  std::vector<float> values{};
   for (const auto &piece : splitSpec(params, ',')) {
     const char *ptr{piece.c_str()};
     char *numEnd{};
@@ -624,13 +625,13 @@ namespace {
 //--}
 
 TonemapOptions parseTonemapOptions(std::string_view spec) {
-  auto options{TonemapOptions{}};
+  TonemapOptions options{};
   bool hasNight{};
   bool hasCurve{};
   bool hasFusion{};
   for (const auto &stage : splitSpec(spec, '+')) {
-    auto name{stage};
-    auto params{std::string()};
+    std::string name{stage};
+    std::string params{};
     bool hasParams{};
     if (const size_t colon{stage.find(':')}; colon != std::string::npos) {
       name = stage.substr(0, colon);
@@ -669,8 +670,8 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
         throw smdl::Error("expected at most one 'fusion' stage in -tonemap");
       hasFusion = true;
       options.useFusion = true;
-      const auto values{hasParams ? parseStageParams(name, params, 3)
-                                  : std::vector<float>()};
+      const std::vector<float> values{
+          hasParams ? parseStageParams(name, params, 3) : std::vector<float>()};
       if (values.size() > 0) options.fusionStrength = values[0];
       if (values.size() > 1) options.fusionClamp = values[1];
       if (values.size() > 2) options.fusionSpan = values[2];
@@ -699,23 +700,23 @@ std::vector<uint8_t> tonemap(const TonemapOptions &options,
                              const Color &wavelengths) {
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
-  auto curve{DisplayCurve{}};
+  DisplayCurve curve{};
   curve.kind = options.curve;
   curve.logDecades = options.logDecades;
-  auto appearance{options.isNight
-                      ? applyNightFilter(rgbImage, film, wavelengths)
-                      : Appearance{rgbImage, 1.0f}};
-  auto gain{std::vector<float>()};
+  Appearance appearance{options.isNight
+                            ? applyNightFilter(rgbImage, film, wavelengths)
+                            : Appearance{rgbImage, 1.0f}};
+  std::vector<float> gain{};
   float autoExposure{1.0f};
   if (options.useFusion)
     gain = computeFusionGain(appearance.image, numPixelsX, numPixelsY, curve,
                              options, autoExposure);
   const float scale{options.exposure * appearance.scale *
                     (gain.empty() ? 1.0f : autoExposure)};
-  auto ldrImage{std::vector<uint8_t>(appearance.image.size())};
+  std::vector<uint8_t> ldrImage(appearance.image.size());
   for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
     const float pixelScale{scale * (gain.empty() ? 1.0f : gain[p])};
-    const auto texel{&appearance.image[3 * p]};
+    const float *texel{&appearance.image[3 * p]};
     const float rgb[3]{pixelScale * texel[0], pixelScale * texel[1],
                        pixelScale * texel[2]};
     float display[3]{};

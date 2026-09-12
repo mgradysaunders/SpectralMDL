@@ -81,7 +81,7 @@ std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
   // with the pass size.
   size_t firstPass{1};
   while (useGuiding && firstPass * 2 <= trainedSpp) firstPass *= 2;
-  auto passes{std::vector<size_t>()};
+  std::vector<size_t> passes{};
   for (size_t sppDone{0}; sppDone < spp;) {
     size_t thisPass{
         useGuiding ? std::min(firstPass << passes.size(), spp - sppDone) : spp};
@@ -108,22 +108,22 @@ void renderSamples(const Options &opts, const Frame &frame,
                    const std::string &outputSpectrum,
                    std::unique_ptr<STree> &sdtree) {
   SMDL_SANITY_CHECK(!bandFilm || response);
-  const auto &wavelengths{grid.wavelengths};
-  const auto &scene{*staged.scene};
-  const auto &lights{*staged.lights};
-  const auto *envLight{staged.envLight.get()};
-  const auto *haze{staged.haze.get()};
-  const auto *exteriorMedium{staged.exteriorMedium};
-  const auto &guideBound{staged.guideBound};
+  const Color &wavelengths{grid.wavelengths};
+  const Scene &scene{*staged.scene};
+  const LightSampler &lights{*staged.lights};
+  const EnvLight *envLight{staged.envLight.get()};
+  const smdl::Haze *haze{staged.haze.get()};
+  const MediumStack *exteriorMedium{staged.exteriorMedium};
+  const BoundBox3 &guideBound{staged.guideBound};
   const bool hasValidGuideBounds{staged.hasValidGuideBounds};
-  const auto &camera{frame.camera};
-  const auto numPixelsX{frame.numPixelsX};
-  const auto numPixelsY{frame.numPixelsY};
-  const auto numWindowPixels{frame.numWindowPixels};
-  const auto window{frame.window};
-  const auto spp{frame.spp};
+  const std::optional<Camera> &camera{frame.camera};
+  const size_t numPixelsX{frame.numPixelsX};
+  const size_t numPixelsY{frame.numPixelsY};
+  const size_t numWindowPixels{frame.numWindowPixels};
+  const int4 window{frame.window};
+  const size_t spp{frame.spp};
   const bool isSavingTree{savesGuideTree(opts, frame, outputSpectrum)};
-  auto progressOptions{opts.utility.progress};
+  ProgressOptions progressOptions{opts.utility.progress};
   // How many samples per pixel trained the resumed tree, 0 without one:
   // what the pass schedule continues from.
   size_t guideTrainedSpp{0};
@@ -133,7 +133,8 @@ void renderSamples(const Options &opts, const Frame &frame,
     // tree only steers sampling, so a missing or unreadable one is
     // never fatal: retraining from scratch is always safe, just slower
     // to converge.
-    const auto treeName{opts.image.resume + std::string(GUIDE_TREE_EXTENSION)};
+    const std::string treeName{opts.image.resume +
+                               std::string(GUIDE_TREE_EXTENSION)};
     if (smdl::exists(treeName)) {
       try {
         uint64_t treeSpp{};
@@ -163,8 +164,8 @@ void renderSamples(const Options &opts, const Frame &frame,
     // dilute the spatial resolution; vertices on the far plane clamp
     // into the border cells, where there is nothing worth guiding
     // anyway. Without one, the scene bounds are the geometry bounds.
-    auto center{scene.boundCenter};
-    auto r{scene.boundRadius};
+    float3 center{scene.boundCenter};
+    float r{scene.boundRadius};
     if (hasValidGuideBounds) {
       center = guideBound.center();
       r = 0.75f * smdl::length(guideBound.extent());
@@ -177,7 +178,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // The combination of the guided passes, which also maintains the
   // ADRRS pixel estimates between passes. Null without guiding, where
   // the single pass accumulates straight into `film`.
-  auto combiner{std::unique_ptr<PassCombiner>()};
+  std::unique_ptr<PassCombiner> combiner{};
   if (opts.render.guide.isEnabled) {
     combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY, window);
     // Seed with the prior session's accumulation, so resolve() below
@@ -224,19 +225,21 @@ void renderSamples(const Options &opts, const Frame &frame,
     // alone. Guided checkpoints only happen on pass boundaries, where the
     // pass just rendered is already folded in.
     if (combiner) combiner->resolve(film);
-    const auto path{std::filesystem::path(opts.image.outputRGB)};
-    auto partPath{path};
+    const std::filesystem::path path{opts.image.outputRGB};
+    std::filesystem::path partPath{path};
     partPath.replace_extension("part" + path.extension().string());
     // Developed as the final picture is, a physical sensor's without its
     // noise.
-    auto rgb{developPreview(opts, frame, grid, compiler, film, bandFilm)};
+    std::vector<float> rgb{
+        developPreview(opts, frame, grid, compiler, film, bandFilm)};
     // Filtered like the final write, so that a checkpoint differs from
     // it only in how many samples stand behind it.
     (void)medianFilterRGB(opts.image.medianFilter, rgb, numPixelsX, window);
-    const auto ldr{tonemap(opts.image.tonemap, rgb, film, wavelengths)};
-    if (auto error{smdl::write8bitImage(partPath.string(), //
-                                        int(numPixelsX), int(numPixelsY), 3,
-                                        ldr.data())}) {
+    const std::vector<uint8_t> ldr{
+        tonemap(opts.image.tonemap, rgb, film, wavelengths)};
+    if (std::optional<smdl::Error> error{
+            smdl::write8bitImage(partPath.string(), int(numPixelsX),
+                                 int(numPixelsY), 3, ldr.data())}) {
       error->print();
       return;
     }
@@ -257,15 +260,15 @@ void renderSamples(const Options &opts, const Frame &frame,
     lastCheckpoint = std::chrono::steady_clock::now();
   }};
 
-  const auto passes{
+  const std::vector<size_t> passes{
       solveSamplePasses(spp, opts.render.guide.isEnabled, guideTrainedSpp)};
   // The manifold-NEE chain depth `tracePath()` runs with, 0 when
   // disabled.
-  auto mneeOptions{opts.render.mnee};
+  MNEEOptions mneeOptions{opts.render.mnee};
   // The reflective gather searches this in place of the straight shadow
   // segment, so it is built once per render: the layout's marked casters,
   // with what each claims.
-  auto mneeCasters{MNEECasterSet()};
+  MNEECasterSet mneeCasters{};
   if (opts.render.useMNEE) {
     mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
     mneeOptions.casters = &mneeCasters;
@@ -279,7 +282,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // bound set high enough that clipping it is negligible even for
   // high-albedo transport; giving -max-bounces makes the bound the whole
   // termination rule, so the estimate is the fixed-depth truncation.
-  const auto &pathOptions{opts.render.path};
+  const PathOptions &pathOptions{opts.render.path};
   // What every path of this render is traced against; see
   // `RenderContext`. Built once, shared by every worker thread.
   const RenderContext render{compiler,    scene, lights,        mneeOptions,
@@ -361,7 +364,7 @@ void renderSamples(const Options &opts, const Frame &frame,
     // The per-thread training mirrors for this pass, absorbed into the
     // tree after the pass renders and before it refines; the tree
     // structure the layout mirrors is frozen in between.
-    auto guideAccumulator{std::unique_ptr<GuideAccumulator>()};
+    std::unique_ptr<GuideAccumulator> guideAccumulator{};
     if (shouldRecordPass)
       guideAccumulator = std::make_unique<GuideAccumulator>(*sdtree);
     // Without guiding the whole budget is one pass, so checkpointing has
@@ -447,7 +450,8 @@ void renderSamples(const Options &opts, const Frame &frame,
           blockStats.emplace();
           path.stats = &*blockStats;
         }
-        const auto walk{makePathWalk(render, path)};
+        const std::unique_ptr<PathWalk, PathWalkDeleter> walk{
+            makePathWalk(render, path)};
         // The block's per-pixel band sums, when there is a response to
         // project onto.
         std::vector<double> bandSums(bandFilm ? response->filmBandCount() : 0);
@@ -489,7 +493,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                     ? response->traceWavelengthAt(
                           x, y, lensWavelengthOffset(uint32_t(i), sampleIndex))
                     : 0.0f};
-            if (auto cameraSample{
+            if (CameraSample cameraSample{
                     camera->sample(x, y, sampler, lensWavelength)};
                 cameraSample.weight > 0) {
               // The path's time: the sample's draw within its line's

@@ -32,11 +32,11 @@ constexpr uint16_t FLAG_VARIANTS = 1;
 
 PlacesFile readPlacesFile(const std::string &fileName) {
   requireLittleEndianHost("'.places'");
-  auto stream{std::ifstream(fileName, std::ios::binary)};
+  std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open places buffer ", smdl::QuotedPath(fileName)));
-  auto header{PlacesHeader()};
+  PlacesHeader header{};
   getRecord(stream, header);
   if (!stream || !hasMagic(header.magic, PLACES_MAGIC))
     throw smdl::Error(smdl::concat(
@@ -52,7 +52,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
                                    ": the reserved time-sample field is ",
                                    header.reserved,
                                    " (must be 0 in version 1)"));
-  auto places{PlacesFile()};
+  PlacesFile places{};
   places.version = header.version;
   places.transforms.resize(header.count, float4x4(1.0f));
   for (auto &transform : places.transforms) {
@@ -82,14 +82,14 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
     throw smdl::Error(
         "the variant column must be empty or one entry per record");
   // The column earns its bytes only if some record uses it.
-  auto anyVariant{false};
+  bool anyVariant{false};
   for (const auto variant : places.variants)
     if (variant != PlacesFile::NO_VARIANT) anyVariant = true;
-  auto stream{std::ofstream(fileName, std::ios::binary)};
+  std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(smdl::concat("cannot write places buffer ",
                                    smdl::QuotedPath(fileName)));
-  auto header{PlacesHeader()};
+  PlacesHeader header{};
   setMagic(header.magic, PLACES_MAGIC);
   header.version = 1;
   header.flags = anyVariant ? FLAG_VARIANTS : 0;

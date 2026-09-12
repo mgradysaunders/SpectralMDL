@@ -12,8 +12,6 @@
 
 #include "Sensor/Develop.h"
 
-//--{ The observer's develop
-
 namespace {
 
 // The fraction of the photopic luminous mass the wavelength grid can
@@ -55,7 +53,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
   const size_t numBands{film.getNumBands()};
-  auto rgbImage{std::vector<float>(numPixelsX * numPixelsY * 3)};
+  std::vector<float> rgbImage(numPixelsX * numPixelsY * 3);
   // Down to 90% coverage the CIE projection is a faithful picture, and
   // down to 35% it is still the physically correct band-limited view
   // (tinted or dim) and only earns a note; below that a color has no
@@ -65,7 +63,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   // much of the photopic mass while its "color" is still garbage.
   enum class Mode { TRUE_COLOR, FALSE_COLOR, GRAYSCALE };
   const double coverage{visibleCoverage(wavelengths)};
-  auto mode{Mode::TRUE_COLOR};
+  Mode mode{Mode::TRUE_COLOR};
   if (numBands < 3) {
     mode = Mode::GRAYSCALE;
   } else if (policy.shouldForceFalseColor || coverage < 0.35) {
@@ -80,7 +78,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
       double mean{};
       for (size_t i = 0; i < numBands; i++) mean += filmMean(film, x, y, i);
       mean /= double(numBands);
-      auto texel{&rgbImage[3 * p]};
+      float *texel{&rgbImage[3 * p]};
       texel[0] = texel[1] = texel[2] = float(mean);
     }
     return rgbImage;
@@ -110,7 +108,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
     std::cerr << note;
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
       const size_t x{p % numPixelsX}, y{p / numPixelsX};
-      auto texel{&rgbImage[3 * p]};
+      float *texel{&rgbImage[3 * p]};
       texel[0] = float(filmMean(film, x, y, bandR));
       texel[1] = float(filmMean(film, x, y, bandG));
       texel[2] = float(filmMean(film, x, y, bandB));
@@ -128,13 +126,13 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   // The JIT'd conversion reads only the state it is handed, so the rows
   // go in parallel.
   smdl::parallelFor(0, numPixelsY, [&](size_t y) {
-    const auto state{makeRenderState(wavelengths)};
+    const smdl::State state{makeRenderState(wavelengths)};
     for (size_t x{}; x < numPixelsX; x++) {
-      auto color{Color()};
+      Color color{};
       for (size_t i = 0; i < color.size(); i++)
         color[i] = float(filmMean(film, x, y, i));
-      const auto rgb{compiler.convertColorToRGB(state, color.data())};
-      auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
+      const float3 rgb{compiler.convertColorToRGB(state, color.data())};
+      float *texel{&rgbImage[3 * (x + numPixelsX * y)]};
       texel[0] = rgb[0];
       texel[1] = rgb[1];
       texel[2] = rgb[2];
@@ -142,10 +140,6 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   });
   return rgbImage;
 }
-
-//--}
-
-//--{ The physical develop
 
 namespace {
 
@@ -246,10 +240,10 @@ void refineHamiltonAdams(const ResponseSettings &response,
                                             int4 window, float saturation) {
   const size_t numBands{bands.size()};
   // Each band's sum and its count, side by side.
-  const auto totals{parallelRowFold(
+  const std::vector<double> totals{parallelRowFold(
       size_t(window[1]), size_t(window[3]), std::vector<double>(numBands * 2),
       [&](size_t y) {
-        auto tally{std::vector<double>(numBands * 2)};
+        std::vector<double> tally(numBands * 2);
         for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
           const size_t pixel{y * numPixelsX + x};
           if (response.hasCFA()) {
@@ -260,7 +254,7 @@ void refineHamiltonAdams(const ResponseSettings &response,
             }
             continue;
           }
-          const auto *samples{&values[pixel * bandCount]};
+          const float *samples{&values[pixel * bandCount]};
           if (!std::all_of(bands.begin(), bands.end(),
                            [&](size_t b) { return samples[b] < saturation; }))
             continue;
@@ -274,7 +268,7 @@ void refineHamiltonAdams(const ResponseSettings &response,
       [](std::vector<double> &running, const std::vector<double> &row) {
         for (size_t i = 0; i < running.size(); i++) running[i] += row[i];
       })};
-  auto means{std::vector<double>(numBands)};
+  std::vector<double> means(numBands);
   for (size_t k = 0; k < numBands; k++)
     means[k] = totals[2 * k + 1] > 0 ? totals[2 * k] / totals[2 * k + 1] : 0.0;
   return means;
@@ -282,7 +276,7 @@ void refineHamiltonAdams(const ResponseSettings &response,
 
 [[nodiscard]] std::string spellBands(const ResponseSettings &response,
                                      smdl::Span<const size_t> bands) {
-  auto text{std::string()};
+  std::string text{};
   for (size_t k = 0; k < bands.size(); k++)
     text += smdl::concat(k > 0 ? ", " : "", response.bands[bands[k]].name);
   return text;
@@ -308,7 +302,7 @@ DemosaicMethod demosaicMethod(const ResponseSettings &response,
   if (!response.hasCFA()) return DemosaicMethod::NONE;
   if (bands.size() == 3 && response.cfaColumns == 2 &&
       response.cfaRows() == 2) {
-    const auto &cfa{response.cfa};
+    const std::vector<size_t> &cfa{response.cfa};
     const size_t green{bands[1]};
     // Green twice on one diagonal, and red and blue once each on the
     // other.
@@ -333,7 +327,7 @@ std::vector<float> demosaic(DemosaicMethod method,
   SMDL_SANITY_CHECK(response.hasCFA() &&
                     mosaic.size() == numPixelsX * numPixelsY);
   const size_t numBands{bands.size()};
-  auto planes{std::vector<float>(numPixelsX * numPixelsY * numBands)};
+  std::vector<float> planes(numPixelsX * numPixelsY * numBands);
   const int columns{int(response.cfaColumns)};
   const int rows{int(response.cfaRows())};
   // Bilinear everywhere first: the pixel's own value where the band
@@ -344,7 +338,7 @@ std::vector<float> demosaic(DemosaicMethod method,
     for (int x = window[0]; x < window[2]; x++) {
       const size_t here{response.bandAt(size_t(x), size_t(y))};
       for (size_t k = 0; k < numBands; k++) {
-        auto &out{planes[(size_t(y) * numPixelsX + size_t(x)) * numBands + k]};
+        float &out{planes[(size_t(y) * numPixelsX + size_t(x)) * numBands + k]};
         if (here == bands[k]) {
           out = mosaic[size_t(y) * numPixelsX + size_t(x)];
           continue;
@@ -378,7 +372,7 @@ std::vector<float> developReadout(const Sensor &sensor,
                                   const Readout &readout,
                                   const WhiteBalance &whiteBalance, int4 window,
                                   bool shouldLog) {
-  const auto &response{sensor.settings().response};
+  const ResponseSettings &response{sensor.settings().response};
   const size_t numPixelsX{readout.pixelCountX};
   const size_t numPixelsY{readout.pixelCountY};
   const size_t bandCount{readout.bandCount};
@@ -389,53 +383,55 @@ std::vector<float> developReadout(const Sensor &sensor,
   // `saturation`, 1 unless the well clips below the top code.
   const double black{detector.blackLevel()};
   const double range{detector.codeRange()};
-  const auto saturation{float((double(detector.whiteLevel()) - black) / range)};
-  auto values{std::vector<float>(readout.digitalNumbers.size())};
+  const float saturation{
+      float((double(detector.whiteLevel()) - black) / range)};
+  std::vector<float> values(readout.digitalNumbers.size());
   for (size_t i = 0; i < values.size(); i++)
     values[i] = float((double(readout.digitalNumbers[i]) - black) / range);
   // What the picture is made of: three bands through the fitted matrix,
   // or as they are when they fit the observer badly, or fewer as a gray.
-  enum class Mode { COLOR, FALSE_COLOR, GRAY };
-  const auto rgb{response.rgbBands()};
-  auto bands{std::vector<size_t>()};
+  enum class Mode { TRUE_COLOR, FALSE_COLOR, GRAYSCALE };
+  const std::optional<std::array<size_t, 3>> rgb{response.rgbBands()};
+  std::vector<size_t> bands{};
   if (rgb) {
     bands.assign(rgb->begin(), rgb->end());
   } else {
     for (size_t b = 0; b < response.bands.size(); b++) bands.push_back(b);
   }
-  const auto bandSpan{smdl::Span<const size_t>(bands.data(), bands.size())};
+  const smdl::Span<const size_t> bandSpan{bands.data(), bands.size()};
   // The white balance: the illuminant it names, or for `auto` the one the
   // frame's gray world reads as.
   const bool isAuto{whiteBalance.kind == WhiteBalanceKind::AUTO};
-  auto illuminant{whiteBalanceSpectrum(whiteBalance)};
-  const auto gray{isAuto ? grayWorld(response, bandSpan, values, bandCount,
-                                     numPixelsX, window, saturation)
-                         : std::vector<double>()};
+  SensorSpectrum illuminant{whiteBalanceSpectrum(whiteBalance)};
+  const std::vector<double> gray{isAuto ? grayWorld(response, bandSpan, values,
+                                                    bandCount, numPixelsX,
+                                                    window, saturation)
+                                        : std::vector<double>()};
   const bool hasGray{isAuto &&
                      std::all_of(gray.begin(), gray.end(),
                                  [](double mean) { return mean > 0; })};
   double measuredKelvin{};
-  auto mode{Mode::GRAY};
-  auto fit{ColorFit{}};
-  auto multipliers{std::vector<double>(bands.size(), 1.0)};
+  Mode mode{Mode::GRAYSCALE};
+  ColorFit fit{};
+  std::vector<double> multipliers(bands.size(), 1.0);
   size_t reference{sensor.peakBand()};
   if (rgb) {
     reference = (*rgb)[1];
     fit = sensor.fitColor(*rgb, illuminant);
     if (hasGray && !fit.isSingular) {
-      auto balanced{smdl::double3()};
+      double3 balanced{};
       for (size_t k = 0; k < 3; k++) balanced[k] = gray[k] * fit.multipliers[k];
-      const auto xyz{fit.cameraToXYZ * balanced};
+      const double3 xyz{fit.cameraToXYZ * balanced};
       if (const double sum{xyz.x + xyz.y + xyz.z}; sum > 0) {
-        measuredKelvin = std::clamp(
-            smdl::mccamyKelvin(smdl::double2(xyz.x / sum, xyz.y / sum)),
-            AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
+        measuredKelvin =
+            std::clamp(smdl::mccamyKelvin(double2(xyz.x / sum, xyz.y / sum)),
+                       AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
         illuminant = kelvinSpectrum(measuredKelvin);
         fit = sensor.fitColor(*rgb, illuminant);
         for (size_t k = 0; k < 3; k++) fit.multipliers[k] = gray[1] / gray[k];
       }
     }
-    mode = fit.isFaithful() ? Mode::COLOR : Mode::FALSE_COLOR;
+    mode = fit.isFaithful() ? Mode::TRUE_COLOR : Mode::FALSE_COLOR;
     for (size_t k = 0; k < 3; k++) multipliers[k] = fit.multipliers[k];
   } else {
     // Each band against the most sensitive, whose saturation the ISO was
@@ -460,7 +456,7 @@ std::vector<float> developReadout(const Sensor &sensor,
   // Balanced, and every sample held where the least multiplied band
   // saturates, so that a saturated white stays white rather than taking
   // the color of the other multipliers.
-  const auto ceiling{
+  const float ceiling{
       float(double(saturation) *
             *std::min_element(multipliers.begin(), multipliers.end()))};
   smdl::parallelFor(size_t(window[1]), size_t(window[3]), [&](size_t y) {
@@ -474,13 +470,13 @@ std::vector<float> developReadout(const Sensor &sensor,
         continue;
       }
       for (size_t k = 0; k < bands.size(); k++) {
-        auto &value{values[pixel * bandCount + bands[k]]};
+        float &value{values[pixel * bandCount + bands[k]]};
         value = std::min(float(double(value) * multipliers[k]), ceiling);
       }
     }
   });
-  const auto method{demosaicMethod(response, bandSpan)};
-  const auto planes{
+  const DemosaicMethod method{demosaicMethod(response, bandSpan)};
+  const std::vector<float> planes{
       method == DemosaicMethod::NONE
           ? std::vector<float>()
           : demosaic(method, response, bandSpan,
@@ -493,34 +489,34 @@ std::vector<float> developReadout(const Sensor &sensor,
   }};
   // Into linear sRGB: the fitted matrix to XYZ under the illuminant,
   // Bradford to the sRGB white, and the builtin's matrix out.
-  const auto toSRGB{
-      mode == Mode::COLOR
+  const double3x3 toSRGB{
+      mode == Mode::TRUE_COLOR
           ? smdl::xyzToLinearSRGB() *
                 (smdl::bradfordAdaptation(fit.white, smdl::linearSRGBWhite()) *
                  fit.cameraToXYZ)
-          : smdl::double3x3(1.0)};
-  auto rgbImage{std::vector<float>(numPixelsX * numPixelsY * 3)};
+          : double3x3(1.0)};
+  std::vector<float> rgbImage(numPixelsX * numPixelsY * 3);
   smdl::parallelFor(size_t(window[1]), size_t(window[3]), [&](size_t y) {
     for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
       const size_t pixel{y * numPixelsX + x};
-      auto color{smdl::double3()};
-      if (mode == Mode::GRAY) {
+      double3 color{};
+      if (mode == Mode::GRAYSCALE) {
         double total{};
         for (size_t k = 0; k < bands.size(); k++) total += sampleOf(pixel, k);
-        color = smdl::double3(total / double(bands.size()));
+        color = double3(total / double(bands.size()));
       } else {
-        color = toSRGB * smdl::double3(sampleOf(pixel, 0), sampleOf(pixel, 1),
-                                       sampleOf(pixel, 2));
+        color = toSRGB * double3(sampleOf(pixel, 0), sampleOf(pixel, 1),
+                                 sampleOf(pixel, 2));
       }
       color *= exposure;
-      auto *texel{&rgbImage[3 * pixel]};
+      float *texel{&rgbImage[3 * pixel]};
       texel[0] = float(color.x);
       texel[1] = float(color.y);
       texel[2] = float(color.z);
     }
   });
   if (shouldLog) {
-    const auto balance{
+    const std::string balance{
         !isAuto    ? whiteBalanceName(whiteBalance)
         : !hasGray ? std::string("auto, which found no gray world in the "
                                  "frame and took D65")
@@ -528,19 +524,19 @@ std::vector<float> developReadout(const Sensor &sensor,
             ? smdl::concat("auto, the frame's gray world reading ",
                            smdl::Brief(measuredKelvin, 4), " K")
             : std::string("auto, the frame's gray world")};
-    auto factors{std::string()};
+    std::string factors{};
     for (size_t k = 0; k < bands.size(); k++)
       factors += smdl::concat(k > 0 ? ", " : "", response.bands[bands[k]].name,
                               " ", smdl::Brief(multipliers[k], 4));
     SMDL_LOG_INFO("Develop: white balance ", balance, ": ", factors,
                   ", every sample held at ", smdl::Brief(ceiling, 4));
-    const auto how{smdl::concat(describeDemosaic(method, response),
-                                "; exposed by ",
-                                smdl::Brief(std::log2(exposure), 3),
-                                " EV, so that a metered neutral develops to ",
-                                smdl::Brief(DEVELOP_MIDDLE_GRAY, 3))};
-    const auto names{spellBands(response, bandSpan)};
-    if (mode == Mode::COLOR)
+    const std::string how{
+        smdl::concat(describeDemosaic(method, response), "; exposed by ",
+                     smdl::Brief(std::log2(exposure), 3),
+                     " EV, so that a metered neutral develops to ",
+                     smdl::Brief(DEVELOP_MIDDLE_GRAY, 3))};
+    const std::string names{spellBands(response, bandSpan)};
+    if (mode == Mode::TRUE_COLOR)
       SMDL_LOG_INFO("Develop: ", names,
                     " to XYZ through the matrix fitted "
                     "over ",
@@ -565,5 +561,3 @@ std::vector<float> developReadout(const Sensor &sensor,
   }
   return rgbImage;
 }
-
-//--}

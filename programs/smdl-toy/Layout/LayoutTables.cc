@@ -57,8 +57,8 @@ void printObjectUsageRows(llvm::raw_ostream &os,
   // thing being scanned. Nesting is shown by indenting the path, but the
   // path printed is still the whole thing, because that is what a pattern
   // containing '/' has to match.
-  auto names{std::vector<std::string>()};
-  auto counts{std::vector<std::string>()};
+  std::vector<std::string> names{};
+  std::vector<std::string> counts{};
   size_t nameWidth{};
   size_t countWidth{};
   for (const auto &entry : usage) {
@@ -75,7 +75,7 @@ void printObjectUsageRows(llvm::raw_ostream &os,
   }
   os << '\n';
   for (size_t i = 0; i < usage.size(); i++) {
-    const auto &entry{usage[i]};
+    const ObjectUsage &entry{usage[i]};
     os << "  ";
     llvm::WithColor(os, llvm::HighlightColor::Tag) << names[i];
     os.indent(nameWidth - names[i].size() + 2);
@@ -96,7 +96,7 @@ void printObjectUsageRows(llvm::raw_ostream &os,
 } // namespace
 
 void printObjectTableJSON(const Layout &layout) {
-  auto seenFiles{std::set<std::string, std::less<>>()};
+  std::set<std::string, std::less<>> seenFiles{};
   llvm::json::OStream json{llvm::outs(), 2};
   json.object([&] {
     json.attributeArray("files", [&] {
@@ -106,8 +106,9 @@ void printObjectTableJSON(const Layout &layout) {
         // here.
         if (item.primitive.isActive() || item.curves.isActive) continue;
         if (!seenFiles.insert(item.fileName).second) continue;
-        auto info{ObjectFileInfo()};
-        const auto usage{importObjectUsage(item.fileName, &info)};
+        ObjectFileInfo info{};
+        const std::vector<ObjectUsage> usage{
+            importObjectUsage(item.fileName, &info)};
         objectListingJSON(json, item.fileName, info, usage);
       }
     });
@@ -116,15 +117,15 @@ void printObjectTableJSON(const Layout &layout) {
 }
 
 void printObjectTable(const Layout &layout) {
-  auto &os{llvm::outs()};
-  auto seenFiles{std::set<std::string, std::less<>>()};
+  llvm::raw_ostream &os{llvm::outs()};
+  std::set<std::string, std::less<>> seenFiles{};
   for (const auto &item : layout.items) {
     if (item.primitive.isActive()) continue;
     if (!seenFiles.insert(item.fileName).second) continue;
     // A groom has nothing to 'select', but silence would read as a
     // hole, so it gets its one-line summary.
     if (item.curves.isActive) {
-      const auto file{readCurvesFile(item.fileName)};
+      const CurvesFile file{readCurvesFile(item.fileName)};
       os << smdl::concat(item.fileName, ": curves, ",
                          smdl::Counted(file.strandCount(), "strand"), ", ",
                          smdl::Counted(file.points.size(), "point"), ", ",
@@ -132,8 +133,9 @@ void printObjectTable(const Layout &layout) {
                          file.hasRootUVs() ? ", root UVs" : "", "\n\n");
       continue;
     }
-    auto info{ObjectFileInfo()};
-    const auto usage{importObjectUsage(item.fileName, &info)};
+    ObjectFileInfo info{};
+    const std::vector<ObjectUsage> usage{
+        importObjectUsage(item.fileName, &info)};
     uint64_t numTriangles{};
     for (const auto &entry : usage)
       if (entry.depth == 0) numTriangles += entry.triangleCount;
@@ -143,7 +145,7 @@ void printObjectTable(const Layout &layout) {
     if (!info.animations.empty()) {
       os << "  animations:";
       for (size_t i = 0; i < info.animations.size(); i++) {
-        const auto &clip{info.animations[i]};
+        const ClipInfo &clip{info.animations[i]};
         os << (i == 0 ? " " : ", ")
            << smdl::concat(smdl::Quoted(clip.name), " (",
                            smdl::Brief(clip.duration, 3), " s)");
@@ -175,21 +177,21 @@ std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
                          item.curves.key(),
                      item.selection.key() + "|" + item.materials.key());
   }};
-  auto multiplicity{std::map<std::pair<std::string, std::string>, uint32_t>()};
+  std::map<std::pair<std::string, std::string>, uint32_t> multiplicity{};
   for (const auto &item : layout.items)
     multiplicity[importKey(item)] +=
         item.batchXfs.empty() ? 1 : uint32_t(item.batchXfs.size());
-  auto usage{std::vector<MaterialUsage>()};
-  auto indexByName{std::map<std::string, size_t, std::less<>>()};
-  auto seenImports{std::set<std::pair<std::string, std::string>>()};
+  std::vector<MaterialUsage> usage{};
+  std::map<std::string, size_t, std::less<>> indexByName{};
+  std::set<std::pair<std::string, std::string>> seenImports{};
   for (const auto &item : layout.items) {
-    const auto key{importKey(item)};
+    const std::pair<std::string, std::string> key{importKey(item)};
     if (!seenImports.insert(key).second) continue;
     // A primitive or a groom is one implicit mesh with the one name its
     // asset assigned; there is no file to ask.
-    auto itemUsage{std::vector<MaterialUsage>()};
+    std::vector<MaterialUsage> itemUsage{};
     if (item.primitive.isActive() || item.curves.isActive) {
-      auto &entry{itemUsage.emplace_back()};
+      MaterialUsage &entry{itemUsage.emplace_back()};
       entry.name = "";
       entry.meshCount = 1;
       entry.instanceCount = 1;
@@ -203,7 +205,7 @@ std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
       if (isNew) {
         usage.push_back(std::move(entry));
       } else {
-        auto &merged{usage[slot->second]};
+        MaterialUsage &merged{usage[slot->second]};
         merged.meshCount += entry.meshCount;
         merged.instanceCount += entry.instanceCount;
         merged.triangleCount += entry.triangleCount;
@@ -216,7 +218,7 @@ std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
 
 void printMaterialTableJSON(const smdl::Compiler *compiler,
                             const Layout &layout) {
-  const auto usage{collectMaterialUsage(layout)};
+  const std::vector<MaterialUsage> usage{collectMaterialUsage(layout)};
   llvm::json::OStream json{llvm::outs(), 2};
   json.object([&] {
     json.attributeArray("materials", [&] {
@@ -244,10 +246,10 @@ void printMaterialTableJSON(const smdl::Compiler *compiler,
 }
 
 void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
-  auto seenFiles{std::set<std::string, std::less<>>()};
+  std::set<std::string, std::less<>> seenFiles{};
   for (const auto &item : layout.items) seenFiles.insert(item.fileName);
-  const auto usage{collectMaterialUsage(layout)};
-  auto &os{llvm::outs()};
+  const std::vector<MaterialUsage> usage{collectMaterialUsage(layout)};
+  llvm::raw_ostream &os{llvm::outs()};
   uint32_t numMeshes{};
   uint32_t numInstances{};
   for (const auto &entry : usage)
@@ -263,8 +265,8 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
   if (usage.empty()) return;
   // Pad the name and count fields to a common width so the statuses line up
   // in a column, which is the thing being scanned for.
-  auto names{std::vector<std::string>()};
-  auto counts{std::vector<std::string>()};
+  std::vector<std::string> names{};
+  std::vector<std::string> counts{};
   size_t nameWidth{};
   size_t countWidth{};
   for (const auto &entry : usage) {
@@ -280,7 +282,7 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
   }};
   os << '\n';
   for (size_t i = 0; i < usage.size(); i++) {
-    const auto &entry{usage[i]};
+    const MaterialUsage &entry{usage[i]};
     os << "  ";
     llvm::WithColor(os, llvm::HighlightColor::Tag) << names[i];
     pad(names[i], nameWidth);
@@ -305,7 +307,8 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
       os << '\n';
       continue;
     }
-    const auto matches{compiler->findMaterials(entry.name)};
+    const std::vector<const smdl::JIT::MaterialDef *> matches{
+        compiler->findMaterials(entry.name)};
     if (matches.empty()) {
       llvm::WithColor(os, llvm::HighlightColor::Error) << "missing";
       os << "    no MDL material matches\n";
@@ -328,15 +331,15 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
 }
 
 void dumpPlaces(const std::string &fileName) {
-  const auto places{readPlacesFile(fileName)};
-  auto &os{llvm::outs()};
+  const PlacesFile places{readPlacesFile(fileName)};
+  llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat("# ", fileName, ": version ", places.version, ", ",
                      smdl::Counted(places.transforms.size(), "record"),
                      places.hasVariants() ? ", with a variant column" : "",
                      "\n# 'thing' stands for whatever asset or group the "
                      "buffer scatters.\n");
   for (size_t i = 0; i < places.transforms.size(); i++) {
-    const auto &transform{places.transforms[i]};
+    const float4x4 &transform{places.transforms[i]};
     os << "place thing matrix";
     for (int row = 0; row < 4; row++)
       for (int column = 0; column < 4; column++)
@@ -348,16 +351,16 @@ void dumpPlaces(const std::string &fileName) {
 }
 
 void dumpCurves(const std::string &fileName) {
-  const auto file{readCurvesFile(fileName)};
+  const CurvesFile file{readCurvesFile(fileName)};
   BoundBox3 bound{};
-  auto minRadius{+INF};
-  auto maxRadius{-INF};
+  float minRadius{+INF};
+  float maxRadius{-INF};
   for (const auto &point : file.points) {
     bound.extend(float3(point.x, point.y, point.z));
     minRadius = std::min(minRadius, point.w);
     maxRadius = std::max(maxRadius, point.w);
   }
-  auto &os{llvm::outs()};
+  llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat(fileName, ": version ", file.version, ", ",
                      CurvesFile::basisName(file.basis), " basis\n  ",
                      smdl::Counted(file.strandCount(), "strand"), ", ",
@@ -374,9 +377,9 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     outputFileName = std::filesystem::path(layoutFileName)
                          .replace_extension(PLACES_EXTENSION)
                          .string();
-  auto diags{LayoutDiagnostics()};
-  const auto &source{diags.loadSource(layoutFileName)};
-  const auto document{parseLayout(
+  LayoutDiagnostics diags{};
+  const LayoutSource &source{diags.loadSource(layoutFileName)};
+  const LayoutDocument document{parseLayout(
       diags, source,
       std::filesystem::path(layoutFileName).parent_path().string())};
   if (!diags.empty()) diags.printAll();
@@ -384,12 +387,12 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     throw smdl::Error(smdl::concat("cannot pack ",
                                    smdl::QuotedPath(layoutFileName), ": ",
                                    diags.summary()));
-  auto places{PlacesFile()};
-  auto assetName{std::string()};
+  PlacesFile places{};
+  std::string assetName{};
   using Overrides = std::map<std::string, std::string, std::less<>>;
-  auto variants{std::vector<Overrides>()};
-  auto variantIndexByOverrides{std::map<Overrides, uint32_t>()};
-  auto anyVariant{false};
+  std::vector<Overrides> variants{};
+  std::map<Overrides, uint32_t> variantIndexByOverrides{};
+  bool anyVariant{false};
   for (const auto &placement : document.placements) {
     // Only ordinary places pack: each is one record, and everything
     // else (imports, bulk places) has no record to become.
@@ -424,7 +427,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
           ": a 'motion' track on a place has no record to live in; write it "
           "on the bulk place instead, where it moves the whole scatter"));
     places.transforms.push_back(placement.transform);
-    auto variantIndex{PlacesFile::NO_VARIANT};
+    uint32_t variantIndex{PlacesFile::NO_VARIANT};
     if (!placement.overrides.empty()) {
       const auto [entry, isNew]{variantIndexByOverrides.try_emplace(
           placement.overrides, uint32_t(variants.size()))};
@@ -441,14 +444,14 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
   if (!anyVariant) places.variants.clear();
   writePlacesFile(outputFileName, places);
   // The wrapper the buffer wants to live under, ready to paste.
-  auto &os{llvm::outs()};
+  llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat(
       "Packed ", smdl::Counted(places.transforms.size(), "record"),
       anyVariant
           ? smdl::concat(" over ", smdl::Counted(variants.size(), "variant"))
           : std::string(),
       " into ", smdl::QuotedPath(outputFileName), ". Scatter it with:\n\n");
-  const auto relative{
+  const std::string relative{
       std::filesystem::path(outputFileName).filename().string()};
   os << smdl::concat("  place ", assetName, " * \"", relative, "\"");
   if (anyVariant) {

@@ -149,7 +149,7 @@ struct CameraOptions final {
 /// One pixel of the frame in scene units, the frame's height over the
 /// picture's rows, which is what a distance on the film is stated in
 /// pixels against.
-[[nodiscard]] 
+[[nodiscard]]
 inline float pixelPitch(const CameraOptions &options) noexcept {
   return options.frameSize.y / float(options.resolution.y);
 }
@@ -158,7 +158,7 @@ inline float pixelPitch(const CameraOptions &options) noexcept {
 /// one, or the distance from the camera to what it looks at when none
 /// was stated, which is what a zero `CameraOptions::focus` asks for.
 /// `INF` is focus at infinity.
-[[nodiscard]] 
+[[nodiscard]]
 inline float focusDistanceOf(const CameraOptions &options) noexcept {
   return options.focus > 0 ? options.focus
                            : length(options.lookTo - options.lookFrom);
@@ -237,8 +237,6 @@ struct DepthOfField final {
   /// Does anything blur? False for a pinhole.
   [[nodiscard]] bool hasLimits() const noexcept { return nearLimit < INF; }
 };
-
-
 
 /// The depth of field of a lens of focal length `focalLength` at
 /// f/`fNumber`, focused at `focus` (`INF` for infinity), on a frame of

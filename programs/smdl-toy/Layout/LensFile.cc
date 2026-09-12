@@ -40,7 +40,7 @@ constexpr float PRINTED_ABBE_TOLERANCE = 0.06f;
 // A medium name in upper case, the case the catalog spells in, so that
 // two names compare the way the catalog matches them: ignoring case.
 [[nodiscard]] std::string foldMediumName(std::string_view name) {
-  auto folded{std::string(name)};
+  std::string folded{name};
   for (auto &ch : folded)
     if ('a' <= ch && ch <= 'z') ch = char(ch - 'a' + 'A');
   return folded;
@@ -78,7 +78,7 @@ private:
     if (mToken.text == "lens") {
       parseLensBlock();
     } else {
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.text == "surface" || mToken.text == "stop") {
@@ -120,10 +120,10 @@ private:
       mDiags.error(location(), "expected '{' after 'lens'");
       throw Recover();
     }
-    auto &lens{mDocument.lens};
+    LensPrescription &lens{mDocument.lens};
     // Where each surface wrote the name of its medium, or nowhere, in
     // step with `lens.surfaces`.
-    auto mediumLocs{std::vector<LayoutLocation>()};
+    std::vector<LayoutLocation> mediumLocs{};
     parseSettings("a lens setting", [&](const std::string &key,
                                         const LayoutLocation &keyLoc) {
       if (key == "name") {
@@ -131,7 +131,7 @@ private:
       } else if (key == "medium") {
         parseMediumDefinition();
       } else if (key == "surface" || key == "stop") {
-        const auto isStop{key == "stop"};
+        const bool isStop{key == "stop"};
         if (lens.surfaces.size() == LENS_MAX_SURFACES) {
           mDiags.error(keyLoc,
                        smdl::concat("expected at most ", LENS_MAX_SURFACES,
@@ -149,11 +149,11 @@ private:
           }
           mStopLoc = keyLoc;
         }
-        auto mediumLoc{LayoutLocation()};
+        LayoutLocation mediumLoc{};
         lens.surfaces.push_back(parseSurface(keyLoc, isStop, mediumLoc));
         mediumLocs.push_back(mediumLoc);
       } else {
-        auto &error{mDiags.error(
+        LayoutDiagnostic &error{mDiags.error(
             keyLoc, smdl::concat("unknown lens setting ", smdl::Quoted(key),
                                  " (expected name, medium, surface, or "
                                  "stop)"))};
@@ -190,16 +190,16 @@ private:
                                 smdl::Quoted(isStop ? "stop" : "surface")));
       throw Recover();
     }
-    auto surface{LensSurface{}};
+    LensSurface surface{};
     surface.isStop = isStop;
-    auto hasDiameter{false};
-    auto iorLoc{LayoutLocation()};
-    auto mediumKeyLoc{LayoutLocation()};
+    bool hasDiameter{false};
+    LayoutLocation iorLoc{};
+    LayoutLocation mediumKeyLoc{};
     parseSettings("a surface setting", [&](const std::string &key,
                                            const LayoutLocation &keyLoc) {
       if (isStop && (key == "radius" || key == "ior" || key == "medium" ||
                      key == "conic" || key == "aspheric")) {
-        auto &error{mDiags.error(
+        LayoutDiagnostic &error{mDiags.error(
             keyLoc, smdl::concat(smdl::Quoted(key),
                                  " has no meaning on the aperture stop"))};
         if (key == "ior" || key == "medium") {
@@ -214,7 +214,7 @@ private:
       if (key == "radius") {
         surface.radius = finite(keyLoc, key, numbers<1>()[0]);
       } else if (key == "thickness") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
           mDiags
               .error(keyLoc, "expected a nonnegative number for 'thickness' "
@@ -225,7 +225,7 @@ private:
         }
         surface.thickness = value;
       } else if (key == "ior") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 1)) {
           mDiags
               .error(keyLoc, smdl::concat("expected 'ior' to be at least 1, "
@@ -249,7 +249,7 @@ private:
         surface.mediumName = parseMediumName();
         mediumKeyLoc = keyLoc;
       } else if (key == "diameter") {
-        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        const float value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value > 0)) {
           mDiags.error(keyLoc, "expected a positive number for 'diameter' "
                                "(the clear aperture, in millimeters)");
@@ -262,7 +262,7 @@ private:
       } else if (key == "aspheric") {
         parseAspheric(surface);
       } else {
-        auto &error{mDiags.error(
+        LayoutDiagnostic &error{mDiags.error(
             keyLoc,
             smdl::concat("unknown surface setting ", smdl::Quoted(key),
                          isStop ? " (expected thickness or diameter)"
@@ -296,7 +296,7 @@ private:
   // common, so all-zero coefficients parse and mean a surface that is
   // exactly its conic.
   void parseAspheric(LensSurface &surface) {
-    auto value{0.0f};
+    float value{0.0f};
     while (mToken.kind == Token::WORD && tryNumber(mToken, value)) {
       if (surface.aspheric.size() == LENS_MAX_ASPHERIC_TERMS) {
         mDiags.error(location(),
@@ -325,7 +325,7 @@ private:
                                "letter, then letters, digits, '-', and '_'");
       throw Recover();
     }
-    auto name{mToken.text};
+    std::string name{mToken.text};
     advance();
     return name;
   }
@@ -335,11 +335,11 @@ private:
   // pointed at its name. Every key takes one number, or one row each of
   // 'sellmeier', and the last one wins, as a surface's do.
   void parseMediumDefinition() {
-    auto definition{MediumDefinition{}};
+    MediumDefinition definition{};
     definition.nameLoc = location();
     definition.name = parseMediumName();
-    const auto &name{definition.name};
-    if (const auto *entry{smdl::findOpticalGlass(name)}) {
+    const std::string &name{definition.name};
+    if (const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass(name)}) {
       mDiags
           .error(definition.nameLoc,
                  name == entry->name
@@ -352,7 +352,7 @@ private:
                     "needs a name of its own");
       throw Recover();
     }
-    if (const auto *first{findDefinition(name)}) {
+    if (const MediumDefinition *first{findDefinition(name)}) {
       mDiags
           .error(definition.nameLoc, smdl::concat("medium ", smdl::Quoted(name),
                                                   " is defined twice"))
@@ -370,15 +370,15 @@ private:
                    smdl::concat("expected '{' after 'medium ", name, "'"));
       throw Recover();
     }
-    auto nd{std::optional<float>()};
-    auto abbeNumber{std::optional<float>()};
-    auto partialDispersion{std::optional<float>()};
-    auto ndLoc{LayoutLocation()};
-    auto abbeLoc{LayoutLocation()};
-    auto partialLoc{LayoutLocation()};
-    auto sellmeierLoc{LayoutLocation()};
-    auto b{std::array<float, 3>()};
-    auto c{std::array<float, 3>()};
+    std::optional<float> nd{};
+    std::optional<float> abbeNumber{};
+    std::optional<float> partialDispersion{};
+    LayoutLocation ndLoc{};
+    LayoutLocation abbeLoc{};
+    LayoutLocation partialLoc{};
+    LayoutLocation sellmeierLoc{};
+    std::array<float, 3> b{};
+    std::array<float, 3> c{};
     parseSettings("a medium setting", [&](const std::string &key,
                                           const LayoutLocation &keyLoc) {
       if (key == "ior") {
@@ -423,13 +423,13 @@ private:
       }
       const float index{*nd};
       const float number{*abbeNumber};
-      if (auto *refusal{buildMedium(definition, [&] {
+      if (LayoutDiagnostic * refusal{buildMedium(definition, [&] {
             return smdl::OpticalGlass::abbe(index, number, partialDispersion);
           })}) {
         // When the fit holds on the normal line, the stated partial
         // dispersion is what was refused, and where the line puts it is
         // the number to read it against.
-        auto normal{smdl::OpticalGlass()};
+        smdl::OpticalGlass normal{};
         if (partialDispersion && !smdl::catchAndReturnError([&] {
               normal = smdl::OpticalGlass::abbe(index, number);
             }))
@@ -471,12 +471,12 @@ private:
       throw Recover();
     }
     const auto row{[&](const LayoutLocation &keyLoc, const std::string &key) {
-      auto values{numbers<3>()};
+      std::array<float, 3> values{numbers<3>()};
       for (auto &value : values) value = finite(keyLoc, key, value);
       return values;
     }};
-    auto bLoc{LayoutLocation()};
-    auto cLoc{LayoutLocation()};
+    LayoutLocation bLoc{};
+    LayoutLocation cLoc{};
     parseSettings("a row of coefficients", [&](const std::string &key,
                                                const LayoutLocation &keyLoc) {
       if (key == "b") {
@@ -505,7 +505,7 @@ private:
   template <typename Factory>
   [[nodiscard]] LayoutDiagnostic *buildMedium(MediumDefinition &definition,
                                               Factory &&factory) {
-    const auto error{
+    const std::optional<smdl::Error> error{
         smdl::catchAndReturnError([&] { definition.medium = factory(); })};
     if (!error) return nullptr;
     return &mDiags.error(definition.nameLoc,
@@ -534,7 +534,7 @@ private:
                     "values the coefficients are checked against, and a "
                     "disagreement is usually a coefficient typed wrong");
     }};
-    const auto &medium{definition.medium};
+    const smdl::OpticalGlass &medium{definition.medium};
     if (nd && !(std::abs(medium.nd() - *nd) <= PRINTED_ND_TOLERANCE))
       warn(ndLoc, "ior", *nd, medium.nd(), 6);
     if (abbeNumber && !(std::abs(medium.abbeNumber() - *abbeNumber) <=
@@ -547,14 +547,16 @@ private:
   // follow the surface that names it. A file's own medium cannot take a
   // built-in name, so which of the two is searched first decides nothing.
   void resolveMedia(const std::vector<LayoutLocation> &mediumLocs) {
-    auto &surfaces{mDocument.lens.surfaces};
+    std::vector<LensSurface> &surfaces{mDocument.lens.surfaces};
     for (size_t i = 0; i < surfaces.size(); i++) {
-      auto &surface{surfaces[i]};
+      LensSurface &surface{surfaces[i]};
       if (surface.mediumName.empty()) continue;
-      if (const auto *entry{smdl::findOpticalGlass(surface.mediumName)}) {
+      if (const smdl::OpticalGlassEntry *entry{
+              smdl::findOpticalGlass(surface.mediumName)}) {
         surface.medium = entry->glass;
         surface.mediumName = std::string(entry->name);
-      } else if (auto *definition{findDefinition(surface.mediumName)}) {
+      } else if (MediumDefinition *
+                 definition{findDefinition(surface.mediumName)}) {
         surface.medium = definition->medium;
         surface.mediumName = definition->name;
         definition->isUsed = true;
@@ -572,7 +574,7 @@ private:
 
   // The file's own definition of `name`, ignoring case, or null.
   [[nodiscard]] MediumDefinition *findDefinition(std::string_view name) {
-    const auto folded{foldMediumName(name)};
+    const std::string folded{foldMediumName(name)};
     for (auto &definition : mMedia)
       if (foldMediumName(definition.name) == folded) return &definition;
     return nullptr;
@@ -582,24 +584,24 @@ private:
   // likely, and the catalog's names, which are few enough to list.
   void reportUnknownMedium(const std::string &name,
                            const LayoutLocation &nameLoc) {
-    auto names{std::vector<std::string_view>()};
+    std::vector<std::string_view> names{};
     for (const auto &entry : smdl::opticalGlassCatalog())
       names.push_back(entry.name);
-    const auto numBuiltIn{names.size()};
+    const size_t numBuiltIn{names.size()};
     for (const auto &definition : mMedia) names.push_back(definition.name);
-    auto &error{mDiags.error(
+    LayoutDiagnostic &error{mDiags.error(
         nameLoc, smdl::concat("unknown medium ", smdl::Quoted(name)))};
     // The distance is taken between folded names, since the match ignores
     // case, and the suggestion is spelled as the catalog or the file
     // spells it.
-    auto folded{std::vector<std::string>()};
+    std::vector<std::string> folded{};
     for (const auto known : names) folded.push_back(foldMediumName(known));
-    auto candidates{
-        std::vector<std::string_view>(folded.begin(), folded.end())};
-    if (const auto nearest{
+    const std::vector<std::string_view> candidates(folded.begin(),
+                                                   folded.end());
+    if (const std::string_view nearest{
             smdl::suggestNearest(foldMediumName(name), candidates)};
         !nearest.empty()) {
-      const auto i{
+      const size_t i{
           size_t(std::find(candidates.begin(), candidates.end(), nearest) -
                  candidates.begin())};
       error.note({},
@@ -638,7 +640,7 @@ bool LensPrescription::isDispersive() const noexcept {
 }
 
 LensDocument parseLens(LayoutDiagnostics &diags, const LayoutSource &source) {
-  auto document{LensDocument()};
+  LensDocument document{};
   document.source = &source;
   Parser(diags, source, document).parse();
   return document;

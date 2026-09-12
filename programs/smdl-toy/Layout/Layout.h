@@ -79,7 +79,7 @@ public:
   /// without the feature keeps its historical cache key.
   [[nodiscard]] std::string key() const {
     if (!isActive()) return {};
-    auto result{std::string("subdivide ") + std::to_string(levels)};
+    std::string result{"subdivide " + std::to_string(levels)};
     if (scheme == Scheme::LOOP) result += " loop";
     if (!isSmooth) result += " linear";
     if (isDisplaced) result += " displace";
@@ -163,7 +163,7 @@ public:
   /// A key that distinguishes two specs, for callers that cache by it.
   [[nodiscard]] std::string key() const {
     if (!isActive()) return {};
-    auto result{std::string(name())};
+    std::string result{name()};
     if (hasRadius()) result += " r=" + std::to_string(radius);
     if (hasHeight()) result += " h=" + std::to_string(height);
     if (hasSize())
@@ -219,8 +219,7 @@ public:
   /// (file, spec).
   [[nodiscard]] std::string key() const {
     if (!isActive) return {};
-    auto result{
-        std::string(mode == Mode::RIBBON ? "curves ribbon" : "curves tube")};
+    std::string result{mode == Mode::RIBBON ? "curves ribbon" : "curves tube"};
     if (radiusScale != 1.0f) result += " x" + std::to_string(radiusScale);
     return result;
   }
@@ -278,7 +277,7 @@ public:
   /// nothing about materials keeps its historical cache key.
   [[nodiscard]] std::string key() const {
     if (empty()) return {};
-    auto result{std::string("material")};
+    std::string result{"material"};
     if (!all.empty()) result += " " + all;
     for (const auto &[slot, target] : bySlot)
       result += " \"" + slot + "\"=" + target;

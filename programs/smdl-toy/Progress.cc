@@ -18,7 +18,7 @@ namespace {
 // How often the bar may redraw. About 10 Hz, which reads as continuous
 // motion and costs nothing. Deliberately a time and not a count of work
 // units: the same render loop covers a 64x64 thumbnail and a 4K frame.
-constexpr auto REDRAW_INTERVAL{std::chrono::milliseconds(100)};
+constexpr std::chrono::milliseconds REDRAW_INTERVAL{100};
 
 // The narrowest bar worth drawing. Below this the ladder in `drawLocked()`
 // drops a field instead.
@@ -93,7 +93,7 @@ constexpr size_t SPINNER_WIDTH{2};
 // Format a count in at most 5 columns: `999`, `436k`, `8.3M`, `1.2G`.
 [[nodiscard]] std::string formatCount(uint64_t value) {
   const auto scaled{[](uint64_t whole, uint64_t tenths, char suffix) {
-    auto str{std::to_string(whole)};
+    std::string str{std::to_string(whole)};
     if (whole < 10) {
       str += '.';
       str += char('0' + tenths);
@@ -116,10 +116,10 @@ constexpr size_t SPINNER_WIDTH{2};
   // dim rule instead, so all of its columns are bar.
   const size_t cells{useUnicode ? width : width - 2};
   const double filled{std::clamp(fraction, 0.0, 1.0) * double(cells)};
-  const auto full{std::min(size_t(filled), cells)};
+  const size_t full{std::min(size_t(filled), cells)};
   const bool hasHalfCell{filled - double(full) >= 0.5 && full < cells};
-  const auto empty{cells - full - size_t(hasHalfCell)};
-  auto str{std::string()};
+  const size_t empty{cells - full - size_t(hasHalfCell)};
+  std::string str{};
   if (useUnicode) {
     str += COLOR_BAR;
     for (size_t i = 0; i < full; i++) str += "━";
@@ -144,12 +144,12 @@ constexpr size_t SPINNER_WIDTH{2};
 // complete, colored.
 [[nodiscard]] std::string renderSpinner(double elapsedSeconds, bool isDone,
                                         bool useUnicode) {
-  auto str{std::string()};
+  std::string str{};
   if (isDone) {
     str += COLOR_DONE;
     str += useUnicode ? DONE_GLYPH_UNICODE : DONE_GLYPH_ASCII;
   } else {
-    const auto tick{
+    const uint64_t tick{
         uint64_t(std::max(elapsedSeconds, 0.0) / SPINNER_FRAME_SECONDS)};
     str += COLOR_BAR;
     str +=
@@ -168,11 +168,11 @@ std::atomic<ProgressBar *> sActive{nullptr};
 } // namespace
 
 [[nodiscard]] std::string formatDuration(double seconds) {
-  auto ticks{uint64_t(std::max(seconds, 0.0))};
-  const auto hours{ticks / 3600};
-  const auto minutes{(ticks / 60) % 60};
-  const auto secs{ticks % 60};
-  auto str{std::string()};
+  uint64_t ticks{uint64_t(std::max(seconds, 0.0))};
+  const uint64_t hours{ticks / 3600};
+  const uint64_t minutes{(ticks / 60) % 60};
+  const uint64_t secs{ticks % 60};
+  std::string str{};
   if (hours > 0) {
     str += std::to_string(hours);
     str += ':';
@@ -236,7 +236,7 @@ void ProgressBar::setNote(std::string note) {
 }
 
 void ProgressBar::finish() {
-  auto summary{std::string()};
+  std::string summary{};
   {
     std::lock_guard<std::mutex> guard{mMutex};
     if (mIsFinished) return;
@@ -312,15 +312,15 @@ std::string ProgressBar::etaLocked(uint64_t done, double elapsedSeconds,
 void ProgressBar::reportLocked(uint64_t done) {
   if (!mIsReporting) return;
   done = std::min(done, mOptions.total);
-  const auto now{Clock::now()};
+  const Clock::time_point now{Clock::now()};
   const double elapsed{std::chrono::duration<double>(now - mStartTime).count()};
   const double fraction{double(done) / double(mOptions.total)};
   const double remaining{secondsRemainingLocked(done, elapsed, fraction)};
   // Written whole and renamed into place, because the reader is polling:
   // a truncate-and-write would hand it half a line often enough to see.
-  const auto partPath{mOptions.filePath + ".part"};
+  const std::string partPath{mOptions.filePath + ".part"};
   {
-    auto stream{std::ofstream(partPath, std::ios::trunc)};
+    std::ofstream stream{partPath, std::ios::trunc};
     if (!stream) return;
     stream << "done=" << done << " total=" << mOptions.total
            << " elapsed=" << std::fixed << std::setprecision(2) << elapsed
@@ -335,25 +335,26 @@ void ProgressBar::drawLocked(uint64_t done) {
   if (!mIsEnabled) return;
   done = std::min(done, mOptions.total);
   const double fraction{double(done) / double(mOptions.total)};
-  auto label{mOptions.label};
+  std::string label{mOptions.label};
   if (!mNote.empty()) label += " (" + mNote + ")";
-  auto percent{std::to_string(uint64_t(fraction * 100.0)) + "%"};
+  std::string percent{std::to_string(uint64_t(fraction * 100.0)) + "%"};
   percent.insert(percent.begin(), 4 - std::min<size_t>(percent.size(), 4), ' ');
   // The completed counter is padded to the width of the total, so that
   // the fields to its left keep still as it counts up instead of drifting
   // a column at every power of ten.
-  auto doneText{formatCount(done / mOptions.displayScale)};
-  const auto totalText{formatCount(mOptions.total / mOptions.displayScale)};
+  std::string doneText{formatCount(done / mOptions.displayScale)};
+  const std::string totalText{
+      formatCount(mOptions.total / mOptions.displayScale)};
   if (doneText.size() < totalText.size())
     doneText.insert(doneText.begin(), totalText.size() - doneText.size(), ' ');
-  const auto counts{
+  const std::string counts{
       doneText + "/" + totalText +
       (mOptions.units.empty() ? std::string() : " " + mOptions.units)};
-  const auto now{Clock::now()};
+  const Clock::time_point now{Clock::now()};
   const double elapsedSeconds{
       std::chrono::duration<double>(now - mStartTime).count()};
-  const auto elapsed{formatDuration(elapsedSeconds)};
-  const auto eta{etaLocked(done, elapsedSeconds, fraction)};
+  const std::string elapsed{formatDuration(elapsedSeconds)};
+  const std::string eta{etaLocked(done, elapsedSeconds, fraction)};
   // The terminal width is re-read on every draw, which is what makes a
   // resize mid-render correct itself. One column is held back because a
   // write into the last one wraps in some terminals, and a bar that wraps
@@ -391,7 +392,7 @@ void ProgressBar::drawLocked(uint64_t done) {
     barWidth = solveBarWidth();
   }
   barWidth = std::min(barWidth, MAX_BAR_WIDTH);
-  auto line{std::string("\r")};
+  std::string line{"\r"};
   if (barWidth == 0 && budget < SPINNER_WIDTH + percent.size()) {
     // Narrower than "100%" and its spinner. Nothing legible fits, so
     // leave the line to whatever else wants it.
@@ -428,7 +429,7 @@ void ProgressBar::drawLocked(uint64_t done) {
 
 void ProgressLogSink::logMessage(smdl::LogLevel level,
                                  std::string_view message) {
-  if (auto *bar{ProgressBar::active()}) {
+  if (ProgressBar * bar{ProgressBar::active()}) {
     bar->printThrough([&] { mPrinter.logMessage(level, message); });
   } else {
     mPrinter.logMessage(level, message);

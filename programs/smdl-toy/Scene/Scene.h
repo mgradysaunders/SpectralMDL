@@ -94,11 +94,11 @@ public:
                              const float3 &rayDir) const noexcept;
 
 public:
-  const MeshInstance *instance{};        ///< The mesh instance.
-  uint32_t instIndex{INVALID_INDEX};     ///< The mesh instance index.
-  uint32_t meshIndex{INVALID_INDEX};     ///< The mesh index.
-  uint32_t faceIndex{INVALID_INDEX};     ///< The face index.
-  uint32_t matIndex{INVALID_INDEX};      ///< The material index.
+  const MeshInstance *instance{};              ///< The mesh instance.
+  uint32_t instIndex{INVALID_INDEX};           ///< The mesh instance index.
+  uint32_t meshIndex{INVALID_INDEX};           ///< The mesh index.
+  uint32_t faceIndex{INVALID_INDEX};           ///< The face index.
+  uint32_t matIndex{INVALID_INDEX};            ///< The material index.
   const smdl::JIT::MaterialDef *materialDef{}; ///< The material definition.
   float3 bary{};     ///< The barycentric coordinate; (0, u, v) on a primitive.
   float3 point{};    ///< The point.
@@ -228,8 +228,8 @@ public:
   /// this, so the hit, the manifold walk, and the light sampler see one
   /// triangle. Only for a mesh that `deforms()`.
   [[nodiscard]] Vert vertAt(uint32_t index, float time) const noexcept {
-    const auto &open{verts[index]};
-    const auto &shut{vertsShut[index]};
+    const Vert &open{verts[index]};
+    const Vert &shut{vertsShut[index]};
     Vert vert{};
     vert.point = (1.0f - time) * open.point + time * shut.point;
     vert.normal = (1.0f - time) * open.normal + time * shut.normal;
@@ -296,8 +296,8 @@ uvTextureDensity(const float3 &point0, const float3 &point1,
                  const float2 &texcoord1, const float2 &texcoord2) noexcept {
   float worldArea{triangleArea(point0, point1, point2)};
   if (!(worldArea > 1e-12f)) return 0.0f;
-  auto uv1{texcoord1 - texcoord0};
-  auto uv2{texcoord2 - texcoord0};
+  const float2 uv1{texcoord1 - texcoord0};
+  const float2 uv2{texcoord2 - texcoord0};
   float uvArea{0.5f * std::fabs(uv1.x * uv2.y - uv1.y * uv2.x)};
   return uvArea / worldArea;
 }
@@ -500,13 +500,13 @@ inline void Hit::applyGeometryToState(const InstanceFrame &frame,
   // `objectToWorld` on the way back out, which lands on world
   // space again exactly, because that is the very matrix `worldToRigid`
   // inverts and the library leaves an orthonormal one untouched.
-  const auto &toRigid{frame.worldToRigid};
-  auto pointR{transformPoint(toRigid, point)};
-  auto rayDirR{transformDirection(toRigid, rayDir)};
-  auto normalR{transformDirection(toRigid, normal)};
-  auto tangentR{transformDirection(toRigid, tangent)};
-  auto NgR{transformDirection(toRigid, Ng)};
-  auto TgR{transformDirection(toRigid, Tg)};
+  const float4x4 &toRigid{frame.worldToRigid};
+  const float3 pointR{transformPoint(toRigid, point)};
+  const float3 rayDirR{transformDirection(toRigid, rayDir)};
+  const float3 normalR{transformDirection(toRigid, normal)};
+  const float3 tangentR{transformDirection(toRigid, tangent)};
+  const float3 NgR{transformDirection(toRigid, Ng)};
+  const float3 TgR{transformDirection(toRigid, Tg)};
   state.objectToWorld = frame.rigidToWorld;
   state.position = pointR;
   state.direction = rayDirR;

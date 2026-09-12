@@ -32,7 +32,7 @@ using RenameMap = std::map<std::string, std::string, std::less<>>;
                                       const RenameMap &outer) {
   if (inner.empty()) return outer;
   if (outer.empty()) return inner;
-  auto result{RenameMap()};
+  RenameMap result{};
   for (const auto &[from, to] : inner) {
     auto itr{outer.find(to)};
     result.emplace(from, itr == outer.end() ? to : itr->second);
@@ -45,7 +45,7 @@ using RenameMap = std::map<std::string, std::string, std::less<>>;
 // to decide, so calling it on a large binary mesh costs nothing, and it
 // is what keeps the `.curves` extension advisory.
 [[nodiscard]] bool sniffCurvesMagic(const std::filesystem::path &path) {
-  auto stream{std::ifstream(path, std::ios::binary)};
+  std::ifstream stream{path, std::ios::binary};
   if (!stream) return false;
   std::array<char, 8> buffer{};
   stream.read(buffer.data(), sizeof(buffer));
@@ -71,7 +71,7 @@ public:
   // These words under `placement`'s own: the innermost explicit word
   // wins.
   [[nodiscard]] MarkOverrides over(const LayoutPlacement &placement) const {
-    auto result{*this};
+    MarkOverrides result{*this};
     if (placement.casterOverride) {
       result.isCaster = placement.casterOverride;
       result.casterLoc = placement.casterLoc;
@@ -129,7 +129,7 @@ public:
   }
 
   [[nodiscard]] MotionXf operator*(const MotionXf &other) const {
-    auto result{MotionXf()};
+    MotionXf result{};
     result.open = open * other.open;
     result.shut = shut * other.shut;
     result.isMoving = isMoving || other.isMoving;
@@ -160,7 +160,7 @@ public:
 // added to the asset's own.
 [[nodiscard]] AnimationSpec animationOf(const LayoutAssetDecl &decl,
                                         const MotionXf &xf) {
-  auto spec{decl.animation};
+  AnimationSpec spec{decl.animation};
   spec.offset += xf.offset;
   return spec;
 }
@@ -192,24 +192,25 @@ public:
                  const RenameMap &outerRenames, const MarkOverrides &outerMarks,
                  bool isEntry, const LayoutLocation &importSite) {
     std::error_code ignored{};
-    auto canonical{std::filesystem::weakly_canonical(fileName, ignored)};
+    std::filesystem::path canonical{
+        std::filesystem::weakly_canonical(fileName, ignored)};
     if (canonical.empty()) canonical = fileName;
     for (const auto &frame : mOpenFiles)
       if (frame.canonical == canonical) {
-        auto message{std::string("import cycle:")};
-        auto isInCycle{false};
+        std::string message{"import cycle:"};
+        bool isInCycle{false};
         for (const auto &open : mOpenFiles) {
           if (open.canonical == canonical) isInCycle = true;
           if (isInCycle) message += smdl::concat(" ", open.fileName, " ->");
         }
         message += smdl::concat(" ", fileName);
-        auto &error{mDiags.error(importSite, message)};
+        LayoutDiagnostic &error{mDiags.error(importSite, message)};
         for (const auto &open : mOpenFiles)
           if (open.importSite)
             error.note(open.importSite, "imported from here");
         return;
       }
-    const auto firstNestedDiag{mDiags.all().size()};
+    const size_t firstNestedDiag{mDiags.all().size()};
     const LayoutSource *source{};
     try {
       source = &mDiags.loadSource(fileName);
@@ -218,7 +219,7 @@ public:
       mDiags.error(importSite, error.message);
       return;
     }
-    const auto document{
+    const LayoutDocument document{
         parseLayout(mDiags, *source,
                     std::filesystem::path(fileName).parent_path().string())};
     mOpenFiles.push_back({canonical, fileName, importSite});
@@ -246,8 +247,8 @@ private:
       if (!document.mediumName.empty())
         mResult.exteriorMediumName = document.mediumName;
       if (!document.iblPath.empty())
-        if (auto resolved{resolvePath(document, document.iblPath,
-                                      document.iblPathLoc, false)};
+        if (std::filesystem::path resolved{resolvePath(
+                document, document.iblPath, document.iblPathLoc, false)};
             !resolved.empty())
           mResult.sky.iblFileName = resolved.string();
     } else {
@@ -264,10 +265,10 @@ private:
                     "the 'medium' of an imported layout is ignored (only "
                     "the entry layout's medium takes effect)");
     }
-    auto usedAssets{std::vector<bool>(document.assets.size(), false)};
-    auto usedGroups{std::vector<bool>(document.groups.size(), false)};
-    auto usedLights{std::vector<bool>(document.lights.size(), false)};
-    auto groupStack{std::vector<GroupFrame>()};
+    std::vector<bool> usedAssets(document.assets.size(), false);
+    std::vector<bool> usedGroups(document.groups.size(), false);
+    std::vector<bool> usedLights(document.lights.size(), false);
+    std::vector<GroupFrame> groupStack{};
     lowerPlacements(document, document.placements, xf, outerRenames, outerMarks,
                     usedAssets, usedGroups, usedLights, groupStack,
                     std::string());
@@ -329,10 +330,10 @@ private:
                   std::vector<bool> &usedLights,
                   std::vector<GroupFrame> &groupStack,
                   const std::string &namePrefix) {
-    const auto placeName{placement.asName.empty() ? namePrefix
-                         : namePrefix.empty()
-                             ? placement.asName
-                             : namePrefix + "/" + placement.asName};
+    const std::string placeName{placement.asName.empty() ? namePrefix
+                                : namePrefix.empty()
+                                    ? placement.asName
+                                    : namePrefix + "/" + placement.asName};
     const LayoutAssetDecl *decl{};
     for (size_t i = 0; i < document.assets.size(); i++)
       if (document.assets[i].name == placement.assetName) {
@@ -357,18 +358,18 @@ private:
           break;
         }
     if (!decl && !group && !light) {
-      auto &error{
+      LayoutDiagnostic &error{
           mDiags.error(placement.assetNameLoc,
                        smdl::concat("no asset, group, or light named ",
                                     smdl::Quoted(placement.assetName)))};
-      auto candidates{std::vector<std::string_view>()};
+      std::vector<std::string_view> candidates{};
       for (const auto &asset : document.assets)
         candidates.push_back(asset.name);
       for (const auto &declared : document.groups)
         candidates.push_back(declared.name);
       for (const auto &declared : document.lights)
         candidates.push_back(declared.name);
-      if (const auto nearest{
+      if (const std::string_view nearest{
               smdl::suggestNearest(placement.assetName, candidates)};
           !nearest.empty())
         error.note({},
@@ -395,10 +396,10 @@ private:
     // The place's own overrides apply outside everything the target says
     // for itself, and inside everything above: each syntactic enclosure
     // adds its rename layer one step further out.
-    const auto baseOuter{composeRename(placement.overrides, outerRenames)};
+    const RenameMap baseOuter{composeRename(placement.overrides, outerRenames)};
     // The marks compose the other way round: the innermost explicit
     // word wins, and the asset's own mark is the default.
-    const auto effectiveMarks{outerMarks.over(placement)};
+    const MarkOverrides effectiveMarks{outerMarks.over(placement)};
     // The placement's own keys under everything above it. The block's
     // shut key, when there is one, is absolute: it stands where the
     // open operations stand, and everything below composes under both.
@@ -406,11 +407,11 @@ private:
     // its own. Its track and the clips of what it places read the same
     // one, so a placement written one second behind is one second behind
     // in both.
-    const auto offset{xf.offset + placement.animationOffset.value_or(0.0f)};
-    const auto sampling{mSampling.shiftedBy(offset)};
-    const auto placeXf{xf * MotionXf(placement.transform, placement.motion,
-                                     sampling,
-                                     placement.animationOffset.value_or(0.0f))};
+    const float offset{xf.offset + placement.animationOffset.value_or(0.0f)};
+    const MotionSampling sampling{mSampling.shiftedBy(offset)};
+    const MotionXf placeXf{
+        xf * MotionXf(placement.transform, placement.motion, sampling,
+                      placement.animationOffset.value_or(0.0f))};
     if (!placement.motion.empty() &&
         placement.motion.hasKeyBetween(sampling.open, sampling.shut))
       mDiags.warn(placement.motionLoc,
@@ -421,9 +422,9 @@ private:
       // standing where a one-line place's operations would, and each
       // record's variant composing where that place's own overrides
       // would (inside this statement's, outside the target's).
-      const auto resolved{resolvePath(document, placement.placesPath,
-                                      placement.placesPathLoc, true)};
-      auto places{PlacesFile()};
+      const std::filesystem::path resolved{resolvePath(
+          document, placement.placesPath, placement.placesPathLoc, true)};
+      PlacesFile places{};
       try {
         places = readPlacesFile(resolved.string());
       } catch (const smdl::Error &error) {
@@ -450,7 +451,7 @@ private:
       // The composed rename layer per variant, folded once rather than
       // once per record: a scatter reuses a handful of variants across
       // thousands of records.
-      auto outerByVariant{std::vector<RenameMap>()};
+      std::vector<RenameMap> outerByVariant{};
       outerByVariant.reserve(placement.variants.size());
       for (const auto &variant : placement.variants)
         outerByVariant.push_back(composeRename(variant, baseOuter));
@@ -460,8 +461,8 @@ private:
       const auto recordXf{
           [&](size_t i) { return placeXf * MotionXf(places.transforms[i]); }};
       const auto outerFor{[&](size_t i) -> const RenameMap & {
-        const auto variantIndex{places.hasVariants() ? places.variants[i]
-                                                     : PlacesFile::NO_VARIANT};
+        const uint32_t variantIndex{
+            places.hasVariants() ? places.variants[i] : PlacesFile::NO_VARIANT};
         return variantIndex == PlacesFile::NO_VARIANT
                    ? baseOuter
                    : outerByVariant[variantIndex];
@@ -472,8 +473,8 @@ private:
       // class with every record's fully composed transform, so the
       // scene can build one Embree instance array per mesh rather than
       // one instance geometry per record.
-      auto target{Target()};
-      const auto batchable{
+      Target target{};
+      const bool batchable{
           decl != nullptr &&
           (decl->primitive.isActive() ||
            (target = resolveTarget(document, decl->path, decl->pathLoc)).kind !=
@@ -491,11 +492,11 @@ private:
       // order within the scatter is therefore grouped by class rather
       // than by record, which only `state::object_id` could ever
       // observe.
-      auto classSlots{std::map<uint32_t, size_t>()};
-      auto batches{std::vector<std::pair<uint32_t, std::vector<MotionXf>>>()};
+      std::map<uint32_t, size_t> classSlots{};
+      std::vector<std::pair<uint32_t, std::vector<MotionXf>>> batches{};
       for (size_t i = 0; i < places.transforms.size(); i++) {
-        const auto variantIndex{places.hasVariants() ? places.variants[i]
-                                                     : PlacesFile::NO_VARIANT};
+        const uint32_t variantIndex{
+            places.hasVariants() ? places.variants[i] : PlacesFile::NO_VARIANT};
         const auto [slot, isNew]{
             classSlots.try_emplace(variantIndex, batches.size())};
         if (isNew) batches.emplace_back(variantIndex, std::vector<MotionXf>());
@@ -510,7 +511,7 @@ private:
       const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
       const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
       for (auto &[variantIndex, xfs] : batches) {
-        auto &item{mResult.items.emplace_back()};
+        LayoutItem &item{mResult.items.emplace_back()};
         if (decl->primitive.isActive()) {
           item.primitive = decl->primitive;
         } else if (target.kind == Target::Kind::CURVES) {
@@ -557,9 +558,9 @@ private:
       std::vector<bool> &usedLights, std::vector<GroupFrame> &groupStack,
       const std::string &placeName) {
     if (lightDecl) {
-      auto &light{mResult.lights.emplace_back()};
+      LayoutLight &light{mResult.lights.emplace_back()};
       light.decl = *lightDecl;
-      const auto lightXf{combinedXf * MotionXf(lightDecl->transform)};
+      const MotionXf lightXf{combinedXf * MotionXf(lightDecl->transform)};
       light.lightToWorld = lightXf.open;
       light.lightToWorldShut = lightXf.shutKey();
       light.placeName = placeName;
@@ -572,15 +573,15 @@ private:
     if (group) {
       for (const auto &frame : groupStack)
         if (frame.group == group) {
-          auto message{std::string("group cycle:")};
-          auto isInCycle{false};
+          std::string message{"group cycle:"};
+          bool isInCycle{false};
           for (const auto &open : groupStack) {
             if (open.group == group) isInCycle = true;
             if (isInCycle)
               message += smdl::concat(" ", open.group->name, " ->");
           }
           message += smdl::concat(" ", group->name);
-          auto &error{mDiags.error(nameLoc, message)};
+          LayoutDiagnostic &error{mDiags.error(nameLoc, message)};
           for (const auto &open : groupStack)
             error.note(open.site, "placed from here");
           throw SkipPlacement();
@@ -597,7 +598,7 @@ private:
     if (decl->primitive.isActive()) {
       const bool isCaster{isCasterOf(*decl, effectiveMarks, nullptr)};
       const bool hasLightMark{isLightOf(*decl, effectiveMarks, nullptr)};
-      auto &item{mResult.items.emplace_back()};
+      LayoutItem &item{mResult.items.emplace_back()};
       item.primitive = decl->primitive;
       placeItem(item, combinedXf * MotionXf(decl->transform));
       item.materials = decl->materials;
@@ -609,14 +610,14 @@ private:
       item.placeName = placeName;
       return;
     }
-    const auto target{resolveTarget(document, decl->path, decl->pathLoc)};
+    const Target target{resolveTarget(document, decl->path, decl->pathLoc)};
     checkAssetTargetKind(*decl, target);
     if (target.kind == Target::Kind::LAYOUT) {
       // The asset's own marks pass down like overrides, since there is
       // no one item for them to mark; the checks still run here, so
       // that `light off` under `caustic` is refused wherever it is said.
       (void)isLightOf(*decl, effectiveMarks, nullptr);
-      auto passed{effectiveMarks};
+      MarkOverrides passed{effectiveMarks};
       if (!passed.isCaster && decl->isCaster) {
         passed.isCaster = true;
         passed.casterLoc = decl->casterLoc;
@@ -633,7 +634,7 @@ private:
     }
     const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
     const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
-    auto &item{mResult.items.emplace_back()};
+    LayoutItem &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     placeItem(item, combinedXf * MotionXf(decl->transform) *
                         MotionXf(target.correction));
@@ -753,9 +754,9 @@ private:
                    const LayoutPlacement &placement, const MotionXf &xf,
                    const RenameMap &outerRenames,
                    const MarkOverrides &outerMarks) {
-    const auto target{
+    const Target target{
         resolveTarget(document, placement.importPath, placement.importPathLoc)};
-    const auto effectiveMarks{outerMarks.over(placement)};
+    const MarkOverrides effectiveMarks{outerMarks.over(placement)};
     if (target.kind == Target::Kind::LAYOUT) {
       lowerFile(target.path, xf * MotionXf(placement.transform),
                 composeRename(subtreeRenames(placement.importMaterials,
@@ -798,7 +799,7 @@ private:
         throw SkipPlacement();
       }
     }
-    auto &item{mResult.items.emplace_back()};
+    LayoutItem &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     item.curves.isActive = target.kind == Target::Kind::CURVES;
     if (target.kind == Target::Kind::MESH) item.animation.offset = xf.offset;
@@ -831,8 +832,8 @@ private:
   [[nodiscard]] Target resolveTarget(const LayoutDocument &document,
                                      const std::string &path,
                                      const LayoutLocation &location) {
-    auto target{Target()};
-    auto resolved{resolvePath(document, path, location, true)};
+    Target target{};
+    std::filesystem::path resolved{resolvePath(document, path, location, true)};
     // An asset directory stands for the mesh its manifest names, placed
     // under the correction the manifest records. The correction applies
     // innermost, so that everything said about the asset still reads as
@@ -840,7 +841,7 @@ private:
     // happens to store it.
     try {
       if (std::filesystem::is_directory(resolved)) {
-        auto manifest{findAssetManifest(resolved.string())};
+        std::string manifest{findAssetManifest(resolved.string())};
         if (manifest.empty()) {
           mDiags.error(location,
                        smdl::concat("cannot import the directory ",
@@ -852,7 +853,7 @@ private:
         resolved = manifest;
       }
       if (resolved.extension() == ASSET_EXTENSION) {
-        const auto asset{readAssetFile(resolved.string())};
+        const AssetFile asset{readAssetFile(resolved.string())};
         resolved = asset.renderFileName;
         target.correction = asset.correction;
       }
@@ -889,8 +890,8 @@ private:
   [[nodiscard]] std::filesystem::path
   resolvePath(const LayoutDocument &document, const std::string &path,
               const LayoutLocation &location, bool shouldSkip) {
-    auto written{std::filesystem::path(path)};
-    auto candidates{std::vector<std::filesystem::path>()};
+    std::filesystem::path written{path};
+    std::vector<std::filesystem::path> candidates{};
     if (written.is_absolute()) {
       candidates.push_back(written);
     } else {
@@ -902,7 +903,7 @@ private:
       if (std::filesystem::exists(candidate)) return candidate;
     // Name every place it was looked for. A path that is subtly wrong is
     // the common case, and the list is what shows which part of it is.
-    auto message{
+    std::string message{
         smdl::concat("cannot find ", smdl::QuotedPath(path), ", looked for:")};
     for (const auto &candidate : candidates)
       message += smdl::concat("\n  ", smdl::QuotedPath(candidate.string()));
@@ -932,7 +933,7 @@ private:
 Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
                    const AssetSearchPath &search,
                    const MotionSampling &sampling) {
-  auto result{Layout()};
+  Layout result{};
   Lowerer(diags, search, sampling, result)
       .lowerFile(fileName, MotionXf(), {}, {}, true, {});
   return result;
@@ -940,8 +941,8 @@ Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
 
 Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
                   const MotionSampling &sampling) {
-  auto diags{LayoutDiagnostics()};
-  auto result{lowerLayout(diags, fileName, search, sampling)};
+  LayoutDiagnostics diags{};
+  Layout result{lowerLayout(diags, fileName, search, sampling)};
   diags.printAllAndRefuse(fileName);
   SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
                  smdl::Counted(result.items.size(), "item"));
@@ -951,7 +952,7 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
 Layout resolveLayoutArgument(const std::string &fileName,
                              const AssetSearchPath &search,
                              const MotionSampling &sampling) {
-  auto path{std::filesystem::path(fileName)};
+  std::filesystem::path path{fileName};
   if (path.extension() == ".scene")
     throw smdl::Error(smdl::concat("the '.scene' format was retired; ",
                                    smdl::QuotedPath(fileName),
@@ -965,9 +966,9 @@ Layout resolveLayoutArgument(const std::string &fileName,
   // The argument names an asset the same way an import does, so that a
   // prepared asset can be rendered on its own without a layout file to
   // wrap it.
-  auto result{Layout()};
+  Layout result{};
   if (std::filesystem::is_directory(path)) {
-    auto manifest{findAssetManifest(path.string())};
+    std::string manifest{findAssetManifest(path.string())};
     if (manifest.empty())
       throw smdl::Error(smdl::concat("cannot render the directory ",
                                      smdl::QuotedPath(path.string()),
@@ -986,8 +987,8 @@ Layout resolveLayoutArgument(const std::string &fileName,
   // could say otherwise, and a bare model with a lamp in it expects to be
   // lit by it.
   if (path.extension() == ASSET_EXTENSION) {
-    const auto asset{readAssetFile(path.string())};
-    auto &item{result.items.emplace_back()};
+    const AssetFile asset{readAssetFile(path.string())};
+    LayoutItem &item{result.items.emplace_back()};
     item.fileName = asset.renderFileName;
     item.curves.isActive = classifyCurves(asset.renderFileName);
     item.objectToWorld = asset.correction;
@@ -997,7 +998,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
   }
   if (path.extension() == LAYOUT_EXTENSION)
     return readLayout(fileName, search, sampling);
-  auto &item{result.items.emplace_back()};
+  LayoutItem &item{result.items.emplace_back()};
   item.fileName = path.string();
   item.curves.isActive = classifyCurves(path);
   item.isLight = !item.curves.isActive;

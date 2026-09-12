@@ -26,7 +26,7 @@ namespace {
                                float unit) noexcept {
   if (!(value > 0.0f)) return 0;
   const double u{std::min(double(value) / double(unit), 0x1p40)};
-  const auto lo{uint64_t(u)};
+  const uint64_t lo{uint64_t(u)};
   return lo + (float(sampler) < float(u - double(lo)) ? 1 : 0);
 }
 
@@ -134,7 +134,7 @@ void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
   momentUnit = prev.momentUnit;
   const uint64_t total{prev.totalFluxUnits()};
   if (total == 0) return;
-  const auto threshold{uint64_t(double(rho) * double(total))};
+  const uint64_t threshold{uint64_t(double(rho) * double(total))};
   // Walk the previous structure, subdividing above-threshold quadrants
   // (synthesizing equal-split children where the previous tree had none)
   // and collapsing the rest.
@@ -180,7 +180,7 @@ void DTree::resetToStructureOf(const DTree &structure) {
 
 STree::STree(const float3 &boundsMin, const float3 &boundsMax) : mNodes(1) {
   // Cubify so midpoint splits keep cells roughly isotropic.
-  auto extent{boundsMax - boundsMin};
+  float3 extent{boundsMax - boundsMin};
   float maxExtent{std::max({extent.x, extent.y, extent.z, 1e-4f})};
   mBoundMin = boundsMin;
   mBoundExtent = float3(maxExtent);
@@ -200,7 +200,7 @@ void STree::buildCounterLayout() {
 
 void STree::absorb(const std::vector<const uint64_t *> &mirrors) {
   smdl::parallelFor(0, mNodes.size(), [&](size_t n) {
-    auto &node{mNodes[n]};
+    Node &node{mNodes[n]};
     if (node.child[0] != 0) return;
     const uint64_t offset{mCounterOffset[n]};
     for (const uint64_t *mirror : mirrors) {
@@ -252,7 +252,7 @@ void STree::record(Sampler &sampler, const float3 &position,
   // The second-moment statistics deposit unjittered: they estimate the
   // cell's own estimator quality, not a field worth splat-filtering.
   {
-    const auto &node{mNodes[at]};
+    const Node &node{mNodes[at]};
     uint64_t *c{counters + mCounterOffset[at]};
     const float unit{node.building.momentUnit};
     c[2] += unitsOf(sampler, momentBSDF, unit);
@@ -271,7 +271,7 @@ void STree::record(Sampler &sampler, const float3 &position,
   jittered.z =
       std::clamp(jittered.z, mBoundMin.z, mBoundMin.z + mBoundExtent.z);
   const uint32_t jat{leafIndex(jittered)};
-  const auto &node{mNodes[jat]};
+  const Node &node{mNodes[jat]};
   uint64_t *c{counters + mCounterOffset[jat]};
   c[0] += 1;
   c[1] += 1;
@@ -302,10 +302,10 @@ void STree::refine(uint32_t splitThreshold, float rho, int maxDepth) {
     uint32_t c0{uint32_t(mNodes.size())};
     mNodes.push_back(parentCopy);
     mNodes.push_back(parentCopy);
-    auto &parent{mNodes[n]};
+    Node &parent{mNodes[n]};
     parent.child = {c0, c0 + 1};
     for (uint32_t c : {c0, c0 + 1}) {
-      auto &childNode{mNodes[c]};
+      Node &childNode{mNodes[c]};
       childNode.child = {0, 0};
       childNode.axis = uint8_t((parent.axis + 1) % 3);
       childNode.recordCount = count / 2;
@@ -388,11 +388,11 @@ static_assert(sizeof(TreeFileQuadNode) == 48, "a quadtree node is 48 bytes");
 void STree::writeFile(const std::string &fileName,
                       uint64_t samplesPerPixel) const {
   requireLittleEndianHost("guide tree");
-  auto stream{std::ofstream(fileName, std::ios::binary)};
+  std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot write guide tree ", smdl::QuotedPath(fileName)));
-  auto header{TreeFileHeader()};
+  TreeFileHeader header{};
   setMagic(header.magic, GUIDE_TREE_MAGIC);
   header.version = 1;
   header.nodeCount = uint32_t(mNodes.size());
@@ -403,14 +403,14 @@ void STree::writeFile(const std::string &fileName,
   }
   putRecord(stream, header);
   for (const auto &node : mNodes) {
-    auto spatial{TreeFileSpatialNode()};
+    TreeFileSpatialNode spatial{};
     spatial.child[0] = node.child[0];
     spatial.child[1] = node.child[1];
     spatial.axis = node.axis;
     putRecord(stream, spatial);
     if (node.child[0] != 0) continue;
-    const auto &sampling{node.sampling};
-    auto leaf{TreeFileLeaf()};
+    const DTree &sampling{node.sampling};
+    TreeFileLeaf leaf{};
     leaf.statisticalWeight = uint64_t(sampling.statisticalWeight);
     leaf.mixtureAlpha = sampling.mixtureAlpha;
     leaf.fluxUnit = sampling.fluxUnit;
@@ -418,7 +418,7 @@ void STree::writeFile(const std::string &fileName,
     leaf.quadNodeCount = uint32_t(sampling.mNodes.size());
     putRecord(stream, leaf);
     for (const auto &quad : sampling.mNodes) {
-      auto quadFile{TreeFileQuadNode()};
+      TreeFileQuadNode quadFile{};
       for (int q = 0; q < 4; q++) {
         quadFile.flux[q] = uint64_t(quad.flux[q]);
         quadFile.child[q] = quad.child[q];
@@ -433,7 +433,7 @@ void STree::writeFile(const std::string &fileName,
 
 STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
   requireLittleEndianHost("guide tree");
-  auto stream{std::ifstream(fileName, std::ios::binary)};
+  std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open guide tree ", smdl::QuotedPath(fileName)));
@@ -441,7 +441,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
     return smdl::Error(smdl::concat("cannot read guide tree ",
                                     smdl::QuotedPath(fileName), ": ", what));
   }};
-  auto header{TreeFileHeader()};
+  TreeFileHeader header{};
   getRecord(stream, header);
   if (!stream || !hasMagic(header.magic, GUIDE_TREE_MAGIC))
     throw corrupt("bad magic; expected it to begin with \"SMDLSDTR\"");
@@ -460,14 +460,14 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
         !std::isfinite(header.boundExtent[i]) ||
         !std::isfinite(header.boundMin[i]))
       throw corrupt("degenerate bounds");
-  auto tree{STree()};
+  STree tree{};
   samplesPerPixel = header.samplesPerPixel;
   tree.mBoundMin = {header.boundMin[0], header.boundMin[1], header.boundMin[2]};
   tree.mBoundExtent = {header.boundExtent[0], header.boundExtent[1],
                        header.boundExtent[2]};
   tree.mNodes.resize(header.nodeCount);
   for (auto &node : tree.mNodes) {
-    auto spatial{TreeFileSpatialNode()};
+    TreeFileSpatialNode spatial{};
     getRecord(stream, spatial);
     if (!stream) throw corrupt("truncated");
     if ((spatial.child[0] == 0) != (spatial.child[1] == 0) ||
@@ -477,7 +477,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
     node.child = {spatial.child[0], spatial.child[1]};
     node.axis = uint8_t(spatial.axis);
     if (node.child[0] != 0) continue;
-    auto leaf{TreeFileLeaf()};
+    TreeFileLeaf leaf{};
     getRecord(stream, leaf);
     if (!stream) throw corrupt("truncated");
     if (!(leaf.fluxUnit > 0.0f) || !std::isfinite(leaf.fluxUnit) ||
@@ -485,10 +485,10 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
         !std::isfinite(leaf.mixtureAlpha) || leaf.quadNodeCount == 0 ||
         leaf.quadNodeCount > (1u << 24))
       throw corrupt("leaf payload does not add up");
-    auto &sampling{node.sampling};
+    DTree &sampling{node.sampling};
     sampling.mNodes.resize(leaf.quadNodeCount);
     for (auto &quad : sampling.mNodes) {
-      auto quadFile{TreeFileQuadNode()};
+      TreeFileQuadNode quadFile{};
       getRecord(stream, quadFile);
       if (!stream) throw corrupt("truncated");
       for (int q = 0; q < 4; q++) {
@@ -530,14 +530,14 @@ GuideAccumulator::GuideAccumulator(const STree &tree)
 uint64_t *GuideAccumulator::local() {
   const unsigned slot{threadMirrorSlot()};
   SMDL_SANITY_CHECK(slot < mMirrors.size());
-  auto &mirror{mMirrors[slot]};
+  std::vector<uint64_t> &mirror{mMirrors[slot]};
   if (mirror.empty()) mirror.resize(mTree.counterCount());
   return mirror.data();
 }
 
 void GuideAccumulator::absorbInto(STree &tree) const {
   SMDL_SANITY_CHECK(&tree == &mTree);
-  auto mirrors{std::vector<const uint64_t *>()};
+  std::vector<const uint64_t *> mirrors{};
   for (const auto &mirror : mMirrors)
     if (!mirror.empty()) mirrors.push_back(mirror.data());
   tree.absorb(mirrors);
@@ -619,7 +619,7 @@ namespace {
 // window: outside it there are no samples and no estimate, so averaging
 // that in would only drag the border pixels' estimates toward black.
 void boxBlur3(std::vector<float> &image, size_t numPixelsX, int4 window) {
-  auto source{image};
+  std::vector<float> source{image};
   for (int y = window[1]; y < window[3]; y++) {
     for (int x = window[0]; x < window[2]; x++) {
       float sum{};
@@ -642,9 +642,10 @@ void boxBlur3(std::vector<float> &image, size_t numPixelsX, int4 window) {
 } // namespace
 
 void PassCombiner::seed(const smdl::SpectralFilm &film) {
-  const auto samplesPerPixel{film.getNumSamples()};
+  const uint64_t samplesPerPixel{film.getNumSamples()};
   for (size_t p = 0; p < mNumPixelsX * mNumPixelsY; p++) {
-    const auto totals{film.totals(p % mNumPixelsX, p / mNumPixelsX)};
+    const smdl::Span<const double> totals{
+        film.totals(p % mNumPixelsX, p / mNumPixelsX)};
     mComboDenom[p] += double(samplesPerPixel);
     for (size_t b = 0; b < mNumBands; b++)
       mComboNumer[p * mNumBands + b] += totals[b];
@@ -736,7 +737,7 @@ void PassCombiner::rebuildPixelEstimates() {
 void PassCombiner::resolve(smdl::SpectralFilm &film) const {
   film.resize(mNumBands, mNumPixelsX, mNumPixelsY);
   film.addSamples(mKeptSPP);
-  auto combined{std::vector<double>(mNumBands)};
+  std::vector<double> combined(mNumBands);
   for (size_t p = 0; p < mNumPixelsX * mNumPixelsY; p++) {
     if (!(mComboDenom[p] > 0)) continue;
     for (size_t b = 0; b < mNumBands; b++)

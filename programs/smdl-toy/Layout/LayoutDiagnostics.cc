@@ -21,14 +21,15 @@ LayoutSource::lineAndColumn(uint32_t offset) const noexcept {
   offset = std::min(offset, uint32_t(text.size()));
   const auto itr{
       std::upper_bound(mLineStarts.begin(), mLineStarts.end(), offset)};
-  const auto lineIndex{uint32_t(itr - mLineStarts.begin()) - 1};
+  const uint32_t lineIndex{uint32_t(itr - mLineStarts.begin()) - 1};
   return {lineIndex + 1, offset - mLineStarts[lineIndex] + 1};
 }
 
 std::string_view LayoutSource::lineText(uint32_t lineNo) const noexcept {
   if (lineNo < 1 || lineNo > lineCount()) return {};
-  const auto start{mLineStarts[lineNo - 1]};
-  auto end{lineNo < lineCount() ? mLineStarts[lineNo] : uint32_t(text.size())};
+  const uint32_t start{mLineStarts[lineNo - 1]};
+  uint32_t end{lineNo < lineCount() ? mLineStarts[lineNo]
+                                    : uint32_t(text.size())};
   if (end > start && text[end - 1] == '\n') end--;
   if (end > start && text[end - 1] == '\r') end--;
   return std::string_view(text).substr(start, end - start);
@@ -36,7 +37,7 @@ std::string_view LayoutSource::lineText(uint32_t lineNo) const noexcept {
 
 LayoutDiagnostic &LayoutDiagnostic::note(LayoutLocation noteLoc,
                                          std::string noteMessage) {
-  auto &added{notes.emplace_back()};
+  LayoutDiagnostic &added{notes.emplace_back()};
   added.kind = Kind::NOTE;
   added.location = noteLoc;
   added.message = std::move(noteMessage);
@@ -44,7 +45,7 @@ LayoutDiagnostic &LayoutDiagnostic::note(LayoutLocation noteLoc,
 }
 
 const LayoutSource &LayoutDiagnostics::loadSource(const std::string &fileName) {
-  auto stream{std::ifstream(fileName, std::ios::binary)};
+  std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open layout file ", smdl::QuotedPath(fileName)));
@@ -60,7 +61,7 @@ const LayoutSource &LayoutDiagnostics::addSource(std::string fileName,
 
 LayoutDiagnostic &LayoutDiagnostics::error(LayoutLocation location,
                                            std::string message) {
-  auto &added{mDiagnostics.emplace_back()};
+  LayoutDiagnostic &added{mDiagnostics.emplace_back()};
   added.kind = LayoutDiagnostic::Kind::ERROR;
   added.location = location;
   added.message = std::move(message);
@@ -70,7 +71,7 @@ LayoutDiagnostic &LayoutDiagnostics::error(LayoutLocation location,
 
 LayoutDiagnostic &LayoutDiagnostics::warn(LayoutLocation location,
                                           std::string message) {
-  auto &added{mDiagnostics.emplace_back()};
+  LayoutDiagnostic &added{mDiagnostics.emplace_back()};
   added.kind = LayoutDiagnostic::Kind::WARNING;
   added.location = location;
   added.message = std::move(message);
@@ -127,17 +128,17 @@ constexpr std::string_view ANSI_GREEN = "\033[1;32m";
 void renderExcerpt(std::string &result, const LayoutLocation &location,
                    bool useColors) {
   const auto [lineNo, charNo]{location.source->lineAndColumn(location.offset)};
-  const auto line{location.source->lineText(lineNo)};
+  const std::string_view line{location.source->lineText(lineNo)};
   result += line;
   result += '\n';
-  const auto column{size_t(charNo) - 1};
+  const size_t column{size_t(charNo) - 1};
   for (size_t i = 0; i < column; i++)
     result += i < line.size() && line[i] == '\t' ? '\t' : ' ';
   if (useColors) result += ANSI_GREEN;
   result += '^';
   if (location.length > 1 && column < line.size()) {
-    const auto available{line.size() - column - 1};
-    const auto tildes{std::min(size_t(location.length) - 1, available)};
+    const size_t available{line.size() - column - 1};
+    const size_t tildes{std::min(size_t(location.length) - 1, available)};
     result.append(tildes, '~');
   }
   if (useColors) result += ANSI_RESET;
@@ -146,7 +147,7 @@ void renderExcerpt(std::string &result, const LayoutLocation &location,
 // One diagnostic or note, without recursing into its notes.
 void renderOne(std::string &result, const LayoutDiagnostic &diagnostic,
                bool useColors) {
-  const auto &location{diagnostic.location};
+  const LayoutLocation &location{diagnostic.location};
   if (useColors) result += ANSI_BOLD;
   if (location) {
     result += LayoutDiagnostics::where(location);
@@ -174,21 +175,21 @@ std::string LayoutDiagnostics::where(const LayoutLocation &location) {
 }
 
 std::string LayoutDiagnostics::excerpt(const LayoutLocation &location) {
-  auto result{std::string()};
+  std::string result{};
   if (location) renderExcerpt(result, location, false);
   return result;
 }
 
 std::string LayoutDiagnostics::render(const LayoutDiagnostic &diagnostic,
                                       bool useColors) {
-  auto result{std::string()};
+  std::string result{};
   renderOne(result, diagnostic, useColors);
   for (const auto &note : diagnostic.notes) renderOne(result, note, useColors);
   return result;
 }
 
 std::string LayoutDiagnostics::renderAll(bool useColors) const {
-  auto result{std::string()};
+  std::string result{};
   for (const auto &diagnostic : mDiagnostics)
     result += render(diagnostic, useColors);
   if (!mDiagnostics.empty()) {
@@ -202,7 +203,7 @@ std::string LayoutDiagnostics::renderAll(bool useColors) const {
 
 std::string LayoutDiagnostics::summary() const {
   if (mDiagnostics.empty()) return {};
-  auto result{std::string()};
+  std::string result{};
   if (mErrorCount > 0)
     result += smdl::concat(smdl::Counted(mErrorCount, "error"));
   if (mWarningCount > 0) {

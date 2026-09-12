@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <utility>
 
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/Strings.h"
 
 #include "IO/RenderHeader.h"
@@ -13,28 +14,30 @@ constexpr const char *PREFIX{"render "};
 
 // How each field type crosses the header, written and read side by side
 // because the two have to agree.
-void spell(std::string &line, uint64_t value) { line += std::to_string(value); }
-// Nine significant digits, every one a double carries that a reader
-// recovering electrons from a gain could want, and no trailing zeros.
-void spell(std::string &line, double value) {
+SMDL_ALWAYS_INLINE void spell(std::string &line, uint64_t value) {
+  line += std::to_string(value);
+}
+SMDL_ALWAYS_INLINE void spell(std::string &line, double value) {
   smdl::Brief(value, 9).appendTo(line);
 }
-void spell(std::string &line, bool value) { line += value ? '1' : '0'; }
-void spell(std::string &line, const std::string &value) { line += value; }
-
-// The format's `{a, b, c}` array form, for a list of names.
-void spell(std::string &line, const std::vector<std::string> &values) {
+SMDL_ALWAYS_INLINE void spell(std::string &line, bool value) {
+  line += value ? '1' : '0';
+}
+SMDL_ALWAYS_INLINE void spell(std::string &line, const std::string &value) {
+  line += value;
+}
+SMDL_ALWAYS_INLINE void spell(std::string &line,
+                              const std::vector<std::string> &values) {
   line += '{';
   for (size_t i = 0; i < values.size(); i++)
     line += (i > 0 ? ", " : "") + values[i];
   line += '}';
 }
 
-void parse(const std::string &text, uint64_t &value) {
+SMDL_ALWAYS_INLINE void parse(const std::string &text, uint64_t &value) {
   value = std::strtoull(text.c_str(), nullptr, 10);
 }
-
-void parse(const std::string &text, double &value) {
+SMDL_ALWAYS_INLINE void parse(const std::string &text, double &value) {
   // A tally is a duration and the rest are physical quantities, none of
   // them negative, so anything a corrupt or hand-edited header offers
   // that is not one reads as zero rather than poisoning every later
@@ -42,20 +45,21 @@ void parse(const std::string &text, double &value) {
   const double parsed{std::strtod(text.c_str(), nullptr)};
   value = std::isfinite(parsed) && parsed > 0.0 ? parsed : 0.0;
 }
-
-void parse(const std::string &text, bool &value) { value = text != "0"; }
-
-void parse(const std::string &text, std::string &value) { value = text; }
-
+SMDL_ALWAYS_INLINE void parse(const std::string &text, bool &value) {
+  value = text != "0";
+}
+SMDL_ALWAYS_INLINE void parse(const std::string &text, std::string &value) {
+  value = text;
+}
 void parse(const std::string &text, std::vector<std::string> &values) {
   values.clear();
-  auto list{text};
+  std::string list{text};
   for (auto &c : list)
     if (c == '{' || c == '}') c = ' ';
   for (size_t pos{}; pos <= list.size();) {
-    auto end{list.find(',', pos)};
+    size_t end{list.find(',', pos)};
     if (end == std::string::npos) end = list.size();
-    auto name{list.substr(pos, end - pos)};
+    std::string name{list.substr(pos, end - pos)};
     const char *WS{" \t\r\n"};
     name.erase(0, name.find_first_not_of(WS));
     name.erase(name.find_last_not_of(WS) + 1);
@@ -113,9 +117,9 @@ void visitDetectorFields(Self &self, Visitor &&visit) {
 // The two directions over either table.
 template <typename Self, typename Walk>
 [[nodiscard]] std::vector<std::string> linesOf(const Self &self, Walk &&walk) {
-  auto lines{std::vector<std::string>()};
+  std::vector<std::string> lines{};
   walk(self, [&](const char *name, const auto &value) {
-    auto line{smdl::concat(PREFIX, name, " = ")};
+    std::string line{smdl::concat(PREFIX, name, " = ")};
     spell(line, value);
     lines.push_back(std::move(line));
   });

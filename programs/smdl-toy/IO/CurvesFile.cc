@@ -56,7 +56,7 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
   if (curves.strandOffsets.empty() || curves.strandOffsets.front() != 0 ||
       curves.strandOffsets.back() != curves.points.size())
     fail("the offset table must start at 0 and end at the point count");
-  const auto minPoints{CurvesFile::minPointsPerStrand(curves.basis)};
+  const uint32_t minPoints{CurvesFile::minPointsPerStrand(curves.basis)};
   for (size_t i = 0; i + 1 < curves.strandOffsets.size(); i++) {
     if (curves.strandOffsets[i] >= curves.strandOffsets[i + 1])
       fail("the offset table must strictly increase (strand ", i,
@@ -76,11 +76,11 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
 
 CurvesFile readCurvesFile(const std::string &fileName) {
   requireLittleEndianHost("'.curves'");
-  auto stream{std::ifstream(fileName, std::ios::binary)};
+  std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot open curves ", smdl::QuotedPath(fileName)));
-  auto header{CurvesHeader()};
+  CurvesHeader header{};
   getRecord(stream, header);
   if (!stream || !hasMagic(header.magic, CURVES_MAGIC))
     throw smdl::Error(smdl::concat(
@@ -96,7 +96,7 @@ CurvesFile readCurvesFile(const std::string &fileName) {
                                    smdl::QuotedPath(fileName),
                                    ": a reserved field is non-zero (must be 0 "
                                    "in version 1)"));
-  auto curves{CurvesFile()};
+  CurvesFile curves{};
   curves.version = header.version;
   curves.basis = CurvesFile::Basis(header.basis);
   getArray(stream, curves.strandOffsets, size_t(header.strandCount) + 1);
@@ -116,11 +116,11 @@ CurvesFile readCurvesFile(const std::string &fileName) {
 void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   requireLittleEndianHost("'.curves'");
   validateCurvesShape(curves, fileName, "write");
-  auto stream{std::ofstream(fileName, std::ios::binary)};
+  std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
         smdl::concat("cannot write curves ", smdl::QuotedPath(fileName)));
-  auto header{CurvesHeader()};
+  CurvesHeader header{};
   setMagic(header.magic, CURVES_MAGIC);
   header.version = 1;
   header.basis = uint16_t(curves.basis);
@@ -138,8 +138,8 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
 
 CurveAxis evalCurveAxis(CurvesFile::Basis basis, const float4 *window,
                         float u) {
-  const auto *p{window};
-  auto axis{CurveAxis()};
+  const float4 *p{window};
+  CurveAxis axis{};
   auto finish{[&](const float4 &value, const float4 &derivative) {
     axis.point = float3(value);
     axis.tangent = float3(derivative);
@@ -168,10 +168,10 @@ CurveAxis evalCurveAxis(CurvesFile::Basis basis, const float4 *window,
   case CurvesFile::Basis::CATMULL_ROM: {
     // Uniform Catmull-Rom through p1 and p2 with tangents (p2 - p0) / 2
     // and (p3 - p1) / 2, exactly Embree's definition.
-    const auto c0{2.0f * p[1]};
-    const auto c1{p[2] - p[0]};
-    const auto c2{2.0f * p[0] - 5.0f * p[1] + 4.0f * p[2] - p[3]};
-    const auto c3{-1.0f * p[0] + 3.0f * p[1] - 3.0f * p[2] + p[3]};
+    const float4 c0{2.0f * p[1]};
+    const float4 c1{p[2] - p[0]};
+    const float4 c2{2.0f * p[0] - 5.0f * p[1] + 4.0f * p[2] - p[3]};
+    const float4 c3{-1.0f * p[0] + 3.0f * p[1] - 3.0f * p[2] + p[3]};
     finish(0.5f * (c0 + u * (c1 + u * (c2 + u * c3))),
            0.5f * (c1 + u * (2.0f * c2 + u * 3.0f * c3)));
     break;

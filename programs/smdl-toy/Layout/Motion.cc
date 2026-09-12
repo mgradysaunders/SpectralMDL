@@ -10,9 +10,9 @@
 // procedure.
 
 TransformDecomposition decomposeTransform(const float4x4 &xf) noexcept {
-  const auto m0{float3(xf[0])};
-  const auto m1{float3(xf[1])};
-  const auto m2{float3(xf[2])};
+  const float3 m0{float3(xf[0])};
+  const float3 m1{float3(xf[1])};
+  const float3 m2{float3(xf[2])};
   const float sx{length(m0)};
   const float3 q0{m0 / sx};
   const float skewXY{dot(q0, m1)};
@@ -68,7 +68,7 @@ TransformDecomposition decomposeTransform(const float4x4 &xf) noexcept {
 }
 
 float4x4 composeTransform(const TransformDecomposition &parts) noexcept {
-  auto q{parts.quaternion};
+  float4 q{parts.quaternion};
   if (!smdl::tryNormalize(q)) q = float4(1, 0, 0, 0);
   const float w{q[0]}, x{q[1]}, y{q[2]}, z{q[3]};
   // The rotation's columns, which the scale and skew then mix.
@@ -99,7 +99,7 @@ namespace {
     cosine = -cosine;
   }
   if (cosine > 0.9995f) {
-    auto result{(1.0f - t) * a + t * b};
+    float4 result{(1.0f - t) * a + t * b};
     if (!smdl::tryNormalize(result)) return a;
     return result;
   }
@@ -114,8 +114,8 @@ float4x4 interpolateTransform(const float4x4 &a, const float4x4 &b,
                               float t) noexcept {
   if (!(t > 0.0f)) return a;
   if (!(t < 1.0f)) return b;
-  const auto lo{decomposeTransform(a)};
-  const auto hi{decomposeTransform(b)};
+  const TransformDecomposition lo{decomposeTransform(a)};
+  const TransformDecomposition hi{decomposeTransform(b)};
   TransformDecomposition parts{};
   parts.translation = (1.0f - t) * lo.translation + t * hi.translation;
   parts.quaternion = slerp(lo.quaternion, hi.quaternion, t);
@@ -130,8 +130,8 @@ float4x4 MotionTrack::at(float seconds) const noexcept {
   if (!(seconds < keys.back().time)) return keys.back().transform;
   size_t i{1};
   while (i < keys.size() && keys[i].time < seconds) i++;
-  const auto &lo{keys[i - 1]};
-  const auto &hi{keys[i]};
+  const MotionKey &lo{keys[i - 1]};
+  const MotionKey &hi{keys[i]};
   if (seconds == lo.time) return lo.transform;
   if (seconds == hi.time) return hi.transform;
   const float span{hi.time - lo.time};

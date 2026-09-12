@@ -15,7 +15,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   curves->basis = file.basis;
   curves->matIndex = matIndex;
   curves->rootUVs = std::move(file.rootUVs);
-  const auto strandCount{file.strandCount()};
+  const uint32_t strandCount{file.strandCount()};
   // Build the Embree-ready buffers strand by strand. The points pass
   // through with the radius scale applied; Catmull-Rom additionally
   // duplicates each strand's end points, so the four-point window of
@@ -23,25 +23,25 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   // point (see `CurvesFile`). Segment counts per basis: a strand of N
   // usable points has N - 1 linear segments, N - 3 B-spline windows,
   // and (after padding) N - 1 Catmull-Rom windows.
-  const auto isCatmullRom{file.basis == CurvesFile::Basis::CATMULL_ROM};
-  const auto windowSize{file.basis == CurvesFile::Basis::LINEAR ? 2U : 4U};
+  const bool isCatmullRom{file.basis == CurvesFile::Basis::CATMULL_ROM};
+  const uint32_t windowSize{file.basis == CurvesFile::Basis::LINEAR ? 2U : 4U};
   curves->points.reserve(file.points.size() +
                          (isCatmullRom ? 2 * size_t(strandCount) : 0));
   curves->strandFirstSeg.reserve(size_t(strandCount) + 1);
   curves->strandFirstSeg.push_back(0);
   for (uint32_t strand = 0; strand < strandCount; strand++) {
-    const auto first{file.strandOffsets[strand]};
-    const auto last{file.strandOffsets[strand + 1]};
-    const auto base{uint32_t(curves->points.size())};
+    const uint32_t first{file.strandOffsets[strand]};
+    const uint32_t last{file.strandOffsets[strand + 1]};
+    const uint32_t base{uint32_t(curves->points.size())};
     if (isCatmullRom) curves->points.push_back(file.points[first]);
-    for (auto i = first; i < last; i++)
+    for (uint32_t i = first; i < last; i++)
       curves->points.push_back(file.points[i]);
     if (isCatmullRom) curves->points.push_back(file.points[last - 1]);
     if (spec.radiusScale != 1.0f)
-      for (auto i = size_t(base); i < curves->points.size(); i++)
+      for (size_t i = base; i < curves->points.size(); i++)
         curves->points[i].w *= spec.radiusScale;
-    const auto numPoints{uint32_t(curves->points.size()) - base};
-    const auto numSegs{numPoints - (windowSize - 1)};
+    const uint32_t numPoints{uint32_t(curves->points.size()) - base};
+    const uint32_t numSegs{numPoints - (windowSize - 1)};
     for (uint32_t segment = 0; segment < numSegs; segment++) {
       curves->segIndices.push_back(base + segment);
       curves->segStrand.push_back(strand);
@@ -59,7 +59,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
     maxRadius = std::max(maxRadius, point.w);
   }
   constexpr size_t PROXY_POINT_CAP = 4096;
-  const auto stride{
+  const size_t stride{
       std::max(size_t(1), curves->points.size() / PROXY_POINT_CAP)};
   for (size_t i = 0; i < curves->points.size(); i += stride)
     curves->proxyPoints.push_back(float3(curves->points[i]));
@@ -74,7 +74,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
                                : bound.lower.z - maxRadius)));
   // The geometry type is the file's basis crossed with the spec's
   // cross-section mode; see `RTC_GEOMETRY_TYPE_CURVE(3)`.
-  auto geometryType{RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE};
+  RTCGeometryType geometryType{RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE};
   switch (file.basis) {
   case CurvesFile::Basis::LINEAR:
     geometryType = spec.mode == CurvesSpec::Mode::RIBBON
@@ -96,7 +96,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   rtcSetSceneFlags(curves->scene, useRobustIntersection ? RTC_SCENE_FLAG_ROBUST
                                                         : RTC_SCENE_FLAG_NONE);
   rtcSetSceneBuildQuality(curves->scene, RTC_BUILD_QUALITY_HIGH);
-  auto geometry{rtcNewGeometry(device, geometryType)};
+  RTCGeometry geometry{rtcNewGeometry(device, geometryType)};
   // The point vector is exactly Embree's FLOAT4 vertex layout, and a
   // 16-byte element satisfies Embree's read-past-the-end padding rule
   // by construction, so the buffer is shared rather than copied. This
@@ -104,7 +104,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   rtcSetSharedGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0,
                              RTC_FORMAT_FLOAT4, curves->points.data(), 0,
                              sizeof(float4), curves->points.size());
-  auto *indices{static_cast<uint32_t *>(rtcSetNewGeometryBuffer(
+  uint32_t *indices{static_cast<uint32_t *>(rtcSetNewGeometryBuffer(
       geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT, sizeof(uint32_t),
       curves->segIndices.size()))};
   std::copy(curves->segIndices.begin(), curves->segIndices.end(), indices);

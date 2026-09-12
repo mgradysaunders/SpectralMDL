@@ -11,7 +11,7 @@ namespace {
 LightTree::LightTree(smdl::Span<const LightBounds> lights, int maxDepth) {
   mTrails.assign(lights.size(), INVALID_INDEX);
   mPhis.assign(lights.size(), 0.0f);
-  auto order{std::vector<uint32_t>()};
+  std::vector<uint32_t> order{};
   for (uint32_t i = 0; i < lights.size(); i++) {
     if (lights[i].phi > 0.0f && !lights[i].box.isEmpty()) {
       order.push_back(i);
@@ -28,9 +28,9 @@ LightTree::LightTree(smdl::Span<const LightBounds> lights, int maxDepth) {
 uint32_t LightTree::build(std::vector<uint32_t> &order,
                           smdl::Span<const LightBounds> lights, size_t begin,
                           size_t end, int depth, uint32_t trail, int maxDepth) {
-  const auto nodeIndex{uint32_t(mNodes.size())};
+  const uint32_t nodeIndex{uint32_t(mNodes.size())};
   {
-    auto node{Node()};
+    Node node{};
     for (size_t i = begin; i < end; i++) {
       node.box.extend(lights[order[i]].box);
       node.phi += lights[order[i]].phi;
@@ -58,7 +58,7 @@ uint32_t LightTree::build(std::vector<uint32_t> &order,
   // usual heuristic is zero for a row of lamps along a road, where it
   // would split one lamp off at a time.
   constexpr int NUM_BUCKETS = 12;
-  const auto &box{mNodes[nodeIndex].box};
+  const BoundBox3 &box{mNodes[nodeIndex].box};
   const float3 extent{box.extent()};
   auto bucketOf{[&](uint32_t light, int axis) {
     const float t{(lights[light].box.center()[axis] - box.lower[axis]) /
@@ -170,7 +170,7 @@ int LightTree::sample(const float3 &point, float xi,
   uint32_t nodeIndex{0};
   float p{1.0f};
   for (;;) {
-    const auto &node{mNodes[nodeIndex]};
+    const Node &node{mNodes[nodeIndex]};
     if (node.lightCount == 1) {
       pmf = p;
       return int(mLeafLights[node.link]);
@@ -209,7 +209,7 @@ float LightTree::pmf(int lightIndex, const float3 &point) const noexcept {
   uint32_t nodeIndex{0};
   float p{1.0f};
   for (;;) {
-    const auto &node{mNodes[nodeIndex]};
+    const Node &node{mNodes[nodeIndex]};
     if (node.lightCount > 0)
       return node.lightCount == 1 ? p : p * mPhis[lightIndex] / node.phi;
     const float pLeft{leftProbability(nodeIndex, point)};

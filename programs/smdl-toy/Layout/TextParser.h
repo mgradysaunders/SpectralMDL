@@ -37,7 +37,7 @@
 template <typename Parse>
 [[nodiscard]] auto readDocument(LayoutDiagnostics &diags,
                                 const std::string &fileName, Parse &&parse) {
-  const auto &source{diags.loadSource(fileName)};
+  const LayoutSource &source{diags.loadSource(fileName)};
   auto document{parse(diags, source)};
   diags.printAllAndRefuse(fileName);
   SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
@@ -218,8 +218,8 @@ protected:
         mDiags.error(location(), smdl::concat("expected ", what, " or '}'"));
         throw Recover();
       }
-      const auto key{mToken.text};
-      const auto keyLoc{location()};
+      const std::string key{mToken.text};
+      const LayoutLocation keyLoc{location()};
       advance();
       body(key, keyLoc);
     }
