@@ -24,8 +24,8 @@ constexpr double CMF_SCALE = 4294967296.0; // 2^32
 // sequence nondecreasing; the top of the range saturates because 1.0
 // scales to exactly one past the largest representable value.
 [[nodiscard]]
-SMDL_ALWAYS_INLINE std::uint32_t quantizeCMF(double cmf) noexcept {
-  return std::uint32_t(std::min(CMF_SCALE * cmf, 4294967295.0));
+SMDL_ALWAYS_INLINE uint32_t quantizeCMF(double cmf) noexcept {
+  return uint32_t(std::min(CMF_SCALE * cmf, 4294967295.0));
 }
 
 } // namespace
@@ -60,16 +60,16 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
     if (pmf) *pmf = 1;
     return 0;
   }
-  const std::uint32_t key{quantizeCMF(std::clamp(double(xi), 0.0, 1.0))};
+  const uint32_t key{quantizeCMF(std::clamp(double(xi), 0.0, 1.0))};
   auto itr{std::lower_bound(mCMFs.begin(), mCMFs.end(), key)};
   if (itr == mCMFs.begin()) ++itr;
   if (itr == mCMFs.end()) --itr;
   --itr;
   int i{int(itr - mCMFs.begin())};
-  std::uint32_t cmf0{*itr++};
-  std::uint32_t cmf1{*itr};
+  uint32_t cmf0{*itr++};
+  uint32_t cmf1{*itr};
   // Nondecreasing entries, so this cannot wrap.
-  const std::uint32_t width{cmf1 - cmf0};
+  const uint32_t width{cmf1 - cmf0};
   if (xiRemap) {
     // Against the dequantized bounds rather than against `key`, so the
     // remapped sample keeps the resolution of the incoming float instead
