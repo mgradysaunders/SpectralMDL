@@ -284,7 +284,7 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
           grid.loadFromFile(fileName, "flame")};
       REQUIRE(error.has_value());
       CHECK_CONTAINS(error->message,
-                     "no grid named \"flame\" in NanoVDB file, which holds "
+                     "No grid named \"flame\" in NanoVDB file, which holds "
                      "\"density\" and \"temperature\"");
       CHECK_NOT_CONTAINS(error->message, "converted from");
     }
@@ -344,12 +344,12 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       std::optional<smdl::Error> error{
           grid.loadFromFile((tmpDir / "missing.nvdb").string())};
       REQUIRE(error.has_value());
-      CHECK_CONTAINS(error->message, "cannot open");
+      CHECK_CONTAINS(error->message, "Cannot open");
       CHECK_NOT_CONTAINS(error->message, "converted from");
       std::ofstream((tmpDir / "short.nvdb").string()) << "not a NanoVDB file";
       error = grid.loadFromFile((tmpDir / "short.nvdb").string());
       REQUIRE(error.has_value());
-      CHECK_CONTAINS(error->message, "too short to be a NanoVDB file");
+      CHECK_CONTAINS(error->message, "Too short to be a NanoVDB file");
       std::ofstream((tmpDir / "junk.nvdb").string()) << std::string(4096, 'x');
       error = grid.loadFromFile((tmpDir / "junk.nvdb").string());
       REQUIRE(error.has_value());

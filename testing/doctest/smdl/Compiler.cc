@@ -473,7 +473,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
     }
     const std::string ambiguous{compiler.explainMaterialLookup("dup")};
     CHECK(smdl::startsWith(ambiguous,
-                           "material name \"dup\" is ambiguous, matching 2 "
+                           "Material name \"dup\" is ambiguous, matching 2 "
                            "materials:\n  \"::alpha::dup\" declared at ["));
     CHECK_CONTAINS(ambiguous, "alpha.mdl:7]\n  \"::beta::dup\" declared at [");
     CHECK_CONTAINS(ambiguous, "beta.mdl:3]");
@@ -484,16 +484,16 @@ TEST_CASE("findMaterial: looking a material up by name") {
     // explanation.
     CHECK(compiler.explainMaterialLookup("unique_mat") == "");
     CHECK(compiler.explainMaterialLookup("unique_mta") ==
-          "no material matches \"unique_mta\"; did you mean \"unique_mat\"?");
+          "No material matches \"unique_mta\"; did you mean \"unique_mat\"?");
     CHECK(compiler.explainMaterialLookup("alpha::unique_mta") ==
-          "no material matches \"alpha::unique_mta\"; did you mean "
+          "No material matches \"alpha::unique_mta\"; did you mean "
           "\"alpha::unique_mat\"?");
     CHECK(compiler.explainMaterialLookup("::alpha::uniqe_mat") ==
-          "no material matches \"::alpha::uniqe_mat\"; did you mean "
+          "No material matches \"::alpha::uniqe_mat\"; did you mean "
           "\"::alpha::unique_mat\"?");
     CHECK(compiler.explainMaterialLookup("no_such_material") ==
-          "no material matches \"no_such_material\"");
-    CHECK(compiler.explainMaterialLookup("") == "no material matches \"\"");
+          "No material matches \"no_such_material\"");
+    CHECK(compiler.explainMaterialLookup("") == "No material matches \"\"");
     // Module-qualified suffixes disambiguate.
     const smdl::JIT::MaterialDef *dupAlpha{compiler.findMaterial("alpha::dup")};
     const smdl::JIT::MaterialDef *dupBeta{compiler.findMaterial("beta::dup")};
@@ -664,7 +664,7 @@ TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
     // name so that the exclusion can be given as the reason.
     CHECK(compiler.findMaterial("unwanted") == nullptr);
     CHECK(compiler.explainMaterialLookup("unwanted") ==
-          "material name \"unwanted\" matches \"::mats::unwanted\", which was "
+          "Material name \"unwanted\" matches \"::mats::unwanted\", which was "
           "not compiled because it is not a desired material (see "
           "'Compiler::setDesiredMaterials()')");
     REQUIRE(compiler.getSkippedMaterialNames().size() == 1);
@@ -682,7 +682,7 @@ TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
           "added modules; did you mean \"unwanted\"?");
     // The skipped material is still offered when the host looks it up.
     CHECK(compiler.explainMaterialLookup("unwnated") ==
-          "no material matches \"unwnated\"; did you mean \"unwanted\"?");
+          "No material matches \"unwnated\"; did you mean \"unwanted\"?");
   }
   SUBCASE("Skipped materials emit no entry points at all") {
     smdl::Compiler compiler{};

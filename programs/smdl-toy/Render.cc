@@ -151,7 +151,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                         "still guides");
       } catch (const smdl::Error &error) {
         SMDL_LOG_WARN("Cannot resume guide tree, retraining from scratch: ",
-                      smdl::decapitalized(error.message));
+                      error.message);
       }
     } else {
       SMDL_LOG_INFO("No guide tree at ", smdl::Quoted(treeName),

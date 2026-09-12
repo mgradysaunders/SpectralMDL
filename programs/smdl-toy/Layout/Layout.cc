@@ -216,7 +216,7 @@ public:
       source = &mDiags.loadSource(fileName);
     } catch (const smdl::Error &error) {
       if (!importSite) throw;
-      mDiags.error(importSite, smdl::decapitalized(error.message));
+      mDiags.error(importSite, error.message);
       return;
     }
     const LayoutDocument document{
@@ -428,8 +428,7 @@ private:
       try {
         places = readPlacesFile(resolved.string());
       } catch (const smdl::Error &error) {
-        mDiags.error(placement.placesPathLoc,
-                     smdl::decapitalized(error.message));
+        mDiags.error(placement.placesPathLoc, error.message);
         throw SkipPlacement();
       }
       if (!placement.variants.empty() && !places.hasVariants())
@@ -859,7 +858,7 @@ private:
         target.correction = asset.correction;
       }
     } catch (const smdl::Error &error) {
-      mDiags.error(location, smdl::decapitalized(error.message));
+      mDiags.error(location, error.message);
       throw SkipPlacement();
     }
     if (resolved.extension() == ".scene") {

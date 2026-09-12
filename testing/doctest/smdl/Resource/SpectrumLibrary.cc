@@ -174,17 +174,17 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     opts = {};
     opts.dataType = 2;
     reject("data_type.sli", opts,
-           "unsupported 'data type' 2 on line 8 of its header, expected 4 or "
+           "Unsupported 'data type' 2 on line 8 of its header, expected 4 or "
            "5");
     opts = {};
     opts.wavelengthUnits = "Furlongs";
     reject("units.sli", opts,
-           "unsupported 'wavelength units' \"Furlongs\" on line 11 of its "
+           "Unsupported 'wavelength units' \"Furlongs\" on line 11 of its "
            "header");
     opts = {};
     opts.isTruncated = true;
     reject("truncated.sli", opts,
-           "the data holds 11 of the 12 values its header describes");
+           "The data holds 11 of the 12 values its header describes");
     // No header file at all.
     std::ofstream((tmpDir / "headerless.sli").string()) << "";
     CHECK(

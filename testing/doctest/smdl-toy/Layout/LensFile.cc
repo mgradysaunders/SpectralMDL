@@ -475,12 +475,12 @@ TEST_CASE("LensFile: defining a medium") {
     REQUIRE(diags.errorCount() == 1);
     const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message,
-                   "medium \"CROWN\": expected a positive Abbe number");
+                   "medium \"CROWN\": Expected a positive Abbe number");
     CHECK(source.lineAndColumn(error.location.offset).lineNo == 4);
   }
   SUBCASE("Every refusal of the dispersion model reaches the file") {
     CHECK_CONTAINS(refusalOf("{ ior 0.9 abbe 60 }"),
-                   "expected an index greater than 1");
+                   "Expected an index greater than 1");
     CHECK_CONTAINS(refusalOf("{ sellmeier { b 1 0 0 c 0.25 0 0 } }"),
                    "pole at 500 nm");
     CHECK_CONTAINS(refusalOf("{ ior 1.5 abbe 60 partial_dispersion 0.3 }"),

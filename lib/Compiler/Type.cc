@@ -1194,10 +1194,10 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
         // arguments the variant injected, none of which the caller wrote.
         // Lead with the call as it was actually written and keep the
         // underlying reason as a note.
-        srcLoc.throwError(
-            concat("Cannot call ", Quoted(declName), " with arguments ",
-                   Quoted(std::string(args)), "\n  forwards to: ",
-                   decapitalized(dropSourceLocation(error.message, srcLoc))));
+        srcLoc.throwError(concat(
+            "Cannot call ", Quoted(declName), " with arguments ",
+            Quoted(std::string(args)),
+            "\n  forwards to: ", dropSourceLocation(error.message, srcLoc)));
       }
       // Skip the conversion when the type already matches exactly, so
       // memory-resident (lvalue) results stay in memory instead of being
@@ -1312,9 +1312,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                    /*shouldSkipEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
-      appendCandidateNote(
-          overloadErrors, {}, func->declName, func->params, func->decl.srcLoc,
-          decapitalized(dropSourceLocation(error.message, srcLoc)));
+      appendCandidateNote(overloadErrors, {}, func->declName, func->params,
+                          func->decl.srcLoc,
+                          dropSourceLocation(error.message, srcLoc));
     }
   }
   // If no matching declarations, fail, including the reason each
@@ -2546,9 +2546,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
                                     &whyNot)) {
       viableConstructors.push_back(&constructor);
     } else {
-      addCandidateNote(
-          "constructor", constructor.params, declSrcLoc,
-          decapitalized(dropSourceLocation(std::move(whyNot), srcLoc)));
+      addCandidateNote("constructor", constructor.params, declSrcLoc,
+                       dropSourceLocation(std::move(whyNot), srcLoc));
     }
   }
   if (viableConstructors.size() == 1) {
@@ -2685,9 +2684,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     }
     return result;
   }
-  addCandidateNote(
-      "field-wise", params, decl.name.srcLoc,
-      decapitalized(dropSourceLocation(std::move(whyNot), srcLoc)));
+  addCandidateNote("field-wise", params, decl.name.srcLoc,
+                   dropSourceLocation(std::move(whyNot), srcLoc));
   srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)), candidateNotes);
   return {};

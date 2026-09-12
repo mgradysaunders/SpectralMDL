@@ -113,9 +113,7 @@ private:
 /// must not have a side effect the program depends on.
 ///
 /// The library words a message as a sentence whose first word is
-/// capitalized and which does not end in a period. Text spliced into a
-/// message after a colon or a semicolon is a clause rather than a line,
-/// and stays lowercase.
+/// capitalized and which does not end in a period.
 #define SMDL_LOG(level, ...)                                            \
   do {                                                                  \
     const auto smdlLogLevel{level};                                     \

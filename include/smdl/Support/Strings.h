@@ -254,13 +254,6 @@ template <typename T, typename... Ts>
   return str;
 }
 
-/// The same message worded as a clause instead of a line, for splicing
-/// into a larger message after a colon or a semicolon. This lowercases
-/// the first letter, and does nothing when the first word carries an
-/// interior capital, which is what keeps a name like `NanoVDB` or a
-/// leading quoted token intact.
-[[nodiscard]] SMDL_EXPORT std::string decapitalized(std::string message);
-
 /// The did-you-mean helper: the nearest candidate to `name` within
 /// `maxDistance` edits (Levenshtein), or empty if none is close enough.
 /// Ties keep the earliest candidate. The threshold is the caller's policy,

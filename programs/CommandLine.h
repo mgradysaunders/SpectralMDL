@@ -148,21 +148,27 @@ public:
     SmallVector<StringRef> tokens{};
     Arg.split(tokens, ",");
     if (tokens.size() != N) {
-      O.error("'" + Arg + "' value invalid for " + getValueName());
+      O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+                           " value invalid for ",
+                           std::string_view(getValueName())));
       return true;
     }
     for (size_t i{}; i < N; i++) {
       if constexpr (std::is_floating_point_v<T>) {
         double result{};
         if (tokens[i].getAsDouble(result)) {
-          O.error("'" + Arg + "' value invalid for " + getValueName());
+          O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+                               " value invalid for ",
+                               std::string_view(getValueName())));
           return true;
         }
         Val[i] = result;
       } else {
         unsigned result{};
         if (tokens[i].getAsInteger(10, result)) {
-          O.error("'" + Arg + "' value invalid for " + getValueName());
+          O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+                               " value invalid for ",
+                               std::string_view(getValueName())));
           return true;
         }
         Val[i] = result;

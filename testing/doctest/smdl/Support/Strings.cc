@@ -108,31 +108,3 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
                        smdl::Bytes(2048)) == "has 1 curve of 2 KiB");
   }
 }
-
-TEST_CASE("decapitalized: a message reworded as a clause") {
-  // The ordinary case: a message spliced in after a colon reads as part of
-  // the sentence around it.
-  CHECK(smdl::decapitalized("Cannot open 'x.vol'") == "cannot open 'x.vol'");
-  CHECK(smdl::decapitalized("Expected a type") == "expected a type");
-  SUBCASE("A name keeps the capital it came with") {
-    // An interior capital marks the first word as a name rather than the
-    // start of a sentence, which is what separates 'NanoVDB' from 'Cannot'.
-    CHECK(smdl::decapitalized("NanoVDB grid is empty") ==
-          "NanoVDB grid is empty");
-    CHECK(smdl::decapitalized("UTF-8 encoding failed") ==
-          "UTF-8 encoding failed");
-    CHECK(smdl::decapitalized("MDLE has no main module") ==
-          "MDLE has no main module");
-  }
-  SUBCASE("Anything that does not start with a letter is left alone") {
-    CHECK(smdl::decapitalized("'exec' has an empty body") ==
-          "'exec' has an empty body");
-    CHECK(smdl::decapitalized("2 grids share a name") ==
-          "2 grids share a name");
-    CHECK(smdl::decapitalized("already a clause") == "already a clause");
-    CHECK(smdl::decapitalized("").empty());
-  }
-  SUBCASE("A one-word message is still a word") {
-    CHECK(smdl::decapitalized("Truncated") == "truncated");
-  }
-}

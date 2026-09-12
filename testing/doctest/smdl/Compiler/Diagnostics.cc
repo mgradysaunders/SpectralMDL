@@ -28,7 +28,7 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
   SUBCASE("A quoted candidate note does not repeat the caret") {
     smdl::Error error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
                                    "exec { auto s = S(alhpa: 2); }\n")};
-    CHECK_CONTAINS(error.message, "no parameter named \"alhpa\"; did you mean "
+    CHECK_CONTAINS(error.message, "No parameter named \"alhpa\"; did you mean "
                                   "\"alpha\"?");
     // The caret belongs to the primary error, not to the note quoting the
     // rejected candidate.
@@ -84,7 +84,7 @@ TEST_CASE("Compiler: where a message points and what it quotes") {
     const std::optional<smdl::Error> error{compiler.runUnitTests(state)};
     REQUIRE(error.has_value());
     CHECK_CONTAINS(error->message, "[<string ::diag>:4:");
-    CHECK_CONTAINS(error->message, "assertion failed: i == 2");
+    CHECK_CONTAINS(error->message, "Assertion failed: i == 2");
     CHECK_CONTAINS(error->snippet, "#assert(i == 2);");
   }
 }
@@ -249,7 +249,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     smdl::Error error{
         compileError("#smdl\nexec { const int i = 1; i = 2; }\n")};
     CHECK_CONTAINS(error.message,
-                   "cannot assign to \"i\" because it is declared "
+                   "Cannot assign to \"i\" because it is declared "
                    "'const'");
     CHECK_CONTAINS(error.message, "declared at [<string ::diag>:2:");
     CHECK_NOT_CONTAINS(error.message, "rvalue");
@@ -285,7 +285,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
                          tmpDir.path().string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(warned.messages().size() == 1);
-    CHECK_CONTAINS(warned.messages()[0], "not an IES file");
+    CHECK_CONTAINS(warned.messages()[0], "Not an IES file");
     CHECK_NOT_CONTAINS(warned.messages()[0], "<builtin");
     CHECK_CONTAINS(warned.messages()[0], "<string ::diag>:2:");
   }
