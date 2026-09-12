@@ -1248,6 +1248,28 @@ TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
   }
 }
 
+TEST_CASE("ExitPupil: the domain holds what gets out, but for a speckle at "
+          "the edge of the field") {
+  // The phone lens wide open, whose surfaces are aspheric to the
+  // fourteenth order. Near the edge of the field two isolated rays get
+  // out tens of microns past where the region ends, points a fraction of
+  // a micron wide with nothing passing on either side of them. What puts
+  // them there is not known. They are not the intersection answering
+  // from the wrong root: they survive a solve held inside the surface's
+  // own extent and walked to the crossing the ray reaches first, which
+  // is the one thing that was ruled out by trying it. A domain scanned
+  // off the region cannot hold what stands isolated off it, and at a
+  // part in a hundred thousand of the rays they move nothing.
+  const auto corner{1.15f * MM};
+  const Lens lens{phone2mm(), {AT_INFINITY, 0}};
+  const ExitPupil pupil{lens, corner};
+  const auto sweep{sweepPupil(lens, pupil, corner, {smdl::FRAUNHOFER_D_LINE})};
+  MESSAGE("of " << sweep.numPassed << " rays out, " << sweep.numOutside
+                << " lie outside the domain");
+  CHECK(sweep.numPassed > 0);
+  CHECK(double(sweep.numOutside) < 1e-4 * double(sweep.numPassed));
+}
+
 TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   // The patent gives a half field of 39.5 degrees, which is the one
   // number of the three printed on it that only a traced ray can check.

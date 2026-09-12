@@ -22,9 +22,9 @@
 # corner of the frame vignettes on the glass rather than on the stop.
 lens {
   name "Largan 2.03mm f/2.8 phone camera"
-  # Covers an image circle 3.4 mm across at infinity focus, so the 4:3
-  # detector it was drawn for is a 2.68 by 2.01 mm frame: 52.1 degrees top
-  # to bottom and 78.7 across the diagonal.
+  # Covers an image circle 3.6 mm across at infinity focus, so the 4:3
+  # detector it was drawn for is a 2.68 by 2.01 mm frame: 51.5 degrees top
+  # to bottom and 78.1 across the diagonal.
   # The materials, by the nd and Vd the patent states, each named for what
   # its table calls it and for its glass code: the plastic of the first
   # three elements, the plastic of the fourth, and the filter's glass.

@@ -123,16 +123,21 @@ public:
                                      (objectDistance - points.focalLength);
 }
 
-// How many passes the aspheric intersection may take, and how close to
-// the surface it has to land as a fraction of the clear aperture radius.
-// A gentle asphere settles in one correction and the pass that confirms
-// it; a phone lens, whose surfaces are aspheric to the fourteenth order
-// and are doing most of the correcting, takes six. A pass costs nothing
-// on a ray that has already converged, since the loop leaves on the
-// residual, so the cap is set well past what anything real has needed:
-// what it buys is a hard case answered instead of dropped.
-constexpr int MAX_NEWTON_STEPS = 12;
-constexpr float NEWTON_TOLERANCE = 1e-6f;
+// How many passes the aspheric solve may take, and how close to the
+// surface it has to land as a fraction of the clear aperture radius. The
+// solve keeps a bracket around the root and bisects whenever the
+// derivative would step outside it, so the cap is a floor under the
+// answer rather than a hope: bisection alone closes a bracket onto
+// neighboring floats well inside the count, and a pass costs nothing on
+// a ray that has converged, since the loop leaves on the residual.
+constexpr int MAX_SOLVE_STEPS = 32;
+constexpr float SOLVE_TOLERANCE = 1e-6f;
+
+// How many pieces the span of a ray over a surface is walked in when the
+// ends of it leave the crossing in doubt. A lens surface is met once by
+// a ray that is not grazing it, so this is for the oblate rim that lifts
+// back over an oblique one and is crossed twice.
+constexpr int NUM_SPAN_STEPS = 8;
 
 // The sag of a surface at squared radius `u`, and its derivative with
 // respect to `u`, both in scene units. False is a radius past where the
@@ -164,37 +169,147 @@ constexpr float NEWTON_TOLERANCE = 1e-6f;
   return true;
 }
 
-// Refine a conic root into a root of the whole sag, the polynomial
-// included, by Newton on the axial distance from the ray to the surface.
-// The polynomial is a perturbation of the conic the seed came from,
-// microns against a sag of millimeters on any real design, which is why
-// so few passes settle it.
-[[nodiscard]] bool intersectAspheric(const LensElement &element, const Ray &ray,
-                                     float t, float3 &point,
-                                     float3 &normal) noexcept {
-  const auto tolerance{NEWTON_TOLERANCE * element.semiDiameter};
-  for (int step = 0; step < MAX_NEWTON_STEPS; step++) {
-    const auto p{ray(t)};
-    const auto u{p.x * p.x + p.y * p.y};
+// Where the surface stops being one, which is what `radialLimit` holds:
+// the clear aperture, or the radius the base conic turns back on itself
+// at if that comes first. The turn is left just outside, since the sag
+// stands vertical there and the solve divides by its slope.
+[[nodiscard]] float radialLimitOf(const LensElement &element) noexcept {
+  auto uLimit{element.semiDiameter * element.semiDiameter};
+  const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
+  if (const auto turn{(1 + element.conic) * curvature * curvature}; turn > 0)
+    uLimit = std::min(uLimit, (1 - 1e-4f) / turn);
+  return std::sqrt(uLimit);
+}
+
+// The band of sag the cap covers inside its radial limit. A polynomial
+// puts its extremes where no closed form reaches them, so the curve is
+// sampled instead, and the band is then opened by the tolerance the
+// solve works to, below which nothing here is resolved anyway.
+void sagRangeOf(const LensElement &element, float &sagMin,
+                float &sagMax) noexcept {
+  constexpr int NUM_SAG_SAMPLES = 64;
+  sagMin = sagMax = 0;
+  for (int i = 1; i <= NUM_SAG_SAMPLES; i++) {
+    const auto radius{element.radialLimit * (float(i) / NUM_SAG_SAMPLES)};
     auto sag{0.0f}, dSagDu{0.0f};
-    if (!sagOf(element, u, sag, dSagDu)) return false;
-    const auto residual{(p.z - element.z) - sag};
-    if (std::abs(residual) <= tolerance) {
-      point = p;
-      // The surface is `z - vertex - sag(x^2 + y^2) = 0`, so its
-      // gradient is the sag's slope in the two radial directions against
-      // a unit rise in z.
-      normal = normalize(float3(-2 * dSagDu * p.x, -2 * dSagDu * p.y, 1.0f));
-      if (dot(normal, ray.dir) > 0) normal = -normal;
-      return true;
-    }
-    // How fast the residual closes: the ray climbing in z against the
+    if (sagOf(element, radius * radius, sag, dSagDu))
+      sagMin = std::min(sagMin, sag), sagMax = std::max(sagMax, sag);
+  }
+  const auto pad{0.01f * (sagMax - sagMin) +
+                 SOLVE_TOLERANCE * element.semiDiameter};
+  sagMin -= pad, sagMax += pad;
+}
+
+// The span of `t` the ray is inside the surface's own extent over, which
+// is the only stretch a root can mean anything on. Both limits are
+// needed to close it: a ray up the axis stays inside the radius forever
+// and one square across the axis stays inside the sag band forever, but
+// a ray is parallel to at most one of them.
+[[nodiscard]] bool spanOverElement(const LensElement &element, const Ray &ray,
+                                   float &tLo, float &tHi) noexcept {
+  tLo = 0, tHi = FLOAT_MAX;
+  const auto a{ray.dir.x * ray.dir.x + ray.dir.y * ray.dir.y};
+  const auto b{2 * (ray.org.x * ray.dir.x + ray.org.y * ray.dir.y)};
+  const auto c{ray.org.x * ray.org.x + ray.org.y * ray.org.y -
+               element.radialLimit * element.radialLimit};
+  if (a > 0) {
+    const auto discriminant{b * b - 4 * a * c};
+    if (!(discriminant > 0)) return false;
+    // The stable pairing, as in the quadric solve below.
+    const auto root{std::sqrt(discriminant)};
+    const auto q{-0.5f * (b + (b < 0 ? -root : root))};
+    tLo = std::max(tLo, std::min(q / a, c / q));
+    tHi = std::min(tHi, std::max(q / a, c / q));
+  } else if (c > 0) {
+    return false;
+  }
+  const auto zLo{element.z + element.sagMin};
+  const auto zHi{element.z + element.sagMax};
+  if (ray.dir.z > 0) {
+    tLo = std::max(tLo, (zLo - ray.org.z) / ray.dir.z);
+    tHi = std::min(tHi, (zHi - ray.org.z) / ray.dir.z);
+  } else if (ray.dir.z < 0) {
+    tLo = std::max(tLo, (zHi - ray.org.z) / ray.dir.z);
+    tHi = std::min(tHi, (zLo - ray.org.z) / ray.dir.z);
+  } else if (!(zLo <= ray.org.z && ray.org.z <= zHi)) {
+    return false;
+  }
+  return tLo <= tHi;
+}
+
+// Intersect a ray with a surface whose sag carries an even polynomial on
+// top of its base conic, which has no closed form. The search is held to
+// the span the ray crosses the surface's own extent over, and inside it
+// runs on a bracket that only ever shrinks: the ends say which side of
+// the surface the ray is on, and each pass takes the step the derivative
+// asks for when it lands inside the bracket and bisects when it does
+// not, so the bracket closes whatever the surface does under it.
+//
+// Holding the search inside the extent is the point of it. An aspheric
+// polynomial is a fit over the clear aperture, and read past there its
+// high-order terms diverge and grow roots that no light ever meets; an
+// iteration free to wander out can come back with one of them and report
+// a hit at the wrong place on the surface.
+[[nodiscard]] bool intersectAspheric(const LensElement &element, const Ray &ray,
+                                     float3 &point, float3 &normal) noexcept {
+  float tLo{}, tHi{};
+  if (!spanOverElement(element, ray, tLo, tHi)) return false;
+  float3 p{};
+  auto sag{0.0f}, dSagDu{0.0f}, height{0.0f};
+  // How far the ray stands above the surface at `t`, along the axis.
+  const auto probe{[&](float t) {
+    p = ray(t);
+    if (!sagOf(element, p.x * p.x + p.y * p.y, sag, dSagDu)) return false;
+    height = (p.z - element.z) - sag;
+    return true;
+  }};
+  const auto accept{[&]() {
+    point = p;
+    // The surface is `z - vertex - sag(x^2 + y^2) = 0`, so its gradient
+    // is the sag's slope in the two radial directions against a unit
+    // rise in z.
+    normal = normalize(float3(-2 * dSagDu * p.x, -2 * dSagDu * p.y, 1.0f));
+    if (dot(normal, ray.dir) > 0) normal = -normal;
+    return true;
+  }};
+  const auto tolerance{SOLVE_TOLERANCE * element.semiDiameter};
+  if (!probe(tLo)) return false;
+  if (std::abs(height) <= tolerance) return accept();
+  // Walk the span from the near end to the first piece of it the ray
+  // changes sides over, so that what the solve closes on is the crossing
+  // the ray reaches first rather than whichever one an iteration happens
+  // to land in. Reading the two ends alone would not do: they agree in
+  // sign whenever the surface lifts back over an oblique ray, and they
+  // disagree without saying which of three crossings came first. What
+  // the walk does not see is a pair of crossings inside one piece, which
+  // is a surface finer than the span divided this far.
+  const auto isBelowAtLo{height < 0};
+  auto tA{tLo}, tB{tLo};
+  auto isBracketed{false};
+  for (int i = 1; i <= NUM_SPAN_STEPS && !isBracketed; i++) {
+    const auto t{tLo + (tHi - tLo) * (float(i) / NUM_SPAN_STEPS)};
+    if (!probe(t)) return false;
+    if (std::abs(height) <= tolerance) return accept();
+    if ((height < 0) != isBelowAtLo)
+      tB = t, isBracketed = true;
+    else
+      tA = t;
+  }
+  if (!isBracketed) return false;
+  auto t{0.5f * (tA + tB)};
+  for (int step = 0; step < MAX_SOLVE_STEPS; step++) {
+    if (!probe(t)) return false;
+    if (std::abs(height) <= tolerance) return accept();
+    if ((height < 0) == isBelowAtLo)
+      tA = t;
+    else
+      tB = t;
+    // How fast the height closes: the ray climbing in z against the
     // surface receding under it as the radius grows.
     const auto slope{ray.dir.z -
                      2 * dSagDu * (p.x * ray.dir.x + p.y * ray.dir.y)};
-    if (slope == 0) return false;
-    t -= residual / slope;
-    if (!(t >= 0)) return false;
+    t = slope == 0 ? FLOAT_MAX : t - height / slope;
+    if (!(tA < t && t < tB)) t = 0.5f * (tA + tB);
   }
   return false;
 }
@@ -214,6 +329,10 @@ constexpr float NEWTON_TOLERANCE = 1e-6f;
 // clear aperture a real design states.
 [[nodiscard]] bool intersectSurface(const LensElement &element, const Ray &ray,
                                     float3 &point, float3 &normal) noexcept {
+  // A polynomial on top of the conic is not a quadric and has no closed
+  // form, so it has a solve of its own and does not start from this one.
+  if (element.numAsphericTerms > 0)
+    return intersectAspheric(element, ray, point, normal);
   const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
   const auto kPlusOne{1 + element.conic};
   const auto ox{ray.org.x}, oy{ray.org.y}, os{ray.org.z - element.z};
@@ -244,10 +363,6 @@ constexpr float NEWTON_TOLERANCE = 1e-6f;
     if (q != 0) consider(c / q);
   }
   if (sBest == FLOAT_MAX) return false;
-  // A polynomial on top of the conic is not a quadric and has no closed
-  // form; the root just found is where its solve starts.
-  if (element.numAsphericTerms > 0)
-    return intersectAspheric(element, ray, tBest, point, normal);
   point = ray(tBest);
   normal = normalize(float3(curvature * point.x, curvature * point.y,
                             curvature * kPlusOne * (point.z - element.z) - 1));
@@ -844,6 +959,14 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     const auto n{float(mNumBlades)};
     mBladeCircumRadius =
         workingStopRadius * std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)));
+  }
+
+  // The extent every intersection searches inside, settled now that the
+  // stop carries its working radius and before the film solve below,
+  // which is the first thing here to trace.
+  for (auto &element : mElements) {
+    element.radialLimit = radialLimitOf(element);
+    sagRangeOf(element, element.sagMin, element.sagMax);
   }
 
   // Focus by moving the film, which is what a lens whose elements do not

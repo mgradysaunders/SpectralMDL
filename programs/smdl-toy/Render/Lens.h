@@ -77,6 +77,24 @@ public:
   /// On the stop it is the working radius, so stopping down narrows it.
   float semiDiameter{};
 
+  /// Where the surface stops being one: the clear aperture, or the
+  /// radius at which the base conic turns back on itself if that comes
+  /// first, held a hair inside the turn because the sag stands vertical
+  /// there. The intersection searches inside this and nowhere else. Out
+  /// past it an aspheric polynomial is a fit read beyond the data it was
+  /// made from, where a term worth microns at the rim is worth meters,
+  /// and the roots it grows there are the formula's rather than the
+  /// lens's.
+  float radialLimit{};
+
+  /// The band of sag the surface covers inside `radialLimit`, which is
+  /// the z its cap occupies measured from the vertex. Together with the
+  /// radial limit it closes the span of a ray that the surface can be
+  /// met over: a ray parallel to the axis never leaves the radius, and
+  /// one square across it never leaves the band, but nothing is parallel
+  /// to both.
+  float sagMin{}, sagMax{};
+
   /// The medium on the scene side and on the film side, as indices into
   /// `Lens::media()`. Both are named because a refraction needs both. The
   /// film side of one surface and the scene side of the next are one

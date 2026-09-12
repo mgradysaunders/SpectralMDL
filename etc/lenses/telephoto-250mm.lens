@@ -3,7 +3,7 @@ lens {
   # Sigler. Modern Lens Design p.175.
   # Scaled to 250 mm from the published 100 mm.
   # Converted from telephoto.250mm.dat by etc/scripts/lens_convert.py.
-  # Covers an image circle 134.4 mm across at infinity focus, far more
+  # Covers an image circle 134 mm across at infinity focus, far more
   # than any modern detector asks for: on a full frame body (36 by 24
   # mm) the frame is 5.5 degrees top to bottom and 9.9 across the
   # diagonal.
