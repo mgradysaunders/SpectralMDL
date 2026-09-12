@@ -27,19 +27,21 @@
 /// the throughput. The single-medium segment, which is nearly every
 /// segment, takes the paths below with no per-component bookkeeping.
 ///
-/// A provably homogeneous medium (`MaterialDef::hasHomogeneousVolume()`)
-/// takes the closed-form path against the coefficient spectra captured
-/// by the instance. Anything else (heterogeneous or unproven) is
-/// tracked with null-collision methods against the majorants the
-/// material declares (`material_volume.max_*_coefficient`): delta
-/// tracking for distance sampling, residual ratio tracking for
-/// shadow-ray transmittance, per-point coefficients queried through the
-/// JIT `volumeEvaluate` entry point in the rigid frame of the instance
-/// whose boundary entered the medium. Evaluated coefficients are
-/// clamped to the declared majorants, so a lying majorant renders a
-/// clamped medium instead of accumulating negative-weight bias. A
-/// heterogeneous medium missing a majorant for a coefficient it uses
-/// falls back to the homogeneous treatment with a one-time warning.
+/// A medium whose coefficients are provably point-independent
+/// (`MaterialDef::hasHomogeneousCoefficients()`) takes the closed-form
+/// path against the coefficient spectra captured by the instance, which
+/// is why every instance is evaluated at the path's own wavelengths and
+/// time. Anything else (heterogeneous or unproven) is tracked with
+/// null-collision methods against the majorants the material declares
+/// (`material_volume.max_*_coefficient`): delta tracking for distance
+/// sampling, residual ratio tracking for shadow-ray transmittance,
+/// per-point coefficients queried through the JIT `volumeEvaluate` entry
+/// point in the rigid frame of the instance whose boundary entered the
+/// medium. Evaluated coefficients are clamped to the declared majorants,
+/// so a lying majorant renders a clamped medium instead of accumulating
+/// negative-weight bias. A heterogeneous medium missing a majorant for a
+/// coefficient it uses falls back to the homogeneous treatment with a
+/// one-time warning.
 ///
 /// Both estimators sample against one hero wavelength and weight by
 /// the single-sample MIS balance heuristic over all bins, which the

@@ -306,7 +306,7 @@ void warnMissingMajorantOnce(const smdl::JIT::MaterialDef *materialDef) {
   if (warned.insert(materialDef).second)
     SMDL_LOG_WARN(
         "material ", smdl::Quoted(materialDef->materialName),
-        " has a isHeterogeneous volume but no majorant for every "
+        " has a heterogeneous volume but no majorant for every "
         "coefficient it uses (see "
         "'material_volume.max_absorption_coefficient' and "
         "'max_scattering_coefficient'); treating the volume as "
@@ -484,7 +484,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
       // Heterogeneous (or unproven, which must be treated the same): the
       // per-point queries need majorants to track against, covering every
       // coefficient the material actually has.
-      if (!material.def->hasHomogeneousVolume()) {
+      if (!material.def->hasHomogeneousCoefficients()) {
         if (!hasUsableMajorants(material)) {
           warnMissingMajorantOnce(material.def);
         } else {

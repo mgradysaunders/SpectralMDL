@@ -6,6 +6,7 @@
 #include "Render/PathStats.h"
 
 #include <algorithm>
+#include <cstring>
 #include <optional>
 
 namespace {
@@ -1627,6 +1628,12 @@ private:
     return mDepth - 1 > mRender.pathOptions.maxBounces;
   }
 
+  // The stack entry of the exterior medium for the path in flight, or
+  // null for vacuum: the instance the block already holds when the path's
+  // wavelengths and time are the ones it was evaluated with, else a new
+  // evaluation.
+  [[nodiscard]] const MediumStack *exteriorMedium();
+
   // Terminate by Russian roulette instead of by a fixed depth limit, so
   // that high-albedo transport keeps the energy it is entitled to.
   // Returns whether the walk continues, scaling the throughput by the
@@ -1752,6 +1759,15 @@ private:
   // boundary the walk crosses.
   const MediumStack *mMediumStack{};
 
+  // The exterior medium's instance, evaluated at the render fields of
+  // the path in flight and kept for every following path of the block
+  // that shares them; see `exteriorMedium()`. Its own allocator, since
+  // the path's is reset between samples.
+  smdl::BumpPtrAllocator mExteriorAllocator{};
+  const MediumStack *mExteriorMedium{};
+  Color mExteriorWavelengths{};
+  float mExteriorTime{};
+
   // What the manifold estimators have claimed since the last receiver;
   // see `MNEECoverage`.
   MNEECoverage mCoverage{};
@@ -1770,6 +1786,34 @@ private:
   float mWidth{};
 };
 
+const MediumStack *PathWalk::exteriorMedium() {
+  if (!mRender.exteriorMediumDef) return nullptr;
+  // An instance is exact at the wavelengths and time it was evaluated
+  // with and at no others, which is the contract of the homogeneity proof
+  // (see `MaterialDef::hasHomogeneousCoefficients()`), so the exterior is
+  // evaluated again whenever a path's differ from the last evaluation's:
+  // every path under -wavelength-jitter or an open shutter, and once per
+  // block otherwise. The instance has no geometry and no side, so the
+  // render state's default frame is already the finalized one, and the
+  // evaluation takes no sampler draw.
+  const Color &wavelengths{mPath.wavelengths};
+  const float time{mPath.time.seconds};
+  if (!mExteriorMedium || mExteriorTime != time ||
+      std::memcmp(mExteriorWavelengths.data(), wavelengths.data(),
+                  wavelengths.size() * sizeof(float)) != 0) {
+    mExteriorAllocator.reset();
+    smdl::State state{makeRenderState(wavelengths, &mExteriorAllocator, time)};
+    mExteriorMedium = new (mExteriorAllocator)
+        MediumStack{nullptr,
+                    mExteriorAllocator.allocate<smdl::JIT::Material>(
+                        state, mRender.exteriorMediumDef),
+                    nullptr};
+    mExteriorWavelengths = wavelengths;
+    mExteriorTime = time;
+  }
+  return mExteriorMedium;
+}
+
 Color PathWalk::trace(const CameraSample &camera) {
   // Begin the path: nothing below reads what the last one left, other
   // than through these.
@@ -1777,7 +1821,7 @@ Color PathWalk::trace(const CameraSample &camera) {
   mPath.medium.beginPath();
   mL.fill(0.0f);
   mBeta.fill(camera.weight);
-  mMediumStack = mRender.exteriorMedium;
+  mMediumStack = exteriorMedium();
   mCoverage.disarm();
   mDepth = 1;
   mPrev.reset();

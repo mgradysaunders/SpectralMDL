@@ -157,15 +157,17 @@ struct RenderContext final {
 
   /// The scene-wide exterior atmosphere, or null. It is the medium of
   /// every segment a walk spends outside all geometry, so it is
-  /// mutually exclusive with `exteriorMedium`, which occupies the same
-  /// place with a material behind it.
+  /// mutually exclusive with `exteriorMediumDef`, which occupies the
+  /// same place with a material behind it.
   const smdl::Haze *haze{};
 
-  /// The bottom of the nested-medium stack every walk starts inside,
-  /// null for vacuum: typically a scene-wide fog or atmosphere named by
-  /// the composition's `medium` directive, whose `MediumStack` entry
-  /// the caller owns for the whole render.
-  const MediumStack *exteriorMedium{};
+  /// The material of the medium every walk starts inside, null for
+  /// vacuum: typically a scene-wide fog named by the composition's
+  /// `medium` directive. A walk evaluates it at its head, at its own
+  /// wavelengths and time, into the path allocator, so that a
+  /// coefficient resampled onto the wavelength grid is exact under
+  /// `-wavelength-jitter`; see `MaterialDef::hasHomogeneousCoefficients()`.
+  const smdl::JIT::MaterialDef *exteriorMediumDef{};
 };
 
 /// What the camera paths of a block of pixels are traced with, what

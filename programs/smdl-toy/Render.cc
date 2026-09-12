@@ -113,7 +113,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   const LightSampler &lights{*staged.lights};
   const EnvLight *envLight{staged.envLight.get()};
   const smdl::Haze *haze{staged.haze.get()};
-  const MediumStack *exteriorMedium{staged.exteriorMedium};
+  const smdl::JIT::MaterialDef *exteriorMediumDef{staged.exteriorMediumDef};
   const BoundBox3 &guideBound{staged.guideBound};
   const bool hasValidGuideBounds{staged.hasValidGuideBounds};
   const std::optional<Camera> &camera{frame.camera};
@@ -285,8 +285,8 @@ void renderSamples(const Options &opts, const Frame &frame,
   const PathOptions &pathOptions{opts.render.path};
   // What every path of this render is traced against; see
   // `RenderContext`. Built once, shared by every worker thread.
-  const RenderContext render{compiler,    scene, lights,        mneeOptions,
-                             pathOptions, haze,  exteriorMedium};
+  const RenderContext render{compiler,    scene, lights,           mneeOptions,
+                             pathOptions, haze,  exteriorMediumDef};
   // The tally behind -report: every block adds its own into this one at
   // the block's end, under the mutex, so the walk itself never shares
   // a write. Empty when nobody asked, and then no block tallies at all.

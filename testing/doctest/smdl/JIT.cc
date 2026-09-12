@@ -64,9 +64,10 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   REQUIRE_OK(compiler.jitCompile());
   // The six '#isDefault'-derived structural bits are always known, and
   // at -O2 the constant-foldable value bits are too, including the
-  // heterogeneous-volume bit (every material here has a constant, or
-  // no, volume, so the '.volumeEvaluate' body folds away from the
-  // state and homogeneity is proven), the displacement bit (every
+  // heterogeneous-coefficients bit (every material here has a constant,
+  // or no, volume, so the '.volumeEvaluate' body reads nothing
+  // point-varying of the state and the coefficients prove
+  // point-independent), the displacement bit (every
   // material here has a constant, in fact default, displacement, so
   // the '.displacementProbe' body folds to the zero vector), and the
   // normal-remap bit (every material here keeps the state normal, so
@@ -78,7 +79,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
       smdl::MATERIAL_HAS_HAIR};
   constexpr int allBits{
       structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
-      smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME |
+      smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS |
       smdl::MATERIAL_HAS_DISPLACEMENT | smdl::MATERIAL_REMAPS_NORMAL};
   SUBCASE("Structural and constant-foldable bits are known") {
     const smdl::JIT::MaterialDef *matDefault{
@@ -106,7 +107,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     const smdl::JIT::MaterialDef *matVolume{
         requireMaterial(compiler, "mat_volume")};
     CHECK(matVolume->hasVolume());
-    CHECK(matVolume->hasHomogeneousVolume());
+    CHECK(matVolume->hasHomogeneousCoefficients());
     // Not opaque because it passes shadow rays through, not because it
     // has a volume: the volume-with-surface material below blocks at
     // every hit and is opaque despite its interior.
@@ -193,6 +194,8 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       "root/vols.mdl",
       "#smdl\n"
       "import ::df::*;\n"
+      "import ::math::*;\n"
+      "import ::scene::*;\n"
       "import ::state::*;\n"
       "import ::tex::*;\n"
       "export material vol_homog() = material(\n"
@@ -212,6 +215,40 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       "    max_scattering_coefficient: 4.0 *\n"
       "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0)));\n"
       "export material vol_none() = material();\n"
+      // Constants that read the state without reading the point: an RGB
+      // triple and a spectral table are resampled onto the wavelength
+      // grid, and the animation time is the path's.
+      "export material vol_rgb() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    absorption_coefficient: color(0.01, 0.02, 0.05),\n"
+      "    scattering_coefficient: color(5.0, 4.0, 3.0)));\n"
+      "export material vol_spectral() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    scattering_coefficient: math::emission_color(\n"
+      "      float[](380.0, 780.0), float[](0.3, 0.9))));\n"
+      "export material vol_time() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    scattering_coefficient: color(state::animation_time())));\n"
+      // Reads that the walk cannot see through: a scene-data getter hands
+      // the whole state to a host callback, and a generator draw writes
+      // to the state.
+      "export material vol_scene() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    scattering_coefficient:\n"
+      "      color(scene::data_lookup_float(\"density\", 1.0))));\n"
+      "export material vol_rng() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    scattering_coefficient: color(state::random_float())));\n"
       "export material vol_fire() = material(\n"
       "  ior: 1.0,\n"
       "  volume: material_volume(\n"
@@ -251,7 +288,7 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     const smdl::JIT::MaterialDef *materialDef{
         requireMaterial(compiler, "vol_homog")};
     CHECK(materialDef->hasVolume());
-    CHECK(materialDef->hasHomogeneousVolume());
+    CHECK(materialDef->hasHomogeneousCoefficients());
     materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
                                 emission.data());
     for (size_t i = 0; i < N; i++) {
@@ -263,7 +300,7 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     const smdl::JIT::MaterialDef *materialDef{
         requireMaterial(compiler, "vol_hetero")};
     CHECK(materialDef->hasVolume());
-    CHECK(!materialDef->hasHomogeneousVolume());
+    CHECK(!materialDef->hasHomogeneousCoefficients());
     // The center of voxel (3, 4, 2) has the exactly representable
     // texture coordinate below, where the field is 243.
     state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
@@ -305,12 +342,52 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     const smdl::JIT::MaterialDef *materialDef{
         requireMaterial(compiler, "vol_none")};
     CHECK(!materialDef->hasVolume());
-    CHECK(materialDef->hasHomogeneousVolume());
+    CHECK(materialDef->hasHomogeneousCoefficients());
     materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
                                 emission.data());
     for (size_t i = 0; i < N; i++) {
       CHECK(sigmaA[i] == 0.0f);
       CHECK(sigmaS[i] == 0.0f);
+    }
+  }
+  SUBCASE("RGB, spectral and time-dependent constants prove homogeneous") {
+    // These read the wavelength grid, so the partial state carries one;
+    // 'volumeEvaluate' still needs no allocator.
+    StateStorage storage{compiler};
+    smdl::State gridState{storage.makeState()};
+    gridState.allocator = nullptr;
+    std::vector<float> sigmaSElsewhere(N);
+    for (const char *name : {"vol_rgb", "vol_spectral"}) {
+      CAPTURE(name);
+      const smdl::JIT::MaterialDef *materialDef{
+          requireMaterial(compiler, name)};
+      CHECK(materialDef->hasVolume());
+      CHECK(materialDef->hasHomogeneousCoefficients());
+      gridState.position = smdl::float3(0.0f, 0.0f, 0.0f);
+      materialDef->volumeEvaluate(gridState, sigmaA.data(), sigmaS.data(),
+                                  emission.data());
+      gridState.position = smdl::float3(3.0f, -2.0f, 7.0f);
+      materialDef->volumeEvaluate(gridState, sigmaA.data(),
+                                  sigmaSElsewhere.data(), emission.data());
+      for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == sigmaSElsewhere[i]);
+      // The proof is of a spectrum that really was resampled onto the
+      // grid, not of one that folded to a flat constant.
+      CHECK(sigmaS.front() != sigmaS.back());
+    }
+    const smdl::JIT::MaterialDef *timed{requireMaterial(compiler, "vol_time")};
+    CHECK(timed->hasHomogeneousCoefficients());
+    gridState.animationTime = 2.0f;
+    timed->volumeEvaluate(gridState, sigmaA.data(), sigmaS.data(),
+                          emission.data());
+    for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 2.0f);
+  }
+  SUBCASE("Scene data and the generator keep the coefficients unproven") {
+    for (const char *name : {"vol_scene", "vol_rng"}) {
+      CAPTURE(name);
+      const smdl::JIT::MaterialDef *materialDef{
+          requireMaterial(compiler, name)};
+      CHECK(materialDef->hasVolume());
+      CHECK(!materialDef->hasHomogeneousCoefficients());
     }
   }
   SUBCASE("Evaluations expose the density acceleration hint") {

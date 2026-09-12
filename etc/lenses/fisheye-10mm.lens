@@ -1,15 +1,15 @@
+# US 4,647,161 (Muller), first embodiment. Modern Lens Design p.164.
+# Scaled to 10 mm from the published 100 mm.
+# Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
+# Covers an image circle 26.7 mm across at infinity focus, which is
+# the whole 153.3 degrees and wider than any sensor is tall, so the
+# circle is always cropped. On a Four Thirds body (17.3 by 13 mm) it
+# fills the frame: 74.6 degrees top to bottom and 123.8 across the
+# diagonal.
+# The glasses, by the nd and Vd the patent states, each named for its
+# glass code; the patent names none.
 lens {
   name "Muller 10mm f/4 fisheye, 155.9 degrees"
-  # US 4,647,161 (Muller), first embodiment. Modern Lens Design p.164.
-  # Scaled to 10 mm from the published 100 mm.
-  # Converted from fisheye.10mm.dat by etc/scripts/lens_convert.py.
-  # Covers an image circle 26.7 mm across at infinity focus, which is
-  # the whole 153.3 degrees and wider than any sensor is tall, so the
-  # circle is always cropped. On a Four Thirds body (17.3 by 13 mm) it
-  # fills the frame: 74.6 degrees top to bottom and 123.8 across the
-  # diagonal.
-  # The glasses, by the nd and Vd the patent states, each named for its
-  # glass code; the patent names none.
   medium GLASS-620603 { ior 1.62041 abbe 60.33 }
   medium GLASS-639554 { ior 1.63854 abbe 55.42 }
   medium GLASS-654337 { ior 1.65446 abbe 33.65 }

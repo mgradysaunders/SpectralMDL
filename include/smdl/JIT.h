@@ -55,17 +55,18 @@ inline constexpr int MATERIAL_HAS_HAIR = (1 << 7);
 /// Indicates that the material has a cutout opacity less than one.
 inline constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 
-/// Indicates that the material volume coefficients vary with position.
+/// Indicates that the material volume coefficients vary from point to
+/// point inside a medium instance.
 ///
 /// \note
 /// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
-/// derived after optimization from whether the body of
-/// `JIT::MaterialDef::volumeEvaluate` still reads its state, so it degrades to
-/// unknown at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets
-/// it. See `JIT::MaterialDef::hasHomogeneousVolume()` for the conservative
-/// reading.
+/// derived after optimization from which `State` fields the body of
+/// `JIT::MaterialDef::volumeEvaluate` still reads, so it degrades to unknown
+/// at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets it.
+/// See `JIT::MaterialDef::hasHomogeneousCoefficients()` for the
+/// conservative reading and the contract.
 ///
-inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
+inline constexpr int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
 
 /// Indicates that the material has a non-zero `geometry.displacement`.
 ///
@@ -340,17 +341,28 @@ public:
            (staticFlags & (MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE)) == 0;
   }
 
-  /// Provably homogeneous: the volume coefficients are independent of
-  /// the evaluation point, so the coefficient spectra captured by the
-  /// `Eval` at the surface hit are exact everywhere in the interior
-  /// and `volumeEvaluate` never needs to be called. When this returns
-  /// false the volume is heterogeneous *or unproven*, and hosts must
-  /// treat it as heterogeneous: sample the interior through
+  /// Provably point-independent coefficients: the volume coefficients
+  /// read nothing of the `State` that varies from point to point inside a
+  /// medium instance, so the coefficient spectra captured by the `Eval`
+  /// at the boundary are exact everywhere in the interior and
+  /// `volumeEvaluate` never needs to be called. When this returns false
+  /// the coefficients are heterogeneous *or unproven*, and hosts must
+  /// treat them as heterogeneous: sample the interior through
   /// `volumeEvaluate` against the majorants (see
   /// `Eval::maxScatteringCoefficient`).
-  [[nodiscard]] bool hasHomogeneousVolume() const noexcept {
-    return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_VOLUME) != 0 &&
-           (staticFlags & MATERIAL_HAS_HETEROGENEOUS_VOLUME) == 0;
+  ///
+  /// Point-independent is not state-independent. The coefficients may
+  /// still depend on the render-wide fields the instance was evaluated
+  /// with: the wavelength grid and its weights (an RGB or spectral
+  /// constant is resampled onto `State::wavelengthBase`), the units, the
+  /// animation time, the object transform, and the transport mode. These
+  /// are the same at every point of one path inside one instance, which
+  /// is what the proof promises; a host that evaluates an instance with
+  /// other render fields than a path's own (a per-sample wavelength
+  /// grid, say) must evaluate it again for that path.
+  [[nodiscard]] bool hasHomogeneousCoefficients() const noexcept {
+    return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS) != 0 &&
+           (staticFlags & MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS) == 0;
   }
 
   /// Provably undisplaced: `geometry.displacement` is the compile-time
@@ -432,9 +444,9 @@ public:
     ///
     /// \note
     /// This is the coefficient expression at the surface hit. For
-    /// heterogeneous volumes (see `MaterialDef::hasHomogeneousVolume()`),
-    /// interior sampling must go through `MaterialDef::volumeEvaluate`
-    /// instead.
+    /// heterogeneous coefficients (see
+    /// `MaterialDef::hasHomogeneousCoefficients()`), interior sampling
+    /// must go through `MaterialDef::volumeEvaluate` instead.
     ///
     const float *absorptionCoefficient{};
 
@@ -586,9 +598,9 @@ public:
   /// `state.allocator` may be null. A coefficient the material does not
   /// declare comes back zero. This is the per-point query that
   /// null-collision tracking makes at every tentative collision inside a
-  /// heterogeneous medium; for provably homogeneous materials
-  /// (`hasHomogeneousVolume()`) the coefficient pointers of an `Eval`
-  /// answer the same question with no call at all.
+  /// heterogeneous medium; for provably point-independent coefficients
+  /// (`hasHomogeneousCoefficients()`) the coefficient pointers of an
+  /// `Eval` answer the same question with no call at all.
   ///
   /// \note
   /// The state is a partial state in the sense of an environment

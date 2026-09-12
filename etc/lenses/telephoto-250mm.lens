@@ -1,19 +1,19 @@
+# Sigler. Modern Lens Design p.175.
+# Scaled to 250 mm from the published 100 mm.
+# Converted from telephoto.250mm.dat by etc/scripts/lens_convert.py.
+# Covers an image circle 134 mm across at infinity focus, far more
+# than any modern detector asks for: on a full frame body (36 by 24
+# mm) the frame is 5.5 degrees top to bottom and 9.9 across the
+# diagonal.
+# The book names SCHOTT's PK51, KZFS9, and KZFS1, and BASF5. None is in
+# the refractiveindex.info database, so these are the dispersion
+# formulas abbetrex.com carries: SCHOTT's KZFS1, and for the rest the
+# nearest it has, SCHOTT's PK51A and KZFSN9 and SUMITA's BASF5, each
+# within the book's rounding of its nd and V. SUMITA fits BASF5 with
+# SCHOTT's power series, so it is written by its nd and Vd and the
+# partial dispersion that series gives.
 lens {
   name "Sigler super achromate telephoto 250mm f/5.6"
-  # Sigler. Modern Lens Design p.175.
-  # Scaled to 250 mm from the published 100 mm.
-  # Converted from telephoto.250mm.dat by etc/scripts/lens_convert.py.
-  # Covers an image circle 134 mm across at infinity focus, far more
-  # than any modern detector asks for: on a full frame body (36 by 24
-  # mm) the frame is 5.5 degrees top to bottom and 9.9 across the
-  # diagonal.
-  # The book names SCHOTT's PK51, KZFS9, and KZFS1, and BASF5. None is in
-  # the refractiveindex.info database, so these are the dispersion
-  # formulas abbetrex.com carries: SCHOTT's KZFS1, and for the rest the
-  # nearest it has, SCHOTT's PK51A and KZFSN9 and SUMITA's BASF5, each
-  # within the book's rounding of its nd and V. SUMITA fits BASF5 with
-  # SCHOTT's power series, so it is written by its nd and Vd and the
-  # partial dispersion that series gives.
   medium PK51A {
     sellmeier { b 1.15611 0.153229 0.785619
                 c 0.00585597 0.0194072 140.537 }

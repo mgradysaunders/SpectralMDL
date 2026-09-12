@@ -34,14 +34,12 @@ namespace {
 // quadrature.
 const std::vector<float> GRID{420.0f, 500.0f, 580.0f, 660.0f};
 
-// Two kinds of coefficient appear below, and which one a material can
-// carry is decided by the compiler, not by taste: a spectral constant
-// is a resampling loop over the wavelength basis, which the optimizer
-// does not fold, so a material whose coefficients vary from band to
-// band is never *provably* homogeneous. The homogeneous cases therefore
-// carry flat coefficients and the tracked cases carry `ramp(lo, hi)`,
-// a spectrum that slopes across the four bands, which is where the
-// hero-wavelength weighting is exercised.
+// Two kinds of coefficient appear below: flat constants, and
+// `ramp(lo, hi)`, a spectrum that slopes across the four bands, which is
+// where the hero-wavelength weighting is exercised. Either proves
+// homogeneous when nothing reads the position: a spectral constant is
+// resampled onto the wavelength basis, a read the proof allows, so the
+// tracked cases are exactly the ones that read `state::position()`.
 const char *MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
@@ -59,6 +57,13 @@ const char *MATERIALS{
     "    scattering: df::anisotropic_vdf(),\n"
     "    absorption_coefficient: color(0.20),\n"
     "    scattering_coefficient: color(0.30)));\n"
+    // Homogeneous with a sloped spectrum, so that the closed forms see
+    // the hero-wavelength weighting that flat coefficients hide.
+    "export material fog_sloped() = material(\n"
+    "  volume: material_volume(\n"
+    "    scattering: df::anisotropic_vdf(),\n"
+    "    absorption_coefficient: ramp(0.10, 0.30),\n"
+    "    scattering_coefficient: ramp(0.20, 0.40)));\n"
     // The two halves of an additive overlap, and the single medium whose
     // coefficients are their sum, written as the same sum so that the
     // two answers are the same floating-point number.
@@ -134,7 +139,7 @@ private:
 public:
   Fixture() {
     REQUIRE_OK(compiler.addCode("::mediumtest", MATERIALS));
-    // O2, because `hasHomogeneousVolume()` is derived after optimization
+    // O2, because `hasHomogeneousCoefficients()` is derived after optimization
     // and degrades to unknown without it, which would send every
     // material here down the heterogeneous path.
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
@@ -156,7 +161,7 @@ public:
   [[nodiscard]] bool isProvablyHomogeneous(const char *name) {
     const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
     REQUIRE(materialDef);
-    return materialDef->hasHomogeneousVolume();
+    return materialDef->hasHomogeneousCoefficients();
   }
 
   // A stack entry over the material `name`, whose evaluation lives as long
@@ -367,6 +372,34 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
   }
 
   {
+    INFO("a sloped spectrum proves homogeneous and takes the closed forms");
+    REQUIRE(fixture.isProvablyHomogeneous("fog_sloped"));
+    MediumStack &sloped{fixture.entry("fog_sloped")};
+    const Coefficients c{coefficientsOf(sloped, unitScale)};
+    // The bands must actually differ, or the hero-wavelength weighting
+    // of the closed forms collapses to the flat case above.
+    REQUIRE(c.extinction()[0] !=
+            doctest::Approx(c.extinction()[GRID.size() - 1]));
+    const Color slopedTr{beerLambert(c.extinction(), DISTANCE)};
+    medium.reset(&sloped, wavelengths, PathTime(0.0f), org, dir);
+    REQUIRE(medium.hasMedium());
+    CHECK_FALSE(medium.attenuationDraws());
+    Sampler sampler{};
+    sampler.startPixelSample(0, 0);
+    Color beta{1.0f};
+    medium.attenuate(sampler, DISTANCE, beta);
+    checkClose(beta, slopedTr, 1e-4f, "the closed-form transmittance");
+    const Means means{
+        sampleMeans(medium, &sloped, wavelengths, org, dir, DISTANCE, nullptr)};
+    checkClose(means.survived, slopedTr, MEAN_TOLERANCE, "the survival weight");
+    Color expect{};
+    for (size_t i = 0; i < expect.size(); i++)
+      expect[i] = c.sigmaS[i] * (1.0f - slopedTr[i]) / c.extinction()[i];
+    checkClose(means.scattered, expect, MEAN_TOLERANCE,
+               "the scattering weight");
+  }
+
+  {
     INFO("a homogeneous medium's emission is the closed-form integral");
     REQUIRE(fixture.isProvablyHomogeneous("glow"));
     MediumStack &glow{fixture.entry("glow")};
@@ -408,7 +441,7 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
   REQUIRE(base[0] != doctest::Approx(base[GRID.size() - 1]));
 
   {
-    INFO("a isHeterogeneous medium is tracked, at a fixed cost in draws");
+    INFO("a heterogeneous medium is tracked, at a fixed cost in draws");
     medium.reset(&ramp, wavelengths, PathTime(0.0f), org, dir);
     REQUIRE(medium.hasMedium());
     CHECK(medium.attenuationDraws());
@@ -446,8 +479,7 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
   }
 
   {
-    INFO(
-        "a isHeterogeneous volume with no majorant falls back to its snapshot");
+    INFO("a heterogeneous volume with no majorant falls back to its snapshot");
     // The material cannot bound its own field, so the medium stands
     // down to the snapshot the evaluation captured rather than tracking
     // against a majorant it does not have.
