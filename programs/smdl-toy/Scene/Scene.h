@@ -266,19 +266,24 @@ public:
   std::vector<uint32_t> baseIndices{};    ///< Concatenated corner indices.
 };
 
-/// The welding of a mesh's vertices by exact position bits, which is what
-/// the surface's own connectivity looks like once the copies split to
-/// carry different UVs across a texture seam are put back together.
+/// A grouping of a mesh's vertices, or of the corners an import read,
+/// into the entries a bitwise weld keeps.
 ///
-/// Displacement moves every vertex of a group by one common offset, so a
-/// grouping outlives it and `Scene::finalizeMesh()` builds only one per
-/// mesh. The one visible consequence is that two groups displaced into
-/// contact stay distinct, where re-welding afterward would merge them and
-/// smooth their normals into each other.
+/// The weld `Scene::finalizeMesh()` builds is by exact position bits,
+/// which is what the surface's own connectivity looks like once the
+/// copies split to carry different UVs across a texture seam are put
+/// back together. Displacement moves every vertex of a group by one
+/// common offset, so that grouping outlives it and only one is built
+/// per mesh. The one visible consequence is that two groups displaced
+/// into contact stay distinct, where re-welding afterward would merge
+/// them and smooth their normals into each other.
+///
+/// The import's corner joins group by the whole vertex record instead,
+/// which is the sharing assimp's own vertex join would have produced.
 struct WeldMap final {
-  /// The group of each vertex, numbered `0` to `numGroups - 1` in
-  /// first-encounter order, so the grouping is deterministic regardless
-  /// of the hashing underneath.
+  /// The group of each vertex or corner, numbered `0` to
+  /// `numGroups - 1` in first-encounter order, so the grouping is
+  /// deterministic regardless of the hashing underneath.
   std::vector<uint32_t> groupOf{};
 
   uint32_t numGroups{};
@@ -736,6 +741,48 @@ private:
                const MaterialAssignment &materials,
                const AnimationSpec &animation);
 
+  /// The instance's own material binding under `materials`: the index
+  /// of what the renames turn `baseName` into, or `INVALID_INDEX` where
+  /// they have nothing to say about it. See `MeshInstance::matIndex`.
+  [[nodiscard]] uint32_t
+  instanceMaterialIndex(const MaterialAssignment &materials,
+                        const std::string &baseName);
+
+  /// The placement tail of `addMesh()`, `addPrimitive()` and
+  /// `addCurves()`: one entry of `worldXfs` becomes an ordinary
+  /// instance and several become one instance array, with
+  /// `worldXfsShut` as the two take it. `nodeXf` is the file's own node
+  /// transform, absent where the geometry has none (a primitive or a
+  /// groom), and `nodeXfShut` is the node's shut key, present only
+  /// where the file's clip moves the node. Returns the first
+  /// instance's index in `meshInstances`.
+  uint32_t place(uint32_t meshIndex, uint32_t primIndex, uint32_t curvesIndex,
+                 smdl::Span<const float4x4> worldXfs,
+                 smdl::Span<const float4x4> worldXfsShut,
+                 const std::optional<float4x4> &nodeXf,
+                 const std::optional<float4x4> &nodeXfShut,
+                 std::string_view fileName, uint32_t matIndex);
+
+  /// The Embree scene of the instantiated geometry, whichever of
+  /// `meshIndex`, `primIndex` and `curvesIndex` names it.
+  [[nodiscard]] RTCScene instancedSceneOf(uint32_t meshIndex,
+                                          uint32_t primIndex,
+                                          uint32_t curvesIndex) const;
+
+  /// The `MeshInstance` record of one placement, holding everything but
+  /// what only the builder knows: the Embree geometry the instance is
+  /// an element of, its index within that geometry, and whether it
+  /// moves.
+  [[nodiscard]] MeshInstance
+  makeInstance(uint32_t meshIndex, uint32_t primIndex, uint32_t curvesIndex,
+               const float4x4 &xf, std::string_view fileName,
+               uint32_t matIndex) const;
+
+  /// Attach a committed instance geometry to the top-level scene,
+  /// retaining it and recording that its elements start at `base` in
+  /// `meshInstances`; see `instanceIndexOf()`.
+  void attachInstance(RTCGeometry geometry, uint32_t base);
+
   /// Returns the new instance's index in `meshInstances`. Exactly one
   /// of `meshIndex`, `primIndex`, and `curvesIndex` names the
   /// instantiated geometry; `matIndex` is the instance's own
@@ -784,7 +831,14 @@ private:
   /// Resolve every material name some instance actually shades with,
   /// instance-level overrides included; the body of what `commit()`
   /// promises about names. See `commit()`.
-  void resolveMaterials();
+  ///
+  /// `isUsed` is `computeUsedMaterials()`, which `commit()` reads for
+  /// `useOpaqueShadows` too. Only a material some instance shades with
+  /// can ever be hit, so only those resolve and the rest stay null:
+  /// scene files routinely declare materials nothing uses, and a mesh
+  /// whose every instance overrides its material away leaves the mesh's
+  /// own name legitimately unresolved.
+  void resolveMaterials(const std::vector<bool> &isUsed);
 
   /// Run the deferred per-mesh work in parallel: subdivision,
   /// displacement, normal and tangent recomputation, and each finalized

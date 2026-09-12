@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <unordered_map>
@@ -187,6 +188,16 @@ firstKey(smdl::Span<const float4x4> keys) {
   if (keys.empty()) return std::nullopt;
   return keys[0];
 }
+
+// The cache key a file is identified by: its canonical path, or the
+// name as given where the path does not resolve.
+[[nodiscard]] std::string canonicalKey(const std::string &fileName) {
+  std::error_code ignored{};
+  std::string key{
+      std::filesystem::weakly_canonical(fileName, ignored).string()};
+  if (key.empty()) key = fileName;
+  return key;
+}
 } // namespace
 
 void Scene::addMesh(const std::string &fileName,
@@ -219,10 +230,7 @@ void Scene::addMesh(const std::string &fileName,
   const bool hasRenamesPerInstance{!subdiv.isDisplaced &&
                                    !meshLevel.renames.empty()};
   if (hasRenamesPerInstance) meshLevel.renames.clear();
-  std::error_code ignored{};
-  std::string key{
-      std::filesystem::weakly_canonical(fileName, ignored).string()};
-  if (key.empty()) key = fileName;
+  std::string key{canonicalKey(fileName)};
   if (subdiv.isActive()) key += "|" + subdiv.key();
   if (!meshLevel.empty()) key += "|" + meshLevel.key();
   // The pose a file is baked in is part of what its meshes are: two
@@ -300,12 +308,9 @@ void Scene::addMesh(const std::string &fileName,
   auto instanceMaterial{[&](uint32_t meshIndex) {
     if (!hasRenamesPerInstance) return INVALID_INDEX;
     auto [entry2, isNew]{overrideForMesh.try_emplace(meshIndex, INVALID_INDEX)};
-    if (isNew) {
-      const std::string &baseName{materialNames[meshes[meshIndex]->matIndex]};
-      if (auto itr{materials.renames.find(baseName)};
-          itr != materials.renames.end() && itr->second != baseName)
-        entry2->second = internMaterial(itr->second);
-    }
+    if (isNew)
+      entry2->second = instanceMaterialIndex(
+          materials, materialNames[meshes[meshIndex]->matIndex]);
     return entry2->second;
   }};
   uint32_t numInstances{};
@@ -339,27 +344,11 @@ void Scene::addMesh(const std::string &fileName,
       nodeXf[3] = float4(float3(nodeXf[3]) - origin, nodeXf[3].w);
       nodeXfShut[3] = float4(float3(nodeXfShut[3]) - origin, nodeXfShut[3].w);
     }
-    if (worldXfs.size() == 1) {
-      // The shut key when either the place or the node moves: the
-      // place's shut key (or its open key) over the node's.
-      std::optional<float4x4> shutXf{firstKey(worldXfsShut)};
-      if (shutXf) {
-        *shutXf = *shutXf * nodeXfShut;
-      } else if (doesNodeMove) {
-        shutXf = worldXfs[0] * nodeXfShut;
-      }
-      addInstance(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
-                  worldXfs[0] * nodeXf, shutXf, fileName,
-                  instanceMaterial(placement.meshIndex));
-      numInstances++;
-    } else {
-      addInstanceArray(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
-                       worldXfs, worldXfsShut, nodeXf,
-                       doesNodeMove ? std::optional<float4x4>(nodeXfShut)
-                                    : std::nullopt,
-                       fileName, instanceMaterial(placement.meshIndex));
-      numInstances += uint32_t(worldXfs.size());
-    }
+    place(placement.meshIndex, INVALID_INDEX, INVALID_INDEX, worldXfs,
+          worldXfsShut, nodeXf,
+          doesNodeMove ? std::optional<float4x4>(nodeXfShut) : std::nullopt,
+          fileName, instanceMaterial(placement.meshIndex));
+    numInstances += uint32_t(worldXfs.size());
   }
   if (numSkippedOnRoot > 0)
     SMDL_LOG_WARN("Selection in ", smdl::QuotedPath(fileName), " skipped ",
@@ -394,17 +383,15 @@ void Scene::add(const LayoutItem &item) {
     addMesh(item.fileName, worldXfs, worldXfsShut, item.selection, item.subdiv,
             item.materials, item.animation);
   }
-  // Every instance the item produced carries its mark; the lowering has
-  // already refused it on a groom.
-  if (item.isCaster && !item.curves.isActive)
-    for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].isCausticCaster = true;
-  if (item.isCausticLight && !item.curves.isActive)
-    for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].isCausticLight = true;
-  if (item.isLight && !item.curves.isActive)
-    for (size_t i = firstInstance; i < meshInstances.size(); i++)
-      meshInstances[i].isLight = true;
+  // Every instance the item produced carries its marks; the lowering
+  // has already refused them on a groom. The instances are the ones
+  // just appended, so the marks assign rather than accumulate.
+  if (!item.curves.isActive)
+    for (size_t i = firstInstance; i < meshInstances.size(); i++) {
+      meshInstances[i].isCausticCaster = item.isCaster;
+      meshInstances[i].isCausticLight = item.isCausticLight;
+      meshInstances[i].isLight = item.isLight;
+    }
 }
 
 uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
@@ -431,17 +418,10 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   } else {
     primIndex = entry->second;
   }
-  uint32_t matIndex{INVALID_INDEX};
-  if (auto itr{materials.renames.find(baseName)};
-      itr != materials.renames.end() && itr->second != baseName)
-    matIndex = internMaterial(itr->second);
+  const uint32_t matIndex{instanceMaterialIndex(materials, baseName)};
   fileNames.push_back(smdl::concat("<", spec.name(), ">"));
-  if (worldXfs.size() == 1)
-    return addInstance(INVALID_INDEX, primIndex, INVALID_INDEX, worldXfs[0],
-                       firstKey(worldXfsShut), spec.name(), matIndex);
-  return addInstanceArray(INVALID_INDEX, primIndex, INVALID_INDEX, worldXfs,
-                          worldXfsShut, float4x4(1.0f), std::nullopt,
-                          spec.name(), matIndex);
+  return place(INVALID_INDEX, primIndex, INVALID_INDEX, worldXfs, worldXfsShut,
+               std::nullopt, std::nullopt, spec.name(), matIndex);
 }
 
 uint32_t Scene::addCurves(const std::string &fileName,
@@ -456,10 +436,7 @@ uint32_t Scene::addCurves(const std::string &fileName,
   MaterialAssignment meshLevel{materials};
   meshLevel.renames.clear();
   const std::string baseName{meshLevel.resolve("")};
-  std::error_code ignored{};
-  std::string key{
-      std::filesystem::weakly_canonical(fileName, ignored).string()};
-  if (key.empty()) key = fileName;
+  std::string key{canonicalKey(fileName)};
   key += "|" + spec.key() + "|" + baseName;
   auto entry{curvesCache.find(key)};
   uint32_t curvesIndex{};
@@ -480,17 +457,10 @@ uint32_t Scene::addCurves(const std::string &fileName,
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
                    smdl::Counted(curves[curvesIndex]->strandCount(), "strand"));
   }
-  uint32_t matIndex{INVALID_INDEX};
-  if (auto itr{materials.renames.find(baseName)};
-      itr != materials.renames.end() && itr->second != baseName)
-    matIndex = internMaterial(itr->second);
+  const uint32_t matIndex{instanceMaterialIndex(materials, baseName)};
   fileNames.push_back(fileName);
-  if (worldXfs.size() == 1)
-    return addInstance(INVALID_INDEX, INVALID_INDEX, curvesIndex, worldXfs[0],
-                       firstKey(worldXfsShut), fileName, matIndex);
-  return addInstanceArray(INVALID_INDEX, INVALID_INDEX, curvesIndex, worldXfs,
-                          worldXfsShut, float4x4(1.0f), std::nullopt, fileName,
-                          matIndex);
+  return place(INVALID_INDEX, INVALID_INDEX, curvesIndex, worldXfs,
+               worldXfsShut, std::nullopt, std::nullopt, fileName, matIndex);
 }
 
 ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
@@ -608,6 +578,69 @@ namespace {
 }
 } // namespace
 
+uint32_t Scene::instanceMaterialIndex(const MaterialAssignment &materials,
+                                      const std::string &baseName) {
+  const auto itr{materials.renames.find(baseName)};
+  if (itr == materials.renames.end() || itr->second == baseName)
+    return INVALID_INDEX;
+  return internMaterial(itr->second);
+}
+
+uint32_t Scene::place(uint32_t meshIndex, uint32_t primIndex,
+                      uint32_t curvesIndex, smdl::Span<const float4x4> worldXfs,
+                      smdl::Span<const float4x4> worldXfsShut,
+                      const std::optional<float4x4> &nodeXf,
+                      const std::optional<float4x4> &nodeXfShut,
+                      std::string_view fileName, uint32_t matIndex) {
+  if (worldXfs.size() > 1)
+    return addInstanceArray(meshIndex, primIndex, curvesIndex, worldXfs,
+                            worldXfsShut, nodeXf ? *nodeXf : float4x4(1.0f),
+                            nodeXfShut, fileName, matIndex);
+  // The shut key when either the place or the node moves: the place's
+  // shut key (or its open key, for a still place under a moving node)
+  // over the node's, which is the node's shut key where the node moves
+  // and its one transform where it does not.
+  std::optional<float4x4> shutXf{firstKey(worldXfsShut)};
+  if (nodeXfShut) {
+    shutXf = (shutXf ? *shutXf : worldXfs[0]) * *nodeXfShut;
+  } else if (shutXf && nodeXf) {
+    *shutXf = *shutXf * *nodeXf;
+  }
+  return addInstance(meshIndex, primIndex, curvesIndex,
+                     nodeXf ? worldXfs[0] * *nodeXf : worldXfs[0], shutXf,
+                     fileName, matIndex);
+}
+
+RTCScene Scene::instancedSceneOf(uint32_t meshIndex, uint32_t primIndex,
+                                 uint32_t curvesIndex) const {
+  return curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
+         : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
+                                      : meshes[meshIndex]->scene;
+}
+
+MeshInstance Scene::makeInstance(uint32_t meshIndex, uint32_t primIndex,
+                                 uint32_t curvesIndex, const float4x4 &xf,
+                                 std::string_view fileName,
+                                 uint32_t matIndex) const {
+  MeshInstance instance{};
+  instance.setObjectToWorld(xf, fileName);
+  instance.meshIndex = meshIndex;
+  instance.primIndex = primIndex;
+  instance.curvesIndex = curvesIndex;
+  instance.matIndex = matIndex;
+  instance.isDeforming =
+      meshIndex != INVALID_INDEX && meshes[meshIndex]->deforms();
+  return instance;
+}
+
+void Scene::attachInstance(RTCGeometry geometry, uint32_t base) {
+  const unsigned int geomID{rtcAttachGeometry(scene, geometry)};
+  instanceGeometries.push_back(geometry);
+  if (instanceBaseByGeomID.size() <= geomID)
+    instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
+  instanceBaseByGeomID[geomID] = base;
+}
+
 uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex, const float4x4 &xf,
                             const std::optional<float4x4> &xfShut,
@@ -617,14 +650,8 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
   // invariant, so a sheared or non-uniformly scaled instance costs nothing
   // here and `makeHit()` rebuilds the world-space geometry from the same
   // matrix.
-  MeshInstance instance{};
-  instance.setObjectToWorld(xf, fileName);
-  instance.meshIndex = meshIndex;
-  instance.primIndex = primIndex;
-  instance.curvesIndex = curvesIndex;
-  instance.matIndex = matIndex;
-  instance.isDeforming =
-      meshIndex != INVALID_INDEX && meshes[meshIndex]->deforms();
+  MeshInstance instance{
+      makeInstance(meshIndex, primIndex, curvesIndex, xf, fileName, matIndex)};
   RTCGeometry inst{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE)};
   rtcSetGeometryBuildQuality(inst, RTC_BUILD_QUALITY_HIGH);
   if (xfShut && keysInterpolate(xf, *xfShut, fileName)) {
@@ -646,19 +673,13 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
                             &instance.frame.objectToWorld[0][0]);
   }
   rtcSetGeometryInstancedScene(
-      inst, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
-            : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
-                                         : meshes[meshIndex]->scene);
+      inst, instancedSceneOf(meshIndex, primIndex, curvesIndex));
   rtcCommitGeometry(inst);
-  const unsigned int geomID{rtcAttachGeometry(scene, inst)};
-  instanceGeometries.push_back(inst);
   instance.geometry = inst;
   instance.instPrimID = 0;
   const uint32_t base{uint32_t(meshInstances.size())};
   meshInstances.push_back(instance);
-  if (instanceBaseByGeomID.size() <= geomID)
-    instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
-  instanceBaseByGeomID[geomID] = base;
+  attachInstance(inst, base);
   return base;
 }
 
@@ -697,9 +718,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
   rtcSetGeometryTimeStepCount(geometry, isMoving ? 2 : 1);
   rtcSetGeometryInstancedScene(
-      geometry, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
-                : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
-                                             : meshes[meshIndex]->scene);
+      geometry, instancedSceneOf(meshIndex, primIndex, curvesIndex));
   float *transforms{};
   RTCQuaternionDecomposition *keys[2]{};
   if (!isMoving) {
@@ -725,25 +744,15 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
       keys[0][i] = quaternionDecompositionOf(xf);
       keys[1][i] = quaternionDecompositionOf(shutOf(i));
     }
-    MeshInstance instance{};
-    instance.setObjectToWorld(xf, fileName);
-    instance.meshIndex = meshIndex;
-    instance.primIndex = primIndex;
-    instance.curvesIndex = curvesIndex;
-    instance.matIndex = matIndex;
-    instance.isDeforming =
-        meshIndex != INVALID_INDEX && meshes[meshIndex]->deforms();
+    MeshInstance instance{makeInstance(meshIndex, primIndex, curvesIndex, xf,
+                                       fileName, matIndex)};
     instance.geometry = geometry;
     instance.instPrimID = unsigned(i);
     instance.isMoving = isMoving;
     meshInstances.push_back(instance);
   }
   rtcCommitGeometry(geometry);
-  const unsigned int geomID{rtcAttachGeometry(scene, geometry)};
-  instanceGeometries.push_back(geometry);
-  if (instanceBaseByGeomID.size() <= geomID)
-    instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
-  instanceBaseByGeomID[geomID] = base;
+  attachInstance(geometry, base);
   SMDL_LOG_DEBUG("Instance array: ", smdl::Counted(worldXfs.size(), "element"),
                  " of ", fileName, isMoving ? ", moving" : "");
   return base;
@@ -819,19 +828,17 @@ void Scene::commit(const Color &wavelengths) {
   // Materials first, because displacement needs them; then the deferred
   // per-mesh work; and only then the top-level structure, whose bounds
   // must see the displaced geometry.
-  resolveMaterials();
+  const std::vector<bool> isUsed{computeUsedMaterials()};
+  resolveMaterials(isUsed);
   // See the field: does every material block a shadow ray at its first
   // hit, which is what turns a visibility walk into a boolean occlusion
   // query.
-  {
-    useOpaqueShadows = true;
-    const std::vector<bool> used{computeUsedMaterials()};
-    for (size_t i = 0; i < materialDefs.size(); i++) {
-      if (!used[i] || !materialDefs[i]) continue;
-      if (!materialDefs[i]->isAlwaysOpaque()) {
-        useOpaqueShadows = false;
-        break;
-      }
+  useOpaqueShadows = true;
+  for (size_t i = 0; i < materialDefs.size(); i++) {
+    if (!isUsed[i] || !materialDefs[i]) continue;
+    if (!materialDefs[i]->isAlwaysOpaque()) {
+      useOpaqueShadows = false;
+      break;
     }
   }
   finalizeMeshes(wavelengths);
@@ -871,7 +878,7 @@ std::vector<std::string> Scene::usedMaterialNames() const {
   return names;
 }
 
-void Scene::resolveMaterials() {
+void Scene::resolveMaterials(const std::vector<bool> &isUsed) {
   const smdl::JIT::MaterialDef *fallback{};
   if (!fallbackMaterialName.empty()) {
     fallback = compiler.findMaterial(fallbackMaterialName);
@@ -880,12 +887,6 @@ void Scene::resolveMaterials() {
           smdl::concat("cannot resolve the fallback material: ",
                        compiler.explainMaterialLookup(fallbackMaterialName)));
   }
-  // Only a material some instance actually shades with can ever be hit,
-  // so only those resolve; the rest stay null. Scene files routinely
-  // declare materials nothing uses, and a mesh whose every instance
-  // overrides its material away leaves the mesh's own name legitimately
-  // unresolved.
-  const std::vector<bool> isUsed{computeUsedMaterials()};
   std::vector<std::string> unresolved{};
   for (size_t i = 0; i < materialDefs.size(); i++) {
     if (!isUsed[i]) continue;
@@ -955,98 +956,109 @@ void appendBits(std::string &key, const Mesh::Vert &vert) {
   appendBits(key, &vert.texcoord.x, 2);
 }
 
+// The groups a bitwise weld of `numCorners` corners keeps:
+// `appendKey(key, i)` appends the bits corner `i` is identified by.
+template <typename AppendKey>
+[[nodiscard]] WeldMap internCorners(size_t numCorners, AppendKey &&appendKey) {
+  std::unordered_map<std::string, uint32_t> indexOf{};
+  indexOf.reserve(numCorners);
+  WeldMap weld{};
+  weld.groupOf.resize(numCorners);
+  std::string key{};
+  for (size_t i = 0; i < numCorners; i++) {
+    key.clear();
+    appendKey(key, i);
+    weld.groupOf[i] =
+        indexOf.try_emplace(key, uint32_t(indexOf.size())).first->second;
+  }
+  weld.numGroups = uint32_t(indexOf.size());
+  return weld;
+}
+
+// Keep one entry per group, the first encountered, so that the array
+// lines up with the groups. Groups number in first-encounter order, so
+// a corner starts its own group exactly when its group index is the
+// number of entries kept so far. An array the file does not carry is
+// empty and stays empty.
+template <typename T>
+void compactByFirst(std::vector<T> &values, const WeldMap &weld) {
+  if (values.empty()) return;
+  SMDL_SANITY_CHECK(values.size() == weld.groupOf.size());
+  std::vector<T> result{};
+  result.reserve(weld.numGroups);
+  for (size_t i = 0; i < values.size(); i++)
+    if (weld.groupOf[i] == uint32_t(result.size())) result.push_back(values[i]);
+  values = std::move(result);
+}
+
 // Weld the corners of a mesh that was read without assimp's vertex join:
 // a corner is one vertex iff its records at both keys (point, normal,
 // tangent, texture coordinate, color) agree bit for bit. That restores
 // the sharing the join gives a still file, and cannot merge two corners
 // that move apart, which the join would, since it looks at the bind pose
 // alone. Output indices number in first-encounter order.
-void shouldJoinCorners(Mesh &mesh) {
-  const size_t numCorners{mesh.verts.size()};
-  std::unordered_map<std::string, uint32_t> indexOf{};
-  indexOf.reserve(numCorners);
-  std::vector<uint32_t> remap(numCorners);
-  std::vector<Mesh::Vert> verts{};
-  std::vector<Mesh::Vert> vertsShut{};
-  std::vector<float4> colors{};
-  std::string key{};
-  for (size_t i = 0; i < numCorners; i++) {
-    key.clear();
-    appendBits(key, mesh.verts[i]);
-    if (!mesh.vertsShut.empty()) appendBits(key, mesh.vertsShut[i]);
-    if (!mesh.colors.empty()) appendBits(key, &mesh.colors[i].x, 4);
-    const auto [entry, isNew]{indexOf.try_emplace(key, uint32_t(verts.size()))};
-    if (isNew) {
-      verts.push_back(mesh.verts[i]);
-      if (!mesh.vertsShut.empty()) vertsShut.push_back(mesh.vertsShut[i]);
-      if (!mesh.colors.empty()) colors.push_back(mesh.colors[i]);
-    }
-    remap[i] = entry->second;
-  }
+void joinCorners(Mesh &mesh) {
+  const WeldMap weld{
+      internCorners(mesh.verts.size(), [&](std::string &key, size_t i) {
+        appendBits(key, mesh.verts[i]);
+        if (!mesh.vertsShut.empty()) appendBits(key, mesh.vertsShut[i]);
+        if (!mesh.colors.empty()) appendBits(key, &mesh.colors[i].x, 4);
+      })};
+  compactByFirst(mesh.verts, weld);
+  compactByFirst(mesh.vertsShut, weld);
+  compactByFirst(mesh.colors, weld);
   for (auto &face : mesh.faces)
-    for (auto &index : face) index = remap[index];
-  mesh.verts = std::move(verts);
-  mesh.vertsShut = std::move(vertsShut);
-  mesh.colors = std::move(colors);
+    for (auto &index : face) index = weld.groupOf[index];
 }
 
 // The same weld over the base polygons of a subdivided read, whose
 // records are a point per key, a texture coordinate, and a color.
 void joinBaseCorners(Mesh &mesh) {
-  const size_t numCorners{mesh.basePoints.size()};
-  std::unordered_map<std::string, uint32_t> indexOf{};
-  indexOf.reserve(numCorners);
-  std::vector<uint32_t> remap(numCorners);
-  std::vector<float3> points{};
-  std::vector<float3> pointsShut{};
-  std::vector<float2> texcoords{};
-  std::vector<float4> colors{};
-  std::string key{};
-  for (size_t i = 0; i < numCorners; i++) {
-    key.clear();
-    appendBits(key, &mesh.basePoints[i].x, 3);
-    if (!mesh.basePointsShut.empty())
-      appendBits(key, &mesh.basePointsShut[i].x, 3);
-    if (!mesh.baseTexcoords.empty())
-      appendBits(key, &mesh.baseTexcoords[i].x, 2);
-    if (!mesh.baseColors.empty()) appendBits(key, &mesh.baseColors[i].x, 4);
-    const auto [entry,
-                isNew]{indexOf.try_emplace(key, uint32_t(points.size()))};
-    if (isNew) {
-      points.push_back(mesh.basePoints[i]);
-      if (!mesh.basePointsShut.empty())
-        pointsShut.push_back(mesh.basePointsShut[i]);
-      if (!mesh.baseTexcoords.empty())
-        texcoords.push_back(mesh.baseTexcoords[i]);
-      if (!mesh.baseColors.empty()) colors.push_back(mesh.baseColors[i]);
-    }
-    remap[i] = entry->second;
-  }
-  for (auto &index : mesh.baseIndices) index = remap[index];
-  mesh.basePoints = std::move(points);
-  mesh.basePointsShut = std::move(pointsShut);
-  mesh.baseTexcoords = std::move(texcoords);
-  mesh.baseColors = std::move(colors);
+  const WeldMap weld{
+      internCorners(mesh.basePoints.size(), [&](std::string &key, size_t i) {
+        appendBits(key, &mesh.basePoints[i].x, 3);
+        if (!mesh.basePointsShut.empty())
+          appendBits(key, &mesh.basePointsShut[i].x, 3);
+        if (!mesh.baseTexcoords.empty())
+          appendBits(key, &mesh.baseTexcoords[i].x, 2);
+        if (!mesh.baseColors.empty()) appendBits(key, &mesh.baseColors[i].x, 4);
+      })};
+  compactByFirst(mesh.basePoints, weld);
+  compactByFirst(mesh.basePointsShut, weld);
+  compactByFirst(mesh.baseTexcoords, weld);
+  compactByFirst(mesh.baseColors, weld);
+  for (auto &index : mesh.baseIndices) index = weld.groupOf[index];
 }
 
-// Do two keys agree bit for bit? A shut key that restates the open one
-// is no key: the mesh renders through the static path.
+// Do two records agree bit for bit? By the bits and not by `==`, so
+// that a zero of either sign or a NaN keeps two records apart, which is
+// what the keys above compare.
+[[nodiscard]] bool hasSameBits(const float *a, const float *b, size_t count) {
+  return std::memcmp(a, b, count * sizeof(float)) == 0;
+}
+
+[[nodiscard]] bool hasSameBits(const Mesh::Vert &a, const Mesh::Vert &b) {
+  return hasSameBits(&a.point.x, &b.point.x, 3) &&
+         hasSameBits(&a.normal.x, &b.normal.x, 3) &&
+         hasSameBits(&a.tangent.x, &b.tangent.x, 3) &&
+         hasSameBits(&a.texcoord.x, &b.texcoord.x, 2);
+}
+
+// Do two keys of a mesh agree bit for bit? A shut key that restates the
+// open one is no key: the mesh renders through the static path.
 [[nodiscard]] bool hasSameKeys(const std::vector<Mesh::Vert> &a,
                                const std::vector<Mesh::Vert> &b) {
-  std::string keyA{}, keyB{};
-  for (size_t i = 0; i < a.size(); i++) {
-    keyA.clear(), keyB.clear();
-    appendBits(keyA, a[i]);
-    appendBits(keyB, b[i]);
-    if (keyA != keyB) return false;
-  }
+  SMDL_SANITY_CHECK(a.size() == b.size());
+  for (size_t i = 0; i < a.size(); i++)
+    if (!hasSameBits(a[i], b[i])) return false;
   return true;
 }
 
 [[nodiscard]] bool hasSameKeys(const std::vector<float3> &a,
                                const std::vector<float3> &b) {
+  SMDL_SANITY_CHECK(a.size() == b.size());
   for (size_t i = 0; i < a.size(); i++)
-    if (positionKey(a[i]) != positionKey(b[i])) return false;
+    if (!hasSameBits(&a[i].x, &b[i].x, 3)) return false;
   return true;
 }
 
@@ -1411,7 +1423,7 @@ void Scene::load(const aiMesh &assMesh,
                       uint32_t(assMesh.mFaces[i].mIndices[2])};
   if (!mesh->vertsShut.empty() && hasSameKeys(mesh->verts, mesh->vertsShut))
     mesh->vertsShut.clear();
-  if (shouldJoinCorners) ::shouldJoinCorners(*mesh);
+  if (shouldJoinCorners) joinCorners(*mesh);
   if (subdiv.isDisplaced) {
     // Displacement without subdivision: the triangles are final but the
     // vertices are not, and moving them needs the materials `commit()`
