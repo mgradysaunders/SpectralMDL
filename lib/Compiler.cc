@@ -5,14 +5,18 @@
 #include "smdl/Support/QualifiedName.h"
 
 #include <algorithm>
+#include <bitset>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -550,6 +554,115 @@ Compiler::add(std::string fileOrDirName,
 }
 
 namespace {
+// The bytes of a 'State' that are the same at every point of one path
+// inside one medium instance: the wavelength grid and its weights, the
+// units, the animation time, the object transform, the transport mode,
+// and the allocator that '#bump' reads. Every other byte is point-varying,
+// padding included, so a new 'State' field is point-varying until it is
+// listed here. The animation time is constant because every instance a
+// path scatters in is evaluated at that path's time; 'tangentToObject' is
+// not, because 'State::finalize()' moves the surface point into its last
+// column.
+const std::bitset<sizeof(State)> &pathConstantStateBytes() {
+  static const std::bitset<sizeof(State)> bytes{[] {
+    std::bitset<sizeof(State)> bits{};
+    auto allow{[&](size_t offset, size_t size) {
+      for (size_t i = offset; i < offset + size; i++) bits.set(i);
+    }};
+#define ALLOW(name) allow(offsetof(State, name), sizeof(State::name))
+    ALLOW(allocator);
+    ALLOW(wavelengthBase);
+    ALLOW(wavelengthMin);
+    ALLOW(wavelengthMax);
+    ALLOW(wavelengthWeight);
+    ALLOW(metersPerSceneUnit);
+    ALLOW(animationTime);
+    ALLOW(objectId);
+    ALLOW(objectToWorld);
+    ALLOW(transport);
+#undef ALLOW
+    return bits;
+  }()};
+  return bytes;
+}
+
+// Does every byte of the 'State' that a function reads through its pointer
+// argument 'arg' lie in 'pathConstantStateBytes()'? This walks the uses of
+// the argument after optimization: a constant GEP is followed at its
+// offset, a load or a constant-length memory read through the pointer is
+// checked against the allowed bytes, and a call to a function defined in
+// the module is followed into that parameter, so the RGB and spectral
+// conversions, which are 'noinline' and read only 'wavelengthBase', are
+// seen through. Anything else, a write, an escape, a variable index, a
+// call to a declaration (a scene-data getter or a '@(foreign)' function,
+// both of which see the whole state), makes the answer false, which hosts
+// read as heterogeneous: the walk is conservative by construction, and an
+// argument with no uses at all is the empty read set and true. Loaded
+// values are never followed: a load of 'wavelengthBase' is a read of that
+// field, and the reads through the pointer it holds are not state reads.
+[[nodiscard]] bool readsOnlyPathConstantState(const llvm::DataLayout &layout,
+                                              const llvm::Argument *arg) {
+  const std::bitset<sizeof(State)> &allowed{pathConstantStateBytes()};
+  auto isAllowed{[&](uint64_t offset, uint64_t size) {
+    if (offset + size > sizeof(State)) return false;
+    for (uint64_t i = offset; i < offset + size; i++)
+      if (!allowed.test(size_t(i))) return false;
+    return true;
+  }};
+  llvm::SmallVector<std::pair<const llvm::Value *, uint64_t>> worklist{
+      {arg, 0}};
+  llvm::DenseSet<std::pair<const llvm::Value *, uint64_t>> visited{};
+  while (!worklist.empty()) {
+    const auto [ptr, offset] = worklist.pop_back_val();
+    if (!visited.insert({ptr, offset}).second) continue;
+    for (const llvm::Use &use : ptr->uses()) {
+      const llvm::User *user{use.getUser()};
+      if (const auto *gep{llvm::dyn_cast<llvm::GetElementPtrInst>(user)}) {
+        llvm::APInt gepOffset(64, 0);
+        if (gep->getPointerOperand() != ptr ||
+            !gep->accumulateConstantOffset(layout, gepOffset) ||
+            gepOffset.isNegative())
+          return false;
+        worklist.push_back({gep, offset + gepOffset.getZExtValue()});
+      } else if (const auto *load{llvm::dyn_cast<llvm::LoadInst>(user)}) {
+        if (!isAllowed(offset, layout.getTypeStoreSize(load->getType())))
+          return false;
+      } else if (const auto *transfer{
+                     llvm::dyn_cast<llvm::MemTransferInst>(user)}) {
+        const auto *length{
+            llvm::dyn_cast<llvm::ConstantInt>(transfer->getLength())};
+        if (transfer->getRawSource() != ptr || transfer->getRawDest() == ptr ||
+            !length || !isAllowed(offset, length->getZExtValue()))
+          return false;
+      } else if (const auto *intrinsic{
+                     llvm::dyn_cast<llvm::IntrinsicInst>(user)}) {
+        switch (intrinsic->getIntrinsicID()) {
+        case llvm::Intrinsic::lifetime_start:
+        case llvm::Intrinsic::lifetime_end:
+        case llvm::Intrinsic::invariant_start:
+        case llvm::Intrinsic::invariant_end:
+        case llvm::Intrinsic::assume:
+          break;
+        default:
+          return false;
+        }
+      } else if (llvm::isa<llvm::ICmpInst>(user)) {
+        // A comparison of the pointer itself reads nothing through it.
+      } else if (const auto *call{llvm::dyn_cast<llvm::CallBase>(user)}) {
+        const llvm::Function *callee{call->getCalledFunction()};
+        if (!callee || callee->isDeclaration() || !call->isArgOperand(&use) ||
+            call->getArgOperandNo(&use) >= callee->arg_size())
+          return false;
+        worklist.push_back(
+            {callee->getArg(call->getArgOperandNo(&use)), offset});
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Derive the value-dependent static material flags after optimization.
 //
 // `FunctionType::initializeMaterialFunctions` fills the type-level
@@ -628,25 +741,25 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
       if (!llvmIsZeroValue(normalDelta))
         jitMaterial.staticFlags |= MATERIAL_REMAPS_NORMAL;
     }
-    // A material with no volume is trivially position-independent, and
-    // a '.volumeEvaluate' body that no longer touches its '%state'
-    // argument proves the volume coefficients independent of the
-    // evaluation point (they may still be baked resource reads, which
-    // is equally position-independent). Either way the material is
-    // provably homogeneous: mark 'MATERIAL_HAS_HETEROGENEOUS_VOLUME'
-    // known and unset. Otherwise the bit stays unknown rather than
-    // set, because the state use may be incidental (the allocator at
-    // 'OPT_LEVEL_NONE', or an un-removable side-effecting call such as
-    // a scene-data lookup anywhere in the material body); hosts treat
-    // unknown as heterogeneous, which is the conservative direction.
-    // See 'JIT::MaterialDef::hasHomogeneousVolume()'.
+    // A material with no volume is trivially point-independent, and so
+    // is a '.volumeEvaluate' body that reads nothing of its '%state'
+    // argument but the fields constant along a path (an RGB constant
+    // reads the wavelength grid, a texel fetch nothing at all). Either
+    // way mark 'MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS' known and
+    // unset. Otherwise the bit stays unknown rather than set, because
+    // the state use may be incidental (every load at 'OPT_LEVEL_NONE',
+    // or an un-removable side-effecting call such as a scene-data
+    // lookup anywhere in the material body); hosts treat unknown as
+    // heterogeneous, which is the conservative direction. See
+    // 'JIT::MaterialDef::hasHomogeneousCoefficients()'.
     llvm::Function *volumeEvaluateFunc{
         llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
         (volumeEvaluateFunc && !volumeEvaluateFunc->isDeclaration() &&
          volumeEvaluateFunc->arg_size() >= 1 &&
-         volumeEvaluateFunc->getArg(0)->use_empty())) {
-      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_VOLUME;
+         readsOnlyPathConstantState(llvmModule.getDataLayout(),
+                                    volumeEvaluateFunc->getArg(0)))) {
+      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS;
     }
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.

@@ -171,10 +171,10 @@ public:
   /// for.
   std::unique_ptr<smdl::Haze> haze{};
 
-  /// The material the layout's `medium` directive names, evaluated once
-  /// and seeding every camera path's medium stack. Null when the layout
-  /// names none.
-  const MediumStack *exteriorMedium{};
+  /// The material the layout's `medium` directive names, which every
+  /// camera path evaluates at its head to seed its medium stack. Null
+  /// when the layout names none.
+  const smdl::JIT::MaterialDef *exteriorMediumDef{};
 
   /// The geometry bounds as they were before the ground plane went in,
   /// which is what the SD-tree is built over: an unbounded plane would
@@ -184,9 +184,4 @@ public:
   BoundBox3 guideBound{};
   bool hasValidGuideBounds{};
   /// \}
-
-private:
-  /// Where `exteriorMedium` lives. Declared last so that it outlives
-  /// nothing that points into it.
-  smdl::BumpPtrAllocator mMediumAllocator{};
 };

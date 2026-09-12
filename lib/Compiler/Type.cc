@@ -1867,9 +1867,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // evaluation, renderers call this at arbitrary points inside a
     // heterogeneous medium with a partial object-space state (see
     // 'JIT::MaterialDef::volumeEvaluate'). After optimization,
-    // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects whether
-    // the body still reads the state to derive the static
-    // 'MATERIAL_HAS_HETEROGENEOUS_VOLUME' flag.
+    // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects which
+    // 'State' fields the body still reads to derive the static
+    // 'MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS' flag.
     Type *funcReturnType{context.getVoidType()};
     llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,

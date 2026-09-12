@@ -1108,6 +1108,11 @@ bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
 }
 
 void Lens::logSummary() const {
+  // TODO Having all of the log info messages emitted separately, all prefixed
+  // by a different form "Lens (something):", is ugly. We should prepare the
+  // entire info message in an intermediate, nicely formatted multiline string
+  // (perhaps with indentation or bullets) and emit the entire info message once
+  // at the end
   SMDL_LOG_INFO("Lens ", smdl::Quoted(mName.empty() ? "(unnamed)" : mName),
                 ": ", mElements.size(), " surfaces, focal length ",
                 mFocalLength * SCENE_TO_MM, " mm, f/", mFNumberWideOpen,

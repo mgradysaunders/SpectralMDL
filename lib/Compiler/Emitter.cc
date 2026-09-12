@@ -8,6 +8,7 @@
 #include "smdl/Support/Parallel.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Format.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <exception>
@@ -1829,13 +1830,16 @@ SMDL_EXPORT void *smdlAllocate(int size, int align) {
 // 'std::free' cannot release memory from '_aligned_malloc'.
 SMDL_EXPORT void smdlFree(void *ptr) { alignedFree(ptr); }
 
-SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
-  SMDL_SANITY_CHECK(state != nullptr && align > 0);
-  if (size <= 0) return nullptr;
-  BumpPtrAllocator *allocator{
-      static_cast<BumpPtrAllocator *>(static_cast<State *>(state)->allocator)};
+// Takes the allocator rather than the state it was read from, so that the
+// IR of a '#bump' says exactly what it reads of the state (see
+// 'readsOnlyPathConstantState' in 'Compiler.cc'). Never null: the wrappers
+// mark every pointer that crosses the JIT boundary 'nonnull', and a
+// '#bump' of an empty struct (a default 'vdf()') must satisfy that too.
+SMDL_EXPORT void *smdlBumpAllocate(void *allocator, int size, int align) {
   SMDL_SANITY_CHECK_MSG(allocator != nullptr, "allocator cannot be null!");
-  return allocator->allocate(size, align);
+  SMDL_SANITY_CHECK(align > 0);
+  return static_cast<BumpPtrAllocator *>(allocator)->allocate(
+      size_t(std::max(size, 1)), size_t(align));
 }
 
 // TODO This is a specific solution to a specific problem of calculating
@@ -2068,10 +2072,13 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (llvm::Function *
         func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
       func->setReturnDoesNotAlias();
+    // The allocator is loaded here and passed on its own, so that the
+    // call reads nothing else of the state as far as the IR can tell.
+    Value allocator{rvalue(accessField(state, "allocator", srcLoc))};
     return RValue(
         context.getVoidPointerType(),
-        builder.CreateCall(callee, {rvalue(state).llvmValue, size.llvmValue,
-                                    align.llvmValue}));
+        builder.CreateCall(
+            callee, {allocator.llvmValue, size.llvmValue, align.llvmValue}));
   }};
   switch (intrinsicID) {
   case IntrinsicID::Invalid:

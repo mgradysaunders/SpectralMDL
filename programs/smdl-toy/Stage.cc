@@ -465,14 +465,11 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     envLight = std::make_unique<EnvLight>(options);
   }
 
-  // The exterior medium the layout's 'medium' directive names, if
-  // any: one material instance evaluated up front in an allocator that
-  // outlives the render, seeding every camera path's medium stack. The
-  // instance has no geometry, so heterogeneous coefficient queries run
-  // in world space directly. Evaluated once at the base animation time,
-  // so an open shutter does not vary its captured homogeneous
-  // coefficients (per-point heterogeneous queries still see the path
-  // time).
+  // The exterior medium the layout's 'medium' directive names, if any.
+  // Only the definition is resolved here: every camera path evaluates
+  // its own instance at its head, at the path's wavelengths and time
+  // (see 'PathWalk::trace'), which is what the homogeneity proof's
+  // contract asks of an instance the closed forms read.
   if (!layout.exteriorMediumName.empty()) {
     const smdl::JIT::MaterialDef *materialDef{
         compiler.findMaterial(layout.exteriorMediumName)};
@@ -486,12 +483,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
       throw smdl::Error(smdl::concat("'medium' directive material ",
                                      smdl::Quoted(layout.exteriorMediumName),
                                      " has no 'volume'"));
-    smdl::State state{makeRenderState(wavelengths, &mMediumAllocator)};
-    state.finalize();
-    exteriorMedium = new (mMediumAllocator) MediumStack{
-        nullptr,
-        mMediumAllocator.allocate<smdl::JIT::Material>(state, materialDef),
-        nullptr};
+    exteriorMediumDef = materialDef;
     SMDL_LOG_INFO("Exterior medium: ", smdl::Quoted(layout.exteriorMediumName));
   }
 
@@ -505,7 +497,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   bool isHazeEnabled{opts.light.haze.isOn || layout.hasHaze};
   if (pick(opts.light.haze.none, fileHaze.none)) isHazeEnabled = false;
   if (isHazeEnabled) {
-    if (exteriorMedium)
+    if (exteriorMediumDef)
       throw smdl::Error("the exterior haze and the 'medium' directive both "
                         "describe the medium outside all geometry; keep one");
     smdl::HazeOptions options{};
