@@ -66,12 +66,12 @@ struct MNEEStats final {
   /// refractive gather's two kinds, the searched refractive gather's,
   /// and the reflective gather's.
   enum Kind : int {
-    DIRAC_REFRACT,
-    GLOSSY_REFRACT,
+    STRAIGHT_DIRAC_REFRACT,
+    STRAIGHT_GLOSSY_REFRACT,
     CASTER_DIRAC_REFRACT,
     CASTER_GLOSSY_REFRACT,
-    DIRAC_REFLECT,
-    GLOSSY_REFLECT,
+    CASTER_DIRAC_REFLECT,
+    CASTER_GLOSSY_REFLECT,
     NUM_KINDS
   };
 

@@ -61,8 +61,9 @@ static_assert(std::size(END_NAMES) == size_t(PathEnd::NUM_ENDS));
 
 // The names of the gather kinds and the walk failures, in enum order.
 constexpr const char *KIND_NAMES[]{
-    "dirac refraction",         "glossy refraction", "caster dirac refraction",
-    "caster glossy refraction", "dirac reflection",  "glossy reflection"};
+    "straight dirac refraction", "straight glossy refraction",
+    "caster dirac refraction",   "caster glossy refraction",
+    "caster dirac reflection",   "caster glossy reflection"};
 
 static_assert(std::size(KIND_NAMES) == size_t(MNEEStats::NUM_KINDS));
 

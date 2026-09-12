@@ -303,8 +303,8 @@ Color MNEEGather::gatherCasterReflection(const MNEECaster &caster,
                                      smdl::DF_GLOSSY_BRDF, seed))
       continue;
     chain.residualTolerance = reciprocalResidualTolerance(chain);
-    const MNEEStats::Kind statKind{seed.isGlossy ? MNEEStats::GLOSSY_REFLECT
-                                                 : MNEEStats::DIRAC_REFLECT};
+    const MNEEStats::Kind statKind{seed.isGlossy ? MNEEStats::CASTER_GLOSSY_REFLECT
+                                                 : MNEEStats::CASTER_DIRAC_REFLECT};
     // The first walk starts at the hit the offset was drawn at, which is a
     // start like any other: the offset's density cancels pointwise
     // whichever start it was drawn at, so nothing is gained by discarding
@@ -390,7 +390,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
             surfaces, vertex.point, target, chain, connection, &report)};
         if (stats) stats->recordWalk(report);
         if (trial == 0 && stats)
-          stats->recordEstimate(MNEEStats::DIRAC_REFRACT, hasConverged);
+          stats->recordEstimate(MNEEStats::STRAIGHT_DIRAC_REFRACT, hasConverged);
         if (hasConverged)
           solutions.consider(
               vertex.point, connection,
@@ -401,7 +401,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
               stats);
       }
       if (stats)
-        stats->recordTrials(MNEEStats::DIRAC_REFRACT,
+        stats->recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT,
                             render.mneeOptions.biasedTrials, false);
       result += solutions.sum();
     } else {
@@ -410,7 +410,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
       const bool hasConverged{solveManifoldConnection(
           surfaces, vertex.point, target, chain, connection, &report)};
       if (stats) stats->recordWalk(report);
-      if (stats) stats->recordEstimate(MNEEStats::DIRAC_REFRACT, hasConverged);
+      if (stats) stats->recordEstimate(MNEEStats::STRAIGHT_DIRAC_REFRACT, hasConverged);
       if (hasConverged) {
         const Color value{contribution(chain, connection, 1.0f, receiverMask)};
         if (stats) stats->recordContribution(!value.isAllZero());
@@ -444,7 +444,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
   // start, so the first walk is jittered like every trial or the
   // deterministic start would be over-counted.
   (void)jitter(chain);
-  result += reciprocalEstimate(target, chain, MNEEStats::GLOSSY_REFRACT,
+  result += reciprocalEstimate(target, chain, MNEEStats::STRAIGHT_GLOSSY_REFRACT,
                                receiverMask, 1.0f, jitter);
   return result;
 }

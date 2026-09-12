@@ -397,9 +397,9 @@ TEST_CASE("PathStats: the manifold section") {
   using Failure = smdl::ManifoldWalkReport::Failure;
   PathStats stats{};
   MNEEStats &mnee{stats.mnee()};
-  mnee.recordEstimate(MNEEStats::DIRAC_REFRACT, true);
-  mnee.recordEstimate(MNEEStats::DIRAC_REFRACT, false);
-  mnee.recordEstimate(MNEEStats::GLOSSY_REFLECT, true);
+  mnee.recordEstimate(MNEEStats::STRAIGHT_DIRAC_REFRACT, true);
+  mnee.recordEstimate(MNEEStats::STRAIGHT_DIRAC_REFRACT, false);
+  mnee.recordEstimate(MNEEStats::CASTER_GLOSSY_REFLECT, true);
   mnee.recordWalk(walkReport(3, Outcome::CONVERGED, Failure::NONE, 1e-6f));
   mnee.recordWalk(walkReport(5, Outcome::CONVERGED, Failure::NONE, 3e-6f));
   mnee.recordWalk(walkReport(7, Outcome::REJECTED));
@@ -412,14 +412,14 @@ TEST_CASE("PathStats: the manifold section") {
   mnee.recordCover(MNEEStats::Cover::UNMATCHED);
   mnee.recordCover(MNEEStats::Cover::MATCHED);
   mnee.recordCover(MNEEStats::Cover::DROPPED);
-  mnee.recordTrials(MNEEStats::DIRAC_REFRACT, 4, false);
-  mnee.recordTrials(MNEEStats::DIRAC_REFRACT, 10, true);
+  mnee.recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT, 4, false);
+  mnee.recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT, 10, true);
   mnee.recordContribution(true);
   mnee.recordContribution(false);
-  const MNEEStats::KindCounts &dirac{mnee.kinds[MNEEStats::DIRAC_REFRACT]};
+  const MNEEStats::KindCounts &dirac{mnee.kinds[MNEEStats::STRAIGHT_DIRAC_REFRACT]};
   CHECK(dirac.estimateCount == 2);
   CHECK(dirac.firstConvergedCount == 1);
-  CHECK(mnee.kinds[MNEEStats::GLOSSY_REFLECT].estimateCount == 1);
+  CHECK(mnee.kinds[MNEEStats::CASTER_GLOSSY_REFLECT].estimateCount == 1);
   CHECK(dirac.trialEstimateCount == 2);
   CHECK(dirac.trialCount == 14);
   CHECK(dirac.trialsMax == 10);
@@ -453,7 +453,7 @@ TEST_CASE("PathStats: the manifold section") {
     PathStats other{};
     other.mnee().recordWalk(
         walkReport(300, Outcome::CONVERGED, Failure::NONE, 9e-6f));
-    other.mnee().recordTrials(MNEEStats::DIRAC_REFRACT, 20, false);
+    other.mnee().recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT, 20, false);
     other.mnee().recordCover(MNEEStats::Cover::DROPPED);
     stats.add(other);
     CHECK(mnee.walkCount == 6);
