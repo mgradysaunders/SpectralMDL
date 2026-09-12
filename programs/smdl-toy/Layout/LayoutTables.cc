@@ -415,8 +415,9 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     // and a scatter moves as a whole through the bulk place's own.
     const auto refuseMark{[&](const char *word) {
       throw smdl::Error(smdl::concat(
-          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": a '", word,
-          "' override on a place has no record to live in; mark the asset "
+          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": a ",
+          smdl::Quoted(word),
+          " override on a place has no record to live in; mark the asset "
           "instead"));
     }};
     if (placement.casterOverride) refuseMark("caster");

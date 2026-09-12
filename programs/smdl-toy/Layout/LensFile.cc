@@ -367,7 +367,8 @@ private:
     }
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(),
-                   smdl::concat("expected '{' after 'medium ", name, "'"));
+                   smdl::concat("expected '{' after ",
+                                smdl::Quoted(smdl::concat("medium ", name))));
       throw Recover();
     }
     std::optional<float> nd{};

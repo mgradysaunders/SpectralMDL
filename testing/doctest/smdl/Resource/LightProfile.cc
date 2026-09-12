@@ -156,7 +156,7 @@ TEST_CASE("LightProfile: where a malformed file goes wrong") {
   SUBCASE("The tilt line and the type codes name their lines") {
     CHECK(refusal(withLine(3, "TILTED")) == "expected 'TILT=' on line 3");
     CHECK(refusal(withLine(3, "TILT=SOMETIMES")) ==
-          "unsupported tilt 'SOMETIMES' on line 3");
+          "unsupported tilt \"SOMETIMES\" on line 3");
     CHECK(refusal(withLine(4, "1 1000 1 5 1 4 2 0.1 0.1 0.1")) ==
           "unknown photometric type 4 on line 4");
     CHECK(refusal(withLine(4, "1 1000 1 5 1 1 3 0.1 0.1 0.1")) ==

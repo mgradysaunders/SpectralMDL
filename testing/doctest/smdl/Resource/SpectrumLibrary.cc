@@ -159,7 +159,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     LibraryOptions opts{};
     opts.fileType = "ENVI Standard";
     reject("file_type.sli", opts,
-           "'file type' on line 7 of its header is 'ENVI Standard', not "
+           "'file type' on line 7 of its header is \"ENVI Standard\", not "
            "'ENVI Spectral Library'");
     opts = {};
     opts.bands = 2;
@@ -179,7 +179,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     opts = {};
     opts.wavelengthUnits = "Furlongs";
     reject("units.sli", opts,
-           "unsupported 'wavelength units' 'Furlongs' on line 11 of its "
+           "unsupported 'wavelength units' \"Furlongs\" on line 11 of its "
            "header");
     opts = {};
     opts.isTruncated = true;

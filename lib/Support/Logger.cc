@@ -77,10 +77,10 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 }
 
 // The length of the quoted string `str` starts with, quotes included, or
-// 0 if it is never closed. Both quotes count, because a message single
-// quotes a code identifier and double quotes a path (`Quoted` against
-// `QuotedPath`). A quote closes only where no word goes on after it, so
-// that the apostrophe in 'bob's.png' does not.
+// 0 if it is never closed. Both quotes count: `Quoted` writes double
+// quotes, while a message that spells a language token out writes it in
+// single quotes ('for', ';'). A quote closes only where no word goes on
+// after it, so that the apostrophe in 'bob's.png' does not.
 [[nodiscard]] size_t quotedLength(std::string_view str) noexcept {
   const char quote{str.empty() ? '\0' : str[0]};
   if (quote != '\'' && quote != '"') return 0;

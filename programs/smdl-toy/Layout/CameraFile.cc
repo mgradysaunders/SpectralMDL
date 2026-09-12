@@ -76,10 +76,10 @@ private:
                                     const LayoutLocation &keyLoc) {
     if (key == "response" || key == "detector") {
       mDiags
-          .error(keyLoc,
-                 smdl::concat("'", key, "' is no longer a camera setting"))
-          .note({}, smdl::concat("it is the '", key,
-                                 "' block of the '.sensor' file the camera "
+          .error(keyLoc, smdl::concat(smdl::Quoted(key),
+                                      " is no longer a camera setting"))
+          .note({}, smdl::concat("it is the ", smdl::Quoted(key),
+                                 " block of the '.sensor' file the camera "
                                  "names with 'sensor'"));
       return true;
     }
@@ -319,9 +319,9 @@ private:
       advance();
       return std::string(word);
     }
-    mDiags.error(location(),
-                 smdl::concat("expected a quoted ", extension, " path or '",
-                              word, "' after '", key, "'"));
+    mDiags.error(location(), smdl::concat("expected a quoted ", extension,
+                                          " path or ", smdl::Quoted(word),
+                                          " after ", smdl::Quoted(key)));
     throw Recover();
   }
 

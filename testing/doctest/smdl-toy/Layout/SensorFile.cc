@@ -123,7 +123,7 @@ TEST_CASE("SensorFile: the body's geometry") {
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch 0 response { band "
                               "v { 400 1 700 1 } } }\n")
                        .message,
-                   "positive number for 'pitch'");
+                   "positive number for \"pitch\"");
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch um response { band "
                               "v { 400 1 700 1 } } }\n")
                        .message,
@@ -140,7 +140,7 @@ TEST_CASE("SensorFile: the body's geometry") {
     CHECK_CONTAINS(parseError(sensorWith("readout -1")).message,
                    "nonnegative number for 'readout'");
     CHECK_CONTAINS(parseError(sensorWith("readout_direction sideways")).message,
-                   "unknown readout direction 'sideways'");
+                   "unknown readout direction \"sideways\"");
   }
   SUBCASE("A key of the wrong block is sent to the right one") {
     CHECK_CONTAINS(parseError(sensorWith("kind qe")).message,
@@ -148,7 +148,7 @@ TEST_CASE("SensorFile: the body's geometry") {
     CHECK_CONTAINS(parseError(sensorWith("full_well 3")).message,
                    "belongs inside the 'detector' block");
     CHECK_CONTAINS(parseError(sensorWith("focus 3")).message,
-                   "unknown sensor setting 'focus'");
+                   "unknown sensor setting \"focus\"");
   }
 }
 
@@ -184,7 +184,7 @@ TEST_CASE("SensorFile: the response block") {
     const SensorDocument document{parseOK(diags, responseWith("kind qe"))};
     CHECK(document.sensor.response.kind == ResponseKind::QE);
     CHECK_CONTAINS(parseError(responseWith("kind absolute")).message,
-                   "unknown response kind 'absolute' (expected relative or "
+                   "unknown response kind \"absolute\" (expected relative or "
                    "qe)");
   }
   SUBCASE("The peak quantum efficiency scales a relative curve, and only "
@@ -220,7 +220,7 @@ TEST_CASE("SensorFile: the response block") {
       (void)parseSensor(bad, source);
       REQUIRE(bad.errorCount() == 1);
       const LayoutDiagnostic &error{bad.all().front()};
-      CHECK_CONTAINS(error.message, "band 'v'");
+      CHECK_CONTAINS(error.message, "band \"v\"");
       CHECK(error.location.offset == source.text.find("band"));
     }
     CHECK_CONTAINS(
@@ -245,7 +245,7 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch 2 response { band "
                               "v { 400 one 700 1 } } }\n")
                        .message,
-                   "expected a number or '}' in band 'v', got 'one'");
+                   "expected a number or '}' in band \"v\", got \"one\"");
   }
   SUBCASE("A band name is an identifier other than 'row', declared once") {
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch 2 response { band "
@@ -257,7 +257,7 @@ TEST_CASE("SensorFile: the response block") {
                        .message,
                    "expected a band name after 'band'");
     CHECK_CONTAINS(parseError(responseWith("band vis { 400 1 700 1 }")).message,
-                   "band 'vis' is declared twice");
+                   "band \"vis\" is declared twice");
   }
   SUBCASE("A response needs a band, and does not name the body") {
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch 2 response { kind "
@@ -267,7 +267,7 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(parseError(responseWith("name \"Body\"")).message,
                    "'name' is the sensor's, not the response's");
     CHECK_CONTAINS(parseError(responseWith("full_well 3")).message,
-                   "unknown response setting 'full_well'");
+                   "unknown response setting \"full_well\"");
   }
   SUBCASE("The tile parses row by row into band indices, whatever order "
           "the bands are declared in") {
@@ -305,9 +305,9 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(parseError(tileWith("cfa { }")).message,
                    "at least one 'row' in 'cfa'");
     CHECK_CONTAINS(parseError(tileWith("cfa { R R }")).message,
-                   "expected 'row' in 'cfa', got 'R'");
+                   "expected 'row' in 'cfa', got \"R\"");
     CHECK_CONTAINS(parseError(tileWith("cfa { row R Q }")).message,
-                   "the tile names 'Q', which is not a band of this "
+                   "the tile names \"Q\", which is not a band of this "
                    "response");
     CHECK_CONTAINS(parseError(tileWith("cfa { row R } cfa { row R }")).message,
                    "second 'cfa'");
@@ -342,7 +342,7 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(parseError(responseWith("rgb vis vis")).message,
                    "expected three band names after 'rgb'");
     CHECK_CONTAINS(parseError(responseWith("rgb vis vis Q")).message,
-                   "'rgb' names 'Q', which is not a band");
+                   "'rgb' names \"Q\", which is not a band");
     CHECK_CONTAINS(
         parseError(responseWith("rgb vis vis vis rgb vis vis vis")).message,
         "the second 'rgb'");
@@ -432,27 +432,27 @@ TEST_CASE("SensorFile: the detector block") {
   }
   SUBCASE("Each refusal points at its key") {
     CHECK_CONTAINS(parseError(detectorWith("full_well 0")).message,
-                   "positive number for 'full_well'");
+                   "positive number for \"full_well\"");
     CHECK_CONTAINS(parseError(detectorWith("full_well inf")).message,
-                   "finite number for 'full_well'");
+                   "finite number for \"full_well\"");
     CHECK_CONTAINS(parseError(detectorWith("read_noise -1")).message,
-                   "nonnegative number for 'read_noise'");
+                   "nonnegative number for \"read_noise\"");
     CHECK_CONTAINS(parseError(detectorWith("dark_current nan")).message,
-                   "finite number for 'dark_current'");
+                   "finite number for \"dark_current\"");
     CHECK_CONTAINS(parseError(detectorWith("doubling_temperature 0")).message,
-                   "positive number for 'doubling_temperature'");
+                   "positive number for \"doubling_temperature\"");
     CHECK_CONTAINS(parseError(detectorWith("black_level -5")).message,
-                   "nonnegative number for 'black_level'");
+                   "nonnegative number for \"black_level\"");
     CHECK_CONTAINS(parseError(detectorWith("bits 12.5")).message,
                    "integer from 1 to 16 for 'bits'");
     CHECK_CONTAINS(parseError(detectorWith("bits 17")).message,
                    "integer from 1 to 16 for 'bits'");
     CHECK_CONTAINS(parseError(detectorWith("gain 0")).message,
-                   "positive number for 'gain'");
+                   "positive number for \"gain\"");
     CHECK_CONTAINS(parseError(detectorWith("gain")).message,
                    "expected 1 number, got 0 of them");
     CHECK_CONTAINS(parseError(detectorWith("well 3")).message,
-                   "unknown detector setting 'well'");
+                   "unknown detector setting \"well\"");
     CHECK_CONTAINS(parseError(sensorWith("detector 3")).message,
                    "expected '{' after 'detector'");
   }
@@ -479,7 +479,7 @@ TEST_CASE("SensorFile: the file as a whole") {
   LayoutDiagnostics diags{};
   SUBCASE("A camera directive names the file it belongs in") {
     const LayoutDiagnostic error{parseError("camera { fovy 30 }\n")};
-    CHECK_CONTAINS(error.message, "unknown directive 'camera'");
+    CHECK_CONTAINS(error.message, "unknown directive \"camera\"");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message,
                    "the '.camera' file that names this one");
@@ -487,7 +487,7 @@ TEST_CASE("SensorFile: the file as a whole") {
   SUBCASE("A response at the top level names the block it belongs in") {
     const LayoutDiagnostic error{
         parseError("response { band v { 400 1 700 1 } }\n")};
-    CHECK_CONTAINS(error.message, "unknown directive 'response'");
+    CHECK_CONTAINS(error.message, "unknown directive \"response\"");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "a block inside 'sensor'");
   }

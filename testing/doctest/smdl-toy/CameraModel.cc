@@ -284,13 +284,13 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
           "among them") {
     CHECK_ERROR(
         refused(files.camera("camera { lens \"singlet.lens\" fovy 30 }\n")),
-        "'fovy' has no meaning with a lens");
+        "\"fovy\" has no meaning with a lens");
     CHECK_ERROR(refused(files.camera("camera { lens \"singlet.lens\" "
                                      "vignetting 1 }\n")),
-                "'vignetting' has no meaning with a lens");
+                "\"vignetting\" has no meaning with a lens");
     CHECK_ERROR(refused(files.camera("camera { lens \"singlet.lens\" "
                                      "focal_length 50 }\n")),
-                "'focal_length' has no meaning with a lens");
+                "\"focal_length\" has no meaning with a lens");
   }
   SUBCASE("A body over a pinhole") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" }\n")),
@@ -348,7 +348,7 @@ TEST_CASE("CameraModel: a refusal points at the key the file stated") {
                              "}\n"))};
     REQUIRE(error);
     CHECK_CONTAINS(error->message, files.path("shot.camera") + ":3:3: ");
-    CHECK_CONTAINS(error->message, "'fovy' has no meaning with a lens");
+    CHECK_CONTAINS(error->message, "\"fovy\" has no meaning with a lens");
     CHECK_CONTAINS(error->snippet, "  fovy 30\n  ^~~~");
   }
   SUBCASE("The last statement of a key is the one marked") {
@@ -370,7 +370,7 @@ TEST_CASE("CameraModel: a refusal points at the key the file stated") {
     const std::optional<smdl::Error> error{refused(files.camera(
         "camera {\n  lens \"singlet.lens\"\n  motion { at 0 fovy 30 }\n}\n"))};
     REQUIRE(error);
-    CHECK(error->message.rfind("'fovy' has no meaning with a lens", 0) == 0);
+    CHECK(error->message.rfind("\"fovy\" has no meaning with a lens", 0) == 0);
     CHECK(error->snippet.empty());
   }
   SUBCASE("The pinhole over a body points at the body") {
@@ -473,7 +473,7 @@ TEST_CASE("CameraModel: the ISO") {
     const std::string report{describeCamera(metered)};
     CHECK_CONTAINS(report, "  well: 36000 e- from the pitch, the generic "
                            "well; base ISO ");
-    CHECK_CONTAINS(report, " from the well, 'R' counting ");
+    CHECK_CONTAINS(report, " from the well, \"R\" counting ");
     CHECK_CONTAINS(report, " e- per lux-second under D55\n");
     CHECK_CONTAINS(report, "  iso: auto, metered from the film once it is "
                            "rendered, from the base ");
@@ -737,7 +737,7 @@ TEST_CASE("CameraModel: the preview") {
     CHECK_CONTAINS(report, ", previewed with -ideal\n");
     CHECK_CONTAINS(report, "  ideal fit: the thin lens -ideal looks through, "
                            "a focal length of ");
-    CHECK_CONTAINS(report, "sensor: the observer, previewing 'Test body' ");
+    CHECK_CONTAINS(report, "sensor: the observer, previewing \"Test body\" ");
   }
 }
 
@@ -808,12 +808,12 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
           "traces the lens at") {
     const std::string report{describeCamera(resolveCameraModel(files.camera(
         "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")))};
-    CHECK_CONTAINS(report, "  after surface 1: 'N-BK7', nd 1.5168, Vd 64.17");
+    CHECK_CONTAINS(report, "  after surface 1: \"N-BK7\", nd 1.5168, Vd 64.17");
     CHECK_CONTAINS(report, "  color: the F line focuses ");
     // Over the band's own curve, which R is zero outside of from 560 to
     // 700 nm.
     CHECK_CONTAINS(report, "  traced: at a wavelength each pixel draws from "
-                           "its band: 'R' 560-700 nm, median ");
+                           "its band: \"R\" 560-700 nm, median ");
   }
   SUBCASE("Without a tile the report says the d line, and under the preview "
           "nothing") {

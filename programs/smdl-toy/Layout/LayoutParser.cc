@@ -858,8 +858,8 @@ private:
                          const LayoutLocation &opLoc, std::string_view word,
                          std::string_view where) {
     if (mark) {
-      mDiags.error(opLoc,
-                   smdl::concat("'", word, "' appears twice in one ", where));
+      mDiags.error(opLoc, smdl::concat(smdl::Quoted(word),
+                                       " appears twice in one ", where));
       throw Recover();
     }
     markLoc = opLoc;

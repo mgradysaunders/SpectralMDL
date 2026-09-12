@@ -105,8 +105,8 @@ TEST_CASE("Compiler: the curve a spectrum library does not have") {
   CHECK(warnings.count("main.mdl:5:") == 1);
   CHECK(warnings.count("main.mdl:8:") == 1);
   CHECK(warnings.count("<builtin") == 0);
-  CHECK(warnings.count("has no curve named 'grasss'; did you mean "
-                       "'grass'?") == 1);
+  CHECK(warnings.count("has no curve named \"grasss\"; did you mean "
+                       "\"grass\"?") == 1);
   CHECK(warnings.count("has no curve at index 7 (it has 2 curves)") == 1);
 }
 
@@ -233,7 +233,7 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     REQUIRE(logged.messages().size() == 2);
     CHECK(logged.warningCount() == 1);
     CHECK_CONTAINS(logged.messages()[1],
-                   "Searched 1 directory for 'nowhere.png':\n  \"");
+                   "Searched 1 directory for \"nowhere.png\":\n  \"");
     CHECK_CONTAINS(logged.messages()[1], "smdl-test-resource-debug\"");
   }
   SUBCASE("Tiles that disagree on their format say which and how") {
@@ -246,10 +246,11 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
     REQUIRE(logged.messages().size() == 1);
-    CHECK_CONTAINS(logged.messages()[0],
-                   "Inconsistent image formats for 'tile_<UDIM>.png': "
-                   "'tile_1001.png' is 1-channel uint8, but 'tile_1002.png' "
-                   "is 4-channel uint8");
+    CHECK_CONTAINS(
+        logged.messages()[0],
+        "Inconsistent image formats for \"tile_<UDIM>.png\": "
+        "\"tile_1001.png\" is 1-channel uint8, but \"tile_1002.png\" "
+        "is 4-channel uint8");
   }
 }
 

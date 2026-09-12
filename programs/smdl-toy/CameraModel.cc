@@ -77,8 +77,8 @@ void refuseThinLensSettings(const CameraDocument &document,
   for (const auto &refusal : refusals)
     if (refusal.wasStated)
       refuse(document, refusal.key,
-             smdl::concat("'", refusal.key,
-                          "' has no meaning with a lens: ", refusal.why));
+             smdl::concat(smdl::Quoted(refusal.key),
+                          " has no meaning with a lens: ", refusal.why));
 }
 
 // The readout's sweep over the picture, which is where the direction

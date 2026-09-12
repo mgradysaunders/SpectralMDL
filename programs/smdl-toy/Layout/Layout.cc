@@ -666,8 +666,8 @@ private:
     const bool isCaster{marks.isCaster.value_or(decl.isCaster)};
     if (isCaster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
-                   smdl::concat("'caster' applies to a mesh file or a shape, "
-                                "but ",
+                   smdl::concat(smdl::Quoted("caster"),
+                                " applies to a mesh file or a shape, but ",
                                 smdl::QuotedPath(decl.path),
                                 " is a curves file"));
       throw SkipPlacement();
@@ -693,8 +693,8 @@ private:
     const bool isLight{marks.isLight.value_or(decl.isLight) || decl.isCaustic};
     if (isLight && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
-                   smdl::concat("'light' applies to a mesh file or a shape, "
-                                "but ",
+                   smdl::concat(smdl::Quoted("light"),
+                                " applies to a mesh file or a shape, but ",
                                 smdl::QuotedPath(decl.path),
                                 " is a curves file"));
       throw SkipPlacement();
@@ -770,8 +770,8 @@ private:
       const auto refuseMark{[&](const LayoutLocation &markLoc,
                                 std::string_view word) {
         mDiags.error(markLoc ? markLoc : placement.importPathLoc,
-                     smdl::concat("'", word,
-                                  "' applies to a mesh file or a shape, but ",
+                     smdl::concat(smdl::Quoted(word),
+                                  " applies to a mesh file or a shape, but ",
                                   smdl::QuotedPath(placement.importPath),
                                   " is a curves file"));
         throw SkipPlacement();

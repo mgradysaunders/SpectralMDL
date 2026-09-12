@@ -284,8 +284,8 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
           grid.loadFromFile(fileName, "flame")};
       REQUIRE(error.has_value());
       CHECK_CONTAINS(error->message,
-                     "no grid named 'flame' in NanoVDB file, which holds "
-                     "'density' and 'temperature'");
+                     "no grid named \"flame\" in NanoVDB file, which holds "
+                     "\"density\" and \"temperature\"");
       CHECK_NOT_CONTAINS(error->message, "converted from");
     }
     SUBCASE("An unwritable target is refused") {

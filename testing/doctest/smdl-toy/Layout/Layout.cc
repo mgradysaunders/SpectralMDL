@@ -173,8 +173,8 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
   const char *words[]{"caster", "light"};
   for (const char *word : words) {
     CAPTURE(word);
-    const std::string refused{std::string("'") + word +
-                              "' applies to a mesh file or a shape"};
+    const std::string refused{std::string("\"") + word +
+                              "\" applies to a mesh file or a shape"};
     SUBCASE("On the asset") {
       const std::string entry{dir.write(
           "entry.layout", std::string("asset hair = \"hair.curves\" { "
@@ -243,8 +243,8 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
       FAIL("expected the pack to be refused");
     } catch (const smdl::Error &error) {
       CAPTURE(error.message);
-      CHECK_CONTAINS(error.message, std::string("a '") + word +
-                                        "' override on a place has no record");
+      CHECK_CONTAINS(error.message, std::string("a \"") + word +
+                                        "\" override on a place has no record");
     }
   }
   // Without a mark the same place packs.

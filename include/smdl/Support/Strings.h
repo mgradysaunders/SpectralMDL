@@ -72,7 +72,9 @@ namespace smdl {
 
 inline namespace string_markup {
 
-/// A quoted string for use with `concat`.
+/// A double-quoted string for use with `concat`. Everything a message
+/// quotes goes through this or `QuotedPath`, so that the quoting does
+/// not vary with who wrote the message.
 class SMDL_EXPORT Quoted final {
 public:
   constexpr Quoted(std::string_view str) : str(str) {}
@@ -82,9 +84,8 @@ public:
   std::string_view str{};
 };
 
-/// A quoted path string for use with `concat`, in double quotes, which
-/// is what tells a path in a message apart from the code identifiers
-/// `Quoted` puts in single quotes. The path is shortened as
+/// A quoted path string for use with `concat`. This quotes like
+/// `Quoted` and differs only in shortening the path first, as
 /// `bestPathForPrinting()` shortens it.
 class SMDL_EXPORT QuotedPath final {
 public:

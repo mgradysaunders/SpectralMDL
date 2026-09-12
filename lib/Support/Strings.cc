@@ -9,9 +9,9 @@
 namespace smdl {
 
 void Quoted::appendTo(std::string &result) const {
-  result += '\'';
+  result += '"';
   result += str;
-  result += '\'';
+  result += '"';
 }
 
 void QuotedPath::appendTo(std::string &result) const {

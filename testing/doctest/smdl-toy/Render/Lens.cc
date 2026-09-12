@@ -561,7 +561,7 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     LensPrescription lens{equiconvex(50, 4, 1.5f, 20)};
     lens.surfaces[1].medium = smdl::findOpticalGlass("N-BK7")->glass;
     lens.surfaces[1].mediumName = "N-BK7";
-    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the medium 'N-BK7'");
+    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the medium \"N-BK7\"");
   }
   SUBCASE("One with more aspheric coefficients than a surface holds is "
           "refused") {

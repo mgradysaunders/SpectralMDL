@@ -27,7 +27,7 @@ void parseFail(const std::string &source, int lineNo,
                const std::string &fragment) {
   try {
     (void)FlatYAML::parse(source, "test.yaml");
-    FAIL("expected a parse error containing '" << fragment << "'");
+    FAIL("expected a parse error containing '" << fragment << "\"");
   } catch (const smdl::Error &error) {
     CAPTURE(error.message);
     CHECK_CONTAINS(error.message, fragment);
@@ -66,19 +66,19 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     CHECK(FlatYAML::find(doc.root, "missing") == nullptr);
     // A quoted number is a string, and a scalar is not a list or a block.
     CHECK(doc.toString(entryOf(doc, "text")) == "1.5");
-    CHECK_THROWS_WITH_AS((void)doc.toFloat(entryOf(doc, "text")),
-                         doctest::Contains("expected a real number for 'text'"),
-                         smdl::Error);
-    CHECK_THROWS_WITH_AS((void)doc.toInt(entryOf(doc, "number")),
-                         doctest::Contains("expected an integer for 'number'"),
-                         smdl::Error);
+    CHECK_THROWS_WITH_AS(
+        (void)doc.toFloat(entryOf(doc, "text")),
+        doctest::Contains("expected a real number for \"text\""), smdl::Error);
+    CHECK_THROWS_WITH_AS(
+        (void)doc.toInt(entryOf(doc, "number")),
+        doctest::Contains("expected an integer for \"number\""), smdl::Error);
     CHECK_THROWS_WITH_AS(
         (void)doc.toList(entryOf(doc, "number")),
-        doctest::Contains("expected an inline list '[...]' for 'number'"),
+        doctest::Contains("expected an inline list '[...]' for \"number\""),
         smdl::Error);
     CHECK_THROWS_WITH_AS(
         (void)doc.toMap(entryOf(doc, "number")),
-        doctest::Contains("expected an indented block after 'number':"),
+        doctest::Contains("expected an indented block after \"number\":"),
         smdl::Error);
     CHECK_THROWS_WITH_AS((void)doc.toSequence(entryOf(doc, "number")),
                          doctest::Contains("expected an indented sequence"),
@@ -114,7 +114,7 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
                          doctest::Contains("expected a list of 3 reals"),
                          smdl::Error);
     CHECK_THROWS_WITH_AS((void)doc.toString(entryOf(doc, "reals")),
-                         doctest::Contains("expected a string for 'reals'"),
+                         doctest::Contains("expected a string for \"reals\""),
                          smdl::Error);
     parseFail("a: [1, 2\n", 1, "expected ']' to close the inline list");
     parseFail("a: [1, , 2]\n", 1, "empty list item");
@@ -180,7 +180,7 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
     parseFail("just some text\n", 1, "expected 'key: value'");
     parseFail("basecolor:a.png\n", 1, "expected a space after ':'");
     parseFail(": x\n", 1, "expected 'key: value'");
-    parseFail("a: 1\na: 2\n", 2, "duplicate key 'a' (already on line 1)");
+    parseFail("a: 1\na: 2\n", 2, "duplicate key \"a\" (already on line 1)");
     parseFail("n:\n  f: 1\n  f: 2\n", 3, "duplicate key");
     parseFail("name: \"unterminated\n", 1, "unterminated string");
     parseFail("name: \"x\" y\n", 1, "unexpected text after string");
