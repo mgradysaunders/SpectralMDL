@@ -507,7 +507,7 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
     MNEEReceiver receiver{};
     receiver.point = point;
     return traceManifoldCasterSeed(harness.render, harness.path, caster,
-                                   receiver, maxDepth, 0.0f, seed);
+                                   receiver, maxDepth, seed);
   }};
   constexpr uint32_t NUM_TRACES{16};
   const MNEECaster &ball{*casterAt(float3(0, 0, -3), float3(0, 0, 0))};
@@ -686,7 +686,7 @@ TEST_CASE("Straight discovery: the line to the light is walked once") {
     Hit blocker{};
     REQUIRE(walk.nextBlocker(&blocker));
     const MNEEStraightEnd end{discoverStraightChain(
-        harness.path, walk, blocker, wl, wantedLobes, maxDepth, 0.0f, seed)};
+        harness.path, walk, blocker, wl, wantedLobes, maxDepth, seed)};
     hops = walk.hopCount();
     return end;
   }};

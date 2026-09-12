@@ -112,7 +112,7 @@ unit_test "The bounded VNDF density matches its acceptance" {
   // which is what makes a masked value over a masked density an estimator of
   // the masked part.
   const auto ms = df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.8, tint: 1.0, multiscatter_tint: color(1.0));
+    roughness_u: 0.3, tint: 1.0, multiscatter_tint: color(1.0));
   scatter::checkDensityAgainstAcceptance(ms, wo, 1.0);
   scatter::checkDensityAgainstAcceptance(ms, wo, 1.0, df::DF_GLOSSY);
   scatter::checkDensityAgainstAcceptance(ms, wo, 1.0, df::DF_SMOOTH);

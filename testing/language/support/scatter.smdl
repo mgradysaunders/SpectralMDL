@@ -249,11 +249,15 @@ export void checkDensityAgainstAcceptance(
 }
 
 /// The reported normal density must integrate to one over the
-/// hemisphere, or it is not the density of anything.
+/// hemisphere, or it is not the density of anything. The grid is uniform
+/// in the hemisphere's area, so a narrow lobe gets few cells: 1600 holds
+/// the tolerance down to a squared roughness of about 0.06, and every
+/// lobe with a distribution to report is under the glossy cutoff, so
+/// the callers stay between the two.
 export void checkNormalDensityIntegral(
   const bsdf scattering, const float3 normal = float3(0, 0, 1)) {
   const auto integral = quadrature::integrateHemisphere(
-    400,
+    1600,
     1.0,
     \(const float3 wm) = normalEvaluate(scattering, wm, normal: normal));
   #assert(float(integral) ~== |2e-2| 1.0);

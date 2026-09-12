@@ -574,26 +574,22 @@ public:
 /// claim needs a solid that bends: thin walls transmit without bending
 /// and an index-matched boundary has no refraction to solve.
 ///
-/// `maxGlossyAlpha`, when positive, hands glossy lobes wider than that
-/// squared roughness to ordinary sampling: the estimator's variance
-/// grows with the lobe width while ordinary sampling's shrinks, so past
-/// some width the claim costs more than it saves (the reference's
-/// figure 17 trade). The width is read from the normal hook at a fixed
-/// center draw on the side asked, which both halves of the estimator
-/// meet a crossing from, so the two gate identically; for a single-lobe
-/// material that is the lobe's own width exactly. Dirac kinds are never
-/// gated, having no width.
+/// The width of a glossy lobe is never read here: it is part of the
+/// kind. A microfacet lobe wider than the builtin cutoff labels itself
+/// `DF_SMOOTH_BRDF` (see `DF_GLOSSY_BRDF`), so a layered material's word
+/// carries its narrow lobe as glossy and its wide one as smooth, the
+/// claim takes the one and leaves the other to ordinary sampling, and
+/// both halves of the estimator read the same word.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
-manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked,
-              float maxGlossyAlpha = 0.0f);
+manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
 
 /// The claim on either side, the union of the two: what a caller with no
 /// one side in hand asks, a load-time enumeration of marked instances
 /// among them, where a walk's starts may land on either side of the
 /// instance and the masked query at the converged crossing settles which
 /// one actually scatters.
-[[nodiscard]] SMDL_EXPORT ManifoldClaim manifoldClaim(
-    const JIT::Material &material, bool isMarked, float maxGlossyAlpha = 0.0f);
+[[nodiscard]] SMDL_EXPORT ManifoldClaim
+manifoldClaim(const JIT::Material &material, bool isMarked);
 
 /// Is a vertex whose evaluated material is `material` one the manifold
 /// gathers run from and claim for? A receiver's BSDF is evaluated at
@@ -601,8 +597,9 @@ manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked,
 /// there makes an estimator that is zero almost always and enormous
 /// otherwise; the paths it claims are then lost at any feasible sample
 /// count, while ordinary sampling handles a narrow lobe well. So a
-/// vertex receives only with a smooth (diffuse-like) lobe, or with a
-/// glossy lobe whose squared roughness reaches `minAlpha`, read from the
+/// vertex receives only with a smooth (diffuse-like) lobe, a microfacet
+/// lobe above the glossy cutoff among them (see `DF_GLOSSY_BRDF`), or
+/// with a glossy lobe whose squared roughness reaches `minAlpha`, read from the
 /// normal hook on the side the path arrived (a material layering several
 /// lobes reports the one its proposal draws from `xi`, which makes
 /// the answer a draw too; it is made once per vertex and both the

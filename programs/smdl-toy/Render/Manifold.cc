@@ -153,8 +153,7 @@ bool evaluateManifoldHookGeometry(const Scene &scene, const Hit &hit,
   return true;
 }
 
-MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
-                             float maxGlossyAlpha)
+MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths)
     : mCasterOfInstance(scene.meshInstances.size(), INVALID_INDEX) {
   smdl::BumpPtrAllocator allocator{};
   for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
@@ -177,14 +176,14 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     // Either side of the instance: a caster walk's starts land
     // wherever the caster faces, and the masked query at the converged
     // crossing settles which side actually scatters.
-    const ManifoldClaim claim{
-        manifoldClaim(material, /*isMarked=*/true, maxGlossyAlpha)};
+    const ManifoldClaim claim{manifoldClaim(material, /*isMarked=*/true)};
     const int dfLobes{material.getLobes()};
     allocator.reset();
     if (claim.empty()) {
       const char *reason{") claims nothing: the material has no Dirac or "
-                         "glossy lobe in either domain, so the mark is "
-                         "ignored"};
+                         "glossy lobe in either domain (a microfacet lobe "
+                         "wider than the glossy width cutoff is smooth), so "
+                         "the mark is ignored"};
       if ((dfLobes & smdl::DF_SETS_NORMAL) != 0)
         reason = ") claims nothing: a df node was given its own normal, "
                  "which the manifold walk cannot solve against; leave it "
@@ -196,11 +195,6 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
                  "while a df node was given a normal of its own, which "
                  "detaches it from the remapped field, so the mark is "
                  "ignored";
-      else if (maxGlossyAlpha > 0.0f &&
-               !manifoldClaim(material, /*isMarked=*/true).empty())
-        reason = ") claims nothing under '-mnee-max-roughness': every "
-                 "claimable lobe is wider, so the mark is ignored and the "
-                 "transport stays with ordinary sampling";
       SMDL_LOG_WARN("The 'caster' on ",
                     smdl::QuotedPath(scene.fileNames[instIndex]), " (material ",
                     smdl::Quoted(scene.materialNames[matIndex]), reason);
@@ -314,7 +308,7 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
 }
 
 bool makeManifoldSeed(const MediumStack *medium, smdl::JIT::Material &material,
-                      const Hit &hit, const float3 &wl, float maxGlossyAlpha,
+                      const Hit &hit, const float3 &wl,
                       ManifoldVertexSeed &seed) {
   const float3 woStraight{-wl};
   material.setExteriorIOR(ExteriorIOR(medium, material, woStraight));
@@ -322,8 +316,8 @@ bool makeManifoldSeed(const MediumStack *medium, smdl::JIT::Material &material,
   // whose scattering tree the claim may speak for and the side whose
   // index is the previous one.
   const bool isPrevInterior{material.isInterior(woStraight)};
-  const ManifoldClaim claim{manifoldClaim(
-      material, isPrevInterior, hit.instance->isCausticCaster, maxGlossyAlpha)};
+  const ManifoldClaim claim{
+      manifoldClaim(material, isPrevInterior, hit.instance->isCausticCaster)};
   if (claim.refractLobes == 0) return false;
   seed.claimedLobes = claim.refractLobes;
   seed.isGlossy = false;
@@ -353,7 +347,6 @@ namespace {
 MNEEStraightEnd discoverStraightChain(PathContext &path, VisibilityWalk &walk,
                                       Hit &blocker, const float3 &wl,
                                       int wantedLobes, int maxDepth,
-                                      float maxGlossyAlpha,
                                       MNEEChainSeed &seed) {
   seed.chain = ManifoldChain{};
   seed.lobes = wantedLobes;
@@ -366,7 +359,7 @@ MNEEStraightEnd discoverStraightChain(PathContext &path, VisibilityWalk &walk,
         state, blocker.materialDef)};
     ManifoldVertexSeed &vertexSeed{seed.chain[seed.chain.count]};
     if (!makeManifoldSeed(walk.mediumStack(), material, blocker, wl,
-                          maxGlossyAlpha, vertexSeed))
+                          vertexSeed))
       return MNEEStraightEnd::BLOCKED;
     // One chain per lobe the WHOLE chain claims: the measure handles a
     // mixed chain, but estimating one would mean claiming it, and the
@@ -388,7 +381,7 @@ MNEEStraightEnd discoverStraightChain(PathContext &path, VisibilityWalk &walk,
 bool traceManifoldCasterSeed(const RenderContext &render, PathContext &path,
                              const MNEECaster &caster,
                              const MNEEReceiver &receiver, int maxDepth,
-                             float maxGlossyAlpha, MNEEChainSeed &seed) {
+                             MNEEChainSeed &seed) {
   seed.chain = ManifoldChain{};
   seed.lobes = 0;
   Hit sampled{};
@@ -424,8 +417,7 @@ bool traceManifoldCasterSeed(const RenderContext &render, PathContext &path,
     smdl::JIT::Material &material{
         *path.allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
     ManifoldVertexSeed &vertexSeed{seed.chain[seed.chain.count]};
-    if (!makeManifoldSeed(medium, material, hit, wTravel, maxGlossyAlpha,
-                          vertexSeed)) {
+    if (!makeManifoldSeed(medium, material, hit, wTravel, vertexSeed)) {
       // Not an interface a chain crosses: the chain is complete as it
       // stands, unless it has not started.
       if (seed.chain.count == 0) return false;

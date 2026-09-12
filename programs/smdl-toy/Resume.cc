@@ -51,7 +51,6 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "mnee-depth",
                                                          "mnee-max-trials",
                                                          "mnee-biased",
-                                                         "mnee-max-roughness",
                                                          "mnee-receiver-alpha",
                                                          "sample-offset",
                                                          "threads",

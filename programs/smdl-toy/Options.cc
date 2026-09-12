@@ -366,11 +366,6 @@ cl::opt<unsigned> optMNEEBiased{
     cl::desc("With -mnee, enable biased mode with this many walks per estimate "
              "(default: 0, unbiased)"),
     cl::init(0), cl::cat(catRendering)};
-cl::opt<float> optMNEEMaxRoughness{
-    "mnee-max-roughness",
-    cl::desc("With -mnee, do not claim glossy lobes with roughness wider than "
-             "this (default: 0, no limit)"),
-    cl::init(0.0f), cl::cat(catRendering)};
 cl::opt<bool> optMNEESunOnly{
     "mnee-sun-only",
     cl::desc("With -mnee and procedural sun-sky, restrict the Dirac-chain "
@@ -718,7 +713,6 @@ Options parseCommandLine(int argc, char **argv) {
                                : 0;
   opts.render.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
   opts.render.mnee.biasedTrials = int(unsigned(optMNEEBiased));
-  opts.render.mnee.maxRoughness = std::max(float(optMNEEMaxRoughness), 0.0f);
   opts.render.mnee.minReceiverAlpha =
       std::max(float(optMNEEReceiverAlpha), 0.0f);
   opts.render.allLights = bool(optMarkAllLights);

@@ -61,14 +61,6 @@ public:
   /// figure 15).
   int biasedTrials{};
 
-  /// When positive, hand glossy lobes wider than this squared roughness
-  /// to ordinary sampling instead of claiming them, identically on the
-  /// gather and arrival sides; see `manifoldClaim()`. The stopgap for a
-  /// light-extent-aware partition: wide lobes under small lights are
-  /// where the claimed estimator loses to ordinary sampling, and until
-  /// the split reads the light's angular size this is the one knob.
-  float maxRoughness{};
-
   /// The squared roughness a glossy-only vertex needs to be a receiver
   /// the gathers run from and claim for; see `isManifoldReceiver()`.
   float minReceiverAlpha{0.005f};
