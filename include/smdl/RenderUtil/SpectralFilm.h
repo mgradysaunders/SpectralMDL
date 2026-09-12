@@ -70,7 +70,7 @@ public:
   void addTotals(size_t iX, size_t iY, const T *totalPtr) noexcept {
     SMDL_SANITY_CHECK(iX < mNumPixelsX);
     SMDL_SANITY_CHECK(iY < mNumPixelsY);
-    auto totalsPtr{&mTotals[(mNumPixelsX * iY + iX) * mNumBands]};
+    double *totalsPtr{&mTotals[(mNumPixelsX * iY + iX) * mNumBands]};
     for (size_t i = 0; i < mNumBands; i++) {
       totalsPtr[i] += static_cast<double>(totalPtr[i]);
     }

@@ -15,12 +15,12 @@ namespace smdl {
 std::optional<Error>
 SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
   clear();
-  auto error{catchAndReturnError([&] {
+  std::optional<Error> error{catchAndReturnError([&] {
     auto throwError{[&](std::string_view message) {
       throw Error(concat("cannot load ", QuotedPath(fileName), ": ", message));
     }};
-    auto hdrFile{readOrThrow(fileName + ".hdr")};
-    auto hdr{llvm::StringRef(hdrFile)};
+    std::string hdrFile{readOrThrow(fileName + ".hdr")};
+    llvm::StringRef hdr{hdrFile};
     // Where in the header a key was, for an error: nothing for a key the
     // header left out, whose value is the default.
     const auto onLine{[&](int lineNo) {
@@ -32,10 +32,10 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     }
     auto split{[&](char ch) {
       if (ch == '\n') {
-        auto i{hdr.rfind('\n', hdr.find('='))};
+        size_t i{hdr.rfind('\n', hdr.find('='))};
         if (i != hdr.npos) {
-          auto split0{hdr.take_front(i)};
-          auto split1{hdr.drop_front(i)};
+          llvm::StringRef split0{hdr.take_front(i)};
+          llvm::StringRef split1{hdr.drop_front(i)};
           hdr = split1.trim();
           return split0.trim();
         }
@@ -45,7 +45,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       return split0.trim();
     }};
     auto splitKeyValue{[&]() {
-      auto key{split('=')};
+      llvm::StringRef key{split('=')};
       if (hdr.starts_with('{')) {
         hdr = hdr.drop_front(1);
         return std::pair(key, split('}'));
@@ -64,7 +64,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     int samplesLine{};
     int linesLine{};
     while (!hdr.empty()) {
-      const auto keyLine{
+      const int keyLine{
           1 + int(std::count(hdrFile.c_str(), hdr.ltrim().data(), '\n'))};
       const auto throwKeyError{[&](std::string_view message) {
         throwError(concat(message, onLine(keyLine)));
@@ -160,14 +160,14 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     for (auto &wavelength : mWavelengths) {
       wavelength = toNanometers(units, wavelength);
     }
-    auto binFile{readOrThrow(fileName)};
-    auto bin{llvm::StringRef(binFile)};
+    std::string binFile{readOrThrow(fileName)};
+    llvm::StringRef bin{binFile};
     bin =
         bin.drop_front(std::min(bin.size(), size_t(std::max(headerOffset, 0))));
-    auto endianness{byteOrder == 0 ? llvm::endianness::little
-                                   : llvm::endianness::big};
-    auto numCurveValues{size_t(samples) * size_t(lines)};
-    if (const auto valueSize{size_t(dataType == 4 ? 4 : 8)};
+    llvm::endianness endianness{byteOrder == 0 ? llvm::endianness::little
+                                               : llvm::endianness::big};
+    size_t numCurveValues{size_t(samples) * size_t(lines)};
+    if (const size_t valueSize{size_t(dataType == 4 ? 4 : 8)};
         bin.size() < numCurveValues * valueSize) {
       throwError(concat("the data holds ", bin.size() / valueSize, " of the ",
                         numCurveValues, " values its header describes"));
@@ -178,16 +178,18 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     for (size_t i = 0; i < numCurveValues; i++) {
       switch (dataType) {
       case 4: {
-        auto value{float()};
-        auto valueData{llvm::support::endian::read32(bin.data(), endianness)};
+        float value{};
+        uint32_t valueData{
+            llvm::support::endian::read32(bin.data(), endianness)};
         bin = bin.drop_front(4);
         std::memcpy(&value, &valueData, 4);
         mCurveValues.push_back(value);
         break;
       }
       case 5: {
-        auto value{double()};
-        auto valueData{llvm::support::endian::read64(bin.data(), endianness)};
+        double value{};
+        uint64_t valueData{
+            llvm::support::endian::read64(bin.data(), endianness)};
         bin = bin.drop_front(8);
         std::memcpy(&value, &valueData, 8);
         mCurveValues.push_back(value);

@@ -94,7 +94,7 @@ namespace smdl {
 /// [2/3, 4/3), goes through the odd series in (m - 1) / (m + 1), cut at
 /// the term that lands below float rounding of the result.
 [[nodiscard]] SMDL_ALWAYS_INLINE float fastLog(float x) noexcept {
-  const auto bits{bitCast<std::uint32_t>(x)};
+  const std::uint32_t bits{bitCast<std::uint32_t>(x)};
   int e{int((bits >> 23) & 0xFF) - 127};
   float m{bitCast<float>((bits & 0x807FFFFFu) | (127u << 23))};
   if (m > 1.3333333f) m *= 0.5f, e += 1;
@@ -110,7 +110,7 @@ namespace smdl {
 /// 0 at 1. The same reduction as the float overload with two more terms
 /// of the series.
 [[nodiscard]] SMDL_ALWAYS_INLINE double fastLog(double x) noexcept {
-  const auto bits{bitCast<std::uint64_t>(x)};
+  const std::uint64_t bits{bitCast<std::uint64_t>(x)};
   int e{int((bits >> 52) & 0x7FF) - 1023};
   double m{bitCast<double>((bits & 0x800FFFFFFFFFFFFFull) | (1023ull << 52))};
   if (m > 1.3333333333333333) m *= 0.5, e += 1;

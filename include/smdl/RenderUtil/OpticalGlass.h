@@ -160,7 +160,7 @@ private:
   template <typename T> [[nodiscard]] T evaluate(T wavelength) const noexcept {
     const T l{T(1e-3) * wavelength};
     const T l2{l * l};
-    const auto &k{mCoefficients};
+    const std::array<float, 6> &k{mCoefficients};
     switch (mKind) {
     case Kind::CONSTANT:
       break;

@@ -202,7 +202,7 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
   mSigmaRef = SpectralColor(wavelens.size());
   mSigmaScaRef = SpectralColor(wavelens.size());
   for (size_t i = 0; i < mSigmaRef.size(); i++) {
-    const auto lerp{channelOf(wavelens[i])};
+    const ChannelLerp lerp{channelOf(wavelens[i])};
     const float rayleigh{sigmaRayleigh *
                          lookup(hazeRural::RAYLEIGH_EXTINCTION, lerp)};
     mSigmaRef[i] =

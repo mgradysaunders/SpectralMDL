@@ -11,15 +11,15 @@ namespace smdl {
 std::optional<Error>
 Spectrum::loadFromFile(const std::string &fileName) noexcept {
   clear();
-  auto error{catchAndReturnError([&] {
-    auto file{openOrThrow(fileName, std::ios::in)};
-    auto line{std::string()};
-    auto units{WAVE_UNITS_MICROMETERS};
+  std::optional<Error> error{catchAndReturnError([&] {
+    std::fstream file{openOrThrow(fileName, std::ios::in)};
+    std::string line{};
+    WaveUnits units{WAVE_UNITS_MICROMETERS};
     bool hasUnitsYet{false};
-    auto lineNo{0};
+    int lineNo{0};
     while (std::getline(file, line)) {
       lineNo++;
-      auto lineRef{llvm::StringRef(line).trim()};
+      llvm::StringRef lineRef{llvm::StringRef(line).trim()};
       if (lineRef.empty() || lineRef[0] == '#') continue;
       // The first row may name the units instead, so a first row that is
       // neither is refused as both.

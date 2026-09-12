@@ -87,12 +87,12 @@ void ForEachPixel(
     size_t nTileY{size_t(header.tile_size_y)};
     size_t nC{size_t(header.num_channels)};
     for (size_t iTile = 0; iTile < size_t(image.num_tiles); iTile++) {
-      auto &tile{image.tiles[iTile]};
+      EXRTile &tile{image.tiles[iTile]};
       size_t i{};
       for (size_t iTileY = 0; iTileY < nTileY; iTileY++) {
         for (size_t iTileX = 0; iTileX < nTileX; iTileX++) {
-          auto iX = tile.offset_x * nTileX + iTileX;
-          auto iY = tile.offset_y * nTileY + iTileY;
+          size_t iX{tile.offset_x * nTileX + iTileX};
+          size_t iY{tile.offset_y * nTileY + iTileY};
           if (iX < size_t(image.width) && iY < size_t(image.height)) {
             for (size_t iC = 0; iC < nC; iC++) {
               size_t pixelSize{GetPixelSize(header.channels[iC])};
@@ -201,7 +201,7 @@ void Image::clear() {
 
 std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   clear();
-  auto error{catchAndReturnError([&] {
+  std::optional<Error> error{catchAndReturnError([&] {
     if (stbi_info(fileName.c_str(), &mNumTexelsX, &mNumTexelsY,
                   &mNumChannels)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
@@ -265,16 +265,15 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
       // 1 'FreeEXRHeader()' happens no matter whether the finish
       // function below runs, throws, is copied, or is dropped without
       // ever being called.
-      auto header{
-          std::shared_ptr<EXRHeader>(new EXRHeader{}, [](EXRHeader *ptr) {
-            FreeEXRHeader(ptr);
-            delete ptr;
-          })};
+      std::shared_ptr<EXRHeader> header{new EXRHeader{}, [](EXRHeader *ptr) {
+                                          FreeEXRHeader(ptr);
+                                          delete ptr;
+                                        }};
       InitEXRHeader(header.get());
       const char *err{};
       if (ParseEXRHeaderFromFile(header.get(), &version, fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
-        auto message{
+        std::string message{
             concat("cannot parse EXR header: ", err ? err : "unknown error")};
         FreeEXRErrorMessage(err);
         throw Error(std::move(message));
@@ -323,7 +322,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         const char *err{};
         if (LoadEXRImageFromFile(&image, header.get(), fileName.c_str(),
                                  &err) != TINYEXR_SUCCESS) {
-          auto message{
+          std::string message{
               concat("cannot decode EXR: ", err ? err : "unknown error")};
           FreeEXRErrorMessage(err);
           throw Error(std::move(message));
@@ -336,8 +335,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
           tinyexr::ForEachPixel(
               *header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                auto i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
-                auto texel{mTexels.get() + size_t(mTexelSize) * i};
+                size_t i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
+                std::byte *texel{mTexels.get() + size_t(mTexelSize) * i};
                 if (iC == 0) std::memcpy(texel, pixel, pixelSize);
               });
         } else {
@@ -356,8 +355,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
           tinyexr::ForEachPixel(
               *header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                auto i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
-                auto texel{mTexels.get() + size_t(mTexelSize) * i};
+                size_t i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
+                std::byte *texel{mTexels.get() + size_t(mTexelSize) * i};
                 if (iC == channelIndexR) {
                   std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
                 } else if (iC == channelIndexG) {
@@ -371,15 +370,15 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
           // If the alpha channel is missing, fill with 1.
           if (!channels[3]) {
             if (mFormat == FLOAT16) {
-              auto one{uint16_t(0x3C00)};
-              auto itr{mTexels.get() + 6};
+              uint16_t one{0x3C00};
+              std::byte *itr{mTexels.get() + 6};
               for (int i = 0; i < mNumTexelsX * mNumTexelsY; i++) {
                 std::memcpy(itr, &one, 2);
                 itr += mTexelSize;
               }
             } else if (mFormat == FLOAT32) {
-              auto one{float(1.0f)};
-              auto itr{mTexels.get() + 12};
+              float one{1.0f};
+              std::byte *itr{mTexels.get() + 12};
               for (int i = 0; i < mNumTexelsX * mNumTexelsY; i++) {
                 std::memcpy(itr, &one, 4);
                 itr += mTexelSize;
@@ -414,7 +413,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
 }
 
 void Image::allocate() {
-  const auto numLevels{getNumLevels()};
+  const int numLevels{getNumLevels()};
   mLevelOffsets.assign(size_t(numLevels), 0);
   size_t offset{0};
   for (int level = 0; level < numLevels; level++) {
@@ -438,7 +437,7 @@ void Image::finishLoad() {
   // NOTE: Move into a local and null the member before invoking, so
   // that a throw cannot leave a stale finish function behind to be
   // invoked again.
-  auto finishLoad{std::move(mFinishLoad)};
+  std::function<void()> finishLoad{std::move(mFinishLoad)};
   mFinishLoad = nullptr;
   try {
     finishLoad();
@@ -465,16 +464,16 @@ void Image::generateMipLevels() noexcept {
 }
 
 void Image::generateMeanMipLevels() noexcept {
-  const auto dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
-                      : mFormat == UINT16  ? STBIR_TYPE_UINT16
-                      : mFormat == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
-                                           : STBIR_TYPE_FLOAT};
+  const stbir_datatype dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
+                                : mFormat == UINT16  ? STBIR_TYPE_UINT16
+                                : mFormat == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
+                                                     : STBIR_TYPE_FLOAT};
   // The plain N-channel layouts, so no channel gets alpha semantics:
   // the chain averages stored values as-is (see the class doc comment
   // for why filtering is gamma-agnostic).
-  const auto layout{mNumChannels == 1   ? STBIR_1CHANNEL
-                    : mNumChannels == 2 ? STBIR_2CHANNEL
-                                        : STBIR_4CHANNEL};
+  const stbir_pixel_layout layout{mNumChannels == 1   ? STBIR_1CHANNEL
+                                  : mNumChannels == 2 ? STBIR_2CHANNEL
+                                                      : STBIR_4CHANNEL};
   for (int level = 1; level < mNumLevels; level++) {
     // Each level halves the previous one, so the box filter is an
     // area average whenever the parent extent is even, and blends the
@@ -492,7 +491,7 @@ void Image::generateMeanMipLevels() noexcept {
 }
 
 void Image::generateMaxMipLevels() noexcept {
-  const auto channelSize{mTexelSize / mNumChannels};
+  const int channelSize{mTexelSize / mNumChannels};
   // Compare in single precision and copy the winning channel's stored
   // bytes, so every format reduces without a pack step.
   auto valueOf{[&](const void *ptr) -> float {
@@ -513,8 +512,8 @@ void Image::generateMaxMipLevels() noexcept {
     const int prevY{getNumTexelsY(level - 1)};
     const int numX{getNumTexelsX(level)};
     const int numY{getNumTexelsY(level)};
-    auto prevTexels{mTexels.get() + mLevelOffsets[size_t(level - 1)]};
-    auto texels{mTexels.get() + mLevelOffsets[size_t(level)]};
+    std::byte *prevTexels{mTexels.get() + mLevelOffsets[size_t(level - 1)]};
+    std::byte *texels{mTexels.get() + mLevelOffsets[size_t(level)]};
     // Level 1 alone adds the one-texel border around the pair it
     // covers; the higher levels inherit it from their children. The
     // last texel of an odd extent widens to cover the remainder.
@@ -531,12 +530,13 @@ void Image::generateMaxMipLevels() noexcept {
         float bestValue[4]{};
         for (int y = y0; y < y1; y++) {
           for (int x = x0; x < x1; x++) {
-            auto src{prevTexels + size_t(mTexelSize) *
-                                      (size_t(wrap(x, prevX)) +
-                                       size_t(prevX) * size_t(wrap(y, prevY)))};
+            std::byte *src{prevTexels +
+                           size_t(mTexelSize) *
+                               (size_t(wrap(x, prevX)) +
+                                size_t(prevX) * size_t(wrap(y, prevY)))};
             for (int c = 0; c < mNumChannels; c++) {
-              auto ptr{reinterpret_cast<const uint8_t *>(src) +
-                       size_t(c) * size_t(channelSize)};
+              const uint8_t *ptr{reinterpret_cast<const uint8_t *>(src) +
+                                 size_t(c) * size_t(channelSize)};
               const float value{valueOf(ptr)};
               if (!best[c] || value > bestValue[c]) {
                 best[c] = ptr;
@@ -545,7 +545,7 @@ void Image::generateMaxMipLevels() noexcept {
             }
           }
         }
-        auto dst{reinterpret_cast<uint8_t *>(
+        uint8_t *dst{reinterpret_cast<uint8_t *>(
             texels +
             size_t(mTexelSize) * (size_t(i) + size_t(numX) * size_t(j)))};
         for (int c = 0; c < mNumChannels; c++)
@@ -560,9 +560,9 @@ void Image::flipVertically() noexcept {
   // The levels in memory, not the levels the extent implies: a chain
   // that was never requested was never allocated either.
   for (int level = 0; level < getNumLevelsInMemory(); level++) {
-    auto levelTexels{mTexels.get() + mLevelOffsets[size_t(level)]};
-    auto numTexelsY{getNumTexelsY(level)};
-    auto rowSize{size_t(mTexelSize) * size_t(getNumTexelsX(level))};
+    std::byte *levelTexels{mTexels.get() + mLevelOffsets[size_t(level)]};
+    int numTexelsY{getNumTexelsY(level)};
+    size_t rowSize{size_t(mTexelSize) * size_t(getNumTexelsX(level))};
     for (int iY = 0; iY < numTexelsY / 2; iY++) {
       std::swap_ranges(levelTexels + rowSize * size_t(iY),
                        levelTexels + rowSize * size_t(iY + 1),
@@ -580,13 +580,14 @@ float4 Image::fetch(int x, int y, int level) const noexcept {
 }
 
 float4 Image::fetchUnsafe(int x, int y, int level) const noexcept {
-  auto texel{float4{std::numeric_limits<float>::quiet_NaN(),
-                    std::numeric_limits<float>::quiet_NaN(),
-                    std::numeric_limits<float>::quiet_NaN(),
-                    std::numeric_limits<float>::quiet_NaN()}};
-  auto texelPtr{mTexels.get() + mLevelOffsets[size_t(level)] +
-                size_t(mTexelSize) *
-                    (size_t(x) + size_t(getNumTexelsX(level)) * size_t(y))};
+  float4 texel{std::numeric_limits<float>::quiet_NaN(),
+               std::numeric_limits<float>::quiet_NaN(),
+               std::numeric_limits<float>::quiet_NaN(),
+               std::numeric_limits<float>::quiet_NaN()};
+  std::byte *texelPtr{
+      mTexels.get() + mLevelOffsets[size_t(level)] +
+      size_t(mTexelSize) *
+          (size_t(x) + size_t(getNumTexelsX(level)) * size_t(y))};
   for (int i = 0; i < mNumChannels; i++) {
     switch (mFormat) {
     case UINT8:
@@ -636,20 +637,22 @@ std::optional<Error> write8bitImage(const std::string &fileName, int numTexelsX,
                             numChannels, ptr);
   } else if (hasExtension(fileName, ".pgm") || hasExtension(fileName, ".ppm")) {
     return catchAndReturnError([&] {
-      auto isGray{hasExtension(fileName, ".pgm")};
-      auto stream{openOrThrow(fileName, std::ios::binary | std::ios::out)};
+      bool isGray{hasExtension(fileName, ".pgm")};
+      std::fstream stream{
+          openOrThrow(fileName, std::ios::binary | std::ios::out)};
       stream << (isGray ? "P5 " : "P6 ");
       stream << numTexelsX << ' ';
       stream << numTexelsY << " 255\n";
-      auto texelPtr{static_cast<const char *>(ptr)};
-      auto texelPtrEnd{texelPtr + size_t(numChannels) * size_t(numTexelsX) *
-                                      size_t(numTexelsY)};
+      const char *texelPtr{static_cast<const char *>(ptr)};
+      const char *texelPtrEnd{texelPtr + size_t(numChannels) *
+                                             size_t(numTexelsX) *
+                                             size_t(numTexelsY)};
       if (isGray) {
         for (; texelPtr < texelPtrEnd; texelPtr += numChannels) {
           stream.write(texelPtr, 1);
         }
       } else {
-        auto effNumChannels{std::min(numChannels, 3)};
+        int effNumChannels{std::min(numChannels, 3)};
         for (; texelPtr < texelPtrEnd; texelPtr += numChannels) {
           stream.write(texelPtr, effNumChannels);
           stream.write("\0\0\0", 3 - effNumChannels);
@@ -677,8 +680,8 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
     const char *message{};
     if (SaveEXR(ptr, numTexelsX, numTexelsY, numChannels, /*save_as_fp16=*/0,
                 fileName.c_str(), &message) != TINYEXR_SUCCESS) {
-      auto error{Error(concat("cannot write ", QuotedPath(fileName), ": ",
-                              message ? message : "unknown error"))};
+      Error error{concat("cannot write ", QuotedPath(fileName), ": ",
+                         message ? message : "unknown error")};
       FreeEXRErrorMessage(message);
       return error;
     }

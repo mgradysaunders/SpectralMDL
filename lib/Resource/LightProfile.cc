@@ -11,8 +11,8 @@ std::optional<Error>
 LightProfile::loadFromFileMemory(std::string file) noexcept {
   clear();
   std::replace(file.begin(), file.end(), ',', ' ');
-  auto error{catchAndReturnError([&] {
-    auto text{llvm::StringRef(file).trim()};
+  std::optional<Error> error{catchAndReturnError([&] {
+    llvm::StringRef text{llvm::StringRef(file).trim()};
     // The line `rest` starts on, and where the parse stands, for an error.
     const auto lineOf{[&](llvm::StringRef rest) {
       const char *end{rest.data() ? rest.data() : file.c_str() + file.size()};
@@ -36,19 +36,19 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
     // Parse properties
     while (true) {
       auto [line, remainder] = text.ltrim().split('\n');
-      auto brackL{line.find('[')};
-      auto brackR{line.find(']')};
+      size_t brackL{line.find('[')};
+      size_t brackR{line.find(']')};
       if (!(brackL < brackR && brackR < line.size())) break;
-      auto key{line.substr(brackL + 1, brackR - brackL - 1).trim()};
-      auto val{line.substr(brackR + 1).trim()};
+      llvm::StringRef key{line.substr(brackL + 1, brackR - brackL - 1).trim()};
+      llvm::StringRef val{line.substr(brackR + 1).trim()};
       properties[std::string(key)] = std::string(val);
       text = remainder;
     }
     auto parseNumberOrThrow{[&](const char *what, auto &value) {
       text = text.ltrim();
       if constexpr (std::is_floating_point_v<std::decay_t<decltype(value)>>) {
-        auto result{double(0)};
-        auto num{text.take_until(isSpace)};
+        double result{0};
+        llvm::StringRef num{text.take_until(isSpace)};
         if (!num.getAsDouble(result, /*AllowInexact=*/true)) {
           value = result;
           text = text.drop_front(num.size());
@@ -67,7 +67,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
       auto [line, remainder] = text.split('\n');
       if (!line.consume_front("TILT="))
         throw Error(concat("expected 'TILT=' ", where()));
-      auto tiltKind{std::string(line.trim())};
+      std::string tiltKind{line.trim()};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
         throw Error(concat("unsupported tilt ", Quoted(tiltKind), " on line ",
                            lineOf(line)));
@@ -150,7 +150,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
     const int nX{horzAngles.size() <= 1
                      ? 1
                      : std::clamp(4 * int(horzAngles.size()), 64, 1024)};
-    auto values{std::vector<float>(size_t(nX) * size_t(nY))};
+    std::vector<float> values(size_t(nX) * size_t(nY));
     for (int iY = 0; iY < nY; iY++) {
       const float theta{PI * (float(iY) + 0.5f) / float(nY)};
       const float sinTheta{std::sin(theta)};
@@ -169,10 +169,11 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
 
 std::optional<Error>
 LightProfile::loadFromFile(const std::string &fileName) noexcept {
-  auto file{std::string()};
-  if (auto error{catchAndReturnError([&] { file = readOrThrow(fileName); })})
+  std::string file{};
+  if (std::optional<Error> error{
+          catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
-  if (auto error{loadFromFileMemory(std::move(file))})
+  if (std::optional<Error> error{loadFromFileMemory(std::move(file))})
     return Error(
         concat("cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
@@ -454,7 +455,7 @@ float LightProfile::interpolate(float vertAngle,
     return 0;
   }
   if (horzAngles.size() <= 1) {
-    auto vertLookup{lerpLookup(vertAngles, vertAngle)};
+    LerpLookup vertLookup{lerpLookup(vertAngles, vertAngle)};
     return lerp(intensityValues[vertLookup.index0], //
                 intensityValues[vertLookup.index1], //
                 vertLookup.fraction);
@@ -462,12 +463,12 @@ float LightProfile::interpolate(float vertAngle,
     if (!(horzAngles.front() <= horzAngle && horzAngle <= horzAngles.back())) {
       return 0;
     }
-    auto vertLookup{lerpLookup(vertAngles, vertAngle)};
-    auto horzLookup{lerpLookup(horzAngles, horzAngle)};
-    auto intensityRow0{&intensityValues[0] +
-                       vertAngles.size() * horzLookup.index0};
-    auto intensityRow1{&intensityValues[0] +
-                       vertAngles.size() * horzLookup.index1};
+    LerpLookup vertLookup{lerpLookup(vertAngles, vertAngle)};
+    LerpLookup horzLookup{lerpLookup(horzAngles, horzAngle)};
+    const float *intensityRow0{&intensityValues[0] +
+                               vertAngles.size() * horzLookup.index0};
+    const float *intensityRow1{&intensityValues[0] +
+                               vertAngles.size() * horzLookup.index1};
     return lerp(lerp(intensityRow0[vertLookup.index0],
                      intensityRow0[vertLookup.index1], //
                      vertLookup.fraction),
@@ -515,8 +516,9 @@ SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
     if (pdf) *pdf = 0.0f;
     return;
   }
-  auto w{static_cast<const smdl::LightProfile *>(profile)->directionSample(
-      xi, pdf)};
+  smdl::float3 w{
+      static_cast<const smdl::LightProfile *>(profile)->directionSample(xi,
+                                                                        pdf)};
   if (wi) *wi = w;
 }
 

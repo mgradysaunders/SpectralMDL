@@ -168,7 +168,7 @@ constexpr CatalogAlias ALIASES[] = {
 OpticalGlass OpticalGlass::constant(float index) {
   if (!(std::isfinite(index) && index >= 1))
     throw Error(concat("expected an index of at least 1, got ", Brief(index)));
-  auto glass{OpticalGlass{}};
+  OpticalGlass glass{};
   glass.mCoefficients[0] = index;
   return glass;
 }
@@ -202,7 +202,7 @@ OpticalGlass OpticalGlass::abbe(float nd, float abbeNumber,
   const double c{(slopeGF - slopeFC) / (xg - xC)};
   const double b{slopeFC - c * (xF + xC)};
   const double a{double(nd) - xd * (b + c * xd)};
-  auto glass{OpticalGlass{}};
+  OpticalGlass glass{};
   glass.mKind = Kind::ABBE;
   glass.mCoefficients = {float(a), float(b), float(c), 0, 0, 0};
   glass.validate();
@@ -222,7 +222,7 @@ OpticalGlass OpticalGlass::sellmeier(const std::array<float, 3> &b,
                          " to ", OPTICAL_GLASS_WAVELENGTH_MAX,
                          " nm a glass is evaluated over"));
   }
-  auto glass{OpticalGlass{}};
+  OpticalGlass glass{};
   glass.mKind = Kind::SELLMEIER;
   glass.mCoefficients = {b[0], b[1], b[2], c[0], c[1], c[2]};
   glass.validate();
@@ -237,7 +237,7 @@ void OpticalGlass::validate() const {
   // Every nanometer, in double. That is fine enough that nothing smooth
   // hides between the samples; what is not smooth is a pole, which
   // `sellmeier()` finds exactly before this runs.
-  auto previous{std::numeric_limits<double>::infinity()};
+  double previous{std::numeric_limits<double>::infinity()};
   for (int wavelength = int(OPTICAL_GLASS_WAVELENGTH_MIN);
        wavelength <= int(OPTICAL_GLASS_WAVELENGTH_MAX); wavelength++) {
     const double index{evaluate(double(wavelength))};
@@ -276,8 +276,8 @@ float OpticalGlass::partialDispersion() const noexcept {
 }
 
 Span<const OpticalGlassEntry> opticalGlassCatalog() {
-  static const auto entries{[] {
-    auto result{std::vector<OpticalGlassEntry>()};
+  static const std::vector<OpticalGlassEntry> entries{[] {
+    std::vector<OpticalGlassEntry> result{};
     for (const auto &data : CATALOG)
       result.push_back({data.name, OpticalGlass::sellmeier(data.b, data.c)});
     return result;

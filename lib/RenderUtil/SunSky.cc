@@ -461,7 +461,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // two-level pairwise sum over the loop nest that is already here and
   // holds the error near a part in a million rather than the part in a
   // hundred thousand a flat sum over 32768 texels would carry.
-  auto weights{std::vector<float>{}};
+  std::vector<float> weights{};
   weights.reserve(size_t(SKY_DISTR_SIZE_X) * SKY_DISTR_SIZE_Y);
   float radianceSum{};
   float sinThetaSum{};
@@ -501,7 +501,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   // falling back to the uncompensated weights if compensation removes
   // everything.
   if (options.isMISCompensationEnabled) {
-    auto compensated{weights};
+    std::vector<float> compensated{weights};
     float compensatedSum{};
     size_t texel{};
     for (int iY = 0; iY < SKY_DISTR_SIZE_Y; iY++) {
@@ -541,7 +541,7 @@ void SunSky::resolve(Span<const float> wavelens, SkyBasis &basis) const {
   basis.mSunIrradiance.assign(numBands, 0.0f);
   if (mSunIrradiance.empty()) return; // default-constructed
   for (size_t j = 0; j < numBands; ++j) {
-    const auto lerp = channelOf(wavelens[j]);
+    const ChannelLerp lerp{channelOf(wavelens[j])};
     const float scale0{mChannelScale.empty() ? 1.0f : mChannelScale[lerp.i0]};
     const float scale1{mChannelScale.empty() ? 1.0f : mChannelScale[lerp.i1]};
     const auto mix{
@@ -636,7 +636,7 @@ void SunSky::sunRadiance(int numWavelens, const float *wavelens,
     return;
   }
   for (int j = 0; j < numWavelens; j++) {
-    const auto lerp = channelOf(wavelens[j]);
+    const ChannelLerp lerp{channelOf(wavelens[j])};
     const float value0 = mSunIrradiance[lerp.i0];
     const float value1 = mSunIrradiance[lerp.i1];
     radiance[j] = (value0 + lerp.frac * (value1 - value0)) * mSunDiskScale;
@@ -649,7 +649,7 @@ void SunSky::radiance(const float3 &direction, int numWavelens,
   if (mIsSunEnabled && !mSunIrradiance.empty() &&
       dot(direction, mSunDir) >= COS_SUN_ANGULAR_RADIUS) {
     for (int j = 0; j < numWavelens; j++) {
-      const auto lerp = channelOf(wavelens[j]);
+      const ChannelLerp lerp{channelOf(wavelens[j])};
       const float value0 = mSunIrradiance[lerp.i0];
       const float value1 = mSunIrradiance[lerp.i1];
       radiance[j] += (value0 + lerp.frac * (value1 - value0)) * mSunDiskScale;

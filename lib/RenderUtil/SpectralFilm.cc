@@ -88,7 +88,7 @@ void writeArrayField(std::ostream &stream, const char *name,
 // information the whitespace does not, so they become whitespace and
 // the rest is a run of numbers.
 [[nodiscard]] std::vector<double> parseArrayValue(std::string value) {
-  auto values{std::vector<double>()};
+  std::vector<double> values{};
   for (auto &c : value)
     if (c == '{' || c == '}' || c == ',') c = ' ';
   const char *ptr{value.c_str()};
@@ -104,13 +104,13 @@ void writeArrayField(std::ostream &stream, const char *name,
 // Parse the `{a, b, c}` array form of a list of names: the braces go,
 // the commas split, and each name is trimmed.
 [[nodiscard]] std::vector<std::string> parseNameList(std::string value) {
-  auto names{std::vector<std::string>()};
+  std::vector<std::string> names{};
   for (auto &c : value)
     if (c == '{' || c == '}') c = ' ';
   for (size_t pos{}; pos <= value.size();) {
-    auto end{value.find(',', pos)};
+    size_t end{value.find(',', pos)};
     if (end == std::string::npos) end = value.size();
-    auto name{value.substr(pos, end - pos)};
+    std::string name{value.substr(pos, end - pos)};
     const char *WS{" \t\r\n"};
     name.erase(0, name.find_first_not_of(WS));
     name.erase(name.find_last_not_of(WS) + 1);
@@ -157,13 +157,13 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
                                  std::optional<int4> cropWindow,
                                  Span<const std::string> bandNames,
                                  bool shouldWriteDouble) const {
-  const auto noCrop{int4{0, 0, int(mNumPixelsX), int(mNumPixelsY)}};
+  const int4 noCrop{0, 0, int(mNumPixelsX), int(mNumPixelsY)};
   checkWindowAndNames(fileName, cropWindow, mNumPixelsX, mNumPixelsY, bandNames,
                       mNumBands);
-  const auto pixelWindow{cropWindow.value_or(noCrop)};
+  const int4 pixelWindow{cropWindow.value_or(noCrop)};
   // Write the header file
   {
-    auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
+    std::fstream file{openOrThrow(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     writeField(file, ENVI_FILE_TYPE, "ENVI Standard");
     writeField(file, ENVI_DATA_TYPE,
@@ -196,8 +196,8 @@ void SpectralFilm::writeENVIFile(Span<const float> wavelengths,
   // meaningful radiance at any sample count.
   {
     const size_t valueSize{shouldWriteDouble ? sizeof(double) : sizeof(float)};
-    auto row{std::vector<char>(mNumPixelsX * mNumBands * valueSize)};
-    auto file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
+    std::vector<char> row(mNumPixelsX * mNumBands * valueSize);
+    std::fstream file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
     for (size_t iY = 0; iY < mNumPixelsY; iY++) {
       char *ptr{row.data()};
       for (size_t iX = 0; iX < mNumPixelsX; iX++) {
@@ -222,16 +222,16 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
                          Span<const std::string> bandNames,
                          Span<const std::string> extraHeaderLines,
                          std::optional<int4> window, uint64_t numSamples) {
-  const auto noCrop{int4{0, 0, int(numPixelsX), int(numPixelsY)}};
+  const int4 noCrop{0, 0, int(numPixelsX), int(numPixelsY)};
   if (data.size() != numBands * numPixelsX * numPixelsY)
     throw Error(concat("cannot write ", QuotedPath(fileName), ": ", data.size(),
                        " values for ", Counted(numBands, "band"), " over ",
                        numPixelsX, "x", numPixelsY, " pixels"));
   checkWindowAndNames(fileName, window, numPixelsX, numPixelsY, bandNames,
                       numBands);
-  const auto pixelWindow{window.value_or(noCrop)};
+  const int4 pixelWindow{window.value_or(noCrop)};
   {
-    auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
+    std::fstream file{openOrThrow(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     writeField(file, ENVI_FILE_TYPE, "ENVI Standard");
     writeField(file, ENVI_DATA_TYPE, ENVI_UINT16);
@@ -251,7 +251,7 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
     for (const auto &line : extraHeaderLines) file << line << '\n';
   }
   {
-    auto file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
+    std::fstream file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
     file.write(reinterpret_cast<const char *>(data.data()),
                std::streamsize(2 * data.size()));
   }
@@ -275,9 +275,9 @@ std::map<std::string, std::string> parseENVIHeader(const std::string &fileName,
     return str;
   }};
   const auto nextLine{[&]() -> std::string {
-    auto end{text.find('\n', pos)};
+    size_t end{text.find('\n', pos)};
     if (end == std::string::npos) end = text.size();
-    auto line{text.substr(pos, end - pos)};
+    std::string line{text.substr(pos, end - pos)};
     pos = std::min(end + 1, text.size());
     return line;
   }};
@@ -285,11 +285,11 @@ std::map<std::string, std::string> parseENVIHeader(const std::string &fileName,
     throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
                        ": missing 'ENVI' magic line"));
   while (pos < text.size()) {
-    auto line{nextLine()};
-    auto eq{line.find('=')};
+    std::string line{nextLine()};
+    size_t eq{line.find('=')};
     if (eq == std::string::npos) continue;
-    auto key{trim(line.substr(0, eq))};
-    auto value{trim(line.substr(eq + 1))};
+    std::string key{trim(line.substr(0, eq))};
+    std::string value{trim(line.substr(eq + 1))};
     if (key.empty()) continue;
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -311,7 +311,7 @@ uint64_t requiredCount(const std::string &fileName,
   if (itr == fields.end())
     throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
                        ": missing ", Quoted(key), " field"));
-  auto value{std::strtoull(itr->second.c_str(), nullptr, 10)};
+  uint64_t value{std::strtoull(itr->second.c_str(), nullptr, 10)};
   fields.erase(itr);
   return value;
 }
@@ -320,15 +320,16 @@ uint64_t requiredCount(const std::string &fileName,
 
 SpectralFilm::ENVIFileInfo
 SpectralFilm::readENVIFile(const std::string &fileName) try {
-  auto result{ENVIFileInfo{}};
-  auto fields{parseENVIHeader(fileName, readOrThrow(fileName + ".hdr"))};
-  const auto nX{requiredCount(fileName, fields, ENVI_SAMPLES)};
-  const auto nY{requiredCount(fileName, fields, ENVI_LINES)};
-  const auto nBands{requiredCount(fileName, fields, ENVI_BANDS)};
+  ENVIFileInfo result{};
+  std::map<std::string, std::string> fields{
+      parseENVIHeader(fileName, readOrThrow(fileName + ".hdr"))};
+  const uint64_t nX{requiredCount(fileName, fields, ENVI_SAMPLES)};
+  const uint64_t nY{requiredCount(fileName, fields, ENVI_LINES)};
+  const uint64_t nBands{requiredCount(fileName, fields, ENVI_BANDS)};
   // Accept exactly the formats the writer emits: 32-bit or 64-bit
   // floats, band-interleaved-by-pixel. The byte order is the one thing
   // worth fixing up rather than rejecting.
-  const auto type{requiredCount(fileName, fields, ENVI_DATA_TYPE)};
+  const uint64_t type{requiredCount(fileName, fields, ENVI_DATA_TYPE)};
   if (type != ENVI_FLOAT32 && type != ENVI_FLOAT64)
     throw Error(concat("cannot load ", QuotedPath(fileName), ": data type ",
                        type, " (expected 4 or 5, a 32-bit or 64-bit float)"));
@@ -340,8 +341,8 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     throw Error(concat("cannot load ", QuotedPath(fileName),
                        ": expected 'interleave = bip'"));
   }
-  const auto byteOrder{requiredCount(fileName, fields, ENVI_BYTE_ORDER)};
-  const auto headerOffset{
+  const uint64_t byteOrder{requiredCount(fileName, fields, ENVI_BYTE_ORDER)};
+  const uint64_t headerOffset{
       fields.count(ENVI_HEADER_OFFSET)
           ? requiredCount(fileName, fields, ENVI_HEADER_OFFSET)
           : 0};
@@ -351,13 +352,13 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   }
   result.cropWindow = int4{0, 0, int(nX), int(nY)};
   if (auto itr{fields.find(ENVI_CROP_WINDOW)}; itr != fields.end()) {
-    const auto bounds{parseArrayValue(itr->second)};
+    const std::vector<double> bounds{parseArrayValue(itr->second)};
     if (bounds.size() != 4)
       throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Counted(bounds.size(), "value"), " in ",
                          Quoted(ENVI_CROP_WINDOW), " (expected 4)"));
     for (size_t i = 0; i < 4; i++) result.cropWindow[i] = int(bounds[i]);
-    if (const auto &cropWindow{result.cropWindow};
+    if (const int4 &cropWindow{result.cropWindow};
         !isSubWindow(cropWindow, nX, nY))
       throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Quoted(ENVI_CROP_WINDOW), " ",          //
@@ -389,14 +390,14 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   // Read the binary file a row at a time, reconstructing the accumulator
   // invariant: totals are means times the sample count, or the means
   // themselves at a count of 1 when the header does not record the count.
-  const auto count{std::max(result.samplesPerPixel, uint64_t(1))};
-  auto file{openOrThrow(fileName, std::ios::in | std::ios::binary)};
+  const uint64_t count{std::max(result.samplesPerPixel, uint64_t(1))};
+  std::fstream file{openOrThrow(fileName, std::ios::in | std::ios::binary)};
   file.ignore(std::streamsize(headerOffset));
   resize(nBands, nX, nY);
   addSamples(count);
   const bool shouldSwapBytes{byteOrder != hostByteOrder()};
-  auto row{std::vector<char>(nX * nBands * valueSize)};
-  auto values{std::vector<double>(nBands)};
+  std::vector<char> row(nX * nBands * valueSize);
+  std::vector<double> values(nBands);
   for (size_t iY = 0; iY < nY; iY++) {
     if (!file.read(row.data(), std::streamsize(row.size())))
       throw Error(concat("cannot load ", QuotedPath(fileName),

@@ -34,7 +34,7 @@ Distribution1D::Distribution1D(Span<const float> values) {
   // Accumulate and normalize in double, then quantize once, so that each
   // stored entry carries the rounding of a single conversion rather than
   // the accumulated drift of a running fixed-point sum.
-  auto sums{std::vector<double>{}};
+  std::vector<double> sums{};
   sums.reserve(values.size() + 1);
   sums.emplace_back(0.0);
   for (const auto &value : values) {
@@ -65,9 +65,9 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
   if (itr == mCMFs.begin()) ++itr;
   if (itr == mCMFs.end()) --itr;
   --itr;
-  auto i{int(itr - mCMFs.begin())};
-  auto cmf0{*itr++};
-  auto cmf1{*itr};
+  int i{int(itr - mCMFs.begin())};
+  std::uint32_t cmf0{*itr++};
+  std::uint32_t cmf1{*itr};
   // Nondecreasing entries, so this cannot wrap.
   const std::uint32_t width{cmf1 - cmf0};
   if (xiRemap) {
@@ -160,7 +160,7 @@ Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
   SMDL_SANITY_CHECK(numTexelsY >= 0);
   SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
   mConditionals.reserve(numTexelsY);
-  auto margins{std::vector<float>(size_t(numTexelsY))};
+  std::vector<float> margins(static_cast<size_t>(numTexelsY));
   for (int iY = 0; iY < numTexelsY; iY++) {
     mConditionals.emplace_back(
         values.subspan(size_t(numTexelsX) * size_t(iY), numTexelsX));

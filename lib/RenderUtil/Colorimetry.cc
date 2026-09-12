@@ -39,18 +39,18 @@ double3x3 xyzToLinearSRGB() noexcept {
 }
 
 double3 linearSRGBWhite() noexcept {
-  auto inverse{xyzToLinearSRGB()};
+  double3x3 inverse{xyzToLinearSRGB()};
   (void)tryInvert(inverse);
   return inverse * double3(1.0);
 }
 
 double3x3 bradfordAdaptation(const double3 &from, const double3 &to) noexcept {
-  const auto cones{bradfordCones()};
-  auto conesInverse{cones};
+  const double3x3 cones{bradfordCones()};
+  double3x3 conesInverse{cones};
   (void)tryInvert(conesInverse);
-  const auto toCones{cones * to};
-  const auto fromCones{cones * from};
-  auto scale{double3x3(1.0)};
+  const double3 toCones{cones * to};
+  const double3 fromCones{cones * from};
+  double3x3 scale{1.0};
   for (size_t i = 0; i < 3; i++) scale[i][i] = toCones[i] / fromCones[i];
   return conesInverse * (scale * cones);
 }

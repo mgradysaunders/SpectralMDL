@@ -13,18 +13,18 @@ namespace smdl {
 std::optional<Error>
 BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
   clear();
-  auto error{catchAndReturnError([&] {
-    auto mem{llvm::StringRef(file)};
+  std::optional<Error> error{catchAndReturnError([&] {
+    llvm::StringRef mem{file};
     if (!mem.consume_front("NVIDIA ARC MBSDF V1\n")) {
       throw Error("not an MBSDF file");
     }
-    auto dataBlockOffset{[&]() -> size_t {
+    size_t dataBlockOffset{[&]() -> size_t {
       kind = KIND_REFLECTION;
-      if (auto i{mem.find("MBSDF_DATA=\n")}; i < mem.size()) return i;
-      if (auto i{mem.find("MBSDF_DATA_REFLECTION=\n")}; i < mem.size())
+      if (size_t i{mem.find("MBSDF_DATA=\n")}; i < mem.size()) return i;
+      if (size_t i{mem.find("MBSDF_DATA_REFLECTION=\n")}; i < mem.size())
         return i;
       kind = KIND_TRANSMISSION;
-      if (auto i{mem.find("MBSDF_DATA_TRANSMISSION=\n")}; i < mem.size())
+      if (size_t i{mem.find("MBSDF_DATA_TRANSMISSION=\n")}; i < mem.size())
         return i;
       throw Error("missing data block");
       return 0;
@@ -34,7 +34,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
         if (!quoted.consume_front("\"")) {
           return std::string(quoted); // Error?
         } else {
-          auto unquoted{std::string()};
+          std::string unquoted{};
           while (!quoted.empty()) {
             if (quoted.consume_front(R"(\n)")) {
               unquoted += '\n';
@@ -49,7 +49,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
           return unquoted;
         }
       }};
-      auto mdLines{llvm::SmallVector<llvm::StringRef>{}};
+      llvm::SmallVector<llvm::StringRef> mdLines{};
       mem.substr(0, dataBlockOffset)
           .split(mdLines, '\n', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
       for (auto mdLine : mdLines) {
@@ -69,9 +69,9 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
     buffer =
         llvm::allocate_buffer(numTheta * numTheta * numPhi * sizeOf(type), 16);
     mem = mem.substr(12);
-    auto num{numTheta * numTheta * numPhi};
-    auto srcPtr{reinterpret_cast<const uint32_t *>(mem.data())};
-    auto dstPtr{static_cast<uint32_t *>(buffer)};
+    size_t num{numTheta * numTheta * numPhi};
+    const uint32_t *srcPtr{reinterpret_cast<const uint32_t *>(mem.data())};
+    uint32_t *dstPtr{static_cast<uint32_t *>(buffer)};
     switch (type) {
     case TYPE_FLOAT:
       for (size_t i = 0; i < num; i++, srcPtr += 1, dstPtr += 1) {
@@ -101,13 +101,13 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
   // corresponding table slice, weighted by the projected solid angle of the
   // incoming direction.
   distributions.reserve(numTheta);
-  auto values{std::vector<float>(numTheta * numPhi)};
+  std::vector<float> values(numTheta * numPhi);
   for (size_t iO = 0; iO < numTheta; iO++) {
     for (size_t iI = 0; iI < numTheta; iI++) {
       const float thetai{0.5f * PI * (float(iI) + 0.5f) / float(numTheta)};
       const float weight{std::cos(thetai) * std::sin(thetai)};
       for (size_t iP = 0; iP < numPhi; iP++) {
-        const auto value{fetch(int(iO), int(iI), int(iP))};
+        const float3 value{fetch(int(iO), int(iI), int(iP))};
         // Deliberately `fmax`: measured data from a file, and a NaN entry
         // must not poison the sampling table.
         values[numPhi * iI + iP] =
@@ -156,9 +156,9 @@ float3 BSDFMeasurement::interpolate(float thetao, float thetai,
   if (!buffer || numTheta == 0 || numPhi == 0) return {};
   const int nTheta{int(numTheta)};
   const int nPhi{int(numPhi)};
-  const auto o{cellLookup(thetao * (2.0f / PI) * float(nTheta), nTheta)};
-  const auto i{cellLookup(thetai * (2.0f / PI) * float(nTheta), nTheta)};
-  const auto p{cellLookup(phi * (1.0f / PI) * float(nPhi), nPhi)};
+  const CellLookup o{cellLookup(thetao * (2.0f / PI) * float(nTheta), nTheta)};
+  const CellLookup i{cellLookup(thetai * (2.0f / PI) * float(nTheta), nTheta)};
+  const CellLookup p{cellLookup(phi * (1.0f / PI) * float(nPhi), nPhi)};
   const auto lerp{[](const float3 &a, const float3 &b, float t) {
     return a + (b - a) * t;
   }};
@@ -234,7 +234,7 @@ float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
   const int iThetao{
       std::clamp(int(thetao * (2.0f / PI) * float(nTheta)), 0, nTheta - 1)};
   float pmf{};
-  const auto i{distributions[iThetao].pixelSample(xi, &xi, &pmf)};
+  const int2 i{distributions[iThetao].pixelSample(xi, &xi, &pmf)};
   if (!(pmf > 0)) return {};
   // Split the remapped azimuth sample into a mirror sign and a within-cell
   // offset, because the table only spans azimuth differences in `[0, pi]`.
@@ -261,10 +261,11 @@ float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
 std::optional<Error>
 BSDFMeasurement::loadFromFile(const std::string &fileName) noexcept {
   clear();
-  auto file{std::string()};
-  if (auto error{catchAndReturnError([&] { file = readOrThrow(fileName); })})
+  std::string file{};
+  if (std::optional<Error> error{
+          catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
-  if (auto error{loadFromFileMemory(file)})
+  if (std::optional<Error> error{loadFromFileMemory(file)})
     return Error(
         concat("cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
@@ -314,8 +315,8 @@ SMDL_EXPORT void smdBSDFMeasurementDirectionSample(const void *measurement,
     if (pdf) *pdf = 0.0f;
     return;
   }
-  auto w{static_cast<const smdl::BSDFMeasurement *>(measurement)
-             ->directionSample(xi, wo, pdf)};
+  smdl::float3 w{static_cast<const smdl::BSDFMeasurement *>(measurement)
+                     ->directionSample(xi, wo, pdf)};
   if (wi) *wi = w;
 }
 

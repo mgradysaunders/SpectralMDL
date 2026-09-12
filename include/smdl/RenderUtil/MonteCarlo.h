@@ -200,8 +200,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
 [[nodiscard]] inline float3 cosineHemisphereSample(float2 xi) noexcept {
-  auto sinTheta{uniformDiskSample(xi)};
-  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
+  float2 sinTheta{uniformDiskSample(xi)};
+  float cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
   return {sinTheta.x, sinTheta.y, cosTheta};
 }
 

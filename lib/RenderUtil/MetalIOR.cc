@@ -812,9 +812,9 @@ constexpr BucketIndexes METAL_IOR_BUCKETS{makeBucketIndexes()};
 [[nodiscard]] constexpr int worstBucketSpan() {
   int worst{};
   for (int m{}; m < 17; m++) {
-    const auto *table{METAL_IORS[m].table};
+    const MetalIORTableEntry *table{METAL_IORS[m].table};
     const int size{METAL_IORS[m].tableSize};
-    const auto &index{METAL_IOR_BUCKETS.byMetal[m]};
+    const BucketIndex &index{METAL_IOR_BUCKETS.byMetal[m]};
     for (int b{}; b < BUCKET_COUNT; b++) {
       const float high{b + 1 < BUCKET_COUNT ? bucketLowEdge(b + 1)
                                             : BUCKET_MAX};

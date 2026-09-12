@@ -228,7 +228,7 @@ void smdlEvalIlluminantF(int numWavelens, const float *wavelens, float *illum,
        0.0161f, 0.0504f, 0.0698f, 0.0319f, 0.0071f, 0.0030f, 0.0026f, 0.0023f,
        0.0028f, 0.0028f, 0.0021f, 0.0017f, 0.0021f, 0.0019f, 0.0015f, 0.0010f,
        0.0005f}};
-  const auto &table{TABLES[number - 1]};
+  const float (&table)[NUM_WAVELENS]{TABLES[number - 1]};
   for (int i = 0; i < numWavelens; i++) {
     illum[i] =
         lerpTable(table, NUM_WAVELENS, MIN_WAVELEN, MAX_WAVELEN, wavelens[i]);
@@ -309,7 +309,7 @@ void smdlEvalIlluminantHP(int numWavelens, const float *wavelens, float *illum,
        0.3098f, 0.2545f, 0.2288f, 0.2082f, 0.2105f, 0.2081f, 0.1869f, 0.1754f,
        0.1958f, 0.1642f, 0.2377f, 0.3539f, 0.2137f, 0.3458f, 0.3021f, 0.1971f,
        0.1561f}};
-  const auto &table{TABLES[number - 1]};
+  const float (&table)[NUM_WAVELENS]{TABLES[number - 1]};
   for (int i = 0; i < numWavelens; i++) {
     illum[i] =
         lerpTable(table, NUM_WAVELENS, MIN_WAVELEN, MAX_WAVELEN, wavelens[i]);
@@ -438,7 +438,7 @@ void smdlEvalIlluminantLED(int numWavelens, const float *wavelens, float *illum,
        0.0717f, 0.0637f, 0.0565f, 0.0501f, 0.0442f, 0.0388f, 0.0339f, 0.0295f,
        0.0258f, 0.0224f, 0.0195f, 0.0170f, 0.0147f, 0.0130f, 0.0110f, 0.0096f,
        0.0084f}};
-  const auto &table{TABLES[number - 1]};
+  const float (&table)[NUM_WAVELENS]{TABLES[number - 1]};
   for (int i = 0; i < numWavelens; i++) {
     illum[i] =
         lerpTable(table, NUM_WAVELENS, MIN_WAVELEN, MAX_WAVELEN, wavelens[i]);
