@@ -386,10 +386,19 @@ void renderSamples(const Options &opts, const Frame &frame,
         // costs is a measurable fraction of the render.
         const smdl::ScopedFlushDenormals flushDenormals{};
         // The scratch the block's pixels take in turn. The allocator is
-        // rewound after every sample and the sampler restarted at every
+        // rewound after every sample and the samplers restarted at every
         // one, so what a block shares is the memory, never the state.
         smdl::BumpPtrAllocator allocator;
+        // The sampler the block's paths draw from, which every walk
+        // reaches through `PathContext`. Each sample copies its own
+        // batch sampler in before walking, so the walk goes on drawing
+        // from exactly where the camera ray left off.
         Sampler sampler;
+        // One sampler per sample of a batch, each reseeded from its own
+        // (pixel, sample index).
+        std::array<Sampler, Camera::TRACE_WIDTH> batchSamplers{};
+        std::array<CameraSample, Camera::TRACE_WIDTH> batchSamples{};
+        std::array<float, Camera::TRACE_WIDTH> batchWavelengths{};
         // The medium view every path of the block resolves through, with
         // the haze it stands in for the vacuum set once: its component
         // storage and its resolution both carry from path to path, see
@@ -483,10 +492,42 @@ void renderSamples(const Options &opts, const Frame &frame,
           guiding.pixelEstimate = combiner && opts.render.guide.useADRRS
                                       ? combiner->pixelEstimate(i)
                                       : 0.0f;
-          for (size_t s = 0; s < chunk; s++) {
+          // The samples of a pixel are drawn in batches so that the
+          // camera rays can be traced together: a real lens traces
+          // several times faster on a batch than on one ray at a time,
+          // being latency bound on one. Nothing about the estimate
+          // depends on the grouping, since `startPixelSample()` reseeds
+          // from the (pixel, sample index) pair and each sample's draws
+          // follow from that alone, so a batched sample draws exactly
+          // what it would have drawn on its own.
+          for (size_t sBase = 0; sBase < chunk; sBase += Camera::TRACE_WIDTH) {
+            const size_t batch{
+                std::min(chunk - sBase, size_t(Camera::TRACE_WIDTH))};
+            // Draw the batch, stopping short of the glass. The
+            // wavelength a dispersing lens is traced at comes from the
+            // pixel's band and the sample index, and reads none of the
+            // per-sample state the walk below sets up.
+            for (size_t j = 0; j < batch; j++) {
+              const uint32_t sampleIndex =
+                  resumed.sampleIndexBase + sppDone + chunkBase + sBase + j;
+              batchSamplers[j].startPixelSample(uint32_t(i), sampleIndex);
+              batchWavelengths[j] =
+                  disperses ? response->traceWavelengthAt(
+                                  x, y,
+                                  lensWavelengthOffset(uint32_t(i), sampleIndex))
+                            : 0.0f;
+              camera->sampleDeferred(x, y, batchSamplers[j],
+                                     batchWavelengths[j], batchSamples[j]);
+            }
+            camera->traceDeferred(
+                smdl::Span<CameraSample>(batchSamples.data(), batch),
+                smdl::Span<const float>(batchWavelengths.data(), batch));
+
+          for (size_t j = 0; j < batch; j++) {
+            const size_t s{sBase + j};
             const uint32_t sampleIndex =
                 resumed.sampleIndexBase + sppDone + chunkBase + s;
-            sampler.startPixelSample(uint32_t(i), sampleIndex);
+            sampler = batchSamplers[j];
             if (shouldJitterWavelength) {
               jitterWavelengths(
                   *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
@@ -498,13 +539,7 @@ void renderSamples(const Options &opts, const Frame &frame,
             // walk but let it still count in the average below, keeping the
             // darkening unbiased.
             uint64_t numRecords{0};
-            // A lens whose glasses disperse is traced at a wavelength drawn
-            // from the band this pixel reads through.
-            const float lensWavelength{
-                disperses
-                    ? response->traceWavelengthAt(
-                          x, y, lensWavelengthOffset(uint32_t(i), sampleIndex))
-                    : 0.0f};
+            const float lensWavelength{batchWavelengths[j]};
             // The same wavelength reaches every material of the path as
             // `State::wavelengthHero`, so that a material refracts at the
             // index the picture is being formed at. A lens that does not
@@ -513,8 +548,7 @@ void renderSamples(const Options &opts, const Frame &frame,
             // the reference a glass catalog states `nd` at.
             const float wavelengthHero{
                 lensWavelength > 0 ? lensWavelength : smdl::FRAUNHOFER_D_LINE};
-            if (CameraSample cameraSample{
-                    camera->sample(x, y, sampler, lensWavelength)};
+            if (CameraSample cameraSample{batchSamples[j]};
                 cameraSample.weight > 0) {
               // The path's time: the sample's draw within its line's
               // exposure, taken only when there is one to draw within,
@@ -562,6 +596,7 @@ void renderSamples(const Options &opts, const Frame &frame,
               }
             }
             allocator.reset();
+          }
           }
           // With guiding the combination owns the film and resolves into
           // it, pass by pass; without, the accumulation is the film.

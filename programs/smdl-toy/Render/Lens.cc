@@ -9,6 +9,7 @@
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
+#include "smdl/Support/SIMD.h"
 
 namespace {
 
@@ -474,6 +475,243 @@ public:
   for (const float2 &normal : edgeNormals)
     if (x * normal.x + y * normal.y > apothem) return false;
   return true;
+}
+
+// The batched trace. Everything below mirrors the scalar helpers above,
+// lane for lane, over `Lens::TRACE_WIDTH` rays at once: the same
+// arithmetic in the same order, with each early return becoming a lane
+// dropped from a mask and each branch becoming both sides and a select.
+//
+// It exists because the scalar trace is latency bound. One ray is a
+// serial chain of divides and square roots too thin to fill the machine,
+// and the surfaces of one ray cannot overlap, so the only way to go
+// faster is to work on rays that do not depend on each other.
+//
+// **The two must agree.** `Lens: the batched trace against the scalar
+// one` in the test suite is what holds them together: it traces a large
+// random spread both ways and checks that every ray is blocked or passed
+// alike. They are not bit-identical, since the vector arithmetic
+// contracts multiplies and adds where the scalar arithmetic does not.
+namespace simd = smdl::simd;
+
+using Pack = simd::Pack<float, Lens::TRACE_WIDTH>;
+using Mask = simd::Mask<float, Lens::TRACE_WIDTH>;
+
+// A direction or a point, one component to a pack.
+struct Vector3Pack final {
+  Pack x{}, y{}, z{};
+};
+
+[[nodiscard]] Pack dot(const Vector3Pack &a, const Vector3Pack &b) noexcept {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+void normalize(Vector3Pack &v) noexcept {
+  const Pack length{simd::sqrt(dot(v, v))};
+  const Pack inverse{
+      simd::select(length > Pack(0.0f), Pack(1.0f) / length, Pack(0.0f))};
+  v.x = v.x * inverse, v.y = v.y * inverse, v.z = v.z * inverse;
+}
+
+// `sagOf` over a pack. Lanes past where the base conic turns back on
+// itself leave `ok`, and are held at a finite value so that the
+// arithmetic the live lanes need cannot trip over them.
+void sagOf(const LensElement &elem, const Pack &u, Pack &sag, Pack &dSagDu,
+           Mask &ok) noexcept {
+  const Pack kappa{elem.curvature()};
+  const Pack wSq{Pack(1.0f) - Pack(1 + elem.conic) * kappa * kappa * u};
+  const Mask live{wSq > Pack(0.0f)};
+  ok = ok & live;
+  const Pack w{simd::sqrt(simd::select(live, wSq, Pack(1.0f)))};
+  sag = kappa * u / (Pack(1.0f) + w);
+  dSagDu = Pack(0.5f) * kappa / w;
+  if (SMDL_UNLIKELY(elem.numAsphericTerms > 0)) {
+    const Pack uMM{u * Pack(SCENE_TO_MM) * Pack(SCENE_TO_MM)};
+    Pack poly{0.0f}, dPoly{0.0f}, power{uMM};
+    for (int i = 0; i < elem.numAsphericTerms; i++) {
+      const Pack coeff{elem.aspheric[i]};
+      poly = poly + coeff * power * uMM;
+      dPoly = dPoly + coeff * Pack(float(i) + 2) * power;
+      power = power * uMM;
+    }
+    sag = sag + poly * Pack(MM_TO_SCENE);
+    dSagDu = dSagDu + dPoly * Pack(SCENE_TO_MM);
+  }
+}
+
+// `spanOverElement` over a pack.
+void spanOverElement(const LensElement &elem, const Vector3Pack &org,
+                     const Vector3Pack &dir, Pack &tLo, Pack &tHi,
+                     Mask &ok) noexcept {
+  const Pack a{dir.x * dir.x + dir.y * dir.y};
+  const Pack b{Pack(2.0f) * (org.x * dir.x + org.y * dir.y)};
+  const Pack c{org.x * org.x + org.y * org.y -
+               Pack(elem.radialLimit * elem.radialLimit)};
+  const Pack discrim{b * b - Pack(4.0f) * a * c};
+  const Mask solvable{(discrim >= Pack(0.0f)) & (a > Pack(0.0f))};
+  ok = ok & solvable;
+  const Pack root{simd::sqrt(simd::select(solvable, discrim, Pack(0.0f)))};
+  const Pack inverse{Pack(0.5f) / simd::select(solvable, a, Pack(1.0f))};
+  tLo = (-b - root) * inverse;
+  tHi = (-b + root) * inverse;
+  // The sag slab, which is a pair of planes on z.
+  const Mask crossing{simd::abs(dir.z) > Pack(0.0f)};
+  const Pack dz{simd::select(crossing, dir.z, Pack(1.0f))};
+  const Pack t0{(Pack(elem.z + elem.sagMin) - org.z) / dz};
+  const Pack t1{(Pack(elem.z + elem.sagMax) - org.z) / dz};
+  tLo = simd::select(crossing, simd::max(tLo, simd::min(t0, t1)), tLo);
+  tHi = simd::select(crossing, simd::min(tHi, simd::max(t0, t1)), tHi);
+  tLo = simd::max(tLo, Pack(0.0f));
+  ok = ok & (tLo < tHi);
+}
+
+// `intersectAspheric` over a pack: bracket, walk the span to the first
+// crossing, then a safeguarded Newton. Every lane runs every step and
+// the finished ones are held by their mask, so the batch costs the
+// deepest lane rather than the sum of them.
+void intersectAspheric(const LensElement &elem, const Vector3Pack &org,
+                       const Vector3Pack &dir, Vector3Pack &point,
+                       Vector3Pack &normal, Mask &alive) noexcept {
+  Pack tLo{}, tHi{};
+  Mask ok{alive};
+  spanOverElement(elem, org, dir, tLo, tHi, ok);
+  const Pack tolerance{SOLVE_TOLERANCE * elem.semiDiameter};
+  Pack sag{}, dSagDu{};
+  // The scalar solve returns the moment it lands, so a lane that has
+  // landed must stop taking part: its slope is what the normal is built
+  // from, and a later step would overwrite it, and a later step's radius
+  // could drop it from `ok` after it had already succeeded.
+  Mask done{false};
+  Pack tBest{}, dSagDuBest{};
+  const auto probe{[&](const Pack &t) {
+    const Pack px{org.x + t * dir.x}, py{org.y + t * dir.y};
+    Mask valid{true};
+    sagOf(elem, px * px + py * py, sag, dSagDu, valid);
+    ok = ok & (valid | done);
+    return (org.z + t * dir.z) - Pack(elem.z) - sag;
+  }};
+  const auto land{[&](const Mask &accepts, const Pack &t) {
+    tBest = simd::select(accepts, t, tBest);
+    dSagDuBest = simd::select(accepts, dSagDu, dSagDuBest);
+    done = done | accepts;
+  }};
+  Pack height{probe(tLo)};
+  land(simd::abs(height) <= tolerance, tLo);
+  const Mask isBelowAtLo{height < Pack(0.0f)};
+  Pack tA{tLo}, tB{tLo};
+  Mask isBracketed{done};
+  for (int i = 1; i <= NUM_SPAN_STEPS; i++) {
+    const Pack t{tLo + (tHi - tLo) * Pack(float(i) / NUM_SPAN_STEPS)};
+    const Pack h{probe(t)};
+    const Mask pending{~done & ~isBracketed};
+    const Mask accepts{pending & (simd::abs(h) <= tolerance)};
+    land(accepts, t);
+    const Mask crosses{pending & ~accepts & ((h < Pack(0.0f)) ^ isBelowAtLo)};
+    tB = simd::select(crosses, t, tB);
+    isBracketed = isBracketed | crosses;
+    tA = simd::select(pending & ~accepts & ~crosses, t, tA);
+  }
+  Mask solving{ok & isBracketed & ~done};
+  Pack t{(tA + tB) * Pack(0.5f)};
+  for (int step = 0; step < MAX_SOLVE_STEPS && simd::anyTrue(solving); step++) {
+    const Pack h{probe(t)};
+    const Mask accepts{solving & (simd::abs(h) <= tolerance)};
+    land(accepts, t);
+    solving = solving & ~accepts;
+    const Mask below{~((h < Pack(0.0f)) ^ isBelowAtLo)};
+    tA = simd::select(solving & below, t, tA);
+    tB = simd::select(solving & ~below, t, tB);
+    // How fast the height closes: the ray climbing in z against the
+    // surface receding under it as the radius grows.
+    const Pack px{org.x + t * dir.x}, py{org.y + t * dir.y};
+    const Pack slope{dir.z - Pack(2.0f) * dSagDu * (px * dir.x + py * dir.y)};
+    const Mask sloped{slope != Pack(0.0f)};
+    const Pack step2{t - h / simd::select(sloped, slope, Pack(1.0f))};
+    const Pack next{simd::select(sloped, step2, Pack(FLOAT_MAX))};
+    t = simd::select((tA < next) & (next < tB), next, (tA + tB) * Pack(0.5f));
+  }
+  alive = alive & ok & done;
+  point.x = org.x + tBest * dir.x;
+  point.y = org.y + tBest * dir.y;
+  point.z = org.z + tBest * dir.z;
+  normal.x = -Pack(2.0f) * dSagDuBest * point.x;
+  normal.y = -Pack(2.0f) * dSagDuBest * point.y;
+  normal.z = Pack(1.0f);
+  normalize(normal);
+}
+
+// `intersectSurface` over a pack. The flat and curved cases are chosen
+// by the surface rather than by the ray, so they stay a scalar branch.
+void intersectSurface(const LensElement &elem, const Vector3Pack &org,
+                      const Vector3Pack &dir, Vector3Pack &point,
+                      Vector3Pack &normal, Mask &alive) noexcept {
+  const float curvature{elem.curvature()};
+  const Pack kappa{curvature};
+  const Pack kPlus1{1 + elem.conic};
+  const Pack os{org.z - Pack(elem.z)};
+  if (SMDL_UNLIKELY(elem.numAsphericTerms > 0)) {
+    intersectAspheric(elem, org, dir, point, normal, alive);
+  } else if (curvature == 0) {
+    const Mask crossing{dir.z != Pack(0.0f)};
+    const Pack t{-os / simd::select(crossing, dir.z, Pack(1.0f))};
+    alive = alive & crossing & (t >= Pack(0.0f));
+    point.x = org.x + t * dir.x;
+    point.y = org.y + t * dir.y;
+    point.z = org.z + t * dir.z;
+    normal.x = Pack(0.0f), normal.y = Pack(0.0f), normal.z = Pack(-1.0f);
+  } else {
+    const Pack a{kappa *
+                 (dir.x * dir.x + dir.y * dir.y + kPlus1 * dir.z * dir.z)};
+    const Pack b{Pack(2.0f) *
+                 (kappa * (org.x * dir.x + org.y * dir.y + kPlus1 * os * dir.z) -
+                  dir.z)};
+    const Pack c{kappa * (org.x * org.x + org.y * org.y + kPlus1 * os * os) -
+                 Pack(2.0f) * os};
+    const Pack discrim{b * b - Pack(4.0f) * a * c};
+    const Mask real{discrim >= Pack(0.0f)};
+    alive = alive & real;
+    const Pack root{simd::sqrt(simd::select(real, discrim, Pack(0.0f)))};
+    // The stable pairing: `q` takes the sign of `b`.
+    const Pack q{Pack(-0.5f) *
+                 (b + simd::select(b >= Pack(0.0f), root, -root))};
+    const Mask hasA{a != Pack(0.0f)}, hasQ{q != Pack(0.0f)};
+    const Pack t1{q / simd::select(hasA, a, Pack(1.0f))};
+    const Pack t2{c / simd::select(hasQ, q, Pack(1.0f))};
+    // Of the roots that lie ahead, the one nearest the vertex.
+    const Pack s1{simd::abs(os + t1 * dir.z)};
+    const Pack s2{simd::abs(os + t2 * dir.z)};
+    const Mask ahead1{hasA & (t1 >= Pack(0.0f))};
+    const Mask ahead2{hasQ & (t2 >= Pack(0.0f))};
+    const Pack t{simd::select(ahead1 & (~ahead2 | (s1 < s2)), t1, t2)};
+    alive = alive & (ahead1 | ahead2);
+    point.x = org.x + t * dir.x;
+    point.y = org.y + t * dir.y;
+    point.z = org.z + t * dir.z;
+    normal.x = kappa * point.x;
+    normal.y = kappa * point.y;
+    normal.z = kappa * kPlus1 * (point.z - Pack(elem.z)) - Pack(1.0f);
+    normalize(normal);
+  }
+  const Mask flipped{dot(normal, dir) > Pack(0.0f)};
+  normal.x = simd::select(flipped, -normal.x, normal.x);
+  normal.y = simd::select(flipped, -normal.y, normal.y);
+  normal.z = simd::select(flipped, -normal.z, normal.z);
+}
+
+// `refract` over a pack, with `eta` per lane so that a batch traced at
+// several wavelengths refracts each ray at its own indices.
+void refract(Vector3Pack &dir, const Vector3Pack &normal, const Pack &eta,
+             Mask &alive) noexcept {
+  const Pack cosThetaI{-dot(dir, normal)};
+  const Pack sin2ThetaT{eta * eta * (Pack(1.0f) - cosThetaI * cosThetaI)};
+  const Mask transmits{sin2ThetaT < Pack(1.0f)};
+  alive = alive & transmits;
+  const Pack scale{eta * cosThetaI -
+                   simd::sqrt(Pack(1.0f) -
+                              simd::select(transmits, sin2ThetaT, Pack(0.0f)))};
+  dir.x = eta * dir.x + scale * normal.x;
+  dir.y = eta * dir.y + scale * normal.y;
+  dir.z = eta * dir.z + scale * normal.z;
 }
 
 // An axis-aligned rectangle on the plane of the rear vertex, grown by
@@ -1102,6 +1340,85 @@ float Lens::paraxialFilmZAt(float wavelength) const noexcept {
       .movedTo(mLayoutEntrancePupilZ)
       .imagePlane(mFocusDistance)
       .value_or(std::numeric_limits<float>::quiet_NaN());
+}
+
+void Lens::traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                         smdl::Span<const smdl::Span<const float>> indices)
+    const noexcept {
+  SMDL_SANITY_CHECK(rays.size() == passes.size());
+  SMDL_SANITY_CHECK(rays.size() == indices.size());
+  SMDL_SANITY_CHECK(rays.size() <= TRACE_WIDTH);
+  // A short batch runs at full width with the absent lanes dead, which
+  // costs the same and keeps one code path.
+  const size_t count{rays.size()};
+  alignas(32) std::array<float, TRACE_WIDTH> ox{}, oy{}, oz{};
+  alignas(32) std::array<float, TRACE_WIDTH> dx{}, dy{}, dz{};
+  Mask alive{false};
+  for (size_t k = 0; k < count; k++) {
+    ox[k] = rays[k].org.x, oy[k] = rays[k].org.y, oz[k] = rays[k].org.z;
+    dx[k] = rays[k].dir.x, dy[k] = rays[k].dir.y, dz[k] = rays[k].dir.z;
+    alive.values[k] = -1;
+  }
+  // A dead lane still divides and takes square roots alongside the live
+  // ones, so give it a direction that stays finite through all of it.
+  for (size_t k = count; k < TRACE_WIDTH; k++) dz[k] = 1.0f;
+
+  Vector3Pack org{Pack::load(ox.data()), Pack::load(oy.data()),
+                  Pack::load(oz.data())};
+  Vector3Pack dir{Pack::load(dx.data()), Pack::load(dy.data()),
+                  Pack::load(dz.data())};
+  normalize(dir);
+  for (size_t i = mElements.size(); i-- > 0;) {
+    if (!simd::anyTrue(alive)) break;
+    const LensElement &elem{mElements[i]};
+    Vector3Pack point{}, normal{};
+    intersectSurface(elem, org, dir, point, normal, alive);
+    alive = alive & (point.x * point.x + point.y * point.y <=
+                     Pack(elem.semiDiameter * elem.semiDiameter));
+    if (elem.isStop) {
+      if (mNumBlades >= 3) {
+        // The blade test is a handful of dot products against the edge
+        // normals, which is cheaper scalar than the gather a packed
+        // version would need over a count known only at run time.
+        alignas(32) std::array<float, TRACE_WIDTH> px{}, py{};
+        point.x.store(px.data()), point.y.store(py.data());
+        for (size_t k = 0; k < count; k++)
+          if (alive.values[k] &&
+              !isInsideBlades(px[k], py[k], mBladeEdgeNormals, mBladeApothem))
+            alive.values[k] = 0;
+      }
+      // The stop bends nothing and has no thickness, so the ray goes on
+      // from where it was.
+      continue;
+    }
+    org = point;
+    alignas(32) std::array<float, TRACE_WIDTH> etas{};
+    for (size_t k = 0; k < TRACE_WIDTH; k++) {
+      const smdl::Span<const float> &index{indices[k < count ? k : 0]};
+      etas[k] = index[elem.mediumAfter] / index[elem.mediumBefore];
+    }
+    refract(dir, normal, Pack::load(etas.data()), alive);
+  }
+
+  org.x.store(ox.data()), org.y.store(oy.data()), org.z.store(oz.data());
+  dir.x.store(dx.data()), dir.y.store(dy.data()), dir.z.store(dz.data());
+  for (size_t k = 0; k < count; k++) {
+    passes[k] = alive.values[k] != 0;
+    if (!passes[k]) continue;
+    rays[k].org = float3(ox[k], oy[k], oz[k]);
+    rays[k].dir = float3(dx[k], dy[k], dz[k]);
+  }
+}
+
+void Lens::traceFromFilm(smdl::Span<Ray> rays,
+                         smdl::Span<bool> passes) const noexcept {
+  const smdl::Span<const float> reference{mReferenceIndices.data(),
+                                          mReferenceIndices.size()};
+  std::array<smdl::Span<const float>, TRACE_WIDTH> indices{};
+  indices.fill(reference);
+  traceFromFilm(rays, passes,
+                smdl::Span<const smdl::Span<const float>>(indices.data(),
+                                                          rays.size()));
 }
 
 bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {

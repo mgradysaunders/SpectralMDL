@@ -1,12 +1,14 @@
 #include "Fixtures.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
 #include <vector>
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Parallel.h"
+#include "smdl/Support/RNG.h"
 
 #include "LensFixtures.h"
 #include "Render/Lens.h"
@@ -1333,5 +1335,86 @@ TEST_CASE("Lens: the lateral color") {
     const Lens achromat{achromatBehindStop(), {2.0f, 0}};
     CHECK(std::abs(achromat.lateralColorAt(FULL_FRAME_CORNER)) <
           0.1f * std::abs(singlet.lateralColorAt(FULL_FRAME_CORNER)));
+  }
+}
+
+TEST_CASE("Lens: the batched trace against the scalar one") {
+  // The guard on the two implementations in 'Lens.cc'. They are not
+  // bit-identical, the vector arithmetic contracting multiplies and adds
+  // where the scalar arithmetic does not, so what is checked is that
+  // they agree on which rays get out and point them the same way.
+  const auto compare{[](const LensPrescription &prescription,
+                        const LensOptions &options) {
+    const Lens lens{prescription, options};
+    const float filmZ{lens.filmZ()};
+    // Drawn the way a camera draws, from the exit pupil over the field
+    // the lens images. A pupil point taken uniformly over the whole rear
+    // aperture is blocked almost every time on a lens that vignettes,
+    // and then the comparison is between two agreeing refusals.
+    const float filmRadius{0.7f * lens.imageCircleRadius()};
+    const ExitPupil exitPupil{lens, filmRadius, std::nullopt};
+    smdl::RNG rng{1234, 5678};
+    std::array<Ray, Lens::TRACE_WIDTH> rays{};
+    std::array<bool, Lens::TRACE_WIDTH> passes{};
+    size_t numTraced{0}, numPassed{0};
+    double worstError{0};
+    for (int batch = 0; batch < 512; batch++) {
+      std::array<Ray, Lens::TRACE_WIDTH> scalarRays{};
+      // A short batch every so often, since the tail of a render is one.
+      const size_t count{batch % 37 == 0 ? 1 + size_t(batch % Lens::TRACE_WIDTH)
+                                         : Lens::TRACE_WIDTH};
+      for (size_t k = 0; k < count; k++) {
+        const float filmR{filmRadius * std::sqrt(rng.generateFloat())};
+        const float filmPhi{TWO_PI * rng.generateFloat()};
+        const float3 film{filmR * std::cos(filmPhi), filmR * std::sin(filmPhi),
+                          filmZ};
+        float area{0.0f};
+        const float2 point{exitPupil.sample(
+            float2(film.x, film.y),
+            float2(rng.generateFloat(), rng.generateFloat()), area)};
+        rays[k] = rayToPupil(lens, film, point.x, point.y);
+        scalarRays[k] = rays[k];
+      }
+      lens.traceFromFilm(smdl::Span<Ray>(rays.data(), count),
+                         smdl::Span<bool>(passes.data(), count));
+      for (size_t k = 0; k < count; k++) {
+        const bool scalarPasses{lens.traceFromFilm(scalarRays[k])};
+        REQUIRE(passes[k] == scalarPasses);
+        numTraced++;
+        if (!scalarPasses) continue;
+        numPassed++;
+        worstError = std::max(
+            {worstError, std::abs(double(rays[k].dir.x - scalarRays[k].dir.x)),
+             std::abs(double(rays[k].dir.y - scalarRays[k].dir.y)),
+             std::abs(double(rays[k].dir.z - scalarRays[k].dir.z)),
+             std::abs(double(rays[k].org.x - scalarRays[k].org.x)),
+             std::abs(double(rays[k].org.y - scalarRays[k].org.y))});
+      }
+    }
+    // The spread has to exercise both outcomes, or the agreement above
+    // is agreement about nothing. A stopped-down or heavily vignetting
+    // lens passes a small fraction of a pupil drawn over the whole rear
+    // aperture, so the bar is a count rather than a rate.
+    CHECK(numPassed > 50);
+    CHECK(numPassed < numTraced);
+    MESSAGE(numPassed, " of ", numTraced, " rays got out");
+    return worstError;
+  }};
+  SUBCASE("A spherical design, wide open") {
+    const double error{compare(dgauss50mm(), {AT_INFINITY, 0})};
+    MESSAGE("worst deviation ", error);
+    CHECK(error < 1e-4);
+  }
+  SUBCASE("A spherical design, stopped down onto nine blades") {
+    LensOptions options{AT_INFINITY, 8.0f};
+    options.numBlades = 9;
+    const double error{compare(dgauss50mm(), options)};
+    MESSAGE("worst deviation ", error);
+    CHECK(error < 1e-4);
+  }
+  SUBCASE("A design whose surfaces are aspheric") {
+    const double error{compare(phone2mm(), {AT_INFINITY, 0})};
+    MESSAGE("worst deviation ", error);
+    CHECK(error < 1e-4);
   }
 }
