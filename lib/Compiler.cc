@@ -549,7 +549,7 @@ Compiler::add(std::string fileOrDirName,
         return;
       }
     }
-    throw Error(concat("Cannot locate ", Quoted(fileOrDirName)));
+    throw Error(concat("Cannot locate ", QuotedPath(fileOrDirName)));
   });
 }
 

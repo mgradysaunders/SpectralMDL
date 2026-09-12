@@ -26,8 +26,8 @@ void writeOutput(const Options &opts, std::string_view text) {
   const std::string &fileName{opts.output.fileName.value};
   std::ofstream ofs{fileName};
   if (!ofs.is_open())
-    throw smdl::Error(
-        smdl::concat("Cannot open ", smdl::Quoted(fileName), " for writing"));
+    throw smdl::Error(smdl::concat("Cannot open ", smdl::QuotedPath(fileName),
+                                   " for writing"));
   ofs << text;
 }
 

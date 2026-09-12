@@ -430,8 +430,8 @@ TEST_CASE("Compiler: an MDLE container") {
     CHECK(fs::is_regular_file(fs::temp_directory_path() /
                               ("smdl-mdle-" + hash) / "wood.png"));
     REQUIRE(extracted.messages().size() == 1);
-    CHECK_CONTAINS(extracted.messages()[0], "Extracted 1 resource of MDLE '");
-    CHECK_CONTAINS(extracted.messages()[0], "smdl-mdle-" + hash + "'");
+    CHECK_CONTAINS(extracted.messages()[0], "Extracted 1 resource of MDLE \"");
+    CHECK_CONTAINS(extracted.messages()[0], "smdl-mdle-" + hash + "\"");
     // Run the in-container unit test: it asserts the texture actually
     // loaded (a resource that failed to resolve would only have
     // produced a warning and a default texture).

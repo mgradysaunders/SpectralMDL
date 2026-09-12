@@ -95,7 +95,10 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     const std::string path{
         (std::filesystem::current_path() / "main.mdl").string()};
     CHECK(smdl::concat(smdl::LocationMarkup(path, 3, 1)) == "[main.mdl:3:1]");
-    CHECK(smdl::concat(smdl::QuotedPath(path)) == "'main.mdl'");
+    // A path is double quoted, which is what tells it from the code
+    // identifiers 'Quoted' single quotes.
+    CHECK(smdl::concat(smdl::QuotedPath(path)) == "\"main.mdl\"");
+    CHECK(smdl::concat(smdl::Quoted("main.mdl")) == "'main.mdl'");
   }
   SUBCASE("The manipulators compose with everything else concat takes") {
     CHECK(smdl::concat("z = ", smdl::Brief(0.5f), " over ",

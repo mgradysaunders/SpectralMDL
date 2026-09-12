@@ -15,9 +15,9 @@ void Quoted::appendTo(std::string &result) const {
 }
 
 void QuotedPath::appendTo(std::string &result) const {
-  result += '\'';
+  result += '"';
   result += bestPathForPrinting(std::string(str));
-  result += '\'';
+  result += '"';
 }
 
 void LocationMarkup::appendTo(std::string &result) const {

@@ -185,9 +185,9 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     // then the summary of the images decoded.
     REQUIRE(logged.messages().size() == 3);
     CHECK(logged.count("main.smdl:9:") == 1);
-    CHECK(logged.count("curve.txt': 3 samples from 400 to 600 nm") == 1);
-    CHECK(logged.count("Loaded image '") == 1);
-    CHECK(logged.count("gray.png': 2 x 2, 1-channel uint8, 4 B") == 1);
+    CHECK(logged.count("curve.txt\": 3 samples from 400 to 600 nm") == 1);
+    CHECK(logged.count("Loaded image \"") == 1);
+    CHECK(logged.count("gray.png\": 2 x 2, 1-channel uint8, 4 B") == 1);
     CHECK_CONTAINS(logged.messages()[2], "Loaded 1 image (4 B) in ");
   }
   SUBCASE("Decoded images are logged in file name order, then summed up") {
@@ -219,7 +219,7 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     REQUIRE(logged.messages().size() == 9);
     for (size_t i = 0; i < 8; i++)
       CHECK_CONTAINS(logged.messages()[i],
-                     std::string(1, char('a' + i)) + ".png': 2 x 2");
+                     std::string(1, char('a' + i)) + ".png\": 2 x 2");
     CHECK_CONTAINS(logged.messages()[8], "Loaded 8 images (32 B) in ");
   }
   SUBCASE("A file not found is followed by where it was looked for") {
@@ -233,8 +233,8 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     REQUIRE(logged.messages().size() == 2);
     CHECK(logged.warningCount() == 1);
     CHECK_CONTAINS(logged.messages()[1],
-                   "Searched 1 directory for 'nowhere.png':\n  '");
-    CHECK_CONTAINS(logged.messages()[1], "smdl-test-resource-debug'");
+                   "Searched 1 directory for 'nowhere.png':\n  \"");
+    CHECK_CONTAINS(logged.messages()[1], "smdl-test-resource-debug\"");
   }
   SUBCASE("Tiles that disagree on their format say which and how") {
     REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1001.png").string(), 2, 2, 1,
@@ -301,7 +301,7 @@ TEST_CASE("Compiler: dropping an image nothing reads") {
     const CollectedLog logged{"image", true};
     CHECK(build(smdl::OPT_LEVEL_O2) == "");
     REQUIRE(logged.count("Dropping image") == 1);
-    CHECK(logged.count("dead.png': never read by the compiled code") == 1);
+    CHECK(logged.count("dead.png\": never read by the compiled code") == 1);
     // The summary of the one image decoded counts the drop too.
     CHECK(logged.count("Loaded 1 image (") == 1);
     CHECK(logged.count(", skipping 1 that the compiled code never reads") == 1);

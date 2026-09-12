@@ -82,7 +82,10 @@ public:
   std::string_view str{};
 };
 
-/// A quoted path string for use with `concat`.
+/// A quoted path string for use with `concat`, in double quotes, which
+/// is what tells a path in a message apart from the code identifiers
+/// `Quoted` puts in single quotes. The path is shortened as
+/// `bestPathForPrinting()` shortens it.
 class SMDL_EXPORT QuotedPath final {
 public:
   constexpr QuotedPath(std::string_view str) : str(str) {}

@@ -76,13 +76,16 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
   return name.empty() || isAllDigits(name) ? 0 : close + 1;
 }
 
-// The length of the single-quoted string `str` starts with, quotes
-// included, or 0 if it is never closed. A quote closes only where no
-// word goes on after it, so that the apostrophe in 'bob's.png' does not.
+// The length of the quoted string `str` starts with, quotes included, or
+// 0 if it is never closed. Both quotes count, because a message single
+// quotes a code identifier and double quotes a path (`Quoted` against
+// `QuotedPath`). A quote closes only where no word goes on after it, so
+// that the apostrophe in 'bob's.png' does not.
 [[nodiscard]] size_t quotedLength(std::string_view str) noexcept {
-  if (str.empty() || str[0] != '\'') return 0;
+  const char quote{str.empty() ? '\0' : str[0]};
+  if (quote != '\'' && quote != '"') return 0;
   for (size_t i = 1; i < str.size(); i++)
-    if (str[i] == '\'' && (i + 1 == str.size() || !isWordChar(str[i + 1])))
+    if (str[i] == quote && (i + 1 == str.size() || !isWordChar(str[i + 1])))
       return i + 1;
   return 0;
 }
