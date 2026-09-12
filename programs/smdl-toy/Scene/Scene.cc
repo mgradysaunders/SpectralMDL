@@ -17,6 +17,7 @@
 #include "smdl/Support/Profiler.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -1620,43 +1621,39 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   return true;
 }
 
-float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
-                                     uint32_t primID, const float3 &bary,
-                                     float time) const {
-  std::optional<InstanceFrame> scratch{};
-  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
-  if (!meshInstance.isDeforming)
-    return manifoldHitPoint(frame, meshInstance, primID, bary);
-  // The three points at the time, by the expression `makeHitFrom()`
-  // interpolates its own with.
-  const float4x4 &objectToWorld{frame.objectToWorld};
-  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
-  const Mesh::Face &face{mesh.faces[primID]};
-  const Mesh::Vert vert0{mesh.vertAt(face[0], time)};
-  const Mesh::Vert vert1{mesh.vertAt(face[1], time)};
-  const Mesh::Vert vert2{mesh.vertAt(face[2], time)};
-  const float3 point0{transformPoint(objectToWorld, vert0.point)};
-  const float3 point1{transformPoint(objectToWorld, vert1.point)};
-  const float3 point2{transformPoint(objectToWorld, vert2.point)};
-  return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
-}
-
-float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
-                               const MeshInstance &meshInstance,
-                               uint32_t primID, const float3 &bary) const {
-  const float4x4 &objectToWorld{frame.objectToWorld};
-  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
-  const Mesh::Face &face{mesh.faces[primID]};
-  const Mesh::Vert &vert0{mesh.verts[face[0]]};
-  const Mesh::Vert &vert1{mesh.verts[face[1]]};
-  const Mesh::Vert &vert2{mesh.verts[face[2]]};
-  const float3 point0{transformPoint(objectToWorld, vert0.point)};
-  const float3 point1{transformPoint(objectToWorld, vert1.point)};
-  const float3 point2{transformPoint(objectToWorld, vert2.point)};
-  return bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
-}
-
 namespace {
+
+// The face's three vertex points in world space. Every builder forms
+// them by this one expression, so the hit record, the manifold
+// geometry, and the side test agree bit for bit.
+[[nodiscard]] std::array<float3, 3>
+worldPoints(const InstanceFrame &frame, const Mesh::Vert &vert0,
+            const Mesh::Vert &vert1, const Mesh::Vert &vert2) noexcept {
+  const float4x4 &objectToWorld{frame.objectToWorld};
+  return {transformPoint(objectToWorld, vert0.point),
+          transformPoint(objectToWorld, vert1.point),
+          transformPoint(objectToWorld, vert2.point)};
+}
+
+// The barycentric combination of three values, which is how every
+// quantity interpolated over a face is formed.
+template <typename T>
+[[nodiscard]] T baryMix(const float3 &bary, const T &value0, const T &value1,
+                        const T &value2) noexcept {
+  return bary[0] * value0 + bary[1] * value1 + bary[2] * value2;
+}
+
+// The world point of a barycentric coordinate on the face. The points
+// are transformed before they are interpolated, which is the same as
+// transforming the interpolated point and is exact under scale; see
+// `makeHitFrom()`, whose own point this reproduces bit for bit.
+[[nodiscard]] float3 faceHitPoint(const InstanceFrame &frame,
+                                  const float3 &bary, const Mesh::Vert &vert0,
+                                  const Mesh::Vert &vert1,
+                                  const Mesh::Vert &vert2) noexcept {
+  const auto [point0, point1, point2]{worldPoints(frame, vert0, vert1, vert2)};
+  return baryMix(bary, point0, point1, point2);
+}
 
 // The face's `Ng` by the expressions `makeHitFrom()` forms it with,
 // the cross of the transformed edges normalized and flipped with the
@@ -1664,16 +1661,35 @@ namespace {
 [[nodiscard]] float3 faceNg(const InstanceFrame &frame, const Mesh::Vert &vert0,
                             const Mesh::Vert &vert1,
                             const Mesh::Vert &vert2) noexcept {
-  const float4x4 &objectToWorld{frame.objectToWorld};
-  const float3 point0{transformPoint(objectToWorld, vert0.point)};
-  const float3 point1{transformPoint(objectToWorld, vert1.point)};
-  const float3 point2{transformPoint(objectToWorld, vert2.point)};
+  const auto [point0, point1, point2]{worldPoints(frame, vert0, vert1, vert2)};
   float3 Ng{cross(point1 - point0, point2 - point0)};
   if (!smdl::tryNormalize(Ng)) Ng = float3(0.0f, 0.0f, 1.0f);
   return frame.flipsWinding ? -Ng : Ng;
 }
 
 } // namespace
+
+float3 Scene::manifoldHitPointMoving(const MeshInstance &meshInstance,
+                                     uint32_t primID, const float3 &bary,
+                                     float time) const {
+  std::optional<InstanceFrame> scratch{};
+  const InstanceFrame &frame{meshInstance.frameAt(time, scratch)};
+  if (!meshInstance.isDeforming)
+    return manifoldHitPoint(frame, meshInstance, primID, bary);
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[primID]};
+  return faceHitPoint(frame, bary, mesh.vertAt(face[0], time),
+                      mesh.vertAt(face[1], time), mesh.vertAt(face[2], time));
+}
+
+float3 Scene::manifoldHitPoint(const InstanceFrame &frame,
+                               const MeshInstance &meshInstance,
+                               uint32_t primID, const float3 &bary) const {
+  const Mesh &mesh{*meshes[meshInstance.meshIndex]};
+  const Mesh::Face &face{mesh.faces[primID]};
+  return faceHitPoint(frame, bary, mesh.verts[face[0]], mesh.verts[face[1]],
+                      mesh.verts[face[2]]);
+}
 
 float3 Scene::hitNg(const RawHit &raw, float time) const {
   const MeshInstance &meshInstance{meshInstances[raw.instIndex]};
@@ -1759,9 +1775,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   // World space first, everything else after. Interpolating the transformed
   // points is the same as transforming the interpolated point, so this
   // costs three matrix-vector products and buys exactness under scale.
-  float3 point0{transformPoint(objectToWorld, vert0.point)};
-  float3 point1{transformPoint(objectToWorld, vert1.point)};
-  float3 point2{transformPoint(objectToWorld, vert2.point)};
+  const auto [point0, point1, point2]{worldPoints(frame, vert0, vert1, vert2)};
   // `Ng` from the raw edges: scaling either one only scales the cross
   // product, which the normalize divides back out, so the edges need not be
   // unit for it. `Tg` does need a unit edge, and is the only reason one of
@@ -1770,8 +1784,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   const float3 faceNormal{cross(point1 - point0, point2 - point0)};
   float3 edge1{point1 - point0};
   auto barycentric{[&](auto member) {
-    return bary[0] * vert0.*member + bary[1] * vert1.*member +
-           bary[2] * vert2.*member;
+    return baryMix(bary, vert0.*member, vert1.*member, vert2.*member);
   }};
   hit.instIndex = instIndex;
   hit.meshIndex = meshInstance.meshIndex;
@@ -1781,7 +1794,7 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   SMDL_SANITY_CHECK(hit.matIndex < materialDefs.size());
   hit.materialDef = materialDefs[hit.matIndex];
   hit.bary = bary;
-  hit.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+  hit.point = baryMix(bary, point0, point1, point2);
   // Normals transform by the cofactor matrix and tangents by the linear
   // part, since a tangent is a direction lying in the surface while a
   // normal is not. The geometry normal is a cofactor image too,
@@ -1821,9 +1834,8 @@ void Scene::makeHitFrom(const InstanceFrame &frame, uint32_t instIndex,
   hit.texcoord1 = float2();
   if (!mesh.colors.empty()) {
     hit.vertexColorSets = 1;
-    hit.vertexColor = bary[0] * mesh.colors[face[0]] +
-                      bary[1] * mesh.colors[face[1]] +
-                      bary[2] * mesh.colors[face[2]];
+    hit.vertexColor = baryMix(bary, mesh.colors[face[0]], mesh.colors[face[1]],
+                              mesh.colors[face[2]]);
   } else {
     hit.vertexColorSets = 0;
     hit.vertexColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -2006,12 +2018,9 @@ ManifoldGeometry Scene::manifoldGeometryFrom(const InstanceFrame &frame,
                                              const Mesh::Vert &vert1,
                                              const Mesh::Vert &vert2) const {
   // See the primitive half of `manifoldGeometry()` for the conventions.
-  const float4x4 &objectToWorld{frame.objectToWorld};
-  const float3 point0{transformPoint(objectToWorld, vert0.point)};
-  const float3 point1{transformPoint(objectToWorld, vert1.point)};
-  const float3 point2{transformPoint(objectToWorld, vert2.point)};
+  const auto [point0, point1, point2]{worldPoints(frame, vert0, vert1, vert2)};
   ManifoldGeometry geometry;
-  geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+  geometry.point = baryMix(bary, point0, point1, point2);
   // The parameterization is the barycentric pair (bary[1], bary[2]).
   geometry.dPdu = point1 - point0;
   geometry.dPdv = point2 - point0;
