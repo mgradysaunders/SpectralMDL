@@ -27,7 +27,7 @@ void *BumpPtrAllocator::allocateSlow(size_t size, size_t align) noexcept {
                                                  : mSlab->size * 2};
   const size_t sizeNeeded{SLAB_HEADER_SIZE + (align - 1) + size};
   if (slabSize < sizeNeeded) slabSize = sizeNeeded;
-  auto *slab{static_cast<Slab *>(std::malloc(slabSize))};
+  Slab *slab{static_cast<Slab *>(std::malloc(slabSize))};
   SMDL_SANITY_CHECK_MSG(slab != nullptr, "out of memory!");
   slab->prev = mSlab;
   slab->size = slabSize;

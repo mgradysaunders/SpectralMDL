@@ -406,8 +406,8 @@ template <typename T, size_t N>
 [[nodiscard]]
 SMDL_ALWAYS_INLINE Vector<T, N> normalize(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
-  auto len{length(v)};
-  auto invLen{len > 0 ? 1 / len : 0};
+  T len{length(v)};
+  T invLen{len > 0 ? 1 / len : 0};
   return v * invLen;
 }
 
@@ -437,7 +437,7 @@ template <typename T>
 [[nodiscard]] inline Vector<T, 3> perpendicularTo(Vector<T, 3> w) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (!tryNormalize(w)) return {1, 0, 0};
-  auto u{float3(0, -1, 0)};
+  Vector<T, 3> u{0, -1, 0};
   if (w.z > T(-0.9999)) {
     u.x = -w.x / (w.z + 1) + 1;
     u.y = -w.y / (w.z + 1);
@@ -643,7 +643,7 @@ constexpr Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
 template <typename T, size_t N, size_t M>
 [[nodiscard]]
 constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
-  auto mT{Matrix<T, M, N>{}};
+  Matrix<T, M, N> mT{};
   for (size_t i = 0; i < N; i++)
     for (size_t j = 0; j < M; j++) mT[j][i] = m[i][j];
   return mT;
@@ -653,7 +653,7 @@ constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
 template <typename T>
 [[nodiscard]]
 constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
-  auto mI{Matrix<T, 4, 4>{}};
+  Matrix<T, 4, 4> mI{};
   mI[0] = {m[0].x, m[1].x, m[2].x, T(0)};
   mI[1] = {m[0].y, m[1].y, m[2].y, T(0)};
   mI[2] = {m[0].z, m[1].z, m[2].z, T(0)};
@@ -669,9 +669,9 @@ template <typename T>
   static_assert(std::is_floating_point_v<T>);
   // The inverse's rows are the cross products of the columns over the
   // determinant.
-  const auto row0{cross(m[1], m[2])};
-  const auto row1{cross(m[2], m[0])};
-  const auto row2{cross(m[0], m[1])};
+  const Vector<T, 3> row0{cross(m[1], m[2])};
+  const Vector<T, 3> row1{cross(m[2], m[0])};
+  const Vector<T, 3> row2{cross(m[0], m[1])};
   const T determinant{dot(m[0], row0)};
   T largest{};
   for (size_t j = 0; j < 3; j++)
@@ -689,8 +689,8 @@ template <typename T = float>
 [[nodiscard]] inline Matrix<T, 3, 3> coordinateSystem(Vector<T, 3> w) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (!tryNormalize(w)) return Matrix<T, 3, 3>(1);
-  auto u{perpendicularTo(w)};
-  auto v{normalize(cross(w, u))};
+  Vector<T, 3> u{perpendicularTo(w)};
+  Vector<T, 3> v{normalize(cross(w, u))};
   return {u, v, w};
 }
 
@@ -712,9 +712,9 @@ template <typename T = float>
 inline Matrix<T, 4, 4> lookAt(const Vector<T, 3> &from, const Vector<T, 3> &to,
                               const Vector<T, 3> &up = {0, 0, 1}) noexcept {
   static_assert(std::is_floating_point_v<T>);
-  auto w{normalize(from - to)};
-  auto u{normalize(cross(up, w))};
-  auto v{cross(w, u)};
+  Vector<T, 3> w{normalize(from - to)};
+  Vector<T, 3> u{normalize(cross(up, w))};
+  Vector<T, 3> v{cross(w, u)};
   return {Vector<T, 4>{u.x, u.y, u.z, 0}, //
           Vector<T, 4>{v.x, v.y, v.z, 0}, //
           Vector<T, 4>{w.x, w.y, w.z, 0}, //

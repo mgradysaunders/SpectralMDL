@@ -119,7 +119,7 @@ private:
 #define SMDL_LOG(level, ...)                                            \
   do {                                                                  \
     const auto smdlLogLevel{level};                                     \
-    if (auto &smdlLogger{::smdl::Logger::get()};                        \
+    if (::smdl::Logger &smdlLogger{::smdl::Logger::get()};              \
         smdlLogger.isEnabled(smdlLogLevel))                             \
       smdlLogger.logMessage(smdlLogLevel, ::smdl::concat(__VA_ARGS__)); \
   } while (false)

@@ -29,8 +29,8 @@ void warnAboutDefaultSearchDir(llvm::StringRef entry) {
 std::vector<std::string>
 FileLocator::getSearchDirs(std::string_view relativeTo,
                            Span<const std::string> priorityDirs) const {
-  auto results{std::vector<std::string>()};
-  auto resultsSet{llvm::StringSet()};
+  std::vector<std::string> results{};
+  llvm::StringSet<> resultsSet{};
   auto add{[&](std::string dir) {
     if (auto [itr, inserted] = resultsSet.insert(dir); inserted) {
       results.push_back(std::move(dir));
@@ -40,7 +40,7 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
     add(makePathCanonical(dir));
   }
   if (!relativeTo.empty()) {
-    auto fileOrDir{makePathCanonical(std::string(relativeTo))};
+    std::string fileOrDir{makePathCanonical(std::string(relativeTo))};
     if (isDirectory(fileOrDir)) {
       add(fileOrDir);
     } else {
@@ -48,20 +48,20 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
     }
   }
   if (mShouldSearchPwd) {
-    auto ec{std::error_code()};
-    if (auto pwd{std::filesystem::current_path(ec)}; !ec) {
+    std::error_code ec{};
+    if (std::filesystem::path pwd{std::filesystem::current_path(ec)}; !ec) {
       add(pwd.string());
     }
   }
   for (const auto &[dir, isRecursive] : mSearchDirs) {
     add(dir);
     if (isRecursive) {
-      auto ec{std::error_code()};
-      auto itr{std::filesystem::recursive_directory_iterator(
-          dir, std::filesystem::directory_options::skip_permission_denied, ec)};
+      std::error_code ec{};
+      std::filesystem::recursive_directory_iterator itr{
+          dir, std::filesystem::directory_options::skip_permission_denied, ec};
       for (; !ec && itr != std::filesystem::recursive_directory_iterator();
            itr.increment(ec)) {
-        if (auto subDir{itr->path().string()}; isDirectory(subDir)) {
+        if (std::string subDir{itr->path().string()}; isDirectory(subDir)) {
           add(std::move(subDir));
         }
       }
@@ -69,11 +69,11 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
   }
   if (mShouldSearchDefaultDirs) {
     if (const char *value{std::getenv("SMDL_DEFAULT_SEARCH_DIRS")}) {
-      auto entries{llvm::SmallVector<llvm::StringRef>()};
+      llvm::SmallVector<llvm::StringRef> entries{};
       llvm::StringRef(value).split(entries, llvm::sys::EnvPathSeparator,
                                    /*MaxSplit=*/-1, /*KeepEmpty=*/false);
       for (auto entry : entries) {
-        if (auto dir{makePathCanonical(entry.str())}; isDirectory(dir)) {
+        if (std::string dir{makePathCanonical(entry.str())}; isDirectory(dir)) {
           add(std::move(dir));
         } else {
           warnAboutDefaultSearchDir(entry);
@@ -88,10 +88,10 @@ std::optional<std::string>
 FileLocator::locate(std::string_view fileName, std::string_view relativeTo,
                     LocateFlags flags,
                     Span<const std::string> priorityDirs) const {
-  auto result{std::string()};
+  std::string result{};
   auto accept{[&](std::filesystem::path attempt) {
     try {
-      auto ec{std::error_code()};
+      std::error_code ec{};
       if (((flags & REGULAR_FILES) != 0 &&
            std::filesystem::is_regular_file(attempt, ec)) ||
           ((flags & DIRS) != 0 && std::filesystem::is_directory(attempt, ec))) {
@@ -103,7 +103,7 @@ FileLocator::locate(std::string_view fileName, std::string_view relativeTo,
     }
     return false;
   }};
-  auto fname{std::filesystem::path(fileName)};
+  std::filesystem::path fname{fileName};
   if (fname.is_absolute() && accept(fname)) {
     return result;
   }
@@ -121,9 +121,9 @@ std::vector<FileLocator::ImagePath>
 FileLocator::locateImages(std::string_view fileName,
                           std::string_view relativeTo,
                           Span<const std::string> priorityDirs) const {
-  const auto pattern{std::filesystem::path(std::string(fileName))};
-  const auto patternName{pattern.filename().string()};
-  const auto patternNameStrRef{llvm::StringRef(patternName)};
+  const std::filesystem::path pattern{std::string(fileName)};
+  const std::string patternName{pattern.filename().string()};
+  const llvm::StringRef patternNameStrRef{patternName};
   // Look for tile placeholders in the final path component:
   // - "<UDIM>"
   // - "<UVTILE0>"
@@ -134,7 +134,8 @@ FileLocator::locateImages(std::string_view fileName,
   if (!hasUDIM && !hasUVTILE0 && !hasUVTILE1) {
     // If no tile placeholders, this is an ordinary filename
     // meant to identify just 1 tile.
-    auto result{locate(fileName, relativeTo, REGULAR_FILES, priorityDirs)};
+    std::optional<std::string> result{
+        locate(fileName, relativeTo, REGULAR_FILES, priorityDirs)};
     if (!result) return {};
     return {ImagePath{0, 0, std::move(*result)}};
   }
@@ -146,15 +147,15 @@ FileLocator::locateImages(std::string_view fileName,
       patternNameStrRef.rsplit(hasUDIM      ? "<UDIM>"
                                : hasUVTILE0 ? "<UVTILE0>"
                                             : "<UVTILE1>");
-  const auto &patternNameBefore{patternNameBeforeAndAfter.first};
-  const auto &patternNameAfter{patternNameBeforeAndAfter.second};
+  const llvm::StringRef &patternNameBefore{patternNameBeforeAndAfter.first};
+  const llvm::StringRef &patternNameAfter{patternNameBeforeAndAfter.second};
   // Try to match the given filename and parse the tile indexes.
   auto tryMatch{[&](llvm::StringRef name, uint32_t &tileIndexU,
                     uint32_t &tileIndexV) -> bool {
     if (!name.consume_front(patternNameBefore)) return false;
     if (hasUDIM) {
       // "<UDIM>" stands for exactly 4 decimal digits.
-      auto digits{name.take_front(4)};
+      llvm::StringRef digits{name.take_front(4)};
       uint32_t num{};
       if (digits.size() != 4 || digits.consumeInteger(10, num) ||
           !digits.empty() || num < 1001)
@@ -182,11 +183,11 @@ FileLocator::locateImages(std::string_view fileName,
   // absolute, the only candidate is its parent directory. Otherwise,
   // join each active search directory with the directory portion of
   // the pattern, if any.
-  auto scanDirs{std::vector<std::string>()};
+  std::vector<std::string> scanDirs{};
   if (pattern.is_absolute()) {
     scanDirs.push_back(pattern.parent_path().string());
   } else {
-    auto patternDir{pattern.parent_path().string()};
+    std::string patternDir{pattern.parent_path().string()};
     for (auto &&dir : getSearchDirs(relativeTo, priorityDirs)) {
       scanDirs.push_back(joinPaths(dir, patternDir));
     }
@@ -195,20 +196,21 @@ FileLocator::locateImages(std::string_view fileName,
   // contains at least 1 match provides all of the results, so that
   // every tile is guaranteed to reside in the same directory.
   for (const auto &scanDir : scanDirs) {
-    auto results{std::vector<ImagePath>()};
-    auto ec{std::error_code()};
-    auto itr{std::filesystem::directory_iterator(
+    std::vector<ImagePath> results{};
+    std::error_code ec{};
+    std::filesystem::directory_iterator itr{
         scanDir, std::filesystem::directory_options::skip_permission_denied,
-        ec)};
+        ec};
     for (; !ec && itr != std::filesystem::directory_iterator();
          itr.increment(ec)) {
-      auto entryEc{std::error_code()};
+      std::error_code entryEc{};
       ImagePath imagePath{};
       if (!itr->is_regular_file(entryEc) ||
           !tryMatch(itr->path().filename().string(), imagePath.tileIndexU,
                     imagePath.tileIndexV))
         continue;
-      if (auto path{std::filesystem::canonical(itr->path(), entryEc)};
+      if (std::filesystem::path path{
+              std::filesystem::canonical(itr->path(), entryEc)};
           !entryEc) {
         imagePath.path = path.string();
         results.emplace_back(std::move(imagePath));

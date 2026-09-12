@@ -60,8 +60,8 @@ std::string expandPathVariables(std::string_view path) {
   }};
   auto isNameContinue{
       [&](char ch) { return isNameStart(ch) || (ch >= '0' && ch <= '9'); }};
-  const auto fullPath{path};
-  auto result{std::string()};
+  const std::string_view fullPath{path};
+  std::string result{};
   result.reserve(path.size());
   while (!path.empty()) {
     if (path[0] != '$') {
@@ -69,15 +69,15 @@ std::string expandPathVariables(std::string_view path) {
       path.remove_prefix(1);
       continue;
     }
-    auto name{std::string_view()};
-    auto lenConsumed{size_t(0)};
+    std::string_view name{};
+    size_t lenConsumed{0};
     if (path.size() > 1 && path[1] == '{') {
-      if (auto pos{path.find('}', 2)}; pos != std::string_view::npos) {
+      if (size_t pos{path.find('}', 2)}; pos != std::string_view::npos) {
         name = path.substr(2, pos - 2);
         lenConsumed = pos + 1;
       }
     } else if (path.size() > 1 && isNameStart(path[1])) {
-      auto pos{size_t(2)};
+      size_t pos{2};
       while (pos < path.size() && isNameContinue(path[pos])) {
         pos++;
       }
@@ -89,7 +89,7 @@ std::string expandPathVariables(std::string_view path) {
       path.remove_prefix(1);
       continue;
     }
-    auto value{std::getenv(std::string(name).c_str())};
+    char *value{std::getenv(std::string(name).c_str())};
     if (!value)
       throw Error(concat("undefined environment variable ", Quoted(name),
                          " in path ", Quoted(fullPath)));
@@ -126,7 +126,7 @@ std::string makePathRelative(std::string path) noexcept try {
   // resolve against the working directory, which is the ordinary result
   // for a path that does not exist. Report the path unchanged instead,
   // so that a diagnostic about a missing file still names it.
-  auto relPath{std::filesystem::relative(path).string()};
+  std::string relPath{std::filesystem::relative(path).string()};
   return relPath.empty() ? path : relPath;
 } catch (...) {
   return path;
@@ -136,8 +136,8 @@ std::string bestPathForPrinting(std::string path) noexcept try {
   // For the purpose of terminal spew, display the relative path (with
   // respect to the current CWD), the absolute path, or the given string
   // unaltered, depending on whichever is shortest.
-  auto absPath{makePathAbsolute(path)};
-  auto relPath{makePathRelative(path)};
+  std::string absPath{makePathAbsolute(path)};
+  std::string relPath{makePathRelative(path)};
   if (absPath.size() < path.size() && absPath.size() < relPath.size()) {
     return absPath;
   } else if (relPath.size() < path.size()) {
@@ -173,7 +173,7 @@ bool tryRenameOnto(const std::string &from, const std::string &to) noexcept
 }
 
 std::fstream openOrThrow(const std::string &path, std::ios::openmode mode) {
-  auto stream{std::fstream(path, mode)};
+  std::fstream stream{path, mode};
   if (!stream.is_open())
     throw Error(
         concat("cannot open ", QuotedPath(path), ": ", std::strerror(errno)));
@@ -181,7 +181,7 @@ std::fstream openOrThrow(const std::string &path, std::ios::openmode mode) {
 }
 
 std::string readOrThrow(const std::string &path) {
-  auto stream{openOrThrow(path, std::ios::in | std::ios::binary)};
+  std::fstream stream{openOrThrow(path, std::ios::in | std::ios::binary)};
   return std::string((std::istreambuf_iterator<char>(stream)),
                      std::istreambuf_iterator<char>());
 }

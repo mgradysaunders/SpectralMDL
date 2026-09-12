@@ -65,8 +65,8 @@ void Bytes::appendTo(std::string &result) const {
     result += " B";
     return;
   }
-  auto value{double(count) / 1024.0};
-  auto unit{size_t(0)};
+  double value{double(count) / 1024.0};
+  size_t unit{0};
   for (; value >= 1024.0 && unit + 1 < std::size(UNITS); unit++)
     value /= 1024.0;
   // Three significant digits, except that a value that rounds to 1000 or
@@ -95,12 +95,12 @@ void Counted::appendTo(std::string &result) const {
 std::string_view suggestNearestName(std::string_view name,
                                     Span<const std::string_view> candidates) {
   auto tailOf{[](std::string_view str) {
-    auto i{str.rfind('_')};
+    size_t i{str.rfind('_')};
     return i == std::string_view::npos ? std::string_view() : str.substr(i + 1);
   }};
-  const auto maxDistance{std::min<size_t>(1 + name.size() / 4, 4)};
-  if (auto tail{tailOf(name)}; !tail.empty()) {
-    auto sameKind{std::vector<std::string_view>{}};
+  const size_t maxDistance{std::min<size_t>(1 + name.size() / 4, 4)};
+  if (std::string_view tail{tailOf(name)}; !tail.empty()) {
+    std::vector<std::string_view> sameKind{};
     for (auto candidate : candidates)
       if (tailOf(candidate) == tail) sameKind.push_back(candidate);
     if (!sameKind.empty()) return suggestNearest(name, sameKind, maxDistance);
@@ -115,29 +115,29 @@ std::string_view suggestNearest(std::string_view name,
   // set of declared names, so everything here is tiny; clarity beats
   // cleverness.
   auto distance{[](std::string_view a, std::string_view b) {
-    auto row{std::vector<size_t>(b.size() + 1)};
+    std::vector<size_t> row(b.size() + 1);
     for (size_t j = 0; j <= b.size(); j++) row[j] = j;
     for (size_t i = 1; i <= a.size(); i++) {
-      auto diagonal{row[0]};
+      size_t diagonal{row[0]};
       row[0] = i;
       for (size_t j = 1; j <= b.size(); j++) {
-        const auto previous{row[j]};
-        const auto substitution{diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)};
+        const size_t previous{row[j]};
+        const size_t substitution{diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)};
         row[j] = std::min({row[j] + 1, row[j - 1] + 1, substitution});
         diagonal = previous;
       }
     }
     return row[b.size()];
   }};
-  auto best{std::string_view()};
-  auto bestDistance{maxDistance + 1};
+  std::string_view best{};
+  size_t bestDistance{maxDistance + 1};
   for (const auto &candidate : candidates) {
     // The length difference alone bounds the distance from below.
-    const auto lengthDelta{name.size() > candidate.size()
-                               ? name.size() - candidate.size()
-                               : candidate.size() - name.size()};
+    const size_t lengthDelta{name.size() > candidate.size()
+                                 ? name.size() - candidate.size()
+                                 : candidate.size() - name.size()};
     if (lengthDelta >= bestDistance) continue;
-    if (const auto d{distance(name, candidate)}; d < bestDistance) {
+    if (const size_t d{distance(name, candidate)}; d < bestDistance) {
       best = candidate;
       bestDistance = d;
     }

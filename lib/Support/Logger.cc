@@ -61,11 +61,11 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 // is not a location.
 [[nodiscard]] size_t locationLength(std::string_view str) noexcept {
   if (str.empty() || str[0] != '[') return 0;
-  const auto close{str.find(']')};
+  const size_t close{str.find(']')};
   if (close == std::string_view::npos) return 0;
-  auto name{str.substr(1, close - 1)};
+  std::string_view name{str.substr(1, close - 1)};
   const auto dropNumber{[&] {
-    const auto colon{name.rfind(':')};
+    const size_t colon{name.rfind(':')};
     if (colon == std::string_view::npos || !isAllDigits(name.substr(colon + 1)))
       return false;
     name = name.substr(0, colon);
@@ -92,10 +92,10 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 // caret line under it, as `SourceLocation::getSourceSnippet()` writes
 // them.
 [[nodiscard]] size_t gutterLength(std::string_view line) noexcept {
-  const auto bar{line.find(" | ")};
+  const size_t bar{line.find(" | ")};
   if (bar == std::string_view::npos || bar < 3 || line.substr(0, 2) != "  ")
     return 0;
-  const auto number{line.substr(2, bar - 2)};
+  const std::string_view number{line.substr(2, bar - 2)};
   const bool isBlank{number.find_first_not_of(' ') == std::string_view::npos};
   return isBlank || isAllDigits(number) ? bar + 2 : 0;
 }
@@ -104,7 +104,7 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 // source line, a '^' extended by any number of '~' after only a gutter
 // and whitespace, or `npos` if it is not.
 [[nodiscard]] size_t caretPosition(std::string_view line) noexcept {
-  const auto caret{line.find_first_not_of(" \t", gutterLength(line))};
+  const size_t caret{line.find_first_not_of(" \t", gutterLength(line))};
   if (caret == std::string_view::npos || line[caret] != '^' ||
       line.find_first_not_of('~', caret + 1) != std::string_view::npos)
     return std::string_view::npos;
@@ -123,7 +123,7 @@ void appendStyled(std::string &result, std::string_view style,
 // since its quotes and brackets are code rather than a message's.
 void appendSnippetLine(std::string &result, std::string_view line,
                        size_t caret = std::string_view::npos) {
-  const auto gutter{gutterLength(line)};
+  const size_t gutter{gutterLength(line)};
   if (gutter > 0) appendStyled(result, ANSI_DIM, line.substr(0, gutter));
   if (caret == std::string_view::npos) {
     result += line.substr(gutter);
@@ -138,13 +138,13 @@ void appendSnippetLine(std::string &result, std::string_view line,
 void appendHighlighted(std::string &result, std::string_view line) {
   for (size_t i = 0; i < line.size();) {
     if (i == 0 || !isWordChar(line[i - 1])) {
-      const auto rest{line.substr(i)};
-      if (const auto n{locationLength(rest)}; n > 0) {
+      const std::string_view rest{line.substr(i)};
+      if (const size_t n{locationLength(rest)}; n > 0) {
         appendStyled(result, ANSI_BOLD, rest.substr(0, n));
         i += n;
         continue;
       }
-      if (const auto n{quotedLength(rest)}; n > 0) {
+      if (const size_t n{quotedLength(rest)}; n > 0) {
         appendStyled(result, ANSI_CYAN, rest.substr(0, n));
         i += n;
         continue;
@@ -208,7 +208,7 @@ std::string_view logLevelLabel(LogLevel level, bool useColors,
 
 std::string formatLogMessage(LogLevel level, std::string_view message,
                              bool useColors, bool useUnicode) {
-  auto result{std::string(logLevelLabel(level, useColors, useUnicode))};
+  std::string result{logLevelLabel(level, useColors, useUnicode)};
   if (!useColors || message.find('\033') != std::string_view::npos) {
     result += message;
     return result;
@@ -220,9 +220,9 @@ std::string formatLogMessage(LogLevel level, std::string_view message,
     appendStyled(result, ANSI_DIM, message);
     return result;
   }
-  auto lines{std::vector<std::string_view>()};
+  std::vector<std::string_view> lines{};
   for (size_t pos = 0;;) {
-    const auto end{message.find('\n', pos)};
+    const size_t end{message.find('\n', pos)};
     lines.push_back(message.substr(pos, end - pos));
     if (end == std::string_view::npos) break;
     pos = end + 1;
@@ -230,7 +230,7 @@ std::string formatLogMessage(LogLevel level, std::string_view message,
   for (size_t i = 0; i < lines.size(); i++) {
     if (i > 0) result += '\n';
     if (i + 1 < lines.size()) {
-      if (const auto caret{caretPosition(lines[i + 1])};
+      if (const size_t caret{caretPosition(lines[i + 1])};
           caret != std::string_view::npos) {
         appendSnippetLine(result, lines[i]);
         result += '\n';

@@ -147,8 +147,8 @@ public:
   /// Allocate and initialize type `T` by passing `Args...` to the constructor.
   template <typename T, typename... Args>
   [[nodiscard]] auto allocate(Args &&...args) {
-    auto result{new (allocate(sizeof(T), alignof(T)))
-                    T{std::forward<Args>(args)...}};
+    T *result{new (allocate(sizeof(T), alignof(T)))
+                  T{std::forward<Args>(args)...}};
     if constexpr (std::is_trivially_destructible_v<T>)
       return result;
     else
