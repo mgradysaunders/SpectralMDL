@@ -175,6 +175,7 @@ void MNEEStats::recordCover(Cover cover) noexcept {
   coverArrivalCount++;
   if (cover == Cover::MATCHED) coverMatchedCount++;
   if (cover == Cover::DROPPED) coverDroppedCount++;
+  if (cover == Cover::CLAIMED) coverClaimedCount++;
 }
 
 void MNEEStats::recordTrials(Kind kind, int trials, bool wasDropped) noexcept {
@@ -216,6 +217,7 @@ void MNEEStats::add(const MNEEStats &other) noexcept {
   coverArrivalCount += other.coverArrivalCount;
   coverMatchedCount += other.coverMatchedCount;
   coverDroppedCount += other.coverDroppedCount;
+  coverClaimedCount += other.coverClaimedCount;
   contributionCount += other.contributionCount;
   contributionNonZeroCount += other.contributionNonZeroCount;
 }
@@ -291,7 +293,9 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
      << share(coverMatchedCount, coverArrivalCount)
      << " matched by the re-walk, "
      << share(coverDroppedCount, coverArrivalCount)
-     << " dropped as the caster gather's\n";
+     << " dropped as the caster gather's, "
+     << share(coverClaimedCount, coverArrivalCount)
+     << " claimed as the straight gather's\n";
   os << "  contributions: " << contributionCount << ", "
      << share(contributionNonZeroCount, contributionCount) << " non-zero\n";
 }
@@ -343,6 +347,7 @@ void MNEEStats::printJSON(llvm::json::OStream &json) const {
     json.attribute("count", int64_t(coverArrivalCount));
     json.attribute("matched", int64_t(coverMatchedCount));
     json.attribute("dropped", int64_t(coverDroppedCount));
+    json.attribute("claimed", int64_t(coverClaimedCount));
   });
   json.attributeObject("contributions", [&] {
     json.attribute("count", int64_t(contributionCount));

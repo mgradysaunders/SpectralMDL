@@ -63,7 +63,7 @@ struct PathStatsSession final {
 /// block like the rest of the tally, so recording shares nothing.
 struct MNEEStats final {
   /// Which gather and kind an estimate belongs to: the straight-line
-  /// refractive gather's two kinds, the searched refractive gather's,
+  /// refractive gather's two kinds, the caster refractive gather's,
   /// and the reflective gather's.
   enum Kind : int {
     STRAIGHT_DIRAC_REFRACT,
@@ -77,9 +77,10 @@ struct MNEEStats final {
 
   /// What became of a Dirac-chain arrival the coverage weighed: the
   /// re-walk reproduced the crossings the path took, it did not and
-  /// the arrival kept weight 1, or the searched refractive gather owned
-  /// the chain's family and the arrival was dropped.
-  enum class Cover { MATCHED, UNMATCHED, DROPPED };
+  /// the arrival kept weight 1, the caster refractive gather owned the
+  /// chain's family and the arrival was dropped, or the straight-line
+  /// gather claimed it outright in the biased mode.
+  enum class Cover { MATCHED, UNMATCHED, DROPPED, CLAIMED };
 
   /// The counters of one kind.
   struct KindCounts final {
@@ -129,12 +130,14 @@ struct MNEEStats final {
   uint64_t rewalkConvergedCount{};
 
   /// The Dirac-chain arrivals the coverage weighed: how many the
-  /// re-walk matched, and how many were dropped as the searched
-  /// refractive gather's. The rest keeps weight 1, so the matched share
-  /// is what the straight-line gather can ever claim.
+  /// re-walk matched, how many were dropped as the caster refractive
+  /// gather's, and how many the straight-line gather claimed outright
+  /// in the biased mode. The rest keeps weight 1, so the matched and
+  /// claimed shares are what the straight-line gather can ever claim.
   uint64_t coverArrivalCount{};
   uint64_t coverMatchedCount{};
   uint64_t coverDroppedCount{};
+  uint64_t coverClaimedCount{};
 
   /// The converged connections weighed, and how many came to anything.
   uint64_t contributionCount{};

@@ -257,7 +257,7 @@ public:
 /// A seed chain: the interfaces a connection is solved through, in order
 /// from the receiver: the eligible crossings of the straight shadow segment
 /// for a refractive connection handed them, a sampled caster point for a
-/// reflective one, and for a searched refractive one the sampled caster
+/// reflective one, and for a caster refractive one the sampled caster
 /// point and the crossings a ray refracted through it goes on to meet.
 class ManifoldChain final {
 public:
@@ -629,8 +629,7 @@ template <typename DrawXi>
   const int dfLobes{material.getLobes(isBackface)};
   if ((dfLobes & DF_FINITE) == 0) return false;
   if ((dfLobes & DF_SMOOTH) != 0) return true;
-  if (!(minAlpha > 0.0f) || !material.def->scatterNormalSample)
-    return true;
+  if (!(minAlpha > 0.0f) || !material.def->scatterNormalSample) return true;
   // One glossy kind, per the hook's contract; see above.
   const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
                                                  : DF_GLOSSY_BTDF};

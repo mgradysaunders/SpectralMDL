@@ -412,11 +412,13 @@ TEST_CASE("PathStats: the manifold section") {
   mnee.recordCover(MNEEStats::Cover::UNMATCHED);
   mnee.recordCover(MNEEStats::Cover::MATCHED);
   mnee.recordCover(MNEEStats::Cover::DROPPED);
+  mnee.recordCover(MNEEStats::Cover::CLAIMED);
   mnee.recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT, 4, false);
   mnee.recordTrials(MNEEStats::STRAIGHT_DIRAC_REFRACT, 10, true);
   mnee.recordContribution(true);
   mnee.recordContribution(false);
-  const MNEEStats::KindCounts &dirac{mnee.kinds[MNEEStats::STRAIGHT_DIRAC_REFRACT]};
+  const MNEEStats::KindCounts &dirac{
+      mnee.kinds[MNEEStats::STRAIGHT_DIRAC_REFRACT]};
   CHECK(dirac.estimateCount == 2);
   CHECK(dirac.firstConvergedCount == 1);
   CHECK(mnee.kinds[MNEEStats::CASTER_GLOSSY_REFLECT].estimateCount == 1);
@@ -443,9 +445,10 @@ TEST_CASE("PathStats: the manifold section") {
   CHECK(mnee.iterationsPercentile(1.0) == MNEEStats::NUM_ITERATION_BINS - 1);
   CHECK(mnee.rewalkCount == 2);
   CHECK(mnee.rewalkConvergedCount == 1);
-  CHECK(mnee.coverArrivalCount == 4);
+  CHECK(mnee.coverArrivalCount == 5);
   CHECK(mnee.coverMatchedCount == 2);
   CHECK(mnee.coverDroppedCount == 1);
+  CHECK(mnee.coverClaimedCount == 1);
   CHECK(mnee.contributionCount == 2);
   CHECK(mnee.contributionNonZeroCount == 1);
   CHECK(PathStats{}.mnee().iterationsPercentile(0.5) == 0);
@@ -457,7 +460,7 @@ TEST_CASE("PathStats: the manifold section") {
     other.mnee().recordCover(MNEEStats::Cover::DROPPED);
     stats.add(other);
     CHECK(mnee.walkCount == 6);
-    CHECK(mnee.coverArrivalCount == 5);
+    CHECK(mnee.coverArrivalCount == 6);
     CHECK(mnee.coverDroppedCount == 2);
     CHECK(mnee.walkIterationsMax == 300);
     CHECK(mnee.walkResidualMax == doctest::Approx(9e-6));
@@ -495,6 +498,7 @@ TEST_CASE("PathStats: the manifold section") {
     CHECK_CONTAINS(text, "dirac refraction");
     CHECK_CONTAINS(text, "caster dirac refraction");
     CHECK_CONTAINS(text, "dropped as the caster gather's");
+    CHECK_CONTAINS(text, "claimed as the straight gather's");
     const std::string json{printJSON()};
     INFO(json);
     CHECK_CONTAINS(json, "\"mnee\"");
@@ -514,7 +518,8 @@ TEST_CASE("PathStats: the manifold section") {
     CHECK(walks->getObject("diverged")->getInteger("iterations") == int64_t(1));
     const llvm::json::Object *covered{object->getObject("covered_arrivals")};
     REQUIRE(covered);
-    CHECK(covered->getInteger("count") == int64_t(4));
+    CHECK(covered->getInteger("count") == int64_t(5));
     CHECK(covered->getInteger("dropped") == int64_t(1));
+    CHECK(covered->getInteger("claimed") == int64_t(1));
   }
 }

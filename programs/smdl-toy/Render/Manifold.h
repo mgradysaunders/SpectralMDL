@@ -56,7 +56,7 @@ using smdl::solveManifoldConnection;
 /// samples the whole caster and has no reach limit) its transport is
 /// lost. Larger costs convergence, since the walk starts further from
 /// every solution.
-constexpr float MANIFOLD_SEED_JITTER{0.60f};
+constexpr float MNEE_STRAIGHT_SEED_JITTER{0.60f};
 
 /// The surface hits one straight receiver-to-light line may resolve and
 /// still carry transport the manifold estimators claim. Both halves of
@@ -140,7 +140,7 @@ public:
                                                 const Hit &hit,
                                                 ManifoldGeometry &geometry);
 
-/// One instance a searched connection may bounce off or pass through: a
+/// One instance a caster connection may bounce off or pass through: a
 /// marked mesh or shape, with the lobes it claims by domain and the
 /// area-weighted face distribution (meshes) a start is drawn from.
 class MNEECaster final {
@@ -160,9 +160,9 @@ public:
   float totalArea{};
 };
 
-/// Every marked instance the searched gathers sample.
+/// Every marked instance the caster gathers sample.
 ///
-/// This is what the searched gathers sample in place of the straight
+/// This is what the caster gathers sample in place of the straight
 /// shadow segment the straight-line refractive gather is handed. A
 /// mirror is nowhere near the line from the receiver to the light, so
 /// there is no crossing to seed from and the surface has to be sampled
@@ -208,7 +208,7 @@ public:
                                                float &pdf) const;
 
   /// The caster the instance is, or null when it is unmarked or claims
-  /// nothing: the membership question both halves of the searched
+  /// nothing: the membership question both halves of the caster
   /// refractive estimator ask.
   [[nodiscard]] const MNEECaster *casterOf(uint32_t instIndex) const noexcept {
     if (instIndex >= mCasterOfInstance.size()) return nullptr;
@@ -333,10 +333,10 @@ public:
 
 /// A chain family: the crossings in order from the receiver, by instance
 /// and, for a primitive, by piece. Two chains of one family cross the
-/// same surfaces in the same order, which is what the searched
+/// same surfaces in the same order, which is what the caster
 /// refractive estimator and the straight-line one are partitioned by:
 /// the straight-line gather owns the family its straight segment
-/// discovers, and the searched gather every other family that starts on
+/// discovers, and the caster gather every other family that starts on
 /// its caster. Both halves of the estimator compare families the same
 /// way, so the partition is the same on both sides.
 class MNEEChainFamily final {
@@ -430,7 +430,7 @@ discoverStraightChain(PathContext &path, VisibilityWalk &walk, Hit &blocker,
                       const float3 &wl, int wantedLobes, int maxDepth,
                       float maxGlossyAlpha, MNEEChainSeed &seed);
 
-/// Trace the start of a searched refractive estimate: draw a point on
+/// Trace the start of a caster refractive estimate: draw a point on
 /// `caster` by area, walk to it from the receiver and take the caster's
 /// first crossing on the way (the near face where the far one was
 /// drawn), then refract by Snell's law about the shading normal with

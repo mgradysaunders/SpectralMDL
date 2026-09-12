@@ -173,7 +173,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     // against the medium the path is actually in.
     material.setExteriorIOR(
         ExteriorIOR(nullptr, material, float3(0.0f, 0.0f, 1.0f)));
-    // Either side of the instance: a searched walk's starts land
+    // Either side of the instance: a caster walk's starts land
     // wherever the caster faces, and the masked query at the converged
     // crossing settles which side actually scatters.
     const ManifoldClaim claim{

@@ -313,7 +313,7 @@ TEST_CASE("ManifoldSolutionSet: distinct solutions counted once") {
   }
 }
 
-// The caster set as the searched gathers see it: every marked instance
+// The caster set as the caster gathers see it: every marked instance
 // with a claim in either domain, looked up by instance.
 TEST_CASE("MNEECasterSet: a refractive caster is kept") {
   smdl::Compiler compiler{};
@@ -360,7 +360,7 @@ TEST_CASE("MNEECasterSet: a refractive caster is kept") {
   CHECK(casters.casterOf(INVALID_INDEX) == nullptr);
 }
 
-// The start of a searched refractive estimate: a glass ball as the
+// The start of a caster refractive estimate: a glass ball as the
 // caster, the trace entering it on the near face wherever the point was
 // drawn, leaving it by Snell's law, and handing the solver a start it
 // converges from; and the ways a trace refuses to start.

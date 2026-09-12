@@ -31,7 +31,7 @@ public:
   /// manifold next-event estimation is off.
   int depth{};
 
-  /// The marked casters the searched gathers sample, for a reflection
+  /// The marked casters the caster gathers sample, for a reflection
   /// off one and for a refraction through one, in place of the straight
   /// shadow segment the straight-line gather is handed; built once per
   /// render, null or empty when the layout marks none. What each marked
@@ -52,10 +52,13 @@ public:
   /// (first walk from the straight seed, the rest jittered) and claims
   /// its transport exclusively: an arrival through a covered Dirac
   /// chain at a target the sampler can draw is dropped outright instead
-  /// of weighed by re-walk MIS, which deletes the weight-1 firefly tail
-  /// along with its re-walks. Either way the estimate darkens by
-  /// whatever the walks miss and approaches the unbiased answer from
-  /// below as the count grows (the reference's figure 15).
+  /// of weighed by re-walk MIS wherever a gather claims its family (the
+  /// straight line's, or one starting on a caster), which deletes the
+  /// weight-1 firefly tail along with the solves; a family no gather
+  /// reaches keeps weight 1 as in the unbiased mode, so the mode darkens
+  /// only by what the walks miss. Either way the estimate approaches the
+  /// unbiased answer from below as the count grows (the reference's
+  /// figure 15).
   int biasedTrials{};
 
   /// When positive, hand glossy lobes wider than this squared roughness
