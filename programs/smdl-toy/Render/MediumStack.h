@@ -97,30 +97,36 @@ static_assert(sizeof(MediumStack) == 3 * sizeof(void *),
 }
 
 /// The scattering interface of one path vertex: the material instance
-/// that owns the BSDF at a surface or the phase function inside a
-/// medium, or the exterior haze, whose phase function has no material
-/// behind it. Converts implicitly from a material instance, so every
-/// vertex that has one reads exactly as it did.
+/// that owns the BSDF at a surface or hair vertex, the VDF of a volume
+/// vertex inside a medium an MDL material describes, or the exterior
+/// haze, whose phase function has no material behind it. Converts
+/// implicitly from each, so every vertex reads as what it scatters with.
 class Scatterer final {
 public:
   Scatterer(const smdl::JIT::Material &material) noexcept
       : mMaterial(&material) {}
 
+  Scatterer(const smdl::JIT::VDF &vdf) noexcept : mVDF(vdf) {}
+
   Scatterer(const smdl::Haze &haze) noexcept : mHaze(&haze) {}
 
-  /// The material instance behind the vertex, which only a haze volume
-  /// vertex lacks: every surface and hair vertex has one, and so does
-  /// every volume vertex whose medium an MDL material describes.
+  /// The material instance behind a surface or hair vertex, which every
+  /// one of them has; a volume vertex scatters with a VDF or the haze
+  /// and has none.
   [[nodiscard]] const smdl::JIT::Material &material() const noexcept {
     return *mMaterial;
   }
+
+  /// The VDF of a volume vertex inside a medium an MDL material
+  /// describes, whose pointer names the evaluation it was taken from.
+  [[nodiscard]] const smdl::JIT::VDF &vdf() const noexcept { return mVDF; }
 
   /// The phase function of a volume vertex, normalized over the sphere
   /// and so also the solid-angle density of `volumeScatterSample()`.
   [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
                                             const float3 &wi) const {
     return SMDL_UNLIKELY(mHaze) ? mHaze->phase().evaluate(wo, wi)
-                                : mMaterial->volumeScatterEvaluate(wo, wi);
+                                : mVDF.evaluate(wo, wi);
   }
 
   /// Sample the phase function of a volume vertex, returning its value.
@@ -128,11 +134,13 @@ public:
                                           float3 &wi) const {
     return SMDL_UNLIKELY(mHaze)
                ? mHaze->phase().sample(float3(xi.x, xi.y, xi.z), wo, wi)
-               : mMaterial->volumeScatterSample(xi, wo, wi);
+               : mVDF.sample(xi, wo, wi);
   }
 
 private:
   const smdl::JIT::Material *mMaterial{};
+
+  smdl::JIT::VDF mVDF{};
 
   const smdl::Haze *mHaze{};
 };

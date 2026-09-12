@@ -1483,6 +1483,7 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
       {"volumeDensityBoundMin", offsetof(Eval, volumeDensityBoundMin)},
       {"volumeDensityBoundMax", offsetof(Eval, volumeDensityBoundMax)},
       {"volumeEmissionIntensity", offsetof(Eval, volumeEmissionIntensity)},
+      {"volumeScattering", offsetof(Eval, volumeScattering)},
       {"surfaceEmissionIntensity", offsetof(Eval, surfaceEmissionIntensity)},
       {"backfaceEmissionIntensity", offsetof(Eval, backfaceEmissionIntensity)},
       {"wavelengthCount", offsetof(Eval, wavelengthCount)},
@@ -1578,7 +1579,6 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   SMDL_SANITY_CHECK(dfModule);
   Type *materialType{};
   Type *materialEvalType{};
-  Type *materialEvalPtrType{};
   Type *float3PtrType{context.getPointerType(context.getFloatType(3))};
   Type *floatPtrType{context.getPointerType(context.getFloatType())};
   auto constParameter{[](Type *type, std::string_view name) {
@@ -1619,7 +1619,6 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
               emitter.emitIntrinsic("bump", materialValue, decl.srcLoc),
               decl.srcLoc)};
           materialEvalType = materialEval.type;
-          materialEvalPtrType = context.getPointerType(materialEvalType);
           Value out{
               emitter.rvalue(emitter.resolveIdentifier("out"sv, decl.srcLoc))};
           emitter.createStore(materialEval, out);
@@ -1632,9 +1631,27 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitMaterial.evaluate.name = func->getName().str();
   }
   verifyMaterialEvalLayout(context, materialEvalType, decl.srcLoc);
+  // The type of the material field at a path of field names, e.g. the
+  // material's own VDF type at {"volume", "scattering"}.
+  auto fieldTypeAtPath{
+      [&](std::initializer_list<std::string_view> path) -> Type * {
+        Type *type{materialType};
+        for (auto name : path) {
+          StructType *structType{llvm::dyn_cast_if_present<StructType>(type)};
+          SMDL_SANITY_CHECK(structType);
+          std::vector<std::pair<const Parameter *, unsigned>> seq{
+              ParameterList::LookupSequence{}};
+          SMDL_SANITY_CHECK_MSG(
+              structType->params.getLookupSequence(name, seq) && !seq.empty(),
+              "cannot resolve material field");
+          type = seq.back().first->type;
+        }
+        return type;
+      }};
+  Type *vdfType{fieldTypeAtPath({"volume", "scattering"})};
   // Generate the scatter and emission entry points, which all have the
-  // same shape: a '@(pure visible)' wrapper that forwards the evaluated
-  // material and its remaining parameters to the like-named function in
+  // same shape: a '@(pure visible)' wrapper that forwards its leading
+  // pointer and its remaining parameters to the like-named function in
   // the 'df' module:
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // @(pure visible) int "material_name.scatterEvaluate"(
@@ -1649,6 +1666,15 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   //     eval, wo, wi, pdfFwd, pdfRev, f, lobeMask);
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // The leading pointer is the evaluated material for every wrapper but
+  // the two volume scattering ones, which take the material's own VDF
+  // type ('volume.scattering') instead: an instance hands over its
+  // '_MaterialEval.volumeScattering', and a host inside a medium whose
+  // VDF varies from point to point hands over what 'vdfEvaluate'
+  // returned at the collision. The C++ side sees 'const void *' either
+  // way; the wrapper's parameter type is what lets the 'df' macro visit
+  // the VDF as its concrete type.
+  //
   // A wrapper parameter passes by pointer unless it is marked
   // 'isByValue'. Pointers are the default because the aggregates and the
   // SIMD vectors have no stable by-value ABI across the JIT boundary and
@@ -1660,11 +1686,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     uint64_t count{1};
     bool isByValue{};
   };
-  auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
-                         Type *funcReturnType,
-                         std::initializer_list<WrapperParam> wrapperParams) {
+  auto makeWrapper{[&](auto &jitFunc, std::string_view suffix,
+                       Type *funcReturnType, Type *selfType,
+                       std::string_view selfName,
+                       std::initializer_list<WrapperParam> wrapperParams) {
     ParameterList params{};
-    params.push_back(constParameter(materialEvalPtrType, "eval"));
+    params.push_back(
+        constParameter(context.getPointerType(selfType), selfName));
     for (const auto &wrapperParam : wrapperParams)
       params.push_back(constParameter(
           wrapperParam.isByValue ? wrapperParam.type
@@ -1688,7 +1716,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                              decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialEvalType);
+    markPointerParam(func, 0, selfType);
     unsigned argIndex{1U};
     for (const auto &wrapperParam : wrapperParams) {
       if (!wrapperParam.isByValue)
@@ -1696,6 +1724,12 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
       argIndex++;
     }
     jitFunc.name = func->getName().str();
+  }};
+  auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
+                         Type *funcReturnType,
+                         std::initializer_list<WrapperParam> wrapperParams) {
+    makeWrapper(jitFunc, suffix, funcReturnType, materialEvalType, "eval"sv,
+                wrapperParams);
   }};
   Type *floatType{context.getFloatType()};
   Type *float2Type{context.getFloatType(2)};
@@ -1748,11 +1782,12 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"we", float3Type},
                  {"pdf", floatType},
                  {"Le", floatType, colorSize}});
-  makeDfWrapper(jitMaterial.volumeScatterEvaluate, "volumeScatterEvaluate",
-                floatType, {{"wo", float3Type}, {"wi", float3Type}});
-  makeDfWrapper(jitMaterial.volumeScatterSample, "volumeScatterSample",
-                floatType,
-                {{"xi", float4Type}, {"wo", float3Type}, {"wi", float3Type}});
+  makeWrapper(jitMaterial.volumeScatterEvaluate, "volumeScatterEvaluate",
+              floatType, vdfType, "vdf"sv,
+              {{"wo", float3Type}, {"wi", float3Type}});
+  makeWrapper(jitMaterial.volumeScatterSample, "volumeScatterSample", floatType,
+              vdfType, "vdf"sv,
+              {{"xi", float4Type}, {"wo", float3Type}, {"wi", float3Type}});
   makeDfWrapper(jitMaterial.hairScatterEvaluate, "hairScatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
@@ -1896,6 +1931,44 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                      context.getColorType()->wavelengthBaseMax);
     jitMaterial.volumeEvaluate.name = func->getName().str();
   }
+  if (!fieldTypeAtPath({"volume"})->isDefault()) {
+    // Generate the VDF evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(visible) &vdf_type "material_name.vdfEvaluate"() {
+    //   return #bump(material_name().volume.scattering);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // The phase-function counterpart of 'volumeEvaluate': it copies
+    // only the VDF, so everything not feeding 'volume.scattering' is
+    // dead-code eliminated, and the copy is what forces every field the
+    // phase function reads to be computed. Renderers call this at a
+    // collision inside a medium whose VDF varies from point to point,
+    // with the partial object-space state of 'volumeEvaluate' plus an
+    // allocator (see 'JIT::MaterialDef::vdfEvaluate'). After
+    // optimization, 'deriveStaticMaterialFlags' in 'Compiler.cc'
+    // inspects which 'State' fields the body still reads to derive the
+    // static 'MATERIAL_HAS_HETEROGENEOUS_VDF' flag; the '#bump' reads
+    // only 'allocator', which that inspection allows. Only a material
+    // with a volume gets one: every other material has the default
+    // 'vdf()', an empty struct, and the flag is settled structurally.
+    Type *funcReturnType{context.getPointerType(vdfType)};
+    llvm::Function *func{emitter.createFunction(
+        concat(symbolBase, ".vdfEvaluate"), /*isPure=*/false, funcReturnType,
+        {}, decl.srcLoc, [&] {
+          emitter.emitReturn(
+              emitter.emitIntrinsic(
+                  "bump",
+                  emitter.accessField(
+                      emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                          "volume"sv, decl.srcLoc),
+                      "scattering"sv, decl.srcLoc),
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    jitMaterial.vdfEvaluate.name = func->getName().str();
+  }
   {
     // Generate the thin-walled probe, compile-time scaffolding that
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects for a
@@ -1975,21 +2048,6 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // staticFlags' holds by construction. The value-dependent bits
     // ('MATERIAL_THIN_WALLED', 'MATERIAL_HAS_CUTOUT') are filled in
     // later by 'deriveStaticMaterialFlags' in 'Compiler.cc'.
-    auto fieldTypeAtPath{
-        [&](std::initializer_list<std::string_view> path) -> Type * {
-          Type *type{materialType};
-          for (auto name : path) {
-            StructType *structType{llvm::dyn_cast_if_present<StructType>(type)};
-            SMDL_SANITY_CHECK(structType);
-            std::vector<std::pair<const Parameter *, unsigned>> seq{
-                ParameterList::LookupSequence{}};
-            SMDL_SANITY_CHECK_MSG(
-                structType->params.getLookupSequence(name, seq) && !seq.empty(),
-                "cannot resolve material field");
-            type = seq.back().first->type;
-          }
-          return type;
-        }};
     auto addStaticFlag{
         [&](int flag, std::initializer_list<std::string_view> path) {
           jitMaterial.staticFlagsKnown |= flag;

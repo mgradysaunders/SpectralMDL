@@ -6911,9 +6911,16 @@ export int _scatterNormalSample(
   return _scatterNormalEvaluate(eval, isBackface, wmWorld, pdf, lobeMask);
 }
 
+/// The volume scattering entry point, which takes a pointer to the VDF
+/// (`material_volume.scattering`) rather than the instance, unlike the
+/// other scattering entry points: either the `_MaterialEval.volumeScattering`
+/// of an instance or the VDF the `vdfEvaluate` entry point evaluated at a
+/// collision, so that a host inside a medium whose VDF varies from point
+/// to point can scatter with the VDF of the collision. NOTE: This is
+/// non-standard!
 @(macro)
 export float _volumeScatterEvaluate(
-  const &_MaterialEval eval,
+  const auto vdf,        ///< The VDF, by pointer
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
 ) {
@@ -6927,13 +6934,14 @@ export float _volumeScatterEvaluate(
   // The entry point is scalar, but `tint` and the mixers can produce a
   // color-valued phase; `average` folds it and is the identity for the
   // float-valued elemental VDFs.
-  return average(scatterEvaluateMasked(
-           visit &eval.ptr.volume.scattering, &params).f);
+  return average(scatterEvaluateMasked(visit vdf, &params).f);
 }
 
+/// The volume sampling entry point, on the VDF pointer like
+/// `_volumeScatterEvaluate()`. NOTE: This is non-standard!
 @(macro)
 export float _volumeScatterSample(
-  const &_MaterialEval eval,
+  const auto vdf,        ///< The VDF, by pointer
   const &float4 xi,      ///< The canonical random sample
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
@@ -6946,13 +6954,12 @@ export float _volumeScatterSample(
     hitBackface: false, // Not applicable for volume scattering
     ior: 1.0,           // Not applicable for volume scattering
   );
-  auto result =
-    scatterSampleMasked(visit &eval.ptr.volume.scattering, &params);
+  auto result = scatterSampleMasked(visit vdf, &params);
   if (result.mode == scatter_none) {
     return 0.0;
   }
   *wiWorld = normalize(result.wi);
-  return _volumeScatterEvaluate(eval, woWorld, wiWorld);
+  return _volumeScatterEvaluate(vdf, woWorld, wiWorld);
 }
 
 /// The hair scattering entry point, dispatching `material.hair`. NOTE:

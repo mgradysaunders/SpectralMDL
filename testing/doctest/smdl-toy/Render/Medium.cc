@@ -267,7 +267,8 @@ struct Means final {
     if (medium.sampleDistance(sampler, tEnd, t, beta, emitted)) {
       means.scattered += beta;
       means.numScattered++;
-      if (first && &medium.scatterer().material() == first)
+      // The scatterer names the evaluation it scatters with by its VDF.
+      if (first && medium.scatterer().vdf().ptr == first->getVDF().ptr)
         means.pickedFirst += beta;
     } else {
       means.survived += beta;

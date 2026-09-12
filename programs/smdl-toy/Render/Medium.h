@@ -135,12 +135,12 @@ public:
                  bool isUnbounded = false) const;
 
   /// The scattering interface of the vertex the last `sampleDistance`
-  /// call returned: the haze's own phase function, or the material of
-  /// the medium, which with additive overlap is the component the
-  /// collision picked.
+  /// call returned: the haze's own phase function, or the VDF of the
+  /// medium's instance, which with additive overlap is the component
+  /// the collision picked.
   [[nodiscard]] Scatterer scatterer() const noexcept {
     return SMDL_UNLIKELY(mIsHaze) ? Scatterer(*mHaze.haze)
-                                  : Scatterer(*mScatterInstance);
+                                  : Scatterer(mScatterInstance->getVDF());
   }
 
 private:

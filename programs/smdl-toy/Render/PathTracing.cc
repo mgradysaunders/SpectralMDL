@@ -346,8 +346,8 @@ bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
     f = Color(phase);
     return phase > 0;
   }
-  // Everything but a volume vertex is a material's, the haze being the
-  // one scatterer with no material behind it.
+  // Everything but a volume vertex is a material's; a volume vertex
+  // scatters with a VDF or the haze and has no material behind it.
   const smdl::JIT::Material &material{scatterer.material()};
   if (kind == VertexKind::HAIR) {
     return material.hairScatterEvaluate(wo, wi, pdf, pdfRevUnused, f);

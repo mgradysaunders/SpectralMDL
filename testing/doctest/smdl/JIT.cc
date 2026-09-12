@@ -64,10 +64,10 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   REQUIRE_OK(compiler.jitCompile());
   // The six '#isDefault'-derived structural bits are always known, and
   // at -O2 the constant-foldable value bits are too, including the
-  // heterogeneous-coefficients bit (every material here has a constant,
-  // or no, volume, so the '.volumeEvaluate' body reads nothing
-  // point-varying of the state and the coefficients prove
-  // point-independent), the displacement bit (every
+  // heterogeneous-coefficients and heterogeneous-VDF bits (every
+  // material here has a constant, or no, volume, so the '.volumeEvaluate'
+  // and '.vdfEvaluate' bodies read nothing point-varying of the state
+  // and both prove point-independent), the displacement bit (every
   // material here has a constant, in fact default, displacement, so
   // the '.displacementProbe' body folds to the zero vector), and the
   // normal-remap bit (every material here keeps the state normal, so
@@ -80,7 +80,8 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   constexpr int allBits{
       structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
       smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS |
-      smdl::MATERIAL_HAS_DISPLACEMENT | smdl::MATERIAL_REMAPS_NORMAL};
+      smdl::MATERIAL_HAS_HETEROGENEOUS_VDF | smdl::MATERIAL_HAS_DISPLACEMENT |
+      smdl::MATERIAL_REMAPS_NORMAL};
   SUBCASE("Structural and constant-foldable bits are known") {
     const smdl::JIT::MaterialDef *matDefault{
         requireMaterial(compiler, "mat_default")};
@@ -108,6 +109,8 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
         requireMaterial(compiler, "mat_volume")};
     CHECK(matVolume->hasVolume());
     CHECK(matVolume->hasHomogeneousCoefficients());
+    CHECK(matVolume->hasHomogeneousVDF());
+    CHECK(matVolume->hasHomogeneousVolume());
     // Not opaque because it passes shadow rays through, not because it
     // has a volume: the volume-with-surface material below blocks at
     // every hit and is opaque despite its interior.
@@ -166,7 +169,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   }
 }
 
-TEST_CASE("volumeEvaluate: the coefficients along a position") {
+TEST_CASE("volumeEvaluate and vdfEvaluate: the volume along a position") {
   TempDir tmpDir{"volume-evaluate"};
   // A 32x8x4 Mitsuba volume holding the linear field
   // 'value = x + 10*y + 100*z', so trilinear filtering reproduces it
@@ -249,6 +252,46 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       "  volume: material_volume(\n"
       "    scattering: df::anisotropic_vdf(),\n"
       "    scattering_coefficient: color(state::random_float())));\n"
+      // Phase functions over constant coefficients: a bias that follows
+      // the position, a color tint, the fog fit, a mix of those two, a
+      // mix whose weight follows the position, and no VDF at all.
+      "export material vol_vdf_pos() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(\n"
+      "      directional_bias: 0.5 * math::sin(state::position().x)),\n"
+      "    absorption_coefficient: color(0.05),\n"
+      "    scattering_coefficient: color(5.0)));\n"
+      "export material vol_vdf_tint() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::tint(color(0.2, 0.5, 0.9),\n"
+      "                         df::anisotropic_vdf(directional_bias: 0.5)),\n"
+      "    scattering_coefficient: color(5.0)));\n"
+      "export material vol_vdf_fog() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::fog_vdf(particle_size: 10.0),\n"
+      "    scattering_coefficient: color(5.0)));\n"
+      "export material vol_vdf_mix() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::normalized_mix(df::vdf_component[](\n"
+      "      df::vdf_component(0.3, df::tint(color(0.2, 0.5, 0.9),\n"
+      "        df::anisotropic_vdf(directional_bias: 0.5))),\n"
+      "      df::vdf_component(0.7, df::fog_vdf(particle_size: 10.0)))),\n"
+      "    scattering_coefficient: color(5.0)));\n"
+      "export material vol_vdf_mix_pos() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::normalized_mix(df::vdf_component[](\n"
+      "      df::vdf_component(#max(state::position().x, 0.0),\n"
+      "        df::anisotropic_vdf(directional_bias: 0.5)),\n"
+      "      df::vdf_component(0.5, df::fog_vdf(particle_size: 10.0)))),\n"
+      "    scattering_coefficient: color(5.0)));\n"
+      "export material vol_absorb() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
       "export material vol_fire() = material(\n"
       "  ior: 1.0,\n"
       "  volume: material_volume(\n"
@@ -389,6 +432,100 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       CHECK(materialDef->hasVolume());
       CHECK(!materialDef->hasHomogeneousCoefficients());
     }
+  }
+  SUBCASE("Constant, tinted, fog and mixed VDFs prove homogeneous") {
+    for (const char *name : {"vol_homog", "vol_vdf_tint", "vol_vdf_fog",
+                             "vol_vdf_mix", "vol_absorb", "vol_none"}) {
+      CAPTURE(name);
+      const smdl::JIT::MaterialDef *materialDef{
+          requireMaterial(compiler, name)};
+      CHECK(materialDef->hasHomogeneousVDF());
+      CHECK(materialDef->hasHomogeneousVolume());
+    }
+    // The two proofs are separate: coefficients that follow the position
+    // under a constant phase function prove the VDF and not the volume.
+    const smdl::JIT::MaterialDef *hetero{
+        requireMaterial(compiler, "vol_hetero")};
+    CHECK(hetero->hasHomogeneousVDF());
+    CHECK(!hetero->hasHomogeneousCoefficients());
+    CHECK(!hetero->hasHomogeneousVolume());
+  }
+  SUBCASE("A position-dependent bias or mix weight keeps the VDF unproven") {
+    for (const char *name : {"vol_vdf_pos", "vol_vdf_mix_pos"}) {
+      CAPTURE(name);
+      const smdl::JIT::MaterialDef *materialDef{
+          requireMaterial(compiler, name)};
+      CHECK(materialDef->hasVolume());
+      CHECK(materialDef->hasHomogeneousCoefficients());
+      CHECK(!materialDef->hasHomogeneousVDF());
+      CHECK(!materialDef->hasHomogeneousVolume());
+      CHECK(bool(materialDef->vdfEvaluate));
+    }
+    // A material with no volume has the default 'vdf()' and no entry
+    // point to ask about it.
+    CHECK(!bool(requireMaterial(compiler, "vol_none")->vdfEvaluate));
+  }
+  SUBCASE("vdfEvaluate reproduces Henyey-Greenstein at each point's bias") {
+    StateStorage storage{compiler};
+    smdl::State fullState{storage.makeState()};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_vdf_pos")};
+    const smdl::float3 wo{smdl::normalize(smdl::float3(0.1f, 0.2f, 1.0f))};
+    const smdl::float3 wi{smdl::normalize(smdl::float3(-0.3f, 0.5f, -0.8f))};
+    // Henyey-Greenstein in the convention of 'df::anisotropic_vdf', on
+    // the cosine between the outgoing and the incoming direction.
+    const auto hg{[](float g, float cosTheta) {
+      const float denom{1.0f + g * g + 2.0f * g * cosTheta};
+      return (1.0f - g * g) /
+             (4.0f * 3.14159265358979f * denom * std::sqrt(denom));
+    }};
+    // The bias is '0.5 * sin(x)': backward, isotropic, and forward.
+    for (float x : {-1.5707964f, 0.0f, 1.5707964f}) {
+      CAPTURE(x);
+      const float g{0.5f * std::sin(x)};
+      fullState.position = smdl::float3(x, 0.0f, 0.0f);
+      smdl::JIT::VDF vdf{fullState, materialDef};
+      REQUIRE(vdf.ptr != nullptr);
+      CHECK(vdf.evaluate(wo, wi) ==
+            doctest::Approx(hg(g, smdl::dot(wo, wi))).epsilon(1e-4));
+      // The sample reports the phase function at the direction it drew.
+      smdl::float3 wiSampled{};
+      const float sampled{
+          vdf.sample(smdl::float4(0.3f, 0.7f, 0.1f, 0.9f), wo, wiSampled)};
+      CHECK(sampled > 0.0f);
+      CHECK(sampled ==
+            doctest::Approx(hg(g, smdl::dot(wo, wiSampled))).epsilon(1e-4));
+    }
+    // The instance's own VDF is the one 'vdfEvaluate' returns at the
+    // state the instance was evaluated with, and the instance's phase
+    // functions go through it.
+    fullState.position = smdl::float3(0.25f, 0.0f, 0.0f);
+    smdl::JIT::Material material{fullState, materialDef};
+    smdl::JIT::VDF atBoundary{fullState, materialDef};
+    CHECK(material.getVDF().def == materialDef);
+    CHECK(material.getVDF().ptr == material.eval.volumeScattering);
+    CHECK(material.getVDF().evaluate(wo, wi) == atBoundary.evaluate(wo, wi));
+    CHECK(material.volumeScatterEvaluate(wo, wi) ==
+          material.getVDF().evaluate(wo, wi));
+  }
+  SUBCASE("A pure absorber scatters zero through its handle") {
+    // The default 'vdf()' is an empty struct, so the copy behind the
+    // handle is the smallest allocation there is, and never null.
+    StateStorage storage{compiler};
+    smdl::State fullState{storage.makeState()};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_absorb")};
+    const smdl::float3 wo{0.0f, 0.0f, 1.0f};
+    const smdl::float3 wi{0.0f, 1.0f, 0.0f};
+    smdl::JIT::VDF vdf{fullState, materialDef};
+    REQUIRE(vdf.ptr != nullptr);
+    CHECK(vdf.evaluate(wo, wi) == 0.0f);
+    smdl::float3 wiSampled{};
+    CHECK(vdf.sample(smdl::float4(0.5f, 0.5f, 0.5f, 0.5f), wo, wiSampled) ==
+          0.0f);
+    smdl::JIT::Material material{fullState, materialDef};
+    REQUIRE(material.getVDF().ptr != nullptr);
+    CHECK(material.getVDF().evaluate(wo, wi) == 0.0f);
   }
   SUBCASE("Evaluations expose the density acceleration hint") {
     StateStorage storage{compiler};

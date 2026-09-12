@@ -761,6 +761,23 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
                                     volumeEvaluateFunc->getArg(0)))) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS;
     }
+    // The phase function likewise, through '.vdfEvaluate', whose body
+    // copies 'volume.scattering' out of the material and so reads
+    // exactly what the VDF reads plus the allocator the copy needs. It
+    // is emitted only for a material with a volume; every other material
+    // has the default 'vdf()' and is settled structurally. See
+    // 'JIT::MaterialDef::hasHomogeneousVDF()'.
+    llvm::Function *vdfEvaluateFunc{
+        jitMaterial.vdfEvaluate.name.empty()
+            ? nullptr
+            : llvmModule.getFunction(jitMaterial.vdfEvaluate.name)};
+    if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
+        (vdfEvaluateFunc && !vdfEvaluateFunc->isDeclaration() &&
+         vdfEvaluateFunc->arg_size() >= 1 &&
+         readsOnlyPathConstantState(llvmModule.getDataLayout(),
+                                    vdfEvaluateFunc->getArg(0)))) {
+      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_VDF;
+    }
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.
     if (llvm::Function * probeFunc{llvmModule.getFunction(thinWalledProbeName)})
@@ -1309,6 +1326,9 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookup(jitMaterial.opacityEvaluate);
       jitLookup(jitMaterial.displacementEvaluate);
       jitLookup(jitMaterial.volumeEvaluate);
+      // Emitted only for a material with a volume.
+      if (!jitMaterial.vdfEvaluate.name.empty())
+        jitLookup(jitMaterial.vdfEvaluate);
       jitLookup(jitMaterial.scatterEvaluate);
       jitLookup(jitMaterial.scatterSample);
       // Emitted only when the host asked for them; see

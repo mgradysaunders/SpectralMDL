@@ -772,6 +772,13 @@ const int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
 const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VDF`, which only ever
+/// appears in the compile-time `staticFlags` derived by the C++ compiler
+/// from the per-material `vdfEvaluate` entry point, the way bit 9 is
+/// derived from `volumeEvaluate`. The instance `flags` below never set
+/// this bit.
+const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
+
 /// The multiplier of the linear congruential generator that advances
 /// `$state.rng`. This and the output permutation in `_randomInt()` must
 /// stay bit-exact with `::extras::rng` and with `smdl::RNG` in the C++
@@ -891,6 +898,11 @@ export struct _MaterialEval {
   &color volumeEmissionIntensity = #hasField(ptr.volume, "emission_intensity")
                                      ? &ptr.volume.emission_intensity
                                      : none;
+
+  /// The VDF, which the volume scattering entry points take in place of
+  /// the instance (see `df::_volumeScatterEvaluate()`), so that a host
+  /// may hand them the VDF evaluated at a collision instead of this one.
+  &void volumeScattering = &ptr.volume.scattering;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
   /// non-default emission EDF. See `df::_emissionEvaluate()` for how the

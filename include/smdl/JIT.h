@@ -98,6 +98,19 @@ inline constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 ///
 inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 
+/// Indicates that the material volume phase function (the VDF) varies
+/// from point to point inside a medium instance.
+///
+/// \note
+/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// derived after optimization from which `State` fields the body of
+/// `JIT::MaterialDef::vdfEvaluate` still reads, so it degrades to unknown
+/// at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets it.
+/// See `JIT::MaterialDef::hasHomogeneousVDF()` for the conservative
+/// reading and the contract.
+///
+inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
+
 /// \}
 
 /// \name Distribution Function (DF) Lobes
@@ -255,8 +268,9 @@ public:
 ///
 /// An entry point that takes an `Eval` takes it first, followed by exactly
 /// the parameters of the `Material` function that wraps it, in the same
-/// order. Every `float *` spectrum points to `Compiler::wavelengthBaseMax`
-/// floats.
+/// order; the two phase entry points take a VDF pointer in its place (see
+/// `VDF`) and follow the same rule. Every `float *` spectrum points to
+/// `Compiler::wavelengthBaseMax` floats.
 struct MaterialDef final {
 public:
   /// The module name.
@@ -363,6 +377,32 @@ public:
   [[nodiscard]] bool hasHomogeneousCoefficients() const noexcept {
     return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS) != 0 &&
            (staticFlags & MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS) == 0;
+  }
+
+  /// Provably point-independent phase function: the VDF reads nothing of
+  /// the `State` that varies from point to point inside a medium
+  /// instance, so the VDF the `Eval` captured at the boundary
+  /// (`Eval::volumeScattering`, wrapped by `Material::getVDF()`) is exact
+  /// at every collision in the interior and `vdfEvaluate` never needs to
+  /// be called. When this returns false the VDF is heterogeneous *or
+  /// unproven*, and hosts must treat it as heterogeneous: evaluate it at
+  /// the collision through `vdfEvaluate` and scatter with the `VDF` that
+  /// comes back.
+  ///
+  /// Point-independent is not state-independent, exactly as for
+  /// `hasHomogeneousCoefficients()`: a color-tinted VDF is resampled onto
+  /// the wavelength grid, so the instance a path scatters with must have
+  /// been evaluated at that path's own render fields.
+  [[nodiscard]] bool hasHomogeneousVDF() const noexcept {
+    return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_VDF) != 0 &&
+           (staticFlags & MATERIAL_HAS_HETEROGENEOUS_VDF) == 0;
+  }
+
+  /// Provably point-independent volume, coefficients and phase function
+  /// both: `hasHomogeneousCoefficients()` and `hasHomogeneousVDF()`. A
+  /// material with no volume is trivially so.
+  [[nodiscard]] bool hasHomogeneousVolume() const noexcept {
+    return hasHomogeneousCoefficients() && hasHomogeneousVDF();
   }
 
   /// Provably undisplaced: `geometry.displacement` is the compile-time
@@ -494,6 +534,15 @@ public:
     /// interiors re-query per point through `MaterialDef::volumeEvaluate`.
     const float *volumeEmissionIntensity{};
 
+    /// The VDF (`material_volume.scattering`) of the instance, opaque to
+    /// the host: what the phase entry points take, and what
+    /// `Material::getVDF()` wraps. Never null; the default `vdf()` is an
+    /// empty struct whose phase function reports zero. This is the VDF at
+    /// the surface hit, which for a point-dependent VDF (see
+    /// `MaterialDef::hasHomogeneousVDF()`) a collision in the interior
+    /// replaces with its own through `MaterialDef::vdfEvaluate`.
+    const void *volumeScattering{};
+
     /// The `surface` emission intensity, or null if the `surface` has no
     /// non-default emission EDF.
     const float *surfaceEmissionIntensity{};
@@ -614,6 +663,29 @@ public:
   ///
   Function<void(State &state, float *sigmaA, float *sigmaS, float *emission)>
       volumeEvaluate{};
+
+  /// The VDF evaluate function.
+  ///
+  /// \param[inout] state  The state.
+  ///
+  /// \return The VDF (`material_volume.scattering`) at the state,
+  /// allocated with `state.allocator`, which is what the phase entry
+  /// points take; `VDF` wraps it.
+  ///
+  /// Evaluates only the VDF and dead-code eliminates the rest: no
+  /// evaluation is constructed, and the one allocation is the VDF itself,
+  /// so `state.allocator` must be set. This is the per-collision query a
+  /// host makes inside a medium whose VDF is not provably
+  /// point-independent (`hasHomogeneousVDF()`); the state contract is that
+  /// of `volumeEvaluate`, the query point in `position` in the object
+  /// space of the instance plus the render-wide fields.
+  ///
+  /// \note
+  /// Null unless the material has a volume (`hasVolume()`): every other
+  /// material has the default `vdf()`, whose phase function is zero and
+  /// which its `Eval::volumeScattering` already points at.
+  ///
+  Function<const void *(State &state)> vdfEvaluate{};
 
   /// The scatter evaluate function.
   ///
@@ -800,7 +872,8 @@ public:
 
   /// The volume scatter evaluate function.
   ///
-  /// \param[in] eval  The evaluated material.
+  /// \param[in] vdf   The VDF: `Eval::volumeScattering`, or what
+  ///                  `vdfEvaluate` returned at a collision.
   /// \param[in] wo    The outgoing direction in world space.
   /// \param[in] wi    The incoming direction in world space.
   ///
@@ -808,12 +881,17 @@ public:
   /// scattering. It is normalized over the sphere and so is also the
   /// solid-angle PDF of `volumeScatterSample`.
   ///
-  Function<float(const Eval &eval, const float3 &wo, const float3 &wi)>
+  /// The VDF rather than the `Eval`, unlike every other scattering entry
+  /// point, so that a host inside a medium whose VDF varies from point to
+  /// point can scatter with the VDF of the collision; hosts go through
+  /// `VDF`, which binds the pointer.
+  ///
+  Function<float(const void *vdf, const float3 &wo, const float3 &wi)>
       volumeScatterEvaluate{};
 
   /// The volume scatter sample function.
   ///
-  /// \param[in]  eval  The evaluated material.
+  /// \param[in]  vdf   The VDF, see `volumeScatterEvaluate`.
   /// \param[in]  xi    The canonical random sample.
   /// \param[in]  wo    The outgoing direction in world space.
   /// \param[out] wi    The incoming direction in world space.
@@ -822,7 +900,7 @@ public:
   /// volume scattering. It is also the solid-angle PDF of having sampled
   /// `wi`, so the implied throughput weight is always 1.
   ///
-  Function<float(const Eval &eval, const float4 &xi, const float3 &wo,
+  Function<float(const void *vdf, const float4 &xi, const float3 &wo,
                  float3 &wi)>
       volumeScatterSample{};
 
@@ -876,6 +954,75 @@ public:
   Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
                float &pdfFwd, float &pdfRev, float *f)>
       hairScatterSample{};
+};
+
+/// A material definition together with one VDF of it, which is what a host
+/// scatters with at a volume vertex: the VDF the instance captured at the
+/// boundary (`Material::getVDF()`) when the definition proves it
+/// point-independent (`MaterialDef::hasHomogeneousVDF()`), else the VDF
+/// evaluated at the collision through `MaterialDef::vdfEvaluate`.
+///
+/// Each function wraps the like-named phase entry point of the definition
+/// with `ptr` bound, the way `Material` wraps its own.
+struct VDF final {
+public:
+  VDF() = default;
+
+  /// Wrap the VDF `ptr` of the given definition, which is an
+  /// `Eval::volumeScattering` or a result of `MaterialDef::vdfEvaluate`.
+  VDF(const MaterialDef *def, const void *ptr) noexcept : def(def), ptr(ptr) {}
+
+  /// Evaluate the VDF at the given state through
+  /// `MaterialDef::vdfEvaluate`, allocating from `state.allocator`. The
+  /// definition must have a volume (`MaterialDef::hasVolume()`), the entry
+  /// point being null otherwise.
+  explicit VDF(State &state, const MaterialDef *def) : def(def) {
+    SMDL_SANITY_CHECK(def);
+    SMDL_SANITY_CHECK_MSG(bool(def->vdfEvaluate),
+                          "'vdfEvaluate' is emitted only for a material "
+                          "with a volume; see 'hasVolume()'");
+    SMDL_DEBUG_CHECK(state.allocator);
+    ptr = def->vdfEvaluate(state);
+    SMDL_SANITY_CHECK(ptr);
+  }
+
+  /// The phase function.
+  ///
+  /// \param[in] wo  The outgoing direction in world space.
+  /// \param[in] wi  The incoming direction in world space.
+  ///
+  /// \return The phase function, or zero if the material has no volume
+  /// scattering. It is normalized over the sphere and so is also the
+  /// solid-angle PDF of `sample()`.
+  ///
+  [[nodiscard]] SMDL_ALWAYS_INLINE float evaluate(const float3 &wo,
+                                                  const float3 &wi) const {
+    SMDL_DEBUG_CHECK(def && ptr);
+    return def->volumeScatterEvaluate(ptr, wo, wi);
+  }
+
+  /// Sample the phase function.
+  ///
+  /// \param[in]  xi  The canonical random sample.
+  /// \param[in]  wo  The outgoing direction in world space.
+  /// \param[out] wi  The incoming direction in world space.
+  ///
+  /// \return The phase function at `wi`, or zero if the material has no
+  /// volume scattering. It is also the solid-angle PDF of having sampled
+  /// `wi`, so the implied throughput weight is always 1.
+  ///
+  [[nodiscard]] SMDL_ALWAYS_INLINE float
+  sample(const float4 &xi, const float3 &wo, float3 &wi) const {
+    SMDL_DEBUG_CHECK(def && ptr);
+    return def->volumeScatterSample(ptr, xi, wo, wi);
+  }
+
+public:
+  /// The definition.
+  const MaterialDef *def{};
+
+  /// The VDF, opaque to the host.
+  const void *ptr{};
 };
 
 /// A material definition together with an evaluation of it at one shading
@@ -1242,7 +1389,14 @@ public:
     return def->emissionSample(eval, xi, we, pdf, Le.data());
   }
 
-  /// The volume scatter evaluate function.
+  /// The VDF the instance captured at the shading point, which is what a
+  /// host scatters with at every collision inside a medium whose VDF is
+  /// provably point-independent (`MaterialDef::hasHomogeneousVDF()`).
+  [[nodiscard]] SMDL_ALWAYS_INLINE VDF getVDF() const noexcept {
+    return VDF(def, eval.volumeScattering);
+  }
+
+  /// The volume scatter evaluate function, which is `getVDF().evaluate()`.
   ///
   /// \param[in] wo  The outgoing direction in world space.
   /// \param[in] wi  The incoming direction in world space.
@@ -1254,10 +1408,10 @@ public:
   [[nodiscard]] SMDL_ALWAYS_INLINE float
   volumeScatterEvaluate(const float3 &wo, const float3 &wi) const {
     SMDL_DEBUG_CHECK(def && eval);
-    return def->volumeScatterEvaluate(eval, wo, wi);
+    return getVDF().evaluate(wo, wi);
   }
 
-  /// The volume scatter sample function.
+  /// The volume scatter sample function, which is `getVDF().sample()`.
   ///
   /// \param[in]  xi  The canonical random sample.
   /// \param[in]  wo  The outgoing direction in world space.
@@ -1270,7 +1424,7 @@ public:
   [[nodiscard]] SMDL_ALWAYS_INLINE float
   volumeScatterSample(const float4 &xi, const float3 &wo, float3 &wi) const {
     SMDL_DEBUG_CHECK(def && eval);
-    return def->volumeScatterSample(eval, xi, wo, wi);
+    return getVDF().sample(xi, wo, wi);
   }
 
   /// The hair scatter evaluate function.
