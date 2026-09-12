@@ -260,6 +260,14 @@ struct PathContext final {
   /// every ray the path and its gathers trace.
   PathTime time;
 
+  /// The path's hero wavelength in nanometers, which the caller sets at
+  /// the head of each path beside the time: the wavelength a lens whose
+  /// glasses disperse was traced at, which reaches every evaluation along
+  /// the path as `State::wavelengthHero` so that a material refracts at
+  /// the index the picture is being formed at. The d line where nothing
+  /// drew one.
+  float wavelengthHero;
+
   /// The SD-tree the walk steers by and the pixel estimate that drives
   /// its Russian roulette, or null for plain path tracing; a null
   /// `Guiding::tree` behaves the same way.

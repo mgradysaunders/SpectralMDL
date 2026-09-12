@@ -260,15 +260,19 @@ public:
 /// needs: the wavelength grid and, when material construction is involved,
 /// the allocator. The geometric fields are applied afterward by
 /// `Hit::applyGeometryToState()`. The time defaults to the render-wide
-/// base time; per-path callers pass the path's own.
-[[nodiscard]] inline smdl::State
-makeRenderState(const smdl::SpectralColor &wavelengths,
-                smdl::BumpPtrAllocator *allocator = nullptr,
-                float time = gRenderShutter.time) noexcept {
+/// base time and the hero wavelength to the library's reference, the d
+/// line; per-path callers pass the path's own of each, since a material
+/// may read either.
+[[nodiscard]] inline smdl::State makeRenderState(
+    const smdl::SpectralColor &wavelengths,
+    smdl::BumpPtrAllocator *allocator = nullptr,
+    float time = gRenderShutter.time,
+    float wavelengthHero = gRenderGrid.stateBase.wavelengthHero) noexcept {
   smdl::State state{gRenderGrid.stateBase};
   state.allocator = allocator;
   state.wavelengthBase = wavelengths.data();
   state.animationTime = time;
+  state.wavelengthHero = wavelengthHero;
   return state;
 }
 

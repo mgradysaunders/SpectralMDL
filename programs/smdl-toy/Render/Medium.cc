@@ -355,22 +355,24 @@ void Medium::setHaze(const smdl::Haze *haze) noexcept {
 }
 
 void Medium::reset(const MediumStack *stack, const Color &wavelengths,
-                   PathTime time, const float3 &org,
+                   PathTime time, float wavelengthHero, const float3 &org,
                    const float3 &dir) noexcept {
-  if (!mKey.isKnown || stack != mKey.stack || time.seconds != mKey.time)
-    resolve(stack, wavelengths, time);
+  if (!mKey.isKnown || stack != mKey.stack || time.seconds != mKey.time ||
+      wavelengthHero != mKey.wavelengthHero)
+    resolve(stack, wavelengths, time, wavelengthHero);
   setSegment(org, dir, time.fraction);
 }
 
 void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
-                     PathTime time) noexcept {
+                     PathTime time, float wavelengthHero) noexcept {
   mKey.stack = stack;
   mKey.isKnown = true;
-  if (mKey.isResolved && rebind(stack, time)) return;
-  rebuild(stack, wavelengths, time);
+  if (mKey.isResolved && rebind(stack, time, wavelengthHero)) return;
+  rebuild(stack, wavelengths, time, wavelengthHero);
 }
 
-bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
+bool Medium::rebind(const MediumStack *stack, PathTime time,
+                    float wavelengthHero) noexcept {
   // The haze stands in for the empty stack and has no components; see
   // `rebuild()`.
   if (mIsHaze != (!stack && mHaze.haze != nullptr)) return false;
@@ -387,6 +389,14 @@ bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
       if (!material.hasAdditiveVolume()) break;
     }
     if (count != mComponents.size()) return false;
+  }
+  if (wavelengthHero != mKey.wavelengthHero) {
+    mKey.wavelengthHero = wavelengthHero;
+    // A component whose coefficients moved with the hero wavelength fails
+    // `matches()` above and never reaches here, so all that is left to
+    // carry over is the state a queried component is asked through.
+    for (auto &comp : mComponents)
+      if (comp.isQueried) comp.state->wavelengthHero = wavelengthHero;
   }
   if (time.seconds != mKey.time) {
     mKey.time = time.seconds;
@@ -429,8 +439,9 @@ bool Medium::matches(const Component &comp,
 }
 
 void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
-                     PathTime time) noexcept {
+                     PathTime time, float wavelengthHero) noexcept {
   mKey.time = time.seconds;
+  mKey.wavelengthHero = wavelengthHero;
   mKey.isResolved = true;
   mHasMedium = false;
   mIsHeterogeneous = false;
@@ -461,7 +472,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   }
 
   const smdl::State renderState{
-      makeRenderState(wavelengths, nullptr, time.seconds)};
+      makeRenderState(wavelengths, nullptr, time.seconds, wavelengthHero)};
   // Coefficients are in inverse meters per the MDL specification, and
   // the toy's scene unit is the meter, so they are in inverse scene
   // units as they come.

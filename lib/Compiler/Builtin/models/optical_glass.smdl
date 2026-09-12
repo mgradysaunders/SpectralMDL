@@ -1,0 +1,102 @@
+/// Indices of refraction of optical glasses across wavelength: the
+/// dispersion models a glass catalog and a lens prescription state a glass
+/// with, and a small catalog of common glasses by their makers'
+/// coefficients, backed by the support library; see
+/// `lib/RenderUtil/OpticalGlass.cc` for the citations.
+///
+/// A material disperses by evaluating its index at the wavelength the path
+/// is committed to, which is `state::wavelength_hero()` and the default
+/// argument of everything here:
+///
+///     material glass() = material(
+///       ior: glass_ior(N_SF11),
+///       surface: material_surface(scattering: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
+///
+/// The index stays a scalar, so the path never splits, and the whole
+/// spectrum it carries refracts as the hero wavelength does. That is the
+/// same commitment a lens whose glasses disperse already makes.
+///
+/// Every glass here is validated: its index is finite, at least 1, and
+/// never rises with wavelength between 300nm and 2500nm, which is the
+/// domain the makers fit over and which every evaluation clamps to.
+#smdl
+
+@(foreign pure)
+float smdlEvalOpticalGlassIOR(int glass, float wavelength);
+
+@(foreign pure)
+float smdlEvalAbbeIOR(float nd, float abbeNumber, float partialDispersion, float wavelength);
+
+/// The glasses with builtin Sellmeier coefficients, in order of falling
+/// Abbe number: the SCHOTT catalog from the crowns to the densest flints,
+/// including the fluor and phosphate crowns an apochromat pairs with them,
+/// plus the two crystals by Malitson's fits.
+export enum glass {
+  CAF2 = 0,     ///< Calcium fluoride, nd 1.43385, Vd 95.00.
+  N_FK51A,      ///< nd 1.48656, Vd 84.47. A fluor crown.
+  N_PK52A,      ///< nd 1.49700, Vd 81.61. A phosphate crown.
+  FUSED_SILICA, ///< Fused silica, nd 1.45846, Vd 67.82.
+  N_BK7,        ///< nd 1.51680, Vd 64.17. The borosilicate crown everything is compared to.
+  N_SK16,       ///< nd 1.62041, Vd 60.32.
+  N_K5,         ///< nd 1.52249, Vd 59.48.
+  N_BAK1,       ///< nd 1.57250, Vd 57.55.
+  N_BAK4,       ///< nd 1.56883, Vd 55.98.
+  N_LAK9,       ///< nd 1.69100, Vd 54.71.
+  N_BAF10,      ///< nd 1.67003, Vd 47.11.
+  N_KZFS4,      ///< nd 1.61336, Vd 44.49. A short flint.
+  LF5,          ///< nd 1.58144, Vd 40.85.
+  N_F2,         ///< nd 1.62005, Vd 36.43.
+  F2,           ///< nd 1.62004, Vd 36.37. The lead flint N-F2 replaced.
+  SF2,          ///< nd 1.64769, Vd 33.85.
+  N_SF2,        ///< nd 1.64769, Vd 33.82.
+  N_SF5,        ///< nd 1.67271, Vd 32.25.
+  N_LASF9,      ///< nd 1.85025, Vd 32.17.
+  N_SF10,       ///< nd 1.72828, Vd 28.53.
+  N_SF11,       ///< nd 1.78472, Vd 25.68.
+  N_SF6,        ///< nd 1.80518, Vd 25.36.
+  N_SF57,       ///< nd 1.84666, Vd 23.78. The densest flint of the catalog.
+};
+
+/// The index of refraction of a catalog glass at the given wavelength in
+/// nanometers, the hero wavelength by default. A wavelength outside the
+/// domain reads as the nearest end of it.
+@(macro)
+export float glass_ior(const glass glass, const float wavelength = $state.wavelengthHero) =
+  smdlEvalOpticalGlassIOR(cast<int>(glass), wavelength);
+
+/// The index of refraction of the three-term Cauchy fitted through `nd`,
+/// the Abbe number `abbe_number`, and the partial dispersion
+/// `partial_dispersion`, at the given wavelength in nanometers, the hero
+/// wavelength by default. This is how a patent's table and a prescription
+/// without catalog data state a glass, a plastic, or an immersion fluid.
+///
+/// A `partial_dispersion` outside 0 to 1, which the default is, takes
+/// Schott's normal line, `0.6438 - 0.001682 * abbe_number`. The ordinary
+/// glasses lie near that line; the anomalous ones an apochromat is made of
+/// do not. The fit is within about 3e-4 of a maker's Sellmeier from 450 to
+/// 700nm and less close past both ends, so a catalog glass is better stated
+/// by `glass_ior()`.
+@(macro)
+export float abbe_ior(const float nd, const float abbe_number,
+                      const float partial_dispersion = 0.0,
+                      const float wavelength = $state.wavelengthHero) =
+  smdlEvalAbbeIOR(nd, abbe_number, partial_dispersion, wavelength);
+
+/// The index of refraction of the three-term Sellmeier
+/// `n^2 = 1 + sum_i b_i l^2 / (l^2 - c_i)`, with `l` the wavelength in
+/// micrometers and `c` in square micrometers, as a maker's datasheet prints
+/// it, at the given wavelength in nanometers.
+///
+/// This is the raw formula and holds nothing within a domain: the caller's
+/// coefficients must put no pole where the caller evaluates them.
+@(pure macro)
+export float sellmeier_ior(const float3 b, const float3 c, const float wavelength) {
+  const float l = 0.001 * wavelength;
+  const float l2 = l * l;
+  return #sqrt(1.0 + #sum(b * l2 / (float3(l2) - c)));
+}
+
+/// The three-term Sellmeier at the hero wavelength. See `sellmeier_ior()`.
+@(macro)
+export float sellmeier_ior(const float3 b, const float3 c) =
+  sellmeier_ior(b, c, $state.wavelengthHero);

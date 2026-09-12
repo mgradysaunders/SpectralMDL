@@ -421,17 +421,22 @@ struct SensorLines final {
 // What a lens whose glasses disperse is traced at: under a tile, a
 // wavelength each pixel draws from its band, spanned here over the
 // band's own curve, which is what the default grid sees; else the d line
-// alone; and under -ideal nothing, the thin lens having no color.
+// alone; and under -ideal nothing, the thin lens having no color. The
+// same wavelength reaches the scene as `State::wavelengthHero`, so this
+// is also what a material that disperses refracts at.
 [[nodiscard]] std::string describeTracing(const CameraModel &model) {
   if (model.shouldApproximateLens())
     return "not at all, since -ideal looks through the thin lens fitted to "
-           "it, which has no color";
+           "it, which has no color; a material that disperses refracts at "
+           "the d line (588 nm)";
   if (!model.options.traceWavelengthRange)
     return "at the d line (588 nm) alone, the film having no color filter "
-           "array to draw a wavelength from";
+           "array to draw a wavelength from, which is also what a material "
+           "that disperses refracts at";
   const ResponseSettings &response{model.sensor->response};
   const SensorSpectrum illuminant{whiteBalanceSpectrum(model.whiteBalance)};
-  std::string text{"at a wavelength each pixel draws from its band"};
+  std::string text{"at a wavelength each pixel draws from its band, which is "
+                   "also what a material that disperses refracts at"};
   const char *separator{": "};
   for (const auto index : tileBands(response.cfa)) {
     const ResponseBand &band{response.bands[index]};

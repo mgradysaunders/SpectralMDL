@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "smdl/Compiler.h"
+#include "smdl/RenderUtil/OpticalGlass.h"
 #include "smdl/Support/Span.h"
 
 #include "Color.h"
@@ -29,14 +30,14 @@
 
 namespace {
 // Four bands, so that the coefficient spectra vary from bin to bin and
-// the estimators' hero-wavelength weighting is exercised instead of
+// the estimators' wavelength-hero weighting is exercised instead of
 // collapsing to a scalar. Uniformly spaced, so the grid stays uniform
 // quadrature.
 const std::vector<float> GRID{420.0f, 500.0f, 580.0f, 660.0f};
 
 // Two kinds of coefficient appear below: flat constants, and
 // `ramp(lo, hi)`, a spectrum that slopes across the four bands, which is
-// where the hero-wavelength weighting is exercised. Either proves
+// where the wavelength-hero weighting is exercised. Either proves
 // homogeneous when nothing reads the position: a spectral constant is
 // resampled onto the wavelength basis, a read the proof allows, so the
 // tracked cases are exactly the ones whose coefficients read
@@ -60,7 +61,7 @@ const char *MATERIALS{
     "    absorption_coefficient: color(0.20),\n"
     "    scattering_coefficient: color(0.30)));\n"
     // Homogeneous with a sloped spectrum, so that the closed forms see
-    // the hero-wavelength weighting that flat coefficients hide.
+    // the wavelength-hero weighting that flat coefficients hide.
     "export material fog_sloped() = material(\n"
     "  volume: material_volume(\n"
     "    scattering: df::anisotropic_vdf(),\n"
@@ -275,7 +276,8 @@ struct Means final {
   for (int i = 0; i < NUM_SAMPLES; i++) {
     sampler.startPixelSample(uint32_t(i), 0);
     allocator.reset();
-    medium.reset(stack, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(stack, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     Color beta{1.0f};
     Color emitted{};
     float t{};
@@ -306,7 +308,8 @@ struct Means final {
   Sampler sampler{};
   for (int i = 0; i < NUM_SAMPLES; i++) {
     sampler.startPixelSample(uint32_t(i), 0);
-    medium.reset(stack, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(stack, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     Color beta{1.0f};
     medium.attenuate(sampler, tEnd, beta);
     mean += beta;
@@ -327,7 +330,8 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
 
   {
     INFO("an empty stack with no haze is a vacuum");
-    medium.reset(nullptr, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(nullptr, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     CHECK_FALSE(medium.hasHaze());
     CHECK_FALSE(medium.hasMedium());
     CHECK_FALSE(medium.attenuationDraws());
@@ -350,7 +354,8 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
   {
     INFO("an entry whose material has no volume carries no medium");
     MediumStack &clear{fixture.entry("clear")};
-    medium.reset(&clear, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&clear, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     CHECK_FALSE(medium.hasMedium());
   }
 
@@ -360,7 +365,8 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
   const Color fogTr{beerLambert(fogC.extinction(), DISTANCE)};
   {
     INFO("a homogeneous medium attenuates by Beer-Lambert, drawing nothing");
-    medium.reset(&fog, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&fog, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     REQUIRE(medium.hasMedium());
     CHECK_FALSE(medium.attenuationDraws());
     Sampler sampler{};
@@ -392,12 +398,13 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
     REQUIRE(fixture.isProvablyHomogeneous("fog_sloped"));
     MediumStack &sloped{fixture.entry("fog_sloped")};
     const Coefficients c{coefficientsOf(sloped, unitScale)};
-    // The bands must actually differ, or the hero-wavelength weighting
+    // The bands must actually differ, or the wavelength-hero weighting
     // of the closed forms collapses to the flat case above.
     REQUIRE(c.extinction()[0] !=
             doctest::Approx(c.extinction()[GRID.size() - 1]));
     const Color slopedTr{beerLambert(c.extinction(), DISTANCE)};
-    medium.reset(&sloped, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&sloped, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     REQUIRE(medium.hasMedium());
     CHECK_FALSE(medium.attenuationDraws());
     Sampler sampler{};
@@ -420,7 +427,8 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
     REQUIRE(fixture.isProvablyHomogeneous("glow"));
     MediumStack &glow{fixture.entry("glow")};
     const Coefficients glowC{coefficientsOf(glow, unitScale)};
-    medium.reset(&glow, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&glow, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     REQUIRE(medium.hasMedium());
     Sampler sampler{};
     sampler.startPixelSample(0, 0);
@@ -452,13 +460,14 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
   const Color base{Color(ramp.material->getMaxScatteringCoefficient()) *
                    unitScale};
   const Color rampTr{beerLambert(base, 1.0f)};
-  // The bands must actually differ, or the hero-wavelength weighting the
+  // The bands must actually differ, or the wavelength-hero weighting the
   // tracking carries through its null collisions is not exercised.
   REQUIRE(base[0] != doctest::Approx(base[GRID.size() - 1]));
 
   {
     INFO("a heterogeneous medium is tracked, at a fixed cost in draws");
-    medium.reset(&ramp, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&ramp, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     REQUIRE(medium.hasMedium());
     CHECK(medium.attenuationDraws());
     // Exactly the two the generator is seeded from, whatever the segment
@@ -501,7 +510,8 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
     // against a majorant it does not have.
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
     MediumStack &nomax{fixture.entry("ramp_nomax")};
-    medium.reset(&nomax, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&nomax, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     REQUIRE(medium.hasMedium());
     CHECK_FALSE(medium.attenuationDraws());
     const Coefficients c{coefficientsOf(nomax, unitScale)};
@@ -539,9 +549,11 @@ TEST_CASE("Medium: additive overlap") {
     s1.startPixelSample(0, 0);
     s2.startPixelSample(0, 0);
     Color betaOverlap{1.0f}, betaSum{1.0f};
-    medium.reset(&b, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&b, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE, org,
+                 dir);
     medium.attenuate(s1, DISTANCE, betaOverlap);
-    medium.reset(&sum, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&sum, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     medium.attenuate(s2, DISTANCE, betaSum);
     checkClose(betaOverlap, betaSum, 1e-6f, "the overlap against the sum");
     checkClose(betaOverlap, overlapTr, 1e-4f, "the closed form of the sum");
@@ -563,9 +575,11 @@ TEST_CASE("Medium: additive overlap") {
     s1.startPixelSample(0, 0);
     s2.startPixelSample(0, 0);
     Color betaDeep{1.0f}, betaPlain{1.0f};
-    medium.reset(&over2, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&over2, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     medium.attenuate(s1, DISTANCE, betaDeep);
-    medium.reset(&plain3, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&plain3, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     medium.attenuate(s2, DISTANCE, betaPlain);
     checkClose(betaDeep, betaPlain, 1e-6f,
                "the entry below the non-additive one contributes nothing");
@@ -636,7 +650,8 @@ TEST_CASE("Medium: additive overlap") {
     Color expect{};
     for (size_t i = 0; i < expect.size(); i++)
       expect[i] = std::exp(-double(base[i] + ac.extinction()[i] * SPAN));
-    medium.reset(&het, wavelengths, PathTime(0.0f), org, dir);
+    medium.reset(&het, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                 org, dir);
     CHECK(medium.attenuationDraws());
     checkClose(attenuateMean(medium, &het, wavelengths, org, dir, SPAN), expect,
                MEAN_TOLERANCE, "the mean transmittance of the overlap");
@@ -789,7 +804,8 @@ TEST_CASE("Medium: the phase function at the collision") {
     for (int i = 0; i < NUM_SAMPLES; i++) {
       sampler.startPixelSample(uint32_t(i), 0);
       allocator.reset();
-      medium.reset(entry, wavelengths, PathTime(0.0f), org, dir);
+      medium.reset(entry, wavelengths, PathTime(0.0f), smdl::FRAUNHOFER_D_LINE,
+                   org, dir);
       Color beta{1.0f};
       Color emitted{};
       float t{};

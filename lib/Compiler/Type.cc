@@ -2264,6 +2264,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(wavelengthBase);
   ADD_FIELD(wavelengthMin);
   ADD_FIELD(wavelengthMax);
+  ADD_FIELD(wavelengthHero);
   ADD_FIELD(wavelengthWeight);
   ADD_FIELD(metersPerSceneUnit);
   ADD_FIELD(animationTime);

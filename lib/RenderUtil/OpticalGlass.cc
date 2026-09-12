@@ -26,6 +26,38 @@ constexpr double NORMAL_LINE_SLOPE = -0.001682;
   return 1 / (l * l);
 }
 
+// The A, B, and C of the three-term Cauchy `A + B x + C x^2`, with `x` the
+// inverse square wavelength in micrometers, fitted through an index at the
+// d line, an Abbe number, and a partial dispersion. The caller establishes
+// that `nd` is greater than 1 and `abbeNumber` is positive.
+//
+// The three conditions are linear in A, B, and C. The second and third,
+// divided by `xF - xC` and `xg - xF`, are the mean slopes of the index in
+// `x` across F to C and across g to F: `B + C (xF + xC)` and
+// `B + C (xg + xF)`. Their difference is C alone.
+[[nodiscard]] std::array<double, 3>
+cauchyThroughAbbe(double nd, double abbeNumber, double pgF) noexcept {
+  const double xd{inverseSquareMicrometers(FRAUNHOFER_D_LINE)};
+  const double xF{inverseSquareMicrometers(FRAUNHOFER_F_LINE)};
+  const double xC{inverseSquareMicrometers(FRAUNHOFER_C_LINE)};
+  const double xg{inverseSquareMicrometers(FRAUNHOFER_G_LINE)};
+  const double spreadFC{(nd - 1) / abbeNumber};
+  const double slopeFC{spreadFC / (xF - xC)};
+  const double slopeGF{pgF * spreadFC / (xg - xF)};
+  const double c{(slopeGF - slopeFC) / (xg - xC)};
+  const double b{slopeFC - c * (xF + xC)};
+  return {nd - xd * (b + c * xd), b, c};
+}
+
+// The partial dispersion to fit with: the one stated, or Schott's normal
+// line where none is.
+[[nodiscard]] double partialDispersionOr(double abbeNumber,
+                                         double partialDispersion) noexcept {
+  return partialDispersion > 0 && partialDispersion < 1
+             ? partialDispersion
+             : NORMAL_LINE_INTERCEPT + NORMAL_LINE_SLOPE * abbeNumber;
+}
+
 // The ends of the domain squared, in square micrometers: where a Sellmeier
 // term's C puts its pole if the pole is inside.
 constexpr double DOMAIN_MIN_SQUARED{1e-6 *
@@ -185,26 +217,12 @@ OpticalGlass OpticalGlass::abbe(float nd, float abbeNumber,
                        Brief(*partialDispersion)));
   const double pgF{partialDispersion
                        ? double(*partialDispersion)
-                       : NORMAL_LINE_INTERCEPT +
-                             NORMAL_LINE_SLOPE * double(abbeNumber)};
-  // The three conditions are linear in the A, B, and C of
-  // `A + B x + C x^2`, with `x` the inverse square wavelength. The second
-  // and third, divided by `xF - xC` and `xg - xF`, are the mean slopes of
-  // the index in `x` across F to C and across g to F: `B + C (xF + xC)`
-  // and `B + C (xg + xF)`. Their difference is C alone.
-  const double xd{inverseSquareMicrometers(FRAUNHOFER_D_LINE)};
-  const double xF{inverseSquareMicrometers(FRAUNHOFER_F_LINE)};
-  const double xC{inverseSquareMicrometers(FRAUNHOFER_C_LINE)};
-  const double xg{inverseSquareMicrometers(FRAUNHOFER_G_LINE)};
-  const double spreadFC{(double(nd) - 1) / double(abbeNumber)};
-  const double slopeFC{spreadFC / (xF - xC)};
-  const double slopeGF{pgF * spreadFC / (xg - xF)};
-  const double c{(slopeGF - slopeFC) / (xg - xC)};
-  const double b{slopeFC - c * (xF + xC)};
-  const double a{double(nd) - xd * (b + c * xd)};
+                       : partialDispersionOr(double(abbeNumber), 0.0)};
+  const std::array<double, 3> k{
+      cauchyThroughAbbe(double(nd), double(abbeNumber), pgF)};
   OpticalGlass glass{};
   glass.mKind = Kind::ABBE;
-  glass.mCoefficients = {float(a), float(b), float(c), 0, 0, 0};
+  glass.mCoefficients = {float(k[0]), float(k[1]), float(k[2]), 0, 0, 0};
   glass.validate();
   return glass;
 }
@@ -296,5 +314,38 @@ const OpticalGlassEntry *findOpticalGlass(std::string_view name) {
     if (isSameName(name, entry.name)) return &entry;
   return nullptr;
 }
+
+extern "C" {
+
+float smdlEvalOpticalGlassIOR(int glass, float wavelength) {
+  const Span<const OpticalGlassEntry> catalog{opticalGlassCatalog()};
+  if (glass < 0 || size_t(glass) >= catalog.size()) return 1.0f;
+  return catalog[size_t(glass)].glass.indexAt(wavelength);
+}
+
+float smdlEvalAbbeIOR(float nd, float abbeNumber, float partialDispersion,
+                      float wavelength) {
+  if (!(std::isfinite(nd) && nd > 1) ||
+      !(std::isfinite(abbeNumber) && abbeNumber > 0))
+    return 1.0f;
+  const std::array<double, 3> k{cauchyThroughAbbe(
+      double(nd), double(abbeNumber),
+      partialDispersionOr(double(abbeNumber), std::isfinite(partialDispersion)
+                                                  ? double(partialDispersion)
+                                                  : 0.0))};
+  // The domain is held the way `OpticalGlass::indexAt()` holds it, which
+  // reads a wavelength that is not a number as the short end.
+  const double x{inverseSquareMicrometers(
+      wavelength > OPTICAL_GLASS_WAVELENGTH_MIN
+          ? std::min(wavelength, OPTICAL_GLASS_WAVELENGTH_MAX)
+          : OPTICAL_GLASS_WAVELENGTH_MIN)};
+  const double index{k[0] + x * (k[1] + x * k[2])};
+  // Without the domain walk `OpticalGlass::abbe()` runs, a fit far off the
+  // normal line can leave the index below 1 at an end of the domain. The
+  // clamp keeps the one invariant the callers of a JIT entry point rely on.
+  return std::isfinite(index) ? float(std::max(index, 1.0)) : 1.0f;
+}
+
+} // extern "C"
 
 } // namespace smdl

@@ -4,6 +4,7 @@
 #include "../CommandLine.h"
 
 #include "smdl/Common.h"
+#include "smdl/RenderUtil/OpticalGlass.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
@@ -130,6 +131,11 @@ cl::OptionCategory catState{"State Options"};
 cl::opt<float> optTime{"time",
                        cl::desc("The animation time in seconds (default: 0)"),
                        cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
+cl::opt<float> optWavelengthHero{
+    "wavelength-hero",
+    cl::desc("The hero wavelength in nanometers (default: 587.5618, the d "
+             "line)"),
+    cl::init(smdl::FRAUNHOFER_D_LINE), cl::sub(subTest), cl::cat(catState)};
 cl::opt<int> optObjectID{"object-id", cl::desc("The object ID (default: 0)"),
                          cl::init(0), cl::sub(subTest), cl::cat(catState)};
 cl::opt<smdl::float3> optTexCoord{
@@ -301,6 +307,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.output.fileName = flag(optOutput);
 
   opts.state.time = float(optTime);
+  opts.state.wavelengthHero = float(optWavelengthHero);
   opts.state.objectID = int(optObjectID);
   opts.state.texCoord = smdl::float3(optTexCoord);
   opts.state.ptexFaceID = int(optPtexFaceID);

@@ -200,7 +200,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     const bool isOccluded{mRender.scene.isOccluded(mRay)};
     if (mMediumStack || mPath.medium.hasHaze()) {
       mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
-                         mRay(mTCovered), mShadowDir);
+                         mPath.wavelengthHero, mRay(mTCovered), mShadowDir);
       if (!isOccluded) {
         mPath.medium.attenuate(mPath.sampler, (mRay.tmax - mTCovered) * mDist,
                                mBeta, mIsInfiniteTarget);
@@ -237,7 +237,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     // view outright, shadow segments in vacuum being the common case.
     if (mMediumStack || mPath.medium.hasHaze()) {
       mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
-                         mRay(mTCovered), mShadowDir);
+                         mPath.wavelengthHero, mRay(mTCovered), mShadowDir);
       mPath.medium.attenuate(mPath.sampler, (mRay.tmax - mTCovered) * mDist,
                              mBeta, mIsInfiniteTarget && !hasHitSurface);
     }
@@ -616,7 +616,8 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   // One state for every crossing the discovery walks in turn; see
   // `Hit::applyGeometryToState()`.
   smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
-                                    gatherState.animationTime)};
+                                    gatherState.animationTime,
+                                    path.wavelengthHero)};
   while (true) {
     if (chain.count == std::min(maxDepth, MANIFOLD_MAX_DEPTH)) return {};
     if (blocker.instance->isCurves()) return {};
@@ -793,7 +794,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   // One state for every converged crossing in turn; see
   // `Hit::applyGeometryToState()`.
   smdl::State crossState{makeRenderState(path.wavelengths, &path.allocator,
-                                         gatherState.animationTime)};
+                                         gatherState.animationTime,
+                                         path.wavelengthHero)};
   for (int i = 0; i < connection.count; i++) {
     const ManifoldConnectionVertex &crossing{connection.vertices[i]};
     VisibilityWalk segWalk{
@@ -1247,8 +1249,8 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   float3 origin{isReceiver};
   // One state for every interface the cast crosses in turn, and for the
   // crossings re-asked below; see `Hit::applyGeometryToState()`.
-  smdl::State state{
-      makeRenderState(path.wavelengths, &path.allocator, path.time.seconds)};
+  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
+                                    path.time.seconds, path.wavelengthHero)};
   bool hasReached{false};
   for (int hops = 0; hops < MNEE_STRAIGHT_MAX_HOPS; hops++) {
     float tmax{INF};
@@ -1767,6 +1769,7 @@ private:
   const MediumStack *mExteriorMedium{};
   Color mExteriorWavelengths{};
   float mExteriorTime{};
+  float mExteriorWavelengthHero{};
 
   // What the manifold estimators have claimed since the last receiver;
   // see `MNEECoverage`.
@@ -1788,21 +1791,25 @@ private:
 
 const MediumStack *PathWalk::exteriorMedium() {
   if (!mRender.exteriorMediumDef) return nullptr;
-  // An instance is exact at the wavelengths and time it was evaluated
-  // with and at no others, which is the contract of the homogeneity proof
-  // (see `MaterialDef::hasHomogeneousCoefficients()`), so the exterior is
-  // evaluated again whenever a path's differ from the last evaluation's:
-  // every path under -wavelength-jitter or an open shutter, and once per
-  // block otherwise. The instance has no geometry and no side, so the
-  // render state's default frame is already the finalized one, and the
-  // evaluation takes no sampler draw.
+  // An instance is exact at the wavelengths, time and hero wavelength it
+  // was evaluated with and at no others, which is the contract of the
+  // homogeneity proof (see `MaterialDef::hasHomogeneousCoefficients()`),
+  // so the exterior is evaluated again whenever a path's differ from the
+  // last evaluation's: every path under -wavelength-jitter, an open
+  // shutter or a lens that disperses, and once per block otherwise. The
+  // instance has no geometry and no side, so the render state's default
+  // frame is already the finalized one, and the evaluation takes no
+  // sampler draw.
   const Color &wavelengths{mPath.wavelengths};
   const float time{mPath.time.seconds};
+  const float wavelengthHero{mPath.wavelengthHero};
   if (!mExteriorMedium || mExteriorTime != time ||
+      mExteriorWavelengthHero != wavelengthHero ||
       std::memcmp(mExteriorWavelengths.data(), wavelengths.data(),
                   wavelengths.size() * sizeof(float)) != 0) {
     mExteriorAllocator.reset();
-    smdl::State state{makeRenderState(wavelengths, &mExteriorAllocator, time)};
+    smdl::State state{makeRenderState(wavelengths, &mExteriorAllocator, time,
+                                      wavelengthHero)};
     mExteriorMedium = new (mExteriorAllocator)
         MediumStack{nullptr,
                     mExteriorAllocator.allocate<smdl::JIT::Material>(
@@ -1810,6 +1817,7 @@ const MediumStack *PathWalk::exteriorMedium() {
                     nullptr};
     mExteriorWavelengths = wavelengths;
     mExteriorTime = time;
+    mExteriorWavelengthHero = wavelengthHero;
   }
   return mExteriorMedium;
 }
@@ -1855,8 +1863,8 @@ Color PathWalk::trace(const CameraSample &camera) {
     // it is vacuum, the common case: the view is left alone rather than
     // resolved to nothing, which would still walk the stack.
     if (mMediumStack || mPath.medium.hasHaze()) {
-      mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time, ray.org,
-                         ray.dir);
+      mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
+                         mPath.wavelengthHero, ray.org, ray.dir);
       if (mPath.medium.hasMedium()) {
         // Sample a free-flight distance over the cast, which
         // `Scene::intersect` bounded at the hit parameter (or left

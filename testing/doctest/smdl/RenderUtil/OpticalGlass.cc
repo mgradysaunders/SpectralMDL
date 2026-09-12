@@ -269,3 +269,91 @@ TEST_CASE("OpticalGlass: the built-in catalog") {
     }
   }
 }
+
+TEST_CASE("OpticalGlass: the entry points a material reaches") {
+  SUBCASE("A catalog index evaluates the glass it indexes") {
+    const smdl::Span<const smdl::OpticalGlassEntry> catalog{
+        smdl::opticalGlassCatalog()};
+    for (size_t i = 0; i < catalog.size(); i++) {
+      CHECK_MESSAGE(
+          smdl::smdlEvalOpticalGlassIOR(int(i), smdl::FRAUNHOFER_D_LINE) ==
+              catalog[i].glass.indexAt(smdl::FRAUNHOFER_D_LINE),
+          asText(catalog[i].name), " does not evaluate at its index");
+      // `nd()` evaluates the same coefficients in double, so the two agree
+      // to a float's precision and not to its last bit.
+      CHECK_NEAR(smdl::smdlEvalOpticalGlassIOR(int(i), smdl::FRAUNHOFER_D_LINE),
+                 catalog[i].glass.nd(), 1e-6f);
+      CHECK(smdl::smdlEvalOpticalGlassIOR(int(i), 450.0f) ==
+            catalog[i].glass.indexAt(450.0f));
+    }
+  }
+  SUBCASE("A catalog index outside the catalog reads as vacuum") {
+    CHECK(smdl::smdlEvalOpticalGlassIOR(-1, smdl::FRAUNHOFER_D_LINE) == 1.0f);
+    CHECK(smdl::smdlEvalOpticalGlassIOR(int(smdl::opticalGlassCatalog().size()),
+                                        smdl::FRAUNHOFER_D_LINE) == 1.0f);
+  }
+  SUBCASE("A catalog index holds its wavelength in the domain") {
+    // The same clamp `indexAt()` applies, since it is `indexAt()`.
+    const smdl::OpticalGlass &glass{catalogGlass("N-SF11")};
+    const int index{int(smdl::findOpticalGlass("N-SF11") -
+                        smdl::opticalGlassCatalog().begin())};
+    CHECK(smdl::smdlEvalOpticalGlassIOR(index, 100.0f) ==
+          glass.indexAt(smdl::OPTICAL_GLASS_WAVELENGTH_MIN));
+    CHECK(smdl::smdlEvalOpticalGlassIOR(
+              index, std::numeric_limits<float>::quiet_NaN()) ==
+          glass.indexAt(smdl::OPTICAL_GLASS_WAVELENGTH_MIN));
+    CHECK(smdl::smdlEvalOpticalGlassIOR(index, 5000.0f) ==
+          glass.indexAt(smdl::OPTICAL_GLASS_WAVELENGTH_MAX));
+  }
+  SUBCASE("An Abbe fit is the one the factory builds") {
+    // The entry point skips the walk of the domain that validates a glass,
+    // and must otherwise be the same fit through the same conditions.
+    const smdl::OpticalGlass stated{
+        smdl::OpticalGlass::abbe(1.5168f, 64.17f, 0.5349f)};
+    const smdl::OpticalGlass implied{smdl::OpticalGlass::abbe(1.5168f, 64.17f)};
+    for (const float wavelength :
+         {350.0f, smdl::FRAUNHOFER_G_LINE, smdl::FRAUNHOFER_F_LINE,
+          smdl::FRAUNHOFER_D_LINE, smdl::FRAUNHOFER_C_LINE, 2000.0f}) {
+      CAPTURE(wavelength);
+      CHECK_NEAR(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 0.5349f, wavelength),
+                 stated.indexAt(wavelength), 1e-6f);
+      // A partial dispersion outside 0 to 1 is the unstated one, which
+      // takes Schott's normal line, as `std::nullopt` does.
+      CHECK_NEAR(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 0.0f, wavelength),
+                 implied.indexAt(wavelength), 1e-6f);
+      CHECK_NEAR(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 2.0f, wavelength),
+                 implied.indexAt(wavelength), 1e-6f);
+    }
+  }
+  SUBCASE("An Abbe fit holds its wavelength in the domain") {
+    const float shortEnd{smdl::smdlEvalAbbeIOR(
+        1.5168f, 64.17f, 0.5349f, smdl::OPTICAL_GLASS_WAVELENGTH_MIN)};
+    const float longEnd{smdl::smdlEvalAbbeIOR(
+        1.5168f, 64.17f, 0.5349f, smdl::OPTICAL_GLASS_WAVELENGTH_MAX)};
+    CHECK(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 0.5349f, 100.0f) == shortEnd);
+    CHECK(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 0.5349f,
+                                std::numeric_limits<float>::quiet_NaN()) ==
+          shortEnd);
+    CHECK(smdl::smdlEvalAbbeIOR(1.5168f, 64.17f, 0.5349f, 5000.0f) == longEnd);
+  }
+  SUBCASE("An Abbe fit that is no glass reads as vacuum") {
+    // Where the factory throws, the entry point cannot, since it is
+    // called from JIT'd code.
+    CHECK(smdl::smdlEvalAbbeIOR(1.0f, 64.17f, 0.5349f,
+                                smdl::FRAUNHOFER_D_LINE) == 1.0f);
+    CHECK(smdl::smdlEvalAbbeIOR(1.5168f, 0.0f, 0.5349f,
+                                smdl::FRAUNHOFER_D_LINE) == 1.0f);
+    CHECK(smdl::smdlEvalAbbeIOR(smdl::INF, 64.17f, 0.5349f,
+                                smdl::FRAUNHOFER_D_LINE) == 1.0f);
+  }
+  SUBCASE("An index below 1 is clamped rather than refused") {
+    // A partial dispersion far off the normal line bends the fit back up
+    // at an end of the domain, which the factory refuses; here the one
+    // invariant a caller in JIT'd code relies on is kept instead.
+    for (const float wavelength : {300.0f, 400.0f, 600.0f, 2500.0f}) {
+      CAPTURE(wavelength);
+      CHECK(smdl::smdlEvalAbbeIOR(1.5f, 90.0f, 0.99f, wavelength) >= 1.0f);
+      CHECK(smdl::smdlEvalAbbeIOR(1.5f, 90.0f, 0.01f, wavelength) >= 1.0f);
+    }
+  }
+}

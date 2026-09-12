@@ -71,9 +71,9 @@ public:
   ///
   /// Resolving the stack is the expensive half (the coefficient spectra,
   /// the majorants, the query state, the density-hint mapping), so it is
-  /// skipped whenever the stack and time are the ones already resolved,
-  /// and only the segment is reprojected. Within a path a repeat is
-  /// found by the stack's address. Across paths the addresses mean
+  /// skipped whenever the stack, time and hero wavelength are the ones
+  /// already resolved, and only the segment is reprojected. Within a path a
+  /// repeat is found by the stack's address. Across paths the addresses mean
   /// nothing, the allocator handing them out again, so `beginPath()`
   /// drops the key and the first call after it identifies the medium by
   /// what the stack carries: the same run of materials with the same
@@ -81,7 +81,8 @@ public:
   /// refreshed, so a render inside one fog or one plume resolves it once
   /// per block rather than once per sample.
   void reset(const MediumStack *stack, const Color &wavelengths, PathTime time,
-             const float3 &org, const float3 &dir) noexcept;
+             float wavelengthHero, const float3 &org,
+             const float3 &dir) noexcept;
 
   /// Forget the stack the resolution is keyed on, at the head of every
   /// path; see `reset()`.
@@ -280,18 +281,20 @@ private:
   /// on the stack alone: kept by `rebind()` when they already describe
   /// this medium, built anew by `rebuild()` otherwise.
   void resolve(const MediumStack *stack, const Color &wavelengths,
-               PathTime time) noexcept;
+               PathTime time, float wavelengthHero) noexcept;
 
   /// Is the resolved medium the one on `stack`? Walks the active run of
   /// the stack as `rebuild()` does and compares each entry with its
   /// component; on a match the components take the entries' instances,
-  /// a moving instance's frame is read again at the new time, and
-  /// nothing else is touched.
-  [[nodiscard]] bool rebind(const MediumStack *stack, PathTime time) noexcept;
+  /// a moving instance's frame is read again at the new time, a
+  /// heterogeneous component's query state takes the new hero
+  /// wavelength, and nothing else is touched.
+  [[nodiscard]] bool rebind(const MediumStack *stack, PathTime time,
+                            float wavelengthHero) noexcept;
 
   /// Build the resolution of `stack` from nothing.
   void rebuild(const MediumStack *stack, const Color &wavelengths,
-               PathTime time) noexcept;
+               PathTime time, float wavelengthHero) noexcept;
 
   /// Would `entry` resolve to `component` again? The material and the
   /// presence of its volume fields decide the path; along it, a
@@ -551,11 +554,13 @@ private:
   mutable const Component *mScatterComponent{};
   mutable float mScatterDistance{};
 
-  /// What the resolution describes: the stack and the time it was
-  /// resolved at, which `reset()` compares against to keep it outright.
+  /// What the resolution describes: the stack, the time and the hero
+  /// wavelength it was resolved at, which `reset()` compares against to
+  /// keep it outright.
   struct Key final {
     const MediumStack *stack{};
     float time{};
+    float wavelengthHero{};
 
     /// Is `stack` a stack of the path in flight? False before the first
     /// `reset()` and after `beginPath()`, when the address may since

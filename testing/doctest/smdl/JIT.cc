@@ -18,6 +18,7 @@
 
 #include "smdl/Compiler.h"
 #include "smdl/Manifold.h"
+#include "smdl/RenderUtil/OpticalGlass.h"
 
 TEST_CASE("MaterialDef: the flags a compile can prove") {
   TempDir tmpDir{"compiler-flags"};
@@ -238,6 +239,12 @@ TEST_CASE("volumeEvaluate and vdfEvaluate: the volume along a position") {
       "  volume: material_volume(\n"
       "    scattering: df::anisotropic_vdf(),\n"
       "    scattering_coefficient: color(state::animation_time())));\n"
+      "export material vol_hero() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering: df::anisotropic_vdf(),\n"
+      "    scattering_coefficient:\n"
+      "      color(0.01 * state::wavelength_hero())));\n"
       // Reads that the walk cannot see through: a scene-data getter hands
       // the whole state to a host callback, and a generator draw writes
       // to the state.
@@ -423,6 +430,15 @@ TEST_CASE("volumeEvaluate and vdfEvaluate: the volume along a position") {
     timed->volumeEvaluate(gridState, sigmaA.data(), sigmaS.data(),
                           emission.data());
     for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 2.0f);
+    // The hero wavelength is path-constant for the same reason the time
+    // is: a path is committed to one, so an index or a coefficient read
+    // from it is the same at every point of one medium instance.
+    const smdl::JIT::MaterialDef *hero{requireMaterial(compiler, "vol_hero")};
+    CHECK(hero->hasHomogeneousCoefficients());
+    gridState.wavelengthHero = 500.0f;
+    hero->volumeEvaluate(gridState, sigmaA.data(), sigmaS.data(),
+                         emission.data());
+    for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 5.0f);
   }
   SUBCASE("Scene data and the generator keep the coefficients unproven") {
     for (const char *name : {"vol_scene", "vol_rng"}) {
@@ -1019,6 +1035,64 @@ TEST_CASE("MaterialDef: the lobe words per side of the interface") {
             .reflectLobes == smdl::DF_DIRAC_BRDF);
   CHECK(smdl::manifoldClaim(twoSided, /*isMarked=*/true).reflectLobes ==
         smdl::DF_DIRAC_BRDF);
+}
+
+TEST_CASE("State: the hero wavelength a dispersive material refracts at") {
+  // The whole point of the field: a material body may compute its scalar
+  // `ior` from the wavelength the path is committed to, so that one
+  // material refracts differently on paths the camera drew differently,
+  // without the path ever splitting or a band ever being zeroed.
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::dispersion_test", R"(#smdl
+import ::df::*;
+using ::models::optical_glass import *;
+export material flint() = material(
+  ior: glass_ior(N_SF11),
+  surface: material_surface(
+    scattering: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
+export material fixed() = material(
+  ior: 1.78472,
+  surface: material_surface(
+    scattering: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
+)"));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const smdl::JIT::MaterialDef *flint{requireMaterial(compiler, "flint")};
+  const smdl::JIT::MaterialDef *fixed{requireMaterial(compiler, "fixed")};
+  StateStorage storage{compiler};
+  const auto iorAt{
+      [&](const smdl::JIT::MaterialDef *materialDef, float wavelengthHero) {
+        smdl::State state{storage.makeState()};
+        state.wavelengthHero = wavelengthHero;
+        state.finalize();
+        return smdl::JIT::Material(state, materialDef).getIOR();
+      }};
+  SUBCASE("A material reads the index of its glass at the hero wavelength") {
+    const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass("N-SF11")};
+    REQUIRE(entry);
+    for (const float wavelengthHero :
+         {smdl::FRAUNHOFER_G_LINE, smdl::FRAUNHOFER_F_LINE,
+          smdl::FRAUNHOFER_D_LINE, smdl::FRAUNHOFER_C_LINE}) {
+      CAPTURE(wavelengthHero);
+      CHECK(iorAt(flint, wavelengthHero) ==
+            entry->glass.indexAt(wavelengthHero));
+    }
+  }
+  SUBCASE("The index moves with the wavelength and normally") {
+    // Normal dispersion: a shorter wavelength refracts more, which is what
+    // makes the short end of a spectrum bend further through a prism.
+    CHECK(iorAt(flint, smdl::FRAUNHOFER_F_LINE) >
+          iorAt(flint, smdl::FRAUNHOFER_C_LINE));
+    CHECK(iorAt(flint, smdl::FRAUNHOFER_D_LINE) !=
+          iorAt(flint, smdl::FRAUNHOFER_F_LINE));
+  }
+  SUBCASE("A material that does not read it is unmoved") {
+    CHECK(iorAt(fixed, smdl::FRAUNHOFER_F_LINE) ==
+          iorAt(fixed, smdl::FRAUNHOFER_C_LINE));
+    // The glass at its own d line is the constant the other states.
+    CHECK_NEAR(iorAt(flint, smdl::FRAUNHOFER_D_LINE),
+               iorAt(fixed, smdl::FRAUNHOFER_D_LINE), 1e-5f);
+  }
 }
 
 TEST_CASE("State: the vertex color a material reads through both spellings") {

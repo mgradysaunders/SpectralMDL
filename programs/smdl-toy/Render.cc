@@ -12,6 +12,7 @@
 #include "../CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "smdl/RenderUtil/OpticalGlass.h"
 #include "smdl/Support/Denormals.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
@@ -418,10 +419,10 @@ void renderSamples(const Options &opts, const Frame &frame,
         const smdl::SkyBasis &skyBasis{shouldJitterWavelength ? jitteredSkyBasis
                                                               : renderSkyBasis};
         // The four states every path of the block works in, built here
-        // rather than per path: only the animation time below tells one
-        // path's from another's, and the jittered grid is rewritten in
-        // place, so the wavelength pointer holds still too. See
-        // `PathContext`.
+        // rather than per path: only the animation time and the hero
+        // wavelength below tell one path's from another's, and the
+        // jittered grid is rewritten in place, so the wavelength pointer
+        // holds still too. See `PathContext`.
         const Color &blockWavelengths{shouldJitterWavelength ? *jittered
                                                              : wavelengths};
         smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
@@ -437,12 +438,23 @@ void renderSamples(const Options &opts, const Frame &frame,
             std::clamp(opts.render.guide.bsdfFraction.value, 0.0f, 1.0f);
         guiding.isBSDFFractionFixed = opts.render.guide.bsdfFraction.wasGiven;
         // The context and the walker of the block's paths; the time is
-        // the open key until each path sets its own.
-        PathContext path{allocator,     sampler,          medium,
-                         skyBasis,      gatherState,      walkState,
-                         shadeState,    lightState,       gatherSample,
-                         gatherBlocker, blockWavelengths, PathTime{0.0f},
-                         &guiding,      records};
+        // the open key and the hero wavelength the d line until each path
+        // sets its own.
+        PathContext path{allocator,
+                         sampler,
+                         medium,
+                         skyBasis,
+                         gatherState,
+                         walkState,
+                         shadeState,
+                         lightState,
+                         gatherSample,
+                         gatherBlocker,
+                         blockWavelengths,
+                         PathTime{0.0f},
+                         smdl::FRAUNHOFER_D_LINE,
+                         &guiding,
+                         records};
         // The block's own tally, which the walk fills and the end of the
         // block folds into the render's.
         std::optional<PathStats> blockStats;
@@ -493,6 +505,14 @@ void renderSamples(const Options &opts, const Frame &frame,
                     ? response->traceWavelengthAt(
                           x, y, lensWavelengthOffset(uint32_t(i), sampleIndex))
                     : 0.0f};
+            // The same wavelength reaches every material of the path as
+            // `State::wavelengthHero`, so that a material refracts at the
+            // index the picture is being formed at. A lens that does not
+            // disperse, and a band the illuminant leaves dark, draw
+            // nothing and leave every material at the d line, which is
+            // the reference a glass catalog states `nd` at.
+            const float wavelengthHero{
+                lensWavelength > 0 ? lensWavelength : smdl::FRAUNHOFER_D_LINE};
             if (CameraSample cameraSample{
                     camera->sample(x, y, sampler, lensWavelength)};
                 cameraSample.weight > 0) {
@@ -511,7 +531,12 @@ void renderSamples(const Options &opts, const Frame &frame,
               walkState.animationTime = time.seconds;
               shadeState.animationTime = time.seconds;
               lightState.animationTime = time.seconds;
+              gatherState.wavelengthHero = wavelengthHero;
+              walkState.wavelengthHero = wavelengthHero;
+              shadeState.wavelengthHero = wavelengthHero;
+              lightState.wavelengthHero = wavelengthHero;
               path.time = time;
+              path.wavelengthHero = wavelengthHero;
               Lsample = tracePath(*walk, cameraSample);
               numRecords = path.numRecords;
             }

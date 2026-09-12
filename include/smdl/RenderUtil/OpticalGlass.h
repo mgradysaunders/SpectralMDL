@@ -218,6 +218,36 @@ struct OpticalGlassEntry final {
 [[nodiscard]] SMDL_EXPORT const OpticalGlassEntry *
 findOpticalGlass(std::string_view name);
 
+/// The entry points the builtin `models::glass_ior` module reaches through
+/// `@(foreign)`, which resolves them out of the host process by name.
+///
+/// Neither throws, since neither may unwind into JIT'd code, and both
+/// return an index that is finite and at least 1 whatever they are given,
+/// as `smdlEvalMetalIOR()` zeroes on a metal it does not know.
+///
+/// \{
+extern "C" {
+
+/// The index of refraction of the catalog glass at index `glass` at
+/// `wavelength` nanometers, where the index is into `opticalGlassCatalog()`
+/// and the wavelength is held within the domain as `OpticalGlass::indexAt()`
+/// holds it. An index outside the catalog reads as 1.
+[[nodiscard]] SMDL_EXPORT float smdlEvalOpticalGlassIOR(int glass,
+                                                        float wavelength);
+
+/// The index of refraction at `wavelength` nanometers of the three-term
+/// Cauchy fitted through `nd`, the Abbe number `abbeNumber`, and the partial
+/// dispersion `partialDispersion`, which takes Schott's normal line unless
+/// it lies between 0 and 1. See `OpticalGlass::abbe()`, whose fit this is;
+/// this skips the walk of the domain that validates it, and clamps the
+/// index to at least 1 instead. An `nd` that is not greater than 1 or an
+/// Abbe number that is not positive reads as 1.
+[[nodiscard]] SMDL_EXPORT float smdlEvalAbbeIOR(float nd, float abbeNumber,
+                                                float partialDispersion,
+                                                float wavelength);
+}
+/// \}
+
 /// \}
 
 } // namespace smdl

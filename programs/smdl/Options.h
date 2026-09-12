@@ -94,6 +94,11 @@ struct OutputOptions final {
 struct StateOptions final {
   float time{};
 
+  /// The wavelength in nanometers a dispersive material evaluates its
+  /// index of refraction at; see `state::wavelength_hero()`. A renderer
+  /// draws this per path, so a unit test states it instead.
+  float wavelengthHero{};
+
   int objectID{};
 
   smdl::float3 texCoord{};

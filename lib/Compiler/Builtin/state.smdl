@@ -95,6 +95,18 @@ export float wavelength_max() = $state.wavelengthMax;
 @(macro)
 export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelengthBase;
 
+/// The wavelength in nanometers the path is committed to: what a lens whose
+/// glasses disperse was traced at, and what to evaluate a wavelength-dependent
+/// index of refraction at, as `models::glass_ior` does. The same at every point
+/// of one path, and always positive. A `color` still carries every band of
+/// `wavelength_base()`; only the index is the hero's, which is how a material
+/// disperses without splitting the path. A renderer that draws no wavelength
+/// reports the helium d line, the reference a glass catalog states `nd` at.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float wavelength_hero() = $state.wavelengthHero;
+
 /// The conversion factor from scene units to meters.
 @(macro)
 export float meters_per_scene_unit() = $state.metersPerSceneUnit;

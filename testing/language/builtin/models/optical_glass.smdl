@@ -1,0 +1,118 @@
+/// `::models::optical_glass`: the indices of refraction of optical
+/// glasses. The values are the makers' published ones, evaluated from the
+/// Sellmeier coefficients the support library carries.
+///
+/// The `nd` roll-call below is what pins the enumeration against the
+/// catalog it indexes, those being two orders mirrored across C++ and
+/// SMDL with nothing else to hold them together.
+#smdl
+
+import ::state::*;
+using ::models::optical_glass import *;
+
+// The wavelengths a catalog states a glass at, in nanometers, and the
+// tolerance the roll-call holds to, which is a few units in the last
+// place of a float at these magnitudes.
+const float D_LINE = 587.5618;
+const float F_LINE = 486.1327;
+const float C_LINE = 656.2725;
+const float G_LINE = 435.8343;
+const float TOL = 2e-6;
+
+unit_test "Every catalog glass reports its published index at the d line" {
+  #assert(#abs(glass_ior(CAF2, D_LINE) - 1.4338493) < TOL);
+  #assert(#abs(glass_ior(N_FK51A, D_LINE) - 1.4865611) < TOL);
+  #assert(#abs(glass_ior(N_PK52A, D_LINE) - 1.4970001) < TOL);
+  #assert(#abs(glass_ior(FUSED_SILICA, D_LINE) - 1.4584637) < TOL);
+  #assert(#abs(glass_ior(N_BK7, D_LINE) - 1.5168000) < TOL);
+  #assert(#abs(glass_ior(N_SK16, D_LINE) - 1.6204100) < TOL);
+  #assert(#abs(glass_ior(N_K5, D_LINE) - 1.5224887) < TOL);
+  #assert(#abs(glass_ior(N_BAK1, D_LINE) - 1.5725001) < TOL);
+  #assert(#abs(glass_ior(N_BAK4, D_LINE) - 1.5688275) < TOL);
+  #assert(#abs(glass_ior(N_LAK9, D_LINE) - 1.6910020) < TOL);
+  #assert(#abs(glass_ior(N_BAF10, D_LINE) - 1.6700299) < TOL);
+  #assert(#abs(glass_ior(N_KZFS4, D_LINE) - 1.6133602) < TOL);
+  #assert(#abs(glass_ior(LF5, D_LINE) - 1.5814404) < TOL);
+  #assert(#abs(glass_ior(N_F2, D_LINE) - 1.6200532) < TOL);
+  #assert(#abs(glass_ior(F2, D_LINE) - 1.6200402) < TOL);
+  #assert(#abs(glass_ior(SF2, D_LINE) - 1.6476891) < TOL);
+  #assert(#abs(glass_ior(N_SF2, D_LINE) - 1.6476898) < TOL);
+  #assert(#abs(glass_ior(N_SF5, D_LINE) - 1.6727071) < TOL);
+  #assert(#abs(glass_ior(N_LASF9, D_LINE) - 1.8502493) < TOL);
+  #assert(#abs(glass_ior(N_SF10, D_LINE) - 1.7282771) < TOL);
+  #assert(#abs(glass_ior(N_SF11, D_LINE) - 1.7847199) < TOL);
+  #assert(#abs(glass_ior(N_SF6, D_LINE) - 1.8051802) < TOL);
+  #assert(#abs(glass_ior(N_SF57, D_LINE) - 1.8466599) < TOL);
+}
+
+// The lead flints and the ones that replaced them agree at the d line to
+// about a part in a million, so the roll-call above cannot tell either
+// pair apart. The short end of the domain separates all four by 1e-2.
+unit_test "The short end separates the flints their d lines cannot" {
+  #assert(#abs(glass_ior(N_F2, 300.0) - 1.7252020) < TOL);
+  #assert(#abs(glass_ior(F2, 300.0) - 1.7176651) < TOL);
+  #assert(#abs(glass_ior(SF2, 300.0) - 1.7612368) < TOL);
+  #assert(#abs(glass_ior(N_SF2, 300.0) - 1.7731955) < TOL);
+}
+
+unit_test "A glass disperses normally and holds its argument in the domain" {
+  #assert(glass_ior(N_BK7, F_LINE) > glass_ior(N_BK7, C_LINE));
+  #assert(#abs(glass_ior(N_BK7, F_LINE) - 1.5223764) < TOL);
+  #assert(#abs(glass_ior(N_BK7, C_LINE) - 1.5143223) < TOL);
+  // A wavelength short of the domain reads as its short end, as the
+  // metal tables clamp.
+  #assert(glass_ior(N_BK7, 250.0) == glass_ior(N_BK7, 300.0));
+  #assert(glass_ior(N_BK7, 3000.0) == glass_ior(N_BK7, 2500.0));
+}
+
+unit_test "Every model defaults to the hero wavelength of the state" {
+  preserve $state.wavelengthHero;
+  $state.wavelengthHero = D_LINE;
+  #assert(glass_ior(N_SF11) == glass_ior(N_SF11, D_LINE));
+  #assert(abbe_ior(1.5168, 64.17) == abbe_ior(1.5168, 64.17, 0.0, D_LINE));
+  $state.wavelengthHero = F_LINE;
+  #assert(glass_ior(N_SF11) == glass_ior(N_SF11, F_LINE));
+  #assert(glass_ior(N_SF11) != glass_ior(N_SF11, D_LINE));
+  #assert(abbe_ior(1.5168, 64.17) == abbe_ior(1.5168, 64.17, 0.0, F_LINE));
+}
+
+// N-BK7 as its datasheet prints it, which is how the catalog itself is
+// stated, so the pure-SMDL evaluation must land where the catalog does.
+const float3 N_BK7_B = float3(1.03961212, 0.231792344, 1.01046945);
+const float3 N_BK7_C = float3(0.00600069867, 0.0200179144, 103.560653);
+
+unit_test "The Sellmeier form agrees with the catalog it is stated from" {
+  #assert(#abs(sellmeier_ior(N_BK7_B, N_BK7_C, D_LINE) -
+               glass_ior(N_BK7, D_LINE)) < TOL);
+  #assert(#abs(sellmeier_ior(N_BK7_B, N_BK7_C, F_LINE) -
+               glass_ior(N_BK7, F_LINE)) < TOL);
+}
+
+// The Cauchy fit is within about 3e-4 of a maker's Sellmeier from 450 to
+// 700 nm, which is the accuracy its own documentation claims, and it is
+// exact at the d line by construction.
+unit_test "The Abbe fit reproduces the glass it was fitted through" {
+  #assert(#abs(abbe_ior(1.5168, 64.17, 0.5349, D_LINE) - 1.5168) < TOL);
+  #assert(#abs(abbe_ior(1.5168, 64.17, 0.5349, F_LINE) -
+               glass_ior(N_BK7, F_LINE)) < 3e-4);
+  #assert(#abs(abbe_ior(1.5168, 64.17, 0.5349, C_LINE) -
+               glass_ior(N_BK7, C_LINE)) < 3e-4);
+  // An unstated partial dispersion takes Schott's normal line, which for
+  // this Abbe number is 0.5359 rather than N-BK7's own 0.5349. The two
+  // fits agree at the d line whatever the partial dispersion, since it is
+  // a condition of both, and part only where the third term carries: the
+  // g line is the far side of the F line it is stated across.
+  #assert(abbe_ior(1.5168, 64.17, 0.0, G_LINE) !=
+          abbe_ior(1.5168, 64.17, 0.5349, G_LINE));
+  #assert(abbe_ior(1.5168, 64.17, 0.0, D_LINE) ==
+          abbe_ior(1.5168, 64.17, 0.5349, D_LINE));
+  // N-BK7 sits near enough the normal line that the unstated fit stays
+  // within the accuracy the fit claims anyway.
+  #assert(#abs(abbe_ior(1.5168, 64.17, 0.0, F_LINE) -
+               glass_ior(N_BK7, F_LINE)) < 3e-4);
+}
+
+unit_test "A nonsense glass reports the index of vacuum" {
+  #assert(abbe_ior(1.0, 64.17) == 1.0);
+  #assert(abbe_ior(1.5168, 0.0) == 1.0);
+}

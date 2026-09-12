@@ -556,13 +556,14 @@ Compiler::add(std::string fileOrDirName,
 namespace {
 // The bytes of a 'State' that are the same at every point of one path
 // inside one medium instance: the wavelength grid and its weights, the
-// units, the animation time, the object transform, the transport mode,
-// and the allocator that '#bump' reads. Every other byte is point-varying,
-// padding included, so a new 'State' field is point-varying until it is
-// listed here. The animation time is constant because every instance a
-// path scatters in is evaluated at that path's time; 'tangentToObject' is
-// not, because 'State::finalize()' moves the surface point into its last
-// column.
+// hero wavelength, the units, the animation time, the object transform,
+// the transport mode, and the allocator that '#bump' reads. Every other
+// byte is point-varying, padding included, so a new 'State' field is
+// point-varying until it is listed here. The animation time is constant
+// because every instance a path scatters in is evaluated at that path's
+// time, and the hero wavelength because it is drawn once at the camera;
+// 'tangentToObject' is not, because 'State::finalize()' moves the surface
+// point into its last column.
 const std::bitset<sizeof(State)> &pathConstantStateBytes() {
   static const std::bitset<sizeof(State)> bytes{[] {
     std::bitset<sizeof(State)> bits{};
@@ -574,6 +575,7 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
     ALLOW(wavelengthBase);
     ALLOW(wavelengthMin);
     ALLOW(wavelengthMax);
+    ALLOW(wavelengthHero);
     ALLOW(wavelengthWeight);
     ALLOW(metersPerSceneUnit);
     ALLOW(animationTime);

@@ -27,6 +27,7 @@ void runUnitTests(const Options &opts, smdl::Compiler &compiler) {
   state.textureCoordinate[0][1] = opts.state.texCoord.y;
   state.textureCoordinate[0][2] = opts.state.texCoord.z;
   state.animationTime = opts.state.time;
+  state.wavelengthHero = opts.state.wavelengthHero;
   state.objectId = opts.state.objectID;
   state.ptexFaceId = opts.state.ptexFaceID;
   state.ptexFaceUV[0] = opts.state.ptexFaceUV.x;

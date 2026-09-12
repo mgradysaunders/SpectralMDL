@@ -811,9 +811,12 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
     CHECK_CONTAINS(report, "  after surface 1: 'N-BK7', nd 1.5168, Vd 64.17");
     CHECK_CONTAINS(report, "  color: the F line focuses ");
     // Over the band's own curve, which R is zero outside of from 560 to
-    // 700 nm.
+    // 700 nm. The same wavelength reaches the scene as
+    // `State::wavelengthHero`, which the line says so that a material's
+    // dispersion and the lens's are read off one place.
     CHECK_CONTAINS(report, "  traced: at a wavelength each pixel draws from "
-                           "its band: 'R' 560-700 nm, median ");
+                           "its band, which is also what a material that "
+                           "disperses refracts at: 'R' 560-700 nm, median ");
   }
   SUBCASE("Without a tile the report says the d line, and under the preview "
           "nothing") {

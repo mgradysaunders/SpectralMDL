@@ -720,6 +720,9 @@ export struct material {
   ///
   /// NOTE: In the MDL specification, IOR is type `color` but for
   /// implementation simplicity this is restricted to being type `float`.
+  /// A material that disperses says so by evaluating its index at
+  /// `state::wavelength_hero()`, the wavelength the path is committed to,
+  /// rather than by carrying one index per band. See `models::glass_ior`.
   ///
   float ior = 1.4;
 

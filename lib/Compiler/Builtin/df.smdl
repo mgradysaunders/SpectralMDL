@@ -314,6 +314,13 @@ auto clampChance(const auto chance) = #select(
 // Every primitive in the `specular` namespace takes this relative incident
 // to transmitted ratio. A modifier BSDF that carries a user-facing absolute
 // IOR must convert it with `relativeIOR()`; never invert by hand.
+//
+// Every IOR here is a scalar at one wavelength, never a spectrum. A
+// material that disperses says so by evaluating its absolute index at
+// `state::wavelength_hero()`, the wavelength the path is committed to (see
+// `models::optical_glass`), which is read where the material is
+// constructed: the scattering entry points are pure and cannot reach
+// `$state` themselves.
 const float DEFAULT_IOR = 1.4;
 
 // Convert a user-facing absolute IOR to the relative ratio oriented with

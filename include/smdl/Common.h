@@ -436,6 +436,26 @@ public:
   /// The maximum wavelength in nanometers.
   float wavelengthMax{};
 
+  /// The wavelength in nanometers the path is committed to: what a lens
+  /// whose glasses disperse was traced at, and what a material evaluates
+  /// a wavelength-dependent index of refraction at. The same at every
+  /// point of one path, and always positive.
+  ///
+  /// This does not narrow a `color`, which still carries every band of
+  /// `wavelengthBase`; only the refraction geometry is the hero's, which
+  /// is dispersion approximated by committing the whole spectrum of a
+  /// path to one index. It is therefore not hero wavelength spectral
+  /// sampling in the usual sense: no band is zeroed and there is no
+  /// multiple importance sampling over wavelength shifts.
+  ///
+  /// The default is the helium d line, which is the wavelength a glass
+  /// catalog states `nd` at and a lens prescription's bare index means,
+  /// so a host that never draws one evaluates every dispersion model at
+  /// its published reference.
+  ///
+  /// \note This is non-standard!
+  float wavelengthHero{587.5618f};
+
   /// If non-null, this necessarily points to `wavelengthBaseMax`
   /// per-band quadrature weights in nanometers: the effective width of
   /// each band, for integrating spectral quantities over a non-uniform
