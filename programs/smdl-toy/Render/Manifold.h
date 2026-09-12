@@ -158,6 +158,14 @@ public:
   PrimitiveSpec primitive{};
   smdl::Distribution1D faceDistr{};
   float totalArea{};
+  /// The center and squared half diagonal of the caster's world box,
+  /// what `MNEECasterSet::weight()` weighs the caster by from a
+  /// receiver. A moving caster's box covers both keys, a proxy for
+  /// where it can be; nothing but the weights read it, and every
+  /// caster keeps a positive weight, so a loose box costs variance and
+  /// never energy.
+  float3 boundCenter{};
+  float boundRadiusSq{};
 };
 
 /// Every marked instance the caster gathers sample.
@@ -173,7 +181,18 @@ public:
 ///
 /// An estimate is made on ONE caster, drawn by `sampleCaster()` with a
 /// probability the estimate divides out, and every start of that estimate
-/// is drawn on it by `samplePoint()`. The start density never enters the
+/// is drawn on it by `samplePoint()`. The draw weighs each caster by its
+/// solid angle from the receiver, near enough, so that a receiver in
+/// one mirror's patch draws that mirror rather than one of the N others
+/// the scene has, which is where the caster count would otherwise cost
+/// variance. The solid angle is a proxy and not the contribution: a
+/// flat mirror's is the lamp's image whatever the mirror's size, a
+/// convex caster demagnifies it and a concave one magnifies it, and
+/// whether the caster can bend the one light the gather also drew
+/// toward the receiver is not asked at all (a flat mirror serves one
+/// patch of the floor per lamp). A mixture with the uniform draw was
+/// weighed and rejected: it halves the loss where the proxy is wrong
+/// and halves the win where it is right. The start density never enters the
 /// estimator: the reciprocal estimate asks how often a fresh start reaches
 /// the same solution, which already accounts for however the starts are
 /// distributed, so all that has to hold is that every start of one
@@ -202,10 +221,22 @@ public:
 
   [[nodiscard]] bool empty() const noexcept { return casters.empty(); }
 
-  /// Draw the caster an estimate is made on, uniformly, and the
-  /// probability of having drawn it. Null when there is none.
-  [[nodiscard]] const MNEECaster *sampleCaster(Sampler &sampler,
-                                               float &pdf) const;
+  /// Draw the caster an estimate is made on from the receiver at
+  /// `point`, in proportion to `weight()`, and the probability of
+  /// having drawn it. Null when there is none. One draw is consumed
+  /// whatever the count. The probability is never recomputed anywhere
+  /// else: a caster estimate is claimed outright, so no arrival weighs
+  /// against it, which is what lets the draw depend on the receiver at
+  /// all.
+  [[nodiscard]] const MNEECaster *
+  sampleCaster(Sampler &sampler, const float3 &point, float &pdf) const;
+
+  /// The weight `sampleCaster()` draws the caster by from `point`: its
+  /// area over the mean squared distance to it, the rule light
+  /// selection weighs a cluster by (`LightTree::importance()`), which
+  /// stays finite for a receiver inside the bound.
+  [[nodiscard]] static float weight(const MNEECaster &caster,
+                                    const float3 &point) noexcept;
 
   /// The caster the instance is, or null when it is unmarked or claims
   /// nothing: the membership question both halves of the caster

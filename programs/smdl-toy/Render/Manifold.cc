@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
 
 #include "Render/Manifold.h"
 #include "Render/Visibility.h"
@@ -209,9 +210,22 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     caster.instIndex = instIndex;
     caster.reflectLobes = claim.reflectLobes;
     caster.refractLobes = claim.refractLobes;
+    // The box covers the open key's geometry under both keys' frames,
+    // as a light's does for the light tree.
+    std::optional<InstanceFrame> shutScratch{};
+    const InstanceFrame *shutFrame{
+        instance.isMoving ? &instance.frameAt(1.0f, shutScratch) : nullptr};
+    BoundBox3 box{};
+    auto extend{[&](const float3 &point) {
+      box.extend(transformPoint(instance.frame.objectToWorld, point));
+      if (shutFrame)
+        box.extend(transformPoint(shutFrame->objectToWorld, point));
+    }};
     if (instance.isPrimitive()) {
-      caster.primitive = scene.primitives[instance.primIndex]->spec;
-      caster.totalArea = scene.primitives[instance.primIndex]->objectArea;
+      const Primitive &primitive{*scene.primitives[instance.primIndex]};
+      caster.primitive = primitive.spec;
+      caster.totalArea = primitive.objectArea;
+      for (const auto &point : primitive.proxyPoints) extend(point);
     } else {
       const Mesh &mesh{*scene.meshes[instance.meshIndex]};
       std::vector<float> faceAreas{};
@@ -229,19 +243,55 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
       }
       if (!(caster.totalArea > 0.0f)) continue;
       caster.faceDistr = smdl::Distribution1D(faceAreas);
+      for (const auto &vert : mesh.verts) extend(vert.point);
     }
+    if (box.isEmpty()) continue;
+    caster.boundCenter = box.center();
+    caster.boundRadiusSq = 0.25f * lengthSquared(box.extent());
     mCasterOfInstance[instIndex] = uint32_t(casters.size());
     casters.push_back(std::move(caster));
   }
 }
 
+float MNEECasterSet::weight(const MNEECaster &caster,
+                            const float3 &point) noexcept {
+  // By the parallel axis theorem the mean squared distance to a bound
+  // filled uniformly is the squared distance to its center plus a third
+  // of its squared half diagonal; see `LightTree::importance()`.
+  const float distSq{lengthSquared(point - caster.boundCenter)};
+  return caster.totalArea /
+         std::max(distSq + caster.boundRadiusSq * (1.0f / 3.0f), EPS * EPS);
+}
+
 const MNEECaster *MNEECasterSet::sampleCaster(Sampler &sampler,
+                                              const float3 &point,
                                               float &pdf) const {
   if (casters.empty()) return nullptr;
-  const size_t which{std::min(size_t(float(sampler) * float(casters.size())),
-                              casters.size() - 1)};
-  pdf = 1.0f / float(casters.size());
-  return &casters[which];
+  const float xi{float(sampler)};
+  float total{};
+  for (const MNEECaster &caster : casters) total += weight(caster, point);
+  // A receiver so far from every caster that the weights vanish, or one
+  // whose distance overflows, draws uniformly.
+  if (!(total > 0.0f) || !std::isfinite(total)) {
+    const size_t which{
+        std::min(size_t(xi * float(casters.size())), casters.size() - 1)};
+    pdf = 1.0f / float(casters.size());
+    return &casters[which];
+  }
+  // The weights are cheap next to the walk the draw seeds, so they are
+  // evaluated again rather than stored.
+  const float target{xi * total};
+  float running{};
+  for (const MNEECaster &caster : casters) {
+    const float w{weight(caster, point)};
+    running += w;
+    if (target < running) {
+      pdf = w / total;
+      return &caster;
+    }
+  }
+  pdf = weight(casters.back(), point) / total;
+  return &casters.back();
 }
 
 bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,

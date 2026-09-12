@@ -360,6 +360,86 @@ TEST_CASE("MNEECasterSet: a refractive caster is kept") {
   CHECK(casters.casterOf(INVALID_INDEX) == nullptr);
 }
 
+// The caster draw: by area over mean squared distance from the
+// receiver, so a receiver over one of two equal disks draws that one
+// nearly always and a receiver midway draws either, with the
+// probability the estimate divides out equal to the drawn weight's
+// share and one draw consumed either way.
+TEST_CASE("MNEECasterSet: a caster is drawn by its solid angle") {
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
+  Scene scene{compiler};
+  {
+    LayoutItem near{};
+    near.primitive.shape = PrimitiveSpec::Shape::DISK;
+    near.primitive.radius = 0.5f;
+    near.materials.all = "self_mirror";
+    near.isCaster = true;
+    scene.add(near);
+    LayoutItem far{near};
+    far.objectToWorld[3] = float4(10.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(far);
+  }
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const ScopedGrid grid{};
+  scene.commit(grid.wavelengths());
+  const MNEECasterSet casters{scene, grid.wavelengths()};
+  REQUIRE(casters.casters.size() == 2);
+  const MNEECaster &near{casters.casters[0]};
+  const MNEECaster &far{casters.casters[1]};
+  CHECK_NEAR(near.boundCenter.x, 0.0f, 1e-4f);
+  CHECK_NEAR(far.boundCenter.x, 10.0f, 1e-4f);
+  CHECK_NEAR(near.boundRadiusSq, 0.5f, 1e-4f); // Half diagonal of 1 by 1.
+  CHECK_NEAR(near.totalArea, far.totalArea, 1e-5f);
+  const auto draw{
+      [&](const float3 &point, int &nearCount, float &nearPdf, float &farPdf) {
+        Sampler sampler{};
+        nearCount = 0;
+        for (uint32_t i = 0; i < 1024; i++) {
+          sampler.startPixelSample(7, i);
+          float pdf{};
+          const MNEECaster *drawn{casters.sampleCaster(sampler, point, pdf)};
+          REQUIRE(drawn);
+          if (drawn == &near) {
+            nearCount++;
+            nearPdf = pdf;
+          } else {
+            CHECK(drawn == &far);
+            farPdf = pdf;
+          }
+        }
+      }};
+  SUBCASE("A receiver over one disk draws it nearly always") {
+    const float3 point{0.0f, 0.0f, 1.0f};
+    const float wNear{MNEECasterSet::weight(near, point)};
+    const float wFar{MNEECasterSet::weight(far, point)};
+    CHECK(wNear > 50.0f * wFar);
+    int nearCount{};
+    float nearPdf{};
+    float farPdf{};
+    draw(point, nearCount, nearPdf, farPdf);
+    CHECK(nearCount > 1000);
+    CHECK_NEAR(nearPdf, wNear / (wNear + wFar), 1e-6f);
+    if (nearCount < 1024) CHECK_NEAR(farPdf, wFar / (wNear + wFar), 1e-6f);
+  }
+  SUBCASE("A receiver midway draws either about equally") {
+    const float3 point{5.0f, 0.0f, 1.0f};
+    int nearCount{};
+    float nearPdf{};
+    float farPdf{};
+    draw(point, nearCount, nearPdf, farPdf);
+    CHECK(nearCount > 400);
+    CHECK(nearCount < 624);
+    CHECK_NEAR(nearPdf, 0.5f, 1e-6f);
+    CHECK_NEAR(farPdf, 0.5f, 1e-6f);
+  }
+  SUBCASE("The weight is finite at the caster's own center") {
+    CHECK(std::isfinite(MNEECasterSet::weight(near, near.boundCenter)));
+    CHECK(MNEECasterSet::weight(near, near.boundCenter) > 0.0f);
+  }
+}
+
 // The start of a caster refractive estimate: a glass ball as the
 // caster, the trace entering it on the near face wherever the point was
 // drawn, leaving it by Snell's law, and handing the solver a start it

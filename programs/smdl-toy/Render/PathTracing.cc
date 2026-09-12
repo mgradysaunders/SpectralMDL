@@ -1299,15 +1299,16 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       // mirror is nowhere near the line to the light, and a prism's
       // spectrum lands beside its shadow, so whether that line is clear
       // says nothing about whether there is a connection to find. One
-      // caster is drawn for both, with the probability each estimate
-      // divides out. The reflective one searches toward the caustic
-      // targets only (see `LightSample::caustic`); the refractive one
-      // toward every light, as the straight-line gather does, since the
-      // glossy chains' share is dropped at every arrival.
+      // caster is drawn for both, by its solid angle from this vertex,
+      // with the probability each estimate divides out. The reflective
+      // one searches toward the caustic targets only (see
+      // `LightSample::caustic`); the refractive one toward every light,
+      // as the straight-line gather does, since the glossy chains' share
+      // is dropped at every arrival.
       if (render.mneeOptions.casters && !render.mneeOptions.casters->empty()) {
         float casterPdf{};
         if (const MNEECaster *caster{render.mneeOptions.casters->sampleCaster(
-                path.sampler, casterPdf)}) {
+                path.sampler, vertex.point, casterPdf)}) {
           if (lightSample.isCaustic)
             direct += mneeGather.gatherCasterReflection(*caster, casterPdf);
           direct += mneeGather.gatherCasterRefraction(
