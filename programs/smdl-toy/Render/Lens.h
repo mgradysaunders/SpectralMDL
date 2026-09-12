@@ -382,12 +382,21 @@ private:
   /// The focus distance the film was placed for, kept for the log.
   float mFocusDistance{};
 
-  /// The aperture polygon, or zero blades for a round stop. The radius
-  /// is the circumradius of the polygon of the stop's own area, so
-  /// blades change the shape of the bokeh and not the exposure.
+  /// The aperture polygon, or zero blades for a round stop. It carries
+  /// the area of the round stop it replaces, so blades change the shape
+  /// of the bokeh and not the exposure.
   int mNumBlades{};
   float mBladeAngle{};
-  float mBladeCircumRadius{};
+
+  /// The polygon as the trace tests it: the outward normal of each edge,
+  /// and the distance from the axis out to an edge. A convex polygon is
+  /// the intersection of its edge half-planes, which is what makes the
+  /// test a dot product per edge and no trigonometry.
+  ///
+  /// \{
+  std::vector<float2> mBladeEdgeNormals{};
+  float mBladeApothem{};
+  /// \}
 };
 
 /// The exit pupil as a film point sees it, tabulated by film radius.

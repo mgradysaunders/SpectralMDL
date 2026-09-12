@@ -91,9 +91,16 @@ constexpr int NUM_TRANSMITTED_AREA_STEPS = 32;
   return std::sqrt(uLimit);
 }
 
-// The sag of a surface at squared radius `u`, and its derivative with
-// respect to `u`, both in scene units. False is a radius past where the
-// base conic turns back on itself, which no point of the surface is.
+// The sag of a surface at squared radius `u`, and, when the caller
+// wants it, its derivative with respect to `u`, both in scene units.
+// False is a radius past where the base conic turns back on itself,
+// which no point of the surface is.
+//
+// The bracketing walk reads the sign of the residual and nothing else,
+// and the derivative is a divide plus a term of polynomial apiece, so it
+// asks for the sag alone. The sag itself is computed the same either
+// way, which keeps the walk's decisions identical.
+template <bool WantDerivative = true>
 [[nodiscard]] bool sagOf(const LensElement &elem, float u, float &sag,
                          float &dSagDu) noexcept {
   const float kappa{elem.curvature()};
@@ -101,7 +108,7 @@ constexpr int NUM_TRANSMITTED_AREA_STEPS = 32;
   if (SMDL_UNLIKELY(!(wSq > 0))) return false;
   const float w{std::sqrt(wSq)};
   sag = kappa * u / (1 + w);
-  dSagDu = 0.5f * kappa / w;
+  if constexpr (WantDerivative) dSagDu = 0.5f * kappa / w;
   if (SMDL_UNLIKELY(elem.numAsphericTerms > 0)) {
     // The polynomial is evaluated in the millimeters its coefficients are
     // written in and converted once, here. Scaling the coefficients into
@@ -114,11 +121,12 @@ constexpr int NUM_TRANSMITTED_AREA_STEPS = 32;
     float power{u};
     for (int i = 0; i < elem.numAsphericTerms; i++) {
       poly += elem.aspheric[i] * power * u;
-      dPoly += elem.aspheric[i] * (float(i) + 2) * power;
+      if constexpr (WantDerivative)
+        dPoly += elem.aspheric[i] * (float(i) + 2) * power;
       power *= u;
     }
     sag += poly * MM_TO_SCENE;
-    dSagDu += dPoly * SCENE_TO_MM;
+    if constexpr (WantDerivative) dSagDu += dPoly * SCENE_TO_MM;
   }
   return true;
 }
@@ -309,6 +317,15 @@ public:
     height = (p.z - elem.z) - sag;
     return true;
   }};
+  // The same, for the walk, which reads the sign and never the slope.
+  // Whatever it lands on close enough to accept is probed again, so that
+  // the normal is taken from a slope that was actually evaluated.
+  const auto probeHeight{[&](float t) {
+    p = ray(t);
+    if (!sagOf<false>(elem, p.x * p.x + p.y * p.y, sag, dSagDu)) return false;
+    height = (p.z - elem.z) - sag;
+    return true;
+  }};
   const auto accept{[&]() {
     point = p;
     // The surface is `z - vertex - sag(x^2 + y^2) = 0`, so its gradient
@@ -319,10 +336,10 @@ public:
     if (dot(normal, ray.dir) > 0) normal = -normal;
     return true;
   }};
-  if (!probe(tLo)) {
+  if (!probeHeight(tLo)) {
     return false;
   } else if (std::abs(height) <= tolerance) {
-    return accept();
+    return probe(tLo) && accept();
   }
   // Walk the span from the near end to the first piece of it the ray
   // changes sides over, so that what the solve closes on is the crossing
@@ -338,10 +355,10 @@ public:
   bool isBracketed{false};
   for (int i = 1; i <= NUM_SPAN_STEPS && !isBracketed; i++) {
     if (const float t{tLo + (tHi - tLo) * (float(i) / NUM_SPAN_STEPS)};
-        !probe(t)) {
+        !probeHeight(t)) {
       return false;
     } else if (std::abs(height) <= tolerance) {
-      return accept();
+      return probe(t) && accept();
     } else if ((height < 0) != isBelowAtLo) {
       tB = t, isBracketed = true;
     } else {
@@ -441,19 +458,22 @@ public:
   return true;
 }
 
-// Is the point inside the regular polygon of `numBlades` sides with
-// circumradius `circumRadius` and a vertex at `angle`? The boundary in
-// polar form is the apothem over the cosine of the angle off the nearest
-// edge, which is one modulo and one cosine rather than a loop over the
-// edges.
-[[nodiscard]] bool isInsideBlades(float x, float y, int numBlades,
-                                  float circumRadius, float angle) noexcept {
-  const float sector{TWO_PI / float(numBlades)};
-  float phi{std::atan2(y, x) - angle};
-  phi -= sector * std::floor(phi / sector);
-  const float apothem{circumRadius * std::cos(0.5f * sector)};
-  const float boundary{apothem / std::cos(phi - 0.5f * sector)};
-  return x * x + y * y <= boundary * boundary;
+// Is the point inside the regular polygon the blades cut, whose inward
+// edge normals and apothem `Lens` laid out? A convex polygon is the
+// intersection of its edge half-planes, so the point is inside when it
+// clears every one of them.
+//
+// The polar form this replaces read the angle off the nearest edge,
+// which is one `atan2` and one cosine however many blades there are.
+// That is fewer operations but a longer dependency chain, and the trace
+// is latency bound: these dot products do not depend on each other, so
+// the processor runs them together.
+[[nodiscard]] bool isInsideBlades(float x, float y,
+                                  smdl::Span<const float2> edgeNormals,
+                                  float apothem) noexcept {
+  for (const float2 &normal : edgeNormals)
+    if (x * normal.x + y * normal.y > apothem) return false;
+  return true;
 }
 
 // An axis-aligned rectangle on the plane of the rear vertex, grown by
@@ -1004,8 +1024,18 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     // scaling `smdl::uniformApertureSample()` samples the thin lens
     // aperture with.
     const float n{float(mNumBlades)};
-    mBladeCircumRadius =
-        workingStopRadius * std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)));
+    const float circumRadius{
+        workingStopRadius * std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)))};
+    // The half planes the trace tests against. `bladeAngle` is measured
+    // so that zero puts a vertex at screen right, so the edge between
+    // two vertices faces half a sector off that.
+    const float sector{TWO_PI / n};
+    mBladeApothem = circumRadius * std::cos(0.5f * sector);
+    mBladeEdgeNormals.resize(mNumBlades);
+    for (int i = 0; i < mNumBlades; i++) {
+      const float phi{mBladeAngle + (float(i) + 0.5f) * sector};
+      mBladeEdgeNormals[i] = float2(std::cos(phi), std::sin(phi));
+    }
   }
 
   // The extent every intersection searches inside, settled now that the
@@ -1087,8 +1117,8 @@ bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
         elem.semiDiameter * elem.semiDiameter)
       return false;
     if (elem.isStop) {
-      if (mNumBlades >= 3 && !isInsideBlades(point.x, point.y, mNumBlades,
-                                             mBladeCircumRadius, mBladeAngle))
+      if (mNumBlades >= 3 &&
+          !isInsideBlades(point.x, point.y, mBladeEdgeNormals, mBladeApothem))
         return false;
       // The stop is a plane with a hole in it: it bends nothing and has
       // no thickness, so the ray goes on from where it was. Moving the
