@@ -183,7 +183,7 @@ public:
   T x, y, z, w;
 };
 
-inline namespace vector_type_aliases {
+inline namespace vector_types {
 
 /// The equivalent of the MDL `int2` vector type.
 using int2 = Vector<int, 2>;
@@ -216,7 +216,7 @@ static_assert(sizeof(float2) == 2 * sizeof(float));
 static_assert(sizeof(float3) == 4 * sizeof(float));
 static_assert(sizeof(float4) == 4 * sizeof(float));
 
-} // namespace vector_type_aliases
+} // namespace vector_types
 
 /// \name Functions (vector math)
 /// \{
@@ -528,7 +528,7 @@ public:
   std::array<Vector<T, M>, N> v{};
 };
 
-inline namespace matrix_type_aliases {
+inline namespace matrix_types {
 
 /// The equivalent of the MDL `float2x2` matrix type.
 using float2x2 = Matrix<float, 2, 2>;
@@ -584,7 +584,7 @@ using double3x4 = Matrix<double, 3, 4>;
 /// The equivalent of the MDL `double4x4` matrix type.
 using double4x4 = Matrix<double, 4, 4>;
 
-} // namespace matrix_type_aliases
+} // namespace matrix_types
 
 /// \name Functions (matrix math)
 /// \{

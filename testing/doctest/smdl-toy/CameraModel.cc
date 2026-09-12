@@ -96,7 +96,7 @@ constexpr const char *SINGLET = "lens {\n"
 // The same singlet in a catalog glass, which disperses.
 constexpr const char *GLASS_SINGLET = "lens {\n"
                                       "  surface { radius 50 thickness 4 "
-                                      "glass N-BK7 diameter 20 }\n"
+                                      "medium N-BK7 diameter 20 }\n"
                                       "  surface { radius -50 diameter 20 }\n"
                                       "  stop { diameter 20 }\n"
                                       "}\n";
@@ -801,7 +801,7 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
     preview.camera.isIdeal = true;
     CHECK(!resolveCameraModel(preview).options.traceWavelengthRange);
   }
-  SUBCASE("The report states the glasses, the color, and what each band "
+  SUBCASE("The report states the media, the color, and what each band "
           "traces the lens at") {
     const auto report{describeCamera(resolveCameraModel(files.camera(
         "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")))};

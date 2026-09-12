@@ -4,8 +4,8 @@
 
 #include "smdl/Support/VectorMath.h"
 
-using namespace smdl::vector_type_aliases;
-using namespace smdl::matrix_type_aliases;
+using namespace smdl::vector_types;
+using namespace smdl::matrix_types;
 
 namespace {
 

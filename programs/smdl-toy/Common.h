@@ -12,8 +12,8 @@
 #include "smdl/Support/Macros.h"
 #include "smdl/Support/VectorMath.h"
 
-using namespace smdl::vector_type_aliases;
-using namespace smdl::matrix_type_aliases;
+using namespace smdl::vector_types;
+using namespace smdl::matrix_types;
 
 // The math constants the programs spell unqualified. They live in the
 // library so that host and library agree on them by construction.

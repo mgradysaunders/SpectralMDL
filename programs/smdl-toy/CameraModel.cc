@@ -395,11 +395,11 @@ struct SensorLines final {
                               : std::string());
 }
 
-// The glass a surface leads into, for the report: its name, nd, Vd, and
+// The medium a surface leads into, for the report: its name, nd, Vd, and
 // partial dispersion, and whether they came from its Sellmeier or from
 // nd and Vd; a scalar index, which does not disperse; or nothing, for
 // air and for the stop.
-[[nodiscard]] std::string describeGlass(const LensSurface &surface) {
+[[nodiscard]] std::string describeMedium(const LensSurface &surface) {
   const auto &medium{surface.medium};
   if (surface.isStop) return {};
   if (!medium.isDispersive())
@@ -407,9 +407,9 @@ struct SensorLines final {
                ? std::string()
                : smdl::concat("an index of ", smdl::Brief(medium.nd(), 6),
                               ", which does not disperse");
-  return smdl::concat(surface.glassName.empty()
-                          ? std::string("a glass")
-                          : smdl::concat(smdl::Quoted(surface.glassName)),
+  return smdl::concat(surface.mediumName.empty()
+                          ? std::string("a medium")
+                          : smdl::concat(smdl::Quoted(surface.mediumName)),
                       ", nd ", smdl::Brief(medium.nd(), 6), ", Vd ",
                       smdl::Brief(medium.abbeNumber(), 4), ", PgF ",
                       smdl::Brief(medium.partialDispersion(), 4),
@@ -960,12 +960,12 @@ std::string describeCamera(const CameraModel &model) {
          : fit.maxChiefRayError > pitch
              ? "; what it frames near the edges sits elsewhere in the render"
              : "");
-    // The glasses, which are the column a transcription is read against,
+    // The media, which are the column a transcription is read against,
     // and what they make of the lens's color when they disperse.
     for (size_t i = 0; i < options.lens->surfaces.size(); i++)
-      if (const auto glass{describeGlass(options.lens->surfaces[i])};
-          !glass.empty())
-        line("  after surface ", i + 1, ": ", glass);
+      if (const auto medium{describeMedium(options.lens->surfaces[i])};
+          !medium.empty())
+        line("  after surface ", i + 1, ": ", medium);
     if (options.lens->isDispersive()) {
       const float apartMM{1e3f *
                           (lens.paraxialFilmZAt(smdl::FRAUNHOFER_F_LINE) -

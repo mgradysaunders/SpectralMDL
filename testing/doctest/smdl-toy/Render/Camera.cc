@@ -336,8 +336,8 @@ TEST_CASE("Camera: the frame's size and the f-number") {
     auto options{openOptions()};
     options.fStop = 2.8f;
     const Camera fullFrame{options};
-    CHECK(fullFrame.frameSize().x == 1e-3f * 36.0f);
-    CHECK(fullFrame.frameSize().y == 1e-3f * 24.0f);
+    CHECK(fullFrame.frameSize().x == 36.0e-3f);
+    CHECK(fullFrame.frameSize().y == 24.0e-3f);
     CHECK(fullFrame.fNumber() == doctest::Approx(2.8f));
     options.frameSize = float2(7.68e-3f, 5.76e-3f);
     const Camera phone{options};
@@ -681,7 +681,7 @@ namespace {
 CameraOptions glassOptions() {
   auto options{lensOptions()};
   options.lens->surfaces[0].medium = smdl::findOpticalGlass("N-BK7")->glass;
-  options.lens->surfaces[0].glassName = "N-BK7";
+  options.lens->surfaces[0].mediumName = "N-BK7";
   return options;
 }
 

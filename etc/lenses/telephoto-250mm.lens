@@ -14,27 +14,27 @@ lens {
   # within the book's rounding of its nd and V. SUMITA fits BASF5 with
   # SCHOTT's power series, so it is written by its nd and Vd and the
   # partial dispersion that series gives.
-  glass PK51A {
+  medium PK51A {
     sellmeier { b 1.15611 0.153229 0.785619
                 c 0.00585597 0.0194072 140.537 }
     ior 1.528554 abbe 76.975515
   }
-  glass KZFSN9 {
+  medium KZFSN9 {
     sellmeier { b 1.35457 0.151346 0.880334
                 c 0.00858527 0.0390569 69.6889 }
     ior 1.598557 abbe 46.903842
   }
-  glass KZFS1 {
+  medium KZFS1 {
     sellmeier { b 1.36618 0.182049 0.864315
                 c 0.00873165 0.0389834 62.9392 }
     ior 1.613099 abbe 44.339473
   }
-  glass BASF5 { ior 1.60323 abbe 42.5 partial_dispersion 0.5721 }
-  surface { radius 54.6275  thickness 12.52   glass PK51A  diameter 47.5 }
-  surface { radius -86.365  thickness 3.755   glass KZFSN9 diameter 44.5 }
-  surface { radius 271.7625 thickness 2.8175               diameter 41.5 }
-  stop    {                 thickness 67.4125              diameter 40.5 }
-  surface { radius -32.13   thickness 3.755   glass KZFS1  diameter 31.5 }
-  surface { radius 49.5325  thickness 12.52   glass BASF5  diameter 33.5 }
-  surface { radius -50.945                                 diameter 37 }
+  medium BASF5 { ior 1.60323 abbe 42.5 partial_dispersion 0.5721 }
+  surface { radius 54.6275  thickness 12.52   medium PK51A  diameter 47.5 }
+  surface { radius -86.365  thickness 3.755   medium KZFSN9 diameter 44.5 }
+  surface { radius 271.7625 thickness 2.8175                diameter 41.5 }
+  stop    {                 thickness 67.4125               diameter 40.5 }
+  surface { radius -32.13   thickness 3.755   medium KZFS1  diameter 31.5 }
+  surface { radius 49.5325  thickness 12.52   medium BASF5  diameter 33.5 }
+  surface { radius -50.945                                  diameter 37 }
 }

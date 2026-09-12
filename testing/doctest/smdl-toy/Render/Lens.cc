@@ -373,12 +373,12 @@ bool isSameRay(const Ray &a, const Ray &b) {
 }
 } // namespace
 
-TEST_CASE("Lens: a named glass") {
+TEST_CASE("Lens: a named medium") {
   // An equiconvex N-BK7 singlet, by the glass's name.
   const auto &glass{catalogGlass("N-BK7")};
   const auto nd{glass.indexAt(smdl::FRAUNHOFER_D_LINE)};
   auto named{singletOf(glass)};
-  named.surfaces[0].glassName = "N-BK7";
+  named.surfaces[0].mediumName = "N-BK7";
   const Lens lens{named, {AT_INFINITY, 0}};
   SUBCASE("It is laid out at its index at the d line") {
     const auto elements{lens.elements()};
@@ -555,13 +555,13 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
                 "expected air behind the last surface");
   }
-  SUBCASE("One that leaves the film in a named glass is refused by name") {
-    // The stop stands in the space before it, so the glass carries
+  SUBCASE("One that leaves the film in a named medium is refused by name") {
+    // The stop stands in the space before it, so the medium carries
     // across it to the film.
     auto lens{equiconvex(50, 4, 1.5f, 20)};
     lens.surfaces[1].medium = smdl::findOpticalGlass("N-BK7")->glass;
-    lens.surfaces[1].glassName = "N-BK7";
-    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the glass 'N-BK7'");
+    lens.surfaces[1].mediumName = "N-BK7";
+    CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the medium 'N-BK7'");
   }
   SUBCASE("One with more aspheric coefficients than a surface holds is "
           "refused") {

@@ -78,7 +78,7 @@ struct CameraOptions final {
   /// with the thin lens it sizes the pixels a readout counts over and
   /// makes the focal length `fStop` is a fraction of real. Never zero:
   /// the caller decides it.
-  float2 frameSize{1e-3f * 36.0f, 1e-3f * 24.0f};
+  float2 frameSize{36.0e-3f, 24.0e-3f};
 
   /// What the film holds, which decides the weight a sample carries.
   ///
@@ -146,6 +146,45 @@ struct CameraOptions final {
   bool noLOD{};
 };
 
+/// One pixel of the frame in scene units, the frame's height over the
+/// picture's rows, which is what a distance on the film is stated in
+/// pixels against.
+[[nodiscard]] 
+inline float pixelPitch(const CameraOptions &options) noexcept {
+  return options.frameSize.y / float(options.resolution.y);
+}
+
+/// The focus distance `options` resolves to, in scene units: the stated
+/// one, or the distance from the camera to what it looks at when none
+/// was stated, which is what a zero `CameraOptions::focus` asks for.
+/// `INF` is focus at infinity.
+[[nodiscard]] 
+inline float focusDistanceOf(const CameraOptions &options) noexcept {
+  return options.focus > 0 ? options.focus
+                           : length(options.lookTo - options.lookFrom);
+}
+
+/// What this render asks of the prescription `options` names: the focus
+/// it resolved to, spelled as `LensOptions` spells infinity, the stop,
+/// and the aperture polygon in radians. Every lens the render builds is
+/// built from this, so the report, the preview's fit, and the camera all
+/// look through the same one.
+[[nodiscard]]
+inline LensOptions lensOptionsOf(const CameraOptions &options) noexcept {
+  const float focus{focusDistanceOf(options)};
+  // The lens focuses at infinity for a distance of 0, which is what
+  // `INF` here means.
+  return LensOptions{std::isinf(focus) ? 0.0f : focus, options.fStop,
+                     options.blades, smdl::radians(options.bladeAngleDeg)};
+}
+
+/// What a lens shows of a frame `frameSize` across: the field top to
+/// bottom and across the diagonal, each traced rather than taken from
+/// the focal length so that whatever distortion the surfaces have is in
+/// it, and the words for an end of the frame nothing reaches. Built once
+/// because the render logs it and the report states it.
+[[nodiscard]] std::string describeField(const Lens &lens, float2 frameSize);
+
 /// One camera ray, built by `Camera::sample()` and placed in the world
 /// by `Camera::toWorld()`.
 struct CameraSample final {
@@ -199,30 +238,7 @@ struct DepthOfField final {
   [[nodiscard]] bool hasLimits() const noexcept { return nearLimit < INF; }
 };
 
-/// One pixel of the frame in scene units, the frame's height over the
-/// picture's rows, which is what a distance on the film is stated in
-/// pixels against.
-[[nodiscard]] float pixelPitch(const CameraOptions &options) noexcept;
 
-/// What a lens shows of a frame `frameSize` across: the field top to
-/// bottom and across the diagonal, each traced rather than taken from
-/// the focal length so that whatever distortion the surfaces have is in
-/// it, and the words for an end of the frame nothing reaches. Built once
-/// because the render logs it and the report states it.
-[[nodiscard]] std::string describeField(const Lens &lens, float2 frameSize);
-
-/// The focus distance `options` resolves to, in scene units: the stated
-/// one, or the distance from the camera to what it looks at when none
-/// was stated, which is what a zero `CameraOptions::focus` asks for.
-/// `INF` is focus at infinity.
-[[nodiscard]] float focusDistanceOf(const CameraOptions &options) noexcept;
-
-/// What this render asks of the prescription `options` names: the focus
-/// it resolved to, spelled as `LensOptions` spells infinity, the stop,
-/// and the aperture polygon in radians. Every lens the render builds is
-/// built from this, so the report, the preview's fit, and the camera all
-/// look through the same one.
-[[nodiscard]] LensOptions lensOptionsOf(const CameraOptions &options) noexcept;
 
 /// The depth of field of a lens of focal length `focalLength` at
 /// f/`fNumber`, focused at `focus` (`INF` for infinity), on a frame of

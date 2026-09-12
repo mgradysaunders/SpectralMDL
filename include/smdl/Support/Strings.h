@@ -70,6 +70,8 @@ namespace smdl {
   return 0;
 }
 
+inline namespace string_markup {
+
 /// A quoted string for use with `concat`.
 class SMDL_EXPORT Quoted final {
 public:
@@ -181,6 +183,8 @@ public:
   /// The plural, if it is not the singular followed by `s`.
   std::string_view plural{};
 };
+
+} // namespace string_markup
 
 #if !SMDL_DOXYGEN
 namespace detail {

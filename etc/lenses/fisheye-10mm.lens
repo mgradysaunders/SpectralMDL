@@ -10,22 +10,22 @@ lens {
   # diagonal.
   # The glasses, by the nd and Vd the patent states, each named for its
   # glass code; the patent names none.
-  glass GLASS-620603 { ior 1.62041 abbe 60.33 }
-  glass GLASS-639554 { ior 1.63854 abbe 55.42 }
-  glass GLASS-654337 { ior 1.65446 abbe 33.65 }
-  glass GLASS-517642 { ior 1.5168 abbe 64.17 }
-  glass GLASS-805254 { ior 1.80518 abbe 25.43 }
-  glass GLASS-673322 { ior 1.6727 abbe 32.21 }
-  surface { radius 30.2249  thickness 0.8335  glass GLASS-620603 diameter 30.34 }
-  surface { radius 11.3931  thickness 7.4136                     diameter 20.68 }
-  surface { radius 75.2019  thickness 1.0654  glass GLASS-639554 diameter 17.8 }
-  surface { radius 8.3349   thickness 11.1549                    diameter 13.42 }
-  surface { radius 9.5882   thickness 2.0054  glass GLASS-654337 diameter 9.02 }
-  surface { radius 43.8677  thickness 5.3895                     diameter 8.14 }
-  stop    {                 thickness 1.4163                     diameter 6.08 }
-  surface { radius 29.4541  thickness 2.1934  glass GLASS-517642 diameter 5.96 }
-  surface { radius -5.2265  thickness 0.9714  glass GLASS-805254 diameter 5.84 }
-  surface { radius -14.2884 thickness 0.0627                     diameter 5.96 }
-  surface { radius -22.3726 thickness 0.94    glass GLASS-673322 diameter 5.96 }
-  surface { radius -15.0404                                      diameter 6.52 }
+  medium GLASS-620603 { ior 1.62041 abbe 60.33 }
+  medium GLASS-639554 { ior 1.63854 abbe 55.42 }
+  medium GLASS-654337 { ior 1.65446 abbe 33.65 }
+  medium GLASS-517642 { ior 1.5168 abbe 64.17 }
+  medium GLASS-805254 { ior 1.80518 abbe 25.43 }
+  medium GLASS-673322 { ior 1.6727 abbe 32.21 }
+  surface { radius 30.2249  thickness 0.8335  medium GLASS-620603 diameter 30.34 }
+  surface { radius 11.3931  thickness 7.4136                      diameter 20.68 }
+  surface { radius 75.2019  thickness 1.0654  medium GLASS-639554 diameter 17.8 }
+  surface { radius 8.3349   thickness 11.1549                     diameter 13.42 }
+  surface { radius 9.5882   thickness 2.0054  medium GLASS-654337 diameter 9.02 }
+  surface { radius 43.8677  thickness 5.3895                      diameter 8.14 }
+  stop    {                 thickness 1.4163                      diameter 6.08 }
+  surface { radius 29.4541  thickness 2.1934  medium GLASS-517642 diameter 5.96 }
+  surface { radius -5.2265  thickness 0.9714  medium GLASS-805254 diameter 5.84 }
+  surface { radius -14.2884 thickness 0.0627                      diameter 5.96 }
+  surface { radius -22.3726 thickness 0.94    medium GLASS-673322 diameter 5.96 }
+  surface { radius -15.0404                                       diameter 6.52 }
 }

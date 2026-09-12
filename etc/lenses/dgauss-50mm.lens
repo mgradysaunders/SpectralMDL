@@ -12,28 +12,28 @@ lens {
   # the nd and Vd SCHOTT prints, which the book rounds to 1.699 and
   # 1.603. That database has no SCHOTT data for BAF10, LAK11, or LAF3,
   # so those are the book's nd and V, on the normal line.
-  glass BAF10 { ior 1.67 abbe 47.1 }
-  glass SF15 {
+  medium BAF10 { ior 1.67 abbe 47.1 }
+  medium SF15 {
     sellmeier { b 1.53925927 0.247620926 1.03816409
                 c 0.0119307961 0.0556077536 116.416747 }
     ior 1.69895 abbe 30.07
   }
-  glass F5 {
+  medium F5 {
     sellmeier { b 1.3104463 0.19603426 0.96612977
                 c 0.00958633048 0.0457627627 115.011883 }
     ior 1.60342 abbe 38.03
   }
-  glass LAK11 { ior 1.658 abbe 57.3 }
-  glass LAF3 { ior 1.717 abbe 48.0 }
-  surface { radius 29.475  thickness 3.76  glass BAF10 diameter 25.2 }
-  surface { radius 84.83   thickness 0.12              diameter 25.2 }
-  surface { radius 19.275  thickness 4.025 glass BAF10 diameter 23 }
-  surface { radius 40.77   thickness 3.275 glass SF15  diameter 23 }
-  surface { radius 12.75   thickness 5.705             diameter 18 }
-  stop    {                thickness 4.5               diameter 17.1 }
-  surface { radius -14.495 thickness 1.18  glass F5    diameter 17 }
-  surface { radius 40.77   thickness 6.065 glass LAK11 diameter 20 }
-  surface { radius -20.385 thickness 0.19              diameter 20 }
-  surface { radius 437.065 thickness 3.22  glass LAF3  diameter 20 }
-  surface { radius -39.73                              diameter 20 }
+  medium LAK11 { ior 1.658 abbe 57.3 }
+  medium LAF3 { ior 1.717 abbe 48.0 }
+  surface { radius 29.475  thickness 3.76  medium BAF10 diameter 25.2 }
+  surface { radius 84.83   thickness 0.12               diameter 25.2 }
+  surface { radius 19.275  thickness 4.025 medium BAF10 diameter 23 }
+  surface { radius 40.77   thickness 3.275 medium SF15  diameter 23 }
+  surface { radius 12.75   thickness 5.705              diameter 18 }
+  stop    {                thickness 4.5                diameter 17.1 }
+  surface { radius -14.495 thickness 1.18  medium F5    diameter 17 }
+  surface { radius 40.77   thickness 6.065 medium LAK11 diameter 20 }
+  surface { radius -20.385 thickness 0.19               diameter 20 }
+  surface { radius 437.065 thickness 3.22  medium LAF3  diameter 20 }
+  surface { radius -39.73                               diameter 20 }
 }

@@ -3,7 +3,7 @@
 
     lens_convert.py IN.dat [-o OUT.lens] [--name "Double Gauss 50mm f/2"]
                            [--note "US 2,673,491 (Tronnier)"] ...
-    lens_convert.py IN.zmx [--agf CATALOG.agf ...] [--glass NAME=ND,VD ...]
+    lens_convert.py IN.zmx [--agf CATALOG.agf ...] [--medium NAME=ND,VD ...]
 
 Reading a prescription is the only way anyone gets a lens into the renderer:
 nobody designs one for it, they transcribe a published table or export from a
@@ -35,9 +35,9 @@ Glasses
 A GLAS line names the glass after its surface. The name resolves through,
 in order:
 
-1. The renderer's built-in catalog, whose names convert as 'glass NAME'.
-2. --glass NAME=ND, which converts as one index at every wavelength, or
-   --glass NAME=ND,VD, which converts as a definition by nd and Vd.
+1. The renderer's built-in catalog, whose names convert as 'medium NAME'.
+2. --medium NAME=ND, which converts as one index at every wavelength, or
+   --medium NAME=ND,VD, which converts as a definition by nd and Vd.
 3. Each --agf catalog, in the order given. A glass its maker fits with the
    three-term Sellmeier (AGF formula 2) converts as a copy of it. One fitted
    with the Schott power series (formula 1), as most makers besides SCHOTT
@@ -91,7 +91,7 @@ LINE_G = 0.4358343
 LINE_F = 0.4861327
 LINE_C = 0.6562725
 
-# A '.lens' glass name: a letter, then letters, digits, '-', and '_'.
+# A '.lens' medium name: a letter, then letters, digits, '-', and '_'.
 GLASS_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 
 
@@ -107,8 +107,8 @@ class Surface:
         self.radius = 0.0
         self.thickness = 0.0
         self.ior = 1.0
-        self.glass = ""
-        self.glass_line = None
+        self.medium_name = ""
+        self.medium_line = None
         self.diameter = 0.0
         self.conic = 0.0
         self.aspheric = []
@@ -124,11 +124,11 @@ class Surface:
         self.aspheric = [a * factor ** (-3 - 2 * i)
                          for i, a in enumerate(self.aspheric)]
 
-    def medium(self):
+    def medium_key(self):
         """The '.lens' key stating the space after this surface, or '' for
         air."""
-        if self.glass:
-            return f"glass {self.glass}"
+        if self.medium_name:
+            return f"medium {self.medium_name}"
         if self.ior != 1.0:
             return f"ior {number(self.ior)}"
         return ""
@@ -141,7 +141,7 @@ class Surface:
                      else f"thickness {number(self.thickness)}")
         # The stop sits in the space before it, which normalize() has
         # checked is the space after it too.
-        medium = "" if self.is_stop else self.medium()
+        medium = "" if self.is_stop else self.medium_key()
         return [radius, thickness, medium, f"diameter {number(self.diameter)}"]
 
     def spell(self, widths):
@@ -157,7 +157,7 @@ class Surface:
 
 
 class Definition:
-    """A glass the '.lens' file defines, since the renderer does not know
+    """A medium the '.lens' file defines, since the renderer does not know
     it."""
 
     def __init__(self, name, source, nd, abbe, partial=None, sellmeier=None):
@@ -175,7 +175,7 @@ class Definition:
         printed = f"ior {number(self.nd)} abbe {number(self.abbe)}"
         if self.sellmeier:
             b, c = self.sellmeier
-            lines += [f"  glass {self.name} {{",
+            lines += [f"  medium {self.name} {{",
                       "    sellmeier { b " + " ".join(number(x) for x in b),
                       "                c " + " ".join(number(x) for x in c) +
                       " }",
@@ -184,7 +184,7 @@ class Definition:
         else:
             if self.partial is not None:
                 printed += f" partial_dispersion {number(self.partial)}"
-            lines.append(f"  glass {self.name} {{ {printed} }}")
+            lines.append(f"  medium {self.name} {{ {printed} }}")
         return lines
 
 
@@ -201,30 +201,30 @@ class Glasses:
 
     def resolve(self, surface):
         """Give `surface` the medium its GLAS line names."""
-        name, fields = surface.glass_line
+        name, fields = surface.medium_line
         upper = name.upper()
         if upper == "___BLANK":
             self.resolve_model(surface, fields)
         elif upper in BUILTIN_GLASSES:
-            surface.glass = upper
+            surface.medium_name = upper
         elif upper in self.given:
             nd, abbe = self.given[upper]
             if abbe is None:
                 surface.ior = nd
             else:
-                surface.glass = self.define(
+                surface.medium_name = self.define(
                     ("name", upper), name,
                     "By the nd and Vd given to the converter.", nd, abbe)
         else:
             for path, records in self.catalogs:
                 if upper in records:
-                    surface.glass = self.define_from_agf(
+                    surface.medium_name = self.define_from_agf(
                         name, path, records[upper])
                     return
             raise ConvertError(
                 f"glass {name!r} is neither built in nor in an --agf "
                 f"catalog; give its maker's catalog with --agf, or its nd "
-                f"and Vd with --glass {name}=<nd>,<Vd>")
+                f"and Vd with --medium {name}=<nd>,<Vd>")
 
     def resolve_model(self, surface, fields):
         """Give `surface` the model glass its GLAS line states."""
@@ -249,7 +249,7 @@ class Glasses:
             partial = round(0.6438 - 0.001682 * abbe + departure, 4)
             source = ("A Zemax model glass, by its nd, Vd, and partial "
                       "dispersion.")
-        surface.glass = self.define(("model", nd, abbe, partial),
+        surface.medium_name = self.define(("model", nd, abbe, partial),
                                     f"MODEL-{glass_code(nd, abbe)}", source,
                                     nd, abbe, partial)
 
@@ -262,7 +262,7 @@ class Glasses:
                 f"glass {name!r} in {catalog} is fitted by AGF formula "
                 f"{formula}, and the converter reads only formula 2 (the "
                 f"three-term Sellmeier) and formula 1 (the Schott power "
-                f"series); give it with --glass {name}=<nd>,<Vd> from its "
+                f"series); give it with --medium {name}=<nd>,<Vd> from its "
                 f"datasheet")
         if len(cd) < 6:
             raise ConvertError(
@@ -553,14 +553,14 @@ def normalize(surfaces):
                 f"surface {i + 1} steps backward along the axis, which only a "
                 f"mirror does")
     stop = stops[0]
-    before = surfaces[stop - 1].medium() if stop > 0 else ""
-    if surfaces[stop].medium() != before:
+    before = surfaces[stop - 1].medium_key() if stop > 0 else ""
+    if surfaces[stop].medium_key() != before:
         raise ConvertError(
             f"surface {stop + 1}, the aperture stop, refracts, and the "
             f"renderer's stop is an opening that bends nothing; move STOP to "
             f"a flat surface of its own, in the air in front of the lens or "
             f"behind it")
-    if surfaces[-1].medium():
+    if surfaces[-1].medium_key():
         raise ConvertError(
             "the last surface has glass behind it, and the renderer puts the "
             "film in air")
@@ -599,7 +599,7 @@ def main(argv=None):
     parser.add_argument("--note", action="append", default=[],
                         help="a provenance comment, repeatable: the patent "
                              "number, the book, the scaling applied")
-    parser.add_argument("--glass", action="append", default=[],
+    parser.add_argument("--medium", action="append", default=[],
                         metavar="NAME=ND[,VD]",
                         help="a glass the file names that is neither built "
                              "in nor in an --agf catalog: one index at every "
@@ -622,12 +622,12 @@ def main(argv=None):
     kind = args.format
     if kind == "auto":
         kind = "zmx" if args.input.lower().endswith(".zmx") else "dat"
-    if kind == "dat" and (args.glass or args.agf):
-        parser.error("--glass and --agf resolve the glasses a '.zmx' names, "
+    if kind == "dat" and (args.medium or args.agf):
+        parser.error("--medium and --agf resolve the media a '.zmx' names, "
                      "and a pbrt '.dat' names none")
 
     given = {}
-    for entry in args.glass:
+    for entry in args.medium:
         key, sep, value = entry.partition("=")
         key = key.strip()
         fields = value.split(",")
@@ -637,11 +637,11 @@ def main(argv=None):
             nd = float(fields[0])
             abbe = float(fields[1]) if len(fields) == 2 else None
         except ValueError:
-            parser.error(f"expected --glass NAME=ND or NAME=ND,VD, got "
+            parser.error(f"expected --medium NAME=ND or NAME=ND,VD, got "
                          f"{entry!r}")
         if key.upper() in BUILTIN_GLASSES:
             parser.error(f"{key} is built in, so the renderer knows it "
-                         f"already; drop --glass {key}")
+                         f"already; drop --medium {key}")
         given[key.upper()] = (nd, abbe)
 
     definitions = []
@@ -652,7 +652,7 @@ def main(argv=None):
                               [(path, read_agf(path)) for path in args.agf])
             surfaces = read_zemax_zmx(text)
             for surface in surfaces:
-                if surface.glass_line:
+                if surface.medium_line:
                     glasses.resolve(surface)
             definitions = glasses.definitions
         else:
@@ -669,7 +669,7 @@ def main(argv=None):
             stop.thickness = before.thickness
             stop.diameter = before.diameter
             stop.ior = before.ior
-            stop.glass = before.glass
+            stop.medium_name = before.medium_name
             before.thickness = 0.0
             surfaces.insert(index, stop)
         if args.scale != 1.0:

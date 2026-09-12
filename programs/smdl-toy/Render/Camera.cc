@@ -10,6 +10,7 @@
 #include "smdl/Support/Strings.h"
 
 namespace {
+
 // Apply radial lens distortion to a sensor point, returning the ideal
 // image point to build the ray from. The model maps sensor to ideal, so
 // this is one polynomial evaluation with nothing to invert. `coneScale`
@@ -75,11 +76,8 @@ constexpr int NUM_FIT_RADII = 32;
   }
   return true;
 }
-} // namespace
 
-float pixelPitch(const CameraOptions &options) noexcept {
-  return options.frameSize.y / float(options.resolution.y);
-}
+} // namespace
 
 std::string describeField(const Lens &lens, float2 frameSize) {
   const auto spell{[](const std::optional<float> &angle, const char *where,
@@ -94,19 +92,6 @@ std::string describeField(const Lens &lens, float2 frameSize) {
   return smdl::concat(
       spell(vertical, "top to bottom", "dark at the top and bottom"), ", ",
       spell(diagonal, "across the diagonal", "dark in the corners"));
-}
-
-float focusDistanceOf(const CameraOptions &options) noexcept {
-  return options.focus > 0 ? options.focus
-                           : length(options.lookTo - options.lookFrom);
-}
-
-LensOptions lensOptionsOf(const CameraOptions &options) noexcept {
-  const float focus{focusDistanceOf(options)};
-  // The lens focuses at infinity for a distance of 0, which is what
-  // `INF` here means.
-  return LensOptions{std::isinf(focus) ? 0.0f : focus, options.fStop,
-                     options.blades, smdl::radians(options.bladeAngleDeg)};
 }
 
 DepthOfField depthOfField(float focalLength, float fNumber, float focus,

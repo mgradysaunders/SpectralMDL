@@ -16,14 +16,17 @@
 ///
 /// A space between two surfaces is air unless the surface in front of it
 /// states otherwise: by `ior`, one index at every wavelength, or by
-/// `glass NAME`, a glass that disperses. A name is either the built-in
-/// catalog's (`smdl::findOpticalGlass()`), one definition shared by every
-/// lens that names it, or one the `lens` block defines beside its surfaces,
-/// in one of three ways:
+/// `medium NAME`, a medium that disperses. A molded polymer, an immersion
+/// fluid and a crystal are the same thing to the trace as a glass is, one
+/// index per wavelength between two surfaces, which is why the keyword
+/// names that rather than one family of it. A name is either the built-in
+/// catalog's (`smdl::findOpticalGlass()`, which holds optical glasses),
+/// one definition shared by every lens that names it, or one the `lens`
+/// block defines beside its surfaces, in one of three ways:
 ///
-///     glass NAME { ior <nd> abbe <Vd> }
-///     glass NAME { ior <nd> abbe <Vd> partial_dispersion <PgF> }
-///     glass NAME { sellmeier { b <B1> <B2> <B3> c <C1> <C2> <C3> } }
+///     medium NAME { ior <nd> abbe <Vd> }
+///     medium NAME { ior <nd> abbe <Vd> partial_dispersion <PgF> }
+///     medium NAME { sellmeier { b <B1> <B2> <B3> c <C1> <C2> <C3> } }
 ///
 /// The first takes its partial dispersion from Schott's normal line (see
 /// `smdl::OpticalGlass::abbe()`). The third may state `ior` and `abbe` as
@@ -33,11 +36,11 @@
 /// wavelengths in square micrometers, the one length in the file that is
 /// not in millimeters.
 ///
-/// A glass name is a letter, then letters, digits, `-`, and `_`. It matches
-/// ignoring case, since designations are spelled inconsistently, and a
-/// file's own glass may not take a built-in name. Names resolve when the
-/// `lens` block closes, so a definition may follow the first surface that
-/// names it.
+/// A medium name is a letter, then letters, digits, `-`, and `_`. It
+/// matches ignoring case, since designations are spelled inconsistently,
+/// and a file's own medium may not take a built-in name. Names resolve
+/// when the `lens` block closes, so a definition may follow the first
+/// surface that names it.
 #pragma once
 
 #include <cstddef>
@@ -86,16 +89,16 @@ public:
 
   /// The medium of the space following this surface in file order: `ior`,
   /// the index at the d line and so at every wavelength, since it states
-  /// no dispersion; or the glass `glass` names. Air is the default, which
-  /// makes an air gap one key shorter to write than a glass.
+  /// no dispersion; or the one `medium` names. Air is the default, which
+  /// makes an air gap one key shorter to write than a medium.
   ///
   /// It is held by value, as the file resolved it, so tracing the
   /// prescription needs no catalog.
   smdl::OpticalGlass medium{};
 
-  /// The name of the glass `medium` is, spelled as the catalog or the
-  /// file's own definition spells it, or empty for `ior` and air.
-  std::string glassName{};
+  /// The name `medium` was given, spelled as the catalog or the file's
+  /// own definition spells it, or empty for `ior` and air.
+  std::string mediumName{};
 
   /// The clear aperture diameter. Prescriptions state a diameter and a
   /// trace wants a radius, so the halving happens once, downstream.

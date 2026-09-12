@@ -18,115 +18,6 @@ namespace {
 constexpr float MM_TO_SCENE = 1e-3f;
 constexpr float SCENE_TO_MM = 1e3f;
 
-// The paraxial ray transfer matrix, in reduced coordinates: it acts on
-// the pair (height, index times slope) rather than (height, slope), so
-// every factor has unit determinant and a surface's matrix says the same
-// thing whatever glass surrounds it. That is what makes the pupil solves
-// below one division each.
-class ABCD final {
-public:
-  float a{1}, b{}, c{}, d{1};
-
-  // `next` acts after this, so it multiplies from the left.
-  [[nodiscard]] ABCD then(const ABCD &next) const noexcept {
-    return ABCD{next.a * a + next.b * c, next.a * b + next.b * d,
-                next.c * a + next.d * c, next.c * b + next.d * d};
-  }
-
-  [[nodiscard]] static ABCD refraction(float power) noexcept {
-    return ABCD{1, 0, -power, 1};
-  }
-
-  [[nodiscard]] static ABCD transfer(float distance, float ior) noexcept {
-    return ABCD{1, distance / ior, 0, 1};
-  }
-};
-
-// The first-order model of a laid-out prescription, with every medium at
-// one set of indices. It runs in the frame the prescription was laid out
-// in, the front vertex at zero, so that the constructor's solve at the d
-// line and a later solve at any wavelength are the same arithmetic.
-class Paraxial final {
-public:
-  smdl::Span<const LensElement> elements{};
-  smdl::Span<const float> layoutZ{};
-  const float *indices{};
-
-  // The power is the difference of the indices over the radius, and not
-  // that difference times `LensElement::curvature()`: a division and a
-  // multiplication by the reciprocal round differently, and the last bit
-  // of the power moves the film the whole solve places.
-  [[nodiscard]] ABCD refractionAt(size_t i) const noexcept {
-    const auto &element{elements[i]};
-    return ABCD::refraction(
-        element.radius == 0
-            ? 0.0f
-            : (indices[element.mediumAfter] - indices[element.mediumBefore]) /
-                  element.radius);
-  }
-
-  // The transfer from vertex `i` to the next, through the space the
-  // surface at `i` names.
-  [[nodiscard]] ABCD transferAfter(size_t i) const noexcept {
-    return ABCD::transfer(layoutZ[i + 1] - layoutZ[i],
-                          indices[elements[i].mediumAfter]);
-  }
-
-  // The whole system, from the plane of the front vertex to the plane of
-  // the rear one.
-  [[nodiscard]] ABCD system() const noexcept {
-    auto system{ABCD{}};
-    for (size_t i = 0; i < elements.size(); i++) {
-      system = system.then(refractionAt(i));
-      if (i + 1 < elements.size()) system = system.then(transferAfter(i));
-    }
-    return system;
-  }
-};
-
-// The cardinal points of a system whose vertices stand at `frontZ` and
-// `rearZ`. Air stands at both ends, so the system's determinant is 1 and
-// every point is one of its elements over another.
-class CardinalPoints final {
-public:
-  float focalLength{};
-  float backFocalDistance{};
-  float frontPrincipalZ{};
-  float rearPrincipalZ{};
-};
-
-[[nodiscard]] CardinalPoints cardinalPointsOf(const ABCD &system, float frontZ,
-                                              float rearZ) noexcept {
-  auto points{CardinalPoints{}};
-  points.focalLength = -1 / system.c;
-  points.backFocalDistance = -system.a / system.c;
-  points.frontPrincipalZ = frontZ + (system.d - 1) / system.c;
-  points.rearPrincipalZ = rearZ + (system.a - 1) * points.focalLength;
-  return points;
-}
-
-// The same points, with the origin moved to `originZ`.
-[[nodiscard]] CardinalPoints movedTo(CardinalPoints points,
-                                     float originZ) noexcept {
-  points.frontPrincipalZ -= originZ;
-  points.rearPrincipalZ -= originZ;
-  return points;
-}
-
-// The paraxial image plane of an object `focusDistance` ahead of the
-// origin, zero being an object at infinity, which lands on the rear focal
-// point. The thick lens images an object `s` ahead of the front principal
-// plane at `f s / (s - f)` behind the rear one. Nothing is an object
-// inside the front focal point, which no film position images.
-[[nodiscard]] std::optional<float> imagePlaneOf(const CardinalPoints &points,
-                                                float focusDistance) noexcept {
-  if (focusDistance == 0) return points.rearPrincipalZ + points.focalLength;
-  const auto objectDistance{points.frontPrincipalZ + focusDistance};
-  if (!(objectDistance > points.focalLength)) return std::nullopt;
-  return points.rearPrincipalZ + points.focalLength * objectDistance /
-                                     (objectDistance - points.focalLength);
-}
-
 // How many passes the aspheric solve may take, and how close to the
 // surface it has to land as a fraction of the clear aperture radius. The
 // solve keeps a bracket around the root and bisects whenever the
@@ -137,6 +28,10 @@ public:
 constexpr int MAX_SOLVE_STEPS = 32;
 constexpr float SOLVE_TOLERANCE = 1e-6f;
 
+// How many radii the sag of a surface is read at to find the band its
+// cap covers.
+constexpr int NUM_SAG_SAMPLES = 64;
+
 // How many pieces the span of a ray over a surface is walked in to reach
 // the crossing the ray meets first. A lens surface is met once by a ray
 // that is not grazing it, so the walk is there for the oblate rim that
@@ -144,45 +39,40 @@ constexpr float SOLVE_TOLERANCE = 1e-6f;
 // see is a pair of crossings inside one piece.
 constexpr int NUM_SPAN_STEPS = 8;
 
-// The stable pairing of the quadratic `a t^2 + b t + c` whose
-// discriminant is positive: the term whose quotients `q / a` and `c / q`
-// are the two roots, so that the root the subtraction would cancel comes
-// off the product of the roots instead. It is zero only where `b` and
-// `c` both are, which each caller answers for itself.
-[[nodiscard]] float stableRootTerm(float b, float discriminant) noexcept {
-  const auto root{std::sqrt(discriminant)};
-  return -0.5f * (b + (b < 0 ? -root : root));
-}
+// The two passes of a scan across the plane of the rear vertex: a coarse
+// one over the whole aperture, then a fine one over the span it found.
+// The rear aperture can be twenty times the width of the cone that
+// actually reaches a film point, and ten times that again once the lens
+// is stopped down, a phone lens being the case that sets these. So the
+// coarse pass is what decides whether the cone is found at all and the
+// fine pass is what resolves it.
+constexpr int NUM_SCAN_COARSE_STEPS = 400;
+constexpr int NUM_SCAN_FINE_STEPS = 200;
 
-// The sag of a surface at squared radius `u`, and its derivative with
-// respect to `u`, both in scene units. False is a radius past where the
-// base conic turns back on itself, which no point of the surface is.
-[[nodiscard]] bool sagOf(const LensElement &element, float u, float &sag,
-                         float &dSagDu) noexcept {
-  const auto curvature{element.curvature()};
-  const auto wSquared{1 - (1 + element.conic) * curvature * curvature * u};
-  if (!(wSquared > 0)) return false;
-  const auto w{std::sqrt(wSquared)};
-  sag = curvature * u / (1 + w);
-  dSagDu = 0.5f * curvature / w;
-  if (element.numAsphericTerms == 0) return true;
-  // The polynomial is evaluated in the millimeters its coefficients are
-  // written in and converted once, here. Scaling the coefficients into
-  // scene units instead would multiply the `r^18` one by 1e51 and divide
-  // its argument by the same, which is off the end of a float at both
-  // ends of the product.
-  const auto uMM{u * (SCENE_TO_MM * SCENE_TO_MM)};
-  auto poly{0.0f}, dPoly{0.0f};
-  auto power{uMM};
-  for (int i = 0; i < element.numAsphericTerms; i++) {
-    poly += element.aspheric[i] * power * uMM;
-    dPoly += element.aspheric[i] * (i + 2) * power;
-    power *= uMM;
-  }
-  sag += poly * MM_TO_SCENE;
-  dSagDu += dPoly * SCENE_TO_MM;
-  return true;
-}
+// How many times a search over the film radius halves its bracket, which
+// closes one the width of an image circle onto neighboring floats.
+constexpr int NUM_RADIUS_BISECTIONS = 30;
+
+// How many rays a bundle carries while the film plane is being solved,
+// and how far either way the search starts out from, as a fraction of
+// the focal length. A published design sits within a percent of its
+// paraxial plane; the bracket only seeds the search, which walks out of
+// it if it has to.
+constexpr int NUM_FOCUS_FAN_RAYS = 64;
+constexpr int NUM_FOCUS_SWEEP_STEPS = 64;
+constexpr float FOCUS_SEARCH_SPAN = 0.02f;
+
+// How many film radii the exit pupil is tabulated at, how many radii
+// within one entry's span are traced (the ends included, so the entry
+// bounds the whole span and not just its middle), and how finely the
+// region one of them sees is gridded once the scans have found it.
+constexpr size_t NUM_PUPIL_RADII = 64;
+constexpr int NUM_PUPIL_FILM_STEPS = 4;
+constexpr int NUM_PUPIL_FINE_STEPS = 64;
+
+// How finely the window a film point sees is gridded to measure how much
+// of the plane of the rear vertex it covers.
+constexpr int NUM_TRANSMITTED_AREA_STEPS = 32;
 
 // Where the surface stops being one, which is what `radialLimit` holds:
 // the clear aperture, or the radius the base conic turns back on itself
@@ -193,63 +83,206 @@ constexpr int NUM_SPAN_STEPS = 8;
 // resolve; the exit pupil bound then misses what the trace passes.
 // Stopping short keeps the two answering the same question, and costs a
 // few rays at the very rim, which a mounted element would have taken.
-[[nodiscard]] float radialLimitOf(const LensElement &element) noexcept {
-  auto uLimit{element.semiDiameter * element.semiDiameter};
-  const auto curvature{element.curvature()};
-  if (const auto turn{(1 + element.conic) * curvature * curvature}; turn > 0)
+[[nodiscard]] float radialLimitOf(const LensElement &elem) noexcept {
+  float uLimit{elem.semiDiameter * elem.semiDiameter};
+  const float kappa{elem.curvature()};
+  if (const float turn{(1 + elem.conic) * kappa * kappa}; turn > 0)
     uLimit = std::min(uLimit, (1 - 1e-2f) / turn);
   return std::sqrt(uLimit);
+}
+
+// The sag of a surface at squared radius `u`, and its derivative with
+// respect to `u`, both in scene units. False is a radius past where the
+// base conic turns back on itself, which no point of the surface is.
+[[nodiscard]] bool sagOf(const LensElement &elem, float u, float &sag,
+                         float &dSagDu) noexcept {
+  const float kappa{elem.curvature()};
+  const float wSq{1 - (1 + elem.conic) * kappa * kappa * u};
+  if (SMDL_UNLIKELY(!(wSq > 0))) return false;
+  const float w{std::sqrt(wSq)};
+  sag = kappa * u / (1 + w);
+  dSagDu = 0.5f * kappa / w;
+  if (SMDL_UNLIKELY(elem.numAsphericTerms > 0)) {
+    // The polynomial is evaluated in the millimeters its coefficients are
+    // written in and converted once, here. Scaling the coefficients into
+    // scene units instead would multiply the `r^18` one by 1e51 and divide
+    // its argument by the same, which is off the end of a float at both
+    // ends of the product.
+    u *= SCENE_TO_MM * SCENE_TO_MM;
+    float poly{0.0f};
+    float dPoly{0.0f};
+    float power{u};
+    for (int i = 0; i < elem.numAsphericTerms; i++) {
+      poly += elem.aspheric[i] * power * u;
+      dPoly += elem.aspheric[i] * (float(i) + 2) * power;
+      power *= u;
+    }
+    sag += poly * MM_TO_SCENE;
+    dSagDu += dPoly * SCENE_TO_MM;
+  }
+  return true;
 }
 
 // The band of sag the cap covers inside its radial limit. A polynomial
 // puts its extremes where no closed form reaches them, so the curve is
 // sampled instead, and the band is then opened by the tolerance the
 // solve works to, below which nothing here is resolved anyway.
-void sagRangeOf(const LensElement &element, float &sagMin,
+void sagRangeOf(const LensElement &elem, float &sagMin,
                 float &sagMax) noexcept {
-  constexpr int NUM_SAG_SAMPLES = 64;
   sagMin = sagMax = 0;
   for (int i = 1; i <= NUM_SAG_SAMPLES; i++) {
-    const auto radius{element.radialLimit * (float(i) / NUM_SAG_SAMPLES)};
-    auto sag{0.0f}, dSagDu{0.0f};
-    if (sagOf(element, radius * radius, sag, dSagDu))
-      sagMin = std::min(sagMin, sag), sagMax = std::max(sagMax, sag);
+    const float radius{elem.radialLimit * (float(i) / NUM_SAG_SAMPLES)};
+    float sag{0.0f};
+    float dSagDu{0.0f};
+    if (sagOf(elem, radius * radius, sag, dSagDu)) {
+      sagMin = std::min(sagMin, sag);
+      sagMax = std::max(sagMax, sag);
+    }
   }
-  const auto pad{0.01f * (sagMax - sagMin) +
-                 SOLVE_TOLERANCE * element.semiDiameter};
-  sagMin -= pad, sagMax += pad;
+  const float pad{0.01f * (sagMax - sagMin) +
+                  SOLVE_TOLERANCE * elem.semiDiameter};
+  sagMin -= pad;
+  sagMax += pad;
 }
+
+// The cardinal points of a system: where it brings light to a focus, and
+// the two planes the focal length is measured from.
+struct CardinalPoints final {
+  // The same points, with the origin moved to `originZ`.
+  [[nodiscard]] CardinalPoints movedTo(float originZ) const noexcept {
+    auto points{*this};
+    points.frontPrincipalZ -= originZ;
+    points.rearPrincipalZ -= originZ;
+    return points;
+  }
+  // The paraxial image plane of an object `focusDistance` ahead of the
+  // origin, zero being an object at infinity, which lands on the rear
+  // focal point. The thick lens images an object `s` ahead of the front
+  // principal plane at `f s / (s - f)` behind the rear one. Nothing is an
+  // object inside the front focal point, which no film position images.
+  [[nodiscard]]
+  std::optional<float> imagePlane(float focusDist) const noexcept {
+    if (focusDist == 0) return rearPrincipalZ + focalLength;
+    const auto objectDist{frontPrincipalZ + focusDist};
+    if (!(objectDist > focalLength)) return std::nullopt;
+    return rearPrincipalZ +
+           focalLength * objectDist / (objectDist - focalLength);
+  }
+
+  float focalLength{};
+  float backFocalDistance{};
+  float frontPrincipalZ{};
+  float rearPrincipalZ{};
+};
+
+// The paraxial ray transfer matrix, in reduced coordinates: it acts on
+// the pair (height, index times slope) rather than (height, slope), so
+// every factor has unit determinant and a surface's matrix says the same
+// thing whatever glass surrounds it. That is what makes the pupil solves
+// below one division each.
+struct ABCD final {
+  [[nodiscard]] static ABCD refraction(float power) noexcept {
+    return {1.0f, 0.0f, -power, 1.0f};
+  }
+  [[nodiscard]] static ABCD transfer(float dist, float ior) noexcept {
+    return {1.0f, dist / ior, 0.0f, 1.0f};
+  }
+  // `next` acts after this, so it multiplies from the left.
+  [[nodiscard]] ABCD then(const ABCD &next) const noexcept {
+    return {next.a * a + next.b * c, next.a * b + next.b * d,
+            next.c * a + next.d * c, next.c * b + next.d * d};
+  }
+  // The cardinal points of a system whose vertices stand at `frontZ` and
+  // `rearZ`. Air stands at both ends, so the determinant is 1 and every
+  // point is one of the matrix's elements over another.
+  [[nodiscard]] CardinalPoints cardinalPoints(float frontZ,
+                                              float rearZ) const noexcept {
+    auto points{CardinalPoints{}};
+    points.focalLength = -1 / c;
+    points.backFocalDistance = -a / c;
+    points.frontPrincipalZ = frontZ + (d - 1) / c;
+    points.rearPrincipalZ = rearZ + (a - 1) * points.focalLength;
+    return points;
+  }
+
+  float a{1.0f};
+  float b{0.0f};
+  float c{0.0f};
+  float d{1.0f};
+};
+
+// The first-order model of a laid-out prescription, with every medium at
+// one set of indices. It runs in the frame the prescription was laid out
+// in, the front vertex at zero, so that the constructor's solve at the d
+// line and a later solve at any wavelength are the same arithmetic.
+class Paraxial final {
+public:
+  // The power is the difference of the indices over the radius, and not
+  // that difference times `LensElement::curvature()`: a division and a
+  // multiplication by the reciprocal round differently, and the last bit
+  // of the power moves the film the whole solve places.
+  [[nodiscard]] ABCD refractionAt(size_t i) const noexcept {
+    const LensElement &elem{elements[i]};
+    return ABCD::refraction(elem.radius == 0 ? 0.0f
+                                             : (indices[elem.mediumAfter] -
+                                                indices[elem.mediumBefore]) /
+                                                   elem.radius);
+  }
+  // The transfer from vertex `i` to the next, through the space the
+  // surface at `i` names.
+  [[nodiscard]] ABCD transferAfter(size_t i) const noexcept {
+    return ABCD::transfer(layoutZ[i + 1] - layoutZ[i],
+                          indices[elements[i].mediumAfter]);
+  }
+  // The whole system, from the plane of the front vertex to the plane of
+  // the rear one.
+  [[nodiscard]] ABCD system() const noexcept {
+    ABCD system{};
+    for (size_t i = 0; i < elements.size(); i++) {
+      system = system.then(refractionAt(i));
+      if (i + 1 < elements.size()) system = system.then(transferAfter(i));
+    }
+    return system;
+  }
+  smdl::Span<const LensElement> elements{};
+  smdl::Span<const float> layoutZ{};
+  const float *indices{};
+};
 
 // The span of `t` the ray is inside the surface's own extent over, which
 // is the only stretch a root can mean anything on. Both limits are
 // needed to close it: a ray up the axis stays inside the radius forever
 // and one square across the axis stays inside the sag band forever, but
 // a ray is parallel to at most one of them.
-[[nodiscard]] bool spanOverElement(const LensElement &element, const Ray &ray,
+[[nodiscard]] bool spanOverElement(const LensElement &elem, const Ray &ray,
                                    float &tLo, float &tHi) noexcept {
   tLo = 0, tHi = FLOAT_MAX;
-  const auto a{ray.dir.x * ray.dir.x + ray.dir.y * ray.dir.y};
-  const auto b{2 * (ray.org.x * ray.dir.x + ray.org.y * ray.dir.y)};
-  const auto c{ray.org.x * ray.org.x + ray.org.y * ray.org.y -
-               element.radialLimit * element.radialLimit};
+  const float ox{ray.org.x}, oy{ray.org.y}, oz{ray.org.z};
+  const float dx{ray.dir.x}, dy{ray.dir.y}, dz{ray.dir.z};
+  const float a{dx * dx + dy * dy};
+  const float b{2 * (ox * dx + oy * dy)};
+  const float c{ox * ox + oy * oy - elem.radialLimit * elem.radialLimit};
   if (a > 0) {
-    const auto discriminant{b * b - 4 * a * c};
-    if (!(discriminant > 0)) return false;
-    const auto q{stableRootTerm(b, discriminant)};
+    const float discrim{b * b - 4 * a * c};
+    if (!(discrim > 0)) return false;
+    // The stable pairing of the roots, `q / a` and `c / q`, which takes
+    // the root the subtraction would cancel off the product of the roots
+    // instead. A strictly positive discriminant leaves `q` nonzero.
+    const float q{-0.5f * (b + std::copysign(std::sqrt(discrim), b))};
     tLo = std::max(tLo, std::min(q / a, c / q));
     tHi = std::min(tHi, std::max(q / a, c / q));
   } else if (c > 0) {
     return false;
   }
-  const auto zLo{element.z + element.sagMin};
-  const auto zHi{element.z + element.sagMax};
-  if (ray.dir.z > 0) {
-    tLo = std::max(tLo, (zLo - ray.org.z) / ray.dir.z);
-    tHi = std::min(tHi, (zHi - ray.org.z) / ray.dir.z);
-  } else if (ray.dir.z < 0) {
-    tLo = std::max(tLo, (zHi - ray.org.z) / ray.dir.z);
-    tHi = std::min(tHi, (zLo - ray.org.z) / ray.dir.z);
-  } else if (!(zLo <= ray.org.z && ray.org.z <= zHi)) {
+  const float zLo{elem.z + elem.sagMin};
+  const float zHi{elem.z + elem.sagMax};
+  if (dz > 0) {
+    tLo = std::max(tLo, (zLo - oz) / dz);
+    tHi = std::min(tHi, (zHi - oz) / dz);
+  } else if (dz < 0) {
+    tLo = std::max(tLo, (zHi - oz) / dz);
+    tHi = std::min(tHi, (zLo - oz) / dz);
+  } else if (!(zLo <= oz && oz <= zHi)) {
     return false;
   }
   return tLo <= tHi;
@@ -268,17 +301,20 @@ void sagRangeOf(const LensElement &element, float &sagMin,
 // high-order terms diverge and grow roots that no light ever meets; an
 // iteration free to wander out can come back with one of them and report
 // a hit at the wrong place on the surface.
-[[nodiscard]] bool intersectAspheric(const LensElement &element, const Ray &ray,
+[[nodiscard]] bool intersectAspheric(const LensElement &elem, const Ray &ray,
                                      float3 &point, float3 &normal) noexcept {
   float tLo{}, tHi{};
-  if (!spanOverElement(element, ray, tLo, tHi)) return false;
+  if (!spanOverElement(elem, ray, tLo, tHi)) return false;
   float3 p{};
-  auto sag{0.0f}, dSagDu{0.0f}, height{0.0f};
+  float sag{0.0f};
+  float dSagDu{0.0f};
+  float height{0.0f};
+  const float tolerance{SOLVE_TOLERANCE * elem.semiDiameter};
   // How far the ray stands above the surface at `t`, along the axis.
   const auto probe{[&](float t) {
     p = ray(t);
-    if (!sagOf(element, p.x * p.x + p.y * p.y, sag, dSagDu)) return false;
-    height = (p.z - element.z) - sag;
+    if (!sagOf(elem, p.x * p.x + p.y * p.y, sag, dSagDu)) return false;
+    height = (p.z - elem.z) - sag;
     return true;
   }};
   const auto accept{[&]() {
@@ -286,13 +322,16 @@ void sagRangeOf(const LensElement &element, float &sagMin,
     // The surface is `z - vertex - sag(x^2 + y^2) = 0`, so its gradient
     // is the sag's slope in the two radial directions against a unit
     // rise in z.
-    normal = normalize(float3(-2 * dSagDu * p.x, -2 * dSagDu * p.y, 1.0f));
+    normal = normalize(float3(-2 * dSagDu * p.x, //
+                              -2 * dSagDu * p.y, 1.0f));
     if (dot(normal, ray.dir) > 0) normal = -normal;
     return true;
   }};
-  const auto tolerance{SOLVE_TOLERANCE * element.semiDiameter};
-  if (!probe(tLo)) return false;
-  if (std::abs(height) <= tolerance) return accept();
+  if (!probe(tLo)) {
+    return false;
+  } else if (std::abs(height) <= tolerance) {
+    return accept();
+  }
   // Walk the span from the near end to the first piece of it the ray
   // changes sides over, so that what the solve closes on is the crossing
   // the ray reaches first rather than whichever one an iteration happens
@@ -301,31 +340,38 @@ void sagRangeOf(const LensElement &element, float &sagMin,
   // disagree without saying which of three crossings came first. What
   // the walk does not see is a pair of crossings inside one piece, which
   // is a surface finer than the span divided this far.
-  const auto isBelowAtLo{height < 0};
-  auto tA{tLo}, tB{tLo};
-  auto isBracketed{false};
+  const bool isBelowAtLo{height < 0};
+  float tA{tLo};
+  float tB{tLo};
+  bool isBracketed{false};
   for (int i = 1; i <= NUM_SPAN_STEPS && !isBracketed; i++) {
-    const auto t{tLo + (tHi - tLo) * (float(i) / NUM_SPAN_STEPS)};
-    if (!probe(t)) return false;
-    if (std::abs(height) <= tolerance) return accept();
-    if ((height < 0) != isBelowAtLo)
+    if (const float t{tLo + (tHi - tLo) * (float(i) / NUM_SPAN_STEPS)};
+        !probe(t)) {
+      return false;
+    } else if (std::abs(height) <= tolerance) {
+      return accept();
+    } else if ((height < 0) != isBelowAtLo) {
       tB = t, isBracketed = true;
-    else
+    } else {
       tA = t;
+    }
   }
   if (!isBracketed) return false;
-  auto t{0.5f * (tA + tB)};
+  float t{0.5f * (tA + tB)};
   for (int step = 0; step < MAX_SOLVE_STEPS; step++) {
-    if (!probe(t)) return false;
-    if (std::abs(height) <= tolerance) return accept();
-    if ((height < 0) == isBelowAtLo)
+    if (!probe(t)) {
+      return false;
+    } else if (std::abs(height) <= tolerance) {
+      return accept();
+    } else if ((height < 0) == isBelowAtLo) {
       tA = t;
-    else
+    } else {
       tB = t;
+    }
     // How fast the height closes: the ray climbing in z against the
     // surface receding under it as the radius grows.
-    const auto slope{ray.dir.z -
-                     2 * dSagDu * (p.x * ray.dir.x + p.y * ray.dir.y)};
+    const float slope{ray.dir.z -
+                      2 * dSagDu * (p.x * ray.dir.x + p.y * ray.dir.y)};
     t = slope == 0 ? FLOAT_MAX : t - height / slope;
     if (!(tA < t && t < tB)) t = 0.5f * (tA + tB);
   }
@@ -345,42 +391,48 @@ void sagRangeOf(const LensElement &element, float &sagMin,
 // solve. The root to take is the one nearest the vertex: the quadric has
 // two sheets, and the far one stands about `2 R` away, well outside any
 // clear aperture a real design states.
-[[nodiscard]] bool intersectSurface(const LensElement &element, const Ray &ray,
+[[nodiscard]] bool intersectSurface(const LensElement &elem, const Ray &ray,
                                     float3 &point, float3 &normal) noexcept {
   // A polynomial on top of the conic is not a quadric and has no closed
   // form, so it has a solve of its own and does not start from this one.
-  if (element.numAsphericTerms > 0)
-    return intersectAspheric(element, ray, point, normal);
-  const auto curvature{element.curvature()};
-  const auto kPlusOne{1 + element.conic};
-  const auto ox{ray.org.x}, oy{ray.org.y}, os{ray.org.z - element.z};
-  const auto &d{ray.dir};
-  const auto a{curvature * (d.x * d.x + d.y * d.y + kPlusOne * d.z * d.z)};
-  const auto b{2 *
-               (curvature * (ox * d.x + oy * d.y + kPlusOne * os * d.z) - d.z)};
-  const auto c{curvature * (ox * ox + oy * oy + kPlusOne * os * os) - 2 * os};
-  auto tBest{0.0f};
-  auto sBest{FLOAT_MAX};
+  if (SMDL_UNLIKELY(elem.numAsphericTerms > 0))
+    return intersectAspheric(elem, ray, point, normal);
+  const float kappa{elem.curvature()};
+  const float kPlus1{1 + elem.conic};
+  const float ox{ray.org.x}, oy{ray.org.y}, os{ray.org.z - elem.z};
+  const float dx{ray.dir.x}, dy{ray.dir.y}, dz{ray.dir.z};
+  const float a{kappa * (dx * dx + dy * dy + kPlus1 * dz * dz)};
+  const float b{2 * (kappa * (ox * dx + oy * dy + kPlus1 * os * dz) - dz)};
+  const float c{kappa * (ox * ox + oy * oy + kPlus1 * os * os) - 2 * os};
+  float sBest{FLOAT_MAX};
+  float tBest{0.0f};
   const auto consider{[&](float t) {
     // Zero counts: two surfaces of a cemented pair may share a vertex,
     // and an axial ray then meets the second one at no distance at all.
     if (!(t >= 0)) return;
-    if (const auto s{std::abs(os + t * d.z)}; s < sBest) sBest = s, tBest = t;
+    if (const float s{std::abs(os + t * dz)}; s < sBest) {
+      sBest = s;
+      tBest = t;
+    }
   }};
-  if (a == 0) {
-    if (b == 0) return false;
+  if (SMDL_UNLIKELY(a == 0)) {
+    if (SMDL_UNLIKELY(b == 0)) return false;
     consider(-c / b);
   } else {
-    const auto discriminant{b * b - 4 * a * c};
-    if (discriminant < 0) return false;
-    const auto q{stableRootTerm(b, discriminant)};
+    const float discrim{b * b - 4 * a * c};
+    if (SMDL_UNLIKELY(discrim < 0)) return false;
+    // The stable pairing of the roots, `q / a` and `c / q`, which takes
+    // the root the subtraction would cancel off the product of the roots
+    // instead. Here `q` is zero where `b` and `c` both are, which leaves
+    // `q / a` the whole answer.
+    const float q{-0.5f * (b + std::copysign(std::sqrt(discrim), b))};
     consider(q / a);
-    if (q != 0) consider(c / q);
+    if (SMDL_LIKELY(q != 0)) consider(c / q);
   }
-  if (sBest == FLOAT_MAX) return false;
+  if (SMDL_UNLIKELY(sBest == FLOAT_MAX)) return false;
   point = ray(tBest);
-  normal = normalize(float3(curvature * point.x, curvature * point.y,
-                            curvature * kPlusOne * (point.z - element.z) - 1));
+  normal = normalize(float3(kappa * point.x, kappa * point.y,
+                            kappa * kPlus1 * (point.z - elem.z) - 1));
   if (dot(normal, ray.dir) > 0) normal = -normal;
   return true;
 }
@@ -389,12 +441,11 @@ void sagRangeOf(const LensElement &element, float &sagMin,
 // the ray leaves over the index it enters. False is total internal
 // reflection, which a lens with no mirror in it has no answer to.
 [[nodiscard]] bool refract(float3 &dir, const float3 &normal,
-                           float eta) noexcept {
-  const auto cosThetaI{-dot(dir, normal)};
-  const auto sinThetaTSquared{eta * eta * (1 - cosThetaI * cosThetaI)};
-  if (sinThetaTSquared >= 1) return false;
-  dir =
-      eta * dir + (eta * cosThetaI - std::sqrt(1 - sinThetaTSquared)) * normal;
+                           float ior) noexcept {
+  const float cosThetaI{-dot(dir, normal)};
+  const float sin2ThetaT{ior * ior * (1 - cosThetaI * cosThetaI)};
+  if (sin2ThetaT >= 1) return false;
+  dir = ior * dir + (ior * cosThetaI - std::sqrt(1 - sin2ThetaT)) * normal;
   return true;
 }
 
@@ -405,16 +456,16 @@ void sagRangeOf(const LensElement &element, float &sagMin,
 // edges.
 [[nodiscard]] bool isInsideBlades(float x, float y, int numBlades,
                                   float circumRadius, float angle) noexcept {
-  const auto sector{TWO_PI / float(numBlades)};
-  auto phi{std::atan2(y, x) - angle};
+  const float sector{TWO_PI / float(numBlades)};
+  float phi{std::atan2(y, x) - angle};
   phi -= sector * std::floor(phi / sector);
-  const auto apothem{circumRadius * std::cos(PI / float(numBlades))};
-  const auto boundary{apothem / std::cos(phi - 0.5f * sector)};
+  const float apothem{circumRadius * std::cos(0.5f * sector)};
+  const float boundary{apothem / std::cos(phi - 0.5f * sector)};
   return x * x + y * y <= boundary * boundary;
 }
 
 // A lens with one set of medium indices, which is what every scan and
-// grid below asks its questions of: the reference indices, for the
+// grid here asks its questions of: the reference indices, for the
 // lens's own probes, and for the exit pupil's table the two ends of a
 // range of wavelengths besides. The pair travels together because every
 // one of those questions is about a lens at a wavelength, and neither
@@ -428,164 +479,149 @@ public:
   [[nodiscard]] bool trace(Ray &ray) const noexcept {
     return lens.traceFromFilm(ray, indices);
   }
-
   // The ray from the film point `filmRadius` off the axis, on the +x
   // side, toward the point `(x, y)` of the plane of the rear vertex,
-  // which is the one ray every scan below is made of.
+  // which is the one ray every scan here is made of.
   [[nodiscard]] Ray rayTo(float filmRadius, float x, float y) const noexcept {
-    const float3 film{filmRadius, 0, lens.filmZ()};
-    return Ray{film, float3(x, y, lens.rearZ()) - film, EPS, INF};
+    const float3 filmA{filmRadius, 0, lens.filmZ()};
+    const float3 filmB{x, y, lens.rearZ()};
+    return {filmA, filmB - filmA, EPS, INF};
   }
-
   // Does light reaching that film point come through that point?
   [[nodiscard]] bool passes(float filmRadius, float x, float y) const noexcept {
-    auto ray{rayTo(filmRadius, x, y)};
+    Ray ray{rayTo(filmRadius, x, y)};
     return trace(ray);
+  }
+
+  // Scan a line across the plane of the rear vertex and report the span
+  // of it that light reaching a film point `filmRadius` off the axis, on
+  // the +x side, comes through. `pointAt` places a point on the line for
+  // a parameter running over [-1, 1], and the span comes back in that
+  // same parameter. False is a line nothing gets out through.
+  template <typename F>
+  [[nodiscard]] bool scanPupil(float filmRadius, F &&pointAt, float &lo,
+                               float &hi) const noexcept {
+    const auto passesAt{[&](float t) {
+      const auto point{pointAt(t)};
+      return passes(filmRadius, point.x, point.y);
+    }};
+    lo = FLOAT_MAX, hi = -FLOAT_MAX;
+    for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++) {
+      const auto t{2.0f * float(i) / NUM_SCAN_COARSE_STEPS - 1};
+      if (passesAt(t)) {
+        lo = std::min(lo, t);
+        hi = std::max(hi, t);
+      }
+    }
+    if (!(lo <= hi)) return false;
+    const float cell{2.0f / NUM_SCAN_COARSE_STEPS};
+    const float from{lo - cell}, to{hi + cell};
+    for (int i = 0; i <= NUM_SCAN_FINE_STEPS; i++) {
+      const auto t{from + (to - from) * float(i) / NUM_SCAN_FINE_STEPS};
+      if (passesAt(t)) {
+        lo = std::min(lo, t);
+        hi = std::max(hi, t);
+      }
+    }
+    return true;
+  }
+
+  // The window along x on the plane of the rear vertex that the light
+  // reaching a film point `filmRadius` off the axis comes through. A scan
+  // along x finds the whole of it, the system being one of revolution and
+  // the film point lying on the +x axis.
+  [[nodiscard]] bool pupilWindowAt(float filmRadius, float &lo,
+                                   float &hi) const noexcept {
+    const auto radius{lens.rearApertureRadius()};
+    const auto alongX{[&](float t) { return float2(radius * t, 0.0f); }};
+    if (!scanPupil(filmRadius, alongX, lo, hi)) return false;
+    lo *= radius, hi *= radius;
+    return true;
+  }
+
+  // How far that same region reaches in y at `x`, which at the middle of
+  // the window bounds the whole of it within a factor of two: what a film
+  // point sees is the clear apertures projected onto this plane and
+  // intersected, so its half-height is a concave function of x vanishing
+  // at both ends of the window, and a concave function is at least half
+  // its largest value at the midpoint of an interval it vanishes on.
+  [[nodiscard]] float pupilHalfHeightAt(float filmRadius,
+                                        float x) const noexcept {
+    const auto radius{lens.rearApertureRadius()};
+    const auto alongY{[&](float t) { return float2(x, radius * t); }};
+    auto lo{0.0f}, hi{0.0f};
+    if (!scanPupil(filmRadius, alongY, lo, hi)) return 0;
+    return radius * std::max(std::abs(lo), std::abs(hi));
+  }
+
+  // The middle of the window, which is the chief ray where the lens does
+  // not vignette and the middle of what survives where it does.
+  [[nodiscard]] bool chiefPointAt(float filmRadius, float &x) const noexcept {
+    auto lo{0.0f}, hi{0.0f};
+    if (!pupilWindowAt(filmRadius, lo, hi)) return false;
+    x = 0.5f * (lo + hi);
+    return true;
+  }
+
+  // The angle off the axis that light reaching a film point `filmRadius`
+  // off the axis comes in at, the chief ray traced out: see
+  // `Lens::fieldAngleAt()`. Empty when nothing reaches that far.
+  [[nodiscard]] std::optional<float>
+  fieldAngleAt(float filmRadius) const noexcept {
+    auto x{0.0f};
+    if (!chiefPointAt(filmRadius, x)) return std::nullopt;
+    auto ray{rayTo(filmRadius, x, 0)};
+    if (!trace(ray)) return std::nullopt;
+    return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
+  }
+
+  // The largest film radius anything reaches: see
+  // `Lens::imageCircleRadius()`. Grow until nothing gets out, then halve
+  // the gap. A film point further off the axis needs its light to clear
+  // more of the glass and never less, so where the light stops is one
+  // place and not several.
+  [[nodiscard]] float imageCircleRadius() const noexcept {
+    const auto cap{16 * lens.focalLength()};
+    auto x{0.0f};
+    auto inside{0.0f}, outside{0.25f * lens.focalLength()};
+    while (outside < cap && chiefPointAt(outside, x))
+      inside = outside, outside *= 2;
+    if (!(outside < cap)) return inside;
+    for (int i = 0; i < NUM_RADIUS_BISECTIONS; i++) {
+      const auto middle{0.5f * (inside + outside)};
+      if (chiefPointAt(middle, x))
+        inside = middle;
+      else
+        outside = middle;
+    }
+    return inside;
+  }
+
+  // The film radius that looks out at `angle` radians off the axis: see
+  // `Lens::filmRadiusForFieldAngle()`.
+  [[nodiscard]] std::optional<float>
+  filmRadiusForFieldAngle(float angle) const noexcept {
+    if (!(angle > 0)) return 0.0f;
+    const auto largest{imageCircleRadius()};
+    const auto widest{fieldAngleAt(largest)};
+    if (!(widest && *widest >= angle)) return std::nullopt;
+    auto lo{0.0f}, hi{largest};
+    for (int i = 0; i < NUM_RADIUS_BISECTIONS; i++) {
+      const auto middle{0.5f * (lo + hi)};
+      // A radius nothing gets out of counts as short of the angle, which
+      // walks the search back in toward where light does get out.
+      const auto angleAt{fieldAngleAt(middle)};
+      if (!angleAt || *angleAt < angle)
+        lo = middle;
+      else
+        hi = middle;
+    }
+    return 0.5f * (lo + hi);
   }
 
   const Lens &lens;
   smdl::Span<const float> indices{};
 };
-
-// The two passes of a scan across the plane of the rear vertex: a coarse
-// one over the whole aperture, then a fine one over the span it found.
-// The rear aperture can be twenty times the width of the cone that
-// actually reaches a film point, and ten times that again once the lens
-// is stopped down, a phone lens being the case that sets these. So the
-// coarse pass is what decides whether the cone is found at all and the
-// fine pass is what resolves it.
-constexpr int NUM_SCAN_COARSE_STEPS = 400;
-constexpr int NUM_SCAN_FINE_STEPS = 200;
-
-// Scan a line across the plane of the rear vertex and report the span of
-// it that light reaching a film point `filmRadius` off the axis, on the
-// +x side, comes through. `pointAt` places a point on the line for a
-// parameter running over [-1, 1], and the span comes back in that same
-// parameter. False is a line nothing gets out through.
-template <typename F>
-[[nodiscard]] bool scanPupil(const Probe &probe, float filmRadius, F &&pointAt,
-                             float &lo, float &hi) noexcept {
-  const auto passes{[&](float t) {
-    const auto point{pointAt(t)};
-    return probe.passes(filmRadius, point.x, point.y);
-  }};
-  lo = FLOAT_MAX, hi = -FLOAT_MAX;
-  for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++) {
-    const auto t{2.0f * i / NUM_SCAN_COARSE_STEPS - 1};
-    if (passes(t)) lo = std::min(lo, t), hi = std::max(hi, t);
-  }
-  if (!(lo <= hi)) return false;
-  const auto cell{2.0f / NUM_SCAN_COARSE_STEPS};
-  const auto from{lo - cell}, to{hi + cell};
-  for (int i = 0; i <= NUM_SCAN_FINE_STEPS; i++) {
-    const auto t{from + (to - from) * i / NUM_SCAN_FINE_STEPS};
-    if (passes(t)) lo = std::min(lo, t), hi = std::max(hi, t);
-  }
-  return true;
-}
-
-// The window along x on the plane of the rear vertex that the light
-// reaching a film point `filmRadius` off the axis comes through. A scan
-// along x finds the whole of it, the system being one of revolution and
-// the film point lying on the +x axis.
-[[nodiscard]] bool pupilWindowOf(const Probe &probe, float filmRadius,
-                                 float &lo, float &hi) noexcept {
-  const auto radius{probe.lens.rearApertureRadius()};
-  const auto alongX{[&](float t) { return float2(radius * t, 0.0f); }};
-  if (!scanPupil(probe, filmRadius, alongX, lo, hi)) return false;
-  lo *= radius, hi *= radius;
-  return true;
-}
-
-// How far that same region reaches in y at the middle of the window,
-// which bounds the whole of it within a factor of two: what a film point
-// sees is the clear apertures projected onto this plane and intersected,
-// so its half-height is a concave function of x vanishing at both ends
-// of the window, and a concave function is at least half its largest
-// value at the midpoint of an interval it vanishes on.
-[[nodiscard]] float pupilHalfHeightOf(const Probe &probe, float filmRadius,
-                                      float x) noexcept {
-  const auto radius{probe.lens.rearApertureRadius()};
-  const auto alongY{[&](float t) { return float2(x, radius * t); }};
-  auto lo{0.0f}, hi{0.0f};
-  if (!scanPupil(probe, filmRadius, alongY, lo, hi)) return 0;
-  return radius * std::max(std::abs(lo), std::abs(hi));
-}
-
-// The middle of the window, which is the chief ray where the lens does
-// not vignette and the middle of what survives where it does.
-[[nodiscard]] bool chiefPointOf(const Probe &probe, float filmRadius,
-                                float &x) noexcept {
-  auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(probe, filmRadius, lo, hi)) return false;
-  x = 0.5f * (lo + hi);
-  return true;
-}
-
-// The angle off the axis that light reaching a film point `filmRadius`
-// off the axis comes in at, the chief ray traced out: see
-// `Lens::fieldAngleAt()`. Empty when nothing reaches that far.
-[[nodiscard]] std::optional<float> fieldAngleOf(const Probe &probe,
-                                                float filmRadius) noexcept {
-  auto x{0.0f};
-  if (!chiefPointOf(probe, filmRadius, x)) return std::nullopt;
-  auto ray{probe.rayTo(filmRadius, x, 0)};
-  if (!probe.trace(ray)) return std::nullopt;
-  return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
-}
-
-// The largest film radius anything reaches: see
-// `Lens::imageCircleRadius()`. Grow until nothing gets out, then halve
-// the gap. A film point further off the axis needs its light to clear
-// more of the glass and never less, so where the light stops is one place
-// and not several.
-[[nodiscard]] float imageCircleOf(const Probe &probe) noexcept {
-  const auto cap{16 * probe.lens.focalLength()};
-  auto x{0.0f};
-  auto inside{0.0f}, outside{0.25f * probe.lens.focalLength()};
-  while (outside < cap && chiefPointOf(probe, outside, x))
-    inside = outside, outside *= 2;
-  if (!(outside < cap)) return inside;
-  for (int i = 0; i < 30; i++) {
-    const auto middle{0.5f * (inside + outside)};
-    if (chiefPointOf(probe, middle, x))
-      inside = middle;
-    else
-      outside = middle;
-  }
-  return inside;
-}
-
-// The film radius that looks out at `angle` radians off the axis: see
-// `Lens::filmRadiusForFieldAngle()`.
-[[nodiscard]] std::optional<float> filmRadiusOf(const Probe &probe,
-                                                float angle) noexcept {
-  if (!(angle > 0)) return 0.0f;
-  const auto largest{imageCircleOf(probe)};
-  const auto widest{fieldAngleOf(probe, largest)};
-  if (!(widest && *widest >= angle)) return std::nullopt;
-  auto lo{0.0f}, hi{largest};
-  for (int i = 0; i < 30; i++) {
-    const auto middle{0.5f * (lo + hi)};
-    // A radius nothing gets out of counts as short of the angle, which
-    // walks the search back in toward where light does get out.
-    const auto angleAt{fieldAngleOf(probe, middle)};
-    if (!angleAt || *angleAt < angle)
-      lo = middle;
-    else
-      hi = middle;
-  }
-  return 0.5f * (lo + hi);
-}
-
-// How many rays a bundle carries while the film plane is being solved,
-// and how far either way the search starts out from, as a fraction of
-// the focal length. A published design sits within a percent of its
-// paraxial plane; the bracket only seeds the search, which walks out of
-// it if it has to.
-constexpr int NUM_FOCUS_FAN_RAYS = 64;
-constexpr int NUM_FOCUS_SWEEP_STEPS = 64;
-constexpr float FOCUS_SEARCH_SPAN = 0.02f;
 
 // The RMS radius of the axial spot for a film at `filmZ`, measured at
 // the plane the lens is focused on, or as a slope for a lens focused at
@@ -600,7 +636,7 @@ constexpr float FOCUS_SEARCH_SPAN = 0.02f;
   const float3 film{0, 0, filmZ};
   auto sumWeight{0.0f}, sumSquared{0.0f};
   for (int i = 0; i < NUM_FOCUS_FAN_RAYS; i++) {
-    const auto height{pupilRadius * (i + 0.5f) / NUM_FOCUS_FAN_RAYS};
+    const auto height{pupilRadius * (float(i) + 0.5f) / NUM_FOCUS_FAN_RAYS};
     auto ray{Ray{film, float3(height, 0, lens.rearZ()) - film, EPS, INF}};
     if (!lens.traceFromFilm(ray) || !(ray.dir.z < 0)) continue;
     const auto slope{ray.dir.x / ray.dir.z};
@@ -625,7 +661,7 @@ constexpr float FOCUS_SEARCH_SPAN = 0.02f;
 [[nodiscard]] float bestFilmPlane(const Lens &lens,
                                   float focusDistance) noexcept {
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(Probe{lens, lens.referenceIndices()}, 0, lo, hi))
+  if (!Probe{lens, lens.referenceIndices()}.pupilWindowAt(0, lo, hi))
     return lens.filmZ();
   const auto pupilRadius{std::max(hi, -lo)};
   const auto span{FOCUS_SEARCH_SPAN * lens.focalLength()};
@@ -638,7 +674,8 @@ constexpr float FOCUS_SEARCH_SPAN = 0.02f;
     return true;
   }};
   for (int i = 0; i <= NUM_FOCUS_SWEEP_STEPS; i++)
-    consider(lens.filmZ() + span * (2.0f * i / NUM_FOCUS_SWEEP_STEPS - 1));
+    consider(lens.filmZ() +
+             span * (2.0f * float(i) / NUM_FOCUS_SWEEP_STEPS - 1));
   if (!(bestSpot < FLOAT_MAX)) return lens.filmZ();
   auto step{span / NUM_FOCUS_SWEEP_STEPS};
   for (int i = 0; i < 64 && step > 1e-4f * span; i++)
@@ -646,44 +683,30 @@ constexpr float FOCUS_SEARCH_SPAN = 0.02f;
   return best;
 }
 
-// How many film radii the exit pupil is tabulated at, how many radii
-// within one entry's span are traced (the ends included, so the entry
-// bounds the whole span and not just its middle), and how finely the
-// region one of them sees is gridded once the scans above have found it.
-constexpr size_t NUM_PUPIL_RADII = 64;
-constexpr int NUM_PUPIL_FILM_STEPS = 4;
-constexpr int NUM_PUPIL_FINE_STEPS = 64;
-
 // An axis-aligned rectangle on the plane of the rear vertex, grown by
 // folding in the points that got out. The default is empty.
 struct PupilRect final {
+  [[nodiscard]] bool isEmpty() const noexcept { return !(loX <= hiX); }
   void extend(float x, float y) noexcept {
     loX = std::min(loX, x), hiX = std::max(hiX, x);
     loY = std::min(loY, y), hiY = std::max(hiY, y);
   }
-
   void extend(const PupilRect &other) noexcept {
     if (!other.isEmpty())
       extend(other.loX, other.loY), extend(other.hiX, other.hiY);
   }
-
   void expand(float x, float y) noexcept {
     loX -= x, hiX += x, loY -= y, hiY += y;
   }
-
   void clampTo(const PupilRect &other) noexcept {
     loX = std::max(loX, other.loX), hiX = std::min(hiX, other.hiX);
     loY = std::max(loY, other.loY), hiY = std::min(hiY, other.hiY);
   }
-
-  [[nodiscard]] bool isEmpty() const noexcept { return !(loX <= hiX); }
-
   [[nodiscard]] float2 center() const noexcept {
-    return float2(0.5f * (loX + hiX), 0.5f * (loY + hiY));
+    return {0.5f * (loX + hiX), 0.5f * (loY + hiY)};
   }
-
   [[nodiscard]] float2 halfExtent() const noexcept {
-    return float2(0.5f * (hiX - loX), 0.5f * (hiY - loY));
+    return {0.5f * (hiX - loX), 0.5f * (hiY - loY)};
   }
 
   float loX{+FLOAT_MAX}, hiX{-FLOAT_MAX};
@@ -753,8 +776,8 @@ void eachPupilPoint(const Probe &probe, float filmRadius, const PupilRect &over,
                                   float filmRadius) noexcept {
   auto rect{PupilRect{}};
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(probe, filmRadius, lo, hi)) return rect;
-  const auto height{2 * pupilHalfHeightOf(probe, filmRadius, 0.5f * (lo + hi))};
+  if (!probe.pupilWindowAt(filmRadius, lo, hi)) return rect;
+  const auto height{2 * probe.pupilHalfHeightAt(filmRadius, 0.5f * (lo + hi))};
   rect.extend(lo, -height), rect.extend(hi, +height);
   const auto least{2 * probe.lens.rearApertureRadius() / NUM_SCAN_COARSE_STEPS};
   rect.expand(std::max(0.25f * (rect.hiX - rect.loX), least),
@@ -854,14 +877,14 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   mElements.resize(surfaces.size());
   mLayoutZ.resize(surfaces.size());
   mMedia.emplace_back();
-  auto glassName{std::string_view()};
+  auto mediumName{std::string_view()};
   auto z{0.0f};
   for (size_t i = 0; i < surfaces.size(); i++) {
     const auto &surface{surfaces[i]};
-    auto &element{mElements[i]};
-    element.z = mLayoutZ[i] = z * MM_TO_SCENE;
-    element.radius = surface.radius * MM_TO_SCENE;
-    element.conic = surface.conic;
+    auto &elem{mElements[i]};
+    elem.z = mLayoutZ[i] = z * MM_TO_SCENE;
+    elem.radius = surface.radius * MM_TO_SCENE;
+    elem.conic = surface.conic;
     if (surface.aspheric.size() > LENS_MAX_ASPHERIC_TERMS)
       throw smdl::Error(
           smdl::concat("expected at most ", LENS_MAX_ASPHERIC_TERMS,
@@ -870,19 +893,19 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     // A table that prints its unused terms leaves trailing zeros, and a
     // polynomial that is all zeros is a conic. Dropping them is what
     // keeps such a surface on the closed-form path.
-    auto numTerms{surface.aspheric.size()};
+    size_t numTerms{surface.aspheric.size()};
     while (numTerms > 0 && surface.aspheric[numTerms - 1] == 0) numTerms--;
-    element.numAsphericTerms = int(numTerms);
+    elem.numAsphericTerms = int(numTerms);
     for (size_t j = 0; j < numTerms; j++)
-      element.aspheric[j] = surface.aspheric[j];
-    element.semiDiameter = 0.5f * surface.diameter * MM_TO_SCENE;
-    element.mediumBefore = int(mMedia.size() - 1);
+      elem.aspheric[j] = surface.aspheric[j];
+    elem.semiDiameter = 0.5f * surface.diameter * MM_TO_SCENE;
+    elem.mediumBefore = int(mMedia.size() - 1);
     if (!surface.isStop) {
       mMedia.push_back(surface.medium);
-      glassName = surface.glassName;
+      mediumName = surface.mediumName;
     }
-    element.mediumAfter = int(mMedia.size() - 1);
-    element.isStop = surface.isStop;
+    elem.mediumAfter = int(mMedia.size() - 1);
+    elem.isStop = surface.isStop;
     z += surface.thickness;
   }
   // Everything below is solved at the d line, and every trace that names
@@ -892,12 +915,12 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     mReferenceIndices.push_back(medium.indexAt(smdl::FRAUNHOFER_D_LINE));
     mIsDispersive = mIsDispersive || medium.isDispersive();
   }
-  if (mReferenceIndices.back() != 1 || !glassName.empty())
+  if (mReferenceIndices.back() != 1 || !mediumName.empty())
     throw smdl::Error(smdl::concat(
         "expected air behind the last surface, got ",
-        glassName.empty()
+        mediumName.empty()
             ? smdl::concat("an index of ", mReferenceIndices.back())
-            : smdl::concat("the glass ", smdl::Quoted(glassName)),
+            : smdl::concat("the medium ", smdl::Quoted(mediumName)),
         ": the film is not immersed, so the prescription is missing the "
         "surface that brings the light back out"));
   mDesignBackFocus = surfaces.back().thickness * MM_TO_SCENE;
@@ -909,7 +932,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   if (system.c == 0)
     throw smdl::Error("the surfaces have no net power between them, so the "
                       "prescription forms no image and has no focal length");
-  auto points{cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back())};
+  auto points{system.cardinalPoints(mLayoutZ.front(), mLayoutZ.back())};
   mFocalLength = points.focalLength;
   mBackFocalDistance = points.backFocalDistance;
 
@@ -948,7 +971,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   // it is known.
   for (auto &element : mElements) element.z -= mLayoutEntrancePupilZ;
   mExitPupilZ -= mLayoutEntrancePupilZ;
-  points = movedTo(points, mLayoutEntrancePupilZ);
+  points = points.movedTo(mLayoutEntrancePupilZ);
 
   const auto pupilMagnification{std::abs(front.a)};
   const auto stopRadius{mElements[mStopIndex].semiDiameter};
@@ -1004,7 +1027,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   mFocusDistance = options.focusDistance;
   if (!(mFocusDistance >= 0))
     throw smdl::Error("expected a nonnegative focus distance");
-  const auto imageZ{imagePlaneOf(points, mFocusDistance)};
+  const auto imageZ{points.imagePlane(mFocusDistance)};
   if (!imageZ)
     throw smdl::Error(smdl::concat(
         "cannot focus at ", mFocusDistance,
@@ -1045,17 +1068,15 @@ Lens::Indices Lens::indicesAt(float wavelength) const noexcept {
 float Lens::focalLengthAt(float wavelength) const noexcept {
   const auto indices{indicesAt(wavelength)};
   const auto system{Paraxial{mElements, mLayoutZ, indices.data()}.system()};
-  return cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back())
-      .focalLength;
+  return system.cardinalPoints(mLayoutZ.front(), mLayoutZ.back()).focalLength;
 }
 
 float Lens::paraxialFilmZAt(float wavelength) const noexcept {
   const auto indices{indicesAt(wavelength)};
   const auto system{Paraxial{mElements, mLayoutZ, indices.data()}.system()};
-  const auto points{
-      movedTo(cardinalPointsOf(system, mLayoutZ.front(), mLayoutZ.back()),
-              mLayoutEntrancePupilZ)};
-  return imagePlaneOf(points, mFocusDistance)
+  return system.cardinalPoints(mLayoutZ.front(), mLayoutZ.back())
+      .movedTo(mLayoutEntrancePupilZ)
+      .imagePlane(mFocusDistance)
       .value_or(std::numeric_limits<float>::quiet_NaN());
 }
 
@@ -1065,13 +1086,13 @@ bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
   // light here runs the other way: at every surface the ray leaves the
   // space on the film side and enters the one on the scene side.
   for (size_t i = mElements.size(); i-- > 0;) {
-    const auto &element{mElements[i]};
+    const auto &elem{mElements[i]};
     float3 point{}, normal{};
-    if (!intersectSurface(element, ray, point, normal)) return false;
+    if (!intersectSurface(elem, ray, point, normal)) return false;
     if (point.x * point.x + point.y * point.y >
-        element.semiDiameter * element.semiDiameter)
+        elem.semiDiameter * elem.semiDiameter)
       return false;
-    if (element.isStop) {
+    if (elem.isStop) {
       if (mNumBlades >= 3 && !isInsideBlades(point.x, point.y, mNumBlades,
                                              mBladeCircumRadius, mBladeAngle))
         return false;
@@ -1086,7 +1107,7 @@ bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
     }
     ray.org = point;
     if (!refract(ray.dir, normal,
-                 indices[element.mediumAfter] / indices[element.mediumBefore]))
+                 indices[elem.mediumAfter] / indices[elem.mediumBefore]))
       return false;
   }
   return true;
@@ -1128,7 +1149,7 @@ void Lens::logSummary() const {
   // lines stand. Like the back focus below, it is a check on a
   // transcription that costs nothing: an achromat brings the two
   // together, so a design meant as one that comes out with millimeters
-  // between them has a glass typed wrong.
+  // between them has a medium typed wrong.
   if (mIsDispersive) {
     const auto imageF{paraxialFilmZAt(smdl::FRAUNHOFER_F_LINE)};
     const auto imageC{paraxialFilmZAt(smdl::FRAUNHOFER_C_LINE)};
@@ -1146,8 +1167,7 @@ void Lens::logSummary() const {
   // that on purpose, at the focus its own zones agree on. A transcription
   // error is a much larger number, and that is what this stands between.
   if (mDesignBackFocus > 0) {
-    const auto error{std::abs(mDesignBackFocus - mBackFocalDistance)};
-    if (error > 0.02f * mFocalLength)
+    if (std::abs(mDesignBackFocus - mBackFocalDistance) > 0.02f * mFocalLength)
       SMDL_LOG_WARN("Lens: the design states a back focus of ",
                     mDesignBackFocus * SCENE_TO_MM,
                     " mm and the surfaces solve to ",
@@ -1180,7 +1200,8 @@ ExitPupil::ExitPupil(const Lens &lens, float maxFilmRadius,
   // building a camera slow enough to notice.
   smdl::parallelFor(size_t(0), mBounds.size(), [&](size_t i) {
     const auto span{maxFilmRadius / NUM_PUPIL_RADII};
-    const auto ellipse{boundPupil(probes, span * i, span * (i + 1))};
+    const auto ellipse{
+        boundPupil(probes, span * float(i), span * (float(i) + 1))};
     mBounds[i].center = ellipse.center;
     mBounds[i].semiAxes = ellipse.semiAxes;
   });
@@ -1217,7 +1238,7 @@ float2 ExitPupil::sample(float2 film, float2 xi, float &area) const noexcept {
   // above reads the same on either side of it.
   const auto cosPhi{filmRadius > 0 ? film.x / filmRadius : 1.0f};
   const auto sinPhi{filmRadius > 0 ? film.y / filmRadius : 0.0f};
-  return float2(cosPhi * x - sinPhi * y, sinPhi * x + cosPhi * y);
+  return {cosPhi * x - sinPhi * y, sinPhi * x + cosPhi * y};
 }
 
 float ExitPupil::areaFraction(float filmRadius) const noexcept {
@@ -1238,28 +1259,27 @@ void ExitPupil::logSummary() const {
 }
 
 std::optional<float> Lens::fieldAngleAt(float filmRadius) const noexcept {
-  return fieldAngleOf(Probe{*this, mReferenceIndices}, filmRadius);
+  return Probe{*this, mReferenceIndices}.fieldAngleAt(filmRadius);
 }
 
 float Lens::imageCircleRadius() const noexcept {
-  return imageCircleOf(Probe{*this, mReferenceIndices});
+  return Probe{*this, mReferenceIndices}.imageCircleRadius();
 }
 
 float Lens::transmittedArea(float filmRadius) const noexcept {
-  constexpr int NUM_PROBE_STEPS = 32;
   const Probe probe{*this, mReferenceIndices};
-  const auto seed{seedPupil(probe, filmRadius)};
+  const PupilRect seed{seedPupil(probe, filmRadius)};
   if (seed.isEmpty()) return 0;
-  auto numPassed{0};
-  eachPupilPoint(probe, filmRadius, seed, NUM_PROBE_STEPS,
+  int numPassed{0};
+  eachPupilPoint(probe, filmRadius, seed, NUM_TRANSMITTED_AREA_STEPS,
                  [&](float, float) { numPassed++; });
-  const auto extent{seed.halfExtent()};
-  return 4 * extent.x * extent.y * numPassed /
-         float(NUM_PROBE_STEPS * NUM_PROBE_STEPS);
+  const float2 extent{seed.halfExtent()};
+  return 4 * extent.x * extent.y * float(numPassed) /
+         float(NUM_TRANSMITTED_AREA_STEPS * NUM_TRANSMITTED_AREA_STEPS);
 }
 
 std::optional<float> Lens::filmRadiusForFieldAngle(float angle) const noexcept {
-  return filmRadiusOf(Probe{*this, mReferenceIndices}, angle);
+  return Probe{*this, mReferenceIndices}.filmRadiusForFieldAngle(angle);
 }
 
 float Lens::lateralColorAt(float filmRadius) const noexcept {
@@ -1267,8 +1287,8 @@ float Lens::lateralColorAt(float filmRadius) const noexcept {
   if (!angle) return std::numeric_limits<float>::quiet_NaN();
   const auto indicesF{indicesAt(smdl::FRAUNHOFER_F_LINE)};
   const auto indicesC{indicesAt(smdl::FRAUNHOFER_C_LINE)};
-  const auto radiusF{filmRadiusOf(Probe{*this, indicesF}, *angle)};
-  const auto radiusC{filmRadiusOf(Probe{*this, indicesC}, *angle)};
+  const auto radiusF{Probe{*this, indicesF}.filmRadiusForFieldAngle(*angle)};
+  const auto radiusC{Probe{*this, indicesC}.filmRadiusForFieldAngle(*angle)};
   if (!radiusF || !radiusC) return std::numeric_limits<float>::quiet_NaN();
   return *radiusF - *radiusC;
 }
