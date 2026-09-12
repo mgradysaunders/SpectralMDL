@@ -21,7 +21,7 @@ TEST_CASE("Emitter: a voided field") {
                                                         "  auto m = Mixed();\n"
                                                         "  auto p = &m.v;\n"
                                                         "}\n")};
-    CHECK_CONTAINS(error, "cannot take address");
+    CHECK_CONTAINS(error, "Cannot take address");
   }
   SUBCASE("Taking the address of a void value is the same error") {
     std::string error{compileSource(tmpDir, "#smdl\n"
@@ -29,7 +29,7 @@ TEST_CASE("Emitter: a voided field") {
                                             "  auto x = void();\n"
                                             "  auto p = &x;\n"
                                             "}\n")};
-    CHECK_CONTAINS(error, "cannot take address");
+    CHECK_CONTAINS(error, "Cannot take address");
   }
   // A voided field has no storage to write through, so both of these
   // report cleanly instead of aborting the compiler, which is what they
@@ -239,16 +239,16 @@ TEST_CASE("Emitter: the error paths of a lambda") {
   }
   SUBCASE("Lambda requires a parameter list") {
     std::string message{build("const auto f = \\;\n")};
-    CHECK_CONTAINS(message, "expected parameter list");
+    CHECK_CONTAINS(message, "Expected parameter list");
   }
   SUBCASE("Lambda requires a body") {
     std::string message{build("const auto f = \\(const float x);\n")};
-    CHECK_CONTAINS(message, "expected '=' or compound statement");
+    CHECK_CONTAINS(message, "Expected '=' or compound statement");
   }
   SUBCASE("Lambda parameter names must be unique") {
     std::string message{
         build("const auto f = \\(const float x, const float x) = x;\n")};
-    CHECK_CONTAINS(message, "duplicate parameter name");
+    CHECK_CONTAINS(message, "Duplicate parameter name");
   }
   SUBCASE("Mutual recursion through a lambda hits the recursion limit") {
     std::string message{
@@ -322,7 +322,7 @@ TEST_CASE("Emitter: the error paths of an inline argument") {
     std::string message{
         build(std::string(sum2) +
               "export const float bad = sum2(inline 1.0, 2.0);\n")};
-    CHECK_CONTAINS(message, "cannot expand 'inline' argument");
+    CHECK_CONTAINS(message, "Cannot expand 'inline' argument");
   }
   SUBCASE("A color does not expand") {
     std::string message{build(std::string(sum2) +
@@ -330,7 +330,7 @@ TEST_CASE("Emitter: the error paths of an inline argument") {
                               "  const color c = color(0.5);\n"
                               "  #assert(sum2(inline c) == 1.0);\n"
                               "}\n")};
-    CHECK_CONTAINS(message, "cannot expand 'inline' argument");
+    CHECK_CONTAINS(message, "Cannot expand 'inline' argument");
   }
   SUBCASE("A pointer does not expand, with a dereference hint") {
     std::string message{build("struct P { float a = 1.0; };\n"
@@ -346,7 +346,7 @@ TEST_CASE("Emitter: the error paths of an inline argument") {
     std::string message{build(std::string(sum2) +
                               "export const float bad = "
                               "sum2(visit inline auto(1.0, 2.0));\n")};
-    CHECK_CONTAINS(message, "cannot combine 'visit' and 'inline'");
+    CHECK_CONTAINS(message, "Cannot combine 'visit' and 'inline'");
   }
   SUBCASE("An inlined argument must not be named") {
     std::string message{build(std::string(sum2) +
@@ -359,13 +359,13 @@ TEST_CASE("Emitter: the error paths of an inline argument") {
         build(std::string(sum2) +
               "struct S { float a = 1.0; float b = 2.0; };\n"
               "export const float bad = sum2(a: 3.0, inline S());\n")};
-    CHECK_CONTAINS(message, "ambiguous name");
+    CHECK_CONTAINS(message, "Ambiguous name");
   }
   SUBCASE("A positional argument after an inlined struct is rejected") {
     std::string message{
         build(std::string(sum2) +
               "struct S { float a = 1.0; };\n"
               "export const float bad = sum2(inline S(), 2.0);\n")};
-    CHECK_CONTAINS(message, "unnamed arguments must appear before named");
+    CHECK_CONTAINS(message, "Unnamed arguments must appear before named");
   }
 }

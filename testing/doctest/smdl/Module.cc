@@ -60,7 +60,7 @@ TEST_CASE("Module: the search directories a module declares") {
                     "#smdl\n"
                     "#search_dir \"${SMDL_TEST_SEARCH_DIR_UNDEF}\"\n",
                     module_, allocator)};
-    CHECK_CONTAINS(message, "undefined environment variable");
+    CHECK_CONTAINS(message, "Undefined environment variable");
   }
   SUBCASE("Empty path is an error") {
     std::string message{parseModule(tmpDir, "mod.smdl",
@@ -72,7 +72,7 @@ TEST_CASE("Module: the search directories a module declares") {
     std::string message{parseModule(tmpDir, "mod.smdl",
                                     "#smdl\n#search_dir 42\n", //
                                     module_, allocator)};
-    CHECK_CONTAINS(message, "expected literal string path");
+    CHECK_CONTAINS(message, "Expected literal string path");
   }
   SUBCASE("'#search_dir' requires the '#smdl' dialect") {
     std::string message{parseModule(tmpDir, "mod.mdl",

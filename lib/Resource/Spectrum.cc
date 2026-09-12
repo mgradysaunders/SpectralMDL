@@ -49,7 +49,7 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
       float wavelength{};
       float curveValue{};
       if (std::sscanf(lineRef.data(), "%f %f", &wavelength, &curveValue) != 2)
-        throw Error(concat("cannot load ", QuotedPath(fileName), ": expected ",
+        throw Error(concat("Cannot load ", QuotedPath(fileName), ": expected ",
                            isFirstRow ? "wavelength units or " : "",
                            "'wavelength value' on line ", lineNo));
       mWavelengths.push_back(toNanometers(units, wavelength));

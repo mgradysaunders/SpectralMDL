@@ -313,7 +313,7 @@ exec {
     float x = 2;
 )")};
     CHECK_CONTAINS(message, "::test>:3:");
-    CHECK_CONTAINS(message, "expected closing '}' after 'let'");
+    CHECK_CONTAINS(message, "Expected closing '}' after 'let'");
   }
 }
 

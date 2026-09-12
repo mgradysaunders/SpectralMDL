@@ -420,7 +420,7 @@ void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
   flat.worldBoundMax = float3(readFloat(36), readFloat(40), readFloat(44));
   const int64_t numValues{int64_t(extent.x) * extent.y * extent.z};
   if (mem.size() < 48 + size_t(numValues) * 4)
-    throw Error("Mitsuba volume file is truncated");
+    throw Error("the Mitsuba volume file is truncated");
   const unsigned char *values{header + 48};
   const auto fetchDense{[&](int x, int y, int z) {
     const uint32_t bits{llvm::support::endian::read32le(
@@ -556,7 +556,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
       loadNanoVDB(fileName, gridName, flat);
     } else if (fileNameRef.ends_with_insensitive(".vol")) {
       if (!gridName.empty())
-        throw Error(concat("Mitsuba volumes have no named grids, cannot "
+        throw Error(concat("a Mitsuba volume has no named grids, cannot "
                            "select ",
                            Quoted(gridName)));
       loadMitsubaVol(fileName, flat);
@@ -601,8 +601,8 @@ VoxelGrid::loadFromFile(const std::string &fileName,
   })};
   if (error) {
     clear();
-    error->message =
-        concat("cannot load ", QuotedPath(fileName), ": ", error->message);
+    error->message = concat("Cannot load ", QuotedPath(fileName), ": ",
+                            decapitalized(error->message));
   }
   return error;
 }
@@ -618,7 +618,7 @@ VoxelGrid::saveToFile(const std::string &fileName,
                   {gridName.empty() ? std::string("density") : gridName});
     } else if (fileNameRef.ends_with_insensitive(".vol")) {
       if (!gridName.empty())
-        throw Error(concat("Mitsuba volumes have no named grids, cannot name "
+        throw Error(concat("a Mitsuba volume has no named grids, cannot name "
                            "one ",
                            Quoted(gridName)));
       saveMitsubaVol(fileName, *this);
@@ -627,8 +627,8 @@ VoxelGrid::saveToFile(const std::string &fileName,
     }
   })};
   if (error)
-    error->message =
-        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
+    error->message = concat("Cannot save ", QuotedPath(fileName), ": ",
+                            decapitalized(error->message));
   return error;
 }
 
@@ -655,8 +655,8 @@ VoxelGrid::saveToFile(const std::string &fileName,
     saveNanoVDB(fileName, voxelGrids, gridNames);
   })};
   if (error)
-    error->message =
-        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
+    error->message = concat("Cannot save ", QuotedPath(fileName), ": ",
+                            decapitalized(error->message));
   return error;
 }
 

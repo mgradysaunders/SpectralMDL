@@ -201,7 +201,7 @@ parseArchivePackagePrefix(const std::string &fileName) {
   std::vector<std::string> prefix{};
   for (auto component : components) {
     if (component.empty())
-      throw Error(concat("invalid archive name ", QuotedPath(fileName),
+      throw Error(concat("Invalid archive name ", QuotedPath(fileName),
                          ": empty package prefix component"));
     prefix.push_back(component.str());
   }
@@ -252,7 +252,7 @@ void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
     // module still loads and compiles, and relative imports within
     // its own tree still resolve to it.
     module_.mIsShadowed = true;
-    SMDL_LOG_WARN("module ", Quoted(qualifiedName), " in ",
+    SMDL_LOG_WARN("Module ", Quoted(qualifiedName), " in ",
                   QuotedPath(module_.getDisplayName()), " is shadowed by ",
                   QuotedPath(itr->second->getDisplayName()));
   }
@@ -279,11 +279,11 @@ std::string normalizeModuleName(const std::string &moduleName) {
   }};
   std::vector<std::string_view> components{splitQualifiedName(moduleName)};
   if (components.empty()) {
-    throw Error(concat("module name ", Quoted(moduleName), " is empty"));
+    throw Error(concat("Module name ", Quoted(moduleName), " is empty"));
   }
   for (const auto &component : components) {
     if (!isIdentifier(component)) {
-      throw Error(concat("module name ", Quoted(moduleName), " has component ",
+      throw Error(concat("Module name ", Quoted(moduleName), " has component ",
                          Quoted(component), " that is not an identifier"));
     }
   }
@@ -308,7 +308,7 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
           itr->second->getSourceCode() == sourceCode) {
         return;
       }
-      throw Error(concat("cannot add module ", Quoted(qualifiedName),
+      throw Error(concat("Cannot add module ", Quoted(qualifiedName),
                          ": the name is already taken by ",
                          QuotedPath(itr->second->getDisplayName())));
     }
@@ -320,12 +320,12 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
                       return joinQualifiedName(splitQualifiedName(
                                  builtinName)) == qualifiedName;
                     }))
-      SMDL_LOG_WARN("module ", Quoted(qualifiedName),
+      SMDL_LOG_WARN("Module ", Quoted(qualifiedName),
                     " has the same name as a builtin module, so imports "
                     "of that name resolve to the builtin");
     if (!anchorDirectory.empty()) {
       if (!isDirectory(anchorDirectory)) {
-        throw Error(concat("cannot add module ", Quoted(qualifiedName),
+        throw Error(concat("Cannot add module ", Quoted(qualifiedName),
                            ": the anchor ", QuotedPath(anchorDirectory),
                            " is not an existing directory"));
       }
@@ -412,7 +412,7 @@ Compiler::add(std::string fileOrDirName,
         }
         if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
             isFile(loosePath + ".smdl")) {
-          throw Error(concat("archive ", QuotedPath(fileName),
+          throw Error(concat("Archive ", QuotedPath(fileName),
                              " conflicts with loose contents at ",
                              QuotedPath(loosePath),
                              " in the same search root"));
@@ -424,7 +424,7 @@ Compiler::add(std::string fileOrDirName,
             hasExtension(entryName, ".mdl")) {
           if (!isConformingArchiveEntry(prefix, entryName)) {
             throw Error(concat(
-                "archive ", QuotedPath(fileName), " entry ", Quoted(entryName),
+                "Archive ", QuotedPath(fileName), " entry ", Quoted(entryName),
                 " does not conform to the package prefix encoded "
                 "by the archive file name"));
           }
@@ -450,7 +450,7 @@ Compiler::add(std::string fileOrDirName,
           } else if (itr->second->getSearchRoot() != searchRoot) {
             // Already added under a different search root: the first
             // identity wins.
-            SMDL_LOG_WARN("module file ", QuotedPath(fileName),
+            SMDL_LOG_WARN("Module file ", QuotedPath(fileName),
                           " was already added as ",
                           Quoted(itr->second->getQualifiedName()),
                           "; keeping the existing identity");
@@ -481,7 +481,7 @@ Compiler::add(std::string fileOrDirName,
         for (const auto &dir : mModuleDirSearchPaths) {
           if (isLexicalSubPath(dir, path) || isLexicalSubPath(path, dir)) {
             throw Error(
-                concat("cannot add search root ", QuotedPath(path),
+                concat("Cannot add search root ", QuotedPath(path),
                        ": nested inside or encloses another search root ",
                        QuotedPath(dir),
                        " (would give modules ambiguous qualified names)"));
@@ -510,7 +510,7 @@ Compiler::add(std::string fileOrDirName,
                 std::equal(prefixI.begin(), prefixI.begin() + long(n),
                            prefixJ.begin())) {
               throw Error(concat(
-                  "archives ", //
+                  "Archives ", //
                   QuotedPath(archivePaths[i]), " and ",
                   QuotedPath(archivePaths[j]),
                   " have overlapping package prefixes in the same search "
@@ -535,7 +535,7 @@ Compiler::add(std::string fileOrDirName,
                        !isPathEquivalent(parentPathOf(entryPath), path)) {
               // Per the MDL specification, archives are only recognized
               // at the top level of a search root.
-              SMDL_LOG_WARN("ignoring archive ", QuotedPath(entryPath),
+              SMDL_LOG_WARN("Ignoring archive ", QuotedPath(entryPath),
                             " because it is not at the top level of search "
                             "root ",
                             QuotedPath(path));
@@ -545,7 +545,7 @@ Compiler::add(std::string fileOrDirName,
         return;
       }
     }
-    throw Error(concat("cannot locate ", Quoted(fileOrDirName)));
+    throw Error(concat("Cannot locate ", Quoted(fileOrDirName)));
   });
 }
 
@@ -818,7 +818,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                                                     jitMaterial.qualifiedName);
                        })) {
         std::string suggestion{suggestMaterialName(*this, desiredName)};
-        SMDL_LOG_WARN("desired material ", Quoted(desiredName),
+        SMDL_LOG_WARN("Desired material ", Quoted(desiredName),
                       " does not match any material in the added modules",
                       suggestion.empty()
                           ? std::string()
@@ -879,8 +879,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
             imageEntries[i].first->canonicalFileNames[0]};
         const Image &image{*imageEntries[i].second};
         if (errors[i]) {
-          SMDL_LOG_WARN("cannot load ", QuotedPath(fileName), ": ",
-                        errors[i]->message);
+          SMDL_LOG_WARN("Cannot load ", QuotedPath(fileName), ": ",
+                        decapitalized(errors[i]->message));
           continue;
         }
         SMDL_LOG_DEBUG("Loaded image ", QuotedPath(fileName), ": ",
@@ -926,14 +926,14 @@ std::optional<Error> Compiler::extractDocs(DocDatabase &docs) noexcept {
 
 llvm::LLVMContext &Compiler::getLLVMContext() {
   if (!mLLVMContext)
-    throw Error("no LLVM context: 'compile()' must be called first (and "
+    throw Error("No LLVM context: 'compile()' must be called first (and "
                 "'jitCompile()' consumes it)");
   return *mLLVMContext;
 }
 
 llvm::Module &Compiler::getLLVMModule() {
   if (!mLLVMModule)
-    throw Error("no LLVM module: 'compile()' must be called first (and "
+    throw Error("No LLVM module: 'compile()' must be called first (and "
                 "'jitCompile()' consumes it)");
   return *mLLVMModule;
 }
@@ -1002,7 +1002,7 @@ const Image &Compiler::loadImage(const std::string &fileName,
         return f == Image::MIP_MAX ? "maximum" : "mean";
       }};
       srcLoc.throwError(
-          "cannot request a ", filterName(filter), " mip chain for ",
+          "Cannot request a ", filterName(filter), " mip chain for ",
           QuotedPath(fileName), ": a ", filterName(image.getMipFilter()),
           " mip chain was requested at ", std::string(itr->second),
           ", and an image holds one chain");
@@ -1022,14 +1022,14 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
         PtexTexture *texture{PtexTexture::open(fileName.c_str(), message,
                                                /*premultiply=*/false)};
         if (!texture)
-          return Error(concat("cannot load ", QuotedPath(fileName), ": ",
+          return Error(concat("Cannot load ", QuotedPath(fileName), ": ",
                               message.c_str()));
         ptexture.texture = texture;
         ptexture.channelCount = texture->numChannels();
         ptexture.alphaIndex = texture->alphaChannel();
         return std::nullopt;
 #else
-        return Error(concat("cannot load ", QuotedPath(fileName),
+        return Error(concat("Cannot load ", QuotedPath(fileName),
                             ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
       });
@@ -1087,7 +1087,7 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
   if (const size_t numCurves{spectrumLibrary.getNumCurves()};
       spectrumView.curveValues.empty() && numCurves > 0) {
     logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveIndex),
-                           concat("spectrum library ", QuotedPath(fileName),
+                           concat("Spectrum library ", QuotedPath(fileName),
                                   " has no curve at index ", curveIndex,
                                   " (it has ", Counted(numCurves, "curve"),
                                   ")"));
@@ -1101,7 +1101,7 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
   const SpectrumLibrary &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
   SpectrumView spectrumView{spectrumLibrary.getCurveByName(curveName)};
   if (spectrumView.curveValues.empty() && spectrumLibrary.getNumCurves() > 0) {
-    std::string message{concat("spectrum library ", QuotedPath(fileName),
+    std::string message{concat("Spectrum library ", QuotedPath(fileName),
                                " has no curve named ", Quoted(curveName))};
     const Span<const std::string> curveNames{spectrumLibrary.getCurveNames()};
     if (curveNames.empty()) {
@@ -1144,7 +1144,7 @@ std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
               dumpFormat == DUMP_FORMAT_ASM
                   ? llvm::CodeGenFileType::AssemblyFile
                   : llvm::CodeGenFileType::ObjectFile))
-        throw Error("cannot emit assembly or object code for the native "
+        throw Error("Cannot emit assembly or object code for the native "
                     "target");
       // The codegen passes mutate the IR, so run them on a clone to keep
       // the module later handed to the JIT pristine.
@@ -1161,7 +1161,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
   mIsJITCompiling = true;
   std::optional<Error> error{catchAndReturnError([&] {
     if (!mLLVMJit || !mLLVMModule || !mLLVMContext)
-      throw Error("nothing to JIT-compile: 'compile()' must be called first");
+      throw Error("Nothing to JIT-compile: 'compile()' must be called first");
     // Define the builtin runtime callees ('smdlPanic', 'smdlBumpAllocate',
     // ...) as absolute symbols so they resolve even when the host process
     // does not export its own symbols (e.g. static link without
@@ -1239,7 +1239,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
 void *Compiler::jitLookup(std::string_view name) {
   llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJit->lookup(name)};
   if (!symbol)
-    throw Error(concat("cannot resolve JIT symbol ", Quoted(name), ": ",
+    throw Error(concat("Cannot resolve JIT symbol ", Quoted(name), ": ",
                        llvm::toString(symbol.takeError())));
   return symbol->toPtr<void *>();
 }
@@ -1359,7 +1359,7 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
             os << " ... ";
             try {
               if (!itr0->test)
-                throw Error(concat("unit test ", Quoted(itr0->testName),
+                throw Error(concat("Unit test ", Quoted(itr0->testName),
                                    " has no JIT-compiled function"));
               itr0->test(state);
               llvm::WithColor(os, testColorSuccess, llvmColorMode) << "success";
@@ -1379,7 +1379,7 @@ std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
     for (auto &jitExec : mExecs) {
       if (!jitExec.func)
-        throw Error(concat("exec ", Quoted(jitExec.name),
+        throw Error(concat("Exec ", Quoted(jitExec.name),
                            " has no JIT-compiled function: 'jitCompile()' "
                            "must be called first"));
       jitExec();

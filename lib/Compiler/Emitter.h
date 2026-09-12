@@ -657,7 +657,7 @@ public:
   /// Emit import declaration.
   Value emit(AST::Import &decl) {
     if (decl.isExported())
-      decl.srcLoc.throwError("cannot re-export qualified 'import'");
+      decl.srcLoc.throwError("Cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
       declareImport(importPath, importPath.isAbsolute(), decl);
     return Value();
@@ -837,7 +837,7 @@ public:
   Value emit(AST::Type &expr) {
     Value value{emit(expr.expr)};
     if (value.type != context.getMetaTypeType())
-      expr.srcLoc.throwError("expected expression to resolve to a type");
+      expr.srcLoc.throwError("Expected expression to resolve to a type");
     expr.type = value.getComptimeMetaType(context, expr.srcLoc);
     return value;
   }
@@ -941,7 +941,7 @@ public:
   Value emit(AST::Preserve &stmt) {
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
       Value value{emit(expr)};
-      if (!value.isLValue()) stmt.srcLoc.throwError("cannot 'preserve' rvalue");
+      if (!value.isLValue()) stmt.srcLoc.throwError("Cannot 'preserve' rvalue");
       unwindStack.push_back(
           {UnwindAction::Kind::Preserve, value, rvalue(value)});
     }
@@ -969,7 +969,7 @@ public:
   Value emit(AST::Unreachable &stmt) {
     if (!getLLVMFunction())
       stmt.srcLoc.throwError(
-          "'unreachable' must be within function definition");
+          "An 'unreachable' must be within function definition");
     builder.CreateUnreachable();
     return Value();
   }

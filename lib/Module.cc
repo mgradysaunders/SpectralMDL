@@ -131,7 +131,7 @@ void Module::computeSearchDirs() {
   for (const auto &searchDir : mRoot->searchDirs) {
     const SourceLocation &srcLoc{searchDir.path->srcLoc};
     if (searchDir.path->value.empty())
-      srcLoc.throwError("'#search_dir' path must not be empty");
+      srcLoc.throwError("The '#search_dir' path must not be empty");
     std::string dir{};
     try {
       dir = expandPathVariables(searchDir.path->value);
@@ -144,7 +144,7 @@ void Module::computeSearchDirs() {
       dir = joinPaths(getDirectory(), dir);
     dir = makePathCanonical(std::move(dir));
     if (!isDirectory(dir))
-      srcLoc.logWarn(concat("'#search_dir' path ", QuotedPath(dir),
+      srcLoc.logWarn(concat("The '#search_dir' path ", QuotedPath(dir),
                             " is not an existing directory"));
     mSearchDirs.push_back(std::move(dir));
   }
@@ -152,11 +152,11 @@ void Module::computeSearchDirs() {
 
 std::optional<Error> Module::compile(Context &context) noexcept {
   if (!isParsed()) {
-    return Error("module not yet parsed");
+    return Error("Module not yet parsed");
   }
   return catchAndReturnError([&] {
     if (mCompileStatus == COMPILE_STATUS_IN_PROGRESS)
-      throw Error(concat("detected cyclic import of module ", Quoted(mName)));
+      throw Error(concat("Detected cyclic import of module ", Quoted(mName)));
     if (mCompileStatus == COMPILE_STATUS_FAILED)
       throw Error(mCompileErrorMessage);
     if (mCompileStatus == COMPILE_STATUS_NOT_STARTED) {
@@ -196,7 +196,7 @@ std::optional<Error> Module::compile(Context &context) noexcept {
 std::optional<Error>
 Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
   if (!isFileBacked()) {
-    return Error(concat("cannot format ", Quoted(mDisplayName),
+    return Error(concat("Cannot format ", Quoted(mDisplayName),
                         " because the module has no file"));
   }
   if (!isParsed()) {
@@ -213,7 +213,7 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
     if (formatOptions.isInPlace) {
       if (isExtractedFromArchive()) {
         throw Error(
-            concat("cannot format module extracted from archive in-place ",
+            concat("Cannot format module extracted from archive in-place ",
                    QuotedPath(mFileName)));
       }
       std::basic_fstream<char> stream{openOrThrow(mFileName, std::ios::out)};

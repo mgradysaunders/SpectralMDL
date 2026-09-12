@@ -140,12 +140,12 @@ void checkWindowAndNames(const std::string &fileName,
                          std::optional<int4> window, size_t nX, size_t nY,
                          Span<const std::string> bandNames, size_t nBands) {
   if (window && !isSubWindow(*window, nX, nY))
-    throw Error(concat("cannot write ", QuotedPath(fileName), ": the window ",
+    throw Error(concat("Cannot write ", QuotedPath(fileName), ": the window ",
                        (*window)[0], ",", (*window)[1], ",", (*window)[2], ",",
                        (*window)[3], " is not a non-empty sub-rectangle of ",
                        nX, "x", nY));
   if (!bandNames.empty() && bandNames.size() != nBands)
-    throw Error(concat("cannot write ", QuotedPath(fileName), ": ",
+    throw Error(concat("Cannot write ", QuotedPath(fileName), ": ",
                        bandNames.size(), " band names for ", nBands, " bands"));
 }
 
@@ -224,7 +224,7 @@ void writeENVIFileUInt16(Span<const uint16_t> data, size_t numBands,
                          std::optional<int4> window, uint64_t numSamples) {
   const int4 noCrop{0, 0, int(numPixelsX), int(numPixelsY)};
   if (data.size() != numBands * numPixelsX * numPixelsY)
-    throw Error(concat("cannot write ", QuotedPath(fileName), ": ", data.size(),
+    throw Error(concat("Cannot write ", QuotedPath(fileName), ": ", data.size(),
                        " values for ", Counted(numBands, "band"), " over ",
                        numPixelsX, "x", numPixelsY, " pixels"));
   checkWindowAndNames(fileName, window, numPixelsX, numPixelsY, bandNames,
@@ -282,7 +282,7 @@ std::map<std::string, std::string> parseENVIHeader(const std::string &fileName,
     return line;
   }};
   if (trim(nextLine()) != "ENVI")
-    throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
+    throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"),
                        ": missing 'ENVI' magic line"));
   while (pos < text.size()) {
     std::string line{nextLine()};
@@ -309,7 +309,7 @@ uint64_t requiredCount(const std::string &fileName,
                        const char *key) {
   auto itr{fields.find(key)};
   if (itr == fields.end())
-    throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"),
+    throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"),
                        ": missing ", Quoted(key), " field"));
   uint64_t value{std::strtoull(itr->second.c_str(), nullptr, 10)};
   fields.erase(itr);
@@ -331,14 +331,14 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   // worth fixing up rather than rejecting.
   const uint64_t type{requiredCount(fileName, fields, ENVI_DATA_TYPE)};
   if (type != ENVI_FLOAT32 && type != ENVI_FLOAT64)
-    throw Error(concat("cannot load ", QuotedPath(fileName), ": data type ",
+    throw Error(concat("Cannot load ", QuotedPath(fileName), ": data type ",
                        type, " (expected 4 or 5, a 32-bit or 64-bit float)"));
   const size_t valueSize{type == ENVI_FLOAT64 ? sizeof(double) : sizeof(float)};
   if (auto itr{fields.find(ENVI_INTERLEAVE)};
       itr != fields.end() && itr->second == "bip") {
     fields.erase(itr);
   } else {
-    throw Error(concat("cannot load ", QuotedPath(fileName),
+    throw Error(concat("Cannot load ", QuotedPath(fileName),
                        ": expected 'interleave = bip'"));
   }
   const uint64_t byteOrder{requiredCount(fileName, fields, ENVI_BYTE_ORDER)};
@@ -354,13 +354,13 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   if (auto itr{fields.find(ENVI_CROP_WINDOW)}; itr != fields.end()) {
     const std::vector<double> bounds{parseArrayValue(itr->second)};
     if (bounds.size() != 4)
-      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
+      throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Counted(bounds.size(), "value"), " in ",
                          Quoted(ENVI_CROP_WINDOW), " (expected 4)"));
     for (size_t i = 0; i < 4; i++) result.cropWindow[i] = int(bounds[i]);
     if (const int4 &cropWindow{result.cropWindow};
         !isSubWindow(cropWindow, nX, nY))
-      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
+      throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Quoted(ENVI_CROP_WINDOW), " ",          //
                          cropWindow[0], ",", cropWindow[1], ",", //
                          cropWindow[2], ",", cropWindow[3],      //
@@ -372,7 +372,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
       result.wavelengths.push_back(float(w));
     fields.erase(itr);
     if (result.wavelengths.size() != nBands)
-      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
+      throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          Counted(result.wavelengths.size(), "wavelength"),
                          " for ", Counted(nBands, "band")));
   }
@@ -380,7 +380,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
     result.bandNames = parseNameList(itr->second);
     fields.erase(itr);
     if (result.bandNames.size() != nBands)
-      throw Error(concat("cannot load ", QuotedPath(fileName + ".hdr"), ": ",
+      throw Error(concat("Cannot load ", QuotedPath(fileName + ".hdr"), ": ",
                          result.bandNames.size(), " band names for ", nBands,
                          " bands"));
   }
@@ -400,7 +400,7 @@ SpectralFilm::readENVIFile(const std::string &fileName) try {
   std::vector<double> values(nBands);
   for (size_t iY = 0; iY < nY; iY++) {
     if (!file.read(row.data(), std::streamsize(row.size())))
-      throw Error(concat("cannot load ", QuotedPath(fileName),
+      throw Error(concat("Cannot load ", QuotedPath(fileName),
                          ": unexpected end of file"));
     const char *ptr{row.data()};
     for (size_t iX = 0; iX < nX; iX++) {

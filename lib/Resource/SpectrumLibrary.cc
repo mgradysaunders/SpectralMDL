@@ -17,7 +17,8 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
   clear();
   std::optional<Error> error{catchAndReturnError([&] {
     auto throwError{[&](std::string_view message) {
-      throw Error(concat("cannot load ", QuotedPath(fileName), ": ", message));
+      throw Error(concat("Cannot load ", QuotedPath(fileName), ": ",
+                         decapitalized(std::string(message))));
     }};
     std::string hdrFile{readOrThrow(fileName + ".hdr")};
     llvm::StringRef hdr{hdrFile};

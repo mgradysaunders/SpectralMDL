@@ -16,7 +16,7 @@ public:
     mz_zip_zero_struct(&mZip);
     if (!mz_zip_reader_init_file(&mZip, fileName.c_str(), /*flags=*/0))
       throw Error(
-          concat("cannot load ", QuotedPath(fileName), ": ",
+          concat("Cannot load ", QuotedPath(fileName), ": ",
                  mz_zip_get_error_string(mz_zip_get_last_error(&mZip))));
   }
 

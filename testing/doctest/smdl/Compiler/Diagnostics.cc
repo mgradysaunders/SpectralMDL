@@ -118,7 +118,7 @@ TEST_CASE("Compiler: the name a misspelling is corrected to") {
     // the wrong kind of distribution function, so nothing is suggested.
     smdl::Error error{compileError("#smdl\nimport ::df::*;\n"
                                    "exec { auto b = df::diffuse_bsdf(); }\n")};
-    CHECK_CONTAINS(error.message, "cannot resolve identifier");
+    CHECK_CONTAINS(error.message, "Cannot resolve identifier");
     CHECK_NOT_CONTAINS(error.message, "did you mean");
   }
   SUBCASE("An imported module that is not opened says so") {
@@ -200,7 +200,7 @@ TEST_CASE("Compiler: the overloads a rejected call names") {
     // caller wrote, not with the internal callee and the two arguments the
     // forwarder injects.
     CHECK_CONTAINS(error.message,
-                   "cannot call 'microfacet_ggx_smith_bsdf' with "
+                   "Cannot call 'microfacet_ggx_smith_bsdf' with "
                    "arguments '(roughness: float)'");
     CHECK_CONTAINS(error.message, "forwards to:");
     CHECK_CONTAINS(error.message, "did you mean 'roughness_u'?");
@@ -228,7 +228,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     smdl::Error error{
         compileError("#smdl\nexec { float4x3 a; float4x3 b; auto c = a "
                      "* b; #print(c); }\n")};
-    CHECK_CONTAINS(error.message, "no binary operator '*'");
+    CHECK_CONTAINS(error.message, "No binary operator '*'");
     CHECK_CONTAINS(error.message,
                    "columns of the left (4) to match the rows of "
                    "the right (3)");
@@ -241,7 +241,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
         compileError("#smdl\n@(pure) int f() { return \"hello\"; }\n"
                      "exec { #print(f()); }\n")};
     CHECK_CONTAINS(error.message,
-                   "cannot convert return value of type 'string' "
+                   "Cannot convert return value of type 'string' "
                    "to 'int'");
   }
   SUBCASE("Assigning to a 'const' says 'const', not 'rvalue'") {
@@ -259,7 +259,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     CHECK_CONTAINS(error.message, "because it is not a variable");
   }
   SUBCASE("A missing resource blames the line that asked for it") {
-    const CollectedLog warned{"cannot load 'nope.png': file not found"};
+    const CollectedLog warned{"load 'nope.png': file not found"};
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addCode(
         "::diag", "#smdl\nexport material m(uniform texture_2d t = "
@@ -300,7 +300,7 @@ TEST_CASE("Compiler: how a refusal is phrased") {
                   "exec { int unusedLocal = 1; }\n"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(warned.messages().size() == 1);
-    CHECK_CONTAINS(warned.messages()[0], "unused variable 'unusedLocal'");
+    CHECK_CONTAINS(warned.messages()[0], "variable 'unusedLocal'");
   }
 }
 
@@ -308,7 +308,7 @@ TEST_CASE("Compiler: where a color and a float3 may convert") {
   SUBCASE("'color' to 'float3' is refused in a pure context") {
     smdl::Error error{compileError(
         "#smdl\nexec { color c = color(1.0); float3 v = c; #print(v); }\n")};
-    CHECK_CONTAINS(error.message, "cannot convert 'color' to 'float3' in a "
+    CHECK_CONTAINS(error.message, "Cannot convert 'color' to 'float3' in a "
                                   "'@(pure)' context");
     // Naming the internal function the conversion reaches is what this
     // replaced.
@@ -318,7 +318,7 @@ TEST_CASE("Compiler: where a color and a float3 may convert") {
     smdl::Error error{
         compileError("#smdl\nexec { color c = float3(1.0, 0.5, 0.25); "
                      "#print(c[0]); }\n")};
-    CHECK_CONTAINS(error.message, "cannot convert 'float3' to 'color' in a "
+    CHECK_CONTAINS(error.message, "Cannot convert 'float3' to 'color' in a "
                                   "'@(pure)' context");
     CHECK_NOT_CONTAINS(error.message, "nontrivialRGBToColor");
   }

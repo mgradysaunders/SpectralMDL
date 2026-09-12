@@ -36,7 +36,7 @@ TEST_CASE("Compiler: the import resolution order") {
     smdl::Compiler compiler{};
     std::string message{buildAll(compiler, {tmpDir / "root"})};
     CHECK(message != "");
-    CHECK_CONTAINS(message, "cannot resolve import");
+    CHECK_CONTAINS(message, "Cannot resolve import");
   }
   SUBCASE("Weak-relative import falls back to search roots in add order") {
     tmpDir.write("rootA/util.mdl", "#smdl\nexport const int marker_a = 1;\n");
@@ -55,7 +55,7 @@ TEST_CASE("Compiler: the import resolution order") {
       smdl::Compiler compiler{};
       std::string message{buildAll(
           compiler, {tmpDir / "rootB", tmpDir / "rootA", tmpDir / "rootC"})};
-      CHECK_CONTAINS(message, "cannot resolve import");
+      CHECK_CONTAINS(message, "Cannot resolve import");
     }
   }
   SUBCASE("Strict-relative '.' import never falls back to search roots") {
@@ -64,7 +64,7 @@ TEST_CASE("Compiler: the import resolution order") {
     {
       smdl::Compiler compiler{};
       std::string message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK_CONTAINS(message, "cannot resolve import");
+      CHECK_CONTAINS(message, "Cannot resolve import");
     }
     // The same import spelled weakly succeeds via the search root.
     tmpDir.write("root/pkg/strict.mdl", "#smdl\nimport util::marker_top;\n");
@@ -89,7 +89,7 @@ TEST_CASE("Compiler: the import resolution order") {
     {
       smdl::Compiler compiler{};
       std::string message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK_CONTAINS(message, "cannot resolve import");
+      CHECK_CONTAINS(message, "Cannot resolve import");
     }
     // ... but a weak-relative 'df' import binds the disk module.
     tmpDir.write("root/main.mdl", "#smdl\nimport df::fake_fn;\n");
@@ -117,7 +117,7 @@ TEST_CASE("Compiler: the import resolution order") {
     {
       smdl::Compiler compiler{};
       std::string message{buildAll(compiler, {tmpDir / "root"})};
-      CHECK_CONTAINS(message, "cannot resolve import");
+      CHECK_CONTAINS(message, "Cannot resolve import");
     }
     // ... but a weak import binds the disk module.
     tmpDir.write("root/main.mdl", "#smdl\nimport models::prospect::fake_fn;\n");
@@ -672,13 +672,13 @@ TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
     // Names that match nothing anywhere only warn; the build succeeds.
   }
   SUBCASE("A misspelled desired name is offered the material it missed") {
-    const CollectedLog logged{"desired material"};
+    const CollectedLog logged{"does not match any material"};
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"wanted", "unwnated"});
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     REQUIRE(logged.messages().size() == 1);
     CHECK(logged.messages()[0] ==
-          "desired material 'unwnated' does not match any material in the "
+          "Desired material 'unwnated' does not match any material in the "
           "added modules; did you mean 'unwanted'?");
     // The skipped material is still offered when the host looks it up.
     CHECK(compiler.explainMaterialLookup("unwnated") ==

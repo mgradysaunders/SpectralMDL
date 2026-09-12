@@ -5,7 +5,7 @@
 TEST_CASE("Profiler: a trace that cannot be written") {
   TempDir tmpDir{"profiler"};
   const std::string fileName{(tmpDir / "missing" / "trace.json").string()};
-  const CollectedLog logged{"cannot write profiler time-trace file"};
+  const CollectedLog logged{"write profiler time-trace file"};
   smdl::profilerInitialize();
   smdl::profilerFinalize(fileName.c_str());
   // Said once, and with the reason, which is also what consumes the error

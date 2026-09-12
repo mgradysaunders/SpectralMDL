@@ -406,8 +406,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   })};
   if (error) {
     clear();
-    error->message =
-        concat("cannot load ", QuotedPath(fileName), ": ", error->message);
+    error->message = concat("Cannot load ", QuotedPath(fileName), ": ",
+                            decapitalized(error->message));
   }
   return error;
 }
@@ -660,11 +660,11 @@ std::optional<Error> write8bitImage(const std::string &fileName, int numTexelsX,
       }
     });
   } else {
-    return Error(concat("cannot write ", QuotedPath(fileName),
+    return Error(concat("Cannot write ", QuotedPath(fileName),
                         ": unrecognized extension"));
   }
   if (result == 0) {
-    return Error(concat("cannot write ", QuotedPath(fileName)));
+    return Error(concat("Cannot write ", QuotedPath(fileName)));
   }
   return std::nullopt;
 }
@@ -680,7 +680,7 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
     const char *message{};
     if (SaveEXR(ptr, numTexelsX, numTexelsY, numChannels, /*save_as_fp16=*/0,
                 fileName.c_str(), &message) != TINYEXR_SUCCESS) {
-      Error error{concat("cannot write ", QuotedPath(fileName), ": ",
+      Error error{concat("Cannot write ", QuotedPath(fileName), ": ",
                          message ? message : "unknown error")};
       FreeEXRErrorMessage(message);
       return error;
@@ -689,11 +689,11 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
   } else if (hasExtension(fileName, ".hdr")) {
     if (stbi_write_hdr(fileName.c_str(), numTexelsX, numTexelsY, numChannels,
                        ptr) == 0) {
-      return Error(concat("cannot write ", QuotedPath(fileName)));
+      return Error(concat("Cannot write ", QuotedPath(fileName)));
     }
     return std::nullopt;
   } else {
-    return Error(concat("cannot write ", QuotedPath(fileName),
+    return Error(concat("Cannot write ", QuotedPath(fileName),
                         ": unrecognized extension"));
   }
 }

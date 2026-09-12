@@ -145,4 +145,13 @@ std::string_view suggestNearest(std::string_view name,
   return best;
 }
 
+std::string decapitalized(std::string message) {
+  if (message.empty() || !('A' <= message[0] && message[0] <= 'Z'))
+    return message;
+  for (size_t i = 1; i < message.size() && message[i] != ' '; i++)
+    if ('A' <= message[i] && message[i] <= 'Z') return message;
+  message[0] = char(message[0] - 'A' + 'a');
+  return message;
+}
+
 } // namespace smdl

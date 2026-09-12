@@ -26,7 +26,7 @@ decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
                     &resultSize, sourceCode.compressed,
                     mz_ulong(sourceCode.compressedSize)) != MZ_OK ||
       resultSize != sourceCode.uncompressedSize)
-    throw Error("cannot decompress builtin module source code");
+    throw Error("Cannot decompress builtin module source code");
   return result;
 }
 } // namespace
@@ -312,7 +312,7 @@ Type *Context::getCommonType(llvm::ArrayRef<Type *> types,
         (typeB->isArithmeticScalar() && typeA->isColor()))
       return getColorType();
     if (!shouldDefaultToUnion || typeA->isAbstract() || typeB->isAbstract())
-      srcLoc.throwError("no common type between ", Quoted(typeA->displayName),
+      srcLoc.throwError("No common type between ", Quoted(typeA->displayName),
                         " and ", Quoted(typeB->displayName));
     return getUnionType({typeA, typeB});
   }};

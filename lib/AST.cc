@@ -152,7 +152,7 @@ Lambda::~Lambda() = default;
 
 Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
   if (!(isVariant() && definition && llvm::isa<Return>(definition.get())))
-    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+    srcLoc.throwError(concat("Function variant ", Quoted(name.srcName),
                              " has invalid declaration"));
   LetAndCall letAndCall{};
   AST::Expr *expr{static_cast<Return *>(definition.get())->expr.get()};
@@ -163,17 +163,17 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
     letAndCall.call = llvm::dyn_cast<Call>(letAndCall.let->expr.get());
     if (!letAndCall.call) {
       srcLoc.throwError(
-          concat("function variant ", Quoted(name.srcName),
+          concat("Function variant ", Quoted(name.srcName),
                  " definition with 'let' must be followed by call expression"));
     }
   }
   if (!letAndCall.call) {
-    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+    srcLoc.throwError(concat("Function variant ", Quoted(name.srcName),
                              " definition must be 'let' or call expression"));
   }
   for (auto &arg : letAndCall.call->args) {
     if (!arg.isNamed()) {
-      srcLoc.throwError(concat("call in definition of function variant ",
+      srcLoc.throwError(concat("Call in definition of function variant ",
                                Quoted(name.srcName),
                                " must only use named arguments"));
     }

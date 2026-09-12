@@ -95,7 +95,7 @@ TEST_CASE("Compiler: the curve a spectrum library does not have") {
                                         materialUsing("byName", "\"grasss\""),
                                         materialUsing("byIndex", "7"),
                                         materialUsing("found", "\"grass\"")));
-  const CollectedLog warnings{"spectrum library"};
+  const CollectedLog warnings{"has no curve"};
   smdl::Compiler compiler{};
   CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
   // Once each, however many times the material bodies were emitted, and
@@ -242,12 +242,12 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1002.png").string(), 2, 2, 4,
                                   rgba));
     tmpDir.write("main.smdl", materialUsing("tile_<UDIM>.png"));
-    const CollectedLog logged{"inconsistent"};
+    const CollectedLog logged{"image formats for"};
     smdl::Compiler compiler{};
     CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
     REQUIRE(logged.messages().size() == 1);
     CHECK_CONTAINS(logged.messages()[0],
-                   "inconsistent image formats for 'tile_<UDIM>.png': "
+                   "Inconsistent image formats for 'tile_<UDIM>.png': "
                    "'tile_1001.png' is 1-channel uint8, but 'tile_1002.png' "
                    "is 4-channel uint8");
   }

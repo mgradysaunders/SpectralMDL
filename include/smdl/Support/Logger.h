@@ -112,10 +112,10 @@ private:
 /// sinks, so a disabled message costs nothing to write, and an argument
 /// must not have a side effect the program depends on.
 ///
-/// The library words a warning or an error like an `Error` message,
-/// starting in lowercase unless its first word is a name, and a debug or
-/// info message as a sentence starting in uppercase. Neither ends in a
-/// period.
+/// The library words a message as a sentence whose first word is
+/// capitalized and which does not end in a period. Text spliced into a
+/// message after a colon or a semicolon is a clause rather than a line,
+/// and stays lowercase.
 #define SMDL_LOG(level, ...)                                            \
   do {                                                                  \
     const auto smdlLogLevel{level};                                     \

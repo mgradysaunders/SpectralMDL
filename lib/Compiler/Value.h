@@ -114,7 +114,7 @@ public:
   [[nodiscard]] Module *
   getComptimeMetaModule(Context &context, const SourceLocation &srcLoc) const {
     if (!isComptimeMetaModule(context))
-      srcLoc.throwError("expected compile-time module");
+      srcLoc.throwError("Expected compile-time module");
     return llvmConstantIntAsPtr<Module>(llvmValue);
   }
 
@@ -122,7 +122,7 @@ public:
   [[nodiscard]] Type *getComptimeMetaType(Context &context,
                                           const SourceLocation &srcLoc) const {
     if (!isComptimeMetaType(context))
-      srcLoc.throwError("expected compile-time type");
+      srcLoc.throwError("Expected compile-time type");
     return llvmConstantIntAsPtr<Type>(llvmValue);
   }
 
@@ -131,7 +131,7 @@ public:
   getComptimeMetaIntrinsic(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaIntrinsic(context))
-      srcLoc.throwError("expected compile-time intrinsic");
+      srcLoc.throwError("Expected compile-time intrinsic");
     return llvmConstantIntAsPtr<AST::Intrinsic>(llvmValue);
   }
 
@@ -140,7 +140,7 @@ public:
   getComptimeMetaNamespace(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaNamespace(context))
-      srcLoc.throwError("expected compile-time intrinsic");
+      srcLoc.throwError("Expected compile-time intrinsic");
     return llvmConstantIntAsPtr<AST::Namespace>(llvmValue);
   }
 
@@ -280,7 +280,7 @@ public:
               astParam->annotations->isMarkedUnused())) {
           astParam->wasWarningIssued = true;
           getSourceLocation().logWarn(
-              concat("unused parameter ", Quoted(name[0])));
+              concat("Unused parameter ", Quoted(name[0])));
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
@@ -291,7 +291,7 @@ public:
               declarator->annotations->isMarkedUnused())) {
           declarator->wasWarningIssued = true;
           getSourceLocation().logWarn(
-              concat("unused variable ", Quoted(name[0])));
+              concat("Unused variable ", Quoted(name[0])));
         }
       }
     }
