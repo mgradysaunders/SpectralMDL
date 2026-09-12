@@ -17,11 +17,13 @@
 /// one file and never two.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "Common.h"
@@ -50,6 +52,31 @@ enum class ResponseKind {
   QE
 };
 
+/// The curve through `knots` and `values` at `lambda`, linear between
+/// the knots and zero outside them: the one rule a response curve is
+/// read by, over the knots as a file states them and over the scaled
+/// copies the render resolves them into, which is why it is written
+/// once over whatever holds them.
+///
+/// The knots ascend and there is at least one of them, which is what a
+/// parsed band guarantees.
+template <typename Curve>
+[[nodiscard]] inline double curveAt(const Curve &knots, const Curve &values,
+                                    double lambda) noexcept {
+  using Knot = std::decay_t<decltype(knots[0])>;
+  SMDL_SANITY_CHECK(knots.size() == values.size() && knots.size() > 0);
+  if (!(lambda >= knots.front() && lambda <= knots.back())) return 0.0;
+  const auto itr{std::upper_bound(knots.begin(), knots.end(), Knot(lambda))};
+  const size_t i{size_t(itr - knots.begin())};
+  if (i == 0) return double(values.front());
+  if (i == knots.size()) return double(values.back());
+  const double w0{double(knots[i - 1])};
+  const double w1{double(knots[i])};
+  const double t{(lambda - w0) / (w1 - w0)};
+  return double(values[i - 1]) +
+         t * (double(values[i]) - double(values[i - 1]));
+}
+
 /// One response band: a named piecewise-linear curve over wavelength.
 class ResponseBand final {
 public:
@@ -65,10 +92,31 @@ public:
   /// is zero outside its knots.
   std::vector<float> values{};
 
-  /// The curve at `lambda` nanometers, linear between the knots and zero
-  /// outside them.
-  [[nodiscard]] double at(double lambda) const noexcept;
+  /// The curve at `lambda` nanometers; see `curveAt()`.
+  [[nodiscard]] double at(double lambda) const noexcept {
+    return curveAt(wavelengths, values, lambda);
+  }
 };
+
+/// The index into a tile `columns` wide and `rows` tall that frame pixel
+/// `(x, y)` reads through, anchored at the frame's origin so that a crop
+/// window changes nothing about which band a pixel sees.
+[[nodiscard]] inline size_t tileIndexAt(size_t columns, size_t rows, size_t x,
+                                        size_t y) noexcept {
+  return (y % rows) * columns + x % columns;
+}
+
+/// The distinct bands the tile `cfa` lays down, in the order it first
+/// names them, which is the order anything that speaks about them once
+/// each walks them in. Empty without a tile.
+[[nodiscard]] inline std::vector<size_t>
+tileBands(const std::vector<size_t> &cfa) {
+  auto bands{std::vector<size_t>()};
+  for (const auto index : cfa)
+    if (std::find(bands.begin(), bands.end(), index) == bands.end())
+      bands.push_back(index);
+  return bands;
+}
 
 /// The `response` a sensor reads through: its named bands as curves over
 /// wavelength, and the tile that lays them over the pixels when there is
@@ -104,6 +152,12 @@ public:
 
   [[nodiscard]] size_t cfaRows() const noexcept {
     return cfaColumns > 0 ? cfa.size() / cfaColumns : 0;
+  }
+
+  /// The band frame pixel `(x, y)` reads through under the tile; see
+  /// `tileIndexAt()`. Without a tile, 0.
+  [[nodiscard]] size_t bandAt(size_t x, size_t y) const noexcept {
+    return hasCFA() ? cfa[tileIndexAt(cfaColumns, cfaRows(), x, y)] : 0;
   }
 
   /// The index of the band named `name`, or nothing.
@@ -179,6 +233,13 @@ public:
   [[nodiscard]] uint32_t topCode() const noexcept {
     return (uint32_t(1) << bits) - 1;
   }
+
+  /// The digital numbers between the black level and the top code, which
+  /// is what the well fills at the base ISO and what the speed of a
+  /// stated gain is read against.
+  [[nodiscard]] double codeRange() const noexcept {
+    return double(topCode()) - double(blackLevel);
+  }
 };
 
 /// The body a file's `sensor` directive describes.
@@ -250,10 +311,15 @@ public:
 /// Read a sensor file: parse, print every diagnostic to standard error
 /// (colored when stderr is a terminal), and throw if any were errors.
 ///
+/// The document's locations point into `diags`, which the caller owns so
+/// that they outlive the read: a caller that keeps the document rather
+/// than the body alone can point a refusal at the key the file stated.
+///
 /// \throws smdl::Error  If the file cannot be read, or on any parse
 ///                      error after printing the diagnostics.
 ///
-[[nodiscard]] SensorDocument readSensor(const std::string &fileName);
+[[nodiscard]] SensorDocument readSensor(LayoutDiagnostics &diags,
+                                        const std::string &fileName);
 
 /// The sensor file a camera file names, or empty for none: `stated` as
 /// the camera file wrote it, resolved relative to `cameraFileName` so

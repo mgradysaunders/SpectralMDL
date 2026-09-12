@@ -106,6 +106,14 @@ public:
   /// Is this the aperture stop? It refracts nothing. What it does is
   /// block whatever falls outside `semiDiameter`.
   bool isStop{};
+
+  /// The curvature, which is the reciprocal radius, and zero for a flat
+  /// surface. The sag and the intersection are written in it, since a
+  /// flat surface is the curvature of zero rather than a case of its
+  /// own.
+  [[nodiscard]] float curvature() const noexcept {
+    return radius == 0 ? 0.0f : 1 / radius;
+  }
 };
 
 /// A lens the camera can look through: the surfaces in order, and the

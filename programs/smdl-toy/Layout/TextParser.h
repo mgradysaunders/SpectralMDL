@@ -1,7 +1,8 @@
 /// \file
 /// The syntax core the layout toolchain's text formats share: the token,
-/// the lexer, and the parser base holding everything that is true of the
-/// grammar rather than of one format.
+/// the lexer, the parser base holding everything that is true of the
+/// grammar rather than of one format, and the read every format's own
+/// `read...()` is.
 ///
 /// The `.layout` and `.camera` formats are one language with two
 /// vocabularies. Everything here is the language; the vocabularies live
@@ -14,12 +15,46 @@
 #include <string>
 #include <string_view>
 
+#include "smdl/Support/Logger.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/Strings.h"
 
 #include "Common.h"
 
 #include "Layout/LayoutDiagnostics.h"
+
+/// Read `fileName` as one document: load it as a source of `diags`,
+/// `parse(diags, source)` it, print every diagnostic, and refuse the
+/// file if any of them was an error.
+///
+/// The document's locations point into `diags`, so a caller that holds
+/// onto them past the read (a refusal made once the scene is known)
+/// passes a sink that outlives the document.
+///
+/// \throws smdl::Error  If the file cannot be read, or on any parse
+///                      error after printing the diagnostics.
+///
+template <typename Parse>
+[[nodiscard]] auto readDocument(LayoutDiagnostics &diags,
+                                const std::string &fileName, Parse &&parse) {
+  const auto &source{diags.loadSource(fileName)};
+  auto document{parse(diags, source)};
+  diags.printAllAndRefuse(fileName);
+  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
+  return document;
+}
+
+/// The file a camera file names, or empty for none: `stated` as the
+/// camera file wrote it, resolved relative to `cameraFileName` so that a
+/// scene directory stays self-contained. `what` is the noun a refusal
+/// calls it by, e.g. `"sensor"`.
+///
+/// \throws smdl::Error  If it names a file that does not exist, which
+///                      may not be quietly ignored.
+///
+[[nodiscard]] std::string resolveSiblingFile(const std::string &stated,
+                                             const std::string &cameraFileName,
+                                             std::string_view what);
 
 /// One token, with the byte range it came from so that every diagnostic
 /// can point at it.
@@ -80,6 +115,22 @@ public:
   }
 
 protected:
+  /// Read statements with `parseStatement` until the end of the file,
+  /// synchronizing at the next top-level keyword after each one that
+  /// threw, so that one bad statement costs its own diagnostic and not
+  /// the diagnostics of the statements after it. This loop is what every
+  /// format's `parse()` is.
+  template <typename ParseStatement>
+  void parseStatements(ParseStatement &&parseStatement) {
+    while (mToken.kind != Token::END) {
+      try {
+        parseStatement();
+      } catch (const Recover &) {
+        synchronize();
+      }
+    }
+  }
+
   /// Skip to the next top-level keyword, tracking brace depth so that a
   /// keyword inside the abandoned statement's block does not fool the
   /// loop into starting mid-block. An error raised after a line's last

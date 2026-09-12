@@ -163,6 +163,12 @@ public:
     return double(mSettings.blackLevel);
   }
 
+  /// The digital numbers between the black level and the top code; see
+  /// `DetectorSettings::codeRange()`.
+  [[nodiscard]] double codeRange() const noexcept {
+    return mSettings.codeRange();
+  }
+
   /// The digital number a saturated pixel reads: the top code, or the
   /// well through the gain where a gain leaves the well below the top
   /// code. What a develop takes as white.
@@ -181,8 +187,8 @@ public:
 
 private:
   /// One pixel band's electrons at the ADC, clipped to the well, from
-  /// the film's `mean`. `signal` is the signal electrons before the dark
-  /// current and the noise.
+  /// the film's `mean` as `filmMean()` reads it. `signal` is the signal
+  /// electrons before the dark current and the noise.
   [[nodiscard]] double electronsOf(double mean, DetectorNoise noise,
                                    smdl::RNG &rng,
                                    double &signal) const noexcept;

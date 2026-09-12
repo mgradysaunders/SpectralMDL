@@ -7,7 +7,6 @@
 #include "smdl/RenderUtil/Illuminant.h"
 #include "smdl/Support/Parallel.h"
 
-#include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
 
 namespace {
@@ -24,11 +23,6 @@ template <typename F> [[nodiscard]] SensorSpectrum tabulated(F &&evaluate) {
     wavelengths[i] = float(sensorWavelength(i));
   evaluate(int(SENSOR_WAVELENGTH_COUNT), wavelengths.data(), values.data());
   return {values.begin(), values.end()};
-}
-
-// Photons per joule at `lambda` nanometers.
-[[nodiscard]] double photonsPerJoule(double lambda) noexcept {
-  return lambda * 1e-9 / (PLANCK * SPEED_OF_LIGHT);
 }
 
 // The mean of `V` over `[lo, hi]` by the midpoint rule, fine enough that
@@ -105,15 +99,10 @@ const std::vector<SensorSpectrum> &trainingReflectances() {
       const auto &table{TRAINING_REFLECTANCES[j]};
       auto &patch{result[j]};
       patch.resize(SENSOR_WAVELENGTH_COUNT);
-      for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
-        const double t{
-            std::clamp((sensorWavelength(i) - TRAINING_WAVELENGTH_MIN) /
-                           TRAINING_WAVELENGTH_STEP,
-                       0.0, double(TRAINING_WAVELENGTH_COUNT - 1))};
-        const size_t k{std::min(size_t(t), TRAINING_WAVELENGTH_COUNT - 2)};
-        const double f{t - double(k)};
-        patch[i] = (1.0 - f) * double(table[k]) + f * double(table[k + 1]);
-      }
+      for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
+        patch[i] =
+            tableAt(table, TRAINING_WAVELENGTH_COUNT, TRAINING_WAVELENGTH_MIN,
+                    TRAINING_WAVELENGTH_STEP, sensorWavelength(i));
     }
     return result;
   }()};
@@ -184,17 +173,16 @@ double Sensor::electronsPerLuxSecond(size_t band,
 double Sensor::gain(double iso) const noexcept {
   const auto &detector{mSettings.detector};
   if (detector.gain) return double(*detector.gain);
-  const double codes{double(detector.topCode()) - double(detector.blackLevel)};
-  return codes / topCodeElectrons(iso);
+  return detector.codeRange() / topCodeElectrons(iso);
 }
 
 double Sensor::fixedGainISO() const noexcept {
   const auto &detector{mSettings.detector};
-  const double codes{double(detector.topCode()) - double(detector.blackLevel)};
-  return mPeakElectronsPerLuxSecond > 0 ? double(detector.gain.value_or(1.0f)) *
-                                              ISO_SATURATION_LUX_SECONDS *
-                                              mPeakElectronsPerLuxSecond / codes
-                                        : mBaseISO;
+  return mPeakElectronsPerLuxSecond > 0
+             ? double(detector.gain.value_or(1.0f)) *
+                   ISO_SATURATION_LUX_SECONDS * mPeakElectronsPerLuxSecond /
+                   detector.codeRange()
+             : mBaseISO;
 }
 
 double Sensor::topCodeElectrons(double iso) const noexcept {
@@ -235,14 +223,9 @@ MeteredExposure Sensor::meter(const smdl::SpectralFilm &film,
   smdl::parallelFor(0, numRows, [&](size_t row) {
     const auto y{size_t(window[1]) + row};
     double total{};
-    for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
-      for (size_t i = 0; i < numBands; i++) {
-        // A pixel some material poisoned reads as black, as the
-        // tonemap and the readout read it.
-        const double value{film.mean(x, y, i)};
-        if (std::isfinite(value)) total += value * weights[i];
-      }
-    }
+    for (size_t x = size_t(window[0]); x < size_t(window[2]); x++)
+      for (size_t i = 0; i < numBands; i++)
+        total += filmMean(film, x, y, i) * weights[i];
     rows[row] = total;
   });
   double total{};
@@ -268,7 +251,6 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
   SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
   auto fit{ColorFit{}};
   fit.bands = bands;
-  fit.white = illuminantWhite(illuminant);
   // What each band counts of the illuminant, wavelength by wavelength,
   // and of its white altogether, which normalizes the responses so that
   // the white reads (1, 1, 1).
@@ -286,13 +268,17 @@ ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,
     }
   }
   // The observer under the illuminant, which the targets are taken per
-  // unit of, so that the white's Y is 1.
+  // unit of, so that the white's Y is 1. Its own sum is the illuminant's
+  // white, which is `illuminantWhite()` accumulated here rather than
+  // over again.
   auto observer{std::vector<smdl::double3>(SENSOR_WAVELENGTH_COUNT)};
-  double whiteY{};
+  auto white{smdl::double3()};
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++) {
     observer[i] = illuminant[i] * smdl::wymanXYZ(sensorWavelength(i));
-    whiteY += observer[i].y;
+    white += observer[i];
   }
+  const double whiteY{white.y};
+  fit.white = whiteY > 0 ? white / whiteY : white;
   if (!(whiteCounts.x > 0 && whiteCounts.y > 0 && whiteCounts.z > 0 &&
         whiteY > 0)) {
     fit.isSingular = true;

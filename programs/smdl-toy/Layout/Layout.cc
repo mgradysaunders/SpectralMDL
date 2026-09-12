@@ -942,10 +942,7 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
                   const MotionSampling &sampling) {
   auto diags{LayoutDiagnostics()};
   auto result{lowerLayout(diags, fileName, search, sampling)};
-  if (!diags.empty()) diags.printAll();
-  if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", diags.summary()));
+  diags.printAllAndRefuse(fileName);
   SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
                  smdl::Counted(result.items.size(), "item"));
   return result;

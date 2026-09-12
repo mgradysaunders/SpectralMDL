@@ -89,8 +89,7 @@ Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
 void Detector::logSummary() const {
   const auto &settings{mSettings};
   const auto &shot{mShot};
-  const double black{double(settings.blackLevel)};
-  const double topCodeElectrons{(double(mTopCode) - black) / mGain};
+  const double topCodeElectrons{mSettings.codeRange() / mGain};
   const char *wellSource{mWellSource == WellSource::STATED ? "stated"
                          : mWellSource == WellSource::FROM_BASE_ISO
                              ? "from the base ISO"
@@ -126,9 +125,6 @@ void Detector::logSummary() const {
 
 double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
                              double &signal) const noexcept {
-  // A pixel some material poisoned reads as black, as the tonemap reads
-  // it.
-  if (!std::isfinite(mean)) mean = 0.0;
   signal = std::max(0.0, mElectronsPerFilmUnit * mean);
   const double mu{signal + mDarkElectrons};
   double electrons{mu};
@@ -185,7 +181,7 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
             uint64_t(index))};
         double signal{};
         const double electrons{
-            electronsOf(film.mean(x, y, b), options.noise, rng, signal)};
+            electronsOf(filmMean(film, x, y, b), options.noise, rng, signal)};
         const double code{std::round(electrons * mGain + black)};
         readout.digitalNumbers[index] =
             uint16_t(std::clamp(code, 0.0, double(mTopCode)));

@@ -4,7 +4,6 @@
 #include "Layout/TextParser.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include <array>
@@ -30,13 +29,7 @@ public:
       : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    while (mToken.kind != Token::END) {
-      try {
-        parseStatement();
-      } catch (const Recover &) {
-        synchronize();
-      }
-    }
+    parseStatements([this] { parseStatement(); });
   }
 
 private:
@@ -366,40 +359,29 @@ private:
       mDiags.error(location(), "expected '{' after 'motion'");
       throw Recover();
     }
-    advance(); // '{'
-    while (mToken.kind != Token::CLOSE) {
-      if (mToken.kind == Token::END) {
-        mDiags.error(location(), "expected '}' before end of file");
-        throw Recover();
-      }
-      if (mToken.kind != Token::WORD) {
-        mDiags.error(location(), "expected 'at' or a camera setting");
-        throw Recover();
-      }
-      const auto word{mToken.text};
-      const auto wordLoc{location()};
-      advance();
-      if (word == "at") {
-        const auto time{finite(wordLoc, "at", numbers<1>()[0])};
-        if (!camera.motion.empty() && !(time > camera.motion.back().time)) {
-          mDiags.error(wordLoc, "the keys of a 'motion' block are written in "
-                                "ascending time");
-          throw Recover();
-        }
-        camera.motion.emplace_back().time = time;
-        continue;
-      }
-      if (camera.motion.empty()) {
-        mDiags
-            .error(wordLoc, "a 'motion' block holds 'at <seconds>' keys, and "
-                            "every setting belongs to the key above it")
-            .note({}, "write 'motion { at 0 look_from ... at 1 look_from "
-                      "... }'");
-        throw Recover();
-      }
-      parseCameraKeySetting(camera.motion.back(), word, wordLoc);
-    }
-    advance(); // '}'
+    parseSettings(
+        "'at' or a camera setting",
+        [&](const std::string &word, const LayoutLocation &wordLoc) {
+          if (word == "at") {
+            const auto time{finite(wordLoc, "at", numbers<1>()[0])};
+            if (!camera.motion.empty() && !(time > camera.motion.back().time)) {
+              mDiags.error(wordLoc, "the keys of a 'motion' block are written "
+                                    "in ascending time");
+              throw Recover();
+            }
+            camera.motion.emplace_back().time = time;
+            return;
+          }
+          if (camera.motion.empty()) {
+            mDiags
+                .error(wordLoc, "a 'motion' block holds 'at <seconds>' keys, "
+                                "and every setting belongs to the key above it")
+                .note({}, "write 'motion { at 0 look_from ... at 1 "
+                          "look_from ... }'");
+            throw Recover();
+          }
+          parseCameraKeySetting(camera.motion.back(), word, wordLoc);
+        });
     if (camera.motion.empty()) {
       mDiags.error(opLoc, "a 'motion' block holds at least one 'at <seconds>' "
                           "key");
@@ -618,14 +600,7 @@ CameraDocument parseCamera(LayoutDiagnostics &diags,
 
 CameraDocument readCamera(LayoutDiagnostics &diags,
                           const std::string &fileName) {
-  const auto &source{diags.loadSource(fileName)};
-  auto document{parseCamera(diags, source)};
-  if (!diags.empty()) diags.printAll();
-  if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", diags.summary()));
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
-  return document;
+  return readDocument(diags, fileName, parseCamera);
 }
 
 std::string resolveCameraFileName(const std::string &given,

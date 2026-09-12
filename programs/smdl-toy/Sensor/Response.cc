@@ -31,32 +31,6 @@ void appendNumber(std::string &text, double value) {
   return path.string() + suffix + extension;
 }
 
-// The curve through `knots` and `values` at `lambda`, linear between the
-// knots and zero outside them.
-[[nodiscard]] double curveAt(smdl::Span<const double> knots,
-                             smdl::Span<const double> values,
-                             double lambda) noexcept {
-  if (!(lambda >= knots.front() && lambda <= knots.back())) return 0.0;
-  const auto itr{std::upper_bound(knots.begin(), knots.end(), lambda)};
-  const size_t i{size_t(itr - knots.begin())};
-  if (i == 0) return values.front();
-  if (i == knots.size()) return values.back();
-  const double t{(lambda - knots[i - 1]) / (knots[i] - knots[i - 1])};
-  return values[i - 1] + t * (values[i] - values[i - 1]);
-}
-
-// The illuminant at `lambda` nanometers, linear between the whole
-// nanometers of the sensor's grid, and held at its ends past them, where
-// no white balance names anything.
-[[nodiscard]] double illuminantAt(const SensorSpectrum &illuminant,
-                                  double lambda) noexcept {
-  const double t{std::clamp(lambda - SENSOR_WAVELENGTH_MIN, 0.0,
-                            double(SENSOR_WAVELENGTH_COUNT - 1))};
-  const size_t i{std::min(size_t(t), SENSOR_WAVELENGTH_COUNT - 2)};
-  const double f{t - double(i)};
-  return (1 - f) * illuminant[i] + f * illuminant[i + 1];
-}
-
 } // namespace
 
 std::vector<std::string>
@@ -113,8 +87,8 @@ LensWavelengthDraw::LensWavelengthDraw(smdl::Span<const double> knots,
   for (size_t i = 0; i + 1 < w.size(); i++) {
     const double middle{0.5 * (w[i] + w[i + 1])};
     mCDF.push_back(mCDF.back() + curveAt(knots, values, middle) *
-                                     illuminantAt(illuminant, middle) * middle *
-                                     (w[i + 1] - w[i]));
+                                     sensorSpectrumAt(illuminant, middle) *
+                                     middle * (w[i + 1] - w[i]));
   }
   const double total{mCDF.back()};
   if (!(total > 0)) {
@@ -243,10 +217,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
   // Each band the tile lays down draws from inside what the grid sees,
   // even when the grid holds still: a lens's geometry is continuous in the
   // wavelength, so it has no comb to alias against.
-  auto isDrawn{std::vector<bool>(mBands.size())};
-  for (const auto index : mCFA) {
-    if (isDrawn[index]) continue;
-    isDrawn[index] = true;
+  for (const auto index : tileBands(mCFA)) {
     auto &band{mBands[index]};
     band.draw = LensWavelengthDraw(band.wavelengths, band.values, gridLo,
                                    gridHi, illuminant);
@@ -256,10 +227,6 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
                     "wavelength grid, so its pixels trace a lens whose "
                     "glasses disperse at the d line");
   }
-}
-
-double Response::evaluate(const Band &band, double lambda) noexcept {
-  return curveAt(band.wavelengths, band.values, lambda);
 }
 
 double Response::integrate(const Band &band, double lo, double hi) noexcept {
@@ -276,10 +243,6 @@ double Response::integrate(const Band &band, double lo, double hi) noexcept {
     total += 0.5 * (va + vb) * (b - a);
   }
   return total;
-}
-
-double Response::photonsPerJoule(double lambda) noexcept {
-  return lambda * 1e-9 / (PLANCK * SPEED_OF_LIGHT);
 }
 
 double Response::project(const Band &band, smdl::Span<const float> wavelengths,
@@ -317,10 +280,7 @@ float Response::traceWavelengthAt(size_t x, size_t y, float xi) const noexcept {
 }
 
 void Response::logTracedSpans() const {
-  auto isLogged{std::vector<bool>(mBands.size())};
-  for (const auto index : mCFA) {
-    if (isLogged[index]) continue;
-    isLogged[index] = true;
+  for (const auto index : tileBands(mCFA)) {
     const auto &band{mBands[index]};
     if (band.draw.isEmpty()) continue;
     const auto span{band.draw.span()};

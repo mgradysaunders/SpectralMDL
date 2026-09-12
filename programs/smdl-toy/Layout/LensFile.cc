@@ -3,13 +3,11 @@
 #include "Layout/TextParser.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <filesystem>
 #include <optional>
 
 // The lens format's own vocabulary, over the syntax core in
@@ -55,13 +53,7 @@ public:
       : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    while (mToken.kind != Token::END) {
-      try {
-        parseStatement();
-      } catch (const Recover &) {
-        synchronize();
-      }
-    }
+    parseStatements([this] { parseStatement(); });
   }
 
 private:
@@ -641,27 +633,12 @@ LensDocument parseLens(LayoutDiagnostics &diags, const LayoutSource &source) {
   return document;
 }
 
-LensDocument readLens(const std::string &fileName) {
-  auto diags{LayoutDiagnostics()};
-  const auto &source{diags.loadSource(fileName)};
-  auto document{parseLens(diags, source)};
-  if (!diags.empty()) diags.printAll();
-  if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", diags.summary()));
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
-  return document;
+LensDocument readLens(LayoutDiagnostics &diags,
+                      const std::string &fileName) {
+  return readDocument(diags, fileName, parseLens);
 }
 
 std::string resolveLensFileName(const std::string &stated,
                                 const std::string &cameraFileName) {
-  if (stated.empty()) return {};
-  auto path{std::filesystem::path(stated)};
-  if (path.is_relative() && !cameraFileName.empty())
-    path = std::filesystem::path(cameraFileName).parent_path() / path;
-  if (!std::filesystem::exists(path))
-    throw smdl::Error(smdl::concat("the camera file names the lens ",
-                                   smdl::QuotedPath(stated),
-                                   ", which does not exist beside it"));
-  return path.string();
+  return resolveSiblingFile(stated, cameraFileName, "lens");
 }

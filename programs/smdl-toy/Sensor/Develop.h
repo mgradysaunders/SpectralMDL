@@ -6,8 +6,6 @@
 /// display transform in `Tonemap.h` starts from.
 #pragma once
 
-#include <array>
-#include <cmath>
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -36,15 +34,6 @@ struct RGBPolicy final {
   /// long wavelengths on red.
   std::vector<float> falseColorWaves{};
 };
-
-/// The film mean of one band, with a non-finite value (a pixel some
-/// material poisoned) read as black, so that everything downstream can
-/// assume finite input and use plain min and max.
-[[nodiscard]] inline double filmMean(const smdl::SpectralFilm &film, size_t x,
-                                     size_t y, size_t i) noexcept {
-  const double value{film.mean(x, y, i)};
-  return std::isfinite(value) ? value : 0.0;
-}
 
 /// Resolve the film to linear RGB once. This is the radiance the
 /// renderer actually estimated, so it is what gets written to the

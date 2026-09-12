@@ -155,14 +155,6 @@ namespace {
 constexpr double AUTO_KELVIN_MIN{2000.0};
 constexpr double AUTO_KELVIN_MAX{12000.0};
 
-// The band the tile puts at pixel (x, y), anchored at the frame's origin
-// as the response anchors it.
-[[nodiscard]] size_t tileBandAt(const ResponseSettings &response, size_t x,
-                                size_t y) noexcept {
-  return response.cfa[(y % response.cfaRows()) * response.cfaColumns +
-                      x % response.cfaColumns];
-}
-
 // Where `band` sits in `bands`, or `bands.size()` if it is not there.
 [[nodiscard]] size_t positionOf(smdl::Span<const size_t> bands,
                                 size_t band) noexcept {
@@ -188,19 +180,17 @@ void refineHamiltonAdams(const ResponseSettings &response,
   const auto plane{[&](int x, int y, size_t k) -> float & {
     return planes[(size_t(y) * numPixelsX + size_t(x)) * 3 + k];
   }};
-  // Green at every red and blue sample two in from the window's edge,
-  // where every tap is inside: along the direction whose green difference
-  // and own second difference are the smaller, corrected by the second
-  // difference, which a plane has none of.
-  const auto rowsFrom{[&](int inset) {
-    return std::pair(size_t(window[1] + inset),
-                     size_t(std::max(window[3] - inset, window[1] + inset)));
-  }};
-  const auto [greenBegin, greenEnd]{rowsFrom(2)};
-  smdl::parallelFor(greenBegin, greenEnd, [&](size_t row) {
+  // Both passes below run two rows in from the window's edge, which is
+  // where every tap they read is inside it.
+  const size_t rowBegin{size_t(window[1] + 2)};
+  const size_t rowEnd{size_t(std::max(window[3] - 2, window[1] + 2))};
+  // Green at every red and blue sample: along the direction whose green
+  // difference and own second difference are the smaller, corrected by
+  // the second difference, which a plane has none of.
+  smdl::parallelFor(rowBegin, rowEnd, [&](size_t row) {
     const int y{int(row)};
     for (int x = window[0] + 2; x < window[2] - 2; x++) {
-      if (tileBandAt(response, size_t(x), size_t(y)) == green) continue;
+      if (response.bandAt(size_t(x), size_t(y)) == green) continue;
       const double center{at(x, y)};
       const double left{at(x - 1, y)};
       const double right{at(x + 1, y)};
@@ -217,23 +207,21 @@ void refineHamiltonAdams(const ResponseSettings &response,
               : 0.25 * (left + right + up + down) + 0.125 * (across + along));
     }
   });
-  // Red and blue two in from the edge, where every green they read is
-  // interpolated from taps inside the window: green plus the mean of
-  // their difference from green at their samples around, which are the
-  // two beside a green sample and the four diagonal to the other color.
-  const auto [colorBegin, colorEnd]{rowsFrom(2)};
-  smdl::parallelFor(colorBegin, colorEnd, [&](size_t row) {
+  // Red and blue, whose green is interpolated from taps inside the
+  // window: green plus the mean of their difference from green at their
+  // samples around, which are the two beside a green sample and the four
+  // diagonal to the other color.
+  smdl::parallelFor(rowBegin, rowEnd, [&](size_t row) {
     const int y{int(row)};
     for (int x = window[0] + 2; x < window[2] - 2; x++) {
-      const size_t here{tileBandAt(response, size_t(x), size_t(y))};
+      const size_t here{response.bandAt(size_t(x), size_t(y))};
       for (const size_t k : {size_t(0), size_t(2)}) {
         if (here == bands[k]) continue;
         double total{};
         int count{};
         for (int dy = -1; dy <= 1; dy++) {
           for (int dx = -1; dx <= 1; dx++) {
-            if (tileBandAt(response, size_t(x + dx), size_t(y + dy)) !=
-                bands[k])
+            if (response.bandAt(size_t(x + dx), size_t(y + dy)) != bands[k])
               continue;
             total += at(x + dx, y + dy) - double(plane(x + dx, y + dy, 1));
             count++;
@@ -265,7 +253,7 @@ void refineHamiltonAdams(const ResponseSettings &response,
     for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
       const size_t pixel{y * numPixelsX + x};
       if (response.hasCFA()) {
-        const size_t k{positionOf(bands, tileBandAt(response, x, y))};
+        const size_t k{positionOf(bands, response.bandAt(x, y))};
         if (k < numBands && values[pixel] < saturation) {
           tally[2 * k] += double(values[pixel]);
           tally[2 * k + 1] += 1.0;
@@ -357,7 +345,7 @@ std::vector<float> demosaic(DemosaicMethod method,
   smdl::parallelFor(size_t(window[1]), size_t(window[3]), [&](size_t row) {
     const int y{int(row)};
     for (int x = window[0]; x < window[2]; x++) {
-      const size_t here{tileBandAt(response, size_t(x), size_t(y))};
+      const size_t here{response.bandAt(size_t(x), size_t(y))};
       for (size_t k = 0; k < numBands; k++) {
         auto &out{planes[(size_t(y) * numPixelsX + size_t(x)) * numBands + k]};
         if (here == bands[k]) {
@@ -371,7 +359,7 @@ std::vector<float> demosaic(DemosaicMethod method,
             const int sx{x + dx};
             const int sy{y + dy};
             if (!isInside(window, sx, sy) ||
-                tileBandAt(response, size_t(sx), size_t(sy)) != bands[k])
+                response.bandAt(size_t(sx), size_t(sy)) != bands[k])
               continue;
             const double w{(1.0 - std::abs(dx) / double(columns)) *
                            (1.0 - std::abs(dy) / double(rows))};
@@ -403,7 +391,7 @@ std::vector<float> developReadout(const Sensor &sensor,
   // noise's lower half as negatives; a sample at the white level reads
   // `saturation`, 1 unless the well clips below the top code.
   const double black{detector.blackLevel()};
-  const double range{double(detector.topCode()) - black};
+  const double range{detector.codeRange()};
   const auto saturation{float((double(detector.whiteLevel()) - black) / range)};
   auto values{std::vector<float>(readout.digitalNumbers.size())};
   for (size_t i = 0; i < values.size(); i++)
@@ -482,7 +470,7 @@ std::vector<float> developReadout(const Sensor &sensor,
     for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
       const size_t pixel{y * numPixelsX + x};
       if (response.hasCFA()) {
-        if (const size_t k{positionOf(bandSpan, tileBandAt(response, x, y))};
+        if (const size_t k{positionOf(bandSpan, response.bandAt(x, y))};
             k < bands.size())
           values[pixel] =
               std::min(float(double(values[pixel]) * multipliers[k]), ceiling);

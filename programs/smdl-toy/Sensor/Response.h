@@ -16,14 +16,6 @@
 #include "Layout/SensorFile.h"
 #include "Sensor/Sensor.h"
 
-/// Planck's constant in joule seconds and the speed of light in meters
-/// per second, both exact by definition.
-///
-/// \{
-constexpr double PLANCK{6.62607015e-34};
-constexpr double SPEED_OF_LIGHT{2.99792458e8};
-/// \}
-
 /// The band units, as the band film's header states them: a band counts
 /// the photoelectrons its curve turns the spectral irradiance at the
 /// sensor into, per square meter and second.
@@ -162,11 +154,10 @@ public:
   /// See `responseHash()`.
   [[nodiscard]] const std::string &hash() const noexcept { return mHash; }
 
-  /// The band that frame pixel `(x, y)` reads through under the tile,
-  /// anchored at the frame's origin so a crop window changes nothing.
-  /// Without a tile, 0.
+  /// The band that frame pixel `(x, y)` reads through under the tile;
+  /// see `tileIndexAt()`. Without a tile, 0.
   [[nodiscard]] size_t bandAt(size_t x, size_t y) const noexcept {
-    return hasTile() ? mCFA[(y % mCFARows) * mCFAColumns + x % mCFAColumns] : 0;
+    return hasTile() ? mCFA[tileIndexAt(mCFAColumns, mCFARows, x, y)] : 0;
   }
 
   /// Add one sample's spectral irradiance `E`, evaluated at
@@ -221,17 +212,16 @@ private:
     LensWavelengthDraw draw{};
   };
 
-  /// The curve at `lambda`, zero outside its knots.
+  /// The band's curve at `lambda`; see `curveAt()`.
   [[nodiscard]] static double evaluate(const Band &band,
-                                       double lambda) noexcept;
+                                       double lambda) noexcept {
+    return curveAt(band.wavelengths, band.values, lambda);
+  }
 
   /// The curve integrated over `[lo, hi]`, exactly, by the trapezoid rule
   /// over its knots clipped to the range.
   [[nodiscard]] static double integrate(const Band &band, double lo,
                                         double hi) noexcept;
-
-  /// Photons per joule at `lambda` nanometers.
-  [[nodiscard]] static double photonsPerJoule(double lambda) noexcept;
 
   /// One sample's projection onto one band.
   [[nodiscard]] double project(const Band &band,

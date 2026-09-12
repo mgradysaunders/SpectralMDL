@@ -1,12 +1,29 @@
 #include "Layout/TextParser.h"
 
+#include "smdl/Support/Error.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 
 // The syntax core: characters to tokens, and the helpers every format of
 // the layout family parses its settings and transforms with. Nothing
 // here knows a directive by name; that is what the derived parsers are.
+
+std::string resolveSiblingFile(const std::string &stated,
+                               const std::string &cameraFileName,
+                               std::string_view what) {
+  if (stated.empty()) return {};
+  auto path{std::filesystem::path(stated)};
+  if (path.is_relative() && !cameraFileName.empty())
+    path = std::filesystem::path(cameraFileName).parent_path() / path;
+  if (!std::filesystem::exists(path))
+    throw smdl::Error(smdl::concat("the camera file names the ", what, " ",
+                                   smdl::QuotedPath(stated),
+                                   ", which does not exist beside it"));
+  return path.string();
+}
 
 Token Lexer::next() {
   const auto &text{mSource.text};

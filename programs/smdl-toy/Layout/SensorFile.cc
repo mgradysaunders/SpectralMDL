@@ -3,7 +3,6 @@
 #include "Layout/TextParser.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include <algorithm>
@@ -37,13 +36,7 @@ public:
       : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    while (mToken.kind != Token::END) {
-      try {
-        parseStatement();
-      } catch (const Recover &) {
-        synchronize();
-      }
-    }
+    parseStatements([this] { parseStatement(); });
   }
 
 private:
@@ -168,7 +161,7 @@ private:
           throw Recover();
         }
         sensor.hasDetectorBlock = true;
-        parseDetectorBlock(sensor.detector, keyLoc);
+        parseDetectorBlock(sensor.detector);
       } else if (key == "readout") {
         const auto value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
@@ -532,8 +525,7 @@ private:
   // The `detector { ... }` block. Every key takes one number and the
   // last one wins. What ties two keys together is checked once the
   // block closes, so the order they are written in does not matter.
-  void parseDetectorBlock(DetectorSettings &detector,
-                          const LayoutLocation &detectorLoc) {
+  void parseDetectorBlock(DetectorSettings &detector) {
     auto baseISOLoc{LayoutLocation()};
     auto fullWellLoc{LayoutLocation()};
     auto blackLevelLoc{LayoutLocation()};
@@ -625,28 +617,12 @@ private:
       mDiags.error(maxISOLoc, "expected 'max_iso' to be at least 'base_iso'");
       throw Recover();
     }
-    (void)detectorLoc;
   }
 
   SensorDocument &mDocument;
 };
 
 } // namespace
-
-double ResponseBand::at(double lambda) const noexcept {
-  if (!(lambda >= wavelengths.front() && lambda <= wavelengths.back()))
-    return 0.0;
-  const auto itr{
-      std::upper_bound(wavelengths.begin(), wavelengths.end(), float(lambda))};
-  const size_t i{size_t(itr - wavelengths.begin())};
-  if (i == 0) return double(values.front());
-  if (i == wavelengths.size()) return double(values.back());
-  const double w0{double(wavelengths[i - 1])};
-  const double w1{double(wavelengths[i])};
-  const double t{(lambda - w0) / (w1 - w0)};
-  return double(values[i - 1]) +
-         t * (double(values[i]) - double(values[i - 1]));
-}
 
 std::optional<size_t>
 ResponseSettings::bandIndex(std::string_view name) const noexcept {
@@ -690,21 +666,13 @@ SensorDocument parseSensor(LayoutDiagnostics &diags,
   return document;
 }
 
-SensorDocument readSensor(const std::string &fileName) {
-  auto diags{LayoutDiagnostics()};
-  const auto &source{diags.loadSource(fileName)};
-  auto document{parseSensor(diags, source)};
-  if (!diags.empty()) diags.printAll();
-  if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", diags.summary()));
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
-  return document;
+SensorDocument readSensor(LayoutDiagnostics &diags,
+                          const std::string &fileName) {
+  return readDocument(diags, fileName, parseSensor);
 }
 
 std::string resolveSensorFileName(const std::string &stated,
                                   const std::string &cameraFileName) {
-  if (stated.empty()) return {};
   // The sidecar this format replaced gets a note saying where its
   // meaning went.
   if (std::filesystem::path(stated).extension() == RESPONSE_EXTENSION)
@@ -714,12 +682,5 @@ std::string resolveSensorFileName(const std::string &stated,
         "response is now the 'response' block of a '.sensor' file, which "
         "holds the body's 'pixels' and 'pitch' beside it (see "
         "etc/sensors)"));
-  auto path{std::filesystem::path(stated)};
-  if (path.is_relative() && !cameraFileName.empty())
-    path = std::filesystem::path(cameraFileName).parent_path() / path;
-  if (!std::filesystem::exists(path))
-    throw smdl::Error(smdl::concat("the camera file names the sensor ",
-                                   smdl::QuotedPath(stated),
-                                   ", which does not exist beside it"));
-  return path.string();
+  return resolveSiblingFile(stated, cameraFileName, "sensor");
 }

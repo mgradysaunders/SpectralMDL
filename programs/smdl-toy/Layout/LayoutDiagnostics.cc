@@ -216,3 +216,10 @@ void LayoutDiagnostics::printAll() const {
   std::cerr << renderAll(smdl::shouldUseColors(smdl::ANSI_COLOR_MODE_AUTO,
                                                smdl::cerrSupportsANSIColors()));
 }
+
+void LayoutDiagnostics::printAllAndRefuse(const std::string &fileName) const {
+  if (!empty()) printAll();
+  if (hasErrors())
+    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
+                                   ": ", summary()));
+}

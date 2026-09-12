@@ -493,7 +493,7 @@ TEST_CASE("SensorFile: the file as a whole") {
     const auto resolved{
         resolveSensorFileName("bodies/body.sensor", cameraPath.string())};
     CHECK(std::filesystem::path(resolved) == sensorPath);
-    const auto document{readSensor(resolved)};
+    const auto document{readSensor(diags, resolved)};
     CHECK(document.sensor.pixels.x == 4);
     CHECK(resolveSensorFileName("", cameraPath.string()) == "");
     CHECK_THROWS(
@@ -515,7 +515,7 @@ TEST_CASE("SensorFile: the file as a whole") {
     TempDir tmpDir{"sensor-file-bad"};
     const auto path{
         tmpDir.write("bad.sensor", "sensor { pixels 4 3 pitch 2 }\n")};
-    CHECK_THROWS((void)readSensor(path.string()));
+    CHECK_THROWS((void)readSensor(diags, path.string()));
   }
   SUBCASE("A body as shipped parses end to end") {
     const auto document{parseOK(diags,

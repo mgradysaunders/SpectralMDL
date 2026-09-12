@@ -52,6 +52,10 @@ public:
   smdl::Span<const float> layoutZ{};
   const float *indices{};
 
+  // The power is the difference of the indices over the radius, and not
+  // that difference times `LensElement::curvature()`: a division and a
+  // multiplication by the reciprocal round differently, and the last bit
+  // of the power moves the film the whole solve places.
   [[nodiscard]] ABCD refractionAt(size_t i) const noexcept {
     const auto &element{elements[i]};
     return ABCD::refraction(
@@ -140,12 +144,22 @@ constexpr float SOLVE_TOLERANCE = 1e-6f;
 // see is a pair of crossings inside one piece.
 constexpr int NUM_SPAN_STEPS = 8;
 
+// The stable pairing of the quadratic `a t^2 + b t + c` whose
+// discriminant is positive: the term whose quotients `q / a` and `c / q`
+// are the two roots, so that the root the subtraction would cancel comes
+// off the product of the roots instead. It is zero only where `b` and
+// `c` both are, which each caller answers for itself.
+[[nodiscard]] float stableRootTerm(float b, float discriminant) noexcept {
+  const auto root{std::sqrt(discriminant)};
+  return -0.5f * (b + (b < 0 ? -root : root));
+}
+
 // The sag of a surface at squared radius `u`, and its derivative with
 // respect to `u`, both in scene units. False is a radius past where the
 // base conic turns back on itself, which no point of the surface is.
 [[nodiscard]] bool sagOf(const LensElement &element, float u, float &sag,
                          float &dSagDu) noexcept {
-  const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
+  const auto curvature{element.curvature()};
   const auto wSquared{1 - (1 + element.conic) * curvature * curvature * u};
   if (!(wSquared > 0)) return false;
   const auto w{std::sqrt(wSquared)};
@@ -181,7 +195,7 @@ constexpr int NUM_SPAN_STEPS = 8;
 // few rays at the very rim, which a mounted element would have taken.
 [[nodiscard]] float radialLimitOf(const LensElement &element) noexcept {
   auto uLimit{element.semiDiameter * element.semiDiameter};
-  const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
+  const auto curvature{element.curvature()};
   if (const auto turn{(1 + element.conic) * curvature * curvature}; turn > 0)
     uLimit = std::min(uLimit, (1 - 1e-2f) / turn);
   return std::sqrt(uLimit);
@@ -221,9 +235,7 @@ void sagRangeOf(const LensElement &element, float &sagMin,
   if (a > 0) {
     const auto discriminant{b * b - 4 * a * c};
     if (!(discriminant > 0)) return false;
-    // The stable pairing, as in the quadric solve below.
-    const auto root{std::sqrt(discriminant)};
-    const auto q{-0.5f * (b + (b < 0 ? -root : root))};
+    const auto q{stableRootTerm(b, discriminant)};
     tLo = std::max(tLo, std::min(q / a, c / q));
     tHi = std::min(tHi, std::max(q / a, c / q));
   } else if (c > 0) {
@@ -339,7 +351,7 @@ void sagRangeOf(const LensElement &element, float &sagMin,
   // form, so it has a solve of its own and does not start from this one.
   if (element.numAsphericTerms > 0)
     return intersectAspheric(element, ray, point, normal);
-  const auto curvature{element.radius == 0 ? 0.0f : 1 / element.radius};
+  const auto curvature{element.curvature()};
   const auto kPlusOne{1 + element.conic};
   const auto ox{ray.org.x}, oy{ray.org.y}, os{ray.org.z - element.z};
   const auto &d{ray.dir};
@@ -361,10 +373,7 @@ void sagRangeOf(const LensElement &element, float &sagMin,
   } else {
     const auto discriminant{b * b - 4 * a * c};
     if (discriminant < 0) return false;
-    // The stable pairing, so that the root the subtraction would cancel
-    // comes off the product of the roots instead.
-    const auto root{std::sqrt(discriminant)};
-    const auto q{-0.5f * (b + (b < 0 ? -root : root))};
+    const auto q{stableRootTerm(b, discriminant)};
     consider(q / a);
     if (q != 0) consider(c / q);
   }

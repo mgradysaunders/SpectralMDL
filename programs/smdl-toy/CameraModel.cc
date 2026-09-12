@@ -411,10 +411,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
   const auto illuminant{whiteBalanceSpectrum(model.whiteBalance)};
   auto text{std::string("at a wavelength each pixel draws from its band")};
   const char *separator{": "};
-  auto isDescribed{std::vector<bool>(response.bands.size())};
-  for (const auto index : response.cfa) {
-    if (isDescribed[index]) continue;
-    isDescribed[index] = true;
+  for (const auto index : tileBands(response.cfa)) {
     const auto &band{response.bands[index]};
     if (const auto span{tracedSpanOf(band, illuminant)}) {
       text +=
@@ -519,7 +516,12 @@ CameraModel resolveCameraModel(const Options &opts) {
   if (fileCamera.sensor && *fileCamera.sensor != SENSOR_HUMAN) {
     model.sensorFileName =
         resolveSensorFileName(*fileCamera.sensor, model.cameraFileName);
-    body = readSensor(model.sensorFileName).sensor;
+    // A sink of its own, so that the body's diagnostics are printed once
+    // rather than again with the camera's. Only the body outlives it,
+    // which carries no locations; a refusal here is made while the
+    // document is still in hand.
+    auto sensorDiags{LayoutDiagnostics()};
+    body = readSensor(sensorDiags, model.sensorFileName).sensor;
     if (model.isPreview) {
       model.previewedSensor = body;
       SMDL_LOG_INFO("Sensor: -ideal previews ",
@@ -593,7 +595,9 @@ CameraModel resolveCameraModel(const Options &opts) {
   if (fileCamera.lens && *fileCamera.lens != LENS_IDEAL) {
     model.lensFileName =
         resolveLensFileName(*fileCamera.lens, model.cameraFileName);
-    options.lens = readLens(model.lensFileName).lens;
+    // A sink of its own, for the reason the body's is.
+    auto lensDiags{LayoutDiagnostics()};
+    options.lens = readLens(lensDiags, model.lensFileName).lens;
     refuseThinLensSettings(document, fileCamera);
     if (model.isPreview)
       SMDL_LOG_INFO("Lens: -ideal previews ",

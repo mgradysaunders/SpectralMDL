@@ -6,7 +6,9 @@
 /// the body's alone.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
@@ -14,6 +16,20 @@
 #include "Color.h"
 #include "Layout/CameraFile.h"
 #include "Layout/SensorFile.h"
+
+/// Planck's constant in joule seconds and the speed of light in meters
+/// per second, both exact by definition.
+///
+/// \{
+constexpr double PLANCK{6.62607015e-34};
+constexpr double SPEED_OF_LIGHT{2.99792458e8};
+/// \}
+
+/// Photons per joule at `lambda` nanometers, which is what a curve in
+/// electrons per photon reads a spectral irradiance through.
+[[nodiscard]] constexpr double photonsPerJoule(double lambda) noexcept {
+  return lambda * 1e-9 / (PLANCK * SPEED_OF_LIGHT);
+}
 
 /// The wavelengths every integral of the sensor's physics runs over: 1
 /// nm steps from 300 to 830 nm, the range the CIE daylight table spans,
@@ -30,10 +46,31 @@ constexpr size_t SENSOR_WAVELENGTH_COUNT{531};
   return SENSOR_WAVELENGTH_MIN + double(i);
 }
 
+/// A table of `count` values, at least two, sampled every `step`
+/// nanometers from `first`, read at `lambda`: linear between the samples
+/// and held at the end values past either end, where neither an
+/// illuminant nor a reflectance stops.
+template <typename T>
+[[nodiscard]] inline double tableAt(const T *values, size_t count, double first,
+                                    double step, double lambda) noexcept {
+  SMDL_SANITY_CHECK(count >= 2);
+  const double t{std::clamp((lambda - first) / step, 0.0, double(count - 1))};
+  const size_t i{std::min(size_t(t), count - 2)};
+  const double f{t - double(i)};
+  return (1.0 - f) * double(values[i]) + f * double(values[i + 1]);
+}
+
 /// A spectral distribution sampled on that grid, `SENSOR_WAVELENGTH_COUNT`
 /// values: an illuminant's relative power per nanometer, which every
 /// integral is taken per unit of.
 using SensorSpectrum = std::vector<double>;
+
+/// A spectrum on the sensor's own grid at `lambda`; see `tableAt()`.
+[[nodiscard]] inline double sensorSpectrumAt(const SensorSpectrum &spectrum,
+                                             double lambda) noexcept {
+  return tableAt(spectrum.data(), spectrum.size(), SENSOR_WAVELENGTH_MIN, 1.0,
+                 lambda);
+}
 
 /// The CIE daylight illuminant of correlated color temperature `kelvin`
 /// on the grid, relative, 1 at 560 nm: the daylight locus of CIE 15
@@ -119,6 +156,16 @@ enum class WellSource {
   /// The generic well over the pixel's area.
   FROM_PITCH
 };
+
+/// The film mean of one band, with a non-finite value (a pixel some
+/// material poisoned) read as black, so that everything that reads a
+/// film (the meter, the readout, and both develops) can assume finite
+/// input and use plain min and max.
+[[nodiscard]] inline double filmMean(const smdl::SpectralFilm &film, size_t x,
+                                     size_t y, size_t i) noexcept {
+  const double value{film.mean(x, y, i)};
+  return std::isfinite(value) ? value : 0.0;
+}
 
 /// What the meter read of a film.
 struct MeteredExposure final {

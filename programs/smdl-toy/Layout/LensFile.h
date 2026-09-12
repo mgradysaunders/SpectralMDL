@@ -158,10 +158,16 @@ public:
 /// Read a lens file: parse, print every diagnostic to standard error
 /// (colored when stderr is a terminal), and throw if any were errors.
 ///
+/// The document's locations point into `diags`, which the caller owns so
+/// that they outlive the read: a caller that keeps the document rather
+/// than the prescription alone can point a refusal at the key the file
+/// stated.
+///
 /// \throws smdl::Error  If the file cannot be read, or on any parse
 ///                      error after printing the diagnostics.
 ///
-[[nodiscard]] LensDocument readLens(const std::string &fileName);
+[[nodiscard]] LensDocument readLens(LayoutDiagnostics &diags,
+                                    const std::string &fileName);
 
 /// The lens file a camera file names, or empty for none: `stated` as the
 /// camera file wrote it, resolved relative to `cameraFileName` so that a

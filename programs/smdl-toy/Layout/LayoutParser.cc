@@ -35,13 +35,7 @@ public:
       : TextParser(diags, source, TOP_LEVEL_KEYWORDS), mDocument(document) {}
 
   void parse() {
-    while (mToken.kind != Token::END) {
-      try {
-        parseStatement();
-      } catch (const Recover &) {
-        synchronize();
-      }
-    }
+    parseStatements([this] { parseStatement(); });
   }
 
 private:

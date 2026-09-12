@@ -192,6 +192,16 @@ public:
   /// `smdl::shouldUseColors()` says standard error is, as the log is.
   void printAll() const;
 
+  /// Print whatever was reported, then refuse `fileName` if any of it
+  /// was an error. Every read of a layout-family format ends here, so a
+  /// file that cannot be read is refused the same way whichever format
+  /// it is.
+  ///
+  /// \throws smdl::Error  If anything reported was an error, after
+  ///                      printing every diagnostic.
+  ///
+  void printAllAndRefuse(const std::string &fileName) const;
+
 private:
   std::deque<LayoutSource> mSources{};
   std::deque<LayoutDiagnostic> mDiagnostics{};
