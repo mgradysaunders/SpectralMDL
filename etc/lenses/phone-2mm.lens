@@ -20,14 +20,15 @@
 # Surface 4 is the one that limits the field: its conic is oblate enough
 # that the surface turns back on itself at a radius of 0.76 mm, so the
 # corner of the frame vignettes on the glass rather than on the stop.
+#
+# Covers an image circle 3.6 mm across at infinity focus, so the 4:3
+# detector it was drawn for is a 2.68 by 2.01 mm frame: 51.5 degrees top
+# to bottom and 78.1 across the diagonal.
+# The materials, by the nd and Vd the patent states, each named for what
+# its table calls it and for its glass code: the plastic of the first
+# three elements, the plastic of the fourth, and the filter's glass.
 lens {
   name "Largan 2.03mm f/2.8 phone camera"
-  # Covers an image circle 3.6 mm across at infinity focus, so the 4:3
-  # detector it was drawn for is a 2.68 by 2.01 mm frame: 51.5 degrees top
-  # to bottom and 78.1 across the diagonal.
-  # The materials, by the nd and Vd the patent states, each named for what
-  # its table calls it and for its glass code: the plastic of the first
-  # three elements, the plastic of the fourth, and the filter's glass.
   medium PLASTIC-544559 { ior 1.544 abbe 55.9 }
   medium PLASTIC-634238 { ior 1.634 abbe 23.8 }
   medium GLASS-517642 { ior 1.517 abbe 64.2 }

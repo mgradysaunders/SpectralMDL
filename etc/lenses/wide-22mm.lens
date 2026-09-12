@@ -1,19 +1,19 @@
+# US 4,211,472 (Nakamura). Modern Lens Design p.360.
+# Scaled to 22 mm from the published 100 mm.
+# Converted from wide.22mm.dat by etc/scripts/lens_convert.py.
+# Covers an image circle 42.6 mm across at infinity focus, a whisker
+# short of the 43.3 mm diagonal of full frame, so an APS-C body is
+# what fits (the a6400 in etc/sensors): at 23.6 by 15.7 mm the frame
+# is 39.5 degrees top to bottom and 66.3 across the diagonal.
+# The glasses the book names. SF6 is SCHOTT's Sellmeier fit, as the
+# refractiveindex.info database carries it, checked against the nd
+# and Vd SCHOTT prints. LAFL4 is HOYA's glass: the nd and Vd of HOYA's
+# Zemax catalog, with the partial dispersion its formula there gives.
+# KF1, LSF16, and F4 are the book's nd and V, on the normal line:
+# neither source has the first two, nor SCHOTT's F4, and HOYA's F4
+# sits 0.0004 from that line.
 lens {
   name "Wide angle 22mm, 38 degrees"
-  # US 4,211,472 (Nakamura). Modern Lens Design p.360.
-  # Scaled to 22 mm from the published 100 mm.
-  # Converted from wide.22mm.dat by etc/scripts/lens_convert.py.
-  # Covers an image circle 42.6 mm across at infinity focus, a whisker
-  # short of the 43.3 mm diagonal of full frame, so an APS-C body is
-  # what fits (the a6400 in etc/sensors): at 23.6 by 15.7 mm the frame
-  # is 39.5 degrees top to bottom and 66.3 across the diagonal.
-  # The glasses the book names. SF6 is SCHOTT's Sellmeier fit, as the
-  # refractiveindex.info database carries it, checked against the nd
-  # and Vd SCHOTT prints. LAFL4 is HOYA's glass: the nd and Vd of HOYA's
-  # Zemax catalog, with the partial dispersion its formula there gives.
-  # KF1, LSF16, and F4 are the book's nd and V, on the normal line:
-  # neither source has the first two, nor SCHOTT's F4, and HOYA's F4
-  # sits 0.0004 from that line.
   medium KF1 { ior 1.54 abbe 51.0 }
   medium LSF16 { ior 1.772 abbe 49.6 }
   medium F4 { ior 1.617 abbe 36.6 }
