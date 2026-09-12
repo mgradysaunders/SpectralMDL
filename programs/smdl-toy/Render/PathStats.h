@@ -62,14 +62,24 @@ struct PathStatsSession final {
 /// report's manifold section under `-mnee`. Plain counters, one set per
 /// block like the rest of the tally, so recording shares nothing.
 struct MNEEStats final {
-  /// Which gather and kind an estimate belongs to.
+  /// Which gather and kind an estimate belongs to: the straight-line
+  /// refractive gather's two kinds, the searched refractive gather's,
+  /// and the reflective gather's.
   enum Kind : int {
     DIRAC_REFRACT,
     GLOSSY_REFRACT,
+    CASTER_DIRAC_REFRACT,
+    CASTER_GLOSSY_REFRACT,
     DIRAC_REFLECT,
     GLOSSY_REFLECT,
     NUM_KINDS
   };
+
+  /// What became of a Dirac-chain arrival the coverage weighed: the
+  /// re-walk reproduced the crossings the path took, it did not and
+  /// the arrival kept weight 1, or the searched refractive gather owned
+  /// the chain's family and the arrival was dropped.
+  enum class Cover { MATCHED, UNMATCHED, DROPPED };
 
   /// The counters of one kind.
   struct KindCounts final {
@@ -118,11 +128,13 @@ struct MNEEStats final {
   uint64_t rewalkCount{};
   uint64_t rewalkConvergedCount{};
 
-  /// The Dirac-chain arrivals weighed by re-walk MIS, and how many the
-  /// re-walk matched: the unmatched rest keeps weight 1, so the matched
-  /// share is what any single-seed gather can ever claim.
+  /// The Dirac-chain arrivals the coverage weighed: how many the
+  /// re-walk matched, and how many were dropped as the searched
+  /// refractive gather's. The rest keeps weight 1, so the matched share
+  /// is what the straight-line gather can ever claim.
   uint64_t coverArrivalCount{};
   uint64_t coverMatchedCount{};
+  uint64_t coverDroppedCount{};
 
   /// The converged connections weighed, and how many came to anything.
   uint64_t contributionCount{};
@@ -138,9 +150,9 @@ struct MNEEStats final {
   /// One re-walk the arrival side ran for MIS.
   void recordRewalk(const smdl::ManifoldWalkReport &report) noexcept;
 
-  /// One Dirac-chain arrival weighed by re-walk MIS, and whether the
-  /// re-walk reproduced the crossings the path took.
-  void recordCover(bool isMatched) noexcept;
+  /// One Dirac-chain arrival the coverage weighed, and what became of
+  /// it.
+  void recordCover(Cover cover) noexcept;
 
   /// The reciprocal estimate of one gather: how many trials it took to
   /// re-find the solution, or that it ran out and dropped the sample.

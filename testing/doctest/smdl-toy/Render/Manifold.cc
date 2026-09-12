@@ -304,3 +304,213 @@ TEST_CASE("ManifoldSolutionSet: distinct solutions counted once") {
     CHECK(valued == int(solutions.sum()[0]));
   }
 }
+
+// The caster set as the searched gathers see it: every marked instance
+// with a claim in either domain, looked up by instance.
+TEST_CASE("MNEECasterSet: a refractive caster is kept") {
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
+  Scene scene{compiler};
+  {
+    LayoutItem mirror{};
+    mirror.primitive.shape = PrimitiveSpec::Shape::DISK;
+    mirror.primitive.radius = 2.0f;
+    mirror.materials.all = "self_mirror";
+    mirror.isCaster = true;
+    scene.add(mirror);
+    LayoutItem glass{mirror};
+    glass.materials.all = "self_glass";
+    glass.objectToWorld[3] = float4(10.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(glass);
+    LayoutItem unmarked{glass};
+    unmarked.isCaster = false;
+    unmarked.objectToWorld[3] = float4(20.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(unmarked);
+  }
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const ScopedGrid grid{};
+  scene.commit(grid.wavelengths());
+  const MNEECasterSet casters{scene, grid.wavelengths()};
+  CHECK(casters.casters.size() == 2);
+  const Hit mirrorHit{castOnto(scene, float3(0, 0, 1), float3(0, 0, 0))};
+  const Hit glassHit{castOnto(scene, float3(10, 0, 1), float3(10, 0, 0))};
+  const Hit unmarkedHit{castOnto(scene, float3(20, 0, 1), float3(20, 0, 0))};
+  REQUIRE(mirrorHit.instance);
+  REQUIRE(glassHit.instance);
+  REQUIRE(unmarkedHit.instance);
+  const MNEECaster *mirror{casters.casterOf(mirrorHit.instIndex)};
+  REQUIRE(mirror);
+  CHECK(mirror->instIndex == mirrorHit.instIndex);
+  CHECK((mirror->reflectLobes & smdl::DF_DIRAC_BRDF) != 0);
+  CHECK(mirror->refractLobes == 0);
+  const MNEECaster *glass{casters.casterOf(glassHit.instIndex)};
+  REQUIRE(glass);
+  CHECK((glass->refractLobes & smdl::DF_DIRAC_BTDF) != 0);
+  CHECK((glass->reflectLobes & smdl::DF_DIRAC_BRDF) != 0);
+  CHECK(casters.casterOf(unmarkedHit.instIndex) == nullptr);
+  CHECK(casters.casterOf(INVALID_INDEX) == nullptr);
+}
+
+// The start of a searched refractive estimate: a glass ball as the
+// caster, the trace entering it on the near face wherever the point was
+// drawn, leaving it by Snell's law, and handing the solver a start it
+// converges from; and the ways a trace refuses to start.
+TEST_CASE("Caster seed trace: a ball is entered and left") {
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
+  Scene scene{compiler};
+  // A glass ball at the origin; another, shadowed from below by a
+  // mirror disk wider than itself; and a glass disk seen at grazing
+  // incidence from its dense side.
+  {
+    LayoutItem ball{};
+    ball.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+    ball.primitive.radius = 1.0f;
+    ball.materials.all = "self_glass";
+    ball.isCaster = true;
+    scene.add(ball);
+    LayoutItem shadowed{ball};
+    shadowed.objectToWorld[3] = float4(20.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(shadowed);
+    LayoutItem mirror{};
+    mirror.primitive.shape = PrimitiveSpec::Shape::DISK;
+    mirror.primitive.radius = 5.0f;
+    mirror.materials.all = "self_mirror";
+    mirror.objectToWorld[3] = float4(20.0f, 0.0f, -2.0f, 1.0f);
+    scene.add(mirror);
+    LayoutItem sheet{mirror};
+    sheet.primitive.radius = 1.0f;
+    sheet.materials.all = "self_glass";
+    sheet.isCaster = true;
+    sheet.objectToWorld[3] = float4(40.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(sheet);
+  }
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const ScopedGrid grid{};
+  const Color &wavelengths{grid.wavelengths()};
+  scene.commit(wavelengths);
+  const MNEECasterSet casters{scene, wavelengths};
+  REQUIRE(casters.casters.size() == 3);
+  const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(wavelengths, &allocator)};
+  Sampler sampler{};
+  // The caster the cast from `from` toward `toward` lands on.
+  const auto casterAt{[&](const float3 &from, const float3 &toward) {
+    const Hit hit{castOnto(scene, from, toward)};
+    REQUIRE(hit.instance);
+    const MNEECaster *caster{casters.casterOf(hit.instIndex)};
+    REQUIRE(caster);
+    return caster;
+  }};
+  // One trace on the sample `sampleIndex`, from vacuum, at shutter open.
+  const auto traceFrom{[&](const MNEECaster &caster, const float3 &receiver,
+                           int maxDepth, uint32_t sampleIndex,
+                           MNEECasterSeed &seed) {
+    sampler.startPixelSample(0, sampleIndex);
+    return traceManifoldCasterSeed(scene, state, allocator, sampler, caster,
+                                   receiver, nullptr, 0.0f, maxDepth, 0.0f,
+                                   seed);
+  }};
+  constexpr uint32_t NUM_TRACES{16};
+  const MNEECaster &ball{*casterAt(float3(0, 0, -3), float3(0, 0, 0))};
+  const float3 below{0.0f, 0.0f, -3.0f};
+  SUBCASE("The chain enters on the near face and leaves by Snell's law") {
+    for (uint32_t i = 0; i < NUM_TRACES; i++) {
+      MNEECasterSeed seed{};
+      CAPTURE(i);
+      REQUIRE(traceFrom(ball, below, MANIFOLD_MAX_DEPTH, i, seed));
+      REQUIRE(seed.chain.count == 2);
+      CHECK((seed.lobes & smdl::DF_DIRAC_BTDF) != 0);
+      const ManifoldVertexSeed &enter{seed.chain[0]};
+      const ManifoldVertexSeed &leave{seed.chain[1]};
+      CHECK(enter.etaPrev == doctest::Approx(1.0f));
+      CHECK(enter.etaNext == doctest::Approx(1.5f));
+      CHECK(leave.etaPrev == doctest::Approx(1.5f));
+      CHECK(leave.etaNext == doctest::Approx(1.0f));
+      CHECK(enter.sideSign == -leave.sideSign);
+      // The entry is on the cap the receiver sees, whichever hemisphere
+      // the point was drawn on, and the exit is on the ball.
+      const float3 &entry{seed.hits[0].point};
+      const float3 &exit{seed.hits[1].point};
+      CHECK(entry.z < -1.0f / 3.0f);
+      CHECK(length(exit) == doctest::Approx(1.0f).epsilon(1e-3));
+      // Snell's law about the outward normal at the entry.
+      const float3 wIn{normalize(entry - below)};
+      const float3 n{seed.hits[0].normal};
+      const float eta{1.0f / 1.5f};
+      const float cosI{-dot(wIn, n)};
+      REQUIRE(cosI > 0.0f);
+      const float cosT{std::sqrt(1.0f - eta * eta * (1.0f - cosI * cosI))};
+      const float3 wt{eta * wIn + (eta * cosI - cosT) * n};
+      const float3 toExit{normalize(exit - entry)};
+      CHECK(length(cross(toExit, wt)) < 1e-3f);
+      CHECK(dot(toExit, wt) > 0.0f);
+      // The family names the ball twice.
+      const MNEEChainFamily family{seed.family()};
+      CHECK(family.count == 2);
+      CHECK(family.instances[0] == ball.instIndex);
+      CHECK(family.instances[1] == ball.instIndex);
+      CHECK(family == seed.family());
+      allocator.reset();
+    }
+  }
+  SUBCASE("The solver converges from the traced start") {
+    // A distant light off the axis: the axial connection would pass
+    // through the poles of the ball's parameterization, where the
+    // walk's frame is degenerate by construction.
+    ManifoldTarget target{};
+    target.wl = normalize(float3(0.35f, 0.2f, 0.9f));
+    bool hasConverged{false};
+    for (uint32_t i = 0; i < NUM_TRACES && !hasConverged; i++) {
+      MNEECasterSeed seed{};
+      if (!traceFrom(ball, below, MANIFOLD_MAX_DEPTH, i, seed)) continue;
+      seed.chain.residualTolerance = 1e-5f;
+      ManifoldConnection connection{};
+      if (!solveManifoldConnection(surfaces, below, target, seed.chain,
+                                   connection))
+        continue;
+      hasConverged = true;
+      // The crossings stay on the ball, entering below and leaving
+      // above, and the measure agrees with finite differences.
+      const float3 &entry{connection.vertices[0].vertex.point};
+      const float3 &exit{connection.vertices[1].vertex.point};
+      CHECK(length(entry) == doctest::Approx(1.0f).epsilon(1e-3));
+      CHECK(length(exit) == doctest::Approx(1.0f).epsilon(1e-3));
+      CHECK(entry.z < 0.0f);
+      CHECK(exit.z > 0.0f);
+      checkMeasure(surfaces, "ball, distant light", below, target, seed.chain);
+    }
+    CHECK(hasConverged);
+  }
+  SUBCASE("The depth cap stops the trace at the entry") {
+    MNEECasterSeed seed{};
+    REQUIRE(traceFrom(ball, below, 1, 0, seed));
+    CHECK(seed.chain.count == 1);
+    CHECK((seed.lobes & smdl::DF_DIRAC_BTDF) != 0);
+    CHECK(seed.chain[0].etaNext == doctest::Approx(1.5f));
+  }
+  SUBCASE("A foreign blocker before the caster fails the trace") {
+    const MNEECaster &shadowed{*casterAt(float3(20, 0, 3), float3(20, 0, 0))};
+    for (uint32_t i = 0; i < NUM_TRACES; i++) {
+      MNEECasterSeed seed{};
+      CAPTURE(i);
+      CHECK(!traceFrom(shadowed, float3(20.0f, 0.0f, -3.0f), MANIFOLD_MAX_DEPTH,
+                       i, seed));
+      CHECK(seed.lobes == 0);
+      allocator.reset();
+    }
+  }
+  SUBCASE("Total internal reflection fails the trace") {
+    const MNEECaster &sheet{*casterAt(float3(40, 0, -1), float3(40, 0, 0))};
+    for (uint32_t i = 0; i < NUM_TRACES; i++) {
+      MNEECasterSeed seed{};
+      CAPTURE(i);
+      CHECK(!traceFrom(sheet, float3(45.0f, 0.0f, -0.2f), MANIFOLD_MAX_DEPTH, i,
+                       seed));
+      allocator.reset();
+    }
+  }
+}

@@ -424,23 +424,45 @@ struct PathVertex final {
   bool isReceiver{true};
 };
 
+// What the straight-line refractive gather reports of its discovery: the
+// family of the chain its straight segment crossed, empty when it never
+// reached an estimate, and the kinds it ran one for. The searched
+// refractive gather refuses that family for those kinds, since the
+// straight-line gather owns it; see `MNEEChainFamily`.
+struct StraightFamily final {
+  MNEEChainFamily family{};
+  int ranLobes{};
+};
+
 // Everything one manifold connection is weighed against that does not
 // change from one connection to the next, which is every input the
 // gather has except the connection itself.
 class MNEEGather final {
 public:
-  // Manifold next-event estimation by reflection off a caster; see the
-  // definition.
-  [[nodiscard]] Color gatherReflection() const;
+  // Manifold next-event estimation by reflection off the drawn caster;
+  // see the definition.
+  [[nodiscard]] Color gatherCasterReflection(const MNEECaster &caster,
+                                             float casterPdf) const;
 
   // Manifold next-event estimation through the refractive interfaces
-  // blocking the straight shadow segment; see the definition.
-  [[nodiscard]] Color gatherRefraction(VisibilityWalk &walk, Hit blocker,
-                                       int maxDepth, int receiverMask) const;
+  // blocking the straight shadow segment; see the definition. Reports
+  // what it discovered in `straight`.
+  [[nodiscard]] Color gatherStraightRefraction(VisibilityWalk &walk,
+                                               Hit blocker, int maxDepth,
+                                               int receiverMask,
+                                               StraightFamily &straight) const;
+
+  // Manifold next-event estimation through the drawn caster, seeded by
+  // sampling it; see the definition.
+  [[nodiscard]] Color
+  gatherCasterRefraction(const MNEECaster &caster, float casterPdf,
+                         int maxDepth, int receiverMask,
+                         const StraightFamily &straight) const;
 
   // What one converged connection is worth; see the definition.
-  // `claimed` sends a Dirac chain down the claimed-exclusive branch,
-  // for the biased claimed mode.
+  // `isClaimed` sends a Dirac chain down the claimed-exclusive branch:
+  // the searched refractive gather's chains, and every Dirac chain in
+  // the biased claimed mode.
   [[nodiscard]] Color contribution(const ManifoldChain &chain,
                                    const ManifoldConnection &connection,
                                    float inverseProbability, int receiverMask,
@@ -497,7 +519,8 @@ private:
   [[nodiscard]]
   Color reciprocalEstimate(const ManifoldTarget &target, ManifoldChain &chain,
                            MNEEStats::Kind statKind, int receiverMask,
-                           float scale, const Reseed &reseed) const;
+                           float scale, const Reseed &reseed,
+                           bool isClaimed = false) const;
 };
 
 // Manifold next-event estimation by reflection off a caster for a light
@@ -508,19 +531,14 @@ private:
 // solution by drawing fresh starts until one lands on it again. What
 // differs is where a start comes from. A mirror is nowhere near the line
 // from the receiver to the light, so there is no crossing to seed from and
-// the caster surface is sampled instead: one caster per estimate, chosen
-// with a probability the estimate divides out, and every start of the
-// estimate drawn on it.
-Color MNEEGather::gatherReflection() const {
+// the caster surface is sampled instead: one caster per estimate, drawn by
+// the caller with the probability `casterPdf` the estimate divides out,
+// and every start of the estimate drawn on it, so that every start comes
+// from the same surface with the same material and the same frame and can
+// re-find what the first walk found.
+Color MNEEGather::gatherCasterReflection(const MNEECaster &caster,
+                                         float casterPdf) const {
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
-  // One caster for the whole estimate, so that every start is drawn from
-  // the same surface with the same material and the same frame, and can
-  // re-find what the first walk found. Its selection probability is the
-  // one start density the estimate divides out.
-  float casterPdf{};
-  const MNEECaster *caster{
-      render.mneeOptions.casters->sampleCaster(path.sampler, casterPdf)};
-  if (!caster) return {};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   Color result{};
   // One estimate per claimed kind, each with its own constraint (the
@@ -529,7 +547,7 @@ Color MNEEGather::gatherReflection() const {
   // count. A material mixing both kinds weighs them inside the masked
   // query, so nothing else multiplies.
   for (const int kindLobe : {smdl::DF_DIRAC_BRDF, smdl::DF_GLOSSY_BRDF}) {
-    if ((caster->reflectLobes & kindLobe) == 0) continue;
+    if ((caster.reflectLobes & kindLobe) == 0) continue;
     // A reflection changes no medium and has no index contrast to
     // resolve, so the two sides weigh the same and `H` is the reflection
     // half vector.
@@ -540,8 +558,8 @@ Color MNEEGather::gatherReflection() const {
     seed.isReflect = true;
     seed.isGlossy = kindLobe == smdl::DF_GLOSSY_BRDF;
     Hit startHit{};
-    if (!render.mneeOptions.casters->samplePoint(
-            render.scene, path.sampler, *caster, path.time.fraction, startHit))
+    if (!MNEECasterSet::samplePoint(render.scene, path.sampler, caster,
+                                    path.time.fraction, startHit))
       continue;
     seed.vertex = vertexOf(startHit);
     seed.frameSeed = manifoldFrameSeed(surfaces, seed.vertex);
@@ -566,9 +584,8 @@ Color MNEEGather::gatherReflection() const {
         target, chain, statKind, smdl::DF_ALL, 1.0f / casterPdf,
         [&](ManifoldChain &reseeded) {
           Hit reseededHit{};
-          if (render.mneeOptions.casters->samplePoint(
-                  render.scene, path.sampler, *caster, path.time.fraction,
-                  reseededHit)) {
+          if (MNEECasterSet::samplePoint(render.scene, path.sampler, caster,
+                                         path.time.fraction, reseededHit)) {
             reseeded[0].vertex = vertexOf(reseededHit);
             return true;
           } else {
@@ -591,9 +608,12 @@ Color MNEEGather::gatherReflection() const {
 // angle is the receiver's continuation density times the host Fresnel
 // transmissions times the transfer Jacobian; `tracePath()` applies the
 // complementary weight to those escapes with the same formula, so the
-// pair sums to one.
-Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
-                                   int maxDepth, int receiverMask) const {
+// pair sums to one. The chain family the discovery found and the kinds
+// estimated for it are reported in `straight`, which is how the searched
+// refractive gather knows to leave that family alone.
+Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit blocker,
+                                           int maxDepth, int receiverMask,
+                                           StraightFamily &straight) const {
   // Discover the seed chain: every blocker along the straight segment
   // must be an eligible interface the walk can differentiate, with its
   // per-side refractive indices resolved against the medium stack as of
@@ -650,6 +670,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   if (walk.hasPassedStochasticCutout() ||
       walk.hopCount() >= MNEE_STRAIGHT_MAX_HOPS)
     return {};
+  for (int i = 0; i < chain.count; i++) straight.family.append(seedHits[i]);
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
@@ -658,6 +679,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   // deterministic and weighed against the path tracer by re-walk MIS, and
   // the glossy chain below, claimed outright.
   if (!isEnvGated && (lobes & smdl::DF_DIRAC_BTDF) != 0) {
+    straight.ranLobes |= smdl::DF_DIRAC_BTDF;
     for (int i = 0; i < chain.count; i++) chain[i].isGlossy = false;
     if (render.mneeOptions.biasedTrials > 0) {
       // The biased claimed mode: exactly `biasedTrials` walks, the
@@ -720,6 +742,7 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
     if (!drawOffset(surfaces, seedHits[i], seedMedium[i], lightSample.wi,
                     -lightSample.wi, smdl::DF_GLOSSY_BTDF, chain[i]))
       return result;
+  straight.ranLobes |= smdl::DF_GLOSSY_BTDF;
   chain.residualTolerance = reciprocalResidualTolerance(chain);
   auto jitter{[&](ManifoldChain &reseeded) {
     for (int i = 0; i < reseeded.count; i++)
@@ -733,6 +756,108 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
   (void)jitter(chain);
   result += reciprocalEstimate(target, chain, MNEEStats::GLOSSY_REFRACT,
                                receiverMask, 1.0f, jitter);
+  return result;
+}
+
+// Manifold next-event estimation through a caster for a light sample at
+// a receiver, whether or not the straight segment to it is clear: the
+// prism's spectrum lands beside its shadow, where the straight line
+// crosses nothing and the straight-line gather never runs.
+//
+// The structure is the reflective gather's: one caster per estimate,
+// drawn by the caller with a probability the estimate divides out, a
+// start drawn on it, a walk, and the reciprocal estimate of the chance
+// of having reached the solution. What differs is that a refractive
+// start is a whole chain, traced through the caster from the sampled
+// crossing by `traceManifoldCasterSeed()`, and that the straight-line
+// gather already owns one family of chains: the one its straight segment
+// discovered, which this gather refuses for every kind the straight one
+// estimated. Every other family that starts on the caster is this
+// gather's, claimed exclusively for both kinds; the arrival side drops a
+// Dirac arrival through such a family by the same family test, in
+// `MNEECoverage::coverWeight()`.
+//
+// Each kind works on its own copy of the first trace's chain, because
+// the reciprocal loop reseeds the chain it is given in place, and the
+// glossy kind's offsets are drawn at the first trace's own hits.
+Color MNEEGather::gatherCasterRefraction(const MNEECaster &caster,
+                                         float casterPdf, int maxDepth,
+                                         int receiverMask,
+                                         const StraightFamily &straight) const {
+  // The sun gate applies to this Dirac kind exactly as to the straight
+  // one: the arrival keeps its ordinary weight toward a gated direction.
+  int kinds{caster.refractLobes};
+  if (lightSample.isInfinite && !render.mneeOptions.isEnvTarget(lightSample.wi))
+    kinds &= ~smdl::DF_DIRAC_BTDF;
+  if (kinds == 0) return {};
+  // One state for every crossing the traces walk in turn; see
+  // `Hit::applyGeometryToState()`.
+  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
+                                    gatherState.animationTime,
+                                    path.wavelengthHero)};
+  const auto trace{[&](MNEECasterSeed &seed) {
+    return traceManifoldCasterSeed(
+        render.scene, state, path.allocator, path.sampler, caster, vertex.point,
+        vertex.mediumStack, path.time.fraction, maxDepth,
+        render.mneeOptions.maxRoughness, seed);
+  }};
+  MNEECasterSeed first{};
+  if (!trace(first)) return {};
+  kinds &= first.lobes;
+  if (kinds == 0) return {};
+  const MNEEChainFamily family{first.family()};
+  const bool isStraightFamily{straight.family.count > 0 &&
+                              family == straight.family};
+  const ManifoldTarget target{makeManifoldTarget(lightSample)};
+  const SceneManifoldSurfaces surfaces{render.scene, path.time};
+  Color result{};
+  for (const int kindLobe : {smdl::DF_DIRAC_BTDF, smdl::DF_GLOSSY_BTDF}) {
+    if ((kinds & kindLobe) == 0) continue;
+    if (isStraightFamily && (straight.ranLobes & kindLobe) != 0) continue;
+    ManifoldChain chain{first.chain};
+    const bool isGlossy{kindLobe == smdl::DF_GLOSSY_BTDF};
+    for (int i = 0; i < chain.count; i++) chain[i].isGlossy = isGlossy;
+    if (isGlossy) {
+      // The half vectors, drawn once and held, as on every glossy chain.
+      bool hasOffsets{true};
+      float3 prev{vertex.point};
+      for (int i = 0; i < chain.count && hasOffsets; i++) {
+        const float3 wTravel{normalize(first.hits[i].point - prev)};
+        hasOffsets =
+            drawOffset(surfaces, first.hits[i], first.medium[i], wTravel,
+                       -wTravel, smdl::DF_GLOSSY_BTDF, chain[i]);
+        prev = first.hits[i].point;
+      }
+      if (!hasOffsets) continue;
+    }
+    // Every kind is a reciprocal estimate here, so every kind's walks
+    // converge to the residual a re-find is recognized at.
+    chain.residualTolerance = reciprocalResidualTolerance(chain);
+    const MNEEStats::Kind statKind{isGlossy ? MNEEStats::CASTER_GLOSSY_REFRACT
+                                            : MNEEStats::CASTER_DIRAC_REFRACT};
+    // A fresh start is a fresh trace, and only one of the same family
+    // can re-find the solution: any other is a failed trial, which the
+    // reciprocal count is free to include so long as every trial is
+    // drawn the same way. The offsets and frames stay with the estimate.
+    result += reciprocalEstimate(
+        target, chain, statKind, receiverMask, 1.0f / casterPdf,
+        [&](ManifoldChain &reseeded) {
+          MNEECasterSeed fresh{};
+          if (!trace(fresh) || (fresh.lobes & kindLobe) == 0 ||
+              fresh.family() != family)
+            return false;
+          for (int i = 0; i < reseeded.count; i++) {
+            const ManifoldVertexSeed &freshSeed{fresh.chain[i]};
+            reseeded[i].vertex = freshSeed.vertex;
+            reseeded[i].etaPrev = freshSeed.etaPrev;
+            reseeded[i].etaNext = freshSeed.etaNext;
+            reseeded[i].sideSign = freshSeed.sideSign;
+            reseeded[i].claimedLobes = freshSeed.claimedLobes;
+          }
+          return true;
+        },
+        /*isClaimed=*/true);
+  }
   return result;
 }
 
@@ -993,12 +1118,14 @@ bool MNEEGather::drawOffset(const ManifoldSurfaces &surfaces, const Hit &hit,
 // caster. The start density never enters the estimator (see
 // `MNEECasterSet`); `scale` multiplies into the solution's value,
 // which is the one place a seeder's own selection probability (the
-// caster's) is divided out.
+// caster's) is divided out. `isClaimed` is `contribution()`'s, for a
+// Dirac chain this loop claims rather than weighs.
 template <typename Reseed>
 Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
                                      ManifoldChain &chain,
                                      MNEEStats::Kind statKind, int receiverMask,
-                                     float scale, const Reseed &reseed) const {
+                                     float scale, const Reseed &reseed,
+                                     bool isClaimed) const {
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
   auto solve{[&](ManifoldConnection &connection) {
@@ -1018,7 +1145,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
     // `MNEEOptions::biasedTrials` and `ManifoldSolutionSet`.
     ManifoldSolutionSet solutions{};
     const auto value{[&](const ManifoldConnection &other) {
-      return contribution(chain, other, scale, receiverMask);
+      return contribution(chain, other, scale, receiverMask, isClaimed);
     }};
     if (hasFirstConverged)
       solutions.consider(vertex.point, connection, value, stats);
@@ -1038,7 +1165,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
   // wall whose reflection of the light is blocked by another interface
   // converges on every walk and would otherwise spend the whole trial
   // budget on nothing.
-  Color value{contribution(chain, connection, scale, receiverMask)};
+  Color value{contribution(chain, connection, scale, receiverMask, isClaimed)};
   if (stats) stats->recordContribution(!value.isAllZero());
   if (value.isAllZero()) return {};
   int trials{};
@@ -1165,12 +1292,21 @@ public:
 
   [[nodiscard]] const float3 &isReceiver() const noexcept { return mReceiver; }
 
+  // The instance of the chain's first crossing, meaningful while the
+  // chain has one: what the searched refractive gather's membership is
+  // asked of.
+  [[nodiscard]] uint32_t firstInstIndex() const noexcept {
+    return mChainHits[0].instIndex;
+  }
+
   // The MIS weight of a BSDF-side arrival at `target` through the
-  // chain, by re-walk MIS; see the definition.
+  // chain, by re-walk MIS; see the definition. `isSearched` says the
+  // searched refractive gather claims every family of this chain's
+  // caster but the straight one.
   [[nodiscard]] float coverWeight(const RenderContext &render,
                                   PathContext &path,
-                                  const ManifoldTarget &target,
-                                  float lightPdf) const;
+                                  const ManifoldTarget &target, float lightPdf,
+                                  bool isSearched) const;
 
 private:
   [[nodiscard]] bool covers(ChainKind kind,
@@ -1213,9 +1349,19 @@ private:
 // when both sides weigh the same number, so the number to weigh by is
 // the one the gather would compute: this walk IS the gather's walk, for
 // this target.
+//
+// Where the chain starts on a caster the searched refractive gather
+// samples (`isSearched`), that gather owns every family of the caster's
+// chains but the straight one, exclusively, and an arrival through such
+// a family is dropped instead of kept: every exit before the solve,
+// where the straight cast's crossings are not the crossings the path
+// took (or ran past the hop budget), returns 0. The exits after the
+// solve keep the weights above, because the path's family IS the
+// straight one there and the straight-line gather owns it, whether or
+// not its walk reached this solution.
 float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
-                                const ManifoldTarget &target,
-                                float lightPdf) const {
+                                const ManifoldTarget &target, float lightPdf,
+                                bool isSearched) const {
   const float3 &isReceiver{mReceiver};
   const MediumStack *receiverMedium{mReceiverMedium};
   const float receiverPdf{mReceiverPdf};
@@ -1224,15 +1370,25 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
       mChainInstances};
   const std::array<uint32_t, MANIFOLD_MAX_DEPTH> &chainPieces{mChainPieces};
   const int chainLength{mChainLength};
-  // Whether the re-walk reproduced the crossings the path took; every
-  // other exit keeps the arrival at weight 1, so the matched fraction
-  // is the share of covered arrivals the gather can ever claim.
+  // Whether the re-walk reproduced the crossings the path took, and
+  // whether the arrival was dropped as the searched gather's before the
+  // solve; every other exit keeps the arrival at weight 1, so the
+  // matched fraction is the share of covered arrivals the straight
+  // gather can ever claim.
   bool isMatched{false};
+  bool isDropped{false};
   SMDL_DEFER([&] {
-    if (path.stats) path.stats->mnee().recordCover(isMatched);
+    if (path.stats)
+      path.stats->mnee().recordCover(isMatched   ? MNEEStats::Cover::MATCHED
+                                     : isDropped ? MNEEStats::Cover::DROPPED
+                                                 : MNEEStats::Cover::UNMATCHED);
   });
   // A light the sampler cannot draw is covered by this arrival alone.
   if (!(lightPdf > 0.0f)) return 1.0f;
+  // The weight of an arrival whose family the straight cast does not
+  // reproduce: the searched gather's to drop, or nobody's to keep.
+  const float unownedWeight{isSearched ? 0.0f : 1.0f};
+  isDropped = isSearched;
   // Build the seed chain along the straight cast, mirroring the
   // gather's discovery: the same interfaces in the same order and
   // nothing else, with per-side indices resolved against the
@@ -1287,12 +1443,12 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
       origin = hit.point;
       continue;
     }
-    if (chain.count == chainLength) return 1.0f;
-    if (hit.instance != chainInstances[chain.count]) return 1.0f;
-    if (hit.instance->isCurves()) return 1.0f;
+    if (chain.count == chainLength) return unownedWeight;
+    if (hit.instance != chainInstances[chain.count]) return unownedWeight;
+    if (hit.instance->isCurves()) return unownedWeight;
     if (hit.instance->isPrimitive() &&
         hit.faceIndex != chainPieces[chain.count])
-      return 1.0f;
+      return unownedWeight;
     // The gather runs its Dirac chain only where every crossing claims
     // the Dirac transmission, so this must ask the same or the pair stops
     // summing to one.
@@ -1300,14 +1456,15 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
                           render.mneeOptions.maxRoughness,
                           chain[chain.count]) ||
         (chain[chain.count].claimedLobes & smdl::DF_DIRAC_BTDF) == 0)
-      return 1.0f;
+      return unownedWeight;
     crossingMedium[chain.count] = medium;
     chain.count++;
     MediumStack::Update(medium, path.allocator, &interfaceInst, hit.instance,
                         woStraight, wl);
     origin = hit.point;
   }
-  if (!hasReached || chain.count != chainLength) return 1.0f;
+  if (!hasReached || chain.count != chainLength) return unownedWeight;
+  isDropped = false;
   ManifoldConnection connection;
   ManifoldWalkReport report{};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
@@ -1384,8 +1541,9 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
 //
 // With the manifold estimators enabled, a light sample whose straight
 // segment is blocked by claimed refractive interfaces routes through
-// `MNEEGather::gatherRefraction()` instead of reading as occluded, and
-// the reflective gather searches the marked casters besides. Hair
+// `MNEEGather::gatherStraightRefraction()` instead of reading as
+// occluded, and the searched gathers sample the marked casters besides,
+// for a reflection off one and for a refraction through one. Hair
 // vertices keep plain gathering: the manifold estimator's MIS is not
 // wired through the hair BSDF.
 //
@@ -1469,25 +1627,38 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
                           lightSample.target,
                           Tr,
                           lightSample.isInfinite};
+      // The chain gather of the receiver behind this vertex already
+      // claims every chain that starts with this vertex's claimed
+      // transmission kinds, so the refractive gathers weigh their
+      // connections with the rest of the BSDF only.
+      const int receiverMask{smdl::DF_ALL &
+                             ~vertex.reachableClaim.refractLobes};
+      StraightFamily straight{};
       if (!walk.nextBlocker(&blocker)) {
         if (Tr.maxComponent() > 0.0f) gatherPlain(Tr);
       } else {
-        // The chain gather of the receiver behind this vertex already
-        // claims every chain that starts with this vertex's claimed
-        // transmission kinds, so this gather weighs its connections with
-        // the rest of the BSDF only.
-        direct += mneeGather.gatherRefraction(
-            walk, blocker, mneeDepth,
-            smdl::DF_ALL & ~vertex.reachableClaim.refractLobes);
+        direct += mneeGather.gatherStraightRefraction(walk, blocker, mneeDepth,
+                                                      receiverMask, straight);
       }
-      // The reflective gather is additive rather than an alternative: a
-      // mirror is nowhere near the line to the light, so whether that line
-      // is clear says nothing about whether there is a reflection to find.
-      // It searches toward the caustic targets only; see
-      // `LightSample::caustic`.
-      if (render.mneeOptions.casters && !render.mneeOptions.casters->empty() &&
-          lightSample.isCaustic)
-        direct += mneeGather.gatherReflection();
+      // The searched gathers are additive rather than an alternative: a
+      // mirror is nowhere near the line to the light, and a prism's
+      // spectrum lands beside its shadow, so whether that line is clear
+      // says nothing about whether there is a connection to find. One
+      // caster is drawn for both, with the probability each estimate
+      // divides out. The reflective one searches toward the caustic
+      // targets only (see `LightSample::caustic`); the refractive one
+      // toward every light, as the straight-line gather does, since the
+      // glossy chains' share is dropped at every arrival.
+      if (render.mneeOptions.casters && !render.mneeOptions.casters->empty()) {
+        float casterPdf{};
+        if (const MNEECaster *caster{render.mneeOptions.casters->sampleCaster(
+                path.sampler, casterPdf)}) {
+          if (lightSample.isCaustic)
+            direct += mneeGather.gatherCasterReflection(*caster, casterPdf);
+          direct += mneeGather.gatherCasterRefraction(
+              *caster, casterPdf, mneeDepth, receiverMask, straight);
+        }
+      }
     }
   }
   return direct;
@@ -1677,8 +1848,9 @@ private:
   // it is dropped outright instead, the gather's multi-seed estimate
   // having claimed every drawable target exclusively; otherwise the
   // ordinary MIS `weight` applies to the share of the segment's
-  // throughput nobody claims, and a claimed share toward a target its
-  // gather reaches is the gather's outright. `makeCoverTarget` fills the
+  // throughput nobody claims, a claimed share toward a target its
+  // gather reaches is the gather's outright, and a Dirac chain the
+  // searched refractive gather owns is dropped. `makeCoverTarget` fills the
   // target the re-walk aims at and returns the light-sampling density it
   // competes with, negative when there is no target to re-walk, which
   // keeps the ordinary weight.
@@ -1695,8 +1867,20 @@ private:
       ManifoldTarget target{};
       const float lightPdf{makeCoverTarget(target)};
       if (lightPdf > 0.0f && mRender.mneeOptions.biasedTrials > 0) return;
-      if (lightPdf >= 0.0f)
-        uniform = mCoverage.coverWeight(mRender, mPath, target, lightPdf);
+      if (lightPdf >= 0.0f) {
+        // Whether the chain starts on a caster the searched refractive
+        // gather samples for the Dirac kind, by the membership the
+        // gather itself goes by; the re-walk then settles which family
+        // the arrival belongs to.
+        const MNEECaster *caster{lightPdf > 0.0f && mRender.mneeOptions.casters
+                                     ? mRender.mneeOptions.casters->casterOf(
+                                           mCoverage.firstInstIndex())
+                                     : nullptr};
+        const bool isSearched{
+            caster && (caster->refractLobes & smdl::DF_DIRAC_BTDF) != 0};
+        uniform =
+            mCoverage.coverWeight(mRender, mPath, target, lightPdf, isSearched);
+      }
     } else if (!(mPrev.shouldShareCausticOnly && !isCausticTarget)) {
       share = &mPrev.claimedShare;
     }

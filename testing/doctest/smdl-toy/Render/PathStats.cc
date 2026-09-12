@@ -408,9 +408,10 @@ TEST_CASE("PathStats: the manifold section") {
   mnee.recordWalk(walkReport(200, Outcome::CONVERGED, Failure::NONE, 2e-6f));
   mnee.recordRewalk(walkReport(2, Outcome::CONVERGED));
   mnee.recordRewalk(walkReport(9, Outcome::DIVERGED, Failure::STALLED));
-  mnee.recordCover(true);
-  mnee.recordCover(false);
-  mnee.recordCover(true);
+  mnee.recordCover(MNEEStats::Cover::MATCHED);
+  mnee.recordCover(MNEEStats::Cover::UNMATCHED);
+  mnee.recordCover(MNEEStats::Cover::MATCHED);
+  mnee.recordCover(MNEEStats::Cover::DROPPED);
   mnee.recordTrials(MNEEStats::DIRAC_REFRACT, 4, false);
   mnee.recordTrials(MNEEStats::DIRAC_REFRACT, 10, true);
   mnee.recordContribution(true);
@@ -442,8 +443,9 @@ TEST_CASE("PathStats: the manifold section") {
   CHECK(mnee.iterationsPercentile(1.0) == MNEEStats::NUM_ITERATION_BINS - 1);
   CHECK(mnee.rewalkCount == 2);
   CHECK(mnee.rewalkConvergedCount == 1);
-  CHECK(mnee.coverArrivalCount == 3);
+  CHECK(mnee.coverArrivalCount == 4);
   CHECK(mnee.coverMatchedCount == 2);
+  CHECK(mnee.coverDroppedCount == 1);
   CHECK(mnee.contributionCount == 2);
   CHECK(mnee.contributionNonZeroCount == 1);
   CHECK(PathStats{}.mnee().iterationsPercentile(0.5) == 0);
@@ -452,8 +454,11 @@ TEST_CASE("PathStats: the manifold section") {
     other.mnee().recordWalk(
         walkReport(300, Outcome::CONVERGED, Failure::NONE, 9e-6f));
     other.mnee().recordTrials(MNEEStats::DIRAC_REFRACT, 20, false);
+    other.mnee().recordCover(MNEEStats::Cover::DROPPED);
     stats.add(other);
     CHECK(mnee.walkCount == 6);
+    CHECK(mnee.coverArrivalCount == 5);
+    CHECK(mnee.coverDroppedCount == 2);
     CHECK(mnee.walkIterationsMax == 300);
     CHECK(mnee.walkResidualMax == doctest::Approx(9e-6));
     CHECK(dirac.trialsMax == 20);
@@ -488,6 +493,8 @@ TEST_CASE("PathStats: the manifold section") {
     CHECK_CONTAINS(text, "Manifold estimators");
     CHECK_CONTAINS(text, "p50 5, p90 7");
     CHECK_CONTAINS(text, "dirac refraction");
+    CHECK_CONTAINS(text, "caster dirac refraction");
+    CHECK_CONTAINS(text, "dropped as the caster gather's");
     const std::string json{printJSON()};
     INFO(json);
     CHECK_CONTAINS(json, "\"mnee\"");
@@ -505,5 +512,9 @@ TEST_CASE("PathStats: the manifold section") {
     REQUIRE(bins);
     CHECK(bins->size() == MNEEStats::NUM_ITERATION_BINS);
     CHECK(walks->getObject("diverged")->getInteger("iterations") == int64_t(1));
+    const llvm::json::Object *covered{object->getObject("covered_arrivals")};
+    REQUIRE(covered);
+    CHECK(covered->getInteger("count") == int64_t(4));
+    CHECK(covered->getInteger("dropped") == int64_t(1));
   }
 }

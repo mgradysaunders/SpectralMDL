@@ -46,11 +46,12 @@ using smdl::solveManifoldConnection;
 /// How far a jittered start may sit from the straight-line crossing, as a
 /// fraction of the distance from the receiver.
 ///
-/// This is the reach of the search: a solution further from the straight
-/// segment than this is never found, and its transport is lost. Larger costs
-/// convergence, since the walk starts further from every solution. The
-/// reference implementation samples the whole caster uniformly instead,
-/// which has no reach limit and needs area sampling per interface.
+/// This is the reach of the straight-line search: a solution further from
+/// the straight segment than this is never found by it, and unless a
+/// marked caster's search reaches it (`traceManifoldCasterSeed()`, which
+/// samples the whole caster and has no reach limit) its transport is
+/// lost. Larger costs convergence, since the walk starts further from
+/// every solution.
 constexpr float MANIFOLD_SEED_JITTER{0.60f};
 
 /// How precisely a glossy chain's walk must match its drawn microfacet
@@ -127,14 +128,19 @@ public:
                                                 const Hit &hit,
                                                 ManifoldGeometry &geometry);
 
-/// One instance a reflective connection may bounce off: a marked mesh
-/// or shape, with the reflection lobes it claims and the area-weighted
-/// face distribution (meshes) a start is drawn from.
+/// One instance a searched connection may bounce off or pass through: a
+/// marked mesh or shape, with the lobes it claims by domain and the
+/// area-weighted face distribution (meshes) a start is drawn from.
 class MNEECaster final {
 public:
   uint32_t instIndex{INVALID_INDEX};
-  /// `DF_DIRAC_BRDF` and or `DF_GLOSSY_BRDF`: one estimate per lobe.
+  /// `DF_DIRAC_BRDF` and or `DF_GLOSSY_BRDF`: one reflective estimate
+  /// per lobe.
   int reflectLobes{};
+  /// `DF_DIRAC_BTDF` and or `DF_GLOSSY_BTDF`: one refractive estimate
+  /// per lobe, on a chain traced through the caster from a sampled
+  /// point on it.
+  int refractLobes{};
   /// The shape, when the caster is a primitive; starts are then drawn by
   /// `samplePrimitiveArea()` and the projection pins the walk to the piece.
   PrimitiveSpec primitive{};
@@ -142,12 +148,16 @@ public:
   float totalArea{};
 };
 
-/// Every mesh instance a reflective connection may bounce off.
+/// Every marked instance the searched gathers sample.
 ///
-/// This is what a reflective gather searches in place of the straight
-/// shadow segment a refractive one is handed. A mirror is nowhere near the
-/// line from the receiver to the light, so there is no crossing to seed
-/// from and the surface has to be sampled instead.
+/// This is what the searched gathers sample in place of the straight
+/// shadow segment the straight-line refractive gather is handed. A
+/// mirror is nowhere near the line from the receiver to the light, so
+/// there is no crossing to seed from and the surface has to be sampled
+/// instead; a prism's refracted caustic lands beside its shadow, where
+/// the straight line crosses nothing, and the same sampling seeds the
+/// first crossing of a chain that `traceManifoldCasterSeed()` then
+/// refracts through the rest of the caster.
 ///
 /// An estimate is made on ONE caster, drawn by `sampleCaster()` with a
 /// probability the estimate divides out, and every start of that estimate
@@ -159,15 +169,21 @@ public:
 /// Mixing casters within an estimate breaks that: a start on another
 /// instance can never re-find a solution on this one, and the two may not
 /// even share a material.
+///
+/// Membership is decided once here, against a placeholder state; whether
+/// a given crossing is admitted is `makeManifoldSeed()`'s per-hit answer.
+/// The gather and the arrival side ask the two questions the same way,
+/// membership through `casterOf()` and admission through the seed, so a
+/// caster whose claim differs between the two is straight-only on both.
 class MNEECasterSet final {
 public:
   MNEECasterSet() = default;
 
   /// Enumerate the scene's marked instances, evaluating each instance's
   /// material once against a placeholder state exactly as the light
-  /// sampler does for emission, and keeping those with a reflection
-  /// claim. A marked instance whose material claims nothing in either
-  /// domain is reported and ignored: the mark is judgment, and the one
+  /// sampler does for emission, and keeping those with a claim in
+  /// either domain. A marked instance whose material claims nothing in
+  /// either is reported and ignored: the mark is judgment, and the one
   /// way to misapply it is to mark something that cannot focus light.
   MNEECasterSet(const Scene &scene, const Color &wavelengths,
                 float maxGlossyAlpha = 0.0f);
@@ -179,14 +195,28 @@ public:
   [[nodiscard]] const MNEECaster *sampleCaster(Sampler &sampler,
                                                float &pdf) const;
 
+  /// The caster the instance is, or null when it is unmarked or claims
+  /// nothing: the membership question both halves of the searched
+  /// refractive estimator ask.
+  [[nodiscard]] const MNEECaster *casterOf(uint32_t instIndex) const noexcept {
+    if (instIndex >= mCasterOfInstance.size()) return nullptr;
+    const uint32_t which{mCasterOfInstance[instIndex]};
+    return which == INVALID_INDEX ? nullptr : &casters[which];
+  }
+
   /// Draw a start on a caster: a face by area and a uniform point on it,
   /// the hit built at the shutter fraction `time`. Returns false when the
   /// hit cannot be made.
-  [[nodiscard]] bool samplePoint(const Scene &scene, Sampler &sampler,
-                                 const MNEECaster &caster, float time,
-                                 Hit &hit) const;
+  [[nodiscard]] static bool samplePoint(const Scene &scene, Sampler &sampler,
+                                        const MNEECaster &caster, float time,
+                                        Hit &hit);
 
   std::vector<MNEECaster> casters{};
+
+private:
+  /// The index in `casters` of each scene instance, `INVALID_INDEX` for
+  /// one that is not a caster.
+  std::vector<uint32_t> mCasterOfInstance{};
 };
 
 /// The distinct solutions one biased clustered estimate has found.
@@ -255,6 +285,98 @@ private:
                                     const Hit &hit, const float3 &wl,
                                     float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);
+
+/// A chain family: the crossings in order from the receiver, by instance
+/// and, for a primitive, by piece. Two chains of one family cross the
+/// same surfaces in the same order, which is what the searched
+/// refractive estimator and the straight-line one are partitioned by:
+/// the straight-line gather owns the family its straight segment
+/// discovers, and the searched gather every other family that starts on
+/// its caster. Both halves of the estimator compare families the same
+/// way, so the partition is the same on both sides.
+class MNEEChainFamily final {
+public:
+  void append(const Hit &hit) noexcept {
+    if (count < MANIFOLD_MAX_DEPTH) {
+      instances[count] = hit.instIndex;
+      pieces[count] =
+          hit.instance->isPrimitive() ? hit.faceIndex : INVALID_INDEX;
+    }
+    count++;
+  }
+
+  [[nodiscard]] bool operator==(const MNEEChainFamily &other) const noexcept {
+    if (count != other.count) return false;
+    for (int i = 0; i < std::min(count, MANIFOLD_MAX_DEPTH); i++)
+      if (instances[i] != other.instances[i] || pieces[i] != other.pieces[i])
+        return false;
+    return true;
+  }
+
+  [[nodiscard]] bool operator!=(const MNEEChainFamily &other) const noexcept {
+    return !(*this == other);
+  }
+
+  /// The crossings, which keeps counting past `MANIFOLD_MAX_DEPTH` so an
+  /// overlong chain never reads as a shorter one; zero for no chain.
+  int count{};
+  std::array<uint32_t, MANIFOLD_MAX_DEPTH> instances{};
+  std::array<uint32_t, MANIFOLD_MAX_DEPTH> pieces{};
+};
+
+/// The start a searched refractive estimate is traced from: the seed
+/// chain, and per crossing the discovery hit and the receiver-side
+/// medium, which the glossy kind draws its offsets at exactly as the
+/// straight-line gather does at its own discovery hits.
+class MNEECasterSeed final {
+public:
+  [[nodiscard]] MNEEChainFamily family() const noexcept {
+    MNEEChainFamily result{};
+    for (int i = 0; i < chain.count; i++) result.append(hits[i]);
+    return result;
+  }
+
+  ManifoldChain chain{};
+  std::array<Hit, MANIFOLD_MAX_DEPTH> hits{};
+  std::array<const MediumStack *, MANIFOLD_MAX_DEPTH> medium{};
+
+  /// The transmission lobes every crossing of the chain claims.
+  int lobes{};
+};
+
+/// Trace the start of a searched refractive estimate: draw a point on
+/// `caster` by area, cast to it from `receiver` and take the caster's
+/// first crossing on the way (the near face where the far one was
+/// drawn), then refract by Snell's law about the shading normal with
+/// the seed's own indices, cross the medium stack, and cast on, admitting
+/// every interface `makeManifoldSeed()` admits, until the ray meets
+/// something that is not one (the floor, an emitter, a curve), escapes,
+/// or the chain reaches `maxDepth`. The chain's last crossing is what the
+/// solve connects to the light. Null interfaces and exactly transparent
+/// cutouts are hopped as the arrival-side re-walk hops them; anything
+/// else before the caster fails the trace, as does a mixed chain (the
+/// straight-line gather refuses those too), total internal reflection,
+/// or a first crossing the seed refuses.
+///
+/// The refracted direction is only a start: the solve enforces the
+/// constraint exactly and the transport is asked of the material at the
+/// converged crossing, which is why the trace uses Snell's law and the
+/// seed's indices rather than the material's own Dirac sample, and so
+/// serves a rough-glass caster that has no Dirac lobe to draw.
+///
+/// The reach of this search is what the trace can seed: a solution whose
+/// crossing count differs from what the refracted trace from the receiver
+/// reaches is never found, and its transport is lost.
+///
+/// `state` is a render state the caller prepared for the path (grid,
+/// hero wavelength, time); the trace applies each crossing's geometry to
+/// it in turn. Returns false with `seed.lobes` zero when no start could
+/// be traced.
+[[nodiscard]] bool traceManifoldCasterSeed(
+    const Scene &scene, smdl::State &state, smdl::BumpPtrAllocator &allocator,
+    Sampler &sampler, const MNEECaster &caster, const float3 &receiver,
+    const MediumStack *receiverMedium, float time, int maxDepth,
+    float maxGlossyAlpha, MNEECasterSeed &seed);
 
 /// The '-mnee-test-normalhook' pass: at deterministic quasi-random points of
 /// every surface instance, read the shading normal field through the

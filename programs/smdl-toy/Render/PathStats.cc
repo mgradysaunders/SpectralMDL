@@ -60,8 +60,9 @@ constexpr const char *END_NAMES[]{"escaped", "absorbed", "roulette", "bound",
 static_assert(std::size(END_NAMES) == size_t(PathEnd::NUM_ENDS));
 
 // The names of the gather kinds and the walk failures, in enum order.
-constexpr const char *KIND_NAMES[]{"dirac refraction", "glossy refraction",
-                                   "dirac reflection", "glossy reflection"};
+constexpr const char *KIND_NAMES[]{
+    "dirac refraction",         "glossy refraction", "caster dirac refraction",
+    "caster glossy refraction", "dirac reflection",  "glossy reflection"};
 
 static_assert(std::size(KIND_NAMES) == size_t(MNEEStats::NUM_KINDS));
 
@@ -169,9 +170,10 @@ void MNEEStats::recordRewalk(const smdl::ManifoldWalkReport &report) noexcept {
     rewalkConvergedCount++;
 }
 
-void MNEEStats::recordCover(bool isMatched) noexcept {
+void MNEEStats::recordCover(Cover cover) noexcept {
   coverArrivalCount++;
-  if (isMatched) coverMatchedCount++;
+  if (cover == Cover::MATCHED) coverMatchedCount++;
+  if (cover == Cover::DROPPED) coverDroppedCount++;
 }
 
 void MNEEStats::recordTrials(Kind kind, int trials, bool wasDropped) noexcept {
@@ -212,6 +214,7 @@ void MNEEStats::add(const MNEEStats &other) noexcept {
   rewalkConvergedCount += other.rewalkConvergedCount;
   coverArrivalCount += other.coverArrivalCount;
   coverMatchedCount += other.coverMatchedCount;
+  coverDroppedCount += other.coverDroppedCount;
   contributionCount += other.contributionCount;
   contributionNonZeroCount += other.contributionNonZeroCount;
 }
@@ -285,7 +288,9 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
      << share(rewalkConvergedCount, rewalkCount) << " converged\n";
   os << "  covered arrivals: " << coverArrivalCount << ", "
      << share(coverMatchedCount, coverArrivalCount)
-     << " matched by the re-walk\n";
+     << " matched by the re-walk, "
+     << share(coverDroppedCount, coverArrivalCount)
+     << " dropped as the caster gather's\n";
   os << "  contributions: " << contributionCount << ", "
      << share(contributionNonZeroCount, contributionCount) << " non-zero\n";
 }
@@ -336,6 +341,7 @@ void MNEEStats::printJSON(llvm::json::OStream &json) const {
   json.attributeObject("covered_arrivals", [&] {
     json.attribute("count", int64_t(coverArrivalCount));
     json.attribute("matched", int64_t(coverMatchedCount));
+    json.attribute("dropped", int64_t(coverDroppedCount));
   });
   json.attributeObject("contributions", [&] {
     json.attribute("count", int64_t(contributionCount));

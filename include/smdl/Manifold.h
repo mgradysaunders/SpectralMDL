@@ -235,8 +235,9 @@ public:
   /// they are on a reflection, that IS the reflection half vector; only
   /// which side the two segments have to be on differs. What differs
   /// outside the constraint is where the seed comes from: a refractive
-  /// crossing lies on the straight shadow segment and is handed one, and a
-  /// reflective one does not and has to be searched for.
+  /// crossing may lie on the straight shadow segment and be handed one,
+  /// and a reflective one never does and has to be searched for, as a
+  /// refractive one is too wherever the straight segment crosses nothing.
   bool isReflect{};
 
   /// Is this a glossy crossing rather than a Dirac one? Per crossing:
@@ -255,7 +256,9 @@ public:
 
 /// A seed chain: the interfaces a connection is solved through, in order
 /// from the receiver: the eligible crossings of the straight shadow segment
-/// for a refractive connection, a sampled caster point for a reflective one.
+/// for a refractive connection handed them, a sampled caster point for a
+/// reflective one, and for a searched refractive one the sampled caster
+/// point and the crossings a ray refracted through it goes on to meet.
 class ManifoldChain final {
 public:
   [[nodiscard]] size_t size() const noexcept {
@@ -508,13 +511,16 @@ manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
 /// bar the renderer's path tracer from, by domain.
 ///
 /// Only the Dirac transmission is claimed without the renderer's caster
-/// mark, and it is the one claim that bars nothing: the refractive walk
-/// is deterministic, so its gather and the path tracer's own arrivals
-/// are weighed against each other by re-walk MIS. Everything else, the
-/// reflections and the glossy transmission, is searched for with random
-/// starts, reaches each solution with a probability it cannot report,
-/// and so has to be claimed outright, which is a decision the scene
-/// makes by marking the instance. The claim is a static, whole-tree
+/// mark, and without the mark it is the one claim that bars nothing: the
+/// straight-line refractive walk is deterministic, so its gather and the
+/// path tracer's own arrivals are weighed against each other by re-walk
+/// MIS. Everything else, the reflections and the glossy transmission, is
+/// searched for with random starts, reaches each solution with a
+/// probability it cannot report, and so has to be claimed outright,
+/// which is a decision the scene makes by marking the instance; on a
+/// marked instance the Dirac transmission is searched for the same way
+/// wherever the straight segment does not hand it a crossing, and those
+/// chains are claimed outright too. The claim is a static, whole-tree
 /// question asked of one side's `df_lobes`, so it can only say that the
 /// material HAS a kind on the side asked, never that a given crossing
 /// reaches it; both halves of the estimator confirm that with a masked
@@ -535,8 +541,9 @@ public:
     return reflectLobes | refractLobes;
   }
 
-  /// The kinds the path tracer is barred from: every claimed kind but
-  /// the Dirac transmission, which is weighed against instead.
+  /// The kinds the path tracer is barred from by a share of its
+  /// throughput: every claimed kind but the Dirac transmission, whose
+  /// chains are weighed against, or dropped whole, by family instead.
   [[nodiscard]] int barredLobes() const noexcept {
     return reflectLobes | (refractLobes & ~DF_DIRAC_BTDF);
   }

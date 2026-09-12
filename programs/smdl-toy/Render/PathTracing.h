@@ -28,10 +28,11 @@ public:
   /// manifold next-event estimation is off.
   int depth{};
 
-  /// The marked casters a reflective gather searches in place of the
-  /// straight shadow segment, built once per render; null or empty when
-  /// the layout marks none. What each marked instance claims, by domain,
-  /// is `manifoldClaim()`.
+  /// The marked casters the searched gathers sample, for a reflection
+  /// off one and for a refraction through one, in place of the straight
+  /// shadow segment the straight-line gather is handed; built once per
+  /// render, null or empty when the layout marks none. What each marked
+  /// instance claims, by domain, is `manifoldClaim()`.
   const MNEECasterSet *casters{};
 
   /// How many fresh starts a reciprocal estimate may draw before dropping

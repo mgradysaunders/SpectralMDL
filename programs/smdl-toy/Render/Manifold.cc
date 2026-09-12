@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 
 #include "Render/Manifold.h"
@@ -150,7 +152,8 @@ bool evaluateManifoldHookGeometry(const Scene &scene, const Hit &hit,
 }
 
 MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
-                             float maxGlossyAlpha) {
+                             float maxGlossyAlpha)
+    : mCasterOfInstance(scene.meshInstances.size(), INVALID_INDEX) {
   smdl::BumpPtrAllocator allocator{};
   for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
        instIndex++) {
@@ -169,7 +172,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     // against the medium the path is actually in.
     material.setExteriorIOR(
         ExteriorIOR(nullptr, material, float3(0.0f, 0.0f, 1.0f)));
-    // Either side of the instance: a reflective walk's starts land
+    // Either side of the instance: a searched walk's starts land
     // wherever the caster faces, and the masked query at the converged
     // crossing settles which side actually scatters.
     const ManifoldClaim claim{
@@ -201,10 +204,10 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
                     smdl::Quoted(scene.materialNames[matIndex]), reason);
       continue;
     }
-    if (claim.reflectLobes == 0) continue;
     MNEECaster caster{};
     caster.instIndex = instIndex;
     caster.reflectLobes = claim.reflectLobes;
+    caster.refractLobes = claim.refractLobes;
     if (instance.isPrimitive()) {
       caster.primitive = scene.primitives[instance.primIndex]->spec;
       caster.totalArea = scene.primitives[instance.primIndex]->objectArea;
@@ -226,6 +229,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
       if (!(caster.totalArea > 0.0f)) continue;
       caster.faceDistr = smdl::Distribution1D(faceAreas);
     }
+    mCasterOfInstance[instIndex] = uint32_t(casters.size());
     casters.push_back(std::move(caster));
   }
 }
@@ -241,7 +245,7 @@ const MNEECaster *MNEECasterSet::sampleCaster(Sampler &sampler,
 
 bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
                                 const MNEECaster &caster, float time,
-                                Hit &hit) const {
+                                Hit &hit) {
   // By area within the caster. This density is never divided out; see the
   // class comment.
   if (caster.primitive.isActive()) {
@@ -276,6 +280,120 @@ bool makeManifoldSeed(const MediumStack *medium, smdl::JIT::Material &material,
   seed.etaPrev = isPrevInterior ? material.getIOR() : material.getExteriorIOR();
   seed.etaNext = isPrevInterior ? material.getExteriorIOR() : material.getIOR();
   seed.sideSign = dot(wl, hit.normal) < 0 ? -1.0f : 1.0f;
+  return true;
+}
+
+namespace {
+// Snell's law: `w` arrives against the unit normal `n` (so `dot(w, n)`
+// is negative) and leaves with the relative index `eta`, the arriving
+// side's over the far side's. False under total internal reflection.
+[[nodiscard]] bool refractDirection(const float3 &w, const float3 &n, float eta,
+                                    float3 &wt) {
+  const float cosI{-dot(w, n)};
+  const float sin2T{eta * eta * std::max(0.0f, 1.0f - cosI * cosI)};
+  if (!(sin2T < 1.0f)) return false;
+  const float cosT{std::sqrt(1.0f - sin2T)};
+  wt = eta * w + (eta * cosI - cosT) * n;
+  return smdl::tryNormalize(wt);
+}
+
+// The first surface a cast from `origin` along the unit `dir` meets that
+// is neither a null interface nor an exactly transparent cutout, hopping
+// those with the medium stack kept current, the way the arrival-side
+// re-walk hops them. A finite `target` bounds every cast short of the
+// target point itself. The hit's geometry is applied to `state` on
+// return. False when the ray escapes, reaches the target, or hops past
+// the budget.
+[[nodiscard]] bool castThroughHoles(const Scene &scene, smdl::State &state,
+                                    smdl::BumpPtrAllocator &allocator,
+                                    const MediumStack *&medium,
+                                    const float3 &origin, const float3 &dir,
+                                    const float3 *target, float time,
+                                    Hit &hit) {
+  float3 from{origin};
+  for (int hops = 0; hops < MAX_SKIPS; hops++) {
+    float tmax{INF};
+    if (target) {
+      tmax = length(*target - from) - EPS;
+      if (!(tmax > EPS)) return false;
+    }
+    Ray ray{from, dir, EPS, tmax, time};
+    if (!scene.intersect(ray, hit)) return false;
+    hit.applyGeometryToState(state, dir);
+    const bool isNullInterface{hit.materialDef->isNullInterface()};
+    const bool isHole{!isNullInterface && !hit.materialDef->isAlwaysOpaque() &&
+                      hit.materialDef->opacityEvaluate(state) == 0};
+    if (!isNullInterface && !isHole) return true;
+    const smdl::JIT::Material &interfaceMaterial{
+        *allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
+    MediumStack::Update(medium, allocator, &interfaceMaterial, hit.instance,
+                        -dir, dir);
+    from = hit.point;
+  }
+  return false;
+}
+} // namespace
+
+bool traceManifoldCasterSeed(const Scene &scene, smdl::State &state,
+                             smdl::BumpPtrAllocator &allocator,
+                             Sampler &sampler, const MNEECaster &caster,
+                             const float3 &receiver,
+                             const MediumStack *receiverMedium, float time,
+                             int maxDepth, float maxGlossyAlpha,
+                             MNEECasterSeed &seed) {
+  seed.chain = ManifoldChain{};
+  seed.lobes = 0;
+  Hit sampled{};
+  if (!MNEECasterSet::samplePoint(scene, sampler, caster, time, sampled))
+    return false;
+  float3 wTravel{sampled.point - receiver};
+  if (!smdl::tryNormalize(wTravel)) return false;
+  // The caster's first crossing on the way to the drawn point: the near
+  // face where the far one was drawn, else the drawn point itself, which
+  // the cast stops short of. Anything else in the way fails the start.
+  const MediumStack *medium{receiverMedium};
+  Hit hit{};
+  if (castThroughHoles(scene, state, allocator, medium, receiver, wTravel,
+                       &sampled.point, time, hit)) {
+    if (hit.instIndex != caster.instIndex) return false;
+  } else {
+    hit = sampled;
+    hit.applyGeometryToState(state, wTravel);
+  }
+  const int depth{std::min(maxDepth, MANIFOLD_MAX_DEPTH)};
+  int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
+  while (true) {
+    if (hit.instance->isCurves()) return false;
+    smdl::JIT::Material &material{
+        *allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
+    ManifoldVertexSeed &vertexSeed{seed.chain[seed.chain.count]};
+    if (!makeManifoldSeed(medium, material, hit, wTravel, maxGlossyAlpha,
+                          vertexSeed)) {
+      // Not an interface a chain crosses: the chain is complete as it
+      // stands, unless it has not started.
+      if (seed.chain.count == 0) return false;
+      break;
+    }
+    lobes &= vertexSeed.claimedLobes;
+    if (lobes == 0) return false;
+    seed.hits[seed.chain.count] = hit;
+    seed.medium[seed.chain.count] = medium;
+    seed.chain.count++;
+    const float3 normal{dot(wTravel, hit.normal) < 0.0f ? hit.normal
+                                                        : -hit.normal};
+    float3 wNext{};
+    if (!refractDirection(wTravel, normal,
+                          vertexSeed.etaPrev / vertexSeed.etaNext, wNext))
+      return false;
+    MediumStack::Update(medium, allocator, &material, hit.instance, -wTravel,
+                        wNext);
+    if (seed.chain.count == depth) break;
+    wTravel = wNext;
+    if (!castThroughHoles(scene, state, allocator, medium, hit.point, wTravel,
+                          nullptr, time, hit))
+      break;
+  }
+  seed.lobes = lobes;
   return true;
 }
 
