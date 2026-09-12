@@ -795,7 +795,7 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
         "::glossy", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
                     "  surface: material_surface(scattering: "
                     "df::microfacet_ggx_smith_bsdf(\n"
-                    "    roughness_u: 0.4, tint: 0.8)));\n"));
+                    "    roughness_u: 0.25, tint: 0.8)));\n"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
   }};
@@ -849,7 +849,7 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(material.scatterNormalSample(xi, false, wm, pdf, alpha,
                                        smdl::DF_GLOSSY_BRDF));
     CHECK(pdf > 0.0f);
-    CHECK(alpha.x == doctest::Approx(0.16f));
+    CHECK(alpha.x == doctest::Approx(0.0625f));
     CHECK(!material.scatterNormalSample(xi, false, wm, pdf, alpha,
                                         smdl::DF_GLOSSY_BTDF));
   }

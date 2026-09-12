@@ -271,7 +271,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // with what each claims.
   MNEECasterSet mneeCasters{};
   if (opts.render.useMNEE) {
-    mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
+    mneeCasters = MNEECasterSet(scene, wavelengths);
     mneeOptions.casters = &mneeCasters;
     SMDL_LOG_DEBUG("MNEE casters: ",
                    smdl::Counted(mneeCasters.casters.size(), "instance"));

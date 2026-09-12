@@ -369,7 +369,7 @@ void buildFrameSeeds(const ManifoldSurfaces &surfaces,
 } // namespace
 
 ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
-                            bool isMarked, float maxGlossyAlpha) {
+                            bool isMarked) {
   ManifoldClaim claim{};
   if (material.hasEmission()) return claim;
   const int dfLobes{material.getLobes(isBackface)};
@@ -391,34 +391,13 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
     claim.refractLobes =
         dfLobes & (DF_DIRAC_BTDF | (isMarked ? DF_GLOSSY_BTDF : 0));
   if (isMarked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSSY_BRDF);
-  // The width gate, at a FIXED center draw so every evaluation of the
-  // claim on this side answers the same however the two halves of the
-  // estimator reached it; see the header.
-  if (maxGlossyAlpha > 0.0f && material.def->scatterNormalSample &&
-      (claim.lobes() & DF_GLOSSY) != 0) {
-    auto tooWide{[&](int kind) {
-      float3 wm{};
-      float pdf{};
-      float2 alpha{};
-      if (!material.scatterNormalSample(float4(0.5f, 0.5f, 0.5f, 0.5f),
-                                        isBackface, wm, pdf, alpha, kind))
-        return false;
-      return std::min(alpha.x, alpha.y) > maxGlossyAlpha;
-    }};
-    if ((claim.refractLobes & DF_GLOSSY_BTDF) != 0 && tooWide(DF_GLOSSY_BTDF))
-      claim.refractLobes &= ~DF_GLOSSY_BTDF;
-    if ((claim.reflectLobes & DF_GLOSSY_BRDF) != 0 && tooWide(DF_GLOSSY_BRDF))
-      claim.reflectLobes &= ~DF_GLOSSY_BRDF;
-  }
   return claim;
 }
 
-ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked,
-                            float maxGlossyAlpha) {
-  ManifoldClaim claim{
-      manifoldClaim(material, /*isBackface=*/false, isMarked, maxGlossyAlpha)};
+ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked) {
+  ManifoldClaim claim{manifoldClaim(material, /*isBackface=*/false, isMarked)};
   const ManifoldClaim back{
-      manifoldClaim(material, /*isBackface=*/true, isMarked, maxGlossyAlpha)};
+      manifoldClaim(material, /*isBackface=*/true, isMarked)};
   claim.reflectLobes |= back.reflectLobes;
   claim.refractLobes |= back.refractLobes;
   return claim;

@@ -229,9 +229,9 @@ unit_test "The normal density agrees with the normal sample" {
   // Two glossy lobes of different roughness under a layer, so the reported
   // density is a mixture and not one leaf's own.
   const auto rough =
-    df::microfacet_ggx_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 0.9);
+    df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.9);
   const auto smooth = df::microfacet_beckmann_smith_bsdf(
-    roughness_u: 0.25, roughness_v: 0.25, tint: 0.9);
+    roughness_u: 0.2, roughness_v: 0.2, tint: 0.9);
   const auto layered =
     df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
   int seenSmooth = 0;
@@ -246,9 +246,9 @@ unit_test "The normal density agrees with the normal sample" {
     #assert(math::dot(r.wm, float3(0, 0, 1)) > 0.0);      // ...above the normal
     #assert(scatter::normalEvaluate(layered, r.wm) ~== |1e-5| r.pdf);
     // The reported roughness is the drawn lobe's own, not the mixture's.
-    #assert((r.alpha.x ~== |1e-6| 0.36) | (r.alpha.x ~== |1e-6| 0.0625));
-    seenSmooth += int(r.alpha.x < 0.1);
-    seenRough += int(r.alpha.x > 0.1);
+    #assert((r.alpha.x ~== |1e-6| 0.09) | (r.alpha.x ~== |1e-6| 0.04));
+    seenSmooth += int(r.alpha.x < 0.06);
+    seenRough += int(r.alpha.x > 0.06);
   }
   #assert((seenSmooth > 0) & (seenRough > 0)); // Else the mixture is untested
   // The mixture is strictly between the two lobes it mixes, which is what
@@ -265,35 +265,38 @@ unit_test "The normal density agrees with the normal sample" {
 }
 
 unit_test "The normal density integrates to one" {
+  // Every lobe under the glossy cutoff, since a wider one reports no
+  // distribution at all (see the cutoff test in lobes.smdl), and none
+  // narrower than the helper's grid resolves.
   scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.5,
-    roughness_v: 0.5,
+    roughness_u: 0.3,
+    roughness_v: 0.3,
     tint: 1.0,
     mode: df::scatter_reflect_transmit));
   scatter::checkNormalDensityIntegral(df::microfacet_ggx_vcavities_bsdf(
-    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   scatter::checkNormalDensityIntegral(df::microfacet_beckmann_smith_bsdf(
-    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   scatter::checkNormalDensityIntegral(df::simple_glossy_bsdf(
-    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   scatter::checkNormalDensityIntegral(df::ward_geisler_moroder_bsdf(
-    roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   // And a mixture, where the density is the mixture's rather than a leaf's.
   scatter::checkNormalDensityIntegral(df::weighted_layer(
     weight: 0.4,
     layer: df::microfacet_ggx_smith_bsdf(
-      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+      roughness_u: 0.25, roughness_v: 0.25, tint: 1.0),
     base: df::microfacet_beckmann_smith_bsdf(
-      roughness_u: 0.7, roughness_v: 0.7, tint: 1.0)));
+      roughness_u: 0.3, roughness_v: 0.3, tint: 1.0)));
   scatter::checkNormalDensityIntegral(df::normalized_mix(df::bsdf_component[2](
     df::bsdf_component(
       weight: 0.3,
-      component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0)),
+      component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.25, tint: 1.0)),
     df::bsdf_component(
       weight: 0.7,
-      component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))));
+      component: df::simple_glossy_bsdf(roughness_u: 0.3, tint: 1.0)))));
 }
 
 // The proposal is the distribution ITSELF and not the visible part of it.
@@ -302,11 +305,11 @@ unit_test "The normal density integrates to one" {
 // number, so assert what the density is, leaf by leaf.
 unit_test "The reported distribution is the plain one, not the visible one" {
   const auto wm = math::normalize(float3(0.12, -0.09, 0.99));
-  const auto alpha = float2(0.45 * 0.45);
+  const auto alpha = float2(0.25 * 0.25);
   const auto ggx = df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+    roughness_u: 0.25, roughness_v: 0.25, tint: 1.0);
   const auto beckmann = df::microfacet_beckmann_smith_bsdf(
-    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+    roughness_u: 0.25, roughness_v: 0.25, tint: 1.0);
   // `D(wm) cos(theta_m)` is the distribution's own solid-angle density.
   #assert(
     scatter::normalEvaluate(ggx, wm) ~== |1e-4| df::microfacet::smith_normal_pdf(df::microfacet::ggx(), alpha, wm) * wm.z);
@@ -320,7 +323,7 @@ unit_test "Only a lobe with a distribution behind it answers" {
   const auto xi = float4(0.3, 0.7, 0.5, 0.5);
   // A reflection-only glossy lobe has nothing transmissive to offer.
   const auto glossyReflect =
-    df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.9);
+    df::microfacet_ggx_smith_bsdf(roughness_u: 0.25, tint: 0.9);
   #assert(scatter::normalSample(glossyReflect, xi).success);
   #assert(
     !scatter::normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSSY_BTDF).success);
@@ -368,9 +371,9 @@ unit_test "The normal density integrates to one under a tilted layer normal" {
     weight: 0.5,
     normal: math::normalize(float3(0.25, -0.15, 0.96)),
     layer: df::microfacet_ggx_smith_bsdf(
-      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+      roughness_u: 0.2, roughness_v: 0.2, tint: 1.0),
     base: df::microfacet_beckmann_smith_bsdf(
-      roughness_u: 0.6, roughness_v: 0.6, tint: 1.0));
+      roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));
   const int n = 400;
   double integral = 0;
   for (int i = 0; i < n; i++) {

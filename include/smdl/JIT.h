@@ -166,7 +166,14 @@ inline constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 /// Having a normal distribution is necessary and not sufficient. A lobe
 /// that mixes one with something else, or whose half vector nothing would
 /// ever want to constrain, belongs in `DF_SMOOTH_BRDF`; the micrograin
-/// layer is both and is classified there.
+/// layer is both and is classified there. Width is part of the kind on
+/// the same ground: a microfacet lobe wider than the builtin cutoff
+/// (`MAX_GLOSSY_ALPHA` in `df.smdl`, squared roughness 0.25, the measured
+/// equal-time break-even under a lamp) labels itself `DF_SMOOTH_BRDF`,
+/// since a walk toward a light has nothing left to win against ordinary
+/// sampling of a lobe that wide. So a manifold claim never reads a width,
+/// and a layered material's word carries its narrow lobe as glossy and
+/// its wide one as smooth.
 inline constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
 /// The transmissive counterpart of `DF_GLOSSY_BRDF`.

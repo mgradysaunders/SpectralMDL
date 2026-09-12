@@ -216,8 +216,7 @@ public:
   /// either domain. A marked instance whose material claims nothing in
   /// either is reported and ignored: the mark is judgment, and the one
   /// way to misapply it is to mark something that cannot focus light.
-  MNEECasterSet(const Scene &scene, const Color &wavelengths,
-                float maxGlossyAlpha = 0.0f);
+  MNEECasterSet(const Scene &scene, const Color &wavelengths);
 
   [[nodiscard]] bool empty() const noexcept { return casters.empty(); }
 
@@ -321,12 +320,10 @@ private:
 ///
 /// `wl` is the direction of travel along the straight segment, toward
 /// the light. `material` is modified in place by the exterior IOR
-/// resolution; `maxGlossyAlpha` is the claim's width gate, passed
-/// through so both halves of the estimator gate identically.
+/// resolution.
 [[nodiscard]] bool makeManifoldSeed(const MediumStack *medium,
                                     smdl::JIT::Material &material,
                                     const Hit &hit, const float3 &wl,
-                                    float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);
 
 /// The receiver a connection leaves from, as both halves of the
@@ -447,8 +444,8 @@ enum class MNEEStraightEnd {
 /// crossing through `makeManifoldSeed()`, narrowing `wantedLobes` to
 /// what every crossing claims, pass through it, and continue to the next
 /// until the line reaches the light or something ends it. `wl` is the
-/// direction of travel toward the light; `maxDepth` and `maxGlossyAlpha`
-/// are the estimator's depth and width gates.
+/// direction of travel toward the light; `maxDepth` is the estimator's
+/// depth.
 ///
 /// This is the one discovery both halves of the Dirac pair run, the
 /// gather to seed its estimate and the arrival side to prove the chain
@@ -459,7 +456,7 @@ enum class MNEEStraightEnd {
 [[nodiscard]] MNEEStraightEnd
 discoverStraightChain(PathContext &path, VisibilityWalk &walk, Hit &blocker,
                       const float3 &wl, int wantedLobes, int maxDepth,
-                      float maxGlossyAlpha, MNEEChainSeed &seed);
+                      MNEEChainSeed &seed);
 
 /// Trace the start of a caster refractive estimate: draw a point on
 /// `caster` by area, walk to it from the receiver and take the caster's
@@ -492,8 +489,7 @@ discoverStraightChain(PathContext &path, VisibilityWalk &walk, Hit &blocker,
                                            PathContext &path,
                                            const MNEECaster &caster,
                                            const MNEEReceiver &receiver,
-                                           int maxDepth, float maxGlossyAlpha,
-                                           MNEEChainSeed &seed);
+                                           int maxDepth, MNEEChainSeed &seed);
 
 /// The '-mnee-test-normalhook' pass: at deterministic quasi-random points of
 /// every surface instance, read the shading normal field through the

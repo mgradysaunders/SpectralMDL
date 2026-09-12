@@ -356,8 +356,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
                             isEnvGated
                                 ? smdl::DF_GLOSSY_BTDF
                                 : smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF,
-                            maxDepth, render.mneeOptions.maxRoughness,
-                            seed) != MNEEStraightEnd::REACHED)
+                            maxDepth, seed) != MNEEStraightEnd::REACHED)
     return {};
   ManifoldChain &chain{seed.chain};
   const int lobes{seed.lobes};
@@ -492,7 +491,7 @@ Color MNEEGather::gatherCasterRefraction(const MNEECaster &caster,
   const MNEEReceiver receiver{vertex.receiver()};
   const auto trace{[&](MNEEChainSeed &seed) {
     return traceManifoldCasterSeed(render, path, caster, receiver, maxDepth,
-                                   render.mneeOptions.maxRoughness, seed);
+                                   seed);
   }};
   MNEEChainSeed first{};
   if (!trace(first)) return {};
@@ -1099,7 +1098,6 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   MNEEChainSeed seed{};
   if (discoverStraightChain(path, walk, blocker, wl, smdl::DF_DIRAC_BTDF,
                             render.mneeOptions.depth,
-                            render.mneeOptions.maxRoughness,
                             seed) != MNEEStraightEnd::REACHED)
     return unownedWeight;
   if (seed.family() != mFamily) return unownedWeight;
@@ -2004,8 +2002,7 @@ Color PathWalk::trace(const CameraSample &camera) {
     // continuation is dropped at the light.
     const ManifoldClaim claim{
         mRender.mneeOptions.isEnabled() && !isHair
-            ? manifoldClaim(material, isBackface, hit.instance->isCausticCaster,
-                            mRender.mneeOptions.maxRoughness)
+            ? manifoldClaim(material, isBackface, hit.instance->isCausticCaster)
             : ManifoldClaim()};
     const ManifoldClaim reachable{
         mCoverage.reach(claim, mRender.mneeOptions, mPrev.isDirac)};
