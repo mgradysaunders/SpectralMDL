@@ -167,7 +167,7 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                    const smdl::SpectralFilm &film, const Color &wavelengths,
                    std::vector<float> &rgbImage, bool shouldLog) {
   const auto &model{frame.model};
-  const Sensor sensor{*model.previewedSensor};
+  const auto &sensor{*model.physics};
   const auto shot{takeShot(frame, sensor, film, wavelengths, shouldLog)};
   auto flat{Color()};
   for (size_t i = 0; i < flat.size(); i++) flat[i] = 1;
@@ -193,6 +193,28 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                   smdl::Brief(DEVELOP_MIDDLE_GRAY, 3));
 }
 
+/// What the body makes of the films before there is a picture: the
+/// detector at the shot's ISO and the readout it takes of the band
+/// film. The checkpoint's preview and the final write both go through
+/// here, so that the two read the body the same way and differ only in
+/// what they say about it.
+struct BodyReadout final {
+  Detector detector;
+  Readout readout;
+};
+
+[[nodiscard]] BodyReadout
+readOutBody(const Frame &frame, const smdl::SpectralFilm &film,
+            const smdl::SpectralFilm &bandFilm, const Color &wavelengths,
+            const DetectorReadoutOptions &options, bool shouldLog) {
+  const auto &sensor{*frame.model.physics};
+  const Detector detector{
+      sensor, takeShot(frame, sensor, film, wavelengths, shouldLog)};
+  if (shouldLog) detector.logSummary();
+  auto readout{detector.readOut(bandFilm, options, frame.window)};
+  return BodyReadout{detector, std::move(readout)};
+}
+
 } // namespace
 
 std::vector<float> developPreview(const Options &opts, const Frame &frame,
@@ -208,14 +230,12 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
     return rgbImage;
   }
   SMDL_SANITY_CHECK(bandFilm);
-  const Sensor sensor{*frame.model.sensor};
-  const Detector detector{
-      sensor, takeShot(frame, sensor, film, grid.wavelengths, false)};
   auto noiseless{opts.image.readout};
   noiseless.noise = DetectorNoise::NONE;
-  const auto readout{detector.readOut(*bandFilm, noiseless, frame.window)};
-  return developReadout(sensor, detector, readout, frame.model.whiteBalance,
-                        frame.window, false);
+  const auto body{
+      readOutBody(frame, film, *bandFilm, grid.wavelengths, noiseless, false)};
+  return developReadout(*frame.model.physics, body.detector, body.readout,
+                        frame.model.whiteBalance, frame.window, false);
 }
 
 void writeOutputs(const Options &opts, const Frame &frame,
@@ -263,11 +283,10 @@ void writeOutputs(const Options &opts, const Frame &frame,
   auto rgbImage{std::vector<float>()};
   if (model.sensor) {
     SMDL_SANITY_CHECK(bandFilm);
-    const Sensor sensor{*model.sensor};
-    const Detector detector{sensor,
-                            takeShot(frame, sensor, film, wavelengths, true)};
-    detector.logSummary();
-    const auto readout{detector.readOut(*bandFilm, opts.image.readout, window)};
+    const auto body{readOutBody(frame, film, *bandFilm, wavelengths,
+                                opts.image.readout, true)};
+    const auto &detector{body.detector};
+    const auto &readout{body.readout};
     SMDL_LOG_INFO(
         "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
         " e- over the window, ",
@@ -299,8 +318,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
                     smdl::Counted(bandNames.size(), "band"),
                     " of digital numbers up to ", detector.topCode());
     }
-    rgbImage = developReadout(sensor, detector, readout, model.whiteBalance,
-                              window, true);
+    rgbImage = developReadout(*model.physics, detector, readout,
+                              model.whiteBalance, window, true);
   } else {
     rgbImage = resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy);
     if (model.previewedSensor)

@@ -216,20 +216,17 @@ MeteredExposure Sensor::meter(const smdl::SpectralFilm &film,
   const auto weights{luminanceWeights(wavelengths)};
   const size_t numBands{film.getNumBands()};
   SMDL_SANITY_CHECK(numBands == weights.size());
-  // Each row sums for itself and the rows fold in order, so the mean
-  // never depends on which thread took which row.
   const size_t numRows{size_t(std::max(window[3] - window[1], 0))};
-  auto rows{std::vector<double>(numRows)};
-  smdl::parallelFor(0, numRows, [&](size_t row) {
-    const auto y{size_t(window[1]) + row};
-    double total{};
-    for (size_t x = size_t(window[0]); x < size_t(window[2]); x++)
-      for (size_t i = 0; i < numBands; i++)
-        total += filmMean(film, x, y, i) * weights[i];
-    rows[row] = total;
-  });
-  double total{};
-  for (const auto value : rows) total += value;
+  const double total{parallelRowFold(
+      size_t(window[1]), size_t(window[1]) + numRows, 0.0,
+      [&](size_t y) {
+        double sum{};
+        for (size_t x = size_t(window[0]); x < size_t(window[2]); x++)
+          for (size_t i = 0; i < numBands; i++)
+            sum += filmMean(film, x, y, i) * weights[i];
+        return sum;
+      },
+      [](double &running, double sum) { running += sum; })};
   const size_t numPixels{numRows * size_t(std::max(window[2] - window[0], 0))};
   auto metered{MeteredExposure{}};
   metered.luxSeconds =

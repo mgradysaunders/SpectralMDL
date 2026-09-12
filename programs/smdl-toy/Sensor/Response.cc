@@ -120,6 +120,11 @@ TracedSpan LensWavelengthDraw::span() const noexcept {
                     float(mWavelengths[last + 1])};
 }
 
+std::string spellTracedSpan(const TracedSpan &span) {
+  return smdl::concat(smdl::Brief(span.lo, 4), "-", smdl::Brief(span.hi, 4),
+                      " nm, median ", smdl::Brief(span.median, 4));
+}
+
 std::optional<TracedSpan> tracedSpanOf(const ResponseBand &band,
                                        const SensorSpectrum &illuminant) {
   const auto knots{
@@ -283,11 +288,9 @@ void Response::logTracedSpans() const {
   for (const auto index : tileBands(mCFA)) {
     const auto &band{mBands[index]};
     if (band.draw.isEmpty()) continue;
-    const auto span{band.draw.span()};
     SMDL_LOG_INFO("Lens color: the ", smdl::Quoted(band.name),
-                  " pixels trace the lens at ", smdl::Brief(span.lo, 4), "-",
-                  smdl::Brief(span.hi, 4), " nm, median ",
-                  smdl::Brief(span.median, 4));
+                  " pixels trace the lens at ",
+                  spellTracedSpan(band.draw.span()));
   }
 }
 

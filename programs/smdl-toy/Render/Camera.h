@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "Common.h"
 
@@ -198,6 +199,31 @@ struct DepthOfField final {
   [[nodiscard]] bool hasLimits() const noexcept { return nearLimit < INF; }
 };
 
+/// One pixel of the frame in scene units, the frame's height over the
+/// picture's rows, which is what a distance on the film is stated in
+/// pixels against.
+[[nodiscard]] float pixelPitch(const CameraOptions &options) noexcept;
+
+/// What a lens shows of a frame `frameSize` across: the field top to
+/// bottom and across the diagonal, each traced rather than taken from
+/// the focal length so that whatever distortion the surfaces have is in
+/// it, and the words for an end of the frame nothing reaches. Built once
+/// because the render logs it and the report states it.
+[[nodiscard]] std::string describeField(const Lens &lens, float2 frameSize);
+
+/// The focus distance `options` resolves to, in scene units: the stated
+/// one, or the distance from the camera to what it looks at when none
+/// was stated, which is what a zero `CameraOptions::focus` asks for.
+/// `INF` is focus at infinity.
+[[nodiscard]] float focusDistanceOf(const CameraOptions &options) noexcept;
+
+/// What this render asks of the prescription `options` names: the focus
+/// it resolved to, spelled as `LensOptions` spells infinity, the stop,
+/// and the aperture polygon in radians. Every lens the render builds is
+/// built from this, so the report, the preview's fit, and the camera all
+/// look through the same one.
+[[nodiscard]] LensOptions lensOptionsOf(const CameraOptions &options) noexcept;
+
 /// The depth of field of a lens of focal length `focalLength` at
 /// f/`fNumber`, focused at `focus` (`INF` for infinity), on a frame of
 /// `frameSize`, all in scene units, by the thin-lens closed forms:
@@ -263,6 +289,12 @@ struct LensApproximation final {
 ///
 /// \throws smdl::Error  If the prescription cannot be a camera lens.
 [[nodiscard]] LensApproximation approximateLens(const CameraOptions &options);
+
+/// The same fit against a lens already built from `options`, which is
+/// what a caller that has one passes rather than paying for a second
+/// solve of the same prescription.
+[[nodiscard]] LensApproximation approximateLens(const Lens &lens,
+                                                const CameraOptions &options);
 
 /// The camera: everything between a pixel coordinate and a world-space
 /// ray carrying a response weight, which is the thin lens or the traced

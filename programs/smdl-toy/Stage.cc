@@ -354,24 +354,28 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   // batch of thumbnails is consistently lit however each one is framed,
   // and then the autofocus, which measures the framing the autolook
   // chose. The camera is built once both have had their say.
+  // What both ask of a prescription is what it does focused at infinity,
+  // since the focus a real lens takes is the distance these very
+  // measurements are about to choose, so one solve answers both.
+  auto probe{std::optional<Lens>()};
+  if (cameraOptions.lens &&
+      (opts.camera.autolook.isEnabled || frame.model.shouldAutofocus))
+    probe.emplace(*cameraOptions.lens, LensOptions{});
   auto autolookSunAzimuth{std::optional<float>()};
   if (opts.camera.autolook.isEnabled) {
     auto autolookOptions{AutolookOptions{}};
     autolookOptions.fovYDeg = cameraOptions.fovYDeg;
     autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
-    if (cameraOptions.lens) {
+    if (probe) {
       // A lens's field follows from the frame and the prescription,
-      // which is what the fit needs. The prescription is solved once
-      // here, focused at infinity, since the focus the real lens takes
-      // is the distance this very solve is about to choose.
-      const Lens probe{*cameraOptions.lens, LensOptions{}};
-      auto angle{probe.fieldAngleAt(0.5f * cameraOptions.frameSize.y)};
+      // which is what the fit needs.
+      auto angle{probe->fieldAngleAt(0.5f * cameraOptions.frameSize.y)};
       if (!angle) {
         // A frame taller than the lens's image circle is framed to the
         // circle, which is where the picture ends at the sides as much as
         // at the top and bottom. A lens nothing gets out of at all is the
         // camera's to refuse, once it is built.
-        angle = probe.fieldAngleAt(probe.imageCircleRadius());
+        angle = probe->fieldAngleAt(probe->imageCircleRadius());
         if (angle)
           autolookOptions.aspectRatio =
               std::min(autolookOptions.aspectRatio, 1.0f);
@@ -400,12 +404,10 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     autofocusOptions.lookFrom = cameraOptions.lookFrom;
     autofocusOptions.lookTo = cameraOptions.lookTo;
     autofocusOptions.lookUp = cameraOptions.lookUp;
-    if (cameraOptions.lens) {
-      // The prescription's paraxial focal length, solved at infinity
-      // since the focus is what this measures.
-      const Lens probe{*cameraOptions.lens, LensOptions{}};
+    if (probe) {
+      // The prescription's paraxial focal length.
       autofocusOptions.focalLengthOverHeight =
-          probe.focalLength() / cameraOptions.frameSize.y;
+          probe->focalLength() / cameraOptions.frameSize.y;
     } else {
       autofocusOptions.focalLengthOverHeight =
           0.5f / std::tan(smdl::radians(cameraOptions.fovYDeg / 2));

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "smdl/RenderUtil/SpectralFilm.h"
+#include "smdl/Support/Parallel.h"
 
 #include "Color.h"
 #include "Layout/CameraFile.h"
@@ -156,6 +157,26 @@ enum class WellSource {
   /// The generic well over the pixel's area.
   FROM_PITCH
 };
+
+/// Tally the rows `[rowBegin, rowEnd)` in parallel and fold the tallies
+/// into `total` in row order: `tallyRow(row)` is what one row makes of
+/// itself, and `fold(total, tally)` adds one in.
+///
+/// Folding in row order rather than as the threads finish is what keeps
+/// a total from depending on which thread took which row, so that a
+/// film meters and reads out the same on any thread count. Every tally
+/// the sensor takes over a frame goes through here for that reason.
+template <typename Tally, typename TallyRow, typename Fold>
+[[nodiscard]] Tally parallelRowFold(size_t rowBegin, size_t rowEnd, Tally total,
+                                    TallyRow &&tallyRow, Fold &&fold) {
+  if (rowEnd <= rowBegin) return total;
+  auto tallies{std::vector<Tally>(rowEnd - rowBegin)};
+  smdl::parallelFor(rowBegin, rowEnd, [&](size_t row) {
+    tallies[row - rowBegin] = tallyRow(row);
+  });
+  for (const auto &tally : tallies) fold(total, tally);
+  return total;
+}
 
 /// The film mean of one band, with a non-finite value (a pixel some
 /// material poisoned) read as black, so that everything that reads a

@@ -245,41 +245,38 @@ void refineHamiltonAdams(const ResponseSettings &response,
                                             size_t bandCount, size_t numPixelsX,
                                             int4 window, float saturation) {
   const size_t numBands{bands.size()};
-  const size_t numRows{size_t(window[3] - window[1])};
-  auto rows{std::vector<double>(numRows * numBands * 2)};
-  smdl::parallelFor(0, numRows, [&](size_t row) {
-    const size_t y{size_t(window[1]) + row};
-    auto *tally{&rows[row * numBands * 2]};
-    for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
-      const size_t pixel{y * numPixelsX + x};
-      if (response.hasCFA()) {
-        const size_t k{positionOf(bands, response.bandAt(x, y))};
-        if (k < numBands && values[pixel] < saturation) {
-          tally[2 * k] += double(values[pixel]);
-          tally[2 * k + 1] += 1.0;
+  // Each band's sum and its count, side by side.
+  const auto totals{parallelRowFold(
+      size_t(window[1]), size_t(window[3]), std::vector<double>(numBands * 2),
+      [&](size_t y) {
+        auto tally{std::vector<double>(numBands * 2)};
+        for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
+          const size_t pixel{y * numPixelsX + x};
+          if (response.hasCFA()) {
+            const size_t k{positionOf(bands, response.bandAt(x, y))};
+            if (k < numBands && values[pixel] < saturation) {
+              tally[2 * k] += double(values[pixel]);
+              tally[2 * k + 1] += 1.0;
+            }
+            continue;
+          }
+          const auto *samples{&values[pixel * bandCount]};
+          if (!std::all_of(bands.begin(), bands.end(),
+                           [&](size_t b) { return samples[b] < saturation; }))
+            continue;
+          for (size_t k = 0; k < numBands; k++) {
+            tally[2 * k] += double(samples[bands[k]]);
+            tally[2 * k + 1] += 1.0;
+          }
         }
-        continue;
-      }
-      const auto *samples{&values[pixel * bandCount]};
-      if (!std::all_of(bands.begin(), bands.end(),
-                       [&](size_t b) { return samples[b] < saturation; }))
-        continue;
-      for (size_t k = 0; k < numBands; k++) {
-        tally[2 * k] += double(samples[bands[k]]);
-        tally[2 * k + 1] += 1.0;
-      }
-    }
-  });
+        return tally;
+      },
+      [](std::vector<double> &running, const std::vector<double> &row) {
+        for (size_t i = 0; i < running.size(); i++) running[i] += row[i];
+      })};
   auto means{std::vector<double>(numBands)};
-  for (size_t k = 0; k < numBands; k++) {
-    double total{};
-    double count{};
-    for (size_t row = 0; row < numRows; row++) {
-      total += rows[(row * numBands + k) * 2];
-      count += rows[(row * numBands + k) * 2 + 1];
-    }
-    means[k] = count > 0 ? total / count : 0.0;
-  }
+  for (size_t k = 0; k < numBands; k++)
+    means[k] = totals[2 * k + 1] > 0 ? totals[2 * k] / totals[2 * k + 1] : 0.0;
   return means;
 }
 

@@ -7,6 +7,7 @@
 #include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Strings.h"
 
 namespace {
 // Apply radial lens distortion to a sensor point, returning the ideal
@@ -76,6 +77,38 @@ constexpr int NUM_FIT_RADII = 32;
 }
 } // namespace
 
+float pixelPitch(const CameraOptions &options) noexcept {
+  return options.frameSize.y / float(options.resolution.y);
+}
+
+std::string describeField(const Lens &lens, float2 frameSize) {
+  const auto spell{[](const std::optional<float> &angle, const char *where,
+                      const char *dark) {
+    return angle ? smdl::concat(smdl::Brief(2 * smdl::degrees(*angle), 4),
+                                " degrees ", where)
+                 : std::string(dark);
+  }};
+  const auto vertical{lens.fieldAngleAt(0.5f * frameSize.y)};
+  const auto diagonal{
+      lens.fieldAngleAt(0.5f * std::hypot(frameSize.x, frameSize.y))};
+  return smdl::concat(
+      spell(vertical, "top to bottom", "dark at the top and bottom"), ", ",
+      spell(diagonal, "across the diagonal", "dark in the corners"));
+}
+
+float focusDistanceOf(const CameraOptions &options) noexcept {
+  return options.focus > 0 ? options.focus
+                           : length(options.lookTo - options.lookFrom);
+}
+
+LensOptions lensOptionsOf(const CameraOptions &options) noexcept {
+  const float focus{focusDistanceOf(options)};
+  // The lens focuses at infinity for a distance of 0, which is what
+  // `INF` here means.
+  return LensOptions{std::isinf(focus) ? 0.0f : focus, options.fStop,
+                     options.blades, smdl::radians(options.bladeAngleDeg)};
+}
+
 DepthOfField depthOfField(float focalLength, float fNumber, float focus,
                           float2 frameSize) noexcept {
   auto result{DepthOfField{}};
@@ -119,14 +152,13 @@ float darkShareOfFrame(float2 frameSize, float radius) noexcept {
 
 LensApproximation approximateLens(const CameraOptions &options) {
   SMDL_SANITY_CHECK(options.lens.has_value());
+  return approximateLens(Lens{*options.lens, lensOptionsOf(options)}, options);
+}
+
+LensApproximation approximateLens(const Lens &lens,
+                                  const CameraOptions &options) {
+  SMDL_SANITY_CHECK(options.lens.has_value());
   auto result{LensApproximation{}};
-  const float focus{options.focus > 0
-                        ? options.focus
-                        : length(options.lookTo - options.lookFrom)};
-  const Lens lens{*options.lens,
-                  LensOptions{std::isinf(focus) ? 0.0f : focus, options.fStop,
-                              options.blades,
-                              smdl::radians(options.bladeAngleDeg)}};
   const float frameHeight{options.frameSize.y};
   const float halfDiagonal{
       0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
@@ -243,9 +275,7 @@ Camera::Camera(const CameraOptions &options) {
                   smdl::isAllTrue(mLookToShut == mLookTo) &&
                   smdl::isAllTrue(mLookUpShut == mLookUp));
   }
-  mFocusDistance = options.focus > 0
-                       ? options.focus
-                       : length(options.lookTo - options.lookFrom);
+  mFocusDistance = focusDistanceOf(options);
   mIsFocusedAtInfinity = std::isinf(mFocusDistance);
   mNumBlades = options.blades;
   mBladeAngle = smdl::radians(options.bladeAngleDeg);
@@ -280,11 +310,7 @@ Camera::Camera(const CameraOptions &options) {
 // field the frame looks out at, the pixel footprint that seeds the LOD
 // cone, and the two probes that say what actually reaches the film.
 void Camera::buildLens(const CameraOptions &options) {
-  // The lens focuses at infinity for a distance of 0, which is what
-  // `INF` here means.
-  mLens.emplace(*options.lens,
-                LensOptions{mIsFocusedAtInfinity ? 0.0f : mFocusDistance,
-                            options.fStop, mNumBlades, mBladeAngle});
+  mLens.emplace(*options.lens, lensOptionsOf(options));
   const auto frameMM{1e3f * float2(mFrameWidth, mFrameHeight)};
   // The pixel's angular footprint, the same quantity the thin lens takes
   // from its field of view, now in the millimeters of a real frame over
@@ -302,7 +328,7 @@ void Camera::buildLens(const CameraOptions &options) {
   mDisperses = options.traceWavelengthRange && mLens->isDispersive();
   if (mDisperses) mTraceWavelengthRange = *options.traceWavelengthRange;
   if (mLens->isDispersive()) {
-    const auto pitch{mFrameHeight / mNumPixelsY};
+    const auto pitch{pixelPitch(options)};
     if (const auto lateral{mLens->lateralColorAt(halfDiagonal) / pitch};
         std::isfinite(lateral))
       SMDL_LOG_INFO("Lens color: at the frame's corner the F line (486 nm) "
@@ -334,17 +360,9 @@ void Camera::buildLens(const CameraOptions &options) {
                   ", so the film holds the scene radiance on axis whatever "
                   "lens takes it and however far it is stopped down");
   }
-  // Traced rather than taken from the focal length, so what it reports
-  // is the frame the picture actually has, distortion and all.
-  const auto vertical{mLens->fieldAngleAt(0.5f * mFrameHeight)};
-  const auto diagonal{mLens->fieldAngleAt(halfDiagonal)};
-  SMDL_LOG_INFO("Lens frame: a ", frameMM.x, " by ", frameMM.y, " mm frame, ",
-                vertical ? smdl::concat(2 * smdl::degrees(*vertical),
-                                        " degrees top to bottom")
-                         : std::string("dark at the top and bottom"),
-                diagonal ? smdl::concat(" and ", 2 * smdl::degrees(*diagonal),
-                                        " degrees across the diagonal")
-                         : std::string(" and dark in the corners"));
+  SMDL_LOG_INFO("Lens frame: a ", smdl::Brief(frameMM.x, 4), " by ",
+                smdl::Brief(frameMM.y, 4), " mm frame, ",
+                describeField(*mLens, options.frameSize));
   // The two ends of the frame, as areas on the plane of the rear vertex
   // rather than shares of it: what the corner gets against what the
   // middle gets is the mechanical vignette, which the thin lens can only

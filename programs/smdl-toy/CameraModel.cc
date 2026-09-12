@@ -230,6 +230,28 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
       b, " ", smdl::Brief(fit.multipliers.z, 4), " against ", g);
 }
 
+// What the log says about the body once the camera resolves, and what
+// the report says about it again. One place for what each line is, so
+// that the two cannot come to say different things; the labels stay with
+// the sinks, which spell and order them their own way.
+struct SensorLines final {
+  std::string response{};
+  std::string detector{};
+  std::string well{};
+  std::string iso{};
+  std::string color{};
+};
+
+[[nodiscard]] SensorLines sensorLinesOf(const Sensor &physics,
+                                        const CameraModel &model) {
+  const auto &settings{physics.settings()};
+  return SensorLines{describeResponse(settings.response),
+                     smdl::concat(settings.hasDetectorBlock ? "" : "generic, ",
+                                  describeDetector(physics)),
+                     describeWell(physics), describeISO(physics, model.iso),
+                     describeColor(physics, model.whiteBalance)};
+}
+
 // A shutter time as a photographer spells it: a fraction of a second
 // below half a second, to the whole denominator from a tenth down.
 [[nodiscard]] std::string spellShutter(double seconds) {
@@ -356,7 +378,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 [[nodiscard]] std::string describeFit(const LensApproximation &fit,
                                       const CameraOptions &options) {
   const float focalLength{thinLensFocalLength(fit.options)};
-  const float pitch{options.frameSize.y / float(options.resolution.y)};
+  const float pitch{pixelPitch(options)};
   return smdl::concat(
       "a focal length of ", smdl::Brief(1e3f * focalLength, 5), " mm at f/",
       smdl::Brief(focalLength / (2 * fit.options.aperture), 4),
@@ -414,21 +436,12 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
   for (const auto index : tileBands(response.cfa)) {
     const auto &band{response.bands[index]};
     if (const auto span{tracedSpanOf(band, illuminant)}) {
-      text +=
-          smdl::concat(separator, smdl::Quoted(band.name), " ",
-                       smdl::Brief(span->lo, 4), "-", smdl::Brief(span->hi, 4),
-                       " nm, median ", smdl::Brief(span->median, 4));
+      text += smdl::concat(separator, smdl::Quoted(band.name), " ",
+                           spellTracedSpan(*span));
       separator = "; ";
     }
   }
   return text;
-}
-
-// The focus distance the camera will be built with, as the camera
-// itself resolves an unstated one.
-[[nodiscard]] float focusDistanceOf(const CameraOptions &options) {
-  return options.focus > 0 ? options.focus
-                           : length(options.lookTo - options.lookFrom);
 }
 
 // A distance for the report, which may be infinite.
@@ -476,11 +489,7 @@ tileSpanOf(const ResponseSettings &response) {
 // The lens the model names, built as the camera builds it, for the
 // report.
 [[nodiscard]] Lens buildLens(const CameraModel &model) {
-  const auto &options{model.options};
-  const float focus{focusDistanceOf(options)};
-  return Lens{*options.lens, LensOptions{std::isinf(focus) ? 0.0f : focus,
-                                         options.fStop, options.blades,
-                                         smdl::radians(options.bladeAngleDeg)}};
+  return Lens{*model.options.lens, lensOptionsOf(model.options)};
 }
 
 } // namespace
@@ -700,8 +709,8 @@ CameraModel resolveCameraModel(const Options &opts) {
   // The ISO, which only a body reads out at: -iso over the file, and the
   // meter when neither states a number. A body whose detector states its
   // gain has one speed, which a number would contradict.
-  const auto physics{shotBody ? std::optional<Sensor>(*shotBody)
-                              : std::optional<Sensor>()};
+  if (shotBody) model.physics.emplace(*shotBody);
+  const auto &physics{model.physics};
   if (!shotBody) {
     if (opts.camera.iso.wasGiven || opts.camera.shouldMeterISO)
       throw smdl::Error("-iso is a physical sensor's setting, and this "
@@ -828,12 +837,12 @@ CameraModel resolveCameraModel(const Options &opts) {
                   " um, a ", smdl::Brief(sizeMM.x, 4), " by ",
                   smdl::Brief(sizeMM.y, 4),
                   " mm frame; the film holds the irradiance at it");
-    SMDL_LOG_INFO("Response: ", describeResponse(sensor.response));
-    SMDL_LOG_INFO("Detector: ", sensor.hasDetectorBlock ? "" : "generic, ",
-                  describeDetector(*physics));
-    SMDL_LOG_INFO("Well: ", describeWell(*physics));
-    SMDL_LOG_INFO("ISO: ", describeISO(*physics, model.iso));
-    SMDL_LOG_INFO("Color: ", describeColor(*physics, model.whiteBalance));
+    const auto lines{sensorLinesOf(*physics, model)};
+    SMDL_LOG_INFO("Response: ", lines.response);
+    SMDL_LOG_INFO("Detector: ", lines.detector);
+    SMDL_LOG_INFO("Well: ", lines.well);
+    SMDL_LOG_INFO("ISO: ", lines.iso);
+    SMDL_LOG_INFO("Color: ", lines.color);
   } else if (body) {
     const auto frameMM{1e3f * options.frameSize};
     SMDL_LOG_INFO("Sensor: the observer on a ", smdl::Brief(frameMM.x, 4),
@@ -916,11 +925,8 @@ std::string describeCamera(const CameraModel &model) {
   if (options.lens) {
     const auto lens{buildLens(model)};
     fNumber = lens.fNumber();
-    const float halfHeight{0.5f * options.frameSize.y};
     const float halfDiagonal{
         0.5f * std::hypot(options.frameSize.x, options.frameSize.y)};
-    const auto vertical{lens.fieldAngleAt(halfHeight)};
-    const auto diagonal{lens.fieldAngleAt(halfDiagonal)};
     const float circle{lens.imageCircleRadius()};
     line("lens: ",
          options.lens->name.empty()
@@ -935,14 +941,7 @@ std::string describeCamera(const CameraModel &model) {
              : std::string());
     line("  focus: ", focusText);
     text += dofText(lens.focalLength(), lens.fNumber());
-    line("  field: ",
-         vertical ? smdl::concat(smdl::Brief(2 * smdl::degrees(*vertical), 4),
-                                 " degrees top to bottom")
-                  : std::string("dark at the top and bottom"),
-         diagonal
-             ? smdl::concat(", ", smdl::Brief(2 * smdl::degrees(*diagonal), 4),
-                            " degrees across the diagonal")
-             : std::string(", dark in the corners"));
+    line("  field: ", describeField(lens, options.frameSize));
     line("  image circle: ", smdl::Brief(2e3f * circle, 4),
          " mm across, against a frame diagonal of ",
          smdl::Brief(2e3f * halfDiagonal, 4), " mm",
@@ -953,8 +952,8 @@ std::string describeCamera(const CameraModel &model) {
                    smdl::Brief(
                        100 * darkShareOfFrame(options.frameSize, circle), 3),
                    "% of the frame dark"));
-    const auto fit{approximateLens(options)};
-    const float pitch{options.frameSize.y / float(options.resolution.y)};
+    const auto fit{approximateLens(lens, options)};
+    const float pitch{pixelPitch(options)};
     line("  ideal fit: the thin lens -ideal looks through, ",
          describeFit(fit, options),
          fit.doesFold ? "; the corners look out elsewhere than the lens's do"
@@ -1005,18 +1004,18 @@ std::string describeCamera(const CameraModel &model) {
          sensor.name.empty() ? std::string("(unnamed)")
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName));
-    const Sensor physics{sensor};
-    line("  response: ", describeResponse(sensor.response));
-    line("  detector: ", sensor.hasDetectorBlock ? "" : "generic, ",
-         describeDetector(physics));
-    line("  well: ", describeWell(physics));
-    line("  iso: ", describeISO(physics, model.iso));
+    const auto &physics{*model.physics};
+    const auto lines{sensorLinesOf(physics, model)};
+    line("  response: ", lines.response);
+    line("  detector: ", lines.detector);
+    line("  well: ", lines.well);
+    line("  iso: ", lines.iso);
     if (gRenderShutter.hasExposure() && fNumber > 0)
       line("  exposure: ", describeExposure(physics, model.iso, fNumber,
                                             gRenderShutter.exposure));
     line("  dynamic range: ",
          describeDynamicRange(physics, model.iso, model.temperature));
-    line("  color: ", describeColor(physics, model.whiteBalance));
+    line("  color: ", lines.color);
     line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
   } else if (model.previewedSensor) {
     const auto &sensor{*model.previewedSensor};
@@ -1025,7 +1024,7 @@ std::string describeCamera(const CameraModel &model) {
                              : smdl::concat(smdl::Quoted(sensor.name)),
          " from ", smdl::QuotedPath(model.sensorFileName),
          " and exposing the picture as its develop would");
-    const Sensor physics{sensor};
+    const auto &physics{*model.physics};
     line("  iso: ", describeISO(physics, model.iso));
     if (gRenderShutter.hasExposure() && fNumber > 0)
       line("  exposure: ", describeExposure(physics, model.iso, fNumber,
@@ -1045,7 +1044,7 @@ Camera buildCamera(CameraModel &model) {
                             : smdl::concat(smdl::Quoted(options.lens->name))};
     SMDL_LOG_INFO("Lens: the thin lens fitted to ", lensName, " is ",
                   describeFit(fit, options));
-    const float pitch{options.frameSize.y / float(options.resolution.y)};
+    const float pitch{pixelPitch(options)};
     if (fit.doesFold)
       SMDL_LOG_WARN("Lens: the projection fitted to ", lensName,
                     " folds over the frame, so the thin lens is the pinhole "

@@ -159,48 +159,50 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
   readout.pixelCountX = numPixelsX;
   readout.pixelCountY = numPixelsY;
   readout.digitalNumbers.resize(numBands * numPixelsX * numPixelsY);
-  // Each row tallies for itself and the rows fold in order below, so
-  // the totals never depend on which thread took which row.
   struct RowTally final {
     double electrons{};
     uint64_t atWell{};
     uint64_t inWindow{};
   };
-  auto rows{std::vector<RowTally>(numPixelsY)};
   const double black{double(mSettings.blackLevel)};
-  smdl::parallelFor(0, numPixelsY, [&](size_t y) {
-    auto &tally{rows[y]};
-    const bool isRowInWindow{int(y) >= window[1] && int(y) < window[3]};
-    for (size_t x = 0; x < numPixelsX; x++) {
-      const bool isInWindow{isRowInWindow && int(x) >= window[0] &&
-                            int(x) < window[2]};
-      for (size_t b = 0; b < numBands; b++) {
-        const size_t index{(y * numPixelsX + x) * numBands + b};
-        auto rng{smdl::RNG(
-            smdl::mixBits(options.seed ^ smdl::mixBits(uint64_t(index + 1))),
-            uint64_t(index))};
-        double signal{};
-        const double electrons{
-            electronsOf(filmMean(film, x, y, b), options.noise, rng, signal)};
-        const double code{std::round(electrons * mGain + black)};
-        readout.digitalNumbers[index] =
-            uint16_t(std::clamp(code, 0.0, double(mTopCode)));
-        if (isInWindow) {
-          tally.inWindow++;
-          tally.electrons += signal;
-          tally.atWell += electrons >= mFullWell ? 1 : 0;
+  const auto tally{parallelRowFold(
+      size_t(0), numPixelsY, RowTally{},
+      [&](size_t y) {
+        auto tally{RowTally{}};
+        const bool isRowInWindow{int(y) >= window[1] && int(y) < window[3]};
+        for (size_t x = 0; x < numPixelsX; x++) {
+          const bool isInWindow{isRowInWindow && int(x) >= window[0] &&
+                                int(x) < window[2]};
+          for (size_t b = 0; b < numBands; b++) {
+            const size_t index{(y * numPixelsX + x) * numBands + b};
+            auto rng{
+                smdl::RNG(smdl::mixBits(options.seed ^
+                                        smdl::mixBits(uint64_t(index + 1))),
+                          uint64_t(index))};
+            double signal{};
+            const double electrons{electronsOf(filmMean(film, x, y, b),
+                                               options.noise, rng, signal)};
+            const double code{std::round(electrons * mGain + black)};
+            readout.digitalNumbers[index] =
+                uint16_t(std::clamp(code, 0.0, double(mTopCode)));
+            if (isInWindow) {
+              tally.inWindow++;
+              tally.electrons += signal;
+              tally.atWell += electrons >= mFullWell ? 1 : 0;
+            }
+          }
         }
-      }
-    }
-  });
-  double electrons{};
-  for (const auto &tally : rows) {
-    electrons += tally.electrons;
-    readout.wellCount += tally.atWell;
-    readout.windowCount += tally.inWindow;
-  }
+        return tally;
+      },
+      [](RowTally &running, const RowTally &row) {
+        running.electrons += row.electrons;
+        running.atWell += row.atWell;
+        running.inWindow += row.inWindow;
+      })};
+  readout.wellCount = tally.atWell;
+  readout.windowCount = tally.inWindow;
   readout.meanElectrons =
-      readout.windowCount > 0 ? electrons / double(readout.windowCount) : 0.0;
+      tally.inWindow > 0 ? tally.electrons / double(tally.inWindow) : 0.0;
   return readout;
 }
 

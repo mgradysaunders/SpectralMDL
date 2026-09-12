@@ -50,6 +50,10 @@ struct TracedSpan final {
   float hi{};
 };
 
+/// A span as both the render's log and the camera's report spell it:
+/// `"<lo>-<hi> nm, median <median>"`.
+[[nodiscard]] std::string spellTracedSpan(const TracedSpan &span);
+
 /// The wavelength a lens whose glasses disperse is traced at, drawn for
 /// the pixels of one band. See `Response::traceWavelengthAt()`.
 ///

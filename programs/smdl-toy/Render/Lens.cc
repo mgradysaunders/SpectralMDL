@@ -413,6 +413,40 @@ void sagRangeOf(const LensElement &element, float &sagMin,
   return x * x + y * y <= boundary * boundary;
 }
 
+// A lens with one set of medium indices, which is what every scan and
+// grid below asks its questions of: the reference indices, for the
+// lens's own probes, and for the exit pupil's table the two ends of a
+// range of wavelengths besides. The pair travels together because every
+// one of those questions is about a lens at a wavelength, and neither
+// half means anything without the other.
+class Probe final {
+public:
+  Probe(const Lens &lens, smdl::Span<const float> indices) noexcept
+      : lens(lens), indices(indices) {}
+
+  // Refract `ray` out through every surface; see `Lens::traceFromFilm()`.
+  [[nodiscard]] bool trace(Ray &ray) const noexcept {
+    return lens.traceFromFilm(ray, indices);
+  }
+
+  // The ray from the film point `filmRadius` off the axis, on the +x
+  // side, toward the point `(x, y)` of the plane of the rear vertex,
+  // which is the one ray every scan below is made of.
+  [[nodiscard]] Ray rayTo(float filmRadius, float x, float y) const noexcept {
+    const float3 film{filmRadius, 0, lens.filmZ()};
+    return Ray{film, float3(x, y, lens.rearZ()) - film, EPS, INF};
+  }
+
+  // Does light reaching that film point come through that point?
+  [[nodiscard]] bool passes(float filmRadius, float x, float y) const noexcept {
+    auto ray{rayTo(filmRadius, x, y)};
+    return trace(ray);
+  }
+
+  const Lens &lens;
+  smdl::Span<const float> indices{};
+};
+
 // The two passes of a scan across the plane of the rear vertex: a coarse
 // one over the whole aperture, then a fine one over the span it found.
 // The rear aperture can be twenty times the width of the cone that
@@ -428,21 +462,12 @@ constexpr int NUM_SCAN_FINE_STEPS = 200;
 // +x side, comes through. `pointAt` places a point on the line for a
 // parameter running over [-1, 1], and the span comes back in that same
 // parameter. False is a line nothing gets out through.
-//
-// This and the scans and grids below it that find what a film point sees
-// trace every medium at `indices`: the reference, for the lens's own
-// probes, and for the exit pupil's table the two ends of a range of
-// wavelengths besides.
 template <typename F>
-[[nodiscard]] bool scanPupil(const Lens &lens, smdl::Span<const float> indices,
-                             float filmRadius, F &&pointAt, float &lo,
-                             float &hi) noexcept {
-  const float3 film{filmRadius, 0, lens.filmZ()};
+[[nodiscard]] bool scanPupil(const Probe &probe, float filmRadius, F &&pointAt,
+                             float &lo, float &hi) noexcept {
   const auto passes{[&](float t) {
     const auto point{pointAt(t)};
-    auto ray{
-        Ray{film, float3(point.x, point.y, lens.rearZ()) - film, EPS, INF}};
-    return lens.traceFromFilm(ray, indices);
+    return probe.passes(filmRadius, point.x, point.y);
   }};
   lo = FLOAT_MAX, hi = -FLOAT_MAX;
   for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++) {
@@ -463,13 +488,11 @@ template <typename F>
 // reaching a film point `filmRadius` off the axis comes through. A scan
 // along x finds the whole of it, the system being one of revolution and
 // the film point lying on the +x axis.
-[[nodiscard]] bool pupilWindowOf(const Lens &lens,
-                                 smdl::Span<const float> indices,
-                                 float filmRadius, float &lo,
-                                 float &hi) noexcept {
-  const auto radius{lens.rearApertureRadius()};
+[[nodiscard]] bool pupilWindowOf(const Probe &probe, float filmRadius,
+                                 float &lo, float &hi) noexcept {
+  const auto radius{probe.lens.rearApertureRadius()};
   const auto alongX{[&](float t) { return float2(radius * t, 0.0f); }};
-  if (!scanPupil(lens, indices, filmRadius, alongX, lo, hi)) return false;
+  if (!scanPupil(probe, filmRadius, alongX, lo, hi)) return false;
   lo *= radius, hi *= radius;
   return true;
 }
@@ -480,23 +503,21 @@ template <typename F>
 // so its half-height is a concave function of x vanishing at both ends
 // of the window, and a concave function is at least half its largest
 // value at the midpoint of an interval it vanishes on.
-[[nodiscard]] float pupilHalfHeightOf(const Lens &lens,
-                                      smdl::Span<const float> indices,
-                                      float filmRadius, float x) noexcept {
-  const auto radius{lens.rearApertureRadius()};
+[[nodiscard]] float pupilHalfHeightOf(const Probe &probe, float filmRadius,
+                                      float x) noexcept {
+  const auto radius{probe.lens.rearApertureRadius()};
   const auto alongY{[&](float t) { return float2(x, radius * t); }};
   auto lo{0.0f}, hi{0.0f};
-  if (!scanPupil(lens, indices, filmRadius, alongY, lo, hi)) return 0;
+  if (!scanPupil(probe, filmRadius, alongY, lo, hi)) return 0;
   return radius * std::max(std::abs(lo), std::abs(hi));
 }
 
 // The middle of the window, which is the chief ray where the lens does
 // not vignette and the middle of what survives where it does.
-[[nodiscard]] bool chiefPointOf(const Lens &lens,
-                                smdl::Span<const float> indices,
-                                float filmRadius, float &x) noexcept {
+[[nodiscard]] bool chiefPointOf(const Probe &probe, float filmRadius,
+                                float &x) noexcept {
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(lens, indices, filmRadius, lo, hi)) return false;
+  if (!pupilWindowOf(probe, filmRadius, lo, hi)) return false;
   x = 0.5f * (lo + hi);
   return true;
 }
@@ -504,14 +525,12 @@ template <typename F>
 // The angle off the axis that light reaching a film point `filmRadius`
 // off the axis comes in at, the chief ray traced out: see
 // `Lens::fieldAngleAt()`. Empty when nothing reaches that far.
-[[nodiscard]] std::optional<float> fieldAngleOf(const Lens &lens,
-                                                smdl::Span<const float> indices,
+[[nodiscard]] std::optional<float> fieldAngleOf(const Probe &probe,
                                                 float filmRadius) noexcept {
   auto x{0.0f};
-  if (!chiefPointOf(lens, indices, filmRadius, x)) return std::nullopt;
-  const float3 film{filmRadius, 0, lens.filmZ()};
-  auto ray{Ray{film, float3(x, 0, lens.rearZ()) - film, EPS, INF}};
-  if (!lens.traceFromFilm(ray, indices)) return std::nullopt;
+  if (!chiefPointOf(probe, filmRadius, x)) return std::nullopt;
+  auto ray{probe.rayTo(filmRadius, x, 0)};
+  if (!probe.trace(ray)) return std::nullopt;
   return std::atan2(std::hypot(ray.dir.x, ray.dir.y), -ray.dir.z);
 }
 
@@ -520,17 +539,16 @@ template <typename F>
 // the gap. A film point further off the axis needs its light to clear
 // more of the glass and never less, so where the light stops is one place
 // and not several.
-[[nodiscard]] float imageCircleOf(const Lens &lens,
-                                  smdl::Span<const float> indices) noexcept {
-  const auto cap{16 * lens.focalLength()};
+[[nodiscard]] float imageCircleOf(const Probe &probe) noexcept {
+  const auto cap{16 * probe.lens.focalLength()};
   auto x{0.0f};
-  auto inside{0.0f}, outside{0.25f * lens.focalLength()};
-  while (outside < cap && chiefPointOf(lens, indices, outside, x))
+  auto inside{0.0f}, outside{0.25f * probe.lens.focalLength()};
+  while (outside < cap && chiefPointOf(probe, outside, x))
     inside = outside, outside *= 2;
   if (!(outside < cap)) return inside;
   for (int i = 0; i < 30; i++) {
     const auto middle{0.5f * (inside + outside)};
-    if (chiefPointOf(lens, indices, middle, x))
+    if (chiefPointOf(probe, middle, x))
       inside = middle;
     else
       outside = middle;
@@ -540,19 +558,18 @@ template <typename F>
 
 // The film radius that looks out at `angle` radians off the axis: see
 // `Lens::filmRadiusForFieldAngle()`.
-[[nodiscard]] std::optional<float> filmRadiusOf(const Lens &lens,
-                                                smdl::Span<const float> indices,
+[[nodiscard]] std::optional<float> filmRadiusOf(const Probe &probe,
                                                 float angle) noexcept {
   if (!(angle > 0)) return 0.0f;
-  const auto largest{imageCircleOf(lens, indices)};
-  const auto widest{fieldAngleOf(lens, indices, largest)};
+  const auto largest{imageCircleOf(probe)};
+  const auto widest{fieldAngleOf(probe, largest)};
   if (!(widest && *widest >= angle)) return std::nullopt;
   auto lo{0.0f}, hi{largest};
   for (int i = 0; i < 30; i++) {
     const auto middle{0.5f * (lo + hi)};
     // A radius nothing gets out of counts as short of the angle, which
     // walks the search back in toward where light does get out.
-    const auto angleAt{fieldAngleOf(lens, indices, middle)};
+    const auto angleAt{fieldAngleOf(probe, middle)};
     if (!angleAt || *angleAt < angle)
       lo = middle;
     else
@@ -608,7 +625,7 @@ constexpr float FOCUS_SEARCH_SPAN = 0.02f;
 [[nodiscard]] float bestFilmPlane(const Lens &lens,
                                   float focusDistance) noexcept {
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(lens, lens.referenceIndices(), 0, lo, hi))
+  if (!pupilWindowOf(Probe{lens, lens.referenceIndices()}, 0, lo, hi))
     return lens.filmZ();
   const auto pupilRadius{std::max(hi, -lo)};
   const auto span{FOCUS_SEARCH_SPAN * lens.focalLength()};
@@ -693,11 +710,9 @@ struct PupilEllipse final {
 // `filmRadius` off axis, on the +x side, gets out through. This is the
 // whole cost of building the table.
 template <typename F>
-void eachPupilPoint(const Lens &lens, smdl::Span<const float> indices,
-                    float filmRadius, const PupilRect &over, int numSteps,
-                    F &&visit) noexcept {
-  const auto radius{lens.rearApertureRadius()};
-  const float3 org{filmRadius, 0.0f, lens.filmZ()};
+void eachPupilPoint(const Probe &probe, float filmRadius, const PupilRect &over,
+                    int numSteps, F &&visit) noexcept {
+  const auto radius{probe.lens.rearApertureRadius()};
   for (int i = 0; i < numSteps; i++) {
     const auto x{over.loX + (over.hiX - over.loX) * (i + 0.5f) / numSteps};
     for (int j = 0; j < numSteps; j++) {
@@ -708,18 +723,16 @@ void eachPupilPoint(const Lens &lens, smdl::Span<const float> indices,
       // it widen the bound would only make every other draw likelier to
       // land there too.
       if (x * x + y * y > radius * radius) continue;
-      auto ray{Ray{org, float3(x, y, lens.rearZ()) - org, EPS, INF}};
-      if (lens.traceFromFilm(ray, indices)) visit(x, y);
+      if (probe.passes(filmRadius, x, y)) visit(x, y);
     }
   }
 }
 
-[[nodiscard]] PupilRect gridPupil(const Lens &lens,
-                                  smdl::Span<const float> indices,
-                                  float filmRadius, const PupilRect &over,
+[[nodiscard]] PupilRect gridPupil(const Probe &probe, float filmRadius,
+                                  const PupilRect &over,
                                   int numSteps) noexcept {
   auto rect{PupilRect{}};
-  eachPupilPoint(lens, indices, filmRadius, over, numSteps,
+  eachPupilPoint(probe, filmRadius, over, numSteps,
                  [&](float x, float y) { rect.extend(x, y); });
   return rect;
 }
@@ -736,19 +749,17 @@ void eachPupilPoint(const Lens &lens, smdl::Span<const float> indices,
 // then widened by a quarter, and never by less than the coarse scan's
 // own step, so that a grid over the box reaches past the region on every
 // side.
-[[nodiscard]] PupilRect seedPupil(const Lens &lens,
-                                  smdl::Span<const float> indices,
+[[nodiscard]] PupilRect seedPupil(const Probe &probe,
                                   float filmRadius) noexcept {
   auto rect{PupilRect{}};
   auto lo{0.0f}, hi{0.0f};
-  if (!pupilWindowOf(lens, indices, filmRadius, lo, hi)) return rect;
-  const auto height{
-      2 * pupilHalfHeightOf(lens, indices, filmRadius, 0.5f * (lo + hi))};
+  if (!pupilWindowOf(probe, filmRadius, lo, hi)) return rect;
+  const auto height{2 * pupilHalfHeightOf(probe, filmRadius, 0.5f * (lo + hi))};
   rect.extend(lo, -height), rect.extend(hi, +height);
-  const auto least{2 * lens.rearApertureRadius() / NUM_SCAN_COARSE_STEPS};
+  const auto least{2 * probe.lens.rearApertureRadius() / NUM_SCAN_COARSE_STEPS};
   rect.expand(std::max(0.25f * (rect.hiX - rect.loX), least),
               std::max(0.25f * (rect.hiY - rect.loY), least));
-  rect.clampTo(apertureRect(lens));
+  rect.clampTo(apertureRect(probe.lens));
   return rect;
 }
 
@@ -773,27 +784,31 @@ void eachPupilPoint(const Lens &lens, smdl::Span<const float> indices,
 // The ellipse is convex and holds every point found at either end, so
 // it holds that hull. That is an argument rather than a proof, since a
 // point's path bows off the chord.
-[[nodiscard]] PupilEllipse
-boundPupil(const Lens &lens,
-           smdl::Span<const smdl::Span<const float>> indexSets,
-           float filmRadius0, float filmRadius1) noexcept {
+[[nodiscard]] PupilEllipse boundPupil(smdl::Span<const Probe> probes,
+                                      float filmRadius0,
+                                      float filmRadius1) noexcept {
+  const auto &lens{probes.front().lens};
   const auto whole{apertureRect(lens)};
   const auto radius{lens.rearApertureRadius()};
   const auto wholeEllipse{PupilEllipse{whole.center(), float2(radius, radius)}};
-  const auto filmRadiusAt{[&](int k) {
-    return filmRadius0 +
-           (filmRadius1 - filmRadius0) * float(k) / (NUM_PUPIL_FILM_STEPS - 1);
+  // Every pass below asks the same question of every probe at every film
+  // radius of the span, and differs only in what it does with the
+  // answer.
+  const auto eachProbeAndRadius{[&](auto &&ask) {
+    for (const auto &probe : probes)
+      for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
+        ask(probe, filmRadius0 + (filmRadius1 - filmRadius0) * float(k) /
+                                     (NUM_PUPIL_FILM_STEPS - 1));
   }};
   auto seed{PupilRect{}};
-  for (const auto &indices : indexSets)
-    for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-      seed.extend(seedPupil(lens, indices, filmRadiusAt(k)));
+  eachProbeAndRadius([&](const Probe &probe, float filmRadius) {
+    seed.extend(seedPupil(probe, filmRadius));
+  });
   if (seed.isEmpty()) return wholeEllipse;
   auto fine{PupilRect{}};
-  for (const auto &indices : indexSets)
-    for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-      fine.extend(gridPupil(lens, indices, filmRadiusAt(k), seed,
-                            NUM_PUPIL_FINE_STEPS));
+  eachProbeAndRadius([&](const Probe &probe, float filmRadius) {
+    fine.extend(gridPupil(probe, filmRadius, seed, NUM_PUPIL_FINE_STEPS));
+  });
   if (fine.isEmpty()) return wholeEllipse;
   const auto cell{float2((seed.hiX - seed.loX) / NUM_PUPIL_FINE_STEPS,
                          (seed.hiY - seed.loY) / NUM_PUPIL_FINE_STEPS)};
@@ -806,14 +821,14 @@ boundPupil(const Lens &lens,
   // grid is walked again rather than remembered, the second walk being
   // cheaper than the tens of thousands of points it would hold.
   auto scale{1.0f};
-  for (const auto &indices : indexSets)
-    for (int k = 0; k < NUM_PUPIL_FILM_STEPS; k++)
-      eachPupilPoint(lens, indices, filmRadiusAt(k), seed, NUM_PUPIL_FINE_STEPS,
-                     [&](float x, float y) {
-                       const auto u{(x - center.x) / extent.x};
-                       const auto v{(y - center.y) / extent.y};
-                       scale = std::max(scale, std::sqrt(u * u + v * v));
-                     });
+  eachProbeAndRadius([&](const Probe &probe, float filmRadius) {
+    eachPupilPoint(probe, filmRadius, seed, NUM_PUPIL_FINE_STEPS,
+                   [&](float x, float y) {
+                     const auto u{(x - center.x) / extent.x};
+                     const auto v{(y - center.y) / extent.y};
+                     scale = std::max(scale, std::sqrt(u * u + v * v));
+                   });
+  });
   return PupilEllipse{center, scale * extent + cell};
 }
 
@@ -1149,22 +1164,23 @@ ExitPupil::ExitPupil(const Lens &lens, float maxFilmRadius,
   mBoundsPerRadius = maxFilmRadius > 0 ? NUM_PUPIL_RADII / maxFilmRadius : 0.0f;
   mInvApertureArea = 1 / (PI * mRearRadius * mRearRadius);
   mBounds.resize(NUM_PUPIL_RADII);
-  // The indices every entry is bounded at: the reference, and the two
-  // ends of the range when the glasses disperse over it.
+  // The lens every entry is bounded at: the reference indices, and the
+  // two ends of the range when the glasses disperse over it.
   auto ends{std::array<Lens::Indices, 2>{}};
-  auto indexSets{std::vector<smdl::Span<const float>>{lens.referenceIndices()}};
+  auto probes{std::vector<Probe>{Probe{lens, lens.referenceIndices()}}};
   if (wavelengthRange && lens.isDispersive()) {
     mWavelengthRange = wavelengthRange;
     ends[0] = lens.indicesAt(wavelengthRange->x);
     ends[1] = lens.indicesAt(wavelengthRange->y);
     for (const auto &end : ends)
-      indexSets.emplace_back(end.data(), lens.media().size());
+      probes.emplace_back(
+          lens, smdl::Span<const float>(end.data(), lens.media().size()));
   }
   // Every entry is independent, and the whole table is the one part of
   // building a camera slow enough to notice.
   smdl::parallelFor(size_t(0), mBounds.size(), [&](size_t i) {
     const auto span{maxFilmRadius / NUM_PUPIL_RADII};
-    const auto ellipse{boundPupil(lens, indexSets, span * i, span * (i + 1))};
+    const auto ellipse{boundPupil(probes, span * i, span * (i + 1))};
     mBounds[i].center = ellipse.center;
     mBounds[i].semiAxes = ellipse.semiAxes;
   });
@@ -1222,19 +1238,20 @@ void ExitPupil::logSummary() const {
 }
 
 std::optional<float> Lens::fieldAngleAt(float filmRadius) const noexcept {
-  return fieldAngleOf(*this, mReferenceIndices, filmRadius);
+  return fieldAngleOf(Probe{*this, mReferenceIndices}, filmRadius);
 }
 
 float Lens::imageCircleRadius() const noexcept {
-  return imageCircleOf(*this, mReferenceIndices);
+  return imageCircleOf(Probe{*this, mReferenceIndices});
 }
 
 float Lens::transmittedArea(float filmRadius) const noexcept {
   constexpr int NUM_PROBE_STEPS = 32;
-  const auto seed{seedPupil(*this, mReferenceIndices, filmRadius)};
+  const Probe probe{*this, mReferenceIndices};
+  const auto seed{seedPupil(probe, filmRadius)};
   if (seed.isEmpty()) return 0;
   auto numPassed{0};
-  eachPupilPoint(*this, mReferenceIndices, filmRadius, seed, NUM_PROBE_STEPS,
+  eachPupilPoint(probe, filmRadius, seed, NUM_PROBE_STEPS,
                  [&](float, float) { numPassed++; });
   const auto extent{seed.halfExtent()};
   return 4 * extent.x * extent.y * numPassed /
@@ -1242,16 +1259,16 @@ float Lens::transmittedArea(float filmRadius) const noexcept {
 }
 
 std::optional<float> Lens::filmRadiusForFieldAngle(float angle) const noexcept {
-  return filmRadiusOf(*this, mReferenceIndices, angle);
+  return filmRadiusOf(Probe{*this, mReferenceIndices}, angle);
 }
 
 float Lens::lateralColorAt(float filmRadius) const noexcept {
   const auto angle{fieldAngleAt(filmRadius)};
   if (!angle) return std::numeric_limits<float>::quiet_NaN();
-  const auto radiusF{
-      filmRadiusOf(*this, indicesAt(smdl::FRAUNHOFER_F_LINE), *angle)};
-  const auto radiusC{
-      filmRadiusOf(*this, indicesAt(smdl::FRAUNHOFER_C_LINE), *angle)};
+  const auto indicesF{indicesAt(smdl::FRAUNHOFER_F_LINE)};
+  const auto indicesC{indicesAt(smdl::FRAUNHOFER_C_LINE)};
+  const auto radiusF{filmRadiusOf(Probe{*this, indicesF}, *angle)};
+  const auto radiusC{filmRadiusOf(Probe{*this, indicesC}, *angle)};
   if (!radiusF || !radiusC) return std::numeric_limits<float>::quiet_NaN();
   return *radiusF - *radiusC;
 }

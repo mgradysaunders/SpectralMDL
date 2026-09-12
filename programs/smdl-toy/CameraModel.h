@@ -11,6 +11,7 @@
 #include "Layout/CameraFile.h"
 #include "Layout/SensorFile.h"
 #include "Render/Camera.h"
+#include "Sensor/Sensor.h"
 
 struct Options;
 
@@ -37,6 +38,14 @@ struct CameraModel final {
   /// sensor the camera names, which the observer stands in for. Always
   /// empty when `sensor` is not.
   std::optional<SensorSettings> previewedSensor{};
+
+  /// The physics of whichever body the shot is exposed for, `sensor` or
+  /// `previewedSensor`, resolved once: the integrals its curves imply,
+  /// which nothing about this render varies. Present exactly when one of
+  /// the two is, so that the meter, the readout, the develop and the
+  /// report all read the same body rather than each integrating it
+  /// again.
+  std::optional<Sensor> physics{};
 
   /// Under `-ideal` with a body, what the preview's film is multiplied by
   /// to be the irradiance the body's own optics would have put on it: the
