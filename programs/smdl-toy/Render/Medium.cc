@@ -387,14 +387,13 @@ bool Medium::rebind(const MediumStack *stack, PathTime time) noexcept {
       if (!material.hasAdditiveVolume()) break;
     }
     if (count != mComponents.size()) return false;
-    if (count > 0) mScatterInstance = mComponents.front().material;
   }
   if (time.seconds != mKey.time) {
     mKey.time = time.seconds;
     if (mIsMoving) {
       std::optional<InstanceFrame> scratch{};
       for (auto &comp : mComponents)
-        if (comp.isHeterogeneous && comp.meshInstance)
+        if (comp.isQueried && comp.meshInstance)
           comp.state->objectToWorld =
               comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
     }
@@ -409,11 +408,13 @@ bool Medium::matches(const Component &comp,
   const smdl::JIT::Material &material{*entry.material};
   if (comp.materialDef != material.def) return false;
   if (comp.presence != presenceOf(material)) return false;
+  // A queried component evaluates in its instance's frame, so the same
+  // material behind another instance is another medium to it.
+  if (comp.isQueried && comp.meshInstance != entry.meshInstance) return false;
   if (!comp.isHeterogeneous)
     return valuesMatch(material.getAbsorptionCoefficient(), comp.sigmaA) &&
            valuesMatch(material.getScatteringCoefficient(), comp.sigmaS) &&
            valuesMatch(material.getVolumeEmissionIntensity(), comp.emission);
-  if (comp.meshInstance != entry.meshInstance) return false;
   const smdl::VoxelGrid *grid{hasUsableDensityGrid(material)
                                   ? material.getVolumeDensityGrid()
                                   : nullptr};
@@ -433,6 +434,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   mKey.isResolved = true;
   mHasMedium = false;
   mIsHeterogeneous = false;
+  mIsQueried = false;
   mIsMoving = false;
   mIsHaze = false;
   mHasEmission = false;
@@ -442,7 +444,8 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
   mMajorantGrid = 0.0f;
   mHint = Hint{};
   mComponents.clear();
-  mScatterInstance = nullptr;
+  mScatterComponent = nullptr;
+  mScatterDistance = 0.0f;
   // The coefficient spectra are left holding whatever the last
   // resolution put there: every read of them is behind `mHasMedium` or
   // `mIsHeterogeneous`, under which the branches below assign them.
@@ -496,22 +499,6 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
           comp.maxSigmaA.setNonPositiveToZero();
           comp.maxSigmaS = Color(material.getMaxScatteringCoefficient());
           comp.maxSigmaS.setNonPositiveToZero();
-          comp.state = renderState;
-          // The queries evaluate in the rigid frame of the instance whose
-          // boundary entered the medium, paired with the rigid transform
-          // so world reassembly inside the material is exact. The rigid
-          // transform has no scale, so the direction stays unit length
-          // and distances stay in scene units. A medium with no geometry
-          // queries in world space directly.
-          comp.meshInstance = entry->meshInstance;
-          if (comp.meshInstance) {
-            mIsMoving |= comp.meshInstance->isMoving;
-            if (comp.meshInstance->frame.isDeformed)
-              warnDeformedVolumeOnce(material.def);
-            std::optional<InstanceFrame> scratch{};
-            comp.state->objectToWorld =
-                comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
-          }
           if (hasUsableDensityGrid(material)) {
             comp.grid = material.getVolumeDensityGrid();
             comp.boundMin = *material.getVolumeDensityBoundMin();
@@ -521,13 +508,36 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
           }
         }
       }
+      // A tracked component queries its coefficients at every tentative
+      // collision, and a component whose phase function is not provably
+      // point-independent queries its VDF at every real one; either
+      // needs the query state. The queries evaluate in the rigid frame
+      // of the instance whose boundary entered the medium, paired with
+      // the rigid transform so world reassembly inside the material is
+      // exact. The rigid transform has no scale, so the direction stays
+      // unit length and distances stay in scene units. A medium with no
+      // geometry queries in world space directly.
+      comp.isQueried =
+          comp.isHeterogeneous || !material.def->hasHomogeneousVDF();
+      if (comp.isQueried) {
+        comp.state = renderState;
+        comp.meshInstance = entry->meshInstance;
+        if (comp.meshInstance) {
+          mIsMoving |= comp.meshInstance->isMoving;
+          if (comp.meshInstance->frame.isDeformed)
+            warnDeformedVolumeOnce(material.def);
+          std::optional<InstanceFrame> scratch{};
+          comp.state->objectToWorld =
+              comp.meshInstance->frameAt(time.fraction, scratch).rigidToWorld;
+        }
+      }
     }
     if (!material.hasAdditiveVolume()) break;
   }
   if (mComponents.empty()) return;
   mHasMedium = true;
   mHasOverlap = mComponents.size() > 1;
-  mScatterInstance = mComponents.front().material;
+  mScatterComponent = &mComponents.front();
   // The aggregates. The homogeneous closed form runs on the summed
   // snapshots when every component is homogeneous; otherwise the
   // tracking loops run against the summed majorants, a homogeneous
@@ -542,6 +552,7 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
     mSigmaS += comp.sigmaS;
     mEmission += comp.emission;
     mIsHeterogeneous |= comp.isHeterogeneous;
+    mIsQueried |= comp.isQueried;
   }
   mSigmaT = mSigmaA + mSigmaS;
   if (!mIsHeterogeneous) return;
@@ -597,9 +608,9 @@ void Medium::setSegment(const float3 &org, const float3 &dir,
     mHaze.k = mHaze.haze->shapeExponent(dir.z);
     return;
   }
-  // A homogeneous medium has the same coefficients everywhere, so it
-  // never queries and has no segment to place.
-  if (!mIsHeterogeneous) return;
+  // A medium whose coefficients and phase function are the same
+  // everywhere never queries and has no segment to place.
+  if (!mIsQueried) return;
   if (SMDL_UNLIKELY(mIsMoving)) {
     projectSegmentMoving(org, dir, time);
   } else {
@@ -691,7 +702,7 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
   // total scattering (a pure-absorption collision) leaves `beta` all
   // zero already; default to the first component so the caller always
   // has a phase function.
-  mScatterInstance = mComponents.front().material;
+  mScatterComponent = &mComponents.front();
   float totalAverage{};
   for (const auto &comp : mComponents)
     totalAverage += componentSigmaS(comp).average();
@@ -707,9 +718,19 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
     cdf += pickedChance;
     if (xi < cdf) break;
   }
-  mScatterInstance = picked->material;
+  mScatterComponent = picked;
   applySpectralShare(beta, sigmaS, componentSigmaS(*picked),
                      1.0f / pickedChance);
+}
+
+smdl::JIT::VDF Medium::evaluateVDF(const Component &comp,
+                                   smdl::BumpPtrAllocator &allocator) const {
+  // The same point and frame the coefficient queries use, with the
+  // allocator the copy of the VDF needs; `volumeEvaluate` allocates
+  // nothing, so leaving it set costs the tracked queries nothing.
+  comp.state->position = comp.orgR + mScatterDistance * comp.dirR;
+  comp.state->allocator = &allocator;
+  return smdl::JIT::VDF(*comp.state, comp.materialDef);
 }
 //--}
 
@@ -829,6 +850,7 @@ SMDL_NO_INLINE bool Medium::sampleDistanceHomogeneous(Sampler &sampler,
     if (SMDL_UNLIKELY(mHasOverlap))
       pickScatterComponent(float(sampler), mSigmaS, beta);
     t = tScatter;
+    mScatterDistance = tScatter;
     return true;
   }
   applySurvivalWeight(beta, Tr, 1.0f / Tr.average());
@@ -891,6 +913,7 @@ SMDL_NO_INLINE bool Medium::sampleDistanceTracked(Sampler &sampler, float tEnd,
           if (SMDL_UNLIKELY(mHasOverlap))
             pickScatterComponent(rng.generateFloat(), sigmaS, beta);
           t = tCur;
+          mScatterDistance = tCur;
           return Outcome::SCATTERED;
         }
         // A null collision, and the next flight drawn before the chain is

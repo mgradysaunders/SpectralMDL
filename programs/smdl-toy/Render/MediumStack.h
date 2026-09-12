@@ -13,7 +13,8 @@ public:
   /// The instance evaluated at the boundary that entered this medium,
   /// which lives as long as the stack does: in the path's allocator for
   /// an entry a walk pushes, alongside the coefficients the instance
-  /// already keeps there, and in the stage's for the exterior medium.
+  /// already keeps there, and in the walk's own allocator for the
+  /// exterior medium.
   const smdl::JIT::Material *material{};
 
   /// The mesh instance whose boundary was crossed to enter this medium,

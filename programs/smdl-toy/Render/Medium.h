@@ -43,6 +43,15 @@
 /// coefficient it uses falls back to the homogeneous treatment with a
 /// one-time warning.
 ///
+/// The phase function is its own question
+/// (`MaterialDef::hasHomogeneousVDF()`): a real collision scatters with
+/// the VDF the instance captured when the definition proves it
+/// point-independent, and otherwise evaluates the VDF at the collision
+/// through the JIT `vdfEvaluate` entry point, in the same rigid frame the
+/// coefficient queries use, into the path's allocator. The two proofs are
+/// independent, so a medium may take the closed forms for its
+/// coefficients and still evaluate its phase function per collision.
+///
 /// Both estimators sample against one hero wavelength and weight by
 /// the single-sample MIS balance heuristic over all bins, which the
 /// null-collision generalization carries through the chain of null
@@ -136,11 +145,17 @@ public:
 
   /// The scattering interface of the vertex the last `sampleDistance`
   /// call returned: the haze's own phase function, or the VDF of the
-  /// medium's instance, which with additive overlap is the component
-  /// the collision picked.
-  [[nodiscard]] Scatterer scatterer() const noexcept {
-    return SMDL_UNLIKELY(mIsHaze) ? Scatterer(*mHaze.haze)
-                                  : Scatterer(mScatterInstance->getVDF());
+  /// medium, which with additive overlap is the component the collision
+  /// picked. A VDF the definition proves point-independent is the
+  /// instance's own; any other is evaluated at the collision point into
+  /// `allocator`, which must outlive the vertex, so a caller passes the
+  /// path's.
+  [[nodiscard]] Scatterer scatterer(smdl::BumpPtrAllocator &allocator) const {
+    if (SMDL_UNLIKELY(mIsHaze)) return Scatterer(*mHaze.haze);
+    const Component &comp{*mScatterComponent};
+    if (comp.materialDef->hasHomogeneousVDF())
+      return Scatterer(comp.material->getVDF());
+    return Scatterer(evaluateVDF(comp, allocator));
   }
 
 private:
@@ -164,6 +179,13 @@ private:
     /// Heterogeneous (or unproven) with usable majorants, so tracked;
     /// else the snapshot below stands for the medium.
     bool isHeterogeneous{};
+
+    /// Does the component ask its material anything at interior points:
+    /// the coefficients at every tentative collision when tracked, or
+    /// the VDF at every real one when the definition does not prove the
+    /// phase function point-independent? If so it carries the query
+    /// state and the segment in the rigid frame below.
+    bool isQueried{};
 
     /// Does the density-hint span scale apply to this component? True
     /// only for the component whose grid drives the spans, see `Hint`.
@@ -193,10 +215,11 @@ private:
     float3 orgR{};
     float3 dirR{};
 
-    /// The partial state of `volumeEvaluate` queries, the render-wide
-    /// fields plus the rigid frame, with `position` set per query;
-    /// tracked only, a `State` being too much to build for a component
-    /// that never asks a material anything.
+    /// The partial state of the `volumeEvaluate` and `vdfEvaluate`
+    /// queries, the render-wide fields plus the rigid frame, with
+    /// `position` set per query; queried components only, a `State`
+    /// being too much to build for a component that never asks a
+    /// material anything.
     mutable std::optional<smdl::State> state{};
 
     /// The clamped scattering coefficient at the most recent query, the
@@ -272,11 +295,13 @@ private:
 
   /// Would `entry` resolve to `component` again? The material and the
   /// presence of its volume fields decide the path; along it, a
-  /// homogeneous component is its three spectra, and a tracked one is
-  /// its majorants, its instance and its density hint. The snapshot a
-  /// tracked component also captured is never consulted on that path
-  /// and varies with where the boundary was crossed, so it is not
-  /// compared, and `rebind()` leaves it holding the first path's.
+  /// homogeneous component is its three spectra, a tracked one is its
+  /// majorants, its instance and its density hint, and a queried
+  /// component of either kind is its instance too, whose frame the
+  /// queries evaluate in. The snapshot a tracked component also captured
+  /// is never consulted on that path and varies with where the boundary
+  /// was crossed, so it is not compared, and `rebind()` leaves it holding
+  /// the first path's.
   [[nodiscard]] bool matches(const Component &component,
                              const MediumStack &entry) const noexcept;
 
@@ -326,9 +351,9 @@ private:
   //--}
 
   //--{ Segment
-  /// Project the segment into the rigid frame of every tracked
+  /// Project the segment into the rigid frame of every queried
   /// component, and into majorant cell space where a density hint
-  /// drives the spans. Nothing to do for a homogeneous medium.
+  /// drives the spans. Nothing to do for a medium that never queries.
   void setSegment(const float3 &org, const float3 &dir, float time) noexcept;
 
   /// The projection of `setSegment()`, `rigidOf` answering with the
@@ -339,7 +364,7 @@ private:
   void projectSegmentWith(const float3 &org, const float3 &dir,
                           const RigidOf &rigidOf) noexcept {
     for (auto &comp : mComponents) {
-      if (!comp.isHeterogeneous) continue;
+      if (!comp.isQueried) continue;
       if (comp.meshInstance) {
         const auto &toRigid{rigidOf(*comp.meshInstance)};
         comp.orgR = transformPoint(toRigid, org);
@@ -399,6 +424,12 @@ private:
   componentSigmaS(const Component &comp) noexcept {
     return comp.isHeterogeneous ? comp.lastSigmaS : comp.sigmaS;
   }
+
+  /// The VDF of `comp` at the collision the last `sampleDistance()`
+  /// returned, evaluated through `vdfEvaluate` at the collision point in
+  /// the component's rigid frame and allocated from `allocator`.
+  [[nodiscard]] smdl::JIT::VDF
+  evaluateVDF(const Component &comp, smdl::BumpPtrAllocator &allocator) const;
   //--}
 
   //--{ State
@@ -426,6 +457,11 @@ private:
 
   /// Heterogeneous (or unproven) with usable majorants, so tracked.
   bool mIsHeterogeneous{};
+
+  /// Does any component ask its material anything at interior points
+  /// (`Component::isQueried`), so that `setSegment()` has a segment to
+  /// project?
+  bool mIsQueried{};
 
   /// Does the medium emit at all? A pure emitter with no coefficients
   /// still counts as a medium.
@@ -509,9 +545,11 @@ private:
   // plain 'malloc' that only guarantees the fundamental alignment.
   std::vector<Component> mComponents{};
 
-  /// The instance behind `scatterer()`; mutable because a real collision
-  /// picks the component during the const sampling call.
-  mutable const smdl::JIT::Material *mScatterInstance{};
+  /// The component behind `scatterer()` and the distance along the
+  /// segment of the collision it scatters at; mutable because a real
+  /// collision records both during the const sampling call.
+  mutable const Component *mScatterComponent{};
+  mutable float mScatterDistance{};
 
   /// What the resolution describes: the stack and the time it was
   /// resolved at, which `reset()` compares against to keep it outright.

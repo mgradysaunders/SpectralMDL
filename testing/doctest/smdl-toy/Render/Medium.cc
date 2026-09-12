@@ -15,8 +15,8 @@
 
 // The participating-medium estimators over materials compiled here: the
 // closed forms a homogeneous medium takes, the null-collision tracking
-// everything else takes, and the additive overlap that sums two media
-// into one segment.
+// everything else takes, the additive overlap that sums two media into
+// one segment, and the phase function a collision scatters with.
 //
 // What is checked is the estimator's EXPECTATION, because that is the
 // only thing a Monte Carlo estimator promises and the only thing a
@@ -39,7 +39,9 @@ const std::vector<float> GRID{420.0f, 500.0f, 580.0f, 660.0f};
 // where the hero-wavelength weighting is exercised. Either proves
 // homogeneous when nothing reads the position: a spectral constant is
 // resampled onto the wavelength basis, a read the proof allows, so the
-// tracked cases are exactly the ones that read `state::position()`.
+// tracked cases are exactly the ones whose coefficients read
+// `state::position()`. The phase function is proven on its own, and
+// `bias_sign` is the one whose VDF reads the position.
 const char *MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
@@ -122,7 +124,15 @@ const char *MATERIALS{
     "  volume: material_volume(\n"
     "    scattering: df::anisotropic_vdf(),\n"
     "    scattering_coefficient:\n"
-    "      ramp(0.30, 0.90) * (0.5 + 0.25 * state::position().x)));\n"};
+    "      ramp(0.30, 0.90) * (0.5 + 0.25 * state::position().x)));\n"
+    // Constant coefficients under a phase function whose bias changes
+    // sign across x = 0: the closed forms sample the distance, and each
+    // collision must scatter with the bias of its own side.
+    "export material bias_sign() = material(\n"
+    "  volume: material_volume(\n"
+    "    scattering: df::anisotropic_vdf(\n"
+    "      directional_bias: state::position().x < 0.0 ? -0.8 : 0.8),\n"
+    "    scattering_coefficient: color(0.5)));\n"};
 } // namespace
 
 namespace {
@@ -258,8 +268,13 @@ struct Means final {
                                 const smdl::JIT::Material *first) {
   Means means{};
   Sampler sampler{};
+  // Where a collision's own VDF goes when the phase function is not
+  // provably point-independent: the path's allocator in the renderer,
+  // reset per sample as the renderer resets it per path.
+  smdl::BumpPtrAllocator allocator{};
   for (int i = 0; i < NUM_SAMPLES; i++) {
     sampler.startPixelSample(uint32_t(i), 0);
+    allocator.reset();
     medium.reset(stack, wavelengths, PathTime(0.0f), org, dir);
     Color beta{1.0f};
     Color emitted{};
@@ -268,7 +283,7 @@ struct Means final {
       means.scattered += beta;
       means.numScattered++;
       // The scatterer names the evaluation it scatters with by its VDF.
-      if (first && medium.scatterer().vdf().ptr == first->getVDF().ptr)
+      if (first && medium.scatterer(allocator).vdf().ptr == first->getVDF().ptr)
         means.pickedFirst += beta;
     } else {
       means.survived += beta;
@@ -726,5 +741,76 @@ TEST_CASE("Medium: the resolution carries across paths") {
     CHECK_FALSE(isIdentical(fog, fogA));
     CHECK(isIdentical(
         fogA, attenuateMean(fresh, &*slot, wavelengths, org, dir, DISTANCE)));
+  }
+}
+
+TEST_CASE("Medium: the phase function at the collision") {
+  // A phase function the compiler cannot prove point-independent is
+  // evaluated where the collision is, not where the path entered. Over
+  // `bias_sign`, backward for x < 0 and forward for x > 0, every
+  // collision scatters with the bias of its own side whichever side the
+  // path entered from, while the constant coefficients still take the
+  // closed forms.
+  Fixture fixture{};
+  const Color &wavelengths{fixture.wavelengths};
+  const float3 org{-1.0f, 0.0f, 0.0f};
+  const float3 dir{1.0f, 0.0f, 0.0f};
+  constexpr float DISTANCE{2.0f};
+  const smdl::JIT::MaterialDef *materialDef{
+      fixture.compiler.findMaterial("bias_sign")};
+  REQUIRE(materialDef);
+  REQUIRE(materialDef->hasHomogeneousCoefficients());
+  REQUIRE_FALSE(materialDef->hasHomogeneousVDF());
+  // Two instances entered from either side of x = 0, so that each
+  // carries the bias of its own side as its snapshot.
+  fixture.state->position = float3(-2.0f, 0.0f, 0.0f);
+  MediumStack &fromBackward{fixture.entry("bias_sign")};
+  fixture.state->position = float3(+2.0f, 0.0f, 0.0f);
+  MediumStack &fromForward{fixture.entry("bias_sign")};
+  fixture.state->position = float3(0.0f, 0.0f, 0.0f);
+  // `wo` points back along the segment, so continuing straight on is
+  // `dir`, the direction a positive bias favors.
+  const float3 wo{-dir};
+  const auto isForward{[&](const Scatterer &scatterer) {
+    return scatterer.volumeScatterEvaluate(wo, dir) >
+           scatterer.volumeScatterEvaluate(wo, -dir);
+  }};
+  CHECK_FALSE(isForward(Scatterer(fromBackward.material->getVDF())));
+  CHECK(isForward(Scatterer(fromForward.material->getVDF())));
+  Medium medium{};
+  smdl::BumpPtrAllocator allocator{};
+  for (const MediumStack *entry : {&fromBackward, &fromForward}) {
+    const char *side{entry == &fromBackward ? "entered from the backward side"
+                                            : "entered from the forward side"};
+    INFO(side);
+    medium.beginPath();
+    Sampler sampler{};
+    int numBackward{}, numForward{}, numWrongSide{}, numFromInstance{};
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      sampler.startPixelSample(uint32_t(i), 0);
+      allocator.reset();
+      medium.reset(entry, wavelengths, PathTime(0.0f), org, dir);
+      Color beta{1.0f};
+      Color emitted{};
+      float t{};
+      if (!medium.sampleDistance(sampler, DISTANCE, t, beta, emitted)) continue;
+      const float x{org.x + t * dir.x};
+      const Scatterer scatterer{medium.scatterer(allocator)};
+      if (isForward(scatterer) != (x >= 0.0f)) numWrongSide++;
+      // The collision's VDF is its own, never the instance's.
+      if (scatterer.vdf().ptr == entry->material->getVDF().ptr)
+        numFromInstance++;
+      if (x < 0.0f)
+        numBackward++;
+      else
+        numForward++;
+    }
+    // Closed-form coefficients: nothing is tracked.
+    CHECK_FALSE(medium.attenuationDraws());
+    // Both sides were reached, or the side check proved nothing.
+    CHECK(numBackward > 0);
+    CHECK(numForward > 0);
+    CHECK(numWrongSide == 0);
+    CHECK(numFromInstance == 0);
   }
 }

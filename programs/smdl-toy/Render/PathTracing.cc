@@ -1903,11 +1903,14 @@ Color PathWalk::trace(const CameraSample &camera) {
             end = PathEnd::BOUND;
             break;
           }
-          // The phase function of the vertex: the haze's own, the
-          // medium's, or with additive overlap the component the
-          // collision picked. Whatever it names outlives the view, so
-          // the gather below is free to retarget the view.
-          const Scatterer phase{mPath.medium.scatterer()};
+          // The phase function of the vertex: the haze's own, or the
+          // medium's (with additive overlap, the component the collision
+          // picked), which is the instance's VDF when the definition
+          // proves it point-independent and otherwise the VDF evaluated
+          // at the collision into the path's allocator. Whatever it
+          // names outlives the view, so the gather below is free to
+          // retarget the view.
+          const Scatterer phase{mPath.medium.scatterer(mPath.allocator)};
           {
             PathVertex vertex{phase};
             vertex.kind = VertexKind::VOLUME;
