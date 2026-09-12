@@ -12,8 +12,8 @@
 namespace {
 // Parse from memory and require no errors.
 LensDocument parseOK(LayoutDiagnostics &diags, std::string text) {
-  const auto &source{diags.addSource("test.lens", std::move(text))};
-  auto document{parseLens(diags, source)};
+  const LayoutSource &source{diags.addSource("test.lens", std::move(text))};
+  LensDocument document{parseLens(diags, source)};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
   return document;
@@ -22,7 +22,7 @@ LensDocument parseOK(LayoutDiagnostics &diags, std::string text) {
 // Parse from memory, require exactly one error, and hand back its
 // message so the caller can say which one it expected.
 std::string parseError(LayoutDiagnostics &diags, std::string text) {
-  const auto &source{diags.addSource("test.lens", std::move(text))};
+  const LayoutSource &source{diags.addSource("test.lens", std::move(text))};
   (void)parseLens(diags, source);
   REQUIRE(diags.errorCount() == 1);
   return diags.all().front().message;
@@ -73,8 +73,8 @@ constexpr std::array<float, 3> WAVELENGTHS{400.0f, smdl::FRAUNHOFER_D_LINE,
 TEST_CASE("LensFile: the shape of a prescription") {
   LayoutDiagnostics diags{};
   SUBCASE("It reads surfaces in file order, front first") {
-    const auto document{parseOK(diags, SINGLET)};
-    const auto &lens{document.lens};
+    const LensDocument document{parseOK(diags, SINGLET)};
+    const LensPrescription &lens{document.lens};
     REQUIRE(lens.surfaces.size() == 2);
     CHECK(lens.surfaces[0].radius == doctest::Approx(50.0f));
     CHECK(lens.surfaces[0].thickness == doctest::Approx(4.0f));
@@ -84,51 +84,52 @@ TEST_CASE("LensFile: the shape of a prescription") {
     CHECK(lens.surfaces[1].isStop);
   }
   SUBCASE("The stop is a surface, and knows its place among them") {
-    const auto document{parseOK(diags, SINGLET)};
+    const LensDocument document{parseOK(diags, SINGLET)};
     CHECK(document.lens.stopIndex() == 1);
   }
   SUBCASE("An omitted 'ior' is air") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  surface { radius 50 diameter 20 }\n"
-                                       "  stop { thickness 10 diameter 12 }\n"
-                                       "}\n")};
-    const auto &surface{document.lens.surfaces[0]};
+    const LensDocument document{parseOK(diags,
+                                        "lens {\n"
+                                        "  surface { radius 50 diameter 20 }\n"
+                                        "  stop { thickness 10 diameter 12 }\n"
+                                        "}\n")};
+    const LensSurface &surface{document.lens.surfaces[0]};
     CHECK(surface.medium.nd() == 1.0f);
     CHECK(!surface.medium.isDispersive());
   }
   SUBCASE("An 'ior' is one index at every wavelength, and names no medium") {
-    const auto document{parseOK(diags, SINGLET)};
-    const auto &surface{document.lens.surfaces[0]};
+    const LensDocument document{parseOK(diags, SINGLET)};
+    const LensSurface &surface{document.lens.surfaces[0]};
     CHECK(!surface.medium.isDispersive());
     CHECK(surface.mediumName.empty());
     for (const auto wavelength : WAVELENGTHS)
       CHECK(surface.medium.indexAt(wavelength) == 1.5f);
   }
   SUBCASE("An omitted 'radius' is flat, and an omitted 'thickness' is zero") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  stop { diameter 12 }\n"
-                                       "}\n")};
+    const LensDocument document{parseOK(diags, "lens {\n"
+                                               "  stop { diameter 12 }\n"
+                                               "}\n")};
     REQUIRE(document.lens.surfaces.size() == 1);
     CHECK(document.lens.surfaces[0].radius == 0.0f);
     CHECK(document.lens.surfaces[0].thickness == 0.0f);
   }
   SUBCASE("A name is free text, and is optional") {
-    const auto document{
+    const LensDocument document{
         parseOK(diags, std::string("lens { name \"Sonnar 50mm f/1.5\" ") +
                            "stop { diameter 12 } }\n")};
     CHECK(document.lens.name == "Sonnar 50mm f/1.5");
     CHECK(parseOK(diags, SINGLET).lens.name.empty());
   }
   SUBCASE("A radius is signed, positive toward the film") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  surface { radius -39.73 "
-                                       "diameter 20 }\n"
-                                       "  stop { diameter 12 }\n"
-                                       "}\n")};
+    const LensDocument document{parseOK(diags, "lens {\n"
+                                               "  surface { radius -39.73 "
+                                               "diameter 20 }\n"
+                                               "  stop { diameter 12 }\n"
+                                               "}\n")};
     CHECK(document.lens.surfaces[0].radius == doctest::Approx(-39.73f));
   }
   SUBCASE("It holds at most 64 surfaces, the stop among them") {
-    auto text{std::string("lens {\n  stop { diameter 12 }\n")};
+    std::string text{"lens {\n  stop { diameter 12 }\n"};
     for (size_t i = 1; i < LENS_MAX_SURFACES; i++)
       text += "  surface { diameter 12 }\n";
     CHECK(parseOK(diags, text + "}\n").lens.surfaces.size() ==
@@ -142,10 +143,10 @@ TEST_CASE("LensFile: the shape of a prescription") {
 TEST_CASE("LensFile: the aperture stop") {
   LayoutDiagnostics diags{};
   SUBCASE("A lens without one is an error that says where to put it") {
-    const auto &source{diags.addSource("test.lens",
-                                       "lens {\n"
-                                       "  surface { radius 50 diameter 20 }\n"
-                                       "}\n")};
+    const LayoutSource &source{
+        diags.addSource("test.lens", "lens {\n"
+                                     "  surface { radius 50 diameter 20 }\n"
+                                     "}\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "exactly one aperture stop");
@@ -154,11 +155,11 @@ TEST_CASE("LensFile: the aperture stop") {
                    "a patent usually leaves the diaphragm out");
   }
   SUBCASE("A second one is an error pointing at the first") {
-    const auto &source{diags.addSource("test.lens",
-                                       "lens {\n"
-                                       "  stop { thickness 4 diameter 12 }\n"
-                                       "  stop { thickness 4 diameter 12 }\n"
-                                       "}\n")};
+    const LayoutSource &source{
+        diags.addSource("test.lens", "lens {\n"
+                                     "  stop { thickness 4 diameter 12 }\n"
+                                     "  stop { thickness 4 diameter 12 }\n"
+                                     "}\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "this is the second 'stop'");
@@ -221,28 +222,30 @@ TEST_CASE("LensFile: the values a surface may take") {
 TEST_CASE("LensFile: conic and aspheric surfaces") {
   LayoutDiagnostics diags{};
   SUBCASE("A conic constant parses and defaults to a sphere") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  surface { radius 21.48 conic -0.45 "
-                                       "diameter 12 }\n"
-                                       "  stop { diameter 10 }\n"
-                                       "}\n")};
+    const LensDocument document{parseOK(diags,
+                                        "lens {\n"
+                                        "  surface { radius 21.48 conic -0.45 "
+                                        "diameter 12 }\n"
+                                        "  stop { diameter 10 }\n"
+                                        "}\n")};
     CHECK(document.lens.surfaces[0].conic == doctest::Approx(-0.45f));
     CHECK(document.lens.surfaces[1].conic == 0.0f);
   }
   SUBCASE("Coefficients that are all zero parse, as printed tables have them") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  surface { radius 21.48 "
-                                       "aspheric 0 0 0 diameter 12 }\n"
-                                       "  stop { diameter 10 }\n"
-                                       "}\n")};
+    const LensDocument document{parseOK(diags, "lens {\n"
+                                               "  surface { radius 21.48 "
+                                               "aspheric 0 0 0 diameter 12 }\n"
+                                               "  stop { diameter 10 }\n"
+                                               "}\n")};
     CHECK(document.lens.surfaces[0].aspheric.size() == 3);
   }
   SUBCASE("Coefficients are kept in the order written, the r^4 term first") {
-    const auto document{parseOK(diags, "lens {\n"
-                                       "  surface { radius 21.48 "
-                                       "aspheric 0 1.2e-5 -3e-9 diameter 12 }\n"
-                                       "  stop { diameter 10 }\n"
-                                       "}\n")};
+    const LensDocument document{
+        parseOK(diags, "lens {\n"
+                       "  surface { radius 21.48 "
+                       "aspheric 0 1.2e-5 -3e-9 diameter 12 }\n"
+                       "  stop { diameter 10 }\n"
+                       "}\n")};
     REQUIRE(document.lens.surfaces[0].aspheric.size() == 3);
     CHECK(document.lens.surfaces[0].aspheric[0] == 0.0f);
     CHECK(document.lens.surfaces[0].aspheric[1] == doctest::Approx(1.2e-5f));
@@ -264,9 +267,9 @@ TEST_CASE("LensFile: conic and aspheric surfaces") {
 TEST_CASE("LensFile: naming a medium") {
   LayoutDiagnostics diags{};
   SUBCASE("A surface carries the built-in glass it names, by value") {
-    const auto document{parseOK(diags, singletOf("N-BK7"))};
-    const auto &surface{document.lens.surfaces[0]};
-    const auto *entry{smdl::findOpticalGlass("N-BK7")};
+    const LensDocument document{parseOK(diags, singletOf("N-BK7"))};
+    const LensSurface &surface{document.lens.surfaces[0]};
+    const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass("N-BK7")};
     REQUIRE(entry != nullptr);
     CHECK(surface.mediumName == "N-BK7");
     CHECK(surface.medium.kind() == smdl::OpticalGlass::Kind::SELLMEIER);
@@ -290,10 +293,11 @@ TEST_CASE("LensFile: naming a medium") {
   }
   SUBCASE("An unknown name suggests the nearest, and lists the built-in "
           "glasses") {
-    const auto &source{diags.addSource("test.lens", singletOf("N-BK8"))};
+    const LayoutSource &source{
+        diags.addSource("test.lens", singletOf("N-BK8"))};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "unknown medium 'N-BK8'");
     REQUIRE(error.notes.size() == 2);
     CHECK_CONTAINS(error.notes[0].message, "did you mean 'N-BK7'?");
@@ -301,7 +305,7 @@ TEST_CASE("LensFile: naming a medium") {
                    "the built-in glasses are CAF2, N-FK51A,");
   }
   SUBCASE("The nearest may be the file's own medium, as the file spells it") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.lens", "lens {\n"
                      "  surface { radius 50 thickness 4 medium CRWN_A "
                      "diameter 20 }\n"
@@ -316,9 +320,9 @@ TEST_CASE("LensFile: naming a medium") {
   }
   SUBCASE("'medium' beside 'ior' is an error, since a named medium states "
           "index") {
-    const auto &source{diags.addSource("test.lens",
-                                       "lens { surface { ior 1.5 medium N-BK7 "
-                                       "diameter 20 } stop { diameter 12 } }")};
+    const LayoutSource &source{
+        diags.addSource("test.lens", "lens { surface { ior 1.5 medium N-BK7 "
+                                     "diameter 20 } stop { diameter 12 } }")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message,
@@ -331,7 +335,7 @@ TEST_CASE("LensFile: naming a medium") {
                    "expected a medium name");
   }
   SUBCASE("A definition on a surface says where definitions go") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.lens", "lens { surface { medium { ior 1.5 abbe 60 } "
                      "diameter 20 } stop { diameter 12 } }")};
     (void)parseLens(diags, source);
@@ -350,34 +354,34 @@ TEST_CASE("LensFile: defining a medium") {
     return parseError(each, definingCrown(definition));
   }};
   SUBCASE("A definition may follow the surface that names it") {
-    const auto document{
+    const LensDocument document{
         parseOK(diags, definingCrown("{ ior 1.62 abbe 60.3 }"))};
     CHECK(diags.warningCount() == 0);
-    const auto &surface{document.lens.surfaces[0]};
+    const LensSurface &surface{document.lens.surfaces[0]};
     CHECK(surface.mediumName == "CROWN");
     CHECK(surface.medium.kind() == smdl::OpticalGlass::Kind::ABBE);
     CHECK_NEAR(surface.medium.nd(), 1.62, 1e-6);
   }
   SUBCASE("'ior' and 'abbe' fit the normal line") {
-    const auto document{
+    const LensDocument document{
         parseOK(diags, definingCrown("{ ior 1.62 abbe 60.3 }"))};
-    const auto expected{smdl::OpticalGlass::abbe(1.62f, 60.3f)};
+    const smdl::OpticalGlass expected{smdl::OpticalGlass::abbe(1.62f, 60.3f)};
     for (const auto wavelength : WAVELENGTHS)
       CHECK(hasSameBits(document.lens.surfaces[0].medium.indexAt(wavelength),
                         expected.indexAt(wavelength)));
   }
   SUBCASE("A stated partial dispersion is kept") {
-    const auto document{parseOK(
+    const LensDocument document{parseOK(
         diags,
         definingCrown("{ ior 1.497 abbe 81.6 partial_dispersion 0.5377 }"))};
     CHECK_NEAR(document.lens.surfaces[0].medium.partialDispersion(), 0.5377,
                1e-4);
   }
   SUBCASE("A Sellmeier definition is the maker's formula") {
-    const auto document{
+    const LensDocument document{
         parseOK(diags, definingCrown(smdl::concat("{ ", BK7_SELLMEIER, " }")))};
-    const auto &medium{document.lens.surfaces[0].medium};
-    const auto &maker{smdl::findOpticalGlass("N-BK7")->glass};
+    const smdl::OpticalGlass &medium{document.lens.surfaces[0].medium};
+    const smdl::OpticalGlass &maker{smdl::findOpticalGlass("N-BK7")->glass};
     CHECK(medium.kind() == smdl::OpticalGlass::Kind::SELLMEIER);
     for (const auto wavelength : WAVELENGTHS)
       CHECK(hasSameBits(medium.indexAt(wavelength), maker.indexAt(wavelength)));
@@ -402,7 +406,7 @@ TEST_CASE("LensFile: defining a medium") {
   }
   SUBCASE("A use matches its definition whatever the case, and reads as the "
           "definition spells it") {
-    const auto document{
+    const LensDocument document{
         parseOK(diags, "lens {\n"
                        "  medium Crown_A { ior 1.62 abbe 60.3 }\n"
                        "  surface { radius 50 thickness 4 medium CROWN_A "
@@ -414,7 +418,7 @@ TEST_CASE("LensFile: defining a medium") {
   SUBCASE("A built-in glass cannot be defined again, under any spelling") {
     for (const auto *name : {"N-BK7", "n-bk7", "BK7"}) {
       LayoutDiagnostics each{};
-      const auto &source{each.addSource(
+      const LayoutSource &source{each.addSource(
           "test.lens", smdl::concat("lens { stop { diameter 12 } medium ", name,
                                     " { ior 1.5 abbe 60 } }"))};
       (void)parseLens(each, source);
@@ -427,12 +431,12 @@ TEST_CASE("LensFile: defining a medium") {
   }
   SUBCASE("A second definition of one name is an error pointing at the "
           "first") {
-    const auto &source{diags.addSource("test.lens",
-                                       "lens {\n"
-                                       "  stop { diameter 12 }\n"
-                                       "  medium A { ior 1.5 abbe 60 }\n"
-                                       "  medium a { ior 1.6 abbe 50 }\n"
-                                       "}\n")};
+    const LayoutSource &source{
+        diags.addSource("test.lens", "lens {\n"
+                                     "  stop { diameter 12 }\n"
+                                     "  medium A { ior 1.5 abbe 60 }\n"
+                                     "  medium a { ior 1.6 abbe 50 }\n"
+                                     "}\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "medium 'a' is defined twice");
@@ -454,7 +458,7 @@ TEST_CASE("LensFile: defining a medium") {
   }
   SUBCASE("An index alone is refused, with a note that it belongs on the "
           "surface") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.lens", definingCrown("{ ior 1.5 }"))};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
@@ -464,11 +468,11 @@ TEST_CASE("LensFile: defining a medium") {
                    "write it as 'ior' on the surface");
   }
   SUBCASE("What the medium refuses is reported at its definition") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.lens", definingCrown("{ ior 1.5 abbe -5 }"))};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message,
                    "medium 'CROWN': expected a positive Abbe number");
     CHECK(source.lineAndColumn(error.location.offset).lineNo == 4);
@@ -483,7 +487,7 @@ TEST_CASE("LensFile: defining a medium") {
   }
   SUBCASE("A partial dispersion that bends the fit back is read against the "
           "normal line") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.lens",
         definingCrown("{ ior 1.5 abbe 60 partial_dispersion 0.3 }"))};
     (void)parseLens(diags, source);
@@ -509,7 +513,7 @@ TEST_CASE("LensFile: defining a medium") {
 TEST_CASE("LensFile: the file holds one lens and nothing else") {
   LayoutDiagnostics diags{};
   SUBCASE("A second 'lens' block does not merge, since surfaces are ordered") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.lens", std::string(SINGLET) + "lens { stop { diameter 12 } }\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
@@ -519,7 +523,7 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
                    "the first one is here");
   }
   SUBCASE("A stray surface says where a surface belongs") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.lens", "surface { radius 50 diameter 20 }\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
@@ -529,7 +533,7 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
                    "belongs inside the 'lens' block");
   }
   SUBCASE("A stray medium says where a definition belongs") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.lens", "medium CROWN { ior 1.5 abbe 60 }\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
@@ -538,7 +542,7 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
                    "inside the 'lens' block");
   }
   SUBCASE("The keyword 'glass' it replaced says what it is now") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.lens", "glass CROWN { ior 1.5 abbe 60 }\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
@@ -547,7 +551,7 @@ TEST_CASE("LensFile: the file holds one lens and nothing else") {
                    "the keyword is 'medium'");
   }
   SUBCASE("A sensor is the camera's, and the note says so") {
-    const auto &source{diags.addSource("test.lens", "sensor 36 24\n")};
+    const LayoutSource &source{diags.addSource("test.lens", "sensor 36 24\n")};
     (void)parseLens(diags, source);
     REQUIRE(diags.errorCount() == 1);
     REQUIRE(diags.all().front().notes.size() == 1);
@@ -566,7 +570,7 @@ TEST_CASE("LensFile: a transcribed prescription") {
   // way of Modern Lens Design p.312, scaled to 50 mm. Transcribing a
   // published table is the only thing anyone will ever do with this
   // format, so the test is that a whole one survives it.
-  const auto document{
+  const LensDocument document{
       parseOK(diags, "lens {\n"
                      "  name \"Double Gauss 50mm f/2\"\n"
                      "  surface { radius   29.475 thickness 3.76  ior 1.67  "
@@ -592,7 +596,7 @@ TEST_CASE("LensFile: a transcribed prescription") {
                      "  surface { radius  -39.73                            "
                      "diameter 20.0 }\n"
                      "}\n")};
-  const auto &lens{document.lens};
+  const LensPrescription &lens{document.lens};
   SUBCASE("Every surface arrives, in order, with the stop among them") {
     REQUIRE(lens.surfaces.size() == 11);
     CHECK(lens.name == "Double Gauss 50mm f/2");

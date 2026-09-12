@@ -18,14 +18,14 @@ TEST_CASE("Spectrum: the text format and its failures") {
   smdl::Spectrum spectrum{};
   SUBCASE("Rows sort by wavelength, comments and blanks are skipped") {
     // No units line, so the wavelengths are micrometers.
-    auto view{loadText(spectrum, tmpDir, "sorted.txt",
-                       "# A comment\n"
-                       "0.7 7\n"
-                       "\n"
-                       "0.4 4\n"
-                       "   # An indented comment\n"
-                       "0.6 6\n"
-                       "0.5 5\n")};
+    smdl::SpectrumView view{loadText(spectrum, tmpDir, "sorted.txt",
+                                     "# A comment\n"
+                                     "0.7 7\n"
+                                     "\n"
+                                     "0.4 4\n"
+                                     "   # An indented comment\n"
+                                     "0.6 6\n"
+                                     "0.5 5\n")};
     REQUIRE(view.wavelengths.size() == 4);
     REQUIRE(view.curveValues.size() == 4);
     const float expected[4] = {4, 5, 6, 7};
@@ -46,15 +46,16 @@ TEST_CASE("Spectrum: the text format and its failures") {
         {"megahertz", "749481145"}, {"gigahertz", "749481.145"}};
     for (const auto &c : cases) {
       CAPTURE(c.units);
-      auto view{loadText(spectrum, tmpDir, "units.txt",
-                         std::string(c.units) + "\n" + c.wavelength + " 1\n")};
+      smdl::SpectrumView view{
+          loadText(spectrum, tmpDir, "units.txt",
+                   std::string(c.units) + "\n" + c.wavelength + " 1\n")};
       REQUIRE(view.wavelengths.size() == 1);
       CHECK(view.wavelengths.data()[0] == doctest::Approx(400.0f));
       CHECK(view.curveValues.data()[0] == 1.0f);
     }
   }
   SUBCASE("A row that does not parse is named by its line") {
-    auto error{spectrum.loadFromFile(
+    std::optional<smdl::Error> error{spectrum.loadFromFile(
         tmpDir.write("row.txt", "# A comment\n0.4 4\n\n0.5 abc\n").string())};
     REQUIRE(error.has_value());
     CHECK_CONTAINS(error->message, ": expected 'wavelength value' on line 4");
@@ -68,7 +69,8 @@ TEST_CASE("Spectrum: the text format and its failures") {
   }
   SUBCASE("Failure leaves the spectrum empty") {
     (void)loadText(spectrum, tmpDir, "good.txt", "0.4 4\n");
-    const auto fileName{tmpDir.write("bad.txt", "0.4 4\n0.5 abc\n").string()};
+    const std::string fileName{
+        tmpDir.write("bad.txt", "0.4 4\n0.5 abc\n").string()};
     CHECK(spectrum.loadFromFile(fileName).has_value());
     CHECK(smdl::SpectrumView(spectrum).wavelengths.empty());
     CHECK(spectrum.loadFromFile((tmpDir / "missing.txt").string()).has_value());

@@ -104,11 +104,13 @@ public:
 
   /// The emission intensity the evaluated material carries at `hit`.
   [[nodiscard]] float intensityAt(const Hit &hit) const {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto state{makeRenderState(wavelengths, &allocator)};
+    smdl::BumpPtrAllocator allocator{};
+    smdl::State state{makeRenderState(wavelengths, &allocator)};
     hit.applyGeometryToState(state, float3(0.0f, 0.0f, -1.0f));
-    const auto material{smdl::JIT::Material(state, hit.materialDef)};
-    const auto values{material.getSurfaceEmissionIntensity()};
+    const smdl::JIT::Material material{
+        smdl::JIT::Material(state, hit.materialDef)};
+    const smdl::Span<const float> values{
+        material.getSurfaceEmissionIntensity()};
     REQUIRE(!values.empty());
     float sum{};
     for (float value : values) sum += value;
@@ -139,31 +141,31 @@ TEST_CASE("Scene: vertex colors from file to state") {
   SUBCASE("A hit interpolates the corners") {
     // The center sits on the diagonal between the red and blue corners,
     // whichever triangle the ray lands in.
-    const auto center{fixture.hitOn(0, 0.0f, 0.0f)};
+    const Hit center{fixture.hitOn(0, 0.0f, 0.0f)};
     CHECK(center.vertexColorSets == 1);
     CHECK(center.vertexColor.x == doctest::Approx(0.5f).epsilon(1e-4));
     CHECK(center.vertexColor.y == doctest::Approx(0.0f).epsilon(1e-4));
     CHECK(center.vertexColor.z == doctest::Approx(0.5f).epsilon(1e-4));
     CHECK(center.vertexColor.w == doctest::Approx(1.0f).epsilon(1e-4));
     // Next to the green corner.
-    const auto corner{fixture.hitOn(0, 0.999f, -0.998f)};
+    const Hit corner{fixture.hitOn(0, 0.999f, -0.998f)};
     CHECK(corner.vertexColor.x == doctest::Approx(0.0f).epsilon(3e-3));
     CHECK(corner.vertexColor.y == doctest::Approx(1.0f).epsilon(3e-3));
     CHECK(corner.vertexColor.z == doctest::Approx(0.0f).epsilon(3e-3));
     // Anywhere: the barycentric sum of the face's stored colors.
-    const auto hit{fixture.hitOn(0, 0.3f, -0.6f)};
-    const auto &mesh{*fixture.scene.meshes[hit.meshIndex]};
+    const Hit hit{fixture.hitOn(0, 0.3f, -0.6f)};
+    const Mesh &mesh{*fixture.scene.meshes[hit.meshIndex]};
     REQUIRE(!mesh.colors.empty());
-    const auto &face{mesh.faces[hit.faceIndex]};
-    const auto expected{hit.bary[0] * mesh.colors[face[0]] +
-                        hit.bary[1] * mesh.colors[face[1]] +
-                        hit.bary[2] * mesh.colors[face[2]]};
+    const Mesh::Face &face{mesh.faces[hit.faceIndex]};
+    const float4 expected{hit.bary[0] * mesh.colors[face[0]] +
+                          hit.bary[1] * mesh.colors[face[1]] +
+                          hit.bary[2] * mesh.colors[face[2]]};
     for (int k = 0; k < 4; k++) {
       CAPTURE(k);
       CHECK(hit.vertexColor[k] == doctest::Approx(expected[k]).epsilon(1e-6));
     }
     // And the state receives exactly that.
-    auto state{makeRenderState(fixture.wavelengths)};
+    smdl::State state{makeRenderState(fixture.wavelengths)};
     hit.applyGeometryToState(state);
     CHECK(state.vertexColorCount == 1);
     for (int k = 0; k < 4; k++) {
@@ -172,11 +174,11 @@ TEST_CASE("Scene: vertex colors from file to state") {
     }
   }
   SUBCASE("A colorless mesh carries no set") {
-    const auto hit{fixture.hitOn(3, 0.3f, -0.6f)};
+    const Hit hit{fixture.hitOn(3, 0.3f, -0.6f)};
     CHECK(hit.vertexColorSets == 0);
     CHECK(hit.vertexColor.x == 1.0f);
     CHECK(hit.vertexColor.w == 1.0f);
-    auto state{makeRenderState(fixture.wavelengths)};
+    smdl::State state{makeRenderState(fixture.wavelengths)};
     hit.applyGeometryToState(state);
     CHECK(state.vertexColorCount == 0);
     CHECK(state.vertexColor[0].x == 1.0f);
@@ -188,28 +190,28 @@ TEST_CASE("Scene: vertex colors from file to state") {
       // corners, under linear refinement by construction and under
       // smooth refinement by the symmetry of the smoothing rule; the
       // corners keep their values under the linear boundary rule.
-      const auto center{fixture.hitOn(i, 0.0f, 0.0f)};
+      const Hit center{fixture.hitOn(i, 0.0f, 0.0f)};
       CHECK(center.vertexColorSets == 1);
       CHECK(center.vertexColor.x == doctest::Approx(0.5f).epsilon(1e-3));
       CHECK(center.vertexColor.y == doctest::Approx(0.5f).epsilon(1e-3));
       CHECK(center.vertexColor.z == doctest::Approx(0.5f).epsilon(1e-3));
       CHECK(center.vertexColor.w == doctest::Approx(1.0f).epsilon(1e-3));
-      const auto corner{fixture.hitOn(i, 0.999f, -0.998f)};
+      const Hit corner{fixture.hitOn(i, 0.999f, -0.998f)};
       CHECK(corner.vertexColor.x == doctest::Approx(0.0f).epsilon(5e-3));
       CHECK(corner.vertexColor.y == doctest::Approx(1.0f).epsilon(5e-3));
       CHECK(corner.vertexColor.z == doctest::Approx(0.0f).epsilon(5e-3));
       // The refined colors are parallel to the refined vertices.
-      const auto &mesh{*fixture.scene.meshes[center.meshIndex]};
+      const Mesh &mesh{*fixture.scene.meshes[center.meshIndex]};
       CHECK(mesh.colors.size() == mesh.verts.size());
       CHECK(fixture.intensityAt(center) ==
             doctest::Approx(center.vertexColor.x).epsilon(1e-5));
     }
   }
   SUBCASE("The material sees it through every spelling") {
-    const auto red{fixture.hitOn(0, 0.3f, -0.6f)};
+    const Hit red{fixture.hitOn(0, 0.3f, -0.6f)};
     CHECK(fixture.intensityAt(red) ==
           doctest::Approx(red.vertexColor.x).epsilon(1e-5));
-    const auto alias{fixture.hitOn(1, 0.3f, -0.6f)};
+    const Hit alias{fixture.hitOn(1, 0.3f, -0.6f)};
     CHECK(fixture.intensityAt(alias) ==
           doctest::Approx(alias.vertexColor.y).epsilon(1e-5));
     CHECK(fixture.intensityAt(fixture.hitOn(2, 0.3f, -0.6f)) ==
@@ -254,7 +256,7 @@ public:
     batch.primitive.shape = PrimitiveSpec::Shape::BOX;
     batch.materials.all = "vc_red";
     for (int i = 0; i < 3; i++) {
-      auto xf{shear};
+      float4x4 xf{shear};
       xf[0][1] += 0.05f * float(i);
       xf[3] = float4(10.0f * float(i), 0.0f, 0.0f, 1.0f);
       batch.batchXfs.push_back(xf);
@@ -272,7 +274,7 @@ public:
     scene.add(moving);
     LayoutItem movingBatch{batch};
     for (const auto &xf : batch.batchXfs) {
-      auto shut{xf};
+      float4x4 shut{xf};
       shut[3].z += 5.0f;
       movingBatch.batchXfsShut.push_back(shut);
     }
@@ -357,7 +359,7 @@ TEST_CASE("Scene: a raw hit rebuilds its record and reads its side") {
       CHECK(rebuilt.normal[i] == hit.normal[i]);
       CHECK(rebuilt.Ng[i] == hit.Ng[i]);
     }
-    const auto Ng{fixture.scene.hitNg(raw, rawRay.time)};
+    const float3 Ng{fixture.scene.hitNg(raw, rawRay.time)};
     for (int i = 0; i < 3; i++) CHECK(Ng[i] == hit.Ng[i]);
     CHECK((smdl::dot(Ng, ray.dir) > 0.0f) == (dirZ > 0.0f));
   }
@@ -367,15 +369,15 @@ TEST_CASE("Scene: the quaternion decomposition reassembles the key") {
   const float4x4 shear{
       float4(1.0f, 0.2f, 0.0f, 0.0f), float4(0.3f, 1.5f, 0.1f, 0.0f),
       float4(0.0f, -0.4f, 0.8f, 0.0f), float4(2.0f, -1.0f, 3.0f, 1.0f)};
-  auto mirrored{shear};
+  float4x4 mirrored{shear};
   mirrored[2] = -mirrored[2];
   const std::pair<const char *, float4x4> keys[]{{"sheared", shear},
                                                  {"mirrored", mirrored}};
   for (const auto &entry : keys) {
     const char *name{entry.first};
-    const auto &key{entry.second};
+    const float4x4 &key{entry.second};
     CAPTURE(name);
-    const auto qd{quaternionDecompositionOf(key)};
+    const RTCQuaternionDecomposition qd{quaternionDecompositionOf(key)};
     CHECK_NEAR(reassemble(qd), key, 2.0e-6f);
     CHECK(qd.shift_x == 0.0f);
     CHECK(qd.shift_y == 0.0f);
@@ -397,11 +399,11 @@ TEST_CASE("Scene: the quaternion decomposition reassembles the key") {
 
 TEST_CASE("Scene: the frame at a time through the retained handle") {
   FrameFixture fixture{};
-  const auto &instances{fixture.scene.meshInstances};
+  const std::vector<MeshInstance> &instances{fixture.scene.meshInstances};
   REQUIRE(instances.size() == 10);
   // The four static instances: no query, the authored matrix exactly.
   for (size_t i = 0; i < 4; i++) {
-    const auto &instance{instances[i]};
+    const MeshInstance &instance{instances[i]};
     CHECK(!instance.isMoving);
     std::optional<InstanceFrame> scratch{};
     CHECK(&instance.frameAt(0.3f, scratch) == &instance.frame);
@@ -425,21 +427,21 @@ TEST_CASE("Scene: the frame at a time through the retained handle") {
 
 TEST_CASE("Scene: a moving instance reads back its keys") {
   FrameFixture fixture{};
-  const auto &instances{fixture.scene.meshInstances};
+  const std::vector<MeshInstance> &instances{fixture.scene.meshInstances};
   REQUIRE(instances.size() == 10);
   constexpr float TOLERANCE = 1.0e-5f;
   SUBCASE("A regular instance: the frame is queried, the keys come back") {
-    const auto &sphere{instances[4]};
+    const MeshInstance &sphere{instances[4]};
     CHECK(sphere.isMoving);
     // The stored frame is the authored open key; the query fills the
     // scratch and answers with it.
     CHECK_SAME(sphere.frame.objectToWorld, instances[0].frame.objectToWorld);
     std::optional<InstanceFrame> scratch{};
-    const auto &frame{sphere.frameAt(0.3f, scratch)};
+    const InstanceFrame &frame{sphere.frameAt(0.3f, scratch)};
     REQUIRE(scratch);
     CHECK(&frame == &*scratch);
     CHECK_NEAR(readBack(sphere, 0.0f), sphere.frame.objectToWorld, TOLERANCE);
-    auto shut{instances[0].frame.objectToWorld};
+    float4x4 shut{instances[0].frame.objectToWorld};
     shut = float4x4{float4(0.0f, 1.0f, 0.0f, 0.0f),
                     float4(-1.0f, 0.0f, 0.0f, 0.0f),
                     float4(0.0f, 0.0f, 1.0f, 0.0f),
@@ -452,21 +454,21 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
   SUBCASE("An array: every element reads back its own pair") {
     for (size_t i = 5; i < 8; i++) {
       CAPTURE(i);
-      const auto &element{instances[i]};
+      const MeshInstance &element{instances[i]};
       CHECK(element.isMoving);
       CHECK(element.instPrimID == unsigned(i - 5));
       CHECK(element.geometry == instances[5].geometry);
-      const auto &open{instances[i - 4].frame.objectToWorld};
-      auto shut{open};
+      const float4x4 &open{instances[i - 4].frame.objectToWorld};
+      float4x4 shut{open};
       shut[3].z += 5.0f;
       CHECK_NEAR(readBack(element, 0.0f), open, TOLERANCE);
       CHECK_NEAR(readBack(element, 1.0f), shut, TOLERANCE);
     }
   }
   SUBCASE("A turn slerps: halfway through 90 degrees is 45, not the lerp") {
-    const auto &turning{instances[8]};
+    const MeshInstance &turning{instances[8]};
     CHECK(turning.isMoving);
-    const auto halfway{readBack(turning, 0.5f)};
+    const float4x4 halfway{readBack(turning, 0.5f)};
     const float c{std::cos(PI / 4)};
     CHECK(halfway[0].x == doctest::Approx(c).epsilon(TOLERANCE));
     CHECK(halfway[0].y == doctest::Approx(c).epsilon(TOLERANCE));
@@ -477,7 +479,7 @@ TEST_CASE("Scene: a moving instance reads back its keys") {
     CHECK(std::fabs(halfway[0].x - 0.5f) > 1.0e-2f);
   }
   SUBCASE("A pair that turns inside out holds its open key") {
-    const auto &insideOut{instances[9]};
+    const MeshInstance &insideOut{instances[9]};
     CHECK(!insideOut.isMoving);
     std::optional<InstanceFrame> scratch{};
     CHECK(&insideOut.frameAt(1.0f, scratch) == &insideOut.frame);
@@ -516,7 +518,7 @@ public:
     item.animation = spec;
     item.subdiv = subdiv;
     item.materials.all = material;
-    const auto first{uint32_t(scene.meshInstances.size())};
+    const uint32_t first{uint32_t(scene.meshInstances.size())};
     scene.add(item);
     return first;
   }
@@ -567,10 +569,10 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
   swing.clipName = "swing";
   AnimationSpec phase{};
   phase.offset = 0.25f;
-  const auto waveInst{fixture.add(fixture.files.wave, {})};
-  const auto stillInst{fixture.add(fixture.files.wave, off)};
-  const auto phaseInst{fixture.add(fixture.files.wave, phase)};
-  const auto armInst{fixture.add(fixture.files.pendulum, swing)};
+  const uint32_t waveInst{fixture.add(fixture.files.wave, {})};
+  const uint32_t stillInst{fixture.add(fixture.files.wave, off)};
+  const uint32_t phaseInst{fixture.add(fixture.files.wave, phase)};
+  const uint32_t armInst{fixture.add(fixture.files.pendulum, swing)};
   // The same two as a batch of two records each, ten units apart.
   const auto batchOf{
       [&](const std::string &fileName, const AnimationSpec &spec) {
@@ -579,20 +581,20 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
         item.animation = spec;
         item.materials.all = "paint";
         for (int i = 0; i < 2; i++) {
-          auto xf{float4x4(1.0f)};
+          float4x4 xf{1.0f};
           xf[3] = float4(10.0f * float(i), 0.0f, 0.0f, 1.0f);
           item.batchXfs.push_back(xf);
         }
-        const auto first{uint32_t(fixture.scene.meshInstances.size())};
+        const uint32_t first{uint32_t(fixture.scene.meshInstances.size())};
         fixture.scene.add(item);
         return first;
       }};
-  const auto waveBatch{batchOf(fixture.files.wave, {})};
-  const auto armBatch{batchOf(fixture.files.pendulum, swing)};
+  const uint32_t waveBatch{batchOf(fixture.files.wave, {})};
+  const uint32_t armBatch{batchOf(fixture.files.pendulum, swing)};
   fixture.commit();
   SUBCASE("A skinned mesh carries a parallel shut key in file space") {
-    const auto &mesh{fixture.meshOf(waveInst)};
-    const auto &inst{fixture.scene.meshInstances[waveInst]};
+    const Mesh &mesh{fixture.meshOf(waveInst)};
+    const MeshInstance &inst{fixture.scene.meshInstances[waveInst]};
     CHECK(mesh.isSkinned);
     CHECK(mesh.deforms());
     CHECK(inst.isDeforming);
@@ -600,13 +602,13 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
     REQUIRE(mesh.verts.size() == 7);
     REQUIRE(mesh.vertsShut.size() == 7);
     // The tip has turned 22.5 degrees at open and 67.5 at shut.
-    const auto tip{nearestVert(mesh, tipOpen)};
+    const uint32_t tip{nearestVert(mesh, tipOpen)};
     CHECK_NEAR(mesh.verts[tip].point, tipOpen, 1e-4f);
     CHECK_NEAR(mesh.vertsShut[tip].point, tipShut, 1e-4f);
     CHECK_NEAR(mesh.vertsShut[tip].normal, float3(0, 0, 1), 1e-4f);
-    const auto base{nearestVert(mesh, float3(0, 0, 0))};
+    const uint32_t base{nearestVert(mesh, float3(0, 0, 0))};
     CHECK_NEAR(mesh.vertsShut[base].point, float3(0, 0, 0), 1e-4f);
-    const auto loose{nearestVert(mesh, float3(5, 5, 0))};
+    const uint32_t loose{nearestVert(mesh, float3(5, 5, 0))};
     CHECK_NEAR(mesh.verts[loose].point, float3(5, 5, 0), 1e-4f);
     CHECK_NEAR(mesh.vertsShut[loose].point, float3(5, 5, 0), 1e-4f);
     // The placing node's five units up never reach a skinned mesh.
@@ -616,7 +618,7 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
           doctest::Approx(0));
   }
   SUBCASE("'off' reads the bind pose as a still mesh, welded alike") {
-    const auto &mesh{fixture.meshOf(stillInst)};
+    const Mesh &mesh{fixture.meshOf(stillInst)};
     CHECK(&mesh != &fixture.meshOf(waveInst));
     CHECK(!mesh.isSkinned);
     CHECK(!mesh.deforms());
@@ -629,14 +631,14 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
           doctest::Approx(5));
   }
   SUBCASE("A phase is another mesh set") {
-    const auto &mesh{fixture.meshOf(phaseInst)};
+    const Mesh &mesh{fixture.meshOf(phaseInst)};
     CHECK(&mesh != &fixture.meshOf(waveInst));
     // 0.5 s into the clip at open: forty-five degrees.
     const float3 expected{1 + rig::SIN45, rig::SIN45, 0};
     CHECK_NEAR(mesh.verts[nearestVert(mesh, expected)].point, expected, 1e-4f);
   }
   SUBCASE("A clip that moves a node moves the instance") {
-    const auto &inst{fixture.scene.meshInstances[armInst]};
+    const MeshInstance &inst{fixture.scene.meshInstances[armInst]};
     CHECK(inst.isMoving);
     CHECK(!inst.isDeforming);
     CHECK(!fixture.meshOf(armInst).deforms());
@@ -648,18 +650,18 @@ TEST_CASE("Scene: the animated read bakes both keys of the shutter") {
   }
   SUBCASE("A batch carries the same keys per element") {
     for (uint32_t i = 0; i < 2; i++) {
-      const auto &skinned{fixture.scene.meshInstances[waveBatch + i]};
+      const MeshInstance &skinned{fixture.scene.meshInstances[waveBatch + i]};
       CHECK(skinned.isDeforming);
       CHECK(!skinned.isMoving);
       CHECK(&fixture.meshOf(waveBatch + i) == &fixture.meshOf(waveInst));
       CHECK(skinned.frame.objectToWorld[3].x == doctest::Approx(10.0f * i));
-      const auto &arm{fixture.scene.meshInstances[armBatch + i]};
+      const MeshInstance &arm{fixture.scene.meshInstances[armBatch + i]};
       CHECK(arm.isMoving);
       CHECK(!arm.isDeforming);
       std::optional<InstanceFrame> scratch{};
       CHECK_NEAR(float3(arm.frame.objectToWorld[0]),
                  float3(std::cos(open), std::sin(open), 0), 1e-4f);
-      const auto &shutFrame{arm.frameAt(1.0f, scratch)};
+      const InstanceFrame &shutFrame{arm.frameAt(1.0f, scratch)};
       CHECK_NEAR(float3(shutFrame.objectToWorld[0]),
                  float3(std::cos(shut), std::sin(shut), 0), 1e-3f);
       CHECK(shutFrame.objectToWorld[3].x == doctest::Approx(10.0f * i));
@@ -671,17 +673,17 @@ TEST_CASE("Scene: a shut shutter holds the pose at the base time") {
   RigFixture fixture{0.5f, 0.0f};
   AnimationSpec swing{};
   swing.clipName = "swing";
-  const auto waveInst{fixture.add(fixture.files.wave, {})};
-  const auto armInst{fixture.add(fixture.files.pendulum, swing)};
+  const uint32_t waveInst{fixture.add(fixture.files.wave, {})};
+  const uint32_t armInst{fixture.add(fixture.files.pendulum, swing)};
   fixture.commit();
-  const auto &mesh{fixture.meshOf(waveInst)};
+  const Mesh &mesh{fixture.meshOf(waveInst)};
   CHECK(mesh.isSkinned);
   CHECK(!mesh.deforms());
   CHECK(mesh.vertsShut.empty());
   CHECK(!fixture.scene.meshInstances[waveInst].isDeforming);
   const float3 tip{1 + rig::SIN45, rig::SIN45, 0};
   CHECK_NEAR(mesh.verts[nearestVert(mesh, tip)].point, tip, 1e-4f);
-  const auto &arm{fixture.scene.meshInstances[armInst]};
+  const MeshInstance &arm{fixture.scene.meshInstances[armInst]};
   CHECK(!arm.isMoving);
   CHECK_NEAR(float3(arm.frame.objectToWorld[0]),
              float3(rig::SIN45, rig::SIN45, 0), 1e-4f);
@@ -694,13 +696,14 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
   linear.isSmooth = false;
   SubdivSpec displaced{};
   displaced.isDisplaced = true;
-  const auto morphInst{fixture.add(fixture.files.morph, {}, linear)};
-  const auto bumpInst{fixture.add(fixture.files.wave, {}, displaced, "bump")};
-  const auto flatInst{fixture.add(fixture.files.morph, {})};
+  const uint32_t morphInst{fixture.add(fixture.files.morph, {}, linear)};
+  const uint32_t bumpInst{
+      fixture.add(fixture.files.wave, {}, displaced, "bump")};
+  const uint32_t flatInst{fixture.add(fixture.files.morph, {})};
   fixture.commit();
   SUBCASE("The animated read welds a duplicated corner at both keys") {
     // Five authored corners, four after the weld, at both keys.
-    const auto &mesh{fixture.meshOf(flatInst)};
+    const Mesh &mesh{fixture.meshOf(flatInst)};
     CHECK(mesh.verts.size() == 4);
     CHECK(mesh.vertsShut.size() == 4);
     CHECK(mesh.faces.size() == 2);
@@ -708,7 +711,7 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
       for (const auto index : face) CHECK(index < 4);
   }
   SUBCASE("A linearly subdivided morph lifts by its weights at each key") {
-    const auto &mesh{fixture.meshOf(morphInst)};
+    const Mesh &mesh{fixture.meshOf(morphInst)};
     CHECK(mesh.deforms());
     CHECK(fixture.scene.meshInstances[morphInst].isDeforming);
     // The file's quad is two triangles, which the bilinear split turns
@@ -728,7 +731,7 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
     CHECK(maxShutX == doctest::Approx(1.375f));
   }
   SUBCASE("A displaced skin moves both keys along their normals") {
-    const auto &mesh{fixture.meshOf(bumpInst)};
+    const Mesh &mesh{fixture.meshOf(bumpInst)};
     REQUIRE(mesh.vertsShut.size() == mesh.verts.size());
     for (size_t i = 0; i < mesh.verts.size(); i++) {
       CHECK(mesh.verts[i].point.z == doctest::Approx(0.1f));
@@ -736,7 +739,7 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
     }
     const float open{0.25f * PI / 2}, shut{0.75f * PI / 2};
     const float3 tip{1 + std::cos(open), std::sin(open), 0.1f};
-    const auto index{nearestVert(mesh, tip)};
+    const uint32_t index{nearestVert(mesh, tip)};
     CHECK_NEAR(mesh.verts[index].point, tip, 1e-4f);
     CHECK_NEAR(mesh.vertsShut[index].point,
                float3(1 + std::cos(shut), std::sin(shut), 0.1f), 1e-4f);
@@ -745,7 +748,7 @@ TEST_CASE("Scene: subdivision and displacement carry the shut key") {
 
 TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
   RigFixture fixture{0.25f, 0.5f};
-  const auto flatInst{fixture.add(fixture.files.morph, {})};
+  const uint32_t flatInst{fixture.add(fixture.files.morph, {})};
   // The same quad three units over, under a placement that also rises one
   // unit over the shutter.
   LayoutItem rising{};
@@ -754,7 +757,7 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
   rising.objectToWorld[3] = float4(3.0f, 0.0f, 0.0f, 1.0f);
   rising.objectToWorldShut = rising.objectToWorld;
   (*rising.objectToWorldShut)[3].z = 1.0f;
-  const auto risingInst{uint32_t(fixture.scene.meshInstances.size())};
+  const uint32_t risingInst{uint32_t(fixture.scene.meshInstances.size())};
   fixture.scene.add(rising);
   fixture.commit();
   const auto castDown{[&](float x, float y, float time) {
@@ -775,19 +778,19 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
                             std::pair{1.0f, 0.75f}}) {
       const float u{key.first}, z{key.second};
       CAPTURE(u);
-      const auto hit{castDown(0.5f, 0.5f, u)};
+      const Hit hit{castDown(0.5f, 0.5f, u)};
       CHECK(hit.instIndex == flatInst);
       CHECK(hit.time == u);
       CHECK(hit.point.z == doctest::Approx(z).epsilon(1e-4));
       CHECK_NEAR(hit.Ng, float3(0, 0, 1), 1e-4f);
-      const auto expected{smdl::normalize((1.0f - u) * normalAt(0.125f) +
-                                          u * normalAt(0.375f))};
+      const float3 expected{smdl::normalize((1.0f - u) * normalAt(0.125f) +
+                                            u * normalAt(0.375f))};
       CHECK_NEAR(hit.normal, expected, 1e-4f);
     }
   }
   SUBCASE("The manifold geometry and the projection hit reproduce it") {
-    const auto hit{castDown(0.5f, 0.5f, 0.5f)};
-    const auto geometry{fixture.scene.manifoldGeometry(hit)};
+    const Hit hit{castDown(0.5f, 0.5f, 0.5f)};
+    const smdl::ManifoldGeometry geometry{fixture.scene.manifoldGeometry(hit)};
     for (int i = 0; i < 3; i++) {
       CHECK(geometry.point[i] == hit.point[i]);
       CHECK(geometry.normal[i] == hit.normal[i]);
@@ -811,22 +814,23 @@ TEST_CASE("Scene: a hit on a deforming mesh lerps its triangle to the time") {
     fixture.scene.makeHit(raw, ray, hit);
     CHECK(hit.instIndex == risingInst);
     CHECK(hit.time == 0.5f);
-    const auto Ng{fixture.scene.hitNg(raw, ray.time)};
+    const float3 Ng{fixture.scene.hitNg(raw, ray.time)};
     for (int i = 0; i < 3; i++) CHECK(Ng[i] == hit.Ng[i]);
     CHECK(smdl::dot(Ng, ray.dir) < 0.0f);
   }
   SUBCASE("Deformation composes with the placement's motion") {
-    const auto &inst{fixture.scene.meshInstances[risingInst]};
+    const MeshInstance &inst{fixture.scene.meshInstances[risingInst]};
     CHECK(inst.isMoving);
     CHECK(inst.isDeforming);
     for (const auto &key : {std::pair{0.0f, 0.25f}, std::pair{0.5f, 1.0f},
                             std::pair{1.0f, 1.75f}}) {
       const float u{key.first}, z{key.second};
       CAPTURE(u);
-      const auto hit{castDown(3.5f, 0.5f, u)};
+      const Hit hit{castDown(3.5f, 0.5f, u)};
       CHECK(hit.instIndex == risingInst);
       CHECK(hit.point.z == doctest::Approx(z).epsilon(1e-3));
-      const auto geometry{fixture.scene.manifoldGeometry(hit)};
+      const smdl::ManifoldGeometry geometry{
+          fixture.scene.manifoldGeometry(hit)};
       for (int i = 0; i < 3; i++) CHECK(geometry.point[i] == hit.point[i]);
     }
   }

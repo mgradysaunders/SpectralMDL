@@ -154,7 +154,7 @@ public:
   // position-independent? Which of the two paths below a medium takes
   // hangs on this, so every case states the answer it is written for.
   [[nodiscard]] bool isProvablyHomogeneous(const char *name) {
-    const auto *materialDef{compiler.findMaterial(name)};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
     REQUIRE(materialDef);
     return materialDef->hasHomogeneousVolume();
   }
@@ -163,7 +163,7 @@ public:
   // as the fixture. `prev` is the entry below it.
   [[nodiscard]] MediumStack &entry(const char *name,
                                    const MediumStack *prev = nullptr) {
-    const auto *materialDef{compiler.findMaterial(name)};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
     REQUIRE(materialDef);
     mMaterials.push_back(
         std::make_unique<smdl::JIT::Material>(*state, materialDef));
@@ -297,7 +297,7 @@ struct Means final {
 
 TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
   Fixture fixture{};
-  const auto &wavelengths{fixture.wavelengths};
+  const Color &wavelengths{fixture.wavelengths};
   const float unitScale{fixture.state->metersPerSceneUnit};
   const float3 org{};
   const float3 dir{1.0f, 0.0f, 0.0f};
@@ -328,14 +328,14 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
 
   {
     INFO("an entry whose material has no volume carries no medium");
-    auto &clear{fixture.entry("clear")};
+    MediumStack &clear{fixture.entry("clear")};
     medium.reset(&clear, wavelengths, PathTime(0.0f), org, dir);
     CHECK_FALSE(medium.hasMedium());
   }
 
   REQUIRE(fixture.isProvablyHomogeneous("fog") == true);
-  auto &fog{fixture.entry("fog")};
-  const auto fogC{coefficientsOf(fog, unitScale)};
+  MediumStack &fog{fixture.entry("fog")};
+  const Coefficients fogC{coefficientsOf(fog, unitScale)};
   const Color fogTr{beerLambert(fogC.extinction(), DISTANCE)};
   {
     INFO("a homogeneous medium attenuates by Beer-Lambert, drawing nothing");
@@ -354,7 +354,7 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
 
   {
     INFO("the free-flight estimator's expectation is the closed form");
-    const auto means{
+    const Means means{
         sampleMeans(medium, &fog, wavelengths, org, dir, DISTANCE, nullptr)};
     checkClose(means.survived, fogTr, MEAN_TOLERANCE, "the survival weight");
     // What the walk keeps on scattering is the scattering coefficient
@@ -369,8 +369,8 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
   {
     INFO("a homogeneous medium's emission is the closed-form integral");
     REQUIRE(fixture.isProvablyHomogeneous("glow"));
-    auto &glow{fixture.entry("glow")};
-    const auto glowC{coefficientsOf(glow, unitScale)};
+    MediumStack &glow{fixture.entry("glow")};
+    const Coefficients glowC{coefficientsOf(glow, unitScale)};
     medium.reset(&glow, wavelengths, PathTime(0.0f), org, dir);
     REQUIRE(medium.hasMedium());
     Sampler sampler{};
@@ -389,7 +389,7 @@ TEST_CASE("Medium: the vacuum and the homogeneous closed forms") {
 
 TEST_CASE("Medium: null-collision tracking is unbiased") {
   Fixture fixture{};
-  const auto &wavelengths{fixture.wavelengths};
+  const Color &wavelengths{fixture.wavelengths};
   const float unitScale{fixture.state->metersPerSceneUnit};
   const float3 org{};
   const float3 dir{1.0f, 0.0f, 0.0f};
@@ -399,7 +399,7 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
   constexpr float DISTANCE{2.0f};
   Medium medium{};
   REQUIRE(fixture.isProvablyHomogeneous("ramp_vol") == false);
-  auto &ramp{fixture.entry("ramp_vol")};
+  MediumStack &ramp{fixture.entry("ramp_vol")};
   const Color base{Color(ramp.material->getMaxScatteringCoefficient()) *
                    unitScale};
   const Color rampTr{beerLambert(base, 1.0f)};
@@ -434,7 +434,7 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
 
   {
     INFO("delta tracking splits the segment without losing energy");
-    const auto means{
+    const Means means{
         sampleMeans(medium, &ramp, wavelengths, org, dir, DISTANCE, nullptr)};
     checkClose(means.survived, rampTr, MEAN_TOLERANCE, "the survival weight");
     // Nothing absorbs here, so the two halves are complements and must
@@ -452,11 +452,11 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
     // down to the snapshot the evaluation captured rather than tracking
     // against a majorant it does not have.
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
-    auto &nomax{fixture.entry("ramp_nomax")};
+    MediumStack &nomax{fixture.entry("ramp_nomax")};
     medium.reset(&nomax, wavelengths, PathTime(0.0f), org, dir);
     REQUIRE(medium.hasMedium());
     CHECK_FALSE(medium.attenuationDraws());
-    const auto c{coefficientsOf(nomax, unitScale)};
+    const Coefficients c{coefficientsOf(nomax, unitScale)};
     REQUIRE(c.extinction().maxComponent() > 0.0f);
     Sampler sampler{};
     sampler.startPixelSample(0, 0);
@@ -469,24 +469,24 @@ TEST_CASE("Medium: null-collision tracking is unbiased") {
 
 TEST_CASE("Medium: additive overlap") {
   Fixture fixture{};
-  const auto &wavelengths{fixture.wavelengths};
+  const Color &wavelengths{fixture.wavelengths};
   const float unitScale{fixture.state->metersPerSceneUnit};
   const float3 org{};
   const float3 dir{1.0f, 0.0f, 0.0f};
   constexpr float DISTANCE{1.5f};
   Medium medium{};
   REQUIRE(fixture.isProvablyHomogeneous("fog_a") == true);
-  auto &a{fixture.entry("fog_a")};
-  auto &b{fixture.entry("fog_b", &a)};
-  const auto ac{coefficientsOf(a, unitScale)};
-  const auto bc{coefficientsOf(b, unitScale)};
+  MediumStack &a{fixture.entry("fog_a")};
+  MediumStack &b{fixture.entry("fog_b", &a)};
+  const Coefficients ac{coefficientsOf(a, unitScale)};
+  const Coefficients bc{coefficientsOf(b, unitScale)};
   const Color mu{ac.extinction() + bc.extinction()};
   const Color overlapTr{beerLambert(mu, DISTANCE)};
 
   {
     INFO("two additive media attenuate as the single medium of their sum");
     REQUIRE(fixture.isProvablyHomogeneous("fog_sum"));
-    auto &sum{fixture.entry("fog_sum")};
+    MediumStack &sum{fixture.entry("fog_sum")};
     Sampler s1{}, s2{};
     s1.startPixelSample(0, 0);
     s2.startPixelSample(0, 0);
@@ -503,14 +503,14 @@ TEST_CASE("Medium: additive overlap") {
     INFO("a non-additive entry replaces everything below it");
     // The run of additive entries from the top plus the first
     // non-additive one, and nothing under that.
-    auto &deep{fixture.entry("fog_b")};
-    auto &blocking{fixture.entry("fog", &deep)};
-    auto &over1{fixture.entry("fog_a", &blocking)};
-    auto &over2{fixture.entry("fog_b", &over1)};
+    MediumStack &deep{fixture.entry("fog_b")};
+    MediumStack &blocking{fixture.entry("fog", &deep)};
+    MediumStack &over1{fixture.entry("fog_a", &blocking)};
+    MediumStack &over2{fixture.entry("fog_b", &over1)};
     // The same three entries with nothing underneath them.
-    auto &plain1{fixture.entry("fog")};
-    auto &plain2{fixture.entry("fog_a", &plain1)};
-    auto &plain3{fixture.entry("fog_b", &plain2)};
+    MediumStack &plain1{fixture.entry("fog")};
+    MediumStack &plain2{fixture.entry("fog_a", &plain1)};
+    MediumStack &plain3{fixture.entry("fog_b", &plain2)};
     Sampler s1{}, s2{};
     s1.startPixelSample(0, 0);
     s2.startPixelSample(0, 0);
@@ -525,7 +525,7 @@ TEST_CASE("Medium: additive overlap") {
 
   {
     INFO("the phase pick carries each component's share of the scattering");
-    const auto means{
+    const Means means{
         sampleMeans(medium, &b, wavelengths, org, dir, DISTANCE, a.material)};
     Color expectFirst{}, expectAll{};
     for (size_t i = 0; i < mu.size(); i++) {
@@ -545,8 +545,8 @@ TEST_CASE("Medium: additive overlap") {
   {
     INFO("two tracked components divide their collisions by their spectra");
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_add2"));
-    auto &first{fixture.entry("ramp_add")};
-    auto &second{fixture.entry("ramp_add2", &first)};
+    MediumStack &first{fixture.entry("ramp_add")};
+    MediumStack &second{fixture.entry("ramp_add2", &first)};
     constexpr float SPAN{2.0f};
     const Color baseFirst{Color(first.material->getMaxScatteringCoefficient()) *
                           unitScale};
@@ -564,8 +564,8 @@ TEST_CASE("Medium: additive overlap") {
       expectAll[i] = 1.0f - trackedTr[i];
       expectFirst[i] = baseFirst[i] / baseTotal[i] * expectAll[i];
     }
-    const auto means{sampleMeans(medium, &second, wavelengths, org, dir, SPAN,
-                                 first.material)};
+    const Means means{sampleMeans(medium, &second, wavelengths, org, dir, SPAN,
+                                  first.material)};
     CHECK(means.numScattered > 0);
     checkClose(means.survived, trackedTr, MEAN_TOLERANCE,
                "the survival weight");
@@ -577,9 +577,9 @@ TEST_CASE("Medium: additive overlap") {
 
   {
     INFO("a homogeneous component tracked alongside a isHeterogeneous one");
-    auto &hom{fixture.entry("fog_a")};
+    MediumStack &hom{fixture.entry("fog_a")};
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_add"));
-    auto &het{fixture.entry("ramp_add", &hom)};
+    MediumStack &het{fixture.entry("ramp_add", &hom)};
     constexpr float SPAN{2.0f};
     // The ramp contributes an optical depth of `base` over [0, 2]; the
     // homogeneous component contributes its extinction over the span.
@@ -609,7 +609,7 @@ namespace {
 
 TEST_CASE("Medium: the resolution carries across paths") {
   Fixture fixture{};
-  const auto &wavelengths{fixture.wavelengths};
+  const Color &wavelengths{fixture.wavelengths};
   const float3 org{0.0f, 0.0f, 0.0f};
   const float3 dir{1.0f, 0.0f, 0.0f};
   constexpr float DISTANCE{2.0f};
@@ -622,12 +622,12 @@ TEST_CASE("Medium: the resolution carries across paths") {
     // floating-point numbers, and every scattering event must name the
     // new stack's evaluation, never the old one's.
     REQUIRE(fixture.isProvablyHomogeneous("fog"));
-    auto &a{fixture.entry("fog")};
-    auto &b{fixture.entry("fog")};
-    const auto first{
+    MediumStack &a{fixture.entry("fog")};
+    MediumStack &b{fixture.entry("fog")};
+    const Means first{
         sampleMeans(medium, &a, wavelengths, org, dir, DISTANCE, a.material)};
     medium.beginPath();
-    const auto second{
+    const Means second{
         sampleMeans(medium, &b, wavelengths, org, dir, DISTANCE, b.material)};
     REQUIRE(first.numScattered > 0);
     CHECK(first.numScattered == second.numScattered);
@@ -639,12 +639,12 @@ TEST_CASE("Medium: the resolution carries across paths") {
   {
     INFO("the same tracked medium on a new stack");
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_vol"));
-    auto &a{fixture.entry("ramp_vol")};
-    auto &b{fixture.entry("ramp_vol")};
-    const auto first{
+    MediumStack &a{fixture.entry("ramp_vol")};
+    MediumStack &b{fixture.entry("ramp_vol")};
+    const Means first{
         sampleMeans(medium, &a, wavelengths, org, dir, DISTANCE, a.material)};
     medium.beginPath();
-    const auto second{
+    const Means second{
         sampleMeans(medium, &b, wavelengths, org, dir, DISTANCE, b.material)};
     CHECK(medium.attenuationDraws());
     REQUIRE(first.numScattered > 0);
@@ -660,14 +660,14 @@ TEST_CASE("Medium: the resolution carries across paths") {
     // must resolve to its own snapshot, not be taken for the last one.
     REQUIRE_FALSE(fixture.isProvablyHomogeneous("ramp_nomax"));
     const float unitScale{fixture.state->metersPerSceneUnit};
-    auto &a{fixture.entry("ramp_nomax")};
+    MediumStack &a{fixture.entry("ramp_nomax")};
     fixture.state->position = float3(2.0f, 0.0f, 0.0f);
-    auto &b{fixture.entry("ramp_nomax")};
+    MediumStack &b{fixture.entry("ramp_nomax")};
     fixture.state->position = float3(0.0f, 0.0f, 0.0f);
-    const auto first{
+    const Color first{
         attenuateMean(medium, &a, wavelengths, org, dir, DISTANCE)};
     medium.beginPath();
-    const auto second{
+    const Color second{
         attenuateMean(medium, &b, wavelengths, org, dir, DISTANCE)};
     CHECK_FALSE(isIdentical(first, second));
     checkClose(second,
@@ -682,12 +682,12 @@ TEST_CASE("Medium: the resolution carries across paths") {
     std::optional<MediumStack> slot{};
     material.emplace(*fixture.state, fixture.compiler.findMaterial("fog"));
     slot.emplace(MediumStack{nullptr, &*material, nullptr});
-    const auto fog{
+    const Color fog{
         attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};
     material.emplace(*fixture.state, fixture.compiler.findMaterial("fog_a"));
     slot.emplace(MediumStack{nullptr, &*material, nullptr});
     medium.beginPath();
-    const auto fogA{
+    const Color fogA{
         attenuateMean(medium, &*slot, wavelengths, org, dir, DISTANCE)};
     Medium fresh{};
     CHECK_FALSE(isIdentical(fog, fogA));

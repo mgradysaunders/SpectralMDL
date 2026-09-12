@@ -50,8 +50,9 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
     double cosTheta{std::cos(theta)};
     for (int iX = 0; iX < nX; iX++) {
       double phi{2.0 * smdl::PI * (iX + 0.5) / nX};
-      auto w{smdl::float3(float(sinTheta * std::cos(phi)),
-                          float(sinTheta * std::sin(phi)), float(cosTheta))};
+      smdl::float3 w{smdl::float3(float(sinTheta * std::cos(phi)),
+                                  float(sinTheta * std::sin(phi)),
+                                  float(cosTheta))};
       double dOmega{sinTheta * (smdl::PI / nY) * (2.0 * smdl::PI / nX)};
       pdfIntegral += profile.directionPDF(w) * dOmega;
       intensityIntegral += profile.interpolate(w) * dOmega;
@@ -63,7 +64,8 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
   std::mt19937 prng{};
   for (int iter = 0; iter < 100; iter++) {
     float pdf{};
-    auto w{profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    smdl::float3 w{
+        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
     REQUIRE(pdf > 0);
     CHECK(profile.directionPDF(w) == doctest::Approx(pdf).epsilon(1e-3));
   }
@@ -72,7 +74,8 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
   const int n{100'000};
   for (int iter = 0; iter < n; iter++) {
     float pdf{};
-    auto w{profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    smdl::float3 w{
+        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
     if (!(pdf > 0)) {
       numInvalid++;
       continue;
@@ -86,18 +89,18 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
 
 TEST_CASE("LightProfile: the IES symmetries and the sampling") {
   SUBCASE("A default profile is invalid and safe to query") {
-    auto profile{smdl::LightProfile()};
+    smdl::LightProfile profile{};
     CHECK(!profile.isValid());
     CHECK(profile.directionPDF(smdl::float3(0, 0, 1)) == 0.0f);
     float pdf{1.0f};
-    auto w{profile.directionSample(smdl::float2(0.5f, 0.5f), &pdf)};
+    smdl::float3 w{profile.directionSample(smdl::float2(0.5f, 0.5f), &pdf)};
     CHECK(pdf == 0.0f);
     CHECK(w.x == 0.0f);
     CHECK(w.y == 0.0f);
     CHECK(w.z == 0.0f);
   }
   SUBCASE("An axially symmetric profile reads back its angles") {
-    auto profile{smdl::LightProfile()};
+    smdl::LightProfile profile{};
     REQUIRE_OK(profile.loadFromFileMemory(axialIES));
     REQUIRE(profile.isValid());
     CHECK(profile.maxIntensity() == doctest::Approx(1.0f));
@@ -111,7 +114,7 @@ TEST_CASE("LightProfile: the IES symmetries and the sampling") {
     checkDistributionConsistency(profile);
   }
   SUBCASE("A quadrant symmetric profile mirrors into four") {
-    auto profile{smdl::LightProfile()};
+    smdl::LightProfile profile{};
     REQUIRE_OK(profile.loadFromFileMemory(quadrantIES));
     REQUIRE(profile.isValid());
     // The quadrant unfolds by mirroring, so the +X and -X directions
@@ -126,15 +129,16 @@ TEST_CASE("LightProfile: the IES symmetries and the sampling") {
 TEST_CASE("LightProfile: where a malformed file goes wrong") {
   // `axialIES` with one line replaced, the lines counting from 1.
   const auto withLine{[](int lineNo, const std::string &replacement) {
-    auto text{std::string(axialIES)};
-    auto begin{size_t(0)};
+    std::string text(axialIES);
+    size_t begin{0};
     for (int i = 1; i < lineNo; i++) begin = text.find('\n', begin) + 1;
     text.replace(begin, text.find('\n', begin) - begin, replacement);
     return text;
   }};
   const auto refusal{[](std::string text) {
-    auto profile{smdl::LightProfile()};
-    auto error{profile.loadFromFileMemory(std::move(text))};
+    smdl::LightProfile profile{};
+    std::optional<smdl::Error> error{
+        profile.loadFromFileMemory(std::move(text))};
     REQUIRE(error.has_value());
     CHECK(!profile.isValid());
     return error->message;

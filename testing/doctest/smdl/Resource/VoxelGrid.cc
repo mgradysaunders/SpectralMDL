@@ -20,7 +20,7 @@ bool hasNanoVDB() { return smdl::BuildInfo::get().withNanoVDB != nullptr; }
 // Do two grids agree everywhere: extent, background, value bounds,
 // world bounds, and every voxel of the extent?
 bool isSameGrid(const smdl::VoxelGrid &grid0, const smdl::VoxelGrid &grid1) {
-  const auto extent{grid0.getExtent()};
+  const smdl::int3 extent{grid0.getExtent()};
   if (!(extent.x == grid1.getExtent().x && extent.y == grid1.getExtent().y &&
         extent.z == grid1.getExtent().z))
     return false;
@@ -61,12 +61,12 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
   SUBCASE("A Mitsuba volume round-trips through the file") {
     // A 20x24x28 linear field, exactly representable in float.
     const int NX{20}, NY{24}, NZ{28};
-    auto values{std::vector<float>()};
+    std::vector<float> values{};
     for (int z = 0; z < NZ; z++)
       for (int y = 0; y < NY; y++)
         for (int x = 0; x < NX; x++)
           values.push_back(float(x) + 100.0f * float(y) + 10000.0f * float(z));
-    auto fileName{(tmpDir / "linear.vol").string()};
+    std::string fileName{(tmpDir / "linear.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
     REQUIRE_OK(grid.loadFromFile(fileName));
@@ -116,12 +116,12 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     const int B{smdl::VoxelGrid::BRICK_EXTENT};
     const int NX{3 * B}, NY{B}, NZ{B};
     const int lo{3 * B / 2}, hi{5 * B / 2};
-    auto values{std::vector<float>()};
+    std::vector<float> values{};
     for (int z = 0; z < NZ; z++)
       for (int y = 0; y < NY; y++)
         for (int x = 0; x < NX; x++)
           values.push_back(x >= lo && x < hi ? 2.0f + float(x - lo) : 0.0f);
-    auto fileName{(tmpDir / "sparse.vol").string()};
+    std::string fileName{(tmpDir / "sparse.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
     REQUIRE_OK(grid.loadFromFile(fileName));
@@ -149,12 +149,12 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     REQUIRE(E == 4);
     const int NY{E}, NZ{E};
     const int lo{3 * E / 2}, hi{5 * E / 2};
-    auto values{std::vector<float>()};
+    std::vector<float> values{};
     for (int z = 0; z < NZ; z++)
       for (int y = 0; y < NY; y++)
         for (int x = 0; x < NX; x++)
           values.push_back(x >= lo && x < hi ? 2.0f + float(x - lo) : 0.0f);
-    auto fileName{(tmpDir / "cells.vol").string()};
+    std::string fileName{(tmpDir / "cells.vol").string()};
     writeVol(fileName, NX, NY, NZ, values);
     smdl::VoxelGrid grid{};
     REQUIRE_OK(grid.loadFromFile(fileName));
@@ -184,7 +184,7 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     // one; spot check against a sweep through the cell that owns the
     // discontinuity.
     bool isBounded{true};
-    const auto bounds{grid.getMajorantBounds(1, 0, 0)};
+    const smdl::float2 bounds{grid.getMajorantBounds(1, 0, 0)};
     for (int i = 0; i < 1000; i++) {
       const float3 coord{(float(E) + float(E) * float(i) / 999.0f) / float(NX),
                          0.4f, 0.6f};
@@ -197,17 +197,17 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     // A 20x24x28 field with structure in every axis, so a transposed or
     // shifted write cannot pass.
     const int NX{20}, NY{24}, NZ{28};
-    auto values{std::vector<float>()};
+    std::vector<float> values{};
     for (int z = 0; z < NZ; z++)
       for (int y = 0; y < NY; y++)
         for (int x = 0; x < NX; x++)
           values.push_back(float(x) + 100.0f * float(y) + 10000.0f * float(z));
-    auto sourceName{(tmpDir / "source.vol").string()};
+    std::string sourceName{(tmpDir / "source.vol").string()};
     writeVol(sourceName, NX, NY, NZ, values);
     smdl::VoxelGrid source{};
     REQUIRE_OK(source.loadFromFile(sourceName));
     SUBCASE("As a Mitsuba volume") {
-      auto fileName{(tmpDir / "saved.vol").string()};
+      std::string fileName{(tmpDir / "saved.vol").string()};
       REQUIRE_OK(source.saveToFile(fileName));
       smdl::VoxelGrid grid{};
       REQUIRE_OK(grid.loadFromFile(fileName));
@@ -215,7 +215,7 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     }
     SUBCASE("As a NanoVDB grid") {
       if (!hasNanoVDB()) return;
-      auto fileName{(tmpDir / "saved.nvdb").string()};
+      std::string fileName{(tmpDir / "saved.nvdb").string()};
       REQUIRE_OK(source.saveToFile(fileName));
       smdl::VoxelGrid grid{};
       // The default name is what an unnamed save writes.
@@ -223,7 +223,7 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       CHECK(isSameGrid(source, grid));
       // And back again, so the whole conversion the CLI performs is
       // covered in both directions.
-      auto backName{(tmpDir / "back.vol").string()};
+      std::string backName{(tmpDir / "back.vol").string()};
       REQUIRE_OK(grid.saveToFile(backName));
       smdl::VoxelGrid back{};
       REQUIRE_OK(back.loadFromFile(backName));
@@ -236,17 +236,17 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       // from them, so without anchoring this would come back 8x8x8 and
       // silently rescale texture space.
       const int MX{40}, MY{8}, MZ{8};
-      auto sparse{std::vector<float>()};
+      std::vector<float> sparse{};
       for (int z = 0; z < MZ; z++)
         for (int y = 0; y < MY; y++)
           for (int x = 0; x < MX; x++)
             sparse.push_back(x >= 16 && x < 24 ? 1.0f + float(x - 16) : 0.0f);
-      auto borderName{(tmpDir / "border.vol").string()};
+      std::string borderName{(tmpDir / "border.vol").string()};
       writeVol(borderName, MX, MY, MZ, sparse);
       smdl::VoxelGrid border{};
       REQUIRE_OK(border.loadFromFile(borderName));
       REQUIRE(border.getExtent().x == MX);
-      auto fileName{(tmpDir / "border.nvdb").string()};
+      std::string fileName{(tmpDir / "border.nvdb").string()};
       REQUIRE_OK(border.saveToFile(fileName));
       smdl::VoxelGrid grid{};
       REQUIRE_OK(grid.loadFromFile(fileName, "density"));
@@ -264,13 +264,13 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     SUBCASE("As several named grids in one NanoVDB file") {
       if (!hasNanoVDB()) return;
       // A second field, distinguishable from the first everywhere.
-      auto other{std::vector<float>()};
+      std::vector<float> other{};
       for (float value : values) other.push_back(-2.0f * value - 1.0f);
-      auto otherName{(tmpDir / "other.vol").string()};
+      std::string otherName{(tmpDir / "other.vol").string()};
       writeVol(otherName, NX, NY, NZ, other);
       smdl::VoxelGrid temperature{};
       REQUIRE_OK(temperature.loadFromFile(otherName));
-      auto fileName{(tmpDir / "both.nvdb").string()};
+      std::string fileName{(tmpDir / "both.nvdb").string()};
       REQUIRE(!smdl::VoxelGrid::saveToFile(fileName, {&source, &temperature},
                                            {"density", "temperature"}));
       smdl::VoxelGrid grid{};
@@ -280,7 +280,8 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       CHECK(isSameGrid(temperature, grid));
       // A name the file does not carry is an error, not the first grid,
       // and the error says which names it does carry.
-      const auto error{grid.loadFromFile(fileName, "flame")};
+      const std::optional<smdl::Error> error{
+          grid.loadFromFile(fileName, "flame")};
       REQUIRE(error.has_value());
       CHECK_CONTAINS(error->message,
                      "no grid named 'flame' in NanoVDB file, which holds "
@@ -296,7 +297,7 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
       smdl::VoxelGrid empty{};
       CHECK(empty.saveToFile((tmpDir / "empty.vol").string()).has_value());
       // Several grids need a NanoVDB file and matching, distinct names.
-      auto fileName{(tmpDir / "several.nvdb").string()};
+      std::string fileName{(tmpDir / "several.nvdb").string()};
       CHECK(smdl::VoxelGrid::saveToFile((tmpDir / "several.vol").string(),
                                         {&source}, {"density"})
                 .has_value());
@@ -340,7 +341,8 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     // library's own words, and a short one is refused before NanoVDB,
     // which never returns from reading it, can see it.
     if (hasNanoVDB()) {
-      auto error{grid.loadFromFile((tmpDir / "missing.nvdb").string())};
+      std::optional<smdl::Error> error{
+          grid.loadFromFile((tmpDir / "missing.nvdb").string())};
       REQUIRE(error.has_value());
       CHECK_CONTAINS(error->message, "cannot open");
       CHECK_NOT_CONTAINS(error->message, "converted from");

@@ -78,7 +78,7 @@ public:
 
   // The probe from `from` looking at `to`, up the Y axis.
   [[nodiscard]] AutofocusResult solve(float3 from, float3 to) const {
-    auto options{AutofocusOptions{}};
+    AutofocusOptions options{};
     options.lookFrom = from;
     options.lookTo = to;
     options.lookUp = float3(0.0f, 1.0f, 0.0f);
@@ -97,7 +97,8 @@ public:
 
 TEST_CASE("Autofocus: a quad five units down the view axis focuses at five") {
   QuadScene fixture{"toy-autofocus-quad", {{QUAD, 0.0f}}};
-  const auto result{fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
+  const AutofocusResult result{
+      fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
   CHECK(result.rayCount == 25);
   CHECK(result.hitCount == 25);
   CHECK(result.distance == doctest::Approx(5.0f).epsilon(1e-4));
@@ -110,15 +111,16 @@ TEST_CASE("Autofocus: the distance is along the view axis, not the ray") {
   QuadScene fixture{"toy-autofocus-axis", {{QUAD, 0.0f}}};
   // From off to the side, the center ray runs the diagonal and the
   // projection on the axis is the diagonal's length.
-  const auto from{float3(3.0f, 0.0f, 4.0f)};
-  const auto result{fixture.solve(from, float3(0.0f))};
+  const float3 from{3.0f, 0.0f, 4.0f};
+  const AutofocusResult result{fixture.solve(from, float3(0.0f))};
   CHECK(result.hitCount == 25);
   CHECK(result.distance == doctest::Approx(5.0f).epsilon(1e-3));
 }
 
 TEST_CASE("Autofocus: a tilted plane focuses at what the center sees") {
   QuadScene fixture{"toy-autofocus-tilt", {{TILTED_QUAD, 0.0f}}};
-  const auto result{fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
+  const AutofocusResult result{
+      fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
   CHECK(result.hitCount == 25);
   // The patch's rays land on both sides of the center at distances that
   // differ from it by a few hundredths; the median is the center's.
@@ -127,7 +129,8 @@ TEST_CASE("Autofocus: a tilted plane focuses at what the center sees") {
 
 TEST_CASE("Autofocus: a sliver at the very center does not pull the focus") {
   QuadScene fixture{"toy-autofocus-sliver", {{QUAD, 0.0f}, {SLIVER, 4.0f}}};
-  const auto result{fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
+  const AutofocusResult result{
+      fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f))};
   CHECK(result.hitCount == 25);
   // One ray of the twenty-five hits the sliver a unit away; the median
   // is what the other twenty-four see.
@@ -137,7 +140,7 @@ TEST_CASE("Autofocus: a sliver at the very center does not pull the focus") {
 
 TEST_CASE("Autofocus: a frame with nothing at its center focuses at infinity") {
   QuadScene fixture{"toy-autofocus-miss", {{QUAD, 0.0f}}};
-  const auto result{
+  const AutofocusResult result{
       fixture.solve(float3(0.0f, 0.0f, 5.0f), float3(0.0f, 0.0f, 10.0f))};
   CHECK(result.rayCount == 25);
   CHECK(result.hitCount == 0);

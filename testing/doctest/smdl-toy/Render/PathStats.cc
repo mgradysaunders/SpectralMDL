@@ -138,8 +138,8 @@ TEST_CASE("PathStats: the contribution bins") {
 
 TEST_CASE("PathStats: the removed-energy identity against brute force") {
   const ScopedGrid grid{{400, 500, 600, 700}, false};
-  const auto entries{makeEntries()};
-  const auto stats{tallyOf(entries)};
+  const std::vector<Entry> entries{makeEntries()};
+  const PathStats stats{tallyOf(entries)};
   const double scale{stats.totalEnergy()};
   REQUIRE(scale > 0.0);
   CHECK(stats.contributionCountFrom(0) == entries.size());
@@ -165,8 +165,8 @@ TEST_CASE("PathStats: the removed-energy identity against brute force") {
 
 TEST_CASE("PathStats: a tally taken with a bound already in force") {
   const ScopedGrid grid{{400, 500, 600, 700}, false};
-  const auto entries{makeEntries()};
-  auto stats{tallyOf(entries)};
+  const std::vector<Entry> entries{makeEntries()};
+  PathStats stats{tallyOf(entries)};
   const double scale{stats.totalEnergy()};
   const double bound{30.0};
   const uint64_t gate{1};
@@ -224,7 +224,7 @@ TEST_CASE("PathStats: where paths end and what they carried") {
 
 TEST_CASE("PathStats: merging one block tally into another") {
   const ScopedGrid grid{{400, 500, 600, 700}, false};
-  const auto entries{makeEntries()};
+  const std::vector<Entry> entries{makeEntries()};
   // One tally takes the first half, another the rest and a deeper path
   // than the first ever sees; a third takes everything.
   PathStats a{};
@@ -249,8 +249,8 @@ TEST_CASE("PathStats: merging one block tally into another") {
   a.add(b);
   REQUIRE(a.rows().size() == whole.rows().size());
   for (size_t i = 0; i < a.rows().size(); i++) {
-    const auto &row{a.rows()[i]};
-    const auto &expected{whole.rows()[i]};
+    const PathStats::Row &row{a.rows()[i]};
+    const PathStats::Row &expected{whole.rows()[i]};
     for (size_t bin = 0; bin < PathStats::NUM_BINS; bin++) {
       CHECK(row.bins[bin].count == expected.bins[bin].count);
       CHECK(row.bins[bin].sumAverage ==
@@ -276,8 +276,8 @@ TEST_CASE("PathStats: merging one block tally into another") {
 
 TEST_CASE("PathStats: the text and JSON reports") {
   const ScopedGrid grid{{400, 500, 600, 700}, false};
-  const auto entries{makeEntries()};
-  auto stats{tallyOf(entries)};
+  const std::vector<Entry> entries{makeEntries()};
+  PathStats stats{tallyOf(entries)};
   stats.recordPath(0, PathEnd::ESCAPED);
   stats.recordPath(3, PathEnd::ROULETTE);
   stats.recordPath(3, PathEnd::BOUND);
@@ -300,7 +300,7 @@ TEST_CASE("PathStats: the text and JSON reports") {
     return text;
   }};
   SUBCASE("The text, without and with a bound in force") {
-    auto text{printText(stats)};
+    std::string text{printText(stats)};
     CHECK_CONTAINS(text,
                    "5 samples over window 0,0,4,2 at 1 spp from sample 7");
     CHECK_CONTAINS(text, "2 camera samples vignetted");
@@ -329,43 +329,45 @@ TEST_CASE("PathStats: the text and JSON reports") {
   SUBCASE("An empty tally prints and parses") {
     const PathStats empty{};
     CHECK_CONTAINS(printText(empty), "No paths were traced");
-    auto parsed{llvm::json::parse(printJSON(empty))};
+    llvm::Expected<llvm::json::Value> parsed{
+        llvm::json::parse(printJSON(empty))};
     if (!parsed) FAIL(llvm::toString(parsed.takeError()));
-    const auto *object{parsed->getAsObject()};
+    const llvm::json::Object *object{parsed->getAsObject()};
     REQUIRE(object);
     CHECK(object->getInteger("samples") == int64_t(0));
-    const auto *bounces{object->getArray("bounces")};
+    const llvm::json::Array *bounces{object->getArray("bounces")};
     REQUIRE(bounces);
     CHECK(bounces->empty());
   }
   SUBCASE("The JSON parses and carries the tally") {
     path.maxContribution = 30.0f;
-    auto parsed{llvm::json::parse(printJSON(stats))};
+    llvm::Expected<llvm::json::Value> parsed{
+        llvm::json::parse(printJSON(stats))};
     if (!parsed) FAIL(llvm::toString(parsed.takeError()));
-    const auto *object{parsed->getAsObject()};
+    const llvm::json::Object *object{parsed->getAsObject()};
     REQUIRE(object);
     CHECK(object->getInteger("samples") == int64_t(5));
     CHECK(object->getInteger("paths") == int64_t(3));
-    const auto *sessionObject{object->getObject("session")};
+    const llvm::json::Object *sessionObject{object->getObject("session")};
     REQUIRE(sessionObject);
     CHECK(sessionObject->getInteger("spp") == int64_t(1));
     CHECK(sessionObject->getInteger("sample_index_base") == int64_t(7));
-    const auto *bounds{object->getObject("bounds")};
+    const llvm::json::Object *bounds{object->getObject("bounds")};
     REQUIRE(bounds);
     CHECK(bounds->getNumber("max_contribution") == 30.0);
-    const auto *edges{object->getArray("edges")};
+    const llvm::json::Array *edges{object->getArray("edges")};
     REQUIRE(edges);
     CHECK(edges->size() == PathStats::NUM_BINS);
-    const auto *bounces{object->getArray("bounces")};
+    const llvm::json::Array *bounces{object->getArray("bounces")};
     REQUIRE(bounces);
     REQUIRE(bounces->size() == stats.rows().size());
-    const auto *row{(*bounces)[3].getAsObject()};
+    const llvm::json::Object *row{(*bounces)[3].getAsObject()};
     REQUIRE(row);
     CHECK(row->getInteger("bounces") == int64_t(3));
-    const auto *bins{row->getArray("bins")};
+    const llvm::json::Array *bins{row->getArray("bins")};
     REQUIRE(bins);
     CHECK(bins->size() == PathStats::NUM_BINS);
-    const auto *ended{row->getObject("ended")};
+    const llvm::json::Object *ended{row->getObject("ended")};
     REQUIRE(ended);
     CHECK(ended->getInteger("roulette") == int64_t(1));
     CHECK(ended->getInteger("bound") == int64_t(1));
@@ -394,7 +396,7 @@ TEST_CASE("PathStats: the manifold section") {
   using Outcome = smdl::ManifoldWalkReport::Outcome;
   using Failure = smdl::ManifoldWalkReport::Failure;
   PathStats stats{};
-  auto &mnee{stats.mnee()};
+  MNEEStats &mnee{stats.mnee()};
   mnee.recordEstimate(MNEEStats::DIRAC_REFRACT, true);
   mnee.recordEstimate(MNEEStats::DIRAC_REFRACT, false);
   mnee.recordEstimate(MNEEStats::GLOSSY_REFLECT, true);
@@ -413,7 +415,7 @@ TEST_CASE("PathStats: the manifold section") {
   mnee.recordTrials(MNEEStats::DIRAC_REFRACT, 10, true);
   mnee.recordContribution(true);
   mnee.recordContribution(false);
-  const auto &dirac{mnee.kinds[MNEEStats::DIRAC_REFRACT]};
+  const MNEEStats::KindCounts &dirac{mnee.kinds[MNEEStats::DIRAC_REFRACT]};
   CHECK(dirac.estimateCount == 2);
   CHECK(dirac.firstConvergedCount == 1);
   CHECK(mnee.kinds[MNEEStats::GLOSSY_REFLECT].estimateCount == 1);
@@ -482,24 +484,24 @@ TEST_CASE("PathStats: the manifold section") {
     CHECK_NOT_CONTAINS(printText(), "Manifold estimators");
     CHECK_NOT_CONTAINS(printJSON(), "\"mnee\"");
     mneeOptions.depth = 2;
-    const auto text{printText()};
+    const std::string text{printText()};
     CHECK_CONTAINS(text, "Manifold estimators");
     CHECK_CONTAINS(text, "p50 5, p90 7");
     CHECK_CONTAINS(text, "dirac refraction");
-    const auto json{printJSON()};
+    const std::string json{printJSON()};
     INFO(json);
     CHECK_CONTAINS(json, "\"mnee\"");
-    auto parsed{llvm::json::parse(json)};
+    llvm::Expected<llvm::json::Value> parsed{llvm::json::parse(json)};
     if (!parsed) FAIL(llvm::toString(parsed.takeError()));
-    const auto *object{parsed->getAsObject()->getObject("mnee")};
+    const llvm::json::Object *object{parsed->getAsObject()->getObject("mnee")};
     REQUIRE(object);
-    const auto *kinds{object->getArray("kinds")};
+    const llvm::json::Array *kinds{object->getArray("kinds")};
     REQUIRE(kinds);
     CHECK(kinds->size() == size_t(MNEEStats::NUM_KINDS));
-    const auto *walks{object->getObject("walks")};
+    const llvm::json::Object *walks{object->getObject("walks")};
     REQUIRE(walks);
     CHECK(walks->getInteger("count") == int64_t(5));
-    const auto *bins{walks->getArray("converged_iterations")};
+    const llvm::json::Array *bins{walks->getArray("converged_iterations")};
     REQUIRE(bins);
     CHECK(bins->size() == MNEEStats::NUM_ITERATION_BINS);
     CHECK(walks->getObject("diverged")->getInteger("iterations") == int64_t(1));

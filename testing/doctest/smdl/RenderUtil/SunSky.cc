@@ -35,8 +35,8 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
       options.sunDirection = makeDirection(SKY_CASES[c][0], sunAzimuthDeg);
       options.visibility = float(SKY_CASES[c][3]);
       options.waterVaporScale = float(SKY_CASES[c][4]);
-      const auto sunSky{smdl::SunSky(options)};
-      const auto direction{
+      const smdl::SunSky sunSky{options};
+      const smdl::float3 direction{
           makeDirection(SKY_CASES[c][1], sunAzimuthDeg + SKY_CASES[c][2])};
       std::vector<float> radiance(GOLDEN_WAVELENGTH_COUNT);
       sunSky.skyRadiance(direction, int(GOLDEN_WAVELENGTH_COUNT),
@@ -60,7 +60,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
       options.sunDirection = makeDirection(SUN_CASES[c][0], 0.0);
       options.visibility = float(SUN_CASES[c][1]);
       options.waterVaporScale = float(SUN_CASES[c][2]);
-      const auto sunSky{smdl::SunSky(options)};
+      const smdl::SunSky sunSky{options};
       std::vector<float> radiance(GOLDEN_WAVELENGTH_COUNT);
       sunSky.sunRadiance(int(GOLDEN_WAVELENGTH_COUNT), GOLDEN_WAVELENGTHS,
                          radiance.data());
@@ -83,10 +83,10 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     // the two conventions is the only difference between them.
     smdl::SunSkyOptions options{};
     options.sunDirection = makeDirection(35.0, 15.0);
-    const auto library{smdl::SunSky(options)};
+    const smdl::SunSky library{options};
     options.scaleFactor = 0.1f;
-    const auto native{smdl::SunSky(options)};
-    const auto direction{makeDirection(55.0, 95.0)};
+    const smdl::SunSky native{options};
+    const smdl::float3 direction{makeDirection(55.0, 95.0)};
     const float wavelens[4] = {450.0f, 550.0f, 1000.0f, 2100.0f};
     float libraryValues[4]{}, nativeValues[4]{};
     library.skyRadiance(direction, 4, wavelens, libraryValues);
@@ -102,9 +102,9 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
   }
   SUBCASE(
       "A wavelength between channels interpolates, and past the ends clamps") {
-    const auto sunSky{
+    const smdl::SunSky sunSky{
         smdl::SunSky(smdl::SunSkyOptions{makeDirection(40.0, 0.0)})};
-    const auto direction{makeDirection(60.0, 120.0)};
+    const smdl::float3 direction{makeDirection(60.0, 120.0)};
     // A wavelength midway between grid channels must equal the average
     // of the neighbors, and wavelengths outside 400-2500nm must clamp
     // to the end channels.
@@ -125,7 +125,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     CHECK(sunRadiance[5] == sunRadiance[6]);
   }
   SUBCASE("The sky is azimuthally symmetric and continues below the horizon") {
-    const auto sunSky{
+    const smdl::SunSky sunSky{
         smdl::SunSky(smdl::SunSkyOptions{makeDirection(50.0, 30.0)})};
     const float wavelens[3] = {550.0f, 1000.0f, 1650.0f};
     // The model is symmetric in the relative azimuth.
@@ -156,7 +156,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     auto directNormalIrradiance{[](double sunZenithDeg) {
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(sunZenithDeg, 70.0);
-      const auto sunSky{smdl::SunSky(options)};
+      const smdl::SunSky sunSky{options};
       double sum{0.0};
       for (int i = 0; i < 421; i++) {
         const float wavelen{channelWavelength(i)};
@@ -178,14 +178,14 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     // 1.6um window, and deepen further with more water vapor.
     smdl::SunSkyOptions options{};
     options.sunDirection = makeDirection(40.0, 0.0);
-    const auto sunSky{smdl::SunSky(options)};
+    const smdl::SunSky sunSky{options};
     const float wavelens[2] = {1380.0f, 1600.0f};
     float radiance[2]{};
     sunSky.sunRadiance(2, wavelens, radiance);
     CHECK(radiance[0] < 0.01f * radiance[1]);
     // Disabling the sun zeroes the disk but not the sky.
     options.isSunEnabled = false;
-    const auto skyOnly{smdl::SunSky(options)};
+    const smdl::SunSky skyOnly{options};
     skyOnly.sunRadiance(2, wavelens, radiance);
     CHECK(radiance[0] == 0.0f);
     CHECK(radiance[1] == 0.0f);
@@ -235,11 +235,11 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     // scalar moonMultiplier() coincide.
     smdl::SunSkyOptions options{};
     options.sunDirection = makeDirection(35.0, 40.0);
-    const auto sunSky{smdl::SunSky(options)};
+    const smdl::SunSky sunSky{options};
     options.isMoon = true;
     options.moonPhase = 30.0f;
     options.moonDistanceScale = 1.1f;
-    const auto moonSky{smdl::SunSky(options)};
+    const smdl::SunSky moonSky{options};
     const int channels[5] = {0, 30, 110, 240, 420};
     float wavelens[5]{};
     for (int j = 0; j < 5; j++) wavelens[j] = channelWavelength(channels[j]);
@@ -268,13 +268,14 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     }
     // Sampling machinery stays functional under the tiny radiances.
     float samplePDF{};
-    const auto wi{moonSky.sample(smdl::float2(0.37f, 0.61f), &samplePDF)};
+    const smdl::float3 wi{
+        moonSky.sample(smdl::float2(0.37f, 0.61f), &samplePDF)};
     CHECK(smdl::lengthSquared(wi) == doctest::Approx(1.0f));
     CHECK(samplePDF > 0.0f);
     CHECK(moonSky.averageRadiance() > 0.0f);
     // A new moon is completely dark.
     options.moonPhase = 180.0f;
-    const auto newMoon{smdl::SunSky(options)};
+    const smdl::SunSky newMoon{options};
     float dark[5]{};
     newMoon.skyRadiance(makeDirection(60.0, 120.0), 5, wavelens, dark);
     for (int j = 0; j < 5; j++) CHECK(dark[j] == 0.0f);
@@ -296,7 +297,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
       smdl::SunSkyOptions options{};
       options.sunDirection = makeDirection(40.0, 25.0);
       options.isMISCompensationEnabled = compensation;
-      const auto sunSky{smdl::SunSky(options)};
+      const smdl::SunSky sunSky{options};
       const float wavelens[3] = {550.0f, 1000.0f, 1650.0f};
 
       auto broadband{[&](const smdl::float3 &wi) {
@@ -311,7 +312,8 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
         const double theta{smdl::PI * (iTheta + 0.5) / numTheta};
         for (int iPhi = 0; iPhi < numPhi; iPhi++) {
           const double phi{2.0 * smdl::PI * (iPhi + 0.5) / numPhi};
-          const auto wi{makeDirection(theta / DEG_TO_RAD, phi / DEG_TO_RAD)};
+          const smdl::float3 wi{
+              makeDirection(theta / DEG_TO_RAD, phi / DEG_TO_RAD)};
           float radiance[3]{};
           sunSky.skyRadiance(wi, 3, wavelens, radiance);
           const double term{(double(radiance[0]) + double(radiance[1]) +
@@ -336,7 +338,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
       int pdfAgreements{0};
       for (int s = 0; s < numSamples; s++) {
         float samplePDF{};
-        const auto wi{
+        const smdl::float3 wi{
             sunSky.sample(smdl::generateCanonical2(prng), &samplePDF)};
         REQUIRE(samplePDF > 0.0f);
         CHECK(smdl::lengthSquared(wi) == doctest::Approx(1.0f));

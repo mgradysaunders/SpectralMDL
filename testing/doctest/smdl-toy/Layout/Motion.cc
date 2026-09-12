@@ -27,14 +27,14 @@ const float4x4 SHEAR{
 } // namespace
 
 TEST_CASE("Motion: the decomposition reassembles the transform") {
-  auto mirrored{SHEAR};
+  float4x4 mirrored{SHEAR};
   mirrored[2] = -mirrored[2];
   const std::pair<const char *, float4x4> keys[]{{"sheared", SHEAR},
                                                  {"mirrored", mirrored}};
   for (const auto &entry : keys) {
     const char *name{entry.first};
     CAPTURE(name);
-    const auto parts{decomposeTransform(entry.second)};
+    const TransformDecomposition parts{decomposeTransform(entry.second)};
     CHECK_NEAR(composeTransform(parts), entry.second, 2.0e-6f);
     CHECK(parts.translation.x == entry.second[3].x);
     CHECK(parts.scale.x > 0.0f);
@@ -47,8 +47,8 @@ TEST_CASE("Motion: the decomposition reassembles the transform") {
 }
 
 TEST_CASE("Motion: the ends of an interpolation are the keys themselves") {
-  const auto a{translation(1, 2, 3)};
-  const auto b{rotationZ(90.0f)};
+  const float4x4 a{translation(1, 2, 3)};
+  const float4x4 b{rotationZ(90.0f)};
   CHECK_SAME(interpolateTransform(a, b, 0.0f), a);
   CHECK_SAME(interpolateTransform(a, b, 1.0f), b);
   CHECK_SAME(interpolateTransform(a, b, -1.0f), a);
@@ -56,12 +56,12 @@ TEST_CASE("Motion: the ends of an interpolation are the keys themselves") {
 }
 
 TEST_CASE("Motion: a turn slerps, so halfway through 90 degrees is 45") {
-  const auto half{
+  const float4x4 half{
       interpolateTransform(rotationZ(0.0f), rotationZ(90.0f), 0.5f)};
   CHECK_NEAR(half, rotationZ(45.0f), 1.0e-5f);
   // The chord a componentwise lerp would take is shorter than the arc,
   // so the object it places is smaller than the one the keys state.
-  const float3 axis{float3(half[0])};
+  const float3 axis{half[0]};
   CHECK(smdl::length(axis) == doctest::Approx(1.0f).epsilon(1.0e-5));
 }
 
@@ -129,7 +129,7 @@ TEST_CASE("MotionSampling: a shut shutter lands both samples on one instant") {
   CHECK(MotionSampling{}.isStill());
   CHECK(MotionSampling(2.5f, 2.5f).isStill());
   CHECK(!MotionSampling(2.5f, 2.52f).isStill());
-  const auto shifted{MotionSampling(1.0f, 2.0f).shiftedBy(0.25f)};
+  const MotionSampling shifted{MotionSampling(1.0f, 2.0f).shiftedBy(0.25f)};
   CHECK(shifted.open == doctest::Approx(1.25f));
   CHECK(shifted.shut == doctest::Approx(2.25f));
 }

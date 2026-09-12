@@ -93,9 +93,9 @@ public:
 [[nodiscard]] std::set<uint32_t> drawnInstances(const LightSampler &lights,
                                                 const Fixture &fixture,
                                                 int numDraws) {
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
-  auto wasDrawn{std::set<uint32_t>()};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
+  std::set<unsigned> wasDrawn{std::set<uint32_t>()};
   Sampler sampler{};
   for (int i = 0; i < numDraws; i++) {
     sampler.startPixelSample(0, uint32_t(i));
@@ -120,11 +120,11 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
   CHECK(!lights.empty());
   // The density and the caustic-target answer follow the mark; the
   // marked non-emitter is no light at all.
-  auto allocator{smdl::BumpPtrAllocator()};
+  smdl::BumpPtrAllocator allocator{};
   for (int i = 0; i < 5; i++) {
     CAPTURE(i);
-    auto state{makeRenderState(fixture.wavelengths, &allocator)};
-    const auto hit{fixture.hitOn(i, state)};
+    smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
+    const Hit hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
                                          hit.point, hit.Ng, Fixture::RECEIVER,
                                          false, 0.0f)};
@@ -135,7 +135,7 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
   }
   // Over many draws the unmarked emitters never come up and both marked
   // ones do.
-  const auto wasDrawn{drawnInstances(lights, fixture, 512)};
+  const std::set<unsigned> wasDrawn{drawnInstances(lights, fixture, 512)};
   CHECK(wasDrawn == std::set<uint32_t>{0, 4});
 }
 
@@ -143,7 +143,7 @@ TEST_CASE("LightSampler: an unsampled emitter still normalizes by area") {
   Fixture fixture{};
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {}, fixture.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator()};
+  smdl::BumpPtrAllocator allocator{};
   // The emitted radiance toward the receiver of each sphere: the two
   // radiant-exitance spheres agree with each other, the two power
   // spheres agree with each other, and power over exitance is the
@@ -151,9 +151,10 @@ TEST_CASE("LightSampler: an unsampled emitter still normalizes by area") {
   Color Le[5]{};
   for (int i = 0; i < 5; i++) {
     CAPTURE(i);
-    auto state{makeRenderState(fixture.wavelengths, &allocator)};
-    const auto hit{fixture.hitOn(i, state)};
-    const auto material{smdl::JIT::Material(state, hit.materialDef)};
+    smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
+    const Hit hit{fixture.hitOn(i, state)};
+    const smdl::JIT::Material material{
+        smdl::JIT::Material(state, hit.materialDef)};
     const float3 wi{normalize(Fixture::RECEIVER - hit.point)};
     const bool doesEmit{
         lights.emittedRadiance(material, hit.instIndex, wi, Le[i])};
@@ -174,11 +175,11 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
   Fixture fixture{};
   const LightSampler lights{fixture.compiler,    fixture.scene, nullptr, {},
                             fixture.wavelengths, true};
-  auto allocator{smdl::BumpPtrAllocator()};
+  smdl::BumpPtrAllocator allocator{};
   for (int i = 0; i < 5; i++) {
     CAPTURE(i);
-    auto state{makeRenderState(fixture.wavelengths, &allocator)};
-    const auto hit{fixture.hitOn(i, state)};
+    smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
+    const Hit hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
                                          hit.point, hit.Ng, Fixture::RECEIVER,
                                          false, 0.0f)};
@@ -187,7 +188,7 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
     CHECK(lights.isCausticLight(hit.instIndex) == isEmitter);
     allocator.reset();
   }
-  const auto wasDrawn{drawnInstances(lights, fixture, 512)};
+  const std::set<unsigned> wasDrawn{drawnInstances(lights, fixture, 512)};
   CHECK(wasDrawn == std::set<uint32_t>{0, 1, 3, 4});
 }
 
@@ -204,8 +205,8 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   int numPunctual{};
   int numArea{};
@@ -268,8 +269,8 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   const float area{4.0f * PI * Fixture::RADIUS * Fixture::RADIUS};
   // The point light's selection PMF is its sample's pdf outright, the
   // density being a delta. An area sample's pdf must be what the
@@ -303,8 +304,8 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   // the geometry: the instances are translated only, so the position
   // density is one over the object area.
   auto spherePMF{[&](int i) {
-    auto hitState{makeRenderState(fixture.wavelengths, &allocator)};
-    const auto hit{fixture.hitOn(i, hitState)};
+    smdl::State hitState{makeRenderState(fixture.wavelengths, &allocator)};
+    const Hit hit{fixture.hitOn(i, hitState)};
     const float3 toLight{hit.point - Fixture::RECEIVER};
     const float distSq{lengthSquared(toLight)};
     const float cosLight{absDot(hit.Ng, toLight / std::sqrt(distSq))};
@@ -367,8 +368,8 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
   ConeFixture fixture{};
   const LightSampler lights{
       fixture.compiler, fixture.scene, nullptr, {}, fixture.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   // Exitance 2 per band is a radiance of `2 / pi`; the irradiance of a
   // sphere on a receiver facing its center is `pi L (R / d)^2`; both
@@ -522,8 +523,8 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
                             nullptr,
                             {LampFixture::diskLight(LampFixture::POWER)},
                             fixture.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   // Per light: the draws, the irradiance estimator `Li cos / pdf` summed
   // over them (the receiver's normal is +Z), and the selection PMF, which
@@ -593,8 +594,8 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
 
 TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
   LampFixture fixture{};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   SUBCASE("A disk under scale 2 2 1") {
     // Twice the radius, four times the area, a quarter of the radiance,
@@ -691,8 +692,8 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
 
 TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
   LampFixture fixture{};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   const float3 above{0.0f, 0.0f, 2.0f * LampFixture::HEIGHT};
   const float3 beside{1.0f, 0.0f, 2.0f * LampFixture::HEIGHT};
@@ -789,7 +790,7 @@ public:
       return item;
     }};
     // 0: the moving lamp; 1 and 2: still lamps at its two keys.
-    auto moving{sphereAt(CENTER_OPEN)};
+    LayoutItem moving{sphereAt(CENTER_OPEN)};
     moving.objectToWorldShut = sphereAt(CENTER_SHUT).objectToWorld;
     scene.add(moving);
     scene.add(sphereAt(CENTER_OPEN));
@@ -806,7 +807,7 @@ public:
       item.objectToWorld[3] = float4(QUAD_CENTER, 1.0f);
       return item;
     }};
-    auto movingQuad{quadAt(1.0f)};
+    LayoutItem movingQuad{quadAt(1.0f)};
     movingQuad.objectToWorldShut = quadAt(2.0f).objectToWorld;
     scene.add(movingQuad);
     scene.add(quadAt(2.0f));
@@ -838,8 +839,8 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
   const LightSampler lights{
       fixture.compiler,    fixture.scene, nullptr,          {},
       fixture.wavelengths, false,         /*useTree=*/false};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   constexpr int NUM_DRAWS{2048};
   SUBCASE("The sphere lamp: the cone at the time, and the still twin's") {
@@ -920,7 +921,7 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
 
 TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
   MotionFixture fixture{};
-  auto state{makeRenderState(fixture.wavelengths)};
+  smdl::State state{makeRenderState(fixture.wavelengths)};
   const auto translated{[](const float3 &offset) {
     float4x4 xf{1.0f};
     xf[3] = float4(offset, 1.0f);
@@ -938,7 +939,7 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     CHECK(light.position(1.0f).x == 4.0f);
     CHECK(light.position(0.5f).x == doctest::Approx(2.0f));
     CHECK(light.position(0.5f).z == doctest::Approx(5.0f));
-    const auto box{light.bounds()};
+    const BoundBox3 box{light.bounds()};
     CHECK(box.lower.x == 0.0f);
     CHECK(box.upper.x == 4.0f);
     // At the shut key the moving light is the still light placed
@@ -962,7 +963,7 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     panel.decl.size = float2(2.0f, 1.0f);
     panel.decl.power = 10.0f;
     panel.lightToWorld = translated(float3(0.0f, 0.0f, 5.0f));
-    auto shut{panel.lightToWorld};
+    float4x4 shut{panel.lightToWorld};
     shut[0].x = 2.0f;
     shut[1].y = 2.0f;
     shut[3].z = 7.0f;
@@ -1008,7 +1009,7 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
           doctest::Approx(4.0f * stillLight.Le(onPanel, receiver, 0.0f)[0])
               .epsilon(1.0e-5));
     CHECK(light.Le(onPanel, receiver, 1.0f)[0] > 0.0f);
-    const auto box{light.bounds()};
+    const BoundBox3 box{light.bounds()};
     CHECK(box.lower.z == 5.0f);
     CHECK(box.upper.z == 7.0f);
     CHECK(box.upper.x == 2.0f);
@@ -1055,8 +1056,8 @@ TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
   const LightSampler lights{
       fixture.compiler,    fixture.scene, nullptr,          {},
       fixture.wavelengths, false,         /*useTree=*/false};
-  auto allocator{smdl::BumpPtrAllocator()};
-  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{makeRenderState(fixture.wavelengths, &allocator)};
   Sampler sampler{};
   constexpr int NUM_DRAWS{1024};
   REQUIRE(fixture.scene.meshInstances[0].isDeforming);

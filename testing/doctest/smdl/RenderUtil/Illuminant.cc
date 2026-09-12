@@ -38,7 +38,7 @@ float evalIlluminantLED(int number, float wavelen) {
 // color matching functions, as the Wyman fit, and return the resulting
 // chromaticity: independent of the illuminant tables under test.
 template <typename Spd> smdl::float2 integrateChromaticity(Spd &&spd) {
-  auto xyz{smdl::double3(0.0)};
+  smdl::double3 xyz{0.0};
   for (int w = 300; w <= 830; w++)
     xyz += double(spd(float(w))) * smdl::wymanXYZ(double(w));
   const double sum{xyz.x + xyz.y + xyz.z};
@@ -61,7 +61,7 @@ TEST_CASE(
                      {6504.0f, {0.31272f, 0.32903f}},  // D65
                      {7504.0f, {0.29902f, 0.31485f}}}; // D75
     for (const auto &daylight : DAYLIGHTS) {
-      auto xy = kelvinToChromaticity(daylight.kelvin);
+      smdl::float2 xy = kelvinToChromaticity(daylight.kelvin);
       CHECK(xy[0] == doctest::Approx(daylight.expectedXY[0]).epsilon(5e-4));
       CHECK(xy[1] == doctest::Approx(daylight.expectedXY[1]).epsilon(5e-4));
     }
@@ -86,7 +86,7 @@ TEST_CASE(
     // itself computed from the S0, S1, and S2 components with the M1 and M2
     // factors rounded to 3 decimal places, so agreement is expected to
     // within about 1%.
-    auto xyD65 = kelvinToChromaticity(6504.0f);
+    smdl::float2 xyD65 = kelvinToChromaticity(6504.0f);
     static const struct {
       float wavelen{};
       float expectedIllum{};
@@ -120,8 +120,8 @@ TEST_CASE(
     // Integrating the reconstruction against the color matching functions
     // must recover the chromaticity it was built from.
     for (float kelvin : {5003.0f, 7504.0f, 25000.0f}) {
-      auto xy = kelvinToChromaticity(kelvin);
-      auto integratedXY = integrateChromaticity(
+      smdl::float2 xy = kelvinToChromaticity(kelvin);
+      smdl::float2 integratedXY = integrateChromaticity(
           [&](float wavelen) { return evalIlluminantD(xy, wavelen); });
       CHECK(integratedXY[0] == doctest::Approx(xy[0]).epsilon(2e-3));
       CHECK(integratedXY[1] == doctest::Approx(xy[1]).epsilon(2e-3));
@@ -167,7 +167,7 @@ TEST_CASE(
         {0.3129f, 0.3292f}, {0.3458f, 0.3586f}, {0.3741f, 0.3727f},
         {0.3458f, 0.3588f}, {0.3805f, 0.3769f}, {0.4370f, 0.4042f}};
     for (int number = 1; number <= 12; number++) {
-      auto integratedXY = integrateChromaticity(
+      smdl::float2 integratedXY = integrateChromaticity(
           [&](float wavelen) { return evalIlluminantF(number, wavelen); });
       CHECK(integratedXY[0] ==
             doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(2e-3));
@@ -212,7 +212,7 @@ TEST_CASE(
                                                 {0.3812f, 0.3797f},
                                                 {0.3776f, 0.3713f}};
     for (int number = 1; number <= 5; number++) {
-      auto integratedXY = integrateChromaticity(
+      smdl::float2 integratedXY = integrateChromaticity(
           [&](float wavelen) { return evalIlluminantHP(number, wavelen); });
       CHECK(integratedXY[0] ==
             doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(3e-3));
@@ -256,7 +256,7 @@ TEST_CASE(
         {0.3422f, 0.3502f}, {0.3118f, 0.3236f}, {0.4474f, 0.4066f},
         {0.4557f, 0.4211f}, {0.4548f, 0.4044f}, {0.3781f, 0.3775f}};
     for (int number = 1; number <= 9; number++) {
-      auto integratedXY = integrateChromaticity(
+      smdl::float2 integratedXY = integrateChromaticity(
           [&](float wavelen) { return evalIlluminantLED(number, wavelen); });
       CHECK(integratedXY[0] ==
             doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(3e-3));

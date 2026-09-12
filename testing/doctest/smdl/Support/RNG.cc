@@ -10,7 +10,7 @@ TEST_CASE("RNG: the golden sequence and the streams") {
     // zero, advance, add the seed, advance, with the stream selector
     // mapped to an odd increment. The language test 'rng.smdl' pins the
     // same states for the builtin mirror.
-    auto rng{smdl::RNG(42, 54)};
+    smdl::RNG rng{42, 54};
     CHECK(rng.increment == 109ULL);
     CHECK(rng.state == 1753877967969059832ULL);
     CHECK(smdl::RNG(42).increment == smdl::RNG().increment);
@@ -19,7 +19,7 @@ TEST_CASE("RNG: the golden sequence and the streams") {
   SUBCASE("The first draws match the published outputs") {
     // The published outputs of O'Neill's pcg32-demo for seed 42,
     // stream 54.
-    auto rng{smdl::RNG(42, 54)};
+    smdl::RNG rng{42, 54};
     CHECK(rng.generate() == 0xA15C02B7U);
     CHECK(rng.generate() == 0x7B47F409U);
     CHECK(rng.generate() == 0xBA1D3330U);
@@ -28,8 +28,8 @@ TEST_CASE("RNG: the golden sequence and the streams") {
     CHECK(rng.generate() == 0xCBED606EU);
   }
   SUBCASE("discard advances exactly as far as generating would") {
-    auto rng0{smdl::RNG(7, 11)};
-    auto rng1{rng0};
+    smdl::RNG rng0{7, 11};
+    smdl::RNG rng1{rng0};
     rng0.discard(1000);
     for (int i = 0; i < 1000; i++) (void)rng1.generate();
     CHECK(rng0 == rng1);
@@ -37,7 +37,7 @@ TEST_CASE("RNG: the golden sequence and the streams") {
     CHECK(rng0 == rng1);
   }
   SUBCASE("generateInt lands in the requested range without bias") {
-    auto rng{smdl::RNG(123)};
+    smdl::RNG rng{123};
     std::array<int, 7> hits{};
     bool isInBounds{true};
     for (int i = 0; i < 10000; i++) {
@@ -51,7 +51,7 @@ TEST_CASE("RNG: the golden sequence and the streams") {
     CHECK(rng.generateInt(0) == 0);
   }
   SUBCASE("generateFloat stays inside the unit interval") {
-    auto rng{smdl::RNG(5)};
+    smdl::RNG rng{5};
     bool isInRange{true};
     for (int i = 0; i < 10000; i++) {
       const float x{rng.generateFloat()};
@@ -60,8 +60,8 @@ TEST_CASE("RNG: the golden sequence and the streams") {
     CHECK(isInRange);
   }
   SUBCASE("Two streams of one seed do not agree") {
-    auto rng0{smdl::RNG(42, 1)};
-    auto rng1{smdl::RNG(42, 2)};
+    smdl::RNG rng0{42, 1};
+    smdl::RNG rng1{42, 2};
     bool anyDiff{false};
     for (int i = 0; i < 16; i++) anyDiff |= rng0.generate() != rng1.generate();
     CHECK(anyDiff);

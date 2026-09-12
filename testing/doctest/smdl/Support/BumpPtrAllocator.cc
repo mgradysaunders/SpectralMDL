@@ -36,7 +36,7 @@ struct alignas(64) OverAligned final {
 
 TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
   SUBCASE("A zero-size request allocates nothing") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     CHECK(allocator.allocate(0, 1) == nullptr);
     CHECK(allocator.allocate(0, 16) == nullptr);
     // A zero-size request must not disturb the bump pointer.
@@ -46,7 +46,7 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     CHECK(static_cast<char *>(ptr1) - static_cast<char *>(ptr0) == 8);
   }
   SUBCASE("Every block is aligned as asked, padding past the last") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     // Interleave alignments so that each allocation has to pad past the
     // last, and include alignments past the slab header's own.
     for (size_t align = 1; align <= 256; align *= 2) {
@@ -57,9 +57,9 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     }
   }
   SUBCASE("Blocks do not overlap and survive slab growth") {
-    auto allocator{smdl::BumpPtrAllocator()};
-    auto rng{smdl::RNG(1234)};
-    auto blocks{std::vector<Block>()};
+    smdl::BumpPtrAllocator allocator{};
+    smdl::RNG rng{1234};
+    std::vector<Block> blocks{};
     // Far past MIN_SLAB_SIZE, so the run spans many slabs, with the
     // occasional request too big for the slab it would land in.
     size_t total{};
@@ -68,10 +68,11 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
       const size_t size{isHuge ? size_t(rng.generateInt(200000) + 1)
                                : size_t(rng.generateInt(300) + 1)};
       const size_t align{size_t(1) << rng.generateInt(7)};
-      auto *ptr{static_cast<unsigned char *>(allocator.allocate(size, align))};
+      uint8_t *ptr{
+          static_cast<unsigned char *>(allocator.allocate(size, align))};
       REQUIRE(ptr != nullptr);
       CHECK(isAlignedTo(ptr, align));
-      const auto fill{static_cast<unsigned char>(blocks.size() & 0xFF)};
+      const uint8_t fill{static_cast<unsigned char>(blocks.size() & 0xFF)};
       for (size_t i = 0; i < size; i++) ptr[i] = fill;
       blocks.push_back(Block{ptr, size, fill});
       total += size;
@@ -86,7 +87,7 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     CHECK(blocks.size() > 1);
   }
   SUBCASE("reset rewinds into the first slab") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     void *first{allocator.allocate(64, 16)};
     allocator.reset();
     // The first slab is kept, so the same request lands at the same
@@ -100,15 +101,15 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     allocator.reset();
     CHECK(allocator.allocate(64, 16) == first);
     // And a reset with nothing allocated at all is harmless.
-    auto empty{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator empty{};
     empty.reset();
     empty.reset();
     CHECK(empty.allocate(8, 8) != nullptr);
   }
   SUBCASE("A request larger than a slab is served") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     const size_t size{4 * smdl::BumpPtrAllocator::MIN_SLAB_SIZE};
-    auto *ptr{static_cast<unsigned char *>(allocator.allocate(size, 64))};
+    uint8_t *ptr{static_cast<unsigned char *>(allocator.allocate(size, 64))};
     REQUIRE(ptr != nullptr);
     CHECK(isAlignedTo(ptr, 64));
     for (size_t i = 0; i < size; i++) ptr[i] = 0xAB;
@@ -121,10 +122,10 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     CHECK(isIntact);
   }
   SUBCASE("A typed allocation destructs only what needs destructing") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     // A trivially destructible type comes back as a raw pointer, since
     // there is nothing to destruct.
-    auto *values{allocator.allocate<float>(3.0f)};
+    float *values{allocator.allocate<float>(3.0f)};
     static_assert(std::is_same_v<decltype(values), float *>);
     CHECK(*values == 3.0f);
     liveCount = 0;
@@ -137,11 +138,11 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
     CHECK(liveCount == 0);
   }
   SUBCASE("Placement new honors an extended alignment") {
-    auto allocator{smdl::BumpPtrAllocator()};
+    smdl::BumpPtrAllocator allocator{};
     // Nudge the bump pointer off the extended alignment first, so that a
     // pass through the unaligned overload would be caught.
     CHECK(allocator.allocate(1, 1) != nullptr);
-    auto *ptr{new (allocator) OverAligned{}};
+    OverAligned *ptr{new (allocator) OverAligned{}};
     CHECK(isAlignedTo(ptr, alignof(OverAligned)));
   }
 }

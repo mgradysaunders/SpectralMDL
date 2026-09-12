@@ -58,7 +58,7 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 // not here: `loadImage()` only probes the file, so an image is described
 // once it is decoded, at the end of `compile()`.
 [[nodiscard]] std::string describeResource(const Ptexture &ptexture) {
-  auto result{concat(Counted(ptexture.channelCount, "channel"))};
+  std::string result{concat(Counted(ptexture.channelCount, "channel"))};
 #if SMDL_HAS_PTEX
   result = concat(static_cast<PtexTexture *>(ptexture.texture)->numFaces(),
                   " faces, ", result);
@@ -67,8 +67,8 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 }
 
 [[nodiscard]] std::string describeResource(const BSDFMeasurement &measurement) {
-  const auto numValues{measurement.numTheta * measurement.numTheta *
-                       measurement.numPhi};
+  const size_t numValues{measurement.numTheta * measurement.numTheta *
+                         measurement.numPhi};
   return concat(
       measurement.kind == BSDFMeasurement::KIND_REFLECTION ? "reflection"
                                                            : "transmission",
@@ -97,14 +97,14 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 
 [[nodiscard]] std::string
 describeResource(const SpectrumLibrary &spectrumLibrary) {
-  const auto numCurves{spectrumLibrary.getNumCurves()};
+  const size_t numCurves{spectrumLibrary.getNumCurves()};
   return concat(
       Counted(numCurves, "curve"), " of ",
       describeSamples(spectrumLibrary.getCurveByIndex(0).wavelengths));
 }
 
 [[nodiscard]] std::string describeResource(const VoxelGrid &voxelGrid) {
-  const auto extent{voxelGrid.getExtent()};
+  const int3 extent{voxelGrid.getExtent()};
   return concat(extent.x, " x ", extent.y, " x ", extent.z, " voxels, values ",
                 Brief(voxelGrid.getMinValue()), " to ",
                 Brief(voxelGrid.getMaxValue()), ", ",
@@ -112,7 +112,7 @@ describeResource(const SpectrumLibrary &spectrumLibrary) {
 }
 
 [[nodiscard]] std::string describeImage(const Image &image) {
-  const auto numLevels{image.getNumLevels()};
+  const int numLevels{image.getNumLevels()};
   return concat(image.getNumTexelsX(), " x ", image.getNumTexelsY(), ", ",
                 image.getNumChannels(), "-channel ",
                 Image::getFormatName(image.getFormat()),
@@ -134,7 +134,7 @@ describeResource(const SpectrumLibrary &spectrumLibrary) {
 template <typename Map>
 [[nodiscard]] auto sortedByFileName(const Map &resources) {
   using Resource = typename Map::mapped_type::element_type;
-  auto entries{std::vector<std::pair<const MD5FileHash *, Resource *>>()};
+  std::vector<std::pair<const MD5FileHash *, Resource *>> entries{};
   entries.reserve(resources.size());
   for (const auto &[key, resource] : resources)
     entries.emplace_back(key, resource.get());
@@ -153,15 +153,15 @@ template <typename Map>
 // name is exactly what leaves the intended material skipped.
 [[nodiscard]] std::string suggestMaterialName(const Compiler &compiler,
                                               std::string_view materialName) {
-  const auto isAbsolute{materialName.substr(0, 2) == "::"};
-  const auto numComponents{splitQualifiedName(materialName).size()};
-  auto spellings{std::vector<std::string>()};
+  const bool isAbsolute{materialName.substr(0, 2) == "::"};
+  const size_t numComponents{splitQualifiedName(materialName).size()};
+  std::vector<std::string> spellings{};
   auto addSpelling{[&](std::string_view qualifiedName) {
     if (isAbsolute) {
       spellings.emplace_back(qualifiedName);
       return;
     }
-    auto components{splitQualifiedName(qualifiedName)};
+    std::vector<std::string_view> components{splitQualifiedName(qualifiedName)};
     components.erase(components.begin(),
                      components.end() -
                          ptrdiff_t(std::min(components.size(), numComponents)));
@@ -171,7 +171,7 @@ template <typename Map>
     if (!jitMaterial.moduleIsShadowed) addSpelling(jitMaterial.qualifiedName);
   for (const auto &skippedName : compiler.getSkippedMaterialNames())
     addSpelling(skippedName);
-  const auto candidates{
+  const std::vector<std::string_view> candidates{
       std::vector<std::string_view>(spellings.begin(), spellings.end())};
   return std::string(suggestNearestName(materialName, candidates));
 }
@@ -195,10 +195,10 @@ namespace {
 [[nodiscard]]
 std::vector<std::string>
 parseArchivePackagePrefix(const std::string &fileName) {
-  auto stem{std::filesystem::path(fileName).stem().string()};
-  auto components{llvm::SmallVector<llvm::StringRef>{}};
+  std::string stem{std::filesystem::path(fileName).stem().string()};
+  llvm::SmallVector<llvm::StringRef> components{};
   llvm::StringRef(stem).split(components, '.');
-  auto prefix{std::vector<std::string>()};
+  std::vector<std::string> prefix{};
   for (auto component : components) {
     if (component.empty())
       throw Error(concat("invalid archive name ", QuotedPath(fileName),
@@ -216,7 +216,7 @@ parseArchivePackagePrefix(const std::string &fileName) {
 [[nodiscard]]
 bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
                               const std::string &entryName) {
-  auto components{llvm::SmallVector<llvm::StringRef>{}};
+  llvm::SmallVector<llvm::StringRef> components{};
   llvm::StringRef(entryName).split(components, '/');
   if (components.size() == prefix.size())
     return std::equal(prefix.begin(), prefix.end() - 1, components.begin()) &&
@@ -229,8 +229,8 @@ bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
 // paths are already canonical. Equal paths do not count.
 [[nodiscard]]
 bool isLexicalSubPath(const std::string &parent, const std::string &child) {
-  auto parentPath{std::filesystem::path(parent)};
-  auto childPath{std::filesystem::path(child)};
+  std::filesystem::path parentPath{parent};
+  std::filesystem::path childPath{child};
   auto [parentItr, childItr] =
       std::mismatch(parentPath.begin(), parentPath.end(), //
                     childPath.begin(), childPath.end());
@@ -240,11 +240,11 @@ bool isLexicalSubPath(const std::string &parent, const std::string &child) {
 
 void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
                               std::vector<std::string> *addedModuleNames) {
-  auto &module_{*mModules.emplace_back(std::move(loadedModule))};
+  Module &module_{*mModules.emplace_back(std::move(loadedModule))};
   if (!module_.getFileName().empty()) {
     mModuleFileNames.emplace(std::string(module_.getFileName()), &module_);
   }
-  auto qualifiedName{std::string(module_.getQualifiedName())};
+  std::string qualifiedName{module_.getQualifiedName()};
   if (auto [itr, inserted] =
           mModulesByQualifiedName.try_emplace(qualifiedName, &module_);
       !inserted) {
@@ -277,7 +277,7 @@ std::string normalizeModuleName(const std::string &moduleName) {
       return isLetter(ch) || (ch >= '0' && ch <= '9');
     });
   }};
-  auto components{splitQualifiedName(moduleName)};
+  std::vector<std::string_view> components{splitQualifiedName(moduleName)};
   if (components.empty()) {
     throw Error(concat("module name ", Quoted(moduleName), " is empty"));
   }
@@ -296,7 +296,7 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
                                        std::string anchorDirectory) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::addCode()", moduleName.c_str());
   return catchAndReturnError([&] {
-    auto qualifiedName{normalizeModuleName(moduleName)};
+    std::string qualifiedName{normalizeModuleName(moduleName)};
     if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
         itr != mModulesByQualifiedName.end()) {
       // Adding the same source code under the same name again is a
@@ -314,7 +314,7 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
     }
     // An absolute import resolves builtins first, so a module named
     // after one compiles but is unreachable by qualified name.
-    auto builtinNames{builtin::getAllNames()};
+    Span<const std::string_view> builtinNames{builtin::getAllNames()};
     if (std::any_of(builtinNames.begin(), builtinNames.end(),
                     [&](std::string_view builtinName) {
                       return joinQualifiedName(splitQualifiedName(
@@ -352,8 +352,8 @@ Compiler::add(std::string fileOrDirName,
       // the container bytes, so identical containers at different
       // paths dedupe to one module and distinct containers can never
       // collide.
-      auto contentHash{std::string(MD5Hash::hashFile(fileName))};
-      auto qualifiedName{"::mdle::" + contentHash};
+      std::string contentHash{std::string(MD5Hash::hashFile(fileName))};
+      std::string qualifiedName{"::mdle::" + contentHash};
       if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
           itr != mModulesByQualifiedName.end()) {
         if (addedModuleNames) {
@@ -364,18 +364,19 @@ Compiler::add(std::string fileOrDirName,
       // Load 'main.mdl' and extract every other entry into a
       // content-addressed cache directory that serves as the anchor
       // for the module's resource lookups.
-      auto extractDir{(std::filesystem::temp_directory_path() /
-                       ("smdl-mdle-" + contentHash))
-                          .string()};
-      auto archive{Archive{fileName}};
-      auto mainSource{std::optional<std::string>()};
-      auto numExtracted{0};
+      std::string extractDir{(std::filesystem::temp_directory_path() /
+                              ("smdl-mdle-" + contentHash))
+                                 .string()};
+      Archive archive{fileName};
+      std::optional<std::string> mainSource{};
+      int numExtracted{0};
       for (int i = 0; i < archive.get_file_count(); i++) {
-        auto entryName{archive.get_file_name(i)};
+        std::string entryName{archive.get_file_name(i)};
         if (entryName == "main.mdl") {
           mainSource = archive.extract_file(i);
         } else if (!entryName.empty() && entryName.back() != '/') {
-          auto outPath{std::filesystem::path(extractDir) / entryName};
+          std::filesystem::path outPath{std::filesystem::path(extractDir) /
+                                        entryName};
           std::filesystem::create_directories(outPath.parent_path());
           openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
               << archive.extract_file(i);
@@ -401,11 +402,11 @@ Compiler::add(std::string fileOrDirName,
       // '::vendor::metals', and every '.mdl' entry must be the
       // enclosed module ('vendor/metals.mdl') or live under the
       // enclosed package directory ('vendor/metals/...').
-      auto prefix{parseArchivePackagePrefix(fileName)};
+      std::vector<std::string> prefix{parseArchivePackagePrefix(fileName)};
       {
         // Duplicating the enclosed contents as loose files in the
         // same search root is an error.
-        auto loosePath{searchRoot};
+        std::string loosePath{searchRoot};
         for (const auto &component : prefix) {
           loosePath = joinPaths(loosePath, component);
         }
@@ -417,9 +418,9 @@ Compiler::add(std::string fileOrDirName,
                              " in the same search root"));
         }
       }
-      auto archive{Archive{fileName}};
+      Archive archive{fileName};
       for (int i = 0; i < archive.get_file_count(); i++) {
-        if (auto entryName{archive.get_file_name(i)};
+        if (std::string entryName{archive.get_file_name(i)};
             hasExtension(entryName, ".mdl")) {
           if (!isConformingArchiveEntry(prefix, entryName)) {
             throw Error(concat(
@@ -427,7 +428,7 @@ Compiler::add(std::string fileOrDirName,
                 " does not conform to the package prefix encoded "
                 "by the archive file name"));
           }
-          if (auto entryPath{joinPaths(fileName, entryName)};
+          if (std::string entryPath{joinPaths(fileName, entryName)};
               mModuleFileNames.count(entryPath) == 0) {
             SMDL_LOG_DEBUG("Adding MDL file from archive ",
                            QuotedPath(entryPath));
@@ -465,10 +466,10 @@ Compiler::add(std::string fileOrDirName,
             addLooseFile(fileName, searchRoot);
           }
         }};
-    if (auto maybePath{fileLocator.locate(fileOrDirName, {},
-                                          FileLocator::REGULAR_FILES |
-                                              FileLocator::DIRS)}) {
-      auto &path{*maybePath};
+    if (std::optional<std::string> maybePath{fileLocator.locate(
+            fileOrDirName, {},
+            FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
+      std::string &path{*maybePath};
       if (isFile(path)) {
         addFile(path, parentPathOf(path));
         return;
@@ -491,19 +492,21 @@ Compiler::add(std::string fileOrDirName,
         // per the MDL specification, 'a.b.mdr' and 'a.b.c.mdr' must not
         // coexist in the same search root (siblings like 'a.c.mdr' are
         // fine).
-        auto archivePaths{std::vector<std::string>()};
+        std::vector<std::string> archivePaths{};
         for (const auto &entry : std::filesystem::directory_iterator(path)) {
-          if (auto entryPath{makePathCanonical(entry.path().string())};
+          if (std::string entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
             archivePaths.push_back(std::move(entryPath));
           }
         }
         std::sort(archivePaths.begin(), archivePaths.end());
         for (size_t i = 0; i < archivePaths.size(); i++) {
-          auto prefixI{parseArchivePackagePrefix(archivePaths[i])};
+          std::vector<std::string> prefixI{
+              parseArchivePackagePrefix(archivePaths[i])};
           for (size_t j = i + 1; j < archivePaths.size(); j++) {
-            auto prefixJ{parseArchivePackagePrefix(archivePaths[j])};
-            if (auto n{std::min(prefixI.size(), prefixJ.size())};
+            std::vector<std::string> prefixJ{
+                parseArchivePackagePrefix(archivePaths[j])};
+            if (size_t n{std::min(prefixI.size(), prefixJ.size())};
                 std::equal(prefixI.begin(), prefixI.begin() + long(n),
                            prefixJ.begin())) {
               throw Error(concat(
@@ -523,7 +526,7 @@ Compiler::add(std::string fileOrDirName,
         }
         for (const auto &entry :
              std::filesystem::recursive_directory_iterator(path)) {
-          if (auto entryPath{makePathCanonical(entry.path().string())};
+          if (std::string entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath)) {
             if (hasExtension(entryPath, ".mdl") ||
                 hasExtension(entryPath, ".smdl")) {
@@ -562,12 +565,13 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   // If every 'ret' in the named function returns one identical constant,
   // return it, else null.
   auto foldedReturnValue{[&](std::string_view name) -> const llvm::Constant * {
-    auto func{llvmModule.getFunction(name)};
+    llvm::Function *func{llvmModule.getFunction(name)};
     if (!func || func->isDeclaration()) return nullptr;
     const llvm::Constant *uniqueConst{};
     for (auto &block : *func) {
-      if (auto ret{llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator())}) {
-        auto retConst{
+      if (llvm::ReturnInst *
+          ret{llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator())}) {
+        llvm::Constant *retConst{
             llvm::dyn_cast_if_present<llvm::Constant>(ret->getReturnValue())};
         if (!retConst || (uniqueConst && uniqueConst != retConst))
           return nullptr;
@@ -579,19 +583,22 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   for (auto &jitMaterial : materials) {
     // Recover the symbol base from the evaluate-opacity entry point name,
     // '<symbolBase>.opacityEvaluate'.
-    auto symbolBase{std::string_view(jitMaterial.opacityEvaluate.name)};
+    std::string_view symbolBase{
+        std::string_view(jitMaterial.opacityEvaluate.name)};
     SMDL_SANITY_CHECK(
         llvm::StringRef(symbolBase).ends_with(".opacityEvaluate"));
     symbolBase.remove_suffix(std::string_view(".opacityEvaluate").size());
-    if (auto opacity{llvm::dyn_cast_if_present<llvm::ConstantFP>(
-            foldedReturnValue(jitMaterial.opacityEvaluate.name))}) {
+    if (const llvm::ConstantFP *opacity{
+            llvm::dyn_cast_if_present<llvm::ConstantFP>(
+                foldedReturnValue(jitMaterial.opacityEvaluate.name))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_CUTOUT;
       if (opacity->getValueAPF().convertToFloat() < 1.0f)
         jitMaterial.staticFlags |= MATERIAL_HAS_CUTOUT;
     }
-    auto thinWalledProbeName{concat(symbolBase, ".thinWalledProbe")};
-    if (auto isThinWalled{llvm::dyn_cast_if_present<llvm::ConstantInt>(
-            foldedReturnValue(thinWalledProbeName))}) {
+    std::string thinWalledProbeName{concat(symbolBase, ".thinWalledProbe")};
+    if (const llvm::ConstantInt *isThinWalled{
+            llvm::dyn_cast_if_present<llvm::ConstantInt>(
+                foldedReturnValue(thinWalledProbeName))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_THIN_WALLED;
       if (!isThinWalled->isZero())
         jitMaterial.staticFlags |= MATERIAL_THIN_WALLED;
@@ -603,8 +610,9 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // A body that did not fold leaves the bit unknown, which hosts
     // treat as possibly displacing. See
     // 'JIT::MaterialDef::hasZeroDisplacement()'.
-    auto displacementProbeName{concat(symbolBase, ".displacementProbe")};
-    if (auto displacement{foldedReturnValue(displacementProbeName)}) {
+    std::string displacementProbeName{concat(symbolBase, ".displacementProbe")};
+    if (const llvm::Constant *displacement{
+            foldedReturnValue(displacementProbeName)}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_DISPLACEMENT;
       if (!llvmIsZeroValue(displacement))
         jitMaterial.staticFlags |= MATERIAL_HAS_DISPLACEMENT;
@@ -614,8 +622,8 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // leaves the shading normal alone, settling
     // 'MATERIAL_REMAPS_NORMAL' the way the displacement probe settles
     // its flag. See 'JIT::MaterialDef::canRemapNormal()'.
-    auto normalProbeName{concat(symbolBase, ".normalProbe")};
-    if (auto normalDelta{foldedReturnValue(normalProbeName)}) {
+    std::string normalProbeName{concat(symbolBase, ".normalProbe")};
+    if (const llvm::Constant *normalDelta{foldedReturnValue(normalProbeName)}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_REMAPS_NORMAL;
       if (!llvmIsZeroValue(normalDelta))
         jitMaterial.staticFlags |= MATERIAL_REMAPS_NORMAL;
@@ -632,7 +640,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // a scene-data lookup anywhere in the material body); hosts treat
     // unknown as heterogeneous, which is the conservative direction.
     // See 'JIT::MaterialDef::hasHomogeneousVolume()'.
-    auto volumeEvaluateFunc{
+    llvm::Function *volumeEvaluateFunc{
         llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
         (volumeEvaluateFunc && !volumeEvaluateFunc->isDeclaration() &&
@@ -642,11 +650,12 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     }
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.
-    if (auto probeFunc{llvmModule.getFunction(thinWalledProbeName)})
+    if (llvm::Function * probeFunc{llvmModule.getFunction(thinWalledProbeName)})
       probeFunc->eraseFromParent();
-    if (auto probeFunc{llvmModule.getFunction(displacementProbeName)})
+    if (llvm::Function *
+        probeFunc{llvmModule.getFunction(displacementProbeName)})
       probeFunc->eraseFromParent();
-    if (auto probeFunc{llvmModule.getFunction(normalProbeName)})
+    if (llvm::Function * probeFunc{llvmModule.getFunction(normalProbeName)})
       probeFunc->eraseFromParent();
   }
 }
@@ -661,13 +670,13 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
 // `texture_2d` out of the IR, so a texture read only for its extent
 // never references its symbol in the first place.
 size_t Compiler::dropUnusedImages() {
-  auto numDropped{size_t(0)};
+  size_t numDropped{0};
   for (auto [fileHash, image] : sortedByFileName(mImages)) {
     auto itr{mImageSymbolNames.find(image)};
     if (itr == mImageSymbolNames.end()) continue;
     // Absent as well as unused: an image loaded by a texture that failed
     // to construct never reached `getImageTexelBase()` at all.
-    auto llvmGlobal{mLLVMModule->getNamedGlobal(itr->second)};
+    llvm::GlobalVariable *llvmGlobal{mLLVMModule->getNamedGlobal(itr->second)};
     if (llvmGlobal) {
       // The comptime `texture_2d` aggregate holding the symbol is a
       // constant, and a constant that nothing in the module reaches is
@@ -695,18 +704,18 @@ namespace {
 describeJITSessionError(llvm::Error error, char globalPrefix,
                         const std::unordered_map<std::string, SourceLocation>
                             &foreignFunctionSourceLocations) {
-  auto errors{std::vector<Error>()};
+  std::vector<Error> errors{};
   llvm::handleAllErrors(
       std::move(error),
       [&](const llvm::orc::SymbolsNotFound &notFound) {
-        auto otherNames{std::string()};
+        std::string otherNames{};
         for (const auto &symbol : notFound.getSymbols()) {
-          auto name{*symbol};
+          llvm::StringRef name{*symbol};
           if (globalPrefix != '\0')
             name.consume_front(llvm::StringRef(&globalPrefix, 1));
           if (auto itr{foreignFunctionSourceLocations.find(name.str())};
               itr != foreignFunctionSourceLocations.end()) {
-            const auto &srcLoc{itr->second};
+            const SourceLocation &srcLoc{itr->second};
             errors.emplace_back(srcLoc.formatMessage(concat(
                                     "'@(foreign)' function ", Quoted(name),
                                     " is not defined in the host process")),
@@ -780,19 +789,21 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
   // or terminating the host process.
   return catchAndReturnError([&] {
     resetForRecompile();
-    auto initializeEntry{profilerEntryBegin("Initialize")};
+    ProfilerEntry *initializeEntry{profilerEntryBegin("Initialize")};
     Context context{*this};
     for (auto &module_ : mModules) module_->reset();
     profilerEntryEnd(initializeEntry);
     {
       SMDL_PROFILER_ENTRY("Parse AST");
       for (auto &module_ : mModules)
-        if (auto error{module_->parse(mAllocator)}) throw std::move(*error);
+        if (std::optional<Error> error{module_->parse(mAllocator)})
+          throw std::move(*error);
     }
     {
       SMDL_PROFILER_ENTRY("Emit LLVM-IR");
       for (auto &module_ : mModules)
-        if (auto error{module_->compile(context)}) throw std::move(*error);
+        if (std::optional<Error> error{module_->compile(context)})
+          throw std::move(*error);
     }
     // Sort JIT materials and unit tests by module and line number in
     // case we want to print them later.
@@ -806,7 +817,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                          return matchesMaterialName(desiredName,
                                                     jitMaterial.qualifiedName);
                        })) {
-        auto suggestion{suggestMaterialName(*this, desiredName)};
+        std::string suggestion{suggestMaterialName(*this, desiredName)};
         SMDL_LOG_WARN("desired material ", Quoted(desiredName),
                       " does not match any material in the added modules",
                       suggestion.empty()
@@ -829,10 +840,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     // needs the optimized module, after 'deriveStaticMaterialFlags' has
     // erased the probe scaffolding whose references must not keep an
     // image alive.
-    const auto numDropped{dropUnusedImages()};
+    const size_t numDropped{dropUnusedImages()};
     // Finish loading the images that still have a decode pending, i.e.,
     // neither failed 'startLoad()' nor were dropped above.
-    auto imageEntries{sortedByFileName(mImages)};
+    std::vector<std::pair<const MD5FileHash *, Image *>> imageEntries{
+        sortedByFileName(mImages)};
     imageEntries.erase(std::remove_if(imageEntries.begin(), imageEntries.end(),
                                       [](const auto &entry) {
                                         return !entry.second->hasPendingLoad();
@@ -840,27 +852,32 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                        imageEntries.end());
     if (!imageEntries.empty()) {
       SMDL_PROFILER_ENTRY("Load images in parallel");
-      const auto startTime{std::chrono::steady_clock::now()};
+      const std::chrono::time_point<
+          std::chrono::steady_clock,
+          std::chrono::duration<long, std::ratio<1, 1000000000>>>
+          startTime{std::chrono::steady_clock::now()};
       // A decode failure must not unwind out of 'parallelFor'; the image
       // keeps its pre-allocated (zeroed) texels, matching the 'loadImage'
       // policy. The workers only record what happened, and the log is
       // written afterward in file name order, so that it reads the same
       // from run to run.
-      auto errors{std::vector<std::optional<Error>>(imageEntries.size())};
+      std::vector<std::optional<Error>> errors{
+          std::vector<std::optional<Error>>(imageEntries.size())};
       parallelFor(0, imageEntries.size(), [&](size_t i) {
         SMDL_PROFILER_ENTRY(
             "Load image", imageEntries[i].first->canonicalFileNames[0].c_str());
         errors[i] =
             catchAndReturnError([&] { imageEntries[i].second->finishLoad(); });
       });
-      const auto seconds{std::chrono::duration<double>(
-                             std::chrono::steady_clock::now() - startTime)
-                             .count()};
-      auto numLoaded{size_t(0)};
-      auto numBytes{size_t(0)};
+      const double seconds{std::chrono::duration<double>(
+                               std::chrono::steady_clock::now() - startTime)
+                               .count()};
+      size_t numLoaded{0};
+      size_t numBytes{0};
       for (size_t i = 0; i < imageEntries.size(); i++) {
-        const auto &fileName{imageEntries[i].first->canonicalFileNames[0]};
-        const auto &image{*imageEntries[i].second};
+        const std::string &fileName{
+            imageEntries[i].first->canonicalFileNames[0]};
+        const Image &image{*imageEntries[i].second};
         if (errors[i]) {
           SMDL_LOG_WARN("cannot load ", QuotedPath(fileName), ": ",
                         errors[i]->message);
@@ -888,7 +905,8 @@ Compiler::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::formatSourceFiles()");
   for (auto &module_ : mModules) {
     if (module_->isFileBacked()) {
-      if (auto error{module_->formatSourceFiles(formatOptions)}) return error;
+      if (std::optional<Error> error{module_->formatSourceFiles(formatOptions)})
+        return error;
     }
   }
   return std::nullopt;
@@ -899,7 +917,8 @@ std::optional<Error> Compiler::extractDocs(DocDatabase &docs) noexcept {
   return catchAndReturnError([&] {
     for (auto &module_ : mModules) {
       if (module_->isShadowed()) continue;
-      if (auto error{module_->parse(mAllocator)}) throw std::move(*error);
+      if (std::optional<Error> error{module_->parse(mAllocator)})
+        throw std::move(*error);
       docs.modules.push_back(extractDocModule(*module_));
     }
   });
@@ -934,7 +953,8 @@ T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
   auto [itr, inserted] = resources.try_emplace(key);
   if (inserted) {
     itr->second = std::make_unique<T>();
-    if (auto error{std::invoke(std::forward<Loader>(loader), *itr->second)}) {
+    if (std::optional<Error> error{
+            std::invoke(std::forward<Loader>(loader), *itr->second)}) {
       srcLoc.logWarn(error->message);
     } else if constexpr (!std::is_same_v<T, Image>) {
       if (Logger::get().isEnabled(LOG_LEVEL_DEBUG))
@@ -958,8 +978,8 @@ bool Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc,
                                  bool useMipLevels, Image::MipFilter filter) {
-  auto fileHash{mFileHasher[fileName]};
-  auto &image{
+  const MD5FileHash *fileHash{mFileHasher[fileName]};
+  Image &image{
       loadResource(mImages, fileHash, srcLoc, fileName, [&](Image &image) {
         SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
         // Probes the file and nothing more: the texels are allocated and
@@ -999,8 +1019,8 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
 #if SMDL_HAS_PTEX
         SMDL_PROFILER_ENTRY("Compiler::loadPtexture()", fileName.c_str());
         Ptex::String message{};
-        auto texture{PtexTexture::open(fileName.c_str(), message,
-                                       /*premultiply=*/false)};
+        PtexTexture *texture{PtexTexture::open(fileName.c_str(), message,
+                                               /*premultiply=*/false)};
         if (!texture)
           return Error(concat("cannot load ", QuotedPath(fileName), ": ",
                               message.c_str()));
@@ -1062,9 +1082,9 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
 // the two lookups below only speak up about a library with curves to find.
 SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
                                     const SourceLocation &srcLoc) {
-  const auto &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
-  auto spectrumView{spectrumLibrary.getCurveByIndex(curveIndex)};
-  if (const auto numCurves{spectrumLibrary.getNumCurves()};
+  const SpectrumLibrary &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
+  SpectrumView spectrumView{spectrumLibrary.getCurveByIndex(curveIndex)};
+  if (const size_t numCurves{spectrumLibrary.getNumCurves()};
       spectrumView.curveValues.empty() && numCurves > 0) {
     logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveIndex),
                            concat("spectrum library ", QuotedPath(fileName),
@@ -1078,18 +1098,18 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const std::string &curveName,
                                     const SourceLocation &srcLoc) {
-  const auto &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
-  auto spectrumView{spectrumLibrary.getCurveByName(curveName)};
+  const SpectrumLibrary &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
+  SpectrumView spectrumView{spectrumLibrary.getCurveByName(curveName)};
   if (spectrumView.curveValues.empty() && spectrumLibrary.getNumCurves() > 0) {
-    auto message{concat("spectrum library ", QuotedPath(fileName),
-                        " has no curve named ", Quoted(curveName))};
-    const auto curveNames{spectrumLibrary.getCurveNames()};
+    std::string message{concat("spectrum library ", QuotedPath(fileName),
+                               " has no curve named ", Quoted(curveName))};
+    const Span<const std::string> curveNames{spectrumLibrary.getCurveNames()};
     if (curveNames.empty()) {
       message += " (its curves are unnamed)";
     } else {
-      const auto candidates{
+      const std::vector<std::string_view> candidates{
           std::vector<std::string_view>(curveNames.begin(), curveNames.end())};
-      if (auto similar{suggestNearestName(curveName, candidates)};
+      if (std::string_view similar{suggestNearestName(curveName, candidates)};
           !similar.empty())
         message += concat("; did you mean ", Quoted(similar), "?");
     }
@@ -1128,7 +1148,8 @@ std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
                     "target");
       // The codegen passes mutate the IR, so run them on a clone to keep
       // the module later handed to the JIT pristine.
-      auto clonedModule{llvm::CloneModule(getLLVMModule())};
+      std::unique_ptr<llvm::Module> clonedModule{
+          llvm::CloneModule(getLLVMModule())};
       passManager.run(*clonedModule);
       out = std::string(os.str());
     }
@@ -1138,7 +1159,7 @@ std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
 std::optional<Error> Compiler::jitCompile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
   mIsJITCompiling = true;
-  auto error{catchAndReturnError([&] {
+  std::optional<Error> error{catchAndReturnError([&] {
     if (!mLLVMJit || !mLLVMModule || !mLLVMContext)
       throw Error("nothing to JIT-compile: 'compile()' must be called first");
     // Define the builtin runtime callees ('smdlPanic', 'smdlBumpAllocate',
@@ -1148,9 +1169,9 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     // code names those by symbol rather than by address, so this is where
     // their addresses are finally committed.
     if (!mBuiltinCalleeAddresses.empty() || !mImageSymbolNames.empty()) {
-      auto mangle{llvm::orc::MangleAndInterner(mLLVMJit->getExecutionSession(),
-                                               mLLVMJit->getDataLayout())};
-      auto symbolMap{llvm::orc::SymbolMap{}};
+      llvm::orc::MangleAndInterner mangle{mLLVMJit->getExecutionSession(),
+                                          mLLVMJit->getDataLayout()};
+      llvm::orc::SymbolMap symbolMap{};
       for (const auto &[calleeName, calleeAddr] : mBuiltinCalleeAddresses)
         symbolMap[mangle(calleeName)] = llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(calleeAddr),
@@ -1165,8 +1186,8 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     // Hand the module to the JIT, dropping our handles up front: a failed
     // call must not leave moved-from state behind for 'dump()' or
     // 'getLLVMModule()' to trip over.
-    auto llvmJitModule{llvm::orc::ThreadSafeModule(std::move(mLLVMModule),
-                                                   std::move(mLLVMContext))};
+    llvm::orc::ThreadSafeModule llvmJitModule{std::move(mLLVMModule),
+                                              std::move(mLLVMContext)};
     llvmThrowIfError(mLLVMJit->addIRModule(std::move(llvmJitModule)));
     jitLookup(mColorToRGB);
     jitLookup(mRGBToColor);
@@ -1199,14 +1220,14 @@ std::optional<Error> Compiler::jitCompile() noexcept {
   })};
   mIsJITCompiling = false;
   mForeignFunctionSourceLocations.clear();
-  auto sessionErrors{std::move(mJITSessionErrors)};
+  std::vector<Error> sessionErrors{std::move(mJITSessionErrors)};
   mJITSessionErrors.clear();
   if (!error) {
     for (const auto &sessionError : sessionErrors) sessionError.print();
   } else if (!sessionErrors.empty()) {
     // A session error is the cause, and the lookup that failed is only
     // how it surfaced, so the session errors lead.
-    auto cause{std::move(sessionErrors.front())};
+    Error cause{std::move(sessionErrors.front())};
     for (size_t i = 1; i < sessionErrors.size(); i++)
       cause.message += concat("\n  ", sessionErrors[i].message);
     cause.message += concat("\n  ", error->message);
@@ -1225,7 +1246,7 @@ void *Compiler::jitLookup(std::string_view name) {
 
 const JIT::MaterialDef *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
-  auto results{findMaterials(materialName)};
+  std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
   return results.size() == 1 ? results.front() : nullptr;
 } catch (...) {
   return nullptr;
@@ -1233,12 +1254,12 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 
 std::string
 Compiler::explainMaterialLookup(std::string_view materialName) const {
-  auto results{findMaterials(materialName)};
+  std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
   if (results.size() == 1) return {};
   if (results.size() > 1) {
-    auto message{concat("material name ", Quoted(materialName),
-                        " is ambiguous, matching ", results.size(),
-                        " materials:")};
+    std::string message{concat("material name ", Quoted(materialName),
+                               " is ambiguous, matching ", results.size(),
+                               " materials:")};
     for (const auto *jitMaterial : results)
       message += concat(
           "\n  ", Quoted(jitMaterial->qualifiedName), " declared at ",
@@ -1254,8 +1275,8 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
                     Quoted(skippedName),
                     ", which was not compiled because it is not a desired "
                     "material (see 'Compiler::setDesiredMaterials()')");
-  auto message{concat("no material matches ", Quoted(materialName))};
-  if (auto suggestion{suggestMaterialName(*this, materialName)};
+  std::string message{concat("no material matches ", Quoted(materialName))};
+  if (std::string suggestion{suggestMaterialName(*this, materialName)};
       !suggestion.empty())
     message += concat("; did you mean ", Quoted(suggestion), "?");
   return message;
@@ -1263,7 +1284,7 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
 
 std::vector<const JIT::MaterialDef *>
 Compiler::findMaterials(std::string_view materialName) const {
-  auto results{std::vector<const JIT::MaterialDef *>()};
+  std::vector<const JIT::MaterialDef *> results{};
   for (const auto &jitMaterial : mMaterialDefs) {
     if (!jitMaterial.moduleIsShadowed &&
         matchesMaterialName(materialName, jitMaterial.qualifiedName))
@@ -1300,11 +1321,11 @@ namespace {
 // the `doc` subcommand's text printer: identity in blue, the name being
 // reported in cyan, and metadata in grey, plus green and red for the
 // results themselves.
-constexpr auto testColorFile{llvm::HighlightColor::Tag};
-constexpr auto testColorName{llvm::HighlightColor::Attribute};
-constexpr auto testColorMetadata{llvm::HighlightColor::Note};
-constexpr auto testColorSuccess{llvm::HighlightColor::String};
-constexpr auto testColorFailure{llvm::HighlightColor::Error};
+constexpr llvm::HighlightColor testColorFile{llvm::HighlightColor::Tag};
+constexpr llvm::HighlightColor testColorName{llvm::HighlightColor::Attribute};
+constexpr llvm::HighlightColor testColorMetadata{llvm::HighlightColor::Note};
+constexpr llvm::HighlightColor testColorSuccess{llvm::HighlightColor::String};
+constexpr llvm::HighlightColor testColorFailure{llvm::HighlightColor::Error};
 } // namespace
 
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
@@ -1318,8 +1339,8 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
     //
     // NOTE: Each colored span opens and closes before the test runs, so
     // that a test that crashes cannot leave the terminal colored.
-    auto &os{llvm::errs()};
-    const auto llvmColorMode{
+    llvm::raw_fd_ostream &os{llvm::errs()};
+    const llvm::ColorMode llvmColorMode{
         shouldUseColors(ansiColorMode, cerrSupportsANSIColors())
             ? llvm::ColorMode::Enable
             : llvm::ColorMode::Disable};
@@ -1371,7 +1392,7 @@ std::string Compiler::printMaterialSummary() const {
   // opacity status ('opaque' proven, 'cutout' proven, 'cutout?' only
   // knowable at runtime), plus 'volume' and 'emissive' when present.
   auto printStaticFlags{[](const JIT::MaterialDef &jitMaterial) {
-    auto flags{std::string()};
+    std::string flags{};
     if ((jitMaterial.staticFlagsKnown & MATERIAL_HAS_CUTOUT) == 0)
       flags += " [cutout?";
     else if ((jitMaterial.staticFlags & MATERIAL_HAS_CUTOUT) != 0)
@@ -1439,7 +1460,7 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
   std::fill_n(out, num, 0.0f);
 #if SMDL_HAS_PTEX
   thread_local ThreadLocalPtexFilters filters{};
-  const auto &smdlState{*static_cast<const smdl::State *>(state)};
+  const smdl::State &smdlState{*static_cast<const smdl::State *>(state)};
   if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
     filters.get(*ptex)->eval(out, first, num, smdlState.ptexFaceId,

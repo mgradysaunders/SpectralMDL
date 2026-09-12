@@ -27,9 +27,9 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
   // an actual load failure is, so without 'Compiler::logResourceWarningOnce'
   // it would be reported once per emission.
   auto materialUsing{[](std::string_view fileName) {
-    auto text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
-                          "export material M() = let {\n  auto t = "
-                          "texture_2d(\"")};
+    std::string text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+                                 "export material M() = let {\n  auto t = "
+                                 "texture_2d(\"")};
     text += fileName;
     text += "\", tex::gamma_srgb);\n"
             "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
@@ -49,7 +49,7 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
     CHECK(warnings.warningCount() == 2);
   }
   SUBCASE("Distinct missing textures are each reported") {
-    auto text{materialUsing("gone_a.png")};
+    std::string text{materialUsing("gone_a.png")};
     text += "export material N() = let {\n"
             "  auto t = texture_2d(\"gone_b.png\", tex::gamma_srgb);\n"
             "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
@@ -77,7 +77,7 @@ TEST_CASE("Compiler: the curve a spectrum library does not have") {
                               "wavelength units = Nanometers\n"
                               "wavelength = {400, 700}\n"
                               "spectra names = {grass, sand}\n");
-  auto data{std::string()};
+  std::string data{};
   for (float value : {0.1f, 0.2f, 0.3f, 0.4f}) {
     uint32_t bits{};
     std::memcpy(&bits, &value, sizeof(bits));
@@ -136,12 +136,13 @@ TEST_CASE("Compiler: the mip levels a texture bakes") {
                                   std::to_string(numLevels) + ");\n}\n");
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
-    if (auto message{buildAll(compiler, {tmpDir / "mips.smdl"})};
+    if (std::string message{buildAll(compiler, {tmpDir / "mips.smdl"})};
         !message.empty())
       return message;
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
-    if (auto error{compiler.runUnitTests(state)}) return error->message;
+    smdl::State state{storage.makeState()};
+    if (std::optional<smdl::Error> error{compiler.runUnitTests(state)})
+      return error->message;
     return std::string();
   }};
   SUBCASE("'use_mipmap: true' bakes the whole chain") {
@@ -192,10 +193,10 @@ TEST_CASE("Compiler: what a resource says at debug level") {
   SUBCASE("Decoded images are logged in file name order, then summed up") {
     // Enough images that the order of the cache, which is keyed by
     // pointer, is almost never the sorted one by chance.
-    auto declarations{std::string()};
-    auto sum{std::string("float3(0)")};
+    std::string declarations{};
+    std::string sum{"float3(0)"};
     for (char letter = 'a'; letter <= 'h'; letter++) {
-      const auto name{std::string(1, letter)};
+      const std::string name(1, letter);
       const uint8_t texels[4] = {uint8_t(letter), 0, 0, 0};
       REQUIRE(!smdl::write8bitImage((tmpDir / (name + ".png")).string(), 2, 2,
                                     1, texels));
@@ -280,16 +281,20 @@ TEST_CASE("Compiler: dropping an image nothing reads") {
       "unit_test \"Extent survives the drop\" {\n"
       "  #assert(tex::width(texture_2d(\"dead.png\")) == 2);\n"
       "}\n");
-  auto ir{std::string()};
+  std::string ir{};
   auto build{[&](smdl::OptLevel optLevel) {
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
-    if (auto error{compiler.add((tmpDir / "main.smdl").string())})
+    if (std::optional<smdl::Error> error{
+            compiler.add((tmpDir / "main.smdl").string())})
       return error->message;
-    if (auto error{compiler.compile(optLevel)}) return error->message;
-    if (auto error{compiler.dump(smdl::DUMP_FORMAT_IR, ir)})
+    if (std::optional<smdl::Error> error{compiler.compile(optLevel)})
       return error->message;
-    if (auto error{compiler.jitCompile()}) return error->message;
+    if (std::optional<smdl::Error> error{
+            compiler.dump(smdl::DUMP_FORMAT_IR, ir)})
+      return error->message;
+    if (std::optional<smdl::Error> error{compiler.jitCompile()})
+      return error->message;
     return std::string();
   }};
   SUBCASE("An unread image is dropped at O2 and a sampled one is kept") {
@@ -351,7 +356,7 @@ TEST_CASE("Compiler: one image symbol per file") {
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.add((tmpDir / "main.smdl").string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
-    auto ir{std::string()};
+    std::string ir{};
     REQUIRE_OK(compiler.dump(smdl::DUMP_FORMAT_IR, ir));
     // Two files, so two symbols: the level count is baked per texture,
     // but the texels are shared and named once.

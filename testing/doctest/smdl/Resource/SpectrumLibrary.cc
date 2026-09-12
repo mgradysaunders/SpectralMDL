@@ -101,7 +101,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
   TempDir tmpDir{"spectrum-library"};
   smdl::SpectrumLibrary library{};
   SUBCASE("A float, little-endian, micrometer library reads back its curves") {
-    auto fileName{(tmpDir / "float.sli").string()};
+    std::string fileName{(tmpDir / "float.sli").string()};
     writeLibrary(fileName, {});
     REQUIRE_OK(library.loadFromFile(fileName));
     for (int i = 0; i < 3; i++)
@@ -123,7 +123,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     opts.headerOffset = 16;
     opts.wavelengthUnits = "Nanometers";
     opts.wavelengthScale = 1000.0f;
-    auto fileName{(tmpDir / "double.sli").string()};
+    std::string fileName{(tmpDir / "double.sli").string()};
     writeLibrary(fileName, opts);
     REQUIRE_OK(library.loadFromFile(fileName));
     for (int i = 0; i < 3; i++)
@@ -132,7 +132,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
   SUBCASE("A library with no spectra names still reads") {
     LibraryOptions opts{};
     opts.useNames = false;
-    auto fileName{(tmpDir / "unnamed.sli").string()};
+    std::string fileName{(tmpDir / "unnamed.sli").string()};
     writeLibrary(fileName, opts);
     REQUIRE_OK(library.loadFromFile(fileName));
     checkCurve(library.getCurveByIndex(2), CURVE_SCALES[2]);
@@ -141,7 +141,7 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
   SUBCASE("A malformed library is refused and leaves nothing behind") {
     // A good load first, so each rejection also shows the failure
     // leaves the library empty rather than half loaded.
-    auto goodName{(tmpDir / "good.sli").string()};
+    std::string goodName{(tmpDir / "good.sli").string()};
     writeLibrary(goodName, {});
     REQUIRE_OK(library.loadFromFile(goodName));
     // Each message names the header line of the key at fault, counting
@@ -149,9 +149,9 @@ TEST_CASE("SpectrumLibrary: the ENVI variants it reads") {
     auto reject{[&](const char *name, const LibraryOptions &opts,
                     std::string_view message) {
       CAPTURE(name);
-      auto fileName{(tmpDir / name).string()};
+      std::string fileName{(tmpDir / name).string()};
       writeLibrary(fileName, opts);
-      const auto error{library.loadFromFile(fileName)};
+      const std::optional<smdl::Error> error{library.loadFromFile(fileName)};
       REQUIRE(error.has_value());
       CHECK_CONTAINS(error->message, message);
       CHECK(library.getCurveByIndex(0).curveValues.empty());

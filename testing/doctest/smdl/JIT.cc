@@ -81,24 +81,30 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
       smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME |
       smdl::MATERIAL_HAS_DISPLACEMENT | smdl::MATERIAL_REMAPS_NORMAL};
   SUBCASE("Structural and constant-foldable bits are known") {
-    auto matDefault{requireMaterial(compiler, "mat_default")};
+    const smdl::JIT::MaterialDef *matDefault{
+        requireMaterial(compiler, "mat_default")};
     CHECK(matDefault->staticFlagsKnown == allBits);
     CHECK(matDefault->staticFlags == 0);
     CHECK(matDefault->isAlwaysOpaque());
-    auto matPlastic{requireMaterial(compiler, "mat_plastic")};
+    const smdl::JIT::MaterialDef *matPlastic{
+        requireMaterial(compiler, "mat_plastic")};
     CHECK(matPlastic->staticFlagsKnown == allBits);
     CHECK(matPlastic->staticFlags == smdl::MATERIAL_HAS_SURFACE);
     CHECK(matPlastic->isAlwaysOpaque());
-    auto matCutoutConst{requireMaterial(compiler, "mat_cutout_const")};
+    const smdl::JIT::MaterialDef *matCutoutConst{
+        requireMaterial(compiler, "mat_cutout_const")};
     CHECK((matCutoutConst->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) != 0);
     CHECK((matCutoutConst->staticFlags & smdl::MATERIAL_HAS_CUTOUT) != 0);
     CHECK(!matCutoutConst->isAlwaysOpaque());
-    auto matCutoutFolds{requireMaterial(compiler, "mat_cutout_folds")};
+    const smdl::JIT::MaterialDef *matCutoutFolds{
+        requireMaterial(compiler, "mat_cutout_folds")};
     CHECK(matCutoutFolds->isAlwaysOpaque());
-    auto matThin{requireMaterial(compiler, "mat_thin")};
+    const smdl::JIT::MaterialDef *matThin{
+        requireMaterial(compiler, "mat_thin")};
     CHECK((matThin->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) != 0);
     CHECK((matThin->staticFlags & smdl::MATERIAL_THIN_WALLED) != 0);
-    auto matVolume{requireMaterial(compiler, "mat_volume")};
+    const smdl::JIT::MaterialDef *matVolume{
+        requireMaterial(compiler, "mat_volume")};
     CHECK(matVolume->hasVolume());
     CHECK(matVolume->hasHomogeneousVolume());
     // Not opaque because it passes shadow rays through, not because it
@@ -106,38 +112,42 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     // every hit and is opaque despite its interior.
     CHECK(matVolume->isNullInterface());
     CHECK(!matVolume->isAlwaysOpaque());
-    auto matVolumeSurface{requireMaterial(compiler, "mat_volume_surface")};
+    const smdl::JIT::MaterialDef *matVolumeSurface{
+        requireMaterial(compiler, "mat_volume_surface")};
     CHECK(matVolumeSurface->hasVolume());
     CHECK(!matVolumeSurface->isNullInterface());
     CHECK(matVolumeSurface->isAlwaysOpaque());
-    auto matEmissive{requireMaterial(compiler, "mat_emissive")};
+    const smdl::JIT::MaterialDef *matEmissive{
+        requireMaterial(compiler, "mat_emissive")};
     CHECK((matEmissive->staticFlags & smdl::MATERIAL_HAS_SURFACE_EMISSION) !=
           0);
     CHECK(matEmissive->isAlwaysOpaque());
   }
   SUBCASE("Runtime-dependent bits degrade to unknown") {
-    auto matCutoutRuntime{requireMaterial(compiler, "mat_cutout_runtime")};
+    const smdl::JIT::MaterialDef *matCutoutRuntime{
+        requireMaterial(compiler, "mat_cutout_runtime")};
     CHECK(matCutoutRuntime->staticFlagsKnown ==
           (allBits & ~smdl::MATERIAL_HAS_CUTOUT));
     CHECK(!matCutoutRuntime->isAlwaysOpaque());
-    auto matThinRuntime{requireMaterial(compiler, "mat_thin_runtime")};
+    const smdl::JIT::MaterialDef *matThinRuntime{
+        requireMaterial(compiler, "mat_thin_runtime")};
     CHECK(matThinRuntime->staticFlagsKnown ==
           (allBits & ~smdl::MATERIAL_THIN_WALLED));
   }
   SUBCASE("Evaluations satisfy the static-flags invariant") {
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     for (const auto &materialDef : compiler.getMaterials()) {
-      auto material{smdl::JIT::Material(state, &materialDef)};
+      smdl::JIT::Material material{state, &materialDef};
       CHECK((material.eval.flags & materialDef.staticFlagsKnown) ==
             materialDef.staticFlags);
     }
     // 'opacityEvaluate' agrees with the full evaluation and requires no
     // allocator.
-    auto stateNoAlloc{state};
+    smdl::State stateNoAlloc{state};
     stateNoAlloc.allocator = nullptr;
     for (const auto &materialDef : compiler.getMaterials()) {
-      auto material{smdl::JIT::Material(state, &materialDef)};
+      smdl::JIT::Material material{state, &materialDef};
       CHECK(materialDef.opacityEvaluate(stateNoAlloc) ==
             material.getCutoutOpacity());
     }
@@ -146,10 +156,10 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     CHECK(requireMaterial(compiler, "mat_cutout_const")
               ->opacityEvaluate(stateNoAlloc) == 0.5f);
     // The additive-volume declaration reaches the evaluation's flags.
-    auto additiveMaterial{smdl::JIT::Material(
+    smdl::JIT::Material additiveMaterial{smdl::JIT::Material(
         state, requireMaterial(compiler, "mat_volume_additive"))};
     CHECK(additiveMaterial.hasAdditiveVolume());
-    auto replacingMaterial{
+    smdl::JIT::Material replacingMaterial{
         smdl::JIT::Material(state, requireMaterial(compiler, "mat_volume"))};
     CHECK(!replacingMaterial.hasAdditiveVolume());
   }
@@ -161,7 +171,7 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
   // 'value = x + 10*y + 100*z', so trilinear filtering reproduces it
   // exactly and the maximum is 31 + 70 + 300 = 401.
   {
-    auto bytes{std::string("VOL")};
+    std::string bytes{"VOL"};
     const auto append{[&](const void *data, size_t size) {
       bytes.append(static_cast<const char *>(data), size);
     }};
@@ -230,15 +240,16 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
   REQUIRE_OK(compiler.add((tmpDir / "root").string()));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
-  const auto N{size_t(compiler.wavelengthBaseMax)};
-  auto sigmaA{std::vector<float>(N)};
-  auto sigmaS{std::vector<float>(N)};
-  auto emission{std::vector<float>(N)};
+  const size_t N{size_t(compiler.wavelengthBaseMax)};
+  std::vector<float> sigmaA(N);
+  std::vector<float> sigmaS(N);
+  std::vector<float> emission(N);
   // 'volumeEvaluate' is allocation-free, so the partial state carries
   // no allocator: only the object-space position identifies the query.
-  auto state{smdl::State()};
+  smdl::State state{};
   SUBCASE("Homogeneous coefficients are position-independent") {
-    auto materialDef{requireMaterial(compiler, "vol_homog")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_homog")};
     CHECK(materialDef->hasVolume());
     CHECK(materialDef->hasHomogeneousVolume());
     materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
@@ -249,7 +260,8 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     }
   }
   SUBCASE("Heterogeneous coefficients follow the position") {
-    auto materialDef{requireMaterial(compiler, "vol_hetero")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_hetero")};
     CHECK(materialDef->hasVolume());
     CHECK(!materialDef->hasHomogeneousVolume());
     // The center of voxel (3, 4, 2) has the exactly representable
@@ -268,7 +280,8 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 0.0f);
   }
   SUBCASE("Emission follows the position and absent emission is zero") {
-    auto materialDef{requireMaterial(compiler, "vol_fire")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_fire")};
     CHECK(materialDef->hasVolume());
     // The center of voxel (3, 4, 2), where the linear field is 243:
     // emission is 0.25 times the field, absorption 2 times it.
@@ -281,14 +294,16 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
       CHECK(emission[i] == 0.25f * 243.0f);
     }
     // A material that declares no emission resolves it to zero.
-    auto hetero{requireMaterial(compiler, "vol_hetero")};
+    const smdl::JIT::MaterialDef *hetero{
+        requireMaterial(compiler, "vol_hetero")};
     state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
     hetero->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
                            emission.data());
     for (size_t i = 0; i < N; i++) CHECK(emission[i] == 0.0f);
   }
   SUBCASE("No volume evaluates to zero and proves homogeneous") {
-    auto materialDef{requireMaterial(compiler, "vol_none")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "vol_none")};
     CHECK(!materialDef->hasVolume());
     CHECK(materialDef->hasHomogeneousVolume());
     materialDef->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
@@ -300,12 +315,12 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
   }
   SUBCASE("Evaluations expose the density acceleration hint") {
     StateStorage storage{compiler};
-    auto fullState{storage.makeState()};
+    smdl::State fullState{storage.makeState()};
     // A material with the complete hint exposes the grid resource and
     // both corners of the bound box through the evaluation.
-    auto hinted{smdl::JIT::Material(fullState,
-                                    requireMaterial(compiler, "vol_hinted"))};
-    const auto *grid{hinted.getVolumeDensityGrid()};
+    smdl::JIT::Material hinted{smdl::JIT::Material(
+        fullState, requireMaterial(compiler, "vol_hinted"))};
+    const smdl::VoxelGrid *grid{hinted.getVolumeDensityGrid()};
     REQUIRE(grid != nullptr);
     CHECK(grid->isValid());
     CHECK(grid->getExtent().x == 32);
@@ -321,7 +336,7 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     // the field: some cell reports the peak, none exceeds it, and the
     // same holds below.
     const int E{grid->getMajorantExtent()};
-    const auto cells{grid->getMajorantCount()};
+    const smdl::int3 cells{grid->getMajorantCount()};
     CHECK(cells.x == (32 + E - 1) / E);
     CHECK(cells.y == (8 + E - 1) / E);
     CHECK(cells.z == (4 + E - 1) / E);
@@ -329,31 +344,31 @@ TEST_CASE("volumeEvaluate: the coefficients along a position") {
     for (int cz = 0; cz < cells.z; cz++)
       for (int cy = 0; cy < cells.y; cy++)
         for (int cx = 0; cx < cells.x; cx++) {
-          const auto bounds{grid->getMajorantBounds(cx, cy, cz)};
+          const smdl::float2 bounds{grid->getMajorantBounds(cx, cy, cz)};
           cellMax = std::max(cellMax, bounds.y);
           cellMin = std::min(cellMin, bounds.x);
         }
     CHECK(cellMax == grid->getMaxValue());
     CHECK(cellMin == grid->getMinValue());
     // A material without the hint reports null pointers.
-    auto unhinted{smdl::JIT::Material(fullState,
-                                      requireMaterial(compiler, "vol_hetero"))};
+    smdl::JIT::Material unhinted{smdl::JIT::Material(
+        fullState, requireMaterial(compiler, "vol_hetero"))};
     CHECK(unhinted.getVolumeDensityGrid() == nullptr);
     CHECK(unhinted.getVolumeDensityBoundMin() == nullptr);
     CHECK(unhinted.getVolumeDensityBoundMax() == nullptr);
   }
   SUBCASE("Evaluations expose the declared majorants") {
     StateStorage storage{compiler};
-    auto fullState{storage.makeState()};
-    auto homog{
+    smdl::State fullState{storage.makeState()};
+    smdl::JIT::Material homog{
         smdl::JIT::Material(fullState, requireMaterial(compiler, "vol_homog"))};
     REQUIRE(homog.getMaxScatteringCoefficient().size() == N);
     CHECK(homog.getMaxAbsorptionCoefficient().empty());
     for (size_t i = 0; i < N; i++)
       CHECK(homog.getMaxScatteringCoefficient()[i] == 2.0f);
     // The heterogeneous majorant is exact through 'tex::max_value'.
-    auto hetero{smdl::JIT::Material(fullState,
-                                    requireMaterial(compiler, "vol_hetero"))};
+    smdl::JIT::Material hetero{smdl::JIT::Material(
+        fullState, requireMaterial(compiler, "vol_hetero"))};
     REQUIRE(hetero.getMaxScatteringCoefficient().size() == N);
     for (size_t i = 0; i < N; i++)
       CHECK(hetero.getMaxScatteringCoefficient()[i] == 4.0f * 401.0f);
@@ -379,10 +394,11 @@ TEST_CASE("displacementEvaluate: a displaced and an undisplaced material") {
   REQUIRE_OK(compiler.jitCompile());
   // 'displacementEvaluate' is allocation-free, so the partial state
   // carries no allocator, exactly as with 'volumeEvaluate'.
-  auto state{smdl::State()};
-  auto displacement{smdl::float3()};
+  smdl::State state{};
+  smdl::float3 displacement{};
   SUBCASE("The default material is provably undisplaced") {
-    auto materialDef{requireMaterial(compiler, "disp_none")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "disp_none")};
     CHECK(materialDef->hasZeroDisplacement());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) !=
           0);
@@ -393,7 +409,8 @@ TEST_CASE("displacementEvaluate: a displaced and an undisplaced material") {
     CHECK(displacement.z == 0.0f);
   }
   SUBCASE("A constant displacement is provably non-zero") {
-    auto materialDef{requireMaterial(compiler, "disp_const")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "disp_const")};
     CHECK(!materialDef->hasZeroDisplacement());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) !=
           0);
@@ -404,7 +421,8 @@ TEST_CASE("displacementEvaluate: a displaced and an undisplaced material") {
     CHECK(displacement.z == 0.25f);
   }
   SUBCASE("A state-dependent displacement is unknown, not proven zero") {
-    auto materialDef{requireMaterial(compiler, "disp_state")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "disp_state")};
     CHECK(!materialDef->hasZeroDisplacement());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) ==
           0);
@@ -430,22 +448,23 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
   StateStorage storage{compiler};
-  auto state{storage.makeState()};
+  smdl::State state{storage.makeState()};
   // The default state's tangent-to-world is identity, so the directions
   // below are written directly in the hair frame: X is the fiber tangent
   // and Z is the cross-section normal.
-  auto wo{smdl::float3(0.0f, 0.6f, 0.8f)};
-  auto wi{smdl::float3(0.6f, -0.64f, -0.48f)};
-  auto f{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-  auto fSpan{smdl::Span<float>(f.data(), f.size())};
+  smdl::float3 wo{0.0f, 0.6f, 0.8f};
+  smdl::float3 wi{0.6f, -0.64f, -0.48f};
+  std::vector<float> f(size_t(compiler.wavelengthBaseMax));
+  smdl::Span<float> fSpan(f.data(), f.size());
   float pdfFwd{};
   float pdfRev{};
   SUBCASE("A hair material evaluates and samples through the entry points") {
-    auto materialDef{requireMaterial(compiler, "hair_brown")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "hair_brown")};
     CHECK(materialDef->hasHair());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
-    auto material{smdl::JIT::Material(state, materialDef)};
+    smdl::JIT::Material material{state, materialDef};
     CHECK(material.hasHair());
     CHECK(material.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd > 0.0f);
@@ -454,8 +473,8 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
       CHECK(fValue > 0.0f);
       CHECK(std::isfinite(fValue));
     }
-    auto xi{smdl::float4(0.3f, 0.4f, 0.5f, 0.6f)};
-    auto wiSampled{smdl::float3()};
+    smdl::float4 xi{0.3f, 0.4f, 0.5f, 0.6f};
+    smdl::float3 wiSampled{};
     CHECK(material.hairScatterSample(xi, wo, wiSampled, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd > 0.0f);
     float lengthSquared{wiSampled.x * wiSampled.x + wiSampled.y * wiSampled.y +
@@ -463,11 +482,12 @@ TEST_CASE("hairScatterEvaluate: a hair material and the default one") {
     CHECK(lengthSquared == doctest::Approx(1.0f).epsilon(1e-3));
   }
   SUBCASE("The default hair BSDF is safe to call and reports black") {
-    auto materialDef{requireMaterial(compiler, "hair_none")};
+    const smdl::JIT::MaterialDef *materialDef{
+        requireMaterial(compiler, "hair_none")};
     CHECK(!materialDef->hasHair());
     CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) == 0);
-    auto material{smdl::JIT::Material(state, materialDef)};
+    smdl::JIT::Material material{state, materialDef};
     CHECK(!material.hasHair());
     CHECK(!material.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd == 0.0f);
@@ -482,7 +502,7 @@ TEST_CASE("scatterSample: a rough reflector sampled and evaluated back") {
   // A rough reflector has a density wherever it scatters, so a sampled
   // direction can be evaluated back, and the two must agree on everything
   // they report.
-  auto compiler{smdl::Compiler()};
+  smdl::Compiler compiler{};
   REQUIRE_OK(compiler.addCode(
       "::rough", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
                  "  surface: material_surface(scattering: "
@@ -490,19 +510,19 @@ TEST_CASE("scatterSample: a rough reflector sampled and evaluated back") {
                  "    roughness_u: 0.4, tint: 0.8)));\n"));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
-  auto *materialDef{compiler.findMaterial("m")};
+  const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
   REQUIRE(materialDef);
   StateStorage storage{compiler};
-  auto state{storage.makeState()};
+  smdl::State state{storage.makeState()};
   state.finalize();
-  auto material{smdl::JIT::Material(state, materialDef)};
-  const auto wo{smdl::float3(0.0f, 0.6f, 0.8f)};
-  auto f{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-  auto fSpan{smdl::Span<float>(f.data(), f.size())};
+  smdl::JIT::Material material{state, materialDef};
+  const smdl::float3 wo{0.0f, 0.6f, 0.8f};
+  std::vector<float> f(size_t(compiler.wavelengthBaseMax));
+  smdl::Span<float> fSpan(f.data(), f.size());
   float pdfFwd{};
   float pdfRev{};
   SUBCASE("The sample agrees with the evaluation at its direction") {
-    auto wi{smdl::float3()};
+    smdl::float3 wi{};
     int lobe{};
     float lobeChance{};
     REQUIRE(material.scatterSample(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f), wo,
@@ -514,7 +534,7 @@ TEST_CASE("scatterSample: a rough reflector sampled and evaluated back") {
     CHECK((lobe & (lobe - 1)) == 0);
     CHECK(lobeChance > 0.0f);
     CHECK(lobeChance <= 1.0f);
-    const auto fSampled{f};
+    const std::vector<float> fSampled{f};
     float pdfFwdEvaluated{};
     float pdfRevEvaluated{};
     REQUIRE(material.scatterEvaluate(wo, wi, pdfFwdEvaluated, pdfRevEvaluated,
@@ -526,7 +546,7 @@ TEST_CASE("scatterSample: a rough reflector sampled and evaluated back") {
   }
   SUBCASE("A mask without the query's domain excludes the query") {
     // Mirrored about the normal, so the pair is a reflection.
-    const auto wi{smdl::float3(0.0f, -0.6f, 0.8f)};
+    const smdl::float3 wi{0.0f, -0.6f, 0.8f};
     CHECK(material.scatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
     CHECK(pdfFwd > 0.0f);
     CHECK(!material.scatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan,
@@ -550,9 +570,9 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     REQUIRE_OK(compiler.jitCompile());
   }};
   SUBCASE("Off by default, and the entry points are absent") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     buildGlossy(compiler, false);
-    auto *materialDef{compiler.findMaterial("m")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
     REQUIRE(materialDef);
     // Absent, not merely unresolved: nothing was emitted to resolve.
     CHECK(materialDef->scatterNormalSample.name.empty());
@@ -563,9 +583,9 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(bool(materialDef->scatterEvaluate));
   }
   SUBCASE("On, and the entry points resolve") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     buildGlossy(compiler, true);
-    auto *materialDef{compiler.findMaterial("m")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
     REQUIRE(materialDef);
     CHECK(bool(materialDef->scatterNormalSample));
     CHECK(bool(materialDef->scatterNormalEvaluate));
@@ -576,17 +596,17 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     // The two-domain mixture is not a distribution any single crossing
     // scatters by, so the wrapper refuses it; the raw entry point still
     // reports the mixture for a caller that wants it.
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     buildGlossy(compiler, true);
-    auto *materialDef{compiler.findMaterial("m")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
     REQUIRE(materialDef);
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     state.finalize();
-    auto material{smdl::JIT::Material(state, materialDef)};
-    const auto xi{smdl::float4(0.25f, 0.5f, 0.5f, 0.5f)};
-    auto wm{smdl::float3()};
-    auto alpha{smdl::float2()};
+    smdl::JIT::Material material{state, materialDef};
+    const smdl::float4 xi{0.25f, 0.5f, 0.5f, 0.5f};
+    smdl::float3 wm{};
+    smdl::float2 alpha{};
     float pdf{};
     CHECK(!material.scatterNormalSample(xi, false, wm, pdf, alpha,
                                         smdl::DF_GLOSSY));
@@ -604,16 +624,16 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
                                         smdl::DF_GLOSSY_BTDF));
   }
   SUBCASE("The evaluate hook reports the density the sample hook drew") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     buildGlossy(compiler, true);
-    auto *materialDef{compiler.findMaterial("m")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
     REQUIRE(materialDef);
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     state.finalize();
-    auto material{smdl::JIT::Material(state, materialDef)};
-    auto wm{smdl::float3()};
-    auto alpha{smdl::float2()};
+    smdl::JIT::Material material{state, materialDef};
+    smdl::float3 wm{};
+    smdl::float2 alpha{};
     float pdf{};
     REQUIRE(material.scatterNormalSample(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f),
                                          false, wm, pdf, alpha,
@@ -624,7 +644,7 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(pdfEvaluated == doctest::Approx(pdf));
   }
   SUBCASE("The normal probe and the geometry normal hook") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     compiler.shouldEmitScatterNormal = true;
     REQUIRE_OK(compiler.addCode(
         "::remap",
@@ -639,8 +659,8 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
         "math::normalize(float3(0.3, 0.0, 1.0))));\n"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
     REQUIRE_OK(compiler.jitCompile());
-    auto *plain{compiler.findMaterial("plain")};
-    auto *remapped{compiler.findMaterial("remapped")};
+    const smdl::JIT::MaterialDef *plain{compiler.findMaterial("plain")};
+    const smdl::JIT::MaterialDef *remapped{compiler.findMaterial("remapped")};
     REQUIRE(plain);
     REQUIRE(remapped);
     // The probe folds 'geometry.normal - $state.normal' at O2, so the
@@ -649,8 +669,9 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(!plain->canRemapNormal());
     CHECK(remapped->canRemapNormal());
     // And the hook reads the field itself, in internal space.
-    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
-    auto state{smdl::State()};
+    std::vector<float> wavelengths{
+        std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    smdl::State state{};
     state.wavelengthMin = 380.0f;
     state.wavelengthMax = 720.0f;
     state.wavelengthBase = wavelengths.data();
@@ -660,7 +681,7 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
           (1 - fac) * state.wavelengthMin + fac * state.wavelengthMax;
     }
     state.finalize();
-    auto normal{smdl::float3()};
+    smdl::float3 normal{};
     REQUIRE(bool(plain->geometryNormalEvaluate));
     plain->geometryNormalEvaluate(state, normal);
     CHECK(normal.x == doctest::Approx(0.0f));
@@ -673,7 +694,7 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(normal.z == doctest::Approx(1.0f * invLen));
   }
   SUBCASE("A remap bars a claim only over a df node given its own normal") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     compiler.shouldEmitScatterNormal = true;
     REQUIRE_OK(compiler.addCode(
         "::claim",
@@ -692,17 +713,19 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
         "  geometry: material_geometry(normal: N));\n"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
     REQUIRE_OK(compiler.jitCompile());
-    auto *inheritsMaterial{compiler.findMaterial("inherits")};
-    auto *pinnedMaterial{compiler.findMaterial("pinned")};
+    const smdl::JIT::MaterialDef *inheritsMaterial{
+        compiler.findMaterial("inherits")};
+    const smdl::JIT::MaterialDef *pinnedMaterial{
+        compiler.findMaterial("pinned")};
     REQUIRE(inheritsMaterial);
     REQUIRE(pinnedMaterial);
     CHECK(inheritsMaterial->canRemapNormal());
     CHECK(pinnedMaterial->canRemapNormal());
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     state.finalize();
-    auto inherits{smdl::JIT::Material(state, inheritsMaterial)};
-    auto pinned{smdl::JIT::Material(state, pinnedMaterial)};
+    smdl::JIT::Material inherits{state, inheritsMaterial};
+    smdl::JIT::Material pinned{state, pinnedMaterial};
     // A defaulted layer normal follows the remapped field, so it reports
     // neither property bit and the walk can solve the whole tree.
     CHECK((inherits.getLobes() &
@@ -716,9 +739,9 @@ TEST_CASE("scatterNormalSample: the opt-in normal-distribution hooks") {
     CHECK(smdl::manifoldClaim(pinned, /*isMarked=*/true).empty());
   }
   SUBCASE("The remap flag degrades to unproven without optimization") {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     buildGlossy(compiler, false); // OPT_LEVEL_NONE inside
-    auto *materialDef{compiler.findMaterial("m")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("m")};
     REQUIRE(materialDef);
     // Nothing folded, so the identity is unproven and the conservative
     // reading is that the material may remap.
@@ -732,7 +755,7 @@ TEST_CASE("MaterialDef: the lobe words per side of the interface") {
   // the union: claiming a kind on the side that cannot produce it bars
   // the ordinary estimators from transport the manifold gather then fails
   // to draw, and the two lose it between them.
-  auto compiler{smdl::Compiler()};
+  smdl::Compiler compiler{};
   REQUIRE_OK(compiler.addCode(
       "::sides", "#smdl\nimport ::df::*;\n"
                  "export material one_sided() = material(\n"
@@ -746,12 +769,14 @@ TEST_CASE("MaterialDef: the lobe words per side of the interface") {
                  "df::specular_bsdf(mode: df::scatter_reflect)));\n"));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
-  auto *oneSidedMaterial{compiler.findMaterial("one_sided")};
-  auto *twoSidedMaterial{compiler.findMaterial("two_sided")};
+  const smdl::JIT::MaterialDef *oneSidedMaterial{
+      compiler.findMaterial("one_sided")};
+  const smdl::JIT::MaterialDef *twoSidedMaterial{
+      compiler.findMaterial("two_sided")};
   REQUIRE(oneSidedMaterial);
   REQUIRE(twoSidedMaterial);
   StateStorage storage{compiler};
-  auto state{storage.makeState()};
+  smdl::State state{storage.makeState()};
   state.finalize();
   const auto lobes{[](const smdl::JIT::Material &material, bool isBackface) {
     return material.getLobes(isBackface) & smdl::DF_ALL;
@@ -759,13 +784,13 @@ TEST_CASE("MaterialDef: the lobe words per side of the interface") {
   // A material with no `backface` initializer scatters by its `surface`
   // from both sides, so the back side reports the surface word and not
   // the empty one the raw `backfaceLobes` field holds.
-  auto oneSided{smdl::JIT::Material(state, oneSidedMaterial)};
+  smdl::JIT::Material oneSided{state, oneSidedMaterial};
   CHECK(lobes(oneSided, false) == smdl::DF_SMOOTH_BRDF);
   CHECK(lobes(oneSided, true) == smdl::DF_SMOOTH_BRDF);
   CHECK((oneSided.getLobes() & smdl::DF_ALL) == smdl::DF_SMOOTH_BRDF);
   // A two-sided one distinguishes, and the sideless union is the two
   // together.
-  auto twoSided{smdl::JIT::Material(state, twoSidedMaterial)};
+  smdl::JIT::Material twoSided{state, twoSidedMaterial};
   CHECK(lobes(twoSided, false) == smdl::DF_SMOOTH_BRDF);
   CHECK(lobes(twoSided, true) == smdl::DF_DIRAC_BRDF);
   CHECK((twoSided.getLobes() & smdl::DF_ALL) ==
@@ -801,14 +826,14 @@ TEST_CASE("State: the vertex color a material reads through both spellings") {
         [](const smdl::State *state) { return state->vertexColorCount > 0; });
   }};
   const auto run{[&](const char *source, bool isPresent) {
-    auto compiler{smdl::Compiler()};
+    smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
     registerAlias(compiler);
     REQUIRE_OK(compiler.addCode("::vertex_color_test", source));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     if (isPresent) {
       state.vertexColorCount = 1;
       state.vertexColor[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);

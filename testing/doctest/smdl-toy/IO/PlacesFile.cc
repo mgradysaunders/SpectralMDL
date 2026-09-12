@@ -9,12 +9,12 @@
 
 TEST_CASE("PlacesFile: round trip") {
   TempDir tmpDir{"toy-places"};
-  const auto fileName{(tmpDir / "scatter.places").string()};
+  const std::string fileName{(tmpDir / "scatter.places").string()};
   // Sheared, scaled, and translated, so that every stored entry of the
   // top three rows is exercised and none is a matrix default.
-  auto places{PlacesFile()};
+  PlacesFile places{};
   for (int i = 0; i < 5; i++) {
-    auto xf{float4x4(1.0f)};
+    float4x4 xf{1.0f};
     xf[0][1] = 0.25f * float(i);
     xf[1][1] = 2.0f + float(i);
     xf[2][0] = -0.5f;
@@ -35,7 +35,7 @@ TEST_CASE("PlacesFile: round trip") {
   }};
   SUBCASE("Without variants") {
     writePlacesFile(fileName, places);
-    const auto read{readPlacesFile(fileName)};
+    const PlacesFile read{readPlacesFile(fileName)};
     CHECK(read.version == 1);
     CHECK(!read.hasVariants());
     checkTransforms(read);
@@ -43,14 +43,14 @@ TEST_CASE("PlacesFile: round trip") {
   SUBCASE("With variants") {
     places.variants = {0, PlacesFile::NO_VARIANT, 2, 1, PlacesFile::NO_VARIANT};
     writePlacesFile(fileName, places);
-    const auto read{readPlacesFile(fileName)};
+    const PlacesFile read{readPlacesFile(fileName)};
     REQUIRE(read.hasVariants());
     CHECK(read.variants == places.variants);
     checkTransforms(read);
   }
   SUBCASE("A truncated buffer is refused") {
     writePlacesFile(fileName, places);
-    auto bytes{std::string()};
+    std::string bytes{};
     {
       std::ifstream file(fileName, std::ios::binary);
       bytes.assign(std::istreambuf_iterator<char>(file), {});

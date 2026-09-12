@@ -583,7 +583,7 @@ private:
   struct VoxelGridKeyHash final {
     [[nodiscard]] size_t operator()(
         const std::pair<const MD5FileHash *, std::string> &key) const noexcept {
-      auto hash{std::hash<const MD5FileHash *>()(key.first)};
+      size_t hash{std::hash<const MD5FileHash *>()(key.first)};
       hash ^= std::hash<std::string>()(key.second) + 0x9E3779B97F4A7C15ULL +
               (hash << 6) + (hash >> 2);
       return hash;

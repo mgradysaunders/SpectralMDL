@@ -17,7 +17,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     const uint8_t texels[18] = {255, 0,   0,   0,   255, 0,   //
                                 0,   0,   255, 255, 255, 255, //
                                 51,  102, 153, 0,   0,   0};
-    auto fileName{(tmpDir / "test.png").string()};
+    std::string fileName{(tmpDir / "test.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 3, 3, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -27,7 +27,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     CHECK(image.getNumChannels() == 4); // 3 must round up to 4
     CHECK(image.getTexelSizeInBytes() == 4);
     image.finishLoad();
-    auto texel{image.fetch(0, 0)};
+    smdl::float4 texel{image.fetch(0, 0)};
     CHECK(texel[0] == 1.0f);
     CHECK(texel[1] == 0.0f);
     CHECK(texel[2] == 0.0f);
@@ -43,7 +43,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
   }
   SUBCASE("A gray PNG round-trips as one channel") {
     const uint8_t texels[4] = {0, 85, 170, 255};
-    auto fileName{(tmpDir / "gray.png").string()};
+    std::string fileName{(tmpDir / "gray.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 2, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -61,7 +61,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
                                 192, 208, 224, 240};
-    auto fileName{(tmpDir / "mip.png").string()};
+    std::string fileName{(tmpDir / "mip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -90,7 +90,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     const uint8_t texels[15] = {10,  20,  30,  40,  50,  //
                                 60,  70,  80,  90,  100, //
                                 110, 120, 130, 140, 150};
-    auto fileName{(tmpDir / "npot.png").string()};
+    std::string fileName{(tmpDir / "npot.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 5, 3, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -106,7 +106,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     for (int level = 1; level < 3; level++)
       for (int y = 0; y < image.getNumTexelsY(level); y++)
         for (int x = 0; x < image.getNumTexelsX(level); x++) {
-          auto value{image.fetch(x, y, level)[0]};
+          float value{image.fetch(x, y, level)[0]};
           CHECK(value >= 10.0f / 255.0f);
           CHECK(value <= 150.0f / 255.0f);
         }
@@ -123,7 +123,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 140, 150, 160, 170, 180, 190, 255, //
                                 5,   15,  25,  35,  45,  55,  65,  //
                                 75,  85,  95,  105, 115, 125, 135};
-    auto fileName{(tmpDir / "max.png").string()};
+    std::string fileName{(tmpDir / "max.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, numX, numY, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -172,13 +172,13 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 4,   210, 6,   7,  //
                                 8,   9,   220, 11, //
                                 12,  13,  14,  230};
-    auto fileName{(tmpDir / "max_rgba.png").string()};
+    std::string fileName{(tmpDir / "max_rgba.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 2, 2, 4, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
     CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
     image.finishLoad();
-    auto texel{image.fetch(0, 0, 1)};
+    smdl::float4 texel{image.fetch(0, 0, 1)};
     CHECK(texel[0] == 200.0f / 255.0f);
     CHECK(texel[1] == 210.0f / 255.0f);
     CHECK(texel[2] == 220.0f / 255.0f);
@@ -189,7 +189,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     // with its exact values, including ones beyond [0, 1].
     const float texels[8] = {0.25f, -1.0f, 2.5f,  0.75f,
                              0.5f,  0.5f,  1.25f, 0.0f};
-    auto fileName{(tmpDir / "max.exr").string()};
+    std::string fileName{(tmpDir / "max.exr").string()};
     REQUIRE(!smdl::writeFloatImage(fileName, 4, 2, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -205,7 +205,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
                                 192, 208, 224, 240};
-    auto fileName{(tmpDir / "nomip.png").string()};
+    std::string fileName{(tmpDir / "nomip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -235,7 +235,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
                                 192, 208, 224, 240};
-    auto fileName{(tmpDir / "nochain.png").string()};
+    std::string fileName{(tmpDir / "nochain.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -265,7 +265,7 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
                                 192, 208, 224, 240};
-    auto fileName{(tmpDir / "earlymip.png").string()};
+    std::string fileName{(tmpDir / "earlymip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE_OK(image.startLoad(fileName));
@@ -288,9 +288,9 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     // inside the pixel data, and so that the chain is several levels.
     std::vector<uint8_t> texels(size_t(64) * 64);
     for (size_t i = 0; i < texels.size(); i++) texels[i] = uint8_t(i);
-    auto fileName{(tmpDir / "truncated.png").string()};
+    std::string fileName{(tmpDir / "truncated.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 64, 64, 1, texels.data()));
-    auto sizeInBytes{fs::file_size(fileName)};
+    size_t sizeInBytes{fs::file_size(fileName)};
     REQUIRE(sizeInBytes > 128);
     fs::resize_file(fileName, sizeInBytes / 2);
     smdl::Image image{};
@@ -304,10 +304,10 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
           CHECK(image.fetch(x, y, level)[0] == 0.0f);
   }
   SUBCASE("Unrecognized or missing files must be load errors") {
-    auto fileName{(tmpDir / "test.txt").string()};
+    std::string fileName{(tmpDir / "test.txt").string()};
     std::ofstream(fileName) << "This is not an image!\n";
     smdl::Image image{};
-    const auto error{image.startLoad(fileName)};
+    const std::optional<smdl::Error> error{image.startLoad(fileName)};
     REQUIRE(error.has_value());
     // The decoder's own reason, and not the C++ type it was thrown as.
     CHECK_CONTAINS(error->message, "unknown image type");

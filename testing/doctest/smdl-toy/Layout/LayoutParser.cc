@@ -8,8 +8,8 @@
 namespace {
 // Parse from memory and require no errors.
 LayoutDocument parseOK(LayoutDiagnostics &diags, std::string text) {
-  const auto &source{diags.addSource("test.layout", std::move(text))};
-  auto document{parseLayout(diags, source, "/nowhere")};
+  const LayoutSource &source{diags.addSource("test.layout", std::move(text))};
+  LayoutDocument document{parseLayout(diags, source, "/nowhere")};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
   return document;
@@ -18,14 +18,14 @@ LayoutDocument parseOK(LayoutDiagnostics &diags, std::string text) {
 
 TEST_CASE("LayoutParser: declarations and a placement") {
   LayoutDiagnostics diags{};
-  const auto document{parseOK(
+  const LayoutDocument document{parseOK(
       diags, R"(asset lamp = sphere { radius 0.2 material lamp_r020 caster }
 light beam = spot { power 100 angle 40 blend 0.2 }
 place lamp as hero translate 0 0 3
 )")};
   CHECK(diags.empty());
   REQUIRE(document.assets.size() == 1);
-  const auto &lamp{document.assets[0]};
+  const LayoutAssetDecl &lamp{document.assets[0]};
   CHECK(lamp.name == "lamp");
   CHECK(lamp.path.empty());
   CHECK(lamp.primitive.shape == PrimitiveSpec::Shape::SPHERE);
@@ -34,14 +34,14 @@ place lamp as hero translate 0 0 3
   CHECK(lamp.isCaster);
   CHECK(!lamp.isCaustic);
   REQUIRE(document.lights.size() == 1);
-  const auto &beam{document.lights[0]};
+  const LayoutLightDecl &beam{document.lights[0]};
   CHECK(beam.kind == LayoutLightDecl::Kind::SPOT);
   CHECK(beam.isPowerSet);
   CHECK(beam.power == doctest::Approx(100.0f));
   CHECK(beam.spotAngle == doctest::Approx(40.0f));
   CHECK(beam.spotBlend == doctest::Approx(0.2f));
   REQUIRE(document.placements.size() == 1);
-  const auto &place{document.placements[0]};
+  const LayoutPlacement &place{document.placements[0]};
   CHECK(place.kind == LayoutPlacement::Kind::PLACE);
   CHECK(place.assetName == "lamp");
   CHECK(place.asName == "hero");
@@ -59,44 +59,47 @@ place lamp as hero translate 0 0 3
 TEST_CASE("LayoutParser: diagnostics") {
   LayoutDiagnostics diags{};
   SUBCASE("An unknown asset operation is located") {
-    const auto &source{diags.addSource("test.layout",
-                                       "asset rock = \"rock.obj\" {\n"
-                                       "  frobnicate\n}\n")};
+    const LayoutSource &source{diags.addSource("test.layout",
+                                               "asset rock = \"rock.obj\" {\n"
+                                               "  frobnicate\n}\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "unknown asset operation");
     CHECK_CONTAINS(error.message, "frobnicate");
     REQUIRE(error.location.source == &source);
-    const auto where{source.lineAndColumn(error.location.offset)};
+    const LayoutSource::LineAndColumn where{
+        source.lineAndColumn(error.location.offset)};
     CHECK(where.lineNo == 2);
     CHECK(where.charNo == 3);
   }
   SUBCASE("A 'camera' directive names the file it belongs in") {
-    const auto &source{diags.addSource("test.layout", "camera { fovy 30 }\n")};
+    const LayoutSource &source{
+        diags.addSource("test.layout", "camera { fovy 30 }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "'.camera' file");
   }
   SUBCASE("A 'time' directive names the flag, since no file holds the clock") {
-    const auto &source{diags.addSource("test.layout", "time { base 2 }\n")};
+    const LayoutSource &source{
+        diags.addSource("test.layout", "time { base 2 }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     REQUIRE(!error.notes.empty());
     // Never the camera file, which rejects a 'time' block of its own.
     CHECK_CONTAINS(error.notes.front().message, "'-time'");
     CHECK_NOT_CONTAINS(error.notes.front().message, "belongs in");
   }
   SUBCASE("The box takes a size, and only the box does") {
-    const auto document{
+    const LayoutDocument document{
         parseOK(diags, R"(asset crate = box { size 0.5 1.25 2 material wood }
 asset plain = box { material wood }
 )")};
     REQUIRE(document.assets.size() == 2);
-    const auto &crate{document.assets[0]};
+    const LayoutAssetDecl &crate{document.assets[0]};
     CHECK(crate.primitive.shape == PrimitiveSpec::Shape::BOX);
     CHECK(crate.primitive.hasSize());
     CHECK(!crate.primitive.hasRadius());
@@ -115,7 +118,7 @@ asset plain = box { material wood }
                              "asset a = disk { height 1 material m }\n"}) {
       CAPTURE(std::string(text));
       LayoutDiagnostics local{};
-      const auto &source{local.addSource("test.layout", text)};
+      const LayoutSource &source{local.addSource("test.layout", text)};
       (void)parseLayout(local, source, "/nowhere");
       // Recovery skips the rest of the block, so the missing `material`
       // is reported after it; the first error is the one under test.
@@ -124,7 +127,7 @@ asset plain = box { material wood }
     }
   }
   SUBCASE("A box size must be three positive numbers") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset a = box { size 1 0 2 material m }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.hasErrors());
@@ -136,7 +139,7 @@ asset plain = box { material wood }
           "light a = disk { radius 0 }\n"}) {
       CAPTURE(std::string(text));
       LayoutDiagnostics local{};
-      const auto &source{local.addSource("test.layout", text)};
+      const LayoutSource &source{local.addSource("test.layout", text)};
       (void)parseLayout(local, source, "/nowhere");
       REQUIRE(local.hasErrors());
       CHECK_CONTAINS(local.all().front().message, "positive number");
@@ -158,18 +161,18 @@ asset plain = box { material wood }
       const std::string text{check.first};
       CAPTURE(text);
       LayoutDiagnostics local{};
-      const auto &source{local.addSource("test.layout", text)};
+      const LayoutSource &source{local.addSource("test.layout", text)};
       (void)parseLayout(local, source, "/nowhere");
       REQUIRE(local.hasErrors());
       CHECK_CONTAINS(local.all().front().message, check.second);
     }
   }
   SUBCASE("A redeclared light points back at the first") {
-    const auto &source{
+    const LayoutSource &source{
         diags.addSource("test.layout", "light a = point\nlight a = spot\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
+    const LayoutDocument document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "redeclaration of light");
     REQUIRE(error.notes.size() == 1);
     CHECK(source.lineAndColumn(error.location.offset).lineNo == 2);
@@ -183,7 +186,7 @@ asset plain = box { material wood }
 TEST_CASE("LayoutParser: the marks") {
   LayoutDiagnostics diags{};
   SUBCASE("Asset, place, and import spellings") {
-    const auto document{parseOK(
+    const LayoutDocument document{parseOK(
         diags, R"(asset a = sphere { radius 1 material m caster caustic light }
 asset b = "b.gltf"
 light l = point { caustic }
@@ -229,7 +232,7 @@ import "b.gltf" { caster light }
     CHECK(!document.placements[3].lightLoc);
   }
   SUBCASE("A mark written twice is an error") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset a = sphere { radius 1 material m }\n"
                        "place a caster caster\n"
                        "place a light off light\n"
@@ -249,7 +252,7 @@ import "b.gltf" { caster light }
     }
   }
   SUBCASE("The word lists name both marks") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset a = sphere { radius 1 material m frob }\n"
                        "asset b = \"b.gltf\" { frob }\n"
                        "place a frob\n"
@@ -265,7 +268,7 @@ import "b.gltf" { caster light }
 
 TEST_CASE("LayoutParser: the shape lights") {
   LayoutDiagnostics diags{};
-  const auto document{
+  const LayoutDocument document{
       parseOK(diags, R"(light panel = rect { size 2 1 power 400 caustic }
 light ring = disk { radius 0.25 }
 light square = rect
@@ -273,7 +276,7 @@ light coin = disk { rotate_x 90 }
 )")};
   CHECK(diags.empty());
   REQUIRE(document.lights.size() == 4);
-  const auto &panel{document.lights[0]};
+  const LayoutLightDecl &panel{document.lights[0]};
   CHECK(panel.kind == LayoutLightDecl::Kind::RECT);
   CHECK(panel.kindName() == "rect");
   CHECK(panel.size.x == doctest::Approx(2.0f));
@@ -281,7 +284,7 @@ light coin = disk { rotate_x 90 }
   CHECK(panel.isPowerSet);
   CHECK(panel.power == doctest::Approx(400.0f));
   CHECK(panel.isCaustic);
-  const auto &ring{document.lights[1]};
+  const LayoutLightDecl &ring{document.lights[1]};
   CHECK(ring.kind == LayoutLightDecl::Kind::DISK);
   CHECK(ring.kindName() == "disk");
   CHECK(ring.radius == doctest::Approx(0.25f));
@@ -300,19 +303,20 @@ light coin = disk { rotate_x 90 }
 TEST_CASE("LayoutParser: the motion block on a place") {
   LayoutDiagnostics diags{};
   SUBCASE("Absent, the placement is static") {
-    const auto document{parseOK(diags, "asset ball = sphere { material m }\n"
-                                       "place ball translate 0 0 3\n")};
+    const LayoutDocument document{parseOK(diags,
+                                          "asset ball = sphere { material m }\n"
+                                          "place ball translate 0 0 3\n")};
     REQUIRE(document.placements.size() == 1);
     CHECK(document.placements[0].motion.empty());
     CHECK(!document.placements[0].motionLoc);
   }
   SUBCASE("The one-line form: keys at absolute times") {
-    const auto document{
+    const LayoutDocument document{
         parseOK(diags, "asset ball = sphere { material m }\n"
                        "place ball translate 0 0 3 motion { at 0 translate "
                        "0 0 0 at 0.5 translate 0 0 0.2 }\n")};
     REQUIRE(document.placements.size() == 1);
-    const auto &place{document.placements[0]};
+    const LayoutPlacement &place{document.placements[0]};
     CHECK(place.transform[3].z == doctest::Approx(3.0f));
     REQUIRE(place.motion.keys.size() == 2);
     CHECK(place.motion.keys[0].time == doctest::Approx(0.0f));
@@ -328,7 +332,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(worldAt(0.25f)[3].z == doctest::Approx(3.1f));
   }
   SUBCASE("The block form, beside a rename, with operations in order") {
-    const auto document{
+    const LayoutDocument document{
         parseOK(diags, "asset rock = \"rock.obj\"\n"
                        "place rock {\n"
                        "  material a = b\n"
@@ -336,7 +340,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
                        "  motion { at 1 translate 2 0 0 rotate_z 90 }\n"
                        "}\n")};
     REQUIRE(document.placements.size() == 1);
-    const auto &place{document.placements[0]};
+    const LayoutPlacement &place{document.placements[0]};
     CHECK(place.overrides.size() == 1);
     CHECK(place.transform[3].x == doctest::Approx(1.0f));
     REQUIRE(place.motion.keys.size() == 1);
@@ -346,11 +350,12 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(place.motion.keys[0].transform[3].y == doctest::Approx(2.0f));
   }
   SUBCASE("A block spanning lines in the one-line form") {
-    const auto document{parseOK(diags, "asset ball = sphere { material m }\n"
-                                       "place ball translate 1 0 0 motion {\n"
-                                       "  at 0 translate 2 0 0\n"
-                                       "}\n"
-                                       "place ball\n")};
+    const LayoutDocument document{
+        parseOK(diags, "asset ball = sphere { material m }\n"
+                       "place ball translate 1 0 0 motion {\n"
+                       "  at 0 translate 2 0 0\n"
+                       "}\n"
+                       "place ball\n")};
     REQUIRE(document.placements.size() == 2);
     REQUIRE(document.placements[0].motion.keys.size() == 1);
     CHECK(document.placements[0].motion.keys[0].transform[3].x ==
@@ -358,7 +363,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("On a group's place and on a bulk place") {
-    const auto document{parseOK(
+    const LayoutDocument document{parseOK(
         diags, "asset ball = sphere { material m }\n"
                "group rig { place ball motion { at 0 translate 1 0 0 } }\n"
                "place ball * \"pair.places\" motion { at 0 rotate_z 10 }\n")};
@@ -370,7 +375,7 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(!document.placements[0].motion.empty());
   }
   SUBCASE("Keys are written in ascending time") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset ball = sphere { material m }\n"
                        "place ball motion { at 1 translate 1 0 0 at 0 "
                        "translate 2 0 0 }\n"
@@ -380,31 +385,31 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK_CONTAINS(diags.all().front().message, "ascending time");
   }
   SUBCASE("An operation before the first key names the spelling") {
-    const auto &source{diags.addSource("test.layout",
-                                       "asset ball = sphere { material m }\n"
+    const LayoutSource &source{
+        diags.addSource("test.layout", "asset ball = sphere { material m }\n"
                                        "place ball motion { translate 1 0 0 }\n"
                                        "place ball\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "'at <seconds>' keys");
     REQUIRE(!error.notes.empty());
   }
   SUBCASE("An empty block is an error rather than a static placement") {
-    const auto &source{diags.addSource("test.layout",
-                                       "asset ball = sphere { material m }\n"
+    const LayoutSource &source{
+        diags.addSource("test.layout", "asset ball = sphere { material m }\n"
                                        "place ball motion { }\n")};
     (void)parseLayout(diags, source, "/nowhere");
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "at least one");
   }
   SUBCASE("A second block on one place is an error, not a merge") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset ball = sphere { material m }\n"
                        "place ball motion { at 0 translate 1 0 0 } motion { "
                        "at 1 translate 2 0 0 }\n"
                        "place ball\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
+    const LayoutDocument document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "'motion' appears twice");
     REQUIRE(document.placements.size() == 2);
@@ -414,35 +419,35 @@ TEST_CASE("LayoutParser: the motion block on a place") {
     CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("On an import it is an error") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout",
         "import \"rock.obj\" { motion { at 0 translate 1 0 0 } }\n"
         "asset ball = sphere { material m }\n"
         "place ball\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
+    const LayoutDocument document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "place operation");
     CHECK(document.placements.size() == 2);
   }
   SUBCASE("Only transform operations are admitted inside a key") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset ball = sphere { material m }\n"
                        "place ball motion { at 0 material a = b }\n"
                        "place ball\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
+    const LayoutDocument document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "transform operation inside 'motion'");
     CHECK_CONTAINS(error.message, "rotate_z, or matrix");
     REQUIRE(document.placements.size() == 2);
     CHECK(document.placements[1].motion.empty());
   }
   SUBCASE("The block needs its brace") {
-    const auto &source{diags.addSource(
+    const LayoutSource &source{diags.addSource(
         "test.layout", "asset ball = sphere { material m }\n"
                        "place ball motion at 0 translate 1 0 0\n"
                        "place ball\n")};
-    const auto document{parseLayout(diags, source, "/nowhere")};
+    const LayoutDocument document{parseLayout(diags, source, "/nowhere")};
     REQUIRE(diags.errorCount() == 1);
     CHECK_CONTAINS(diags.all().front().message, "'{' after 'motion'");
     CHECK(document.placements.size() == 2);
@@ -453,7 +458,7 @@ namespace {
 // Parse from memory, require exactly one error, and return its message.
 std::string firstErrorOf(const std::string &text) {
   LayoutDiagnostics diags{};
-  const auto &source{diags.addSource("test.layout", text)};
+  const LayoutSource &source{diags.addSource("test.layout", text)};
   (void)parseLayout(diags, source, "/nowhere");
   if (diags.errorCount() != 1) MESSAGE(diags.renderAll(false));
   REQUIRE(diags.errorCount() == 1);
@@ -468,13 +473,14 @@ TEST_CASE("LayoutParser: the animation operation") {
   LayoutDiagnostics diags{};
   SUBCASE(
       "A clip by name, settings in any order, ended by the next operation") {
-    const auto document{parseOK(diags, "asset hero = \"hero.glb\" {\n"
-                                       "  animation \"walk\" speed 2 offset "
-                                       "0.25 once material m\n"
-                                       "}\n"
-                                       "place hero\n")};
+    const LayoutDocument document{parseOK(diags,
+                                          "asset hero = \"hero.glb\" {\n"
+                                          "  animation \"walk\" speed 2 offset "
+                                          "0.25 once material m\n"
+                                          "}\n"
+                                          "place hero\n")};
     REQUIRE(document.assets.size() == 1);
-    const auto &hero{document.assets[0]};
+    const LayoutAssetDecl &hero{document.assets[0]};
     CHECK(hero.animationLoc);
     CHECK(hero.animation.clipName == "walk");
     CHECK(hero.animation.clipIndex == INVALID_INDEX);
@@ -485,11 +491,12 @@ TEST_CASE("LayoutParser: the animation operation") {
     CHECK(hero.materials.all == "m");
   }
   SUBCASE("A clip by index, the bare word, off, and nothing") {
-    const auto document{parseOK(diags, "asset a = \"a.glb\" { animation 2 }\n"
-                                       "asset b = \"b.glb\" { animation }\n"
-                                       "asset c = \"c.glb\" { animation off }\n"
-                                       "asset d = \"d.glb\"\n"
-                                       "place a\n")};
+    const LayoutDocument document{
+        parseOK(diags, "asset a = \"a.glb\" { animation 2 }\n"
+                       "asset b = \"b.glb\" { animation }\n"
+                       "asset c = \"c.glb\" { animation off }\n"
+                       "asset d = \"d.glb\"\n"
+                       "place a\n")};
     REQUIRE(document.assets.size() == 4);
     CHECK(document.assets[0].animation.clipIndex == 2);
     CHECK(document.assets[0].animation.clipName.empty());
@@ -529,13 +536,13 @@ TEST_CASE("LayoutParser: the animation operation") {
 TEST_CASE("LayoutParser: the offset on a place") {
   LayoutDiagnostics diags{};
   SUBCASE("The one-line form, the block form, a group's place, a bulk place") {
-    const auto document{parseOK(diags,
-                                "asset hero = \"hero.glb\"\n"
-                                "group rig { place hero offset 0.1 }\n"
-                                "place hero translate 1 0 0 offset 0.4\n"
-                                "place hero { offset 0.5 material a = b }\n"
-                                "place hero * \"crowd.places\" offset 1\n"
-                                "place hero\n")};
+    const LayoutDocument document{
+        parseOK(diags, "asset hero = \"hero.glb\"\n"
+                       "group rig { place hero offset 0.1 }\n"
+                       "place hero translate 1 0 0 offset 0.4\n"
+                       "place hero { offset 0.5 material a = b }\n"
+                       "place hero * \"crowd.places\" offset 1\n"
+                       "place hero\n")};
     REQUIRE(document.groups.size() == 1);
     REQUIRE(document.groups[0].placements.size() == 1);
     CHECK(document.groups[0].placements[0].animationOffset ==

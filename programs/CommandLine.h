@@ -106,7 +106,7 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
   }
 
   [[nodiscard]] bool compare(const GenericOptionValue &value) const override {
-    const auto &other{static_cast<const OptionValue &>(value)};
+    const OptionValue &other{static_cast<const OptionValue &>(value)};
     return other.hasValue() && compare(other.getValue());
   }
 
@@ -189,7 +189,7 @@ public:
                        typename base::OptVal Default,
                        size_t GlobalWidth) const {
     this->printOptionName(O, GlobalWidth);
-    const auto value{spellVector(V)};
+    const std::string value{spellVector(V)};
     outs() << "= " << value;
     // The value column is padded to 8 before the default, matching the
     // scalar parsers in LLVM's `CommandLine.cpp`.
@@ -253,9 +253,9 @@ lowerUnicodeMode(cl::boolOrDefault value) {
 ///
 [[nodiscard]] inline std::vector<float>
 parseWavelengths(const std::string &flagStr) {
-  auto values{std::vector<float>()};
+  std::vector<float> values{};
   if (flagStr.empty()) return values;
-  auto text{flagStr};
+  std::string text{flagStr};
   if (std::ifstream file{flagStr}; file) {
     text.assign(std::istreambuf_iterator<char>(file), {});
     if (text.empty())
@@ -300,8 +300,7 @@ parseWavelengths(const std::string &flagStr) {
 ///
 [[nodiscard]] inline WavelengthRange
 parseWavelengthRange(const std::string &flagStr) {
-  auto result{
-      WavelengthRange{smdl::float2{WAVELENGTH_MIN, WAVELENGTH_MAX}, 16U}};
+  WavelengthRange result{smdl::float2{WAVELENGTH_MIN, WAVELENGTH_MAX}, 16U};
   if (flagStr.empty()) return result;
   const char *ptr{flagStr.c_str()};
   char *numEnd{};

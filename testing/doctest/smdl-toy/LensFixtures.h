@@ -10,7 +10,7 @@
 /// signed toward the film, index of the space behind it.
 [[nodiscard]] inline LensSurface surfaceOf(float radius, float thickness,
                                            float ior, float diameter) {
-  auto surface{LensSurface{}};
+  LensSurface surface{};
   surface.radius = radius;
   surface.thickness = thickness;
   surface.medium = smdl::OpticalGlass::constant(ior);
@@ -19,7 +19,7 @@
 }
 
 [[nodiscard]] inline LensSurface stopOf(float thickness, float diameter) {
-  auto surface{surfaceOf(0, thickness, 1, diameter)};
+  LensSurface surface{surfaceOf(0, thickness, 1, diameter)};
   surface.isStop = true;
   return surface;
 }
@@ -30,7 +30,7 @@
 /// length and f-number are printed on it, which is what makes it the
 /// transcription check.
 [[nodiscard]] inline LensPrescription dgauss50mm() {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "Double Gauss 50mm f/2";
   lens.surfaces = {
       surfaceOf(29.475f, 3.76f, 1.67f, 25.2f),

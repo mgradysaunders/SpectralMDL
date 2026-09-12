@@ -17,7 +17,7 @@ Module::Module(std::string name, std::string sourceCode)
   // The name is the builtin lookup key, e.g., `models::prospect`: the
   // last component is the module name and the components together form
   // the qualified name.
-  auto components{splitQualifiedName(name)};
+  std::vector<std::string_view> components{splitQualifiedName(name)};
   if (components.empty()) {
     mName = std::move(name);
   } else {
@@ -36,12 +36,12 @@ namespace {
 // `::stem` if the file name is not lexically under the search root.
 [[nodiscard]] std::string deriveQualifiedName(const std::string &fileName,
                                               const std::string &searchRoot) {
-  auto filePath{std::filesystem::path(fileName)};
-  auto relative{filePath.lexically_relative(searchRoot)};
+  std::filesystem::path filePath{fileName};
+  std::filesystem::path relative{filePath.lexically_relative(searchRoot)};
   if (relative.empty() || *relative.begin() == "..") {
     return "::" + filePath.stem().string();
   }
-  auto name{std::string()};
+  std::string name{};
   for (auto itr{relative.begin()}; itr != relative.end(); ++itr) {
     name += "::";
     name +=
@@ -53,7 +53,7 @@ namespace {
 
 std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
                                              const std::string &searchRoot) {
-  auto module_{std::make_unique<Module>()};
+  std::unique_ptr<Module> module_{std::make_unique<Module>()};
   module_->mOrigin = ORIGIN_FILE;
   module_->mFileName = fileName;
   module_->mDisplayName = fileName;
@@ -68,7 +68,7 @@ std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
 std::unique_ptr<Module> Module::loadFromFileExtractedFromArchive(
     const std::string &archiveFileName, const std::string &entryName,
     const std::string &file, const std::string &searchRoot) {
-  auto module_{std::make_unique<Module>()};
+  std::unique_ptr<Module> module_{std::make_unique<Module>()};
   module_->mOrigin = ORIGIN_ARCHIVE;
   module_->mFileName = joinPaths(archiveFileName, entryName);
   module_->mDisplayName = module_->mFileName;
@@ -88,7 +88,7 @@ std::unique_ptr<Module>
 Module::loadFromMDLE(const std::string &mdleFileName, const std::string &file,
                      const std::string &qualifiedName,
                      const std::string &resourceDirectory) {
-  auto module_{std::make_unique<Module>()};
+  std::unique_ptr<Module> module_{std::make_unique<Module>()};
   module_->mOrigin = ORIGIN_ARCHIVE;
   module_->mFileName = joinPaths(mdleFileName, "main.mdl");
   module_->mDisplayName = module_->mFileName;
@@ -104,8 +104,8 @@ std::unique_ptr<Module>
 Module::loadFromSourceCode(const std::string &qualifiedName,
                            std::string sourceCode,
                            const std::string &anchorDirectory) {
-  auto module_{std::make_unique<Module>()};
-  auto components{splitQualifiedName(qualifiedName)};
+  std::unique_ptr<Module> module_{std::make_unique<Module>()};
+  std::vector<std::string_view> components{splitQualifiedName(qualifiedName)};
   module_->mOrigin = ORIGIN_SOURCE_CODE;
   module_->mDisplayName = concat("<string ", qualifiedName, ">");
   module_->mName =
@@ -129,10 +129,10 @@ std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
 void Module::computeSearchDirs() {
   mSearchDirs.clear();
   for (const auto &searchDir : mRoot->searchDirs) {
-    const auto &srcLoc{searchDir.path->srcLoc};
+    const SourceLocation &srcLoc{searchDir.path->srcLoc};
     if (searchDir.path->value.empty())
       srcLoc.throwError("'#search_dir' path must not be empty");
-    auto dir{std::string()};
+    std::string dir{};
     try {
       dir = expandPathVariables(searchDir.path->value);
     } catch (const Error &error) {
@@ -200,23 +200,23 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
                         " because the module has no file"));
   }
   if (!isParsed()) {
-    auto allocator{BumpPtrAllocator{}};
-    if (auto error{parse(allocator)}) return error;
-    auto error{formatSourceFiles(formatOptions)};
+    BumpPtrAllocator allocator{};
+    if (std::optional<Error> error{parse(allocator)}) return error;
+    std::optional<Error> error{formatSourceFiles(formatOptions)};
     mRoot = {};
     return error;
   }
   return catchAndReturnError([&] {
     SMDL_PROFILER_ENTRY("Module::formatSourceFiles()", mDisplayName.c_str());
-    auto formatter{Formatter{formatOptions}};
-    auto formatted{formatter.format(mSourceCode, *mRoot)};
+    Formatter formatter{formatOptions};
+    std::string formatted{formatter.format(mSourceCode, *mRoot)};
     if (formatOptions.isInPlace) {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("cannot format module extracted from archive in-place ",
                    QuotedPath(mFileName)));
       }
-      auto stream{openOrThrow(mFileName, std::ios::out)};
+      std::basic_fstream<char> stream{openOrThrow(mFileName, std::ios::out)};
       stream << formatted;
     } else {
       std::cout << formatted;

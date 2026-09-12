@@ -18,11 +18,11 @@ namespace {
   std::uniform_real_distribution<float> position{-10.0f, 10.0f};
   std::uniform_real_distribution<float> extent{0.0f, 0.5f};
   std::uniform_real_distribution<float> power{0.1f, 10.0f};
-  auto lights{std::vector<LightBounds>()};
+  std::vector<LightBounds> lights{};
   for (int i = 0; i < count; i++) {
     const float3 center{position(rng), position(rng), position(rng)};
     const float3 half{extent(rng), extent(rng), extent(rng)};
-    auto &light{lights.emplace_back()};
+    LightBounds &light{lights.emplace_back()};
     light.box = BoundBox3(center - half, center + half);
     light.phi = power(rng);
   }
@@ -65,7 +65,7 @@ void checkEstimatorContract(const LightTree &tree, int numLights, int numPoints,
 void checkDrawsFollowProbabilities(const LightTree &tree, int numLights,
                                    const float3 &point) {
   constexpr int NUM_DRAWS{1 << 16};
-  auto counts{std::vector<int>(size_t(numLights))};
+  std::vector<int> counts(static_cast<size_t>(numLights));
   for (int j = 0; j < NUM_DRAWS; j++) {
     float pmf{};
     const int light{
@@ -83,7 +83,7 @@ void checkDrawsFollowProbabilities(const LightTree &tree, int numLights,
 } // namespace
 
 TEST_CASE("LightTree: the estimator contract over random lights") {
-  const auto lights{randomLights(64, 1)};
+  const std::vector<LightBounds> lights{randomLights(64, 1)};
   const LightTree tree{lights};
   CHECK(!tree.empty());
   CHECK(tree.nodeCount() == 2 * 64 - 1);
@@ -96,7 +96,7 @@ TEST_CASE("LightTree: the estimator contract over random lights") {
 
 TEST_CASE("LightTree: a near light draws over a far one by the inverse "
           "square") {
-  auto lights{std::vector<LightBounds>(2)};
+  std::vector<LightBounds> lights(2);
   lights[0].box = BoundBox3(float3(1.0f, 0.0f, 0.0f), float3(1.0f, 0.0f, 0.0f));
   lights[0].phi = 1.0f;
   lights[1].box =
@@ -116,7 +116,7 @@ TEST_CASE("LightTree: a near light draws over a far one by the inverse "
 }
 
 TEST_CASE("LightTree: a light without weight is never drawn") {
-  auto lights{randomLights(3, 4)};
+  std::vector<LightBounds> lights{randomLights(3, 4)};
   lights[1].phi = 0.0f;
   const LightTree tree{lights};
   CHECK(tree.nodeCount() == 3);
@@ -137,7 +137,7 @@ TEST_CASE("LightTree: a light without weight is never drawn") {
 }
 
 TEST_CASE("LightTree: the build is deterministic") {
-  const auto lights{randomLights(200, 6)};
+  const std::vector<LightBounds> lights{randomLights(200, 6)};
   const LightTree first{lights};
   const LightTree second{lights};
   CHECK(first.nodeCount() == second.nodeCount());
@@ -152,7 +152,7 @@ TEST_CASE("LightTree: the build is deterministic") {
 
 TEST_CASE("LightTree: a depth cap closes the rest into a leaf drawn by "
           "weight") {
-  const auto lights{randomLights(40, 8)};
+  const std::vector<LightBounds> lights{randomLights(40, 8)};
   const LightTree tree{lights, 3};
   CHECK(tree.depth() == 3);
   CHECK(tree.nodeCount() <= 15);
@@ -173,7 +173,7 @@ TEST_CASE("LightTree: coincident lights and a receiver inside a cluster") {
   // Forty lights at one point: no split improves on any other, so the
   // build halves by index and the tree is balanced; every draw is by
   // weight alone, from anywhere, the receiver at the lights included.
-  auto lights{randomLights(40, 11)};
+  std::vector<LightBounds> lights{randomLights(40, 11)};
   for (auto &light : lights)
     light.box = BoundBox3(float3(1.0f, 2.0f, 3.0f), float3(1.0f, 2.0f, 3.0f));
   const LightTree tree{lights};
@@ -194,7 +194,7 @@ TEST_CASE("LightTree: nothing to draw") {
   (void)empty.sample(float3(0.0f), 0.5f, pmf);
   CHECK(pmf == 0.0f);
   CHECK(empty.pmf(0, float3(0.0f)) == 0.0f);
-  auto lights{randomLights(4, 13)};
+  std::vector<LightBounds> lights{randomLights(4, 13)};
   for (auto &light : lights) light.phi = 0.0f;
   const LightTree dark{lights};
   CHECK(dark.empty());

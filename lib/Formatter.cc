@@ -20,14 +20,15 @@ void Formatter::alignLineComments() {
   }};
   for (auto itr{mLineCommentsToAlign.rbegin()};
        itr != mLineCommentsToAlign.rend();) {
-    auto maxColumn{itr->column};
+    size_t maxColumn{itr->column};
     auto itrPrev{itr};
     auto itrNext{itr};
     itrNext++;
     while (itrNext != mLineCommentsToAlign.rend()) {
-      const auto &iPrev{itrPrev->i};
-      const auto &iNext{itrNext->i};
-      if (auto src{llvm::StringRef(mOutputSrc.data() + iNext, iPrev - iNext)};
+      const size_t &iPrev{itrPrev->i};
+      const size_t &iNext{itrNext->i};
+      if (llvm::StringRef src{
+              llvm::StringRef(mOutputSrc.data() + iNext, iPrev - iNext)};
           src.count('\n') > 1) {
         break;
       }
@@ -42,12 +43,12 @@ void Formatter::alignLineComments() {
 }
 
 bool Formatter::nextCommentForcesNewLine() const {
-  auto inSrc{mInputSrc};
+  llvm::StringRef inSrc{mInputSrc};
   while (!inSrc.empty()) {
-    auto ws{inSrc.take_while(isSpace)};
+    llvm::StringRef ws{inSrc.take_while(isSpace)};
     inSrc = inSrc.drop_front(ws.size());
     if (inSrc.starts_with("//")) {
-      auto pos{inSrc.find('\n')};
+      size_t pos{inSrc.find('\n')};
       if (keepComment(pos == inSrc.npos ? inSrc : inSrc.take_front(pos))) {
         return true;
       }
@@ -55,7 +56,7 @@ bool Formatter::nextCommentForcesNewLine() const {
       if (pos == inSrc.npos) break;
       inSrc = inSrc.drop_front(pos);
     } else if (inSrc.starts_with("/*")) {
-      auto pos{inSrc.find("*/", 2)};
+      size_t pos{inSrc.find("*/", 2)};
       if (pos == inSrc.npos) break; // Shouldn't happen?
       if (keepComment(inSrc.take_front(pos + 2))) {
         if (ws.count('\n') > 0) {
@@ -77,8 +78,8 @@ bool Formatter::nextCommentForcesNewLine() const {
 }
 
 void Formatter::writeDelimNone() {
-  auto numNewLines{consumeInputSpace().count('\n')};
-  if (auto comment{consumeInputComment()}; !comment.empty()) {
+  size_t numNewLines{consumeInputSpace().count('\n')};
+  if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
     // Preserve up to 1 extra newline
     if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
       mOutputSrc += '\n';
@@ -97,8 +98,8 @@ void Formatter::writeDelimSpace() {
 void Formatter::writeDelimNewLine() {
   while (lastOutput() == ' ') // Remove spaces
     mOutputSrc.pop_back();
-  if (auto numNewLines{consumeInputSpace().count('\n')}; numNewLines <= 1) {
-    if (auto comment{consumeInputComment()}; !comment.empty()) {
+  if (size_t numNewLines{consumeInputSpace().count('\n')}; numNewLines <= 1) {
+    if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
       // Preserve up to 1 extra newline
       if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
         mOutputSrc += '\n';
@@ -113,7 +114,7 @@ void Formatter::writeDelimNewLine() {
     while (lastOutput(-1) != '\n' || lastOutput(-2) != '\n') {
       mOutputSrc += '\n';
     }
-    if (auto comment{consumeInputComment()}; !comment.empty()) {
+    if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
       writeComment(comment), writeMoreComments();
     }
   }
@@ -146,13 +147,14 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
     // `writeIndentIfNewLine()` so that `FormatOff::outputSrcPos` includes
     // the indentation of the `// smdl format off` comment itself.
     if (inSrc.starts_with("//") || !inSrc.contains('\n')) {
-      auto text{inSrc.starts_with("//")
-                    ? inSrc.drop_front(2).trim()
-                    : inSrc.drop_front(2).drop_back(2).trim()};
-      auto tokens{llvm::SmallVector<llvm::StringRef>{}};
+      llvm::StringRef text{inSrc.starts_with("//")
+                               ? inSrc.drop_front(2).trim()
+                               : inSrc.drop_front(2).drop_back(2).trim()};
+      llvm::SmallVector<llvm::StringRef> tokens{};
       while (!text.empty() && tokens.size() < 3) {
         text = text.drop_while(isSpace);
-        auto token{text.take_while([&](char ch) { return !isSpace(ch); })};
+        llvm::StringRef token{
+            text.take_while([&](char ch) { return !isSpace(ch); })};
         if (!token.empty()) {
           tokens.push_back(token);
           text = text.drop_front(token.size());
@@ -174,7 +176,7 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
     // Always consume the trailing space, or else `writeMoreComments()`
     // cannot see past it and the next `writeToken()` silently discards
     // whatever comments remain in the gap!
-    auto numNewLines{consumeInputSpace().count('\n')};
+    size_t numNewLines{consumeInputSpace().count('\n')};
     if (!mOptions.isCompact && numNewLines > 0) {
       // Preserve up to 1 extra newline
       mOutputSrc += '\n';
@@ -208,8 +210,9 @@ namespace {
 // the same conversion as the parser, or else the guarantee is worthless!
 [[nodiscard]] bool roundTripsTo(llvm::StringRef spelling, double value) {
   llvm::APFloat parsedValue(llvm::APFloat::IEEEdouble());
-  auto opStatus{parsedValue.convertFromString(
-      spelling, llvm::APFloat::rmNearestTiesToEven)};
+  llvm::Expected<llvm::APFloat::opStatus> opStatus{
+      parsedValue.convertFromString(spelling,
+                                    llvm::APFloat::rmNearestTiesToEven)};
   if (!opStatus) {
     llvm::consumeError(opStatus.takeError());
     return false;
@@ -228,9 +231,9 @@ namespace {
   // but check for both anyway.
   if (!std::isfinite(value) || std::signbit(value)) return srcValue.str();
   // Split off the type suffix.
-  auto numChars{srcValue.size()};
+  size_t numChars{srcValue.size()};
   while (numChars > 0 && isFloatSuffix(srcValue[numChars - 1])) numChars--;
-  auto suffix{srcValue.drop_front(numChars)};
+  llvm::StringRef suffix{srcValue.drop_front(numChars)};
   if (suffix.ends_with("f") || suffix.ends_with("F")) // Drop the default!
     suffix = suffix.drop_back(1);
   // Without a suffix, the spelling must contain a decimal point or an
@@ -260,7 +263,7 @@ namespace {
       if (isDigit(ch)) digits += ch;
     while (digits.size() > 1 && digits.back() == '0') digits.pop_back();
   }
-  auto numDigits{int(digits.size())};
+  int numDigits{int(digits.size())};
   // Spell it in fixed notation. Remember that the lexer requires a literal
   // to begin with a digit, so `0.5` cannot shrink to `.5`.
   std::string fixed{};
@@ -288,7 +291,7 @@ namespace {
                          std::to_string(exponent - numDigits + 1)};
   // Take the shortest, preferring fixed notation because it is easier to
   // read, then put the suffix back.
-  auto result{fixed};
+  std::string result{fixed};
   if (sci.size() < result.size()) result = sci;
   if (sciNoPoint.size() < result.size()) result = sciNoPoint;
   result += suffix;
@@ -314,7 +317,7 @@ void Formatter::write(const AST::File &file) {
     write(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path, DELIM_NEWLINE);
   }
   if (file.version) {
-    auto &version{*file.version};
+    const AST::File::Version &version{*file.version};
     write(version.srcKwMdl, DELIM_SPACE, version.srcVersion,
           version.srcSemicolon, DELIM_NEWLINE);
   }
@@ -428,7 +431,7 @@ void Formatter::write(const AST::Struct &decl) {
 
 void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
-  auto moreThanOne{decl.declarators.size() > 1};
+  bool moreThanOne{decl.declarators.size() > 1};
   writeList(decl.declarators.size(), decl.hasTrailingComma(),
             /*canBreak=*/false, [&](Delim delim) {
               for (const auto &each : decl.declarators) {
@@ -472,7 +475,7 @@ void Formatter::write(const AST::Lambda &expr) {
   // This mirrors `write(const AST::Function &)` minus the name,
   // annotations, frequency qualifier, semicolon, and return type, which
   // is implicitly `auto`.
-  const auto &decl{*expr.func};
+  const AST::Function &decl{*expr.func};
   write(expr.srcBackslash, decl.params);
   if (!decl.srcEqual.empty()) {
     write(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
@@ -579,7 +582,7 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
 namespace {
 // Is the expression a literal constant, possibly signed?
 [[nodiscard]] bool isLiteral(const AST::Expr &expr) {
-  if (auto unary{llvm::dyn_cast<AST::Unary>(&expr)};
+  if (const AST::Unary *unary{llvm::dyn_cast<AST::Unary>(&expr)};
       unary && (unary->op == AST::UNOP_POS || unary->op == AST::UNOP_NEG))
     return isLiteral(*unary->expr);
   return llvm::isa<AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,

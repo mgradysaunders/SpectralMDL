@@ -123,10 +123,10 @@ TEST_CASE("Colorimetry: the two Gaussian efficiencies the display uses") {
 }
 
 TEST_CASE("Colorimetry: the sRGB white and Bradford") {
-  const auto white{smdl::linearSRGBWhite()};
+  const smdl::double3 white{smdl::linearSRGBWhite()};
   SUBCASE("The builtin's matrix takes its white to (1, 1, 1), and the white "
           "is D65") {
-    const auto rgb{smdl::xyzToLinearSRGB() * white};
+    const smdl::double3 rgb{smdl::xyzToLinearSRGB() * white};
     CHECK(rgb.x == doctest::Approx(1.0).epsilon(1e-9));
     CHECK(rgb.y == doctest::Approx(1.0).epsilon(1e-9));
     CHECK(rgb.z == doctest::Approx(1.0).epsilon(1e-9));
@@ -138,8 +138,8 @@ TEST_CASE("Colorimetry: the sRGB white and Bradford") {
     CHECK(isIdentity(smdl::bradfordAdaptation(white, white), 1e-12));
   }
   SUBCASE("It takes the one white to the other") {
-    const auto d50{smdl::double3(0.96422, 1.0, 0.82521)};
-    const auto adapted{smdl::bradfordAdaptation(d50, white) * d50};
+    const smdl::double3 d50{0.96422, 1.0, 0.82521};
+    const smdl::double3 adapted{smdl::bradfordAdaptation(d50, white) * d50};
     CHECK(adapted.x == doctest::Approx(white.x).epsilon(1e-12));
     CHECK(adapted.y == doctest::Approx(white.y).epsilon(1e-12));
     CHECK(adapted.z == doctest::Approx(white.z).epsilon(1e-12));
@@ -157,15 +157,15 @@ TEST_CASE("Colorimetry: McCamy's temperature") {
 }
 
 TEST_CASE("Colorimetry: CIELAB and the color differences") {
-  const auto white{smdl::linearSRGBWhite()};
+  const smdl::double3 white{smdl::linearSRGBWhite()};
   SUBCASE("The white is L 100 and neutral, black is L 0, and a gray is "
           "neutral") {
-    const auto lab{smdl::xyzToLab(white, white)};
+    const smdl::double3 lab{smdl::xyzToLab(white, white)};
     CHECK(lab.x == doctest::Approx(100.0));
     CHECK(std::abs(lab.y) < 1e-9);
     CHECK(std::abs(lab.z) < 1e-9);
     CHECK(std::abs(smdl::xyzToLab(smdl::double3(0.0), white).x) < 1e-12);
-    const auto gray{smdl::xyzToLab(0.18 * white, white)};
+    const smdl::double3 gray{smdl::xyzToLab(0.18 * white, white)};
     CHECK(gray.x == doctest::Approx(49.496).epsilon(1e-4));
     CHECK(std::abs(gray.y) < 1e-9);
     CHECK(std::abs(gray.z) < 1e-9);

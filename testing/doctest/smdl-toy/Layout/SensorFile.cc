@@ -10,8 +10,8 @@
 namespace {
 // Parse from memory and require no errors.
 SensorDocument parseOK(LayoutDiagnostics &diags, std::string text) {
-  const auto &source{diags.addSource("test.sensor", std::move(text))};
-  auto document{parseSensor(diags, source)};
+  const LayoutSource &source{diags.addSource("test.sensor", std::move(text))};
+  SensorDocument document{parseSensor(diags, source)};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
   return document;
@@ -22,7 +22,7 @@ SensorDocument parseOK(LayoutDiagnostics &diags, std::string text) {
 // The sink is local so that a subcase can ask several times.
 LayoutDiagnostic parseError(std::string text) {
   LayoutDiagnostics diags{};
-  const auto &source{diags.addSource("test.sensor", std::move(text))};
+  const LayoutSource &source{diags.addSource("test.sensor", std::move(text))};
   (void)parseSensor(diags, source);
   REQUIRE(diags.errorCount() == 1);
   return diags.all().front();
@@ -61,8 +61,8 @@ TEST_CASE("SensorFile: the body's geometry") {
   LayoutDiagnostics diags{};
   SUBCASE("The base parses: pixels, one pitch for square pixels, and the "
           "frame follows") {
-    const auto document{parseOK(diags, BASE)};
-    const auto &sensor{document.sensor};
+    const SensorDocument document{parseOK(diags, BASE)};
+    const SensorSettings &sensor{document.sensor};
     CHECK(sensor.pixels.x == 4);
     CHECK(sensor.pixels.y == 3);
     CHECK(sensor.pitchUM.x == 2.5f);
@@ -79,23 +79,26 @@ TEST_CASE("SensorFile: the body's geometry") {
           1);
   }
   SUBCASE("Two pitches are the rare rectangular pixel") {
-    const auto document{parseOK(diags, "sensor { pixels 4 3 pitch 2 3 "
-                                       "response { band v { 400 1 700 1 } } "
-                                       "}\n")};
+    const SensorDocument document{parseOK(diags,
+                                          "sensor { pixels 4 3 pitch 2 3 "
+                                          "response { band v { 400 1 700 1 } } "
+                                          "}\n")};
     CHECK(document.sensor.pitchUM.x == 2.0f);
     CHECK(document.sensor.pitchUM.y == 3.0f);
   }
   SUBCASE("A size in millimeters gives the pitch over the pixels") {
-    const auto document{parseOK(diags, "sensor { pixels 6000 4000 size 36 24 "
-                                       "response { band v { 400 1 700 1 } } "
-                                       "}\n")};
+    const SensorDocument document{
+        parseOK(diags, "sensor { pixels 6000 4000 size 36 24 "
+                       "response { band v { 400 1 700 1 } } "
+                       "}\n")};
     CHECK(document.sensor.pitchUM.x == doctest::Approx(6.0f));
     CHECK(document.sensor.pitchUM.y == doctest::Approx(6.0f));
   }
   SUBCASE("A size whose pitches disagree is refused, naming the pitch to "
           "write") {
-    const auto error{parseError("sensor { pixels 6000 4000 size 36 20 "
-                                "response { band v { 400 1 700 1 } } }\n")};
+    const LayoutDiagnostic error{
+        parseError("sensor { pixels 6000 4000 size 36 20 "
+                   "response { band v { 400 1 700 1 } } }\n")};
     CHECK_CONTAINS(error.message, "which is not square");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "state 'pitch 6 5'");
@@ -128,8 +131,9 @@ TEST_CASE("SensorFile: the body's geometry") {
                    "'pitch'");
   }
   SUBCASE("The name, the readout, and its direction") {
-    const auto document{parseOK(diags, sensorWith("name \"Body\" readout 0.03 "
-                                                  "readout_direction left"))};
+    const SensorDocument document{
+        parseOK(diags, sensorWith("name \"Body\" readout 0.03 "
+                                  "readout_direction left"))};
     CHECK(document.sensor.name == "Body");
     CHECK(document.sensor.readout == doctest::Approx(0.03f));
     CHECK(document.sensor.readoutDirection == ReadoutDirection::LEFT);
@@ -152,14 +156,15 @@ TEST_CASE("SensorFile: the response block") {
   LayoutDiagnostics diags{};
   SUBCASE("It parses with its bands and their knots, and the kind is "
           "relative unless stated") {
-    const auto document{parseOK(diags, "sensor {\n"
-                                       "  pixels 4 3 pitch 2\n"
-                                       "  response {\n"
-                                       "    band vis { 380 0  550 1  720 0 }\n"
-                                       "    band nir { 700 0 750 1 1000 1 }\n"
-                                       "  }\n"
-                                       "}\n")};
-    const auto &response{document.sensor.response};
+    const SensorDocument document{
+        parseOK(diags, "sensor {\n"
+                       "  pixels 4 3 pitch 2\n"
+                       "  response {\n"
+                       "    band vis { 380 0  550 1  720 0 }\n"
+                       "    band nir { 700 0 750 1 1000 1 }\n"
+                       "  }\n"
+                       "}\n")};
+    const ResponseSettings &response{document.sensor.response};
     CHECK(response.kind == ResponseKind::RELATIVE);
     CHECK(!response.peakQE);
     REQUIRE(response.bands.size() == 2);
@@ -176,7 +181,7 @@ TEST_CASE("SensorFile: the response block") {
     CHECK(!response.rgbBands());
   }
   SUBCASE("The kind is one of two words") {
-    const auto document{parseOK(diags, responseWith("kind qe"))};
+    const SensorDocument document{parseOK(diags, responseWith("kind qe"))};
     CHECK(document.sensor.response.kind == ResponseKind::QE);
     CHECK_CONTAINS(parseError(responseWith("kind absolute")).message,
                    "unknown response kind 'absolute' (expected relative or "
@@ -184,7 +189,7 @@ TEST_CASE("SensorFile: the response block") {
   }
   SUBCASE("The peak quantum efficiency scales a relative curve, and only "
           "that") {
-    const auto document{parseOK(diags, responseWith("peak_qe 0.8"))};
+    const SensorDocument document{parseOK(diags, responseWith("peak_qe 0.8"))};
     REQUIRE(document.sensor.response.peakQE);
     CHECK(*document.sensor.response.peakQE == 0.8f);
     CHECK(document.sensor.response.qeScale() == doctest::Approx(0.8));
@@ -211,10 +216,10 @@ TEST_CASE("SensorFile: the response block") {
           "sensor { pixels 4 3 pitch 2 response { band v { 0 1 700 1 } } "
           "}\n"}) {
       LayoutDiagnostics bad{};
-      const auto &source{bad.addSource("test.sensor", text)};
+      const LayoutSource &source{bad.addSource("test.sensor", text)};
       (void)parseSensor(bad, source);
       REQUIRE(bad.errorCount() == 1);
-      const auto &error{bad.all().front()};
+      const LayoutDiagnostic &error{bad.all().front()};
       CHECK_CONTAINS(error.message, "band 'v'");
       CHECK(error.location.offset == source.text.find("band"));
     }
@@ -266,16 +271,17 @@ TEST_CASE("SensorFile: the response block") {
   }
   SUBCASE("The tile parses row by row into band indices, whatever order "
           "the bands are declared in") {
-    const auto document{parseOK(diags, "sensor {\n"
-                                       "  pixels 4 3 pitch 2\n"
-                                       "  response {\n"
-                                       "    cfa { row R G  row G B }\n"
-                                       "    band R { 400 1 700 1 }\n"
-                                       "    band G { 400 1 700 1 }\n"
-                                       "    band B { 400 1 700 1 }\n"
-                                       "  }\n"
-                                       "}\n")};
-    const auto &response{document.sensor.response};
+    const SensorDocument document{parseOK(diags,
+                                          "sensor {\n"
+                                          "  pixels 4 3 pitch 2\n"
+                                          "  response {\n"
+                                          "    cfa { row R G  row G B }\n"
+                                          "    band R { 400 1 700 1 }\n"
+                                          "    band G { 400 1 700 1 }\n"
+                                          "    band B { 400 1 700 1 }\n"
+                                          "  }\n"
+                                          "}\n")};
+    const ResponseSettings &response{document.sensor.response};
     REQUIRE(response.hasCFA());
     CHECK(response.cfaColumns == 2);
     CHECK(response.cfaRows() == 2);
@@ -307,26 +313,29 @@ TEST_CASE("SensorFile: the response block") {
                    "second 'cfa'");
   }
   SUBCASE("The three color bands are named, or follow the default") {
-    const auto three{"sensor { pixels 4 3 pitch 2 response { band a { 400 1 "
-                     "700 1 } band b { 400 1 700 1 } band c { 400 1 700 1 } "
-                     "rgb c b a } }\n"};
-    const auto named{parseOK(diags, three)};
+    const char *const three{
+        "sensor { pixels 4 3 pitch 2 response { band a { 400 1 "
+        "700 1 } band b { 400 1 700 1 } band c { 400 1 700 1 } "
+        "rgb c b a } }\n"};
+    const SensorDocument named{parseOK(diags, three)};
     REQUIRE(named.sensor.response.rgb);
     CHECK((*named.sensor.response.rgb)[0] == 2);
     CHECK((*named.sensor.response.rgb)[2] == 0);
     CHECK(named.sensor.response.rgbBands() == named.sensor.response.rgb);
     // Unstated, the bands named R, G, and B, else the first three.
-    const auto byName{parseOK(diags, "sensor { pixels 4 3 pitch 2 response "
-                                     "{ band B { 400 1 700 1 } band G { "
-                                     "400 1 700 1 } band R { 400 1 700 1 } "
-                                     "} }\n")};
+    const SensorDocument byName{parseOK(diags,
+                                        "sensor { pixels 4 3 pitch 2 response "
+                                        "{ band B { 400 1 700 1 } band G { "
+                                        "400 1 700 1 } band R { 400 1 700 1 } "
+                                        "} }\n")};
     REQUIRE(byName.sensor.response.rgbBands());
     CHECK((*byName.sensor.response.rgbBands())[0] == 2);
     CHECK((*byName.sensor.response.rgbBands())[2] == 0);
-    const auto byOrder{parseOK(diags, "sensor { pixels 4 3 pitch 2 response "
-                                      "{ band a { 400 1 700 1 } band b { "
-                                      "400 1 700 1 } band c { 400 1 700 1 } "
-                                      "band d { 400 1 700 1 } } }\n")};
+    const SensorDocument byOrder{parseOK(diags,
+                                         "sensor { pixels 4 3 pitch 2 response "
+                                         "{ band a { 400 1 700 1 } band b { "
+                                         "400 1 700 1 } band c { 400 1 700 1 } "
+                                         "band d { 400 1 700 1 } } }\n")};
     REQUIRE(byOrder.sensor.response.rgbBands());
     CHECK((*byOrder.sensor.response.rgbBands())[0] == 0);
     CHECK((*byOrder.sensor.response.rgbBands())[2] == 2);
@@ -339,13 +348,15 @@ TEST_CASE("SensorFile: the response block") {
         "the second 'rgb'");
   }
   SUBCASE("A second response points at the first, and a path is refused") {
-    const auto error{parseError(sensorWith("response { band w { 400 1 700 "
-                                           "1 } }"))};
+    const LayoutDiagnostic error{
+        parseError(sensorWith("response { band w { 400 1 700 "
+                              "1 } }"))};
     CHECK_CONTAINS(error.message, "the second 'response'");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "the first one is here");
-    const auto path{parseError("sensor { pixels 4 3 pitch 2 response "
-                               "\"body.response\" }\n")};
+    const LayoutDiagnostic path{
+        parseError("sensor { pixels 4 3 pitch 2 response "
+                   "\"body.response\" }\n")};
     CHECK_CONTAINS(path.message, "'response' is a block here, not a path");
     REQUIRE(!path.notes.empty());
     CHECK_CONTAINS(path.notes.front().message, "a body is one file");
@@ -355,8 +366,8 @@ TEST_CASE("SensorFile: the response block") {
 TEST_CASE("SensorFile: the detector block") {
   LayoutDiagnostics diags{};
   SUBCASE("Absent, the detector is the generic one") {
-    const auto document{parseOK(diags, BASE)};
-    const auto &detector{document.sensor.detector};
+    const SensorDocument document{parseOK(diags, BASE)};
+    const DetectorSettings &detector{document.sensor.detector};
     CHECK(!document.sensor.hasDetectorBlock);
     CHECK(!detector.baseISO);
     CHECK(!detector.fullWell);
@@ -372,17 +383,17 @@ TEST_CASE("SensorFile: the detector block") {
   }
   SUBCASE("An empty block is the generic detector too, and says it was "
           "written") {
-    const auto document{parseOK(diags, detectorWith(""))};
+    const SensorDocument document{parseOK(diags, detectorWith(""))};
     CHECK(document.sensor.hasDetectorBlock);
     CHECK(document.sensor.detector.blackLevel == 128.0f);
   }
   SUBCASE("Every key parses, last one wins") {
-    const auto document{parseOK(
+    const SensorDocument document{parseOK(
         diags, detectorWith("full_well 30000 read_noise 2.5 dark_current 0.02 "
                             "reference_temperature 5 doubling_temperature "
                             "12.7 black_level 64 bits 14 gain 0.5 bits 16 "
                             "max_iso 51200"))};
-    const auto &detector{document.sensor.detector};
+    const DetectorSettings &detector{document.sensor.detector};
     REQUIRE(detector.fullWell);
     CHECK(*detector.fullWell == 30000.0f);
     CHECK(detector.readNoise == 2.5f);
@@ -408,10 +419,11 @@ TEST_CASE("SensorFile: the detector block") {
                    "at 8 bits");
   }
   SUBCASE("The base ISO and the well are one fact") {
-    const auto document{parseOK(diags, detectorWith("base_iso 100"))};
+    const SensorDocument document{parseOK(diags, detectorWith("base_iso 100"))};
     REQUIRE(document.sensor.detector.baseISO);
     CHECK(*document.sensor.detector.baseISO == 100.0f);
-    const auto error{parseError(detectorWith("base_iso 100 full_well 50000"))};
+    const LayoutDiagnostic error{
+        parseError(detectorWith("base_iso 100 full_well 50000"))};
     CHECK_CONTAINS(error.message, "'base_iso' and 'full_well' are one fact");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "'base_iso' is here");
@@ -445,16 +457,18 @@ TEST_CASE("SensorFile: the detector block") {
                    "expected '{' after 'detector'");
   }
   SUBCASE("The temperature is the shot's, wherever it is written here") {
-    const auto inDetector{parseError(detectorWith("temperature 30"))};
+    const LayoutDiagnostic inDetector{
+        parseError(detectorWith("temperature 30"))};
     CHECK_CONTAINS(inDetector.message, "not a fact about the detector");
     REQUIRE(!inDetector.notes.empty());
     CHECK_CONTAINS(inDetector.notes.front().message,
                    "state it in the 'camera' block");
-    const auto inSensor{parseError(sensorWith("temperature 30"))};
+    const LayoutDiagnostic inSensor{parseError(sensorWith("temperature 30"))};
     CHECK_CONTAINS(inSensor.message, "not a fact about the body");
   }
   SUBCASE("A second block points at the first") {
-    const auto error{parseError(detectorWith("} detector { bits 8"))};
+    const LayoutDiagnostic error{
+        parseError(detectorWith("} detector { bits 8"))};
     CHECK_CONTAINS(error.message, "the second 'detector'");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "the first one is here");
@@ -464,14 +478,15 @@ TEST_CASE("SensorFile: the detector block") {
 TEST_CASE("SensorFile: the file as a whole") {
   LayoutDiagnostics diags{};
   SUBCASE("A camera directive names the file it belongs in") {
-    const auto error{parseError("camera { fovy 30 }\n")};
+    const LayoutDiagnostic error{parseError("camera { fovy 30 }\n")};
     CHECK_CONTAINS(error.message, "unknown directive 'camera'");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message,
                    "the '.camera' file that names this one");
   }
   SUBCASE("A response at the top level names the block it belongs in") {
-    const auto error{parseError("response { band v { 400 1 700 1 } }\n")};
+    const LayoutDiagnostic error{
+        parseError("response { band v { 400 1 700 1 } }\n")};
     CHECK_CONTAINS(error.message, "unknown directive 'response'");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "a block inside 'sensor'");
@@ -480,20 +495,21 @@ TEST_CASE("SensorFile: the file as a whole") {
     CHECK_CONTAINS(parseError("# nothing\n").message, "has none");
   }
   SUBCASE("A second block is an error rather than a merge") {
-    const auto error{parseError(std::string(BASE) + BASE)};
+    const LayoutDiagnostic error{parseError(std::string(BASE) + BASE)};
     CHECK_CONTAINS(error.message, "the second 'sensor' block");
   }
   SUBCASE("It reads from disk, and resolves relative to the camera that "
           "names it") {
     TempDir tmpDir{"sensor-file"};
-    const auto cameraPath{tmpDir.write("shot.camera",
-                                       "camera { sensor \"bodies/body.sensor\" "
-                                       "}\n")};
-    const auto sensorPath{tmpDir.write("bodies/body.sensor", BASE)};
-    const auto resolved{
+    const std::filesystem::path cameraPath{
+        tmpDir.write("shot.camera", "camera { sensor \"bodies/body.sensor\" "
+                                    "}\n")};
+    const std::filesystem::path sensorPath{
+        tmpDir.write("bodies/body.sensor", BASE)};
+    const std::string resolved{
         resolveSensorFileName("bodies/body.sensor", cameraPath.string())};
     CHECK(std::filesystem::path(resolved) == sensorPath);
-    const auto document{readSensor(diags, resolved)};
+    const SensorDocument document{readSensor(diags, resolved)};
     CHECK(document.sensor.pixels.x == 4);
     CHECK(resolveSensorFileName("", cameraPath.string()) == "");
     CHECK_THROWS(
@@ -504,8 +520,9 @@ TEST_CASE("SensorFile: the file as a whole") {
   }
   SUBCASE("The old response sidecar is named for what it became") {
     TempDir tmpDir{"sensor-file-response"};
-    const auto path{tmpDir.write("body.response", "response { }\n")};
-    const auto error{smdl::catchAndReturnError(
+    const std::filesystem::path path{
+        tmpDir.write("body.response", "response { }\n")};
+    const std::optional<smdl::Error> error{smdl::catchAndReturnError(
         [&] { (void)resolveSensorFileName(path.string(), ""); })};
     CHECK_ERROR(error,
                 "names a '.response' file, a format that no longer exists");
@@ -513,31 +530,31 @@ TEST_CASE("SensorFile: the file as a whole") {
   }
   SUBCASE("A malformed file throws after reporting") {
     TempDir tmpDir{"sensor-file-bad"};
-    const auto path{
+    const std::filesystem::path path{
         tmpDir.write("bad.sensor", "sensor { pixels 4 3 pitch 2 }\n")};
     CHECK_THROWS((void)readSensor(diags, path.string()));
   }
   SUBCASE("A body as shipped parses end to end") {
-    const auto document{parseOK(diags,
-                                "# A body.\n"
-                                "sensor {\n"
-                                "  name \"Test body\"\n"
-                                "  pixels 6000 4000\n"
-                                "  pitch 5.93\n"
-                                "  response {\n"
-                                "    kind relative\n"
-                                "    peak_qe 0.5\n"
-                                "    band R { 380 0.001 550 0.3 780 0.01 }\n"
-                                "    band G { 380 0.002 550 1.0 780 0.01 }\n"
-                                "    band B { 380 0.5 550 0.2 780 0.001 }\n"
-                                "    cfa { row R G  row G B }\n"
-                                "  }\n"
-                                "  detector {\n"
-                                "    base_iso 100\n"
-                                "    bits 14\n"
-                                "  }\n"
-                                "}\n")};
-    const auto &sensor{document.sensor};
+    const SensorDocument document{
+        parseOK(diags, "# A body.\n"
+                       "sensor {\n"
+                       "  name \"Test body\"\n"
+                       "  pixels 6000 4000\n"
+                       "  pitch 5.93\n"
+                       "  response {\n"
+                       "    kind relative\n"
+                       "    peak_qe 0.5\n"
+                       "    band R { 380 0.001 550 0.3 780 0.01 }\n"
+                       "    band G { 380 0.002 550 1.0 780 0.01 }\n"
+                       "    band B { 380 0.5 550 0.2 780 0.001 }\n"
+                       "    cfa { row R G  row G B }\n"
+                       "  }\n"
+                       "  detector {\n"
+                       "    base_iso 100\n"
+                       "    bits 14\n"
+                       "  }\n"
+                       "}\n")};
+    const SensorSettings &sensor{document.sensor};
     CHECK(sensor.name == "Test body");
     CHECK(sensor.pixels.x == 6000);
     CHECK(sensor.sizeMM().x == doctest::Approx(35.58));

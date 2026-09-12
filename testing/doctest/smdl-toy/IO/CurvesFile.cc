@@ -14,7 +14,7 @@ namespace {
 // and coordinates that are all distinct, so a transposed or truncated
 // read shows up as a wrong value rather than as a coincidence.
 [[nodiscard]] CurvesFile makeGroom(CurvesFile::Basis basis) {
-  auto curves{CurvesFile()};
+  CurvesFile curves{};
   curves.basis = basis;
   const size_t counts[2]{6, 4};
   curves.strandOffsets.push_back(0);
@@ -47,25 +47,25 @@ void checkSame(const CurvesFile &read, const CurvesFile &written) {
 
 TEST_CASE("CurvesFile: round trip") {
   TempDir tmpDir{"toy-curves"};
-  const auto fileName{(tmpDir / "groom.curves").string()};
+  const std::string fileName{(tmpDir / "groom.curves").string()};
   SUBCASE("Every basis survives") {
     for (const auto basis :
          {CurvesFile::Basis::LINEAR, CurvesFile::Basis::BSPLINE,
           CurvesFile::Basis::CATMULL_ROM}) {
       CAPTURE(uint16_t(basis));
-      const auto groom{makeGroom(basis)};
+      const CurvesFile groom{makeGroom(basis)};
       writeCurvesFile(fileName, groom);
-      const auto read{readCurvesFile(fileName)};
+      const CurvesFile read{readCurvesFile(fileName)};
       checkSame(read, groom);
       CHECK(!read.hasRootUVs());
       CHECK(read.strandCount() == 2);
     }
   }
   SUBCASE("The root UV column survives") {
-    auto groom{makeGroom(CurvesFile::Basis::CATMULL_ROM)};
+    CurvesFile groom{makeGroom(CurvesFile::Basis::CATMULL_ROM)};
     groom.rootUVs = {float2(0.25f, 0.75f), float2(-1.0f, 2.0f)};
     writeCurvesFile(fileName, groom);
-    const auto read{readCurvesFile(fileName)};
+    const CurvesFile read{readCurvesFile(fileName)};
     checkSame(read, groom);
     REQUIRE(read.hasRootUVs());
     REQUIRE(read.rootUVs.size() == 2);
@@ -78,19 +78,19 @@ TEST_CASE("CurvesFile: round trip") {
     // The format is the host's own bytes, so a round trip that agrees on
     // values must also agree on the file, which is what lets a '.curves'
     // be content-hashed or cached.
-    const auto groom{makeGroom(CurvesFile::Basis::BSPLINE)};
+    const CurvesFile groom{makeGroom(CurvesFile::Basis::BSPLINE)};
     writeCurvesFile(fileName, groom);
     const auto readBytes{[&] {
       std::ifstream file(fileName, std::ios::binary);
       return std::string(std::istreambuf_iterator<char>(file), {});
     }};
-    const auto first{readBytes()};
+    const std::string first{readBytes()};
     writeCurvesFile(fileName, readCurvesFile(fileName));
     CHECK(readBytes() == first);
   }
   SUBCASE("A truncated file is refused") {
     writeCurvesFile(fileName, makeGroom(CurvesFile::Basis::LINEAR));
-    auto bytes{std::string()};
+    std::string bytes{};
     {
       std::ifstream file(fileName, std::ios::binary);
       bytes.assign(std::istreambuf_iterator<char>(file), {});
@@ -114,7 +114,7 @@ TEST_CASE("CurvesFile: round trip") {
     // cannot reach disk. B-spline is the basis with a real floor: it
     // needs a whole four-point window, where Catmull-Rom takes two and
     // the loader pads the phantom ends itself.
-    auto groom{CurvesFile()};
+    CurvesFile groom{};
     groom.points.assign(3, float4(0.0f, 0.0f, 0.0f, 0.01f));
     groom.strandOffsets = {0, 3};
     groom.basis = CurvesFile::Basis::BSPLINE;
@@ -123,7 +123,7 @@ TEST_CASE("CurvesFile: round trip") {
     CHECK_NOTHROW(writeCurvesFile(fileName, groom));
   }
   SUBCASE("An offset table that does not add up is refused") {
-    auto groom{makeGroom(CurvesFile::Basis::LINEAR)};
+    CurvesFile groom{makeGroom(CurvesFile::Basis::LINEAR)};
     SUBCASE("Not ending at the point count") {
       groom.strandOffsets.back()--;
       CHECK_THROWS_AS(writeCurvesFile(fileName, groom), smdl::Error);

@@ -32,9 +32,11 @@
 /// fails on the same assertion as a wrong message.
 [[nodiscard]] inline smdl::Error compileError(std::string sourceCode) {
   smdl::Compiler compiler{};
-  if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+  if (std::optional<smdl::Error> error{
+          compiler.addCode("::diag", std::move(sourceCode))})
     return *error;
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+  if (std::optional<smdl::Error> error{compiler.compile(smdl::OPT_LEVEL_NONE)})
+    return *error;
   return smdl::Error("compiled without error");
 }
 
@@ -46,10 +48,13 @@ buildAll(smdl::Compiler &compiler,
          std::vector<std::string> *addedNames = nullptr,
          smdl::OptLevel optLevel = smdl::OPT_LEVEL_NONE) {
   for (const auto &path : paths)
-    if (auto error{compiler.add(path.string(), addedNames)})
+    if (std::optional<smdl::Error> error{
+            compiler.add(path.string(), addedNames)})
       return error->message;
-  if (auto error{compiler.compile(optLevel)}) return error->message;
-  if (auto error{compiler.jitCompile()}) return error->message;
+  if (std::optional<smdl::Error> error{compiler.compile(optLevel)})
+    return error->message;
+  if (std::optional<smdl::Error> error{compiler.jitCompile()})
+    return error->message;
   return {};
 }
 
@@ -61,25 +66,27 @@ buildAll(smdl::Compiler &compiler,
 /// emitted, since otherwise nothing inside one would be diagnosed at all.
 [[nodiscard]] inline std::string compileSource(const TempDir &tmpDir,
                                                std::string_view sourceCode) {
-  const auto path{tmpDir.write("main.smdl", sourceCode)};
+  const std::filesystem::path path{tmpDir.write("main.smdl", sourceCode)};
   smdl::Compiler compiler{};
   compiler.shouldEmitUnitTests = true;
-  if (auto error{compiler.add(path.string())}) return error->message;
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return error->message;
+  if (std::optional<smdl::Error> error{compiler.add(path.string())})
+    return error->message;
+  if (std::optional<smdl::Error> error{compiler.compile(smdl::OPT_LEVEL_NONE)})
+    return error->message;
   return {};
 }
 
 /// The material named `name`, requiring that there is one.
 [[nodiscard]] inline const smdl::JIT::MaterialDef *
 requireMaterial(smdl::Compiler &compiler, std::string_view name) {
-  const auto *materialDef{compiler.findMaterial(name)};
+  const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
   REQUIRE_MESSAGE(materialDef != nullptr, compiler.explainMaterialLookup(name));
   return materialDef;
 }
 
 /// A minimal named material definition.
 [[nodiscard]] inline std::string minimalMaterial(std::string_view name) {
-  auto text{std::string("material ")};
+  std::string text{"material "};
   text += name;
   text += "() = material(\n"
           "  surface: material_surface(\n"
@@ -96,11 +103,11 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
 /// unoptimized LLVM-IR.
 [[nodiscard]] inline std::string compileToIR(const TempDir &tmpDir,
                                              std::string_view sourceCode) {
-  const auto path{tmpDir.write("main.smdl", sourceCode)};
+  const std::filesystem::path path{tmpDir.write("main.smdl", sourceCode)};
   smdl::Compiler compiler{};
   REQUIRE_OK(compiler.add(path.string()));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
-  auto ir{std::string()};
+  std::string ir{};
   REQUIRE_OK(compiler.dump(smdl::DUMP_FORMAT_IR, ir));
   return ir;
 }
@@ -109,14 +116,14 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
 /// between the parentheses of its `define` line.
 [[nodiscard]] inline std::string llvmParamsOf(const std::string &ir,
                                               std::string_view name) {
-  const auto marker{std::string("@") + std::string(name) + "("};
-  auto i{ir.find("define")};
+  const std::string marker{std::string("@") + std::string(name) + "("};
+  size_t i{ir.find("define")};
   while (i != std::string::npos) {
-    const auto lineEnd{ir.find('\n', i)};
-    const auto line{ir.substr(i, lineEnd - i)};
-    if (const auto j{line.find(marker)}; j != std::string::npos) {
-      const auto open{j + marker.size()};
-      const auto close{line.rfind(')')};
+    const size_t lineEnd{ir.find('\n', i)};
+    const std::string line{ir.substr(i, lineEnd - i)};
+    if (const size_t j{line.find(marker)}; j != std::string::npos) {
+      const size_t open{j + marker.size()};
+      const size_t close{line.rfind(')')};
       REQUIRE(close != std::string::npos);
       REQUIRE(close >= open);
       return line.substr(open, close - open);
@@ -130,7 +137,7 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
 /// Count the image symbol declarations in an LLVM-IR dump. A declaration
 /// starts a line; every other mention of the symbol is a use.
 [[nodiscard]] inline size_t countImageSymbols(std::string_view ir) {
-  auto count{size_t(0)};
+  size_t count{0};
   for (size_t pos{}; (pos = ir.find("\n@smdl.image.", pos)) != ir.npos; pos++)
     count++;
   return count;
@@ -147,7 +154,7 @@ class StateStorage final {
 public:
   explicit StateStorage(const smdl::Compiler &compiler)
       : mWavelengths(compiler.wavelengthBaseMax) {
-    const auto numBands{mWavelengths.size()};
+    const size_t numBands{mWavelengths.size()};
     for (size_t i = 0; i < numBands; i++) {
       // The midpoint at one band, rather than a division by zero.
       const float fac{numBands > 1 ? float(i) / float(numBands - 1) : 0.5f};
@@ -163,7 +170,7 @@ public:
   /// and nothing geometric. Call `finalize()` on it where the entry
   /// point being tested reads the space conventions.
   [[nodiscard]] smdl::State makeState() noexcept {
-    auto state{smdl::State()};
+    smdl::State state{};
     state.allocator = &mAllocator;
     state.wavelengthMin = WAVELENGTH_MIN;
     state.wavelengthMax = WAVELENGTH_MAX;
@@ -223,7 +230,7 @@ public:
   /// How many of them mention `needle`, for telling apart the messages a
   /// broader needle collected together.
   [[nodiscard]] int count(std::string_view needle) const {
-    auto n{0};
+    int n{0};
     for (const auto &message : mSink.messages)
       if (message.find(needle) != std::string::npos) n++;
     return n;
@@ -266,7 +273,7 @@ writeZip(const std::filesystem::path &path,
     }
     return ~crc;
   }};
-  auto out{std::string()};
+  std::string out{};
   const auto putU16{[&](uint32_t value) {
     out += char(value & 0xFF);
     out += char((value >> 8) & 0xFF);
@@ -275,7 +282,7 @@ writeZip(const std::filesystem::path &path,
     putU16(value & 0xFFFF);
     putU16(value >> 16);
   }};
-  auto offsets{std::vector<uint32_t>()};
+  std::vector<unsigned> offsets{std::vector<uint32_t>()};
   for (const auto &[name, data] : entries) {
     offsets.push_back(uint32_t(out.size()));
     putU32(0x04034B50u); // Local file header
@@ -285,7 +292,7 @@ writeZip(const std::filesystem::path &path,
     putU16(uint32_t(name.size())), putU16(0);
     out += name, out += data;
   }
-  const auto centralOffset{uint32_t(out.size())};
+  const uint32_t centralOffset{uint32_t(out.size())};
   for (size_t i = 0; i < entries.size(); i++) {
     const auto &[name, data]{entries[i]};
     putU32(0x02014B50u); // Central directory header
@@ -297,7 +304,7 @@ writeZip(const std::filesystem::path &path,
     putU32(offsets[i]);
     out += name;
   }
-  const auto centralSize{uint32_t(out.size()) - centralOffset};
+  const uint32_t centralSize{uint32_t(out.size()) - centralOffset};
   putU32(0x06054B50u); // End of central directory
   putU16(0), putU16(0);
   putU16(uint32_t(entries.size())), putU16(uint32_t(entries.size()));

@@ -6,7 +6,7 @@
 #include "smdl/Common.h"
 
 TEST_CASE("BuildInfo: what the banner reports about this build") {
-  auto info{smdl::BuildInfo::get()};
+  smdl::BuildInfo info{smdl::BuildInfo::get()};
   SUBCASE("Fields documented as never null are never null") {
     CHECK(info.gitBranch != nullptr);
     CHECK(info.gitCommit != nullptr);
@@ -28,16 +28,17 @@ TEST_CASE("BuildInfo: what the banner reports about this build") {
 #endif
   }
   SUBCASE("String summary mentions the version and commit") {
-    auto str{info.toString()};
-    auto version{std::to_string(info.major) + "." + std::to_string(info.minor) +
-                 "." + std::to_string(info.patch)};
+    std::string str{info.toString()};
+    std::string version{std::to_string(info.major) + "." +
+                        std::to_string(info.minor) + "." +
+                        std::to_string(info.patch)};
     CHECK_CONTAINS(str, version);
     CHECK_CONTAINS(str, info.gitCommit);
     CHECK_CONTAINS(str, info.llvmVersion);
   }
   SUBCASE("String summary lists every third-party dependency") {
     CHECK(!info.thirdparty.empty());
-    auto str{info.toString()};
+    std::string str{info.toString()};
     for (const auto &dep : info.thirdparty) {
       CHECK(!dep.version.empty());
       CHECK_CONTAINS(str, dep.name + " " + dep.version);
@@ -50,7 +51,7 @@ TEST_CASE("State: what finalize establishes") {
     // A host that asks for more spaces than there are must not send the
     // loops here, or the generated code that reads the same arrays, off
     // the end of them.
-    auto state{smdl::State()};
+    smdl::State state{};
     state.textureSpaceCount = 16;
     state.finalize();
     CHECK(state.textureSpaceCount == int(smdl::State::TEXTURE_SPACE_MAX));
@@ -65,7 +66,7 @@ TEST_CASE("State: what finalize establishes") {
     CHECK(state.textureSpaceCount == 1);
   }
   SUBCASE("Finalize establishes the internal space conventions") {
-    auto state{smdl::State()};
+    smdl::State state{};
     state.position = smdl::float3(3, -1, 2);
     state.normal = smdl::float3(0, 1, 1);
     state.geometryNormal = smdl::float3(0, 1, 1);
@@ -88,16 +89,16 @@ TEST_CASE("State: what finalize establishes") {
     }};
     // A frame no repair step would touch: unit normals, each tangent
     // pair orthonormal with its normal, and an orthonormal placement.
-    const auto w{smdl::normalize(float3(1, 2, 3))};
-    const auto u{smdl::perpendicularTo(w)};
-    const auto v{smdl::cross(w, u)};
-    const auto n{smdl::normalize(w + 0.25f * u - 0.125f * v)};
-    auto tu{u - smdl::dot(u, n) * n};
+    const smdl::float3 w{smdl::normalize(float3(1, 2, 3))};
+    const smdl::float3 u{smdl::perpendicularTo(w)};
+    const smdl::float3 v{smdl::cross(w, u)};
+    const smdl::float3 n{smdl::normalize(w + 0.25f * u - 0.125f * v)};
+    smdl::float3 tu{u - smdl::dot(u, n) * n};
     CHECK(smdl::tryNormalize(tu));
-    const auto tv{smdl::cross(n, tu)};
-    const auto placement{smdl::orthonormalize(
+    const smdl::float3 tv{smdl::cross(n, tu)};
+    const smdl::float3x3 placement{smdl::orthonormalize(
         smdl::float3x3(float3(2, 1, 0), float3(-1, 3, 1), float3(0, -1, 2)))};
-    auto state{smdl::State()};
+    smdl::State state{};
     state.position = float3(3, -1, 2);
     state.direction = smdl::normalize(float3(-1, 0.5f, -2));
     state.motion = float3(0.1f, 0.2f, 0.3f);
@@ -110,9 +111,9 @@ TEST_CASE("State: what finalize establishes") {
     state.objectToWorld = smdl::float4x4(
         smdl::float4(placement[0], 0), smdl::float4(placement[1], 0),
         smdl::float4(placement[2], 0), smdl::float4(4, 5, 6, 1));
-    auto checked{state};
+    smdl::State checked{state};
     checked.finalize();
-    auto unchecked{state};
+    smdl::State unchecked{state};
     unchecked.finalizeUnchecked();
     CHECK(near(checked.position, unchecked.position));
     CHECK(near(checked.direction, unchecked.direction));

@@ -11,9 +11,9 @@ using namespace smdl;
 namespace {
 
 [[nodiscard]] DocModule extractFromSource(std::string sourceCode) {
-  auto allocator{BumpPtrAllocator{}};
-  auto module_{Module("test", std::move(sourceCode))};
-  auto error{module_.parse(allocator)};
+  BumpPtrAllocator allocator{};
+  Module module_{"test", std::move(sourceCode)};
+  std::optional<Error> error{module_.parse(allocator)};
   REQUIRE(!error);
   return extractDocModule(module_);
 }
@@ -30,7 +30,7 @@ namespace {
 
 TEST_CASE("Doc: what a doc comment extracts to") {
   SUBCASE("Every documented declaration comes out with its comment") {
-    auto mod{extractFromSource(R"(/// The module documentation.
+    DocModule mod{extractFromSource(R"(/// The module documentation.
 #smdl
 
 /// The epsilon.
@@ -72,17 +72,17 @@ namespace inner {
     CHECK(mod.qualifiedName == "::test");
     CHECK(mod.docText == "The module documentation.");
 
-    const auto &epsilon{entryNamed(mod, "EPSILON")};
+    const DocEntry &epsilon{entryNamed(mod, "EPSILON")};
     CHECK(epsilon.kind == "variable");
     CHECK(epsilon.qualifiedName == "::test::EPSILON");
     CHECK(!epsilon.isExported);
     CHECK(epsilon.signature == "const float EPSILON = 1e-6");
     CHECK(epsilon.docText == "The epsilon.");
-    const auto &other{entryNamed(mod, "OTHER")};
+    const DocEntry &other{entryNamed(mod, "OTHER")};
     CHECK(other.signature == "const float OTHER = 2.0");
     CHECK(other.docText == "The other.");
 
-    const auto &scatterMode{entryNamed(mod, "scatter_mode")};
+    const DocEntry &scatterMode{entryNamed(mod, "scatter_mode")};
     CHECK(scatterMode.kind == "enum");
     CHECK(scatterMode.isExported);
     CHECK(scatterMode.signature == "export enum scatter_mode");
@@ -95,7 +95,7 @@ namespace inner {
     CHECK(scatterMode.members[0].docText == "None.");
     CHECK(scatterMode.members[1].docText == "Reflect.");
 
-    const auto &result{entryNamed(mod, "result")};
+    const DocEntry &result{entryNamed(mod, "result")};
     CHECK(result.kind == "struct");
     CHECK(result.signature == "export struct result");
     REQUIRE(result.members.size() == 2);
@@ -105,7 +105,7 @@ namespace inner {
     CHECK(result.members[0].docText == "The value.");
     CHECK(result.members[1].docText == "The flags.");
 
-    const auto &helper{entryNamed(mod, "helper")};
+    const DocEntry &helper{entryNamed(mod, "helper")};
     CHECK(helper.kind == "function");
     CHECK(helper.signature ==
           "@(pure macro) export float helper(float x, float weight = 1.0)");
@@ -123,7 +123,7 @@ namespace inner {
     CHECK(entryNamed(mod, "vector3").signature ==
           "export typedef float3 vector3");
 
-    const auto &inner{entryNamed(mod, "inner")};
+    const DocEntry &inner{entryNamed(mod, "inner")};
     CHECK(inner.kind == "namespace");
     REQUIRE(inner.members.size() == 1);
     CHECK(inner.members[0].qualifiedName == "::test::inner::nested");
@@ -132,7 +132,7 @@ namespace inner {
   SUBCASE("A minified signature is re-expanded to a readable one") {
     // Minified sources, which is how the builtins are embedded, drop the
     // spacing around initializers and separators.
-    auto mod{extractFromSource(R"(#smdl
+    DocModule mod{extractFromSource(R"(#smdl
 export struct s {
   const int2 count=int2(1,1);
   float weight=0.;
@@ -145,7 +145,7 @@ export int g(
 ) = a + b;
 export const int X=-1;
 )")};
-    const auto &s{entryNamed(mod, "s")};
+    const DocEntry &s{entryNamed(mod, "s")};
     REQUIRE(s.members.size() == 3);
     CHECK(s.members[0].signature == "const int2 count = int2(1, 1)");
     CHECK(s.members[1].signature == "float weight = 0.");
@@ -160,7 +160,7 @@ export const int X=-1;
   SUBCASE("Re-expansion leaves a compound operator alone") {
     // Only the `=` that introduces an initializer is spaced apart; a `=`
     // belonging to an operator inside the initializer expression is not.
-    auto mod{extractFromSource(R"(#smdl
+    DocModule mod{extractFromSource(R"(#smdl
 export struct s {
   bool a=(1==2);
   bool b=(1!=2);
@@ -168,7 +168,7 @@ export struct s {
   bool d=(1>=2);
 };
 )")};
-    const auto &s{entryNamed(mod, "s")};
+    const DocEntry &s{entryNamed(mod, "s")};
     REQUIRE(s.members.size() == 4);
     CHECK(s.members[0].signature == "bool a = (1==2)");
     CHECK(s.members[1].signature == "bool b = (1!=2)");
@@ -176,7 +176,7 @@ export struct s {
     CHECK(s.members[3].signature == "bool d = (1>=2)");
   }
   SUBCASE("nameOffset locates the declared name inside the signature") {
-    auto mod{extractFromSource(R"(#smdl
+    DocModule mod{extractFromSource(R"(#smdl
 /// The function.
 @(pure macro)
 export float helper(float x) = x;
@@ -213,18 +213,18 @@ namespace ns {
     walk(walk, mod.entries);
     // Spot check that it is not merely matching the first occurrence: the
     // name of `helper` follows the attributes and the return type.
-    const auto &helper{entryNamed(mod, "helper")};
+    const DocEntry &helper{entryNamed(mod, "helper")};
     CHECK(helper.signature == "@(pure macro) export float helper(float x)");
     CHECK(helper.nameOffset == helper.signature.find("helper("));
   }
   SUBCASE("A conformant module falls back on 'anno::description'") {
-    auto mod{extractFromSource(R"(mdl 1.7;
+    DocModule mod{extractFromSource(R"(mdl 1.7;
 export const int X = 0 [[ anno::description("The described constant.") ]];
 )")};
     CHECK(entryNamed(mod, "X").docText == "The described constant.");
   }
   SUBCASE("findSymbol finds what removeHidden has not taken away") {
-    auto docs{DocDatabase{}};
+    DocDatabase docs{};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// The exported function.
 export int f(int a) = a;
@@ -245,7 +245,7 @@ namespace ns {
   export int h(int a) = a;
 }
 )"));
-    auto foundF{docs.findSymbol("f")};
+    std::vector<const DocEntry *> foundF{docs.findSymbol("f")};
     REQUIRE(foundF.size() == 1);
     CHECK(foundF[0]->qualifiedName == "::test::f");
     CHECK(docs.findSymbol("::test::f").size() == 1);
@@ -267,7 +267,7 @@ namespace ns {
     CHECK(docs.findSymbol("s::_invisible").empty());
   }
   SUBCASE("removeHidden drops a namespace it has emptied") {
-    auto docs{DocDatabase{}};
+    DocDatabase docs{};
     docs.modules.push_back(extractFromSource(R"(#smdl
 namespace ns {
   int internal(int a) = a;
@@ -282,33 +282,33 @@ namespace _detail {
     CHECK(docs.findSymbol("hidden").empty());
   }
   SUBCASE("printJSON escapes what JSON requires escaping") {
-    auto docs{DocDatabase{}};
+    DocDatabase docs{};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// A "quoted" doc with a backslash \ and
 /// a second line.
 export const int X = 0;
 )"));
-    auto json{docs.printJSON()};
+    std::string json{docs.printJSON()};
     CHECK_CONTAINS(json, "\"modules\"");
     CHECK_CONTAINS(json, "A \\\"quoted\\\" doc with a backslash \\\\ and\\n"
                          "a second line.");
   }
   SUBCASE("printMarkdown renders the declaration and its comment") {
-    auto docs{DocDatabase{}};
+    DocDatabase docs{};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// The function.
 export int f(int a) = a;
 )"));
-    auto md{docs.printMarkdown()};
+    std::string md{docs.printMarkdown()};
     CHECK_CONTAINS(md, "# Module `::test`");
     CHECK_CONTAINS(md, "## `::test::f`");
     CHECK_CONTAINS(md, "The function.");
   }
   SUBCASE("The builtin module names are reported") {
-    auto names{getBuiltinModuleNames()};
+    std::vector<std::string_view> names{getBuiltinModuleNames()};
     CHECK(!names.empty());
     CHECK(std::find(names.begin(), names.end(), "df") != names.end());
-    auto mod{extractBuiltinDocModule("df")};
+    std::optional<DocModule> mod{extractBuiltinDocModule("df")};
     REQUIRE(mod.has_value());
     CHECK(mod->qualifiedName == "::df");
     CHECK(!mod->entries.empty());
@@ -319,7 +319,7 @@ export int f(int a) = a;
     CHECK(std::any_of(
         mod->entries.begin(), mod->entries.end(),
         [](const DocEntry &entry) { return !entry.docText.empty(); }));
-    auto docs{DocDatabase{}};
+    DocDatabase docs{};
     docs.modules.push_back(std::move(*mod));
     CHECK(!docs.findSymbol("::df::diffuse_reflection_bsdf").empty());
     CHECK(!extractBuiltinDocModule("not_a_builtin").has_value());

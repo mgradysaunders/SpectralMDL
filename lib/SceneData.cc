@@ -26,7 +26,7 @@ SceneData::~SceneData() {
 void SceneData::clear() { static_cast<Lookup *>(mPtr)->clear(); }
 
 void SceneData::set(std::string_view name, Getter getter, Exists exists) {
-  auto &lookup{*static_cast<Lookup *>(mPtr)};
+  Lookup &lookup{*static_cast<Lookup *>(mPtr)};
   lookup[llvm::StringRef(name)] = Entry{std::move(getter), std::move(exists)};
 }
 
@@ -105,14 +105,14 @@ void SceneData::setColor(std::string_view name,
 }
 
 const SceneData::Getter *SceneData::get(std::string_view name) const {
-  auto &lookup{*static_cast<const Lookup *>(mPtr)};
+  const Lookup &lookup{*static_cast<const Lookup *>(mPtr)};
   if (auto itr{lookup.find(llvm::StringRef(name))}; itr != lookup.end())
     return &itr->getValue().getter;
   return nullptr;
 }
 
 bool SceneData::exists(std::string_view name, const State *state) const {
-  auto &lookup{*static_cast<const Lookup *>(mPtr)};
+  const Lookup &lookup{*static_cast<const Lookup *>(mPtr)};
   auto itr{lookup.find(llvm::StringRef(name))};
   if (itr == lookup.end()) return false;
   const auto &entry{itr->getValue()};
@@ -132,7 +132,8 @@ SMDL_EXPORT int smdlDataExists(void *state, void *sceneData, // NOLINT
 SMDL_EXPORT void smdlDataLookup(void *state, void *sceneData, // NOLINT
                                 const char *name, int kind, int size,
                                 void *ptr) {
-  if (auto getter{static_cast<smdl::SceneData *>(sceneData)->get(name)})
+  if (const smdl::SceneData::Getter *getter{
+          static_cast<smdl::SceneData *>(sceneData)->get(name)})
     (*getter)(static_cast<smdl::State *>(state), smdl::SceneData::Kind(kind),
               size, ptr);
 }

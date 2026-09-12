@@ -23,7 +23,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
   constexpr uint64_t SPP = 5;
   // NOLINTNEXTLINE
   const float wavelengths[NUM_BANDS] = {400.0f, 500.0f, 600.0f, 700.0f};
-  auto film{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
+  smdl::SpectralFilm film{NUM_BANDS, NUM_X, NUM_Y};
   film.addSamples(SPP);
   for (size_t y = 0; y < NUM_Y; y++) {
     for (size_t x = 0; x < NUM_X; x++) {
@@ -39,7 +39,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(film.mean(0, 0, 0) == 0.0);
     CHECK(film.mean(2, 1, 3) == 213.0);
     // A film with no samples must read back as zero, not NaN.
-    auto empty{smdl::SpectralFilm(NUM_BANDS, 1, 1)};
+    smdl::SpectralFilm empty{NUM_BANDS, 1, 1};
     CHECK(empty.getNumSamples() == 0);
     CHECK(empty.mean(0, 0, 0) == 0.0);
   }
@@ -49,14 +49,14 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(film.mean(2, 1, 3) == 0.0);
   }
   SUBCASE("A film round-trips through an ENVI pair") {
-    auto fileName{(tmpDir / "test.envi").string()};
+    std::string fileName{(tmpDir / "test.envi").string()};
     const std::array<std::string, 2> extraLines = {
         std::string("render sampler = test-1"),
         std::string("render args = -spp 5")};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName, extraLines);
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loadedFilm.getNumBands() == NUM_BANDS);
     CHECK(loadedFilm.getNumPixelsX() == NUM_X);
     CHECK(loadedFilm.getNumPixelsY() == NUM_Y);
@@ -88,23 +88,23 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
   SUBCASE("Means are stored in single precision unless double is asked "
           "for, and either reads back") {
     // A mean a float cannot hold, so that the two precisions differ.
-    auto tenth{smdl::SpectralFilm(1, 1, 1)};
+    smdl::SpectralFilm tenth{1, 1, 1};
     tenth.addSamples(SPP);
     const double total{double(SPP) * 0.1};
     tenth.addTotals(0, 0, &total);
     for (const bool shouldWriteDouble : {false, true}) {
-      auto fileName{(tmpDir / "precision.envi").string()};
+      std::string fileName{(tmpDir / "precision.envi").string()};
       tenth.writeENVIFile({}, fileName, {}, {}, {}, shouldWriteDouble);
-      auto text{std::string()};
+      std::string text{};
       {
-        auto file{std::ifstream(fileName + ".hdr")};
+        std::ifstream file{fileName + ".hdr"};
         for (std::string line; std::getline(file, line);) text += line + "\n";
       }
       CHECK_CONTAINS(text,
                      shouldWriteDouble ? "data type = 5" : "data type = 4");
       CHECK(fs::file_size(fileName) ==
             (shouldWriteDouble ? sizeof(double) : sizeof(float)));
-      auto loadedFilm{smdl::SpectralFilm{}};
+      smdl::SpectralFilm loadedFilm{};
       loadedFilm.readENVIFile(fileName);
       CHECK(loadedFilm.mean(0, 0, 0) ==
             (shouldWriteDouble ? 0.1 : double(0.1f)));
@@ -112,24 +112,24 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
   }
   SUBCASE("A film in the other byte order is swapped on load") {
     for (const bool shouldWriteDouble : {false, true}) {
-      auto fileName{(tmpDir / "swapped.envi").string()};
+      std::string fileName{(tmpDir / "swapped.envi").string()};
       film.writeENVIFile({}, fileName, {}, {}, {}, shouldWriteDouble);
       // Reverse the bytes of every value, and the header's byte order
       // with them.
       const size_t valueSize{shouldWriteDouble ? sizeof(double)
                                                : sizeof(float)};
-      auto bytes{std::string()};
+      std::string bytes{};
       {
-        auto file{std::ifstream(fileName, std::ios::binary)};
+        std::ifstream file{fileName, std::ios::binary};
         bytes.assign(std::istreambuf_iterator<char>(file),
                      std::istreambuf_iterator<char>());
       }
       for (size_t i = 0; i < bytes.size(); i += valueSize)
         std::reverse(bytes.begin() + i, bytes.begin() + i + valueSize);
       std::ofstream(fileName, std::ios::binary) << bytes;
-      auto text{std::string()};
+      std::string text{};
       {
-        auto file{std::ifstream(fileName + ".hdr")};
+        std::ifstream file{fileName + ".hdr"};
         for (std::string line; std::getline(file, line);) {
           if (line == "byte order = 0") {
             line = "byte order = 1";
@@ -140,7 +140,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         }
       }
       std::ofstream(fileName + ".hdr") << text;
-      auto loadedFilm{smdl::SpectralFilm{}};
+      smdl::SpectralFilm loadedFilm{};
       loadedFilm.readENVIFile(fileName);
       CHECK(loadedFilm.mean(2, 1, 3) == 213.0);
       CHECK(loadedFilm.mean(1, 0, 2) == 102.0);
@@ -150,7 +150,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     // The window is the middle column, which is where a windowed render
     // has samples; everything else is untouched.
     const smdl::int4 window{1, 0, 2, int(NUM_Y)};
-    auto windowed{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
+    smdl::SpectralFilm windowed{NUM_BANDS, NUM_X, NUM_Y};
     windowed.addSamples(SPP);
     for (size_t y = 0; y < NUM_Y; y++) {
       // NOLINTNEXTLINE
@@ -159,11 +159,11 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         sums[b] = double(SPP) * double(100 + 10 * y + b);
       windowed.addTotals(1, y, sums);
     }
-    auto fileName{(tmpDir / "windowed.envi").string()};
+    std::string fileName{(tmpDir / "windowed.envi").string()};
     windowed.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                            fileName, {}, window);
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.samplesPerPixel == SPP);
     CHECK(loaded.cropWindow[0] == 1);
     CHECK(loaded.cropWindow[1] == 0);
@@ -192,7 +192,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     // the window's, and the pixels outside come back black rather than
     // claiming samples of black.
     const smdl::int4 window{0, 0, int(NUM_X), 1};
-    auto windowed{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
+    smdl::SpectralFilm windowed{NUM_BANDS, NUM_X, NUM_Y};
     windowed.addSamples(SPP);
     for (size_t y = 0; y < NUM_Y; y++) {
       for (size_t x = 0; x < NUM_X; x++) {
@@ -204,11 +204,11 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         windowed.addTotals(x, y, sums);
       }
     }
-    auto fileName{(tmpDir / "combined.envi").string()};
+    std::string fileName{(tmpDir / "combined.envi").string()};
     windowed.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                            fileName, {}, window);
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.samplesPerPixel == SPP);
     CHECK(loaded.cropWindow[3] == 1);
     CHECK(loadedFilm.getNumSamples() == SPP);
@@ -216,18 +216,18 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(loadedFilm.mean(2, 1, 1) == 0.0);
   }
   SUBCASE("ENVI whole-frame window records no window") {
-    auto fileName{(tmpDir / "whole.envi").string()};
+    std::string fileName{(tmpDir / "whole.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName, {}, smdl::int4{0, 0, int(NUM_X), int(NUM_Y)});
-    auto headerName{fileName + ".hdr"};
-    auto text{std::string()};
+    std::string headerName{fileName + ".hdr"};
+    std::string text{};
     {
-      auto file{std::ifstream(headerName)};
+      std::ifstream file{headerName};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
     CHECK_NOT_CONTAINS(text, "render crop window");
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.cropWindow[0] == 0);
     CHECK(loaded.cropWindow[1] == 0);
     CHECK(loaded.cropWindow[2] == int(NUM_X));
@@ -235,7 +235,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(loadedFilm.getNumSamples() == SPP);
   }
   SUBCASE("ENVI write rejects a window outside the frame") {
-    auto fileName{(tmpDir / "badwindow.envi").string()};
+    std::string fileName{(tmpDir / "badwindow.envi").string()};
     CHECK_THROWS(film.writeENVIFile(
         smdl::Span<const float>(wavelengths, NUM_BANDS), fileName, {},
         smdl::int4{0, 0, int(NUM_X) + 1, int(NUM_Y)}));
@@ -244,7 +244,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
                            fileName, {}, smdl::int4{1, 0, 1, int(NUM_Y)}));
   }
   SUBCASE("ENVI read rejects a malformed window") {
-    auto fileName{(tmpDir / "brokenwindow.envi").string()};
+    std::string fileName{(tmpDir / "brokenwindow.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
     std::ofstream(fileName + ".hdr", std::ios::app)
@@ -256,19 +256,19 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         (tmpDir / "nonexistent.envi").string()));
   }
   SUBCASE("ENVI read rejects a malformed header") {
-    auto fileName{(tmpDir / "bad.envi").string()};
+    std::string fileName{(tmpDir / "bad.envi").string()};
     std::ofstream(fileName + ".hdr") << "NOT ENVI\n";
     std::ofstream(fileName) << "";
     CHECK_THROWS(smdl::SpectralFilm().readENVIFile(fileName));
   }
   SUBCASE("ENVI read rejects a truncated binary") {
-    auto fileName{(tmpDir / "short.envi").string()};
+    std::string fileName{(tmpDir / "short.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
     fs::resize_file(fileName, fs::file_size(fileName) - sizeof(float));
     // A read that fails part way through must leave the film cleared
     // rather than holding the rows that made it in.
-    auto loadedFilm{smdl::SpectralFilm(NUM_BANDS, NUM_X, NUM_Y)};
+    smdl::SpectralFilm loadedFilm{NUM_BANDS, NUM_X, NUM_Y};
     CHECK_THROWS(loadedFilm.readENVIFile(fileName));
     CHECK(loadedFilm.getNumPixelsX() == 0);
     CHECK(loadedFilm.getNumPixelsY() == 0);
@@ -276,19 +276,19 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(loadedFilm.getNumSamples() == 0);
   }
   SUBCASE("A film of named bands round-trips with no wavelength line") {
-    auto fileName{(tmpDir / "named.envi").string()};
+    std::string fileName{(tmpDir / "named.envi").string()};
     const std::array<std::string, NUM_BANDS> names = {"R", "G", "B", "nir"};
     film.writeENVIFile({}, fileName, {}, {},
                        smdl::Span<const std::string>(names.data(), NUM_BANDS));
-    auto text{std::string()};
+    std::string text{};
     {
-      auto file{std::ifstream(fileName + ".hdr")};
+      std::ifstream file{fileName + ".hdr"};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
     CHECK_NOT_CONTAINS(text, "wavelength");
     CHECK_CONTAINS(text, "band names = {R, G, B, nir}");
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.wavelengths.empty());
     REQUIRE(loaded.bandNames.size() == NUM_BANDS);
     CHECK(loaded.bandNames[0] == "R");
@@ -297,7 +297,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK(loadedFilm.mean(2, 1, 3) == doctest::Approx(213.0).epsilon(1e-12));
   }
   SUBCASE("Band names that do not number the bands are refused both ways") {
-    auto fileName{(tmpDir / "misnamed.envi").string()};
+    std::string fileName{(tmpDir / "misnamed.envi").string()};
     const std::array<std::string, 2> names = {"R", "G"};
     CHECK_THROWS(film.writeENVIFile(
         {}, fileName, {}, {}, smdl::Span<const std::string>(names.data(), 2)));
@@ -308,7 +308,7 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
   }
   SUBCASE("A 16-bit image writes its integers, its names, and its count, "
           "and is not a film") {
-    auto fileName{(tmpDir / "readout.envi").string()};
+    std::string fileName{(tmpDir / "readout.envi").string()};
     const std::array<std::string, 2> names = {"R", "nir"};
     // NOLINTNEXTLINE
     const uint16_t values[2 * NUM_X * NUM_Y] = {0, 1, 2, 3, 4,     5,
@@ -319,9 +319,9 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         fileName, smdl::Span<const std::string>(names.data(), 2),
         smdl::Span<const std::string>(extra.data(), 1), smdl::int4{1, 0, 3, 2},
         SPP);
-    auto text{std::string()};
+    std::string text{};
     {
-      auto file{std::ifstream(fileName + ".hdr")};
+      std::ifstream file{fileName + ".hdr"};
       for (std::string line; std::getline(file, line);) text += line + "\n";
     }
     CHECK_CONTAINS(text, "data type = 12");
@@ -331,9 +331,9 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
     CHECK_CONTAINS(text, "render crop window = {1, 0, 3, 2}");
     CHECK_CONTAINS(text, "band units = DN");
     CHECK_NOT_CONTAINS(text, "wavelength");
-    auto bytes{std::string()};
+    std::string bytes{};
     {
-      auto file{std::ifstream(fileName, std::ios::binary)};
+      std::ifstream file{fileName, std::ios::binary};
       bytes.assign(std::istreambuf_iterator<char>(file),
                    std::istreambuf_iterator<char>());
     }
@@ -347,20 +347,20 @@ TEST_CASE("SpectralFilm: the means it accumulates and the ENVI round trip") {
         fileName, smdl::Span<const std::string>(names.data(), 1)));
   }
   SUBCASE("No 'render spp' reads back with a count of 1") {
-    auto fileName{(tmpDir / "foreign.envi").string()};
+    std::string fileName{(tmpDir / "foreign.envi").string()};
     film.writeENVIFile(smdl::Span<const float>(wavelengths, NUM_BANDS),
                        fileName);
     // Strip the field to simulate a foreign or legacy header.
-    auto headerName{fileName + ".hdr"};
-    auto text{std::string()};
+    std::string headerName{fileName + ".hdr"};
+    std::string text{};
     {
-      auto file{std::ifstream(headerName)};
+      std::ifstream file{headerName};
       for (std::string line; std::getline(file, line);)
         if (line.rfind("render spp", 0) != 0) text += line + "\n";
     }
     std::ofstream(headerName) << text;
-    auto loadedFilm{smdl::SpectralFilm{}};
-    auto loaded{loadedFilm.readENVIFile(fileName)};
+    smdl::SpectralFilm loadedFilm{};
+    smdl::SpectralFilm::ENVIFileInfo loaded{loadedFilm.readENVIFile(fileName)};
     CHECK(loaded.samplesPerPixel == 0);
     CHECK(loadedFilm.getNumSamples() == 1);
     CHECK(loadedFilm.mean(2, 1, 3) == doctest::Approx(213.0).epsilon(1e-12));

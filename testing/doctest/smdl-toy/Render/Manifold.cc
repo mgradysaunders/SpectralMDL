@@ -84,7 +84,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
                   const ManifoldChain &chain, float analytic = -1.0f) {
   INFO(name);
   ManifoldWalkReport report{};
-  const auto center{solveOnce(surfaces, receiver, target, chain, &report)};
+  const Solve center{solveOnce(surfaces, receiver, target, chain, &report)};
   {
     INFO("the walk did not converge: ", describe(report));
     REQUIRE(center.hasSolution);
@@ -108,7 +108,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
         perturbed.wl = normalize(perturbed.point - receiver);
       }
       ManifoldWalkReport perturbedReport{};
-      const auto solved{
+      const Solve solved{
           solveOnce(surfaces, receiver, perturbed, chain, &perturbedReport)};
       {
         INFO("a perturbed walk did not converge: ", describe(perturbedReport));
@@ -138,9 +138,9 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
 } // namespace
 
 TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
-  auto compiler{smdl::Compiler()};
+  smdl::Compiler compiler{};
   REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
-  auto scene{Scene(compiler)};
+  Scene scene{compiler};
   // A mirror disk at the origin and two stacked glass disks off to the
   // side, so the two families' casts never see each other; not too far,
   // because float resolution of the crossing positions is what sets the
@@ -162,7 +162,7 @@ TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
   const ScopedGrid grid{};
-  const auto &wavelengths{grid.wavelengths()};
+  const Color &wavelengths{grid.wavelengths()};
   scene.commit(wavelengths);
   const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
 
@@ -175,7 +175,7 @@ TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
     ManifoldChain chain{};
     chain.count = 1;
     chain.residualTolerance = 1e-5f;
-    auto &seed{chain.vertices[0]};
+    ManifoldVertexSeed &seed{chain.vertices[0]};
     const Hit mirrorHit{castOnto(scene, receiver, float3(0.3f, 0.2f, 0.0f))};
     REQUIRE(mirrorHit.instance);
     seed.vertex = vertexOf(mirrorHit);
@@ -203,7 +203,7 @@ TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
     ManifoldChain chain{};
     chain.count = 1;
     chain.residualTolerance = 1e-5f;
-    auto &seed{chain.vertices[0]};
+    ManifoldVertexSeed &seed{chain.vertices[0]};
     const Hit glassHit{castOnto(scene, receiver, float3(50.1f, 0.2f, 0.0f))};
     REQUIRE(glassHit.instance);
     seed.vertex = vertexOf(glassHit);
@@ -231,8 +231,8 @@ TEST_CASE("SceneManifoldSurfaces: the connection measure over scene surfaces") {
     ManifoldChain chain{};
     chain.count = 2;
     chain.residualTolerance = 1e-5f;
-    auto &lower{chain.vertices[0]};
-    auto &upper{chain.vertices[1]};
+    ManifoldVertexSeed &lower{chain.vertices[0]};
+    ManifoldVertexSeed &upper{chain.vertices[1]};
     const Hit lowerHit{castOnto(scene, receiver, receiver + float3(0, 0, 1))};
     REQUIRE(lowerHit.instance);
     const Hit upperHit{castOnto(scene, lowerHit.point + float3(0, 0, EPS),

@@ -7,8 +7,8 @@
 
 TEST_CASE("Filesystem: renaming one file onto another") {
   TempDir tmpDir{"filesystem"};
-  const auto part{(tmpDir / "image.png.part").string()};
-  const auto final{(tmpDir / "image.png").string()};
+  const std::string part{(tmpDir / "image.png.part").string()};
+  const std::string final{(tmpDir / "image.png").string()};
   SUBCASE("renameOnto replaces the destination") {
     tmpDir.write("image.png", "stale");
     tmpDir.write("image.png.part", "fresh");

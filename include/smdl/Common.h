@@ -383,9 +383,9 @@ public:
     // transpose and a direction maps to its three dots with the axes,
     // which is the whole of `affineInverse()` and the 4x4 product for a
     // vector whose `w` is zero.
-    const auto u{geometryTangentU[0]};
-    const auto v{geometryTangentV[0]};
-    const auto w{geometryNormal};
+    const float3 u{geometryTangentU[0]};
+    const float3 v{geometryTangentV[0]};
+    const float3 w{geometryNormal};
     const auto toTangent{[&](const float3 &d) {
       return float3(dot(d, u), dot(d, v), dot(d, w));
     }};

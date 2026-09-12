@@ -13,7 +13,7 @@
 
 namespace {
 CameraOptions openOptions() {
-  auto options{CameraOptions{}};
+  CameraOptions options{};
   options.resolution = int2(64, 48);
   options.lookFrom = float3(-6.0f, 0.0f, 2.0f);
   options.lookTo = float3(0.0f, 0.0f, 0.5f);
@@ -26,7 +26,7 @@ const float3 LOOK_TO_SHUT{0.5f, 0.2f, 0.4f};
 const float3 LOOK_UP_SHUT{0.1f, 0.0f, 1.0f};
 
 CameraOptions movingOptions() {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.hasMotion = true;
   options.lookFromShut = LOOK_FROM_SHUT;
   options.lookToShut = LOOK_TO_SHUT;
@@ -39,7 +39,7 @@ CameraOptions movingOptions() {
 CameraSample rayAt(const Camera &camera, float u) {
   Sampler sampler{};
   sampler.startPixelSample(1234, 5);
-  auto sample{camera.sample(17, 9, sampler)};
+  CameraSample sample{camera.sample(17, 9, sampler)};
   camera.toWorld(sample, u);
   return sample;
 }
@@ -51,13 +51,13 @@ bool isSameRay(const Ray &a, const Ray &b) {
 } // namespace
 
 TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   SUBCASE("With a pinhole") {}
   SUBCASE("With a thin lens") { options.fStop = 2.8f; }
   const Camera camera{options};
-  const auto r0{rayAt(camera, 0.0f)};
-  const auto r1{rayAt(camera, 0.3f)};
-  const auto r2{rayAt(camera, 1.0f)};
+  const CameraSample r0{rayAt(camera, 0.0f)};
+  const CameraSample r1{rayAt(camera, 0.3f)};
+  const CameraSample r2{rayAt(camera, 1.0f)};
   CHECK(isSameRay(r0.ray, r1.ray));
   CHECK(isSameRay(r0.ray, r2.ray));
   CHECK(r0.ray.time == 0.0f);
@@ -69,7 +69,7 @@ TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
 TEST_CASE("Camera: a moving camera reproduces its keys at the shutter ends") {
   const Camera moving{movingOptions()};
   const Camera stillOpen{openOptions()};
-  auto shutOptions{openOptions()};
+  CameraOptions shutOptions{openOptions()};
   shutOptions.lookFrom = LOOK_FROM_SHUT;
   shutOptions.lookTo = LOOK_TO_SHUT;
   shutOptions.lookUp = LOOK_UP_SHUT;
@@ -82,33 +82,33 @@ TEST_CASE("Camera: a moving camera reproduces its keys at the shutter ends") {
 
 TEST_CASE("Camera: halfway through the shutter is the camera of the mid keys") {
   const Camera moving{movingOptions()};
-  auto midOptions{openOptions()};
+  CameraOptions midOptions{openOptions()};
   midOptions.lookFrom = 0.5f * (midOptions.lookFrom + LOOK_FROM_SHUT);
   midOptions.lookTo = 0.5f * (midOptions.lookTo + LOOK_TO_SHUT);
   midOptions.lookUp = 0.5f * (midOptions.lookUp + LOOK_UP_SHUT);
   const Camera stillMid{midOptions};
-  const auto mid{rayAt(moving, 0.5f)};
-  const auto expected{rayAt(stillMid, 0.5f)};
+  const CameraSample mid{rayAt(moving, 0.5f)};
+  const CameraSample expected{rayAt(stillMid, 0.5f)};
   CHECK(length(mid.ray.org - expected.ray.org) < 1e-6f);
   CHECK(length(mid.ray.dir - expected.ray.dir) < 1e-6f);
   // A pinhole's origin is the position itself, so the origin halfway is
   // the midpoint of the origins at the ends.
-  const auto r0{rayAt(moving, 0.0f)};
-  const auto r1{rayAt(moving, 1.0f)};
+  const CameraSample r0{rayAt(moving, 0.0f)};
+  const CameraSample r1{rayAt(moving, 1.0f)};
   CHECK(length(mid.ray.org - 0.5f * (r0.ray.org + r1.ray.org)) < 1e-6f);
   CHECK(mid.ray.time == 0.5f);
 }
 
 TEST_CASE("Camera: a motion equal to the open keys is still") {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.hasMotion = true;
   options.lookFromShut = options.lookFrom;
   options.lookToShut = options.lookTo;
   options.lookUpShut = options.lookUp;
   const Camera still{openOptions()};
   const Camera notMoving{options};
-  const auto a{rayAt(still, 0.3f)};
-  const auto b{rayAt(notMoving, 0.3f)};
+  const CameraSample a{rayAt(still, 0.3f)};
+  const CameraSample b{rayAt(notMoving, 0.3f)};
   CHECK(isSameRay(a.ray, b.ray));
   CHECK(b.ray.time == 0.3f);
 }
@@ -124,7 +124,7 @@ namespace {
 // suite; here it is only a lens that is present.
 LensPrescription singlet() {
   const auto surface{[](float radius, float thickness, float ior, bool isStop) {
-    auto value{LensSurface{}};
+    LensSurface value{};
     value.radius = radius;
     value.thickness = thickness;
     value.medium = smdl::OpticalGlass::constant(ior);
@@ -132,7 +132,7 @@ LensPrescription singlet() {
     value.isStop = isStop;
     return value;
   }};
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "singlet";
   lens.surfaces.push_back(surface(50, 4, 1.5f, false));
   lens.surfaces.push_back(surface(-50, 0, 1, false));
@@ -141,7 +141,7 @@ LensPrescription singlet() {
 }
 
 CameraOptions lensOptions() {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.lens = singlet();
   options.frameSize = float2(0.036f, 0.027f);
   options.focus = 8.0f;
@@ -162,7 +162,7 @@ CameraSample cameraSpaceSample(const Camera &camera, size_t x, size_t y,
 // ray rather than a blocked one has to ask for one.
 CameraSample passingSample(const Camera &camera, size_t x, size_t y) {
   for (uint32_t sampleIndex = 0; sampleIndex < 32; sampleIndex++)
-    if (auto sample{cameraSpaceSample(camera, x, y, sampleIndex)};
+    if (CameraSample sample{cameraSpaceSample(camera, x, y, sampleIndex)};
         sample.weight > 0)
       return sample;
   return CameraSample{};
@@ -173,7 +173,7 @@ CameraSample passingSample(const Camera &camera, size_t x, size_t y) {
 // blocked on the way out.
 float meanWeight(const Camera &camera, size_t x, size_t y) {
   constexpr uint32_t NUM_SAMPLES = 256;
-  auto total{0.0f};
+  float total{0.0f};
   for (uint32_t sampleIndex = 0; sampleIndex < NUM_SAMPLES; sampleIndex++)
     total += cameraSpaceSample(camera, x, y, sampleIndex).weight;
   return total / float(NUM_SAMPLES);
@@ -189,8 +189,9 @@ TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
     // way up, so the two arrive at the same signs by opposite routes.
     // Corner pixels, where the field angle swamps the pupil point.
     for (const auto pixel : {int2(60, 4), int2(4, 44)}) {
-      const auto a{passingSample(lensed, size_t(pixel.x), size_t(pixel.y))};
-      const auto b{
+      const CameraSample a{
+          passingSample(lensed, size_t(pixel.x), size_t(pixel.y))};
+      const CameraSample b{
           cameraSpaceSample(pinhole, size_t(pixel.x), size_t(pixel.y), 3)};
       REQUIRE(a.weight > 0);
       CHECK(std::signbit(a.ray.dir.x) == std::signbit(b.ray.dir.x));
@@ -200,18 +201,18 @@ TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
     }
   }
   SUBCASE("The ray leaves the front of the glass, not the camera origin") {
-    const auto sample{passingSample(lensed, 32, 24)};
+    const CameraSample sample{passingSample(lensed, 32, 24)};
     REQUIRE(sample.weight > 0);
     CHECK(sample.ray.org.z < 0);
     CHECK(length(sample.ray.org) > 0);
   }
   SUBCASE("It consumes the sampler dimensions the thin lens with a lens "
           "point consumes, in the same place") {
-    auto withLens{Sampler{}};
-    auto withDOF{Sampler{}};
+    Sampler withLens{};
+    Sampler withDOF{};
     withLens.startPixelSample(77, 2);
     withDOF.startPixelSample(77, 2);
-    auto dofOptions{openOptions()};
+    CameraOptions dofOptions{openOptions()};
     dofOptions.aperture = 0.1f;
     const Camera defocused{dofOptions};
     (void)lensed.sample(11, 7, withLens);
@@ -225,10 +226,10 @@ TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
           "average still counts it") {
     // Stopped far down, most of the rear aperture is shut off, so some
     // pixel of a frame this size draws a pupil point the stop blocks.
-    auto options{lensOptions()};
+    CameraOptions options{lensOptions()};
     options.fStop = 22.0f;
     const Camera stopped{options};
-    auto numBlocked{0};
+    int numBlocked{0};
     for (size_t y = 0; y < 48; y++)
       for (size_t x = 0; x < 64; x++)
         if (cameraSpaceSample(stopped, x, y, 3).weight == 0) numBlocked++;
@@ -238,8 +239,8 @@ TEST_CASE("Camera: a lens replaces the thin lens and nothing else") {
     // The thin lens leaves `vignetting` off by default; the pupil
     // integral has no such switch, so a corner weighs less than the
     // middle does.
-    const auto middle{meanWeight(lensed, 32, 24)};
-    const auto corner{meanWeight(lensed, 1, 1)};
+    const float middle{meanWeight(lensed, 32, 24)};
+    const float corner{meanWeight(lensed, 1, 1)};
     REQUIRE(middle > 0);
     CHECK(corner < middle);
     CHECK(middle <= 1.0f);
@@ -254,9 +255,9 @@ namespace {
 // of the rim of the curved surface in front of it, which bulges a
 // millimeter toward the film and would otherwise cross it.
 LensPrescription singletBehindWindow() {
-  auto lens{singlet()};
+  LensPrescription lens{singlet()};
   lens.surfaces.back().thickness = 2.0f;
-  auto window{LensSurface{}};
+  LensSurface window{};
   window.diameter = 40.0f;
   lens.surfaces.push_back(window);
   return lens;
@@ -269,54 +270,54 @@ float fNumberOf(const LensPrescription &prescription) {
 
 TEST_CASE("Camera: what a lens's film holds is the sensor's decision") {
   constexpr double PI_DOUBLE{3.14159265358979323846};
-  const auto fNumber{fNumberOf(singlet())};
+  const float fNumber{fNumberOf(singlet())};
   SUBCASE("On the observer's film the lens is normalized to its f-number, so "
           "the frame holds its brightness however far it is stopped down") {
-    auto options{lensOptions()};
-    const auto wideOpen{meanWeight(Camera{options}, 32, 24)};
+    CameraOptions options{lensOptions()};
+    const float wideOpen{meanWeight(Camera{options}, 32, 24)};
     options.fStop = 2 * fNumber;
-    const auto stopped{meanWeight(Camera{options}, 32, 24)};
+    const float stopped{meanWeight(Camera{options}, 32, 24)};
     CHECK(wideOpen == doctest::Approx(1.0).epsilon(0.2));
     CHECK(stopped == doctest::Approx(wideOpen).epsilon(0.1));
   }
   SUBCASE("On a physical sensor's film an ideal lens reads pi over four "
           "f-numbers squared, and a real one a little under") {
-    auto options{lensOptions()};
+    CameraOptions options{lensOptions()};
     options.filmQuantity = FilmQuantity::IRRADIANCE;
-    const auto ideal{PI_DOUBLE / (4 * fNumber * fNumber)};
-    const auto middle{meanWeight(Camera{options}, 32, 24)};
+    const double ideal{PI_DOUBLE / (4 * fNumber * fNumber)};
+    const float middle{meanWeight(Camera{options}, 32, 24)};
     CHECK(middle < 1.02f * ideal);
     CHECK(middle > 0.8f * ideal);
   }
   SUBCASE("There, stopping down darkens by the square of the f-number") {
-    auto options{lensOptions()};
+    CameraOptions options{lensOptions()};
     options.filmQuantity = FilmQuantity::IRRADIANCE;
-    const auto wideOpen{meanWeight(Camera{options}, 32, 24)};
+    const float wideOpen{meanWeight(Camera{options}, 32, 24)};
     options.fStop = 2 * fNumber;
-    const auto stopped{meanWeight(Camera{options}, 32, 24)};
+    const float stopped{meanWeight(Camera{options}, 32, 24)};
     CHECK(stopped == doctest::Approx(wideOpen / 4).epsilon(0.1));
   }
   SUBCASE("And a wider rear element changes nothing, the exposure being an "
           "integral over the pupil and not over the glass") {
-    auto options{lensOptions()};
+    CameraOptions options{lensOptions()};
     options.filmQuantity = FilmQuantity::IRRADIANCE;
-    const auto bare{meanWeight(Camera{options}, 32, 24)};
+    const float bare{meanWeight(Camera{options}, 32, 24)};
     options.lens = singletBehindWindow();
-    const auto behindWindow{meanWeight(Camera{options}, 32, 24)};
+    const float behindWindow{meanWeight(Camera{options}, 32, 24)};
     CHECK(behindWindow == doctest::Approx(bare).epsilon(0.02));
   }
   SUBCASE("The two films differ by exactly four f-numbers squared over pi, "
           "sample for sample") {
-    auto options{lensOptions()};
+    CameraOptions options{lensOptions()};
     options.fStop = 2 * fNumber;
     const Camera observer{options};
     options.filmQuantity = FilmQuantity::IRRADIANCE;
     const Camera sensor{options};
     const double N{sensor.fNumber()};
     for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
-      const auto a{
+      const CameraSample a{
           cameraSpaceSample(observer, size_t(pixel.x), size_t(pixel.y), 3)};
-      const auto b{
+      const CameraSample b{
           cameraSpaceSample(sensor, size_t(pixel.x), size_t(pixel.y), 3)};
       CHECK(a.weight ==
             doctest::Approx(b.weight * 4 * N * N / PI_DOUBLE).epsilon(1e-5));
@@ -333,7 +334,7 @@ TEST_CASE("Camera: the frame's size and the f-number") {
   }
   SUBCASE("The thin lens spans the frame it was given, full frame by "
           "default, and its f-number is what set the aperture") {
-    auto options{openOptions()};
+    CameraOptions options{openOptions()};
     options.fStop = 2.8f;
     const Camera fullFrame{options};
     CHECK(fullFrame.frameSize().x == 36.0e-3f);
@@ -345,14 +346,14 @@ TEST_CASE("Camera: the frame's size and the f-number") {
     CHECK(phone.fNumber() == doctest::Approx(2.8f));
     // The same f-number on a frame a quarter the height is a lens a
     // quarter the radius: the lens point of one draw scales with it.
-    const auto onFullFrame{rayAt(fullFrame, 0.0f)};
-    const auto onPhone{rayAt(phone, 0.0f)};
+    const CameraSample onFullFrame{rayAt(fullFrame, 0.0f)};
+    const CameraSample onPhone{rayAt(phone, 0.0f)};
     CHECK(length(onPhone.ray.org - openOptions().lookFrom) ==
           doctest::Approx(
               0.24 * length(onFullFrame.ray.org - openOptions().lookFrom)));
   }
   SUBCASE("An aperture radius has an f-number too, and a pinhole none") {
-    auto options{openOptions()};
+    CameraOptions options{openOptions()};
     const float focalLength{0.5f /
                             std::tan(smdl::radians(options.fovYDeg / 2))};
     options.aperture = 0.5f * 0.024f * focalLength / 4.0f;
@@ -367,9 +368,9 @@ TEST_CASE("Camera: the frame's size and the f-number") {
     // same float the old constant was, so a render that names no body
     // draws the same lens point bit for bit.
     CHECK(1e-3f * 24.0f == 0.024f);
-    auto byFStop{openOptions()};
+    CameraOptions byFStop{openOptions()};
     byFStop.fStop = 2.8f;
-    auto byRadius{openOptions()};
+    CameraOptions byRadius{openOptions()};
     const float focalLength{0.5f /
                             std::tan(smdl::radians(byRadius.fovYDeg / 2))};
     byRadius.aperture = 0.5f * 0.024f * focalLength / 2.8f;
@@ -380,7 +381,7 @@ TEST_CASE("Camera: the frame's size and the f-number") {
 
 TEST_CASE("Camera: the thin lens on a physical sensor's film") {
   constexpr double PI_DOUBLE{3.14159265358979323846};
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.filmQuantity = FilmQuantity::IRRADIANCE;
   SUBCASE("A pinhole has no pupil to integrate over, and is refused") {
     CHECK_ERROR(smdl::catchAndReturnError(
@@ -395,7 +396,7 @@ TEST_CASE("Camera: the thin lens on a physical sensor's film") {
     // Each sample carries the cos^4 of its own pupil point, so one draw
     // reads under the paraxial constant and the mean over the pupil
     // reads the exact integral, which at f/2.8 is 3% under it.
-    const auto middle{meanWeight(camera, 32, 24)};
+    const float middle{meanWeight(camera, 32, 24)};
     CHECK(middle ==
           doctest::Approx(PI_DOUBLE / (4 * 2.8 * 2.8 + 1)).epsilon(0.01));
     CHECK(cameraSpaceSample(camera, 32, 24, 3).weight <
@@ -404,11 +405,11 @@ TEST_CASE("Camera: the thin lens on a physical sensor's film") {
   SUBCASE("Focused near, the bellows factor darkens the whole frame") {
     options.fStop = 2.8f;
     options.focus = 1000.0f;
-    const auto far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    const float far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
     // A focal length of about 35 mm focused at 0.35 m puts the film a
     // tenth further back, which costs a fifth of the light.
     options.focus = 0.35f;
-    const auto near{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    const float near{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
     CHECK(near < far);
     CHECK(near == doctest::Approx(far / 1.21).epsilon(0.05));
   }
@@ -419,8 +420,8 @@ TEST_CASE("Camera: the thin lens on a physical sensor's film") {
     const Camera plain{options};
     options.vignetting = 1.0f;
     const Camera vignetted{options};
-    const auto middle{cameraSpaceSample(plain, 32, 24, 3).weight};
-    const auto corner{cameraSpaceSample(plain, 1, 1, 3).weight};
+    const float middle{cameraSpaceSample(plain, 32, 24, 3).weight};
+    const float corner{cameraSpaceSample(plain, 1, 1, 3).weight};
     CHECK(corner < middle);
     CHECK(corner > 0.5f * middle);
     CHECK(cameraSpaceSample(vignetted, 1, 1, 3).weight == corner);
@@ -441,7 +442,7 @@ TEST_CASE("Camera: the thin lens on a physical sensor's film") {
 TEST_CASE("Camera: the depth of field") {
   const float2 fullFrame{0.036f, 0.024f};
   SUBCASE("50 mm at f/8 focused at 5 m, against the tables") {
-    const auto dof{depthOfField(0.05f, 8.0f, 5.0f, fullFrame)};
+    const DepthOfField dof{depthOfField(0.05f, 8.0f, 5.0f, fullFrame)};
     CHECK(dof.hasLimits());
     CHECK(dof.circleOfConfusion == doctest::Approx(2.8844e-5f).epsilon(1e-3));
     CHECK(dof.hyperfocal == doctest::Approx(10.884f).epsilon(1e-3));
@@ -450,25 +451,25 @@ TEST_CASE("Camera: the depth of field") {
   }
   SUBCASE("Focused at infinity, sharp from the hyperfocal less one focal "
           "length") {
-    const auto dof{depthOfField(0.05f, 8.0f, INF, fullFrame)};
+    const DepthOfField dof{depthOfField(0.05f, 8.0f, INF, fullFrame)};
     CHECK(dof.nearLimit == doctest::Approx(10.834f).epsilon(1e-3));
     CHECK(dof.farLimit == INF);
   }
   SUBCASE("Focused past the hyperfocal, the far limit is infinity") {
-    const auto dof{depthOfField(0.05f, 8.0f, 20.0f, fullFrame)};
+    const DepthOfField dof{depthOfField(0.05f, 8.0f, 20.0f, fullFrame)};
     CHECK(dof.nearLimit == doctest::Approx(7.039f).epsilon(1e-3));
     CHECK(dof.farLimit == INF);
-    const auto atHyperfocal{
+    const DepthOfField atHyperfocal{
         depthOfField(0.05f, 8.0f, dof.hyperfocal, fullFrame)};
     CHECK(atHyperfocal.farLimit == INF);
   }
   SUBCASE("A pinhole has none") {
-    const auto dof{depthOfField(0.05f, 0.0f, 5.0f, fullFrame)};
+    const DepthOfField dof{depthOfField(0.05f, 0.0f, 5.0f, fullFrame)};
     CHECK(!dof.hasLimits());
     CHECK(dof.nearLimit == INF);
   }
   SUBCASE("The camera reports its own, from what it resolved") {
-    auto options{openOptions()};
+    CameraOptions options{openOptions()};
     options.frameSize = fullFrame;
     options.fStop = 8.0f;
     options.focus = 5.0f;
@@ -476,11 +477,12 @@ TEST_CASE("Camera: the depth of field") {
     CHECK(thin.focalLength() ==
           doctest::Approx(0.024f * 0.5f /
                           std::tan(smdl::radians(options.fovYDeg / 2))));
-    const auto dof{thin.depthOfField()};
-    const auto byHand{depthOfField(thin.focalLength(), 8.0f, 5.0f, fullFrame)};
+    const DepthOfField dof{thin.depthOfField()};
+    const DepthOfField byHand{
+        depthOfField(thin.focalLength(), 8.0f, 5.0f, fullFrame)};
     CHECK(dof.nearLimit == byHand.nearLimit);
     CHECK(dof.farLimit == byHand.farLimit);
-    auto lensed{lensOptions()};
+    CameraOptions lensed{lensOptions()};
     lensed.focus = 5.0f;
     const Camera traced{lensed};
     CHECK(traced.depthOfField().hyperfocal ==
@@ -522,7 +524,7 @@ TEST_CASE("Camera: the share of a frame an image circle leaves dark") {
 }
 
 TEST_CASE("Camera: focus at infinity") {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.fStop = 2.0f;
   options.focus = INF;
   SUBCASE("The thin lens sends the rays through every lens point out "
@@ -533,8 +535,8 @@ TEST_CASE("Camera: focus at infinity") {
     // The same draw jitters the pixel the same way, so each lens point's
     // ray runs along the pinhole's for that draw.
     for (uint32_t sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
-      const auto a{cameraSpaceSample(camera, 17, 9, sampleIndex)};
-      const auto b{cameraSpaceSample(pinhole, 17, 9, sampleIndex)};
+      const CameraSample a{cameraSpaceSample(camera, 17, 9, sampleIndex)};
+      const CameraSample b{cameraSpaceSample(pinhole, 17, 9, sampleIndex)};
       CHECK(length(a.ray.org) > 0);
       CHECK(isSame(normalize(a.ray.dir), normalize(b.ray.dir)));
     }
@@ -544,21 +546,22 @@ TEST_CASE("Camera: focus at infinity") {
   SUBCASE("Focused far, the rays converge on the focus plane instead") {
     options.focus = 1000.0f;
     const Camera camera{options};
-    const auto a{cameraSpaceSample(camera, 17, 9, 0)};
-    const auto b{cameraSpaceSample(camera, 17, 9, 1)};
+    const CameraSample a{cameraSpaceSample(camera, 17, 9, 0)};
+    const CameraSample b{cameraSpaceSample(camera, 17, 9, 1)};
     CHECK(!isSame(normalize(a.ray.dir), normalize(b.ray.dir)));
   }
   SUBCASE("On a physical sensor's film the image distance is the focal "
           "length, the limit of the far focus") {
     options.filmQuantity = FilmQuantity::IRRADIANCE;
-    const auto atInfinity{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    const float atInfinity{
+        cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
     options.focus = 100000.0f;
-    const auto far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
+    const float far{cameraSpaceSample(Camera{options}, 32, 24, 3).weight};
     CHECK(atInfinity == doctest::Approx(far).epsilon(1e-4));
     CHECK(atInfinity > far);
   }
   SUBCASE("A lens focuses at infinity too") {
-    auto lensed{lensOptions()};
+    CameraOptions lensed{lensOptions()};
     lensed.focus = INF;
     const Camera camera{lensed};
     CHECK(std::isinf(camera.focusDistance()));
@@ -568,15 +571,15 @@ TEST_CASE("Camera: focus at infinity") {
 
 TEST_CASE("Camera: the natural vignetting is taken in image heights") {
   constexpr double PI_DOUBLE{3.14159265358979323846};
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.vignetting = 1.0f;
   SUBCASE("With a pinhole the lens point is nothing, and the corner reads "
           "the chief ray's cos^4") {
     const Camera camera{options};
     const float focalLength{0.5f /
                             std::tan(smdl::radians(options.fovYDeg / 2))};
-    const auto middle{cameraSpaceSample(camera, 32, 24, 3)};
-    const auto corner{cameraSpaceSample(camera, 0, 0, 3)};
+    const CameraSample middle{cameraSpaceSample(camera, 32, 24, 3)};
+    const CameraSample corner{cameraSpaceSample(camera, 0, 0, 3)};
     // Within the jitter of the middle pixel of 1.
     CHECK(middle.weight == doctest::Approx(1.0).epsilon(1e-3));
     const float2 image{-(corner.ray.dir.x), -(corner.ray.dir.y)};
@@ -593,7 +596,7 @@ TEST_CASE("Camera: the natural vignetting is taken in image heights") {
     options.fStop = 2.8f;
     options.focus = INF;
     const Camera camera{options};
-    const auto middle{meanWeight(camera, 32, 24)};
+    const float middle{meanWeight(camera, 32, 24)};
     CHECK(middle ==
           doctest::Approx(4 * 2.8 * 2.8 / (4 * 2.8 * 2.8 + 1)).epsilon(0.005));
     CHECK(middle < 0.98f);
@@ -610,9 +613,9 @@ TEST_CASE("Camera: the natural vignetting is taken in image heights") {
         PI_DOUBLE * R * R /
         (double(observer.focalLength()) * double(observer.focalLength()))};
     for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
-      const auto a{
+      const CameraSample a{
           cameraSpaceSample(observer, size_t(pixel.x), size_t(pixel.y), 3)};
-      const auto b{
+      const CameraSample b{
           cameraSpaceSample(sensor, size_t(pixel.x), size_t(pixel.y), 3)};
       CHECK(a.weight == doctest::Approx(b.weight / pupil).epsilon(1e-4));
     }
@@ -620,14 +623,14 @@ TEST_CASE("Camera: the natural vignetting is taken in image heights") {
 }
 
 TEST_CASE("Camera: the thin lens fitted to a lens") {
-  auto options{openOptions()};
+  CameraOptions options{openOptions()};
   options.lens = dgauss50mm();
   options.frameSize = float2(0.036f, 0.024f);
   options.focus = INF;
   const Lens lens{*options.lens, LensOptions{}};
   SUBCASE("On full frame its chief rays land within a sixth of a 6 um "
           "pixel, and the edge of its field is the lens's") {
-    const auto fit{approximateLens(options)};
+    const LensApproximation fit{approximateLens(options)};
     CHECK(!fit.doesFold);
     CHECK(fit.numFittedRadii == 32);
     CHECK(fit.numDroppedRadii == 0);
@@ -641,13 +644,13 @@ TEST_CASE("Camera: the thin lens fitted to a lens") {
     const float stretch{
         1 +
         s * s * (fit.options.distortionK1 + s * s * fit.options.distortionK2)};
-    const auto angle{lens.fieldAngleAt(0.012f)};
+    const std::optional<float> angle{lens.fieldAngleAt(0.012f)};
     REQUIRE(angle);
     CHECK(0.5f * stretch / focalLength ==
           doctest::Approx(std::tan(*angle)).epsilon(1e-4));
   }
   SUBCASE("It takes the lens's entrance pupil and none of its vignetting") {
-    const auto fit{approximateLens(options)};
+    const LensApproximation fit{approximateLens(options)};
     CHECK(!fit.options.lens);
     CHECK(fit.options.aperture == lens.entrancePupilRadius());
     CHECK(fit.options.fStop == 0);
@@ -660,14 +663,14 @@ TEST_CASE("Camera: the thin lens fitted to a lens") {
   }
   SUBCASE("Radii past the image circle are dropped") {
     options.frameSize = float2(0.06f, 0.04f);
-    const auto fit{approximateLens(options)};
+    const LensApproximation fit{approximateLens(options)};
     CHECK(fit.numDroppedRadii > 0);
     CHECK(fit.numFittedRadii + fit.numDroppedRadii == 32);
   }
   SUBCASE("Too few radii to fit fall back to the paraxial pinhole") {
     // Two of the radii land inside the 55 mm circle of a frame this size.
     options.frameSize = float2(0.7f, 0.5f);
-    const auto fit{approximateLens(options)};
+    const LensApproximation fit{approximateLens(options)};
     CHECK(fit.doesFold);
     CHECK(fit.options.distortionK1 == 0);
     CHECK(fit.options.distortionK2 == 0);
@@ -679,7 +682,7 @@ TEST_CASE("Camera: the thin lens fitted to a lens") {
 namespace {
 // The singlet in N-BK7, a glass that disperses.
 CameraOptions glassOptions() {
-  auto options{lensOptions()};
+  CameraOptions options{lensOptions()};
   options.lens->surfaces[0].medium = smdl::findOpticalGlass("N-BK7")->glass;
   options.lens->surfaces[0].mediumName = "N-BK7";
   return options;
@@ -696,25 +699,25 @@ CameraSample sampleAt(const Camera &camera, int2 pixel, uint32_t sampleIndex,
 } // namespace
 
 TEST_CASE("Camera: a lens whose glasses disperse") {
-  auto options{glassOptions()};
+  CameraOptions options{glassOptions()};
   options.traceWavelengthRange = float2(400, 700);
   const Camera camera{options};
   SUBCASE("It disperses only with a range and a glass that disperses") {
     CHECK(camera.disperses());
     CHECK(!Camera{glassOptions()}.disperses());
-    auto constant{lensOptions()};
+    CameraOptions constant{lensOptions()};
     constant.traceWavelengthRange = float2(400, 700);
     CHECK(!Camera{constant}.disperses());
-    auto thin{openOptions()};
+    CameraOptions thin{openOptions()};
     thin.traceWavelengthRange = float2(400, 700);
     CHECK(!Camera{thin}.disperses());
   }
   SUBCASE("A wavelength of 0 traces the reference, which is the d line") {
-    auto numDiffering{0};
+    int numDiffering{0};
     for (const auto pixel : {int2(32, 24), int2(60, 4), int2(4, 44)}) {
       for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
-        const auto a{sampleAt(camera, pixel, sampleIndex, 0)};
-        const auto b{
+        const CameraSample a{sampleAt(camera, pixel, sampleIndex, 0)};
+        const CameraSample b{
             sampleAt(camera, pixel, sampleIndex, smdl::FRAUNHOFER_D_LINE)};
         if (!isSameRay(a.ray, b.ray) || a.weight != b.weight) numDiffering++;
       }
@@ -722,10 +725,10 @@ TEST_CASE("Camera: a lens whose glasses disperse") {
     CHECK(numDiffering == 0);
   }
   SUBCASE("Blue and red leave the glass in different directions") {
-    auto numCompared{0};
+    int numCompared{0};
     for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
-      const auto blue{sampleAt(camera, int2(60, 4), sampleIndex, 420)};
-      const auto red{sampleAt(camera, int2(60, 4), sampleIndex, 680)};
+      const CameraSample blue{sampleAt(camera, int2(60, 4), sampleIndex, 420)};
+      const CameraSample red{sampleAt(camera, int2(60, 4), sampleIndex, 680)};
       if (!(blue.weight > 0 && red.weight > 0)) continue;
       CHECK(!isSame(blue.ray.dir, red.ray.dir));
       numCompared++;
@@ -734,10 +737,10 @@ TEST_CASE("Camera: a lens whose glasses disperse") {
   }
   SUBCASE("A camera that does not disperse ignores the wavelength") {
     const Camera plain{glassOptions()};
-    auto numDiffering{0};
+    int numDiffering{0};
     for (uint32_t sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
-      const auto a{sampleAt(plain, int2(60, 4), sampleIndex, 420)};
-      const auto b{sampleAt(plain, int2(60, 4), sampleIndex, 0)};
+      const CameraSample a{sampleAt(plain, int2(60, 4), sampleIndex, 420)};
+      const CameraSample b{sampleAt(plain, int2(60, 4), sampleIndex, 0)};
       if (!isSameRay(a.ray, b.ray) || a.weight != b.weight) numDiffering++;
     }
     CHECK(numDiffering == 0);

@@ -154,8 +154,8 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
   if (!(isVariant() && definition && llvm::isa<Return>(definition.get())))
     srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
                              " has invalid declaration"));
-  auto letAndCall{LetAndCall{}};
-  auto expr{static_cast<Return *>(definition.get())->expr.get()};
+  LetAndCall letAndCall{};
+  AST::Expr *expr{static_cast<Return *>(definition.get())->expr.get()};
   if (llvm::isa<Call>(expr)) {
     letAndCall.call = static_cast<Call *>(expr);
   } else if (llvm::isa<Let>(expr)) {
@@ -182,9 +182,9 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
 }
 
 std::string getDocCommentText(std::string_view srcDocComment) {
-  auto text{std::string{}};
+  std::string text{};
   while (!srcDocComment.empty()) {
-    auto line{srcDocComment.substr(0, srcDocComment.find('\n'))};
+    std::string_view line{srcDocComment.substr(0, srcDocComment.find('\n'))};
     srcDocComment.remove_prefix(
         std::min(line.size() + 1, srcDocComment.size()));
     while (!line.empty() && isSpace(line.front())) line.remove_prefix(1);

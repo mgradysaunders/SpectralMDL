@@ -37,7 +37,7 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
     // The point of the nine digits: these have no short decimal form,
     // and a shorter one would not read back as the same float.
     for (float value : {0.1f, 1.0f / 3.0f, 1e-8f, 1.23456789e12f}) {
-      const auto str{smdl::concat(smdl::Precise(value))};
+      const std::string str{smdl::concat(smdl::Precise(value))};
       CHECK(std::stof(str) == value);
     }
   }
@@ -92,7 +92,8 @@ TEST_CASE("Strings: the suggestion and the float formatting") {
                                             /*isPath=*/false)) ==
           "[<builtin ::df>:12]");
     // A path shortens as 'QuotedPath' shortens it.
-    const auto path{(std::filesystem::current_path() / "main.mdl").string()};
+    const std::string path{
+        (std::filesystem::current_path() / "main.mdl").string()};
     CHECK(smdl::concat(smdl::LocationMarkup(path, 3, 1)) == "[main.mdl:3:1]");
     CHECK(smdl::concat(smdl::QuotedPath(path)) == "'main.mdl'");
   }

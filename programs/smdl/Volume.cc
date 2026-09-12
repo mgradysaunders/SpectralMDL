@@ -27,10 +27,10 @@ namespace {
 // material gets its numbers.
 void printVolumeInfo(const std::string &fileName, const std::string &gridName,
                      const smdl::VoxelGrid &grid) {
-  const auto extent{grid.getExtent()};
-  const auto brickCount{grid.getBrickCount()};
-  const auto boundMin{grid.getWorldBoundMin()};
-  const auto boundMax{grid.getWorldBoundMax()};
+  const smdl::int3 extent{grid.getExtent()};
+  const smdl::int3 brickCount{grid.getBrickCount()};
+  const smdl::float3 boundMin{grid.getWorldBoundMin()};
+  const smdl::float3 boundMax{grid.getWorldBoundMax()};
   llvm::outs() << smdl::concat(
       smdl::bestPathForPrinting(fileName),
       gridName.empty() ? std::string()
@@ -55,37 +55,39 @@ void runVolume(const Options &opts) {
     return i < opts.volume.gridNames.size() ? opts.volume.gridNames[i]
                                             : std::string();
   }};
-  auto grids{std::vector<std::unique_ptr<smdl::VoxelGrid>>()};
-  auto writeNames{std::vector<std::string>()};
+  std::vector<std::unique_ptr<smdl::VoxelGrid>> grids{};
+  std::vector<std::string> writeNames{};
   for (size_t i = 0; i < opts.inputs.size(); i++) {
-    const auto &fileName{opts.inputs[i]};
-    auto grid{std::make_unique<smdl::VoxelGrid>()};
+    const std::string &fileName{opts.inputs[i]};
+    std::unique_ptr<smdl::VoxelGrid> grid{std::make_unique<smdl::VoxelGrid>()};
     // An unnamed NanoVDB input reads its first grid, so the name only
     // travels when it was actually asked for.
-    const auto readName{isNanoVDBFileName(fileName) ? explicitName(i)
-                                                    : std::string()};
-    if (auto error{grid->loadFromFile(fileName, readName)})
+    const std::string readName{isNanoVDBFileName(fileName) ? explicitName(i)
+                                                           : std::string()};
+    if (std::optional<smdl::Error> error{
+            grid->loadFromFile(fileName, readName)})
       error->printAndExit();
-    auto writeName{explicitName(i)};
+    std::string writeName{explicitName(i)};
     if (writeName.empty())
       writeName = std::filesystem::path(fileName).stem().string();
     grids.push_back(std::move(grid));
     writeNames.push_back(std::move(writeName));
   }
-  const auto &output{opts.volume.fileName};
+  const std::string &output{opts.volume.fileName};
   if (output.empty()) {
     for (size_t i = 0; i < grids.size(); i++)
       printVolumeInfo(opts.inputs[i], explicitName(i), *grids[i]);
     return;
   }
   if (grids.size() == 1) {
-    if (auto error{grids[0]->saveToFile(
+    if (std::optional<smdl::Error> error{grids[0]->saveToFile(
             output, isNanoVDBFileName(output) ? writeNames[0] : std::string())})
       error->printAndExit();
     return;
   }
-  auto pointers{std::vector<const smdl::VoxelGrid *>()};
+  std::vector<const smdl::VoxelGrid *> pointers{};
   for (const auto &grid : grids) pointers.push_back(grid.get());
-  if (auto error{smdl::VoxelGrid::saveToFile(output, pointers, writeNames)})
+  if (std::optional<smdl::Error> error{
+          smdl::VoxelGrid::saveToFile(output, pointers, writeNames)})
     error->printAndExit();
 }

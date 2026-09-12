@@ -12,7 +12,7 @@ class ParsedModule final {
 public:
   explicit ParsedModule(std::string sourceCode)
       : mModule("test", std::move(sourceCode)) {
-    auto error{mModule.parse(mAllocator)};
+    std::optional<Error> error{mModule.parse(mAllocator)};
     REQUIRE(!error);
   }
 
@@ -42,9 +42,9 @@ private:
 // Parse source code that is expected to fail and return the error message,
 // which is prefixed by the source location '[<string ::test>:LINE:COLUMN]'.
 [[nodiscard]] std::string parseError(std::string sourceCode) {
-  auto allocator{BumpPtrAllocator{}};
-  auto module{Module("test", std::move(sourceCode))};
-  auto error{module.parse(allocator)};
+  BumpPtrAllocator allocator{};
+  Module module{"test", std::move(sourceCode)};
+  std::optional<Error> error{module.parse(allocator)};
   REQUIRE(error);
   return error->message;
 }
@@ -62,7 +62,7 @@ TEST_CASE("Parser: which declaration a doc comment attaches to") {
     CHECK(docText("///\n/// After blank") == "After blank");
   }
   SUBCASE("On a global declaration") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 /// The documented constant.
 const int X = 1;
 
@@ -80,7 +80,7 @@ const int UNDOCUMENTED = 0;
     CHECK(parsed.decl(2).srcDocComment.empty());
   }
   SUBCASE("A blank line or an ordinary comment breaks the attachment") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 /// Not attached, blank line follows.
 
 const int A = 0;
@@ -97,7 +97,7 @@ const int C = 0;
     CHECK(parsed.decl(2).srcDocComment.empty());
   }
   SUBCASE("A blank line between doc lines starts a new block") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 /// Dropped.
 
 /// Kept.
@@ -106,7 +106,7 @@ const int A = 0;
     CHECK(docText(parsed.decl(0).srcDocComment) == "Kept.");
   }
   SUBCASE("On a struct field") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 struct S {
   /// The first field,
   /// on two lines.
@@ -114,33 +114,33 @@ struct S {
   int field2 = 0;
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Struct>(0)};
+    const AST::Struct &decl{parsed.declAs<AST::Struct>(0)};
     REQUIRE(decl.fields.size() == 2);
     CHECK(docText(decl.fields[0].srcDocComment) ==
           "The first field,\non two lines.");
     CHECK(decl.fields[1].srcDocComment.empty());
   }
   SUBCASE("On an enum declarator") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E {
   /// The first.
   E_FIRST,
   E_SECOND,
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocComment) == "The first.");
     CHECK(decl.declarators[1].srcDocComment.empty());
   }
   SUBCASE("Trailing '///<' on an enum declarator") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST = 0x0,  ///< The first.
   E_SECOND = 0x1, ///< The second.
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) == "The first.");
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The second.");
@@ -148,26 +148,26 @@ enum E {
     CHECK(decl.declarators[1].srcDocComment.empty());
   }
   SUBCASE("Trailing '///<' on the last declarator, with no comma after it") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST,
   E_SECOND ///< The second.
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The second.");
   }
   SUBCASE("A stray '///<' on its own line attaches to nothing") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E {
   E_FIRST,
   ///< Stray, attaches to nothing.
   E_SECOND,
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
@@ -175,25 +175,25 @@ enum E {
     CHECK(decl.declarators[1].srcDocCommentTrailing.empty());
   }
   SUBCASE("A stray '///<' before any item attaches to nothing") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E { ///< Stray, trails the brace, not a declarator.
   E_FIRST,
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 1);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
   }
   SUBCASE("A leading and a trailing comment on one item") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 enum E {
   /// The leading doc.
   E_FIRST, ///< The trailing doc.
   E_SECOND,
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Enum>(0)};
+    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocComment) == "The leading doc.");
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) ==
@@ -202,75 +202,75 @@ enum E {
     CHECK(decl.declarators[1].srcDocCommentTrailing.empty());
   }
   SUBCASE("Trailing '///<' on a struct field") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 struct S {
   int field1 = 0; ///< The first.
   int field2 = 0; ///< The second.
 };
 )")};
-    const auto &decl{parsed.declAs<AST::Struct>(0)};
+    const AST::Struct &decl{parsed.declAs<AST::Struct>(0)};
     REQUIRE(decl.fields.size() == 2);
     CHECK(docText(decl.fields[0].srcDocCommentTrailing) == "The first.");
     CHECK(docText(decl.fields[1].srcDocCommentTrailing) == "The second.");
   }
   SUBCASE("Trailing '///<' on a parameter") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 int f(
   int a, ///< The a.
   int b) = a + b;
 )")};
-    const auto &decl{parsed.declAs<AST::Function>(0)};
+    const AST::Function &decl{parsed.declAs<AST::Function>(0)};
     REQUIRE(decl.params.size() == 2);
     CHECK(docText(decl.params[0].srcDocCommentTrailing) == "The a.");
     CHECK(decl.params[1].srcDocCommentTrailing.empty());
   }
   SUBCASE("Trailing '///<' on a variable declarator") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 const int c0 = 0, ///< The c0.
   c1 = 1; ///< The c1.
 )")};
-    const auto &decl{parsed.declAs<AST::Variable>(0)};
+    const AST::Variable &decl{parsed.declAs<AST::Variable>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) == "The c0.");
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The c1.");
   }
   SUBCASE("On a parameter") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 int f(
   /// The parameter.
   int a,
   int b) = a + b;
 )")};
-    const auto &decl{parsed.declAs<AST::Function>(0)};
+    const AST::Function &decl{parsed.declAs<AST::Function>(0)};
     REQUIRE(decl.params.size() == 2);
     CHECK(docText(decl.params[0].srcDocComment) == "The parameter.");
     CHECK(decl.params[1].srcDocComment.empty());
   }
   SUBCASE("On a variable declarator") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 const int c0 = 0,
   /// The second declarator.
   c1 = 1;
 )")};
-    const auto &decl{parsed.declAs<AST::Variable>(0)};
+    const AST::Variable &decl{parsed.declAs<AST::Variable>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(docText(decl.declarators[1].srcDocComment) ==
           "The second declarator.");
   }
   SUBCASE("On a declaration inside a namespace") {
-    auto parsed{ParsedModule(R"(#smdl
+    ParsedModule parsed{ParsedModule(R"(#smdl
 namespace ns {
 /// The nested function.
 int g() = 0;
 }
 )")};
-    const auto &decl{parsed.declAs<AST::Namespace>(0)};
+    const AST::Namespace &decl{parsed.declAs<AST::Namespace>(0)};
     REQUIRE(decl.decls.size() == 1);
     CHECK(docText(decl.decls[0]->srcDocComment) == "The nested function.");
   }
   SUBCASE("On the module itself, in the SMDL dialect") {
-    auto parsed{ParsedModule(R"(// A line comment.
+    ParsedModule parsed{ParsedModule(R"(// A line comment.
 /// The module documentation,
 /// on two lines.
 #smdl
@@ -282,7 +282,7 @@ const int X = 0;
     CHECK(parsed.decl(0).srcDocComment.empty());
   }
   SUBCASE("On the module itself, in a conformant file") {
-    auto parsed{ParsedModule(R"(/// The module documentation.
+    ParsedModule parsed{ParsedModule(R"(/// The module documentation.
 mdl 1.7;
 
 /// The documented constant.
@@ -295,7 +295,7 @@ export const int X = 0;
 
 TEST_CASE("Parser: a malformed let expression") {
   SUBCASE("A non-declaration is reported at the offending token") {
-    auto message{parseError(R"(#smdl
+    std::string message{parseError(R"(#smdl
 exec {
   int y = let {
     float x = 2;
@@ -307,7 +307,7 @@ exec {
     CHECK_CONTAINS(message, "must contain only declarations");
   }
   SUBCASE("An unterminated block is reported at the 'let'") {
-    auto message{parseError(R"(#smdl
+    std::string message{parseError(R"(#smdl
 exec {
   int y = let {
     float x = 2;
@@ -319,11 +319,11 @@ exec {
 
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
-    auto message{parseError("#smdl\nint i = 1\nint j = 2;\n")};
+    std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};
     CHECK_CONTAINS(message, "but found 'int'");
   }
   SUBCASE("End of file is said plainly") {
-    auto message{parseError("#smdl\nexec {\n  int i = 1;\n")};
+    std::string message{parseError("#smdl\nexec {\n  int i = 1;\n")};
     CHECK_CONTAINS(message, "reached the end of the file");
   }
   SUBCASE("A keyword borrowed from another language is explained") {
@@ -345,7 +345,8 @@ TEST_CASE("Parser: the token that stopped the parse") {
                    "the type test operator is '<:'");
   }
   SUBCASE("A borrowed keyword in a comment or string is not advice") {
-    auto message{parseError("#smdl\nexec { int i = 1 /* class */ 2; }\n")};
+    std::string message{
+        parseError("#smdl\nexec { int i = 1 /* class */ 2; }\n")};
     CHECK_CONTAINS(message, "but found");
     CHECK_NOT_CONTAINS(message, "use 'struct'");
     message = parseError("#smdl\nexec { string s = \"class\" 2; }\n");
@@ -372,7 +373,7 @@ TEST_CASE("Parser: the token that stopped the parse") {
   }
   SUBCASE("An empty destructure is not a declarator") {
     // Accepting '{}' here swallowed the body of 'exec {}'.
-    auto parsed{ParsedModule("#smdl\nexec {}\n")};
+    ParsedModule parsed{"#smdl\nexec {}\n"};
     CHECK(parsed.root().globalDecls.size() == 1);
   }
 }

@@ -21,7 +21,7 @@ namespace {
 // thickness greater than twice the sag at the rim.
 LensPrescription equiconvex(float radius, float thickness, float ior,
                             float diameter) {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "equiconvex";
   lens.surfaces.push_back(surfaceOf(radius, thickness, ior, diameter));
   lens.surfaces.push_back(surfaceOf(-radius, 0, 1, diameter));
@@ -62,12 +62,12 @@ TEST_CASE("Lens: the paraxial solve against closed forms") {
   }
   SUBCASE("A thick one follows the thick lens equation") {
     constexpr float R = 50, T = 6, N = 1.5f;
-    const auto expected{1 / ((N - 1) * (2 / R - (N - 1) * T / (N * R * R)))};
+    const float expected{1 / ((N - 1) * (2 / R - (N - 1) * T / (N * R * R)))};
     const Lens lens{equiconvex(R, T, N, 20), {AT_INFINITY, 0}};
     CHECK(lens.focalLength() == doctest::Approx(expected * MM).epsilon(1e-4));
     // The rear principal plane moves forward into the glass, so the back
     // focus falls short of the focal length by exactly that much.
-    const auto shift{expected * (N - 1) * T / (N * R)};
+    const float shift{expected * (N - 1) * T / (N * R)};
     CHECK(lens.backFocalDistance() ==
           doctest::Approx((expected - shift) * MM).epsilon(1e-4));
   }
@@ -88,9 +88,9 @@ TEST_CASE("Lens: focus places the film and nothing else") {
     // Its principal planes and its pupil all sit at the lens, so the
     // object distance needs no correction and the extension beyond the
     // rear focal point is f^2 / (distance - f) with nothing left over.
-    const auto atInfinity{Lens{equiconvex(50, 0, 1.5f, 20), {AT_INFINITY, 0}}};
-    const auto close{Lens{equiconvex(50, 0, 1.5f, 20), {1.0f, 0}}};
-    const auto f{atInfinity.focalLength()};
+    const Lens atInfinity{equiconvex(50, 0, 1.5f, 20), {AT_INFINITY, 0}};
+    const Lens close{equiconvex(50, 0, 1.5f, 20), {1.0f, 0}};
+    const float f{atInfinity.focalLength()};
     CHECK(close.paraxialFilmZ() - atInfinity.paraxialFilmZ() ==
           doctest::Approx(f * f / (1.0f - f)).epsilon(1e-4));
   }
@@ -99,11 +99,11 @@ TEST_CASE("Lens: focus places the film and nothing else") {
     // x x' = f^2 on both sides of the lens, so two focus distances give
     // two readings of where the front focal point is, and a solve that
     // is only approximately conjugate makes them disagree.
-    const auto atInfinity{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
-    const auto near{Lens{dgauss50mm(), {2.0f, 0}}};
-    const auto far{Lens{dgauss50mm(), {5.0f, 0}}};
-    const auto f{atInfinity.focalLength()};
-    const auto rearFocalZ{atInfinity.paraxialFilmZ()};
+    const Lens atInfinity{dgauss50mm(), {AT_INFINITY, 0}};
+    const Lens near{dgauss50mm(), {2.0f, 0}};
+    const Lens far{dgauss50mm(), {5.0f, 0}};
+    const float f{atInfinity.focalLength()};
+    const float rearFocalZ{atInfinity.paraxialFilmZ()};
     const auto frontFocalFrom{[&](const Lens &lens, float distance) {
       return f * f / (lens.paraxialFilmZ() - rearFocalZ) - distance;
     }};
@@ -127,9 +127,9 @@ TEST_CASE("Lens: focus places the film and nothing else") {
     // the whole cone comes to, which is a fixed correction of the
     // design's own spherical aberration: focusing carries it along
     // rather than solving it again from nothing.
-    const auto atInfinity{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
-    const auto close{Lens{dgauss50mm(), {2.0f, 0}}};
-    const auto correction{atInfinity.filmZ() - atInfinity.paraxialFilmZ()};
+    const Lens atInfinity{dgauss50mm(), {AT_INFINITY, 0}};
+    const Lens close{dgauss50mm(), {2.0f, 0}};
+    const float correction{atInfinity.filmZ() - atInfinity.paraxialFilmZ()};
     CHECK(correction != 0);
     CHECK(std::abs(correction) < 0.01f * atInfinity.focalLength());
     CHECK(close.filmZ() - close.paraxialFilmZ() ==
@@ -151,17 +151,17 @@ TEST_CASE("Lens: the f-number is a statement about the entrance pupil") {
           doctest::Approx(lens.focalLength() / 5.6f).epsilon(1e-4));
   }
   SUBCASE("The physical stop narrows with it, by the pupil magnification") {
-    const auto open{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
-    const auto shut{Lens{dgauss50mm(), {AT_INFINITY, 4.0f}}};
-    const auto ratio{open.fNumberWideOpen() / 4.0f};
+    const Lens open{dgauss50mm(), {AT_INFINITY, 0}};
+    const Lens shut{dgauss50mm(), {AT_INFINITY, 4.0f}};
+    const float ratio{open.fNumberWideOpen() / 4.0f};
     CHECK(
         shut.elements()[shut.stopIndex()].semiDiameter ==
         doctest::Approx(open.elements()[open.stopIndex()].semiDiameter * ratio)
             .epsilon(1e-4));
   }
   SUBCASE("Nothing else moves when the lens is stopped down") {
-    const auto open{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
-    const auto shut{Lens{dgauss50mm(), {AT_INFINITY, 8.0f}}};
+    const Lens open{dgauss50mm(), {AT_INFINITY, 0}};
+    const Lens shut{dgauss50mm(), {AT_INFINITY, 8.0f}};
     CHECK(shut.focalLength() == doctest::Approx(open.focalLength()));
     CHECK(shut.paraxialFilmZ() == doctest::Approx(open.paraxialFilmZ()));
     CHECK(shut.exitPupilZ() == doctest::Approx(open.exitPupilZ()));
@@ -171,8 +171,8 @@ TEST_CASE("Lens: the f-number is a statement about the entrance pupil") {
     // Focus shift, which is what spherical aberration does when the
     // aperture changes: the paraxial plane is the limit the film walks
     // back toward as the cone the stop passes narrows onto the axis.
-    const auto open{Lens{dgauss50mm(), {AT_INFINITY, 0}}};
-    const auto shut{Lens{dgauss50mm(), {AT_INFINITY, 8.0f}}};
+    const Lens open{dgauss50mm(), {AT_INFINITY, 0}};
+    const Lens shut{dgauss50mm(), {AT_INFINITY, 8.0f}};
     const auto toward{[](const Lens &lens) {
       return std::abs(lens.filmZ() - lens.paraxialFilmZ());
     }};
@@ -192,7 +192,7 @@ TEST_CASE("Lens: the camera-space origin is the entrance pupil") {
     CHECK(lens.filmZ() > lens.rearZ());
   }
   SUBCASE("Surfaces run front to film in order, and the stop is among them") {
-    const auto elements{lens.elements()};
+    const smdl::Span<const LensElement> elements{lens.elements()};
     REQUIRE(elements.size() == 11);
     for (size_t i = 1; i < elements.size(); i++)
       CHECK(elements[i].z >= elements[i - 1].z);
@@ -200,8 +200,8 @@ TEST_CASE("Lens: the camera-space origin is the entrance pupil") {
     CHECK(elements[5].isStop);
   }
   SUBCASE("The medium carries across the stop, which ends no space") {
-    const auto elements{lens.elements()};
-    const auto indices{lens.referenceIndices()};
+    const smdl::Span<const LensElement> elements{lens.elements()};
+    const smdl::Span<const float> indices{lens.referenceIndices()};
     for (size_t i = 1; i < elements.size(); i++)
       CHECK(elements[i].mediumBefore == elements[i - 1].mediumAfter);
     CHECK(elements[5].mediumBefore == elements[5].mediumAfter);
@@ -223,7 +223,7 @@ TEST_CASE("Lens: a transcribed design reproduces what is printed on it") {
     lens.logSummary();
   }
   SUBCASE("A design that states its back focus is checked against the solve") {
-    auto lens{dgauss50mm()};
+    LensPrescription lens{dgauss50mm()};
     lens.surfaces.back().thickness = 36.106f;
     const Lens built{lens, {AT_INFINITY, 0}};
     CHECK(built.designBackFocus() / MM == doctest::Approx(36.106f));
@@ -245,14 +245,14 @@ Ray rayToPupil(const Lens &lens, float3 film, float x, float y) {
 // film point nothing reaches.
 double spotRMS(const Lens &lens, float3 film, float distance) {
   constexpr int NUM_STEPS = 64;
-  const auto radius{lens.rearApertureRadius()};
+  const float radius{lens.rearApertureRadius()};
   const auto each{[&](auto &&visit) {
     for (int i = 0; i < NUM_STEPS; i++) {
       for (int j = 0; j < NUM_STEPS; j++) {
-        const auto x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
-        const auto y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
+        const float x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
+        const float y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
         if (x * x + y * y > radius * radius) continue;
-        auto ray{rayToPupil(lens, film, x, y)};
+        Ray ray{rayToPupil(lens, film, x, y)};
         if (!lens.traceFromFilm(ray) || !(ray.dir.z < 0)) continue;
         visit(ray((-distance - ray.org.z) / ray.dir.z));
       }
@@ -277,7 +277,7 @@ TEST_CASE("Lens: tracing a ray from the film") {
   const float3 film{1 * MM, 2 * MM, lens.filmZ()};
   SUBCASE("It leaves as a unit vector, from the front element, going the way "
           "the camera looks") {
-    auto ray{rayToPupil(lens, film, 2 * MM, 0)};
+    Ray ray{rayToPupil(lens, film, 2 * MM, 0)};
     REQUIRE(lens.traceFromFilm(ray));
     CHECK(length(ray.dir) == doctest::Approx(1.0f).epsilon(1e-5));
     CHECK(ray.dir.z < 0);
@@ -286,7 +286,7 @@ TEST_CASE("Lens: tracing a ray from the film") {
   SUBCASE("Rays through different pupil points meet again on the plane the "
           "lens is focused at, which is what focus means") {
     const auto imageOf{[&](float x, float y) {
-      auto ray{rayToPupil(lens, film, x, y)};
+      Ray ray{rayToPupil(lens, film, x, y)};
       REQUIRE(lens.traceFromFilm(ray));
       return ray((-1.0f - ray.org.z) / ray.dir.z);
     }};
@@ -297,7 +297,7 @@ TEST_CASE("Lens: tracing a ray from the film") {
     // axis, so a rim ray lands a few hundredths of a millimeter from the
     // chief ray on an image 40 mm across. That is the lens being a poor
     // one; a trace with a root or a sign wrong misses by millimeters.
-    const auto center{imageOf(0, 0)};
+    const float3 center{imageOf(0, 0)};
     CHECK_NEAR(imageOf(0.5f * MM, 0), center, 1e-3f);
     CHECK_NEAR(imageOf(0, -0.5f * MM), center, 1e-3f);
     // The image on the film is inverted, so the two run opposite.
@@ -316,32 +316,32 @@ TEST_CASE("Lens: tracing a ray from the film") {
                         1.0f));
   }
   SUBCASE("A ray outside a clear aperture is blocked") {
-    auto ray{rayToPupil(lens, film, 20 * MM, 0)};
+    Ray ray{rayToPupil(lens, film, 20 * MM, 0)};
     CHECK_FALSE(lens.traceFromFilm(ray));
   }
 }
 
 TEST_CASE("Lens: the stop is what the trace tests, not the prescription") {
-  const auto stopped{Lens{equiconvex(50, 4, 1.5f, 20), {1.0f, 25.0f}}};
+  const Lens stopped{equiconvex(50, 4, 1.5f, 20), {1.0f, 25.0f}};
   const float3 film{0, 0, stopped.filmZ()};
   SUBCASE("Stopping down blocks the rays the wider stop passed") {
-    const auto radius{stopped.elements()[stopped.stopIndex()].semiDiameter};
-    auto inside{rayToPupil(stopped, film, 0.5f * radius, 0)};
-    auto outside{rayToPupil(stopped, film, 2.0f * radius, 0)};
+    const float radius{stopped.elements()[stopped.stopIndex()].semiDiameter};
+    Ray inside{rayToPupil(stopped, film, 0.5f * radius, 0)};
+    Ray outside{rayToPupil(stopped, film, 2.0f * radius, 0)};
     CHECK(stopped.traceFromFilm(inside));
     CHECK_FALSE(stopped.traceFromFilm(outside));
   }
   SUBCASE("Blades cut the corners off the circle they carry the area of") {
-    auto options{LensOptions{1.0f, 25.0f}};
+    LensOptions options{1.0f, 25.0f};
     options.numBlades = 4;
     const Lens bladed{equiconvex(50, 4, 1.5f, 20), options};
-    const auto radius{bladed.elements()[bladed.stopIndex()].semiDiameter};
+    const float radius{bladed.elements()[bladed.stopIndex()].semiDiameter};
     // A square of the circle's area reaches past it toward its vertices
     // and falls short of it toward the middle of an edge, so the same
     // radius passes one way and not the other.
-    const auto reach{0.95f * radius};
-    auto towardVertex{rayToPupil(bladed, film, reach, 0)};
-    auto towardEdge{
+    const float reach{0.95f * radius};
+    Ray towardVertex{rayToPupil(bladed, film, reach, 0)};
+    Ray towardEdge{
         rayToPupil(bladed, film, reach * 0.70710678f, reach * 0.70710678f)};
     CHECK(bladed.traceFromFilm(towardVertex));
     CHECK_FALSE(bladed.traceFromFilm(towardEdge));
@@ -351,7 +351,7 @@ TEST_CASE("Lens: the stop is what the trace tests, not the prescription") {
 namespace {
 // A glass of the built-in catalog.
 const smdl::OpticalGlass &catalogGlass(const char *name) {
-  const auto *entry{smdl::findOpticalGlass(name)};
+  const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass(name)};
   REQUIRE(entry != nullptr);
   return entry->glass;
 }
@@ -360,7 +360,7 @@ const smdl::OpticalGlass &catalogGlass(const char *name) {
 // `equiconvex()` lays it out.
 LensPrescription singletOf(const smdl::OpticalGlass &glass,
                            float thickness = 4) {
-  auto lens{equiconvex(50, thickness, 1, 20)};
+  LensPrescription lens{equiconvex(50, thickness, 1, 20)};
   lens.surfaces[0].medium = glass;
   return lens;
 }
@@ -375,14 +375,14 @@ bool isSameRay(const Ray &a, const Ray &b) {
 
 TEST_CASE("Lens: a named medium") {
   // An equiconvex N-BK7 singlet, by the glass's name.
-  const auto &glass{catalogGlass("N-BK7")};
-  const auto nd{glass.indexAt(smdl::FRAUNHOFER_D_LINE)};
-  auto named{singletOf(glass)};
+  const smdl::OpticalGlass &glass{catalogGlass("N-BK7")};
+  const float nd{glass.indexAt(smdl::FRAUNHOFER_D_LINE)};
+  LensPrescription named{singletOf(glass)};
   named.surfaces[0].mediumName = "N-BK7";
   const Lens lens{named, {AT_INFINITY, 0}};
   SUBCASE("It is laid out at its index at the d line") {
-    const auto elements{lens.elements()};
-    const auto indices{lens.referenceIndices()};
+    const smdl::Span<const LensElement> elements{lens.elements()};
+    const smdl::Span<const float> indices{lens.referenceIndices()};
     CHECK(hasSameBits(indices[elements[0].mediumAfter], nd));
     CHECK(hasSameBits(indices[elements[1].mediumBefore], nd));
     CHECK(lens.isDispersive());
@@ -394,17 +394,17 @@ TEST_CASE("Lens: a named medium") {
 }
 
 TEST_CASE("Lens: tracing at a wavelength") {
-  const auto &glass{catalogGlass("N-BK7")};
+  const smdl::OpticalGlass &glass{catalogGlass("N-BK7")};
   SUBCASE("A lens with no dispersion data traces the same ray at every "
           "wavelength, bit for bit") {
     const Lens lens{dgauss50mm(), {5.0f, 0}};
     for (const auto filmMM : {0.0f, 8.0f, 16.0f}) {
       const float3 film{filmMM * MM, 0, lens.filmZ()};
       for (const auto x : {-4.0f, 0.0f, 3.0f}) {
-        auto reference{rayToPupil(lens, film, x * MM, 1 * MM)};
-        const auto passes{lens.traceFromFilm(reference)};
+        Ray reference{rayToPupil(lens, film, x * MM, 1 * MM)};
+        const bool passes{lens.traceFromFilm(reference)};
         for (const auto wavelength : {380.0f, 550.0f, 780.0f, 2000.0f}) {
-          auto ray{rayToPupil(lens, film, x * MM, 1 * MM)};
+          Ray ray{rayToPupil(lens, film, x * MM, 1 * MM)};
           CHECK(lens.traceFromFilm(ray, wavelength) == passes);
           CHECK(isSameRay(ray, reference));
         }
@@ -415,8 +415,8 @@ TEST_CASE("Lens: tracing at a wavelength") {
     const Lens lens{singletOf(glass), {1.0f, 0}};
     const float3 film{1 * MM, 2 * MM, lens.filmZ()};
     for (const auto x : {-6.0f, 0.0f, 2.0f, 7.0f}) {
-      auto reference{rayToPupil(lens, film, x * MM, 0)};
-      auto atD{rayToPupil(lens, film, x * MM, 0)};
+      Ray reference{rayToPupil(lens, film, x * MM, 0)};
+      Ray atD{rayToPupil(lens, film, x * MM, 0)};
       REQUIRE(lens.traceFromFilm(reference));
       REQUIRE(lens.traceFromFilm(atD, smdl::FRAUNHOFER_D_LINE));
       CHECK(isSameRay(reference, atD));
@@ -429,7 +429,7 @@ TEST_CASE("Lens: tracing at a wavelength") {
     const Lens lens{singletOf(glass), {1.0f, 0}};
     const float3 film{0, 0, lens.filmZ()};
     const auto slopeAt{[&](float wavelength) {
-      auto ray{rayToPupil(lens, film, 6 * MM, 0)};
+      Ray ray{rayToPupil(lens, film, 6 * MM, 0)};
       REQUIRE(lens.traceFromFilm(ray, wavelength));
       return ray.dir.x / -ray.dir.z;
     }};
@@ -439,8 +439,8 @@ TEST_CASE("Lens: tracing at a wavelength") {
 }
 
 TEST_CASE("Lens: the paraxial solve at a wavelength") {
-  const auto &crown{catalogGlass("N-BK7")};
-  const auto &flint{catalogGlass("F2")};
+  const smdl::OpticalGlass &crown{catalogGlass("N-BK7")};
+  const smdl::OpticalGlass &flint{catalogGlass("F2")};
   SUBCASE("At the d line it is the constructor's solve, bit for bit") {
     const Lens lens{singletOf(crown), {1.0f, 0}};
     CHECK(hasSameBits(lens.focalLengthAt(smdl::FRAUNHOFER_D_LINE),
@@ -466,8 +466,8 @@ TEST_CASE("Lens: the paraxial solve at a wavelength") {
          {400.0f, smdl::FRAUNHOFER_F_LINE, smdl::FRAUNHOFER_D_LINE,
           smdl::FRAUNHOFER_C_LINE, 700.0f}) {
       CAPTURE(wavelength);
-      const auto n{double(crown.indexAt(wavelength))};
-      const auto expected{
+      const double n{double(crown.indexAt(wavelength))};
+      const double expected{
           1 / ((n - 1) * (2 / double(R) - (n - 1) * T / (n * R * R)))};
       CHECK(lens.focalLengthAt(wavelength) / MM ==
             doctest::Approx(expected).epsilon(1e-5));
@@ -488,12 +488,12 @@ TEST_CASE("Lens: the paraxial solve at a wavelength") {
     // flint `-V2 / (V1 - V2)`. The crown is equiconvex and the flint is
     // cemented to it. At zero thickness the design is exact for the
     // paraxial solve, though it is no solid a ray could be traced through.
-    const auto n1{double(crown.nd())}, v1{double(crown.abbeNumber())};
-    const auto n2{double(flint.nd())}, v2{double(flint.abbeNumber())};
-    const auto power1{v1 / (v1 - v2) / 50}, power2{-v2 / (v1 - v2) / 50};
-    const auto r1{float(2 * (n1 - 1) / power1)};
-    const auto r3{float(1 / (-1 / double(r1) - power2 / (n2 - 1)))};
-    auto doublet{LensPrescription{}};
+    const double n1{double(crown.nd())}, v1{double(crown.abbeNumber())};
+    const double n2{double(flint.nd())}, v2{double(flint.abbeNumber())};
+    const double power1{v1 / (v1 - v2) / 50}, power2{-v2 / (v1 - v2) / 50};
+    const float r1{float(2 * (n1 - 1) / power1)};
+    const float r3{float(1 / (-1 / double(r1) - power2 / (n2 - 1)))};
+    LensPrescription doublet{};
     doublet.surfaces.push_back(surfaceOf(r1, 0, 1, 20));
     doublet.surfaces.push_back(surfaceOf(-r1, 0, 1, 20));
     doublet.surfaces.push_back(surfaceOf(r3, 0, 1, 20));
@@ -537,7 +537,7 @@ TEST_CASE("Lens: the paraxial solve at a wavelength") {
 
 TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
   SUBCASE("One with no stop is refused") {
-    auto lens{LensPrescription{}};
+    LensPrescription lens{};
     lens.surfaces.push_back(surfaceOf(50, 0, 1.5f, 20));
     lens.surfaces.push_back(surfaceOf(-50, 0, 1, 20));
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "aperture stop");
@@ -549,7 +549,7 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
   SUBCASE("One that leaves the film in glass is refused") {
     // The last surface refracts into glass and nothing brings the light
     // back out, so the film would be immersed in it.
-    auto lens{LensPrescription{}};
+    LensPrescription lens{};
     lens.surfaces.push_back(stopOf(2, 20));
     lens.surfaces.push_back(surfaceOf(50, 0, 1.5f, 20));
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
@@ -558,7 +558,7 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
   SUBCASE("One that leaves the film in a named medium is refused by name") {
     // The stop stands in the space before it, so the medium carries
     // across it to the film.
-    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    LensPrescription lens{equiconvex(50, 4, 1.5f, 20)};
     lens.surfaces[1].medium = smdl::findOpticalGlass("N-BK7")->glass;
     lens.surfaces[1].mediumName = "N-BK7";
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "got the medium 'N-BK7'");
@@ -567,7 +567,7 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
           "refused") {
     // The reader caps the list, so this is the guard on a prescription
     // built in code rather than read from a file.
-    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    LensPrescription lens{equiconvex(50, 4, 1.5f, 20)};
     lens.surfaces.front().aspheric.assign(LENS_MAX_ASPHERIC_TERMS + 1, 0.0f);
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
                 "at most 8 aspheric coefficients");
@@ -575,13 +575,13 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
   SUBCASE("One with more surfaces than a lens holds is refused") {
     // The reader caps the count too, so this is again the guard on a
     // prescription built in code.
-    auto lens{equiconvex(50, 4, 1.5f, 20)};
+    LensPrescription lens{equiconvex(50, 4, 1.5f, 20)};
     lens.surfaces.insert(lens.surfaces.begin(), LENS_MAX_SURFACES - 2,
                          surfaceOf(0, 1, 1, 20));
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}), "at most 64 surfaces");
   }
   SUBCASE("One with no net power has no focal length") {
-    auto lens{LensPrescription{}};
+    LensPrescription lens{};
     // A plane parallel plate bends nothing, so it images nothing.
     lens.surfaces.push_back(surfaceOf(0, 4, 1.5f, 20));
     lens.surfaces.push_back(surfaceOf(0, 0, 1, 20));
@@ -595,16 +595,16 @@ namespace {
 // can see out through, by brute force over the whole of it.
 double transmission(const Lens &lens, float filmRadius) {
   constexpr int NUM_STEPS = 512;
-  const auto radius{lens.rearApertureRadius()};
+  const float radius{lens.rearApertureRadius()};
   const float3 film{filmRadius, 0, lens.filmZ()};
-  auto numPassed{0.0}, numInside{0.0};
+  double numPassed{0.0}, numInside{0.0};
   for (int i = 0; i < NUM_STEPS; i++) {
-    const auto x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
+    const float x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
     for (int j = 0; j < NUM_STEPS; j++) {
-      const auto y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
+      const float y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
       if (x * x + y * y > radius * radius) continue;
       numInside += 1;
-      auto ray{rayToPupil(lens, film, x, y)};
+      Ray ray{rayToPupil(lens, film, x, y)};
       if (lens.traceFromFilm(ray)) numPassed += 1;
     }
   }
@@ -620,19 +620,19 @@ double transmissionThroughBound(const Lens &lens, const ExitPupil &pupil,
                                 float filmRadius) {
   constexpr int NUM_STEPS = 512;
   const float3 film{filmRadius, 0, lens.filmZ()};
-  auto total{0.0};
+  double total{0.0};
   for (int i = 0; i < NUM_STEPS; i++) {
     for (int j = 0; j < NUM_STEPS; j++) {
-      auto area{0.0f};
-      const auto point{pupil.sample(
+      float area{0.0f};
+      const float2 point{pupil.sample(
           float2(filmRadius, 0),
           float2((i + 0.5f) / NUM_STEPS, (j + 0.5f) / NUM_STEPS), area)};
       if (!(area > 0)) continue;
-      auto ray{rayToPupil(lens, film, point.x, point.y)};
+      Ray ray{rayToPupil(lens, film, point.x, point.y)};
       if (lens.traceFromFilm(ray)) total += area;
     }
   }
-  const auto radius{lens.rearApertureRadius()};
+  const float radius{lens.rearApertureRadius()};
   return total / (NUM_STEPS * NUM_STEPS) / (PI * radius * radius);
 }
 
@@ -647,7 +647,7 @@ TEST_CASE("ExitPupil: the domain the pupil point is drawn from") {
   SUBCASE("It carries the transmission of the whole aperture, which is what "
           "leaves the estimator alone") {
     for (const auto fraction : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
-      const auto filmRadius{fraction * FULL_FRAME_CORNER};
+      const float filmRadius{fraction * FULL_FRAME_CORNER};
       CHECK(transmissionThroughBound(lens, pupil, filmRadius) ==
             doctest::Approx(transmission(lens, filmRadius)).epsilon(0.02));
     }
@@ -662,14 +662,14 @@ TEST_CASE("ExitPupil: the domain the pupil point is drawn from") {
           pupil.areaFraction(FULL_FRAME_CORNER));
   }
   SUBCASE("Every draw is inside the aperture or carries no area") {
-    const auto radius{lens.rearApertureRadius()};
-    auto numOutside{0};
+    const float radius{lens.rearApertureRadius()};
+    int numOutside{0};
     for (int i = 0; i < 64; i++) {
       for (int j = 0; j < 64; j++) {
-        auto area{0.0f};
-        const auto point{pupil.sample(float2(FULL_FRAME_CORNER, 0),
-                                      float2((i + 0.5f) / 64, (j + 0.5f) / 64),
-                                      area)};
+        float area{0.0f};
+        const float2 point{
+            pupil.sample(float2(FULL_FRAME_CORNER, 0),
+                         float2((i + 0.5f) / 64, (j + 0.5f) / 64), area)};
         if (area > 0 && lengthSquared(point) > radius * radius) numOutside++;
       }
     }
@@ -677,10 +677,10 @@ TEST_CASE("ExitPupil: the domain the pupil point is drawn from") {
   }
   SUBCASE("It turns with the film point's azimuth, the system being one of "
           "revolution") {
-    auto areaOnX{0.0f}, areaOnY{0.0f};
-    const auto xi{float2(0.3f, 0.7f)};
-    const auto onX{pupil.sample(float2(FULL_FRAME_CORNER, 0), xi, areaOnX)};
-    const auto onY{pupil.sample(float2(0, FULL_FRAME_CORNER), xi, areaOnY)};
+    float areaOnX{0.0f}, areaOnY{0.0f};
+    const float2 xi{0.3f, 0.7f};
+    const float2 onX{pupil.sample(float2(FULL_FRAME_CORNER, 0), xi, areaOnX)};
+    const float2 onY{pupil.sample(float2(0, FULL_FRAME_CORNER), xi, areaOnY)};
     CHECK(areaOnY == doctest::Approx(areaOnX));
     CHECK(onY.x == doctest::Approx(-onX.y));
     CHECK(onY.y == doctest::Approx(onX.x));
@@ -701,9 +701,9 @@ namespace {
 // rather than a second opinion of the same precision.
 double sagMM(double radius, double conic, const std::vector<float> &aspheric,
              double r) {
-  const auto curvature{radius == 0 ? 0.0 : 1 / radius};
-  auto sag{curvature * r * r /
-           (1 + std::sqrt(1 - (1 + conic) * curvature * curvature * r * r))};
+  const double curvature{radius == 0 ? 0.0 : 1 / radius};
+  double sag{curvature * r * r /
+             (1 + std::sqrt(1 - (1 + conic) * curvature * curvature * r * r))};
   for (size_t i = 0; i < aspheric.size(); i++)
     sag += aspheric[i] * std::pow(r, double(2 * i + 4));
   return sag;
@@ -714,9 +714,9 @@ double sagMM(double radius, double conic, const std::vector<float> &aspheric,
 // at the rim: the regime every real asphere is in, and the one the
 // conic seed is chosen for.
 LensPrescription frontAsphere(const std::vector<float> &aspheric) {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "front asphere";
-  auto front{surfaceOf(30, 6, 1.5f, 24)};
+  LensSurface front{surfaceOf(30, 6, 1.5f, 24)};
   front.conic = -0.6f;
   front.aspheric = aspheric;
   lens.surfaces.push_back(front);
@@ -728,7 +728,7 @@ LensPrescription frontAsphere(const std::vector<float> &aspheric) {
 // Where a ray drawn to the point `(x, y)` of the pupil plane leaves the
 // front element, which is what `traceFromFilm()` puts the ray at.
 float3 frontPointOf(const Lens &lens, float3 film, float x, float y) {
-  auto ray{rayToPupil(lens, film, x, y)};
+  Ray ray{rayToPupil(lens, film, x, y)};
   REQUIRE(lens.traceFromFilm(ray));
   return ray.org;
 }
@@ -739,7 +739,7 @@ float3 frontPointOf(const Lens &lens, float3 film, float x, float y) {
 // a solve that went somewhere else.
 double sagErrorMM(const Lens &lens, const std::vector<float> &aspheric,
                   float3 point) {
-  const auto radius{std::hypot(point.x, point.y) / MM};
+  const float radius{std::hypot(point.x, point.y) / MM};
   return std::abs((point.z - lens.frontZ()) / MM -
                   sagMM(30, -0.6, aspheric, radius));
 }
@@ -765,8 +765,8 @@ TEST_CASE("Lens: an aspheric surface is solved by iteration") {
     CHECK(conic.elements().front().numAsphericTerms == 0);
     CHECK(iterated.elements().front().numAsphericTerms == 1);
     for (const auto x : {1.0f, 5.0f, 9.0f}) {
-      auto one{rayToPupil(conic, film, x * MM, 0)};
-      auto two{rayToPupil(iterated, film, x * MM, 0)};
+      Ray one{rayToPupil(conic, film, x * MM, 0)};
+      Ray two{rayToPupil(iterated, film, x * MM, 0)};
       REQUIRE(conic.traceFromFilm(one));
       REQUIRE(iterated.traceFromFilm(two));
       CHECK_NEAR(one.org, two.org, 1e-8f);
@@ -789,37 +789,37 @@ TEST_CASE("Lens: an aspheric surface is solved by iteration") {
     // polynomial contributes to, the point tests above being blind to
     // it.
     for (const auto height : {3.0, 7.0, 11.0}) {
-      auto ray{Ray{float3(float(height * MM), 0, lens.filmZ()),
-                   float3(0, 0, -1), EPS, INF}};
+      Ray ray{Ray{float3(float(height * MM), 0, lens.filmZ()), float3(0, 0, -1),
+                  EPS, INF}};
       REQUIRE(lens.traceFromFilm(ray));
       CHECK(ray.org.x / MM == doctest::Approx(height).epsilon(1e-6));
       // The published sag differentiated by hand: the conic slope, then
       // the polynomial's.
-      const auto curvature{1 / 30.0};
-      const auto w{
+      const double curvature{1 / 30.0};
+      const double w{
           std::sqrt(1 - (1 - 0.6) * curvature * curvature * height * height)};
-      auto slope{curvature * height / w};
+      double slope{curvature * height / w};
       for (size_t i = 0; i < aspheric.size(); i++)
         slope += aspheric[i] * double(2 * i + 4) *
                  std::pow(height, double(2 * i + 3));
-      const auto scale{std::sqrt(1 + slope * slope)};
-      const auto cosThetaI{1 / scale};
-      const auto eta{1.5};
-      const auto cosThetaT{
+      const double scale{std::sqrt(1 + slope * slope)};
+      const double cosThetaI{1 / scale};
+      const double eta{1.5};
+      const double cosThetaT{
           std::sqrt(1 - eta * eta * (1 - cosThetaI * cosThetaI))};
       // Snell in vector form, on the incident direction (0, 0, -1) and
       // the unit normal (-slope, 0, 1) / scale.
-      const auto factor{(eta * cosThetaI - cosThetaT) / scale};
-      const auto turned{
+      const double factor{(eta * cosThetaI - cosThetaT) / scale};
+      const float3 turned{
           normalize(float3(float(-factor * slope), 0, float(-eta + factor)))};
       CHECK_NEAR(ray.dir, turned, 1e-6f);
     }
   }
   SUBCASE("The polynomial bends the ray, the conic alone being a different "
           "surface") {
-    auto withIt{rayToPupil(lens, film, 9 * MM, 0)};
+    Ray withIt{rayToPupil(lens, film, 9 * MM, 0)};
     const Lens without{frontAsphere({}), {AT_INFINITY, 0}};
-    auto withoutIt{rayToPupil(without, film, 9 * MM, 0)};
+    Ray withoutIt{rayToPupil(without, film, 9 * MM, 0)};
     REQUIRE(lens.traceFromFilm(withIt));
     REQUIRE(without.traceFromFilm(withoutIt));
     CHECK(length(withIt.dir - withoutIt.dir) > 1e-4f);
@@ -831,13 +831,13 @@ TEST_CASE("Lens: an aspheric surface is solved by iteration") {
               Lens{frontAsphere({}), {AT_INFINITY, 0}}.focalLength()));
   }
   SUBCASE("It converges everywhere on the aperture, at every film point") {
-    auto numTraced{0};
-    auto worst{0.0};
+    int numTraced{0};
+    double worst{0.0};
     for (int i = 0; i < 24; i++) {
-      const auto filmRadius{i * 0.5f * MM};
+      const float filmRadius{i * 0.5f * MM};
       for (int j = 0; j < 24; j++) {
-        const auto x{(-11.0f + j) * MM};
-        auto ray{rayToPupil(lens, float3(filmRadius, 0, lens.filmZ()), x, 0)};
+        const float x{(-11.0f + j) * MM};
+        Ray ray{rayToPupil(lens, float3(filmRadius, 0, lens.filmZ()), x, 0)};
         if (!lens.traceFromFilm(ray)) continue;
         numTraced++;
         worst = std::max(worst, sagErrorMM(lens, aspheric, ray.org));
@@ -852,7 +852,7 @@ namespace {
 LensSurface asphericSurfaceOf(float radius, float thickness, float ior,
                               float diameter, float conic,
                               std::vector<float> aspheric) {
-  auto surface{surfaceOf(radius, thickness, ior, diameter)};
+  LensSurface surface{surfaceOf(radius, thickness, ior, diameter)};
   surface.conic = conic;
   surface.aspheric = std::move(aspheric);
   return surface;
@@ -865,7 +865,7 @@ LensSurface asphericSurfaceOf(float radius, float thickness, float ior,
 // this trace will ever be given, and a design whose numbers are printed
 // on it.
 LensPrescription phone2mm() {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "Largan 2.03mm f/2.8 phone camera";
   lens.surfaces = {
       asphericSurfaceOf(2.20482f, 0.316f, 1.544f, 1.00f, -4.17195e+01f,
@@ -903,10 +903,10 @@ LensPrescription phone2mm() {
 // a ray out through, which is the edge of the cone the axial rays fill.
 float axialConeMM(const Lens &lens, float filmMM) {
   const float3 film{0, 0, lens.rearZ() + filmMM * MM};
-  auto largest{0.0f};
+  float largest{0.0f};
   for (int i = 1; i <= 400; i++) {
-    const auto height{lens.rearApertureRadius() * i / 400};
-    auto ray{rayToPupil(lens, film, height, 0)};
+    const float height{lens.rearApertureRadius() * i / 400};
+    Ray ray{rayToPupil(lens, film, height, 0)};
     if (lens.traceFromFilm(ray)) largest = height;
   }
   return largest / MM;
@@ -920,9 +920,9 @@ double axialSpread(const Lens &lens, float filmMM, float coneMM,
   const float3 film{0, 0, lens.rearZ() + filmMM * MM};
   double sum{}, sumSquared{}, count{};
   for (int i = 1; i <= 12; i++) {
-    auto ray{rayToPupil(lens, film, fraction * coneMM * MM * i / 12, 0)};
+    Ray ray{rayToPupil(lens, film, fraction * coneMM * MM * i / 12, 0)};
     if (!lens.traceFromFilm(ray)) continue;
-    const auto angle{std::atan2(ray.dir.x, -ray.dir.z)};
+    const float angle{std::atan2(ray.dir.x, -ray.dir.z)};
     sum += angle, sumSquared += double(angle) * angle, count += 1;
   }
   if (count < 2) return 1e30;
@@ -933,9 +933,9 @@ double axialSpread(const Lens &lens, float filmMM, float coneMM,
 TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
           "order") {
   const Lens lens{phone2mm(), {AT_INFINITY, 0}};
-  const auto paraxialMM{float(lens.backFocalDistance() / MM)};
+  const float paraxialMM{float(lens.backFocalDistance() / MM)};
   // What the patent states, which is where the design puts its sensor.
-  const auto statedMM{0.360f};
+  const float statedMM{0.360f};
   SUBCASE("It reproduces the focal length and the f-number printed on it") {
     CHECK(lens.focalLength() / MM == doctest::Approx(2.03).epsilon(2e-3));
     CHECK(lens.fNumberWideOpen() == doctest::Approx(2.80).epsilon(1e-3));
@@ -948,16 +948,16 @@ TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
     // test is the surface intersection, which does not care where the
     // film sits, and standing the sweep on the one plane a formula gives
     // is what keeps the counts below comparable.
-    const auto cone{axialConeMM(lens, paraxialMM)};
-    auto numTraced{0};
-    auto worst{0.0};
+    const float cone{axialConeMM(lens, paraxialMM)};
+    int numTraced{0};
+    double worst{0.0};
     for (int i = 0; i <= 40; i++) {
       const float3 film{(i * 0.04f) * MM, 0, lens.paraxialFilmZ()};
       for (int j = -60; j <= 60; j++) {
-        auto ray{rayToPupil(lens, film, (i * 0.0375f + j * 0.002f) * MM, 0)};
+        Ray ray{rayToPupil(lens, film, (i * 0.0375f + j * 0.002f) * MM, 0)};
         if (!lens.traceFromFilm(ray)) continue;
         numTraced++;
-        const auto radius{std::hypot(ray.org.x, ray.org.y) / MM};
+        const float radius{std::hypot(ray.org.x, ray.org.y) / MM};
         worst = std::max(
             worst, std::abs((ray.org.z - lens.frontZ()) / MM -
                             sagMM(2.20482, -4.17195e+01, aspheric, radius)));
@@ -977,12 +977,12 @@ TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
     // between the paraxial focus and where the whole cone comes to a
     // head, and that is only true if the polynomials are right: they are
     // what bends the outer zones.
-    const auto cone{axialConeMM(lens, paraxialMM)};
-    auto marginalMM{paraxialMM};
-    auto best{1e30};
+    const float cone{axialConeMM(lens, paraxialMM)};
+    float marginalMM{paraxialMM};
+    double best{1e30};
     for (int i = 0; i <= 200; i++) {
-      const auto filmMM{paraxialMM * (0.9f + 0.002f * i)};
-      if (const auto spread{axialSpread(lens, filmMM, cone, 1.0f)};
+      const float filmMM{paraxialMM * (0.9f + 0.002f * i)};
+      if (const double spread{axialSpread(lens, filmMM, cone, 1.0f)};
           spread < best)
         best = spread, marginalMM = filmMM;
     }
@@ -998,12 +998,12 @@ TEST_CASE("Lens: a design whose surfaces are aspheric to the fourteenth "
 
 TEST_CASE("Lens: the field a sensor of a given size looks out at") {
   const Lens lens{dgauss50mm(), {AT_INFINITY, 0}};
-  const auto circle{lens.imageCircleRadius()};
+  const float circle{lens.imageCircleRadius()};
   SUBCASE("The angle grows with the film radius, which is what lets it be "
           "inverted") {
-    auto previous{0.0f};
+    float previous{0.0f};
     for (int i = 1; i <= 10; i++) {
-      const auto angle{lens.fieldAngleAt(circle * i / 12)};
+      const std::optional<float> angle{lens.fieldAngleAt(circle * i / 12)};
       REQUIRE(angle);
       CHECK(*angle > previous);
       previous = *angle;
@@ -1012,16 +1012,16 @@ TEST_CASE("Lens: the field a sensor of a given size looks out at") {
   SUBCASE("A sensor half-height and its field angle are each other's "
           "inverse") {
     for (const auto fraction : {0.2f, 0.5f, 0.8f}) {
-      const auto filmRadius{fraction * circle};
-      const auto angle{lens.fieldAngleAt(filmRadius)};
+      const float filmRadius{fraction * circle};
+      const std::optional<float> angle{lens.fieldAngleAt(filmRadius)};
       REQUIRE(angle);
-      const auto inverted{lens.filmRadiusForFieldAngle(*angle)};
+      const std::optional<float> inverted{lens.filmRadiusForFieldAngle(*angle)};
       REQUIRE(inverted);
       CHECK(*inverted == doctest::Approx(filmRadius).epsilon(1e-3));
     }
   }
   SUBCASE("Past the image circle nothing reaches the film at all") {
-    const auto inside{lens.fieldAngleAt(0.99f * circle)};
+    const std::optional<float> inside{lens.fieldAngleAt(0.99f * circle)};
     REQUIRE(inside);
     CHECK(*inside > 0);
     CHECK(!lens.fieldAngleAt(1.05f * circle));
@@ -1032,7 +1032,7 @@ TEST_CASE("Lens: the field a sensor of a given size looks out at") {
     // image circle wider than that; the vertical field of a 24 mm high
     // sensor is what a 50 is known for.
     CHECK(circle / MM > 21.7f);
-    const auto vertical{lens.fieldAngleAt(12 * MM)};
+    const std::optional<float> vertical{lens.fieldAngleAt(12 * MM)};
     REQUIRE(vertical);
     CHECK(smdl::degrees(2 * *vertical) == doctest::Approx(26.9).epsilon(0.02));
   }
@@ -1047,8 +1047,8 @@ TEST_CASE("Lens: what a film point sees, on a lens whose rear element dwarfs "
   // prescription broken.
   SUBCASE("Wide open it is what a grid over the whole aperture finds") {
     const Lens lens{phone2mm(), {AT_INFINITY, 0}};
-    const auto radius{lens.rearApertureRadius()};
-    const auto whole{PI * radius * radius};
+    const float radius{lens.rearApertureRadius()};
+    const float whole{PI * radius * radius};
     for (const auto filmRadius : {0.0f, 1.0f * MM}) {
       CAPTURE(filmRadius);
       CHECK(lens.transmittedArea(filmRadius) ==
@@ -1065,7 +1065,7 @@ TEST_CASE("Lens: what a film point sees, on a lens whose rear element dwarfs "
     for (const auto fStop : {4.0f, 11.0f}) {
       CAPTURE(fStop);
       const Lens shut{phone2mm(), {AT_INFINITY, fStop}};
-      const auto ratio{open.fNumber() / fStop};
+      const float ratio{open.fNumber() / fStop};
       CHECK(shut.transmittedArea(0) > 0);
       CHECK(shut.transmittedArea(0) ==
             doctest::Approx(open.transmittedArea(0) * ratio * ratio)
@@ -1085,7 +1085,7 @@ TEST_CASE("ExitPupil: a cone that is a thousandth of the aperture it is "
   // rear aperture three hundred times its width. Falling back to the
   // whole aperture is correct and costs nothing but draws, which is
   // exactly what the table exists to save, so it has to not happen.
-  const auto corner{1.15f * MM};
+  const float corner{1.15f * MM};
   const Lens lens{phone2mm(), {AT_INFINITY, 11.0f}};
   const ExitPupil pupil{lens, corner};
   SUBCASE("The table finds it rather than giving up and taking the whole") {
@@ -1110,7 +1110,7 @@ namespace {
 // glass images it, and the glass's color moves that image across the
 // plane the pupil points are drawn on.
 LensPrescription flintBehindStop() {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.name = "N-SF57 behind a stop";
   lens.surfaces.push_back(stopOf(15, 8));
   lens.surfaces.push_back(surfaceOf(40, 6, 1, 30));
@@ -1134,37 +1134,37 @@ PupilSweep sweepPupil(const Lens &lens, const ExitPupil &pupil, float corner,
                       const std::vector<float> &wavelengths) {
   constexpr size_t NUM_RADII = 65;
   constexpr int NUM_STEPS = 128;
-  const auto radius{lens.rearApertureRadius()};
-  auto sweeps{std::vector<PupilSweep>(NUM_RADII)};
+  const float radius{lens.rearApertureRadius()};
+  std::vector<PupilSweep> sweeps(NUM_RADII);
   smdl::parallelFor(size_t(0), NUM_RADII, [&](size_t k) {
-    const auto filmRadius{corner * float(k) / float(NUM_RADII - 1)};
+    const float filmRadius{corner * float(k) / float(NUM_RADII - 1)};
     const float3 film{filmRadius, 0, lens.filmZ()};
     for (const auto wavelength : wavelengths) {
-      const auto indices{lens.indicesAt(wavelength)};
+      const std::array<float, 65> indices{lens.indicesAt(wavelength)};
       const auto passes{[&](float x, float y) {
         if (x * x + y * y > radius * radius) return false;
-        auto ray{rayToPupil(lens, film, x, y)};
+        Ray ray{rayToPupil(lens, film, x, y)};
         return lens.traceFromFilm(ray, indices);
       }};
-      auto loX{FLOAT_MAX}, hiX{-FLOAT_MAX}, loY{FLOAT_MAX}, hiY{-FLOAT_MAX};
+      float loX{FLOAT_MAX}, hiX{-FLOAT_MAX}, loY{FLOAT_MAX}, hiY{-FLOAT_MAX};
       for (int i = 0; i < NUM_STEPS; i++) {
-        const auto x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
+        const float x{radius * (2 * (i + 0.5f) / NUM_STEPS - 1)};
         for (int j = 0; j < NUM_STEPS; j++) {
-          const auto y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
+          const float y{radius * (2 * (j + 0.5f) / NUM_STEPS - 1)};
           if (!passes(x, y)) continue;
           loX = std::min(loX, x), hiX = std::max(hiX, x);
           loY = std::min(loY, y), hiY = std::max(hiY, y);
         }
       }
       if (!(loX <= hiX)) continue;
-      const auto cell{2 * radius / NUM_STEPS};
-      const auto marginX{0.5f * (hiX - loX) + cell};
-      const auto marginY{0.5f * (hiY - loY) + cell};
+      const float cell{2 * radius / NUM_STEPS};
+      const float marginX{0.5f * (hiX - loX) + cell};
+      const float marginY{0.5f * (hiY - loY) + cell};
       loX -= marginX, hiX += marginX, loY -= marginY, hiY += marginY;
       for (int i = 0; i < NUM_STEPS; i++) {
-        const auto x{loX + (hiX - loX) * (i + 0.5f) / NUM_STEPS};
+        const float x{loX + (hiX - loX) * (i + 0.5f) / NUM_STEPS};
         for (int j = 0; j < NUM_STEPS; j++) {
-          const auto y{loY + (hiY - loY) * (j + 0.5f) / NUM_STEPS};
+          const float y{loY + (hiY - loY) * (j + 0.5f) / NUM_STEPS};
           if (!passes(x, y)) continue;
           sweeps[k].numPassed++;
           if (!pupil.contains(float2(filmRadius, 0), float2(x, y)))
@@ -1173,7 +1173,7 @@ PupilSweep sweepPupil(const Lens &lens, const ExitPupil &pupil, float corner,
       }
     }
   });
-  auto total{PupilSweep{}};
+  PupilSweep total{};
   for (const auto &sweep : sweeps) {
     total.numPassed += sweep.numPassed;
     total.numOutside += sweep.numOutside;
@@ -1184,18 +1184,18 @@ PupilSweep sweepPupil(const Lens &lens, const ExitPupil &pupil, float corner,
 
 TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
   const Lens lens{flintBehindStop(), {AT_INFINITY, 0}};
-  const auto corner{12 * MM};
+  const float corner{12 * MM};
   const ExitPupil pupil{lens, corner, float2(380, 780)};
   SUBCASE("Every draw lies in the domain it reports holding, whatever the "
           "film point's azimuth") {
-    auto numOutside{0};
+    int numOutside{0};
     for (const auto azimuth : {0.0f, 1.0f, 2.5f, 4.0f}) {
-      const auto film{0.8f * corner *
-                      float2(std::cos(azimuth), std::sin(azimuth))};
+      const float2 film{0.8f * corner *
+                        float2(std::cos(azimuth), std::sin(azimuth))};
       for (int i = 0; i < 16; i++) {
         for (int j = 0; j < 16; j++) {
-          auto area{0.0f};
-          const auto point{pupil.sample(
+          float area{0.0f};
+          const float2 point{pupil.sample(
               film, float2((i + 0.5f) / 16, (j + 0.5f) / 16), area)};
           if (!pupil.contains(film, point)) numOutside++;
         }
@@ -1207,9 +1207,9 @@ TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
   }
   SUBCASE("It holds every ray that gets out, at every wavelength across the "
           "range and every film radius") {
-    auto wavelengths{std::vector<float>()};
+    std::vector<float> wavelengths{};
     for (int i = 0; i <= 16; i++) wavelengths.push_back(380.0f + 25.0f * i);
-    const auto sweep{sweepPupil(lens, pupil, corner, wavelengths)};
+    const PupilSweep sweep{sweepPupil(lens, pupil, corner, wavelengths)};
     CHECK(sweep.numPassed > 0);
     CHECK(sweep.numOutside == 0);
   }
@@ -1229,15 +1229,15 @@ TEST_CASE("ExitPupil: the domain over a range of wavelengths") {
     const Lens constant{dgauss50mm(), {5.0f, 0}};
     const ExitPupil without{constant, FULL_FRAME_CORNER};
     const ExitPupil with{constant, FULL_FRAME_CORNER, float2(380, 780)};
-    auto numDiffering{0};
+    int numDiffering{0};
     for (const auto fraction : {0.0f, 0.5f, 1.0f}) {
-      const auto film{float2(fraction * FULL_FRAME_CORNER, 0)};
+      const float2 film{fraction * FULL_FRAME_CORNER, 0};
       for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
-          const auto xi{float2((i + 0.5f) / 8, (j + 0.5f) / 8)};
-          auto areaWithout{0.0f}, areaWith{0.0f};
-          const auto one{without.sample(film, xi, areaWithout)};
-          const auto two{with.sample(film, xi, areaWith)};
+          const float2 xi{(i + 0.5f) / 8, (j + 0.5f) / 8};
+          float areaWithout{0.0f}, areaWith{0.0f};
+          const float2 one{without.sample(film, xi, areaWithout)};
+          const float2 two{with.sample(film, xi, areaWith)};
           if (!hasSameBits(one.x, two.x) || !hasSameBits(one.y, two.y) ||
               !hasSameBits(areaWithout, areaWith))
             numDiffering++;
@@ -1258,10 +1258,11 @@ TEST_CASE("ExitPupil: the domain holds what gets out, on the lens whose "
   // it, and no scan that builds the bound resolves such a thing. Holding
   // the intersection clear of the turn is what keeps the trace from
   // passing them, and this is the case that says so.
-  const auto corner{1.15f * MM};
+  const float corner{1.15f * MM};
   const Lens lens{phone2mm(), {AT_INFINITY, 0}};
   const ExitPupil pupil{lens, corner};
-  const auto sweep{sweepPupil(lens, pupil, corner, {smdl::FRAUNHOFER_D_LINE})};
+  const PupilSweep sweep{
+      sweepPupil(lens, pupil, corner, {smdl::FRAUNHOFER_D_LINE})};
   MESSAGE("of " << sweep.numPassed << " rays out, " << sweep.numOutside
                 << " lie outside the domain");
   CHECK(sweep.numPassed > 0);
@@ -1272,7 +1273,8 @@ TEST_CASE("Lens: the field a transcribed design states is the field it has") {
   // The patent gives a half field of 39.5 degrees, which is the one
   // number of the three printed on it that only a traced ray can check.
   const Lens lens{phone2mm(), {AT_INFINITY, 0}};
-  const auto filmRadius{lens.filmRadiusForFieldAngle(smdl::radians(39.5f))};
+  const std::optional<float> filmRadius{
+      lens.filmRadiusForFieldAngle(smdl::radians(39.5f))};
   REQUIRE(filmRadius);
   CHECK(*filmRadius > 0);
   CHECK(*filmRadius / MM ==
@@ -1285,7 +1287,7 @@ namespace {
 // bends it: a singlet of N-SF57, the most dispersive glass in the
 // catalog, and an N-BK7/F2 achromat.
 LensPrescription singletBehindStop() {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.surfaces.push_back(stopOf(20, 6));
   lens.surfaces.push_back(surfaceOf(84.7f, 5, 1, 30));
   lens.surfaces.push_back(surfaceOf(-84.7f, 0, 1, 30));
@@ -1294,7 +1296,7 @@ LensPrescription singletBehindStop() {
 }
 
 LensPrescription achromatBehindStop() {
-  auto lens{LensPrescription{}};
+  LensPrescription lens{};
   lens.surfaces.push_back(stopOf(10, 6));
   lens.surfaces.push_back(surfaceOf(22.39f, 5, 1, 16));
   lens.surfaces.push_back(surfaceOf(-22.39f, 2, 1, 16));
@@ -1321,7 +1323,7 @@ TEST_CASE("Lens: the lateral color") {
     // Blue is bent the more, and the chief ray crosses the glass above
     // the axis, so blue is turned further back toward it.
     const Lens lens{singletBehindStop(), {2.0f, 0}};
-    const auto lateral{lens.lateralColorAt(FULL_FRAME_CORNER)};
+    const float lateral{lens.lateralColorAt(FULL_FRAME_CORNER)};
     CHECK(lateral < 0);
     CHECK(-lateral / MM > 0.2f);
     CHECK(-lateral / MM < 1.0f);

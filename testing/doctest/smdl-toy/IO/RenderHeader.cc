@@ -13,9 +13,9 @@ namespace {
 // halves tested apart.
 [[nodiscard]] std::map<std::string, std::string>
 asFields(const std::vector<std::string> &lines) {
-  auto fields{std::map<std::string, std::string>()};
+  std::map<std::string, std::string> fields{};
   for (const auto &line : lines) {
-    const auto eq{line.find(" = ")};
+    const size_t eq{line.find(" = ")};
     REQUIRE(eq != std::string::npos);
     fields[line.substr(0, eq)] = line.substr(eq + 3);
   }
@@ -23,7 +23,7 @@ asFields(const std::vector<std::string> &lines) {
 }
 
 [[nodiscard]] RenderHeader makeHeader() {
-  auto header{RenderHeader()};
+  RenderHeader header{};
   header.sessions = 7;
   header.seconds = 1234.5;
   header.cpuSeconds = 9876.25;
@@ -38,10 +38,11 @@ asFields(const std::vector<std::string> &lines) {
 } // namespace
 
 TEST_CASE("RenderHeader: round trip") {
-  const auto written{makeHeader()};
-  const auto fields{asFields(written.headerLines())};
+  const RenderHeader written{makeHeader()};
+  const std::map<std::string, std::string> fields{
+      asFields(written.headerLines())};
   SUBCASE("Every field survives the header") {
-    auto read{RenderHeader()};
+    RenderHeader read{};
     read.readFrom(fields);
     CHECK(read.sessions == written.sessions);
     CHECK(read.seconds == doctest::Approx(written.seconds));
@@ -65,7 +66,7 @@ TEST_CASE("RenderHeader: round trip") {
   SUBCASE("A field the file does not carry leaves the value alone") {
     // This is what makes a sequence written by an older build resumable
     // rather than an error.
-    auto read{makeHeader()};
+    RenderHeader read{makeHeader()};
     read.readFrom({});
     CHECK(read.sessions == 7);
     CHECK(read.sampler == "owen-sobol-1");
@@ -76,20 +77,20 @@ TEST_CASE("RenderHeader: round trip") {
     // session's total.
     for (const char *text : {"-1", "not a number", "nan", "inf"}) {
       CAPTURE(text);
-      auto read{makeHeader()};
+      RenderHeader read{makeHeader()};
       read.readFrom({{"render seconds", text}});
       CHECK(read.seconds == 0.0);
     }
   }
   SUBCASE("The jitter flag is the file's '0' or '1'") {
-    auto read{RenderHeader()};
+    RenderHeader read{};
     read.readFrom({{"render wavelength jitter", "0"}});
     CHECK(!read.hasWavelengthJitter);
     read.readFrom({{"render wavelength jitter", "1"}});
     CHECK(read.hasWavelengthJitter);
   }
   SUBCASE("An empty header writes lines a reader takes as defaults") {
-    auto read{makeHeader()};
+    RenderHeader read{makeHeader()};
     read.readFrom(asFields(RenderHeader().headerLines()));
     CHECK(read.sessions == 0);
     CHECK(read.seconds == 0.0);
@@ -104,7 +105,7 @@ TEST_CASE("RenderHeader: round trip") {
 }
 
 TEST_CASE("DetectorHeader: round trip") {
-  auto written{DetectorHeader()};
+  DetectorHeader written{};
   written.seed = 7;
   written.noise = "shot";
   written.exposure = 0.001;
@@ -122,12 +123,13 @@ TEST_CASE("DetectorHeader: round trip") {
   written.baseISO = 100;
   written.wasISOMetered = true;
   written.whiteLevel = 16383;
-  const auto fields{asFields(written.headerLines())};
+  const std::map<std::string, std::string> fields{
+      asFields(written.headerLines())};
   SUBCASE("Every field survives the header at its digits") {
     CHECK(fields.at("render detector gain") == "0.00341");
     CHECK(fields.at("render detector dark electrons") == "1e-07");
     CHECK(fields.at("render detector noise") == "shot");
-    auto read{DetectorHeader()};
+    DetectorHeader read{};
     read.readFrom(fields);
     CHECK(read.seed == 7);
     CHECK(read.noise == "shot");
@@ -157,14 +159,15 @@ TEST_CASE("DetectorHeader: round trip") {
 }
 
 TEST_CASE("ResponseHeader: round trip") {
-  auto written{ResponseHeader()};
+  ResponseHeader written{};
   written.hash = "0123456789abcdef0123456789abcdef";
   written.cfaColumns = 2;
   written.cfa = {"R", "G", "G", "B"};
-  const auto fields{asFields(written.headerLines())};
+  const std::map<std::string, std::string> fields{
+      asFields(written.headerLines())};
   SUBCASE("Every field survives the header, the tile as a list") {
     CHECK(fields.at("render cfa") == "{R, G, G, B}");
-    auto read{ResponseHeader()};
+    ResponseHeader read{};
     read.readFrom(fields);
     CHECK(read.hash == written.hash);
     CHECK(read.cfaColumns == 2);
@@ -178,17 +181,18 @@ TEST_CASE("ResponseHeader: round trip") {
     }
   }
   SUBCASE("No tile spells an empty list and reads back as none") {
-    auto plain{ResponseHeader()};
-    const auto plainFields{asFields(plain.headerLines())};
+    ResponseHeader plain{};
+    const std::map<std::string, std::string> plainFields{
+        asFields(plain.headerLines())};
     CHECK(plainFields.at("render cfa") == "{}");
     CHECK(plainFields.at("render cfa columns") == "0");
-    auto read{written};
+    ResponseHeader read{written};
     read.readFrom(plainFields);
     CHECK(read.cfa.empty());
     CHECK(read.cfaColumns == 0);
   }
   SUBCASE("A field the file does not carry leaves the value alone") {
-    auto read{written};
+    ResponseHeader read{written};
     read.readFrom({});
     CHECK(read.hash == written.hash);
     CHECK(read.cfa.size() == 4);

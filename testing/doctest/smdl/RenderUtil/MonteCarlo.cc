@@ -12,7 +12,7 @@
 
 TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
   SUBCASE("Distribution1D draws in proportion to its values") {
-    auto distr =
+    smdl::Distribution1D distr =
         smdl::Distribution1D(std::vector<float>{1.0f, 2.0f, 3.0f, 1.0f});
     CHECK(distr.indexPMF(0) == doctest::Approx(1.0 / 7.0));
     CHECK(distr.indexPMF(1) == doctest::Approx(2.0 / 7.0));
@@ -26,7 +26,7 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     std::mt19937 prng{};
     std::array<int, 4> histogram{};
     for (int iter = 0; iter < 100'000; iter++) {
-      auto i = distr.indexSample(smdl::generateCanonical(prng));
+      int i = distr.indexSample(smdl::generateCanonical(prng));
       histogram[i]++;
     }
     CHECK(histogram[0] * 1e-5 ==
@@ -39,14 +39,15 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
           doctest::Approx(distr.indexPMF(3)).epsilon(1e-3));
   }
   SUBCASE("Distribution1D with all-zero values draws uniformly") {
-    auto distr = smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 0.0f});
+    smdl::Distribution1D distr =
+        smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 0.0f});
     CHECK(distr.indexPMF(0) == 0.0f);
     CHECK(distr.indexPMF(1) == 0.0f);
     CHECK(distr.indexPMF(2) == 0.0f);
     CHECK(distr.unnormalizedSum() == 0.0f);
   }
   SUBCASE("Distribution2D draws in proportion to its values") {
-    auto distr =
+    smdl::Distribution2D distr =
         smdl::Distribution2D(4, 2,
                              std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f, //
                                                 6.0f, 3.0f, 1.0f, 2.0f});
@@ -61,7 +62,7 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     std::mt19937 prng{};
     std::array<std::array<int, 4>, 2> histogram{};
     for (int iter = 0; iter < 1'000'000; iter++) {
-      auto i = distr.pixelSample(smdl::generateCanonical2(prng));
+      smdl::int2 i = distr.pixelSample(smdl::generateCanonical2(prng));
       histogram[i.y][i.x]++;
     }
     for (int iY = 0; iY < 2; iY++) {
@@ -84,7 +85,7 @@ void checkNet(const std::vector<uint32_t> &X, const std::vector<uint32_t> &Y,
   REQUIRE(Y.size() == size_t(1) << m);
   for (int k1 = 0; k1 <= m; k1++) {
     const int k2{m - k1};
-    auto counts{std::vector<int>(size_t(1) << m, 0)};
+    std::vector<int> counts(size_t(1) << m, 0);
     for (size_t i = 0; i < X.size(); i++) {
       const uint32_t cellX{k1 == 0 ? 0U : X[i] >> (32 - k1)};
       const uint32_t cellY{k2 == 0 ? 0U : Y[i] >> (32 - k2)};
@@ -131,7 +132,7 @@ TEST_CASE("MonteCarlo: the canonical sample helpers") {
     smdl::float3 mean{};
     constexpr int NUM_SAMPLES{100'000};
     for (int iter = 0; iter < NUM_SAMPLES; iter++) {
-      const auto bary{
+      const smdl::float3 bary{
           smdl::uniformTriangleSample(smdl::generateCanonical2(prng))};
       isInside &= bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f;
       isInside &= std::abs(bary.x + bary.y + bary.z - 1.0f) < 1e-5f;
@@ -156,7 +157,7 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
     std::mt19937 prng{};
     bool isInvolution{true};
     for (int iter = 0; iter < 1000; iter++) {
-      const auto x{uint32_t(prng())};
+      const uint32_t x{uint32_t(prng())};
       isInvolution &= smdl::reverseBits(smdl::reverseBits(x)) == x;
     }
     CHECK(isInvolution);
@@ -184,10 +185,10 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
     std::mt19937 prng{};
     bool isNested{true};
     for (int iter = 0; iter < 10000; iter++) {
-      const auto x{uint32_t(prng())};
-      const auto low{uint32_t(prng())};
-      const auto seed{uint32_t(prng())};
-      const auto k{int(prng() % 33U)};
+      const uint32_t x{uint32_t(prng())};
+      const uint32_t low{uint32_t(prng())};
+      const uint32_t seed{uint32_t(prng())};
+      const int k{int(prng() % 33U)};
       const uint32_t mask{k == 0 ? 0U : ~uint32_t(0) << (32 - k)};
       const uint32_t x1{(x & mask) | (low & ~mask)};
       isNested &= ((smdl::nestedUniformScramble(x, seed) ^
@@ -215,8 +216,8 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
     std::mt19937 prng{};
     bool roundTrips{true};
     for (int iter = 0; iter < 10000; iter++) {
-      const auto x{uint32_t(prng())};
-      const auto seed{uint32_t(prng())};
+      const uint32_t x{uint32_t(prng())};
+      const uint32_t seed{uint32_t(prng())};
       roundTrips &= invert(smdl::nestedUniformScramble(x, seed), seed) == x;
     }
     CHECK(roundTrips);
@@ -225,9 +226,9 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
     CHECK(smdl::sobolDim1(5) == 0x20000000U);
     CHECK(smdl::sobolDim1(0xFFFFU) == 0x00010000U);
     for (int m = 0; m <= 12; m++) {
-      const auto N{uint32_t(1) << m};
-      auto X{std::vector<uint32_t>(N)};
-      auto Y{std::vector<uint32_t>(N)};
+      const uint32_t N{uint32_t(1) << m};
+      std::vector<unsigned> X{std::vector<uint32_t>(N)};
+      std::vector<unsigned> Y{std::vector<uint32_t>(N)};
       for (uint32_t i = 0; i < N; i++) {
         X[i] = smdl::reverseBits(i);
         Y[i] = smdl::sobolDim1(i);
@@ -256,7 +257,7 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
       doesAgree &= smdl::sobolDim1(uint32_t(1) << bit) == DIRECTIONS[bit];
     std::mt19937 prng{};
     for (int iter = 0; iter < 100000; iter++) {
-      const auto index{uint32_t(prng())};
+      const uint32_t index{uint32_t(prng())};
       doesAgree &= smdl::sobolDim1(index) == byTable(index);
     }
     CHECK(doesAgree);
@@ -265,7 +266,7 @@ TEST_CASE("MonteCarlo: the quasi-Monte Carlo helpers") {
 
 TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
   SUBCASE("The sequence is deterministic and matches the golden draws") {
-    auto sampler{smdl::OwenSobolSampler()};
+    smdl::OwenSobolSampler sampler{};
     sampler.start(0xC0FFEEU, 12345U);
     CHECK(sampler.generate() == 0xDACD9D31U);
     CHECK(sampler.generate() == 0x694EADCBU);
@@ -277,7 +278,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     sampler.start(0xC0FFEEU, 12345U);
     CHECK(sampler.generate() == 0xDACD9D31U);
     // A different seed diverges.
-    auto other{smdl::OwenSobolSampler()};
+    smdl::OwenSobolSampler other{};
     other.start(0xC0FFEFU, 12345U);
     sampler.start(0xC0FFEEU, 12345U);
     bool anyDiff{false};
@@ -286,7 +287,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     CHECK(anyDiff);
   }
   SUBCASE("Every draw lands in the open unit interval") {
-    auto sampler{smdl::OwenSobolSampler()};
+    smdl::OwenSobolSampler sampler{};
     bool isInRange{true};
     for (uint32_t index = 0; index < 256; index++) {
       sampler.start(0x51U, index);
@@ -294,7 +295,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
         const float xi{sampler.generateFloat()};
         isInRange &= xi > 0.0f && xi < 1.0f;
       }
-      const auto xi4{sampler.generateFloat4()};
+      const smdl::float4 xi4{sampler.generateFloat4()};
       isInRange &= xi4.x > 0.0f && xi4.x < 1.0f;
       isInRange &= xi4.w > 0.0f && xi4.w < 1.0f;
     }
@@ -307,14 +308,14 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     // the first 2^m points must remain a (0,2)-net for any seed.
     std::mt19937 prng{};
     for (int rep = 0; rep < 4; rep++) {
-      const auto seed{uint32_t(prng())};
+      const uint32_t seed{uint32_t(prng())};
       for (const int pair : {0, 2}) {
         const int m{10};
-        const auto N{uint32_t(1) << m};
-        auto X{std::vector<uint32_t>(N)};
-        auto Y{std::vector<uint32_t>(N)};
+        const uint32_t N{uint32_t(1) << m};
+        std::vector<unsigned> X{std::vector<uint32_t>(N)};
+        std::vector<unsigned> Y{std::vector<uint32_t>(N)};
         for (uint32_t i = 0; i < N; i++) {
-          auto sampler{smdl::OwenSobolSampler()};
+          smdl::OwenSobolSampler sampler{};
           sampler.start(seed, i);
           for (int d = 0; d < 2 * pair; d++) (void)sampler.generate();
           X[i] = sampler.generate();
@@ -330,8 +331,8 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     for (const uint32_t seed : {1U, 0xC0FFEEU}) {
       for (const uint32_t index : {0U, 7U, 12345U}) {
         for (const int skip : {0, 1, 2, 3}) {
-          auto single{smdl::OwenSobolSampler()};
-          auto paired{smdl::OwenSobolSampler()};
+          smdl::OwenSobolSampler single{};
+          smdl::OwenSobolSampler paired{};
           single.start(seed, index);
           paired.start(seed, index);
           for (int d = 0; d < skip; d++) {
@@ -342,7 +343,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
           const float y{single.generateFloat()};
           const float z{single.generateFloat()};
           const float w{single.generateFloat()};
-          const auto xyzw{paired.generateFloat4()};
+          const smdl::float4 xyzw{paired.generateFloat4()};
           CHECK(xyzw.x == x);
           CHECK(xyzw.y == y);
           CHECK(xyzw.z == z);
@@ -353,7 +354,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     }
   }
   SUBCASE("alignPair advances the dimension it says it does") {
-    auto sampler{smdl::OwenSobolSampler()};
+    smdl::OwenSobolSampler sampler{};
     sampler.start(1U, 2U);
     CHECK(sampler.dimension() == 0U);
     sampler.alignPair(); // aligned already, no move
@@ -381,7 +382,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     const int N{4096};
     double sumX{}, sumY{}, sumXX{}, sumYY{}, sumXY{};
     for (int i = 0; i < N; i++) {
-      auto sampler{smdl::OwenSobolSampler()};
+      smdl::OwenSobolSampler sampler{};
       sampler.start(0xABCDEFU, uint32_t(i));
       const double x{sampler.generateFloat()};
       (void)sampler.generate();
@@ -404,7 +405,7 @@ TEST_CASE("OwenSobolSampler: the draw sequence and its net property") {
     const int N{4096};
     double sum{};
     for (int i = 0; i < N; i++) {
-      auto sampler{smdl::OwenSobolSampler()};
+      smdl::OwenSobolSampler sampler{};
       sampler.start(0x1234U, uint32_t(i));
       sum += sampler.generateFloat();
     }

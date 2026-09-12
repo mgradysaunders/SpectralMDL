@@ -126,7 +126,7 @@ TEST_CASE("Manifold: a connection through a flat mirror") {
   smdl::ManifoldChain chain{};
   chain.count = 1;
   chain.residualTolerance = 1e-6f;
-  auto &seed{chain.vertices[0]};
+  smdl::ManifoldVertexSeed &seed{chain.vertices[0]};
   seed.vertex.point = float3(0.3f, 0.2f, 0.0f);
   seed.vertex.coords = seed.vertex.point;
   seed.etaPrev = seed.etaNext = 1.0f;
@@ -177,7 +177,7 @@ TEST_CASE("Manifold: a connection refracted through a sphere") {
   smdl::ManifoldChain chain{};
   chain.count = 1;
   chain.residualTolerance = 1e-6f;
-  auto &seed{chain.vertices[0]};
+  smdl::ManifoldVertexSeed &seed{chain.vertices[0]};
   seed.vertex.point = normalize(float3(0.25f, -0.2f, 0.94f));
   seed.vertex.coords = seed.vertex.point;
   seed.etaPrev = 1.5f;

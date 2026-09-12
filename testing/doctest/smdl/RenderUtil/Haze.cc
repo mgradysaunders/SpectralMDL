@@ -77,15 +77,15 @@ TEST_CASE("MiePhase: the fit against its generator") {
                        {8.0f, 0.984469f, 0.541064f, 20.32569f, 0.473642f}};
     for (const auto &c : cases) {
       CAPTURE(c.diameter);
-      const auto phase{smdl::MiePhase(c.diameter)};
+      const smdl::MiePhase phase{c.diameter};
       CHECK(std::abs(phase.asymmetryHG() - c.gHG) < 1e-5f);
       CHECK(std::abs(phase.asymmetryDraine() - c.gD) < 1e-5f);
       CHECK(std::abs(phase.alphaDraine() - c.alpha) < 1e-4f);
       CHECK(std::abs(phase.weightDraine() - c.wD) < 1e-5f);
     }
     // The diameter clamps into the fitted domain.
-    const auto clamped{smdl::MiePhase(75.0f)};
-    const auto atMax{smdl::MiePhase(50.0f)};
+    const smdl::MiePhase clamped{75.0f};
+    const smdl::MiePhase atMax{50.0f};
     CHECK(clamped.asymmetryHG() == atMax.asymmetryHG());
     CHECK(clamped.weightDraine() == atMax.weightDraine());
   }
@@ -116,7 +116,7 @@ TEST_CASE("MiePhase: the fit against its generator") {
     }
     // The direction-pair overload is the same function of the
     // deflection cosine, which is the negated dot product.
-    const auto phase{smdl::MiePhase(8.0f)};
+    const smdl::MiePhase phase{8.0f};
     const smdl::float3 wo{0.0f, 0.0f, 1.0f};
     CHECK(phase.evaluate(wo, smdl::float3{0.6f, 0.0f, -0.8f}) ==
           doctest::Approx(phase.evaluate(0.8f)));
@@ -138,7 +138,7 @@ TEST_CASE("MiePhase: the fit against its generator") {
       CAPTURE(c.diameter);
       CAPTURE(c.xi);
       CAPTURE(c.useDraine);
-      const auto phase{smdl::MiePhase(c.diameter)};
+      const smdl::MiePhase phase{c.diameter};
       CHECK(std::abs(sampleDeflection(phase, c.xi, c.useDraine) - c.expected) <
             1e-5f);
     }
@@ -148,7 +148,7 @@ TEST_CASE("MiePhase: the fit against its generator") {
     // anisotropy no diameter resolves to. It takes the root of the
     // anisotropy-free cumulative distribution, whose density is even in
     // the deflection cosine, so its median is exactly zero.
-    const auto isotropic{smdl::MiePhase(0.02f)};
+    const smdl::MiePhase isotropic{0.02f};
     REQUIRE(std::abs(isotropic.asymmetryDraine()) < 0.01f);
     CHECK(std::abs(sampleDeflection(isotropic, 0.5f, true)) < 1e-5f);
     CHECK(sampleDeflection(isotropic, 0.25f, true) < 0.0f);
@@ -159,7 +159,7 @@ TEST_CASE("MiePhase: the fit against its generator") {
     // One diameter per branch of the piecewise fits.
     for (float diameter : {0.05f, 0.8f, 3.0f, 12.0f}) {
       CAPTURE(diameter);
-      const auto phase{smdl::MiePhase(diameter)};
+      const smdl::MiePhase phase{diameter};
       // The reference cumulative distribution of the deflection cosine,
       // integrated finely enough to resolve a forward peak a hundredth
       // of a radian wide.
@@ -208,13 +208,13 @@ TEST_CASE("MiePhase: the fit against its generator") {
         const float u0{-1.0f + 2.0f * float(probe) / 32.0f};
         float empirical{0.0f};
         for (int lobe = 0; lobe < 2; lobe++) {
-          const auto &d{deflections[lobe]};
+          const std::vector<float> &d{deflections[lobe]};
           empirical +=
               weights[lobe] *
               float(std::lower_bound(d.begin(), d.end(), u0) - d.begin()) /
               float(d.size());
         }
-        const auto bin{
+        const size_t bin{
             size_t(std::clamp((u0 + 1.0f) * 0.5f * STEPS, 0.0f, float(STEPS)))};
         worstCDF = std::max(worstCDF, std::abs(empirical - float(cdf[bin])));
       }
@@ -224,19 +224,20 @@ TEST_CASE("MiePhase: the fit against its generator") {
 }
 
 TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
-  const auto wavelens{makeWavelengths()};
-  const auto options{makeOptions()};
-  const auto span{smdl::Span<const float>(wavelens.data(), wavelens.size())};
+  const std::vector<float> wavelens{makeWavelengths()};
+  const smdl::HazeOptions options{makeOptions()};
+  const smdl::Span<const float> span{
+      smdl::Span<const float>(wavelens.data(), wavelens.size())};
   SUBCASE("The optical depth agrees with quadrature") {
     // Rays that climb, descend, and run flat, from origins on both
     // sides of the reference height.
-    const auto haze{smdl::Haze(options, span, 1.0f)};
+    const smdl::Haze haze{options, span, 1.0f};
     std::vector<float> sigmaC(haze.size());
     for (const auto &org :
          {smdl::float3{0.0f, 0.0f, 0.0f}, smdl::float3{0.0f, 0.0f, 400.0f},
           smdl::float3{0.0f, 0.0f, -250.0f}}) {
       for (float dz : {0.95f, 0.4f, 0.05f, 0.0f, -0.03f, -0.3f}) {
-        const auto dir{makeDirection(dz)};
+        const smdl::float3 dir{makeDirection(dz)};
         haze.extinctionAt(org.z,
                           smdl::Span<float>(sigmaC.data(), sigmaC.size()));
         const float k{haze.shapeExponent(dir.z)};
@@ -285,12 +286,12 @@ TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
     // carrying its own shape, interpolated across the channel grid.
     // Wavelengths off the grid at both ends are in the golden, so the
     // clamp is checked too.
-    const auto goldenSpan{
+    const smdl::Span<const float> goldenSpan{
         smdl::Span<const float>(GOLDEN_WAVELENGTHS, GOLDEN_WAVELENGTH_COUNT)};
     for (size_t c = 0; c < GOLDEN_CASE_COUNT; c++) {
-      auto goldenOptions{smdl::HazeOptions{}};
+      smdl::HazeOptions goldenOptions{};
       goldenOptions.visibility = GOLDEN_VISIBILITY[c];
-      const auto haze{smdl::Haze(goldenOptions, goldenSpan, 1.0f)};
+      const smdl::Haze haze{goldenOptions, goldenSpan, 1.0f};
       std::vector<float> sigma(haze.size()), albedo(haze.size());
       haze.extinctionAt(0.0f, smdl::Span<float>(sigma.data(), sigma.size()));
       haze.albedo(smdl::Span<float>(albedo.data(), albedo.size()));
@@ -310,10 +311,10 @@ TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
     // visibility.
     const float reference[]{550.0f};
     for (float visibility : {5.0f, 12.0f, 23.0f, 50.0f, 100.0f}) {
-      auto referenceOptions{smdl::HazeOptions{}};
+      smdl::HazeOptions referenceOptions{};
       referenceOptions.visibility = visibility;
-      const auto haze{smdl::Haze(referenceOptions,
-                                 smdl::Span<const float>(reference, 1), 1.0f)};
+      const smdl::Haze haze{smdl::Haze(
+          referenceOptions, smdl::Span<const float>(reference, 1), 1.0f)};
       float sigma{};
       haze.extinctionAt(0.0f, smdl::Span<float>(&sigma, 1));
       CAPTURE(visibility);
@@ -322,7 +323,7 @@ TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
     }
   }
   SUBCASE("Scattering never exceeds extinction") {
-    const auto haze{smdl::Haze(options, span, 1.0f)};
+    const smdl::Haze haze{options, span, 1.0f};
     std::vector<float> albedo(haze.size());
     haze.albedo(smdl::Span<float>(albedo.data(), albedo.size()));
     for (size_t i = 0; i < albedo.size(); i++) {
@@ -335,7 +336,7 @@ TEST_CASE("Haze: the optical depth and the free flight that inverts it") {
   SUBCASE("The zenith depth is finite and approached from below") {
     // An upward ray leaves the atmosphere having accumulated
     // `sigmaC / k`, which is why the sky survives the haze.
-    const auto haze{smdl::Haze(options, span, 1.0f)};
+    const smdl::Haze haze{options, span, 1.0f};
     for (float dz : {0.2f, 0.6f, 1.0f}) {
       CAPTURE(dz);
       const float k{haze.shapeExponent(dz)};

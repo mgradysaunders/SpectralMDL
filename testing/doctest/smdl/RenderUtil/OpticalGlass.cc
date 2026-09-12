@@ -45,7 +45,7 @@ constexpr Printed PRINTED[] = {
 
 // The glass the catalog holds under `name`, which it must.
 [[nodiscard]] const smdl::OpticalGlass &catalogGlass(std::string_view name) {
-  const auto *entry{smdl::findOpticalGlass(name)};
+  const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass(name)};
   REQUIRE_MESSAGE(entry, "the catalog holds no ", asText(name));
   return entry->glass;
 }
@@ -54,14 +54,14 @@ constexpr Printed PRINTED[] = {
 
 TEST_CASE("OpticalGlass: the three ways a glass is stated") {
   SUBCASE("Air is exactly 1 at every wavelength") {
-    const auto air{smdl::OpticalGlass{}};
+    const smdl::OpticalGlass air{};
     CHECK(air.kind() == Kind::CONSTANT);
     CHECK_FALSE(air.isDispersive());
     for (const float wavelength : {300.0f, smdl::FRAUNHOFER_D_LINE, 2500.0f})
       CHECK(air.indexAt(wavelength) == 1.0f);
   }
   SUBCASE("A constant glass is its index everywhere and disperses nothing") {
-    const auto glass{smdl::OpticalGlass::constant(1.67f)};
+    const smdl::OpticalGlass glass{smdl::OpticalGlass::constant(1.67f)};
     CHECK_FALSE(glass.isDispersive());
     CHECK(glass.indexAt(400.0f) == 1.67f);
     CHECK(glass.indexAt(700.0f) == 1.67f);
@@ -70,7 +70,8 @@ TEST_CASE("OpticalGlass: the three ways a glass is stated") {
     CHECK(glass.partialDispersion() == 0.0f);
   }
   SUBCASE("An Abbe fit passes through its nd, Vd, and partial dispersion") {
-    const auto glass{smdl::OpticalGlass::abbe(1.62041f, 60.32f, 0.5412f)};
+    const smdl::OpticalGlass glass{
+        smdl::OpticalGlass::abbe(1.62041f, 60.32f, 0.5412f)};
     CHECK(glass.kind() == Kind::ABBE);
     CHECK(glass.isDispersive());
     CHECK_NEAR(glass.nd(), 1.62041f, 1e-6f);
@@ -79,7 +80,8 @@ TEST_CASE("OpticalGlass: the three ways a glass is stated") {
   }
   SUBCASE("Without a partial dispersion the fit takes Schott's normal line") {
     for (const float abbeNumber : {25.0f, 45.0f, 64.0f}) {
-      const auto glass{smdl::OpticalGlass::abbe(1.6f, abbeNumber)};
+      const smdl::OpticalGlass glass{
+          smdl::OpticalGlass::abbe(1.6f, abbeNumber)};
       CHECK_NEAR(glass.partialDispersion(), 0.6438f - 0.001682f * abbeNumber,
                  1e-4f);
     }
@@ -87,18 +89,18 @@ TEST_CASE("OpticalGlass: the three ways a glass is stated") {
   SUBCASE("Glasses of different Abbe number differ in partial dispersion") {
     // Which a two-term Cauchy through nd and Vd alone cannot say, and is
     // why an achromat designed on one has no secondary spectrum.
-    const auto crown{smdl::OpticalGlass::abbe(1.5168f, 64.17f)};
-    const auto flint{smdl::OpticalGlass::abbe(1.62004f, 36.37f)};
+    const smdl::OpticalGlass crown{smdl::OpticalGlass::abbe(1.5168f, 64.17f)};
+    const smdl::OpticalGlass flint{smdl::OpticalGlass::abbe(1.62004f, 36.37f)};
     CHECK(flint.partialDispersion() - crown.partialDispersion() > 0.04f);
   }
   SUBCASE("An Abbe fit tracks the maker's Sellmeier through the visible") {
     // On the glass's own partial dispersion, so that what is left is the
     // Cauchy form against the Sellmeier.
     for (const auto &entry : smdl::opticalGlassCatalog()) {
-      const auto &maker{entry.glass};
-      const auto fit{smdl::OpticalGlass::abbe(maker.nd(), maker.abbeNumber(),
-                                              maker.partialDispersion())};
-      auto worst{0.0f};
+      const smdl::OpticalGlass &maker{entry.glass};
+      const smdl::OpticalGlass fit{smdl::OpticalGlass::abbe(
+          maker.nd(), maker.abbeNumber(), maker.partialDispersion())};
+      float worst{0.0f};
       for (int wavelength = 450; wavelength <= 700; wavelength += 5)
         worst = std::max(worst, std::abs(fit.indexAt(float(wavelength)) -
                                          maker.indexAt(float(wavelength))));
@@ -109,7 +111,7 @@ TEST_CASE("OpticalGlass: the three ways a glass is stated") {
     // A patent prints no partial dispersion, so this is what a transcribed
     // glass gets, and a real one must never be refused.
     for (const auto &entry : smdl::opticalGlassCatalog()) {
-      const auto &maker{entry.glass};
+      const smdl::OpticalGlass &maker{entry.glass};
       INFO(asText(entry.name));
       CHECK_OK(smdl::catchAndReturnError([&] {
         (void)smdl::OpticalGlass::abbe(maker.nd(), maker.abbeNumber());
@@ -117,18 +119,18 @@ TEST_CASE("OpticalGlass: the three ways a glass is stated") {
     }
   }
   SUBCASE("A Sellmeier glass is the maker's formula") {
-    const auto glass{smdl::OpticalGlass::sellmeier(
+    const smdl::OpticalGlass glass{smdl::OpticalGlass::sellmeier(
         {1.03961212f, 0.231792344f, 1.01046945f},
         {0.00600069867f, 0.0200179144f, 103.560653f})};
     CHECK(glass.kind() == Kind::SELLMEIER);
     CHECK(glass.isDispersive());
-    const auto &catalog{catalogGlass("N-BK7")};
+    const smdl::OpticalGlass &catalog{catalogGlass("N-BK7")};
     for (const float wavelength : {400.0f, 550.0f, 700.0f, 1550.0f})
       CHECK(
           hasSameBits(glass.indexAt(wavelength), catalog.indexAt(wavelength)));
   }
   SUBCASE("A wavelength outside the domain reads as the nearest end") {
-    const auto &glass{catalogGlass("N-SF11")};
+    const smdl::OpticalGlass &glass{catalogGlass("N-SF11")};
     const float shortEnd{glass.indexAt(smdl::OPTICAL_GLASS_WAVELENGTH_MIN)};
     const float longEnd{glass.indexAt(smdl::OPTICAL_GLASS_WAVELENGTH_MAX)};
     CHECK(glass.indexAt(100.0f) == shortEnd);
@@ -209,7 +211,7 @@ TEST_CASE("OpticalGlass: the built-in catalog") {
   SUBCASE("Every SCHOTT glass reproduces the nd and Vd its maker prints") {
     // To half the last digit printed, which is 5e-6 in nd and 0.005 in Vd.
     for (const auto &printed : PRINTED) {
-      const auto &glass{catalogGlass(printed.name)};
+      const smdl::OpticalGlass &glass{catalogGlass(printed.name)};
       CHECK_MESSAGE(std::abs(glass.nd() - printed.nd) <= 5e-6f,
                     asText(printed.name), " has nd ", glass.nd(),
                     " against the printed ", printed.nd);
@@ -224,8 +226,8 @@ TEST_CASE("OpticalGlass: the built-in catalog") {
     constexpr double SILICA_C[3]{0.0684043, 0.1162414, 9.896161};
     constexpr double FLUORITE_B[3]{0.5675888, 0.4710914, 3.8484723};
     constexpr double FLUORITE_C[3]{0.050263605, 0.1003909, 34.649040};
-    const auto &silica{catalogGlass("FUSED-SILICA")};
-    const auto &fluorite{catalogGlass("CAF2")};
+    const smdl::OpticalGlass &silica{catalogGlass("FUSED-SILICA")};
+    const smdl::OpticalGlass &fluorite{catalogGlass("CAF2")};
     for (int wavelength = 300; wavelength <= 2500; wavelength += 100) {
       CHECK_NEAR(silica.indexAt(float(wavelength)),
                  malitson(SILICA_B, SILICA_C, wavelength), 1e-6);
@@ -234,7 +236,7 @@ TEST_CASE("OpticalGlass: the built-in catalog") {
     }
   }
   SUBCASE("Names match whatever their case, and an alias finds its target") {
-    const auto *entry{smdl::findOpticalGlass("n-bk7")};
+    const smdl::OpticalGlassEntry *entry{smdl::findOpticalGlass("n-bk7")};
     REQUIRE(entry);
     CHECK(asText(entry->name) == "N-BK7");
     CHECK(smdl::findOpticalGlass("BK7") == entry);
@@ -255,7 +257,8 @@ TEST_CASE("OpticalGlass: the built-in catalog") {
                     asText(entry.name), " finds another entry");
   }
   SUBCASE("Every glass disperses, in order of falling Abbe number") {
-    const auto catalog{smdl::opticalGlassCatalog()};
+    const smdl::Span<const smdl::OpticalGlassEntry> catalog{
+        smdl::opticalGlassCatalog()};
     CHECK(catalog.size() == 23);
     for (size_t i = 0; i < catalog.size(); i++) {
       CHECK(catalog[i].glass.kind() == Kind::SELLMEIER);

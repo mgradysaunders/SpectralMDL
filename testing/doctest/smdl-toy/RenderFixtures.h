@@ -29,7 +29,7 @@ public:
   /// quadrature weights, and `stateBase` at their defaults, which is what
   /// a scene test needs and all it needs.
   ScopedGrid() {
-    auto grid{std::vector<float>(gRenderGrid.numBands)};
+    std::vector<float> grid(gRenderGrid.numBands);
     for (size_t i = 0; i < grid.size(); i++)
       grid[i] = 400.0f + 300.0f * float(i) / float(grid.size() - 1);
     mWavelengths = Color(smdl::Span<const float>(grid.data(), grid.size()));
@@ -40,7 +40,8 @@ public:
   /// band count and the quadrature weights along with the wavelengths, so
   /// that every `Color` constructed inside the scope is sized to it.
   ScopedGrid(const std::vector<float> &grid, bool shouldJitter) {
-    const auto span{smdl::Span<const float>(grid.data(), grid.size())};
+    const smdl::Span<const float> span{
+        smdl::Span<const float>(grid.data(), grid.size())};
     gRenderGrid.reset(span, shouldJitter);
     mWavelengths = Color(span);
   }

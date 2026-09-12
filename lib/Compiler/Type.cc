@@ -19,11 +19,11 @@ namespace {
 // and struct constructors describe themselves the same way.
 std::string toSignatureString(std::string_view name,
                               const ParameterList &params) {
-  auto str{std::string(name)};
+  std::string str{name};
   str += '(';
   for (size_t i = 0; i < params.size(); i++) {
     if (i) str += ", ";
-    const auto &param{params[i]};
+    const Parameter &param{params[i]};
     str += param.type->displayName;
     if (!param.name.empty()) {
       str += ' ';
@@ -42,7 +42,7 @@ std::string toSignatureString(std::string_view name,
 // no-op if the message does not begin with that prefix.
 std::string dropSourceLocation(std::string message,
                                const SourceLocation &srcLoc) {
-  if (const auto prefix{srcLoc.formatMessage({})};
+  if (const std::string prefix{srcLoc.formatMessage({})};
       !prefix.empty() && llvm::StringRef(message).starts_with(prefix))
     message.erase(0, prefix.size());
   return message;
@@ -116,7 +116,7 @@ bool Type::isOptionalUnion() const {
 }
 
 bool Type::isDefault() const {
-  if (auto structType{llvm::dyn_cast<StructType>(this)}) {
+  if (const StructType *structType{llvm::dyn_cast<StructType>(this)}) {
     if (!structType->instanceOf) {
       // The struct is considered 'default' if it is the default type for
       // its first tag.
@@ -137,14 +137,14 @@ Type *Type::getPointeeType() const {
 }
 
 Type *Type::getFirstNonPointerType() const {
-  auto type{const_cast<Type *>(this)};
+  Type *type{const_cast<Type *>(this)};
   while (type->isPointer()) type = type->getPointeeType();
   return type;
 }
 
 size_t Type::getFirstNonPointerTypeDepth() const {
   size_t depth{};
-  auto type{const_cast<Type *>(this)};
+  Type *type{const_cast<Type *>(this)};
   while (type->isPointer()) {
     type = type->getPointeeType();
     depth++;
@@ -249,15 +249,15 @@ std::optional<Value> tryConstructFromPointer(Emitter &emitter, Type *resultType,
 
 Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
-  auto &context{emitter.context};
-  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+  Context &context{emitter.context};
+  if (std::optional<Value> trivial{invokeTrivialCases(emitter, args)}) {
     return *trivial;
   }
   if (extent.isScalar()) {
     if (!args.isOnePositional())
       srcLoc.throwError("scalar ", Quoted(displayName),
                         " constructor expects 1 positional argument");
-    auto value{args[0].value};
+    Value value{args[0].value};
     // If constructing bool from pointer, check that it is non-NULL.
     if (scalar.isBoolean() && value.type->isPointer())
       return RValue(this,
@@ -276,9 +276,9 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       return RValue(
           this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
   } else if (extent.isVector()) {
-    auto dim{size_t(extent.getVectorSize())};
+    size_t dim{size_t(extent.getVectorSize())};
     if (args.isOnePositional()) {
-      auto value{args[0].value};
+      Value value{args[0].value};
       // If constructing from scalar, splat the scalar value.
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       // float3(2.7) // == float3(2.7, 2.7, 2.7)
@@ -299,8 +299,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                                          llvmType));
       // If constructing from a pointer to the scalar type, load from the
       // pointer.
-      if (auto loaded{tryConstructFromPointer(emitter, this,
-                                              getScalarType(context), value)})
+      if (std::optional<Value> loaded{tryConstructFromPointer(
+              emitter, this, getScalarType(context), value)})
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `_colorToRgb` function in the `api` module.
@@ -320,7 +320,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       }
     }
     // From scalars
-    auto canConstructFromScalars{[&] {
+    bool canConstructFromScalars{[&] {
       if (!(dim == args.size() && args.isAllTrue([](auto &arg) {
             return arg.value.type->isArithmeticScalar();
           })))
@@ -331,14 +331,14 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
              !args.isAnyNamed();
     }()};
     if (canConstructFromScalars) {
-      auto values{llvm::SmallVector<Value>{}};
+      llvm::SmallVector<Value> values{};
       // If vector size is 2, 3, or 4, possibly resolve the argument names.
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       // float4(w: 3.0, x: 5.0, y: 7.0, z: 9.0)
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       if (2 <= dim && dim <= 4) {
-        auto scalarType{getScalarType(context)};
-        auto params{ParameterList{}};
+        ArithmeticType *scalarType{getScalarType(context)};
+        ParameterList params{};
         params.push_back(Parameter{scalarType, "x"});
         params.push_back(Parameter{scalarType, "y"});
         if (dim >= 3) params.push_back(Parameter{scalarType, "z"});
@@ -350,13 +350,13 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         // by now that they have no names!)
         for (auto &arg : args) values.push_back(arg.value);
       }
-      auto result{Value::zero(this)};
+      Value result{Value::zero(this)};
       for (size_t i = 0; i < dim; i++)
         result = emitter.insert(result, values[i], i, srcLoc);
       return result;
     }
     // From scalars and vectors
-    auto canConstructFromScalarsAndVectors{[&] {
+    bool canConstructFromScalarsAndVectors{[&] {
       if (!args.isAllTrue([](auto &arg) {
             return arg.isPositional() &&
                    (arg.value.type->isArithmeticScalar() ||
@@ -370,8 +370,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       return impliedDim == dim;
     }()};
     if (canConstructFromScalarsAndVectors) {
-      auto result{Value::zero(this)};
-      auto i{size_t(0)};
+      Value result{Value::zero(this)};
+      size_t i{0};
       for (auto &arg : args) {
         // Convert the scalar to avoid redundant casting later. Then
         // - If the argument is a scalar, insert it into the vector.
@@ -379,8 +379,9 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         // into the vector.
         SMDL_SANITY_CHECK(arg.value.type->isArithmeticScalar() ||
                           arg.value.type->isArithmeticVector());
-        auto arithType{static_cast<ArithmeticType *>(arg.value.type)};
-        auto value{emitter.invoke(
+        ArithmeticType *arithType{
+            static_cast<ArithmeticType *>(arg.value.type)};
+        Value value{emitter.invoke(
             arithType->getWithDifferentScalar(context, scalar), arg, srcLoc)};
         if (arg.value.type->isArithmeticScalar()) {
           result = emitter.insert(result, value, i++, srcLoc);
@@ -393,10 +394,10 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       return result;
     }
   } else if (extent.isMatrix()) {
-    auto scalarType{getScalarType(context)};
-    auto columnType{getColumnType(context)};
+    ArithmeticType *scalarType{getScalarType(context)};
+    ArithmeticType *columnType{getColumnType(context)};
     auto construct{[&](auto &&func) {
-      auto result{Value::zero(this)};
+      Value result{Value::zero(this)};
       for (unsigned j = 0; j < extent.numCols; j++)
         result = emitter.insert(result, std::invoke(func, j), j, srcLoc);
       return result;
@@ -407,7 +408,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       if (canConstructFromScalar)
         return construct(
             [&, scalar = emitter.invoke(scalarType, args, srcLoc)](unsigned j) {
-              auto column{Value::zero(columnType)};
+              Value column{Value::zero(columnType)};
               if (j < extent.numRows)
                 column = emitter.insert(column, scalar, j, srcLoc);
               return column;
@@ -436,7 +437,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
               [](auto &arg) { return arg.value.type->isArithmeticScalar(); })};
       if (canConstructFromScalars)
         return construct([&](unsigned j) {
-          auto column{Value::zero(columnType)};
+          Value column{Value::zero(columnType)};
           for (unsigned i = 0; i < extent.numRows; i++)
             column = emitter.insert(column, args[j * extent.numRows + i].value,
                                     i, srcLoc);
@@ -447,7 +448,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
   // These constructions are a chain of shape tests rather than a list of
   // candidates, so say what the shape accepts instead of only that the
   // arguments did not fit it.
-  auto accepts{std::string()};
+  std::string accepts{};
   if (extent.isVector()) {
     accepts = concat("; ", Quoted(displayName),
                      " takes one scalar, or scalars and shorter vectors "
@@ -487,20 +488,20 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     return result;
   }};
   if (name.size() == 1) {
-    if (auto i{toIndex(name[0])})
+    if (std::optional<unsigned> i{toIndex(name[0])})
       return named(accessIndex(
           emitter, value, emitter.context.getComptimeInt(int(*i)), srcLoc));
   }
   if (extent.isVector()) {
-    if (auto iMask{toIndexSwizzle(name)})
+    if (std::optional<llvm::SmallVector<int>> iMask{toIndexSwizzle(name)})
       return named(RValue(
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
           emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask)));
   }
   // The nameable components, so that a swizzle off the end says how far it
   // may actually go.
-  auto components{std::string()};
-  auto colorComponents{std::string()};
+  std::string components{};
+  std::string colorComponents{};
   for (uint32_t i{}; i < 4; i++) {
     if (!toIndex("xyzw"[i])) break;
     if (!components.empty()) {
@@ -526,8 +527,8 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
     srcLoc.throwError("scalar ", Quoted(displayName),
                       " has no index access operator");
   if (i.isComptimeInt()) {
-    const auto iNow{i.getComptimeSignedInt()};
-    const auto count{
+    const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
+    const int64_t count{
         int64_t(extent.isVector() ? extent.numRows : extent.numCols)};
     if (!iNow || *iNow < 0 || *iNow >= count)
       srcLoc.throwError("index out of bounds for ", Quoted(displayName));
@@ -549,7 +550,7 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
     }
   } else {
     if (extent.isVector()) {
-      auto scalarType{getScalarType(emitter.context)};
+      ArithmeticType *scalarType{getScalarType(emitter.context)};
       return LValue(
           scalarType,
           emitter.builder.CreateGEP(
@@ -617,8 +618,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     // The element type may not be trivially constructible, so explicitly
     // default construct the element type and insert it into each element in the
     // array.
-    auto value0{emitter.invoke(elemType, args, srcLoc)};
-    auto result{Value::zero(emitter.context.getArrayType(value0.type, size))};
+    Value value0{emitter.invoke(elemType, args, srcLoc)};
+    Value result{Value::zero(emitter.context.getArrayType(value0.type, size))};
     for (uint32_t i = 0; i < size; i++)
       result = emitter.insert(result, value0, i, srcLoc);
     return result;
@@ -634,7 +635,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (args.isAllPositional() && args.size() == size) {
     if (isAbstract()) {
-      auto argElemType{emitter.context.getCommonType(
+      Type *argElemType{emitter.context.getCommonType(
           args.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
       if (!emitter.context.isPerfectlyConvertible(argElemType, elemType))
         srcLoc.throwError("cannot construct abstract array ",
@@ -645,7 +646,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     } else {
       // If we can construct all elements directly from arguments, construct the
       // array by converting each argument.
-      auto result{Value::zero(this)};
+      Value result{Value::zero(this)};
       for (uint32_t i = 0; i < size; i++)
         result = emitter.insert(
             result, emitter.invoke(elemType, args[i].value, srcLoc), i, srcLoc);
@@ -653,19 +654,20 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     }
   }
   if (args.isOnePositional()) {
-    auto value{args[0].value};
+    Value value{args[0].value};
     // If constructing from array type of identical size but different element
     // type, try to convert each element.
-    if (auto arrType{llvm::dyn_cast<ArrayType>(value.type)};
+    if (ArrayType *arrType{llvm::dyn_cast<ArrayType>(value.type)};
         arrType && arrType->size == size) {
-      auto elems{emitter.accessEveryIndex(
+      std::vector<Value> elems{emitter.accessEveryIndex(
           value, size, srcLoc, [&](unsigned, Value elem) {
             return emitter.invoke(elemType, elem, srcLoc);
           })};
       return invoke(emitter, llvm::ArrayRef<Value>(elems), srcLoc);
     }
     // If constructing from pointer to element type, load from the pointer.
-    if (auto loaded{tryConstructFromPointer(emitter, this, elemType, value)})
+    if (std::optional<Value> loaded{
+            tryConstructFromPointer(emitter, this, elemType, value)})
       return *loaded;
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
@@ -686,7 +688,7 @@ Value ArrayType::accessField(Emitter &emitter, Value value,
     }
     // The behavior here is to construct an `auto[]` by accessing
     // the field on each of element in the array.
-    auto elems{emitter.accessEveryIndex(
+    std::vector<Value> elems{emitter.accessEveryIndex(
         value, size, srcLoc, [&](unsigned, Value elem) {
           return emitter.accessField(elem, name, srcLoc);
         })};
@@ -703,7 +705,7 @@ Value ArrayType::accessIndex(Emitter &emitter, Value value, Value i,
                              const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(!isAbstract());
   if (i.isComptimeInt()) {
-    const auto iNow{i.getComptimeSignedInt()};
+    const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
     if (!iNow || *iNow < 0 || *iNow >= int64_t(size))
       srcLoc.throwError("index out of bounds for ", Quoted(displayName));
   }
@@ -769,7 +771,7 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
     Scalar scalar{static_cast<ArithmeticType *>(args[0].value.type)->scalar};
     size_t extent{};
     for (auto arg : args) {
-      auto arithType{static_cast<ArithmeticType *>(arg.value.type)};
+      ArithmeticType *arithType{static_cast<ArithmeticType *>(arg.value.type)};
       scalar = scalar.getCommon(arithType->scalar);
       extent += arithType->extent.numRows;
     }
@@ -796,12 +798,12 @@ ColorType::ColorType(Context &context) {
 
 Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
-  auto &context{emitter.context};
-  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+  Context &context{emitter.context};
+  if (std::optional<Value> trivial{invokeTrivialCases(emitter, args)}) {
     return *trivial;
   }
   if (args.isOnePositional()) {
-    auto value{args[0].value};
+    Value value{args[0].value};
     if (value.type->isArithmeticScalar())
       return RValue(this,
                     emitter.builder.CreateVectorSplat(
@@ -812,8 +814,8 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
             wavelengthBaseMax)
       return RValue(
           this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
-    if (auto loaded{tryConstructFromPointer(emitter, this,
-                                            context.getFloatType(), value)})
+    if (std::optional<Value> loaded{tryConstructFromPointer(
+            emitter, this, context.getFloatType(), value)})
       return *loaded;
     if (value.type == context.getFloatType(Extent(3))) {
       try {
@@ -837,12 +839,13 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                               value, srcLoc);
   }
   if (args.size() <= 3 && args.isOnlyTheseNames({"r", "g", "b"})) {
-    auto params{ParameterList{
+    ParameterList params{
         Parameter{context.getFloatType(), "r", {}, {}, {}, true},
         Parameter{context.getFloatType(), "g", {}, {}, {}, true},
-        Parameter{context.getFloatType(), "b", {}, {}, {}, true}}};
+        Parameter{context.getFloatType(), "b", {}, {}, {}, true}};
     if (emitter.canResolveArguments(params, args, srcLoc)) {
-      auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
+      Emitter::ResolvedArguments resolvedArgs{
+          emitter.resolveArguments(params, args, srcLoc)};
       return emitter.emitCall(
           context.getKeyword("_rgbToColor"),
           emitter.invoke(context.getFloatType(Extent(3)),
@@ -852,15 +855,18 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (args.size() == 2 &&
       args.isOnlyTheseNames({"wavelengths", "amplitudes"})) {
-    auto floatArrayType{
+    InferredSizeArrayType *floatArrayType{
         context.getInferredSizeArrayType(context.getFloatType())};
-    auto params{ParameterList{
+    ParameterList params{
         Parameter{floatArrayType, "wavelengths", {}, {}, {}, false},
-        Parameter{floatArrayType, "amplitudes", {}, {}, {}, false}}};
+        Parameter{floatArrayType, "amplitudes", {}, {}, {}, false}};
     if (emitter.canResolveArguments(params, args, srcLoc)) {
-      auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
-      auto arrayType0{llvm::dyn_cast<ArrayType>(resolvedArgs.values[0].type)};
-      auto arrayType1{llvm::dyn_cast<ArrayType>(resolvedArgs.values[1].type)};
+      Emitter::ResolvedArguments resolvedArgs{
+          emitter.resolveArguments(params, args, srcLoc)};
+      ArrayType *arrayType0{
+          llvm::dyn_cast<ArrayType>(resolvedArgs.values[0].type)};
+      ArrayType *arrayType1{
+          llvm::dyn_cast<ArrayType>(resolvedArgs.values[1].type)};
       if (!arrayType0 || arrayType0 != arrayType1)
         srcLoc.throwError(
             "expected wavelength and amplitude arrays to be same size");
@@ -881,7 +887,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
 Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
                              const SourceLocation &srcLoc) {
   if (i.isComptimeInt()) {
-    const auto iNow{i.getComptimeSignedInt()};
+    const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
     if (!iNow || *iNow < 0 || *iNow >= int64_t(wavelengthBaseMax))
       srcLoc.throwError("index out of bounds for ", Quoted(displayName));
   }
@@ -896,7 +902,7 @@ Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
       });
     }
   } else {
-    auto scalarType{getArithmeticScalarType(emitter.context)};
+    ArithmeticType *scalarType{getArithmeticScalarType(emitter.context)};
     return LValue(
         scalarType,
         emitter.builder.CreateGEP(
@@ -949,14 +955,14 @@ Value ComptimeUnionType::invoke(Emitter &emitter, const ArgumentList &args,
 
 //--{ EnumType
 void EnumType::initialize(Emitter &emitter) {
-  auto &context{emitter.context};
+  Context &context{emitter.context};
   llvmType = context.getIntType()->llvmType;
   emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
   emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
-  auto lastValue{Value()};
+  Value lastValue{};
   for (auto &declarator : decl.declarators) {
-    auto &name{declarator.name};
-    auto value{[&]() {
+    AST::Name &name{declarator.name};
+    Value value{[&]() {
       if (declarator.exprInit)
         return emitter.invoke(context.getIntType(),
                               emitter.emit(declarator.exprInit), name.srcLoc);
@@ -975,21 +981,21 @@ void EnumType::initialize(Emitter &emitter) {
   }
 
   // Initialize the to-string LLVM function. This is just a big switch.
-  auto returnType{context.getStringType()};
+  Type *returnType{context.getStringType()};
   llvmFuncToString = emitter.createFunction(
       displayName + ".to_string", /*isPure=*/true, returnType,
       {Parameter{this, "value"}}, decl.name.srcLoc, [&]() {
-        auto value{
+        Value value{
             emitter.resolveIdentifier(std::string_view("value"), decl.srcLoc)};
-        auto blockDefault{emitter.createBlock("switch.default")};
-        auto switchInst{
+        llvm::BasicBlock *blockDefault{emitter.createBlock("switch.default")};
+        llvm::SwitchInst *switchInst{
             emitter.builder.CreateSwitch(emitter.rvalue(value), blockDefault)};
-        auto switchUniq{llvm::DenseSet<llvm::Value *>{}};
+        llvm::DenseSet<llvm::Value *> switchUniq{};
         for (unsigned i = 0; i < decl.declarators.size(); i++) {
           auto &declarator{decl.declarators[i]};
           if (!switchUniq.insert(declarator.llvmConst).second)
             continue; // Skip repeats!
-          auto blockCase{
+          llvm::BasicBlock *blockCase{
               emitter.createBlock("switch.case." + std::to_string(i))};
           switchInst->addCase(declarator.llvmConst, blockCase);
           emitter.builder.SetInsertPoint(blockCase);
@@ -1008,10 +1014,10 @@ void EnumType::initialize(Emitter &emitter) {
 
 Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
                        const SourceLocation &srcLoc) {
-  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+  if (std::optional<Value> trivial{invokeTrivialCases(emitter, args)}) {
     return *trivial;
   } else if (args.isOnePositional()) {
-    auto value{args[0].value};
+    Value value{args[0].value};
     if ((value.type->isArithmeticScalar() &&
          value.type->isArithmeticIntegral()) ||
         value.type->isEnum())
@@ -1030,7 +1036,7 @@ namespace {
 // `owner` phrase names the offending declaration in the diagnostic.
 void rejectDuplicateParameterNames(const ParameterList &params,
                                    std::string_view owner) {
-  auto uniqueNames{llvm::StringSet<>()};
+  llvm::StringSet<> uniqueNames{};
   for (auto &param : params)
     if (!uniqueNames.insert(param.name).second)
       param.getSourceLocation().throwError("duplicate parameter name ",
@@ -1039,14 +1045,14 @@ void rejectDuplicateParameterNames(const ParameterList &params,
 } // namespace
 
 void FunctionType::initialize(Emitter &emitter) {
-  auto &context{emitter.context};
+  Context &context{emitter.context};
   // Find previous overload.
-  if (auto prev{emitter.resolveIdentifier(decl.name, decl.srcLoc,
-                                          /*shouldDefaultToVoid=*/true)};
+  if (Value prev{emitter.resolveIdentifier(decl.name, decl.srcLoc,
+                                           /*shouldDefaultToVoid=*/true)};
       !prev.isVoid()) {
-    auto prevType{prev.isComptimeMetaType(context)
-                      ? prev.getComptimeMetaType(context, decl.srcLoc)
-                      : nullptr};
+    Type *prevType{prev.isComptimeMetaType(context)
+                       ? prev.getComptimeMetaType(context, decl.srcLoc)
+                       : nullptr};
     if (!prevType || !prevType->isFunction())
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " shadows non-function");
@@ -1055,7 +1061,7 @@ void FunctionType::initialize(Emitter &emitter) {
     // the imported module's interned `FunctionType` and leak this (possibly
     // non-exported) function into every other importer's overload
     // resolution.
-    auto prevFunc{static_cast<FunctionType *>(prevType)};
+    FunctionType *prevFunc{static_cast<FunctionType *>(prevType)};
     if (prevFunc->decl.srcLoc.module_ == decl.srcLoc.module_) {
       if (prevFunc->isVariant())
         decl.srcLoc.throwError("function ", Quoted(declName),
@@ -1093,7 +1099,7 @@ void FunctionType::initialize(Emitter &emitter) {
                            " declared '@(macro)' must not be variadic");
   }
   auto compileNow{[&] {
-    auto paramTypes{params.getTypes()};
+    std::vector<Type *> paramTypes{params.getTypes()};
     getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
                                                    paramTypes.end()));
   }};
@@ -1135,7 +1141,7 @@ void FunctionType::initialize(Emitter &emitter) {
 }
 
 void FunctionType::initializeLambda(Emitter &emitter) {
-  auto &context{emitter.context};
+  Context &context{emitter.context};
   // Unlike `initialize()`: no overload discovery and no name declaration,
   // because a lambda is anonymous. The resolution anchor is the lambda
   // expression itself, so the body resolves names visible at the point the
@@ -1158,9 +1164,9 @@ void FunctionType::initializeLambda(Emitter &emitter) {
 
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                            const SourceLocation &srcLoc) {
-  auto func{resolveOverload(emitter, args, srcLoc)};
+  FunctionType *func{resolveOverload(emitter, args, srcLoc)};
   if (func->isVariant()) {
-    auto result{Value()};
+    Value result{};
     SMDL_PRESERVE(emitter.scope, emitter.anchors);
     emitter.restoreResolutionAnchor(func->params);
     emitter.handleScope(nullptr, nullptr, [&]() {
@@ -1173,14 +1179,14 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       // In the function variant call expression, we visit each argument in the
       // AST argument list and add it to the patched argument list but only if
       // the caller did not explicitly set it by name.
-      auto patchedArgs{args};
+      ArgumentList patchedArgs{args};
       for (auto &astArg : astCall->args) {
         if (!patchedArgs.hasName(astArg.name.srcName)) {
           patchedArgs.push_back(Argument{astArg.name.srcName,
                                          emitter.emit(astArg.expr), &astArg});
         }
       }
-      auto callee{emitter.emit(astCall->expr)};
+      Value callee{emitter.emit(astCall->expr)};
       try {
         result = emitter.emitCall(callee, patchedArgs, srcLoc);
       } catch (const Error &error) {
@@ -1201,10 +1207,11 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     });
     return result;
   }
-  auto resolvedArgs{emitter.resolveArguments(
+  Emitter::ResolvedArguments resolvedArgs{emitter.resolveArguments(
       func->params, args, srcLoc, /*shouldSkipEmit=*/false,
       /*shouldPassAggregatesIndirectly=*/func->usesIndirectParams())};
-  if (auto impliedVisitArgs{resolvedArgs.getImpliedVisitArguments()})
+  if (std::optional<ArgumentList> impliedVisitArgs{
+          resolvedArgs.getImpliedVisitArguments()})
     return emitter.emitCall(emitter.context.getComptimeMetaType(this),
                             *impliedVisitArgs, srcLoc);
   if (func->isMacro()) {
@@ -1214,7 +1221,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                         " exceeds compile-time recursion limit 1024");
     SMDL_PRESERVE(emitter.scope, emitter.anchors);
     emitter.restoreResolutionAnchor(func->params);
-    auto result{emitter.createFunctionImplementation(
+    Value result{emitter.createFunctionImplementation(
         func->declName, func->isPure() || !emitter.state, func->returnType,
         func->params, resolvedArgs.values, srcLoc, [&]() {
           if (func->decl.hasAttribute("fastmath"))
@@ -1228,15 +1235,15 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     if (!func->isPure() && !emitter.state)
       srcLoc.throwError("cannot call ", Quoted(func->declName),
                         " from '@(pure)' context");
-    auto &instance{
+    Instance &instance{
         func->getInstance(emitter, resolvedArgs.getNonVariadicTypes())};
-    auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
+    llvm::SmallVector<llvm::Value *> llvmArgs{};
     // Indirect ('sret') returns receive a caller-provided result slot as
     // the leading argument (see 'Emitter::createFunction'), and the call
     // result is that slot as an lvalue, so the value stays in memory
     // instead of materializing as a large SSA aggregate. Foreign
     // functions always return by value.
-    auto sretSlot{Value{}};
+    Value sretSlot{};
     if (!func->isForeign() && emitter.returnsIndirectly(instance.returnType)) {
       SMDL_SANITY_CHECK(instance.llvmFunc->getReturnType()->isVoidTy());
       sretSlot = emitter.createAlloca(instance.returnType, "sret.slot");
@@ -1248,9 +1255,9 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     // building the argument list, which is what keeps them in step with the
     // callee: 'Emitter::createFunction' records its own the same way, and
     // the two must agree for the backend to lower the call consistently.
-    auto indirectParams{llvm::SmallVector<std::pair<unsigned, Type *>, 4>{}};
+    llvm::SmallVector<std::pair<unsigned, Type *>, 4> indirectParams{};
     for (size_t i = 0; i < resolvedArgs.values.size(); i++) {
-      const auto &value{resolvedArgs.values[i]};
+      const Value &value{resolvedArgs.values[i]};
       // A voided argument carries no data and is absent from the callee's
       // signature (see 'Emitter::createFunction'), so it contributes no
       // LLVM argument here either. The callee's parameter types are the
@@ -1266,7 +1273,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       }
       llvmArgs.push_back(value);
     }
-    auto callInst{emitter.builder.CreateCall(
+    llvm::CallInst *callInst{emitter.builder.CreateCall(
         instance.llvmFunc->getFunctionType(), instance.llvmFunc, llvmArgs)};
     for (auto [i, paramType] : indirectParams)
       emitter.addIndirectParamAttrs(paramType, i, nullptr, callInst);
@@ -1290,18 +1297,19 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     FunctionType *func{};
     llvm::SmallVector<const Parameter *> params{};
   };
-  auto overloads{std::vector<Overload>{}};
+  std::vector<Overload> overloads{};
   auto getLastOverload{[&]() {
-    auto func{this};
+    FunctionType *func{this};
     while (func->nextOverload) func = func->nextOverload;
     return func;
   }};
-  auto overloadErrors{std::string{}};
+  std::string overloadErrors{};
   for (auto func{getLastOverload()}; func; func = func->prevOverload) {
     try {
       SMDL_SANITY_CHECK(!func->isVariant());
-      auto resolvedArgs{emitter.resolveArguments(func->params, args, srcLoc,
-                                                 /*shouldSkipEmit=*/true)};
+      Emitter::ResolvedArguments resolvedArgs{
+          emitter.resolveArguments(func->params, args, srcLoc,
+                                   /*shouldSkipEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
       appendCandidateNote(overloadErrors, {}, func->declName, func->params,
@@ -1320,21 +1328,21 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // ('CONVERSION_RULE_PERFECT' beats 'CONVERSION_RULE_IMPLICIT'). This is
   // what makes an exact argument-type match win regardless of declaration
   // order.
-  auto beatsByConversion{[&](const Overload &overloadA,
-                             const Overload &overloadB) {
-    bool anyBetter{};
-    for (size_t i = 0; i < args.size(); i++) {
-      if (!overloadA.params[i] || !overloadB.params[i])
-        continue; // Unresolved variadic arguments do not participate
-      auto ruleA{emitter.context.getConversionRule(args[i].value.type,
-                                                   overloadA.params[i]->type)};
-      auto ruleB{emitter.context.getConversionRule(args[i].value.type,
-                                                   overloadB.params[i]->type)};
-      if (ruleA < ruleB) return false;
-      if (ruleA > ruleB) anyBetter = true;
-    }
-    return anyBetter;
-  }};
+  auto beatsByConversion{
+      [&](const Overload &overloadA, const Overload &overloadB) {
+        bool anyBetter{};
+        for (size_t i = 0; i < args.size(); i++) {
+          if (!overloadA.params[i] || !overloadB.params[i])
+            continue; // Unresolved variadic arguments do not participate
+          ConversionRule ruleA{emitter.context.getConversionRule(
+              args[i].value.type, overloadA.params[i]->type)};
+          ConversionRule ruleB{emitter.context.getConversionRule(
+              args[i].value.type, overloadB.params[i]->type)};
+          if (ruleA < ruleB) return false;
+          if (ruleA > ruleB) anyBetter = true;
+        }
+        return anyBetter;
+      }};
   // The tiebreaker: the LHS set of parameter types is less specific than the
   // RHS set if each and every RHS parameter type is implicitly convertible
   // to the corresponding LHS parameter type. This is what makes a concrete
@@ -1362,7 +1370,8 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // more than one survives, the call is genuinely ambiguous: fail loudly
   // instead of picking by declaration order.
   auto filterBeaten{[&](auto &&beats) {
-    auto beaten{llvm::SmallVector<bool>(overloads.size(), false)};
+    llvm::SmallVector<bool> beaten{
+        llvm::SmallVector<bool>(overloads.size(), false)};
     for (size_t a = 0; a < overloads.size(); a++)
       for (size_t b = 0; b < overloads.size(); b++)
         if (a != b && beats(overloads[a], overloads[b])) beaten[b] = true;
@@ -1378,7 +1387,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   filterBeaten(beatsByConversion);
   filterBeaten(beatsBySpecificity);
   if (overloads.size() > 1) {
-    auto candidateNotes{std::string{}};
+    std::string candidateNotes{};
     for (auto &overload : overloads) {
       candidateNotes += "\n  ambiguous candidate: ";
       candidateNotes +=
@@ -1455,7 +1464,7 @@ namespace {
 // behavior at render time; fail the compile loudly instead.
 void verifyMaterialEvalLayout(Context &context, Type *type,
                               const SourceLocation &srcLoc) {
-  auto llvmStructType{
+  llvm::StructType *llvmStructType{
       llvm::dyn_cast_if_present<llvm::StructType>(type->llvmType)};
   if (!llvmStructType)
     srcLoc.throwError("'_MaterialEval' is not a struct type");
@@ -1484,7 +1493,8 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
       {"seed", offsetof(Eval, seed)},
       {"tangentToWorld", offsetof(Eval, tangentToWorld)},
   };
-  auto llvmLayout{context.llvmLayout.getStructLayout(llvmStructType)};
+  const llvm::StructLayout *llvmLayout{
+      context.llvmLayout.getStructLayout(llvmStructType)};
   if (llvmStructType->getNumElements() != std::size(fields) ||
       uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Eval))
     srcLoc.throwError("mismatch between C++ 'JIT::MaterialDef::Eval' and "
@@ -1502,13 +1512,13 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
 
 void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
-  auto &context{emitter.context};
-  auto &compiler{context.compiler};
+  Context &context{emitter.context};
+  Compiler &compiler{context.compiler};
   // Build the qualified material name from the module identity, the
   // enclosing namespace names, and the material name.
-  auto module_{decl.srcLoc.module_};
+  Module *module_{decl.srcLoc.module_};
   SMDL_SANITY_CHECK(module_);
-  auto qualifiedName{std::string(module_->getQualifiedName())};
+  std::string qualifiedName{module_->getQualifiedName()};
   if (qualifiedName.empty()) {
     // Builtin modules have no search root; use the bare name.
     qualifiedName += "::";
@@ -1551,12 +1561,12 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // module is shadowed by an equally named module under an earlier
   // search root. This keeps the symbols deterministic instead of
   // relying on LLVM's load-order '.N' uniquing.
-  auto symbolBase{std::string()};
+  std::string symbolBase{};
   for (auto component : splitQualifiedName(jitMaterial.qualifiedName)) {
     if (!symbolBase.empty()) symbolBase += '.';
     symbolBase += component;
   }
-  if (auto numDuplicates{std::count_if(
+  if (int64_t numDuplicates{std::count_if(
           compiler.mMaterialDefs.begin(), compiler.mMaterialDefs.end(),
           [&](const auto &other) {
             return &other != &jitMaterial &&
@@ -1564,7 +1574,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           })};
       numDuplicates > 0)
     symbolBase += concat(".", numDuplicates);
-  auto dfModule{context.getBuiltinModule("df")};
+  Module *dfModule{context.getBuiltinModule("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialType{};
   Type *materialEvalType{};
@@ -1582,7 +1592,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   auto markPointerParam{[&](llvm::Function *func, unsigned argIndex,
                             Type *pointeeType, uint64_t count = 1,
                             bool noAlias = true) {
-    auto attrs{llvm::AttrBuilder(context.llvmContext)};
+    llvm::AttrBuilder attrs{context.llvmContext};
     if (noAlias) attrs.addAttribute(llvm::Attribute::NoAlias);
     attrs.addAttribute(llvm::Attribute::NonNull);
     attrs.addAttribute(llvm::Attribute::NoUndef);
@@ -1597,20 +1607,20 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     //   *out = _MaterialEval(#bump(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{context.getVoidType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getVoidType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
-          auto materialValue{invoke(emitter, {}, decl.srcLoc)};
+          Value materialValue{invoke(emitter, {}, decl.srcLoc)};
           materialType = materialValue.type;
-          auto materialEval{emitter.emitCall(
+          Value materialEval{emitter.emitCall(
               context.getKeyword("_MaterialEval"),
               emitter.emitIntrinsic("bump", materialValue, decl.srcLoc),
               decl.srcLoc)};
           materialEvalType = materialEval.type;
           materialEvalPtrType = context.getPointerType(materialEvalType);
-          auto out{
+          Value out{
               emitter.rvalue(emitter.resolveIdentifier("out"sv, decl.srcLoc))};
           emitter.createStore(materialEval, out);
         })};
@@ -1653,22 +1663,22 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
                          Type *funcReturnType,
                          std::initializer_list<WrapperParam> wrapperParams) {
-    auto params{ParameterList{}};
+    ParameterList params{};
     params.push_back(constParameter(materialEvalPtrType, "eval"));
     for (const auto &wrapperParam : wrapperParams)
       params.push_back(constParameter(
           wrapperParam.isByValue ? wrapperParam.type
                                  : context.getPointerType(wrapperParam.type),
           wrapperParam.name));
-    auto func{emitter.createFunction(
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".", suffix), /*isPure=*/true, funcReturnType,
         params, decl.srcLoc, [&] {
-          const auto dfName{concat("_", suffix)};
-          auto dfFunc{Declaration::findInModule(
+          const std::string dfName{concat("_", suffix)};
+          Declaration *dfFunc{Declaration::findInModule(
               context, std::string_view(dfName), nullptr, dfModule,
               /*shouldIgnoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
-          auto callArgs{llvm::SmallVector<Value>{}};
+          llvm::SmallVector<Value> callArgs{};
           for (const auto &param : params)
             callArgs.push_back(
                 emitter.resolveIdentifier(param.name, decl.srcLoc));
@@ -1679,7 +1689,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, materialEvalType);
-    auto argIndex{1U};
+    unsigned argIndex{1U};
     for (const auto &wrapperParam : wrapperParams) {
       if (!wrapperParam.isByValue)
         markPointerParam(func, argIndex, wrapperParam.type, wrapperParam.count);
@@ -1687,12 +1697,12 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     }
     jitFunc.name = func->getName().str();
   }};
-  auto floatType{context.getFloatType()};
-  auto float2Type{context.getFloatType(2)};
-  auto float3Type{context.getFloatType(3)};
-  auto float4Type{context.getFloatType(4)};
-  auto intType{context.getIntType()};
-  const auto colorSize{uint64_t(context.getColorType()->wavelengthBaseMax)};
+  Type *floatType{context.getFloatType()};
+  Type *float2Type{context.getFloatType(2)};
+  Type *float3Type{context.getFloatType(3)};
+  Type *float4Type{context.getFloatType(4)};
+  Type *intType{context.getIntType()};
+  const size_t colorSize{uint64_t(context.getColorType()->wavelengthBaseMax)};
   makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
@@ -1769,8 +1779,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' also inspects whether
     // the body folded to a constant to derive the static
     // 'MATERIAL_HAS_CUTOUT' flag.
-    auto funcReturnType{context.getFloatType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getFloatType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".opacityEvaluate"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
           emitter.emitReturn(
@@ -1797,16 +1807,16 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // null and everything not feeding 'geometry.displacement' is
     // dead-code eliminated. This is the per-vertex query for hosts
     // that apply displacement to geometry at load time.
-    auto funcReturnType{context.getVoidType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getVoidType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".displacementEvaluate"), /*isPure=*/false,
         funcReturnType, {constParameter(float3PtrType, "displacement")},
         decl.srcLoc, [&] {
-          auto value{emitter.accessField(
+          Value value{emitter.accessField(
               emitter.accessField(invoke(emitter, {}, decl.srcLoc),
                                   "geometry"sv, decl.srcLoc),
               "displacement"sv, decl.srcLoc)};
-          auto out{emitter.rvalue(
+          Value out{emitter.rvalue(
               emitter.resolveIdentifier("displacement"sv, decl.srcLoc))};
           emitter.createStore(emitter.rvalue(value), out);
         })};
@@ -1822,16 +1832,16 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // normal is dead-code eliminated. Opt-in with the normal
     // distribution entry points, since only a host solving manifold
     // constraints through a remapped shading normal has a use for it.
-    auto funcReturnType{context.getVoidType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getVoidType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".geometryNormalEvaluate"), /*isPure=*/false,
         funcReturnType, {constParameter(float3PtrType, "normal")}, decl.srcLoc,
         [&] {
-          auto value{emitter.accessField(
+          Value value{emitter.accessField(
               emitter.accessField(invoke(emitter, {}, decl.srcLoc),
                                   "geometry"sv, decl.srcLoc),
               "normal"sv, decl.srcLoc)};
-          auto out{emitter.rvalue(
+          Value out{emitter.rvalue(
               emitter.resolveIdentifier("normal"sv, decl.srcLoc))};
           emitter.createStore(emitter.rvalue(value), out);
         })};
@@ -1860,8 +1870,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects whether
     // the body still reads the state to derive the static
     // 'MATERIAL_HAS_HETEROGENEOUS_VOLUME' flag.
-    auto funcReturnType{context.getVoidType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getVoidType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(floatPtrType, "sigmaA"),
          constParameter(floatPtrType, "sigmaS"),
@@ -1891,8 +1901,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects for a
     // constant 'thin_walled' and then erases; it is never a host entry
     // point.
-    auto funcReturnType{context.getIntType()};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getIntType()};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".thinWalledProbe"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
           emitter.emitReturn(
@@ -1909,8 +1919,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // inspect whether the body folded to a constant vector, settling
     // 'MATERIAL_HAS_DISPLACEMENT'. Erased after inspection; never a
     // host entry point.
-    auto funcReturnType{context.getFloatType(3)};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getFloatType(3)};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".displacementProbe"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
           emitter.emitReturn(
@@ -1929,25 +1939,26 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // zero vector exactly when the material leaves the shading normal
     // alone, settling 'MATERIAL_REMAPS_NORMAL'. Erased after
     // inspection; never a host entry point.
-    auto funcReturnType{context.getFloatType(3)};
-    auto func{emitter.createFunction(
+    Type *funcReturnType{context.getFloatType(3)};
+    llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".normalProbe"), /*isPure=*/false, funcReturnType,
         {}, decl.srcLoc, [&] {
-          auto materialNormal{emitter.accessField(
+          Value materialNormal{emitter.accessField(
               emitter.accessField(invoke(emitter, {}, decl.srcLoc),
                                   "geometry"sv, decl.srcLoc),
               "normal"sv, decl.srcLoc)};
-          auto stateNormal{emitter.accessField(
+          Value stateNormal{emitter.accessField(
               emitter.resolveIdentifier("$state"sv, decl.srcLoc), "normal"sv,
               decl.srcLoc)};
-          auto delta{emitter.emitOp(BINOP_SUB, materialNormal, stateNormal,
-                                    decl.srcLoc)};
+          Value delta{emitter.emitOp(BINOP_SUB, materialNormal, stateNormal,
+                                     decl.srcLoc)};
           // The default fast-math flags lack 'nnan'/'ninf', under which
           // 'x - x' of the untouched normal cannot fold to zero. The
           // probe only ever asks whether the two are the same value, so
           // assume the normal finite here and let the fold happen.
-          if (auto subInst{llvm::dyn_cast_if_present<llvm::Instruction>(
-                  delta.llvmValue)};
+          if (llvm::Instruction *subInst{
+                  llvm::dyn_cast_if_present<llvm::Instruction>(
+                      delta.llvmValue)};
               subInst && llvm::isa<llvm::FPMathOperator>(subInst)) {
             subInst->setHasNoNaNs(true);
             subInst->setHasNoInfs(true);
@@ -1968,9 +1979,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         [&](std::initializer_list<std::string_view> path) -> Type * {
           Type *type{materialType};
           for (auto name : path) {
-            auto structType{llvm::dyn_cast_if_present<StructType>(type)};
+            StructType *structType{llvm::dyn_cast_if_present<StructType>(type)};
             SMDL_SANITY_CHECK(structType);
-            auto seq{ParameterList::LookupSequence{}};
+            std::vector<std::pair<const Parameter *, unsigned>> seq{
+                ParameterList::LookupSequence{}};
             SMDL_SANITY_CHECK_MSG(
                 structType->params.getLookupSequence(name, seq) && !seq.empty(),
                 "cannot resolve material field");
@@ -2006,7 +2018,7 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
         Quoted(displayName));
 
   // Infer!
-  auto inferredArrayType{[&]() {
+  ArrayType *inferredArrayType{[&]() {
     // If there is one positional argument ...
     if (args.isOnePositional()) {
       // If the argument is an array whose element type is convertible to this
@@ -2019,8 +2031,8 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       // auto arr1 = auto[](arr0);
       // #assert(#typeOf(arr0) == #typeOf(arr1));
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      auto value{args[0].value};
-      auto arrayType{llvm::dyn_cast<ArrayType>(value.type)};
+      Value value{args[0].value};
+      ArrayType *arrayType{llvm::dyn_cast<ArrayType>(value.type)};
       if (arrayType && emitter.context.isExplicitlyConvertible(
                            arrayType->elemType, elemType))
         return emitter.context.getArrayType(elemType, arrayType->size);
@@ -2031,15 +2043,16 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   }()};
 
   if (!sizeName.empty()) {
-    const auto size{int64_t(inferredArrayType->size)};
+    const int64_t size{int64_t(inferredArrayType->size)};
     // The same scope may already bind the size name: a previous parameter
     // in `(const float[<N>] a, const auto[<N>] b)` binds `N` for its own
     // argument first. A binding that agrees is shared; a binding that
     // disagrees is a hard error, never a silent rebind, because the body
     // indexes every array with whichever binding survived.
-    if (auto existing{
-            emitter.findSameScopeDeclaration(std::string_view(sizeName))}) {
-      const auto existingSize{existing->value.getComptimeSignedInt()};
+    if (Declaration * existing{emitter.findSameScopeDeclaration(
+                          std::string_view(sizeName))}) {
+      const std::optional<int64_t> existingSize{
+          existing->value.getComptimeSignedInt()};
       if (!existingSize)
         srcLoc.throwError("inferred array size name ", Quoted(sizeName),
                           " conflicts with a declaration of ", Quoted(sizeName),
@@ -2075,26 +2088,29 @@ bool MetaType::hasNonVoidField(Emitter &emitter, Value value,
 Value MetaType::accessField(Emitter &emitter, Value value,
                             std::string_view name,
                             const SourceLocation &srcLoc) {
-  auto &context{emitter.context};
+  Context &context{emitter.context};
   if (value.isComptimeMetaType(context)) {
-    auto type{value.getComptimeMetaType(context, srcLoc)};
+    Type *type{value.getComptimeMetaType(context, srcLoc)};
     // Make static fields available
-    if (auto structType{llvm::dyn_cast<StructType>(type)}) {
-      const auto &staticFields{structType->getInstanceOf().staticFields};
-      if (auto itr{staticFields.find(name)}; itr != staticFields.end())
+    if (StructType * structType{llvm::dyn_cast<StructType>(type)}) {
+      const llvm::StringMap<Value> &staticFields{
+          structType->getInstanceOf().staticFields};
+      if (llvm::StringMapIterBase<Value, true> itr{staticFields.find(name)};
+          itr != staticFields.end())
         return itr->second;
     }
   } else if (value.isComptimeMetaModule(context)) {
     // Make exported declarations available
-    auto module_{value.getComptimeMetaModule(context, srcLoc)};
-    if (auto declaration{Declaration::findInModule(
-            context, name, emitter.getLLVMFunction(), module_)})
+    Module *module_{value.getComptimeMetaModule(context, srcLoc)};
+    if (Declaration * declaration{Declaration::findInModule(
+                          context, name, emitter.getLLVMFunction(), module_)})
       return declaration->value;
   } else if (value.isComptimeMetaNamespace(context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
-    auto namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
-    if (auto declaration{Declaration::resolveInScope(
+    AST::Namespace *namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
+    if (Declaration *
+        declaration{Declaration::resolveInScope(
             context, name, emitter.getLLVMFunction(), namespace_->scope,
             /*shouldIgnoreIfNotExported=*/
             namespace_->srcLoc.module_ != emitter.currentModule,
@@ -2119,7 +2135,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       srcLoc.throwError("cannot zero construct abstract pointer ",
                         Quoted(displayName));
     if (args.isOnePositional()) {
-      auto value{args[0].value};
+      Value value{args[0].value};
       if (value.type->isPointer() &&
           emitter.context.isPerfectlyConvertible(value.type->getPointeeType(),
                                                  pointeeType)) {
@@ -2131,7 +2147,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       return Value::zero(this);
     }
     if (args.isOnePositional()) {
-      auto value{args[0].value};
+      Value value{args[0].value};
       if (value.type->isPointer()) {
         return RValue(this, emitter.rvalue(value));
       }
@@ -2219,14 +2235,14 @@ StateType::StateType(Context &context) {
   ADD_FIELD(vertexColorCount);
   ADD_FIELD(vertexColor);
 #undef ADD_FIELD
-  auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
+  llvm::SmallVector<llvm::Type *> llvmTypes{};
   for (auto &field : mFields) {
     SMDL_SANITY_CHECK(field.type);
     SMDL_SANITY_CHECK(field.type->llvmType);
     llvmTypes.push_back(field.type->llvmType);
   }
   llvmType = llvm::StructType::create(context, llvmTypes, displayName);
-  auto llvmLayout{context.llvmLayout.getStructLayout(
+  const llvm::StructLayout *llvmLayout{context.llvmLayout.getStructLayout(
       static_cast<llvm::StructType *>(llvmType))};
   for (unsigned i = 0; i < mFields.size(); i++)
     if (mFields[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
@@ -2242,7 +2258,7 @@ Value StateType::accessField(Emitter &emitter, Value value,
   for (unsigned i = 0; i < mFields.size(); i++) {
     const auto &field{mFields[i]};
     if (field.name == name) {
-      auto llvmValue{
+      llvm::Value *llvmValue{
           emitter.builder.CreateStructGEP(value.type->llvmType, value, i)};
       if (value.llvmValue->hasName())
         llvmValue->setName(concat(value.llvmValue->getName().str(), ".", name));
@@ -2263,13 +2279,13 @@ StringType::StringType(Context &context) {
 Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
                          const SourceLocation &srcLoc) {
   // Construct from nothing, null, or another string.
-  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+  if (std::optional<Value> trivial{invokeTrivialCases(emitter, args)}) {
     return *trivial;
   }
   // Construct from enum, call the enum-to-string conversion function.
   if (args.isOnePositional()) {
-    auto value{args[0].value};
-    if (auto enumType{llvm::dyn_cast<EnumType>(value.type)})
+    Value value{args[0].value};
+    if (EnumType * enumType{llvm::dyn_cast<EnumType>(value.type)})
       return RValue(this, emitter.builder.CreateCall(
                               enumType->llvmFuncToString->getFunctionType(),
                               enumType->llvmFuncToString,
@@ -2315,7 +2331,7 @@ void StructType::initialize(Emitter &emitter) {
   // Initialize tags.
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
-    auto tagType{llvm::dyn_cast<TagType>(tag.type->type)};
+    TagType *tagType{llvm::dyn_cast<TagType>(tag.type->type)};
     if (!tagType) decl.srcLoc.throwError("unknown tag");
     if (tag.isDefault()) {
       if (tagType->defaultType)
@@ -2331,7 +2347,7 @@ void StructType::initialize(Emitter &emitter) {
   }
   // Initialize fields.
   for (auto &field : decl.fields) {
-    auto fieldType{
+    Type *fieldType{
         emitter.emit(field.type)
             .getComptimeMetaType(emitter.context, field.name.srcLoc)};
     if (fieldType == this)
@@ -2348,13 +2364,13 @@ void StructType::initialize(Emitter &emitter) {
       if (reasonForError)
         field.name.srcLoc.throwError("field ", Quoted(field.name),
                                      " declared 'static' ", reasonForError);
-      auto value{emitter.invoke(fieldType, emitter.emit(field.exprInit),
-                                field.name.srcLoc)};
+      Value value{emitter.invoke(fieldType, emitter.emit(field.exprInit),
+                                 field.name.srcLoc)};
       staticFields[field.name.srcName] = value;
       emitter.declare(field.name, &field, value);
       emitter.captureResolutionAnchor(params);
     } else {
-      auto &param{params.emplace_back()};
+      Parameter &param{params.emplace_back()};
       param.type = fieldType;
       param.name = field.name.srcName;
       param.astField = &field;
@@ -2377,10 +2393,11 @@ StructType::getInstance(Context &context,
   SMDL_SANITY_CHECK(params.size() == paramTypes.size());
   SMDL_SANITY_CHECK(paramConstants.empty() ||
                     paramConstants.size() == paramTypes.size());
-  auto key{llvm::SmallVector<std::pair<Type *, llvm::Constant *>>{}};
+  llvm::SmallVector<std::pair<Type *, llvm::Constant *>> key{};
   key.reserve(paramTypes.size());
   for (size_t i{}; i < paramTypes.size(); i++) {
-    auto paramConstant{paramConstants.empty() ? nullptr : paramConstants[i]};
+    llvm::Constant *paramConstant{paramConstants.empty() ? nullptr
+                                                         : paramConstants[i]};
     SMDL_SANITY_CHECK(!paramConstant || params[i].isConst());
     key.push_back({paramTypes[i], paramConstant});
   }
@@ -2405,19 +2422,19 @@ StructType::getInstance(Context &context,
 
 StructType *StructType::getCommonSiblingInstance(Context &context, Type *typeA,
                                                  Type *typeB) {
-  auto structTypeA{llvm::dyn_cast_if_present<StructType>(typeA)};
-  auto structTypeB{llvm::dyn_cast_if_present<StructType>(typeB)};
+  StructType *structTypeA{llvm::dyn_cast_if_present<StructType>(typeA)};
+  StructType *structTypeB{llvm::dyn_cast_if_present<StructType>(typeB)};
   if (!structTypeA || !structTypeB || !structTypeA->instanceOf ||
       structTypeA->instanceOf != structTypeB->instanceOf)
     return nullptr;
   SMDL_SANITY_CHECK(structTypeA->params.size() == structTypeB->params.size());
-  auto paramTypes{llvm::SmallVector<Type *>{}};
-  auto paramConstants{llvm::SmallVector<llvm::Constant *>{}};
+  llvm::SmallVector<Type *> paramTypes{};
+  llvm::SmallVector<llvm::Constant *> paramConstants{};
   paramTypes.reserve(structTypeA->params.size());
   paramConstants.reserve(structTypeA->params.size());
   for (size_t i{}; i < structTypeA->params.size(); i++) {
-    auto &paramA{structTypeA->params[i]};
-    auto &paramB{structTypeB->params[i]};
+    Parameter &paramA{structTypeA->params[i]};
+    Parameter &paramB{structTypeB->params[i]};
     if (paramA.type != paramB.type) return nullptr;
     paramTypes.push_back(paramA.type);
     paramConstants.push_back(paramA.bakedConstant == paramB.bakedConstant
@@ -2468,7 +2485,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional()) {
-    if (auto structType{llvm::dyn_cast<StructType>(args[0].value.type)}) {
+    if (StructType *
+        structType{llvm::dyn_cast<StructType>(args[0].value.type)}) {
       if (structType == this || structType->isInstanceOf(this)) {
         return emitter.rvalue(args[0].value);
       }
@@ -2480,12 +2498,12 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       // one struct type instead of becoming a union.
       if (instanceOf && structType->instanceOf == instanceOf &&
           getCommonSiblingInstance(emitter.context, structType, this) == this) {
-        auto value{emitter.rvalue(args[0].value)};
-        auto result{Value::zero(this)};
+        Value value{emitter.rvalue(args[0].value)};
+        Value result{Value::zero(this)};
         for (size_t i{}; i < params.size(); i++) {
           if (params[i].isBaked() || params[i].type->isVoid()) continue;
-          auto &sourceParam{structType->params[i]};
-          auto elem{RValue(
+          Parameter &sourceParam{structType->params[i]};
+          Value elem{RValue(
               sourceParam.type,
               sourceParam.isBaked()
                   ? sourceParam.bakedConstant
@@ -2500,22 +2518,23 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   // Why each candidate was rejected, so that a failure to construct can say
   // why instead of only that it failed. Mirrors the candidate notes in
   // 'FunctionType::resolveOverload'.
-  auto candidateNotes{std::string{}};
+  std::string candidateNotes{};
   auto addCandidateNote{
       [&](std::string_view kind, const ParameterList &candidateParams,
           const SourceLocation &declSrcLoc, std::string_view reason) {
         appendCandidateNote(candidateNotes, kind, displayName, candidateParams,
                             declSrcLoc, reason);
       }};
-  auto whyNot{std::string{}};
+  std::string whyNot{};
   // Explicit constructors are applied first, so a struct with constructors
   // controls its own construction. Field-wise construction below is the
   // fallback; callers can always force it by naming the fields explicitly,
   // provided no constructor parameter names collide exactly.
   // TODO Overload resolution?
-  auto viableConstructors{llvm::SmallVector<Constructor *>{}};
+  llvm::SmallVector<StructType::Constructor *> viableConstructors{
+      llvm::SmallVector<Constructor *>{}};
   for (auto &constructor : getInstanceOf().constructors) {
-    const auto declSrcLoc{constructor.astConstructor->name.srcLoc};
+    const SourceLocation declSrcLoc{constructor.astConstructor->name.srcLoc};
     if (constructor.isInvoking) {
       addCandidateNote("constructor", constructor.params, declSrcLoc,
                        "constructor is already being invoked (a constructor "
@@ -2532,8 +2551,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     }
   }
   if (viableConstructors.size() == 1) {
-    auto &constructor{*viableConstructors[0]};
-    auto resolvedArgs{
+    StructType::Constructor &constructor{*viableConstructors[0]};
+    Emitter::ResolvedArguments resolvedArgs{
         emitter.resolveArguments(constructor.params, args, srcLoc)};
     SMDL_PRESERVE(emitter.scope, emitter.anchors, constructor.isInvoking);
     emitter.restoreResolutionAnchor(constructor.params);
@@ -2546,7 +2565,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
                              srcLoc);
         });
   } else if (viableConstructors.size() > 1) {
-    auto ambiguousNotes{std::string{}};
+    std::string ambiguousNotes{};
     for (auto constructor : viableConstructors) {
       ambiguousNotes += "\n  ambiguous candidate: constructor ";
       ambiguousNotes += toSignatureString(displayName, constructor->params);
@@ -2558,16 +2577,17 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   whyNot.clear();
   if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
-    auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
+    Emitter::ResolvedArguments resolvedArgs{
+        emitter.resolveArguments(params, args, srcLoc)};
     // Constructing a value instance directly (e.g. '#typeOf(x)(...)'): a
     // baked field is part of the type and cannot be overridden, but
     // explicitly passing the identical constant is allowed so generic
     // code can round-trip.
     if (instanceOf) {
       for (size_t iArg{}; iArg < args.size(); iArg++) {
-        if (auto param{resolvedArgs.argParams[iArg]};
+        if (const Parameter *param{resolvedArgs.argParams[iArg]};
             param && param->isBaked()) {
-          const auto &value{resolvedArgs.values[size_t(param - &params[0])]};
+          const Value &value{resolvedArgs.values[size_t(param - &params[0])]};
           if (!(value.isComptime() && value.llvmValue == param->bakedConstant))
             srcLoc.throwError(
                 "cannot construct ", Quoted(displayName), ": field ",
@@ -2576,17 +2596,17 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         }
       }
     }
-    auto resultType{this};
+    StructType *resultType{this};
     if (resultType->isAbstract()) {
       // Constant-field elimination: a 'const' field whose resolved value
       // is a compile-time constant is baked into the instantiated type,
       // where it occupies no storage and reads as the constant. 'const'
       // is already not addressable, so only type identity can observe
       // the elimination.
-      auto paramConstants{llvm::SmallVector<llvm::Constant *>{}};
+      llvm::SmallVector<llvm::Constant *> paramConstants{};
       paramConstants.reserve(params.size());
       for (size_t i{}; i < params.size(); i++) {
-        const auto &value{resolvedArgs.values[i]};
+        const Value &value{resolvedArgs.values[i]};
         paramConstants.push_back(
             params[i].isConst() && value.isComptime() && !value.isVoid()
                 ? static_cast<llvm::Constant *>(value.llvmValue)
@@ -2604,10 +2624,10 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     // counting them as runtime would push an otherwise-constant aggregate
     // through the in-place path, where it can no longer fold, e.g., as a
     // module-scope initializer of a large struct with void fields.
-    auto allComptime{true};
+    bool allComptime{true};
     for (const auto &value : resolvedArgs.values)
       allComptime &= value.isVoid() || value.isComptime();
-    auto result{Value()};
+    Value result{};
     if (!allComptime && emitter.getLLVMFunction() &&
         emitter.returnsIndirectly(resultType)) {
       // Construct large structs in place: allocate a slot, store the
@@ -2616,14 +2636,14 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       // whole-struct SSA values, which lower poorly. Small structs and
       // compile-time constants keep the by-value construction below so
       // module scope and constant folding continue to work.
-      auto lv{emitter.createAlloca(resultType, "struct.lv")};
+      Value lv{emitter.createAlloca(resultType, "struct.lv")};
       SMDL_SANITY_CHECK(resolvedArgs.values.size() ==
                         resultType->params.size());
       for (size_t i{}; i < resolvedArgs.values.size(); i++) {
-        auto &value{resolvedArgs.values[i]};
+        Value &value{resolvedArgs.values[i]};
         // NOTE: 'i' is the field index, which is the LLVM element index
         // only when no preceding field is voided or baked.
-        const auto j{resultType->params.getLLVMFieldIndex(i)};
+        const unsigned j{resultType->params.getLLVMFieldIndex(i)};
         if (j == ParameterList::NO_LLVM_FIELD) {
           SMDL_SANITY_CHECK(value.isVoid() || resultType->params[i].isBaked());
           continue;
@@ -2636,7 +2656,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       result = LValue(resultType, lv.llvmValue);
     } else {
       result = Value::zero(resultType);
-      auto i{size_t(0)};
+      size_t i{0};
       for (auto &value : resolvedArgs.values)
         result = emitter.insert(result, value, i++, srcLoc);
     }
@@ -2648,8 +2668,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
         emitter.setCurrentModule(decl.srcLoc);
-        const auto isInPlace{result.isLValue()};
-        auto lv{emitter.lvalue(result)};
+        const bool isInPlace{result.isLValue()};
+        Value lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declare(param.name, &decl,
                           emitter.accessField(lv, param.name, srcLoc));
@@ -2675,17 +2695,20 @@ bool StructType::hasField(std::string_view name) {
   // Resolve through 'getLookupSequence()' rather than scanning 'params'
   // flat, so that this agrees with 'accessField()' below about fields
   // reached through an 'inline' parameter.
-  auto seq{ParameterList::LookupSequence{}};
+  std::vector<std::pair<const Parameter *, unsigned>> seq{
+      ParameterList::LookupSequence{}};
   if (params.getLookupSequence(name, seq)) return true;
   return getInstanceOf().staticFields.contains(name);
 }
 
 bool StructType::hasNonVoidField(Emitter &, Value, std::string_view name,
                                  const SourceLocation &) {
-  auto seq{ParameterList::LookupSequence{}};
+  std::vector<std::pair<const Parameter *, unsigned>> seq{
+      ParameterList::LookupSequence{}};
   if (params.getLookupSequence(name, seq))
     return !seq.back().first->type->isVoid();
-  if (auto itr{getInstanceOf().staticFields.find(name)};
+  if (llvm::StringMapIterBase<Value, false> itr{
+          getInstanceOf().staticFields.find(name)};
       itr != getInstanceOf().staticFields.end())
     return !itr->second.isVoid();
   return false;
@@ -2694,9 +2717,10 @@ bool StructType::hasNonVoidField(Emitter &, Value, std::string_view name,
 Value StructType::accessField(Emitter &emitter, Value value,
                               std::string_view name,
                               const SourceLocation &srcLoc) {
-  auto seq{ParameterList::LookupSequence{}};
+  std::vector<std::pair<const Parameter *, unsigned>> seq{
+      ParameterList::LookupSequence{}};
   if (params.getLookupSequence(name, seq)) {
-    const auto name0{value.llvmValue->getName().str()};
+    const std::string name0{value.llvmValue->getName().str()};
     bool isConst{};
     for (auto [param, i] : seq) {
       isConst |= param->isConst();
@@ -2729,14 +2753,16 @@ Value StructType::accessField(Emitter &emitter, Value value,
       value.llvmValue->setName(concat(name0, ".", name));
     return isConst ? emitter.rvalue(value) : value;
   }
-  if (auto itr{getInstanceOf().staticFields.find(name)};
+  if (llvm::StringMapIterBase<Value, false> itr{
+          getInstanceOf().staticFields.find(name)};
       itr != getInstanceOf().staticFields.end())
     return itr->second;
-  auto fieldNames{params.getNames()};
+  std::vector<std::string_view> fieldNames{params.getNames()};
   for (const auto &[staticName, staticValue] : getInstanceOf().staticFields)
     fieldNames.push_back(staticName);
-  auto suggestion{std::string()};
-  if (auto similar{suggestNearestName(name, fieldNames)}; !similar.empty())
+  std::string suggestion{};
+  if (std::string_view similar{suggestNearestName(name, fieldNames)};
+      !similar.empty())
     suggestion = concat("; did you mean ", Quoted(similar), "?");
   srcLoc.throwError("no field ", Quoted(name), " in struct ",
                     Quoted(displayName), suggestion);
@@ -2750,7 +2776,7 @@ Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
   // when no preceding field is voided or baked. Neither has storage to
   // insert into; construction is the only writer of a baked field and
   // always passes its own constant.
-  const auto j{params.getLLVMFieldIndex(i)};
+  const unsigned j{params.getLLVMFieldIndex(i)};
   if (j == ParameterList::NO_LLVM_FIELD) return emitter.rvalue(value);
   return RValue(this, emitter.builder.CreateInsertValue(
                           emitter.rvalue(value),
@@ -2766,7 +2792,7 @@ Value TagType::invoke(Emitter &emitter, const ArgumentList &args,
       srcLoc.throwError("cannot default construct tag ", Quoted(displayName));
     return defaultType->invoke(emitter, args, srcLoc);
   } else if (args.isOnePositional()) {
-    auto value{args[0].value};
+    Value value{args[0].value};
     if (!emitter.context.isPerfectlyConvertible(value.type, this))
       srcLoc.throwError("cannot construct tag ", Quoted(displayName), " from ",
                         Quoted(value.type->displayName));
@@ -2782,7 +2808,7 @@ Value TagType::invoke(Emitter &emitter, const ArgumentList &args,
 //--{ UnionType
 UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
     : caseTypes(std::move(caseTys)) {
-  auto caseTypeNames{llvm::SmallVector<llvm::StringRef>{}};
+  llvm::SmallVector<llvm::StringRef> caseTypeNames{};
   for (auto caseType : caseTypes) {
     SMDL_SANITY_CHECK(caseType);
     SMDL_SANITY_CHECK(!caseType->isAbstract());
@@ -2812,9 +2838,9 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   // byte shuffles and unmergeable scalar stores.
   uint64_t chunkSize{std::max<uint64_t>(requiredAlign, 8)};
   uint64_t numChunks{(requiredSize + chunkSize - 1) / chunkSize};
-  auto i64Type{llvm::Type::getInt64Ty(context)};
-  auto chunkType{chunkSize == 8
-                     ? i64Type
+  llvm::IntegerType *i64Type{llvm::Type::getInt64Ty(context)};
+  llvm::Type *chunkType{
+      chunkSize == 8 ? i64Type
                      : static_cast<llvm::Type *>(
                            llvm::FixedVectorType::get(i64Type, chunkSize / 8))};
   llvmType =
@@ -2826,12 +2852,12 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
 
 Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
-  auto &context{emitter.context};
+  Context &context{emitter.context};
   if (args.empty() || args.isNull()) {
     if (!isOptionalUnion())
       srcLoc.throwError("cannot zero construct non-optional union type ",
                         Quoted(displayName));
-    auto result{Value::zero(this)};
+    Value result{Value::zero(this)};
     result.llvmValue = emitter.builder.CreateInsertValue(
         result.llvmValue, context.getComptimeInt(int(caseTypes.size() - 1)),
         {1U});
@@ -2841,24 +2867,24 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
     return emitter.rvalue(args[0].value);
   }
   if (args.isOnePositional()) {
-    auto arg{args[0].value};
-    if (auto argUnionType{llvm::dyn_cast<UnionType>(arg.type)}) {
-      auto lvArg{emitter.lvalue(arg)};
-      auto lv{emitter.createAlloca(this, "")};
+    Value arg{args[0].value};
+    if (UnionType * argUnionType{llvm::dyn_cast<UnionType>(arg.type)}) {
+      Value lvArg{emitter.lvalue(arg)};
+      Value lv{emitter.createAlloca(this, "")};
       emitter.builder.CreateStore(Value::zero(this), lv);
       emitter.builder.CreateMemCpy(
           lv, llvm::Align(context.getAlignOf(this)), //
           lvArg, llvm::Align(context.getAlignOf(argUnionType)),
           std::min(requiredSize, argUnionType->requiredSize));
       if (!arg.isLValue()) emitter.createLifetimeEnd(lvArg);
-      auto index{emitter.rvalue(emitter.accessIndex(
+      Value index{emitter.rvalue(emitter.accessIndex(
           context.getComptimeUnionIndexMap(argUnionType, this),
           emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
       emitter.builder.CreateStore(index,
                                   emitter.accessField(lv, "#idx", srcLoc));
       // Large unions stay memory-resident: return the slot as an lvalue
       // instead of loading the whole payload into an SSA value.
-      auto result{Value()};
+      Value result{};
       if (emitter.returnsIndirectly(this)) {
         result = lv;
       } else {
@@ -2883,7 +2909,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       if (!hasCaseType(arg.type))
         srcLoc.throwError("cannot construct union ", Quoted(displayName),
                           " from ", Quoted(arg.type->displayName));
-      auto i{getCaseTypeIndex(arg.type)};
+      int i{getCaseTypeIndex(arg.type)};
       // A union is built by storing the payload and then the tag, so it
       // needs a slot, and module scope has no function to allocate one in.
       // Saying so is worth the check: the alloca below would otherwise
@@ -2896,7 +2922,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
             "cannot construct union ", Quoted(displayName),
             " outside of a function: a union is built in storage, so it "
             "must not appear in a module-scope initializer");
-      auto lv{emitter.createAlloca(this, "union.lv")};
+      Value lv{emitter.createAlloca(this, "union.lv")};
       emitter.createLifetimeStart(lv);
       emitter.builder.CreateStore(Value::zero(this), lv); // zeroinitializer
       emitter.createStore(arg, LValue(arg.type, lv.llvmValue));
@@ -2905,7 +2931,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       // Large unions stay memory-resident: return the slot as an lvalue
       // instead of loading the whole payload into an SSA value.
       if (emitter.returnsIndirectly(this)) return lv;
-      auto rv{emitter.rvalue(lv)};
+      Value rv{emitter.rvalue(lv)};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
@@ -2970,11 +2996,11 @@ Value UnionType::accessField(Emitter &emitter, Value value,
 
 llvm::SmallVector<Type *>
 UnionType::canonicalizeTypes(llvm::ArrayRef<Type *> types) {
-  auto caseTypes{llvm::SmallVector<Type *>{}};
+  llvm::SmallVector<Type *> caseTypes{};
   for (auto type : types) {
     SMDL_SANITY_CHECK(type);
     SMDL_SANITY_CHECK(!type->isAbstract());
-    if (auto unionType{llvm::dyn_cast<UnionType>(type)})
+    if (UnionType * unionType{llvm::dyn_cast<UnionType>(type)})
       caseTypes.insert(caseTypes.end(), unionType->caseTypes.begin(),
                        unionType->caseTypes.end());
     else

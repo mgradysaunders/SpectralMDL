@@ -22,8 +22,8 @@ public:
 
   /// A minimal linear groom: one strand of two points.
   std::string writeCurves(const std::string &name) const {
-    const auto path{(root / name).string()};
-    auto curves{CurvesFile()};
+    const std::string path{(root / name).string()};
+    CurvesFile curves{};
     curves.basis = CurvesFile::Basis::LINEAR;
     curves.strandOffsets = {0, 2};
     curves.points = {float4(0.0f, 0.0f, 0.0f, 0.01f),
@@ -41,7 +41,7 @@ namespace {
 // one instant, which lowers every track static.
 Layout lowerOK(LayoutDiagnostics &diags, const std::string &fileName,
                const MotionSampling &sampling = {}) {
-  auto layout{lowerLayout(diags, fileName, {}, sampling)};
+  Layout layout{lowerLayout(diags, fileName, {}, sampling)};
   if (diags.hasErrors()) MESSAGE(diags.renderAll(false));
   REQUIRE(!diags.hasErrors());
   return layout;
@@ -68,7 +68,7 @@ TEST_CASE("Layout lowering: the marks compose") {
                           "place inner\n");
   dir.write("sub2.layout", "asset inner = sphere { radius 1 material m }\n"
                            "place inner caster light\n");
-  const auto entry{dir.write(
+  const std::string entry{dir.write(
       "entry.layout",
       "asset ball = sphere { radius 1 material m caster light }\n"
       "asset plain = sphere { radius 1 material m }\n"
@@ -98,7 +98,7 @@ TEST_CASE("Layout lowering: the marks compose") {
       "place plain light\n" // 17: one mark without the other
       )};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry)};
+  const Layout layout{lowerOK(diags, entry)};
   const std::vector<bool> caster{true, false, true,  false, true,  false,
                                  true, true,  false, false, false, true,
                                  true, false, true,  true,  false, false};
@@ -124,14 +124,14 @@ TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
   dir.write("sub.layout", "asset inner = sphere { radius 1 material m }\n"
                           "place inner\n");
   SUBCASE("At the place") {
-    const auto entry{dir.write(
+    const std::string entry{dir.write(
         "entry.layout", "asset lamp = sphere { radius 1 material m caustic }\n"
                         "place lamp light off\n")};
     LayoutDiagnostics diags{};
-    const auto layout{lowerLayout(diags, entry)};
+    const Layout layout{lowerLayout(diags, entry)};
     CHECK(layout.items.empty());
     REQUIRE(diags.errorCount() == 1);
-    const auto &error{diags.all().front()};
+    const LayoutDiagnostic &error{diags.all().front()};
     CHECK_CONTAINS(error.message, "'light off' cannot apply to ");
     CHECK_CONTAINS(error.message, "lamp");
     REQUIRE(error.notes.size() == 1);
@@ -143,23 +143,23 @@ TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {
               .lineNo == 1);
   }
   SUBCASE("Passed down from a group placement") {
-    const auto entry{dir.write(
+    const std::string entry{dir.write(
         "entry.layout", "asset lamp = sphere { radius 1 material m caustic }\n"
                         "group g { place lamp }\n"
                         "place g light off\n")};
     LayoutDiagnostics diags{};
-    const auto layout{lowerLayout(diags, entry)};
+    const Layout layout{lowerLayout(diags, entry)};
     CHECK(layout.items.empty());
     REQUIRE(diags.errorCount() == 1);
     CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR,
                         "'light off' cannot apply to "));
   }
   SUBCASE("On a layout target") {
-    const auto entry{dir.write("entry.layout",
-                               "asset sub = \"sub.layout\" { caustic }\n"
-                               "place sub light off\n")};
+    const std::string entry{dir.write("entry.layout",
+                                      "asset sub = \"sub.layout\" { caustic }\n"
+                                      "place sub light off\n")};
     LayoutDiagnostics diags{};
-    const auto layout{lowerLayout(diags, entry)};
+    const Layout layout{lowerLayout(diags, entry)};
     CHECK(layout.items.empty());
     REQUIRE(diags.errorCount() == 1);
     CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR,
@@ -173,36 +173,36 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
   const char *words[]{"caster", "light"};
   for (const char *word : words) {
     CAPTURE(word);
-    const auto refused{std::string("'") + word +
-                       "' applies to a mesh file or a shape"};
+    const std::string refused{std::string("'") + word +
+                              "' applies to a mesh file or a shape"};
     SUBCASE("On the asset") {
-      const auto entry{dir.write("entry.layout",
-                                 std::string("asset hair = \"hair.curves\" { "
-                                             "material m ") +
-                                     word + " }\nplace hair\n")};
+      const std::string entry{dir.write(
+          "entry.layout", std::string("asset hair = \"hair.curves\" { "
+                                      "material m ") +
+                              word + " }\nplace hair\n")};
       LayoutDiagnostics diags{};
-      const auto layout{lowerLayout(diags, entry)};
+      const Layout layout{lowerLayout(diags, entry)};
       CHECK(layout.items.empty());
       REQUIRE(diags.errorCount() == 1);
       CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR, refused));
     }
     SUBCASE("On the import") {
-      const auto entry{dir.write(
+      const std::string entry{dir.write(
           "entry.layout",
           std::string("import \"hair.curves\" { material m ") + word + " }\n")};
       LayoutDiagnostics diags{};
-      const auto layout{lowerLayout(diags, entry)};
+      const Layout layout{lowerLayout(diags, entry)};
       CHECK(layout.items.empty());
       REQUIRE(diags.errorCount() == 1);
       CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR, refused));
     }
   }
   SUBCASE("Unmarked, the groom lowers") {
-    const auto entry{dir.write("entry.layout",
-                               "asset hair = \"hair.curves\" { material m }\n"
-                               "place hair\n")};
+    const std::string entry{dir.write(
+        "entry.layout", "asset hair = \"hair.curves\" { material m }\n"
+                        "place hair\n")};
     LayoutDiagnostics diags{};
-    const auto layout{lowerOK(diags, entry)};
+    const Layout layout{lowerOK(diags, entry)};
     REQUIRE(layout.items.size() == 1);
     CHECK(layout.items[0].curves.isActive);
     CHECK(!layout.items[0].isCaster);
@@ -213,10 +213,11 @@ TEST_CASE("Layout lowering: the marks are refused on a groom") {
 
 TEST_CASE("Layout lowering: marks on a light placement warn") {
   LayoutDir dir{};
-  const auto entry{dir.write("entry.layout", "light lamp = point\n"
-                                             "place lamp caster light\n")};
+  const std::string entry{dir.write("entry.layout",
+                                    "light lamp = point\n"
+                                    "place lamp caster light\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry)};
+  const Layout layout{lowerOK(diags, entry)};
   CHECK(layout.items.empty());
   REQUIRE(layout.lights.size() == 1);
   CHECK(layout.lights[0].decl.kind == LayoutLightDecl::Kind::POINT);
@@ -229,11 +230,11 @@ TEST_CASE("Layout lowering: marks on a light placement warn") {
 
 TEST_CASE("Layout packing: a per-place mark has no record to live in") {
   LayoutDir dir{};
-  const auto output{(dir.root / "out.places").string()};
+  const std::string output{(dir.root / "out.places").string()};
   const char *words[]{"caster", "light"};
   for (const char *word : words) {
     CAPTURE(word);
-    const auto entry{dir.write(
+    const std::string entry{dir.write(
         "entry.layout", std::string("asset ball = sphere { radius 1 material m "
                                     "}\nplace ball ") +
                             word + " off\n")};
@@ -247,23 +248,23 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
     }
   }
   // Without a mark the same place packs.
-  const auto entry{dir.write("entry.layout",
-                             "asset ball = sphere { radius 1 material m }\n"
-                             "place ball translate 1 2 3\n")};
+  const std::string entry{
+      dir.write("entry.layout", "asset ball = sphere { radius 1 material m }\n"
+                                "place ball translate 1 2 3\n")};
   packPlaces(entry, output);
   CHECK(fs::exists(output));
 }
 
 TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
   LayoutDir dir{};
-  const auto entry{dir.write("entry.layout",
-                             "light panel = rect { size 2 1 }\n"
-                             "place panel scale 3 2 1 translate 0 0 5\n")};
+  const std::string entry{
+      dir.write("entry.layout", "light panel = rect { size 2 1 }\n"
+                                "place panel scale 3 2 1 translate 0 0 5\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry)};
+  const Layout layout{lowerOK(diags, entry)};
   CHECK(diags.empty());
   REQUIRE(layout.lights.size() == 1);
-  const auto &light{layout.lights[0]};
+  const LayoutLight &light{layout.lights[0]};
   CHECK(light.decl.kind == LayoutLightDecl::Kind::RECT);
   CHECK(light.decl.size.x == doctest::Approx(2.0f));
   CHECK(light.decl.size.y == doctest::Approx(1.0f));
@@ -277,14 +278,14 @@ TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
 
 TEST_CASE("Layout lowering: a camera directive names where it belongs") {
   LayoutDir dir{};
-  const auto entry{dir.write("entry.layout", "camera { fovy 30 }\n"
-                                             "asset ball = sphere { "
-                                             "material m }\n"
-                                             "place ball\n")};
+  const std::string entry{dir.write("entry.layout", "camera { fovy 30 }\n"
+                                                    "asset ball = sphere { "
+                                                    "material m }\n"
+                                                    "place ball\n")};
   LayoutDiagnostics diags{};
   (void)lowerLayout(diags, entry);
   REQUIRE(diags.errorCount() == 1);
-  const auto &error{diags.all().front()};
+  const LayoutDiagnostic &error{diags.all().front()};
   CHECK_CONTAINS(error.message, "unknown directive");
   REQUIRE(!error.notes.empty());
   CHECK_CONTAINS(error.notes.front().message, "'.camera' file");
@@ -296,9 +297,9 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
                           "place inner translate 0 0 1\n");
   {
     // Two records, one unit apart along y.
-    auto places{PlacesFile()};
+    PlacesFile places{};
     const auto translate{[](float x, float y, float z) {
-      auto xf{float4x4(1.0f)};
+      float4x4 xf{1.0f};
       xf[3] = float4(x, y, z, 1.0f);
       return xf;
     }};
@@ -308,7 +309,7 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
   }
   // The keys are absolute readings of the clock, and the shutter below
   // spans exactly the second they span, so each sample lands on a key.
-  const auto entry{dir.write(
+  const std::string entry{dir.write(
       "entry.layout",
       "asset ball = sphere { radius 1 material m translate 0 0 1 }\n"
       "light lamp = point { power 10 }\n"
@@ -329,7 +330,7 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
       "place ball * \"pair.places\"\n"
       "place lit motion { at 0 translate 10 0 0 at 1 translate 11 0 0 }\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
+  const Layout layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
   CHECK(diags.empty());
   REQUIRE(layout.items.size() == 8);
   const auto translationOf{[](const float4x4 &xf) { return float3(xf[3]); }};
@@ -379,15 +380,15 @@ TEST_CASE("Layout lowering: motion tracks compose pairwise") {
 
 TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
   LayoutDir dir{};
-  const auto entry{dir.write(
+  const std::string entry{dir.write(
       "entry.layout",
       "asset ball = sphere { material m }\n"
       "place ball motion { at 1 translate 0 0 0 at 3 translate 20 0 0 }\n")};
   const auto xOf{[&](const MotionSampling &sampling, bool isShut = false) {
     LayoutDiagnostics diags{};
-    const auto layout{lowerOK(diags, entry, sampling)};
+    const Layout layout{lowerOK(diags, entry, sampling)};
     REQUIRE(layout.items.size() == 1);
-    const auto &item{layout.items[0]};
+    const LayoutItem &item{layout.items[0]};
     if (!isShut) return item.objectToWorld[3].x;
     REQUIRE(item.objectToWorldShut);
     return (*item.objectToWorldShut)[3].x;
@@ -403,7 +404,7 @@ TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
   }
   SUBCASE("A shut shutter lowers static however the track moves") {
     LayoutDiagnostics diags{};
-    const auto layout{lowerOK(diags, entry, MotionSampling(2.0f, 2.0f))};
+    const Layout layout{lowerOK(diags, entry, MotionSampling(2.0f, 2.0f))};
     REQUIRE(layout.items.size() == 1);
     CHECK(!layout.items[0].objectToWorldShut);
   }
@@ -422,14 +423,14 @@ TEST_CASE("Layout lowering: a track is read on the clock, not on the shutter") {
 
 TEST_CASE("Layout lowering: a place's operations compose outside its track") {
   LayoutDir dir{};
-  const auto entry{dir.write(
+  const std::string entry{dir.write(
       "entry.layout", "asset ball = sphere { material m }\n"
                       "place ball translate 0 0 7 motion { at 0 translate "
                       "0 0 0 at 1 translate 4 0 0 }\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
+  const Layout layout{lowerOK(diags, entry, MotionSampling(0.0f, 1.0f))};
   REQUIRE(layout.items.size() == 1);
-  const auto &item{layout.items[0]};
+  const LayoutItem &item{layout.items[0]};
   // Standing at z = 7 and sliding along x in its own frame.
   CHECK(item.objectToWorld[3].x == doctest::Approx(0.0f));
   CHECK(item.objectToWorld[3].z == doctest::Approx(7.0f));
@@ -443,7 +444,7 @@ TEST_CASE("Layout lowering: an offset shifts the clock a track is read on") {
   dir.write("member.layout", "asset ball = sphere { material m }\n"
                              "place ball motion { at 0 translate 0 0 0 "
                              "at 4 translate 40 0 0 }\n");
-  const auto entry{dir.write(
+  const std::string entry{dir.write(
       "entry.layout", "asset sub = \"member.layout\"\n"
                       "asset ball = sphere { material m }\n"
                       "place sub\n"
@@ -453,7 +454,7 @@ TEST_CASE("Layout lowering: an offset shifts the clock a track is read on") {
                       "place ball offset 2 motion { at 0 translate 0 0 0 "
                       "at 4 translate 40 0 0 }\n")};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry, MotionSampling(1.0f, 1.0f))};
+  const Layout layout{lowerOK(diags, entry, MotionSampling(1.0f, 1.0f))};
   REQUIRE(layout.items.size() == 4);
   // An enclosing place's offset reaches the track inside it, and a
   // placement's own offset reaches its own track: both stand where the
@@ -473,12 +474,12 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
             "place inner offset 0.25\n");
   dir.write("sub2.layout", "import \"hero.obj\"\n");
   {
-    auto places{PlacesFile()};
+    PlacesFile places{};
     places.transforms = {float4x4(1.0f), float4x4(1.0f)};
     places.transforms[1][3] = float4(0.0f, 1.0f, 0.0f, 1.0f);
     writePlacesFile((dir.root / "pair.places").string(), places);
   }
-  const auto entry{
+  const std::string entry{
       dir.write("entry.layout",
                 "asset hero = \"hero.obj\" { animation \"walk\" offset 0.25 }\n"
                 "asset plain = \"hero.obj\"\n"
@@ -498,7 +499,7 @@ TEST_CASE("Layout lowering: the animation spec reaches the item with the "
                 "place hero\n"                            // 9
                 )};
   LayoutDiagnostics diags{};
-  const auto layout{lowerOK(diags, entry)};
+  const Layout layout{lowerOK(diags, entry)};
   CHECK(diags.empty());
   REQUIRE(layout.items.size() == 10);
   const auto offsetOf{
@@ -537,7 +538,7 @@ TEST_CASE("Layout lowering: 'animation' is refused on a groom and a layout") {
   dir.write("sub.layout", "asset inner = sphere { material m }\n"
                           "place inner\n");
   SUBCASE("On a groom") {
-    const auto entry{dir.write(
+    const std::string entry{dir.write(
         "entry.layout", "asset fur = \"fur.curves\" { material m animation "
                         "\"x\" }\n"
                         "place fur\n")};
@@ -548,9 +549,9 @@ TEST_CASE("Layout lowering: 'animation' is refused on a groom and a layout") {
     CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR, "curves file"));
   }
   SUBCASE("On a layout") {
-    const auto entry{dir.write("entry.layout",
-                               "asset sub = \"sub.layout\" { animation 0 }\n"
-                               "place sub\n")};
+    const std::string entry{
+        dir.write("entry.layout", "asset sub = \"sub.layout\" { animation 0 }\n"
+                                  "place sub\n")};
     LayoutDiagnostics diags{};
     (void)lowerLayout(diags, entry);
     CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::ERROR,

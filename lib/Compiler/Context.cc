@@ -20,8 +20,8 @@ namespace smdl {
 namespace {
 [[nodiscard]] std::string
 decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
-  auto result{std::string(sourceCode.uncompressedSize, '\0')};
-  auto resultSize{mz_ulong(sourceCode.uncompressedSize)};
+  std::string result(sourceCode.uncompressedSize, '\0');
+  size_t resultSize{mz_ulong(sourceCode.uncompressedSize)};
   if (mz_uncompress(reinterpret_cast<unsigned char *>(result.data()),
                     &resultSize, sourceCode.compressed,
                     mz_ulong(sourceCode.compressedSize)) != MZ_OK ||
@@ -128,10 +128,10 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `_wymanY`
   // - Function `_colorToRgb`
   // - Function `_rgbToColor`
-  auto apiRootScope{getBuiltinModule("api")->mRootScope};
+  Scope *apiRootScope{getBuiltinModule("api")->mRootScope};
   auto seedKeyword{[&](Declaration *declaration) {
     if (declaration->isExported() && declaration->hasSimpleName()) {
-      auto simpleName{llvm::StringRef(declaration->name[0])};
+      llvm::StringRef simpleName{declaration->name[0]};
       SMDL_SANITY_CHECK_MSG(!mKeywords.contains(simpleName),
                             "keyword collision in builtin 'api' module");
       mKeywords[simpleName] = declaration->value;
@@ -161,21 +161,21 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
 Span<const std::string_view>
 Context::internName(Span<const std::string_view> name) {
   if (name.empty()) return {};
-  auto key{llvm::SmallString<64>{}};
+  llvm::SmallString<64> key{};
   for (size_t i = 0; i < name.size(); i++) {
     key += name[i];
     if (i + 1 < name.size()) key += '\0';
   }
   auto [itr, inserted] = mInternedNames.try_emplace(key);
   if (inserted) {
-    auto views{llvm::SmallVector<std::string_view, 4>{}};
-    auto keyChars{itr->getKey()};
+    llvm::SmallVector<std::string_view, 4> views{};
+    llvm::StringRef keyChars{itr->getKey()};
     size_t pos{};
     for (const auto &elem : name) {
       views.push_back(std::string_view(keyChars.data() + pos, elem.size()));
       pos += elem.size() + 1;
     }
-    auto elems{static_cast<std::string_view *>(allocator.allocate(
+    std::string_view *elems{static_cast<std::string_view *>(allocator.allocate(
         sizeof(std::string_view) * views.size(), alignof(std::string_view)))};
     std::uninitialized_copy(views.begin(), views.end(), elems);
     itr->second = Span<const std::string_view>(elems, views.size());
@@ -184,19 +184,20 @@ Context::internName(Span<const std::string_view> name) {
 }
 
 Module *Context::getBuiltinModule(llvm::StringRef name) {
-  auto sourceCode{builtin::get_source_code(name)};
+  const builtin::CompressedSourceCode *sourceCode{
+      builtin::get_source_code(name)};
   if (!sourceCode) {
     return nullptr;
   }
-  auto &mod{mBuiltinModules[name]};
+  BumpPtr<Module> &mod{mBuiltinModules[name]};
   if (!mod) {
     mod = allocator.allocate<Module>(name.str(),
                                      decompressSourceCode(*sourceCode));
-    if (auto error{mod->parse(allocator)}) {
+    if (std::optional<Error> error{mod->parse(allocator)}) {
       throw std::move(*error);
     }
   }
-  if (auto error{mod->compile(*this)}) {
+  if (std::optional<Error> error{mod->compile(*this)}) {
     throw std::move(*error);
   }
   return mod.get();
@@ -212,20 +213,21 @@ Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
   key |= uint64_t(scalar.numBits) << 32;
   key |= uint64_t(extent.numCols) << 16;
   key |= uint64_t(extent.numRows);
-  auto &type{mArithmeticTypes[key]};
+  BumpPtr<ArithmeticType> &type{mArithmeticTypes[key]};
   if (!type) type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
   return type.get();
 }
 
 ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
-  auto &type{mArrayTypes[std::pair(elemType, size)]};
+  BumpPtr<ArrayType> &type{mArrayTypes[std::pair(elemType, size)]};
   if (!type) type = allocator.allocate<ArrayType>(*this, elemType, size);
   return type.get();
 }
 
 InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
                                                          std::string sizeName) {
-  auto &type{mInferredSizeArrayTypes[std::pair(elemType, sizeName)]};
+  BumpPtr<InferredSizeArrayType> &type{
+      mInferredSizeArrayTypes[std::pair(elemType, sizeName)]};
   if (!type)
     type = allocator.allocate<InferredSizeArrayType>(elemType,
                                                      std::move(sizeName));
@@ -233,53 +235,54 @@ InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
 }
 
 PointerType *Context::getPointerType(Type *pointeeType) {
-  auto &type{mPointerTypes[pointeeType]};
+  BumpPtr<PointerType> &type{mPointerTypes[pointeeType]};
   if (!type) type = allocator.allocate<PointerType>(*this, pointeeType);
   return type.get();
 }
 
 EnumType *Context::getEnumType(AST::Enum *decl) {
-  auto &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<EnumType>(*decl);
   return static_cast<EnumType *>(type.get());
 }
 
 FunctionType *Context::getFunctionType(AST::Function *decl) {
-  auto &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<FunctionType>(*decl);
   return static_cast<FunctionType *>(type.get());
 }
 
 FunctionType *Context::getLambdaFunctionType(AST::Function *decl) {
-  auto type{allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
-  auto *result{type.get()};
+  BumpPtr<FunctionType> type{
+      allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
+  FunctionType *result{type.get()};
   mLambdaTypes.push_back(std::move(type));
   return result;
 }
 
 StructType *Context::getStructType(AST::Struct *decl) {
-  auto &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<StructType>(*decl);
   return static_cast<StructType *>(type.get());
 }
 
 TagType *Context::getTagType(AST::Tag *decl) {
-  auto &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<TagType>(std::string(decl->name.srcName));
   return static_cast<TagType *>(type.get());
 }
 
 Type *Context::getUnionType(llvm::ArrayRef<Type *> types) {
-  auto caseTypes{UnionType::canonicalizeTypes(types)};
+  llvm::SmallVector<Type *> caseTypes{UnionType::canonicalizeTypes(types)};
   if (caseTypes.size() == 1) return caseTypes[0];
-  auto &type{mUnionTypes[caseTypes]};
+  BumpPtr<UnionType> &type{mUnionTypes[caseTypes]};
   if (!type) type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
   return type.get();
 }
 
 ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
-  auto &type{mComptimeUnionTypes[unionType]};
+  BumpPtr<ComptimeUnionType> &type{mComptimeUnionTypes[unionType]};
   if (!type) type = allocator.allocate<ComptimeUnionType>(unionType);
   return type.get();
 }
@@ -295,11 +298,12 @@ Type *Context::getCommonType(llvm::ArrayRef<Type *> types,
     // Sibling struct instances differing only in baked constants merge to
     // the sibling keeping the constants they agree on, so they stay one
     // struct type instead of becoming a union.
-    if (auto merged{StructType::getCommonSiblingInstance(*this, typeA, typeB)})
+    if (StructType *
+        merged{StructType::getCommonSiblingInstance(*this, typeA, typeB)})
       return merged;
     if (typeA->isArithmetic() && typeB->isArithmetic()) {
-      auto arithTypeA{static_cast<ArithmeticType *>(typeA)};
-      auto arithTypeB{static_cast<ArithmeticType *>(typeB)};
+      ArithmeticType *arithTypeA{static_cast<ArithmeticType *>(typeA)};
+      ArithmeticType *arithTypeB{static_cast<ArithmeticType *>(typeB)};
       if (arithTypeA->extent == arithTypeB->extent ||
           arithTypeA->extent.isScalar() || arithTypeB->extent.isScalar())
         return arithTypeA->getCommonType(*this, arithTypeB);
@@ -381,7 +385,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     }
     // If the destination type is a vector with equivalent scalar type,
     // conversion is explicit (Load from the pointer!).
-    if (auto arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
+    if (ArithmeticType *arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
         arithTypeB->extent.isVector() &&
         arithTypeB->getScalarType(*this) == typeA->getPointeeType()) {
       return CONVERSION_RULE_EXPLICIT;
@@ -389,21 +393,21 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
   }
   // If the source type is a struct that is an instance of the
   // destination type, conversion is perfect.
-  if (auto structTypeA{llvm::dyn_cast<StructType>(typeA)};
+  if (StructType *structTypeA{llvm::dyn_cast<StructType>(typeA)};
       structTypeA && structTypeA->isInstanceOf(typeB)) {
     return CONVERSION_RULE_PERFECT;
   }
   // If the source type is a union that is always an instance of the
   // destination type, conversion is perfect.
-  if (auto unionTypeA{llvm::dyn_cast<UnionType>(typeA)};
+  if (UnionType *unionTypeA{llvm::dyn_cast<UnionType>(typeA)};
       unionTypeA && unionTypeA->isAlwaysInstanceOf(typeB)) {
     return CONVERSION_RULE_PERFECT;
   }
   // If the destination type is a union ...
-  if (auto unionTypeB{llvm::dyn_cast<UnionType>(typeB)}) {
+  if (UnionType * unionTypeB{llvm::dyn_cast<UnionType>(typeB)}) {
     // If the source type is a union and the destination type has all
     // of the source case types, conversion is implicit.
-    if (auto unionTypeA{llvm::dyn_cast<UnionType>(typeA)}) {
+    if (UnionType * unionTypeA{llvm::dyn_cast<UnionType>(typeA)}) {
       return unionTypeB->hasAllCaseTypes(unionTypeA) ? CONVERSION_RULE_IMPLICIT
                                                      : CONVERSION_RULE_EXPLICIT;
     } else {
@@ -414,7 +418,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
   }
   // If the destination type is a compile-time union and the source type
   // is one of the case types, conversion is perfect.
-  if (auto unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
+  if (ComptimeUnionType *unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
       unionTypeB && unionTypeB->unionType->hasCaseType(typeA)) {
     return CONVERSION_RULE_PERFECT;
   }
@@ -429,11 +433,11 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
       return CONVERSION_RULE_EXPLICIT;
   }
   // If the source type is an array ...
-  if (auto arrayTypeA{llvm::dyn_cast<ArrayType>(typeA)}) {
+  if (ArrayType * arrayTypeA{llvm::dyn_cast<ArrayType>(typeA)}) {
     // If the destination type is an inferred-size array, conversion is whatever
     // the element conversion is.
-    if (auto inferredSizeArrayTypeB{
-            llvm::dyn_cast<InferredSizeArrayType>(typeB)}) {
+    if (InferredSizeArrayType *
+        inferredSizeArrayTypeB{llvm::dyn_cast<InferredSizeArrayType>(typeB)}) {
       return getConversionRule(arrayTypeA->elemType,
                                inferredSizeArrayTypeB->elemType);
     }
@@ -443,7 +447,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     // auto someArray = float[4](/* ... */);
     // &float somePtr = someArray;
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (auto pointerTypeB{llvm::dyn_cast<PointerType>(typeB)};
+    if (PointerType *pointerTypeB{llvm::dyn_cast<PointerType>(typeB)};
         pointerTypeB && arrayTypeA->elemType == pointerTypeB->pointeeType) {
       return CONVERSION_RULE_IMPLICIT;
     }
@@ -454,7 +458,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     // auto someArray = float[4](/* ... */);
     // auto someArray2 = cast<double[4]>(someArray);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (auto arrayTypeB{llvm::dyn_cast<ArrayType>(typeB)};
+    if (ArrayType *arrayTypeB{llvm::dyn_cast<ArrayType>(typeB)};
         arrayTypeB && arrayTypeA->size == arrayTypeB->size &&
         getConversionRule(arrayTypeA->elemType, arrayTypeB->elemType) !=
             CONVERSION_RULE_NOT_ALLOWED) {
@@ -466,11 +470,11 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
 
 Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
                                         UnionType *unionTypeB) {
-  auto &indexMap{mUnionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
+  Value &indexMap{mUnionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
   if (!indexMap) {
     indexMap =
         Value::zero(getArrayType(getIntType(), unionTypeA->caseTypes.size()));
-    auto builder{llvm::IRBuilder<>(llvmContext)};
+    llvm::IRBuilder<> builder{llvmContext};
     for (unsigned i = 0; i < unionTypeA->caseTypes.size(); i++)
       indexMap.llvmValue =
           builder.CreateInsertValue(indexMap.llvmValue,
@@ -491,7 +495,7 @@ Value Context::getImageTexelBase(Type *type, const Image &image) {
   SMDL_SANITY_CHECK(type && type->llvmType);
   auto itr{compiler.mImageSymbolNames.find(&image)};
   SMDL_SANITY_CHECK(itr != compiler.mImageSymbolNames.end());
-  auto llvmGlobal{llvmModule.getNamedGlobal(itr->second)};
+  llvm::GlobalVariable *llvmGlobal{llvmModule.getNamedGlobal(itr->second)};
   if (!llvmGlobal) {
     // A declaration, so the address stays open until the JIT links it.
     // Deliberately not 'dso_local': that lets the backend address the
@@ -511,13 +515,14 @@ Value Context::getImageTexelBase(Type *type, const Image &image) {
 
 Value Context::getComptimeIntArray(Span<const int> values,
                                    llvm::StringRef name) {
-  auto *llvmIntType{getIntType()->llvmType};
-  auto llvmValues{llvm::SmallVector<llvm::Constant *>()};
+  llvm::Type *llvmIntType{getIntType()->llvmType};
+  llvm::SmallVector<llvm::Constant *> llvmValues{};
   for (auto value : values)
     llvmValues.push_back(llvm::ConstantInt::get(
         llvmIntType, llvm::APInt(sizeof(int) * 8, value, /*isSigned=*/true)));
-  auto *llvmArrayType{llvm::ArrayType::get(llvmIntType, llvmValues.size())};
-  auto *llvmInit{llvm::ConstantArray::get(llvmArrayType, llvmValues)};
+  llvm::ArrayType *llvmArrayType{
+      llvm::ArrayType::get(llvmIntType, llvmValues.size())};
+  llvm::Constant *llvmInit{llvm::ConstantArray::get(llvmArrayType, llvmValues)};
   // Named by content and reused, the way 'getImageTexelBase()' reuses
   // the texel symbol. A material body is emitted once per entry point,
   // so the same table is asked for many times over, and a fresh global
@@ -527,16 +532,16 @@ Value Context::getComptimeIntArray(Span<const int> values,
   // 'xxh3_64bits' rather than 'llvm::hash_value', which is seeded per
   // process and would name the same table differently on every run,
   // leaving a dumped object file irreproducible.
-  auto uniqueName{
+  std::string uniqueName{
       concat(std::string_view(name.data(), name.size()), ".",
              llvm::utohexstr(llvm::xxh3_64bits(llvm::ArrayRef<uint8_t>(
                  reinterpret_cast<const uint8_t *>(values.begin()),
                  values.size() * sizeof(int)))))};
-  if (auto *llvmGlobal{llvmModule.getNamedGlobal(uniqueName)};
+  if (llvm::GlobalVariable *llvmGlobal{llvmModule.getNamedGlobal(uniqueName)};
       llvmGlobal && llvmGlobal->hasInitializer() &&
       llvmGlobal->getInitializer() == llvmInit)
     return RValue(getPointerType(getIntType()), llvmGlobal);
-  auto *llvmGlobal{new llvm::GlobalVariable(
+  llvm::GlobalVariable *llvmGlobal{new llvm::GlobalVariable(
       llvmModule, llvmArrayType, /*isConstant=*/true,
       llvm::GlobalValue::PrivateLinkage, llvmInit, uniqueName)};
   // Nothing compares the address, so two tables that hash apart but
@@ -552,7 +557,7 @@ Span<const std::string_view> getAllNames() {
 }
 
 std::string getSourceCode(std::string_view name) {
-  const auto *sourceCode{get_source_code(name)};
+  const CompressedSourceCode *sourceCode{get_source_code(name)};
   return sourceCode ? decompressSourceCode(*sourceCode) : std::string();
 }
 

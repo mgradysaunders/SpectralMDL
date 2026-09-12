@@ -72,7 +72,7 @@ public:
   };
 
   explicit Emitter(Context &context) : context(context), builder(context) {
-    auto fmf{llvm::FastMathFlags::getFast()};
+    llvm::FastMathFlags fmf{llvm::FastMathFlags::getFast()};
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
     builder.setFastMathFlags(fmf);
@@ -82,7 +82,7 @@ public:
   /// Push a new scope whose parent is the current scope. The caller is
   /// responsible for restoring `scope` (typically via `SMDL_PRESERVE`).
   [[nodiscard]] Scope *pushScope(bool isTransparent) {
-    auto newScope{context.makeScope()};
+    Scope *newScope{context.makeScope()};
     newScope->parent = scope;
     newScope->isTransparent = isTransparent;
     return newScope;
@@ -245,7 +245,7 @@ public:
   [[nodiscard]] std::array<llvm::BasicBlock *, N>
   createBlocks(llvm::StringRef baseName,
                std::array<llvm::StringRef, N> extensions) {
-    auto name{context.getUniqueName(baseName, getLLVMFunction())};
+    std::string name{context.getUniqueName(baseName, getLLVMFunction())};
     auto blocks{std::array<llvm::BasicBlock *, N>{}};
     for (size_t i = 0; i < N; i++)
       blocks[i] = createBlock(name + extensions[i]);
@@ -287,7 +287,7 @@ public:
   /// temporary.
   auto declare(Span<const std::string_view> name, AST::Node *node, Value value,
                bool ownsStorage = true) {
-    auto declaration{context.allocator.allocate<Declaration>(
+    Declaration *declaration{context.allocator.allocate<Declaration>(
         context.internName(name), node, value)};
     declaration->seq = context.nextDeclSeq();
     // Record the declaration in the scope index. Imports resolve by
@@ -297,7 +297,7 @@ public:
       if (declaration->isASTImport() || declaration->isASTUsingImport()) {
         scope->imports.push_back(declaration);
       } else {
-        auto &slot{scope->decls[declaration->name.data()]};
+        Declaration *&slot{scope->decls[declaration->name.data()]};
         declaration->prevSameNameInScope = slot;
         slot = declaration;
       }
@@ -363,9 +363,9 @@ public:
   ///
   [[nodiscard]] Value lvalue(Value value) {
     if (value.isRValue() && !value.isVoid()) {
-      auto lv{createAlloca(value.type, value.llvmValue->hasName()
-                                           ? value.llvmValue->getName() + ".lv"
-                                           : "")};
+      Value lv{createAlloca(value.type, value.llvmValue->hasName()
+                                            ? value.llvmValue->getName() + ".lv"
+                                            : "")};
       createLifetimeStart(lv);
       builder.CreateStore(value, lv);
       return lv;
@@ -494,7 +494,7 @@ public:
                    Func &&func) {
     SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak, labelContinue,
                   isInDefer, currentModule);
-    const auto depth0{unwindStack.size()};
+    const size_t depth0{unwindStack.size()};
     scope = pushScope(/*isTransparent=*/false);
     if (blockStart) {
       llvmMoveBlockToEnd(blockStart);
@@ -734,8 +734,8 @@ public:
     // Evaluate the callee before the arguments: C++ makes no ordering
     // guarantee between function arguments, and the emission order here
     // defines side-effect order in the generated code.
-    auto callee{emit(expr.expr)};
-    auto args{emit(expr.args)};
+    Value callee{emit(expr.expr)};
+    ArgumentList args{emit(expr.args)};
     return emitCall(callee, args, expr.srcLoc);
   }
 
@@ -761,7 +761,7 @@ public:
   /// captured by `initializeLambda()` must be re-captured against the scope
   /// of the current expansion.
   Value emit(AST::Lambda &expr) {
-    auto *funcType{context.getLambdaFunctionType(expr.func.get())};
+    FunctionType *funcType{context.getLambdaFunctionType(expr.func.get())};
     funcType->initializeLambda(*this);
     return context.getComptimeMetaType(funcType);
   }
@@ -771,10 +771,10 @@ public:
     // The declarations open their own scope, so they may shadow names in
     // the enclosing scope.
     SMDL_PRESERVE(scope);
-    const auto depth0{unwindStack.size()};
+    const size_t depth0{unwindStack.size()};
     scope = pushScope(/*isTransparent=*/false);
     for (auto &decl : expr.decls) emit(decl);
-    auto value{rvalue(emit(expr.expr))};
+    Value value{rvalue(emit(expr.expr))};
     unwind(depth0);
     unwindStack.resize(depth0);
     return value;
@@ -787,7 +787,7 @@ public:
 
   /// Emit literal float expression.
   Value emit(AST::LiteralFloat &expr) {
-    auto src{llvm::StringRef(expr.srcValue)};
+    llvm::StringRef src{expr.srcValue};
     if (src.ends_with_insensitive("jd")) {
       return invoke("complex",
                     {context.getComptimeDouble(0.0),
@@ -811,7 +811,7 @@ public:
     // If the literal value is greater than the maximum `int` promote
     // it to `int64`.
     if (expr.value > uint64_t(std::numeric_limits<int>::max())) {
-      auto intType{context.getArithmeticType(Scalar::getInt(64), Extent(1))};
+      Type *intType{context.getArithmeticType(Scalar::getInt(64), Extent(1))};
       return RValue(intType,
                     llvm::ConstantInt::get(intType->llvmType,
                                            llvm::APInt(64, expr.value)));
@@ -835,7 +835,7 @@ public:
 
   /// Emit type expression.
   Value emit(AST::Type &expr) {
-    auto value{emit(expr.expr)};
+    Value value{emit(expr.expr)};
     if (value.type != context.getMetaTypeType())
       expr.srcLoc.throwError("expected expression to resolve to a type");
     expr.type = value.getComptimeMetaType(context, expr.srcLoc);
@@ -844,8 +844,8 @@ public:
 
   /// Emit type-cast expression.
   Value emit(AST::TypeCast &expr) {
-    auto type{emit(expr.type).getComptimeMetaType(context, expr.srcLoc)};
-    auto value{emit(expr.expr)};
+    Type *type{emit(expr.type).getComptimeMetaType(context, expr.srcLoc)};
+    Value value{emit(expr.expr)};
     return invoke(type, value, expr.srcLoc);
   }
 
@@ -861,8 +861,8 @@ public:
       std::invoke(std::forward<Func>(func));
       return;
     }
-    auto cond{invoke(context.getBoolType(), emit(lateIf->expr),
-                     lateIf->expr->srcLoc)};
+    Value cond{invoke(context.getBoolType(), emit(lateIf->expr),
+                      lateIf->expr->srcLoc)};
     if (cond.isComptimeInt()) {
       // Fold like `emit(AST::If &)`, so statements following a
       // comptime-taken `return`/`break`/`continue` are never emitted.
@@ -940,7 +940,7 @@ public:
   /// Emit preserve statement.
   Value emit(AST::Preserve &stmt) {
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
-      auto value{emit(expr)};
+      Value value{emit(expr)};
       if (!value.isLValue()) stmt.srcLoc.throwError("cannot 'preserve' rvalue");
       unwindStack.push_back(
           {UnwindAction::Kind::Preserve, value, rvalue(value)});
@@ -1068,7 +1068,7 @@ public:
   [[nodiscard]] Value emitOpColumnwise(Type *type, Func &&func) {
     SMDL_SANITY_CHECK(type);
     SMDL_SANITY_CHECK(type->isArithmeticMatrix());
-    auto result{Value::zero(type)};
+    Value result{Value::zero(type)};
     for (unsigned j = 0;
          j < static_cast<ArithmeticType *>(type)->extent.numCols; j++)
       result = insert(result, std::invoke(func, j), j, /*srcLoc=*/{});
@@ -1186,7 +1186,8 @@ public:
     }
 
     [[nodiscard]] llvm::SmallVector<Type *> getNonVariadicTypes() const {
-      auto valueTypes{llvm::SmallVector<Type *>(values.size())};
+      llvm::SmallVector<Type *> valueTypes{
+          llvm::SmallVector<Type *>(values.size())};
       for (size_t i = 0; i < values.size(); i++) valueTypes[i] = values[i].type;
       // For crappy support of C-style variadic functions, if the
       // parameters have an ellipsis, then the resolveArguments() routine
@@ -1199,7 +1200,7 @@ public:
 
     [[nodiscard]] std::optional<ArgumentList> getImpliedVisitArguments() const {
       bool hasImpliedVisit{false};
-      auto impliedVisitArgs{args};
+      ArgumentList impliedVisitArgs{args};
       for (size_t i = 0; i < args.size(); i++) {
         if (argParams[i] != nullptr && //
             argParams[i]->type->isAbstract() &&
@@ -1268,7 +1269,8 @@ public:
                                          const ArgumentList &args,
                                          const SourceLocation &srcLoc,
                                          std::string *whyNot = nullptr) try {
-    auto res{resolveArguments(params, args, srcLoc, /*shouldSkipEmit=*/true)};
+    ResolvedArguments res{
+        resolveArguments(params, args, srcLoc, /*shouldSkipEmit=*/true)};
     return true;
   } catch (const Error &error) {
     // Only resolution failures mean "no"; anything else propagates.

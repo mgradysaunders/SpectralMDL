@@ -37,7 +37,7 @@ void parseFail(const std::string &source, int lineNo,
 }
 
 const FlatYAML::Entry &entryOf(const FlatYAML &doc, const std::string &key) {
-  auto entry{FlatYAML::find(doc.root, key)};
+  const FlatYAML::Entry *entry{FlatYAML::find(doc.root, key)};
   REQUIRE(entry);
   return *entry;
 }
@@ -45,14 +45,14 @@ const FlatYAML::Entry &entryOf(const FlatYAML &doc, const std::string &key) {
 
 TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
   SUBCASE("Scalars, comments, quotes, blank lines, CRLF, BOM") {
-    auto doc{parseOK("\xEF\xBB\xBF# A comment\r\n"
-                     "\r\n"
-                     "name: Forest Ground  # trailing comment\r\n"
-                     "hash: \"a # b\"\r\n"
-                     "quoted: \"say \\\"hi\\\" \\\\ done\"\r\n"
-                     "number: 1.5\r\n"
-                     "text: \"1.5\"\r\n"
-                     "count: 42\r\n")};
+    smdl::FlatYAML doc{parseOK("\xEF\xBB\xBF# A comment\r\n"
+                               "\r\n"
+                               "name: Forest Ground  # trailing comment\r\n"
+                               "hash: \"a # b\"\r\n"
+                               "quoted: \"say \\\"hi\\\" \\\\ done\"\r\n"
+                               "number: 1.5\r\n"
+                               "text: \"1.5\"\r\n"
+                               "count: 42\r\n")};
     CHECK(doc.sourceName == "test.yaml");
     REQUIRE(doc.root.size() == 6);
     CHECK(doc.toString(entryOf(doc, "name")) == "Forest Ground");
@@ -86,20 +86,21 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
   }
 
   SUBCASE("An inline list parses to its elements") {
-    auto doc{parseOK("empty: []\n"
-                     "reals: [1, 2.5, -3e2]\n"
-                     "words: [ a , \"b, c\" , d ]\n"
-                     "nested: [0, [0.9, 0.8, 0.7]]\n")};
+    smdl::FlatYAML doc{parseOK("empty: []\n"
+                               "reals: [1, 2.5, -3e2]\n"
+                               "words: [ a , \"b, c\" , d ]\n"
+                               "nested: [0, [0.9, 0.8, 0.7]]\n")};
     CHECK(doc.toList(entryOf(doc, "empty")).empty());
-    auto reals{doc.toFloats(entryOf(doc, "reals"), 3)};
+    std::vector<float> reals{doc.toFloats(entryOf(doc, "reals"), 3)};
     CHECK(reals[2] == doctest::Approx(-300.0f));
-    const auto &words{doc.toList(entryOf(doc, "words"))};
+    const std::vector<FlatYAML::Node> &words{doc.toList(entryOf(doc, "words"))};
     REQUIRE(words.size() == 3);
     CHECK(words[0].text == "a");
     CHECK(words[1].text == "b, c");
     CHECK(words[1].isQuoted);
     CHECK(words[2].text == "d");
-    const auto &nested{doc.toList(entryOf(doc, "nested"))};
+    const std::vector<FlatYAML::Node> &nested{
+        doc.toList(entryOf(doc, "nested"))};
     REQUIRE(nested.size() == 2);
     CHECK(nested[0].kind == FlatYAML::Node::SCALAR);
     CHECK(nested[1].kind == FlatYAML::Node::LIST);
@@ -122,11 +123,11 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
   }
 
   SUBCASE("A block map parses to its entries") {
-    auto doc{parseOK("normal:\n"
-                     "  file: n.png\n"
-                     "  range: [0, 1]\n"
-                     "after: yes\n")};
-    const auto &block{doc.toMap(entryOf(doc, "normal"))};
+    smdl::FlatYAML doc{parseOK("normal:\n"
+                               "  file: n.png\n"
+                               "  range: [0, 1]\n"
+                               "after: yes\n")};
+    const FlatYAML::Map &block{doc.toMap(entryOf(doc, "normal"))};
     REQUIRE(block.size() == 2);
     CHECK(block[0].key == "file");
     CHECK(block[0].lineNo == 2);
@@ -145,14 +146,15 @@ TEST_CASE("FlatYAML: the subset it parses and the errors it refuses") {
   }
 
   SUBCASE("A block sequence of maps parses to its entries") {
-    auto doc{parseOK("objects:\n"
-                     "  - select: rock_03\n"
-                     "    materials: [rock, moss]\n"
-                     "    triangles: 5000\n"
-                     "  -   select: rock_04\n"
-                     "      triangles: 12\n"
-                     "name: after\n")};
-    const auto &sequence{doc.toSequence(entryOf(doc, "objects"))};
+    smdl::FlatYAML doc{parseOK("objects:\n"
+                               "  - select: rock_03\n"
+                               "    materials: [rock, moss]\n"
+                               "    triangles: 5000\n"
+                               "  -   select: rock_04\n"
+                               "      triangles: 12\n"
+                               "name: after\n")};
+    const std::vector<FlatYAML::Map> &sequence{
+        doc.toSequence(entryOf(doc, "objects"))};
     REQUIRE(sequence.size() == 2);
     REQUIRE(sequence[0].size() == 3);
     CHECK(sequence[0][0].key == "select");

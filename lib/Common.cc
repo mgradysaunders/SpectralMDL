@@ -55,12 +55,12 @@ BuildInfo BuildInfo::get() noexcept {
 }
 
 std::string BuildInfo::toString() const {
-  auto result{concat("SpectralMDL ", major, ".", minor, ".", patch,  //
-                     " (", gitBranch, ", commit ", gitCommit, ")\n", //
-                     "  built:      ", buildDate, "\n",              //
-                     "  options:    rtti ", hasRTTI ? "on" : "off",  //
-                     ", dynamic scheduling ",                        //
-                     hasDynamicScheduling ? "on" : "off", "\n")};
+  std::string result{concat("SpectralMDL ", major, ".", minor, ".", patch,  //
+                            " (", gitBranch, ", commit ", gitCommit, ")\n", //
+                            "  built:      ", buildDate, "\n",              //
+                            "  options:    rtti ", hasRTTI ? "on" : "off",  //
+                            ", dynamic scheduling ",                        //
+                            hasDynamicScheduling ? "on" : "off", "\n")};
   // The dependencies as one comma-separated list, greedily wrapped to
   // 80 columns under a hanging indent the width of the label.
   constexpr size_t COLUMNS{80};
@@ -68,7 +68,7 @@ std::string BuildInfo::toString() const {
   result += LABEL;
   size_t column{LABEL.size()};
   for (size_t i{}; i < thirdparty.size(); i++) {
-    auto item{thirdparty[i].name + ' ' + thirdparty[i].version};
+    std::string item{thirdparty[i].name + ' ' + thirdparty[i].version};
     if (i + 1 < thirdparty.size()) item += ',';
     if (i > 0) {
       if (column + 1 + item.size() > COLUMNS) {
@@ -101,8 +101,8 @@ const NativeTarget &NativeTarget::get() noexcept {
       llvm::report_fatal_error("LLVM has no code generator for this machine");
     std::string name{llvm::sys::getHostCPUName()};
     std::string triple{llvm::sys::getDefaultTargetTriple()};
-    auto targetError{std::string{}};
-    auto target{
+    std::string targetError{};
+    const llvm::Target *target{
         llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), targetError)};
     if (!target) llvm::report_fatal_error(targetError.c_str());
     llvm::TargetOptions opts{};
@@ -127,20 +127,21 @@ std::string_view SourceLocation::getModuleDisplayName() const {
 }
 
 std::string SourceLocation::getSourceSnippet() const {
-  auto sourceCode{module_ ? module_->getSourceCode() : std::string_view()};
+  std::string_view sourceCode{module_ ? module_->getSourceCode()
+                                      : std::string_view()};
   if (sourceCode.empty()) return {};
   // An error raised at EOF has no character to point at, so clamp and let
   // the caret land one past the end of the last line.
-  auto pos{i < sourceCode.size() ? size_t(i) : sourceCode.size()};
-  auto lineBegin{sourceCode.rfind('\n', pos)};
+  size_t pos{i < sourceCode.size() ? size_t(i) : sourceCode.size()};
+  size_t lineBegin{sourceCode.rfind('\n', pos)};
   lineBegin = lineBegin == std::string_view::npos ? 0 : lineBegin + 1;
-  auto lineEnd{sourceCode.find('\n', pos)};
+  size_t lineEnd{sourceCode.find('\n', pos)};
   lineEnd = lineEnd == std::string_view::npos ? sourceCode.size() : lineEnd;
-  auto line{sourceCode.substr(lineBegin, lineEnd - lineBegin)};
+  std::string_view line{sourceCode.substr(lineBegin, lineEnd - lineBegin)};
   if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-  auto column{pos - lineBegin};
+  size_t column{pos - lineBegin};
   if (line.empty() || column > line.size()) return {};
-  auto gutter{std::to_string(lineNo)};
+  std::string gutter{std::to_string(lineNo)};
   std::string str{};
   str += "\n  ";
   str += gutter;
@@ -157,7 +158,7 @@ std::string SourceLocation::getSourceSnippet() const {
 }
 
 std::string SourceLocation::formatMessage(std::string_view message) const {
-  auto str{std::string(*this)};
+  std::string str{std::string(*this)};
   if (!str.empty()) str += ' ';
   str += message;
   return str;
@@ -218,9 +219,9 @@ void State::finalize() noexcept {
   // already derived takes the first branch every time, so the six dot
   // products that recognize the case are worth their cost against the
   // three square roots and six divides they skip.
-  const auto axisX{float3(objectToWorld[0])};
-  const auto axisY{float3(objectToWorld[1])};
-  const auto axisZ{float3(objectToWorld[2])};
+  const float3 axisX{float3(objectToWorld[0])};
+  const float3 axisY{float3(objectToWorld[1])};
+  const float3 axisZ{float3(objectToWorld[2])};
   constexpr float ORTHONORMAL_EPS = 1e-6f;
   const auto isOrthonormal{[&] {
     return std::abs(lengthSquared(axisX) - 1) < ORTHONORMAL_EPS &&
@@ -231,7 +232,7 @@ void State::finalize() noexcept {
            std::abs(dot(axisY, axisZ)) < ORTHONORMAL_EPS;
   }};
   if (!isOrthonormal()) {
-    auto axes{orthonormalize(float3x3(axisX, axisY, axisZ))};
+    float3x3 axes{orthonormalize(float3x3(axisX, axisY, axisZ))};
     objectToWorld[0] = float4(axes[0], 0.0f);
     objectToWorld[1] = float4(axes[1], 0.0f);
     objectToWorld[2] = float4(axes[2], 0.0f);

@@ -227,7 +227,7 @@ cl::opt<std::string> optVolumeOutput{
 [[nodiscard]] std::vector<float>
 resolveWavelengths(const WavelengthRange &range, std::vector<float> given) {
   if (!given.empty()) return given;
-  auto wavelengths{std::vector<float>(range.bandCount)};
+  std::vector<float> wavelengths(range.bandCount);
   for (unsigned i = 0; i < range.bandCount; i++) {
     const float fac{range.bandCount > 1 ? float(i) / float(range.bandCount - 1)
                                         : 0.5f};
@@ -249,7 +249,7 @@ Options parseCommandLine(int argc, char **argv) {
   // one of them was given.
   cl::PrintOptionValues();
 
-  auto opts{Options{}};
+  Options opts{};
   opts.subcommand = activeSubcommand();
 
   // The '::'-prefixed positionals are queries rather than file names,
@@ -274,7 +274,8 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("expected one -grid per input, or none at all");
 
   // Parsed here so a typo fails before anything loads.
-  const auto range{parseWavelengthRange(std::string(optWavelengthRange))};
+  const WavelengthRange range{
+      parseWavelengthRange(std::string(optWavelengthRange))};
   opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
   opts.compile.isDebugEnabled = bool(optDebug);
   opts.compile.wavelengths =

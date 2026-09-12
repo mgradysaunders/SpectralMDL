@@ -167,7 +167,7 @@ bool evaluateChain(
     const std::array<float3, MANIFOLD_MAX_DEPTH> &frameSeeds,
     const std::array<ManifoldVertex, MANIFOLD_MAX_DEPTH> &vertices,
     ManifoldChainState &chainState) {
-  const auto count{chain.count};
+  const int count{chain.count};
   chainState.count = count;
   for (int i = 0; i < count; i++)
     if (!surfaces.evaluateGeometry(vertices[i], chainState[i].geometry))
@@ -179,15 +179,15 @@ bool evaluateChain(
   // formula picks up through the real distance).
   std::array<float, MANIFOLD_MAX_DEPTH> gLen;
   for (int i = 0; i < count; i++) {
-    auto &sv{chainState[i]};
-    const auto &geometry{sv.geometry};
+    ManifoldChainState::Vertex &sv{chainState[i]};
+    const ManifoldGeometry &geometry{sv.geometry};
     const float3 prev{i == 0 ? receiver : chainState[i - 1].geometry.point};
-    auto toPrev{prev - geometry.point};
+    float3 toPrev{prev - geometry.point};
     sv.distPrev = length(toPrev);
     if (!(sv.distPrev > 1e-6f)) return false;
     sv.wPrev = toPrev / sv.distPrev;
     if (i + 1 < count) {
-      auto toNext{chainState[i + 1].geometry.point - geometry.point};
+      float3 toNext{chainState[i + 1].geometry.point - geometry.point};
       sv.distNext = length(toNext);
       if (!(sv.distNext > 1e-6f)) return false;
       sv.wNext = toNext / sv.distNext;
@@ -195,7 +195,7 @@ bool evaluateChain(
       sv.wNext = target.wl;
       sv.distNext = 0.0f;
     } else {
-      auto toLight{target.point - geometry.point};
+      float3 toLight{target.point - geometry.point};
       sv.distNext = length(toLight);
       if (!(sv.distNext > 1e-6f)) return false;
       sv.wNext = toLight / sv.distNext;
@@ -247,8 +247,8 @@ bool evaluateChain(
   for (int r = 0; r < 2 * count; r++)
     for (int c = 0; c < 2 * count; c++) chainState.J(r, c) = 0.0f;
   for (int i = 0; i < count; i++) {
-    const auto &seed{chain[i]};
-    const auto &seedv{chainState[i]};
+    const ManifoldVertexSeed &seed{chain[i]};
+    const ManifoldChainState::Vertex &seedv{chainState[i]};
     const float3 n{seedv.geometry.normal};
     for (int j = std::max(i - 1, 0); j <= std::min(i + 1, count - 1); j++) {
       const std::array<float3, 2> dPde{chainState[j].geometry.dPdu,
@@ -313,7 +313,7 @@ bool evaluateChain(
   if (!(std::abs(detJ) > 0.0f)) return false;
   float factor{1.0f / std::abs(detJ)};
   for (int i = 0; i < count; i++) {
-    const auto &sv{chainState[i]};
+    const ManifoldChainState::Vertex &sv{chainState[i]};
     if (!(sv.distPrev > 0.0f)) return false;
     // Projected against the geometric normal: the area-to-solid-angle
     // factor is a property of the facet, not of the interpolated normal
@@ -332,7 +332,7 @@ bool evaluateChain(
   // refractive chain that bend is nearly nothing, which is why the
   // selftest's finite mirror is what caught its absence.
   if (!target.isInfinite) {
-    const auto &sv{chainState[last]};
+    const ManifoldChainState::Vertex &sv{chainState[last]};
     const float distStraight{length(target.point - receiver)};
     const float distNext{sv.distNext};
     if (!(distStraight > 0.0f) || !(distNext > 0.0f)) return false;
@@ -460,7 +460,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   {
     float3 origin{receiver};
     for (int i = 0; i < count; i++) {
-      const auto &jitter{chain[i].seedJitter};
+      const float2 &jitter{chain[i].seedJitter};
       if (lengthSquared(jitter) > 0.0f) {
         float3 normal{}, t1{}, t2{};
         if (!buildManifoldSeedFrame(surfaces, vertices[i], frameSeeds[i],
@@ -521,7 +521,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     float maxStepFraction{};
     float minDist{(*state)[0].distPrev};
     for (int i = 0; i < count; i++) {
-      const auto &sv{(*state)[i]};
+      const ManifoldChainState::Vertex &sv{(*state)[i]};
       steps[i] = rhs[2 * i + 0] * sv.geometry.dPdu + //
                  rhs[2 * i + 1] * sv.geometry.dPdv;
       const float stepLen{length(steps[i])};
@@ -599,7 +599,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   // cross; it was searched for rather than handed over, so there is no
   // straight segment whose side it has to have kept.
   for (int i = 0; i < count; i++) {
-    const auto &sv{(*state)[i]};
+    const ManifoldChainState::Vertex &sv{(*state)[i]};
     const float sidePrev{dot(sv.wPrev, sv.geometry.normal)};
     const float sideNext{dot(sv.wNext, sv.geometry.normal)};
     const bool isCrossing{chain[i].isReflect
@@ -610,7 +610,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
                               : sidePrev * sideNext < 0.0f &&
                                     -sidePrev * chain[i].sideSign > 0.0f};
     if (!isCrossing) return finish(Outcome::REJECTED);
-    auto &vertex{connection.vertices[i]};
+    ManifoldConnectionVertex &vertex{connection.vertices[i]};
     vertex.vertex = vertices[i];
     vertex.geometry = sv.geometry;
     vertex.wPrev = sv.wPrev;

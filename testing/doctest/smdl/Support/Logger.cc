@@ -23,7 +23,7 @@ const std::string CARET{"\033[1;32m"};
 // `str` with its escape sequences taken out, which for anything
 // `formatLogMessage()` colors must be the uncolored rendering.
 [[nodiscard]] std::string stripEscapes(std::string_view str) {
-  auto result{std::string()};
+  std::string result{};
   for (size_t i = 0; i < str.size(); i++) {
     if (str[i] == '\033') {
       i = str.find('m', i);
@@ -38,8 +38,10 @@ const std::string CARET{"\033[1;32m"};
 // What `formatLogMessage()` makes of `message` as a colored warning,
 // with the label taken off the front.
 [[nodiscard]] std::string highlighted(std::string_view message) {
-  const auto label{smdl::logLevelLabel(smdl::LOG_LEVEL_WARN, true, false)};
-  auto str{smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message, true, false)};
+  const std::string_view label{
+      smdl::logLevelLabel(smdl::LOG_LEVEL_WARN, true, false)};
+  std::string str{
+      smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message, true, false)};
   REQUIRE(smdl::startsWith(str, label));
   return str.substr(label.size());
 }
@@ -121,11 +123,12 @@ TEST_CASE("Logger: level labels") {
   SUBCASE("Colored labels wrap the same text and reset before the space") {
     for (const bool useUnicode : {false, true}) {
       for (const auto level : LEVELS) {
-        const auto plain{smdl::logLevelLabel(level, false, useUnicode)};
-        const auto colored{
+        const std::string_view plain{
+            smdl::logLevelLabel(level, false, useUnicode)};
+        const std::string colored{
             std::string(smdl::logLevelLabel(level, true, useUnicode))};
-        const auto tail{std::string(plain.substr(0, plain.size() - 1)) +
-                        "\033[0m "};
+        const std::string tail{std::string(plain.substr(0, plain.size() - 1)) +
+                               "\033[0m "};
         CHECK(smdl::startsWith(colored, "\033["));
         REQUIRE(colored.size() > tail.size());
         CHECK(colored.substr(colored.size() - tail.size()) == tail);
@@ -134,9 +137,9 @@ TEST_CASE("Logger: level labels") {
   }
   SUBCASE("Each Unicode label is one non-ASCII code point and a space") {
     for (const auto level : LEVELS) {
-      const auto label{smdl::logLevelLabel(level, false, true)};
+      const std::string_view label{smdl::logLevelLabel(level, false, true)};
       REQUIRE(!label.empty());
-      const auto length{
+      const size_t length{
           utf8SequenceLength(static_cast<unsigned char>(label[0]))};
       CHECK(length > 1);
       CHECK(label.size() == length + 1);
@@ -156,7 +159,7 @@ TEST_CASE("Logger: a message below the minimum level is never built") {
   const CollectedLog logged{"built"};
   REQUIRE_FALSE(smdl::Logger::get().isEnabled(smdl::LOG_LEVEL_DEBUG));
   REQUIRE(smdl::Logger::get().isEnabled(smdl::LOG_LEVEL_INFO));
-  auto numBuilt{0};
+  int numBuilt{0};
   const auto build{[&] {
     numBuilt++;
     return std::string("built");
@@ -301,14 +304,14 @@ TEST_CASE("Logger: message formatting") {
       CHECK(highlighted(message) == message);
   }
   SUBCASE("A source snippet keeps its source line as written") {
-    const auto error{
+    const smdl::Error error{
         compileError("#smdl\nexec { int i = nope; } // not 'this' [a:1]\n")};
-    const auto str{highlighted(error.message + error.snippet)};
+    const std::string str{highlighted(error.message + error.snippet)};
     CHECK(smdl::startsWith(str, BOLD + "[<string ::diag>:2:16]" + RESET));
     CHECK_CONTAINS(str, DIM + "  2 |" + RESET +
                             " exec { int i = nope; } // not 'this' [a:1]\n");
     CHECK_CONTAINS(str, DIM + "    |" + RESET);
-    const auto tail{CARET + "^" + RESET};
+    const std::string tail{CARET + "^" + RESET};
     REQUIRE(str.size() > tail.size());
     CHECK(str.substr(str.size() - tail.size()) == tail);
   }
@@ -317,7 +320,8 @@ TEST_CASE("Logger: message formatting") {
           "refused\n  fovy 'x'\n  " + CARET + "^~~~" + RESET);
   }
   SUBCASE("A debug message is dimmed whole and nothing in it highlighted") {
-    const auto message{std::string_view("New material '::m' at [a.mdl:3]")};
+    const std::string_view message{
+        std::string_view("New material '::m' at [a.mdl:3]")};
     CHECK(smdl::formatLogMessage(smdl::LOG_LEVEL_DEBUG, message, true, false) ==
           DIM +
               std::string(
@@ -325,7 +329,8 @@ TEST_CASE("Logger: message formatting") {
               DIM + std::string(message) + RESET);
   }
   SUBCASE("A message with escape codes of its own is left as it is") {
-    const auto message{std::string_view("already \033[1mbold\033[0m 'x'")};
+    const std::string_view message{
+        std::string_view("already \033[1mbold\033[0m 'x'")};
     for (const auto level : LEVELS)
       CHECK(smdl::formatLogMessage(level, message, true, false) ==
             std::string(smdl::logLevelLabel(level, true, false)) +
@@ -334,13 +339,14 @@ TEST_CASE("Logger: message formatting") {
 }
 
 TEST_CASE("Logger: the default sinks print what formatLogMessage renders") {
-  const auto message{std::string_view("cannot load 'x.png'")};
+  const std::string_view message{"cannot load 'x.png'"};
   for (const auto colorMode :
        {smdl::ANSI_COLOR_MODE_ALWAYS, smdl::ANSI_COLOR_MODE_NEVER}) {
     const bool useColors{colorMode == smdl::ANSI_COLOR_MODE_ALWAYS};
-    const auto expected{smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message,
-                                               useColors, false) +
-                        "\n"};
+    const std::string expected{smdl::formatLogMessage(smdl::LOG_LEVEL_WARN,
+                                                      message, useColors,
+                                                      false) +
+                               "\n"};
     {
       smdl::LogSinks::PrintToCerr sink{smdl::UNICODE_MODE_NEVER};
       sink.setColorMode(colorMode);

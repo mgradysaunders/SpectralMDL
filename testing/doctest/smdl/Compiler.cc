@@ -34,7 +34,7 @@ TEST_CASE("Compiler: the import resolution order") {
                  "#smdl\nimport ::df::*;\nimport util::marker_top;\n" +
                      minimalMaterial("main_bad"));
     smdl::Compiler compiler{};
-    auto message{buildAll(compiler, {tmpDir / "root"})};
+    std::string message{buildAll(compiler, {tmpDir / "root"})};
     CHECK(message != "");
     CHECK_CONTAINS(message, "cannot resolve import");
   }
@@ -53,7 +53,7 @@ TEST_CASE("Compiler: the import resolution order") {
     {
       // 'rootB' added first: its 'util' wins, so 'marker_a' does not.
       smdl::Compiler compiler{};
-      auto message{buildAll(
+      std::string message{buildAll(
           compiler, {tmpDir / "rootB", tmpDir / "rootA", tmpDir / "rootC"})};
       CHECK_CONTAINS(message, "cannot resolve import");
     }
@@ -63,7 +63,7 @@ TEST_CASE("Compiler: the import resolution order") {
     tmpDir.write("root/pkg/strict.mdl", "#smdl\nimport .::util::marker_top;\n");
     {
       smdl::Compiler compiler{};
-      auto message{buildAll(compiler, {tmpDir / "root"})};
+      std::string message{buildAll(compiler, {tmpDir / "root"})};
       CHECK_CONTAINS(message, "cannot resolve import");
     }
     // The same import spelled weakly succeeds via the search root.
@@ -88,7 +88,7 @@ TEST_CASE("Compiler: the import resolution order") {
     tmpDir.write("root/main.mdl", "#smdl\nimport ::df::fake_fn;\n");
     {
       smdl::Compiler compiler{};
-      auto message{buildAll(compiler, {tmpDir / "root"})};
+      std::string message{buildAll(compiler, {tmpDir / "root"})};
       CHECK_CONTAINS(message, "cannot resolve import");
     }
     // ... but a weak-relative 'df' import binds the disk module.
@@ -116,7 +116,7 @@ TEST_CASE("Compiler: the import resolution order") {
                  "#smdl\nimport ::models::prospect::fake_fn;\n");
     {
       smdl::Compiler compiler{};
-      auto message{buildAll(compiler, {tmpDir / "root"})};
+      std::string message{buildAll(compiler, {tmpDir / "root"})};
       CHECK_CONTAINS(message, "cannot resolve import");
     }
     // ... but a weak import binds the disk module.
@@ -140,7 +140,8 @@ TEST_CASE("Compiler: the import resolution order") {
     REQUIRE_OK(compiler.addCode("::a", "#smdl\nimport ::b::*;\n"));
     REQUIRE_OK(compiler.addCode("::b", "#smdl\nimport ::c::*;\n"));
     REQUIRE_OK(compiler.addCode("::c", "#smdl\nimport ::a::*;\n"));
-    const auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
+    const std::optional<smdl::Error> error{
+        compiler.compile(smdl::OPT_LEVEL_NONE)};
     REQUIRE(error.has_value());
     CHECK_CONTAINS(error->message,
                    "[<string ::c>:2:1] cyclic import: '::a' imports '::b', "
@@ -171,7 +172,7 @@ TEST_CASE("Compiler: the qualified name a search root derives") {
     tmpDir.write("root/vendor/metals/steel.mdl",
                  "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     std::sort(names.begin(), names.end());
     CHECK(names ==
@@ -180,7 +181,7 @@ TEST_CASE("Compiler: the qualified name a search root derives") {
   SUBCASE("Single-file add uses the parent directory as implicit root") {
     tmpDir.write("dir/pkg/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE(
         !compiler.add((tmpDir / "dir" / "pkg" / "mod.mdl").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
@@ -189,7 +190,7 @@ TEST_CASE("Compiler: the qualified name a search root derives") {
     tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string()));
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     CHECK_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names.empty());
   }
@@ -213,8 +214,8 @@ TEST_CASE("Compiler: the qualified name a search root derives") {
                  "#smdl\nimport ::df::*;\nimport util::marker_b;\n" +
                      minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
-    auto names1{std::vector<std::string>()};
-    auto names2{std::vector<std::string>()};
+    std::vector<std::string> names1{};
+    std::vector<std::string> names2{};
     REQUIRE_OK(compiler.add((tmpDir / "root1").string(), &names1));
     REQUIRE_OK(compiler.add((tmpDir / "root2").string(), &names2));
     CHECK(names1 == std::vector<std::string>{"::util"});
@@ -245,14 +246,14 @@ TEST_CASE("Compiler: an MDR archive") {
                                   "import vendor::metals::metals_marker;\n" +
                                       minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     std::sort(names.begin(), names.end());
     CHECK(names == std::vector<std::string>{"::main", "::vendor::metals",
                                             "::vendor::metals::steel"});
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
-    auto materialDef{compiler.findMaterial("brushed")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("brushed")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::vendor::metals::steel::brushed");
     CHECK_CONTAINS(materialDef->moduleFileName, "vendor.metals.mdr");
@@ -285,7 +286,7 @@ TEST_CASE("Compiler: an MDR archive") {
     tmpDir.write("root/vendor/other.mdl", "#smdl\nexport const int y = 1;\n");
     {
       smdl::Compiler compiler{};
-      auto names{std::vector<std::string>()};
+      std::vector<std::string> names{};
       REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
       std::sort(names.begin(), names.end());
       CHECK(names ==
@@ -304,22 +305,23 @@ TEST_CASE("Compiler: an MDR archive") {
     writeZip(tmpDir / "root" / "a.c.mdr", {{"a/c.mdl", "#smdl\n"}});
     {
       smdl::Compiler compiler{};
-      auto names{std::vector<std::string>()};
+      std::vector<std::string> names{};
       REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
       std::sort(names.begin(), names.end());
       CHECK(names == std::vector<std::string>{"::a::b", "::a::c"});
     }
   }
   SUBCASE("An archive under a later root is shadowed") {
-    auto archiveEntry{"#smdl\nimport ::df::*;\n" +
-                      minimalMaterial("shared_arch")};
+    std::string archiveEntry{"#smdl\nimport ::df::*;\n" +
+                             minimalMaterial("shared_arch")};
     writeZip(tmpDir / "root1" / "vendor.metals.mdr",
              {{"vendor/metals.mdl", archiveEntry}});
     writeZip(tmpDir / "root2" / "vendor.metals.mdr",
              {{"vendor/metals.mdl", archiveEntry}});
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
-    auto materialDef{compiler.findMaterial("shared_arch")};
+    const smdl::JIT::MaterialDef *materialDef{
+        compiler.findMaterial("shared_arch")};
     REQUIRE(materialDef != nullptr);
     CHECK_CONTAINS(materialDef->moduleFileName, "root1");
     CHECK(compiler.findMaterials("shared_arch").size() == 1);
@@ -328,7 +330,7 @@ TEST_CASE("Compiler: an MDR archive") {
     writeZip(tmpDir / "root" / "sub" / "x.y.mdr", {{"x/y.mdl", "#smdl\n"}});
     tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
   }
@@ -336,17 +338,20 @@ TEST_CASE("Compiler: an MDR archive") {
 
 TEST_CASE("Compiler: an MDLE container") {
   TempDir tmpDir{"compiler-mdle"};
-  const auto mainModule{"#smdl\nimport ::df::*;\nexport const int m = 1;\n" +
-                        minimalMaterial("main")};
+  const std::string mainModule{
+      "#smdl\nimport ::df::*;\nexport const int m = 1;\n" +
+      minimalMaterial("main")};
   SUBCASE("Content-based identity and the 'main' convention") {
     writeZip(tmpDir / "CoolSteel.mdle", {{"main.mdl", mainModule}});
-    auto expectedName{"::mdle::" + std::string(smdl::MD5Hash::hashFile(
-                                       (tmpDir / "CoolSteel.mdle").string()))};
+    std::string expectedName{"::mdle::" +
+                             std::string(smdl::MD5Hash::hashFile(
+                                 (tmpDir / "CoolSteel.mdle").string()))};
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE(buildAll(compiler, {tmpDir / "CoolSteel.mdle"}, &names) == "");
     REQUIRE(names == std::vector<std::string>{expectedName});
-    auto materialDef{compiler.findMaterial(expectedName + "::main")};
+    const smdl::JIT::MaterialDef *materialDef{
+        compiler.findMaterial(expectedName + "::main")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == expectedName + "::main");
     CHECK(materialDef->moduleName == "CoolSteel");
@@ -357,11 +362,12 @@ TEST_CASE("Compiler: an MDLE container") {
   SUBCASE("Identical containers dedupe, distinct containers cannot collide") {
     writeZip(tmpDir / "a" / "one.mdle", {{"main.mdl", mainModule}});
     writeZip(tmpDir / "b" / "two.mdle", {{"main.mdl", mainModule}});
-    auto otherModule{"#smdl\nimport ::df::*;\nexport const int m = 2;\n" +
-                     minimalMaterial("main")};
+    std::string otherModule{
+        "#smdl\nimport ::df::*;\nexport const int m = 2;\n" +
+        minimalMaterial("main")};
     writeZip(tmpDir / "c" / "three.mdle", {{"main.mdl", otherModule}});
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE(buildAll(compiler,
                      {tmpDir / "a" / "one.mdle", tmpDir / "b" / "two.mdle",
                       tmpDir / "c" / "three.mdle"},
@@ -389,7 +395,7 @@ TEST_CASE("Compiler: an MDLE container") {
     writeZip(tmpDir / "root" / "loose.mdle", {{"main.mdl", mainModule}});
     tmpDir.write("root/mod.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
-    auto names{std::vector<std::string>()};
+    std::vector<std::string> names{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
   }
@@ -399,7 +405,7 @@ TEST_CASE("Compiler: an MDLE container") {
     const uint8_t texels[12] = {255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255};
     REQUIRE_OK(
         smdl::write8bitImage((tmpDir / "wood.png").string(), 2, 2, 3, texels));
-    const auto pngBytes{tmpDir.read("wood.png")};
+    const std::string pngBytes{tmpDir.read("wood.png")};
     REQUIRE(!pngBytes.empty());
     writeZip(tmpDir / "Textured.mdle",
              {{"main.mdl", "#smdl\nimport ::df::*;\nimport ::tex::*;\n" +
@@ -412,7 +418,7 @@ TEST_CASE("Compiler: an MDLE container") {
                                "  #assert(tex::height(t) == 2);\n"
                                "}\n"},
               {"wood.png", pngBytes}});
-    auto hash{std::string(
+    std::string hash{std::string(
         smdl::MD5Hash::hashFile((tmpDir / "Textured.mdle").string()))};
     const CollectedLog extracted{"Extracted", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
@@ -430,7 +436,7 @@ TEST_CASE("Compiler: an MDLE container") {
     // loaded (a resource that failed to resolve would only have
     // produced a warning and a default texture).
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     REQUIRE_OK(compiler.runUnitTests(state));
   }
 }
@@ -447,7 +453,8 @@ TEST_CASE("findMaterial: looking a material up by name") {
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     // Unique bare name resolves and carries the qualified identity.
-    auto materialDef{compiler.findMaterial("unique_mat")};
+    const smdl::JIT::MaterialDef *materialDef{
+        compiler.findMaterial("unique_mat")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->moduleName == "alpha");
     CHECK(materialDef->materialName == "unique_mat");
@@ -464,7 +471,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
       CHECK(compiler.findMaterial("dup") == nullptr);
       CHECK(logged.messages().empty());
     }
-    const auto ambiguous{compiler.explainMaterialLookup("dup")};
+    const std::string ambiguous{compiler.explainMaterialLookup("dup")};
     CHECK(smdl::startsWith(ambiguous,
                            "material name 'dup' is ambiguous, matching 2 "
                            "materials:\n  '::alpha::dup' declared at ["));
@@ -488,8 +495,8 @@ TEST_CASE("findMaterial: looking a material up by name") {
           "no material matches 'no_such_material'");
     CHECK(compiler.explainMaterialLookup("") == "no material matches ''");
     // Module-qualified suffixes disambiguate.
-    auto dupAlpha{compiler.findMaterial("alpha::dup")};
-    auto dupBeta{compiler.findMaterial("beta::dup")};
+    const smdl::JIT::MaterialDef *dupAlpha{compiler.findMaterial("alpha::dup")};
+    const smdl::JIT::MaterialDef *dupBeta{compiler.findMaterial("beta::dup")};
     REQUIRE(dupAlpha != nullptr);
     REQUIRE(dupBeta != nullptr);
     CHECK(dupAlpha != dupBeta);
@@ -511,7 +518,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
                  "#smdl\nimport ::df::*;\n" + minimalMaterial("brushed"));
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
-    auto materialDef{compiler.findMaterial("brushed")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("brushed")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::vendor::metals::steel::brushed");
     CHECK(materialDef->evaluate.name == "vendor.metals.steel.brushed.evaluate");
@@ -535,7 +542,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
                                        "}\n");
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
-    auto materialDef{compiler.findMaterial("nested")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("nested")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::nsmod::outer::inner::nested");
     CHECK(materialDef->evaluate.name == "nsmod.outer.inner.nested.evaluate");
@@ -557,7 +564,8 @@ TEST_CASE("findMaterial: looking a material up by name") {
     // 'root2/mat.mdl' is shadowed by 'root1/mat.mdl', so its materials
     // are unreachable by name, mirroring the unreachability of the
     // module itself by qualified name.
-    auto materialDef{compiler.findMaterial("mat::shared_name")};
+    const smdl::JIT::MaterialDef *materialDef{
+        compiler.findMaterial("mat::shared_name")};
     REQUIRE(materialDef != nullptr);
     CHECK_CONTAINS(materialDef->moduleFileName, "root1");
     CHECK(compiler.findMaterials("shared_name").size() == 1);
@@ -565,9 +573,9 @@ TEST_CASE("findMaterial: looking a material up by name") {
     CHECK(compiler.findMaterial("mat::only_r2") == nullptr);
     CHECK(compiler.findMaterial("only_r2") == nullptr);
     // Enumeration still exposes the shadowed materials, flagged.
-    auto materials{compiler.getMaterials()};
+    smdl::Span<const smdl::JIT::MaterialDef> materials{compiler.getMaterials()};
     REQUIRE(materials.size() == 4);
-    auto numShadowed{size_t(0)};
+    size_t numShadowed{0};
     for (const auto &each : materials)
       numShadowed += each.moduleIsShadowed ? 1 : 0;
     CHECK(numShadowed == 2);
@@ -588,7 +596,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
     auto symbolNames{[&]() {
       smdl::Compiler compiler{};
       REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
-      auto names{std::vector<std::string>()};
+      std::vector<std::string> names{};
       for (const auto &each : compiler.getMaterials())
         names.push_back(each.evaluate.name);
       std::sort(names.begin(), names.end());
@@ -606,7 +614,7 @@ TEST_CASE("printMaterialSummary: the materials of each module") {
                                            minimalMaterial("m1") +
                                            minimalMaterial("m2")));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
-  const auto summary{compiler.printMaterialSummary()};
+  const std::string summary{compiler.printMaterialSummary()};
   CHECK_CONTAINS(summary, " contains 1 material:\n");
   CHECK_CONTAINS(summary, " contains 2 materials:\n");
 }
@@ -621,7 +629,7 @@ TEST_CASE("jitCompile: a '@(foreign)' function the host does not define") {
                               "  #println(smdlNoSuchSymbolAnywhere(3));\n"
                               "}\n"));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
-  const auto error{compiler.jitCompile()};
+  const std::optional<smdl::Error> error{compiler.jitCompile()};
   REQUIRE(error.has_value());
   // The declaration is what there is to fix, so it leads, rather than the
   // entry point whose lookup happened to fail first.
@@ -681,7 +689,7 @@ TEST_CASE("setDesiredMaterials: compiling only what the host asked for") {
     compiler.setDesiredMaterials({"wanted"});
     REQUIRE_OK(compiler.add((tmpDir / "root").string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
-    auto ir{std::string()};
+    std::string ir{};
     REQUIRE_OK(compiler.dump(smdl::DUMP_FORMAT_IR, ir));
     CHECK_CONTAINS(ir, "mats.wanted.evaluate");
     CHECK_NOT_CONTAINS(ir, "mats.unwanted");
@@ -747,10 +755,10 @@ TEST_CASE(
     // An endpoint-inclusive uniform grid over the visible; a single band
     // sits at the midpoint.
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
+    smdl::State state{storage.makeState()};
     REQUIRE_OK(compiler.runUnitTests(state));
     // The gray fast path of RGB-to-color is exact at any band count.
-    auto colorBuf{std::vector<float>(size_t(numBands), -1.0f)};
+    std::vector<float> colorBuf(size_t(numBands), -1.0f);
     compiler.convertRGBToColor(state, smdl::float3(0.5f, 0.5f, 0.5f),
                                colorBuf.data());
     for (float band : colorBuf) CHECK(band == 0.5f);
@@ -763,7 +771,7 @@ TEST_CASE(
     }
     // Black converts to black exactly, at any band count.
     std::fill(colorBuf.begin(), colorBuf.end(), 0.0f);
-    auto rgbOfBlack{compiler.convertColorToRGB(state, colorBuf.data())};
+    smdl::float3 rgbOfBlack{compiler.convertColorToRGB(state, colorBuf.data())};
     CHECK(rgbOfBlack[0] == 0.0f);
     CHECK(rgbOfBlack[1] == 0.0f);
     CHECK(rgbOfBlack[2] == 0.0f);
@@ -771,7 +779,7 @@ TEST_CASE(
     // CIE quadrature only resolves an approximately-gray round trip once
     // the grid samples the visible densely (see the 64-band check below).
     std::fill(colorBuf.begin(), colorBuf.end(), 0.5f);
-    auto rgbOfGray{compiler.convertColorToRGB(state, colorBuf.data())};
+    smdl::float3 rgbOfGray{compiler.convertColorToRGB(state, colorBuf.data())};
     for (int i = 0; i < 3; i++) CHECK(std::isfinite(rgbOfGray[i]));
     if (numBands == 64) {
       for (int i = 0; i < 3; i++) {
@@ -783,16 +791,17 @@ TEST_CASE(
     // `(max - min) / N` reproduce the null-weight result up to
     // summation order, and scaling every weight scales the result
     // linearly.
-    auto weights{std::vector<float>(
+    std::vector<float> weights{std::vector<float>(
         size_t(numBands),
         (state.wavelengthMax - state.wavelengthMin) / float(numBands))};
     state.wavelengthWeight = weights.data();
-    auto rgbWeighted{compiler.convertColorToRGB(state, colorBuf.data())};
+    smdl::float3 rgbWeighted{
+        compiler.convertColorToRGB(state, colorBuf.data())};
     for (int i = 0; i < 3; i++)
       CHECK(rgbWeighted[i] ==
             doctest::Approx(rgbOfGray[i]).epsilon(1e-4).scale(1.0));
     for (auto &weight : weights) weight *= 2.0f;
-    auto rgbDoubled{compiler.convertColorToRGB(state, colorBuf.data())};
+    smdl::float3 rgbDoubled{compiler.convertColorToRGB(state, colorBuf.data())};
     for (int i = 0; i < 3; i++)
       CHECK(rgbDoubled[i] ==
             doctest::Approx(2.0f * rgbWeighted[i]).epsilon(1e-5).scale(1.0));
@@ -805,8 +814,9 @@ TEST_CASE("addCode: a module the host supplies as source") {
   // The render state the unit tests below run against.
   auto runUnitTests{[](smdl::Compiler &compiler) {
     StateStorage storage{compiler};
-    auto state{storage.makeState()};
-    if (auto error{compiler.runUnitTests(state)}) return error->message;
+    smdl::State state{storage.makeState()};
+    if (std::optional<smdl::Error> error{compiler.runUnitTests(state)})
+      return error->message;
     return std::string();
   }};
   SUBCASE("Source code compiles as a module with no file") {
@@ -815,7 +825,7 @@ TEST_CASE("addCode: a module the host supplies as source") {
                                                     minimalMaterial("mat_ok")));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
-    auto materialDef{compiler.findMaterial("mat_ok")};
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("mat_ok")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::host::mats::mat_ok");
     CHECK(materialDef->moduleName == "mats");
@@ -824,7 +834,7 @@ TEST_CASE("addCode: a module the host supplies as source") {
   }
   SUBCASE("The leading '::' is optional") {
     smdl::Compiler compiler{};
-    auto source{"#smdl\nimport ::df::*;\n" + minimalMaterial("mat_ok")};
+    std::string source{"#smdl\nimport ::df::*;\n" + minimalMaterial("mat_ok")};
     REQUIRE_OK(compiler.addCode("host::mats", source));
     // The same name and the same source code again is a no-op, so a host
     // may register its defaults defensively.
@@ -836,7 +846,7 @@ TEST_CASE("addCode: a module the host supplies as source") {
   SUBCASE("A different body under a taken name is an error") {
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
-    const auto error{
+    const std::optional<smdl::Error> error{
         compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
     CHECK_CONTAINS(error->message, "already taken");
@@ -867,7 +877,7 @@ TEST_CASE("addCode: a module the host supplies as source") {
     smdl::Compiler compiler{};
     for (const char *moduleName :
          {"", "::", "a::", "::a::::b", "1bad", "a b", "a-b"}) {
-      auto error{compiler.addCode(moduleName, "#smdl\n")};
+      std::optional<smdl::Error> error{compiler.addCode(moduleName, "#smdl\n")};
       CAPTURE(moduleName);
       CHECK(error.has_value());
     }
@@ -909,7 +919,8 @@ TEST_CASE("addCode: a module the host supplies as source") {
   SUBCASE("The source code outlives the string it was given") {
     smdl::Compiler compiler{};
     {
-      auto source{"#smdl\nimport ::df::*;\n" + minimalMaterial("mat_ok")};
+      std::string source{"#smdl\nimport ::df::*;\n" +
+                         minimalMaterial("mat_ok")};
       REQUIRE_OK(compiler.addCode("::host::mats", source));
     }
     // Twice, because 'compile()' resets and re-parses every module: a
@@ -928,23 +939,27 @@ TEST_CASE("addCode: a module the host supplies as source") {
     tmpDir.write("anchor/helper.mdl", "#smdl\nexport const int marker = 3;\n");
     // Explicitly relative, so this resolves against the module's own
     // directory and nothing else.
-    auto source{std::string("#smdl\nimport ::tex::*;\n"
-                            "import .::helper::marker;\n"
-                            "unit_test \"Anchored\" {\n"
-                            "  #assert(helper::marker == 3);\n"
-                            "  const auto t = texture_2d(\"wood.png\", "
-                            "tex::gamma_linear);\n"
-                            "  #assert(tex::texture_isvalid(t));\n}\n")};
+    std::string source{std::string("#smdl\nimport ::tex::*;\n"
+                                   "import .::helper::marker;\n"
+                                   "unit_test \"Anchored\" {\n"
+                                   "  #assert(helper::marker == 3);\n"
+                                   "  const auto t = texture_2d(\"wood.png\", "
+                                   "tex::gamma_linear);\n"
+                                   "  #assert(tex::texture_isvalid(t));\n}\n")};
     auto build{[&](const std::string &anchorDirectory) {
       smdl::Compiler compiler{};
       compiler.shouldEmitUnitTests = true;
-      if (auto error{compiler.add((tmpDir / "anchor").string())})
+      if (std::optional<smdl::Error> error{
+              compiler.add((tmpDir / "anchor").string())})
         return error->message;
-      if (auto error{compiler.addCode("::host::mats", source, anchorDirectory)})
+      if (std::optional<smdl::Error> error{
+              compiler.addCode("::host::mats", source, anchorDirectory)})
         return error->message;
-      if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)})
+      if (std::optional<smdl::Error> error{
+              compiler.compile(smdl::OPT_LEVEL_NONE)})
         return error->message;
-      if (auto error{compiler.jitCompile()}) return error->message;
+      if (std::optional<smdl::Error> error{compiler.jitCompile()})
+        return error->message;
       return runUnitTests(compiler);
     }};
     CHECK(build((tmpDir / "anchor").string()) == "");

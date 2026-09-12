@@ -42,7 +42,7 @@ const int N_THETA{4};
 const int N_PHI{4};
 
 std::vector<float> testValuesFloat() {
-  auto data{std::vector<float>()};
+  std::vector<float> data{};
   for (int iO = 0; iO < N_THETA; iO++)
     for (int iI = 0; iI < N_THETA; iI++)
       for (int iP = 0; iP < N_PHI; iP++) data.push_back(testValue(iO, iI, iP));
@@ -50,7 +50,7 @@ std::vector<float> testValuesFloat() {
 }
 
 std::vector<float> testValuesFloat3() {
-  auto data{std::vector<float>()};
+  std::vector<float> data{};
   for (int iO = 0; iO < N_THETA; iO++)
     for (int iI = 0; iI < N_THETA; iI++)
       for (int iP = 0; iP < N_PHI; iP++) {
@@ -88,11 +88,12 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
     double cosTheta{std::cos(theta)};
     for (int iX = 0; iX < nX; iX++) {
       double phi{2.0 * smdl::PI * (iX + 0.5) / nX};
-      auto wi{smdl::float3(float(sinTheta * std::cos(phi)),
-                           float(sinTheta * std::sin(phi)), float(cosTheta))};
+      smdl::float3 wi{smdl::float3(float(sinTheta * std::cos(phi)),
+                                   float(sinTheta * std::sin(phi)),
+                                   float(cosTheta))};
       double dOmega{sinTheta * (0.5 * smdl::PI / nY) * (2.0 * smdl::PI / nX)};
       pdfIntegral += measured.directionPDF(wo, wi) * dOmega;
-      auto value{measured.interpolate(wo, wi)};
+      smdl::float3 value{measured.interpolate(wo, wi)};
       valueIntegral += (value.x + value.y + value.z) / 3.0 * cosTheta * dOmega;
     }
   }
@@ -100,7 +101,8 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
   std::mt19937 prng{};
   for (int iter = 0; iter < 100; iter++) {
     float pdf{};
-    auto wi{measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
+    smdl::float3 wi{
+        measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
     REQUIRE(pdf > 0);
     CHECK(measured.directionPDF(wo, wi) == doctest::Approx(pdf).epsilon(1e-3));
   }
@@ -109,12 +111,13 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
   const int n{100'000};
   for (int iter = 0; iter < n; iter++) {
     float pdf{};
-    auto wi{measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
+    smdl::float3 wi{
+        measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
     if (!(pdf > 0)) {
       numInvalid++;
       continue;
     }
-    auto value{measured.interpolate(wo, wi)};
+    smdl::float3 value{measured.interpolate(wo, wi)};
     mcIntegral += (value.x + value.y + value.z) / 3.0 * std::abs(wi.z) / pdf;
   }
   CHECK(numInvalid == 0);
@@ -124,17 +127,17 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
 
 TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
   SUBCASE("A default measurement is invalid and safe to query") {
-    auto measured{smdl::BSDFMeasurement()};
+    smdl::BSDFMeasurement measured{};
     CHECK(measured.directionPDF(smdl::float3(0, 0, 1), smdl::float3(0, 0, 1)) ==
           0.0f);
     float pdf{1.0f};
-    auto wi{measured.directionSample(smdl::float2(0.5f, 0.5f),
-                                     smdl::float3(0, 0, 1), &pdf)};
+    smdl::float3 wi{measured.directionSample(smdl::float2(0.5f, 0.5f),
+                                             smdl::float3(0, 0, 1), &pdf)};
     CHECK(pdf == 0.0f);
     CHECK(wi.z == 0.0f);
   }
   SUBCASE("The scalar format reads back its values") {
-    auto measured{smdl::BSDFMeasurement()};
+    smdl::BSDFMeasurement measured{};
     REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(0, N_THETA, N_PHI, testValuesFloat())));
     CHECK(measured.kind == smdl::BSDFMeasurement::KIND_REFLECTION);
@@ -142,7 +145,7 @@ TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
     CHECK(measured.numTheta == N_THETA);
     CHECK(measured.numPhi == N_PHI);
     // The fetch must splat scalar values to all three components.
-    auto value{measured.fetch(1, 2, 3)};
+    smdl::float3 value{measured.fetch(1, 2, 3)};
     CHECK(value.x == doctest::Approx(testValue(1, 2, 3)));
     CHECK(value.y == doctest::Approx(testValue(1, 2, 3)));
     CHECK(value.z == doctest::Approx(testValue(1, 2, 3)));
@@ -164,22 +167,23 @@ TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
         doctest::Approx(testValue(N_THETA - 1, 0, 0)));
   }
   SUBCASE("The float3 format reads back its values") {
-    auto measured{smdl::BSDFMeasurement()};
+    smdl::BSDFMeasurement measured{};
     REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(1, N_THETA, N_PHI, testValuesFloat3())));
     CHECK(measured.type == smdl::BSDFMeasurement::TYPE_FLOAT3);
-    auto value{measured.fetch(1, 2, 3)};
+    smdl::float3 value{measured.fetch(1, 2, 3)};
     CHECK(value.x == doctest::Approx(1.0f * testValue(1, 2, 3)));
     CHECK(value.y == doctest::Approx(2.0f * testValue(1, 2, 3)));
     CHECK(value.z == doctest::Approx(3.0f * testValue(1, 2, 3)));
     // Interpolate through directions: outgoing at the center of zenith
     // cell 1 with azimuth zero, incoming at the center of zenith cell 2
     // with azimuth difference at the center of cell 0.
-    auto wo{smdl::float3(std::sin(thetaCenter(1)), 0.0f, //
-                         std::cos(thetaCenter(1)))};
-    auto wi{smdl::float3(std::sin(thetaCenter(2)) * std::cos(phiCenter(0)),
-                         std::sin(thetaCenter(2)) * std::sin(phiCenter(0)),
-                         std::cos(thetaCenter(2)))};
+    smdl::float3 wo{smdl::float3(std::sin(thetaCenter(1)), 0.0f, //
+                                 std::cos(thetaCenter(1)))};
+    smdl::float3 wi{
+        smdl::float3(std::sin(thetaCenter(2)) * std::cos(phiCenter(0)),
+                     std::sin(thetaCenter(2)) * std::sin(phiCenter(0)),
+                     std::cos(thetaCenter(2)))};
     CHECK(measured.interpolate(wo, wi).y ==
           doctest::Approx(2.0f * testValue(1, 2, 0)).epsilon(1e-3));
     // Reciprocity of the synthetic data carries through interpolation.
@@ -187,7 +191,7 @@ TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
           doctest::Approx(measured.interpolate(wi, wo).x).epsilon(1e-3));
   }
   SUBCASE("Sampling agrees with the reported density") {
-    auto measured{smdl::BSDFMeasurement()};
+    smdl::BSDFMeasurement measured{};
     REQUIRE_OK(measured.loadFromFileMemory(
         makeMBSDF(1, N_THETA, N_PHI, testValuesFloat3())));
     checkDistributionConsistency(measured, smdl::float3(0, 0, 1));

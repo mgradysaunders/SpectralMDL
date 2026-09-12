@@ -19,15 +19,15 @@ namespace {
 // the normalizer drops outright, as opposed to whitespace, which it
 // collapses.
 [[nodiscard]] size_t skipDropped(std::string_view src, size_t i) {
-  auto remaining{src.substr(i)};
+  std::string_view remaining{src.substr(i)};
   auto skipPast{[&](std::string_view close) {
-    auto j{src.find(close, i + 2)};
+    size_t j{src.find(close, i + 2)};
     return j == std::string_view::npos ? src.size() : j + close.size();
   }};
   if (startsWith(remaining, "//")) {
     // Stop at the newline rather than past it: it is whitespace, which
     // the caller still has to account for.
-    auto j{src.find('\n', i + 2)};
+    size_t j{src.find('\n', i + 2)};
     return j == std::string_view::npos ? src.size() : j;
   }
   if (startsWith(remaining, "/*")) return skipPast("*/");
@@ -43,7 +43,7 @@ namespace {
       i++;
       continue;
     }
-    auto j{skipDropped(src, i)};
+    size_t j{skipDropped(src, i)};
     if (j == i) break;
     i = j;
   }
@@ -75,14 +75,14 @@ namespace {
 [[nodiscard]] std::string normalizeSignature(std::string_view src,
                                              std::string_view srcName = {},
                                              uint32_t *nameOffset = nullptr) {
-  auto result{std::string{}};
+  std::string result{};
   result.reserve(src.size());
-  auto nameBegin{std::string_view::npos};
+  size_t nameBegin{std::string_view::npos};
   if (!srcName.empty() && !src.empty() && srcName.data() >= src.data() &&
       srcName.data() + srcName.size() <= src.data() + src.size()) {
     nameBegin = size_t(srcName.data() - src.data());
   }
-  auto lastWasSpace{true}; // Also trims leading whitespace
+  bool lastWasSpace{true}; // Also trims leading whitespace
   auto addSpace{[&] {
     if (!lastWasSpace) {
       if (!result.empty() && result.back() != '(') result += ' ';
@@ -91,20 +91,20 @@ namespace {
   }};
   size_t i{};
   while (i < src.size()) {
-    if (auto j{skipDropped(src, i)}; j != i) {
+    if (size_t j{skipDropped(src, i)}; j != i) {
       i = j;
       addSpace();
     } else if (isSpace(src[i])) {
       i++;
       addSpace();
     } else {
-      const auto ch{src[i]};
+      const char ch{src[i]};
       // Drop a trailing comma before a closing bracket, which minified
       // sources keep but which reads as a missing argument. NOTE: The
       // lookahead must skip comments too: with `--keep-doc-comments`, a
       // trailing `///<` sits between the last comma and the `)`.
       if (ch == ',') {
-        auto j{skipIgnorable(src, i + 1)};
+        size_t j{skipIgnorable(src, i + 1)};
         if (j < src.size() &&
             (src[j] == ')' || src[j] == ']' || src[j] == '}')) {
           i = j;
@@ -113,7 +113,7 @@ namespace {
       }
       if ((ch == ',' || ch == ')') && !result.empty() && result.back() == ' ')
         result.pop_back();
-      const auto spaceAround{ch == '=' && !isCompoundOperatorEquals(src, i)};
+      const bool spaceAround{ch == '=' && !isCompoundOperatorEquals(src, i)};
       if (spaceAround) addSpace();
       if (i == nameBegin && nameOffset) *nameOffset = uint32_t(result.size());
       result += ch;
@@ -152,7 +152,7 @@ descriptionOf(const AST::AnnotationBlock *annotations) {
 [[nodiscard]] std::string docTextOf(std::string_view srcDocComment,
                                     std::string_view srcTrailing,
                                     const AST::AnnotationBlock *annotations) {
-  auto text{AST::getDocCommentText(srcDocComment)};
+  std::string text{AST::getDocCommentText(srcDocComment)};
   if (text.empty()) text = AST::getDocCommentText(srcTrailing);
   if (text.empty()) text = descriptionOf(annotations);
   return text;
@@ -165,14 +165,14 @@ public:
       : mModule(module_), mSource(module_.getSourceCode()) {}
 
   [[nodiscard]] DocModule extract() {
-    auto mod{DocModule{}};
+    DocModule mod{};
     mod.name = std::string(mModule.getName());
     mod.qualifiedName = mModule.getQualifiedName().empty()
                             ? "::" + mod.name
                             : std::string(mModule.getQualifiedName());
     mod.fileName = std::string(mModule.getFileName());
     mQualifiedNamePrefix = mod.qualifiedName;
-    const auto *root{mModule.getRoot()};
+    const AST::File *root{mModule.getRoot()};
     if (!root) return mod;
     mod.docText = AST::getDocCommentText(root->srcDocComment);
     if (mod.docText.empty())
@@ -208,7 +208,7 @@ private:
   // The signature prefix from the attributes and the `export` keyword,
   // which precede the declaration's own source location.
   [[nodiscard]] static std::string declPrefix(const AST::Decl &decl) {
-    auto prefix{std::string{}};
+    std::string prefix{};
     if (decl.attributes) {
       prefix += "@(";
       for (size_t i = 0; i < decl.attributes->attrs.size(); i++) {
@@ -229,7 +229,7 @@ private:
   // record where the declared name landed in it.
   static void setSignature(DocEntry &entry, std::string_view prefix,
                            std::string_view src, std::string_view srcName) {
-    auto offset{DocEntry::NO_NAME_OFFSET};
+    unsigned offset{DocEntry::NO_NAME_OFFSET};
     entry.signature =
         std::string(prefix) + normalizeSignature(src, srcName, &offset);
     if (offset != DocEntry::NO_NAME_OFFSET)
@@ -238,7 +238,7 @@ private:
 
   [[nodiscard]] DocEntry makeEntry(const AST::Decl &decl, const char *kind,
                                    std::string_view name) const {
-    auto entry{DocEntry{}};
+    DocEntry entry{};
     entry.kind = kind;
     entry.name = std::string(name);
     entry.qualifiedName = qualify(name);
@@ -256,7 +256,7 @@ private:
   [[nodiscard]] DocEntry makeMember(const DocEntry &parent, const char *kind,
                                     std::string qualifiedName, const Node &node,
                                     std::string_view srcEnd) const {
-    auto member{DocEntry{}};
+    DocEntry member{};
     member.kind = kind;
     member.name = std::string(node.name.srcName);
     member.qualifiedName = std::move(qualifiedName);
@@ -276,7 +276,7 @@ private:
   void extractSimpleDecl(const AST::Decl &decl, const char *kind,
                          std::vector<DocEntry> &out) {
     const auto &d{static_cast<const Decl &>(decl)};
-    auto entry{makeEntry(decl, kind, d.name.srcName)};
+    DocEntry entry{makeEntry(decl, kind, d.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, beginOf(d.srcSemicolon)), d.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
@@ -319,7 +319,7 @@ private:
 
   void extractAnnotationDecl(const AST::AnnotationDecl &decl,
                              std::vector<DocEntry> &out) {
-    auto entry{makeEntry(decl, "annotation", decl.name.srcName)};
+    DocEntry entry{makeEntry(decl, "annotation", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, endOf(decl.params.srcParenR)),
                  decl.name.srcName);
@@ -329,7 +329,7 @@ private:
   }
 
   void extractEnum(const AST::Enum &decl, std::vector<DocEntry> &out) {
-    auto entry{makeEntry(decl, "enum", decl.name.srcName)};
+    DocEntry entry{makeEntry(decl, "enum", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, endOf(decl.name.srcName)),
                  decl.name.srcName);
@@ -345,7 +345,7 @@ private:
   }
 
   void extractFunction(const AST::Function &decl, std::vector<DocEntry> &out) {
-    auto entry{makeEntry(decl, "function", decl.name.srcName)};
+    DocEntry entry{makeEntry(decl, "function", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, !decl.srcFrequency.empty()
                                           ? endOf(decl.srcFrequency)
@@ -361,16 +361,16 @@ private:
 
   void extractNamespace(const AST::Namespace &decl,
                         std::vector<DocEntry> &out) {
-    auto name{std::string{}};
+    std::string name{};
     for (auto elemName : Span<const std::string_view>(*decl.identifier)) {
       if (!name.empty()) name += "::";
       name += elemName;
     }
-    auto entry{makeEntry(decl, "namespace", name)};
+    DocEntry entry{makeEntry(decl, "namespace", name)};
     entry.signature = "namespace " + name;
     entry.nameOffset = uint32_t(entry.signature.size() - name.size());
     entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
-    auto prevPrefix{mQualifiedNamePrefix};
+    std::string prevPrefix{mQualifiedNamePrefix};
     mQualifiedNamePrefix = entry.qualifiedName;
     for (const auto &inner : decl.decls) extractDecl(*inner, entry.members);
     mQualifiedNamePrefix = std::move(prevPrefix);
@@ -378,7 +378,7 @@ private:
   }
 
   void extractStruct(const AST::Struct &decl, std::vector<DocEntry> &out) {
-    auto entry{makeEntry(decl, "struct", decl.name.srcName)};
+    DocEntry entry{makeEntry(decl, "struct", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, endOf(decl.name.srcName)),
                  decl.name.srcName);
@@ -394,9 +394,10 @@ private:
 
   void extractVariable(const AST::Variable &decl, std::vector<DocEntry> &out) {
     if (decl.declarators.empty()) return;
-    auto typeSrc{slice(decl.srcLoc.i, decl.declarators[0].srcLoc.i)};
+    std::string_view typeSrc{
+        slice(decl.srcLoc.i, decl.declarators[0].srcLoc.i)};
     for (const auto &declarator : decl.declarators) {
-      auto name{std::string{}};
+      std::string name{};
       if (declarator.isDestructure()) {
         name += '{';
         for (size_t i = 0; i < declarator.names.size(); i++) {
@@ -407,16 +408,16 @@ private:
       } else if (!declarator.names.empty()) {
         name = std::string(declarator.names[0].name.srcName);
       }
-      auto entry{makeEntry(decl, "variable", name)};
+      DocEntry entry{makeEntry(decl, "variable", name)};
       entry.lineNo = declarator.srcLoc.lineNo;
-      auto declaratorSrc{sliceUntil(declarator.srcLoc.i, declarator.srcComma,
-                                    decl.srcSemicolon)};
+      std::string_view declaratorSrc{sliceUntil(
+          declarator.srcLoc.i, declarator.srcComma, decl.srcSemicolon)};
       // NOTE: The type and the declarator are not contiguous in the
       // source, so this is the one signature built by concatenation.
       // The name span must be rebased onto the concatenated string.
-      auto signatureSrc{std::string(typeSrc) + " " +
-                        std::string(declaratorSrc)};
-      auto srcName{std::string_view{}};
+      std::string signatureSrc{std::string(typeSrc) + " " +
+                               std::string(declaratorSrc)};
+      std::string_view srcName{};
       if (!declarator.isDestructure() && !declarator.names.empty()) {
         srcName = std::string_view(
             signatureSrc.data() + typeSrc.size() + 1 +
@@ -437,7 +438,7 @@ private:
   void extractParams(const AST::ParameterList &params,
                      std::vector<DocParam> &out) {
     for (const auto &param : params) {
-      auto docParam{DocParam{}};
+      DocParam docParam{};
       docParam.name = std::string(param.name.srcName);
       // NOTE: `Parameter::src` is never populated, so slice from the
       // parameter start to its comma or the closing parenthesis.
@@ -467,16 +468,16 @@ DocModule extractDocModule(const Module &module_) {
 }
 
 std::vector<std::string_view> getBuiltinModuleNames() {
-  auto names{builtin::getAllNames()};
+  Span<const std::string_view> names{builtin::getAllNames()};
   return std::vector<std::string_view>(names.begin(), names.end());
 }
 
 std::optional<DocModule> extractBuiltinDocModule(std::string_view name) {
-  auto sourceCode{builtin::getSourceCode(name)};
+  std::string sourceCode{builtin::getSourceCode(name)};
   if (sourceCode.empty()) return std::nullopt;
-  auto allocator{BumpPtrAllocator{}};
-  auto module_{Module(std::string(name), std::move(sourceCode))};
-  if (auto error{module_.parse(allocator)}) return std::nullopt;
+  BumpPtrAllocator allocator{};
+  Module module_{std::string(name), std::move(sourceCode)};
+  if (std::optional<Error> error{module_.parse(allocator)}) return std::nullopt;
   return extractDocModule(module_);
 }
 //--}
@@ -484,7 +485,7 @@ std::optional<DocModule> extractBuiltinDocModule(std::string_view name) {
 //--{ Database queries
 std::vector<const DocEntry *>
 DocDatabase::findSymbol(std::string_view symbolName) const {
-  auto found{std::vector<const DocEntry *>{}};
+  std::vector<const DocEntry *> found{};
   auto walk{[&](auto &&self, const std::vector<DocEntry> &entries) -> void {
     for (const auto &entry : entries) {
       if (isQualifiedNameSuffix(symbolName, entry.qualifiedName))
@@ -537,7 +538,7 @@ public:
     writeKey(depth + 1, "params");
     mOut += '[';
     for (size_t i = 0; i < entry.params.size(); i++) {
-      const auto &param{entry.params[i]};
+      const DocParam &param{entry.params[i]};
       mOut += i > 0 ? ", {" : "{";
       writeInlineField("name", param.name), mOut += ", ";
       writeInlineField("signature", param.signature), mOut += ", ";
@@ -647,8 +648,8 @@ private:
 } // namespace
 
 std::string DocDatabase::printJSON() const {
-  auto out{std::string{}};
-  auto json{JSONWriter(out)};
+  std::string out{};
+  JSONWriter json{out};
   out += "{\n  \"modules\": [\n";
   for (size_t i = 0; i < modules.size(); i++) {
     json.writeModule(modules[i]);
@@ -701,7 +702,7 @@ void printMarkdownEntry(std::string &out, const DocEntry &entry, int level) {
 } // namespace
 
 std::string DocDatabase::printMarkdown() const {
-  auto out{std::string{}};
+  std::string out{};
   for (const auto &mod : modules) {
     out += "# Module `" + mod.qualifiedName + "`\n\n";
     if (!mod.fileName.empty()) out += "Defined in `" + mod.fileName + "`.\n\n";

@@ -41,13 +41,14 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
   touch(tmpDir, "dirA/t_u2_v1.exr");
   touch(tmpDir, "dirA/sub/n_1001.png");
   touch(tmpDir, "dirB/tex_1002.png");
-  auto locator{smdl::FileLocator()};
+  smdl::FileLocator locator{};
   locator.setSearchPwd(false);
   locator.setSearchDefaultDirs(false);
   REQUIRE(locator.addSearchDir((tmpDir / "dirA").string()));
   REQUIRE(locator.addSearchDir((tmpDir / "dirB").string()));
   SUBCASE("Without tile marker") {
-    auto images{locator.locateImages("plain.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("plain.png")};
     REQUIRE(images.size() == 1);
     CHECK(images[0].tileIndexU == 0);
     CHECK(images[0].tileIndexV == 0);
@@ -59,7 +60,8 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
     // 1101 and beyond, and must reject near-misses: names that only
     // end with the pattern, extra digits, leading zeros, and numbers
     // below 1001.
-    auto images{locator.locateImages("tex_<UDIM>.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("tex_<UDIM>.png")};
     REQUIRE(images.size() == 3);
     CHECK(images[0].tileIndexU == 0);
     CHECK(images[0].tileIndexV == 0);
@@ -72,13 +74,15 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
     CHECK(fs::path(images[2].path).filename() == "tex_1012.png");
   }
   SUBCASE("With '<UDIM>' tile marker at the beginning") {
-    auto images{locator.locateImages("<UDIM>.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("<UDIM>.png")};
     REQUIRE(images.size() == 2);
     CHECK(fs::path(images[0].path).filename() == "1001.png");
     CHECK(fs::path(images[1].path).filename() == "1002.png");
   }
   SUBCASE("With '<UVTILE0>' tile marker") {
-    auto images{locator.locateImages("uv<UVTILE0>.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("uv<UVTILE0>.png")};
     REQUIRE(images.size() == 2);
     CHECK(images[0].tileIndexU == 0);
     CHECK(images[0].tileIndexV == 0);
@@ -88,7 +92,8 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
   SUBCASE("With '<UVTILE1>' tile marker") {
     // Must normalize the 1-based tile indexes to be 0-based, and
     // must not match '_u0_v0'.
-    auto images{locator.locateImages("t<UVTILE1>.exr")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("t<UVTILE1>.exr")};
     REQUIRE(images.size() == 2);
     CHECK(images[0].tileIndexU == 0);
     CHECK(images[0].tileIndexV == 0);
@@ -105,12 +110,13 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
     }
   }
   SUBCASE("With directory portion in the pattern") {
-    auto images{locator.locateImages("sub/n_<UDIM>.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("sub/n_<UDIM>.png")};
     REQUIRE(images.size() == 1);
     CHECK(fs::path(images[0].path).filename() == "n_1001.png");
   }
   SUBCASE("With absolute pattern") {
-    auto images{
+    std::vector<smdl::FileLocator::ImagePath> images{
         locator.locateImages((tmpDir / "dirB" / "tex_<UDIM>.png").string())};
     REQUIRE(images.size() == 1);
     CHECK(images[0].tileIndexU == 1);
@@ -121,11 +127,12 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
     fs::create_directories(tmpDir / "dirP");
     touch(tmpDir, "dirP/plain.png");
     touch(tmpDir, "dirP/tex_1005.png");
-    auto priorityDirs{std::vector<std::string>{(tmpDir / "dirP").string()}};
+    std::vector<std::string> priorityDirs{
+        std::vector<std::string>{(tmpDir / "dirP").string()}};
     // Without priority dirs, 'plain.png' resolves in 'dirA', even more so
     // with 'dirA' as the relative-to anchor. With priority dirs, 'dirP'
     // must win over both.
-    auto located{locator.locate("plain.png")};
+    std::optional<std::string> located{locator.locate("plain.png")};
     REQUIRE(located);
     CHECK(fs::path(*located).parent_path().filename() == "dirA");
     located = locator.locate("plain.png", (tmpDir / "dirA").string(),
@@ -134,8 +141,8 @@ TEST_CASE("FileLocator: the tile markers and the search order") {
     CHECK(fs::path(*located).parent_path().filename() == "dirP");
     // The first directory that matches a tile pattern provides all of
     // the results, so the priority dir must eclipse the tiles in 'dirA'.
-    auto images{locator.locateImages("tex_<UDIM>.png",
-                                     (tmpDir / "dirA").string(), priorityDirs)};
+    std::vector<smdl::FileLocator::ImagePath> images{locator.locateImages(
+        "tex_<UDIM>.png", (tmpDir / "dirA").string(), priorityDirs)};
     REQUIRE(images.size() == 1);
     CHECK(fs::path(images[0].path).filename() == "tex_1005.png");
     // A priority dir must not disable the regular search dirs: a file
@@ -164,11 +171,11 @@ TEST_CASE("FileLocator: the default search directories") {
                                   SEPARATOR + (tmpDir / "missing").string() +
                                   SEPARATOR + (tmpDir / "default2").string() +
                                   SEPARATOR};
-  auto locator{smdl::FileLocator()};
+  smdl::FileLocator locator{};
   locator.setSearchPwd(false);
   REQUIRE(locator.addSearchDir((tmpDir / "added").string()));
   SUBCASE("Rank after every other search directory") {
-    auto located{locator.locate("both.png")};
+    std::optional<std::string> located{locator.locate("both.png")};
     REQUIRE(located);
     CHECK(fs::path(*located).parent_path().filename() == "added");
     located = locator.locate("only_default.png");
@@ -179,7 +186,7 @@ TEST_CASE("FileLocator: the default search directories") {
     CHECK(fs::path(*located).parent_path().filename() == "default2");
   }
   SUBCASE("Keep their order and skip empty or missing entries") {
-    auto searchDirs{locator.getSearchDirs()};
+    std::vector<std::string> searchDirs{locator.getSearchDirs()};
     REQUIRE(searchDirs.size() == 3);
     CHECK(fs::path(searchDirs[0]) == fs::weakly_canonical(tmpDir / "added"));
     CHECK(fs::path(searchDirs[1]) == fs::weakly_canonical(tmpDir / "default1"));
@@ -188,7 +195,8 @@ TEST_CASE("FileLocator: the default search directories") {
   SUBCASE("Supply tiles only when no earlier directory matches") {
     // Both 'added' and 'default1' match the UDIM pattern, so 'added'
     // provides every tile; only 'default1' matches the UVTILE0 pattern.
-    auto images{locator.locateImages("tex_<UDIM>.png")};
+    std::vector<smdl::FileLocator::ImagePath> images{
+        locator.locateImages("tex_<UDIM>.png")};
     REQUIRE(images.size() == 1);
     CHECK(fs::path(images[0].path).filename() == "tex_1001.png");
     images = locator.locateImages("uv<UVTILE0>.png");
@@ -206,12 +214,12 @@ TEST_CASE("FileLocator: a default search directory that is not one") {
   TempDir tmpDir{"filelocator-not-a-dir"};
   touch(tmpDir, "a-file.txt");
   // Names used by no other test, since each is reported once per process.
-  const auto missing{(tmpDir / "missing-for-the-warning").string()};
-  const auto file{(tmpDir / "a-file.txt").string()};
+  const std::string missing{(tmpDir / "missing-for-the-warning").string()};
+  const std::string file{(tmpDir / "a-file.txt").string()};
   const ScopedEnv defaultDirs{"SMDL_DEFAULT_SEARCH_DIRS",
                               missing + SEPARATOR + file};
   const CollectedLog logged{"SMDL_DEFAULT_SEARCH_DIRS"};
-  auto locator{smdl::FileLocator()};
+  smdl::FileLocator locator{};
   // The variable is read on every lookup, and each entry is reported
   // once however many lookups read it.
   for (int i = 0; i < 3; i++) CHECK(locator.getSearchDirs().size() == 1);

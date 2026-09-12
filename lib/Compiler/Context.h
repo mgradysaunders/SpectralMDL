@@ -37,9 +37,9 @@ public:
   [[nodiscard]]
   llvm::FunctionCallee getBuiltinCallee(llvm::StringRef name,
                                         llvm::FunctionType *llvmFuncTy) {
-    auto &callee{mBuiltinCallees[name]};
+    llvm::FunctionCallee &callee{mBuiltinCallees[name]};
     if (!callee) {
-      auto llvmFunc{llvm::Function::Create(
+      llvm::Function *llvmFunc{llvm::Function::Create(
           llvmFuncTy, llvm::Function::ExternalLinkage, name, llvmModule)};
       llvmFunc->setDSOLocal(false);
       callee = llvm::FunctionCallee(llvmFuncTy, llvmFunc);
@@ -97,7 +97,8 @@ public:
 
   /// Get keyword value. Return `Value()` if undefined.
   [[nodiscard]] Value getKeyword(llvm::StringRef name) {
-    if (auto itr{mKeywords.find(name)}; itr != mKeywords.end())
+    if (llvm::StringMapIterBase<Value, false> itr{mKeywords.find(name)};
+        itr != mKeywords.end())
       return itr->second;
     return Value();
   }
@@ -116,7 +117,7 @@ public:
   /// Get every keyword name, for did-you-mean suggestions. The views are
   /// borrowed from the keyword table and live as long as the `Context`.
   [[nodiscard]] std::vector<std::string_view> getKeywordNames() const {
-    auto names{std::vector<std::string_view>{}};
+    std::vector<std::string_view> names{};
     names.reserve(mKeywords.size());
     for (const auto &entry : mKeywords)
       names.push_back(std::string_view(entry.getKey()));
@@ -339,7 +340,7 @@ public:
   /// Get compile-time scalar constant.
   template <typename T> [[nodiscard]] Value getComptimeScalar(T value) {
     static_assert(std::is_arithmetic_v<T>);
-    auto type{getArithmeticType(Scalar::get<T>())};
+    Type *type{getArithmeticType(Scalar::get<T>())};
     if constexpr (std::is_integral_v<T>) {
       // See the signedness note on 'getComptimeInt()'.
       return RValue(type, llvm::ConstantInt::get(
@@ -356,8 +357,8 @@ public:
   template <typename T, size_t M>
   [[nodiscard]] Value getComptimeVector(Vector<T, M> value) {
     static_assert(std::is_arithmetic_v<T> && M > 1);
-    auto builder{llvm::IRBuilder<>{llvmContext}};
-    auto result{Value::zero(getArithmeticType(Scalar::get<T>(), Extent(M)))};
+    llvm::IRBuilder<> builder{llvmContext};
+    Value result{Value::zero(getArithmeticType(Scalar::get<T>(), Extent(M)))};
     for (size_t i = 0; i < M; i++)
       result.llvmValue = builder.CreateInsertElement(
           result.llvmValue, getComptimeScalar(value[i]).llvmValue, uint64_t(i));
@@ -366,11 +367,12 @@ public:
 
   /// Get compile-time `string` constant.
   [[nodiscard]] Value getComptimeString(std::string_view value) {
-    auto &result{mStrings[value]};
+    Value &result{mStrings[value]};
     if (!result) {
-      auto builder{llvm::IRBuilder<>(llvmContext)};
-      auto str{builder.CreateGlobalString(value, "str", 0, &llvmModule)};
-      auto ptr{
+      llvm::IRBuilder<> builder{llvmContext};
+      llvm::GlobalVariable *str{
+          builder.CreateGlobalString(value, "str", 0, &llvmModule)};
+      llvm::Value *ptr{
           builder.CreateConstInBoundsGEP2_32(str->getValueType(), str, 0, 0)};
       result = RValue(mStringType.get(), ptr);
     }

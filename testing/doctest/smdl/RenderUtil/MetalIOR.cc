@@ -81,7 +81,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
       REQUIRE(metalIOR.tableSize >= 2);
       int violations{};
       for (int j = 0; j < metalIOR.tableSize; j++) {
-        const auto &entry{metalIOR.table[j]};
+        const smdl::MetalIORTableEntry &entry{metalIOR.table[j]};
         violations += !(entry.wavelen > 0.0f);
         violations += !(entry.wavelen <= 14000.0f);
         violations += !(entry.ior[0] > 0.0f);
@@ -130,17 +130,18 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // The evaluation must interpolate linearly between table entries.
     smdl::MetalIOR metalIOR{};
     REQUIRE(smdl::smdlFindMetalIOR(smdl::Metal::Au, &metalIOR) == 1);
-    const auto &entry0{metalIOR.table[10]};
-    const auto &entry1{metalIOR.table[11]};
-    auto ior =
+    const smdl::MetalIORTableEntry &entry0{metalIOR.table[10]};
+    const smdl::MetalIORTableEntry &entry1{metalIOR.table[11]};
+    smdl::float2 ior =
         evalMetalIOR(smdl::Metal::Au, 0.5f * (entry0.wavelen + entry1.wavelen));
     CHECK(ior[0] == doctest::Approx(0.5f * (entry0.ior[0] + entry1.ior[0])));
     CHECK(ior[1] == doctest::Approx(0.5f * (entry0.ior[1] + entry1.ior[1])));
 
     // Wavelengths outside the table domain must clamp to the first and
     // last entries instead of extrapolating.
-    const auto &entryFirst{metalIOR.table[0]};
-    const auto &entryLast{metalIOR.table[metalIOR.tableSize - 1]};
+    const smdl::MetalIORTableEntry &entryFirst{metalIOR.table[0]};
+    const smdl::MetalIORTableEntry &entryLast{
+        metalIOR.table[metalIOR.tableSize - 1]};
     CHECK(evalMetalIOR(smdl::Metal::Au, 10.0f)[0] == entryFirst.ior[0]);
     CHECK(evalMetalIOR(smdl::Metal::Au, 10.0f)[1] == entryFirst.ior[1]);
     CHECK(evalMetalIOR(smdl::Metal::Au, 100000.0f)[0] == entryLast.ior[0]);
@@ -182,7 +183,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
         {smdl::Metal::Cu, 650.0f, {0.326f, 3.4f}},          // Querry
         {smdl::Metal::CuZn, 10000.0f, {16.878f, 51.601f}}}; // Querry
     for (const auto &spot : SPOTS) {
-      auto ior = evalMetalIOR(spot.metal, spot.wavelen);
+      smdl::float2 ior = evalMetalIOR(spot.metal, spot.wavelen);
       CHECK(ior[0] == doctest::Approx(spot.expectedIOR[0]).epsilon(0.01));
       CHECK(ior[1] == doctest::Approx(spot.expectedIOR[1]).epsilon(0.01));
     }
@@ -198,7 +199,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // roughly 0.1 uncertainty in reflectance, so only pin down that it
     // stays a plausible silvery metal through the visible range.
     for (float wavelen : {380.0f, 550.0f, 700.0f}) {
-      auto ior = evalMetalIOR(smdl::Metal::Sn, wavelen);
+      smdl::float2 ior = evalMetalIOR(smdl::Metal::Sn, wavelen);
       CHECK(ior[0] > 0.0f);
       CHECK(ior[1] > ior[0]);
       CHECK(reflectance(ior) > 0.65f);
@@ -212,10 +213,10 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // the same arithmetic on the same two entries and the result agrees to
     // the bit. Anything less would shift rendered appearance.
     for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
-      const auto metal{smdl::Metal(i)};
+      const smdl::Metal metal{i};
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);
-      const auto wavelens{probeWavelengths(metalIOR)};
+      const std::vector<float> wavelens{probeWavelengths(metalIOR)};
       const int numWavelens(wavelens.size());
       std::vector<float> iorN(numWavelens), iorK(numWavelens);
       std::vector<float> expectN(numWavelens), expectK(numWavelens);
@@ -238,10 +239,10 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // wavelength before is the tempting optimization, and it would return
     // wrong values for unsorted input rather than merely being slower.
     for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
-      const auto metal{smdl::Metal(i)};
+      const smdl::Metal metal{i};
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);
-      auto wavelens{probeWavelengths(metalIOR)};
+      std::vector<float> wavelens{probeWavelengths(metalIOR)};
       wavelens.erase(std::remove_if(wavelens.begin(), wavelens.end(),
                                     [](float w) { return std::isnan(w); }),
                      wavelens.end());
@@ -249,7 +250,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
       std::vector<float> iorN(numWavelens), iorK(numWavelens);
       smdl::smdlEvalMetalIOR(metal, numWavelens, wavelens.data(), iorN.data(),
                              iorK.data());
-      auto reversed{wavelens};
+      std::vector<float> reversed{wavelens};
       std::reverse(reversed.begin(), reversed.end());
       std::vector<float> reversedN(numWavelens), reversedK(numWavelens);
       smdl::smdlEvalMetalIOR(metal, numWavelens, reversed.data(),

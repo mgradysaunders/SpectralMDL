@@ -69,7 +69,7 @@ TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
         if (x == 5) v = std::max(v, 0.05f);
         values[size_t(x + NX * (y + NY * z))] = v;
       }
-  const auto fileName{(tmpDir / "field.vol").string()};
+  const std::string fileName{(tmpDir / "field.vol").string()};
   writeVol(fileName, NX, NY, NZ, values);
   smdl::VoxelGrid grid{};
   REQUIRE_OK(grid.loadFromFile(fileName));
@@ -108,7 +108,8 @@ TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
                   << " dir " << dir.x << "," << dir.y << "," << dir.z
                   << " tEnd " << tEnd);
 
-    const auto all{spansOf(&grid, org, dir, invMaxValue, tEnd, false)};
+    const std::vector<smdl::MajorantSpan> all{
+        spansOf(&grid, org, dir, invMaxValue, tEnd, false)};
     REQUIRE(!all.empty());
     // The spans tile [0, tEnd) in order.
     CHECK(all.front().t0 == 0.0f);
@@ -136,7 +137,8 @@ TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
       }
     }
     // Skipping empty cells drops exactly the spans with a zero scale.
-    const auto kept{spansOf(&grid, org, dir, invMaxValue, tEnd, true)};
+    const std::vector<smdl::MajorantSpan> kept{
+        spansOf(&grid, org, dir, invMaxValue, tEnd, true)};
     std::vector<MajorantSpan> expected{};
     for (const auto &span : all)
       if (span.scale > 0.0f) expected.push_back(span);
@@ -156,7 +158,7 @@ TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
 
   // No grid: the one global span, and nothing for an empty segment.
   {
-    const auto spans{
+    const std::vector<smdl::MajorantSpan> spans{
         spansOf(nullptr, float3(), float3(1, 0, 0), 0.0f, 3.0f, true)};
     REQUIRE(spans.size() == 1);
     CHECK(spans[0].t0 == 0.0f);

@@ -18,7 +18,8 @@ TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
           "weighs") {
   SUBCASE("A uniform grid weighs every band its spacing, halved at the ends") {
     ScopedGrid scoped{{400, 500, 600, 700}, false};
-    const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+    const std::vector<double> widths{
+        wavelengthTrapezoidWidths(scoped.wavelengths())};
     REQUIRE(widths.size() == 4);
     CHECK(widths[0] == 50.0);
     CHECK(widths[1] == 100.0);
@@ -28,8 +29,8 @@ TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
   }
   SUBCASE("A non-uniform grid weighs each band half the distance between its "
           "neighbors") {
-    const auto grid{std::vector<float>{400, 450, 600, 700}};
-    const auto widths{wavelengthTrapezoidWidths(
+    const std::vector<float> grid{400, 450, 600, 700};
+    const std::vector<double> widths{wavelengthTrapezoidWidths(
         smdl::Span<const float>(grid.data(), grid.size()))};
     REQUIRE(widths.size() == 4);
     CHECK(widths[0] == 25.0);
@@ -39,8 +40,8 @@ TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
     CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
   }
   SUBCASE("A grid of one band is half a unit wide") {
-    const auto grid{std::vector<float>{550}};
-    const auto widths{wavelengthTrapezoidWidths(
+    const std::vector<float> grid{550};
+    const std::vector<double> widths{wavelengthTrapezoidWidths(
         smdl::Span<const float>(grid.data(), grid.size()))};
     REQUIRE(widths.size() == 1);
     CHECK(widths[0] == 0.5);
@@ -49,7 +50,8 @@ TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
     for (const auto &grid : {std::vector<float>{400, 500, 600, 700},
                              std::vector<float>{400, 450, 600, 700}}) {
       const ScopedGrid scoped{grid, false};
-      const auto widths{wavelengthTrapezoidWidths(scoped.wavelengths())};
+      const std::vector<double> widths{
+          wavelengthTrapezoidWidths(scoped.wavelengths())};
       REQUIRE(gRenderGrid.weights.size() == widths.size());
       CHECK(gRenderGrid.stateBase.wavelengthWeight ==
             gRenderGrid.weights.data());
@@ -62,8 +64,8 @@ TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
 TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
   SUBCASE("A uniform grid tiles its span with bands of the spacing, halved "
           "at the ends") {
-    const auto wavelens{std::vector<float>{400, 500, 600, 700}};
-    const auto edges{wavelengthBandEdges(
+    const std::vector<float> wavelens{400, 500, 600, 700};
+    const std::vector<float> edges{wavelengthBandEdges(
         smdl::Span<const float>(wavelens.data(), wavelens.size()))};
     REQUIRE(edges.size() == wavelens.size() + 1);
     // The end bands stop at the grid's ends, half the spacing wide; the
@@ -80,8 +82,8 @@ TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
     }
   }
   SUBCASE("A non-uniform grid splits each gap down the middle") {
-    const auto wavelens{std::vector<float>{400, 420, 500, 900}};
-    const auto edges{wavelengthBandEdges(
+    const std::vector<float> wavelens{400, 420, 500, 900};
+    const std::vector<float> edges{wavelengthBandEdges(
         smdl::Span<const float>(wavelens.data(), wavelens.size()))};
     REQUIRE(edges.size() == wavelens.size() + 1);
     CHECK(edges[0] == doctest::Approx(400.0f));
@@ -94,8 +96,9 @@ TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
     for (const auto &wavelens : {std::vector<float>{400, 500, 600, 700},
                                  std::vector<float>{400, 420, 500, 900}}) {
       const ScopedGrid grid{wavelens, true};
-      const auto &edges{gRenderGrid.bandEdges};
-      const auto widths{wavelengthTrapezoidWidths(grid.wavelengths())};
+      const std::vector<float> &edges{gRenderGrid.bandEdges};
+      const std::vector<double> widths{
+          wavelengthTrapezoidWidths(grid.wavelengths())};
       REQUIRE(edges.size() == widths.size() + 1);
       for (size_t i = 0; i < widths.size(); i++)
         CHECK(double(edges[i + 1]) - double(edges[i]) ==
@@ -103,7 +106,7 @@ TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
     }
   }
   SUBCASE("A grid with no band width has no rectangles") {
-    const auto wavelens{std::vector<float>{550}};
+    const std::vector<float> wavelens{550};
     CHECK(wavelengthBandEdges(
               smdl::Span<const float>(wavelens.data(), wavelens.size()))
               .empty());
@@ -112,12 +115,12 @@ TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
 }
 
 TEST_CASE("jitterWavelengths: every sample inside its own band") {
-  const auto wavelens{std::vector<float>{400, 420, 500, 900}};
+  const std::vector<float> wavelens{400, 420, 500, 900};
   const ScopedGrid grid{wavelens, true};
-  const auto &edges{gRenderGrid.bandEdges};
+  const std::vector<float> &edges{gRenderGrid.bandEdges};
   SUBCASE("The offset places every band at the same point of its band") {
-    auto wavelengths{Color(smdl::Span<const float>(wavelens.data(), //
-                                                   wavelens.size()))};
+    Color wavelengths{Color(smdl::Span<const float>(wavelens.data(), //
+                                                    wavelens.size()))};
     jitterWavelengths(wavelengths, 0.0f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] == doctest::Approx(edges[i]));
@@ -141,8 +144,8 @@ TEST_CASE("jitterWavelengths: every sample inside its own band") {
   }
   SUBCASE("Every sample stays inside its own band and averages to it") {
     constexpr uint32_t NUM_SAMPLES = 4096;
-    auto wavelengths{Color()};
-    auto sums{std::vector<double>(wavelens.size())};
+    Color wavelengths{};
+    std::vector<double> sums(wavelens.size());
     for (uint32_t index = 0; index < NUM_SAMPLES; index++) {
       jitterWavelengths(wavelengths, wavelengthJitterOffset(7, index));
       for (size_t i = 0; i < wavelens.size(); i++) {
@@ -165,7 +168,7 @@ TEST_CASE("wavelengthJitterOffset: the sequence a pixel draws") {
     // one per stratum, which is the property the jitter is drawn this
     // way for.
     constexpr uint32_t NUM_SAMPLES = 256;
-    auto hits{std::vector<int>(NUM_SAMPLES)};
+    std::vector<int> hits(NUM_SAMPLES);
     for (uint32_t index = 0; index < NUM_SAMPLES; index++) {
       const float xi{wavelengthJitterOffset(12345, index)};
       REQUIRE(xi > 0.0f);

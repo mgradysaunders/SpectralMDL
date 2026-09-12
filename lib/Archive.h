@@ -38,7 +38,7 @@ public:
 
   /// Get file name.
   [[nodiscard]] std::string get_file_name(int fileIndex) {
-    auto buffer{std::array<char, 512>{}};
+    std::array<char, 512> buffer{};
     if (!mz_zip_reader_get_filename(&mZip, fileIndex, buffer.data(),
                                     buffer.size())) {
       throw Error(mz_zip_get_error_string(mz_zip_get_last_error(&mZip)));
@@ -48,7 +48,7 @@ public:
 
   /// Get file stat.
   [[nodiscard]] mz_zip_archive_file_stat file_stat(int fileIndex) {
-    auto stat{mz_zip_archive_file_stat{}};
+    mz_zip_archive_file_stat stat{};
     if (!mz_zip_reader_file_stat(&mZip, fileIndex, &stat)) {
       throw Error(mz_zip_get_error_string(mz_zip_get_last_error(&mZip)));
     }
@@ -57,8 +57,8 @@ public:
 
   /// Get file.
   [[nodiscard]] std::string extract_file(int fileIndex) {
-    auto stat{file_stat(fileIndex)};
-    auto file{std::string()};
+    mz_zip_archive_file_stat stat{file_stat(fileIndex)};
+    std::string file{};
     file.resize(stat.m_uncomp_size);
     if (!mz_zip_reader_extract_to_mem(&mZip, fileIndex, file.data(),
                                       file.size(),

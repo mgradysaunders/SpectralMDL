@@ -31,13 +31,13 @@ public:
   /// which the format requires for positions.
   uint32_t floats(const std::vector<float> &data, const char *type,
                   size_t components, bool shouldEmitBounds = false) {
-    const auto view{addView(data.data(), data.size() * sizeof(float), 4)};
-    auto accessor{smdl::concat(
+    const uint32_t view{addView(data.data(), data.size() * sizeof(float), 4)};
+    std::string accessor{smdl::concat(
         "{\"bufferView\":", view, ",\"componentType\":5126,\"count\":",
         data.size() / components, ",\"type\":\"", type, "\"")};
     if (shouldEmitBounds) {
-      auto lower{std::vector<float>(components, +1e30f)};
-      auto upper{std::vector<float>(components, -1e30f)};
+      std::vector<float> lower(components, +1e30f);
+      std::vector<float> upper(components, -1e30f);
       for (size_t i = 0; i < data.size(); i++) {
         lower[i % components] = std::min(lower[i % components], data[i]);
         upper[i % components] = std::max(upper[i % components], data[i]);
@@ -51,7 +51,8 @@ public:
   /// Append unsigned short data; returns the accessor index.
   uint32_t ushorts(const std::vector<uint16_t> &data, const char *type,
                    size_t components) {
-    const auto view{addView(data.data(), data.size() * sizeof(uint16_t), 2)};
+    const uint32_t view{
+        addView(data.data(), data.size() * sizeof(uint16_t), 2)};
     mAccessors.push_back(smdl::concat(
         "{\"bufferView\":", view, ",\"componentType\":5123,\"count\":",
         data.size() / components, ",\"type\":\"", type, "\"}"));
@@ -68,7 +69,7 @@ public:
   }
 
   [[nodiscard]] static std::string numbers(const std::vector<float> &values) {
-    auto text{std::string("[")};
+    std::string text{"["};
     for (size_t i = 0; i < values.size(); i++) {
       char buffer[32]{};
       std::snprintf(buffer, sizeof(buffer), "%.9g", double(values[i]));
@@ -82,7 +83,7 @@ public:
 private:
   uint32_t addView(const void *data, size_t size, size_t alignment) {
     while (bytes.size() % alignment != 0) bytes.push_back('\0');
-    const auto offset{bytes.size()};
+    const size_t offset{bytes.size()};
     bytes.append(static_cast<const char *>(data), size);
     mBufferViews.push_back(smdl::concat("{\"buffer\":0,\"byteOffset\":", offset,
                                         ",\"byteLength\":", size, "}"));
@@ -90,7 +91,7 @@ private:
   }
 
   [[nodiscard]] static std::string join(const std::vector<std::string> &parts) {
-    auto text{std::string()};
+    std::string text{};
     for (size_t i = 0; i < parts.size(); i++)
       text += (i == 0 ? "" : ",") + parts[i];
     return text;
@@ -118,7 +119,7 @@ public:
 
 inline std::string writeFile(const std::filesystem::path &dir,
                              const std::string &name, const std::string &text) {
-  const auto path{(dir / name).string()};
+  const std::string path{(dir / name).string()};
   std::ofstream file(path, std::ios::binary | std::ios::trunc);
   file.write(text.data(), std::streamsize(text.size()));
   return path;
@@ -143,28 +144,28 @@ inline std::string finish(const std::filesystem::path &dir,
 /// use, which is why checks find vertices by position. Material `paint`.
 inline std::string writeWave(const std::filesystem::path &dir) {
   GltfBuilder gltf{"wave.bin"};
-  const auto points{gltf.floats(
+  const uint32_t points{gltf.floats(
       {0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 2, 0, 0, 2, 1, 0, 5, 5, 0}, "VEC3",
       3, true)};
-  const auto normals{gltf.floats(
+  const uint32_t normals{gltf.floats(
       {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, "VEC3",
       3)};
-  const auto joints{gltf.ushorts({0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1,
-                                  0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
-                                 "VEC4", 4)};
-  const auto weights{
+  const uint32_t joints{gltf.ushorts({0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1,
+                                      0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
+                                     "VEC4", 4)};
+  const uint32_t weights{
       gltf.floats({1, 0, 0, 0, 1, 0, 0, 0, 0.5f, 0.5f, 0, 0, 0.5f, 0.5f,
                    0, 0, 1, 0, 0, 0, 1, 0, 0,    0,    0, 0, 0,    0},
                   "VEC4", 4)};
-  const auto indices{
+  const uint32_t indices{
       gltf.ushorts({0, 2, 3, 0, 3, 1, 2, 4, 5, 2, 5, 3, 4, 5, 6}, "SCALAR", 1)};
   // Column-major: the identity, then a translation by (-1, 0, 0).
-  const auto bindMatrices{
+  const uint32_t bindMatrices{
       gltf.floats({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  0, 0, 1, //
                    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1},
                   "MAT4", 16)};
-  const auto times{gltf.floats({0, 1}, "SCALAR", 1)};
-  const auto rotations{
+  const uint32_t times{gltf.floats({0, 1}, "SCALAR", 1)};
+  const uint32_t rotations{
       gltf.floats({0, 0, 0, 1, 0, 0, SIN45, SIN45}, "VEC4", 4)};
   return finish(
       dir, "wave", gltf,
@@ -198,21 +199,21 @@ inline std::string writeWave(const std::filesystem::path &dir) {
 /// together. Material `paint`.
 inline std::string writeMorph(const std::filesystem::path &dir) {
   GltfBuilder gltf{"morph.bin"};
-  const auto points{gltf.floats({0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0},
-                                "VEC3", 3, true)};
-  const auto normals{
+  const uint32_t points{gltf.floats(
+      {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0}, "VEC3", 3, true)};
+  const uint32_t normals{
       gltf.floats({0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, "VEC3", 3)};
-  const auto indices{gltf.ushorts({0, 1, 2, 0, 4, 3}, "SCALAR", 1)};
-  const auto lift{gltf.floats({0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
-                              "VEC3", 3, true)};
-  const auto liftNormals{
+  const uint32_t indices{gltf.ushorts({0, 1, 2, 0, 4, 3}, "SCALAR", 1)};
+  const uint32_t lift{gltf.floats({0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+                                  "VEC3", 3, true)};
+  const uint32_t liftNormals{
       gltf.floats({0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, "VEC3", 3)};
-  const auto stretch{gltf.floats({0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0},
-                                 "VEC3", 3, true)};
-  const auto stretchNormals{gltf.floats(
+  const uint32_t stretch{gltf.floats(
+      {0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0}, "VEC3", 3, true)};
+  const uint32_t stretchNormals{gltf.floats(
       {1, 0, -1, 1, 0, -1, 1, 0, -1, 1, 0, -1, 1, 0, -1}, "VEC3", 3)};
-  const auto times{gltf.floats({0, 1}, "SCALAR", 1)};
-  const auto weights{gltf.floats({0, 0, 1, 0.5f}, "SCALAR", 1)};
+  const uint32_t times{gltf.floats({0, 1}, "SCALAR", 1)};
+  const uint32_t weights{gltf.floats({0, 0, 1, 0.5f}, "SCALAR", 1)};
   return finish(
       dir, "morph", gltf,
       smdl::concat(
@@ -238,15 +239,15 @@ inline std::string writeMorph(const std::filesystem::path &dir) {
 /// with zero tangents. Material `paint`.
 inline std::string writePendulum(const std::filesystem::path &dir) {
   GltfBuilder gltf{"pendulum.bin"};
-  const auto points{gltf.floats(QUAD_POINTS, "VEC3", 3, true)};
-  const auto normals{gltf.floats(QUAD_NORMALS, "VEC3", 3)};
-  const auto indices{gltf.ushorts(QUAD_INDICES, "SCALAR", 1)};
-  const auto times{gltf.floats({0, 1}, "SCALAR", 1)};
-  const auto rotations{
+  const uint32_t points{gltf.floats(QUAD_POINTS, "VEC3", 3, true)};
+  const uint32_t normals{gltf.floats(QUAD_NORMALS, "VEC3", 3)};
+  const uint32_t indices{gltf.ushorts(QUAD_INDICES, "SCALAR", 1)};
+  const uint32_t times{gltf.floats({0, 1}, "SCALAR", 1)};
+  const uint32_t rotations{
       gltf.floats({0, 0, 0, 1, 0, 0, SIN45, SIN45}, "VEC4", 4)};
-  const auto hops{gltf.floats({0, 0, 0, 0, 0, 1}, "VEC3", 3)};
+  const uint32_t hops{gltf.floats({0, 0, 0, 0, 0, 1}, "VEC3", 3)};
   // In-tangent, value, out-tangent per key.
-  const auto eases{gltf.floats(
+  const uint32_t eases{gltf.floats(
       {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0}, "VEC3", 3)};
   return finish(
       dir, "pendulum", gltf,
@@ -277,9 +278,9 @@ inline std::string writePendulum(const std::filesystem::path &dir) {
 /// The unit quad, under a wrapper, and nothing else. Material `paint`.
 inline std::string writePlain(const std::filesystem::path &dir) {
   GltfBuilder gltf{"plain.bin"};
-  const auto points{gltf.floats(QUAD_POINTS, "VEC3", 3, true)};
-  const auto normals{gltf.floats(QUAD_NORMALS, "VEC3", 3)};
-  const auto indices{gltf.ushorts(QUAD_INDICES, "SCALAR", 1)};
+  const uint32_t points{gltf.floats(QUAD_POINTS, "VEC3", 3, true)};
+  const uint32_t normals{gltf.floats(QUAD_NORMALS, "VEC3", 3)};
+  const uint32_t indices{gltf.ushorts(QUAD_INDICES, "SCALAR", 1)};
   return finish(dir, "plain", gltf,
                 smdl::concat("\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
                              "\"nodes\":[{\"name\":\"rig\",\"children\":[1]},"

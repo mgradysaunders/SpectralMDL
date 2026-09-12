@@ -29,21 +29,21 @@ namespace {
 // Deliberately unequal dimensions everywhere, so that a swapped axis or
 // a confused radius and height cannot pass.
 [[nodiscard]] std::vector<PrimitiveSpec> everyShape() {
-  auto specs{std::vector<PrimitiveSpec>()};
-  auto &sphere{specs.emplace_back()};
+  std::vector<PrimitiveSpec> specs{};
+  PrimitiveSpec &sphere{specs.emplace_back()};
   sphere.shape = PrimitiveSpec::Shape::SPHERE;
   sphere.radius = 0.7f;
-  auto &box{specs.emplace_back()};
+  PrimitiveSpec &box{specs.emplace_back()};
   box.shape = PrimitiveSpec::Shape::BOX;
   box.size = float3(0.5f, 1.25f, 2.0f);
-  auto &disk{specs.emplace_back()};
+  PrimitiveSpec &disk{specs.emplace_back()};
   disk.shape = PrimitiveSpec::Shape::DISK;
   disk.radius = 1.3f;
-  auto &cylinder{specs.emplace_back()};
+  PrimitiveSpec &cylinder{specs.emplace_back()};
   cylinder.shape = PrimitiveSpec::Shape::CYLINDER;
   cylinder.radius = 0.6f;
   cylinder.height = 1.7f;
-  auto &cone{specs.emplace_back()};
+  PrimitiveSpec &cone{specs.emplace_back()};
   cone.shape = PrimitiveSpec::Shape::CONE;
   cone.radius = 0.9f;
   cone.height = 1.1f;
@@ -54,7 +54,7 @@ namespace {
 // implementation's own piece-by-piece sum.
 [[nodiscard]] float expectedArea(const PrimitiveSpec &spec) {
   const float r{spec.radius}, h{spec.height};
-  const auto &s{spec.size};
+  const float3 &s{spec.size};
   switch (spec.shape) {
   case PrimitiveSpec::Shape::SPHERE:
     return 4.0f * PI * r * r;
@@ -138,7 +138,7 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
   SUBCASE("Every shape reports the piece count it is built from") {
     for (const auto &spec : everyShape()) {
       CAPTURE(std::string(spec.name()));
-      const auto pieceCount{primitivePieceCount(spec)};
+      const uint32_t pieceCount{primitivePieceCount(spec)};
       switch (spec.shape) {
       case PrimitiveSpec::Shape::SPHERE:
       case PrimitiveSpec::Shape::DISK:
@@ -172,10 +172,11 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
       for (uint32_t primID = 0; primID < primitivePieceCount(spec); primID++)
         for (int iu = 0; iu < 7; iu++)
           for (int iv = 1; iv < 7; iv++) {
-            const auto uv{
+            const float2 uv{
                 float2(0.5f / 7.0f + float(iu) / 7.0f, float(iv) / 8.0f)};
-            const auto fromUV{evalPrimitiveSurface(spec, primID, uv)};
-            const auto fromPoint{
+            const PrimitiveSurface fromUV{
+                evalPrimitiveSurface(spec, primID, uv)};
+            const PrimitiveSurface fromPoint{
                 evalPrimitiveSurfaceAt(spec, primID, fromUV.point)};
             // The parameters come back through the fast inverse
             // trigonometry, whose bounds are a few float ulps of a
@@ -198,7 +199,7 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
       for (uint32_t primID = 0; primID < primitivePieceCount(spec); primID++)
         for (int iu = 0; iu <= 8; iu++)
           for (int iv = 0; iv <= 8; iv++) {
-            const auto surface{evalPrimitiveSurface(
+            const PrimitiveSurface surface{evalPrimitiveSurface(
                 spec, primID, float2(float(iu) / 8.0f, float(iv) / 8.0f))};
             worst = std::max(worst, surfaceResidual(spec, surface.point));
             // The normal is a unit vector perpendicular to both
@@ -221,19 +222,20 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
     const int N{64};
     for (const auto &spec : everyShape()) {
       CAPTURE(std::string(spec.name()));
-      const auto pieceCount{primitivePieceCount(spec)};
-      auto counts{std::vector<int>(pieceCount, 0)};
+      const uint32_t pieceCount{primitivePieceCount(spec)};
+      std::vector<int> counts(pieceCount, 0);
       float worst{0.0f};
       for (int ix = 0; ix < N; ix++)
         for (int iy = 0; iy < N; iy++) {
-          const auto xi{float2((float(ix) + 0.5f) / N, (float(iy) + 0.5f) / N)};
-          const auto sample{samplePrimitiveArea(spec, xi)};
+          const float2 xi{
+              float2((float(ix) + 0.5f) / N, (float(iy) + 0.5f) / N)};
+          const PrimitiveAreaSample sample{samplePrimitiveArea(spec, xi)};
           REQUIRE(sample.primID < pieceCount);
           counts[sample.primID]++;
           worst = std::max(worst, surfaceResidual(spec, sample.surface.point));
           // The sample reports its surface directly; the point and
           // normal must be the same ones its (piece, u, v) rebuilds.
-          const auto surface{
+          const PrimitiveSurface surface{
               evalPrimitiveSurface(spec, sample.primID, sample.surface.uv)};
           CHECK(length(sample.surface.point - surface.point) < 1e-4f);
           CHECK(length(sample.surface.normal - surface.normal) < 1e-4f);
@@ -257,12 +259,12 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
     spec.shape = PrimitiveSpec::Shape::BOX;
     spec.size = float3(0.5f, 1.25f, 2.0f);
     Fixture fixture{spec};
-    const auto half{0.5f * spec.size};
+    const float3 half{0.5f * spec.size};
     for (size_t axis = 0; axis < 3; axis++)
       for (int sign = -1; sign <= 1; sign += 2) {
         CAPTURE(axis);
         CAPTURE(sign);
-        auto dir{float3(0.0f)};
+        float3 dir{0.0f};
         dir[axis] = float(sign);
         // From the center outward: the face at that end, hit at its
         // half-extent, with the outward normal along the ray.
@@ -278,14 +280,14 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
         CHECK(!fixture.scene.intersect(beyond, again));
         // From well outside on the far side, travelling the same way:
         // the opposite face, entered against its outward normal.
-        const auto origin{-4.0f * dir};
+        const float3 origin{-4.0f * dir};
         Ray inward{origin, dir, EPS, INF};
         Hit in{};
         REQUIRE(fixture.scene.intersect(inward, in));
         CHECK(in.point[axis] == doctest::Approx(-float(sign) * half[axis]));
         CHECK(dot(in.normal, dir) < 0.0f);
         // And the same ray offset past the side of the box misses it.
-        auto offset{origin};
+        float3 offset{origin};
         offset[(axis + 1) % 3] = 0.5f * spec.size[(axis + 1) % 3] + 1e-2f;
         Ray past{offset, dir, EPS, INF};
         Hit missed{};
@@ -299,10 +301,10 @@ TEST_CASE("Primitive: the shapes, their areas, and their surfaces") {
     Fixture fixture{spec};
     // An oblique direction, so the crossing is not axis-aligned and the
     // entry and exit faces differ.
-    const auto dir{normalize(float3(0.37f, 0.51f, -0.77f))};
-    const auto origin{float3(-3.0f * dir)};
+    const float3 dir{normalize(float3(0.37f, 0.51f, -0.77f))};
+    const float3 origin{-3.0f * dir};
     int crossings{0};
-    auto point{origin};
+    float3 point{origin};
     for (int i = 0; i < 8; i++) {
       Ray ray{point, dir, EPS, INF};
       Hit hit{};

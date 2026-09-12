@@ -18,10 +18,12 @@ bool Value::isComptimeString() const {
 
 std::string_view Value::getComptimeString() const {
   if (!isComptimeString()) return {};
-  auto globalVar{llvm::dyn_cast_if_present<llvm::GlobalVariable>(llvmValue)};
+  llvm::GlobalVariable *globalVar{
+      llvm::dyn_cast_if_present<llvm::GlobalVariable>(llvmValue)};
   if (!globalVar) return {};
-  auto dataArray{llvm::dyn_cast_if_present<llvm::ConstantDataArray>(
-      globalVar->getInitializer())};
+  llvm::ConstantDataArray *dataArray{
+      llvm::dyn_cast_if_present<llvm::ConstantDataArray>(
+          globalVar->getInitializer())};
   if (!dataArray) return {};
   return dataArray->getAsCString();
 }
@@ -48,7 +50,7 @@ Declaration *Declaration::findThroughImport(Context &context,
                                             Declaration *declaration) {
   // If the declaration value is a `Module` ...
   if (declaration->value.isComptimeMetaModule(context)) {
-    auto module_{declaration->value.getComptimeMetaModule(
+    Module *module_{declaration->value.getComptimeMetaModule(
         context, declaration->getSourceLocation())};
     // Look inside the module if it is either
     // 1. A universal import in unqualified form `using foo::bar import *`
@@ -59,17 +61,17 @@ Declaration *Declaration::findThroughImport(Context &context,
       // The size check also keeps the `subspan` below in range.
       if (name.size() > declaration->name.size() &&
           name.startsWith(declaration->name)) {
-        if (auto subDeclaration{
-                findInModule(context, name.subspan(declaration->name.size()),
-                             llvmFunc, module_)}) {
+        if (Declaration * subDeclaration{findInModule(
+                              context, name.subspan(declaration->name.size()),
+                              llvmFunc, module_)}) {
           return subDeclaration;
         }
       }
       // Search for unqualified names `baz` if universal unqualified
       // import `using foo::bar import *`
       if (declaration->isASTUsingImport())
-        if (auto subDeclaration{
-                findInModule(context, name, llvmFunc, module_)}) {
+        if (Declaration *
+            subDeclaration{findInModule(context, name, llvmFunc, module_)}) {
           return subDeclaration;
         }
     }
@@ -104,11 +106,13 @@ Declaration *Declaration::resolveInScope(Context &context,
     Declaration *declaration{};
     size_t prefixSize{};
   };
-  auto candidates{llvm::SmallVector<Candidate, 4>{}};
+  llvm::SmallVector<Candidate, 4> candidates{};
   for (size_t k = 1; k <= name.size(); k++) {
-    auto prefix{k == name.size() ? name
-                                 : context.internName(name.subspan(0, k))};
-    if (auto itr{scope->decls.find(prefix.data())}; itr != scope->decls.end())
+    Span<const std::string_view> prefix{
+        k == name.size() ? name : context.internName(name.subspan(0, k))};
+    if (llvm::DenseMapIterator<const void *, Declaration *> itr{
+            scope->decls.find(prefix.data())};
+        itr != scope->decls.end())
       for (auto c{itr->second}; c; c = c->prevSameNameInScope)
         candidates.push_back({c, k});
   }
@@ -130,13 +134,13 @@ Declaration *Declaration::resolveInScope(Context &context,
     // Descend into namespaces for proper prefixes, propagating the export
     // filter: 'export' gates access across module boundaries only.
     if (c->value.isComptimeMetaNamespace(context)) {
-      auto astNamespace{
+      AST::Namespace *astNamespace{
           c->value.getComptimeMetaNamespace(context, c->getSourceLocation())};
       if (astNamespace->scope)
-        if (auto found{
-                resolveInScope(context, name.subspan(prefixSize), llvmFunc,
-                               astNamespace->scope, shouldIgnoreIfNotExported,
-                               std::numeric_limits<uint64_t>::max(), nullptr)})
+        if (Declaration * found{resolveInScope(
+                              context, name.subspan(prefixSize), llvmFunc,
+                              astNamespace->scope, shouldIgnoreIfNotExported,
+                              std::numeric_limits<uint64_t>::max(), nullptr)})
           return found;
     }
   }
@@ -144,11 +148,11 @@ Declaration *Declaration::resolveInScope(Context &context,
   // declaration in their scope, so trying them after `decls` preserves the
   // chain's newest-first order.
   for (auto itr{scope->imports.rbegin()}; itr != scope->imports.rend(); ++itr) {
-    auto importDeclaration{*itr};
+    Declaration *importDeclaration{*itr};
     if (importDeclaration->seq > seqLimit) continue;
     if (shouldIgnoreIfNotExported && !importDeclaration->isExported()) continue;
-    if (auto found{
-            findThroughImport(context, name, llvmFunc, importDeclaration)})
+    if (Declaration *
+        found{findThroughImport(context, name, llvmFunc, importDeclaration)})
       return found;
   }
   return nullptr;
@@ -177,7 +181,7 @@ std::vector<Type *> ParameterList::getTypes() const {
 }
 
 std::vector<llvm::Type *> ParameterList::getLLVMFieldTypes() const {
-  auto llvmTypes{std::vector<llvm::Type *>{}};
+  std::vector<llvm::Type *> llvmTypes{};
   llvmTypes.reserve(size());
   for (auto &param : *this) {
     // Voided and baked fields occupy no storage: they are absent from the
@@ -206,11 +210,11 @@ bool ParameterList::getLookupSequence(std::string_view name,
                                       LookupSequence &seq) const {
   unsigned i = 0;
   for (auto &param : *this) {
-    const auto noStorage{param.type->isVoid() || param.isBaked()};
+    const bool noStorage{param.type->isVoid() || param.isBaked()};
     seq.push_back({&param, noStorage ? NO_LLVM_FIELD : i});
     if (param.name == name) return true;
     if (param.isInline()) {
-      if (auto structType{
+      if (StructType *structType{
               llvm::dyn_cast<StructType>(param.type->getFirstNonPointerType())};
           structType && structType->params.getLookupSequence(name, seq)) {
         return true;
@@ -245,7 +249,7 @@ std::vector<Value> ArgumentList::getValues() const {
 }
 
 void ArgumentList::validateNames() {
-  auto uniqueNames{llvm::StringSet<>()};
+  llvm::StringSet<> uniqueNames{};
   for (auto &arg : elems) {
     if (arg.isNamed()) {
       auto [itr, inserted] = uniqueNames.insert(arg.name);

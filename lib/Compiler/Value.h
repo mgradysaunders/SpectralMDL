@@ -54,7 +54,8 @@ public:
   /// - If this is an LLVM instruction, it is only usable if it belongs to the
   /// same LLVM function.
   [[nodiscard]] bool isUsableInLLVMFunction(llvm::Function *llvmFunc) const {
-    if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
+    if (llvm::Instruction *llvmInst{
+            llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
         llvmInst && llvmInst->getParent())
       return llvmInst->getFunction() == llvmFunc;
     return true;
@@ -75,7 +76,8 @@ public:
 
   /// Get value as compile-time int or `unsigned(-1)` on failure.
   [[nodiscard]] unsigned getComptimeInt() const {
-    if (auto llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
+    if (llvm::ConstantInt *
+        llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
       return llvmConst->getValue().getLimitedValue(
           std::numeric_limits<unsigned>::max());
     return unsigned(-1);
@@ -86,7 +88,8 @@ public:
   /// `getComptimeInt()` wherever the value must be range-checked: the
   /// unsigned accessor silently clamps, so e.g. `-1` becomes `4294967295`.
   [[nodiscard]] std::optional<int64_t> getComptimeSignedInt() const {
-    if (auto llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
+    if (llvm::ConstantInt *
+        llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
       if (llvmConst->getValue().getSignificantBits() <= 64)
         return llvmConst->getValue().getSExtValue();
     return std::nullopt;
@@ -222,12 +225,13 @@ public:
 
   /// Is exported?
   [[nodiscard]] bool isExported() const {
-    if (auto decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
+    if (AST::Decl * decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
       return decl->isExported();
-    if (auto declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
+    if (AST::Enum::Declarator *
+        declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
       return declarator->decl->isExported();
-    if (auto declarator{
-            llvm::dyn_cast_if_present<AST::Variable::Declarator>(node)})
+    if (AST::Variable::Declarator *
+        declarator{llvm::dyn_cast_if_present<AST::Variable::Declarator>(node)})
       return declarator->decl->isExported();
     return false;
   }
@@ -265,11 +269,11 @@ public:
   /// compile-time condition routinely folds away a builtin's only use of a
   /// value, as the null pointer of a resource that failed to load does.
   void maybeWarnAboutUnusedValue() const {
-    const auto *module_{getSourceLocation().module_};
+    const Module *module_{getSourceLocation().module_};
     if (module_ && module_->isBuiltin()) return;
     if (isUsed == 0 && name.size() == 1) {
       if (llvm::isa_and_present<AST::Parameter>(node)) {
-        auto astParam{static_cast<AST::Parameter *>(node)};
+        AST::Parameter *astParam{static_cast<AST::Parameter *>(node)};
         if (!astParam->wasWarningIssued &&
             !astParam->type->hasQualifier("inline") &&
             !(astParam->annotations &&
@@ -280,7 +284,8 @@ public:
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
-        auto declarator{static_cast<AST::Variable::Declarator *>(node)};
+        AST::Variable::Declarator *declarator{
+            static_cast<AST::Variable::Declarator *>(node)};
         if (!declarator->wasWarningIssued &&
             !(declarator->annotations &&
               declarator->annotations->isMarkedUnused())) {
@@ -380,7 +385,7 @@ public:
 
   /// Is marked with the keyword `const`?
   [[nodiscard]] bool isConst() const {
-    if (auto astType{getASTType()})
+    if (AST::Type * astType{getASTType()})
       return astType->hasQualifier("const") || isBuiltinConst;
     return isBuiltinConst;
   }
@@ -393,7 +398,8 @@ public:
 
   /// Is marked with the keyword `inline`?
   [[nodiscard]] bool isInline() const {
-    if (auto astType{getASTType()}) return astType->hasQualifier("inline");
+    if (AST::Type * astType{getASTType()})
+      return astType->hasQualifier("inline");
     return false;
   }
 

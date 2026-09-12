@@ -11,7 +11,7 @@ TEST_CASE("SceneData: what a registered field answers") {
     for (size_t j{}; j < 4; j++)
       for (size_t i{}; i < 4; i++) matrix[j][i] = float(4 * j + i);
     sceneData.setFloat4x4("matrix", matrix);
-    auto *getter{sceneData.get("matrix")};
+    const smdl::SceneData::Getter *getter{sceneData.get("matrix")};
     REQUIRE(getter);
     // The lookup kind and size are those emitted by
     // 'data_lookup_float4x4' in 'Builtin/scene.smdl': kind Float, 16
@@ -49,7 +49,7 @@ TEST_CASE("SceneData: what a registered field answers") {
         [](const smdl::State *state) { return state->vertexColorCount > 0; });
     CHECK(sceneData.exists("vertex_color", &present));
     CHECK(!sceneData.exists("vertex_color", &absent));
-    auto *getter{sceneData.get("vertex_color")};
+    const smdl::SceneData::Getter *getter{sceneData.get("vertex_color")};
     REQUIRE(getter);
     present.vertexColor[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
     std::array<float, 4> out{};
@@ -61,7 +61,7 @@ TEST_CASE("SceneData: what a registered field answers") {
   }
   SUBCASE("setFloat4 does not answer a float4x4 lookup") {
     sceneData.setFloat4("vector", smdl::float4(1.0f, 2.0f, 3.0f, 4.0f));
-    auto *getter{sceneData.get("vector")};
+    const smdl::SceneData::Getter *getter{sceneData.get("vector")};
     REQUIRE(getter);
     std::array<float, 16> out{};
     out.fill(-1.0f);

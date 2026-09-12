@@ -7,19 +7,21 @@
 #include "Options.h"
 
 void runExecs(const Options &opts, smdl::Compiler &compiler) {
-  if (auto error{compiler.compile(opts.compile.optLevel)})
+  if (std::optional<smdl::Error> error{compiler.compile(opts.compile.optLevel)})
     error->printAndExit();
-  if (auto error{compiler.jitCompile()}) error->printAndExit();
-  if (auto error{compiler.runExecs()}) error->printAndExit();
+  if (std::optional<smdl::Error> error{compiler.jitCompile()})
+    error->printAndExit();
+  if (std::optional<smdl::Error> error{compiler.runExecs()})
+    error->printAndExit();
 }
 
 void runUnitTests(const Options &opts, smdl::Compiler &compiler) {
   // The grid is the compiler's own, so a unit test sees exactly the
   // wavelengths the material code was emitted for. It is copied because
   // `State::wavelengthBase` is a mutable view into it.
-  auto wavelengths{opts.compile.wavelengths};
-  auto allocator{smdl::BumpPtrAllocator{}};
-  auto state{smdl::State{}};
+  std::vector<float> wavelengths{opts.compile.wavelengths};
+  smdl::BumpPtrAllocator allocator{};
+  smdl::State state{};
   state.allocator = &allocator;
   state.textureCoordinate[0][0] = opts.state.texCoord.x;
   state.textureCoordinate[0][1] = opts.state.texCoord.y;
@@ -32,7 +34,7 @@ void runUnitTests(const Options &opts, smdl::Compiler &compiler) {
   state.wavelengthMin = opts.compile.wavelengthRange.x;
   state.wavelengthMax = opts.compile.wavelengthRange.y;
   state.wavelengthBase = wavelengths.data();
-  if (auto error{compiler.runUnitTests(state)}) {
+  if (std::optional<smdl::Error> error{compiler.runUnitTests(state)}) {
     std::cerr << '\n';
     error->printAndExit();
   }

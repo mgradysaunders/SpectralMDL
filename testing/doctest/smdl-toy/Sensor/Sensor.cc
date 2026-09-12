@@ -26,11 +26,11 @@ namespace {
 // A body of 4 um pixels with one flat `qe` band of 0.5 from 400 to 700
 // nm, stating nothing about its well.
 [[nodiscard]] SensorSettings flatBody() {
-  auto value{SensorSettings{}};
+  SensorSettings value{};
   value.pixels = int2(4, 4);
   value.pitchUM = float2(4.0f, 4.0f);
   value.response.kind = ResponseKind::QE;
-  auto &band{value.response.bands.emplace_back()};
+  ResponseBand &band{value.response.bands.emplace_back()};
   band.name = "L";
   band.wavelengths = {400.0f, 700.0f};
   band.values = {0.5f, 0.5f};
@@ -57,8 +57,8 @@ namespace {
 // `E` in every band inside `window`, and nothing outside it.
 [[nodiscard]] smdl::SpectralFilm flatFilm(size_t numBands, size_t numX,
                                           size_t numY, double E, int4 window) {
-  auto film{smdl::SpectralFilm(numBands, numX, numY)};
-  auto sums{std::vector<double>(numBands)};
+  smdl::SpectralFilm film{numBands, numX, numY};
+  std::vector<double> sums(numBands);
   for (size_t y = 0; y < numY; y++) {
     for (size_t x = 0; x < numX; x++) {
       const bool isLit{int(x) >= window[0] && int(x) < window[2] &&
@@ -73,7 +73,7 @@ namespace {
 
 // A 10 nm grid from 400 to 700 nm, 31 bands.
 [[nodiscard]] std::vector<float> fineGrid() {
-  auto grid{std::vector<float>()};
+  std::vector<float> grid{};
   for (float w = 400; w <= 700; w += 10) grid.push_back(w);
   return grid;
 }
@@ -82,10 +82,10 @@ namespace {
 // responses are the observer's XYZ: `QE_b lambda` is the curve. Knots at
 // 1 nm, where the fit integrates.
 [[nodiscard]] SensorSettings lutherBody() {
-  auto value{flatBody()};
+  SensorSettings value{flatBody()};
   value.response.bands.clear();
   for (size_t k = 0; k < 3; k++) {
-    auto &band{value.response.bands.emplace_back()};
+    ResponseBand &band{value.response.bands.emplace_back()};
     band.name = std::string(1, "RGB"[k]);
     for (int lambda = 360; lambda <= 830; lambda++) {
       band.wavelengths.push_back(float(lambda));
@@ -99,12 +99,12 @@ namespace {
 // A body of three overlapping Gaussian bands, red, green, and blue: the
 // shape of a camera's curves and no camera's.
 [[nodiscard]] SensorSettings gaussianBody() {
-  auto value{flatBody()};
+  SensorSettings value{flatBody()};
   value.response.bands.clear();
   constexpr double CENTERS[3]{600.0, 540.0, 460.0};
   constexpr double WIDTHS[3]{40.0, 40.0, 30.0};
   for (size_t k = 0; k < 3; k++) {
-    auto &band{value.response.bands.emplace_back()};
+    ResponseBand &band{value.response.bands.emplace_back()};
     band.name = std::string(1, "RGB"[k]);
     for (int lambda = 380; lambda <= 780; lambda += 5) {
       const double x{(double(lambda) - CENTERS[k]) / WIDTHS[k]};
@@ -119,7 +119,7 @@ namespace {
 
 TEST_CASE("Sensor: the integrals against hand integrals") {
   const Sensor sensor{flatBody()};
-  const auto flat{flatSpectrum()};
+  const std::vector<double> flat{flatSpectrum()};
   SUBCASE("A flat band under a flat spectrum counts the photon integral, "
           "to the half nanometer the 1 nm rule leaves at each edge") {
     // integral(0.5 lambda / (h c)) from 400 to 700 nm, in nanometers.
@@ -135,7 +135,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
   }
   SUBCASE("The electrons per lux-second are the pixel's, with the scale of "
           "the illuminant cancelled") {
-    auto brighter{flat};
+    std::vector<double> brighter{flat};
     for (auto &value : brighter) value *= 7.0;
     const double expected{16e-12 * sensor.electronRate(0, flat) /
                           Sensor::illuminance(flat)};
@@ -145,7 +145,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
   }
   SUBCASE("D55 is 1 at 560 nm, and rates the body a little differently "
           "from a flat spectrum") {
-    const auto d55{daylightSpectrum(D55_KELVIN)};
+    const std::vector<double> d55{daylightSpectrum(D55_KELVIN)};
     REQUIRE(d55.size() == SENSOR_WAVELENGTH_COUNT);
     CHECK(d55[260] == doctest::Approx(1.0).epsilon(1e-3));
     CHECK(sensor.peakBand() == 0);
@@ -155,8 +155,8 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
           doctest::Approx(sensor.electronsPerLuxSecond(0, flat)));
   }
   SUBCASE("The most sensitive band is the one that counts most under D55") {
-    auto settings{flatBody()};
-    auto &blue{settings.response.bands.emplace_back()};
+    SensorSettings settings{flatBody()};
+    ResponseBand &blue{settings.response.bands.emplace_back()};
     blue.name = "B";
     blue.wavelengths = {400.0f, 500.0f};
     blue.values = {0.9f, 0.9f};
@@ -169,7 +169,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
 }
 
 TEST_CASE("Sensor: the well and the base ISO are one fact") {
-  auto settings{flatBody()};
+  SensorSettings settings{flatBody()};
   SUBCASE("Neither stated: the generic well over the pitch, and the base "
           "ISO it implies") {
     const Sensor sensor{settings};
@@ -206,7 +206,7 @@ TEST_CASE("Sensor: the well and the base ISO are one fact") {
 }
 
 TEST_CASE("Sensor: the gain follows the ISO") {
-  auto settings{flatBody()};
+  SensorSettings settings{flatBody()};
   settings.detector.baseISO = 100.0f;
   settings.detector.blackLevel = 535.0f;
   const Sensor sensor{settings};
@@ -235,13 +235,13 @@ TEST_CASE("Sensor: the gain follows the ISO") {
 }
 
 TEST_CASE("Sensor: the meter") {
-  auto settings{flatBody()};
+  SensorSettings settings{flatBody()};
   settings.detector.baseISO = 100.0f;
   settings.detector.maxISO = 6400.0f;
   const Sensor sensor{settings};
-  const auto grid{fineGrid()};
+  const std::vector<float> grid{fineGrid()};
   ScopedGrid scoped{grid, false};
-  const auto &wavelengths{scoped.wavelengths()};
+  const Color &wavelengths{scoped.wavelengths()};
   const int4 whole{0, 0, 4, 4};
   // A flat spectral irradiance `E` over the grid reads
   // `683 E integral(y-bar)` lux over the grid's span, by the trapezoid.
@@ -271,8 +271,8 @@ TEST_CASE("Sensor: the meter") {
   SUBCASE("A flat field of known luminance meters to q K over its exposure") {
     // 2.03 lux at 10 ms is 0.0203 lux-seconds, which wants ISO 400.
     const double E{2.03 / luxOf(1.0)};
-    const auto film{flatFilm(grid.size(), 4, 4, E, whole)};
-    const auto metered{sensor.meter(film, wavelengths, whole, 0.01)};
+    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
+    const MeteredExposure metered{sensor.meter(film, wavelengths, whole, 0.01)};
     CHECK(metered.luxSeconds == doctest::Approx(0.0203).epsilon(1e-4));
     CHECK(metered.wantedISO ==
           doctest::Approx(METER_Q * METER_K / 0.0203).epsilon(1e-4));
@@ -284,9 +284,9 @@ TEST_CASE("Sensor: the meter") {
   SUBCASE("A bright field wants less than the base, and is overexposed by "
           "the stops between") {
     const double E{2.03 / luxOf(1.0)};
-    const auto film{flatFilm(grid.size(), 4, 4, E, whole)};
+    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
     // Eight times the exposure wants ISO 50, a stop under the base.
-    const auto metered{sensor.meter(film, wavelengths, whole, 0.08)};
+    const MeteredExposure metered{sensor.meter(film, wavelengths, whole, 0.08)};
     CHECK(metered.wantedISO == doctest::Approx(50.0).epsilon(1e-3));
     CHECK(metered.iso == 100.0);
     CHECK(metered.stopsOff == doctest::Approx(1.0).epsilon(1e-3));
@@ -294,16 +294,17 @@ TEST_CASE("Sensor: the meter") {
   }
   SUBCASE("A dim field wants more than the top, and is underexposed") {
     const double E{2.03 / luxOf(1.0)};
-    const auto film{flatFilm(grid.size(), 4, 4, E, whole)};
+    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
     // A 64th of the exposure wants ISO 25600, two stops over the top.
-    const auto metered{sensor.meter(film, wavelengths, whole, 0.01 / 64.0)};
+    const MeteredExposure metered{
+        sensor.meter(film, wavelengths, whole, 0.01 / 64.0)};
     CHECK(metered.iso == 6400.0);
     CHECK(metered.stopsOff == doctest::Approx(-2.0).epsilon(1e-3));
     CHECK(metered.isUnderexposed());
   }
   SUBCASE("A dark film wants everything, and gets the top") {
-    const auto film{smdl::SpectralFilm(grid.size(), 4, 4)};
-    const auto metered{sensor.meter(film, wavelengths, whole, 0.01)};
+    const smdl::SpectralFilm film{grid.size(), 4, 4};
+    const MeteredExposure metered{sensor.meter(film, wavelengths, whole, 0.01)};
     CHECK(metered.luxSeconds == 0.0);
     CHECK(std::isinf(metered.wantedISO));
     CHECK(metered.iso == 6400.0);
@@ -313,21 +314,22 @@ TEST_CASE("Sensor: the meter") {
           "black") {
     const double E{2.03 / luxOf(1.0)};
     const int4 window{0, 0, 2, 2};
-    auto film{flatFilm(grid.size(), 4, 4, E, window)};
-    const auto over{sensor.meter(film, wavelengths, whole, 0.01)};
-    const auto within{sensor.meter(film, wavelengths, window, 0.01)};
+    smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, window)};
+    const MeteredExposure over{sensor.meter(film, wavelengths, whole, 0.01)};
+    const MeteredExposure within{sensor.meter(film, wavelengths, window, 0.01)};
     CHECK(over.luxSeconds == doctest::Approx(0.0203 / 4.0).epsilon(1e-4));
     CHECK(within.luxSeconds == doctest::Approx(0.0203).epsilon(1e-4));
-    auto poison{std::vector<double>(grid.size(), double(INF))};
+    std::vector<double> poison(grid.size(), double(INF));
     film.addTotals(0, 0, poison.data());
-    const auto poisoned{sensor.meter(film, wavelengths, window, 0.01)};
+    const MeteredExposure poisoned{
+        sensor.meter(film, wavelengths, window, 0.01)};
     CHECK(poisoned.luxSeconds == doctest::Approx(0.75 * 0.0203).epsilon(1e-4));
   }
 }
 
 TEST_CASE("Sensor: the illuminants a white balance names") {
   SUBCASE("The Planckian radiator at 2856 K is CIE illuminant A") {
-    const auto a{planckSpectrum(ILLUMINANT_A_KELVIN)};
+    const std::vector<double> a{planckSpectrum(ILLUMINANT_A_KELVIN)};
     CHECK(a[260] == doctest::Approx(1.0));
     CHECK(a[100] == doctest::Approx(0.147080).epsilon(1e-3));
     CHECK(a[200] == doctest::Approx(0.598611).epsilon(1e-3));
@@ -353,14 +355,14 @@ TEST_CASE("Sensor: the illuminants a white balance names") {
               WhiteBalanceKind::KELVIN, 3200.0f}) == planckSpectrum(3200.0));
     // F2 is tabulated from 380 to 780 nm, and its mercury line at 546 nm
     // stands out of its neighbors.
-    const auto f2{of(WhiteBalanceKind::FLUORESCENT)};
+    const std::vector<double> f2{of(WhiteBalanceKind::FLUORESCENT)};
     CHECK(f2[79] == 0.0);
     CHECK(f2[80] > 0.0);
     CHECK(f2[481] == 0.0);
     CHECK(f2[245] > 2.0 * f2[235]);
   }
   SUBCASE("A white is the illuminant through the observer, Y = 1") {
-    const auto white{illuminantWhite(daylightSpectrum(D65_KELVIN))};
+    const double3 white{illuminantWhite(daylightSpectrum(D65_KELVIN))};
     CHECK(white.y == 1.0);
     const double sum{white.x + white.y + white.z};
     CHECK(white.x / sum == doctest::Approx(0.3127).epsilon(0.002));
@@ -369,7 +371,7 @@ TEST_CASE("Sensor: the illuminants a white balance names") {
 }
 
 TEST_CASE("Sensor: the training reflectances") {
-  const auto &patches{trainingReflectances()};
+  const std::vector<SensorSpectrum> &patches{trainingReflectances()};
   REQUIRE(patches.size() == 190);
   REQUIRE(patches[0].size() == SENSOR_WAVELENGTH_COUNT);
   SUBCASE("They are the table's at its own wavelengths, and linear between") {
@@ -386,11 +388,11 @@ TEST_CASE("Sensor: the training reflectances") {
 }
 
 TEST_CASE("Sensor: the color fit") {
-  const auto d65{daylightSpectrum(D65_KELVIN)};
+  const std::vector<double> d65{daylightSpectrum(D65_KELVIN)};
   const std::array<size_t, 3> rgb{0, 1, 2};
   SUBCASE("A body whose curves are the observer's fits it to nothing, an "
           "index of 100") {
-    const auto fit{Sensor{lutherBody()}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{lutherBody()}.fitColor(rgb, d65)};
     CHECK(!fit.isSingular);
     CHECK(fit.isFaithful());
     CHECK(fit.meanDeltaE00 < 0.01);
@@ -400,8 +402,8 @@ TEST_CASE("Sensor: the color fit") {
   SUBCASE("The white lands exactly, and the multipliers balance it against "
           "green") {
     const Sensor sensor{gaussianBody()};
-    const auto fit{sensor.fitColor(rgb, d65)};
-    const auto white{fit.cameraToXYZ * smdl::double3(1.0)};
+    const ColorFit fit{sensor.fitColor(rgb, d65)};
+    const double3 white{fit.cameraToXYZ * smdl::double3(1.0)};
     CHECK(white.x == doctest::Approx(fit.white.x).epsilon(1e-12));
     CHECK(white.y == doctest::Approx(fit.white.y).epsilon(1e-12));
     CHECK(white.z == doctest::Approx(fit.white.z).epsilon(1e-12));
@@ -414,7 +416,7 @@ TEST_CASE("Sensor: the color fit") {
                                    .epsilon(1e-12));
   }
   SUBCASE("A camera's shape of curves fits the way a camera's do") {
-    const auto fit{Sensor{gaussianBody()}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{gaussianBody()}.fitColor(rgb, d65)};
     CHECK(fit.isFaithful());
     CHECK(fit.meanDeltaE00 > 0.5);
     CHECK(fit.meanDeltaE00 < 5.0);
@@ -422,18 +424,18 @@ TEST_CASE("Sensor: the color fit") {
     CHECK(fit.index() < 99.0);
   }
   SUBCASE("Bands too much alike have no fit, and are not faithful") {
-    auto settings{lutherBody()};
+    SensorSettings settings{lutherBody()};
     settings.response.bands[2] = settings.response.bands[1];
-    const auto fit{Sensor{settings}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{settings}.fitColor(rgb, d65)};
     CHECK(fit.isSingular);
     CHECK(!fit.isFaithful());
   }
   SUBCASE("A band the illuminant does not reach has no fit") {
-    auto settings{lutherBody()};
-    auto &band{settings.response.bands[2]};
+    SensorSettings settings{lutherBody()};
+    ResponseBand &band{settings.response.bands[2]};
     band.wavelengths = {840.0f, 900.0f};
     band.values = {0.5f, 0.5f};
-    const auto fit{Sensor{settings}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{settings}.fitColor(rgb, d65)};
     CHECK(fit.isSingular);
     CHECK(fit.multipliers.x == 1.0);
   }

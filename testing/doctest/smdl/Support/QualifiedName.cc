@@ -21,11 +21,12 @@ TEST_CASE("QualifiedName: splitting, joining, and suffix matching") {
     CHECK(smdl::joinQualifiedName({"a"}) == "::a");
     CHECK(smdl::joinQualifiedName({"a", "b"}) == "::a::b");
     // Round trip.
-    auto components{smdl::splitQualifiedName("::vendor::metals::steel")};
+    std::vector<std::string_view> components{
+        smdl::splitQualifiedName("::vendor::metals::steel")};
     CHECK(smdl::joinQualifiedName(components) == "::vendor::metals::steel");
   }
   SUBCASE("isQualifiedNameSuffix matches whole components only") {
-    const auto name{"::vendor::metals::steel::brushed"};
+    const char *const name{"::vendor::metals::steel::brushed"};
     CHECK(smdl::isQualifiedNameSuffix("brushed", name));
     CHECK(smdl::isQualifiedNameSuffix("steel::brushed", name));
     CHECK(smdl::isQualifiedNameSuffix("metals::steel::brushed", name));
