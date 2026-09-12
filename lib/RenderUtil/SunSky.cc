@@ -8,10 +8,10 @@
 
 #include "smdl/RenderUtil/FastMath.h"
 #include "smdl/Support/Macros.h"
+#include "smdl/Support/SIMD.h"
 
 #include "SunSkyRoloMoon.h"
 #include "SunSkyRural.h"
-#include "Support/SIMD.h"
 
 // The lunar multiplier is generated on the same grid as the sun-sky fit,
 // so the channels line up one-to-one.

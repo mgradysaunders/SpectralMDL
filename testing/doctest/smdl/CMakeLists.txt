@@ -39,6 +39,7 @@ smdl_add_doctest(
     "Support/Profiler.cc"
     "Support/QualifiedName.cc"
     "Support/RNG.cc"
+    "Support/SIMD.cc"
     "Support/Strings.cc"
     "Support/VectorMath.cc"
   LINK
