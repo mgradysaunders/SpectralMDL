@@ -19,6 +19,10 @@
 #include "smdl/Manifold.h"
 #include "smdl/RenderUtil/MonteCarlo.h"
 
+struct RenderContext;
+struct PathContext;
+class VisibilityWalk;
+
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.
 using smdl::buildManifoldSeedFrame;
@@ -53,6 +57,14 @@ using smdl::solveManifoldConnection;
 /// lost. Larger costs convergence, since the walk starts further from
 /// every solution.
 constexpr float MANIFOLD_SEED_JITTER{0.60f};
+
+/// The surface hits one straight receiver-to-light line may resolve and
+/// still carry transport the manifold estimators claim. Both halves of
+/// the estimator discover that line through `discoverStraightChain()`,
+/// so the budget is one decision: past it the gather stands down and
+/// the arrival keeps the ordinary weight, the way every other
+/// undiscovered chain does.
+constexpr int MNEE_STRAIGHT_MAX_HOPS{64};
 
 /// How precisely a glossy chain's walk must match its drawn microfacet
 /// normals, as a fraction of the narrowest lobe's squared roughness, so
@@ -270,11 +282,11 @@ private:
 /// per-side indices and the side of the shading normal the segment
 /// arrived from.
 ///
-/// Both halves of the manifold estimator go through here: the gather
-/// discovering its chain and the arrival-side re-walk reconstructing
-/// it. Their seeds must agree vertex for vertex or the two MIS weights
-/// stop summing to one, so the eligibility test and the index
-/// assignment deliberately have exactly one implementation.
+/// Every discovery goes through here: the straight-line one both halves
+/// of the estimator run (`discoverStraightChain()`) and the caster
+/// trace. The seeds of the two halves must agree vertex for vertex or
+/// the two MIS weights stop summing to one, so the eligibility test and
+/// the index assignment deliberately have exactly one implementation.
 ///
 /// `wl` is the direction of travel along the straight segment, toward
 /// the light. `material` is modified in place by the exterior IOR
@@ -285,6 +297,39 @@ private:
                                     const Hit &hit, const float3 &wl,
                                     float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);
+
+/// The receiver a connection leaves from, as both halves of the
+/// estimator see it: the vertex, the direction that arrived there, the
+/// nested medium it sits in, and the interface that scatters there,
+/// null at a volume vertex, which has none.
+class MNEEReceiver final {
+public:
+  /// The nested medium a segment leaving the receiver toward `wi` starts
+  /// in: the receiver's own where the direction stays on the side the
+  /// path arrived from, and across the receiver's interface where it
+  /// transmits, exactly as the walk's own continuation crosses it at
+  /// the bounce. A segment started in the receiver's own medium
+  /// regardless would miss the interior of a rough-glass receiver a
+  /// connection transmits into.
+  [[nodiscard]] const MediumStack *
+  mediumToward(smdl::BumpPtrAllocator &allocator, const float3 &wi) const {
+    const MediumStack *result{medium};
+    if (material)
+      MediumStack::Update(result, allocator, material, instance, wo, wi);
+    return result;
+  }
+
+  float3 point{};
+
+  /// The direction back along the segment that arrived at the receiver.
+  float3 wo{};
+
+  const MediumStack *medium{};
+
+  const smdl::JIT::Material *material{};
+
+  const MeshInstance *instance{};
+};
 
 /// A chain family: the crossings in order from the receiver, by instance
 /// and, for a primitive, by piece. Two chains of one family cross the
@@ -324,11 +369,10 @@ public:
   std::array<uint32_t, MANIFOLD_MAX_DEPTH> pieces{};
 };
 
-/// The start a searched refractive estimate is traced from: the seed
-/// chain, and per crossing the discovery hit and the receiver-side
-/// medium, which the glossy kind draws its offsets at exactly as the
-/// straight-line gather does at its own discovery hits.
-class MNEECasterSeed final {
+/// A seed chain, as a discovery hands it to the estimators: the chain,
+/// and per crossing the discovery hit and the receiver-side medium,
+/// which the glossy kind draws its offsets at.
+class MNEEChainSeed final {
 public:
   [[nodiscard]] MNEEChainFamily family() const noexcept {
     MNEEChainFamily result{};
@@ -340,23 +384,67 @@ public:
   std::array<Hit, MANIFOLD_MAX_DEPTH> hits{};
   std::array<const MediumStack *, MANIFOLD_MAX_DEPTH> medium{};
 
-  /// The transmission lobes every crossing of the chain claims.
+  /// The transmission lobes every crossing of the chain claims, of those
+  /// the discovery was asked for.
   int lobes{};
 };
 
+/// How a straight-line discovery ended. Only `REACHED` yields an
+/// estimate; the rest are the one list of reasons the gather stands
+/// down and the arrival side keeps its ordinary weight, decided in one
+/// place for both.
+enum class MNEEStraightEnd {
+  /// Every surface on the line was an admitted crossing, and the line
+  /// reached the light.
+  REACHED,
+  /// A surface no chain of the wanted kinds crosses: not an interface
+  /// the claim admits, a curve, or a crossing claiming none of the kinds
+  /// the chain so far claims (a mixed chain is nobody's).
+  BLOCKED,
+  /// More crossings than the depth allows.
+  OVERLONG,
+  /// More surface hits than `MNEE_STRAIGHT_MAX_HOPS`.
+  BUDGET,
+  /// The line passed a cutout on a draw of the walk's own, which the
+  /// arrival side cannot replay.
+  CUTOUT,
+};
+
+/// Discover the chain along one straight receiver-to-light line, from
+/// the first blocker `walk` returned in `blocker` (the caller's scratch,
+/// which the discovery keeps walking in): admit each blocker as a
+/// crossing through `makeManifoldSeed()`, narrowing `wantedLobes` to
+/// what every crossing claims, pass through it, and continue to the next
+/// until the line reaches the light or something ends it. `wl` is the
+/// direction of travel toward the light; `maxDepth` and `maxGlossyAlpha`
+/// are the estimator's depth and width gates.
+///
+/// This is the one discovery both halves of the Dirac pair run, the
+/// gather to seed its estimate and the arrival side to prove the chain
+/// covered, so the two resolve the same hits with the same epsilons, the
+/// same hops, the same endpoint (an infinite target's line runs to
+/// infinity) and the same budget by construction rather than by twin
+/// predicates.
+[[nodiscard]] MNEEStraightEnd
+discoverStraightChain(PathContext &path, VisibilityWalk &walk, Hit &blocker,
+                      const float3 &wl, int wantedLobes, int maxDepth,
+                      float maxGlossyAlpha, MNEEChainSeed &seed);
+
 /// Trace the start of a searched refractive estimate: draw a point on
-/// `caster` by area, cast to it from `receiver` and take the caster's
+/// `caster` by area, walk to it from the receiver and take the caster's
 /// first crossing on the way (the near face where the far one was
 /// drawn), then refract by Snell's law about the shading normal with
-/// the seed's own indices, cross the medium stack, and cast on, admitting
-/// every interface `makeManifoldSeed()` admits, until the ray meets
-/// something that is not one (the floor, an emitter, a curve), escapes,
-/// or the chain reaches `maxDepth`. The chain's last crossing is what the
-/// solve connects to the light. Null interfaces and exactly transparent
-/// cutouts are hopped as the arrival-side re-walk hops them; anything
-/// else before the caster fails the trace, as does a mixed chain (the
-/// straight-line gather refuses those too), total internal reflection,
-/// or a first crossing the seed refuses.
+/// the seed's own indices, cross the medium stack, and walk on,
+/// admitting every interface `makeManifoldSeed()` admits, until the
+/// walk meets something that is not one (the floor, an emitter, a
+/// curve), escapes, or the chain reaches `maxDepth`. The chain's last
+/// crossing is what the solve connects to the light. Every walk is a
+/// `VisibilityWalk`, so what it passes through is what every shadow
+/// segment passes through, a partial cutout included, by a draw that
+/// only ever moves the start; anything else before the caster fails the
+/// trace, as does a mixed chain (the straight-line gather refuses those
+/// too), total internal reflection, or a first crossing the seed
+/// refuses.
 ///
 /// The refracted direction is only a start: the solve enforces the
 /// constraint exactly and the transport is asked of the material at the
@@ -368,15 +456,13 @@ public:
 /// crossing count differs from what the refracted trace from the receiver
 /// reaches is never found, and its transport is lost.
 ///
-/// `state` is a render state the caller prepared for the path (grid,
-/// hero wavelength, time); the trace applies each crossing's geometry to
-/// it in turn. Returns false with `seed.lobes` zero when no start could
-/// be traced.
-[[nodiscard]] bool traceManifoldCasterSeed(
-    const Scene &scene, smdl::State &state, smdl::BumpPtrAllocator &allocator,
-    Sampler &sampler, const MNEECaster &caster, const float3 &receiver,
-    const MediumStack *receiverMedium, float time, int maxDepth,
-    float maxGlossyAlpha, MNEECasterSeed &seed);
+/// Returns false with `seed.lobes` zero when no start could be traced.
+[[nodiscard]] bool traceManifoldCasterSeed(const RenderContext &render,
+                                           PathContext &path,
+                                           const MNEECaster &caster,
+                                           const MNEEReceiver &receiver,
+                                           int maxDepth, float maxGlossyAlpha,
+                                           MNEEChainSeed &seed);
 
 /// The '-mnee-test-normalhook' pass: at deterministic quasi-random points of
 /// every surface instance, read the shading normal field through the

@@ -9,7 +9,9 @@
 
 #include "Color.h"
 #include "Layout/Layout.h"
+#include "PathFixtures.h"
 #include "Render/Manifold.h"
+#include "Render/Visibility.h"
 #include "Scene/Scene.h"
 
 // The manifold walk over this renderer's own surfaces: small flat scenes
@@ -22,7 +24,9 @@
 
 namespace {
 // Flat mirrors and dielectric interfaces, on which the walk converges
-// from anywhere and the measure has independent ground truth.
+// from anywhere and the measure has independent ground truth, and the
+// two cutouts a walk meets: an exact hole it hops and a partial one it
+// draws for.
 const char *SELFTEST_MATERIALS{
     "#smdl\n"
     "import ::df::*;\n"
@@ -32,7 +36,11 @@ const char *SELFTEST_MATERIALS{
     "export material self_glass() = material(\n"
     "  ior: 1.5,\n"
     "  surface: material_surface(scattering:\n"
-    "    df::specular_bsdf(mode: df::scatter_reflect_transmit)));\n"};
+    "    df::specular_bsdf(mode: df::scatter_reflect_transmit)));\n"
+    "export material self_hole() = material(\n"
+    "  geometry: material_geometry(cutout_opacity: 0.0));\n"
+    "export material self_cutout() = material(\n"
+    "  geometry: material_geometry(cutout_opacity: 0.5));\n"};
 
 // The first surface hit casting from `from` toward `toward`.
 [[nodiscard]] Hit castOnto(const Scene &scene, const float3 &from,
@@ -361,8 +369,8 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
   REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
   Scene scene{compiler};
   // A glass ball at the origin; another, shadowed from below by a
-  // mirror disk wider than itself; and a glass disk seen at grazing
-  // incidence from its dense side.
+  // mirror disk wider than itself; a glass disk seen at grazing
+  // incidence from its dense side; and a ball behind a partial cutout.
   {
     LayoutItem ball{};
     ball.primitive.shape = PrimitiveSpec::Shape::SPHERE;
@@ -385,6 +393,13 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
     sheet.isCaster = true;
     sheet.objectToWorld[3] = float4(40.0f, 0.0f, 0.0f, 1.0f);
     scene.add(sheet);
+    LayoutItem veiled{ball};
+    veiled.objectToWorld[3] = float4(60.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(veiled);
+    LayoutItem cutout{mirror};
+    cutout.materials.all = "self_cutout";
+    cutout.objectToWorld[3] = float4(60.0f, 0.0f, -2.0f, 1.0f);
+    scene.add(cutout);
   }
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
   REQUIRE_OK(compiler.jitCompile());
@@ -392,11 +407,9 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
   const Color &wavelengths{grid.wavelengths()};
   scene.commit(wavelengths);
   const MNEECasterSet casters{scene, wavelengths};
-  REQUIRE(casters.casters.size() == 3);
+  REQUIRE(casters.casters.size() == 4);
   const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
-  smdl::BumpPtrAllocator allocator{};
-  smdl::State state{makeRenderState(wavelengths, &allocator)};
-  Sampler sampler{};
+  PathHarness harness{compiler, scene, wavelengths};
   // The caster the cast from `from` toward `toward` lands on.
   const auto casterAt{[&](const float3 &from, const float3 &toward) {
     const Hit hit{castOnto(scene, from, toward)};
@@ -405,21 +418,23 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
     REQUIRE(caster);
     return caster;
   }};
-  // One trace on the sample `sampleIndex`, from vacuum, at shutter open.
-  const auto traceFrom{[&](const MNEECaster &caster, const float3 &receiver,
+  // One trace on the sample `sampleIndex`, from a receiver in vacuum
+  // with no interface of its own, at shutter open.
+  const auto traceFrom{[&](const MNEECaster &caster, const float3 &point,
                            int maxDepth, uint32_t sampleIndex,
-                           MNEECasterSeed &seed) {
-    sampler.startPixelSample(0, sampleIndex);
-    return traceManifoldCasterSeed(scene, state, allocator, sampler, caster,
-                                   receiver, nullptr, 0.0f, maxDepth, 0.0f,
-                                   seed);
+                           MNEEChainSeed &seed) {
+    harness.beginPath(sampleIndex);
+    MNEEReceiver receiver{};
+    receiver.point = point;
+    return traceManifoldCasterSeed(harness.render, harness.path, caster,
+                                   receiver, maxDepth, 0.0f, seed);
   }};
   constexpr uint32_t NUM_TRACES{16};
   const MNEECaster &ball{*casterAt(float3(0, 0, -3), float3(0, 0, 0))};
   const float3 below{0.0f, 0.0f, -3.0f};
   SUBCASE("The chain enters on the near face and leaves by Snell's law") {
     for (uint32_t i = 0; i < NUM_TRACES; i++) {
-      MNEECasterSeed seed{};
+      MNEEChainSeed seed{};
       CAPTURE(i);
       REQUIRE(traceFrom(ball, below, MANIFOLD_MAX_DEPTH, i, seed));
       REQUIRE(seed.chain.count == 2);
@@ -454,7 +469,6 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
       CHECK(family.instances[0] == ball.instIndex);
       CHECK(family.instances[1] == ball.instIndex);
       CHECK(family == seed.family());
-      allocator.reset();
     }
   }
   SUBCASE("The solver converges from the traced start") {
@@ -465,7 +479,7 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
     target.wl = normalize(float3(0.35f, 0.2f, 0.9f));
     bool hasConverged{false};
     for (uint32_t i = 0; i < NUM_TRACES && !hasConverged; i++) {
-      MNEECasterSeed seed{};
+      MNEEChainSeed seed{};
       if (!traceFrom(ball, below, MANIFOLD_MAX_DEPTH, i, seed)) continue;
       seed.chain.residualTolerance = 1e-5f;
       ManifoldConnection connection{};
@@ -486,7 +500,7 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
     CHECK(hasConverged);
   }
   SUBCASE("The depth cap stops the trace at the entry") {
-    MNEECasterSeed seed{};
+    MNEEChainSeed seed{};
     REQUIRE(traceFrom(ball, below, 1, 0, seed));
     CHECK(seed.chain.count == 1);
     CHECK((seed.lobes & smdl::DF_DIRAC_BTDF) != 0);
@@ -495,22 +509,187 @@ TEST_CASE("Caster seed trace: a ball is entered and left") {
   SUBCASE("A foreign blocker before the caster fails the trace") {
     const MNEECaster &shadowed{*casterAt(float3(20, 0, 3), float3(20, 0, 0))};
     for (uint32_t i = 0; i < NUM_TRACES; i++) {
-      MNEECasterSeed seed{};
+      MNEEChainSeed seed{};
       CAPTURE(i);
       CHECK(!traceFrom(shadowed, float3(20.0f, 0.0f, -3.0f), MANIFOLD_MAX_DEPTH,
                        i, seed));
       CHECK(seed.lobes == 0);
-      allocator.reset();
     }
+  }
+  SUBCASE("A partial cutout before the caster is passed by a draw") {
+    const MNEECaster &veiled{*casterAt(float3(60, 0, 3), float3(60, 0, 0))};
+    int passes{0};
+    for (uint32_t i = 0; i < NUM_TRACES; i++) {
+      MNEEChainSeed seed{};
+      CAPTURE(i);
+      if (traceFrom(veiled, float3(60.0f, 0.0f, -3.0f), MANIFOLD_MAX_DEPTH, i,
+                    seed)) {
+        passes++;
+        CHECK(seed.chain.count == 2);
+        CHECK(seed.family().instances[0] == veiled.instIndex);
+      } else {
+        CHECK(seed.lobes == 0);
+      }
+    }
+    CHECK(passes > 0);
+    CHECK(passes < int(NUM_TRACES));
   }
   SUBCASE("Total internal reflection fails the trace") {
     const MNEECaster &sheet{*casterAt(float3(40, 0, -1), float3(40, 0, 0))};
     for (uint32_t i = 0; i < NUM_TRACES; i++) {
-      MNEECasterSeed seed{};
+      MNEEChainSeed seed{};
       CAPTURE(i);
       CHECK(!traceFrom(sheet, float3(45.0f, 0.0f, -0.2f), MANIFOLD_MAX_DEPTH, i,
                        seed));
-      allocator.reset();
     }
+  }
+}
+
+// The one discovery both halves of the Dirac pair run along the straight
+// receiver-to-light line, and how it ends: a glass ball crossed twice,
+// and beside it the things that end a discovery short of the light.
+TEST_CASE("Straight discovery: the line to the light is walked once") {
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.addCode("::selftest", SELFTEST_MATERIALS));
+  Scene scene{compiler};
+  // Columns along x, each a glass ball at the origin of its column with
+  // the receiver 3 below and the light straight up: the ball alone; a
+  // mirror above it; a hole below it; a partial cutout below it; and
+  // more holes below it than the hop budget resolves.
+  constexpr int NUM_BUDGET_HOLES{MNEE_STRAIGHT_MAX_HOPS + 4};
+  {
+    LayoutItem ball{};
+    ball.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+    ball.primitive.radius = 1.0f;
+    ball.materials.all = "self_glass";
+    for (int column = 0; column < 5; column++) {
+      LayoutItem item{ball};
+      item.objectToWorld[3] = float4(20.0f * float(column), 0.0f, 0.0f, 1.0f);
+      scene.add(item);
+    }
+    LayoutItem disk{};
+    disk.primitive.shape = PrimitiveSpec::Shape::DISK;
+    disk.primitive.radius = 5.0f;
+    disk.materials.all = "self_mirror";
+    disk.objectToWorld[3] = float4(20.0f, 0.0f, 3.0f, 1.0f);
+    scene.add(disk);
+    disk.materials.all = "self_hole";
+    disk.objectToWorld[3] = float4(40.0f, 0.0f, -2.0f, 1.0f);
+    scene.add(disk);
+    disk.materials.all = "self_cutout";
+    disk.objectToWorld[3] = float4(60.0f, 0.0f, -2.0f, 1.0f);
+    scene.add(disk);
+    disk.materials.all = "self_hole";
+    for (int i = 0; i < NUM_BUDGET_HOLES; i++) {
+      disk.objectToWorld[3] =
+          float4(80.0f, 0.0f, -2.9f + 0.01f * float(i), 1.0f);
+      scene.add(disk);
+    }
+  }
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const ScopedGrid grid{};
+  const Color &wavelengths{grid.wavelengths()};
+  scene.commit(wavelengths);
+  PathHarness harness{compiler, scene, wavelengths};
+  const float3 wl{0.0f, 0.0f, 1.0f};
+  // The discovery from the receiver below `column` on the sample
+  // `sampleIndex`, as the gather runs it toward an infinite light:
+  // the walk aimed along the line with a finite point standing in, and
+  // the discovery from its first blocker. Reports the hops resolved.
+  const auto discover{[&](int column, uint32_t sampleIndex, int wantedLobes,
+                          int maxDepth, MNEEChainSeed &seed, int &hops) {
+    harness.beginPath(sampleIndex);
+    const float3 receiver{20.0f * float(column), 0.0f, -3.0f};
+    VisibilityWalk walk{harness.render,        harness.path, nullptr, receiver,
+                        receiver + 20.0f * wl, nullptr,      true};
+    Hit blocker{};
+    REQUIRE(walk.nextBlocker(&blocker));
+    const MNEEStraightEnd end{discoverStraightChain(
+        harness.path, walk, blocker, wl, wantedLobes, maxDepth, 0.0f, seed)};
+    hops = walk.hopCount();
+    return end;
+  }};
+  constexpr int BOTH_KINDS{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
+  const uint32_t ballIndex{
+      castOnto(scene, float3(0, 0, -3), float3(0, 0, 0)).instIndex};
+  SUBCASE("The ball is crossed twice and the light reached") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(0, 0, BOTH_KINDS, MANIFOLD_MAX_DEPTH, seed, hops) ==
+          MNEEStraightEnd::REACHED);
+    REQUIRE(seed.chain.count == 2);
+    CHECK(seed.lobes == smdl::DF_DIRAC_BTDF);
+    CHECK(hops == 2);
+    CHECK(seed.chain[0].etaPrev == doctest::Approx(1.0f));
+    CHECK(seed.chain[0].etaNext == doctest::Approx(1.5f));
+    CHECK(seed.chain[1].etaPrev == doctest::Approx(1.5f));
+    CHECK(seed.chain[1].etaNext == doctest::Approx(1.0f));
+    CHECK(seed.hits[0].point.z == doctest::Approx(-1.0f).epsilon(1e-3));
+    CHECK(seed.hits[1].point.z == doctest::Approx(+1.0f).epsilon(1e-3));
+    CHECK(seed.medium[0] == nullptr);
+    CHECK(seed.medium[1] != nullptr);
+    const MNEEChainFamily family{seed.family()};
+    CHECK(family.count == 2);
+    CHECK(family.instances[0] == ballIndex);
+    CHECK(family.instances[1] == ballIndex);
+  }
+  SUBCASE("The wanted kinds narrow to what every crossing claims") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(0, 0, smdl::DF_GLOSSY_BTDF, MANIFOLD_MAX_DEPTH, seed,
+                   hops) == MNEEStraightEnd::BLOCKED);
+    CHECK(discover(0, 0, smdl::DF_DIRAC_BTDF, MANIFOLD_MAX_DEPTH, seed, hops) ==
+          MNEEStraightEnd::REACHED);
+    CHECK(seed.lobes == smdl::DF_DIRAC_BTDF);
+  }
+  SUBCASE("The depth cap ends the chain short of its second crossing") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(0, 0, BOTH_KINDS, 1, seed, hops) ==
+          MNEEStraightEnd::OVERLONG);
+    CHECK(seed.chain.count == 1);
+  }
+  SUBCASE("A surface the chain cannot cross blocks") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(1, 0, BOTH_KINDS, MANIFOLD_MAX_DEPTH, seed, hops) ==
+          MNEEStraightEnd::BLOCKED);
+    CHECK(seed.chain.count == 2);
+  }
+  SUBCASE("An exact hole is hopped and is no crossing") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(2, 0, BOTH_KINDS, MANIFOLD_MAX_DEPTH, seed, hops) ==
+          MNEEStraightEnd::REACHED);
+    CHECK(seed.chain.count == 2);
+    CHECK(hops == 3);
+  }
+  SUBCASE("A partial cutout ends the discovery whichever way its draw went") {
+    int passes{0}, blocks{0};
+    for (uint32_t i = 0; i < 16; i++) {
+      MNEEChainSeed seed{};
+      int hops{};
+      CAPTURE(i);
+      const MNEEStraightEnd end{
+          discover(3, i, BOTH_KINDS, MANIFOLD_MAX_DEPTH, seed, hops)};
+      if (end == MNEEStraightEnd::CUTOUT) {
+        passes++;
+        CHECK(seed.chain.count == 2);
+      } else {
+        CHECK(end == MNEEStraightEnd::BLOCKED);
+        CHECK(seed.chain.count == 0);
+        blocks++;
+      }
+    }
+    CHECK(passes > 0);
+    CHECK(blocks > 0);
+  }
+  SUBCASE("More hops than the budget end the discovery") {
+    MNEEChainSeed seed{};
+    int hops{};
+    CHECK(discover(4, 0, BOTH_KINDS, MANIFOLD_MAX_DEPTH, seed, hops) ==
+          MNEEStraightEnd::BUDGET);
+    CHECK(hops >= MNEE_STRAIGHT_MAX_HOPS);
   }
 }

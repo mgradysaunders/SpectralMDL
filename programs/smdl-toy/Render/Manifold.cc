@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "Render/Manifold.h"
+#include "Render/Visibility.h"
 #include "Scene/Primitive.h"
 
 #include "smdl/Support/Logger.h"
@@ -297,75 +298,81 @@ namespace {
   return smdl::tryNormalize(wt);
 }
 
-// The first surface a cast from `origin` along the unit `dir` meets that
-// is neither a null interface nor an exactly transparent cutout, hopping
-// those with the medium stack kept current, the way the arrival-side
-// re-walk hops them. A finite `target` bounds every cast short of the
-// target point itself. The hit's geometry is applied to `state` on
-// return. False when the ray escapes, reaches the target, or hops past
-// the budget.
-[[nodiscard]] bool castThroughHoles(const Scene &scene, smdl::State &state,
-                                    smdl::BumpPtrAllocator &allocator,
-                                    const MediumStack *&medium,
-                                    const float3 &origin, const float3 &dir,
-                                    const float3 *target, float time,
-                                    Hit &hit) {
-  float3 from{origin};
-  for (int hops = 0; hops < MAX_SKIPS; hops++) {
-    float tmax{INF};
-    if (target) {
-      tmax = length(*target - from) - EPS;
-      if (!(tmax > EPS)) return false;
-    }
-    Ray ray{from, dir, EPS, tmax, time};
-    if (!scene.intersect(ray, hit)) return false;
-    hit.applyGeometryToState(state, dir);
-    const bool isNullInterface{hit.materialDef->isNullInterface()};
-    const bool isHole{!isNullInterface && !hit.materialDef->isAlwaysOpaque() &&
-                      hit.materialDef->opacityEvaluate(state) == 0};
-    if (!isNullInterface && !isHole) return true;
-    const smdl::JIT::Material &interfaceMaterial{
-        *allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
-    MediumStack::Update(medium, allocator, &interfaceMaterial, hit.instance,
-                        -dir, dir);
-    from = hit.point;
-  }
-  return false;
-}
 } // namespace
 
-bool traceManifoldCasterSeed(const Scene &scene, smdl::State &state,
-                             smdl::BumpPtrAllocator &allocator,
-                             Sampler &sampler, const MNEECaster &caster,
-                             const float3 &receiver,
-                             const MediumStack *receiverMedium, float time,
-                             int maxDepth, float maxGlossyAlpha,
-                             MNEECasterSeed &seed) {
+MNEEStraightEnd discoverStraightChain(PathContext &path, VisibilityWalk &walk,
+                                      Hit &blocker, const float3 &wl,
+                                      int wantedLobes, int maxDepth,
+                                      float maxGlossyAlpha,
+                                      MNEEChainSeed &seed) {
+  seed.chain = ManifoldChain{};
+  seed.lobes = wantedLobes;
+  const int depth{std::min(maxDepth, MANIFOLD_MAX_DEPTH)};
+  while (true) {
+    if (seed.chain.count == depth) return MNEEStraightEnd::OVERLONG;
+    if (blocker.instance->isCurves()) return MNEEStraightEnd::BLOCKED;
+    smdl::State &state{path.shadeHit(blocker, wl)};
+    smdl::JIT::Material &material{*path.allocator.allocate<smdl::JIT::Material>(
+        state, blocker.materialDef)};
+    ManifoldVertexSeed &vertexSeed{seed.chain[seed.chain.count]};
+    if (!makeManifoldSeed(walk.mediumStack(), material, blocker, wl,
+                          maxGlossyAlpha, vertexSeed))
+      return MNEEStraightEnd::BLOCKED;
+    // One chain per lobe the WHOLE chain claims: the measure handles a
+    // mixed chain, but estimating one would mean claiming it, and the
+    // arrival side treats a mixed chain as nobody's (see
+    // `MNEECoverage`), so the two policies must move together.
+    seed.lobes &= vertexSeed.claimedLobes;
+    if (seed.lobes == 0) return MNEEStraightEnd::BLOCKED;
+    seed.hits[seed.chain.count] = blocker;
+    seed.medium[seed.chain.count] = walk.mediumStack();
+    seed.chain.count++;
+    walk.passThrough(&material, blocker);
+    if (!walk.nextBlocker(&blocker)) break;
+  }
+  if (walk.hopCount() >= MNEE_STRAIGHT_MAX_HOPS) return MNEEStraightEnd::BUDGET;
+  if (walk.hasPassedStochasticCutout()) return MNEEStraightEnd::CUTOUT;
+  return MNEEStraightEnd::REACHED;
+}
+
+bool traceManifoldCasterSeed(const RenderContext &render, PathContext &path,
+                             const MNEECaster &caster,
+                             const MNEEReceiver &receiver, int maxDepth,
+                             float maxGlossyAlpha, MNEEChainSeed &seed) {
   seed.chain = ManifoldChain{};
   seed.lobes = 0;
   Hit sampled{};
-  if (!MNEECasterSet::samplePoint(scene, sampler, caster, time, sampled))
+  if (!MNEECasterSet::samplePoint(render.scene, path.sampler, caster,
+                                  path.time.fraction, sampled))
     return false;
-  float3 wTravel{sampled.point - receiver};
+  float3 wTravel{sampled.point - receiver.point};
   if (!smdl::tryNormalize(wTravel)) return false;
   // The caster's first crossing on the way to the drawn point: the near
   // face where the far one was drawn, else the drawn point itself, which
-  // the cast stops short of. Anything else in the way fails the start.
-  const MediumStack *medium{receiverMedium};
+  // the walk stops short of. Anything else in the way fails the start.
   Hit hit{};
-  if (castThroughHoles(scene, state, allocator, medium, receiver, wTravel,
-                       &sampled.point, time, hit)) {
-    if (hit.instIndex != caster.instIndex) return false;
-  } else {
-    hit = sampled;
-    hit.applyGeometryToState(state, wTravel);
+  const MediumStack *medium{};
+  {
+    VisibilityWalk walk{render,
+                        path,
+                        receiver.mediumToward(path.allocator, wTravel),
+                        receiver.point,
+                        sampled.point,
+                        nullptr};
+    if (walk.nextBlocker(&hit)) {
+      if (hit.instIndex != caster.instIndex) return false;
+    } else {
+      hit = sampled;
+    }
+    medium = walk.mediumStack();
   }
   const int depth{std::min(maxDepth, MANIFOLD_MAX_DEPTH)};
   int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
   while (true) {
     if (hit.instance->isCurves()) return false;
+    smdl::State &state{path.shadeHit(hit, wTravel)};
     smdl::JIT::Material &material{
-        *allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
+        *path.allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
     ManifoldVertexSeed &vertexSeed{seed.chain[seed.chain.count]};
     if (!makeManifoldSeed(medium, material, hit, wTravel, maxGlossyAlpha,
                           vertexSeed)) {
@@ -385,13 +392,20 @@ bool traceManifoldCasterSeed(const Scene &scene, smdl::State &state,
     if (!refractDirection(wTravel, normal,
                           vertexSeed.etaPrev / vertexSeed.etaNext, wNext))
       return false;
-    MediumStack::Update(medium, allocator, &material, hit.instance, -wTravel,
-                        wNext);
+    MediumStack::Update(medium, path.allocator, &material, hit.instance,
+                        -wTravel, wNext);
     if (seed.chain.count == depth) break;
     wTravel = wNext;
-    if (!castThroughHoles(scene, state, allocator, medium, hit.point, wTravel,
-                          nullptr, time, hit))
-      break;
+    // The refracted line runs to infinity, which the walk aims along.
+    VisibilityWalk walk{render,
+                        path,
+                        medium,
+                        hit.point,
+                        hit.point + wTravel,
+                        nullptr,
+                        /*isInfiniteTarget=*/true};
+    if (!walk.nextBlocker(&hit)) break;
+    medium = walk.mediumStack();
   }
   seed.lobes = lobes;
   return true;

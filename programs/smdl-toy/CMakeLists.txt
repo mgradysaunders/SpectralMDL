@@ -65,6 +65,7 @@ target_sources(
     "Render/Medium.cc"
     "Render/PathStats.cc"
     "Render/PathTracing.cc"
+    "Render/Visibility.cc"
   )
 set_target_properties(
   "smdl-toy-objects"

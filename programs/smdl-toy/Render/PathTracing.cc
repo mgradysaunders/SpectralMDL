@@ -4,10 +4,10 @@
 #include "Render/Light.h"
 #include "Render/Manifold.h"
 #include "Render/PathStats.h"
+#include "Render/Visibility.h"
 
 #include <algorithm>
 #include <cstring>
-#include <optional>
 
 namespace {
 
@@ -43,294 +43,10 @@ constexpr float ANGLE_GROWTH_DIFFUSE{0.3f};
 // well-conditioned on long paths.
 constexpr float ANGLE_MAX{1.0f};
 
-// The surface hits one straight receiver-to-light segment may resolve and
-// still carry transport the manifold estimators claim. Both halves of the
-// pair walk that line, the gather to discover its chain and the arrival
-// side to prove the chain covered, so a budget one half gave up at alone
-// would leave the other claiming transport nobody cancels. Exceeding it
-// is not an error: the gather stands down and the arrival keeps the
-// ordinary weight, the way every other uncovered arrival does.
-constexpr int MNEE_STRAIGHT_MAX_HOPS{64};
-
 // The scattering role of a path vertex: a surface BSDF, a volume phase
 // function, or the hair BSDF at a curve hit whose material binds
 // `material.hair`.
 enum class VertexKind { SURFACE, VOLUME, HAIR };
-
-// A visibility segment walk from `point0` toward `point1`: attenuates
-// medium transmittance into `beta` over the spans it covers, passes
-// through cutout hits and null interfaces with the nested-medium stack
-// kept current, and stops on the first surface that blocks under cutout
-// semantics, leaving what to make of that surface to the caller. Plain
-// shadow rays treat it as the occluder.
-class VisibilityWalk final {
-public:
-  // `mediumStack` is the nested medium the segment starts in. The walk
-  // works in the path's own scratch, so that a segment inside the medium
-  // the path is already in resolves nothing: it overwrites `path.medium`
-  // and shades every surface it passes through in `path.shadeHit()`, so
-  // a caller must not expect either to survive the walk.
-  VisibilityWalk(const RenderContext &render, PathContext &path,
-                 const MediumStack *mediumStack, const float3 &point0,
-                 const float3 &point1, Color &beta,
-                 bool isInfiniteTarget = false);
-
-  // Advance to the next blocking surface. Returns true, with `hit`
-  // filled in when the caller asked for one; returns false when the walk
-  // finished without a blocker, either because the segment reached
-  // `point1` or because `beta` was fully absorbed along the way (the
-  // caller distinguishes by looking at `beta`).
-  //
-  // Passing somewhere to put the blocker promises the caller reads it,
-  // which is what the manifold refraction gather does to discover
-  // chains; it keeps the walk on the closest-hit path in scenes whose
-  // `Scene::useOpaqueShadows` would otherwise answer the walk as a boolean
-  // occlusion query and return no blocker at all.
-  [[nodiscard]] bool nextBlocker(Hit *hit = {});
-
-  // The nested-medium stack as of the walk's current position, e.g., at
-  // the blocker just returned.
-  [[nodiscard]] const MediumStack *mediumStack() const noexcept {
-    return mMediumStack;
-  }
-
-  // Pass through the blocker `nextBlocker()` just returned: update the
-  // nested-medium stack across it with the given instance and continue
-  // the walk on the far side, exactly as the walk passes its own cutout
-  // hits.
-  void passThrough(const smdl::JIT::Material *material, const Hit &hit);
-
-  // Did the walk pass through a cutout on a draw of its own, i.e. through
-  // a hit whose opacity is strictly between 0 and 1? The manifold gather
-  // declines such segments, so that its coverage stays the exact
-  // complement of the deterministic re-walk the arrival-side MIS runs. A
-  // hit whose opacity is exactly 0 or exactly 1 does not count: there is
-  // no coin to replay, so the re-walk resolves it the same way every
-  // time, which is what keeps a silhouette mask (a leaf, a fence) from
-  // disabling the estimators wherever it covers the light.
-  [[nodiscard]] bool hasPassedStochasticCutout() const noexcept {
-    return mHasPassedStochasticCutout;
-  }
-
-  // The surface hits resolved along the segment so far: cutout and
-  // null-interface hops, and the blockers the caller passed through. The
-  // gather declines a segment that needs more of them than
-  // `MNEE_STRAIGHT_MAX_HOPS`, the budget the re-walk of the same line
-  // gives up at; see `MNEECoverage::coverWeight()`.
-  [[nodiscard]] int hopCount() const noexcept { return mHopCount; }
-
-private:
-  // Continue the walk on the far side of the hit it is at.
-  void stepPast();
-
-  const RenderContext &mRender;
-  PathContext &mPath;
-
-  // The nested-medium stack as of the walk's current position, a
-  // walk-local view that evolves across the boundaries it passes through
-  // without touching the caller's stack.
-  const MediumStack *mMediumStack{};
-
-  Color &mBeta;
-
-  // The world-space segment length.
-  float mDist{};
-
-  // The normalized segment direction, or zero when the endpoints
-  // coincide, honoring the zero-means-off `State` convention.
-  float3 mShadowDir{};
-
-  // The self-intersection offset in the segment's unit parameterization.
-  // Offsets are parametric, so for segments longer than one scene unit
-  // they are rescaled to stay near `EPS` in WORLD units: a sun shadow ray
-  // spans the whole scene, and an offset scaled by that length is wide
-  // enough to skip real geometry, and a boundary crossing inside the
-  // skipped sliver desyncs the medium stack for the entire segment.
-  float mParamEps{};
-
-  // The current cast over the segment's unit parameterization.
-  Ray mRay{};
-
-  // The parameter up to which the medium has been integrated, tracked
-  // separately from `mRay.tmin` deliberately: integrating only
-  // `[tmin, tmax]` of each cast would skip a scene-scaled sliver of
-  // medium at every pass-through restart, and where such a gap crosses
-  // dense medium the skipped optical depth reads as a bright seam in the
-  // shadow.
-  float mTCovered{};
-
-  // See `hopCount()`.
-  int mHopCount{};
-
-  // See `hasPassedStochasticCutout()`.
-  bool mHasPassedStochasticCutout{};
-
-  // Does the segment end where it does only because a light infinitely
-  // far away needs a finite point to aim at? See `Medium::attenuate()`.
-  bool mIsInfiniteTarget{};
-};
-
-VisibilityWalk::VisibilityWalk(const RenderContext &render, PathContext &path,
-                               const MediumStack *mediumStack,
-                               const float3 &point0, const float3 &point1,
-                               Color &beta, bool isInfiniteTarget)
-    : mRender(render), mPath(path), mMediumStack(mediumStack), mBeta(beta),
-      mIsInfiniteTarget(isInfiniteTarget) {
-  mDist = length(point1 - point0);
-  mShadowDir = mDist > 0 ? (point1 - point0) / mDist : float3{};
-  mParamEps = mDist > 1.0f ? EPS / mDist : EPS;
-  mRay = Ray{point0, point1 - point0, mParamEps, 1.0f - mParamEps,
-             path.time.fraction};
-}
-
-bool VisibilityWalk::nextBlocker(Hit *hit) {
-  // Where every material blocks a shadow ray at its first hit (see
-  // `Scene::useOpaqueShadows`), a walk whose caller wants no blocker is a
-  // pure boolean, which Embree answers cheaper than a closest hit:
-  // occlusion early-outs on any hit and skips the hit reconstruction.
-  // The medium stack cannot change across such a walk (nothing passes
-  // through), so a clear segment attenuates over its whole span in the
-  // starting medium, and a blocked one carries nothing: every caller
-  // discards `mBeta` on a blocked outcome, so only the two sampler draws
-  // heterogeneous tracking would have made are consumed in its place,
-  // keeping the deterministic sequence unchanged. The refraction
-  // gather's walk, which reads blockers to discover chains, asks for one
-  // and keeps the closest-hit path.
-  if (mRender.scene.useOpaqueShadows && !hit) {
-    const bool isOccluded{mRender.scene.isOccluded(mRay)};
-    if (mMediumStack || mPath.medium.hasHaze()) {
-      mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
-                         mPath.wavelengthHero, mRay(mTCovered), mShadowDir);
-      if (!isOccluded) {
-        mPath.medium.attenuate(mPath.sampler, (mRay.tmax - mTCovered) * mDist,
-                               mBeta, mIsInfiniteTarget);
-      } else if (mPath.medium.attenuationDraws()) {
-        (void)mPath.sampler.nextBits();
-        (void)mPath.sampler.nextBits();
-      }
-    }
-    return isOccluded;
-  }
-  // The blocker the walk works in: the caller's where it wants one, its
-  // own where it does not. Built only in the second case, because the
-  // gather supplies one at every vertex and a plain local would be a
-  // hundred and ninety-two bytes of default member initializers that
-  // nothing there ever reads. Its own rather than shared, because a
-  // caller's blocker outlives the call and the walks it goes on to spawn
-  // ask for one of these themselves.
-  std::optional<Hit> ownBlocker;
-  Hit &found{hit ? *hit : ownBlocker.emplace()};
-  RawHit raw;
-  while (mRay.tmin < mRay.tmax) {
-    // The cast reports what it hit and nothing more; the record is
-    // built below only where something reads it. Nothing clears the
-    // record first: `Scene::makeHit()` assigns the whole of it, so what
-    // the last iteration left standing is never seen.
-    bool hasHitSurface{mRender.scene.intersect(mRay, raw)};
-    // Attenuate over the span actually traveled, hit or miss
-    // (`Scene::intersect` narrows `tmax` to the hit parameter on a
-    // hit). The parametrization spans `[0, 1]` over the segment, so the
-    // world-space span is rescaled and the medium sees a unit direction
-    // with distances in scene units. The epsilon slivers the casts
-    // exclude are attributed to whichever side of the boundary this
-    // iteration integrates. An empty stack with no haze skips the medium
-    // view outright, shadow segments in vacuum being the common case.
-    if (mMediumStack || mPath.medium.hasHaze()) {
-      mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
-                         mPath.wavelengthHero, mRay(mTCovered), mShadowDir);
-      mPath.medium.attenuate(mPath.sampler, (mRay.tmax - mTCovered) * mDist,
-                             mBeta, mIsInfiniteTarget && !hasHitSurface);
-    }
-    mTCovered = mRay.tmax;
-    if (!(mBeta.maxComponent() > 0.0f)) {
-      return false; // Fully absorbed already.
-    }
-    if (!hasHitSurface) {
-      return false;
-    }
-    ++mHopCount;
-    const Scene &scene{mRender.scene};
-    const MeshInstance &instance{scene.meshInstances[raw.instIndex]};
-    const smdl::JIT::MaterialDef *materialDef{
-        scene.materialDefs[scene.materialIndexOf(instance)]};
-    // A null interface passes shadow rays straight through: no opacity
-    // and no blocking, only the medium-stack bookkeeping. Leaving needs
-    // neither the record nor an instance: the side is the face's
-    // geometry normal, which is the normal the instance's own side test
-    // reads, and the entry is found by the instance and the material.
-    // Entering builds both, since the stack entry carries what the
-    // medium view reads. A curve or primitive boundary owes its normal
-    // to the record builder and keeps the full path either way.
-    if (materialDef->isNullInterface()) {
-      if (!instance.isCurves() && !instance.isPrimitive()) {
-        const float side{dot(scene.hitNg(raw, mRay.time), mRay.dir)};
-        if (side >= 0.0f) {
-          if (side > 0.0f)
-            MediumStack::Leave(mMediumStack, mPath.allocator, materialDef,
-                               &instance);
-          stepPast();
-          continue;
-        }
-      }
-      scene.makeHit(raw, mRay, found);
-      smdl::State &state{mPath.shadeHit(found, mShadowDir)};
-      passThrough(mPath.allocator.allocate<smdl::JIT::Material>(
-                      state, found.materialDef),
-                  found);
-      continue;
-    }
-    // A statically opaque material blocks without any material work,
-    // and without the record unless the caller asked for the blocker.
-    if (materialDef->isAlwaysOpaque()) {
-      if (hit) scene.makeHit(raw, mRay, found);
-      return true;
-    }
-    scene.makeHit(raw, mRay, found);
-    // Only the ray direction is populated; the LOD fields stay zero so
-    // opacity evaluates at full fidelity, the conservative choice for
-    // shadow rays.
-    smdl::State &state{mPath.shadeHit(found, mShadowDir)};
-    // An exactly transparent hit is the segment's own geometry: it costs
-    // no draw and passes like a null interface, as it does in the walk
-    // (see `PathWalk::trace()`). Anything else is decided here, and a
-    // pass the draw decided is a coin the arrival side cannot replay.
-    if (const float opacity{found.materialDef->opacityEvaluate(state)};
-        opacity > 0) {
-      if (opacity == 1 || float(mPath.sampler) < opacity) {
-        return true; // Blocks visibility!
-      }
-      mHasPassedStochasticCutout = true;
-    }
-    // Only an actual pass-through needs the full instance, to keep the
-    // medium stack current across the cutout.
-    passThrough(
-        mPath.allocator.allocate<smdl::JIT::Material>(state, found.materialDef),
-        found);
-  }
-  return false;
-}
-
-void VisibilityWalk::passThrough(const smdl::JIT::Material *material,
-                                 const Hit &hit) {
-  MediumStack::Update(mMediumStack, mPath.allocator, material, hit.instance,
-                      -mRay.dir, mRay.dir);
-  stepPast();
-}
-
-void VisibilityWalk::stepPast() {
-  mRay.tmin = smdl::incrementFloat(mRay.tmax + mParamEps);
-  mRay.tmax = 1.0f - mParamEps;
-}
-
-[[nodiscard]]
-bool testVisibility(const RenderContext &render, PathContext &path,
-                    const MediumStack *mediumStack, const float3 &point0,
-                    const float3 &point1, Color &beta,
-                    bool isInfiniteTarget = false) {
-  VisibilityWalk walk{render, path, mediumStack,     point0,
-                      point1, beta, isInfiniteTarget};
-  return walk.nextBlocker() ? false : beta.maxComponent() > 0.0f;
-}
 
 [[nodiscard]]
 bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
@@ -397,8 +113,12 @@ struct PathVertex final {
   // The direction back along the segment that arrived here.
   float3 wo{};
 
-  // The nested-medium stack the vertex sits in, which every gather ray
-  // leaving it starts in.
+  // The instance scattering here at a surface vertex; null at a volume
+  // or hair vertex, which has no interface.
+  const MeshInstance *instance{};
+
+  // The nested-medium stack the vertex sits in. A gather ray leaving it
+  // starts in `receiver().mediumToward()` of its direction.
   const MediumStack *mediumStack{};
 
   // The SD-tree cell participating here, or null where the continuation
@@ -422,6 +142,15 @@ struct PathVertex final {
   // Whether this vertex is one the gathers run from at all; see
   // `isManifoldReceiver()`.
   bool isReceiver{true};
+
+  // The vertex as the receiver a connection leaves from; see
+  // `MNEEReceiver`.
+  [[nodiscard]] MNEEReceiver receiver() const noexcept {
+    return MNEEReceiver{point, wo, mediumStack,
+                        kind == VertexKind::SURFACE ? &scatterer.material()
+                                                    : nullptr,
+                        instance};
+  }
 };
 
 // What the straight-line refractive gather reports of its discovery: the
@@ -448,7 +177,7 @@ public:
   // blocking the straight shadow segment; see the definition. Reports
   // what it discovered in `straight`.
   [[nodiscard]] Color gatherStraightRefraction(VisibilityWalk &walk,
-                                               Hit blocker, int maxDepth,
+                                               Hit &blocker, int maxDepth,
                                                int receiverMask,
                                                StraightFamily &straight) const;
 
@@ -596,81 +325,42 @@ Color MNEEGather::gatherCasterReflection(const MNEECaster &caster,
   return result;
 }
 
-// Manifold next-event estimation for an environment sample whose
-// straight shadow segment is blocked by smooth refractive interfaces
-// (Hanika et al. 2015): discover the seed chain by continuing the walk
-// through up to `maxDepth` eligible interfaces, solve the refracted
-// connection, then assemble the receiver BSDF at the bent direction,
-// the per-crossing Fresnel transmission and radiance compression, the
-// transfer Jacobian, and the attenuation and visibility of every
-// sub-segment. The result is MIS-weighted against the walk's own
-// escapes through the same chain, whose density per unit light solid
-// angle is the receiver's continuation density times the host Fresnel
-// transmissions times the transfer Jacobian; `tracePath()` applies the
-// complementary weight to those escapes with the same formula, so the
-// pair sums to one. The chain family the discovery found and the kinds
-// estimated for it are reported in `straight`, which is how the searched
-// refractive gather knows to leave that family alone.
-Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit blocker,
+// Manifold next-event estimation for a light sample whose straight
+// shadow segment is blocked by claimed refractive interfaces (Hanika et
+// al. 2015): discover the seed chain along the segment with
+// `discoverStraightChain()`, solve the refracted connection, then
+// assemble the receiver BSDF at the bent direction, the per-crossing
+// Fresnel transmission and radiance compression, the transfer Jacobian,
+// and the attenuation and visibility of every sub-segment. The Dirac
+// result is MIS-weighted against the walk's own arrivals through the
+// same chain, whose density per unit light solid angle is the receiver's
+// continuation density times the host Fresnel transmissions times the
+// transfer Jacobian; `MNEECoverage::coverWeight()` applies the
+// complementary weight to those arrivals with the same formula from the
+// same discovery, so the pair sums to one. The chain family the
+// discovery found and the kinds estimated for it are reported in
+// `straight`, which is how the searched refractive gather knows to leave
+// that family alone.
+Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit &blocker,
                                            int maxDepth, int receiverMask,
                                            StraightFamily &straight) const {
-  // Discover the seed chain: every blocker along the straight segment
-  // must be an eligible interface the walk can differentiate, with its
-  // per-side refractive indices resolved against the medium stack as of
-  // the crossing, and the segment must clear past the last one.
-  ManifoldChain chain{};
-  // The medium on the receiver side of each crossing, kept so that the
-  // offset draw below can resolve the same exterior index the transport
-  // does, and the discovery hit itself, which the offset draw evaluates
-  // the interface material at. The arrival side keeps the same things
-  // for the same reasons.
-  std::array<const MediumStack *, MANIFOLD_MAX_DEPTH> seedMedium{};
-  std::array<Hit, MANIFOLD_MAX_DEPTH> seedHits{};
   // The sun gate: toward a gated environment sample the Dirac estimate
   // stands down, and its arrivals keep their ordinary weights by the
   // same predicate, so only a chain with a glossy claim is worth
   // discovering.
   const bool isEnvGated{lightSample.isInfinite &&
                         !render.mneeOptions.isEnvTarget(lightSample.wi)};
-  int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
-  // One state for every crossing the discovery walks in turn; see
-  // `Hit::applyGeometryToState()`.
-  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
-                                    gatherState.animationTime,
-                                    path.wavelengthHero)};
-  while (true) {
-    if (chain.count == std::min(maxDepth, MANIFOLD_MAX_DEPTH)) return {};
-    if (blocker.instance->isCurves()) return {};
-    blocker.applyGeometryToState(state, lightSample.wi);
-    smdl::JIT::Material &interfaceMaterial{
-        *path.allocator.allocate<smdl::JIT::Material>(state,
-                                                      blocker.materialDef)};
-    ManifoldVertexSeed &seed{chain[chain.count]};
-    seedMedium[chain.count] = walk.mediumStack();
-    seedHits[chain.count] = blocker;
-    if (!makeManifoldSeed(walk.mediumStack(), interfaceMaterial, blocker,
-                          lightSample.wi, render.mneeOptions.maxRoughness,
-                          seed))
-      return {};
-    // One estimate per lobe the WHOLE chain claims: the measure now
-    // handles a mixed chain, but estimating one would mean claiming it,
-    // and the arrival side treats a mixed chain as nobody's (see
-    // `MNEECoverage`), so the two policies must move together.
-    lobes &= seed.claimedLobes;
-    if (lobes == 0) return {};
-    if (isEnvGated && (lobes & smdl::DF_GLOSSY_BTDF) == 0) return {};
-    chain.count++;
-    walk.passThrough(&interfaceMaterial, blocker);
-    if (!walk.nextBlocker(&blocker)) break;
-  }
-  // Decline a segment the arrival side cannot reproduce: a cutout pass
-  // this walk's own draw decided, or more hits than the re-walk's budget
-  // resolves. The escape-side cancelation probes coverage with a
-  // deterministic cast, so the two must agree on what is covered.
-  if (walk.hasPassedStochasticCutout() ||
-      walk.hopCount() >= MNEE_STRAIGHT_MAX_HOPS)
+  MNEEChainSeed seed{};
+  if (discoverStraightChain(path, walk, blocker, lightSample.wi,
+                            isEnvGated
+                                ? smdl::DF_GLOSSY_BTDF
+                                : smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF,
+                            maxDepth, render.mneeOptions.maxRoughness,
+                            seed) != MNEEStraightEnd::REACHED)
     return {};
-  for (int i = 0; i < chain.count; i++) straight.family.append(seedHits[i]);
+  ManifoldChain &chain{seed.chain};
+  const int lobes{seed.lobes};
+  straight.family = seed.family();
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
@@ -678,7 +368,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit blocker,
   // One estimate per kind the whole chain claims: the Dirac chain,
   // deterministic and weighed against the path tracer by re-walk MIS, and
   // the glossy chain below, claimed outright.
-  if (!isEnvGated && (lobes & smdl::DF_DIRAC_BTDF) != 0) {
+  if ((lobes & smdl::DF_DIRAC_BTDF) != 0) {
     straight.ranLobes |= smdl::DF_DIRAC_BTDF;
     for (int i = 0; i < chain.count; i++) chain[i].isGlossy = false;
     if (render.mneeOptions.biasedTrials > 0) {
@@ -739,7 +429,7 @@ Color MNEEGather::gatherStraightRefraction(VisibilityWalk &walk, Hit blocker,
   // over them needs. Redrawing the offsets per trial would move the solutions
   // and leave nothing to recognize.
   for (int i = 0; i < chain.count; i++)
-    if (!drawOffset(surfaces, seedHits[i], seedMedium[i], lightSample.wi,
+    if (!drawOffset(surfaces, seed.hits[i], seed.medium[i], lightSample.wi,
                     -lightSample.wi, smdl::DF_GLOSSY_BTDF, chain[i]))
       return result;
   straight.ranLobes |= smdl::DF_GLOSSY_BTDF;
@@ -790,18 +480,12 @@ Color MNEEGather::gatherCasterRefraction(const MNEECaster &caster,
   if (lightSample.isInfinite && !render.mneeOptions.isEnvTarget(lightSample.wi))
     kinds &= ~smdl::DF_DIRAC_BTDF;
   if (kinds == 0) return {};
-  // One state for every crossing the traces walk in turn; see
-  // `Hit::applyGeometryToState()`.
-  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
-                                    gatherState.animationTime,
-                                    path.wavelengthHero)};
-  const auto trace{[&](MNEECasterSeed &seed) {
-    return traceManifoldCasterSeed(
-        render.scene, state, path.allocator, path.sampler, caster, vertex.point,
-        vertex.mediumStack, path.time.fraction, maxDepth,
-        render.mneeOptions.maxRoughness, seed);
+  const MNEEReceiver receiver{vertex.receiver()};
+  const auto trace{[&](MNEEChainSeed &seed) {
+    return traceManifoldCasterSeed(render, path, caster, receiver, maxDepth,
+                                   render.mneeOptions.maxRoughness, seed);
   }};
-  MNEECasterSeed first{};
+  MNEEChainSeed first{};
   if (!trace(first)) return {};
   kinds &= first.lobes;
   if (kinds == 0) return {};
@@ -842,7 +526,7 @@ Color MNEEGather::gatherCasterRefraction(const MNEECaster &caster,
     result += reciprocalEstimate(
         target, chain, statKind, receiverMask, 1.0f / casterPdf,
         [&](ManifoldChain &reseeded) {
-          MNEECasterSeed fresh{};
+          MNEEChainSeed fresh{};
           if (!trace(fresh) || (fresh.lobes & kindLobe) == 0 ||
               fresh.family() != family)
             return false;
@@ -914,7 +598,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   // the light: the actual sample point for a finite light, or the far
   // environment target translated to the last vertex.
   Color Tr{1.0f};
-  const MediumStack *segMedium{vertex.mediumStack};
+  const MediumStack *segMedium{
+      vertex.receiver().mediumToward(path.allocator, connection.wr)};
   float3 segStart{vertex.point};
   // One state for every converged crossing in turn; see
   // `Hit::applyGeometryToState()`.
@@ -924,7 +609,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   for (int i = 0; i < connection.count; i++) {
     const ManifoldConnectionVertex &crossing{connection.vertices[i]};
     VisibilityWalk segWalk{
-        render, path, segMedium, segStart, crossing.geometry.point, Tr};
+        render, path, segMedium, segStart, crossing.geometry.point, &Tr};
     if (segWalk.nextBlocker() || !(Tr.maxComponent() > 0.0f)) return {};
     // The solver's vertex is an address, not a hit record; rebuild the
     // hit to evaluate the interface material at the converged crossing.
@@ -1007,7 +692,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   const float3 lightPoint{lightSample.isInfinite
                               ? segStart + (lightSample.target - vertex.point)
                               : lightSample.target};
-  VisibilityWalk lightWalk{render, path, segMedium, segStart, lightPoint, Tr};
+  VisibilityWalk lightWalk{render, path, segMedium, segStart, lightPoint, &Tr};
   if (lightWalk.nextBlocker() || !(Tr.maxComponent() > 0.0f)) return {};
   // The connection's one measure (see `ManifoldConnection::measure()`),
   // and the density of the drawn offsets, which is 1 where every
@@ -1200,15 +885,13 @@ public:
   // Begin a fresh receiver, the vertex a gather could connect from.
   // `isEnabled` is false when manifold NEE is off, which leaves the state
   // permanently disarmed.
-  void arm(bool isEnabled, const float3 &point, float pdf,
-           const MediumStack *medium) noexcept {
+  void arm(bool isEnabled, const MNEEReceiver &receiver, float pdf) noexcept {
     mIsArmed = isEnabled;
-    mChainLength = 0;
+    mFamily = MNEEChainFamily{};
     mChainKind = ChainKind::NONE;
     mChainShare = Color(1.0f);
-    mReceiver = point;
+    mReceiver = receiver;
     mReceiverPdf = pdf;
-    mReceiverMedium = medium;
   }
 
   // Disarm, which is all a fresh path needs: `arm()` sets everything
@@ -1220,16 +903,12 @@ public:
 
   // Extend the chain across a claimed transmission: Dirac, or glossy with
   // the share of the crossing's throughput its claimed lobe carries. The
-  // length keeps counting past `MANIFOLD_MAX_DEPTH` so that an overlong chain
-  // reads as uncovered rather than as a shorter one.
+  // family keeps counting past `MANIFOLD_MAX_DEPTH` so that an overlong
+  // chain reads as uncovered rather than as a shorter one.
   void extend(const Hit &hit, bool isGlossy,
               const Color &claimedShare) noexcept {
-    if (mChainLength < MANIFOLD_MAX_DEPTH) {
-      mChainInstances[mChainLength] = hit.instance;
-      mChainPieces[mChainLength] = hit.faceIndex;
-      mChainHits[mChainLength] = hit;
-    }
-    mChainLength++;
+    if (mFamily.count < MANIFOLD_MAX_DEPTH) mChainHits[mFamily.count] = hit;
+    mFamily.append(hit);
     const ChainKind kind{isGlossy ? ChainKind::GLOSSY : ChainKind::DIRAC};
     mChainKind = mChainKind == ChainKind::NONE || mChainKind == kind
                      ? kind
@@ -1255,7 +934,7 @@ public:
 
   [[nodiscard]] ChainKind chainKind() const noexcept { return mChainKind; }
 
-  [[nodiscard]] int chainLength() const noexcept { return mChainLength; }
+  [[nodiscard]] int chainLength() const noexcept { return mFamily.count; }
 
   // What the gathers behind this vertex can reach of the vertex's own
   // claim, which is what the vertex's gather leaves to them and what the
@@ -1272,7 +951,7 @@ public:
     ManifoldClaim reachable{};
     if (!mIsArmed) return reachable;
     if (!isPrevDirac) reachable.reflectLobes = claim.reflectLobes;
-    if (mChainLength < mneeOptions.depth) {
+    if (mFamily.count < mneeOptions.depth) {
       switch (mChainKind) {
       case ChainKind::NONE:
         reachable.refractLobes = claim.refractLobes;
@@ -1290,13 +969,16 @@ public:
     return reachable;
   }
 
-  [[nodiscard]] const float3 &isReceiver() const noexcept { return mReceiver; }
+  // The receiver the chain leaves from.
+  [[nodiscard]] const MNEEReceiver &receiver() const noexcept {
+    return mReceiver;
+  }
 
   // The instance of the chain's first crossing, meaningful while the
   // chain has one: what the searched refractive gather's membership is
   // asked of.
   [[nodiscard]] uint32_t firstInstIndex() const noexcept {
-    return mChainHits[0].instIndex;
+    return mFamily.instances[0];
   }
 
   // The MIS weight of a BSDF-side arrival at `target` through the
@@ -1311,66 +993,59 @@ public:
 private:
   [[nodiscard]] bool covers(ChainKind kind,
                             const MNEEOptions &mneeOptions) const noexcept {
-    return mIsArmed && mChainKind == kind && mChainLength >= 1 &&
-           mChainLength <= mneeOptions.depth;
+    return mIsArmed && mChainKind == kind && mFamily.count >= 1 &&
+           mFamily.count <= mneeOptions.depth;
   }
 
   bool mIsArmed{};
-  int mChainLength{};
   ChainKind mChainKind{ChainKind::NONE};
   Color mChainShare{1.0f};
-  float3 mReceiver{};
+  MNEEReceiver mReceiver{};
   float mReceiverPdf{};
-  const MediumStack *mReceiverMedium{};
-  std::array<const MeshInstance *, MANIFOLD_MAX_DEPTH> mChainInstances{};
-  std::array<uint32_t, MANIFOLD_MAX_DEPTH> mChainPieces{};
+
+  // The crossings the path took since the receiver, as a family and as
+  // the hits themselves, the latter below `MANIFOLD_MAX_DEPTH` only.
+  MNEEChainFamily mFamily{};
   std::array<Hit, MANIFOLD_MAX_DEPTH> mChainHits{};
 };
 
 // The MIS weight of a BSDF-side arrival at a light, an environment
 // escape or an emitter hit, through a Dirac chain of eligible refractive
 // interfaces, by re-walk MIS (Hanika et al. 2015, section 5): re-run
-// the deterministic manifold walk the gather at `receiver` runs for
-// this target, and only when it converges to the same crossings the
-// path actually took does the gather compete; otherwise (a different
-// chain family, a different fold solution, a failed walk, a partial
-// cutout in the way, a line too crowded for the hop budget, or a light
-// the sampler cannot draw) the arrival keeps weight 1 instead of
-// silently losing its transport. The competing densities are per unit
-// solid angle of the straight line toward the light: the gather's is the
-// light sampling density, the arrival's is the receiver's recorded
-// continuation density times the interfaces' own selection chances times
-// the transfer Jacobian; the gather applies the complementary weight with
-// the same formula, so the pair sums to one.
+// the discovery and the deterministic manifold walk the gather at the
+// receiver runs for this target, and only when the walk converges to the
+// same crossings the path actually took does the gather compete;
+// otherwise (a different chain family, a different fold solution, a
+// failed walk, or a light the sampler cannot draw) the arrival keeps
+// weight 1 instead of silently losing its transport. The competing
+// densities are per unit solid angle of the straight line toward the
+// light: the gather's is the light sampling density, the arrival's is
+// the receiver's recorded continuation density times the interfaces'
+// own selection chances times the transfer Jacobian; the gather applies
+// the complementary weight with the same formula, so the pair sums to
+// one.
 //
 // That last factor is taken from the walk run here rather than
 // re-evaluated on the crossings the path actually took. The two agree
 // only to the convergence tolerance, and the pair sums to one exactly
 // when both sides weigh the same number, so the number to weigh by is
 // the one the gather would compute: this walk IS the gather's walk, for
-// this target.
+// this target, from the same discovery (`discoverStraightChain()`) of
+// the same line.
 //
 // Where the chain starts on a caster the searched refractive gather
 // samples (`isSearched`), that gather owns every family of the caster's
 // chains but the straight one, exclusively, and an arrival through such
 // a family is dropped instead of kept: every exit before the solve,
-// where the straight cast's crossings are not the crossings the path
-// took (or ran past the hop budget), returns 0. The exits after the
-// solve keep the weights above, because the path's family IS the
-// straight one there and the straight-line gather owns it, whether or
-// not its walk reached this solution.
+// where the discovery does not reach the light through the crossings
+// the path took, returns 0. The exits after the solve keep the weights
+// above, because the path's family IS the straight one there and the
+// straight-line gather owns it, whether or not its walk reached this
+// solution.
 float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
                                 const ManifoldTarget &target, float lightPdf,
                                 bool isSearched) const {
-  const float3 &isReceiver{mReceiver};
-  const MediumStack *receiverMedium{mReceiverMedium};
-  const float receiverPdf{mReceiverPdf};
-  const std::array<Hit, MANIFOLD_MAX_DEPTH> &chainHits{mChainHits};
-  const std::array<const MeshInstance *, MANIFOLD_MAX_DEPTH> &chainInstances{
-      mChainInstances};
-  const std::array<uint32_t, MANIFOLD_MAX_DEPTH> &chainPieces{mChainPieces};
-  const int chainLength{mChainLength};
-  // Whether the re-walk reproduced the crossings the path took, and
+  // Whether the discovery reproduced the crossings the path took, and
   // whether the arrival was dropped as the searched gather's before the
   // solve; every other exit keeps the arrival at weight 1, so the
   // matched fraction is the share of covered arrivals the straight
@@ -1385,96 +1060,45 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   });
   // A light the sampler cannot draw is covered by this arrival alone.
   if (!(lightPdf > 0.0f)) return 1.0f;
-  // The weight of an arrival whose family the straight cast does not
+  // The weight of an arrival whose family the straight line does not
   // reproduce: the searched gather's to drop, or nobody's to keep.
   const float unownedWeight{isSearched ? 0.0f : 1.0f};
   isDropped = isSearched;
-  // Build the seed chain along the straight cast, mirroring the
-  // gather's discovery: the same interfaces in the same order and
-  // nothing else, with per-side indices resolved against the
-  // receiver's medium stack as it evolves across the crossings. A
-  // finite target bounds each cast short of the light point itself.
-  ManifoldChain chain{};
-  // The receiver-side medium at each crossing, kept so that the chance
-  // below can be asked of the interface material with the same exterior
-  // index the gather resolves.
-  std::array<const MediumStack *, MANIFOLD_MAX_DEPTH> crossingMedium{};
-  const MediumStack *medium{receiverMedium};
-  const float3 wl{target.wl};
-  const float3 woStraight{-wl};
-  float3 origin{isReceiver};
-  // One state for every interface the cast crosses in turn, and for the
-  // crossings re-asked below; see `Hit::applyGeometryToState()`.
-  smdl::State state{makeRenderState(path.wavelengths, &path.allocator,
-                                    path.time.seconds, path.wavelengthHero)};
-  bool hasReached{false};
-  for (int hops = 0; hops < MNEE_STRAIGHT_MAX_HOPS; hops++) {
-    float tmax{INF};
-    if (!target.isInfinite) {
-      tmax = length(target.point - origin) - EPS;
-      if (!(tmax > EPS)) {
-        hasReached = true;
-        break;
-      }
-    }
-    Ray ray{origin, wl, EPS, tmax, path.time.fraction};
-    Hit hit{};
-    if (!render.scene.intersect(ray, hit)) {
-      hasReached = true;
-      break;
-    }
-    hit.applyGeometryToState(state, wl);
-    const bool isNullInterface{hit.materialDef->isNullInterface()};
-    // A hole the straight line pierces, which hops like a null interface.
-    // An exactly transparent cutout is the only one that may: anything
-    // else the gather's walk resolved with a draw of its own (see
-    // `VisibilityWalk::hasPassedStochasticCutout()`), and a hit it took
-    // for a blocker is one this cast has to take for a crossing, or the
-    // two stop agreeing on what is covered. Asked before the material is
-    // built, and through the same entry point the gather's walk asks,
-    // so that a stochastically evaluated cutout answers both the same.
-    const bool isHole{!isNullInterface && !hit.materialDef->isAlwaysOpaque() &&
-                      hit.materialDef->opacityEvaluate(state) == 0};
-    smdl::JIT::Material &interfaceInst{
-        *path.allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
-    if (isNullInterface || isHole) {
-      MediumStack::Update(medium, path.allocator, &interfaceInst, hit.instance,
-                          woStraight, wl);
-      origin = hit.point;
-      continue;
-    }
-    if (chain.count == chainLength) return unownedWeight;
-    if (hit.instance != chainInstances[chain.count]) return unownedWeight;
-    if (hit.instance->isCurves()) return unownedWeight;
-    if (hit.instance->isPrimitive() &&
-        hit.faceIndex != chainPieces[chain.count])
-      return unownedWeight;
-    // The gather runs its Dirac chain only where every crossing claims
-    // the Dirac transmission, so this must ask the same or the pair stops
-    // summing to one.
-    if (!makeManifoldSeed(medium, interfaceInst, hit, wl,
-                          render.mneeOptions.maxRoughness,
-                          chain[chain.count]) ||
-        (chain[chain.count].claimedLobes & smdl::DF_DIRAC_BTDF) == 0)
-      return unownedWeight;
-    crossingMedium[chain.count] = medium;
-    chain.count++;
-    MediumStack::Update(medium, path.allocator, &interfaceInst, hit.instance,
-                        woStraight, wl);
-    origin = hit.point;
-  }
-  if (!hasReached || chain.count != chainLength) return unownedWeight;
+  // The gather's own walk of the straight line for this target: from
+  // the receiver, in the medium its direction leaves into, aimed where
+  // the gather's light sample aims (the finite light point, or the far
+  // point an infinite light stands in with), asking for the Dirac kind.
+  const float3 &wl{target.wl};
+  const float3 aim{target.isInfinite
+                       ? mReceiver.point + 2.0f * render.scene.boundRadius * wl
+                       : target.point};
+  VisibilityWalk walk{
+      render,           path, mReceiver.mediumToward(path.allocator, wl),
+      mReceiver.point,  aim,  nullptr,
+      target.isInfinite};
+  Hit blocker{};
+  if (!walk.nextBlocker(&blocker)) return unownedWeight;
+  MNEEChainSeed seed{};
+  if (discoverStraightChain(path, walk, blocker, wl, smdl::DF_DIRAC_BTDF,
+                            render.mneeOptions.depth,
+                            render.mneeOptions.maxRoughness,
+                            seed) != MNEEStraightEnd::REACHED)
+    return unownedWeight;
+  if (seed.family() != mFamily) return unownedWeight;
   isDropped = false;
+  const ManifoldChain &chain{seed.chain};
+  const int chainLength{mFamily.count};
   ManifoldConnection connection;
   ManifoldWalkReport report{};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
-  const bool hasConverged{solveManifoldConnection(surfaces, isReceiver, target,
-                                                  chain, connection, &report)};
+  const bool hasConverged{solveManifoldConnection(
+      surfaces, mReceiver.point, target, chain, connection, &report)};
   if (path.stats) path.stats->mnee().recordRewalk(report);
   if (!hasConverged) return 1.0f;
   for (int i = 0; i < chainLength; i++) {
-    const float scale{std::max(1e-3f, length(chainHits[i].point - isReceiver))};
-    if (!(length(connection.vertices[i].vertex.point - chainHits[i].point) <
+    const float scale{
+        std::max(1e-3f, length(mChainHits[i].point - mReceiver.point))};
+    if (!(length(connection.vertices[i].vertex.point - mChainHits[i].point) <
           MANIFOLD_IDENTITY_FRACTION * scale))
       return 1.0f;
   }
@@ -1482,20 +1106,22 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   const float transfer{connection.measure(chain)};
   // The chance the continuation takes this chain, asked of each
   // interface rather than recomputed here, so that a layered or tinted
-  // interface reports the selection it actually makes. The gather
-  // accumulates the same quantity the same way, drawn from its own
-  // sampler, which is what keeps the pair summing to one.
+  // interface reports the selection it actually makes, with the
+  // exterior index each crossing resolved against the discovery's medium
+  // on its receiver side. The gather accumulates the same quantity the
+  // same way, drawn from its own sampler, which is what keeps the pair
+  // summing to one.
   float Q{1.0f};
-  float3 prev{isReceiver};
+  float3 prev{mReceiver.point};
   for (int i = 0; i < chainLength; i++) {
-    const float3 toHit{chainHits[i].point - prev};
+    const float3 toHit{mChainHits[i].point - prev};
     const float d{length(toHit)};
     if (!(d > 0.0f)) return 1.0f;
     const float3 travel{toHit / d};
-    chainHits[i].applyGeometryToState(state, travel);
-    smdl::JIT::Material crossMaterial{state, chainHits[i].materialDef};
+    smdl::State &state{path.shadeHit(mChainHits[i], travel)};
+    smdl::JIT::Material crossMaterial{state, mChainHits[i].materialDef};
     crossMaterial.setExteriorIOR(
-        ExteriorIOR(crossingMedium[i], crossMaterial, -travel));
+        ExteriorIOR(seed.medium[i], crossMaterial, -travel));
     float3 wiDirac{};
     float vertexChance{};
     Color fDirac{};
@@ -1508,12 +1134,12 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
     // weighing the same number.
     Q *= vertexChance *
          diracBranchChance(
-             path.guiding, chainHits[i].point,
+             path.guiding, mChainHits[i].point,
              (crossMaterial.getLobes(crossMaterial.isInterior(-travel)) &
               smdl::DF_FINITE) != 0);
-    prev = chainHits[i].point;
+    prev = mChainHits[i].point;
   }
-  const float arrivalPdf{receiverPdf * Q * transfer};
+  const float arrivalPdf{mReceiverPdf * Q * transfer};
   if (!(arrivalPdf > 0.0f) || !std::isfinite(arrivalPdf)) return 1.0f;
   return smdl::powerHeuristic(arrivalPdf, lightPdf);
 }
@@ -1607,10 +1233,14 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
         D *= smdl::powerHeuristic(lightSample.pdf, continuationPdf);
       direct += D;
     }};
+    // The medium the shadow segment starts in, across the receiver's
+    // own interface where the light direction transmits through it.
+    const MediumStack *gatherMedium{
+        vertex.receiver().mediumToward(path.allocator, lightSample.wi)};
     if (!shouldRunManifold) {
       if (Color Tr{1.0f};
           neeMask != 0 &&
-          testVisibility(render, path, vertex.mediumStack, vertex.point,
+          testVisibility(render, path, gatherMedium, vertex.point,
                          lightSample.target, Tr, lightSample.isInfinite)) {
         gatherPlain(Tr);
       }
@@ -1622,10 +1252,10 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       Hit &blocker{path.gatherBlocker};
       VisibilityWalk walk{render,
                           path,
-                          vertex.mediumStack,
+                          gatherMedium,
                           vertex.point,
                           lightSample.target,
-                          Tr,
+                          &Tr,
                           lightSample.isInfinite};
       // The chain gather of the receiver behind this vertex already
       // claims every chain that starts with this vertex's claimed
@@ -2136,8 +1766,8 @@ Color PathWalk::trace(const CameraSample &camera) {
           mPrev.isAreaSampled =
               gatherRunsManifold(mRender.mneeOptions, VertexKind::VOLUME, true);
           // A volume vertex is a manifold-NEE receiver like any other.
-          mCoverage.arm(mRender.mneeOptions.isEnabled(), point, phaseValue,
-                        mMediumStack);
+          mCoverage.arm(mRender.mneeOptions.isEnabled(),
+                        MNEEReceiver{point, wo, mMediumStack}, phaseValue);
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           mSpread = std::min(mSpread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
@@ -2186,7 +1816,7 @@ Color PathWalk::trace(const CameraSample &camera) {
                        return -1.0f;
                      target.wl = ray.dir;
                      return mRender.lights.envSelectionPMF(
-                                mCoverage.isReceiver()) *
+                                mCoverage.receiver().point) *
                             Lipdf;
                    });
       }
@@ -2305,7 +1935,8 @@ Color PathWalk::trace(const CameraSample &camera) {
                        ? &mPath.records[mPath.numRecords - 2]
                        : nullptr,
                    [&](ManifoldTarget &target) {
-                     const float3 toLight{hit.point - mCoverage.isReceiver()};
+                     const float3 toLight{hit.point -
+                                          mCoverage.receiver().point};
                      const float distStraight{length(toLight)};
                      if (!(distStraight > 0.0f)) return -1.0f;
                      target.wl = toLight / distStraight;
@@ -2314,8 +1945,8 @@ Color PathWalk::trace(const CameraSample &camera) {
                      target.normal = hit.Ng;
                      return mRender.lights.solidAnglePDF(
                          hit.instIndex, hit.faceIndex, hit.point, hit.Ng,
-                         mCoverage.isReceiver(), /*isAreaSampled=*/true,
-                         hit.time);
+                         mCoverage.receiver().point,
+                         /*isAreaSampled=*/true, hit.time);
                    });
       }
     }
@@ -2367,6 +1998,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       vertex.kind = isHair ? VertexKind::HAIR : VertexKind::SURFACE;
       vertex.point = hit.point;
       vertex.wo = wo;
+      vertex.instance = hit.instance;
       vertex.mediumStack = mMediumStack;
       vertex.dtree = dtree;
       vertex.bsdfFraction = bsdfFraction;
@@ -2473,7 +2105,10 @@ Color PathWalk::trace(const CameraSample &camera) {
       hasExtendedChain = true;
       mCoverage.extend(hit, !isDiracBounce, claimedShare);
     } else if (!isHair && !isDiracBounce) {
-      mCoverage.arm(isReceiver, hit.point, wpdf, mMediumStack);
+      mCoverage.arm(
+          isReceiver,
+          MNEEReceiver{hit.point, wo, mMediumStack, &material, hit.instance},
+          wpdf);
     } else {
       mCoverage.disarm();
     }
