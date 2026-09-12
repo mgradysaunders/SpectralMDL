@@ -42,6 +42,15 @@ constexpr float ANGLE_GROWTH_DIFFUSE{0.3f};
 // well-conditioned on long paths.
 constexpr float ANGLE_MAX{1.0f};
 
+// The surface hits one straight receiver-to-light segment may resolve and
+// still carry transport the manifold estimators claim. Both halves of the
+// pair walk that line, the gather to discover its chain and the arrival
+// side to prove the chain covered, so a budget one half gave up at alone
+// would leave the other claiming transport nobody cancels. Exceeding it
+// is not an error: the gather stands down and the arrival keeps the
+// ordinary weight, the way every other uncovered arrival does.
+constexpr int MNEE_STRAIGHT_MAX_HOPS{64};
+
 // The scattering role of a path vertex: a surface BSDF, a volume phase
 // function, or the hair BSDF at a curve hit whose material binds
 // `material.hair`.
@@ -90,17 +99,24 @@ public:
   // hits.
   void passThrough(const smdl::JIT::Material *material, const Hit &hit);
 
-  // TODO Is there any way to get MNEE to work with cutouts? Or at least
-  //      to get MNEE to work with deterministic cutouts, i.e., leaves where
-  //      the mask is mostly exactly 0 or exactly 1 so we can know the
-  //      re-walk will be deterministic?
-
-  // Did the walk pass through a cutout so far? The manifold gather
+  // Did the walk pass through a cutout on a draw of its own, i.e. through
+  // a hit whose opacity is strictly between 0 and 1? The manifold gather
   // declines such segments, so that its coverage stays the exact
-  // complement of the deterministic re-walk the arrival-side MIS runs.
-  [[nodiscard]] bool hasPassedCutout() const noexcept {
-    return mHasPassedCutout;
+  // complement of the deterministic re-walk the arrival-side MIS runs. A
+  // hit whose opacity is exactly 0 or exactly 1 does not count: there is
+  // no coin to replay, so the re-walk resolves it the same way every
+  // time, which is what keeps a silhouette mask (a leaf, a fence) from
+  // disabling the estimators wherever it covers the light.
+  [[nodiscard]] bool hasPassedStochasticCutout() const noexcept {
+    return mHasPassedStochasticCutout;
   }
+
+  // The surface hits resolved along the segment so far: cutout and
+  // null-interface hops, and the blockers the caller passed through. The
+  // gather declines a segment that needs more of them than
+  // `MNEE_STRAIGHT_MAX_HOPS`, the budget the re-walk of the same line
+  // gives up at; see `MNEECoverage::coverWeight()`.
+  [[nodiscard]] int hopCount() const noexcept { return mHopCount; }
 
 private:
   // Continue the walk on the far side of the hit it is at.
@@ -142,8 +158,11 @@ private:
   // shadow.
   float mTCovered{};
 
-  // See `hasPassedCutout()`.
-  bool mHasPassedCutout{};
+  // See `hopCount()`.
+  int mHopCount{};
+
+  // See `hasPassedStochasticCutout()`.
+  bool mHasPassedStochasticCutout{};
 
   // Does the segment end where it does only because a light infinitely
   // far away needs a finite point to aim at? See `Medium::attenuate()`.
@@ -228,6 +247,7 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     if (!hasHitSurface) {
       return false;
     }
+    ++mHopCount;
     const Scene &scene{mRender.scene};
     const MeshInstance &instance{scene.meshInstances[raw.instIndex]};
     const smdl::JIT::MaterialDef *materialDef{
@@ -269,13 +289,19 @@ bool VisibilityWalk::nextBlocker(Hit *hit) {
     // opacity evaluates at full fidelity, the conservative choice for
     // shadow rays.
     smdl::State &state{mPath.shadeHit(found, mShadowDir)};
-    if (float opacity{found.materialDef->opacityEvaluate(state)};
-        opacity == 1 || float(mPath.sampler) < opacity) {
-      return true; // Blocks visibility!
+    // An exactly transparent hit is the segment's own geometry: it costs
+    // no draw and passes like a null interface, as it does in the walk
+    // (see `PathWalk::trace()`). Anything else is decided here, and a
+    // pass the draw decided is a coin the arrival side cannot replay.
+    if (const float opacity{found.materialDef->opacityEvaluate(state)};
+        opacity > 0) {
+      if (opacity == 1 || float(mPath.sampler) < opacity) {
+        return true; // Blocks visibility!
+      }
+      mHasPassedStochasticCutout = true;
     }
     // Only an actual pass-through needs the full instance, to keep the
     // medium stack current across the cutout.
-    mHasPassedCutout = true;
     passThrough(
         mPath.allocator.allocate<smdl::JIT::Material>(state, found.materialDef),
         found);
@@ -615,10 +641,13 @@ Color MNEEGather::gatherRefraction(VisibilityWalk &walk, Hit blocker,
     walk.passThrough(&interfaceMaterial, blocker);
     if (!walk.nextBlocker(&blocker)) break;
   }
-  // Decline segments that passed a cutout: the pass is stochastic, and
-  // the escape-side cancelation probes coverage with a deterministic
-  // cast, so the two must agree on what is covered.
-  if (walk.hasPassedCutout()) return {};
+  // Decline a segment the arrival side cannot reproduce: a cutout pass
+  // this walk's own draw decided, or more hits than the re-walk's budget
+  // resolves. The escape-side cancelation probes coverage with a
+  // deterministic cast, so the two must agree on what is covered.
+  if (walk.hasPassedStochasticCutout() ||
+      walk.hopCount() >= MNEE_STRAIGHT_MAX_HOPS)
+    return {};
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
   const SceneManifoldSurfaces surfaces{render.scene, path.time};
   MNEEStats *const stats{path.stats ? &path.stats->mnee() : nullptr};
@@ -1165,15 +1194,15 @@ private:
 // the deterministic manifold walk the gather at `receiver` runs for
 // this target, and only when it converges to the same crossings the
 // path actually took does the gather compete; otherwise (a different
-// chain family, a different fold solution, a failed walk, a cutout in
-// the way, or a light the sampler cannot draw) the arrival keeps
-// weight 1 instead of silently losing its transport. The competing
-// densities are per unit solid angle of the straight line toward the
-// light: the gather's is the light sampling density, the arrival's is
-// the receiver's recorded continuation density times the interfaces'
-// own selection chances times the transfer Jacobian; the gather applies
-// the complementary weight with the same formula, so the pair sums to
-// one.
+// chain family, a different fold solution, a failed walk, a partial
+// cutout in the way, a line too crowded for the hop budget, or a light
+// the sampler cannot draw) the arrival keeps weight 1 instead of
+// silently losing its transport. The competing densities are per unit
+// solid angle of the straight line toward the light: the gather's is the
+// light sampling density, the arrival's is the receiver's recorded
+// continuation density times the interfaces' own selection chances times
+// the transfer Jacobian; the gather applies the complementary weight with
+// the same formula, so the pair sums to one.
 //
 // That last factor is taken from the walk run here rather than
 // re-evaluated on the crossings the path actually took. The two agree
@@ -1220,7 +1249,7 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
   smdl::State state{
       makeRenderState(path.wavelengths, &path.allocator, path.time.seconds)};
   bool hasReached{false};
-  for (int skip = 0; skip < 64; skip++) {
+  for (int hops = 0; hops < MNEE_STRAIGHT_MAX_HOPS; hops++) {
     float tmax{INF};
     if (!target.isInfinite) {
       tmax = length(target.point - origin) - EPS;
@@ -1236,9 +1265,20 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
       break;
     }
     hit.applyGeometryToState(state, wl);
+    const bool isNullInterface{hit.materialDef->isNullInterface()};
+    // A hole the straight line pierces, which hops like a null interface.
+    // An exactly transparent cutout is the only one that may: anything
+    // else the gather's walk resolved with a draw of its own (see
+    // `VisibilityWalk::hasPassedStochasticCutout()`), and a hit it took
+    // for a blocker is one this cast has to take for a crossing, or the
+    // two stop agreeing on what is covered. Asked before the material is
+    // built, and through the same entry point the gather's walk asks,
+    // so that a stochastically evaluated cutout answers both the same.
+    const bool isHole{!isNullInterface && !hit.materialDef->isAlwaysOpaque() &&
+                      hit.materialDef->opacityEvaluate(state) == 0};
     smdl::JIT::Material &interfaceInst{
         *path.allocator.allocate<smdl::JIT::Material>(state, hit.materialDef)};
-    if (hit.materialDef->isNullInterface()) {
+    if (isNullInterface || isHole) {
       MediumStack::Update(medium, path.allocator, &interfaceInst, hit.instance,
                           woStraight, wl);
       origin = hit.point;

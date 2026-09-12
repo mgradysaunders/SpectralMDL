@@ -34,9 +34,9 @@
 /// a warning. Bump this whenever the sequence changes.
 constexpr const char *SAMPLER_VERSION =
 #if SMDL_TOY_SAMPLER_PCG32
-    "pcg32-2";
+    "pcg32-3";
 #else
-    "owen-sobol-2";
+    "owen-sobol-3";
 #endif
 
 /// The rendering sampler: the draw policy around the library's
