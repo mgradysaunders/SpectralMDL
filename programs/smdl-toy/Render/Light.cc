@@ -208,7 +208,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   case LayoutLightDecl::Kind::DISK: {
     if (!(mPlacement.worldArea > 0)) {
       SMDL_LOG_WARN("The ", decl.kindName(), " light ", smdl::Quoted(decl.name),
-                    " is placed with no area and is never sampled.");
+                    " is placed with no area and is never sampled");
       power = 0.0f;
       break;
     }
@@ -537,7 +537,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         SMDL_LOG_WARN("The material ",
                       smdl::Quoted(scene.materialNames[matIndex]),
                       " is marked 'light' but has no emission; the mark is "
-                      "ignored.");
+                      "ignored");
       allocator.reset();
       continue;
     }
@@ -551,7 +551,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
             "Curves shaded by the emissive material ",
             smdl::Quoted(scene.materialNames[scene.materialIndexOf(instance)]),
             " do not register as area lights; their emission renders "
-            "through path hits only.");
+            "through path hits only");
       allocator.reset();
       continue;
     }
@@ -743,7 +743,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                   smdl::Counted(numUnsampledArea, "emissive instance"),
                   numUnsampledArea == 1 ? " renders" : " render",
                   " through path hits alone; mark emitters in the layout, "
-                  "or pass -mark-all-lights.");
+                  "or pass -mark-all-lights");
   SMDL_LOG_DEBUG("Light sampler: ", smdl::Counted(numSampledArea, "area light"),
                  ", ", smdl::Counted(numUnsampledArea, "unsampled emitter"),
                  ", ", smdl::Counted(mAnalyticLights.size(), "analytic light"),

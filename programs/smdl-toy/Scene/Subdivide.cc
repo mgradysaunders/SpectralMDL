@@ -83,9 +83,9 @@ bool subdivideMesh(Mesh &mesh) {
   if (isLoop) {
     for (const auto count : mesh.baseFaceCounts) {
       if (count != 3) {
-        SMDL_LOG_WARN("'subdivide ", spec.levels,
+        SMDL_LOG_WARN("A 'subdivide ", spec.levels,
                       " loop' needs triangles, but a mesh has a face with ",
-                      count, " vertices; rendering it unsubdivided instead.");
+                      count, " vertices; rendering it unsubdivided instead");
         fanTriangulate(mesh);
         return false;
       }
@@ -167,7 +167,7 @@ bool subdivideMesh(Mesh &mesh) {
   if (!refiner) {
     SMDL_LOG_WARN("OpenSubdiv rejected the topology of a mesh with ",
                   faceCounts.size(),
-                  " faces; rendering it unsubdivided instead.");
+                  " faces; rendering it unsubdivided instead");
     fanTriangulate(mesh);
     return false;
   }

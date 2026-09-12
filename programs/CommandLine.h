@@ -228,7 +228,7 @@ struct WavelengthRange final {
   if (flagStr == "info") return smdl::LOG_LEVEL_INFO;
   if (flagStr == "warn") return smdl::LOG_LEVEL_WARN;
   if (flagStr == "error") return smdl::LOG_LEVEL_ERROR;
-  throw smdl::Error(smdl::concat("expected -log-level to be 'debug', 'info', "
+  throw smdl::Error(smdl::concat("Expected -log-level to be 'debug', 'info', "
                                  "'warn', or 'error', got ",
                                  smdl::Quoted(flagStr)));
 }
@@ -271,19 +271,19 @@ parseWavelengths(const std::string &flagStr) {
     char *numEnd{};
     const float value{std::strtof(ptr, &numEnd)};
     if (numEnd == ptr)
-      throw smdl::Error(smdl::concat("cannot parse -wavelengths near ",
+      throw smdl::Error(smdl::concat("Cannot parse -wavelengths near ",
                                      smdl::Quoted(std::string(ptr, 0, 12))));
     ptr = numEnd;
     values.push_back(value);
   }
   if (values.empty())
-    throw smdl::Error("expected -wavelengths to name at least 1 wavelength");
+    throw smdl::Error("Expected -wavelengths to name at least 1 wavelength");
   for (size_t i = 0; i < values.size(); i++) {
     if (!(std::isfinite(values[i]) && values[i] > 0))
       throw smdl::Error(
-          "expected every -wavelengths value to be positive and finite");
+          "Expected every -wavelengths value to be positive and finite");
     if (i > 0 && !(values[i] > values[i - 1]))
-      throw smdl::Error("expected -wavelengths to be strictly increasing");
+      throw smdl::Error("Expected -wavelengths to be strictly increasing");
   }
   return values;
 }
@@ -306,30 +306,30 @@ parseWavelengthRange(const std::string &flagStr) {
   char *numEnd{};
   result.range.x = std::strtof(ptr, &numEnd);
   if (numEnd == ptr || *numEnd != ',')
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+    throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
                                    smdl::Quoted(std::string(ptr, 0, 12))));
   ptr = numEnd + 1;
   result.range.y = std::strtof(ptr, &numEnd);
   if (numEnd == ptr)
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+    throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
                                    smdl::Quoted(std::string(ptr, 0, 12))));
   ptr = numEnd;
   if (*ptr == ':') {
     ptr++;
     if (!std::isdigit(static_cast<unsigned char>(*ptr)))
-      throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+      throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
                                      smdl::Quoted(std::string(ptr, 0, 12))));
     result.bandCount = unsigned(std::strtoul(ptr, &numEnd, 10));
     ptr = numEnd;
   }
   if (*ptr != '\0')
-    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+    throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
                                    smdl::Quoted(std::string(ptr, 0, 12))));
   if (!(std::isfinite(result.range.x) && std::isfinite(result.range.y) &&
         result.range.x > 0 && result.range.x < result.range.y))
     throw smdl::Error(
-        "expected -wavelength-range 'A,B' to be positive and increasing");
+        "Expected -wavelength-range 'A,B' to be positive and increasing");
   if (result.bandCount < 1)
-    throw smdl::Error("expected -wavelength-range ':N' to be at least 1");
+    throw smdl::Error("Expected -wavelength-range ':N' to be at least 1");
   return result;
 }

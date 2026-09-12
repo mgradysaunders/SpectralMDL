@@ -510,7 +510,8 @@ private:
     if (!error) return nullptr;
     return &mDiags.error(definition.nameLoc,
                          smdl::concat("medium ", smdl::Quoted(definition.name),
-                                      ": ", error->message));
+                                      ": ",
+                                      smdl::decapitalized(error->message)));
   }
 
   // Warn where a printed value stated beside 'sellmeier' disagrees with

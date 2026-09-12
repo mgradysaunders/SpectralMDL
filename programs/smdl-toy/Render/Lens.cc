@@ -853,14 +853,14 @@ public:
 Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   const std::vector<LensSurface> &surfaces{prescription.surfaces};
   if (surfaces.empty())
-    throw smdl::Error("expected a lens with at least one surface");
+    throw smdl::Error("Expected a lens with at least one surface");
   if (surfaces.size() > LENS_MAX_SURFACES)
-    throw smdl::Error(smdl::concat("expected at most ", LENS_MAX_SURFACES,
+    throw smdl::Error(smdl::concat("Expected at most ", LENS_MAX_SURFACES,
                                    " surfaces in a lens, got ",
                                    surfaces.size()));
   mStopIndex = prescription.stopIndex();
   if (mStopIndex == surfaces.size())
-    throw smdl::Error("expected a lens with an aperture stop, which is what "
+    throw smdl::Error("Expected a lens with an aperture stop, which is what "
                       "decides how much light it gathers");
   mName = prescription.name;
   // Lay the surfaces out on the axis from the front vertex, one medium to
@@ -880,7 +880,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     elem.conic = surface.conic;
     if (surface.aspheric.size() > LENS_MAX_ASPHERIC_TERMS)
       throw smdl::Error(
-          smdl::concat("expected at most ", LENS_MAX_ASPHERIC_TERMS,
+          smdl::concat("Expected at most ", LENS_MAX_ASPHERIC_TERMS,
                        " aspheric coefficients on a surface, got ",
                        surface.aspheric.size()));
     // A table that prints its unused terms leaves trailing zeros, and a
@@ -910,7 +910,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   }
   if (mReferenceIndices.back() != 1 || !mediumName.empty())
     throw smdl::Error(smdl::concat(
-        "expected air behind the last surface, got ",
+        "Expected air behind the last surface, got ",
         mediumName.empty()
             ? smdl::concat("an index of ", mReferenceIndices.back())
             : smdl::concat("the medium ", smdl::Quoted(mediumName)),
@@ -923,7 +923,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   const Paraxial paraxial{mElements, mLayoutZ, mReferenceIndices.data()};
   const ABCD system{paraxial.system()};
   if (system.c == 0)
-    throw smdl::Error("the surfaces have no net power between them, so the "
+    throw smdl::Error("The surfaces have no net power between them, so the "
                       "prescription forms no image and has no focal length");
   CardinalPoints points{
       system.cardinalPoints(mLayoutZ.front(), mLayoutZ.back())};
@@ -942,7 +942,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     front = front.then(paraxial.transferAfter(i));
   }
   if (front.a == 0)
-    throw smdl::Error("the stop sits at the front focal point of the "
+    throw smdl::Error("The stop sits at the front focal point of the "
                       "surfaces before it, which puts the entrance pupil at "
                       "infinity; the renderer cannot sample a telecentric "
                       "lens");
@@ -956,7 +956,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     rear = rear.then(paraxial.refractionAt(i + 1));
   }
   if (rear.d == 0)
-    throw smdl::Error("the stop sits at the rear focal point of the surfaces "
+    throw smdl::Error("The stop sits at the rear focal point of the surfaces "
                       "behind it, which puts the exit pupil at infinity");
   mExitPupilZ = mLayoutZ.back() - rear.b / rear.d;
 
@@ -974,7 +974,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   if (options.fStop > 0) {
     if (options.fStop < mFNumberWideOpen)
       throw smdl::Error(smdl::concat(
-          "cannot open the lens to f/", options.fStop, ": its stop is ",
+          "Cannot open the lens to f/", options.fStop, ": its stop is ",
           2 * stopRadius * SCENE_TO_MM, " mm across, which is f/",
           mFNumberWideOpen, " wide open"));
     // An f-number is a statement about the entrance pupil, so that is
@@ -1020,11 +1020,11 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
   // move does.
   mFocusDistance = options.focusDistance;
   if (!(mFocusDistance >= 0))
-    throw smdl::Error("expected a nonnegative focus distance");
+    throw smdl::Error("Expected a nonnegative focus distance");
   const std::optional<float> imageZ{points.imagePlane(mFocusDistance)};
   if (!imageZ)
     throw smdl::Error(smdl::concat(
-        "cannot focus at ", mFocusDistance,
+        "Cannot focus at ", mFocusDistance,
         " scene units: that is inside the lens's front focal point, ",
         (mFocalLength - points.frontPrincipalZ),
         " scene units out, and no film position images it"));

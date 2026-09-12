@@ -190,7 +190,7 @@ AutolookResult solveAutolook(const Scene &scene,
   const std::vector<float3> points{
       gatherWorldPoints(scene, options.skipInstance, bound)};
   if (points.empty())
-    throw smdl::Error("cannot -autolook: the scene has no geometry");
+    throw smdl::Error("Cannot -autolook: the scene has no geometry");
   const float usable{1.0f - options.margin};
   const float tanY{std::tan(smdl::radians(0.5f * options.fovYDeg)) * usable};
   const float tanX{tanY * options.aspectRatio};

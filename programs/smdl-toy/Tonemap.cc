@@ -609,13 +609,13 @@ namespace {
     char *numEnd{};
     const float value{std::strtof(ptr, &numEnd)};
     if (numEnd == ptr || *numEnd != '\0' || !std::isfinite(value))
-      throw smdl::Error(smdl::concat("cannot parse -tonemap ",
+      throw smdl::Error(smdl::concat("Cannot parse -tonemap ",
                                      smdl::Quoted(stage), " parameter ",
                                      smdl::Quoted(piece)));
     values.push_back(value);
   }
   if (values.size() > maxCount)
-    throw smdl::Error(smdl::concat("expected at most ",
+    throw smdl::Error(smdl::concat("Expected at most ",
                                    smdl::Counted(maxCount, "parameter"),
                                    " for -tonemap ", smdl::Quoted(stage)));
   return values;
@@ -639,18 +639,18 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
       hasParams = true;
     }
     if (name.empty())
-      throw smdl::Error("expected a -tonemap stage name (the stages are "
+      throw smdl::Error("Expected a -tonemap stage name (the stages are "
                         "joined by '+')");
     if (name == "night") {
       if (hasNight)
-        throw smdl::Error("expected at most one 'night' stage in -tonemap");
+        throw smdl::Error("Expected at most one 'night' stage in -tonemap");
       if (hasParams)
-        throw smdl::Error("expected no parameters for -tonemap 'night'");
+        throw smdl::Error("Expected no parameters for -tonemap 'night'");
       hasNight = true;
       options.isNight = true;
     } else if (name == "gamma" || name == "log" || name == "filmic") {
       if (hasCurve)
-        throw smdl::Error("expected at most one display curve in -tonemap "
+        throw smdl::Error("Expected at most one display curve in -tonemap "
                           "('gamma', 'log', or 'filmic')");
       hasCurve = true;
       options.curve = name == "gamma" ? TonemapCurve::GAMMA
@@ -658,16 +658,16 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
                                       : TonemapCurve::FILMIC;
       if (hasParams) {
         if (name != "log")
-          throw smdl::Error(smdl::concat("expected no parameters for -tonemap ",
+          throw smdl::Error(smdl::concat("Expected no parameters for -tonemap ",
                                          smdl::Quoted(name)));
         options.logDecades = parseStageParams(name, params, 1)[0];
         if (!(options.logDecades > 0))
-          throw smdl::Error("expected the -tonemap 'log' DECADES to be "
+          throw smdl::Error("Expected the -tonemap 'log' DECADES to be "
                             "positive");
       }
     } else if (name == "fusion") {
       if (hasFusion)
-        throw smdl::Error("expected at most one 'fusion' stage in -tonemap");
+        throw smdl::Error("Expected at most one 'fusion' stage in -tonemap");
       hasFusion = true;
       options.useFusion = true;
       const std::vector<float> values{
@@ -676,17 +676,17 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
       if (values.size() > 1) options.fusionClamp = values[1];
       if (values.size() > 2) options.fusionSpan = values[2];
       if (!(options.fusionStrength >= 0 && options.fusionStrength <= 1))
-        throw smdl::Error("expected the -tonemap 'fusion' STRENGTH between 0 "
+        throw smdl::Error("Expected the -tonemap 'fusion' STRENGTH between 0 "
                           "and 1");
       if (!(options.fusionClamp > 0))
-        throw smdl::Error("expected the -tonemap 'fusion' CLAMP to be "
+        throw smdl::Error("Expected the -tonemap 'fusion' CLAMP to be "
                           "positive");
       if (!(options.fusionSpan >= 0))
-        throw smdl::Error("expected the -tonemap 'fusion' SPAN to be "
+        throw smdl::Error("Expected the -tonemap 'fusion' SPAN to be "
                           "nonnegative (0 infers the bracket)");
     } else {
       throw smdl::Error(
-          smdl::concat("unknown -tonemap stage ", smdl::Quoted(name),
+          smdl::concat("Unknown -tonemap stage ", smdl::Quoted(name),
                        " (expected 'night', 'gamma', 'log', 'filmic', or "
                        "'fusion')"));
     }

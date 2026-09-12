@@ -215,7 +215,7 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
     for (unsigned k = 0; k < key.mNumValuesAndWeights; k++) {
       if (key.mValues[k] >= assMesh.mNumAnimMeshes)
         throw smdl::Error(smdl::concat(
-            "morph channel ", smdl::Quoted(channel->mName.C_Str()), " in ",
+            "Morph channel ", smdl::Quoted(channel->mName.C_Str()), " in ",
             smdl::QuotedPath(fileName), " keys target ", key.mValues[k],
             " of a mesh with ", assMesh.mNumAnimMeshes));
       result[key.mValues[k]] = float(key.mWeights[k]);
@@ -296,7 +296,7 @@ const aiAnimation *resolveClip(const aiScene &assScene,
   if (spec.isOff) return nullptr;
   if (assScene.mNumAnimations == 0) {
     if (spec.hasClip())
-      throw smdl::Error(smdl::concat("'animation' names a clip, but ",
+      throw smdl::Error(smdl::concat("The 'animation' names a clip, but ",
                                      smdl::QuotedPath(fileName),
                                      " carries none"));
     return nullptr;
@@ -309,13 +309,13 @@ const aiAnimation *resolveClip(const aiScene &assScene,
         clip = assScene.mAnimations[i];
     if (!clip)
       throw smdl::Error(
-          smdl::concat("no clip named ", smdl::Quoted(spec.clipName), " in ",
+          smdl::concat("No clip named ", smdl::Quoted(spec.clipName), " in ",
                        smdl::QuotedPath(fileName),
                        ", which carries:", clipListing(assScene)));
   } else if (spec.clipIndex != INVALID_INDEX) {
     if (spec.clipIndex >= assScene.mNumAnimations)
       throw smdl::Error(smdl::concat(
-          "no clip ", spec.clipIndex, " in ", smdl::QuotedPath(fileName),
+          "No clip ", spec.clipIndex, " in ", smdl::QuotedPath(fileName),
           ", which carries:", clipListing(assScene)));
     clip = assScene.mAnimations[spec.clipIndex];
   } else if (assScene.mNumAnimations == 1) {
@@ -330,7 +330,7 @@ const aiAnimation *resolveClip(const aiScene &assScene,
   if (!(clip->mTicksPerSecond > 0))
     SMDL_LOG_WARN("Clip ", smdl::Quoted(clip->mName.C_Str()), " in ",
                   smdl::QuotedPath(fileName),
-                  " has no tick rate; assuming 25 ticks per second.");
+                  " has no tick rate; assuming 25 ticks per second");
   return clip;
 }
 
@@ -459,7 +459,7 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       if (w == 0) continue;
       const aiAnimMesh &target{*assMesh.mAnimMeshes[t]};
       if (target.mNumVertices != numVerts)
-        throw smdl::Error(smdl::concat("morph target ", t, " of mesh ",
+        throw smdl::Error(smdl::concat("Morph target ", t, " of mesh ",
                                        smdl::Quoted(assMesh.mName.C_Str()),
                                        " in ", smdl::QuotedPath(fileName),
                                        " has ", target.mNumVertices,
@@ -497,7 +497,7 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       for (unsigned k = 0; k < bone.mNumWeights; k++) {
         if (bone.mWeights[k].mVertexId >= numVerts)
           throw smdl::Error(smdl::concat(
-              "bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
+              "Bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
               smdl::Quoted(assMesh.mName.C_Str()), " in ",
               smdl::QuotedPath(fileName), " weights vertex ",
               bone.mWeights[k].mVertexId, " of ", numVerts));
@@ -518,7 +518,7 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       const uint32_t nodeIndex{pose.find(bone.mName.C_Str())};
       if (nodeIndex == INVALID_INDEX)
         throw smdl::Error(smdl::concat(
-            "bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
+            "Bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
             smdl::Quoted(assMesh.mName.C_Str()), " in ",
             smdl::QuotedPath(fileName), " names no node in the file"));
       boneXfs[b] = pose.nodeToFile[nodeIndex] * fromAssimp(bone.mOffsetMatrix);

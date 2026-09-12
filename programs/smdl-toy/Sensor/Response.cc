@@ -167,7 +167,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
     const double inside{integrate(band, gridLo, gridHi)};
     if (!(inside > 0))
       throw smdl::Error(
-          smdl::concat("response band ", smdl::Quoted(band.name), " (",
+          smdl::concat("Response band ", smdl::Quoted(band.name), " (",
                        smdl::Brief(band.wavelengths.front(), 6), "-",
                        smdl::Brief(band.wavelengths.back(), 6),
                        " nm) lies outside the wavelength grid (",
@@ -176,7 +176,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
                        "cover it"));
     if (inside < 0.99 * whole)
       SMDL_LOG_WARN(
-          "response band ", smdl::Quoted(band.name), " has ",
+          "Response band ", smdl::Quoted(band.name), " has ",
           smdl::Brief(100.0 * (1.0 - inside / whole), 3),
           "% of its weight outside the wavelength grid (",
           smdl::Brief(gridLo, 6), "-", smdl::Brief(gridHi, 6),
@@ -191,7 +191,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
         *std::max_element(band.values.begin(), band.values.end())};
     const double equivalentWidth{peak > 0 ? whole / peak : 0.0};
     if (!mIsJittering && equivalentWidth < minSpacing)
-      SMDL_LOG_WARN("response band ", smdl::Quoted(band.name), " is ",
+      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name), " is ",
                     smdl::Brief(equivalentWidth, 3),
                     " nm wide against a grid spaced ",
                     smdl::Brief(minSpacing, 3),
@@ -206,7 +206,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
         seen += evaluate(band, double(wavelengths[i])) * widths[i];
       if (!(seen > 0))
         throw smdl::Error(smdl::concat(
-            "response band ", smdl::Quoted(band.name),
+            "Response band ", smdl::Quoted(band.name),
             " falls between the wavelengths of the grid, so no sample "
             "can see it; use -wavelength-jitter, or a finer grid"));
       band.fixedWeights.resize(numBands);
@@ -226,7 +226,7 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
     band.draw = LensWavelengthDraw(band.wavelengths, band.values, gridLo,
                                    gridHi, illuminant);
     if (band.draw.isEmpty())
-      SMDL_LOG_WARN("response band ", smdl::Quoted(band.name),
+      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name),
                     " sees none of the white balance's illuminant inside the "
                     "wavelength grid, so its pixels trace a lens whose "
                     "glasses disperse at the d line");

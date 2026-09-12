@@ -221,16 +221,16 @@ LensApproximation approximateLens(const Lens &lens,
 
 Camera::Camera(const CameraOptions &options) {
   if (options.blades != 0 && options.blades < 3)
-    throw smdl::Error("expected 'blades' to be 0 (a round lens) or at "
+    throw smdl::Error("Expected 'blades' to be 0 (a round lens) or at "
                       "least 3");
   if (!(options.vignetting >= 0 && options.vignetting <= 1))
-    throw smdl::Error("expected 'vignetting' to be between 0 (off) "
+    throw smdl::Error("Expected 'vignetting' to be between 0 (off) "
                       "and 1 (the physical cos^4 law)");
   if (!(options.catEye >= 0 && options.catEye <= 1))
-    throw smdl::Error("expected 'cat_eye' to be between 0 (off) and 1 "
+    throw smdl::Error("Expected 'cat_eye' to be between 0 (off) and 1 "
                       "(fully dark corners)");
   if (!(options.frameSize.x > 0 && options.frameSize.y > 0))
-    throw smdl::Error("expected the frame to have a size");
+    throw smdl::Error("Expected the frame to have a size");
   // The radial distortion map must stay monotone over the frame or the
   // image folds over itself; the radius is corner-normalized, so this is
   // aspect independent.
@@ -238,7 +238,7 @@ Camera::Camera(const CameraOptions &options) {
           distortionFoldAt(options.distortionK1, options.distortionK2)};
       t >= 0)
     throw smdl::Error(smdl::concat(
-        "the distortion folds the image at ", t,
+        "The distortion folds the image at ", t,
         " of the corner radius, where the radial map stops increasing. "
         "Reduce 'distortion_k1', which must exceed -1/3 on its own, or "
         "'distortion_k2'"));
@@ -355,7 +355,7 @@ void Camera::buildLens(const CameraOptions &options) {
   // approximate with its cat's eye.
   const float onAxis{mLens->transmittedArea(0.0f)};
   if (!(onAxis > 0))
-    throw smdl::Error("no ray from the middle of the frame reaches the "
+    throw smdl::Error("No ray from the middle of the frame reaches the "
                       "scene through this lens: check that the surfaces are "
                       "in front-to-film order and that the clear apertures "
                       "are diameters");
@@ -420,13 +420,13 @@ void Camera::buildThinLens(const CameraOptions &options) {
     // focus. The `cos^4` of each sample's own segment lands in
     // `sample()`.
     if (!(mLensRadius > 0))
-      throw smdl::Error("a physical sensor integrates the irradiance over a "
+      throw smdl::Error("A physical sensor integrates the irradiance over a "
                         "pupil, and a pinhole has none: state 'fstop' or "
                         "'aperture'");
     const float focalLength{mFocalLength * mFrameHeight};
     if (!(mFocusDistance > focalLength))
       throw smdl::Error(smdl::concat(
-          "the thin lens cannot focus at ", mFocusDistance,
+          "The thin lens cannot focus at ", mFocusDistance,
           " scene units, inside its focal length of ", focalLength));
     mImageDistance = mIsFocusedAtInfinity ? focalLength
                                           : focalLength * mFocusDistance /

@@ -19,7 +19,7 @@ std::string resolveSiblingFile(const std::string &stated,
   if (path.is_relative() && !cameraFileName.empty())
     path = std::filesystem::path(cameraFileName).parent_path() / path;
   if (!std::filesystem::exists(path))
-    throw smdl::Error(smdl::concat("the camera file names the ", what, " ",
+    throw smdl::Error(smdl::concat("The camera file names the ", what, " ",
                                    smdl::QuotedPath(stated),
                                    ", which does not exist beside it"));
   return path.string();

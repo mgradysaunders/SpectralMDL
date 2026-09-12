@@ -138,7 +138,7 @@ struct BandFilm final {
   const bool hasHeader{smdl::exists(name + ".hdr")};
   if (!hasData || !hasHeader)
     throw smdl::Error(smdl::concat(
-        "cannot resume: the band film ", smdl::Quoted(name),
+        "Cannot resume: the band film ", smdl::Quoted(name),
         " beside the accumulation ",
         hasData || hasHeader ? "is half a pair" : "does not exist",
         "; the sequence was rendered without a response, or its last "
@@ -148,22 +148,22 @@ struct BandFilm final {
   if (result.film.getNumPixelsX() != size_t(resolution.x) ||
       result.film.getNumPixelsY() != size_t(resolution.y))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the band film is ", result.film.getNumPixelsX(), "x",
+        "Cannot resume: the band film is ", result.film.getNumPixelsX(), "x",
         result.film.getNumPixelsY(), " against -resolution ", resolution.x, ",",
         resolution.y));
   if (result.info.samplesPerPixel != samplesPerPixel)
     throw smdl::Error(smdl::concat(
-        "cannot resume: the band film holds ", result.info.samplesPerPixel,
+        "Cannot resume: the band film holds ", result.info.samplesPerPixel,
         " samples per pixel against the accumulation's ", samplesPerPixel,
         "; the last session was interrupted between the files, or rendered "
         "without the response"));
   if (!smdl::isAllTrue(result.info.cropWindow == window))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the band film was rendered with -crop-window ",
+        "Cannot resume: the band film was rendered with -crop-window ",
         spellVector(result.info.cropWindow), " against this session's ",
         spellVector(window)));
   if (result.info.bandNames != names)
-    throw smdl::Error(smdl::concat("cannot resume: the band film's bands are ",
+    throw smdl::Error(smdl::concat("Cannot resume: the band film's bands are ",
                                    spellNames(result.info.bandNames),
                                    " against this response's ",
                                    spellNames(names)));
@@ -193,7 +193,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
     const bool hasHeader{smdl::exists(resumeName + ".hdr")};
     if (hasData != hasHeader)
       throw smdl::Error(smdl::concat(
-          "cannot resume: ",
+          "Cannot resume: ",
           smdl::Quoted(hasData ? resumeName : resumeName + ".hdr"),
           " exists but ",
           smdl::Quoted(hasData ? resumeName + ".hdr" : resumeName),
@@ -204,7 +204,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
       // no 'render spp' field and could not itself be resumed.
       if (opts.render.sampling.spp == 0)
         throw smdl::Error(smdl::concat(
-            "cannot resume with '-spp 0': ", smdl::Quoted(resumeName),
+            "Cannot resume with '-spp 0': ", smdl::Quoted(resumeName),
             " does not exist, so there is no output stage to re-run"));
       SMDL_LOG_INFO(
           "Starting a new render sequence: ", smdl::Quoted(resumeName),
@@ -220,11 +220,11 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   if (film.getNumPixelsX() != size_t(resolution.x) ||
       film.getNumPixelsY() != size_t(resolution.y))
     throw smdl::Error(
-        smdl::concat("cannot resume: the file is ", film.getNumPixelsX(), "x",
+        smdl::concat("Cannot resume: the file is ", film.getNumPixelsX(), "x",
                      film.getNumPixelsY(), " against -resolution ",
                      resolution.x, ",", resolution.y));
   if (info.samplesPerPixel == 0)
-    throw smdl::Error("cannot resume: the header has no 'render spp' count "
+    throw smdl::Error("Cannot resume: the header has no 'render spp' count "
                       "(the file was not written by -output-spectrum)");
   // The window is what the recorded count applies to, so a session
   // that moved it would accumulate over a different set of pixels and
@@ -233,7 +233,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   // frame, and so does this session's.
   if (!smdl::isAllTrue(info.cropWindow == window))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the file was rendered with -crop-window ",
+        "Cannot resume: the file was rendered with -crop-window ",
         spellVector(info.cropWindow), " against this session's ",
         spellVector(window),
         "; the window must be held constant across a resumed sequence, "
@@ -251,26 +251,26 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
                                                          : header.quantity};
   if (fileQuantity != filmQuantityName(frame.model.filmQuantity()))
     throw smdl::Error(smdl::concat(
-        "cannot resume: the file holds ", fileQuantity,
+        "Cannot resume: the file holds ", fileQuantity,
         " and this camera's film holds ",
         filmQuantityName(frame.model.filmQuantity()),
         " (a physical sensor's film and the observer's are different "
         "quantities); render with the same sensor, or start a fresh "
         "-output-spectrum"));
   if (header.sampler != SAMPLER_VERSION)
-    SMDL_LOG_WARN("resuming a file from a different sampler: the continuation "
+    SMDL_LOG_WARN("Resuming a file from a different sampler: the continuation "
                   "samples are independent of the first session's rather than "
                   "jointly stratified (still unbiased, noise just improves "
                   "more slowly)");
   if (header.hasWavelengthJitter != frame.shouldJitterWavelength)
     SMDL_LOG_WARN(
-        "resuming across a -wavelength-jitter change: a jittered band "
+        "Resuming across a -wavelength-jitter change: a jittered band "
         "holds the mean radiance over the band and an unjittered one holds "
         "the radiance at one wavelength, so the merged image mixes two "
         "different quantities");
   if (!header.args.empty() &&
       stripSessionOnlyArgs(header.args) != stripSessionOnlyArgs(opts.argsEcho))
-    SMDL_LOG_WARN("resuming with different flags: the file records ",
+    SMDL_LOG_WARN("Resuming with different flags: the file records ",
                   smdl::Quoted(header.args),
                   "; if the scene or camera changed, the merged image "
                   "mixes two different renders");
@@ -283,7 +283,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   const std::string bandName{bandFilmFileName(opts.image.resume)};
   if (!response) {
     if (smdl::exists(bandName) || smdl::exists(bandName + ".hdr"))
-      SMDL_LOG_WARN("the band film ", smdl::Quoted(bandName),
+      SMDL_LOG_WARN("The band film ", smdl::Quoted(bandName),
                     " beside the accumulation is not continued: this "
                     "session has no response, so it falls behind");
     return result;
@@ -294,7 +294,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   result.responseHeader.readFrom(bands.info.fields);
   if (result.responseHeader.hash != responseHash(*response))
     throw smdl::Error(
-        "cannot resume: the response's curves differ from the ones the band "
+        "Cannot resume: the response's curves differ from the ones the band "
         "film was rendered with; start a fresh -output-spectrum, or render "
         "without the response");
   result.bandFilm = std::move(bands.film);

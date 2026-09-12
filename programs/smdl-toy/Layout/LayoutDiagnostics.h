@@ -140,6 +140,12 @@ public:
   const LayoutSource &addSource(std::string fileName, std::string text);
 
   /// Report an error. Returns the diagnostic so notes can chain.
+  ///
+  /// A message here follows `error:` on the same line, so it is worded
+  /// as a lowercase clause and may lead with the directive it is about
+  /// (`'sensor' names a body`), unlike a logged message, which is a
+  /// capitalized sentence. An `smdl::Error` crossing into this channel
+  /// is reworded by `smdl::decapitalized()`.
   LayoutDiagnostic &error(LayoutLocation location, std::string message);
 
   /// Report a warning. Returns the diagnostic so notes can chain.

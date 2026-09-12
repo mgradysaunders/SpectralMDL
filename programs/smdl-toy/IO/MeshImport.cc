@@ -57,7 +57,7 @@ const aiScene *readLossless(Assimp::Importer &importer,
   importer.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
   const aiScene *assScene{importer.ReadFile(fileName.c_str(), 0)};
   if (!assScene)
-    throw smdl::Error(smdl::concat("assimp failed to read ",
+    throw smdl::Error(smdl::concat("Assimp failed to read ",
                                    smdl::QuotedPath(fileName), ": ",
                                    importer.GetErrorString()));
   return assScene;
@@ -221,7 +221,7 @@ const aiScene *readForListing(Assimp::Importer &assImporter,
   const aiScene *assScene{
       assImporter.ReadFile(fileName.c_str(), MATERIAL_POSTPROCESS_FLAGS)};
   if (!assScene)
-    throw smdl::Error(smdl::concat("assimp failed to read ",
+    throw smdl::Error(smdl::concat("Assimp failed to read ",
                                    smdl::QuotedPath(fileName), ": ",
                                    assImporter.GetErrorString()));
   flattenNodes(*assScene->mRootNode, float4x4(1.0f), INVALID_INDEX, {}, 0,

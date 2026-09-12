@@ -678,7 +678,7 @@ std::string resolveSensorFileName(const std::string &stated,
   // meaning went.
   if (std::filesystem::path(stated).extension() == RESPONSE_EXTENSION)
     throw smdl::Error(smdl::concat(
-        "the camera file's 'sensor' ", smdl::QuotedPath(stated),
+        "The camera file's 'sensor' ", smdl::QuotedPath(stated),
         " names a '.response' file, a format that no longer exists: the "
         "response is now the 'response' block of a '.sensor' file, which "
         "holds the body's 'pixels' and 'pitch' beside it (see "

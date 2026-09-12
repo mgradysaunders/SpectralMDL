@@ -217,7 +217,7 @@ cl::opt<std::string> optVolumeOutput{
   if (subFormat) return Subcommand::FORMAT;
   if (subDoc) return Subcommand::DOC;
   if (subVolume) return Subcommand::VOLUME;
-  throw smdl::Error("expected a subcommand");
+  throw smdl::Error("Expected a subcommand");
 }
 
 // The wavelength grid the material code compiles for. An explicit
@@ -264,14 +264,14 @@ Options parseCommandLine(int argc, char **argv) {
   // `doc` is the exception: '--builtins' and the queries above give it
   // something to document without any input at all.
   if (opts.inputs.empty() && opts.subcommand != Subcommand::DOC)
-    throw smdl::Error("expected at least one input");
+    throw smdl::Error("Expected at least one input");
   if (optWavelengths.getNumOccurrences() > 0 &&
       optWavelengthRange.getNumOccurrences() > 0)
-    throw smdl::Error("expected at most one of -wavelengths and "
+    throw smdl::Error("Expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
   if (!optVolumeGrids.empty() && optVolumeGrids.size() != opts.inputs.size())
-    throw smdl::Error("expected one -grid per input, or none at all");
+    throw smdl::Error("Expected one -grid per input, or none at all");
 
   // Parsed here so a typo fails before anything loads.
   const WavelengthRange range{

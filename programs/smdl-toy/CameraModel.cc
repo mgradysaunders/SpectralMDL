@@ -1078,7 +1078,7 @@ Camera buildCamera(CameraModel &model) {
     } else {
       const double s{focusDistanceOf(options)};
       if (!(s > f))
-        throw smdl::Error(smdl::concat("the thin lens cannot focus at ", s,
+        throw smdl::Error(smdl::concat("The thin lens cannot focus at ", s,
                                        " scene units, inside its focal "
                                        "length of ",
                                        f));

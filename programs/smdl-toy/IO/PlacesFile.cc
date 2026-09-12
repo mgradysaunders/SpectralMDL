@@ -35,7 +35,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
   std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("cannot open places buffer ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot open places buffer ", smdl::QuotedPath(fileName)));
   PlacesHeader header{};
   getRecord(stream, header);
   if (!stream || !hasMagic(header.magic, PLACES_MAGIC))
@@ -44,11 +44,11 @@ PlacesFile readPlacesFile(const std::string &fileName) {
         " is not a '.places' buffer (bad magic; expected it to begin "
         "with \"SMDLPLCS\")"));
   if (header.version != 1)
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
+    throw smdl::Error(smdl::concat("Cannot read ", smdl::QuotedPath(fileName),
                                    ": version ", header.version,
                                    " (this build reads version 1)"));
   if (header.reserved != 0)
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
+    throw smdl::Error(smdl::concat("Cannot read ", smdl::QuotedPath(fileName),
                                    ": the reserved time-sample field is ",
                                    header.reserved,
                                    " (must be 0 in version 1)"));
@@ -68,7 +68,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
   if (header.flags & FLAG_VARIANTS)
     getArray(stream, places.variants, header.count);
   if (!stream)
-    throw smdl::Error(smdl::concat("cannot read ", smdl::QuotedPath(fileName),
+    throw smdl::Error(smdl::concat("Cannot read ", smdl::QuotedPath(fileName),
                                    ": truncated (the header "
                                    "promises ",
                                    smdl::Counted(header.count, "record"), ")"));
@@ -80,14 +80,14 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
   if (!places.variants.empty() &&
       places.variants.size() != places.transforms.size())
     throw smdl::Error(
-        "the variant column must be empty or one entry per record");
+        "The variant column must be empty or one entry per record");
   // The column earns its bytes only if some record uses it.
   bool anyVariant{false};
   for (const auto variant : places.variants)
     if (variant != PlacesFile::NO_VARIANT) anyVariant = true;
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
-    throw smdl::Error(smdl::concat("cannot write places buffer ",
+    throw smdl::Error(smdl::concat("Cannot write places buffer ",
                                    smdl::QuotedPath(fileName)));
   PlacesHeader header{};
   setMagic(header.magic, PLACES_MAGIC);
@@ -104,6 +104,6 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
   }
   if (anyVariant) putArray(stream, places.variants);
   if (!stream)
-    throw smdl::Error(smdl::concat("cannot write places buffer ",
+    throw smdl::Error(smdl::concat("Cannot write places buffer ",
                                    smdl::QuotedPath(fileName)));
 }

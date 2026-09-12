@@ -152,7 +152,7 @@ void MeshInstance::setObjectToWorld(const float4x4 &xf,
     SMDL_LOG_WARN("Instance transform in ", smdl::QuotedPath(fileName),
                   " is degenerate: it collapses the object onto a plane or a "
                   "line, which has no volume to intersect and no surface "
-                  "normal to shade.");
+                  "normal to shade");
 }
 
 const InstanceFrame &MeshInstance::frameAtMoving(
@@ -239,10 +239,10 @@ void Scene::addMesh(const std::string &fileName,
   if (const std::string animationKey{animation.key()}; !animationKey.empty())
     key += "|anim " + animationKey;
   if (subdiv.levels >= 5)
-    SMDL_LOG_WARN("'subdivide ", subdiv.levels, "' in ",
+    SMDL_LOG_WARN("A 'subdivide ", subdiv.levels, "' in ",
                   smdl::QuotedPath(fileName), " multiplies the face count by ",
                   (uint64_t(1) << (2 * subdiv.levels)),
-                  "; expect memory and build time to match.");
+                  "; expect memory and build time to match");
   auto entry{importCache.find(key)};
   if (entry == importCache.end()) {
     Assimp::Importer assImporter{};
@@ -265,7 +265,7 @@ void Scene::addMesh(const std::string &fileName,
     const aiScene *assScene{
         assImporter.ReadFile(fileName.c_str(), flags & ~DEFERRED_FLAGS)};
     if (!assScene)
-      throw smdl::Error(smdl::concat("assimp failed to read ",
+      throw smdl::Error(smdl::concat("Assimp failed to read ",
                                      smdl::QuotedPath(fileName), ": ",
                                      assImporter.GetErrorString()));
     const aiAnimation *clip{resolveClip(*assScene, animation, fileName)};
@@ -275,7 +275,7 @@ void Scene::addMesh(const std::string &fileName,
     if (!anyDeforms) {
       assScene = assImporter.ApplyPostProcessing(flags & DEFERRED_FLAGS);
       if (!assScene)
-        throw smdl::Error(smdl::concat("assimp failed to post-process ",
+        throw smdl::Error(smdl::concat("Assimp failed to post-process ",
                                        smdl::QuotedPath(fileName), ": ",
                                        assImporter.GetErrorString()));
     }
@@ -356,7 +356,7 @@ void Scene::addMesh(const std::string &fileName,
                   smdl::Counted(numSkippedOnRoot, "mesh", "meshes"),
                   numSkippedOnRoot == 1 ? " that sits" : " that sit",
                   " directly on the file's root node, which has no name to "
-                  "select it by.");
+                  "select it by");
   if (!selection.patterns.empty())
     SMDL_LOG_DEBUG("Selected ", smdl::Counted(numInstances, "instance"),
                    " from ", smdl::QuotedPath(fileName));
@@ -572,7 +572,7 @@ namespace {
   if ((det(xf) < 0.0f) != (det(xfShut) < 0.0f)) {
     SMDL_LOG_WARN("Instance motion in ", smdl::QuotedPath(fileName),
                   " turns the object inside out over the shutter, which no "
-                  "interpolation can render; it holds its open key.");
+                  "interpolation can render; it holds its open key");
     return false;
   }
   return true;
@@ -885,7 +885,7 @@ void Scene::resolveMaterials(const std::vector<bool> &isUsed) {
     fallback = compiler.findMaterial(fallbackMaterialName);
     if (!fallback)
       throw smdl::Error(
-          smdl::concat("cannot resolve the fallback material: ",
+          smdl::concat("Cannot resolve the fallback material: ",
                        compiler.explainMaterialLookup(fallbackMaterialName)));
   }
   std::vector<std::string> unresolved{};
@@ -1173,9 +1173,9 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   for (auto i : pending) wasDisplaceRequested |= meshes[i]->subdiv.isDisplaced;
   if (wasDisplaceRequested && numDisplaced.load() == 0)
     SMDL_LOG_WARN(
-        "'displace' was requested but every material involved has provably "
+        "Displacement was requested but every material involved has provably "
         "zero 'geometry.displacement'; check that the scene resolves to the "
-        "materials you meant (run with -list-materials).");
+        "materials you meant (run with -list-materials)");
 }
 
 bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths,

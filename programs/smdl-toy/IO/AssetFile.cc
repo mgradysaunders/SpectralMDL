@@ -164,7 +164,7 @@ std::string findAssetManifest(const std::string &directory) {
   std::error_code errorCode{};
   const std::filesystem::directory_iterator dirItr{directory, errorCode};
   if (errorCode)
-    throw smdl::Error(smdl::concat("cannot read directory ",
+    throw smdl::Error(smdl::concat("Cannot read directory ",
                                    smdl::QuotedPath(directory), ": ",
                                    errorCode.message()));
   std::vector<std::string> candidates{};

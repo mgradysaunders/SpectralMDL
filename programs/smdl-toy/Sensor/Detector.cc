@@ -52,7 +52,7 @@ DetectorNoise parseDetectorNoise(const std::string &name) {
   if (name == "none") return DetectorNoise::NONE;
   if (name == "shot") return DetectorNoise::SHOT;
   if (name == "all") return DetectorNoise::ALL;
-  throw smdl::Error(smdl::concat("expected -detector-noise to be 'none', "
+  throw smdl::Error(smdl::concat("Expected -detector-noise to be 'none', "
                                  "'shot', or 'all', got ",
                                  smdl::Quoted(name)));
 }
@@ -117,7 +117,7 @@ void Detector::logSummary() const {
                   "the pixel does, as it does above the base ISO of ",
                   smdl::Brief(mBaseISO, 6));
   else if (topCodeElectrons > 1.001 * mFullWell)
-    SMDL_LOG_WARN("the well clips at ", mWhiteLevel,
+    SMDL_LOG_WARN("The well clips at ", mWhiteLevel,
                   " DN, below the top code of ", mTopCode, ", as it does ",
                   mHasFixedGain ? "under the stated gain"
                                 : "below the base ISO");

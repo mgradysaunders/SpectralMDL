@@ -69,7 +69,7 @@ int main(int argc, char **argv) try {
   // The positional scene argument is required for everything that
   // remains; see the note on its declaration.
   if (opts.scene.inputSceneFile.empty())
-    throw smdl::Error("expected an <input scene> argument");
+    throw smdl::Error("Expected an <input scene> argument");
   // The profiler covers everything from here to just before the render
   // loop: layout parsing, MDL compilation, scene import, and the
   // acceleration structures. The library's own entries (module parse, IR

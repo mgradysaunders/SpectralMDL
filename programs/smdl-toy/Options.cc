@@ -571,7 +571,7 @@ Options parseCommandLine(int argc, char **argv) {
       const float value{std::strtof(text.c_str(), &end)};
       if (text.empty() || *end != '\0' || !std::isfinite(value) || !(value > 0))
         throw smdl::Error(smdl::concat(
-            "expected -iso to be a positive number or 'auto', got ",
+            "Expected -iso to be a positive number or 'auto', got ",
             smdl::Quoted(text)));
       iso = Flag<float>{value, true};
     }
@@ -582,48 +582,48 @@ Options parseCommandLine(int argc, char **argv) {
     const std::optional<WhiteBalance> parsed{parseWhiteBalance(text)};
     if (!parsed)
       throw smdl::Error(smdl::concat(
-          "expected -white-balance to be D65, daylight, cloudy, shade, "
+          "Expected -white-balance to be D65, daylight, cloudy, shade, "
           "tungsten, fluorescent, auto, or a color temperature from ",
           int(WHITE_BALANCE_KELVIN_MIN), " to ", int(WHITE_BALANCE_KELVIN_MAX),
           " K, got ", smdl::Quoted(text)));
     whiteBalance = Flag<WhiteBalance>{*parsed, true};
   }
   if (!(float(optResolutionScale) > 0 && float(optResolutionScale) <= 1))
-    throw smdl::Error("expected -resolution-scale to be greater than 0 and at "
+    throw smdl::Error("Expected -resolution-scale to be greater than 0 and at "
                       "most 1");
   if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
                       optLookTo.getNumOccurrences() > 0))
-    throw smdl::Error("expected at most one of -autolook and "
+    throw smdl::Error("Expected at most one of -autolook and "
                       "-look-from/-look-to (autolook solves the camera "
                       "position)");
   if (!(float(optAutolookZenith) >= 1 && float(optAutolookZenith) <= 179))
-    throw smdl::Error("expected -autolook-zenith between 1 and 179");
+    throw smdl::Error("Expected -autolook-zenith between 1 and 179");
   if (!(float(optAutolookMargin) >= 0 && float(optAutolookMargin) <= 0.5f))
-    throw smdl::Error("expected -autolook-margin between 0 and 0.5");
+    throw smdl::Error("Expected -autolook-margin between 0 and 0.5");
   if (optWavelengths.getNumOccurrences() > 0 &&
       optWavelengthRange.getNumOccurrences() > 0)
-    throw smdl::Error("expected at most one of -wavelengths and "
+    throw smdl::Error("Expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
   // The shared parser admits a single band; a render wants a band width
   // to jitter and to integrate over, so it does not.
   if (parseWavelengthRange(std::string(optWavelengthRange)).bandCount < 2)
-    throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
+    throw smdl::Error("Expected -wavelength-range ':N' to be at least 2");
   if (optRGBWavelengths.getNumOccurrences() > 0) {
     const float3 waves{float3(optRGBWavelengths)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
-      throw smdl::Error("expected -rgb-wavelengths to be three positive "
+      throw smdl::Error("Expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
   }
   if (!(float(optMedianFilterFactor) > 1))
-    throw smdl::Error("expected -median-filter-factor to be greater than 1");
+    throw smdl::Error("Expected -median-filter-factor to be greater than 1");
   if (!(int(optMedianFilterRadius) >= 1 &&
         int(optMedianFilterRadius) <= MEDIAN_FILTER_MAX_RADIUS))
-    throw smdl::Error(smdl::concat("expected -median-filter-radius between 1 "
+    throw smdl::Error(smdl::concat("Expected -median-filter-radius between 1 "
                                    "and ",
                                    MEDIAN_FILTER_MAX_RADIUS));
   if (!std::isfinite(float(optTime)))
-    throw smdl::Error("expected -time to be finite");
+    throw smdl::Error("Expected -time to be finite");
 
   Options opts{};
 

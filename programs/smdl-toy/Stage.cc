@@ -148,7 +148,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   if (shouldAdoptResumedGrid) {
     if (resumed.info.wavelengths.empty())
       throw smdl::Error(
-          "cannot resume: the file carries no wavelengths to adopt, give "
+          "Cannot resume: the file carries no wavelengths to adopt, give "
           "the grid explicitly with -wavelength-range or -wavelengths");
     gridSpec = resumed.info.wavelengths;
   }
@@ -191,13 +191,13 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   if (resumed.wasLoaded) {
     if (resumed.film.getNumBands() != wavelengths.size())
       throw smdl::Error(smdl::concat(
-          "cannot resume: the file has ", resumed.film.getNumBands(),
+          "Cannot resume: the file has ", resumed.film.getNumBands(),
           " bands against the renderer's ", wavelengths.size()));
     for (size_t i = 0; i < wavelengths.size(); i++)
       if (i >= resumed.info.wavelengths.size() ||
           !(std::abs(resumed.info.wavelengths[i] - wavelengths[i]) < 0.5f))
         throw smdl::Error(
-            "cannot resume: the wavelength grid does not match the "
+            "Cannot resume: the wavelength grid does not match the "
             "renderer's");
   }
   if (opts.render.grid.wasGiven || shouldAdoptResumedGrid)
@@ -218,7 +218,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                              wavelengths[wavelengths.size() - 1] > 781.0f};
   if (isBeyondVisible)
     SMDL_LOG_WARN(
-        "the wavelength grid leaves the visible (380-780nm): RGB colors, "
+        "The wavelength grid leaves the visible (380-780nm): RGB colors, "
         "textures, and images extend flat from their 380 and 780nm values "
         "(a convention, not data), metal IOR tables clamp to their measured "
         "ranges, and the RGB outputs project through CIE color matching, so "
@@ -307,7 +307,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
     guideBound = scene->preCommitBounds();
     hasValidGuideBounds = true;
     if (guideBound.isEmpty())
-      throw smdl::Error("cannot -ground: the scene has no geometry to "
+      throw smdl::Error("Cannot -ground: the scene has no geometry to "
                         "put a plane under");
     const float z{opts.scene.groundZ.wasGiven ? opts.scene.groundZ.value
                                               : guideBound.lower.z};
@@ -475,12 +475,12 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
         compiler.findMaterial(layout.exteriorMediumName)};
     if (!materialDef)
       throw smdl::Error(smdl::concat(
-          "cannot resolve the material of the 'medium' directive: ",
+          "Cannot resolve the material of the 'medium' directive: ",
           compiler.explainMaterialLookup(layout.exteriorMediumName),
           opts.scene.inputMDLFiles.empty() ? " (no MDL modules were given)"
                                            : ""));
     if (!materialDef->hasVolume())
-      throw smdl::Error(smdl::concat("'medium' directive material ",
+      throw smdl::Error(smdl::concat("The 'medium' directive material ",
                                      smdl::Quoted(layout.exteriorMediumName),
                                      " has no 'volume'"));
     exteriorMediumDef = materialDef;
@@ -498,7 +498,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   if (pick(opts.light.haze.none, fileHaze.none)) isHazeEnabled = false;
   if (isHazeEnabled) {
     if (exteriorMediumDef)
-      throw smdl::Error("the exterior haze and the 'medium' directive both "
+      throw smdl::Error("The exterior haze and the 'medium' directive both "
                         "describe the medium outside all geometry; keep one");
     smdl::HazeOptions options{};
     // An unwritten visibility follows the sky's, so that distant

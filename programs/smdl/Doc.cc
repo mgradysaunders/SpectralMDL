@@ -208,7 +208,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
     error->printAndExit();
   loadBuiltinDocModules(opts, docs);
   if (docs.modules.empty())
-    throw smdl::Error("nothing to document: pass input files, '::'-prefixed "
+    throw smdl::Error("Nothing to document: pass input files, '::'-prefixed "
                       "queries, or '-builtins'");
   // Open the destination up front: the text printer colors as it goes,
   // which a `std::string` cannot carry.
@@ -217,7 +217,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   if (opts.output.fileName.wasGiven) {
     outputFile.emplace(opts.output.fileName.value, errorCode);
     if (errorCode)
-      throw smdl::Error(smdl::concat("cannot open ",
+      throw smdl::Error(smdl::concat("Cannot open ",
                                      smdl::Quoted(opts.output.fileName.value),
                                      ": ", errorCode.message()));
   }
@@ -253,7 +253,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
       std::vector<const smdl::DocEntry *> found{docs.findSymbol(query)};
       if (found.empty())
         throw smdl::Error(
-            smdl::concat("no documentation found for ", smdl::Quoted(query)));
+            smdl::concat("No documentation found for ", smdl::Quoted(query)));
       for (const auto *entry : found) printer.printEntry(*entry);
     }
   }

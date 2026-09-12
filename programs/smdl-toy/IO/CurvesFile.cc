@@ -45,7 +45,7 @@ constexpr uint16_t FLAG_ROOT_UVS = 1;
 void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
                          std::string_view verb) {
   auto fail{[&](auto &&...args) {
-    throw smdl::Error(smdl::concat("cannot ", verb, " curves ",
+    throw smdl::Error(smdl::concat("Cannot ", verb, " curves ",
                                    smdl::QuotedPath(fileName), ": ", args...));
   }};
   if (curves.basis != CurvesFile::Basis::LINEAR &&
@@ -79,7 +79,7 @@ CurvesFile readCurvesFile(const std::string &fileName) {
   std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("cannot open curves ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot open curves ", smdl::QuotedPath(fileName)));
   CurvesHeader header{};
   getRecord(stream, header);
   if (!stream || !hasMagic(header.magic, CURVES_MAGIC))
@@ -89,10 +89,10 @@ CurvesFile readCurvesFile(const std::string &fileName) {
         "with \"SMDLCRVS\")"));
   if (header.version != 1)
     throw smdl::Error(smdl::concat(
-        "cannot read curves ", smdl::QuotedPath(fileName), ": version ",
+        "Cannot read curves ", smdl::QuotedPath(fileName), ": version ",
         header.version, " (this build reads version 1)"));
   if (header.reserved0 != 0 || header.reserved1 != 0)
-    throw smdl::Error(smdl::concat("cannot read curves ",
+    throw smdl::Error(smdl::concat("Cannot read curves ",
                                    smdl::QuotedPath(fileName),
                                    ": a reserved field is non-zero (must be 0 "
                                    "in version 1)"));
@@ -105,7 +105,7 @@ CurvesFile readCurvesFile(const std::string &fileName) {
     getArray(stream, curves.rootUVs, header.strandCount);
   if (!stream)
     throw smdl::Error(
-        smdl::concat("cannot read curves ", smdl::QuotedPath(fileName),
+        smdl::concat("Cannot read curves ", smdl::QuotedPath(fileName),
                      ": truncated (the header promises ",
                      smdl::Counted(header.strandCount, "strand"), " and ",
                      smdl::Counted(header.pointCount, "point"), ")"));
@@ -119,7 +119,7 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("cannot write curves ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName)));
   CurvesHeader header{};
   setMagic(header.magic, CURVES_MAGIC);
   header.version = 1;
@@ -133,7 +133,7 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   if (curves.hasRootUVs()) putArray(stream, curves.rootUVs);
   if (!stream)
     throw smdl::Error(
-        smdl::concat("cannot write curves ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName)));
 }
 
 CurveAxis evalCurveAxis(CurvesFile::Basis basis, const float4 *window,

@@ -112,7 +112,7 @@ TEST_CASE("Lens: focus places the film and nothing else") {
           doctest::Approx(frontFocalFrom(far, 5.0f)).epsilon(1e-3));
   }
   SUBCASE("A focus distance inside the front focal point is an error") {
-    CHECK_ERROR(buildLens(dgauss50mm(), {0.01f, 0}), "cannot focus at");
+    CHECK_ERROR(buildLens(dgauss50mm(), {0.01f, 0}), "Cannot focus at");
   }
   SUBCASE("A focus distance of zero is focus at infinity, not an error") {
     const Lens lens{dgauss50mm(), {0, 0}};
@@ -180,7 +180,7 @@ TEST_CASE("Lens: the f-number is a statement about the entrance pupil") {
   }
   SUBCASE("Asking for more light than the stop passes is an error") {
     CHECK_ERROR(buildLens(dgauss50mm(), {AT_INFINITY, 1.4f}),
-                "cannot open the lens");
+                "Cannot open the lens");
   }
 }
 
@@ -553,7 +553,7 @@ TEST_CASE("Lens: prescriptions that cannot be a camera lens") {
     lens.surfaces.push_back(stopOf(2, 20));
     lens.surfaces.push_back(surfaceOf(50, 0, 1.5f, 20));
     CHECK_ERROR(buildLens(lens, {AT_INFINITY, 0}),
-                "expected air behind the last surface");
+                "Expected air behind the last surface");
   }
   SUBCASE("One that leaves the film in a named medium is refused by name") {
     // The stop stands in the space before it, so the medium carries

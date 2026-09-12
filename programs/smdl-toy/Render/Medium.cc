@@ -305,7 +305,7 @@ void warnMissingMajorantOnce(const smdl::JIT::MaterialDef *materialDef) {
   const std::scoped_lock lock{mutex};
   if (warned.insert(materialDef).second)
     SMDL_LOG_WARN(
-        "material ", smdl::Quoted(materialDef->materialName),
+        "Material ", smdl::Quoted(materialDef->materialName),
         " has a heterogeneous volume but no majorant for every "
         "coefficient it uses (see "
         "'material_volume.max_absorption_coefficient' and "
@@ -323,7 +323,7 @@ void warnDeformedVolumeOnce(const smdl::JIT::MaterialDef *materialDef) {
   static std::unordered_set<const smdl::JIT::MaterialDef *> warned{};
   const std::scoped_lock lock{mutex};
   if (warned.insert(materialDef).second)
-    SMDL_LOG_WARN("material ", smdl::Quoted(materialDef->materialName),
+    SMDL_LOG_WARN("Material ", smdl::Quoted(materialDef->materialName),
                   " has a spatially varying volume inside an instance that "
                   "shears or scales non-uniformly; the surface is deformed "
                   "but the volume it encloses is not");

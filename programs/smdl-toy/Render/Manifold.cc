@@ -196,7 +196,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
         reason = ") claims nothing under '-mnee-max-roughness': every "
                  "claimable lobe is wider, so the mark is ignored and the "
                  "transport stays with ordinary sampling";
-      SMDL_LOG_WARN("'caster' on ",
+      SMDL_LOG_WARN("The 'caster' on ",
                     smdl::QuotedPath(scene.fileNames[instIndex]), " (material ",
                     smdl::Quoted(scene.materialNames[matIndex]), reason);
       continue;

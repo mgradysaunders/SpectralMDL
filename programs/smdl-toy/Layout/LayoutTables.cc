@@ -384,7 +384,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
       std::filesystem::path(layoutFileName).parent_path().string())};
   if (!diags.empty()) diags.printAll();
   if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("cannot pack ",
+    throw smdl::Error(smdl::concat("Cannot pack ",
                                    smdl::QuotedPath(layoutFileName), ": ",
                                    diags.summary()));
   PlacesFile places{};
@@ -399,13 +399,13 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     if (placement.kind != LayoutPlacement::Kind::PLACE ||
         !placement.placesPath.empty())
       throw smdl::Error(smdl::concat(
-          "cannot pack ", smdl::QuotedPath(layoutFileName),
+          "Cannot pack ", smdl::QuotedPath(layoutFileName),
           ": every top-level placement must be an ordinary 'place'"));
     if (assetName.empty()) {
       assetName = placement.assetName;
     } else if (assetName != placement.assetName) {
       throw smdl::Error(smdl::concat(
-          "cannot pack ", smdl::QuotedPath(layoutFileName), ": it places ",
+          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": it places ",
           smdl::Quoted(assetName), " and ", smdl::Quoted(placement.assetName),
           ", and a '.places' buffer scatters one asset or group"));
     }
@@ -415,7 +415,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     // and a scatter moves as a whole through the bulk place's own.
     const auto refuseMark{[&](const char *word) {
       throw smdl::Error(smdl::concat(
-          "cannot pack ", smdl::QuotedPath(layoutFileName), ": a '", word,
+          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": a '", word,
           "' override on a place has no record to live in; mark the asset "
           "instead"));
     }};
@@ -423,7 +423,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     if (placement.lightOverride) refuseMark("light");
     if (!placement.motion.empty())
       throw smdl::Error(smdl::concat(
-          "cannot pack ", smdl::QuotedPath(layoutFileName),
+          "Cannot pack ", smdl::QuotedPath(layoutFileName),
           ": a 'motion' track on a place has no record to live in; write it "
           "on the bulk place instead, where it moves the whole scatter"));
     places.transforms.push_back(placement.transform);
@@ -438,7 +438,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     places.variants.push_back(variantIndex);
   }
   if (places.transforms.empty())
-    throw smdl::Error(smdl::concat("cannot pack ",
+    throw smdl::Error(smdl::concat("Cannot pack ",
                                    smdl::QuotedPath(layoutFileName),
                                    ": it has no 'place' statements"));
   if (!anyVariant) places.variants.clear();

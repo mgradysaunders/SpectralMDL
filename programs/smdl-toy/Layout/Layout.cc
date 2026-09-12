@@ -216,7 +216,7 @@ public:
       source = &mDiags.loadSource(fileName);
     } catch (const smdl::Error &error) {
       if (!importSite) throw;
-      mDiags.error(importSite, error.message);
+      mDiags.error(importSite, smdl::decapitalized(error.message));
       return;
     }
     const LayoutDocument document{
@@ -428,7 +428,8 @@ private:
       try {
         places = readPlacesFile(resolved.string());
       } catch (const smdl::Error &error) {
-        mDiags.error(placement.placesPathLoc, error.message);
+        mDiags.error(placement.placesPathLoc,
+                     smdl::decapitalized(error.message));
         throw SkipPlacement();
       }
       if (!placement.variants.empty() && !places.hasVariants())
@@ -858,7 +859,7 @@ private:
         target.correction = asset.correction;
       }
     } catch (const smdl::Error &error) {
-      mDiags.error(location, error.message);
+      mDiags.error(location, smdl::decapitalized(error.message));
       throw SkipPlacement();
     }
     if (resolved.extension() == ".scene") {
@@ -954,7 +955,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
                              const MotionSampling &sampling) {
   std::filesystem::path path{fileName};
   if (path.extension() == ".scene")
-    throw smdl::Error(smdl::concat("the '.scene' format was retired; ",
+    throw smdl::Error(smdl::concat("The '.scene' format was retired; ",
                                    smdl::QuotedPath(fileName),
                                    " must be ported to '.layout'"));
   if (path.extension() == CAMERA_EXTENSION)
@@ -970,7 +971,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
   if (std::filesystem::is_directory(path)) {
     std::string manifest{findAssetManifest(path.string())};
     if (manifest.empty())
-      throw smdl::Error(smdl::concat("cannot render the directory ",
+      throw smdl::Error(smdl::concat("Cannot render the directory ",
                                      smdl::QuotedPath(path.string()),
                                      ": it holds no '.asset' manifest, so it "
                                      "is not an asset"));
