@@ -365,7 +365,7 @@ TEST_CASE("Camera: the frame's size and the f-number") {
   SUBCASE("On the default frame the thin lens's aperture is what it always "
           "was") {
     // The frame height the f-number is a fraction of is spelled as the
-    // same float the old constant was, so a render that names no body
+    // same float the old constant was, so a render that names no sensor
     // draws the same lens point bit for bit.
     CHECK(1e-3f * 24.0f == 0.024f);
     CameraOptions byFStop{openOptions()};

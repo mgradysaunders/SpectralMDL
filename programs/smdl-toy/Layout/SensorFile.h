@@ -1,5 +1,5 @@
 /// \file
-/// The sensor format: the body a picture lands on, as a fact shared by
+/// The sensor format: what a picture lands on, as a fact shared by
 /// every shot taken with it.
 ///
 /// A `.sensor` file is the fourth format of the layout family and is
@@ -9,11 +9,11 @@
 /// a `.sensor` says what it landed on: the pixel array and its pitch, the
 /// spectral response of each band and the tile that lays them over the
 /// pixels, the detector that turns electrons into digital numbers, and
-/// how long a readout sweeps the frame. One body then serves as many
+/// how long a readout sweeps the frame. One sensor then serves as many
 /// cameras as name it, and a lens swapped against it changes the field
 /// exactly as a real one does.
 ///
-/// The file is self-contained: no key in it takes a path, so a body is
+/// The file is self-contained: no key in it takes a path, so a sensor is
 /// one file and never two.
 #pragma once
 
@@ -242,10 +242,10 @@ public:
   }
 };
 
-/// The body a file's `sensor` directive describes.
+/// The sensor a file's `sensor` directive describes.
 class SensorSettings final {
 public:
-  /// `name`: the body's name, free text, or empty.
+  /// `name`: the sensor's name, free text, or empty.
   std::string name{};
 
   /// `pixels`: the columns and rows of the array, positive.
@@ -294,7 +294,7 @@ public:
   /// `LayoutDiagnostics` that loaded it.
   const LayoutSource *source{};
 
-  /// The body the file's `sensor` directive described.
+  /// The sensor the file's `sensor` directive described.
   SensorSettings sensor{};
   LayoutLocation sensorLoc{};
 };
@@ -313,7 +313,7 @@ public:
 ///
 /// The document's locations point into `diags`, which the caller owns so
 /// that they outlive the read: a caller that keeps the document rather
-/// than the body alone can point a refusal at the key the file stated.
+/// than the sensor alone can point a refusal at the key the file stated.
 ///
 /// \throws smdl::Error  If the file cannot be read, or on any parse
 ///                      error after printing the diagnostics.

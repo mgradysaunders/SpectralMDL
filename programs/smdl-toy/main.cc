@@ -82,9 +82,10 @@ int main(int argc, char **argv) try {
   const std::string &profileFileName{opts.utility.profile};
   if (isProfiling) smdl::profilerInitialize();
   Frame frame{resolveFrame(opts)};
-  // The body's response, which exists exactly when a body does.
+  // The sensor's response, which exists exactly when a sensor does.
   std::optional<ResponseSettings> responseSettings{};
-  if (frame.model.sensor) responseSettings = frame.model.sensor->response;
+  if (frame.model.hasPhysicalSensor())
+    responseSettings = frame.model.sensor->settings().response;
   ResumedSequence resumed{resumeSequence(
       opts, frame, responseSettings ? &*responseSettings : nullptr)};
   const ResolvedGrid grid{resolveWavelengthGrid(opts, frame, resumed)};

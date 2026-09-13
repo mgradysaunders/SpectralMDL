@@ -1,6 +1,6 @@
 /// \file
 /// The camera format: the shot. Where the picture is taken from, on what
-/// body and through what lens, and what the photographer turned.
+/// sensor and through what lens, and what the photographer turned.
 ///
 /// A `.camera` file is the second format of the layout family and is
 /// parsed by the same syntax core (`TextParser.h`). The split is a
@@ -8,19 +8,19 @@
 /// it moves, on an absolute clock; a `.camera` says what it is
 /// photographed with; a `.sensor` says what the picture lands on; and a
 /// `.lens` says what the light came through. One scene then takes as
-/// many viewpoints as there are camera files, one body serves every shot
+/// many viewpoints as there are camera files, one sensor serves every shot
 /// taken with it, and no file restates another.
 ///
-/// The camera names its body and its lens, each a file beside it or the
+/// The camera names its sensor and its lens, each a file beside it or the
 /// ideal stand-in: `sensor human`, the CIE observer, and `lens ideal`,
-/// the thin lens, which are both the defaults. It never writes a body
-/// inline: a body is a fact shared by every shot, so it gets a file.
+/// the thin lens, which are both the defaults. It never writes a sensor
+/// inline: a sensor is a fact shared by every shot, so it gets a file.
 ///
 /// What the file deliberately does not carry: which instant to
 /// photograph (`-time`, so one camera renders every frame of a shot) and
 /// how big the picture is (`-resolution` and `-crop-window`, which are
 /// facts about this render rather than about the camera, and which a
-/// physical body decides for itself).
+/// physical sensor decides for itself).
 #pragma once
 
 #include <map>
@@ -38,7 +38,7 @@
 /// the one beside a layout.
 constexpr std::string_view CAMERA_EXTENSION = ".camera";
 
-/// The word that names the observer in place of a body, and the word
+/// The word that names the observer in place of a sensor, and the word
 /// that names the thin lens in place of a prescription.
 ///
 /// \{
@@ -104,7 +104,7 @@ parseWhiteBalance(std::string_view text);
 ///
 /// The ones left out are left out because they are not: `blades` counts
 /// the aperture's edges, `distortion_fit` is a bare flag, `lens` and
-/// `sensor` are the instrument, `temperature` is the body's condition
+/// `sensor` are the instrument, `temperature` is the sensor's condition
 /// over the shot, `iso` and `white_balance` are applied after the render,
 /// `shutter`,
 /// `readout`, and `readout_direction` describe the interval a key is
@@ -120,9 +120,9 @@ public:
 
   /// `fovy` and `focal_length`: two ways of stating the thin lens's
   /// field. Alone, either one implies the other over a frame 24 mm
-  /// tall, or over the body's frame when the camera names one; together
+  /// tall, or over the sensor's frame when the camera names one; together
   /// they state the frame height of the observer's camera, and are
-  /// refused as two statements of one fact over a body. Both are
+  /// refused as two statements of one fact over a sensor. Both are
   /// refused with a lens, whose field is the frame and the glass.
   ///
   /// \{
@@ -187,7 +187,7 @@ public:
   /// thin lens, which unset means too. Not keyable: it is the lens, not
   /// a quantity to interpolate.
   ///
-  /// With a prescription, the field of view is the body and the glass
+  /// With a prescription, the field of view is the sensor and the glass
   /// together, so `fovy` and every setting that stands in for what a
   /// real lens does on its own are refused rather than ignored.
   std::optional<std::string> lens{};
@@ -195,23 +195,23 @@ public:
   /// `sensor`: the '.sensor' file the picture lands on, as written, to be
   /// resolved relative to the camera file that names it; or `human`, the
   /// CIE observer, which unset means too. Not keyable, and never a
-  /// block: a body is a file.
+  /// block: a sensor is a file.
   std::optional<std::string> sensor{};
 
-  /// `temperature`: the body's degrees Celsius over the shot, which its
+  /// `temperature`: the sensor's degrees Celsius over the shot, which its
   /// dark current follows; 25 unless stated. A condition of the shot
-  /// rather than a fact about the body, which is why it is here and not
+  /// rather than a fact about the sensor, which is why it is here and not
   /// in the sensor file. Meaningless to the observer, and refused with
   /// it.
   std::optional<float> temperature{};
 
   /// `iso`: the ISO a physical sensor is read out at, positive; or
   /// `auto`, which unset means too: the ISO is metered from the rendered
-  /// film as ISO 12232's saturation speed, never below the body's base.
+  /// film as ISO 12232's saturation speed, never below the sensor's base.
   /// The last statement wins, so a number clears `auto` and `auto`
   /// clears a number. Not keyable, being applied after the render, and
   /// refused with the observer, whose film holds radiance, and with a
-  /// body whose detector states its `gain`, which fixes the speed.
+  /// sensor whose detector states its `gain`, which fixes the speed.
   ///
   /// \{
   std::optional<float> iso{};
@@ -235,14 +235,14 @@ public:
   std::optional<float> shutter{};
 
   /// `readout`: the seconds the sensor takes to read the frame out,
-  /// nonnegative, overriding the body's own. Zero is a global shutter,
+  /// nonnegative, overriding the sensor's own. Zero is a global shutter,
   /// where every line exposes over the same interval; with one, the lines
   /// expose one after another, the frame spans `shutter` plus `readout`,
   /// and motion during the sweep skews the picture.
   std::optional<float> readout{};
 
   /// `readout_direction`: the way the readout sweeps the picture,
-  /// overriding the body's own, which is `down` unless stated, so that
+  /// overriding the sensor's own, which is `down` unless stated, so that
   /// `down` reads the top line first. Not keyable: which way a sensor
   /// reads is a fact nobody changes over a shot.
   std::optional<ReadoutDirection> readoutDirection{};
@@ -286,7 +286,7 @@ public:
 
   /// Where each setting was last stated inside a `camera` block, by the
   /// key as the grammar spells it, so that a refusal made after the
-  /// parse (a setting with no meaning beside the lens or the body the
+  /// parse (a setting with no meaning beside the lens or the sensor the
   /// camera names) can point a caret at the key rather than at the
   /// block. A setting stated only in a `motion` key is not here.
   std::map<std::string, LayoutLocation> keyLocs{};
@@ -306,7 +306,7 @@ public:
 ///
 /// The document's locations point into `diags`, which the caller owns
 /// so that they outlive the read: a refusal made once the lens and the
-/// body are known points at the key the file stated.
+/// sensor are known points at the key the file stated.
 ///
 /// \throws smdl::Error  If the file cannot be read, or on any parse
 ///                      error after printing the diagnostics.

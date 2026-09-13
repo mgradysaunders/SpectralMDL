@@ -7,12 +7,12 @@
 #include "Options.h"
 #include "Render/Sampler.h"
 
-// The model is the one place the camera file, the body and the lens it
+// The model is the one place the camera file, the sensor and the lens it
 // names, and the few flags that frame and preview the picture meet. What
 // matters is that the files speak for the instrument and the flags only
-// where they may, that a body decides the pixels and the frame and the
+// where they may, that a sensor decides the pixels and the frame and the
 // observer's frame follows the picture, that the preview keeps of the
-// body what its exposure needs, that what has no meaning with the
+// sensor what its exposure needs, that what has no meaning with the
 // instrument is refused, and that the film quantity follows the sensor
 // and nothing else.
 
@@ -44,7 +44,7 @@ constexpr const char *BODY = "sensor {\n"
                              "  readout_direction up\n"
                              "}\n";
 
-// The same body with a stated gain, so that its speed is fixed.
+// The same sensor with a stated gain, so that its speed is fixed.
 constexpr const char *FIXED_BODY = "sensor {\n"
                                    "  pixels 600 400\n"
                                    "  pitch 6\n"
@@ -52,7 +52,7 @@ constexpr const char *FIXED_BODY = "sensor {\n"
                                    "  detector { gain 0.5 }\n"
                                    "}\n";
 
-// A body whose noise floor is its read noise alone, 4 e- under a 16384 e-
+// A sensor whose noise floor is its read noise alone, 4 e- under a 16384 e-
 // well read out over 16 bits from a black level of 0: 12 stops.
 constexpr const char *QUIET_BODY =
     "sensor {\n"
@@ -70,7 +70,7 @@ constexpr const char *LARGE_BODY = "sensor {\n"
                                    "  response { band L { 400 1 700 1 } }\n"
                                    "}\n";
 
-// A tiled body whose bands are zero for a way past their ends, and a
+// A tiled sensor whose bands are zero for a way past their ends, and a
 // fourth band, which the tile does not lay down, wider than the three.
 constexpr const char *SHAPED_BODY =
     "sensor {\n"
@@ -110,7 +110,7 @@ constexpr const char *TUBE = "lens {\n"
                              "  surface { radius -50 diameter 10 }\n"
                              "}\n";
 
-// A scratch directory holding the body and the lens, and a camera file
+// A scratch directory holding the sensor and the lens, and a camera file
 // written per case.
 class Files final {
 public:
@@ -177,15 +177,15 @@ TEST_CASE("CameraModel: the observer's frame follows the picture") {
   }
 }
 
-TEST_CASE("CameraModel: a body decides the pixels and the frame") {
+TEST_CASE("CameraModel: a sensor decides the pixels and the frame") {
   ScopedShutter shutter{0.0f, 0.0f};
   Files files{"camera-model-body"};
   Options opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
-  SUBCASE("The pixels are the body's, the frame is the pitch over them, and "
+  SUBCASE("The pixels are the sensor's, the frame is the pitch over them, and "
           "the film holds irradiance") {
     const CameraModel model{resolveCameraModel(opts)};
     REQUIRE(model.hasPhysicalSensor());
-    CHECK(model.sensor->name == "Test body");
+    CHECK(model.sensor->settings().name == "Test body");
     CHECK(model.filmQuantity() == FilmQuantity::IRRADIANCE);
     CHECK(model.resolution().x == 600);
     CHECK(model.resolution().y == 400);
@@ -203,7 +203,7 @@ TEST_CASE("CameraModel: a body decides the pixels and the frame") {
         smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
         "is not the sensor's 600,400");
   }
-  SUBCASE("The readout is the body's, then the camera file's") {
+  SUBCASE("The readout is the sensor's, then the camera file's") {
     (void)resolveCameraModel(opts);
     CHECK(gRenderShutter.readout == doctest::Approx(0.03f));
     CHECK(gRenderShutter.isReadoutReversed);
@@ -219,7 +219,7 @@ TEST_CASE("CameraModel: a body decides the pixels and the frame") {
                                     "temperature 40 }\n")};
     CHECK(resolveCameraModel(warm).temperature == 40.0f);
   }
-  SUBCASE("The report names the body") {
+  SUBCASE("The report names the sensor") {
     const CameraModel model{resolveCameraModel(opts)};
     const std::string report{describeCamera(model)};
     CHECK_CONTAINS(report, "Test body");
@@ -292,7 +292,7 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
                                      "focal_length 50 }\n")),
                 "\"focal_length\" has no meaning with a lens");
   }
-  SUBCASE("A body over a pinhole") {
+  SUBCASE("A sensor over a pinhole") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" }\n")),
                 "a physical sensor integrates the irradiance over a pupil");
   }
@@ -309,7 +309,7 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
     flagged.camera.iso = Flag<float>{400.0f, true};
     CHECK_ERROR(refused(flagged), "-iso is a physical sensor's setting");
   }
-  SUBCASE("An ISO for a body whose gain is fixed") {
+  SUBCASE("An ISO for a sensor whose gain is fixed") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"fixed.sensor\" fstop 8 "
                                      "iso 400 }\n")),
                 "'iso' has no meaning with a fixed gain");
@@ -320,7 +320,7 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
   SUBCASE("A readout of the observer, or with no exposure") {
     Options human{files.camera("camera { }\n")};
     human.image.outputDN = "out-dn.img";
-    CHECK_ERROR(refused(human), "-output-dn reads a body out");
+    CHECK_ERROR(refused(human), "-output-dn reads a sensor out");
     Options shut{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
     shut.image.outputDN = "out-dn.img";
     CHECK_ERROR(refused(shut), "-output-dn needs an exposure");
@@ -373,7 +373,7 @@ TEST_CASE("CameraModel: a refusal points at the key the file stated") {
     CHECK(error->message.rfind("\"fovy\" has no meaning with a lens", 0) == 0);
     CHECK(error->snippet.empty());
   }
-  SUBCASE("The pinhole over a body points at the body") {
+  SUBCASE("The pinhole over a sensor points at the sensor") {
     const std::optional<smdl::Error> error{
         refused(files.camera("camera {\n  sensor \"body.sensor\"\n}\n"))};
     REQUIRE(error);
@@ -413,7 +413,7 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
     CHECK(model.options.fovYDeg == 37.8f);
     CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
   }
-  SUBCASE("Over a body the focal length states the field over the body's "
+  SUBCASE("Over a sensor the focal length states the field over the sensor's "
           "frame") {
     const CameraModel model{resolveCameraModel(files.camera(
         "camera { sensor \"body.sensor\" focal_length 4.8 fstop 2 }\n"))};
@@ -424,7 +424,7 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
           doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
     CHECK(thinLensFocalLength(model.options) == doctest::Approx(4.8e-3f));
   }
-  SUBCASE("Over a body the field of view alone states it too, and both "
+  SUBCASE("Over a sensor the field of view alone states it too, and both "
           "are refused") {
     const CameraModel model{resolveCameraModel(
         files.camera("camera { sensor \"body.sensor\" fovy 30 fstop 2 }\n"))};
@@ -434,7 +434,7 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
                                      "focal_length 5 fstop 2 }\n")),
                 "'fovy' and 'focal_length' are two statements");
   }
-  SUBCASE("The preview of a body follows the body's rule") {
+  SUBCASE("The preview of a sensor follows the sensor's rule") {
     Options opts{
         files.camera("camera { sensor \"body.sensor\" focal_length 4.8 "
                      "fstop 2 }\n")};
@@ -594,7 +594,7 @@ TEST_CASE("CameraModel: the white balance") {
 }
 
 TEST_CASE("CameraModel: what only the observer's develop does is refused "
-          "with a body") {
+          "with a sensor") {
   ScopedShutter shutter{0.0f, 0.0f};
   Files files{"camera-model-develop"};
   const auto refused{[&](const Options &opts) {
@@ -627,7 +627,7 @@ TEST_CASE("CameraModel: a render of a physical sensor needs an exposure") {
     return smdl::catchAndReturnError(
         [&] { refuseUnrenderable(resolveCameraModel(opts)); });
   }};
-  SUBCASE("A body with the shutter shut is refused, pointed at the body") {
+  SUBCASE("A sensor with the shutter shut is refused, pointed at the sensor") {
     const std::optional<smdl::Error> error{unrenderable(
         files.camera("camera {\n  sensor \"body.sensor\"\n  fstop 8\n}\n"))};
     CHECK_ERROR(error, files.path("shot.camera") + ":2:3: a physical sensor "
@@ -656,14 +656,14 @@ TEST_CASE("CameraModel: the preview") {
     opts.camera.isIdeal = true;
     return opts;
   }};
-  SUBCASE("-ideal puts the observer on the body's frame and pixels, and "
+  SUBCASE("-ideal puts the observer on the sensor's frame and pixels, and "
           "fits the thin lens to the lens") {
     const CameraModel model{resolveCameraModel(
         preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" }\n"))};
     CHECK(model.isPreview);
     CHECK(!model.hasPhysicalSensor());
-    REQUIRE(model.previewedSensor);
-    CHECK(model.previewedSensor->name == "Test body");
+    REQUIRE(model.hasPreviewedSensor());
+    CHECK(model.sensor->settings().name == "Test body");
     CHECK(model.sensorFileName == files.path("body.sensor"));
     CHECK(model.shouldApproximateLens());
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
@@ -685,17 +685,17 @@ TEST_CASE("CameraModel: the preview") {
     const CameraModel model{
         resolveCameraModel(preview("camera { fovy 30 }\n"))};
     CHECK(model.isPreview);
-    CHECK(!model.previewedSensor);
+    CHECK(!model.hasPreviewedSensor());
     CHECK(!model.shouldApproximateLens());
   }
-  SUBCASE("A readout has no body to read") {
+  SUBCASE("A readout has no sensor to read") {
     Options opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
     opts.image.outputDN = files.path("shot.img");
     CHECK_ERROR(
         smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
-        "-output-dn reads a body out, and -ideal previews it");
+        "-output-dn reads a sensor out, and -ideal previews it");
   }
-  SUBCASE("Through the thin lens, the body's film would hold its pupil "
+  SUBCASE("Through the thin lens, the sensor's film would hold its pupil "
           "integral on axis") {
     // At f/8 the aperture's radius is a sixteenth of the focal length, and
     // focused at infinity the pupil integral is pi R^2 / (R^2 + f^2).
@@ -705,7 +705,7 @@ TEST_CASE("CameraModel: the preview") {
     CHECK(model.previewIrradianceScale ==
           doctest::Approx(3.14159265358979 / 257).epsilon(1e-5));
   }
-  SUBCASE("Through a lens, what the lens puts on the middle of a body's "
+  SUBCASE("Through a lens, what the lens puts on the middle of a sensor's "
           "film") {
     CameraModel model{resolveCameraModel(
         preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" focus "
@@ -729,7 +729,7 @@ TEST_CASE("CameraModel: the preview") {
     Options opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
     CHECK_ERROR(smdl::catchAndReturnError(
                     [&] { refuseUnrenderable(resolveCameraModel(opts)); }),
-                "-ideal exposes the picture as the body would");
+                "-ideal exposes the picture as the sensor would");
   }
   SUBCASE("The report says what the preview stands in for") {
     const std::string report{describeCamera(resolveCameraModel(
@@ -744,15 +744,15 @@ TEST_CASE("CameraModel: the preview") {
 TEST_CASE("CameraModel: the resolution scale") {
   ScopedShutter shutter{0.0f, 0.0f};
   Files files{"camera-model-resolution-scale"};
-  SUBCASE("A body renders exactly its own pixels, so it is refused") {
+  SUBCASE("A sensor renders exactly its own pixels, so it is refused") {
     Options opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
     opts.image.resolutionScale = Flag<float>{0.25f, true};
     CHECK_ERROR(
         smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
         "-resolution-scale renders a smaller picture of the frame, "
-        "and a body renders exactly its own pixels");
+        "and a sensor renders exactly its own pixels");
   }
-  SUBCASE("Under -ideal the body's frame keeps its size over fewer pixels") {
+  SUBCASE("Under -ideal the sensor's frame keeps its size over fewer pixels") {
     Options opts{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
     opts.camera.isIdeal = true;
     opts.image.resolutionScale = Flag<float>{0.25f, true};
@@ -776,7 +776,7 @@ TEST_CASE("CameraModel: the resolution scale") {
 TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
   ScopedShutter shutter{0.0f, 0.0f};
   Files files{"camera-model-trace-range"};
-  SUBCASE("A tiled body and a lens whose glasses disperse set the span of "
+  SUBCASE("A tiled sensor and a lens whose glasses disperse set the span of "
           "the bands the tile lays down") {
     const CameraModel model{resolveCameraModel(files.camera(
         "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n"))};
@@ -792,7 +792,7 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
         "camera { sensor \"shaped.sensor\" lens \"singlet.lens\" }\n"))};
     CHECK(!model.options.traceWavelengthRange);
   }
-  SUBCASE("Nor does a body without a tile, the observer, or the preview") {
+  SUBCASE("Nor does a sensor without a tile, the observer, or the preview") {
     CHECK(!resolveCameraModel(
                files.camera(
                    "camera { sensor \"quiet.sensor\" lens \"glass.lens\" }\n"))

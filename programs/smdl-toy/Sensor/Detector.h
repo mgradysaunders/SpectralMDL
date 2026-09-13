@@ -1,5 +1,5 @@
 /// \file
-/// The detector readout: what a body reads of the band film, as digital
+/// The detector readout: what a sensor reads of the band film, as digital
 /// numbers. A post-process over the converged film, so the spectral film
 /// and its resume are untouched and a saved film reads out any number of
 /// times for any number of noise realizations. Scene units are meters,
@@ -44,12 +44,12 @@ struct DetectorReadoutOptions final {
 };
 
 /// The shot the readout is of: what the camera and the command line say
-/// about this exposure, beside the body `Sensor` is.
+/// about this exposure, beside the `Sensor` it is taken with.
 struct DetectorShot final {
   /// The exposure in seconds: how long each line stays open.
   double exposure{};
 
-  /// The body's degrees Celsius at the exposure, which the dark current
+  /// The sensor's degrees Celsius at the exposure, which the dark current
   /// follows.
   double temperature{25.0};
 
@@ -140,7 +140,7 @@ public:
   /// The gain in digital numbers per electron, at the shot's ISO.
   [[nodiscard]] double gain() const noexcept { return mGain; }
 
-  /// The shot's ISO, and the body's base.
+  /// The shot's ISO, and the sensor's base.
   ///
   /// \{
   [[nodiscard]] double iso() const noexcept { return mShot.iso; }

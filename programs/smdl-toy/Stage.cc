@@ -52,7 +52,7 @@ Frame resolveFrame(const Options &opts) {
   for (const auto &directory : opts.scene.assetDirs)
     assetSearchPath.push_back(smdl::makePathCanonical(directory));
   // The camera first, and with it the clock: how long the shutter stays
-  // open and how long the readout sweeps are the camera's and the body's,
+  // open and how long the readout sweeps are the camera's and the sensor's,
   // and what a layout's motion means is the transform at those two
   // instants, so they are settled before the scene is read. The camera
   // itself is a text parse and a paraxial solve, so fail-fast ordering
@@ -122,7 +122,7 @@ Frame resolveFrame(const Options &opts) {
   Frame frame{};
   frame.layout = std::move(layout);
   frame.shouldJitterWavelength =
-      opts.render.grid.shouldJitter.wasGiven || !model.sensor
+      opts.render.grid.shouldJitter.wasGiven || !model.hasPhysicalSensor()
           ? opts.render.grid.shouldJitter.value
           : true;
   frame.model = std::move(model);
@@ -158,9 +158,9 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
     // of its curves at the default band count, so that no band is cut
     // off by the visible default: a user should not have to know that
     // the curves must lie inside the grid.
-    if (frame.model.sensor && !opts.render.grid.wasGiven) {
+    if (frame.model.hasPhysicalSensor() && !opts.render.grid.wasGiven) {
       range.range = float2(INF, -INF);
-      for (const auto &band : frame.model.sensor->response.bands) {
+      for (const auto &band : frame.model.sensor->settings().response.bands) {
         range.range.x = std::min(range.range.x, band.wavelengths.front());
         range.range.y = std::max(range.range.y, band.wavelengths.back());
       }
@@ -226,7 +226,9 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "is the radiometric record");
   // The accumulation buffers scale as bands times pixels; say so before
   // allocating gigabytes.
-  const std::optional<SensorSettings> &sensor{frame.model.sensor};
+  const SensorSettings *sensor{frame.model.hasPhysicalSensor()
+                                   ? &frame.model.sensor->settings()
+                                   : nullptr};
   const double bandFilmBytes{
       sensor ? 8.0 * double(sensor->response.hasCFA()
                                 ? 1

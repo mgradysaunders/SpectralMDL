@@ -23,9 +23,9 @@
 
 namespace {
 
-// A body of 4 um pixels with one flat `qe` band of 0.5 from 400 to 700
+// A sensor of 4 um pixels with one flat `qe` band of 0.5 from 400 to 700
 // nm, stating nothing about its well.
-[[nodiscard]] SensorSettings flatBody() {
+[[nodiscard]] SensorSettings flatSensor() {
   SensorSettings value{};
   value.pixels = int2(4, 4);
   value.pitchUM = float2(4.0f, 4.0f);
@@ -78,11 +78,11 @@ namespace {
   return grid;
 }
 
-// A body whose three bands are the observer over photons, so that its
+// A sensor whose three bands are the observer over photons, so that its
 // responses are the observer's XYZ: `QE_b lambda` is the curve. Knots at
 // 1 nm, where the fit integrates.
-[[nodiscard]] SensorSettings lutherBody() {
-  SensorSettings value{flatBody()};
+[[nodiscard]] SensorSettings lutherSensor() {
+  SensorSettings value{flatSensor()};
   value.response.bands.clear();
   for (size_t k = 0; k < 3; k++) {
     ResponseBand &band{value.response.bands.emplace_back()};
@@ -96,10 +96,10 @@ namespace {
   return value;
 }
 
-// A body of three overlapping Gaussian bands, red, green, and blue: the
+// A sensor of three overlapping Gaussian bands, red, green, and blue: the
 // shape of a camera's curves and no camera's.
-[[nodiscard]] SensorSettings gaussianBody() {
-  SensorSettings value{flatBody()};
+[[nodiscard]] SensorSettings gaussianSensor() {
+  SensorSettings value{flatSensor()};
   value.response.bands.clear();
   constexpr double CENTERS[3]{600.0, 540.0, 460.0};
   constexpr double WIDTHS[3]{40.0, 40.0, 30.0};
@@ -118,7 +118,7 @@ namespace {
 } // namespace
 
 TEST_CASE("Sensor: the integrals against hand integrals") {
-  const Sensor sensor{flatBody()};
+  const Sensor sensor{flatSensor()};
   const std::vector<double> flat{flatSpectrum()};
   SUBCASE("A flat band under a flat spectrum counts the photon integral, "
           "to the half nanometer the 1 nm rule leaves at each edge") {
@@ -143,7 +143,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
     CHECK(sensor.electronsPerLuxSecond(0, brighter) ==
           doctest::Approx(expected));
   }
-  SUBCASE("D55 is 1 at 560 nm, and rates the body a little differently "
+  SUBCASE("D55 is 1 at 560 nm, and rates the sensor a little differently "
           "from a flat spectrum") {
     const std::vector<double> d55{daylightSpectrum(D55_KELVIN)};
     REQUIRE(d55.size() == SENSOR_WAVELENGTH_COUNT);
@@ -155,7 +155,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
           doctest::Approx(sensor.electronsPerLuxSecond(0, flat)));
   }
   SUBCASE("The most sensitive band is the one that counts most under D55") {
-    SensorSettings settings{flatBody()};
+    SensorSettings settings{flatSensor()};
     ResponseBand &blue{settings.response.bands.emplace_back()};
     blue.name = "B";
     blue.wavelengths = {400.0f, 500.0f};
@@ -169,7 +169,7 @@ TEST_CASE("Sensor: the integrals against hand integrals") {
 }
 
 TEST_CASE("Sensor: the well and the base ISO are one fact") {
-  SensorSettings settings{flatBody()};
+  SensorSettings settings{flatSensor()};
   SUBCASE("Neither stated: the generic well over the pitch, and the base "
           "ISO it implies") {
     const Sensor sensor{settings};
@@ -206,7 +206,7 @@ TEST_CASE("Sensor: the well and the base ISO are one fact") {
 }
 
 TEST_CASE("Sensor: the gain follows the ISO") {
-  SensorSettings settings{flatBody()};
+  SensorSettings settings{flatSensor()};
   settings.detector.baseISO = 100.0f;
   settings.detector.blackLevel = 535.0f;
   const Sensor sensor{settings};
@@ -235,7 +235,7 @@ TEST_CASE("Sensor: the gain follows the ISO") {
 }
 
 TEST_CASE("Sensor: the meter") {
-  SensorSettings settings{flatBody()};
+  SensorSettings settings{flatSensor()};
   settings.detector.baseISO = 100.0f;
   settings.detector.maxISO = 6400.0f;
   const Sensor sensor{settings};
@@ -390,9 +390,9 @@ TEST_CASE("Sensor: the training reflectances") {
 TEST_CASE("Sensor: the color fit") {
   const std::vector<double> d65{daylightSpectrum(D65_KELVIN)};
   const std::array<size_t, 3> rgb{0, 1, 2};
-  SUBCASE("A body whose curves are the observer's fits it to nothing, an "
+  SUBCASE("A sensor whose curves are the observer's fits it to nothing, an "
           "index of 100") {
-    const ColorFit fit{Sensor{lutherBody()}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{lutherSensor()}.fitColor(rgb, d65)};
     CHECK(!fit.isSingular);
     CHECK(fit.isFaithful());
     CHECK(fit.meanDeltaE00 < 0.01);
@@ -401,7 +401,7 @@ TEST_CASE("Sensor: the color fit") {
   }
   SUBCASE("The white lands exactly, and the multipliers balance it against "
           "green") {
-    const Sensor sensor{gaussianBody()};
+    const Sensor sensor{gaussianSensor()};
     const ColorFit fit{sensor.fitColor(rgb, d65)};
     const double3 white{fit.cameraToXYZ * smdl::double3(1.0)};
     CHECK(white.x == doctest::Approx(fit.white.x).epsilon(1e-12));
@@ -416,7 +416,7 @@ TEST_CASE("Sensor: the color fit") {
                                    .epsilon(1e-12));
   }
   SUBCASE("A camera's shape of curves fits the way a camera's do") {
-    const ColorFit fit{Sensor{gaussianBody()}.fitColor(rgb, d65)};
+    const ColorFit fit{Sensor{gaussianSensor()}.fitColor(rgb, d65)};
     CHECK(fit.isFaithful());
     CHECK(fit.meanDeltaE00 > 0.5);
     CHECK(fit.meanDeltaE00 < 5.0);
@@ -424,14 +424,14 @@ TEST_CASE("Sensor: the color fit") {
     CHECK(fit.index() < 99.0);
   }
   SUBCASE("Bands too much alike have no fit, and are not faithful") {
-    SensorSettings settings{lutherBody()};
+    SensorSettings settings{lutherSensor()};
     settings.response.bands[2] = settings.response.bands[1];
     const ColorFit fit{Sensor{settings}.fitColor(rgb, d65)};
     CHECK(fit.isSingular);
     CHECK(!fit.isFaithful());
   }
   SUBCASE("A band the illuminant does not reach has no fit") {
-    SensorSettings settings{lutherBody()};
+    SensorSettings settings{lutherSensor()};
     ResponseBand &band{settings.response.bands[2]};
     band.wavelengths = {840.0f, 900.0f};
     band.values = {0.5f, 0.5f};

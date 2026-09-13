@@ -56,8 +56,8 @@ cl::opt<float3> optLookUp{
 cl::opt<bool> optIdeal{
     "ideal",
     cl::desc("Preview the camera: a '.lens' becomes the thin lens fitted to "
-             "it, a '.sensor' body becomes the CIE observer on the body's "
-             "frame and pixels, and the picture is exposed as the body would "
+             "it, a '.sensor' becomes the CIE observer on its own frame "
+             "and pixels, and the picture is exposed as that sensor would "
              "expose it"),
     cl::init(false), cl::cat(catCamera)};
 cl::opt<bool> optAutolook{
@@ -93,7 +93,7 @@ cl::opt<std::string> optISO{
     "iso",
     cl::desc("The ISO a physical sensor is read out at, or 'auto' to meter it "
              "from the rendered film as the saturation speed of ISO 12232, "
-             "never below the body's base ISO, overriding the camera file's "
+             "never below the sensor's base ISO, overriding the camera file's "
              "'iso' (default: the camera file's, else auto)"),
     cl::cat(catCamera)};
 cl::opt<std::string> optWhiteBalance{
@@ -135,7 +135,7 @@ cl::opt<int2> optResolution{
 cl::opt<float> optResolutionScale{
     "resolution-scale",
     cl::desc("Render this fraction of the frame's pixels, a smaller picture "
-             "of the same frame, for the observer and under -ideal; a body "
+             "of the same frame, for the observer and under -ideal; a sensor "
              "renders exactly its own pixels (default: 1)"),
     cl::init(1.0f), cl::cat(catImage)};
 cl::opt<int4> optCropWindow{
@@ -206,7 +206,7 @@ cl::opt<std::string> optResume{
 cl::opt<std::string> optOutputDN{
     "output-dn",
     cl::desc("Also write the detector readout to this 16-bit ENVI file of "
-             "digital numbers, through the camera's '.sensor' body"),
+             "digital numbers, through the camera's '.sensor'"),
     cl::cat(catImage)};
 cl::opt<unsigned> optDetectorSeed{
     "detector-seed",
@@ -497,7 +497,7 @@ cl::opt<bool> optDescribeCamera{
     "describe-camera",
     cl::desc("Print what the camera resolves to and exit, before any scene "
              "is read: the frame, the lens and its ideal fit, the focus, the "
-             "body, the exposure, the dynamic range, and the color fit; "
+             "sensor, the exposure, the dynamic range, and the color fit; "
              "needs no scene when -camera is given"),
     cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optJSON{"json",

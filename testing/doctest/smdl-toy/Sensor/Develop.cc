@@ -17,10 +17,10 @@
 // The physical develop is a raw developer's chain from digital numbers
 // to linear sRGB. What matters is that each demosaic reproduces a plane
 // on its lattice, that a neutral and a clipped white develop neutral,
-// that a body whose curves are the observer's develops the training
+// that a sensor whose curves are the observer's develops the training
 // reflectances to the observer's own colors, that a neutral the meter
 // aimed at lands at middle gray whichever band the ISO was rated in,
-// that a body that cannot carry color still develops, and that the
+// that a sensor that cannot carry color still develops, and that the
 // picture is a function of the readout alone. The observer's develop
 // needs the JIT and is not here.
 
@@ -84,11 +84,11 @@ void checkPlanes(const std::vector<float> &planes,
                        planeAt(bands[k], double(x), double(y))) < 1e-5);
 }
 
-// A body whose three bands are the observer over photons, so that its
+// A sensor whose three bands are the observer over photons, so that its
 // responses are the observer's XYZ, with blue's scaled by `blueScale`,
 // which a fit absorbs; under the RGGB tile, or none. Knots at 1 nm,
 // where the fit integrates.
-[[nodiscard]] SensorSettings lutherBody(bool isTiled, double blueScale = 1.0) {
+[[nodiscard]] SensorSettings lutherSensor(bool isTiled, double blueScale = 1.0) {
   SensorSettings value{};
   value.pixels = int2(8, 6);
   value.pitchUM = float2(4.0f, 4.0f);
@@ -113,7 +113,7 @@ void checkPlanes(const std::vector<float> &planes,
   return value;
 }
 
-// A body of `numBands` identical flat bands, untiled.
+// A sensor of `numBands` identical flat bands, untiled.
 [[nodiscard]] SensorSettings flatBands(size_t numBands) {
   SensorSettings value{};
   value.pixels = int2(4, 4);
@@ -131,7 +131,7 @@ void checkPlanes(const std::vector<float> &planes,
   return value;
 }
 
-// The detector at the body's base ISO, whose levels the develop reads.
+// The detector at the sensor's base ISO, whose levels the develop reads.
 [[nodiscard]] Detector detectorFor(const Sensor &sensor) {
   DetectorShot shot{};
   shot.exposure = 0.01;
@@ -299,7 +299,7 @@ TEST_CASE("Develop: each demosaic reproduces a plane on its lattice") {
 }
 
 TEST_CASE("Develop: a neutral develops neutral") {
-  const Sensor sensor{lutherBody(true)};
+  const Sensor sensor{lutherSensor(true)};
   const Detector detector{detectorFor(sensor)};
   const ResponseSettings &response{sensor.settings().response};
   const std::vector<double> white{SensorSpectrum(SENSOR_WAVELENGTH_COUNT, 1.0)};
@@ -343,7 +343,7 @@ TEST_CASE("Develop: a neutral develops neutral") {
 
 TEST_CASE("Develop: a clipped white stays white") {
   for (const bool isTiled : {true, false}) {
-    const Sensor sensor{lutherBody(isTiled)};
+    const Sensor sensor{lutherSensor(isTiled)};
     const Detector detector{detectorFor(sensor)};
     const size_t bandCount{isTiled ? size_t(1) : size_t(3)};
     const double fraction{
@@ -357,9 +357,9 @@ TEST_CASE("Develop: a clipped white stays white") {
   }
 }
 
-TEST_CASE("Develop: a body whose curves are the observer's develops the "
+TEST_CASE("Develop: a sensor whose curves are the observer's develops the "
           "training set to its colors") {
-  const Sensor sensor{lutherBody(false)};
+  const Sensor sensor{lutherSensor(false)};
   const Detector detector{detectorFor(sensor)};
   const std::vector<double> d65{daylightSpectrum(D65_KELVIN)};
   const std::vector<double> white{SensorSpectrum(SENSOR_WAVELENGTH_COUNT, 1.0)};
@@ -398,13 +398,13 @@ TEST_CASE("Develop: a body whose curves are the observer's develops the "
 
 TEST_CASE("Develop: a metered neutral develops to middle gray") {
   // A D65 field on a 5 nm grid, metered at 10 ms, and read out
-  // noise-free at the ISO the meter asks for. The body's blue is its most
+  // noise-free at the ISO the meter asks for. The sensor's blue is its most
   // sensitive band, so the ISO is rated in blue and the develop has to
   // carry that over to green.
   std::vector<float> grid{};
   for (float w = 380; w <= 780; w += 5) grid.push_back(w);
   ScopedGrid scoped{grid, false};
-  const Sensor sensor{lutherBody(true, 1.5)};
+  const Sensor sensor{lutherSensor(true, 1.5)};
   REQUIRE(sensor.peakBand() == 2);
   const ResponseSettings &response{sensor.settings().response};
   constexpr size_t NUM_X{8};
@@ -455,7 +455,7 @@ TEST_CASE("Develop: a metered neutral develops to middle gray") {
     CHECK(double(value) == doctest::Approx(expected).epsilon(0.01));
 }
 
-TEST_CASE("Develop: a body that cannot carry color still develops") {
+TEST_CASE("Develop: a sensor that cannot carry color still develops") {
   SUBCASE("Three bands too much alike develop as false color, each band on "
           "its own channel") {
     const Sensor sensor{flatBands(3)};
@@ -479,7 +479,7 @@ TEST_CASE("Develop: a body that cannot carry color still develops") {
 }
 
 TEST_CASE("Develop: the picture is a function of the readout alone") {
-  const Sensor sensor{lutherBody(true)};
+  const Sensor sensor{lutherSensor(true)};
   const Detector detector{detectorFor(sensor)};
   std::vector<double> fractions(48);
   for (size_t i = 0; i < fractions.size(); i++)

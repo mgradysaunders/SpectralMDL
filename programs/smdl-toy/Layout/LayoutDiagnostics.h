@@ -143,7 +143,8 @@ public:
   ///
   /// A message here follows `error:` on the same line, so it is worded
   /// as a lowercase clause and may lead with the directive it is about
-  /// (`'sensor' names a body`), unlike a logged message, which is a
+  /// (`'sensor' names a '.sensor' file`), unlike a logged message,
+  /// which is a
   /// capitalized sentence. A directive spelled out in the message text
   /// is single quoted as the format writes it; a name or value that
   /// comes from the file goes through `smdl::Quoted`.

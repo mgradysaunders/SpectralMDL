@@ -398,10 +398,10 @@ TEST_CASE("CameraFile: the lens and the sensor") {
     CHECK_CONTAINS(error.notes.front().message,
                    "'.sensor' file's 'pixels' and 'pitch'");
   }
-  SUBCASE("An inline block says that a body is a file") {
+  SUBCASE("An inline block is refused, since a sensor is a file") {
     const LayoutDiagnostic error{
         parseError("camera { sensor { pixels 4 3 } }\n")};
-    CHECK_CONTAINS(error.message, "a body is a file");
+    CHECK_CONTAINS(error.message, "never an inline block");
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message,
                    "write the block in a '.sensor' file");
@@ -470,7 +470,7 @@ TEST_CASE("CameraFile: the temperature setting") {
     CHECK_CONTAINS(parseError("camera { temperature nan }\n").message,
                    "finite number for \"temperature\"");
   }
-  SUBCASE("It cannot be keyed, being the body's condition over the whole "
+  SUBCASE("It cannot be keyed, being the sensor's condition over the whole "
           "shot") {
     CHECK_CONTAINS(
         parseError("camera { motion { at 0 temperature 1 } }\n").message,

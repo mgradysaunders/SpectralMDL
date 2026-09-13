@@ -32,7 +32,7 @@ namespace {
   return value;
 }
 
-// A body of 4 um pixels with one flat band, whose detector reads one
+// A sensor of 4 um pixels with one flat band, whose detector reads one
 // digital number per electron with no dark current, no read noise, and
 // no black level, so a digital number is an electron: the base every
 // case perturbs.

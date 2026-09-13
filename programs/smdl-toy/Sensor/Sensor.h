@@ -2,8 +2,8 @@
 /// The physical sensor as physics: what its curves, its pixel, and its
 /// detector imply before any picture is taken, and the meter that reads
 /// a taken one. Independent of the render grid: the integrals here run
-/// at 1 nm over the range the CIE tables span, so a body's numbers are
-/// the body's alone.
+/// at 1 nm over the range the CIE tables span, so a sensor's numbers are
+/// the sensor's alone.
 #pragma once
 
 #include <algorithm>
@@ -142,7 +142,7 @@ constexpr double METER_Q{0.65};
 /// \}
 
 /// The generic well, electrons per square micrometer of pixel, for a
-/// body that states neither its well nor its base ISO.
+/// sensor that states neither its well nor its base ISO.
 constexpr double GENERIC_ELECTRONS_PER_SQUARE_MICROMETER{1000.0};
 
 /// Where a sensor's well came from.
@@ -386,7 +386,7 @@ public:
   /// c_w)^-1 c_w^T A^-1` with `A = C C^T` and `c_w = (1, 1, 1)`: the
   /// white lands exactly, and the rest as closely as three by three
   /// numbers can put it. The render grid has no part in it, so the fit
-  /// is the body's alone.
+  /// is the sensor's alone.
   [[nodiscard]] ColorFit fitColor(const std::array<size_t, 3> &bands,
                                   const SensorSpectrum &illuminant) const;
 

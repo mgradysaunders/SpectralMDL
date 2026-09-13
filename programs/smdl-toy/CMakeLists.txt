@@ -62,6 +62,7 @@ target_sources(
     "Render/Lens.cc"
     "Render/Light.cc"
     "Render/LightTree.cc"
+    "Render/MNEE.cc"
     "Render/Manifold.cc"
     "Render/Medium.cc"
     "Render/PathStats.cc"

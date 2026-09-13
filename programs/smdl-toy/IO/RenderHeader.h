@@ -130,7 +130,7 @@ struct DetectorHeader final {
   /// electrons from the band film alone.
   double electronsPerFilmUnit{};
 
-  /// The ISO the gain follows, and the body's base ISO.
+  /// The ISO the gain follows, and the sensor's base ISO.
   ///
   /// \{
   double iso{};

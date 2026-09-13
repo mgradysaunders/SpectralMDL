@@ -28,7 +28,7 @@ LayoutDiagnostic parseError(std::string text) {
   return diags.all().front();
 }
 
-// The shortest thing that is a body: the pixels, the pitch, and one
+// The shortest thing that is a sensor: the pixels, the pitch, and one
 // band of two knots. The base every malformed case below perturbs.
 constexpr const char *BASE = "sensor {\n"
                              "  pixels 4 3  pitch 2.5\n"
@@ -57,7 +57,7 @@ std::string detectorWith(const char *setting) {
 }
 } // namespace
 
-TEST_CASE("SensorFile: the body's geometry") {
+TEST_CASE("SensorFile: the sensor's geometry") {
   LayoutDiagnostics diags{};
   SUBCASE("The base parses: pixels, one pitch for square pixels, and the "
           "frame follows") {
@@ -103,7 +103,7 @@ TEST_CASE("SensorFile: the body's geometry") {
     REQUIRE(!error.notes.empty());
     CHECK_CONTAINS(error.notes.front().message, "state 'pitch 6 5'");
   }
-  SUBCASE("Each thing the body needs is asked for by name") {
+  SUBCASE("Each thing the sensor needs is asked for by name") {
     CHECK_CONTAINS(parseError("sensor { pitch 2 response { band v { 400 1 "
                               "700 1 } } }\n")
                        .message,
@@ -259,7 +259,7 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(parseError(responseWith("band vis { 400 1 700 1 }")).message,
                    "band \"vis\" is declared twice");
   }
-  SUBCASE("A response needs a band, and does not name the body") {
+  SUBCASE("A response needs a band, and does not name the sensor") {
     CHECK_CONTAINS(parseError("sensor { pixels 4 3 pitch 2 response { kind "
                               "qe } }\n")
                        .message,
@@ -356,10 +356,10 @@ TEST_CASE("SensorFile: the response block") {
     CHECK_CONTAINS(error.notes.front().message, "the first one is here");
     const LayoutDiagnostic path{
         parseError("sensor { pixels 4 3 pitch 2 response "
-                   "\"body.response\" }\n")};
+                   "\"sensor.response\" }\n")};
     CHECK_CONTAINS(path.message, "'response' is a block here, not a path");
     REQUIRE(!path.notes.empty());
-    CHECK_CONTAINS(path.notes.front().message, "a body is one file");
+    CHECK_CONTAINS(path.notes.front().message, "a sensor is one file");
   }
 }
 
@@ -464,7 +464,7 @@ TEST_CASE("SensorFile: the detector block") {
     CHECK_CONTAINS(inDetector.notes.front().message,
                    "state it in the 'camera' block");
     const LayoutDiagnostic inSensor{parseError(sensorWith("temperature 30"))};
-    CHECK_CONTAINS(inSensor.message, "not a fact about the body");
+    CHECK_CONTAINS(inSensor.message, "not a fact about the sensor");
   }
   SUBCASE("A second block points at the first") {
     const LayoutDiagnostic error{
@@ -502,12 +502,12 @@ TEST_CASE("SensorFile: the file as a whole") {
           "names it") {
     TempDir tmpDir{"sensor-file"};
     const std::filesystem::path cameraPath{
-        tmpDir.write("shot.camera", "camera { sensor \"bodies/body.sensor\" "
+        tmpDir.write("shot.camera", "camera { sensor \"sensors/sensor.sensor\" "
                                     "}\n")};
     const std::filesystem::path sensorPath{
-        tmpDir.write("bodies/body.sensor", BASE)};
+        tmpDir.write("sensors/sensor.sensor", BASE)};
     const std::string resolved{
-        resolveSensorFileName("bodies/body.sensor", cameraPath.string())};
+        resolveSensorFileName("sensors/sensor.sensor", cameraPath.string())};
     CHECK(std::filesystem::path(resolved) == sensorPath);
     const SensorDocument document{readSensor(diags, resolved)};
     CHECK(document.sensor.pixels.x == 4);
@@ -521,7 +521,7 @@ TEST_CASE("SensorFile: the file as a whole") {
   SUBCASE("The old response sidecar is named for what it became") {
     TempDir tmpDir{"sensor-file-response"};
     const std::filesystem::path path{
-        tmpDir.write("body.response", "response { }\n")};
+        tmpDir.write("sensor.response", "response { }\n")};
     const std::optional<smdl::Error> error{smdl::catchAndReturnError(
         [&] { (void)resolveSensorFileName(path.string(), ""); })};
     CHECK_ERROR(error,
@@ -534,11 +534,11 @@ TEST_CASE("SensorFile: the file as a whole") {
         tmpDir.write("bad.sensor", "sensor { pixels 4 3 pitch 2 }\n")};
     CHECK_THROWS((void)readSensor(diags, path.string()));
   }
-  SUBCASE("A body as shipped parses end to end") {
+  SUBCASE("A sensor as shipped parses end to end") {
     const SensorDocument document{
-        parseOK(diags, "# A body.\n"
+        parseOK(diags, "# A sensor.\n"
                        "sensor {\n"
-                       "  name \"Test body\"\n"
+                       "  name \"Test sensor\"\n"
                        "  pixels 6000 4000\n"
                        "  pitch 5.93\n"
                        "  response {\n"
@@ -555,7 +555,7 @@ TEST_CASE("SensorFile: the file as a whole") {
                        "  }\n"
                        "}\n")};
     const SensorSettings &sensor{document.sensor};
-    CHECK(sensor.name == "Test body");
+    CHECK(sensor.name == "Test sensor");
     CHECK(sensor.pixels.x == 6000);
     CHECK(sensor.sizeMM().x == doctest::Approx(35.58));
     CHECK(sensor.response.bands.size() == 3);

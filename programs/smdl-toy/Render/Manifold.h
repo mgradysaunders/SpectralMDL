@@ -4,10 +4,10 @@
 /// binds it to this renderer's world. `SceneManifoldSurfaces` answers
 /// the solver's projection casts and differential-geometry queries over
 /// the `Scene` (Embree casts, mesh interpolation, and the
-/// geometry-normal hook for remapped materials); the caster set,
-/// seeding, and the transport-side work (Fresnel, medium attenuation,
-/// MIS and reciprocal-probability bookkeeping) stay with the path
-/// tracer.
+/// geometry-normal hook for remapped materials), and the caster set,
+/// the receiver, and the chain discovery and seeding sit here beside
+/// it. The transport-side work (Fresnel, medium attenuation, MIS and
+/// reciprocal-probability bookkeeping) is `Render/MNEE.h`'s.
 #pragma once
 
 #include <vector>

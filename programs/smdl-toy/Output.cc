@@ -43,7 +43,7 @@ constexpr const char *ENVI_SUN_ELEVATION{"sun elevation"};
 constexpr const char *ENVI_SOLAR_IRRADIANCE{"solar irradiance"};
 
 /// The band film's reader-only fields: what its numbers are, and whose
-/// body they came from. The readout's units are the same field.
+/// sensor they came from. The readout's units are the same field.
 constexpr const char *ENVI_BAND_UNITS{"band units"};
 constexpr const char *ENVI_SENSOR_NAME{"render sensor name"};
 constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
@@ -125,12 +125,12 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
                 " lux-seconds over the window");
 }
 
-/// The shot the body takes of the film: the exposure, the temperature,
+/// The shot the sensor takes of the film: the exposure, the temperature,
 /// the f-number, and the ISO, stated, the fixed gain's own, or what the
-/// film meters to. A body's film is the irradiance it meters; under
+/// film meters to. A sensor's film is the irradiance it meters; under
 /// -ideal the film is the scene radiance, which the model's preview scale
-/// turns into the irradiance the body would have metered. The model
-/// established the body and the exposure; the f-number comes off the
+/// turns into the irradiance the sensor would have metered. The model
+/// established the sensor and the exposure; the f-number comes off the
 /// camera, which under -autolook exists only once the scene does. The
 /// final picture logs where the ISO came from, and a checkpoint does not.
 [[nodiscard]] DetectorShot takeShot(const Frame &frame, const Sensor &sensor,
@@ -142,8 +142,8 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
   shot.exposure = gRenderShutter.exposure;
   shot.temperature = model.temperature;
   shot.fNumber = frame.camera->fNumber();
-  const double irradianceScale{model.sensor ? 1.0
-                                            : model.previewIrradianceScale};
+  const double irradianceScale{
+      model.hasPhysicalSensor() ? 1.0 : model.previewIrradianceScale};
   const MeteredExposure metered{sensor.meter(film, wavelengths, frame.window,
                                              shot.exposure * irradianceScale)};
   shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
@@ -154,10 +154,10 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
   return shot;
 }
 
-/// The observer's picture under -ideal, exposed as the body it stands in
-/// for would expose it: the ISO the body would take, and the gain that
+/// The observer's picture under -ideal, exposed as the sensor it stands in
+/// for would expose it: the ISO the sensor would take, and the gain that
 /// puts a unit of the film where `developedLuminance()` puts the
-/// focal-plane exposure the body's optics would have made of it. The
+/// focal-plane exposure the sensor's optics would have made of it. The
 /// observer's develop is measured rather than assumed: the gain is taken
 /// against what the JIT gives a flat spectrum on this grid, whose
 /// luminance the meter's weights state, so whatever separates the two
@@ -167,7 +167,7 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                    const smdl::SpectralFilm &film, const Color &wavelengths,
                    std::vector<float> &rgbImage, bool shouldLog) {
   const CameraModel &model{frame.model};
-  const Sensor &sensor{*model.physics};
+  const Sensor &sensor{*model.sensor};
   const DetectorShot shot{
       takeShot(frame, sensor, film, wavelengths, shouldLog)};
   Color flat{};
@@ -187,33 +187,33 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
           : 0.0};
   for (auto &value : rgbImage) value = float(double(value) * gain);
   if (shouldLog)
-    SMDL_LOG_INFO("Preview: the observer's picture exposed as the body's "
+    SMDL_LOG_INFO("Preview: the observer's picture exposed as the sensor's "
                   "develop would expose it, times ",
                   smdl::Brief(gain, 4), " (", smdl::Brief(std::log2(gain), 3),
                   " EV), so that a neutral at the meter's aim lands on ",
                   smdl::Brief(DEVELOP_MIDDLE_GRAY, 3));
 }
 
-/// What the body makes of the films before there is a picture: the
+/// What the sensor makes of the films before there is a picture: the
 /// detector at the shot's ISO and the readout it takes of the band
 /// film. The checkpoint's preview and the final write both go through
-/// here, so that the two read the body the same way and differ only in
+/// here, so that the two read the sensor the same way and differ only in
 /// what they say about it.
-struct BodyReadout final {
+struct SensorReadout final {
   Detector detector;
   Readout readout;
 };
 
-[[nodiscard]] BodyReadout
-readOutBody(const Frame &frame, const smdl::SpectralFilm &film,
-            const smdl::SpectralFilm &bandFilm, const Color &wavelengths,
-            const DetectorReadoutOptions &options, bool shouldLog) {
-  const Sensor &sensor{*frame.model.physics};
+[[nodiscard]] SensorReadout
+readOutSensor(const Frame &frame, const smdl::SpectralFilm &film,
+              const smdl::SpectralFilm &bandFilm, const Color &wavelengths,
+              const DetectorReadoutOptions &options, bool shouldLog) {
+  const Sensor &sensor{*frame.model.sensor};
   const Detector detector{
       sensor, takeShot(frame, sensor, film, wavelengths, shouldLog)};
   if (shouldLog) detector.logSummary();
   Readout readout{detector.readOut(bandFilm, options, frame.window)};
-  return BodyReadout{detector, std::move(readout)};
+  return SensorReadout{detector, std::move(readout)};
 }
 
 } // namespace
@@ -223,20 +223,21 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
                                   smdl::Compiler &compiler,
                                   const smdl::SpectralFilm &film,
                                   const smdl::SpectralFilm *bandFilm) {
-  if (!frame.model.sensor) {
+  if (!frame.model.hasPhysicalSensor()) {
     std::vector<float> rgbImage{
         resolveRGB(compiler, film, grid.wavelengths, opts.image.rgbPolicy)};
-    if (frame.model.previewedSensor)
+    if (frame.model.hasPreviewedSensor())
       exposePreview(frame, compiler, film, grid.wavelengths, rgbImage, false);
     return rgbImage;
   }
   SMDL_SANITY_CHECK(bandFilm);
   DetectorReadoutOptions noiseless{opts.image.readout};
   noiseless.noise = DetectorNoise::NONE;
-  const BodyReadout body{
-      readOutBody(frame, film, *bandFilm, grid.wavelengths, noiseless, false)};
-  return developReadout(*frame.model.physics, body.detector, body.readout,
-                        frame.model.whiteBalance, frame.window, false);
+  const SensorReadout sensorReadout{readOutSensor(
+      frame, film, *bandFilm, grid.wavelengths, noiseless, false)};
+  return developReadout(*frame.model.sensor, sensorReadout.detector,
+                        sensorReadout.readout, frame.model.whiteBalance,
+                        frame.window, false);
 }
 
 void writeOutputs(const Options &opts, const Frame &frame,
@@ -263,7 +264,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   resumed.header.args = opts.argsEcho;
   resumed.header.quantity = filmQuantityName(model.filmQuantity());
   // The response's fingerprint, which every film beside the spectral one
-  // carries, the readout included, and the body's name for the reader.
+  // carries, the readout included, and the sensor's name for the reader.
   std::vector<std::string> responseLines{};
   if (response) {
     ResponseHeader responseHeader{};
@@ -271,23 +272,23 @@ void writeOutputs(const Options &opts, const Frame &frame,
     responseHeader.cfaColumns = response->tileColumns();
     responseHeader.cfa = response->tileNames();
     responseLines = responseHeader.headerLines();
-    if (model.sensor && !model.sensor->name.empty())
+    if (model.hasPhysicalSensor() && !model.sensor->settings().name.empty())
       responseLines.push_back(
-          smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->name));
+          smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->settings().name));
   }
   // The picture as linear sRGB: the observer's develop of the spectral
-  // film, exposed under -ideal as the body it stands in for would expose
-  // it, or the body's develop of its readout. The meter reads the film, the ISO
-  // follows (stated, metered, or the fixed gain's own), the readout
-  // reads the band film out at it, onto its own pair under the usual
-  // discipline when asked for, and the develop makes the picture of it.
+  // film, exposed under -ideal as the sensor it stands in for would expose
+  // it, or the sensor's develop of its readout. The meter reads the film, the
+  // ISO follows (stated, metered, or the fixed gain's own), the readout reads
+  // the band film out at it, onto its own pair under the usual discipline when
+  // asked for, and the develop makes the picture of it.
   std::vector<float> rgbImage{};
-  if (model.sensor) {
+  if (model.hasPhysicalSensor()) {
     SMDL_SANITY_CHECK(bandFilm);
-    const BodyReadout body{readOutBody(frame, film, *bandFilm, wavelengths,
-                                       opts.image.readout, true)};
-    const Detector &detector{body.detector};
-    const Readout &readout{body.readout};
+    const SensorReadout sensorReadout{readOutSensor(
+        frame, film, *bandFilm, wavelengths, opts.image.readout, true)};
+    const Detector &detector{sensorReadout.detector};
+    const Readout &readout{sensorReadout.readout};
     SMDL_LOG_INFO(
         "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
         " e- over the window, ",
@@ -319,11 +320,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
                     smdl::Counted(bandNames.size(), "band"),
                     " of digital numbers up to ", detector.topCode());
     }
-    rgbImage = developReadout(*model.physics, detector, readout,
+    rgbImage = developReadout(*model.sensor, detector, readout,
                               model.whiteBalance, window, true);
   } else {
     rgbImage = resolveRGB(compiler, film, wavelengths, opts.image.rgbPolicy);
-    if (model.previewedSensor)
+    if (model.hasPreviewedSensor())
       exposePreview(frame, compiler, film, wavelengths, rgbImage, true);
   }
   {

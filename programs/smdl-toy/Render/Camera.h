@@ -66,7 +66,7 @@ struct CameraOptions final {
   /// With a lens whose glasses disperse, the shortest and the longest
   /// wavelength in nanometers it is traced at, which its exit pupil is
   /// bounded over; or none, to trace it at the reference alone. The model
-  /// sets it for a tiled body only: it is the span of the bands the tile
+  /// sets it for a tiled sensor only: it is the span of the bands the tile
   /// lays down, and every sample draws its wavelength from the band of
   /// its own pixel.
   std::optional<float2> traceWavelengthRange{};
@@ -374,7 +374,7 @@ public:
   /// Does the camera trace its lens at a wavelength of each sample's own?
   /// Only a lens whose glasses disperse, bounded over a range of
   /// wavelengths, which `CameraOptions::traceWavelengthRange` gives for a
-  /// tiled body alone.
+  /// tiled sensor alone.
   [[nodiscard]] bool disperses() const noexcept { return mDisperses; }
 
   /// Place the ray `sample()` built into the world at shutter fraction

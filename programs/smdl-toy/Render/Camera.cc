@@ -409,7 +409,7 @@ void Camera::buildThinLens(const CameraOptions &options) {
   } else if (options.fStop > 0) {
     // `mFocalLength` is in units of image height, so the lens is
     // `mFrameHeight * mFocalLength` long and `1 / fstop` of that across:
-    // the 24 mm of a 35mm frame unless a body says otherwise.
+    // the 24 mm of a 35mm frame unless a sensor says otherwise.
     mLensRadius = 0.5f * mFrameHeight * mFocalLength / options.fStop;
   }
   mVignetteStrength = options.vignetting;
@@ -488,7 +488,8 @@ CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
 }
 
 void Camera::sampleDeferred(size_t x, size_t y, Sampler &sampler,
-                            float wavelength, CameraSample &sample) const noexcept {
+                            float wavelength,
+                            CameraSample &sample) const noexcept {
   // The pixel jitter is always dimensions 0-1 of the sequence.
   const float2 xi{float2(sampler)};
   const float u{(float(x) + xi.x) / mNumPixelsX};
@@ -633,8 +634,8 @@ void Camera::traceDeferred(smdl::Span<CameraSample> samples,
       SMDL_DEBUG_CHECK(!(wavelength > 0) ||
                        (wavelength >= mTraceWavelengthRange.x &&
                         wavelength <= mTraceWavelengthRange.y));
-      indices[k] = wavelength > 0 ? mLens->indicesAt(wavelength)
-                                  : Lens::Indices{};
+      indices[k] =
+          wavelength > 0 ? mLens->indicesAt(wavelength) : Lens::Indices{};
       spans[k] = wavelength > 0
                      ? smdl::Span<const float>(indices[k].data(), numMedia)
                      : mLens->referenceIndices();

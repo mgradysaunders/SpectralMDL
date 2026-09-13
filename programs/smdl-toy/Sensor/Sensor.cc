@@ -186,7 +186,7 @@ double Sensor::fixedGainISO() const noexcept {
 double Sensor::topCodeElectrons(double iso) const noexcept {
   // The saturation exposure at the ISO in the most sensitive band, which
   // at the base ISO is the well by construction, spelled through the
-  // well so that a body with no weight in its curves still fills it.
+  // well so that a sensor with no weight in its curves still fills it.
   return mFullWell * mBaseISO / iso;
 }
 

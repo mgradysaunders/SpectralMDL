@@ -25,7 +25,7 @@ constexpr std::array<std::string_view, 1> TOP_LEVEL_KEYWORDS{"sensor"};
 constexpr std::string_view RESPONSE_EXTENSION = ".response";
 
 // Pitches derived from `size` that differ by more than this fraction are
-// refused: a body's pixels are square, and a size that disagrees by more
+// refused: a sensor's pixels are square, and a size that disagrees by more
 // is a typo or a crop.
 constexpr float PITCH_TOLERANCE = 0.005f;
 
@@ -53,7 +53,7 @@ private:
           mDiags.error(location(), smdl::concat("unknown directive ",
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.text == "camera" || mToken.text == "lens") {
-        error.note({}, "a sensor file describes the body alone; where the "
+        error.note({}, "a sensor file describes the sensor alone; where the "
                        "picture is taken from and through what belongs in "
                        "the '.camera' file that names this one");
       } else if (mToken.text == "response" || mToken.text == "detector") {
@@ -70,11 +70,11 @@ private:
   }
 
   // A `sensor { ... }` block, which is the whole file. A second one does
-  // not merge: a body is one thing, and two have no meaningful union.
+  // not merge: a sensor is one thing, and two have no meaningful union.
   void parseSensorBlock() {
     if (mDocument.sensorLoc) {
       mDiags
-          .error(location(), "a sensor file describes one body, and this is "
+          .error(location(), "a sensor file describes one sensor, and this is "
                              "the second 'sensor' block")
           .note(mDocument.sensorLoc, "the first one is here");
       throw Recover();
@@ -138,7 +138,7 @@ private:
         responseLoc = keyLoc;
         if (mToken.kind == Token::STRING) {
           mDiags.error(keyLoc, "'response' is a block here, not a path")
-              .note({}, "a body is one file: write the bands inside "
+              .note({}, "a sensor is one file: write the bands inside "
                         "'response { ... }' beside the pixels and the pitch");
           throw Recover();
         }
@@ -191,7 +191,7 @@ private:
       } else if (key == "temperature") {
         mDiags
             .error(keyLoc, "'temperature' is a condition of the shot, not a "
-                           "fact about the body")
+                           "fact about the sensor")
             .note({}, "state it in the 'camera' block");
         throw Recover();
       } else if (key == "kind" || key == "peak_qe" || key == "band" ||
@@ -659,7 +659,7 @@ SensorDocument parseSensor(LayoutDiagnostics &diags,
   SensorDocument document{};
   document.source = &source;
   Parser(diags, source, document).parse();
-  // A camera named this file for its body, so a file with none is an
+  // A camera named this file for its sensor, so a file with none is an
   // error rather than an empty sensor; the caret sits at the start,
   // there being nothing else to point at.
   if (!document.sensorLoc && !diags.hasErrors())
@@ -683,7 +683,7 @@ std::string resolveSensorFileName(const std::string &stated,
         "The camera file's 'sensor' ", smdl::QuotedPath(stated),
         " names a '.response' file, a format that no longer exists: the "
         "response is now the 'response' block of a '.sensor' file, which "
-        "holds the body's 'pixels' and 'pitch' beside it (see "
+        "holds the sensor's 'pixels' and 'pitch' beside it (see "
         "etc/sensors)"));
   return resolveSiblingFile(stated, cameraFileName, "sensor");
 }

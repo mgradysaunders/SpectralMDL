@@ -58,7 +58,7 @@ struct AutolookFlags final {
 /// The camera: which file describes it, and the few things the command
 /// line may say about it.
 ///
-/// The instrument and the shot are the files' alone: the lens, the body,
+/// The instrument and the shot are the files' alone: the lens, the sensor,
 /// the stop, the focus, and the shutter are keys of the `.camera` file
 /// and of the `.sensor` and `.lens` files it names. What stays here
 /// frames the picture, previews the camera, or acts after the last
@@ -79,8 +79,8 @@ struct CameraFlags final {
 
   /// `-ideal`: preview the camera. The model resolves from the files as
   /// it would without it, and is then projected: a traced lens becomes
-  /// the thin lens fitted to it, a body becomes the observer on the
-  /// body's frame and pixels, and the picture is exposed as the body
+  /// the thin lens fitted to it, a sensor becomes the observer on the
+  /// sensor's frame and pixels, and the picture is exposed as the sensor
   /// would expose it. See `CameraModel::isPreview`.
   bool isIdeal{};
 
@@ -115,7 +115,7 @@ struct ImageOptions final {
   Flag<int2> resolution{};
 
   /// The fraction of the frame's pixels to render: a smaller picture of
-  /// the same frame, the body's or the observer's. A body renders exactly
+  /// the same frame, the sensor's or the observer's. A sensor renders exactly
   /// its own pixels, so it is refused in realistic mode.
   Flag<float> resolutionScale{};
 
@@ -151,7 +151,7 @@ struct ImageOptions final {
   std::string resume{};
 
   /// The detector readout, empty for none: a 16-bit ENVI pair of digital
-  /// numbers through the camera's body.
+  /// numbers through the camera's sensor.
   std::string outputDN{};
 
   /// The readout's realization and which noise it draws.

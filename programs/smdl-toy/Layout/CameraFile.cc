@@ -14,7 +14,7 @@
 
 // The camera format's own vocabulary, over the syntax core in
 // `TextParser.h`. One directive and nothing else: what the picture is
-// taken with. The body and the lens are files it names, so the words it
+// taken with. The sensor and the lens are files it names, so the words it
 // knows are the shot's alone.
 
 namespace {
@@ -55,7 +55,7 @@ private:
                        "says how long it stays open");
       } else if (mToken.text == "response" || mToken.text == "detector") {
         error.note({}, smdl::concat("the ", mToken.text,
-                                    " is the body's: it is a block inside "
+                                    " is the sensor's: it is a block inside "
                                     "the 'sensor' block of the '.sensor' "
                                     "file the camera names"));
       } else if (mToken.text == "sensor") {
@@ -331,9 +331,11 @@ private:
   void parseSensorSetting(CameraSettings &camera,
                           const LayoutLocation &keyLoc) {
     if (mToken.kind == Token::OPEN) {
-      mDiags.error(keyLoc, "'sensor' names a body, and a body is a file")
+      mDiags
+          .error(keyLoc, "'sensor' names a '.sensor' file, never an "
+                         "inline block")
           .note({}, "write the block in a '.sensor' file and name it here: "
-                    "sensor \"body.sensor\"");
+                    "sensor \"a7m3.sensor\"");
       throw Recover();
     }
     if (mToken.kind == Token::WORD && isNumber(mToken)) {
@@ -341,7 +343,7 @@ private:
           .note({}, "the thin lens spans a frame 24 mm tall whose width "
                     "follows the picture; a physical frame is a '.sensor' "
                     "file's 'pixels' and 'pitch', and 'sensor "
-                    "\"body.sensor\"' names it");
+                    "\"a7m3.sensor\"' names it");
       throw Recover();
     }
     camera.sensor = parseFileOrWord("sensor", SENSOR_HUMAN, "'.sensor'");
