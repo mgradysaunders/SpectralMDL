@@ -200,6 +200,11 @@ public:
   void traceFromFilm(smdl::Span<Ray> rays,
                      smdl::Span<bool> passes) const noexcept;
 
+  /// The batch of `rays` traced at one set of indices, for a caller
+  /// asking many rays about the same lens at the same wavelength.
+  void traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                     smdl::Span<const float> indices) const noexcept;
+
   /// Room for every medium a prescription can have: the air in front,
   /// and one space per surface. A trace at a wavelength holds its indices
   /// in one of these on the stack, so that a camera sample never

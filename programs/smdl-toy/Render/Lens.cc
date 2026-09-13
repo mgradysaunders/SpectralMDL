@@ -715,28 +715,40 @@ public:
   [[nodiscard]]
   SMDL_ALWAYS_INLINE bool scanPupil(float filmRadius, F &&pointAt, //
                                     float &lo, float &hi) const noexcept {
-    const auto passesAt{[&](float t) {
+    // The sweep is traced a batch at a time and folded into a minimum
+    // and a maximum, which the order of arrival does not touch. Neither
+    // pass stops early, every point of both being read either way.
+    std::array<Ray, Lens::TRACE_WIDTH> rays{};
+    std::array<float, Lens::TRACE_WIDTH> params{};
+    std::array<bool, Lens::TRACE_WIDTH> gotOut{};
+    size_t count{0};
+    const auto flush{[&]() {
+      if (count == 0) return;
+      lens.traceFromFilm(smdl::Span<Ray>(rays.data(), count),
+                         smdl::Span<bool>(gotOut.data(), count), indices);
+      for (size_t k = 0; k < count; k++) {
+        if (!gotOut[k]) continue;
+        lo = std::min(lo, params[k]);
+        hi = std::max(hi, params[k]);
+      }
+      count = 0;
+    }};
+    const auto scanAt{[&](float t) {
       const auto point{pointAt(t)};
-      return passes(filmRadius, point.x, point.y);
+      rays[count] = rayTo(filmRadius, point.x, point.y);
+      params[count] = t;
+      if (++count == Lens::TRACE_WIDTH) flush();
     }};
     lo = FLOAT_MAX, hi = -FLOAT_MAX;
-    for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++) {
-      if (const float t{2.0f * float(i) / NUM_SCAN_COARSE_STEPS - 1};
-          passesAt(t)) {
-        lo = std::min(lo, t);
-        hi = std::max(hi, t);
-      }
-    }
+    for (int i = 0; i <= NUM_SCAN_COARSE_STEPS; i++)
+      scanAt(2.0f * float(i) / NUM_SCAN_COARSE_STEPS - 1);
+    flush();
     if (!(lo <= hi)) return false;
     const float cell{2.0f / NUM_SCAN_COARSE_STEPS};
     const float from{lo - cell}, to{hi + cell};
-    for (int i = 0; i <= NUM_SCAN_FINE_STEPS; i++) {
-      if (const float t{from + (to - from) * float(i) / NUM_SCAN_FINE_STEPS};
-          passesAt(t)) {
-        lo = std::min(lo, t);
-        hi = std::max(hi, t);
-      }
-    }
+    for (int i = 0; i <= NUM_SCAN_FINE_STEPS; i++)
+      scanAt(from + (to - from) * float(i) / NUM_SCAN_FINE_STEPS);
+    flush();
     return true;
   }
   // Grid `over` and hand `visit` every point that a ray from a film
@@ -747,6 +759,22 @@ public:
                                          const PupilRect &over, int numSteps,
                                          F &&visit) const noexcept {
     const float radius{lens.rearApertureRadius()};
+    // Traced a batch at a time, which is several times faster than one
+    // ray at a time. Every caller folds what it is given into a bound, a
+    // maximum or a count, so the order the points come back in does not
+    // matter and the answer is the same either way.
+    std::array<Ray, Lens::TRACE_WIDTH> rays{};
+    std::array<float2, Lens::TRACE_WIDTH> points{};
+    std::array<bool, Lens::TRACE_WIDTH> gotOut{};
+    size_t count{0};
+    const auto flush{[&]() {
+      if (count == 0) return;
+      lens.traceFromFilm(smdl::Span<Ray>(rays.data(), count),
+                         smdl::Span<bool>(gotOut.data(), count), indices);
+      for (size_t k = 0; k < count; k++)
+        if (gotOut[k]) visit(points[k].x, points[k].y);
+      count = 0;
+    }};
     for (int i = 0; i < numSteps; i++) {
       const float x{
           smdl::lerp(over.loX, over.hiX, (float(i) + 0.5f) / float(numSteps))};
@@ -758,10 +786,13 @@ public:
         // bound: a draw landing there is blocked either way, and letting
         // it widen the bound would only make every other draw likelier to
         // land there too.
-        if (x * x + y * y <= radius * radius && passes(filmRadius, x, y))
-          visit(x, y);
+        if (!(x * x + y * y <= radius * radius)) continue;
+        rays[count] = rayTo(filmRadius, x, y);
+        points[count] = float2(x, y);
+        if (++count == Lens::TRACE_WIDTH) flush();
       }
     }
+    flush();
   }
   // The box on this plane that everything a film point `filmRadius` off
   // the axis can see lies within, found by the two scans rather than by
@@ -802,17 +833,34 @@ public:
 [[nodiscard]] float axialSpotOf(const Lens &lens, float filmZ,
                                 float pupilRadius, float focusDist) noexcept {
   const float3 film{0, 0, filmZ};
+  const auto heightAt{[&](int i) {
+    return pupilRadius * (float(i) + 0.5f) / NUM_FOCUS_FAN_RAYS;
+  }};
   float sumWeight{0.0f};
   float sumSq{0.0f};
-  for (int i = 0; i < NUM_FOCUS_FAN_RAYS; i++) {
-    const float height{pupilRadius * (float(i) + 0.5f) / NUM_FOCUS_FAN_RAYS};
-    Ray ray{film, float3(height, 0, lens.rearZ()) - film, EPS, INF};
-    if (!lens.traceFromFilm(ray) || !(ray.dir.z < 0)) continue;
-    const float slope{ray.dir.x / ray.dir.z};
-    const float at{focusDist > 0 ? ray.org.x + (-focusDist - ray.org.z) * slope
-                                 : -slope};
-    sumWeight += height;
-    sumSq += height * at * at;
+  // The fan is traced a batch at a time but folded in its own order,
+  // since a sum of floats is not associative and the spot would
+  // otherwise depend on how wide the batch happened to be.
+  std::array<Ray, Lens::TRACE_WIDTH> rays{};
+  std::array<bool, Lens::TRACE_WIDTH> gotOut{};
+  for (int i = 0; i < NUM_FOCUS_FAN_RAYS; i += int(Lens::TRACE_WIDTH)) {
+    const int count{
+        std::min(int(Lens::TRACE_WIDTH), NUM_FOCUS_FAN_RAYS - i)};
+    for (int k = 0; k < count; k++)
+      rays[k] = Ray{film, float3(heightAt(i + k), 0, lens.rearZ()) - film, EPS,
+                    INF};
+    lens.traceFromFilm(smdl::Span<Ray>(rays.data(), count),
+                       smdl::Span<bool>(gotOut.data(), count));
+    for (int k = 0; k < count; k++) {
+      const Ray &ray{rays[k]};
+      if (!gotOut[k] || !(ray.dir.z < 0)) continue;
+      const float slope{ray.dir.x / ray.dir.z};
+      const float at{focusDist > 0
+                         ? ray.org.x + (-focusDist - ray.org.z) * slope
+                         : -slope};
+      sumWeight += heightAt(i + k);
+      sumSq += heightAt(i + k) * at * at;
+    }
   }
   return sumWeight > 0 ? std::sqrt(sumSq / sumWeight) : -1.0f;
 }
@@ -1241,6 +1289,15 @@ void Lens::traceFromFilm(smdl::Span<Ray> rays,
   traceFromFilm(rays, passes,
                 smdl::Span<const smdl::Span<const float>>(indices.data(),
                                                           rays.size()));
+}
+
+void Lens::traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                         smdl::Span<const float> indices) const noexcept {
+  std::array<smdl::Span<const float>, TRACE_WIDTH> perRay{};
+  perRay.fill(indices);
+  traceBatch<TRACE_WIDTH>(
+      rays, passes,
+      smdl::Span<const smdl::Span<const float>>(perRay.data(), rays.size()));
 }
 
 bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
