@@ -97,9 +97,10 @@ stated, so that the develop agrees with the `-ideal` preview;
 in kelvin, or `auto` for the frame's gray world), held where a saturated
 white would lose its color, demosaicked (Hamilton-Adams on these RGGB
 tiles), and mapped to linear sRGB by a matrix fitted to the body's own
-curves. A metered neutral develops to 0.18, middle gray. `-output-rgbf`
-holds the same linear picture, and the tone map and `-exposure` apply to
-it as they do to the observer's.
+curves. A metered neutral develops to 0.18, middle gray. Named with an
+`.exr` or `.hdr` extension, `-output-rgb` holds that linear picture as
+floats; any other extension goes through the tone map and `-exposure`
+as the observer's picture does.
 
 The matrix is a white-preserving least-squares fit over the 190
 training reflectances of rawtoaces-data

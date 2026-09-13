@@ -129,13 +129,14 @@ struct ImageOptions final {
   /// The tone map applied to the 8-bit output.
   TonemapOptions tonemap{};
 
-  /// The firefly filter applied to both RGB outputs, and to neither the
+  /// The firefly filter applied to the RGB output, and to neither the
   /// spectral output nor anything a later session resumes from.
   MedianFilterOptions medianFilter{};
 
+  /// The RGB picture: the linear picture as floats when the name ends
+  /// in '.exr' or '.hdr', else tone mapped to 8 bits; see
+  /// `hasFloatImageExtension()`. Empty means none.
   std::string outputRGB{};
-
-  std::string outputRGBFloat{};
 
   /// The spectral output. Empty means none; `-resume` implies it back
   /// to the file being resumed.

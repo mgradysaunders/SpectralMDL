@@ -187,12 +187,11 @@ cl::opt<int> optMedianFilterRadius{
     cl::init(1), cl::cat(catImage)};
 cl::opt<std::string> optOutputRGB{
     "output-rgb",
-    cl::desc("The tone mapped RGB image filename (default: output.png)"),
+    cl::desc("The RGB image filename (default: output.png)\n"
+             "* '.exr' or '.hdr' holds the linear picture as floats, before "
+             "the tone map and -exposure; any other extension holds the tone "
+             "mapped 8-bit picture"),
     cl::init(std::string("output.png")), cl::cat(catImage)};
-cl::opt<std::string> optOutputRGBf{
-    "output-rgbf",
-    cl::desc("Also write linear RGB radiance to this '.exr' or '.hdr' file"),
-    cl::cat(catImage)};
 cl::opt<std::string> optOutputSpectrum{
     "output-spectrum",
     cl::desc("Also write linear spectral radiance to this ENVI file"),
@@ -674,7 +673,6 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.medianFilter.factor = float(optMedianFilterFactor);
   opts.image.medianFilter.radius = int(optMedianFilterRadius);
   opts.image.outputRGB = std::string(optOutputRGB);
-  opts.image.outputRGBFloat = std::string(optOutputRGBf);
   opts.image.outputSpectrum = std::string(optOutputSpectrum);
   opts.image.wasOutputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
   opts.image.shouldWriteDouble = optOutputSpectrumDouble;

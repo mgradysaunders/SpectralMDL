@@ -32,7 +32,6 @@
 #include "Resume.h"
 #include "Sensor/Response.h"
 #include "Stage.h"
-#include "Tonemap.h"
 
 namespace {
 
@@ -212,12 +211,12 @@ void renderSamples(const Options &opts, const Frame &frame,
   // moves forward. The counters still show pixels, which is the number a
   // person pictures. Nothing is drawn unless stderr is a terminal, where
   // the summary below takes the bar's place.
-  // Rewriting the tone mapped output while the render runs, so that a tool
+  // Rewriting the RGB output while the render runs, so that a tool
   // watching the file sees the image converge. The sums-plus-count film
   // is a valid mean at every moment, so a checkpoint is the finished write
   // with fewer samples behind it, and nothing about the estimator changes.
   // Written beside the output and renamed into place: a watcher polling
-  // the path never opens a half-written PNG.
+  // the path never opens a half-written image.
   const double previewEvery{std::max(double(opts.utility.previewEvery), 0.0)};
   const bool isCheckpointing{previewEvery > 0.0 &&
                              !opts.image.outputRGB.empty()};
@@ -237,11 +236,9 @@ void renderSamples(const Options &opts, const Frame &frame,
     // Filtered like the final write, so that a checkpoint differs from
     // it only in how many samples stand behind it.
     (void)medianFilterRGB(opts.image.medianFilter, rgb, numPixelsX, window);
-    const std::vector<uint8_t> ldr{
-        tonemap(opts.image.tonemap, rgb, film, wavelengths)};
     if (std::optional<smdl::Error> error{
-            smdl::write8bitImage(partPath.string(), int(numPixelsX),
-                                 int(numPixelsY), 3, ldr.data())}) {
+            writeRGBImage(opts, grid, film, partPath.string(), rgb,
+                          numPixelsX, numPixelsY)}) {
       error->print();
       return;
     }

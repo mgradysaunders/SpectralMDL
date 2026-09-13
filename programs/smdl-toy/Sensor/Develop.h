@@ -2,8 +2,8 @@
 /// The two develops, each to linear sRGB: the observer's, from the
 /// spectral film through the CIE observer, or false color where the grid
 /// cannot carry color; and a physical sensor's, from its readout the way
-/// a raw developer takes one. What `-output-rgbf` holds, and what the
-/// display transform in `Tonemap.h` starts from.
+/// a raw developer takes one. What `-output-rgb` holds as floats, and
+/// what the display transform in `Tonemap.h` starts from.
 #pragma once
 
 #include <vector>

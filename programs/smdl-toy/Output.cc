@@ -240,6 +240,26 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
                         frame.window, false);
 }
 
+bool hasFloatImageExtension(const std::string &fileName) {
+  return smdl::hasExtension(fileName, ".exr") ||
+         smdl::hasExtension(fileName, ".hdr");
+}
+
+std::optional<smdl::Error> writeRGBImage(const Options &opts,
+                                         const ResolvedGrid &grid,
+                                         const smdl::SpectralFilm &film,
+                                         const std::string &fileName,
+                                         const std::vector<float> &rgb,
+                                         size_t numPixelsX, size_t numPixelsY) {
+  if (hasFloatImageExtension(fileName))
+    return smdl::writeFloatImage(fileName, int(numPixelsX), int(numPixelsY), 3,
+                                 rgb.data());
+  const std::vector<uint8_t> ldrImage{
+      tonemap(opts.image.tonemap, rgb, film, grid.wavelengths)};
+  return smdl::write8bitImage(fileName, int(numPixelsX), int(numPixelsY), 3,
+                              ldrImage.data());
+}
+
 void writeOutputs(const Options &opts, const Frame &frame,
                   const ResolvedGrid &grid, smdl::Compiler &compiler,
                   const EnvLight *envLight, const smdl::SpectralFilm &film,
@@ -328,8 +348,8 @@ void writeOutputs(const Options &opts, const Frame &frame,
       exposePreview(frame, compiler, film, wavelengths, rgbImage, true);
   }
   {
-    // Both RGB outputs see the same filtered pixels, and neither the
-    // spectral file below nor the film it comes from sees any of it.
+    // The RGB output sees the filtered pixels, and neither the spectral
+    // file below nor the film it comes from sees any of it.
     const MedianFilterReport report{
         medianFilterRGB(opts.image.medianFilter, rgbImage, numPixelsX, window)};
     if (report.replacedCount > 0) {
@@ -343,13 +363,6 @@ void writeOutputs(const Options &opts, const Frame &frame,
                     report.examinedCount, " pixels (",
                     smdl::Brief(sharePixels, 3), "%) and removed ",
                     smdl::Brief(shareEnergy, 3), "% of the energy");
-    }
-  }
-  if (!opts.image.outputRGBFloat.empty()) {
-    if (std::optional<smdl::Error> error{
-            smdl::writeFloatImage(opts.image.outputRGBFloat, int(numPixelsX),
-                                  int(numPixelsY), 3, rgbImage.data())}) {
-      error->print();
     }
   }
   if (!outputSpectrum.empty()) {
@@ -457,12 +470,10 @@ void writeOutputs(const Options &opts, const Frame &frame,
         " wall, ", formatDuration(resumed.header.cpuSeconds), " compute over ",
         smdl::Counted(resumed.header.sessions, "session"));
   }
-  {
-    const std::vector<uint8_t> ldrImage{
-        tonemap(opts.image.tonemap, rgbImage, film, wavelengths)};
+  if (!opts.image.outputRGB.empty()) {
     if (std::optional<smdl::Error> error{
-            smdl::write8bitImage(opts.image.outputRGB, int(numPixelsX),
-                                 int(numPixelsY), 3, ldrImage.data())}) {
+            writeRGBImage(opts, grid, film, opts.image.outputRGB, rgbImage,
+                          numPixelsX, numPixelsY)}) {
       error->print();
     }
   }

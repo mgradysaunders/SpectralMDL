@@ -6,6 +6,7 @@ smdl_add_doctest(
     "CameraModel.cc"
     "Color.cc"
     "MedianFilter.cc"
+    "Output.cc"
     "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"

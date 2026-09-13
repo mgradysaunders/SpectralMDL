@@ -36,7 +36,6 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
   static constexpr auto SESSION_ONLY_VALUES = std::array{"resume",
                                                          "spp",
                                                          "output-rgb",
-                                                         "output-rgbf",
                                                          "output-spectrum",
                                                          "exposure",
                                                          "tonemap",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare two linear-radiance renders numerically.
 
-Reads the '.exr' or '.hdr' files that 'smdl-toy -output-rgbf' writes and
+Reads the '.exr' or '.hdr' files that 'smdl-toy -output-rgb' writes and
 reports, over an optional crop, the ratio of means, the RMSE of the
 difference relative to the reference mean, and, when each side was rendered
 twice with different '-sample-offset' values, the z-score of the mean

@@ -2,6 +2,7 @@
 /// Writing what the render produced.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,15 +29,32 @@ developPreview(const Options &opts, const Frame &frame,
                const smdl::SpectralFilm &film,
                const smdl::SpectralFilm *bandFilm);
 
-/// Write everything the command line asked for: the linear RGB floating
-/// point image, the spectral ENVI pair, the guide tree beside it, the
-/// readout, and the tone mapped 8-bit image.
+/// Does `fileName` name a floating point image? By its extension,
+/// case-insensitively: `.exr` or `.hdr`, the two formats
+/// `smdl::writeFloatImage()` writes. Any other name is written 8-bit
+/// through the tone map.
+[[nodiscard]] bool hasFloatImageExtension(const std::string &fileName);
+
+/// Write the picture `rgb`, `numPixelsX` by `numPixelsY` of linear sRGB,
+/// to `fileName`: as floats when `hasFloatImageExtension()`, which is
+/// the linear picture before the tone map and its exposure, else tone
+/// mapped to 8 bits. The final write and every checkpoint come through
+/// here, so a checkpoint differs from the final picture in its samples
+/// alone.
+[[nodiscard]] std::optional<smdl::Error>
+writeRGBImage(const Options &opts, const ResolvedGrid &grid,
+              const smdl::SpectralFilm &film, const std::string &fileName,
+              const std::vector<float> &rgb, size_t numPixelsX,
+              size_t numPixelsY);
+
+/// Write everything the command line asked for: the spectral ENVI pair,
+/// the guide tree beside it, the readout, and the RGB picture.
 ///
 /// The picture is developed by mode: the observer's develop of the
 /// spectral film, or a physical sensor's of its readout, which runs
 /// whether or not the digital numbers are written, since the picture is
-/// made from them. Both then take the same tail: the firefly filter, the
-/// floating point write, the tone map, and the 8-bit write.
+/// made from them. Both then take the same tail: the firefly filter and
+/// the RGB write, as floats or tone mapped by the name's extension.
 ///
 /// The film must already hold every sample the session took, resumed
 /// ones included. `outputSpectrum` is the resolved spectral path, empty
