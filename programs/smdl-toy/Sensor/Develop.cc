@@ -665,9 +665,12 @@ void requireDNGSensor(const Sensor &sensor) {
              "tile lays down ",
              smdl::Counted(count, "band"));
   }
+  // The matrices themselves are wanted at readout and not here; building
+  // one is the check, since that is what refuses a sensor whose three
+  // bands respond too much alike to state one.
   const std::array<size_t, 3> rgb{*response.rgbBands()};
   for (const double kelvin : {ILLUMINANT_A_KELVIN, D65_KELVIN})
-    xyzToCameraOf(calibrationAt(sensor, rgb, kelvin), kelvin);
+    (void)xyzToCameraOf(calibrationAt(sensor, rgb, kelvin), kelvin);
 }
 
 DNGImage makeDNGImage(const Sensor &sensor, const Detector &detector,

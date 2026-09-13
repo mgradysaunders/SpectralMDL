@@ -5,6 +5,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "smdl/RenderUtil/Colorimetry.h"
@@ -602,8 +603,13 @@ TEST_CASE("Develop: the DNG a readout hands a raw developer") {
                           develop);
   }};
   std::vector<uint16_t> planes{};
-  const auto [image, develop]{
+  // Deliberately not a structured binding: a subcase below names 'image'
+  // inside a 'CHECK_NEAR', and capturing a structured binding in the
+  // lambda the macro expands to is C++20.
+  const std::pair<DNGImage, DevelopFit> made{
       imageOf(sensor, detector, readout, WhiteBalanceKind::D65, planes)};
+  const DNGImage &image{made.first};
+  const DevelopFit &develop{made.second};
   SUBCASE("Says which plane every pixel of the tile holds, whatever order "
           "the file names the bands in") {
     CHECK(image.hasCFA);
