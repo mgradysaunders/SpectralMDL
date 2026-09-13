@@ -270,6 +270,23 @@ if(SMDL_ENABLE_PTEX)
       PTEX_BUILD_SHARED_LIBS OFF
       PTEX_BUILD_DOCS OFF
     )
+endif()
+
+if(SMDL_ENABLE_NANOVDB)
+  # NanoVDB lives inside the OpenVDB repository and has no release of its own,
+  # so the tag here is an OpenVDB one. 'nanovdb' holds no CMakeLists.txt, which
+  # is what makes it the right SOURCE_SUBDIR: the headers get populated and
+  # nothing is ever added as a subdirectory, so OpenVDB proper, along with the
+  # TBB and Blosc it wants, stays out of the build entirely.
+  smdl_fetch_dependency(
+    "NanoVDB"
+    REPOSITORY "https://github.com/AcademySoftwareFoundation/openvdb"
+    TAG "v13.0.0"
+    SOURCE_SUBDIR "nanovdb"
+    )
+endif()
+
+if(SMDL_TOY)
   # Assimp
   #
   # Narrowed to the widely adopted formats. Assimp reads roughly fifty, most
@@ -318,23 +335,7 @@ if(SMDL_ENABLE_PTEX)
       #ASSIMP_BUILD_PLY_EXPORTER ON
       #ASSIMP_BUILD_STL_EXPORTER ON
     )
-endif()
 
-if(SMDL_ENABLE_NANOVDB)
-  # NanoVDB lives inside the OpenVDB repository and has no release of its own,
-  # so the tag here is an OpenVDB one. 'nanovdb' holds no CMakeLists.txt, which
-  # is what makes it the right SOURCE_SUBDIR: the headers get populated and
-  # nothing is ever added as a subdirectory, so OpenVDB proper, along with the
-  # TBB and Blosc it wants, stays out of the build entirely.
-  smdl_fetch_dependency(
-    "NanoVDB"
-    REPOSITORY "https://github.com/AcademySoftwareFoundation/openvdb"
-    TAG "v13.0.0"
-    SOURCE_SUBDIR "nanovdb"
-    )
-endif()
-
-if(SMDL_TOY)
   # Embree
   #
   # Only the geometry types smdl-toy actually creates are compiled in:
