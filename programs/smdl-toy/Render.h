@@ -6,13 +6,11 @@
 #include <string>
 
 #include "smdl/Compiler.h"
-#include "smdl/RenderUtil/SpectralFilm.h"
 
 struct Options;
 struct Frame;
-struct ResolvedGrid;
 struct ResumedSequence;
-class Response;
+class RenderFilm;
 class StagedScene;
 class STree;
 
@@ -26,13 +24,12 @@ class STree;
 /// Meter the scene when the shot needs it, then draw this session's
 /// samples into the film.
 ///
-/// The film is the observer's spectral `film`, or the band film a
-/// physical sensor's `response` projects every sample onto; exactly one
-/// of `film` and `bandFilm` is there. Guiding splits the budget into
-/// geometrically growing passes and combines them; everything else is
-/// one pass. Either way the film holds every sample the session took
-/// when this returns, resumed ones included, and `resumed.header` has
-/// been charged for the time it cost.
+/// `target` is the observer's spectral film, or the band film a physical
+/// sensor's response projects every sample onto; see `RenderFilm`.
+/// Guiding splits the budget into geometrically growing passes and
+/// combines them; everything else is one pass. Either way the film holds
+/// every sample the session took when this returns, resumed ones
+/// included, and `resumed.header` has been charged for the time it cost.
 ///
 /// A sensor whose ISO nothing states is metered before the first
 /// sample, once for the sequence: a metering pass over the window,
@@ -43,8 +40,7 @@ class STree;
 /// is filled in when guiding is on, whether or not it is going to be
 /// written.
 void renderSamples(const Options &opts, const Frame &frame,
-                   const ResolvedGrid &grid, smdl::Compiler &compiler,
-                   const StagedScene &staged, ResumedSequence &resumed,
-                   smdl::SpectralFilm *film, const Response *response,
-                   smdl::SpectralFilm *bandFilm, const std::string &outputBands,
+                   smdl::Compiler &compiler, const StagedScene &staged,
+                   ResumedSequence &resumed, RenderFilm &target,
+                   const std::string &outputBands,
                    std::unique_ptr<STree> &sdtree);

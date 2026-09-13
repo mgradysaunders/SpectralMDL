@@ -158,6 +158,22 @@ struct WavelengthGrid final {
   }
 };
 
+/// The span the RGB pipeline is defined over, in nanometers, with a
+/// nanometer of slack at each end so that a grid ending exactly on one of
+/// them is not called out. Outside it, RGB-sourced spectra extend flat
+/// from their end values and the CIE projection sees little; see
+/// `RenderGrid::isBeyondVisible`.
+///
+/// \{
+constexpr float VISIBLE_MIN{380.0f};
+constexpr float VISIBLE_MAX{780.0f};
+constexpr float VISIBLE_SLACK{1.0f};
+/// \}
+
+/// Declared here for `RenderGrid::wavelengths()`; defined below, since
+/// its constructors read `gRenderGrid`.
+class Color;
+
 /// The render's wavelength grids: one, or one per band of a sensor's
 /// tile, every pixel evaluating on the grid of the band it reads
 /// through.
@@ -197,6 +213,12 @@ struct RenderGrid final {
   /// `-wavelength-jitter`? Never on a grid with no cells.
   bool isJittering{};
 
+  /// Does any grid reach outside the visible? Everything RGB-sourced
+  /// degrades there, so several later stages say so once rather than
+  /// rendering a mysteriously dark image. Derived by `reset()` from the
+  /// grids themselves, so it cannot disagree with them.
+  bool isBeyondVisible{};
+
   /// The `smdl::State` every evaluation starts from: the library
   /// defaults plus the first grid's endpoints and quadrature weights.
   /// `makeRenderState()` copies it rather than building a fresh state,
@@ -223,6 +245,13 @@ struct RenderGrid final {
   [[nodiscard]] const WavelengthGrid &first() const noexcept {
     return grids.front();
   }
+
+  /// The first grid's wavelengths, which is what a render-wide
+  /// evaluation runs on and what every stage outside the render loop
+  /// reads the grid as. Defined out of line, `Color` being declared
+  /// below, and returned by value, `Color` not being a member for the
+  /// same reason; every caller is setup-time or output-time.
+  [[nodiscard]] Color wavelengths() const;
 
   /// The span every grid lies within.
   ///
@@ -263,6 +292,8 @@ struct RenderGrid final {
     tileRows = columns > 0 ? tile.size() / columns : 0;
     tileGrids = std::move(tile);
     isJittering = shouldJitter && !grids.front().bandEdges.empty();
+    isBeyondVisible = minWavelength() < VISIBLE_MIN - VISIBLE_SLACK ||
+                      maxWavelength() > VISIBLE_MAX + VISIBLE_SLACK;
     stateBase = smdl::State{};
     grids.front().applyTo(stateBase);
   }
@@ -409,6 +440,8 @@ public:
   Color(SpectralColor &&other) noexcept
       : SpectralColor(static_cast<SpectralColor &&>(other)) {}
 };
+
+inline Color RenderGrid::wavelengths() const { return {first().wavelengths}; }
 
 /// An `smdl::State` carrying the render-wide fields every evaluation
 /// needs: the wavelength grid and, when material construction is involved,

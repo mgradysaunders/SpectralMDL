@@ -15,12 +15,12 @@
 #include "Render.h"
 #include "Render/Guiding.h"
 #include "Render/Manifold.h"
+#include "RenderFilm.h"
 #include "Resume.h"
 #include "Sensor/Response.h"
 #include "Stage.h"
 
 #include "smdl/Compiler.h"
-#include "smdl/RenderUtil/SpectralFilm.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
@@ -88,7 +88,7 @@ int main(int argc, char **argv) try {
     responseSettings = frame.model.sensor->settings().response;
   ResumedSequence resumed{resumeSequence(
       opts, frame, responseSettings ? &*responseSettings : nullptr)};
-  const ResolvedGrid grid{resolveWavelengthGrid(opts, frame, resumed)};
+  resolveWavelengthGrid(opts, frame, resumed);
   // The response against the grid, here rather than later, so that a
   // band the grid cannot see fails before anything compiles. Under a tile
   // it draws the wavelengths a lens whose glasses disperse is traced at,
@@ -99,7 +99,7 @@ int main(int argc, char **argv) try {
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
   smdl::Compiler compiler{};
-  setUpCompiler(opts, frame, grid, compiler);
+  setUpCompiler(opts, frame, compiler);
   if (opts.utility.shouldListObjects) {
     if (opts.utility.useJSON) {
       printObjectTableJSON(frame.layout);
@@ -127,7 +127,11 @@ int main(int argc, char **argv) try {
     if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
     return EXIT_SUCCESS;
   }
-  StagedScene staged{opts, frame, grid, compiler};
+  StagedScene staged{opts, frame, compiler};
+  // Everything the trace covers has run; the render loop and the self-test
+  // below are deliberately outside it, see -profile. Finalized here rather
+  // than past the self-test so that no exit path drops the trace.
+  if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
   // The self-test bows out here rather than after the render setup: it
   // asks the committed scene one question and answers it.
   if (opts.render.shouldTestMNEENormalHook) {
@@ -140,18 +144,12 @@ int main(int argc, char **argv) try {
                                 failures == 1 ? " disagrees\n" : " disagree\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
-  // The render loop is deliberately outside the trace; see -profile.
-  if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
   // The film: the observer's spectral film, or through a physical sensor
   // its band film, which the response projects every sample onto and the
-  // readout reads. One or the other, never both.
-  std::optional<smdl::SpectralFilm> film{};
-  std::optional<smdl::SpectralFilm> bandFilm{};
-  if (response)
-    bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
-                     frame.numPixelsY);
-  else
-    film.emplace(grid.wavelengths.size(), frame.numPixelsX, frame.numPixelsY);
+  // readout reads. One or the other, never both, which is what
+  // `RenderFilm` holds. It borrows the response above, which outlives it.
+  RenderFilm target{response ? &*response : nullptr, gRenderGrid.numBands,
+                    frame.numPixelsX, frame.numPixelsY};
   // -resume implies writing back to the file being resumed, so one
   // command line re-runs to keep accumulating; an explicitly given
   // -output-bands wins verbatim, redirecting or (when empty)
@@ -160,14 +158,11 @@ int main(int argc, char **argv) try {
                                         !resumed.wasRequested
                                     ? opts.image.outputBands
                                     : opts.image.resume};
-  smdl::SpectralFilm *filmOrNull{film ? &*film : nullptr};
-  const Response *responseOrNull{response ? &*response : nullptr};
-  smdl::SpectralFilm *bandFilmOrNull{bandFilm ? &*bandFilm : nullptr};
   std::unique_ptr<STree> sdtree{};
-  renderSamples(opts, frame, grid, compiler, staged, resumed, filmOrNull,
-                responseOrNull, bandFilmOrNull, outputBands, sdtree);
-  writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), filmOrNull,
-               responseOrNull, bandFilmOrNull, resumed, outputBands,
+  renderSamples(opts, frame, compiler, staged, resumed, target, outputBands,
+                sdtree);
+  writeOutputs(opts, frame, compiler, staged.envLight.get(), target, resumed,
+               outputBands,
                savesGuideTree(opts, frame, outputBands) ? sdtree.get()
                                                         : nullptr);
   return EXIT_SUCCESS;

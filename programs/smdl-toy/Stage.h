@@ -90,32 +90,22 @@ struct Frame final {
 ///
 [[nodiscard]] Frame resolveFrame(const Options &opts);
 
-/// The wavelength grid the render runs on.
-struct ResolvedGrid final {
-  /// The grid in nanometers, which sizes every `Color`.
-  Color wavelengths{};
-
-  /// Does the grid reach outside the visible? Everything RGB-sourced
-  /// degrades there, so several later stages say so once rather than
-  /// rendering a mysteriously dark image.
-  bool isBeyondVisible{};
-};
-
-/// Resolve the grid, in priority order: explicit `-wavelengths`,
-/// `-wavelength-range` uniform bands, or, when resuming with no grid
-/// flags at all, the grid recorded in the file being resumed, so that a
-/// resumed render needs no grid retyping.
+/// Install the render-wide `gRenderGrid`, in priority order: explicit
+/// `-wavelengths`, `-wavelength-range` uniform bands, or, when resuming
+/// with no grid flags at all, the grid recorded in the file being
+/// resumed, so that a resumed render needs no grid retyping.
 ///
-/// This also installs the render-wide `gRenderGrid`, whose band count
-/// sizes every `Color` built from here on, so nothing may construct one
-/// before this runs.
+/// `gRenderGrid` is the grid from here on, and its band count sizes every
+/// `Color` built after this, so nothing may construct one before this
+/// runs. Nothing is returned: every stage below reads the grid it
+/// installs, through `RenderGrid::wavelengths()` for the wavelengths and
+/// `RenderGrid::isBeyondVisible` for whether they leave the visible.
 ///
 /// \throws smdl::Error  If the grid is malformed, or does not match the
 ///                      one the resumed file was rendered on.
 ///
-[[nodiscard]] ResolvedGrid
-resolveWavelengthGrid(const Options &opts, const Frame &frame,
-                      const ResumedSequence &resumed);
+void resolveWavelengthGrid(const Options &opts, const Frame &frame,
+                           const ResumedSequence &resumed);
 
 /// Configure `compiler` and load every MDL module the command line
 /// names, plus the built-in stand-in.
@@ -123,7 +113,7 @@ resolveWavelengthGrid(const Options &opts, const Frame &frame,
 /// Split from the staging below because `-list-materials` reports how
 /// names resolve and so needs exactly this much and no more.
 void setUpCompiler(const Options &opts, const Frame &frame,
-                   const ResolvedGrid &grid, smdl::Compiler &compiler);
+                   smdl::Compiler &compiler);
 
 /// The scene, built and ready to render.
 ///
@@ -147,8 +137,7 @@ public:
   ///                      the scene asks for two mutually exclusive
   ///                      exterior media.
   ///
-  StagedScene(const Options &opts, Frame &frame, const ResolvedGrid &grid,
-              smdl::Compiler &compiler);
+  StagedScene(const Options &opts, Frame &frame, smdl::Compiler &compiler);
 
   StagedScene(const StagedScene &) = delete;
 

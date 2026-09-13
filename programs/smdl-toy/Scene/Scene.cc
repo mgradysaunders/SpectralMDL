@@ -1762,6 +1762,16 @@ void Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
                      mesh.verts[face[2]], hit);
 }
 
+void Scene::makeHitAt(const InstanceFrame &frame, uint32_t instIndex,
+                      uint32_t faceIndex, const float3 &bary, float time,
+                      Hit &hit) const {
+  const MeshInstance &meshInstance{meshInstances[instIndex]};
+  SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
+  if (meshInstance.isDeforming)
+    return makeHitDeforming(frame, instIndex, faceIndex, bary, time, hit);
+  return makeHit(frame, instIndex, faceIndex, bary, time, hit);
+}
+
 void Scene::makeHitDeforming(const InstanceFrame &frame, uint32_t instIndex,
                              uint32_t faceIndex, const float3 &bary, float time,
                              Hit &hit) const {

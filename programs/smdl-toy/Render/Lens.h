@@ -191,9 +191,9 @@ public:
   /// last bits: the vector arithmetic contracts multiplies and adds
   /// where the scalar arithmetic does not, so the two agree on which
   /// rays get out and differ slightly on where they point.
-  void traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
-                     smdl::Span<const smdl::Span<const float>> indices)
-      const noexcept;
+  void traceFromFilm(
+      smdl::Span<Ray> rays, smdl::Span<bool> passes,
+      smdl::Span<const smdl::Span<const float>> indices) const noexcept;
 
   /// The batch of `rays` traced at the reference indices, which is the d
   /// line, as the one-ray `traceFromFilm(Ray &)` is.
@@ -392,9 +392,9 @@ private:
   /// step. A width-one pack compiles to the scalar instruction for each
   /// operation, so the one-ray path costs what a scalar one would.
   template <size_t W>
-  void traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
-                  smdl::Span<const smdl::Span<const float>> indices)
-      const noexcept;
+  void
+  traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+             smdl::Span<const smdl::Span<const float>> indices) const noexcept;
 
   /// Trace the ray through every element, refracting at each.
 
