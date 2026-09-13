@@ -593,58 +593,63 @@ manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
 manifoldClaim(const JIT::Material &material, bool isMarked);
 
-/// The lobes a vertex whose evaluated material is `material` receives
+/// The narrowest width of the glossy lobes of `material` on the side
+/// `isBackface`, read from the normal hook, which reports it whichever
+/// lobe its draw takes; `drawXi` is a callable producing the `float4`
+/// for that draw, consulted only when there is a glossy lobe to read,
+/// so a renderer's deterministic sampler advances exactly then. The
+/// width is the squared roughness, the slope of the lobe's half-width,
+/// which is what `manifoldReceiverLobes()` judges against a light's
+/// angular radius. `INFINITY` without a glossy lobe, so that the
+/// question never arises, and zero without the hook (see
+/// `Compiler::shouldEmitScatterNormal`), so that every finite lobe
+/// receives, as the Dirac estimator always has.
+template <typename DrawXi>
+[[nodiscard]] inline float manifoldGlossyWidth(const JIT::Material &material,
+                                               bool isBackface,
+                                               DrawXi &&drawXi) {
+  const int dfLobes{material.getLobes(isBackface)};
+  const int glossy{dfLobes & DF_GLOSSY};
+  if (glossy == 0) return INFINITY;
+  if (!material.def->scatterNormalSample) return 0.0f;
+  // One glossy kind, per the hook's contract: the reflection kind when
+  // the material has it and the transmission kind otherwise, since a
+  // single reflect-transmit leaf reports the same lobe either way and a
+  // layering that differs by domain answers for its reflection side,
+  // which is the side the receiver's own gather evaluates.
+  const int kind{(glossy & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
+                                                : DF_GLOSSY_BTDF};
+  float3 wm{};
+  float pdf{};
+  float2 alpha{};
+  if (!material.scatterNormalSample(drawXi(), isBackface, wm, pdf, alpha, kind))
+    return 0.0f;
+  return std::sqrt(alpha.x * alpha.y);
+}
+
+/// The lobes a vertex whose lobe word is `dfLobes` receives a light
 /// with: the ones the manifold gathers run from and value, and whose
 /// share of the vertex's bounce the arrivals behind it drop. A
 /// receiver's BSDF is evaluated at whatever bent direction a connection
-/// lands on, so a narrow lobe there makes an estimator that is zero
-/// almost always and enormous otherwise, while ordinary sampling handles
-/// a narrow lobe well. So the smooth (diffuse-like) lobes receive, a
-/// microfacet lobe above the glossy cutoff among them (see
-/// `DF_GLOSSY_BRDF`), and the glossy lobes receive when their squared
-/// roughness reaches `minAlpha`, read from the normal hook on the side
-/// the path arrived (a material layering several glossy lobes reports
-/// its narrowest, so the answer is the same whichever lobe the hook's
-/// draw took). The hook takes one glossy
-/// kind, and the query asks for the reflection kind when the material
-/// has it and the transmission kind otherwise: a single reflect-transmit
-/// leaf reports the same lobe either way, and a layering that differs
-/// by domain answers for its reflection side, which is the side the
-/// receiver's own gather evaluates. Without the hook (see
-/// `Compiler::shouldEmitScatterNormal`), every finite lobe receives, as
-/// the Dirac estimator always has. Zero means the vertex is no receiver.
+/// lands on, and the connections toward one light spread over its
+/// angular extent from the receiver, so a lobe narrower than that
+/// extent makes an estimator that is zero almost always and enormous
+/// otherwise, while ordinary sampling handles a narrow lobe well. So the
+/// smooth (diffuse-like) lobes receive, a microfacet lobe above the
+/// glossy cutoff among them (see `DF_GLOSSY_BRDF`), and the glossy
+/// lobes receive when `glossyWidth` (see `manifoldGlossyWidth()`)
+/// reaches `minWidth`, which a renderer sets from the light's angular
+/// radius. Zero means the vertex is no receiver of that light.
 ///
 /// The answer is a mask rather than a verdict on the vertex so that a
 /// narrow coat over a wide base leaves the base receiving and the coat
 /// to ordinary sampling: the gathers value the receiving lobes only,
 /// and an arrival behind keeps the share of the receiver's bounce the
 /// other lobes carried, the same partition the casters' claims make.
-///
-/// The right threshold is the lobe's angular width against the light's
-/// angular radius from the receiver, which is a property of the scene;
-/// until a partition reads it, `minAlpha` is the renderer's one knob.
-///
-/// `drawXi` is a callable producing the `float4` for the hook's draw,
-/// consulted only on the path that actually draws, so a renderer's
-/// deterministic sampler advances exactly when a lobe is proposed.
-template <typename DrawXi>
-[[nodiscard]] inline int manifoldReceiverLobes(const JIT::Material &material,
-                                               bool isBackface, DrawXi &&drawXi,
-                                               float minAlpha) {
-  const int dfLobes{material.getLobes(isBackface)};
-  const int glossy{dfLobes & DF_GLOSSY};
-  if (glossy == 0 || !(minAlpha > 0.0f) || !material.def->scatterNormalSample)
-    return dfLobes & DF_FINITE;
-  // One glossy kind, per the hook's contract; see above.
-  const int kind{(glossy & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
-                                                : DF_GLOSSY_BTDF};
-  float3 wm{};
-  float pdf{};
-  float2 alpha{};
-  const bool isWide{material.scatterNormalSample(drawXi(), isBackface, wm, pdf,
-                                                 alpha, kind) &&
-                    std::sqrt(alpha.x * alpha.y) >= minAlpha};
-  return (dfLobes & DF_SMOOTH) | (isWide ? glossy : 0);
+[[nodiscard]] inline int manifoldReceiverLobes(int dfLobes, float glossyWidth,
+                                               float minWidth) noexcept {
+  return (dfLobes & DF_SMOOTH) |
+         (glossyWidth >= minWidth ? dfLobes & DF_GLOSSY : 0);
 }
 
 /// \}

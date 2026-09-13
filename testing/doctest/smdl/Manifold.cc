@@ -256,10 +256,10 @@ TEST_CASE("Manifold: the trials a reciprocal walk counts") {
 }
 
 TEST_CASE("Manifold: the lobes a receiver receives with") {
-  // The answer is a mask over the material's lobes, so a narrow coat over
-  // a diffuse base leaves the base receiving and hands the coat to
-  // ordinary sampling, with the draw made only where a glossy lobe has
-  // a width to read.
+  // The width is read once from the hook, and the lobes that receive a
+  // light are decided against the width that light asks for, as a mask
+  // over the material's lobes: a narrow coat over a diffuse base leaves
+  // the base receiving and hands the coat to ordinary sampling.
   smdl::Compiler compiler{};
   compiler.shouldEmitScatterNormal = true;
   REQUIRE_OK(compiler.addCode(
@@ -285,51 +285,60 @@ TEST_CASE("Manifold: the lobes a receiver receives with") {
   StateStorage storage{compiler};
   smdl::State state{storage.makeState()};
   state.finalize();
-  // The receiving lobes and how many times the hook was drawn.
-  const auto lobesOf{[&](const char *name, float minAlpha) {
+  // The glossy width and how many times the hook was drawn for it.
+  const auto widthOf{[&](const char *name) {
     const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
     REQUIRE(materialDef);
     smdl::JIT::Material material{state, materialDef};
     int draws{0};
-    const int lobes{smdl::manifoldReceiverLobes(
-        material, /*isBackface=*/false,
-        [&] {
+    const float width{
+        smdl::manifoldGlossyWidth(material, /*isBackface=*/false, [&] {
           draws++;
           return smdl::float4(0.3f, 0.7f, 0.5f, 0.5f);
-        },
-        minAlpha)};
-    return std::pair<int, int>{lobes, draws};
+        })};
+    return std::pair<float, int>{width, draws};
   }};
-  SUBCASE("A diffuse lobe receives without a draw") {
-    const auto [lobes, draws]{lobesOf("diffuse", 0.005f)};
-    CHECK(lobes == smdl::DF_SMOOTH_BRDF);
+  // The lobes that receive a light asking for `minWidth`.
+  const auto lobesOf{[&](const char *name, float minWidth) {
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
+    REQUIRE(materialDef);
+    smdl::JIT::Material material{state, materialDef};
+    return smdl::manifoldReceiverLobes(material.getLobes(false),
+                                       widthOf(name).first, minWidth);
+  }};
+  SUBCASE("A diffuse lobe receives any light without a draw") {
+    const auto [width, draws]{widthOf("diffuse")};
+    CHECK(std::isinf(width));
     CHECK(draws == 0);
+    CHECK(lobesOf("diffuse", 0.06f) == smdl::DF_SMOOTH_BRDF);
   }
-  SUBCASE("A glossy lobe receives by its width") {
-    // Squared roughness 0.0025 is under the floor and 0.04 is over it.
-    const auto [narrow, narrowDraws]{lobesOf("narrow", 0.005f)};
-    CHECK(narrow == 0);
+  SUBCASE("A glossy lobe receives by its width against the light's") {
+    // Squared roughness 0.0025 and 0.04 against a light asking 0.005.
+    const auto [narrow, narrowDraws]{widthOf("narrow")};
+    CHECK(narrow == doctest::Approx(0.0025f));
     CHECK(narrowDraws == 1);
-    const auto [wide, wideDraws]{lobesOf("wide", 0.005f)};
-    CHECK(wide == smdl::DF_GLOSSY_BRDF);
+    CHECK(lobesOf("narrow", 0.005f) == 0);
+    CHECK(lobesOf("narrow", 0.001f) == smdl::DF_GLOSSY_BRDF);
+    const auto [wide, wideDraws]{widthOf("wide")};
+    CHECK(wide == doctest::Approx(0.04f));
     CHECK(wideDraws == 1);
-    // No floor: every finite lobe receives, and nothing is drawn.
-    const auto [any, anyDraws]{lobesOf("narrow", 0.0f)};
-    CHECK(any == smdl::DF_GLOSSY_BRDF);
-    CHECK(anyDraws == 0);
+    CHECK(lobesOf("wide", 0.005f) == smdl::DF_GLOSSY_BRDF);
+    // A light asking nothing: every finite lobe receives.
+    CHECK(lobesOf("narrow", 0.0f) == smdl::DF_GLOSSY_BRDF);
   }
   SUBCASE("A narrow coat over a diffuse base leaves the base receiving") {
-    const auto [lobes, draws]{lobesOf("coated", 0.005f)};
-    CHECK(lobes == smdl::DF_SMOOTH_BRDF);
+    const auto [width, draws]{widthOf("coated")};
+    CHECK(width == doctest::Approx(0.0025f));
     CHECK(draws == 1);
-    // A floor the coat clears lets it receive too.
-    const auto [both, bothDraws]{lobesOf("coated", 0.001f)};
-    CHECK(both == (smdl::DF_SMOOTH_BRDF | smdl::DF_GLOSSY_BRDF));
-    CHECK(bothDraws == 1);
+    CHECK(lobesOf("coated", 0.005f) == smdl::DF_SMOOTH_BRDF);
+    // A light the coat is wide enough for lets it receive too.
+    CHECK(lobesOf("coated", 0.001f) ==
+          (smdl::DF_SMOOTH_BRDF | smdl::DF_GLOSSY_BRDF));
   }
   SUBCASE("A Dirac lobe never receives") {
-    const auto [lobes, draws]{lobesOf("mirror", 0.005f)};
-    CHECK(lobes == 0);
+    const auto [width, draws]{widthOf("mirror")};
+    CHECK(std::isinf(width));
     CHECK(draws == 0);
+    CHECK(lobesOf("mirror", 0.005f) == 0);
   }
 }

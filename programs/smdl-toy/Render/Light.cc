@@ -2,6 +2,7 @@
 
 #include "smdl/Support/Logger.h"
 
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -709,6 +710,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       bounds.push_back({light.bounds(), light.weight()});
     }
   }
+  mBounds = bounds;
   float envWeight{};
   if (envLight) {
     // Treat the environment as shining on a disk of the scene radius.
@@ -756,10 +758,78 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
 bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
                           Sampler &sampler, const float3 &point, float time,
                           LightSample &lightSample, bool shouldKeepDark) const {
-  if (empty()) return false;
   float selectPMF{};
+  const int lightIndex{select(sampler, point, selectPMF)};
+  return lightIndex >= 0 &&
+         sampleSelected(lightIndex, selectPMF, state, basis, sampler, point,
+                        time, lightSample, shouldKeepDark);
+}
+
+int LightSampler::select(Sampler &sampler, const float3 &point,
+                         float &selectPMF) const noexcept {
+  selectPMF = 0.0f;
+  if (empty()) return -1;
   const int lightIndex{mSelection.select(point, float(sampler), selectPMF)};
-  if (!(selectPMF > 0)) return false;
+  return selectPMF > 0.0f ? lightIndex : -1;
+}
+
+namespace {
+// The angular radius of a sphere from a point, a right angle from inside.
+[[nodiscard]] float sphereAngularRadius(const float3 &center, float radius,
+                                        const float3 &point) noexcept {
+  const float dist{length(center - point)};
+  if (!(dist > radius)) return 0.5f * PI;
+  return std::asin(radius / dist);
+}
+} // namespace
+
+float LightSampler::angularRadius(int lightIndex,
+                                  const float3 &point) const noexcept {
+  if (lightIndex < 0 || size_t(lightIndex) >= mBounds.size()) return 0.5f * PI;
+  // A sphere light by its own sphere at the open key; anything else by
+  // the sphere around its box, which is what the selection weighs by.
+  if (size_t(lightIndex) < mAreaLights.size() &&
+      mAreaLights[size_t(lightIndex)].sphereRadius > 0.0f) {
+    const AreaLight &light{mAreaLights[size_t(lightIndex)]};
+    return sphereAngularRadius(light.sphereCenter, light.sphereRadius, point);
+  }
+  const BoundBox3 &box{mBounds[size_t(lightIndex)].box};
+  return sphereAngularRadius(box.center(), 0.5f * length(box.extent()), point);
+}
+
+float LightSampler::angularRadiusOfInstance(
+    uint32_t instIndex, const float3 &point) const noexcept {
+  const uint32_t lightIndex{instIndex < mInstanceToLight.size()
+                                ? mInstanceToLight[instIndex]
+                                : INVALID_INDEX};
+  return lightIndex == INVALID_INDEX ? 0.5f * PI
+                                     : angularRadius(int(lightIndex), point);
+}
+
+float LightSampler::angularRadiusOfEnv(const float3 &wi) const noexcept {
+  float3 sunDirection{};
+  float cosSunRadius{};
+  if (mEnvLight && mEnvLight->sunCone(sunDirection, cosSunRadius) &&
+      dot(wi, sunDirection) >= cosSunRadius)
+    return std::acos(std::min(1.0f, cosSunRadius));
+  return 0.5f * PI;
+}
+
+float LightSampler::angularRadiusOf(const LightSample &lightSample,
+                                    const float3 &point) const noexcept {
+  if (lightSample.isInfinite) return angularRadiusOfEnv(lightSample.wi);
+  if (lightSample.analyticIndex != INVALID_INDEX)
+    return angularRadius(
+        int(mAreaLights.size() + size_t(lightSample.analyticIndex)), point);
+  return angularRadiusOfInstance(lightSample.hit.instIndex, point);
+}
+
+bool LightSampler::sampleSelected(int lightIndex, float selectPMF,
+                                  smdl::State &state,
+                                  const smdl::SkyBasis &basis, Sampler &sampler,
+                                  const float3 &point, float time,
+                                  LightSample &lightSample,
+                                  bool shouldKeepDark) const {
   // Everything a `true` return leaves standing is established here, so
   // that a caller may hand the same sample back over and over rather
   // than value-initializing half a kilobyte per gather. `hit` is the one

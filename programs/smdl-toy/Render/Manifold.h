@@ -26,7 +26,6 @@ class VisibilityWalk;
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.
 using smdl::buildManifoldSeedFrame;
-using smdl::manifoldReceiverLobes;
 using smdl::isSameManifoldSolution;
 using smdl::MANIFOLD_IDENTITY_FRACTION;
 using smdl::MANIFOLD_MAX_DEPTH;
@@ -39,6 +38,8 @@ using smdl::manifoldClaim;
 using smdl::ManifoldConnection;
 using smdl::ManifoldConnectionVertex;
 using smdl::manifoldFrameSeed;
+using smdl::manifoldGlossyWidth;
+using smdl::manifoldReceiverLobes;
 using smdl::manifoldReciprocal;
 using smdl::ManifoldSurfaces;
 using smdl::ManifoldTarget;
@@ -65,6 +66,27 @@ constexpr float MNEE_STRAIGHT_SEED_JITTER{0.60f};
 /// the arrival keeps the ordinary weight, the way every other
 /// undiscovered chain does.
 constexpr int MNEE_STRAIGHT_MAX_HOPS{64};
+
+/// The fraction of a light's angular radius from the receiver that a
+/// receiver's glossy lobes must reach in width (the squared roughness,
+/// the slope of the lobe's half-width) to receive that light's
+/// connections; see `manifoldReceiverLobes()`. The measured break-even
+/// of a glossy floor receiving a flat mirror's caustic from a 0.2 m
+/// lamp about 3 m away (angular radius 0.067): at width 0.04 ordinary
+/// sampling wins 1.6x at equal time and at 0.1 receiving wins 1.7x,
+/// the log-linear break-even 0.061, which is 0.9 of the radius. A
+/// narrow lobe loses by orders of magnitude, since ordinary sampling
+/// reaches such a caustic as a near-deterministic chain while a gather
+/// evaluates the lobe at whatever bent direction the light sample lands
+/// on. The sun's radius is 0.0047, so a lobe of width 0.0042 receives
+/// its caustics; the sky's is a right angle, which no lobe reaches.
+///
+/// The radius is the light's own from the receiver, not its image's
+/// through the caster, which is the one quantity both halves of the
+/// partition can compute before any walk or caster draw: exact for the
+/// straight refractive chains, and for a mirror a proxy that reads
+/// large near the lamp, where the image is farther than the lamp.
+constexpr float MNEE_RECEIVER_EXTENT_RATIO{0.9f};
 
 /// How precisely a glossy chain's walk must match its drawn microfacet
 /// normals, as a fraction of the narrowest lobe's squared roughness, so

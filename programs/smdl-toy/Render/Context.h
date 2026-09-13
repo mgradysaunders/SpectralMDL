@@ -61,17 +61,6 @@ public:
   /// figure 15).
   int biasedTrials{};
 
-  /// The squared roughness a vertex's glossy lobes need to receive
-  /// connections, its smooth lobes receiving regardless; see
-  /// `manifoldReceiverLobes()`. The default is the measured break-even
-  /// of a glossy lobe receiving a flat mirror's caustic under a lamp of
-  /// the usual angular size: at 0.04 ordinary sampling wins 1.6x at
-  /// equal time and at 0.1 receiving wins 1.7x, with a narrow lobe losing
-  /// by orders of magnitude, since ordinary sampling reaches such a
-  /// caustic as a near-deterministic chain while a gather evaluates the
-  /// lobe at whatever bent direction the light sample lands on.
-  float minReceiverAlpha{0.06f};
-
   /// Restrict the Dirac-chain machinery to the environment's sun cone:
   /// the deterministic refractive gather runs for an environment sample
   /// only when it aims inside the sun disk, and an environment arrival

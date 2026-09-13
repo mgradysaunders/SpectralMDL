@@ -356,12 +356,6 @@ cl::opt<unsigned> optMNEEMaxTrials{
     cl::desc("With -mnee, max attempts to re-find a reciprocal "
              "estimate before dropping the sample (default: 256)"),
     cl::init(256), cl::cat(catRendering)};
-cl::opt<float> optMNEEReceiverAlpha{
-    "mnee-receiver-alpha",
-    cl::desc("With -mnee, squared roughness a glossy lobe needs to "
-             "receive connections (default: 0.06, 0 takes every finite "
-             "lobe)"),
-    cl::init(0.06f), cl::cat(catRendering)};
 cl::opt<unsigned> optMNEEBiased{
     "mnee-biased",
     cl::desc("With -mnee, enable biased mode with this many walks per estimate "
@@ -714,8 +708,6 @@ Options parseCommandLine(int argc, char **argv) {
                                : 0;
   opts.render.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
   opts.render.mnee.biasedTrials = int(unsigned(optMNEEBiased));
-  opts.render.mnee.minReceiverAlpha =
-      std::max(float(optMNEEReceiverAlpha), 0.0f);
   opts.render.allLights = bool(optMarkAllLights);
   opts.render.noLightTree = bool(optNoLightTree);
   opts.render.noRobustIntersection = bool(optNoRobustIntersection);

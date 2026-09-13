@@ -529,6 +529,46 @@ public:
                             LightSample &lightSample,
                             bool shouldKeepDark = false) const;
 
+  /// The two halves of `sample()`, for a caller that has to know which
+  /// light was drawn before it decides how to draw the point on it:
+  /// `select()` draws the light for the receiver at `point` on one
+  /// sampler value, returning its index in the selection's space and
+  /// its probability, or a negative index when there is nothing to
+  /// draw; `sampleSelected()` then draws the point exactly as `sample()`
+  /// does for that light. `isEnv()` says whether an index is the
+  /// environment's.
+  [[nodiscard]] int select(Sampler &sampler, const float3 &point,
+                           float &selectPMF) const noexcept;
+  [[nodiscard]] bool sampleSelected(int lightIndex, float selectPMF,
+                                    smdl::State &state,
+                                    const smdl::SkyBasis &basis,
+                                    Sampler &sampler, const float3 &point,
+                                    float time, LightSample &lightSample,
+                                    bool shouldKeepDark = false) const;
+  [[nodiscard]] bool isEnv(int lightIndex) const noexcept {
+    return mEnvLight &&
+           lightIndex == int(mAreaLights.size() + mAnalyticLights.size());
+  }
+
+  /// The angular radius of a light from `point`, the scale a receiver's
+  /// glossy lobes are judged against (see `manifoldReceiverLobes()`):
+  /// the light's bounding sphere's, a right angle from inside it, and
+  /// for the environment the sun disk's where a direction falls in it
+  /// and a right angle for the sky, which no lobe is wide enough for.
+  /// By selection index (`angularRadius()`, for a light that is not the
+  /// environment), by the instance an emitter hit lands on
+  /// (`angularRadiusOfInstance()`, a right angle for an emitter light
+  /// selection never draws), by environment direction
+  /// (`angularRadiusOfEnv()`), and by sample (`angularRadiusOf()`).
+  [[nodiscard]] float angularRadius(int lightIndex,
+                                    const float3 &point) const noexcept;
+  [[nodiscard]] float
+  angularRadiusOfInstance(uint32_t instIndex,
+                          const float3 &point) const noexcept;
+  [[nodiscard]] float angularRadiusOfEnv(const float3 &wi) const noexcept;
+  [[nodiscard]] float angularRadiusOf(const LightSample &lightSample,
+                                      const float3 &point) const noexcept;
+
   /// Re-evaluate a sample's incident radiance for a segment that
   /// arrives at the light from `incidencePoint` rather than from
   /// `point`, the receiver it was sampled from. `state` must carry the
@@ -644,6 +684,10 @@ private:
   /// The selection over `areaLights`, then `analyticLights`, then the
   /// environment if present; see `LightSelection`.
   LightSelection mSelection{};
+
+  /// The bounds the selection was built over, in its index order, for
+  /// the angular radius queries.
+  std::vector<LightBounds> mBounds{};
 
   // TODO Revisit this?
   /// Is the environment a caustic target: true exactly while no light
