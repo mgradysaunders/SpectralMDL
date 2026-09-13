@@ -133,6 +133,7 @@ TEST_CASE("DetectorHeader: round trip") {
   written.baseISO = 100;
   written.wasISOMetered = true;
   written.whiteLevel = 16383;
+  written.crosstalk = {0.012f, 0.008f, 0.004f};
   const std::map<std::string, std::string> fields{
       asFields(written.headerLines())};
   SUBCASE("Every field survives the header at its digits") {
@@ -158,9 +159,10 @@ TEST_CASE("DetectorHeader: round trip") {
     CHECK(read.baseISO == 100);
     CHECK(read.wasISOMetered);
     CHECK(read.whiteLevel == 16383);
+    CHECK(read.crosstalk == written.crosstalk);
   }
   SUBCASE("Every field is written, under the 'render detector' prefix") {
-    CHECK(fields.size() == 17);
+    CHECK(fields.size() == 18);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render detector ", 0) == 0);
@@ -173,18 +175,24 @@ TEST_CASE("ResponseHeader: round trip") {
   written.hash = "0123456789abcdef0123456789abcdef";
   written.cfaColumns = 2;
   written.cfa = {"R", "G", "G", "B"};
+  written.crosstalk = {0.012f, 0.008f, 0.004f};
   const std::map<std::string, std::string> fields{
       asFields(written.headerLines())};
   SUBCASE("Every field survives the header, the tile as a list") {
     CHECK(fields.at("render cfa") == "{R, G, G, B}");
+    // The shortest spelling that reads back as the same float, so a leak
+    // comes out the way the file stated it rather than as the nine
+    // digits of the double it widens to.
+    CHECK(fields.at("render response crosstalk") == "{0.012, 0.008, 0.004}");
     ResponseHeader read{};
     read.readFrom(fields);
     CHECK(read.hash == written.hash);
     CHECK(read.cfaColumns == 2);
     CHECK(read.cfa == written.cfa);
+    CHECK(read.crosstalk == written.crosstalk);
   }
   SUBCASE("Every field is written, under the 'render' prefix") {
-    CHECK(fields.size() == 3);
+    CHECK(fields.size() == 4);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render ", 0) == 0);
@@ -196,10 +204,12 @@ TEST_CASE("ResponseHeader: round trip") {
         asFields(plain.headerLines())};
     CHECK(plainFields.at("render cfa") == "{}");
     CHECK(plainFields.at("render cfa columns") == "0");
+    CHECK(plainFields.at("render response crosstalk") == "{}");
     ResponseHeader read{written};
     read.readFrom(plainFields);
     CHECK(read.cfa.empty());
     CHECK(read.cfaColumns == 0);
+    CHECK(read.crosstalk.empty());
   }
   SUBCASE("A field the file does not carry leaves the value alone") {
     ResponseHeader read{written};

@@ -93,12 +93,56 @@ namespace {
 
 [[nodiscard]] Readout readOut(const Detector &detector,
                               const smdl::SpectralFilm &film,
-                              DetectorNoise noise, uint64_t seed = 0) {
+                              DetectorNoise noise, uint64_t seed = 0,
+                              std::optional<int4> window = {}) {
   DetectorReadoutOptions options{};
   options.seed = seed;
   options.noise = noise;
   return detector.readOut(
-      film, options, wholeFrame(film.getNumPixelsX(), film.getNumPixelsY()));
+      film, options,
+      window.value_or(wholeFrame(film.getNumPixelsX(), film.getNumPixelsY())));
+}
+
+// A sensor of the `plain()` detector with three flat bands under an RGGB
+// tile, leaking `leaks`. Its film holds the one mosaic band, as a tiled
+// render's does.
+[[nodiscard]] SensorSettings bayer(const std::vector<float> &leaks) {
+  SensorSettings value{plain()};
+  value.response.bands.clear();
+  for (const auto *name : {"R", "G", "B"}) {
+    ResponseBand &band{value.response.bands.emplace_back()};
+    band.name = name;
+    band.wavelengths = {400.0f, 700.0f};
+    band.values = {1.0f, 1.0f};
+  }
+  value.response.cfaColumns = 2;
+  value.response.cfa = {0, 1, 1, 2};
+  value.response.crosstalk = leaks;
+  return value;
+}
+
+// A one-band film whose pixel holds `electronsAt(x, y)` electrons,
+// through the detector's own factor.
+template <typename ElectronsAt>
+[[nodiscard]] smdl::SpectralFilm drawnFilm(const Detector &detector,
+                                           size_t numX, size_t numY,
+                                           ElectronsAt &&electronsAt) {
+  constexpr uint64_t NUM_SAMPLES{16};
+  const double k{detector.electronsPerFilmUnit()};
+  smdl::SpectralFilm film{1, numX, numY};
+  for (size_t y = 0; y < numY; y++) {
+    for (size_t x = 0; x < numX; x++) {
+      const double sum{electronsAt(x, y) / k * double(NUM_SAMPLES)};
+      film.addTotals(x, y, &sum);
+    }
+  }
+  film.addSamples(NUM_SAMPLES);
+  return film;
+}
+
+// The one band's digital number at a pixel.
+[[nodiscard]] double dnAt(const Readout &readout, size_t x, size_t y) {
+  return double(readout.digitalNumbers[y * readout.pixelCountX + x]);
 }
 
 struct Stats final {
@@ -373,5 +417,107 @@ TEST_CASE("Detector: the tallies are over the window and the rest reads as "
               (isInWindow ? 1001 : 1));
       }
     }
+  }
+}
+
+TEST_CASE("Detector: cross-talk gathers what the response de-mixed") {
+  SUBCASE("A flat field reads exactly what it reads with no leak, since the "
+          "de-mix and the gather compose") {
+    const std::vector<float> leaks{0.012f, 0.008f, 0.004f};
+    const Sensor sensor{bayer(leaks)};
+    const Detector detector{sensor, shot(sensor)};
+    // What the stated curves read of the field, and the crosstalk-free
+    // generation that implies, which is what the band film holds.
+    const std::vector<double> reads{1000.0, 2000.0, 1500.0};
+    const std::vector<double> demix{tileMixingInverse(bayer(leaks).response)};
+    REQUIRE(demix.size() == 9);
+    std::vector<double> generated(3);
+    for (size_t b = 0; b < 3; b++)
+      for (size_t j = 0; j < 3; j++)
+        generated[b] += demix[b * 3 + j] * reads[j];
+    const auto bandAt{
+        [](size_t x, size_t y) { return bayer({}).response.bandAt(x, y); }};
+    const smdl::SpectralFilm film{
+        drawnFilm(detector, 6, 6,
+                  [&](size_t x, size_t y) { return generated[bandAt(x, y)]; })};
+    const Readout readout{readOut(detector, film, DetectorNoise::NONE)};
+    // The outermost ring drops the taps it has no neighbors for.
+    for (size_t y = 1; y < 5; y++)
+      for (size_t x = 1; x < 5; x++)
+        CHECK(dnAt(readout, x, y) == doctest::Approx(reads[bandAt(x, y)]));
+  }
+  SUBCASE("A step edge moves by the closed form, and nothing else does") {
+    constexpr double LEAK{0.01};
+    constexpr double DARK{1000.0};
+    constexpr double LIT{5000.0};
+    SensorSettings settings{plain()};
+    settings.response.crosstalk = {float(LEAK)};
+    const Sensor sensor{settings};
+    const Detector detector{sensor, shot(sensor)};
+    const smdl::SpectralFilm film{drawnFilm(
+        detector, 8, 8, [](size_t x, size_t) { return x < 4 ? DARK : LIT; })};
+    const Readout readout{readOut(detector, film, DetectorNoise::NONE)};
+    for (size_t y = 1; y < 7; y++) {
+      CHECK(dnAt(readout, 2, y) == doctest::Approx(DARK));
+      CHECK(dnAt(readout, 3, y) ==
+            doctest::Approx((1.0 - LEAK) * DARK + LEAK * LIT));
+      CHECK(dnAt(readout, 4, y) ==
+            doctest::Approx((1.0 - LEAK) * LIT + LEAK * DARK));
+      CHECK(dnAt(readout, 5, y) == doctest::Approx(LIT));
+    }
+  }
+  SUBCASE("A spot away from the border spreads without gaining or losing "
+          "charge") {
+    constexpr double SPOT{20000.0};
+    SensorSettings settings{plain()};
+    settings.response.crosstalk = {0.02f};
+    const Sensor sensor{settings};
+    const Detector detector{sensor, shot(sensor)};
+    const smdl::SpectralFilm film{
+        drawnFilm(detector, 8, 8, [](size_t x, size_t y) {
+          return x == 4 && y == 4 ? SPOT : 0.0;
+        })};
+    const Readout readout{readOut(detector, film, DetectorNoise::NONE)};
+    double total{};
+    for (size_t y = 0; y < 8; y++)
+      for (size_t x = 0; x < 8; x++) total += dnAt(readout, x, y);
+    CHECK(total == doctest::Approx(SPOT));
+    CHECK(dnAt(readout, 4, 4) == doctest::Approx(0.92 * SPOT));
+    CHECK(dnAt(readout, 3, 4) == doctest::Approx(0.02 * SPOT));
+    CHECK(dnAt(readout, 3, 3) == 0);
+  }
+  SUBCASE("A tap outside the window is dropped, so the window's own edge "
+          "reads darker by what it does not gather") {
+    constexpr double LEAK{0.01};
+    constexpr double LIT{10000.0};
+    SensorSettings settings{plain()};
+    settings.response.crosstalk = {float(LEAK)};
+    const Sensor sensor{settings};
+    const Detector detector{sensor, shot(sensor)};
+    const smdl::SpectralFilm film{
+        drawnFilm(detector, 8, 8, [](size_t, size_t) { return LIT; })};
+    const int4 window{2, 2, 6, 6};
+    const Readout readout{
+        readOut(detector, film, DetectorNoise::NONE, 0, window)};
+    // The corner drops two taps, an edge one, and the interior none.
+    CHECK(dnAt(readout, 2, 2) == doctest::Approx((1.0 - 2.0 * LEAK) * LIT));
+    CHECK(dnAt(readout, 3, 2) == doctest::Approx((1.0 - LEAK) * LIT));
+    CHECK(dnAt(readout, 3, 3) == doctest::Approx(LIT));
+  }
+  SUBCASE("A leak of zero reads the film as it stands, on the same seeds") {
+    SensorSettings settings{plain()};
+    settings.detector.readNoise = 3.0f;
+    const Sensor stated{settings};
+    settings.response.crosstalk = {0.0f, 0.0f};
+    const Sensor zeroed{settings};
+    const Detector before{stated, shot(stated)};
+    const Detector after{zeroed, shot(zeroed)};
+    CHECK(before.crosstalk().isEmpty());
+    CHECK(after.crosstalk().isEmpty());
+    const smdl::SpectralFilm film{
+        drawnFilm(before, 6, 6,
+                  [](size_t x, size_t y) { return 400.0 * double(x + y); })};
+    CHECK(readOut(before, film, DetectorNoise::ALL, 9).digitalNumbers ==
+          readOut(after, film, DetectorNoise::ALL, 9).digitalNumbers);
   }
 }

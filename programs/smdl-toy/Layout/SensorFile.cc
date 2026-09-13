@@ -853,31 +853,43 @@ std::vector<double> tileMixingInverse(const ResponseSettings &settings) {
   return inverse;
 }
 
-double crosstalkFloor(const ResponseSettings &settings) {
-  if (!settings.hasCFA() || !settings.hasCrosstalk()) return 0.0;
+std::vector<ResponseBand> crosstalkFreeBands(const ResponseSettings &settings) {
+  if (!settings.hasCFA() || !settings.hasCrosstalk()) return settings.bands;
   const std::vector<double> demix{tileMixingInverse(settings)};
-  if (demix.empty()) return 0.0;
+  if (demix.empty()) return settings.bands;
   const size_t numBands{settings.bands.size()};
-  float peak{0.0f};
-  for (const auto &band : settings.bands)
-    for (const auto value : band.values) peak = std::max(peak, value);
-  if (!(peak > 0)) return 0.0;
   // A linear combination of piecewise-linear curves is piecewise linear
-  // on the union of their knots, so its minimum is at one of them.
+  // on the union of their knots, so the values there carry it exactly.
   std::vector<float> knots{};
   for (const auto &band : settings.bands)
     knots.insert(knots.end(), band.wavelengths.begin(), band.wavelengths.end());
   std::sort(knots.begin(), knots.end());
   knots.erase(std::unique(knots.begin(), knots.end()), knots.end());
-  double floor{0.0};
+  std::vector<ResponseBand> bands(numBands);
   for (size_t b = 0; b < numBands; b++) {
+    ResponseBand &band{bands[b]};
+    band.name = settings.bands[b].name;
+    band.wavelengths = knots;
+    band.values.reserve(knots.size());
     for (const float knot : knots) {
       double value{};
       for (size_t j = 0; j < numBands; j++)
         value += demix[b * numBands + j] * settings.bands[j].at(double(knot));
-      floor = std::min(floor, value / double(peak));
+      band.values.push_back(float(value));
     }
   }
+  return bands;
+}
+
+double crosstalkFloor(const ResponseSettings &settings) {
+  float peak{0.0f};
+  for (const auto &band : settings.bands)
+    for (const auto value : band.values) peak = std::max(peak, value);
+  if (!(peak > 0)) return 0.0;
+  double floor{0.0};
+  for (const auto &band : crosstalkFreeBands(settings))
+    for (const auto value : band.values)
+      floor = std::min(floor, double(value) / double(peak));
   return floor;
 }
 

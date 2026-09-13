@@ -33,6 +33,49 @@ enum class DetectorNoise { NONE, SHOT, ALL };
 /// The name back, for the header.
 [[nodiscard]] const char *detectorNoiseName(DetectorNoise noise) noexcept;
 
+/// What a pixel's charge does to its neighbors as the readout gathers
+/// it: the per-band leak, and the tile that says which band a pixel is.
+/// Empty when the sensor states no cross-talk, which is when the readout
+/// reads the film as it stands.
+///
+/// The band film holds the crosstalk-free generation a response de-mixed
+/// the stated curves into, so the gather here is the other half: it puts
+/// back exactly the mixing `tileMixing()` describes, and the two compose
+/// to the stated curve on any flat field. Only detail finer than the
+/// kernel moves.
+struct DetectorCrosstalk final {
+  /// The fraction of a pixel's charge each one of its four neighbors
+  /// collects, per band, so a pixel keeps `1 - 4 leak` of its own; see
+  /// `ResponseSettings::crosstalk`. Empty for no cross-talk.
+  std::vector<double> leak{};
+
+  /// The tile as `ResponseSettings` holds it, `tileColumns` 0 without
+  /// one.
+  ///
+  /// \{
+  size_t tileColumns{};
+  size_t tileRows{};
+  std::vector<size_t> tile{};
+  /// \}
+
+  [[nodiscard]] bool isEmpty() const noexcept { return leak.empty(); }
+
+  /// The leak of the pixel at `(x, y)` in film band `filmBand`: the
+  /// tile's band under a tile, where the film holds the one mosaic band,
+  /// and `filmBand` itself without one, where every pixel holds every
+  /// band and cross-talk is a same-band blur.
+  [[nodiscard]] double leakAt(size_t x, size_t y,
+                              size_t filmBand) const noexcept {
+    return leak[tileColumns > 0 ? tile[tileIndexAt(tileColumns, tileRows, x, y)]
+                                : filmBand];
+  }
+};
+
+/// The cross-talk `settings` state, or nothing to gather when they state
+/// none.
+[[nodiscard]] DetectorCrosstalk
+detectorCrosstalkOf(const ResponseSettings &settings);
+
 /// The readout's flags: about this render rather than the instrument,
 /// which the sensor file's `detector` block is.
 struct DetectorReadoutOptions final {
@@ -185,6 +228,11 @@ public:
   [[nodiscard]] DetectorHeader
   header(const DetectorReadoutOptions &options) const;
 
+  /// The cross-talk the gather puts back, see `DetectorCrosstalk`.
+  [[nodiscard]] const DetectorCrosstalk &crosstalk() const noexcept {
+    return mCrosstalk;
+  }
+
 private:
   /// One pixel band's electrons at the ADC, clipped to the well, from
   /// the film's `mean` as `filmMean()` reads it. `signal` is the signal
@@ -193,9 +241,29 @@ private:
                                    smdl::RNG &rng,
                                    double &signal) const noexcept;
 
+  /// The charge one pixel band collects, in units of the film: what the
+  /// pixel keeps of its own generation plus what each of its four
+  /// neighbors hands it, which is what `filmMean()` alone reads without
+  /// cross-talk.
+  ///
+  /// A tap outside `window` is dropped, nothing having been rendered
+  /// there, so the outermost ring receives less than it should by under
+  /// `4 leak` of one pixel's charge; a crop wanting exactness renders a
+  /// pixel of margin, and at the frame's own border a real sensor's edge
+  /// row is genuinely darker too. Normalizing over the taps that were
+  /// kept, the way the develop's bilinear pass does, is deliberately not
+  /// done: the interior weights do not sum to one when the bands leak
+  /// differently, and normalizing would erase that rather than fix the
+  /// border.
+  [[nodiscard]] double collect(const smdl::SpectralFilm &film, size_t x,
+                               size_t y, size_t band,
+                               int4 window) const noexcept;
+
   DetectorSettings mSettings{};
 
   DetectorShot mShot{};
+
+  DetectorCrosstalk mCrosstalk{};
 
   float2 mPitchUM{};
 

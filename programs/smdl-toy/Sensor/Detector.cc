@@ -46,6 +46,20 @@ constexpr double TWO_PI_DOUBLE{6.283185307179586476925};
   return double(count - 1);
 }
 
+// The leaks as the log spells them: one number when every band leaks
+// alike, else one per band in band order.
+[[nodiscard]] std::string spellLeaks(const std::vector<double> &leaks) {
+  const bool isUniform{
+      std::all_of(leaks.begin(), leaks.end(),
+                  [&](double leak) { return leak == leaks.front(); })};
+  std::string text{};
+  for (size_t i = 0; i < (isUniform ? size_t(1) : leaks.size()); i++) {
+    if (i > 0) text += ", ";
+    smdl::Brief(leaks[i], 3).appendTo(text);
+  }
+  return text;
+}
+
 } // namespace
 
 DetectorNoise parseDetectorNoise(const std::string &name) {
@@ -69,8 +83,19 @@ const char *detectorNoiseName(DetectorNoise noise) noexcept {
   return "all";
 }
 
+DetectorCrosstalk detectorCrosstalkOf(const ResponseSettings &settings) {
+  DetectorCrosstalk crosstalk{};
+  if (!settings.hasCrosstalk()) return crosstalk;
+  crosstalk.leak.assign(settings.crosstalk.begin(), settings.crosstalk.end());
+  crosstalk.tileColumns = settings.cfaColumns;
+  crosstalk.tileRows = settings.cfaRows();
+  crosstalk.tile = settings.cfa;
+  return crosstalk;
+}
+
 Detector::Detector(const Sensor &sensor, const DetectorShot &shot)
     : mSettings(sensor.settings().detector), mShot(shot),
+      mCrosstalk(detectorCrosstalkOf(sensor.settings().response)),
       mPitchUM(sensor.settings().pitchUM), mFullWell(sensor.fullWell()),
       mBaseISO(sensor.baseISO()), mGain(sensor.gain(shot.iso)),
       mWellSource(sensor.wellSource()), mHasFixedGain(sensor.hasFixedGain()) {
@@ -121,6 +146,17 @@ void Detector::logSummary() const {
                   " DN, below the top code of ", mTopCode, ", as it does ",
                   mHasFixedGain ? "under the stated gain"
                                 : "below the base ISO");
+  if (!mCrosstalk.isEmpty()) {
+    double meanLeak{};
+    for (const double leak : mCrosstalk.leak) meanLeak += leak;
+    meanLeak /= double(mCrosstalk.leak.size());
+    SMDL_LOG_INFO("Readout: cross-talk ", spellLeaks(mCrosstalk.leak),
+                  " per side, so a pixel keeps ",
+                  smdl::Brief(1.0 - 4.0 * meanLeak, 4),
+                  " of its own charge and a checker of alternating pixels "
+                  "reads at ",
+                  smdl::Brief(1.0 - 8.0 * meanLeak, 4), " of its contrast");
+  }
 }
 
 double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
@@ -146,6 +182,22 @@ double Detector::electronsOf(double mean, DetectorNoise noise, smdl::RNG &rng,
   // The well clips; the ADC clips at zero below, after the black level,
   // which is what the black level is for.
   return std::min(electrons, mFullWell);
+}
+
+double Detector::collect(const smdl::SpectralFilm &film, size_t x, size_t y,
+                         size_t band, int4 window) const noexcept {
+  double total{(1.0 - 4.0 * mCrosstalk.leakAt(x, y, band)) *
+               filmMean(film, x, y, band)};
+  for (const int2 step : {int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1)}) {
+    const int tapX{int(x) + step.x};
+    const int tapY{int(y) + step.y};
+    if (tapX < window[0] || tapX >= window[2] || tapY < window[1] ||
+        tapY >= window[3])
+      continue;
+    total += mCrosstalk.leakAt(size_t(tapX), size_t(tapY), band) *
+             filmMean(film, size_t(tapX), size_t(tapY), band);
+  }
+  return total;
 }
 
 Readout Detector::readOut(const smdl::SpectralFilm &film,
@@ -178,9 +230,16 @@ Readout Detector::readOut(const smdl::SpectralFilm &film,
             smdl::RNG rng{smdl::mixBits(options.seed ^
                                         smdl::mixBits(uint64_t(index + 1))),
                           uint64_t(index)};
+            // The gather is a pure function of the film and leaves the
+            // draws seeded by the pixel band's index exactly as they
+            // were, so a realization is still a function of
+            // `(seed, x, y, band)`.
+            const double mean{mCrosstalk.isEmpty()
+                                  ? filmMean(film, x, y, b)
+                                  : collect(film, x, y, b, window)};
             double signal{};
-            const double electrons{electronsOf(filmMean(film, x, y, b),
-                                               options.noise, rng, signal)};
+            const double electrons{
+                electronsOf(mean, options.noise, rng, signal)};
             const double code{std::round(electrons * mGain + black)};
             readout.digitalNumbers[index] =
                 uint16_t(std::clamp(code, 0.0, double(mTopCode)));
@@ -224,5 +283,6 @@ DetectorHeader Detector::header(const DetectorReadoutOptions &options) const {
   header.baseISO = mBaseISO;
   header.wasISOMetered = mShot.wasISOMetered;
   header.whiteLevel = uint64_t(mWhiteLevel);
+  header.crosstalk.assign(mCrosstalk.leak.begin(), mCrosstalk.leak.end());
   return header;
 }

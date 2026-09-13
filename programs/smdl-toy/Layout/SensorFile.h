@@ -99,8 +99,10 @@ public:
   /// ascending, at least two of them.
   std::vector<float> wavelengths{};
 
-  /// The curve's value at each knot, finite and nonnegative. The curve
-  /// is zero outside its knots.
+  /// The curve's value at each knot, finite and nonnegative as a file
+  /// states them, though a crosstalk-free curve derived from a set of
+  /// them may dip slightly below zero; see `crosstalkFreeBands()`. The
+  /// curve is zero outside its knots.
   std::vector<float> values{};
 
   /// The curve at `lambda` nanometers; see `curveAt()`.
@@ -250,6 +252,24 @@ tileMixingInverse(const ResponseSettings &settings);
 /// takes its minimum at one of them. Zero for a response with no leak,
 /// with no tile, or whose mixing is singular.
 [[nodiscard]] double crosstalkFloor(const ResponseSettings &settings);
+
+/// The crosstalk-free curves the stated ones imply: `tileMixingInverse()`
+/// applied across the bands, each on the union of every band's knots,
+/// which is where a combination of piecewise-linear curves is itself
+/// piecewise linear and so is carried exactly by its values.
+///
+/// This is what a response projects samples onto, since a stated curve
+/// is what a uniformly illuminated array reads and already carries the
+/// mixing the readout's gather puts back. Everything else a sensor
+/// derives stays on the stated curves, because the well, the speed and
+/// the color fit are all flat-field facts; only spatial detail moves.
+///
+/// The stated bands verbatim without a leak, without a tile, or under a
+/// singular mixing, so a response with no cross-talk takes the path it
+/// always took. A curve may dip below zero, by no more than the parse
+/// allowed it to; see `crosstalkFloor()`.
+[[nodiscard]] std::vector<ResponseBand>
+crosstalkFreeBands(const ResponseSettings &settings);
 
 /// The `detector` a sensor reads out with: what turns the electrons the
 /// response counts into the digital numbers the instrument writes. Every

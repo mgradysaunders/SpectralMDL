@@ -250,8 +250,12 @@ private:
 class Response final {
 public:
   /// Resolve `settings` against `gRenderGrid`, jittered when it
-  /// jitters. Under a tile, also tabulate the draw of each band the tile
-  /// lays down under `illuminant`, the white balance's; see
+  /// jitters. The curves resolved are the crosstalk-free ones the stated
+  /// ones imply, see `crosstalkFreeBands()`, so that the band film holds
+  /// what each pixel generates rather than what it reads, and the
+  /// readout's gather puts the mixing back. Under a tile, also tabulate
+  /// the draw of each band the tile lays down under `illuminant`, the
+  /// white balance's; see
   /// `traceWavelengthAt()`. Warns about a band its grid only partly
   /// sees, about one narrow enough to alias against a grid held still,
   /// and about a tiled one the illuminant leaves dark. A band the tile
@@ -292,6 +296,13 @@ public:
   }
 
   [[nodiscard]] size_t tileColumns() const noexcept { return mCFAColumns; }
+
+  /// The per-band leak the curves were de-mixed by, which is what makes
+  /// the band film hold crosstalk-free generation; see
+  /// `ResponseSettings::crosstalk`. Empty when the sensor states none.
+  [[nodiscard]] const std::vector<float> &crosstalk() const noexcept {
+    return mCrosstalk;
+  }
 
   /// See `responseHash()`.
   [[nodiscard]] const std::string &hash() const noexcept { return mHash; }
@@ -364,6 +375,8 @@ private:
   std::vector<std::string> mTileNames{};
 
   std::vector<std::string> mTileBandNames{};
+
+  std::vector<float> mCrosstalk{};
 };
 
 /// The response of a frame resolved against the grids, under the white

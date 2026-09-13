@@ -319,6 +319,28 @@ TEST_CASE("Response: the tile picks one band per pixel") {
     CHECK(projectOnce(tiled, scoped.wavelengths(), E, 1, 0)[0] ==
           projectOnce(tiled, scoped.wavelengths(), E, 0, 1)[0]);
   }
+  SUBCASE("Under a leak it projects on the crosstalk-free curves, so the "
+          "tile's mixing takes the projections back to the stated ones") {
+    ResponseSettings leaky{settings};
+    leaky.crosstalk = {0.012f, 0.008f, 0.004f};
+    const Response stated{settings, d65()};
+    const Response leaked{leaky, d65()};
+    CHECK(leaked.crosstalk() == leaky.crosstalk);
+    const std::vector<double> m{tileMixing(leaky)};
+    const Color E{sloped(scoped.wavelengths())};
+    // A pixel of each band on the RGGB tile, whose film holds what that
+    // band generates without the transport.
+    const size_t pixels[3][2]{{0, 0}, {1, 0}, {1, 1}};
+    for (size_t b = 0; b < 3; b++) {
+      double gathered{};
+      for (size_t j = 0; j < 3; j++)
+        gathered += m[b * 3 + j] * projectOnce(leaked, scoped.wavelengths(), E,
+                                               pixels[j][0], pixels[j][1])[0];
+      CHECK(gathered ==
+            doctest::Approx(projectOnce(stated, scoped.wavelengths(), E,
+                                        pixels[b][0], pixels[b][1])[0]));
+    }
+  }
 }
 
 TEST_CASE("Response: the fingerprint and the film's band names") {

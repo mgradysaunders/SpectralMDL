@@ -94,14 +94,17 @@ WavelengthDensity::ofResponse(smdl::Span<const double> knots,
   if (w.empty()) return {};
   // The photon factor's `1 / (h c)` and the curve's scale cancel in the
   // normalization, so a piece's mass is the curve, the illuminant, and
-  // the wavelength at its middle, times its width.
+  // the wavelength at its middle, times its width. A crosstalk-free
+  // curve may dip a little below zero, by no more than the parse let it,
+  // and a density cannot, so such a piece is simply never drawn.
   std::vector<float> masses{};
   masses.reserve(w.size() - 1);
   for (size_t i = 0; i + 1 < w.size(); i++) {
     const double middle{0.5 * (w[i] + w[i + 1])};
-    masses.push_back(float(curveAt(knots, values, middle) *
-                           sensorSpectrumAt(illuminant, middle) * middle *
-                           (w[i + 1] - w[i])));
+    masses.push_back(
+        float(std::max(0.0, curveAt(knots, values, middle) *
+                                sensorSpectrumAt(illuminant, middle) * middle *
+                                (w[i + 1] - w[i]))));
   }
   return WavelengthDensity(std::move(w), masses);
 }
@@ -243,7 +246,7 @@ Response::Response(const ResponseSettings &settings,
     : mHash(responseHash(settings)),
       mFilmBandNames(responseFilmBandNames(settings)),
       mCFAColumns(settings.cfaColumns), mCFARows(settings.cfaRows()),
-      mCFA(settings.cfa) {
+      mCFA(settings.cfa), mCrosstalk(settings.crosstalk) {
   for (const auto index : mCFA)
     mTileNames.push_back(settings.bands[index].name);
   const std::vector<size_t> tileBandIndices{tileBands(mCFA)};
@@ -264,9 +267,12 @@ Response::Response(const ResponseSettings &settings,
     return nullptr;
   }};
   const bool isJittering{grids.isJittering};
+  // The scale stays the stated curves', whose peak is what `peak_qe`
+  // names; the de-mix is a mixing between the bands and moves no peak.
   const double scale{settings.qeScale()};
-  for (size_t bandIndex = 0; bandIndex < settings.bands.size(); bandIndex++) {
-    const ResponseBand &curve{settings.bands[bandIndex]};
+  const std::vector<ResponseBand> curves{crosstalkFreeBands(settings)};
+  for (size_t bandIndex = 0; bandIndex < curves.size(); bandIndex++) {
+    const ResponseBand &curve{curves[bandIndex]};
     Band band{};
     band.name = curve.name;
     const WavelengthGrid *grid{gridOf(bandIndex)};

@@ -1,5 +1,7 @@
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 
 #include "smdl/Support/Macros.h"
@@ -41,8 +43,30 @@ void spell(std::string &line, const std::vector<double> &values) {
   }
   line += '}';
 }
+// The shortest spelling that reads back as the same float. The widening
+// to double is what makes the long way round wrong: a leak a file states
+// as 0.012 is 0.0120000001 at nine digits of the double it becomes, and
+// nothing is gained by writing that down. Shortest by the string rather
+// than by the digits, since `%g` turns exponential once the exponent
+// reaches the precision and `6e+02` is no improvement on `600`.
+void spell(std::string &line, float value) {
+  char shortest[32]{};
+  for (int digits = 1; digits <= 9; digits++) {
+    char buffer[32]{};
+    std::snprintf(buffer, sizeof(buffer), "%.*g", digits, double(value));
+    if (std::strtof(buffer, nullptr) != value) continue;
+    if (!shortest[0] || std::strlen(buffer) < std::strlen(shortest))
+      std::snprintf(shortest, sizeof(shortest), "%s", buffer);
+  }
+  line += shortest;
+}
 void spell(std::string &line, const std::vector<float> &values) {
-  spell(line, std::vector<double>(values.begin(), values.end()));
+  line += '{';
+  for (size_t i = 0; i < values.size(); i++) {
+    if (i > 0) line += ", ";
+    spell(line, values[i]);
+  }
+  line += '}';
 }
 
 SMDL_ALWAYS_INLINE void parse(const std::string &text, uint64_t &value) {
@@ -143,6 +167,7 @@ void visitResponseFields(Self &self, Visitor &&visit) {
   visit("response hash", self.hash);
   visit("cfa columns", self.cfaColumns);
   visit("cfa", self.cfa);
+  visit("response crosstalk", self.crosstalk);
 }
 
 // The readout's table, under the same prefix.
@@ -165,6 +190,7 @@ void visitDetectorFields(Self &self, Visitor &&visit) {
   visit("detector base iso", self.baseISO);
   visit("detector iso metered", self.wasISOMetered);
   visit("detector white level", self.whiteLevel);
+  visit("detector crosstalk", self.crosstalk);
 }
 
 // The two directions over either table.

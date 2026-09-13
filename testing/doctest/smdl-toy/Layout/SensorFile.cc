@@ -825,3 +825,74 @@ TEST_CASE("SensorFile: the leak a curve set can carry") {
     CHECK(crosstalkFloor(document.sensor.response) == 0.0);
   }
 }
+
+TEST_CASE("SensorFile: the crosstalk-free curves a leak implies") {
+  SUBCASE("Without a leak they are the stated bands, knot for knot") {
+    const ResponseSettings none{
+        tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}})};
+    const std::vector<ResponseBand> free{crosstalkFreeBands(none)};
+    REQUIRE(free.size() == 3);
+    for (size_t b = 0; b < 3; b++) {
+      CHECK(free[b].name == none.bands[b].name);
+      CHECK(free[b].wavelengths == none.bands[b].wavelengths);
+      CHECK(free[b].values == none.bands[b].values);
+    }
+  }
+  SUBCASE("The tile's mixing takes them back to the stated ones, which is "
+          "what a flat field reads") {
+    std::vector<ResponseSettings> responses{
+        tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}},
+              {0.012f, 0.008f, 0.004f}),
+        tiled({"R", "G", "B"},
+              {{"G", "B", "R", "G", "R", "B"},
+               {"R", "G", "G", "B", "G", "G"},
+               {"B", "G", "G", "R", "G", "G"},
+               {"G", "R", "B", "G", "B", "R"},
+               {"B", "G", "G", "R", "G", "G"},
+               {"R", "G", "G", "B", "G", "G"}},
+              {0.01f, 0.01f, 0.01f})};
+    // Bands that overlap the way a camera's do, so the de-mix has
+    // something to take apart.
+    for (auto &response : responses) {
+      for (size_t b = 0; b < 3; b++) {
+        response.bands[b].wavelengths = {400.0f, 500.0f, 600.0f, 700.0f};
+        response.bands[b].values = {0.0f, 0.0f, 0.0f, 0.0f};
+        response.bands[b].values[2 - b] = 1.0f;
+        response.bands[b].values[2 - b + 1] = 0.2f;
+      }
+    }
+    for (const auto &response : responses) {
+      const std::vector<double> m{tileMixing(response)};
+      const std::vector<ResponseBand> free{crosstalkFreeBands(response)};
+      REQUIRE(free.size() == 3);
+      for (size_t b = 0; b < 3; b++) {
+        for (const float knot : free[b].wavelengths) {
+          double mixed{};
+          for (size_t j = 0; j < 3; j++)
+            mixed += at(m, 3, b, j) * free[j].at(double(knot));
+          CHECK(mixed == doctest::Approx(response.bands[b].at(double(knot))));
+        }
+      }
+    }
+  }
+  SUBCASE("They live on the union of every band's knots, where the "
+          "combination is piecewise linear") {
+    ResponseSettings response{tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}},
+                                    {0.01f, 0.01f, 0.01f})};
+    response.bands[0].wavelengths = {400.0f, 700.0f};
+    response.bands[0].values = {1.0f, 1.0f};
+    response.bands[1].wavelengths = {450.0f, 550.0f, 700.0f};
+    response.bands[1].values = {0.0f, 1.0f, 0.0f};
+    response.bands[2].wavelengths = {400.0f, 500.0f};
+    response.bands[2].values = {1.0f, 0.0f};
+    const std::vector<float> united{400.0f, 450.0f, 500.0f, 550.0f, 700.0f};
+    for (const auto &band : crosstalkFreeBands(response))
+      CHECK(band.wavelengths == united);
+  }
+  SUBCASE("A leak without a tile leaves them alone, there being nothing to "
+          "mix") {
+    ResponseSettings response{tiled({"R", "G"}, {})};
+    response.crosstalk = {0.05f, 0.05f};
+    CHECK(crosstalkFreeBands(response)[0].values == response.bands[0].values);
+  }
+}

@@ -209,6 +209,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     responseHeader.hash = response->hash();
     responseHeader.cfaColumns = response->tileColumns();
     responseHeader.cfa = response->tileNames();
+    responseHeader.crosstalk = response->crosstalk();
     responseLines = responseHeader.headerLines();
     if (model.hasPhysicalSensor() && !model.sensor->settings().name.empty())
       responseLines.push_back(

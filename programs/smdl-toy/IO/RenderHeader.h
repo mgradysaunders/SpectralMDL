@@ -123,6 +123,11 @@ struct ResponseHeader final {
   /// The tile row by row as band names, empty without a tile.
   std::vector<std::string> cfa{};
 
+  /// The per-band leak the curves were de-mixed by, which is what the
+  /// film's numbers mean; see `ResponseSettings::crosstalk`. Empty
+  /// without one.
+  std::vector<float> crosstalk{};
+
   /// The lines to hand `smdl::SpectralFilm::writeENVIFile()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;
 
@@ -191,6 +196,10 @@ struct DetectorHeader final {
   /// The digital number a saturated pixel reads, which a develop takes
   /// as white: the top code, unless the well clips below it.
   uint64_t whiteLevel{};
+
+  /// The per-band leak the readout gathered over, empty without one; see
+  /// `DetectorCrosstalk`.
+  std::vector<float> crosstalk{};
 
   /// The lines to hand `smdl::writeENVIFileUInt16()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;

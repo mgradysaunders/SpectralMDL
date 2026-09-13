@@ -77,6 +77,55 @@ a6400 reads out in about 46 ms, the a7 III in 62 ms, the a7R III in 70
 ms, the a9 in 6.6 ms, and the R5 in 16 ms. State one with `readout` in
 a copy of the file, or in the camera file.
 
+## Cross-talk between pixels
+
+A pixel does not keep all the charge it generates. Some of it converts
+deep enough in the silicon to diffuse sideways and be collected by a
+neighbor, and red converts several times deeper than blue, so red leaks
+furthest. `crosstalk` in the `response` block states that leak as the
+fraction of a pixel's charge each one of its four neighbors collects, so
+the total a pixel loses is four times it:
+
+```
+response {
+  crosstalk 0.008                          # one leak for every band
+  crosstalk { R 0.012  G 0.008  B 0.004 }  # or one per band
+}
+```
+
+None of the files here state one, and the reason is the measurement.
+Weta illuminated the assembled camera through a monochromator, which is
+a uniform field over the whole array, and a uniform field cannot show
+anything but the mixing: every curve here already carries its body's own
+flat-field cross-talk, whatever it is. Stating a leak does not add that
+mixing a second time. The renderer de-mixes the stated curves by what
+the leak and the tile imply, projects the samples onto the curves that
+come out, and puts the mixing back as the readout gathers over the four
+neighbors. On any flat field the two compose exactly back to the stated
+curve, so a leak moves no exposure, no white balance, and no color
+matrix. What moves is spatial detail: zero inside a patch of flat color,
+tens of digital numbers on the pixels either side of a hard edge, and a
+colored fringe on a small bright highlight, where the three bands move by
+different amounts.
+
+The bound on a leak comes from the curves themselves. Undoing the mixing
+drives a de-mixed curve below zero once the leak claims more band overlap
+than charge transport can explain, since most of that overlap is the
+color filter's own transmission. A leak past that is an error, with a
+note naming the largest one the set carries; these 17 bodies carry
+between 0.36% and 1.5% per side, a median of 0.88%. That is the one bound
+on a leak that comes from data rather than a guess, since no per-pitch,
+per-wavelength cross-talk table exists in public.
+
+Two things to know about a render. The leak is part of what the band film
+means, so it is in the response hash and `-resume` refuses a film drawn
+under a different one. And the gather drops a tap it has no rendered
+neighbor for, so the outermost ring of a `-crop-window` receives less
+than it should, by under four times the leak of one pixel's charge; a
+crop wanting exactness renders a pixel of margin and throws it away. At
+the frame's own border nothing is dropped that a real sensor's edge row
+does not also lose.
+
 ## Reading a sensor out
 
 `-output-dn` needs an exposure (`shutter`) and a pupil (`fstop` or
