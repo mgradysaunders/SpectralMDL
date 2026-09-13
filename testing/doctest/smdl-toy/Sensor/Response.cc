@@ -343,6 +343,19 @@ TEST_CASE("Response: the fingerprint and the file beside the film") {
     g.peakQE = DEFAULT_PEAK_QE;
     CHECK(responseHash(a) == responseHash(g));
   }
+  SUBCASE("And the leaks, which decide what the band film holds, so that a "
+          "resume across two of them refuses itself") {
+    ResponseSettings none{oneBand("vis", {380, 720}, {1, 1})};
+    ResponseSettings zero{none};
+    zero.crosstalk = {0.0f};
+    CHECK(responseHash(none) == responseHash(zero));
+    ResponseSettings leaky{none};
+    leaky.crosstalk = {0.01f};
+    CHECK(responseHash(none) != responseHash(leaky));
+    ResponseSettings leakier{none};
+    leakier.crosstalk = {0.02f};
+    CHECK(responseHash(leaky) != responseHash(leakier));
+  }
   SUBCASE("The film band names are the bands, or the one mosaic") {
     ResponseSettings settings{oneBand("vis", {380, 720}, {1, 1})};
     ResponseBand &nir{settings.bands.emplace_back()};
