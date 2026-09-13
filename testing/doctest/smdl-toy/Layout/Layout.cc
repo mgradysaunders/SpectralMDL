@@ -239,7 +239,7 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
                                     "}\nplace ball ") +
                             word + " off\n")};
     try {
-      packPlaces(entry, output);
+      packPlaces(entry, output, false, false);
       FAIL("expected the pack to be refused");
     } catch (const smdl::Error &error) {
       CAPTURE(error.message);
@@ -251,7 +251,7 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
   const std::string entry{
       dir.write("entry.layout", "asset ball = sphere { radius 1 material m }\n"
                                 "place ball translate 1 2 3\n")};
-  packPlaces(entry, output);
+  packPlaces(entry, output, false, false);
   CHECK(fs::exists(output));
 }
 

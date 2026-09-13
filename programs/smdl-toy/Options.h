@@ -330,6 +330,14 @@ struct UtilityOptions final {
 
   std::string outputPlaces{};
 
+  /// Write the buffer `-pack-places` produces with rigid records, which
+  /// refuses a scaled, skewed, or mirrored place rather than rounding
+  /// it away.
+  bool useRigidPlaces{};
+
+  /// Deflate the payload of the buffer `-pack-places` produces.
+  bool useCompressedPlaces{};
+
   bool shouldListMaterials{};
 
   bool shouldListObjects{};

@@ -55,7 +55,8 @@ int main(int argc, char **argv) try {
     return EXIT_SUCCESS;
   }
   if (!opts.utility.packPlaces.empty()) {
-    packPlaces(opts.utility.packPlaces, opts.utility.outputPlaces);
+    packPlaces(opts.utility.packPlaces, opts.utility.outputPlaces,
+               opts.utility.useRigidPlaces, opts.utility.useCompressedPlaces);
     return EXIT_SUCCESS;
   }
   // The camera report needs the camera and the files it names, and no

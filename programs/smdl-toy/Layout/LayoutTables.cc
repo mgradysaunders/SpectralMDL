@@ -126,11 +126,15 @@ void printObjectTable(const Layout &layout) {
     // hole, so it gets its one-line summary.
     if (item.curves.isActive) {
       const CurvesFile file{readCurvesFile(item.fileName)};
-      os << smdl::concat(item.fileName, ": curves, ",
-                         smdl::Counted(file.strandCount(), "strand"), ", ",
-                         smdl::Counted(file.points.size(), "point"), ", ",
-                         CurvesFile::basisName(file.basis), " basis",
-                         file.hasRootUVs() ? ", root UVs" : "", "\n\n");
+      os << smdl::concat(
+          item.fileName, ": curves, ",
+          smdl::Counted(file.strandCount(), "strand"), ", ",
+          smdl::Counted(file.pointCount(), "point"), ", ",
+          CurvesFile::basisName(file.basis), " basis",
+          file.isMoving()
+              ? smdl::concat(", ", smdl::Counted(file.keyCount(), "key"))
+              : std::string(),
+          file.hasRootUVs() ? ", root UVs" : "", "\n\n");
       continue;
     }
     ObjectFileInfo info{};
@@ -335,6 +339,8 @@ void dumpPlaces(const std::string &fileName) {
   llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat("# ", fileName, ": version ", places.version, ", ",
                      smdl::Counted(places.transforms.size(), "record"),
+                     places.isRigid ? ", rigid" : ", general",
+                     places.isCompressed ? ", deflated" : "",
                      places.hasVariants() ? ", with a variant column" : "",
                      "\n# 'thing' stands for whatever asset or group the "
                      "buffer scatters.\n");
@@ -352,6 +358,8 @@ void dumpPlaces(const std::string &fileName) {
 
 void dumpCurves(const std::string &fileName) {
   const CurvesFile file{readCurvesFile(fileName)};
+  // The bounds fold in every key, so a moving groom reports the extent
+  // it sweeps rather than one instant of it.
   BoundBox3 bound{};
   float minRadius{+INF};
   float maxRadius{-INF};
@@ -361,18 +369,24 @@ void dumpCurves(const std::string &fileName) {
     maxRadius = std::max(maxRadius, point.w);
   }
   llvm::raw_ostream &os{llvm::outs()};
-  os << smdl::concat(fileName, ": version ", file.version, ", ",
-                     CurvesFile::basisName(file.basis), " basis\n  ",
-                     smdl::Counted(file.strandCount(), "strand"), ", ",
-                     smdl::Counted(file.points.size(), "point"),
-                     file.hasRootUVs() ? ", with a root UV column" : "",
-                     "\n  bounds [", bound.lower.x, ", ", bound.lower.y, ", ",
-                     bound.lower.z, "] to [", bound.upper.x, ", ",
-                     bound.upper.y, ", ", bound.upper.z, "]\n  radius ",
-                     minRadius, " to ", maxRadius, "\n");
+  os << smdl::concat(
+      fileName, ": version ", file.version, ", ",
+      CurvesFile::basisName(file.basis), " basis",
+      file.isCompressed ? ", deflated" : "", "\n  ",
+      smdl::Counted(file.strandCount(), "strand"), ", ",
+      smdl::Counted(file.pointCount(), "point"),
+      file.hasRootUVs() ? ", with a root UV column" : "", "\n  ",
+      smdl::Counted(file.keyCount(), "key"),
+      file.isMoving() ? smdl::concat(" from ", file.keyTimes.front(), " s to ",
+                                     file.keyTimes.back(), " s")
+                      : std::string(),
+      "\n  bounds [", bound.lower.x, ", ", bound.lower.y, ", ", bound.lower.z,
+      "] to [", bound.upper.x, ", ", bound.upper.y, ", ", bound.upper.z,
+      "]\n  radius ", minRadius, " to ", maxRadius, "\n");
 }
 
-void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
+void packPlaces(const std::string &layoutFileName, std::string outputFileName,
+                bool isRigid, bool isCompressed) {
   if (outputFileName.empty())
     outputFileName = std::filesystem::path(layoutFileName)
                          .replace_extension(PLACES_EXTENSION)
@@ -388,6 +402,8 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
                                    smdl::QuotedPath(layoutFileName), ": ",
                                    diags.summary()));
   PlacesFile places{};
+  places.isRigid = isRigid;
+  places.isCompressed = isCompressed;
   std::string assetName{};
   using Overrides = std::map<std::string, std::string, std::less<>>;
   std::vector<Overrides> variants{};
@@ -451,7 +467,9 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
       anyVariant
           ? smdl::concat(" over ", smdl::Counted(variants.size(), "variant"))
           : std::string(),
-      " into ", smdl::QuotedPath(outputFileName), ". Scatter it with:\n\n");
+      places.isRigid ? " as rigid records" : "",
+      places.isCompressed ? ", deflated" : "", " into ",
+      smdl::QuotedPath(outputFileName), ". Scatter it with:\n\n");
   const std::string relative{
       std::filesystem::path(outputFileName).filename().string()};
   os << smdl::concat("  place ", assetName, " * \"", relative, "\"");

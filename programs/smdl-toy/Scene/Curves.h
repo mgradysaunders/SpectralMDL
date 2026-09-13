@@ -64,9 +64,14 @@ public:
 
   /// The Embree vertex buffer, shared with the geometry (so this vector
   /// must never reallocate once the geometry is built): the file's
-  /// points with `spec.radiusScale` applied, and with each strand's
-  /// ends duplicated when the basis is Catmull-Rom.
+  /// points at shutter open with `spec.radiusScale` applied, and with
+  /// each strand's ends duplicated when the basis is Catmull-Rom.
   std::vector<float4> points{};
+
+  /// The points at shutter shut, parallel to `points`, or empty for a
+  /// groom that does not move over the shutter: the second key of the
+  /// two Embree lerps between, shared exactly as `points` is.
+  std::vector<float4> pointsShut{};
 
   /// The Embree index buffer source: the first control vertex of each
   /// segment.
@@ -99,17 +104,35 @@ public:
     return uint32_t(segIndices.size());
   }
 
-  /// The fiber center at (`segIndex`, `u` in [0, 1]).
-  [[nodiscard]] CurveAxis axisAt(uint32_t segIndex, float u) const {
-    return evalCurveAxis(basis, &points[segIndices[segIndex]], u);
+  /// Do the strands move over the shutter?
+  [[nodiscard]] bool moves() const noexcept { return !pointsShut.empty(); }
+
+  /// The fiber center at (`segIndex`, `u` in [0, 1]) and a shutter
+  /// fraction.
+  ///
+  /// A moving groom lerps the window's control points between the two
+  /// keys and then evaluates, which is exactly what the traversal did:
+  /// the basis is linear in its control points, so Embree's per-vertex
+  /// lerp and this one produce the same curve.
+  [[nodiscard]] CurveAxis axisAt(uint32_t segIndex, float u, float time) const {
+    const uint32_t first{segIndices[segIndex]};
+    if (!moves()) return evalCurveAxis(basis, &points[first], u);
+    const uint32_t windowSize{basis == CurvesFile::Basis::LINEAR ? 2U : 4U};
+    float4 window[4]{};
+    for (uint32_t i = 0; i < windowSize; i++)
+      window[i] =
+          (1.0f - time) * points[first + i] + time * pointsShut[first + i];
+    return evalCurveAxis(basis, window, u);
   }
 };
 
-/// Create a curves object: build the Embree curve geometry (the file's
-/// basis crossed with `spec.mode`), the strand tables, and the proxy
-/// points, and commit its scene. The caller interns `matIndex` and
-/// owns the result; the geometry shares the point buffer, so the result
-/// must not be relocated afterward.
+/// Create a curves object: sample the file's keys at the two instants
+/// `sampling` names, build the Embree curve geometry (the file's basis
+/// crossed with `spec.mode`), the strand tables, and the proxy points,
+/// and commit its scene. The caller interns `matIndex` and owns the
+/// result; the geometry shares the point buffers, so the result must
+/// not be relocated afterward.
 [[nodiscard]] std::unique_ptr<Curves>
 makeCurves(RTCDevice device, CurvesFile file, const CurvesSpec &spec,
-           uint32_t matIndex, bool useRobustIntersection);
+           uint32_t matIndex, bool useRobustIntersection,
+           const MotionSampling &sampling);

@@ -477,6 +477,15 @@ cl::opt<std::string> optOutputPlaces{
     cl::desc(
         "The output file for -pack-places (default: layout name + '.places')"),
     cl::cat(catUtility)};
+cl::opt<bool> optRigidPlaces{
+    "pack-places-rigid",
+    cl::desc("Write 20-byte rigid records, refusing any place that is "
+             "scaled, skewed, or mirrored"),
+    cl::init(false), cl::cat(catUtility)};
+cl::opt<bool> optCompressPlaces{
+    "pack-places-compress",
+    cl::desc("Deflate the payload of the buffer -pack-places writes"),
+    cl::init(false), cl::cat(catUtility)};
 cl::opt<bool> optListMaterials{
     "list-materials", cl::desc("List material names the scene needs and exit"),
     cl::init(false), cl::cat(catUtility)};
@@ -728,6 +737,8 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.dumpCurves = std::string(optDumpCurves);
   opts.utility.packPlaces = std::string(optPackPlaces);
   opts.utility.outputPlaces = std::string(optOutputPlaces);
+  opts.utility.useRigidPlaces = bool(optRigidPlaces);
+  opts.utility.useCompressedPlaces = bool(optCompressPlaces);
   opts.utility.shouldListMaterials = bool(optListMaterials);
   opts.utility.shouldListObjects = bool(optListObjects);
   opts.utility.shouldDescribeCamera = bool(optDescribeCamera);

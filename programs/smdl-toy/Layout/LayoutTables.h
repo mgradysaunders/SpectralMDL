@@ -48,7 +48,8 @@ void printMaterialTableJSON(const smdl::Compiler *compiler,
 ///
 /// \throws smdl::Error  On parse errors, mixed content, or write
 ///                      failure.
-void packPlaces(const std::string &layoutFileName, std::string outputFileName);
+void packPlaces(const std::string &layoutFileName, std::string outputFileName,
+                bool isRigid, bool isCompressed);
 
 /// Print a `.places` buffer as the one-line place text `packPlaces()`
 /// consumes, one `place` per record with its variant's overrides

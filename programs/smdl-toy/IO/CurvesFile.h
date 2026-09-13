@@ -20,13 +20,27 @@ constexpr std::string_view CURVES_EXTENSION = ".curves";
 /// The magic that begins a curves file.
 constexpr std::string_view CURVES_MAGIC = "SMDLCRVS";
 
+/// Where an instant falls among a file's key times: the two keys that
+/// bracket it and the fraction of the way from one to the other.
+///
+/// Found once for a whole file rather than once per point, since every
+/// control point of a groom shares the one list of times.
+class CurvesKeyBlend final {
+public:
+  uint32_t lo{};
+  uint32_t hi{};
+  float fraction{};
+
+  /// Do the two ends coincide, so that the blend is one stored key?
+  [[nodiscard]] bool isStill() const noexcept { return lo == hi; }
+};
+
 /// A `.curves` file in memory: strands of control points, each point a
-/// position and radius, under one basis that says what the points mean.
+/// position and radius at each of the file's key times, under one basis
+/// that says what the points mean.
 ///
 /// The file layout is little-endian and deliberately simple, like
-/// `.places`; the point block is exactly Embree's `RTC_FORMAT_FLOAT4`
-/// curve vertex layout, so loading is a validation pass and a shared
-/// buffer rather than a translation:
+/// `.places`:
 ///
 /// ```
 /// offset  size      field
@@ -35,17 +49,20 @@ constexpr std::string_view CURVES_MAGIC = "SMDLCRVS";
 ///     10      2     u16 basis: 0 = linear, 1 = cubic B-spline,
 ///                   2 = Catmull-Rom
 ///     12      2     u16 flags, bit 0 = a per-strand root UV column
-///                   follows the points
-///     14      2     u16 reserved, 0 in v1
+///                   follows the points, bit 1 = the payload is one
+///                   zlib stream
+///     14      2     u16 key count K, at least 1
 ///     16      4     u32 strand count S
 ///     20      4     u32 point count P
-///     24      4     u32 reserved: a future time-sample index, 0 in v1
-///                   (the same animation seam '.places' carries)
-///     28  4*(S+1)   u32 offsets: offsets[i] is the first point of
+///     24    4*K     float key times in seconds, ascending
+/// --- the payload, deflated as a whole when flags bit 1 ---
+///        4*(S+1)    u32 offsets: offsets[i] is the first point of
 ///                   strand i; offsets[0] = 0, strictly increasing,
 ///                   offsets[S] = P
-///   then   16*P     float4 points (x, y, z, radius), strand by strand
-///   then    8*S     float2 root UVs, only if flags bit 0
+///         16*P*K    float4 points (x, y, z, radius): K consecutive
+///                   values per control point, one per key, strand by
+///                   strand
+///           8*S     float2 root UVs, only if flags bit 0
 /// ```
 ///
 /// The **basis** is a fact about the data, not a rendering choice: the
@@ -75,6 +92,14 @@ constexpr std::string_view CURVES_MAGIC = "SMDLCRVS";
 /// in object space, so silhouette and shading stay consistent however
 /// the instance is deformed.
 ///
+/// The **key times** are absolute readings of the render clock, exactly
+/// as a layout `motion { at <seconds> ... }` block's are, which is what
+/// makes a groom that moves mean the same thing at every shutter. The
+/// strands are the only place fiber motion can live: a layout track
+/// swings a whole groom as one body, and a mesh clip cannot reach a
+/// file of curves. A file with one key is a still groom, and its one
+/// time is never consulted.
+///
 /// Points are single precision on purpose, for the same arithmetic that
 /// decided `.places`. There is deliberately no ASCII twin: a groom is
 /// bulk data no human ever edits, `-dump-curves` prints a summary, and
@@ -93,12 +118,22 @@ public:
   /// What the points mean; see the class comment.
   Basis basis{Basis::BSPLINE};
 
-  /// The fence-post offsets: strand `i` is the points
+  /// Deflate the payload. What the reader found, and what the writer
+  /// will do, so that a round trip preserves the encoding.
+  bool isCompressed{};
+
+  /// The key times in ascending seconds, at least one. One key is a
+  /// still groom.
+  std::vector<float> keyTimes{0.0f};
+
+  /// The fence-post offsets over CONTROL POINTS, not over stored
+  /// entries: strand `i` is the points
   /// `[strandOffsets[i], strandOffsets[i + 1])`. Size S + 1, first 0,
-  /// strictly increasing, last equal to `points.size()`.
+  /// strictly increasing, last equal to `pointCount()`.
   std::vector<uint32_t> strandOffsets{};
 
-  /// The control points, `(x, y, z, radius)` per entry.
+  /// The control points, `(x, y, z, radius)` per entry, `keyCount()`
+  /// consecutive entries per control point.
   std::vector<float4> points{};
 
   /// The per-strand root UVs, either empty (no column) or exactly one
@@ -110,7 +145,43 @@ public:
     return strandOffsets.empty() ? 0 : uint32_t(strandOffsets.size() - 1);
   }
 
+  [[nodiscard]] uint32_t keyCount() const noexcept {
+    return uint32_t(keyTimes.size());
+  }
+
+  [[nodiscard]] uint32_t pointCount() const noexcept {
+    return keyTimes.empty() ? 0 : uint32_t(points.size() / keyTimes.size());
+  }
+
+  /// Does the groom move, so that a still and a moving key differ?
+  [[nodiscard]] bool isMoving() const noexcept { return keyCount() > 1; }
+
   [[nodiscard]] bool hasRootUVs() const noexcept { return !rootUVs.empty(); }
+
+  /// The `keyCount()` stored entries of one control point.
+  [[nodiscard]] const float4 *keysOf(uint32_t point) const noexcept {
+    return points.data() + size_t(point) * keyTimes.size();
+  }
+
+  /// Where `seconds` falls among `keyTimes`, clamped to the ends, and
+  /// exact at a key's own time. An empty or one-key file answers that
+  /// one key at every instant.
+  [[nodiscard]] CurvesKeyBlend blendAt(float seconds) const noexcept;
+
+  /// The control point `point` at `blend`, linearly interpolated, which
+  /// is what Embree does between two vertex buffers.
+  [[nodiscard]] float4 pointAt(uint32_t point,
+                               const CurvesKeyBlend &blend) const noexcept {
+    const float4 *keys{keysOf(point)};
+    if (blend.isStill()) return keys[blend.lo];
+    return (1.0f - blend.fraction) * keys[blend.lo] +
+           blend.fraction * keys[blend.hi];
+  }
+
+  /// Does a key sit strictly inside the open interval `(open, shut)`?
+  /// Such a key is not represented by the two samples the renderer
+  /// takes, and the loader says so.
+  [[nodiscard]] bool hasKeyBetween(float open, float shut) const noexcept;
 
   /// The fewest points a strand of `basis` can have; see the class
   /// comment.
@@ -136,19 +207,20 @@ public:
 /// Read a `.curves` file.
 ///
 /// \throws smdl::Error  If the file cannot be read, the magic, version,
-///                      or basis is wrong, the offsets are not a
-///                      monotone fence-post table, any strand has fewer
-///                      points than its basis needs, or the sizes do
-///                      not add up. Fail-loud, like `.places`: a
-///                      truncated groom silently dropped would be a
-///                      bald patch and a hunt.
+///                      or basis is wrong, the key times are not
+///                      ascending, the offsets are not a monotone
+///                      fence-post table, any strand has fewer points
+///                      than its basis needs, or the sizes do not add
+///                      up. Fail-loud, like `.places`: a truncated groom
+///                      silently dropped would be a bald patch and a
+///                      hunt.
 ///
 [[nodiscard]] CurvesFile readCurvesFile(const std::string &fileName);
 
 /// Write a `.curves` file.
 ///
-/// `rootUVs` must be empty or one per strand, and the offsets must be
-/// the valid fence-post table `readCurvesFile()` demands.
+/// `rootUVs` must be empty or one per strand, and the key times and
+/// offsets must be the valid tables `readCurvesFile()` demands.
 ///
 /// \throws smdl::Error  If the data is inconsistent or the file cannot
 ///                      be written.

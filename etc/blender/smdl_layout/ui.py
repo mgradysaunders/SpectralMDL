@@ -129,6 +129,12 @@ class SMDL_OT_export_scene(bpy.types.Operator, ExportHelper):
                     "text, which is what heavy scatter wants. Zero keeps "
                     "everything as text",
         default=64, min=0, soft_max=4096)
+    compress_sidecars: bpy.props.BoolProperty(
+        name="Compress Binary Sidecars",
+        description="Deflate the payload of the '.places' and '.curves' "
+                    "sidecars, which costs a little load time and saves a "
+                    "quarter to a half of their bytes",
+        default=True)
 
     collection: bpy.props.StringProperty(
         name="Collection",
@@ -148,7 +154,7 @@ class SMDL_OT_export_scene(bpy.types.Operator, ExportHelper):
         report = write_scene(context, self.filepath,
                              context.scene.smdl_asset_root,
                              self.bake_untagged, collection,
-                             self.places_threshold)
+                             self.places_threshold, self.compress_sidecars)
         for problem in report["problems"]:
             self.report({"WARNING"}, problem)
         summary = (f"{report['placements']} placement(s) of "

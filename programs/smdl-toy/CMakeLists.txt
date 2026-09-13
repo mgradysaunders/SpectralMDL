@@ -32,6 +32,7 @@ target_sources(
     "Resume.cc"
     "Stage.cc"
     "Tonemap.cc"
+    "Transform.cc"
     "IO/AssetFile.cc"
     "IO/CurvesFile.cc"
     "IO/MeshDeform.cc"

@@ -1,6 +1,6 @@
 #include "Scene/Scene.h"
 
-#include "Layout/Motion.h"
+#include "Transform.h"
 
 #include "IO/MeshDeform.h"
 #include "IO/MeshImport.h"
@@ -442,17 +442,27 @@ uint32_t Scene::addCurves(const std::string &fileName,
   auto entry{curvesCache.find(key)};
   uint32_t curvesIndex{};
   if (entry == curvesCache.end()) {
+    // The shutter is one fact for the whole render, so it joins no
+    // cache key: two grooms of the same file and spec sample the same
+    // two instants.
+    const MotionSampling sampling{gRenderShutter.time,
+                                  gRenderShutter.secondsAt(1.0f)};
+    CurvesFile file{readCurvesFile(fileName)};
+    if (file.hasKeyBetween(sampling.open, sampling.shut))
+      SMDL_LOG_WARN("A key of ", smdl::QuotedPath(fileName),
+                    " sits inside the shutter, so the strands move along "
+                    "the chord of its two ends");
     curvesIndex = uint32_t(curves.size());
-    curves.push_back(makeCurves(device, readCurvesFile(fileName), spec,
-                                internMaterial(baseName),
-                                useRobustIntersection));
+    curves.push_back(makeCurves(device, std::move(file), spec,
+                                internMaterial(baseName), useRobustIntersection,
+                                sampling));
     curvesCache.emplace(std::move(key), curvesIndex);
     SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
                    smdl::Counted(curves.back()->strandCount(), "strand"), ", ",
                    smdl::Counted(curves.back()->segCount(), "segment"), ", ",
                    CurvesFile::basisName(curves.back()->basis), " basis, ",
                    spec.mode == CurvesSpec::Mode::RIBBON ? "ribbon" : "tube",
-                   " mode");
+                   " mode", curves.back()->moves() ? ", moving" : "");
   } else {
     curvesIndex = entry->second;
     SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
@@ -2050,7 +2060,7 @@ void Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
   // by the linear part like any tangent. Degenerate windows (repeated
   // control points) fall back to any perpendicular so the frame stays a
   // frame.
-  const CurveAxis axis{groom.axisAt(primID, u)};
+  const CurveAxis axis{groom.axisAt(primID, u, time)};
   float3 tangent{transformDirection(objectToWorld, axis.tangent)};
   const bool isRibbon{groom.spec.mode == CurvesSpec::Mode::RIBBON};
   float3 normal{};

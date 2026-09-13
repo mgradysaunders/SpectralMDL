@@ -2,8 +2,10 @@
 #include "IO/BinaryFile.h"
 
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Strings.h"
 
+#include <cmath>
 #include <fstream>
 
 // The `.curves` reader, writer, and basis math: explicit-width
@@ -27,17 +29,18 @@ public:
   uint16_t version{};
   uint16_t basis{};
   uint16_t flags{};
-  uint16_t reserved0{};
+  uint16_t keyCount{};
   uint32_t strandCount{};
   uint32_t pointCount{};
-  uint32_t reserved1{};
 };
 
-static_assert(sizeof(CurvesHeader) == 28, "the header is 28 bytes");
+static_assert(sizeof(CurvesHeader) == 24, "the header is 24 bytes");
 static_assert(sizeof(float4) == 16, "points are packed float4s");
 static_assert(sizeof(float2) == 8, "root UVs are packed float2s");
 
 constexpr uint16_t FLAG_ROOT_UVS = 1;
+constexpr uint16_t FLAG_COMPRESSED = 2;
+constexpr uint16_t FLAG_ALL = FLAG_ROOT_UVS | FLAG_COMPRESSED;
 
 // The shared shape validation, so that reading a bad file and being
 // asked to write one fail with the same words. `fileName` names the
@@ -53,8 +56,22 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
       curves.basis != CurvesFile::Basis::CATMULL_ROM)
     fail("unknown basis ", uint16_t(curves.basis),
          " (this build knows 0 = linear, 1 = b-spline, 2 = catmull-rom)");
+  if (curves.keyTimes.empty()) fail("a groom must have at least one key time");
+  for (size_t i = 0; i < curves.keyTimes.size(); i++) {
+    if (!std::isfinite(curves.keyTimes[i]))
+      fail("key time ", i, " is not finite");
+    if (i > 0 && !(curves.keyTimes[i] > curves.keyTimes[i - 1]))
+      fail("the key times must strictly increase (key ", i, " is at ",
+           curves.keyTimes[i], " s, after ", curves.keyTimes[i - 1], " s)");
+  }
+  if (curves.points.size() % curves.keyTimes.size() != 0)
+    fail("the point block holds ",
+         smdl::Counted(curves.points.size(), "entry", "entries"),
+         ", which is "
+         "not a whole number of points at ",
+         smdl::Counted(curves.keyTimes.size(), "key"), " each");
   if (curves.strandOffsets.empty() || curves.strandOffsets.front() != 0 ||
-      curves.strandOffsets.back() != curves.points.size())
+      curves.strandOffsets.back() != curves.pointCount())
     fail("the offset table must start at 0 and end at the point count");
   const uint32_t minPoints{CurvesFile::minPointsPerStrand(curves.basis)};
   for (size_t i = 0; i + 1 < curves.strandOffsets.size(); i++) {
@@ -74,41 +91,77 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
 
 } // namespace
 
+CurvesKeyBlend CurvesFile::blendAt(float seconds) const noexcept {
+  if (keyTimes.size() < 2) return {};
+  if (!(seconds > keyTimes.front())) return {};
+  if (!(seconds < keyTimes.back())) {
+    const uint32_t last{uint32_t(keyTimes.size() - 1)};
+    return {last, last, 0.0f};
+  }
+  size_t i{1};
+  while (i + 1 < keyTimes.size() && keyTimes[i] < seconds) i++;
+  const float lo{keyTimes[i - 1]}, hi{keyTimes[i]};
+  // A key's own time answers that key, with no blend and no rounding,
+  // exactly as `MotionTrack::at()` does.
+  if (seconds == lo) return {uint32_t(i - 1), uint32_t(i - 1), 0.0f};
+  if (seconds == hi) return {uint32_t(i), uint32_t(i), 0.0f};
+  return {uint32_t(i - 1), uint32_t(i), (seconds - lo) / (hi - lo)};
+}
+
+bool CurvesFile::hasKeyBetween(float open, float shut) const noexcept {
+  for (const float time : keyTimes)
+    if (time > open && time < shut) return true;
+  return false;
+}
+
 CurvesFile readCurvesFile(const std::string &fileName) {
   requireLittleEndianHost("'.curves'");
-  std::ifstream stream{fileName, std::ios::binary};
-  if (!stream)
-    throw smdl::Error(
-        smdl::concat("Cannot open curves ", smdl::QuotedPath(fileName)));
+  const auto fail{[&](auto &&...args) {
+    throw smdl::Error(smdl::concat("Cannot read curves ",
+                                   smdl::QuotedPath(fileName), ": ", args...));
+  }};
+  const std::string contents{smdl::readOrThrow(fileName)};
   CurvesHeader header{};
-  getRecord(stream, header);
-  if (!stream || !hasMagic(header.magic, CURVES_MAGIC))
+  if (contents.size() < sizeof(header) ||
+      (std::memcpy(&header, contents.data(), sizeof(header)),
+       !hasMagic(header.magic, CURVES_MAGIC)))
     throw smdl::Error(smdl::concat(
         smdl::QuotedPath(fileName),
         " is not a '.curves' file (bad magic; expected it to begin "
         "with \"SMDLCRVS\")"));
   if (header.version != 1)
-    throw smdl::Error(smdl::concat(
-        "Cannot read curves ", smdl::QuotedPath(fileName), ": version ",
-        header.version, " (this build reads version 1)"));
-  if (header.reserved0 != 0 || header.reserved1 != 0)
-    throw smdl::Error(smdl::concat("Cannot read curves ",
-                                   smdl::QuotedPath(fileName),
-                                   ": a reserved field is non-zero (must be 0 "
-                                   "in version 1)"));
+    fail("version ", header.version, " (this build reads version 1)");
+  if (header.flags & ~FLAG_ALL)
+    fail("its flags hold unknown bits (", header.flags & ~uint16_t(FLAG_ALL),
+         ")");
+  if (header.keyCount == 0) fail("it declares no key times");
   CurvesFile curves{};
   curves.version = header.version;
   curves.basis = CurvesFile::Basis(header.basis);
-  getArray(stream, curves.strandOffsets, size_t(header.strandCount) + 1);
-  getArray(stream, curves.points, header.pointCount);
+  curves.isCompressed = (header.flags & FLAG_COMPRESSED) != 0;
+  const size_t timesOffset{sizeof(header)};
+  const size_t timesSize{header.keyCount * sizeof(float)};
+  if (contents.size() < timesOffset + timesSize)
+    fail("truncated (the key times do not fit)");
+  curves.keyTimes.resize(header.keyCount);
+  std::memcpy(curves.keyTimes.data(), contents.data() + timesOffset, timesSize);
+  const size_t payloadSize{
+      (size_t(header.strandCount) + 1) * sizeof(uint32_t) +
+      size_t(header.pointCount) * header.keyCount * sizeof(float4) +
+      ((header.flags & FLAG_ROOT_UVS) ? header.strandCount * sizeof(float2)
+                                      : 0)};
+  const BinaryPayload payload{contents, timesOffset + timesSize, payloadSize,
+                              curves.isCompressed, fileName};
+  ByteReader reader{payload.bytes()};
+  reader.takeArray(curves.strandOffsets, size_t(header.strandCount) + 1);
+  reader.takeArray(curves.points, size_t(header.pointCount) * header.keyCount);
   if (header.flags & FLAG_ROOT_UVS)
-    getArray(stream, curves.rootUVs, header.strandCount);
-  if (!stream)
-    throw smdl::Error(
-        smdl::concat("Cannot read curves ", smdl::QuotedPath(fileName),
-                     ": truncated (the header promises ",
-                     smdl::Counted(header.strandCount, "strand"), " and ",
-                     smdl::Counted(header.pointCount, "point"), ")"));
+    reader.takeArray(curves.rootUVs, header.strandCount);
+  if (!reader.empty())
+    fail("truncated (the header promises ",
+         smdl::Counted(header.strandCount, "strand"), " and ",
+         smdl::Counted(header.pointCount, "point"), " at ",
+         smdl::Counted(header.keyCount, "key"), ")");
   validateCurvesShape(curves, fileName, "read");
   return curves;
 }
@@ -116,6 +169,19 @@ CurvesFile readCurvesFile(const std::string &fileName) {
 void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   requireLittleEndianHost("'.curves'");
   validateCurvesShape(curves, fileName, "write");
+  if (curves.keyTimes.size() > 0xFFFF)
+    throw smdl::Error(
+        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName), ": ",
+                     smdl::Counted(curves.keyTimes.size(), "key time"),
+                     " exceeds the 65535 the header can state"));
+  std::vector<std::byte> payload{};
+  payload.reserve(curves.strandOffsets.size() * sizeof(uint32_t) +
+                  curves.points.size() * sizeof(float4) +
+                  curves.rootUVs.size() * sizeof(float2));
+  pushArray(payload, curves.strandOffsets);
+  pushArray(payload, curves.points);
+  if (curves.hasRootUVs()) pushArray(payload, curves.rootUVs);
+  if (curves.isCompressed) payload = smdl::compressBytes(payload);
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
@@ -124,13 +190,15 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   setMagic(header.magic, CURVES_MAGIC);
   header.version = 1;
   header.basis = uint16_t(curves.basis);
-  header.flags = curves.hasRootUVs() ? FLAG_ROOT_UVS : 0;
+  header.flags = uint16_t((curves.hasRootUVs() ? FLAG_ROOT_UVS : 0) |
+                          (curves.isCompressed ? FLAG_COMPRESSED : 0));
+  header.keyCount = uint16_t(curves.keyCount());
   header.strandCount = curves.strandCount();
-  header.pointCount = uint32_t(curves.points.size());
+  header.pointCount = curves.pointCount();
   putRecord(stream, header);
-  putArray(stream, curves.strandOffsets);
-  putArray(stream, curves.points);
-  if (curves.hasRootUVs()) putArray(stream, curves.rootUVs);
+  putArray(stream, curves.keyTimes);
+  stream.write(reinterpret_cast<const char *>(payload.data()),
+               std::streamsize(payload.size()));
   if (!stream)
     throw smdl::Error(
         smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName)));

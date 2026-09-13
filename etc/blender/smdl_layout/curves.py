@@ -16,11 +16,19 @@ export is a handful of bulk copies. See `CurvesFile.h` for the format.
 """
 
 import struct
+import zlib
 
 import numpy as np
 
 CURVES_MAGIC = b"SMDLCRVS"
 CATMULL_ROM = 2
+FLAG_ROOT_UVS = 1
+FLAG_COMPRESSED = 2
+
+# A groom exports at one key: Blender's own motion is the placement's,
+# and per-strand keys would need the groom evaluated at both ends of the
+# shutter, which is a separate piece of work.
+KEY_TIMES = (0.0,)
 
 # What a groom whose radius is missing or zero everywhere is written
 # with, so it renders visibly instead of vanishing: the default root
@@ -28,8 +36,12 @@ CATMULL_ROM = 2
 FALLBACK_RADIUS = 0.001
 
 
-def bake(depsgraph, ob, filepath):
+def bake(depsgraph, ob, filepath, compress=True):
     """Bake the evaluated groom of the Curves object `ob` to `filepath`.
+
+    Deflating the payload costs about a fifth of the load time of a
+    million-point groom and saves about a quarter of its bytes, which is
+    why it is on by default.
 
     Returns (strands, points, has_uvs, problems). Zero strands means
     nothing was written and the problems say why.
@@ -97,12 +109,18 @@ def bake(depsgraph, ob, filepath):
     block = np.empty((num_points, 4), dtype=np.float32)
     block[:, :3] = positions
     block[:, 3] = radii
+    payload = np.ascontiguousarray(offsets, dtype="<u4").tobytes()
+    payload += np.ascontiguousarray(block, dtype="<f4").tobytes()
+    if uvs is not None:
+        payload += np.ascontiguousarray(uvs, dtype="<f4").tobytes()
+    flags = (0 if uvs is None else FLAG_ROOT_UVS)
+    if compress:
+        flags |= FLAG_COMPRESSED
+        payload = zlib.compress(payload, 6)
     with open(filepath, "wb") as stream:
-        stream.write(struct.pack("<8sHHHHIII", CURVES_MAGIC, 1, CATMULL_ROM,
-                                 0 if uvs is None else 1, 0,
-                                 num_curves, num_points, 0))
-        stream.write(np.ascontiguousarray(offsets, dtype="<u4").tobytes())
-        stream.write(np.ascontiguousarray(block, dtype="<f4").tobytes())
-        if uvs is not None:
-            stream.write(np.ascontiguousarray(uvs, dtype="<f4").tobytes())
+        stream.write(struct.pack("<8sHHHHII", CURVES_MAGIC, 1, CATMULL_ROM,
+                                 flags, len(KEY_TIMES),
+                                 num_curves, num_points))
+        stream.write(struct.pack(f"<{len(KEY_TIMES)}f", *KEY_TIMES))
+        stream.write(payload)
     return num_curves, num_points, uvs is not None, problems
