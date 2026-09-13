@@ -197,11 +197,13 @@ public:
   /// has no offset to draw and no chance of drawing it.
   float offsetDensity{1.0f};
 
-  /// The squared roughness of the lobe the offset was drawn from, the
-  /// smaller of its two axes, in the slope units the offset is measured
-  /// in: the width of the distribution the estimate evaluates at the
-  /// converged half vector, which is how precisely that half vector has
-  /// to match the offset. Zero for a Dirac crossing.
+  /// The squared roughness of the narrowest lobe of the distribution
+  /// the offset was drawn from, the smaller of its two axes, in the
+  /// slope units the offset is measured in: the finest scale of the
+  /// density the estimate divides by at the converged half vector, which
+  /// is how precisely that half vector has to match the offset. A
+  /// mixture of widths is as fine as its narrowest part, whichever lobe
+  /// the draw took. Zero for a Dirac crossing.
   float alpha{};
 
   /// The world-space vector the walk's tangent frame at this vertex is
@@ -602,8 +604,8 @@ manifoldClaim(const JIT::Material &material, bool isMarked);
 /// `DF_GLOSSY_BRDF`), and the glossy lobes receive when their squared
 /// roughness reaches `minAlpha`, read from the normal hook on the side
 /// the path arrived (a material layering several glossy lobes reports
-/// the one its proposal draws from `xi`, which makes that part of the
-/// answer a draw; it is made once per vertex). The hook takes one glossy
+/// its narrowest, so the answer is the same whichever lobe the hook's
+/// draw took). The hook takes one glossy
 /// kind, and the query asks for the reflection kind when the material
 /// has it and the transmission kind otherwise: a single reflect-transmit
 /// leaf reports the same lobe either way, and a layering that differs

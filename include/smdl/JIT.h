@@ -769,7 +769,8 @@ public:
   /// \param[in]  isBackface  Whether to ask on the backface side.
   /// \param[out] wm          The microfacet normal in world space.
   /// \param[out] pdf         The solid-angle PDF of sampling `wm`.
-  /// \param[out] alpha       The squared roughness of the lobe drawn from.
+  /// \param[out] alpha       The squared roughness of the narrowest lobe
+  ///                         the mask keeps, whichever lobe the draw took.
   /// \param[in]  lobeMask    The lobes to consider, `DF_GLOSSY` is every lobe.
   ///
   /// \return `true` if a lobe with a normal distribution was reached.
@@ -1330,7 +1331,8 @@ public:
   /// \param[in]  isBackface  Whether to ask on the backface side.
   /// \param[out] wm          The microfacet normal in world space.
   /// \param[out] pdf         The solid-angle PDF of sampling `wm`.
-  /// \param[out] alpha       The squared roughness of the lobe drawn from.
+  /// \param[out] alpha       The squared roughness of the narrowest lobe
+  ///                         the mask keeps, whichever lobe the draw took.
   /// \param[in]  lobeMask    The lobes to consider, which must be exactly
   ///                         `DF_GLOSSY_BRDF` or `DF_GLOSSY_BTDF`.
   ///

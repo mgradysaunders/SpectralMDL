@@ -880,11 +880,6 @@ struct ScatterNormalSampleResult {
   /// The sampled microfacet normal in the natural tangent space.
   float3 wm = float3(0, 0, 1);
 
-  /// The squared roughness of the lobe that drew it: the width a caller's
-  /// receiver floor reads, and the width its solver's tolerance is a
-  /// fraction of.
-  float2 alpha = float2(0.0);
-
   /// Is valid? False when nothing the mask kept had a normal distribution.
   bool isValid = false;
 };
@@ -1235,6 +1230,31 @@ float normalEvaluateMasked(
   const auto this, inline const &ScatterNormalParameters params) {
   return 0.0 if (!hasNormalDistribution(this._lobes, lobeMask));
   return normalEvaluate(this, params);
+}
+
+// The width reported beside a normal draw: the narrowest lobe among those
+// with a normal distribution the mask keeps, as its squared roughness
+// pair, whichever lobe the proposal drew. The residual a walk converges
+// to and the floor a receiver is judged by are scales of the whole
+// mixture the density evaluates, which is as fine as its narrowest part.
+// `NO_NORMAL_ALPHA` is a width no lobe has, what a subtree keeping none
+// reports, so that the narrower of two is always a lobe's own.
+const float2 NO_NORMAL_ALPHA = float2(1e30);
+
+@(pure macro)
+float2 narrowerAlpha(const float2 a, const float2 b) =
+  #min(a.x, a.y) <= #min(b.x, b.y) ? a : b;
+
+@(pure macro)
+float2 normalAlpha(
+  const auto this [[anno::unused()]],
+  const &ScatterNormalParameters params [[anno::unused()]]) = NO_NORMAL_ALPHA;
+
+@(macro)
+float2 normalAlphaMasked(
+  const auto this, inline const &ScatterNormalParameters params) {
+  return NO_NORMAL_ALPHA if (!hasNormalDistribution(this._lobes, lobeMask));
+  return normalAlpha(this, params);
 }
 
 //--{ diffuse_reflection_bsdf
@@ -2462,7 +2482,7 @@ auto normalSample(
   const auto wmLocal(float3(#sin(theta) * float2(cosPhi, sinPhi), #cos(theta)));
   return ScatterNormalSampleResult() if (!(wmLocal.z > MIN_COS_THETA));
   return ScatterNormalSampleResult(
-           wm: normalize((*tbn) * wmLocal), alpha: alpha, isValid: true);
+           wm: normalize((*tbn) * wmLocal), isValid: true);
 }
 
 @(pure noinline)
@@ -2478,6 +2498,11 @@ float normalEvaluate(
   const auto g(wmLocal.xy / (wmLocal.z * alpha));
   return #exp(-#sum(g * g)) / ($PI * alpha.x * alpha.y * #pow(wmLocal.z, 3));
 }
+
+@(pure macro)
+float2 normalAlpha(
+  const &ward_geisler_moroder_bsdf this,
+  const &ScatterNormalParameters params [[anno::unused()]]) = wardAlpha(this);
 
 @(pure noinline)
 auto scatterSample(
@@ -3200,7 +3225,7 @@ auto normalSample(
     this, xi.xy, float3(0, 0, 1), /*visible=*/ false));
   return ScatterNormalSampleResult() if (!(wmLocal.z > 0.0));
   return ScatterNormalSampleResult(
-           wm: normalize((*tbn) * wmLocal), alpha: this.alpha, isValid: true);
+           wm: normalize((*tbn) * wmLocal), isValid: true);
 }
 
 @(pure noinline)
@@ -3211,6 +3236,11 @@ float normalEvaluate(
   return 0.0 if (!recalculateTangentSpace(params));
   return microfacetNormalPdf(this, normalize(wm));
 }
+
+@(pure macro)
+float2 normalAlpha(
+  const &microfacet_bsdf this,
+  const &ScatterNormalParameters params [[anno::unused()]]) = this.alpha;
 
 @(pure noinline)
 auto scatterSample(
@@ -3713,6 +3743,11 @@ auto normalSample(
 auto normalEvaluate(
   const &micrograin_layer this, const &ScatterNormalParameters params) =
   normalEvaluateMasked(visit &this.base, params);
+
+@(macro)
+auto normalAlpha(
+  const &micrograin_layer this, const &ScatterNormalParameters params) =
+  normalAlphaMasked(visit &this.base, params);
 
 @(macro)
 auto scatterSample(
@@ -4998,12 +5033,20 @@ auto normalEvaluate(const &tint1 this, const &ScatterNormalParameters params) =
   normalEvaluateMasked(visit &this.base, params);
 
 @(macro)
+auto normalAlpha(const &tint1 this, const &ScatterNormalParameters params) =
+  normalAlphaMasked(visit &this.base, params);
+
+@(macro)
 auto normalSample(const &tint2 this, const &ScatterNormalParameters params) =
   normalSampleMasked(visit &this.base, params);
 
 @(macro)
 auto normalEvaluate(const &tint2 this, const &ScatterNormalParameters params) =
   normalEvaluateMasked(visit &this.base, params);
+
+@(macro)
+auto normalAlpha(const &tint2 this, const &ScatterNormalParameters params) =
+  normalAlphaMasked(visit &this.base, params);
 
 @(macro)
 auto scatterSample(const &tint1 this, const &ScatterSampleParameters params) {
@@ -5114,6 +5157,13 @@ float normalEvaluate(
 }
 
 @(macro)
+float2 normalAlpha(
+  const &weighted_layer this, inline const &ScatterNormalParameters params) =
+  narrowerAlpha(
+    normalAlphaMasked(visit &this.layer, params),
+    normalAlphaMasked(visit &this.base, params));
+
+@(macro)
 auto scatterSample(
   const &weighted_layer this, inline const &ScatterSampleParameters params) {
   const float chance(maskedChance(
@@ -5163,6 +5213,10 @@ auto factorNormalSample(const auto this, const &ScatterNormalParameters params) 
 @(macro)
 auto factorNormalEvaluate(const auto this, const &ScatterNormalParameters params) =
   normalEvaluateMasked(visit &this.base, params);
+
+@(macro)
+auto factorNormalAlpha(const auto this, const &ScatterNormalParameters params) =
+  normalAlphaMasked(visit &this.base, params);
 
 @(macro)
 auto factorScatterSample(
@@ -5309,6 +5363,10 @@ auto normalEvaluate(const &thin_film this, const &ScatterNormalParameters params
   factorNormalEvaluate(this, params);
 
 @(macro)
+auto normalAlpha(const &thin_film this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
+
+@(macro)
 auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) = //
 factorScatterSample(
   this,
@@ -5364,6 +5422,11 @@ auto normalSample(
 auto normalEvaluate(
   const &fresnel_factor this, const &ScatterNormalParameters params) =
   factorNormalEvaluate(this, params);
+
+@(macro)
+auto normalAlpha(
+  const &fresnel_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
 
 @(macro)
 auto scatterSample(
@@ -5431,6 +5494,11 @@ auto normalEvaluate(
   factorNormalEvaluate(this, params);
 
 @(macro)
+auto normalAlpha(
+  const &directional_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
+
+@(macro)
 auto scatterSample(
   const &directional_factor this, const &ScatterSampleParameters params) = //
 factorScatterSample(
@@ -5495,6 +5563,11 @@ auto normalSample(
 auto normalEvaluate(
   const &measured_curve_factor this, const &ScatterNormalParameters params) =
   factorNormalEvaluate(this, params);
+
+@(macro)
+auto normalAlpha(
+  const &measured_curve_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
 
 @(macro)
 auto scatterSample(
@@ -5603,6 +5676,11 @@ auto normalSample(
 auto normalEvaluate(
   const &horizon_shadow_factor this, const &ScatterNormalParameters params) =
   factorNormalEvaluate(this, params);
+
+@(macro)
+auto normalAlpha(
+  const &horizon_shadow_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
 
 @(macro)
 auto scatterSample(
@@ -5722,6 +5800,11 @@ auto normalEvaluate(
   factorNormalEvaluate(this, params);
 
 @(macro)
+auto normalAlpha(
+  const &relief_shadow_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
+
+@(macro)
 auto scatterSample(
   const &relief_shadow_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSampleMasked(visit &this.base, params));
@@ -5803,6 +5886,11 @@ auto normalSample(
 auto normalEvaluate(
   const &measured_factor this, const &ScatterNormalParameters params) =
   factorNormalEvaluate(this, params);
+
+@(macro)
+auto normalAlpha(
+  const &measured_factor this, const &ScatterNormalParameters params) =
+  factorNormalAlpha(this, params);
 
 @(macro)
 auto scatterSample(
@@ -5925,6 +6013,13 @@ float layerNormalEvaluate(
 }
 
 @(macro)
+float2 layerNormalAlpha(
+  const auto this, inline const &ScatterNormalParameters params) =
+  narrowerAlpha(
+    normalAlphaMasked(visit &this.layer, params),
+    normalAlphaMasked(visit &this.base, params));
+
+@(macro)
 auto layerScatterSample(
   const auto this,
   inline const &ScatterSampleParameters params,
@@ -6041,6 +6136,11 @@ auto normalEvaluate(
 layerNormalEvaluate(this, params, \() = relativeIOR(params, this._averageIOR));
 
 @(macro)
+auto normalAlpha(
+  const &fresnel_layer this, inline const &ScatterNormalParameters params) =
+  layerNormalAlpha(this, params);
+
+@(macro)
 auto scatterSample(
   const &fresnel_layer this, inline const &ScatterSampleParameters params) = //
 layerScatterSample(
@@ -6154,6 +6254,11 @@ auto normalEvaluate(
 layerNormalEvaluate(this, params, \() = ior);
 
 @(macro)
+auto normalAlpha(
+  const &custom_curve_layer this, inline const &ScatterNormalParameters params) =
+  layerNormalAlpha(this, params);
+
+@(macro)
 auto scatterSample(
   const &custom_curve_layer this, inline const &ScatterSampleParameters params) = //
 layerScatterSample(
@@ -6251,6 +6356,11 @@ layerNormalSample(this, params, \() = ior);
 auto normalEvaluate(
   const &measured_curve_layer this, inline const &ScatterNormalParameters params) = //
 layerNormalEvaluate(this, params, \() = ior);
+
+@(macro)
+auto normalAlpha(
+  const &measured_curve_layer this, inline const &ScatterNormalParameters params) =
+  layerNormalAlpha(this, params);
 
 @(macro)
 auto scatterSample(
@@ -6482,6 +6592,19 @@ float normalEvaluate(
     }
   }
   return liveChance > 0.0 ? density / liveChance : 0.0;
+}
+
+@(macro)
+float2 normalAlpha(
+  const &component_mix this, inline const &ScatterNormalParameters params) {
+  float2 alpha(NO_NORMAL_ALPHA);
+  for (int i = 0; i < #num(this.components); i++) {
+    visit component in this.components[i] { // In general this is a union!
+      alpha = narrowerAlpha(
+        alpha, normalAlphaMasked(visit &component.component, params));
+    }
+  }
+  return alpha;
 }
 
 @(macro)
@@ -6941,7 +7064,7 @@ export int _scatterNormalSample(
   const int isBackface,  ///< Whether to ask on the backface side
   const &float3 wmWorld, ///< output: The microfacet normal in world space
   const &float pdf,      ///< output: The solid-angle PDF of sampling `wm`
-  const &float2 alpha,   ///< output: The squared roughness of the lobe drawn from
+  const &float2 alpha,   ///< output: The narrowest kept lobe's squared roughness
   const int lobeMask,    ///< The lobes to consider, `DF_GLOSSY` is every lobe
 ) {
   auto params = ScatterNormalParameters(
@@ -6964,7 +7087,11 @@ export int _scatterNormalSample(
   // sampler does, so the world-space normal comes back on the requested side.
   *wmWorld = normalize(eval.tangentToWorld * #select(
     params.hitBackface, -result.wm, +result.wm));
-  *alpha = result.alpha;
+  // The width is the mixture's narrowest lobe whichever lobe drew, since
+  // it is a scale of the density the caller divides by; see `normalAlpha`.
+  *alpha = #isDefault(eval.ptr.backface) || !params.hitBackface //
+  ? normalAlphaMasked(visit &eval.ptr.surface.scattering, &params)  //
+  : normalAlphaMasked(visit &eval.ptr.backface.scattering, &params);
   return _scatterNormalEvaluate(eval, isBackface, wmWorld, pdf, lobeMask);
 }
 

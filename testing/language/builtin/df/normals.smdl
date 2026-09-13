@@ -234,8 +234,6 @@ unit_test "The normal density agrees with the normal sample" {
     roughness_u: 0.2, roughness_v: 0.2, tint: 0.9);
   const auto layered =
     df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
-  int seenSmooth = 0;
-  int seenRough = 0;
   for (int i = 0; i < 16; i++) {
     const auto xi = float4(
       (i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
@@ -245,12 +243,10 @@ unit_test "The normal density agrees with the normal sample" {
     #assert(#all(math::normalize(r.wm) ~== |1e-5| r.wm)); // Unit...
     #assert(math::dot(r.wm, float3(0, 0, 1)) > 0.0);      // ...above the normal
     #assert(scatter::normalEvaluate(layered, r.wm) ~== |1e-5| r.pdf);
-    // The reported roughness is the drawn lobe's own, not the mixture's.
-    #assert((r.alpha.x ~== |1e-6| 0.09) | (r.alpha.x ~== |1e-6| 0.04));
-    seenSmooth += int(r.alpha.x < 0.06);
-    seenRough += int(r.alpha.x > 0.06);
+    // The reported width is the mixture's narrowest lobe, whichever drew:
+    // the scale a caller's tolerance and receiver floor are read against.
+    #assert(r.alpha.x ~== |1e-6| 0.04);
   }
-  #assert((seenSmooth > 0) & (seenRough > 0)); // Else the mixture is untested
   // The mixture is strictly between the two lobes it mixes, which is what
   // makes the agreement above a statement about the mixture rather than
   // about one lobe the layer happened to always pick.
