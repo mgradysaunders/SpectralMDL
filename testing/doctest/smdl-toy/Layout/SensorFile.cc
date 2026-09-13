@@ -592,7 +592,8 @@ ResponseSettings tiled(const std::vector<std::string> &names,
   }
   for (const auto &row : rows) {
     response.cfaColumns = row.size();
-    for (const auto &name : row) response.cfa.push_back(*response.bandIndex(name));
+    for (const auto &name : row)
+      response.cfa.push_back(*response.bandIndex(name));
   }
   response.crosstalk = leaks;
   return response;
@@ -630,13 +631,13 @@ TEST_CASE("SensorFile: the cross-talk a response states") {
     CHECK(document.sensor.response.hasCrosstalk());
   }
   SUBCASE("A block gives one band its own, and the rest keep zero") {
-    const SensorDocument document{parseOK(
-        diags, "sensor { pixels 4 4 pitch 2 response {\n"
-               "  band R { 400 1 700 1 } band G { 400 1 700 1 }\n"
-               "  band B { 400 1 700 1 }\n"
-               "  cfa { row R G  row G B }\n"
-               "  crosstalk { R 0.012 B 0.004 }\n"
-               "} }\n")};
+    const SensorDocument document{
+        parseOK(diags, "sensor { pixels 4 4 pitch 2 response {\n"
+                       "  band R { 400 1 700 1 } band G { 400 1 700 1 }\n"
+                       "  band B { 400 1 700 1 }\n"
+                       "  cfa { row R G  row G B }\n"
+                       "  crosstalk { R 0.012 B 0.004 }\n"
+                       "} }\n")};
     const std::vector<float> &leaks{document.sensor.response.crosstalk};
     REQUIRE(leaks.size() == 3);
     CHECK(leaks[0] == 0.012f);
@@ -644,12 +645,12 @@ TEST_CASE("SensorFile: the cross-talk a response states") {
     CHECK(leaks[2] == 0.004f);
   }
   SUBCASE("A block may name a band declared below it, as the tile may") {
-    const SensorDocument document{parseOK(
-        diags, "sensor { pixels 4 4 pitch 2 response {\n"
-               "  crosstalk { G 0.008 }\n"
-               "  band R { 400 1 700 1 } band G { 400 1 700 1 }\n"
-               "  cfa { row R G  row G R }\n"
-               "} }\n")};
+    const SensorDocument document{
+        parseOK(diags, "sensor { pixels 4 4 pitch 2 response {\n"
+                       "  crosstalk { G 0.008 }\n"
+                       "  band R { 400 1 700 1 } band G { 400 1 700 1 }\n"
+                       "  cfa { row R G  row G R }\n"
+                       "} }\n")};
     REQUIRE(document.sensor.response.crosstalk.size() == 2);
     CHECK(document.sensor.response.crosstalk[1] == 0.008f);
   }
@@ -697,9 +698,8 @@ TEST_CASE("SensorFile: the mixing a tile implies") {
   }
   SUBCASE("On RGGB every R and B neighbor is green, and every G neighbor is "
           "two reds and two blues") {
-    const ResponseSettings bayer{tiled({"R", "G", "B"},
-                                       {{"R", "G"}, {"G", "B"}},
-                                       {0.01f, 0.01f, 0.01f})};
+    const ResponseSettings bayer{tiled(
+        {"R", "G", "B"}, {{"R", "G"}, {"G", "B"}}, {0.01f, 0.01f, 0.01f})};
     const std::vector<double> m{tileMixing(bayer)};
     CHECK(at(m, 3, 0, 0) == doctest::Approx(0.96));
     CHECK(at(m, 3, 0, 1) == doctest::Approx(0.04));
@@ -718,9 +718,12 @@ TEST_CASE("SensorFile: the mixing a tile implies") {
         tiled({"A", "B", "C", "D"}, {{"A", "B"}, {"C", "D"}},
               {0.01f, 0.02f, 0.03f, 0.04f}),
         tiled({"R", "G", "B"},
-              {{"G", "B", "R", "G", "R", "B"}, {"R", "G", "G", "B", "G", "G"},
-               {"B", "G", "G", "R", "G", "G"}, {"G", "R", "B", "G", "B", "R"},
-               {"B", "G", "G", "R", "G", "G"}, {"R", "G", "G", "B", "G", "G"}},
+              {{"G", "B", "R", "G", "R", "B"},
+               {"R", "G", "G", "B", "G", "G"},
+               {"B", "G", "G", "R", "G", "G"},
+               {"G", "R", "B", "G", "B", "R"},
+               {"B", "G", "G", "R", "G", "G"},
+               {"R", "G", "G", "B", "G", "G"}},
               {0.012f, 0.008f, 0.004f})};
     for (const auto &response : tiles) {
       const size_t numBands{response.bands.size()};
@@ -737,8 +740,8 @@ TEST_CASE("SensorFile: the mixing a tile implies") {
   SUBCASE("Its rows sum to one only when every band leaks alike, since a "
           "band that leaks less than its neighbors keeps more than it "
           "started with") {
-    const ResponseSettings even{tiled(
-        {"R", "G", "B"}, {{"R", "G"}, {"G", "B"}}, {0.01f, 0.01f, 0.01f})};
+    const ResponseSettings even{tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}},
+                                      {0.01f, 0.01f, 0.01f})};
     const std::vector<double> flat{tileMixing(even)};
     for (size_t row = 0; row < 3; row++)
       CHECK(at(flat, 3, row, 0) + at(flat, 3, row, 1) + at(flat, 3, row, 2) ==
@@ -765,9 +768,8 @@ TEST_CASE("SensorFile: the mixing a tile implies") {
     CHECK(at(m, 4, 0, 3) == doctest::Approx(0.0));
   }
   SUBCASE("The inverse undoes it") {
-    const ResponseSettings bayer{tiled({"R", "G", "B"},
-                                       {{"R", "G"}, {"G", "B"}},
-                                       {0.012f, 0.008f, 0.004f})};
+    const ResponseSettings bayer{tiled(
+        {"R", "G", "B"}, {{"R", "G"}, {"G", "B"}}, {0.012f, 0.008f, 0.004f})};
     const std::vector<double> m{tileMixing(bayer)};
     const std::vector<double> inverse{tileMixingInverse(bayer)};
     REQUIRE(inverse.size() == 9);
@@ -792,8 +794,8 @@ TEST_CASE("SensorFile: the leak a curve set can carry") {
   }
   SUBCASE("Bands that do not overlap at all carry none, there being no "
           "overlap for transport to explain") {
-    ResponseSettings apart{
-        tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}}, {0.01f, 0.01f, 0.01f})};
+    ResponseSettings apart{tiled({"R", "G", "B"}, {{"R", "G"}, {"G", "B"}},
+                                 {0.01f, 0.01f, 0.01f})};
     apart.bands[0].wavelengths = {600.0f, 700.0f};
     apart.bands[0].values = {1.0f, 1.0f};
     apart.bands[1].wavelengths = {500.0f, 600.0f};

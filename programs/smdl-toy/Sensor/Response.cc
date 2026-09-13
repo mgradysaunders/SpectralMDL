@@ -55,6 +55,13 @@ std::string responseHash(const ResponseSettings &settings) {
   }
   text += std::to_string(settings.cfaColumns);
   for (const auto index : settings.cfa) text += ' ' + std::to_string(index);
+  // The leaks decide what the band film holds, since a response de-mixes
+  // the stated curves by what they imply, so a film drawn under one is
+  // not a film drawn under another and a resume across the two has to
+  // refuse itself. A response stating no leak hashes as one stating zero,
+  // which is what they both mean.
+  if (settings.hasCrosstalk())
+    for (const auto leak : settings.crosstalk) appendNumber(text, leak);
   return std::string(smdl::MD5Hash::hashMemory(text));
 }
 

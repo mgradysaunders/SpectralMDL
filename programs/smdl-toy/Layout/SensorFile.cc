@@ -29,6 +29,24 @@ constexpr std::string_view RESPONSE_EXTENSION = ".response";
 // is a typo or a crop.
 constexpr float PITCH_TOLERANCE = 0.005f;
 
+// The largest leak every band could take alike and still be one these
+// curves carry, by bisection on `crosstalkFloor()`. Only ever asked on
+// the way to refusing a leak, so the copy it takes costs nothing.
+[[nodiscard]] float largestUniformLeak(const ResponseSettings &settings) {
+  ResponseSettings probe{settings};
+  float lo{0.0f};
+  float hi{CROSSTALK_MAX_LEAK};
+  for (int i = 0; i < 24; i++) {
+    const float mid{0.5f * (lo + hi)};
+    probe.crosstalk.assign(settings.bands.size(), mid);
+    if (crosstalkFloor(probe) >= -CROSSTALK_NEGATIVE_TOLERANCE)
+      lo = mid;
+    else
+      hi = mid;
+  }
+  return lo;
+}
+
 class Parser final : public TextParser {
 public:
   Parser(LayoutDiagnostics &diags, const LayoutSource &source,
@@ -195,7 +213,7 @@ private:
             .note({}, "state it in the 'camera' block");
         throw Recover();
       } else if (key == "kind" || key == "peak_qe" || key == "band" ||
-                 key == "cfa" || key == "rgb") {
+                 key == "cfa" || key == "rgb" || key == "crosstalk") {
         mDiags.error(keyLoc, smdl::concat(smdl::Quoted(key),
                                           " belongs inside the 'response' "
                                           "block"));
@@ -270,9 +288,14 @@ private:
     std::vector<LayoutLocation> tileLocs{};
     std::vector<std::string> rgbNames{};
     std::vector<LayoutLocation> rgbLocs{};
+    std::vector<std::string> leakNames{};
+    std::vector<float> leakValues{};
+    std::vector<LayoutLocation> leakLocs{};
+    std::optional<float> leakEveryBand{};
     LayoutLocation cfaLoc{};
     LayoutLocation rgbLoc{};
     LayoutLocation peakLoc{};
+    LayoutLocation crosstalkLoc{};
     parseSettings("a response setting", [&](const std::string &key,
                                             const LayoutLocation &keyLoc) {
       if (key == "kind") {
@@ -329,6 +352,17 @@ private:
           rgbLocs.push_back(location());
           advance();
         }
+      } else if (key == "crosstalk") {
+        if (crosstalkLoc) {
+          mDiags
+              .error(keyLoc, "a response states its cross-talk once, and this "
+                             "is the second 'crosstalk'")
+              .note(crosstalkLoc, "the first one is here");
+          throw Recover();
+        }
+        crosstalkLoc = keyLoc;
+        parseResponseCrosstalk(keyLoc, leakEveryBand, leakNames, leakValues,
+                               leakLocs);
       } else if (key == "name") {
         mDiags.error(keyLoc, "'name' is the sensor's, not the response's")
             .note({}, "state it in the 'sensor' block, one level up");
@@ -337,7 +371,7 @@ private:
         mDiags.error(keyLoc, smdl::concat("unknown response setting ",
                                           smdl::Quoted(key),
                                           " (expected kind, peak_qe, band, "
-                                          "cfa, or rgb)"));
+                                          "cfa, rgb, or crosstalk)"));
         throw Recover();
       }
     });
@@ -377,6 +411,64 @@ private:
       }
       response.rgb = rgb;
     }
+    if (crosstalkLoc) {
+      response.crosstalk.assign(response.bands.size(),
+                                leakEveryBand.value_or(0.0f));
+      for (size_t i = 0; i < leakNames.size(); i++) {
+        const std::optional<size_t> index{response.bandIndex(leakNames[i])};
+        if (!index) {
+          mDiags.error(leakLocs[i],
+                       smdl::concat("'crosstalk' names ",
+                                    smdl::Quoted(leakNames[i]),
+                                    ", which is not a band of this response"));
+          throw Recover();
+        }
+        for (size_t j = 0; j < i; j++) {
+          if (leakNames[j] != leakNames[i]) continue;
+          mDiags
+              .error(leakLocs[i],
+                     smdl::concat("'crosstalk' states band ",
+                                  smdl::Quoted(leakNames[i]), " twice"))
+              .note(leakLocs[j], "the first one is here");
+          throw Recover();
+        }
+        response.crosstalk[*index] = leakValues[i];
+      }
+      checkCrosstalk(response, crosstalkLoc);
+    }
+  }
+
+  // The leaks against the curves. A leak is only ever a fraction of the
+  // charge of a pixel the tile lays down, so a response without one has
+  // nothing to check: `tileMixing()` is the identity there and the
+  // readout's gather is a same-band blur.
+  void checkCrosstalk(const ResponseSettings &response,
+                      const LayoutLocation &crosstalkLoc) {
+    if (!response.hasCrosstalk() || !response.hasCFA()) return;
+    if (tileMixingInverse(response).empty()) {
+      mDiags.error(crosstalkLoc,
+                   "these leaks mix this tile's bands into each other with "
+                   "no way back, so no crosstalk-free curve set implies the "
+                   "stated one");
+      throw Recover();
+    }
+    const double floor{crosstalkFloor(response)};
+    if (floor >= -CROSSTALK_NEGATIVE_TOLERANCE) return;
+    mDiags
+        .error(crosstalkLoc,
+               smdl::concat("this response cannot carry a leak that large: "
+                            "the crosstalk-free curves it implies fall to ",
+                            smdl::Brief(floor, 3),
+                            " of the largest stated value"))
+        .note({}, "a measured curve is what the whole array reads at once, "
+                  "so it already carries whatever charge crosses between "
+                  "pixels; a leak past what it can carry is claiming "
+                  "transport for what is the color filter's own "
+                  "transmission")
+        .note({}, smdl::concat("these curves carry a leak of up to ",
+                               smdl::Brief(largestUniformLeak(response), 3),
+                               " in every band"));
+    throw Recover();
   }
 
   // One `band NAME { w v w v ... }`: the name, then the knots as bare
@@ -469,6 +561,48 @@ private:
       band.values.push_back(value);
     }
     return band;
+  }
+
+  // The `crosstalk` leak: one number every band takes alike, or a
+  // `{ NAME value ... }` block naming bands, whose names are kept until
+  // the block closes as the tile's are, so either may name a band
+  // declared below it. A band the block leaves out keeps the scalar, or
+  // zero where there was none.
+  void parseResponseCrosstalk(const LayoutLocation &keyLoc,
+                              std::optional<float> &everyBand,
+                              std::vector<std::string> &names,
+                              std::vector<float> &values,
+                              std::vector<LayoutLocation> &nameLocs) {
+    if (mToken.kind != Token::OPEN) {
+      everyBand = leak(keyLoc, numbers<1>()[0]);
+      return;
+    }
+    parseSettings("a band name", [&](const std::string &name,
+                                     const LayoutLocation &nameLoc) {
+      if (!isIdentifier(name)) {
+        mDiags.error(nameLoc,
+                     smdl::concat("expected a band name in 'crosstalk', got ",
+                                  smdl::Quoted(name)));
+        throw Recover();
+      }
+      names.push_back(name);
+      nameLocs.push_back(nameLoc);
+      values.push_back(leak(nameLoc, numbers<1>()[0]));
+    });
+  }
+
+  // One leak, checked for what the format can check without the curves;
+  // what they can carry is `checkCrosstalk()`, once they are all read.
+  [[nodiscard]] float leak(const LayoutLocation &keyLoc, float value) {
+    if (!(std::isfinite(value) && value >= 0 && value < CROSSTALK_MAX_LEAK)) {
+      mDiags.error(keyLoc,
+                   smdl::concat("expected a 'crosstalk' leak in [0, ",
+                                smdl::Brief(CROSSTALK_MAX_LEAK, 4),
+                                "), the fraction of a pixel's charge each "
+                                "one of its four neighbors collects"));
+      throw Recover();
+    }
+    return value;
   }
 
   // The `cfa { row A B  row C D }` tile: rows of band names, all the same
@@ -643,6 +777,108 @@ ResponseSettings::rgbBands() const noexcept {
   if (r && g && b) return std::array<size_t, 3>{*r, *g, *b};
   if (bands.size() >= 3) return std::array<size_t, 3>{0, 1, 2};
   return std::nullopt;
+}
+
+std::vector<double> tileMixing(const ResponseSettings &settings) {
+  const size_t numBands{settings.bands.size()};
+  std::vector<double> mixing(numBands * numBands, 0.0);
+  for (size_t b = 0; b < numBands; b++) mixing[b * numBands + b] = 1.0;
+  if (!settings.hasCFA() || !settings.hasCrosstalk()) return mixing;
+  SMDL_SANITY_CHECK(settings.crosstalk.size() == numBands);
+  const size_t columns{settings.cfaColumns};
+  const size_t rows{settings.cfaRows()};
+  std::vector<size_t> cellCount(numBands, 0);
+  std::vector<double> neighbors(numBands * numBands, 0.0);
+  for (size_t y = 0; y < rows; y++) {
+    for (size_t x = 0; x < columns; x++) {
+      const size_t b{settings.bandAt(x, y)};
+      cellCount[b]++;
+      // `bandAt()` takes the tile's own modulus, so adding the period
+      // before stepping back is the periodic wrap.
+      neighbors[b * numBands + settings.bandAt(x + columns - 1, y)] += 1.0;
+      neighbors[b * numBands + settings.bandAt(x + 1, y)] += 1.0;
+      neighbors[b * numBands + settings.bandAt(x, y + rows - 1)] += 1.0;
+      neighbors[b * numBands + settings.bandAt(x, y + 1)] += 1.0;
+    }
+  }
+  for (size_t b = 0; b < numBands; b++) {
+    // A band the tile never lays down has no pixels to leak from or to,
+    // and keeps the identity row it started with.
+    if (cellCount[b] == 0) continue;
+    for (size_t j = 0; j < numBands; j++) {
+      const double mean{neighbors[b * numBands + j] / double(cellCount[b])};
+      mixing[b * numBands + j] =
+          (b == j ? 1.0 - 4.0 * double(settings.crosstalk[b]) : 0.0) +
+          mean * double(settings.crosstalk[j]);
+    }
+  }
+  return mixing;
+}
+
+std::vector<double> tileMixingInverse(const ResponseSettings &settings) {
+  const size_t numBands{settings.bands.size()};
+  std::vector<double> a{tileMixing(settings)};
+  std::vector<double> inverse(numBands * numBands, 0.0);
+  for (size_t i = 0; i < numBands; i++) inverse[i * numBands + i] = 1.0;
+  // Gauss-Jordan with partial pivoting. The matrix is the band count
+  // square, which is three for a color camera and never large.
+  for (size_t col = 0; col < numBands; col++) {
+    size_t pivot{col};
+    for (size_t row = col + 1; row < numBands; row++)
+      if (std::abs(a[row * numBands + col]) >
+          std::abs(a[pivot * numBands + col]))
+        pivot = row;
+    if (!(std::abs(a[pivot * numBands + col]) > 0)) return {};
+    if (pivot != col) {
+      for (size_t k = 0; k < numBands; k++) {
+        std::swap(a[col * numBands + k], a[pivot * numBands + k]);
+        std::swap(inverse[col * numBands + k], inverse[pivot * numBands + k]);
+      }
+    }
+    const double scale{1.0 / a[col * numBands + col]};
+    for (size_t k = 0; k < numBands; k++) {
+      a[col * numBands + k] *= scale;
+      inverse[col * numBands + k] *= scale;
+    }
+    for (size_t row = 0; row < numBands; row++) {
+      if (row == col) continue;
+      const double factor{a[row * numBands + col]};
+      if (factor == 0) continue;
+      for (size_t k = 0; k < numBands; k++) {
+        a[row * numBands + k] -= factor * a[col * numBands + k];
+        inverse[row * numBands + k] -= factor * inverse[col * numBands + k];
+      }
+    }
+  }
+  return inverse;
+}
+
+double crosstalkFloor(const ResponseSettings &settings) {
+  if (!settings.hasCFA() || !settings.hasCrosstalk()) return 0.0;
+  const std::vector<double> demix{tileMixingInverse(settings)};
+  if (demix.empty()) return 0.0;
+  const size_t numBands{settings.bands.size()};
+  float peak{0.0f};
+  for (const auto &band : settings.bands)
+    for (const auto value : band.values) peak = std::max(peak, value);
+  if (!(peak > 0)) return 0.0;
+  // A linear combination of piecewise-linear curves is piecewise linear
+  // on the union of their knots, so its minimum is at one of them.
+  std::vector<float> knots{};
+  for (const auto &band : settings.bands)
+    knots.insert(knots.end(), band.wavelengths.begin(), band.wavelengths.end());
+  std::sort(knots.begin(), knots.end());
+  knots.erase(std::unique(knots.begin(), knots.end()), knots.end());
+  double floor{0.0};
+  for (size_t b = 0; b < numBands; b++) {
+    for (const float knot : knots) {
+      double value{};
+      for (size_t j = 0; j < numBands; j++)
+        value += demix[b * numBands + j] * settings.bands[j].at(double(knot));
+      floor = std::min(floor, value / double(peak));
+    }
+  }
+  return floor;
 }
 
 double ResponseSettings::qeScale() const noexcept {

@@ -37,6 +37,17 @@ constexpr std::string_view SENSOR_EXTENSION = ".sensor";
 /// its file states none: a plausible modern CMOS figure, and generic.
 constexpr float DEFAULT_PEAK_QE = 0.5f;
 
+/// The largest leak a band may state, where a pixel would keep half its
+/// charge and the mixing of `tileMixing()` goes singular over a Bayer
+/// tile. Far above anything a measured curve set carries: the limit that
+/// binds in practice is `crosstalkFloor()`.
+constexpr float CROSSTALK_MAX_LEAK = 0.125f;
+
+/// How far a crosstalk-free curve may fall below zero, as a fraction of
+/// the largest stated value, before the leak that implies it is refused.
+/// See `crosstalkFloor()`.
+constexpr double CROSSTALK_NEGATIVE_TOLERANCE = 0.002;
+
 /// The direction a rolling readout sweeps the picture, named for where
 /// the sweep travels to: `DOWN` reads the top line first.
 enum class ReadoutDirection { DOWN, UP, LEFT, RIGHT };
@@ -140,7 +151,27 @@ public:
   /// into `bands`, when the file stated them. See `rgbBands()`.
   std::optional<std::array<size_t, 3>> rgb{};
 
+  /// `crosstalk`: the fraction of a pixel's charge each one of its four
+  /// neighbors collects, one value per band in band order, so the total
+  /// a pixel loses is four times it. Empty is no cross-talk, which is
+  /// the default and what every shipped sensor states; a scalar in the
+  /// file fills every band alike.
+  ///
+  /// The leak is the source pixel's rather than the destination's: the
+  /// charge is generated under the source's filter and travels as far as
+  /// the depth that filter's wavelengths convert at, which is why red
+  /// leaks several times as far as blue. Each value is in
+  /// `[0, CROSSTALK_MAX_LEAK)`, and the set as a whole must be one the
+  /// curves can carry; see `crosstalkFloor()`.
+  std::vector<float> crosstalk{};
+
   [[nodiscard]] bool hasCFA() const noexcept { return cfaColumns > 0; }
+
+  /// Does any band leak?
+  [[nodiscard]] bool hasCrosstalk() const noexcept {
+    return std::any_of(crosstalk.begin(), crosstalk.end(),
+                       [](float leak) { return leak > 0; });
+  }
 
   [[nodiscard]] size_t cfaRows() const noexcept {
     return cfaColumns > 0 ? cfa.size() / cfaColumns : 0;
@@ -167,6 +198,58 @@ public:
   /// hold. Zero for a response whose every value is zero.
   [[nodiscard]] double qeScale() const noexcept;
 };
+
+/// The flat-field band mixing the tile and the leaks imply: what a
+/// uniformly illuminated array reads through each band, as a row-major
+/// square matrix over the crosstalk-free responsivities,
+///
+///     M[b][b'] = (1 - 4 leak[b]) delta[b][b'] + neighbors[b][b'] leak[b']
+///
+/// with `neighbors[b][b']` the mean count of band `b'` pixels among the
+/// four neighbors of a band `b` pixel, over the tile with its own
+/// periodic wrap. Diagonals are left out because the measurement finds
+/// them negligible at the pitch where cross-talk matters at all.
+///
+/// A published camera curve is already this applied to the curves the
+/// silicon would have without transport, because the measurement
+/// illuminates the whole array at once and a uniform field cannot show
+/// anything but the mixing. So this is what a response undoes before the
+/// readout gathers over the same kernel, and undoing it is what makes the
+/// two compose back to the stated curve on any flat field.
+///
+/// Charge conservation is the invariant it always has: the tile's band
+/// multiplicities carried through it, `sum_b mult[b] M[b][b'] = mult[b']`.
+/// The rows sum to one only when every band leaks alike. Under a per-band
+/// leak a band that leaks less than its neighbors keeps more than it
+/// started with, which is the whole point of stating one, so the rows are
+/// deliberately not normalized. The identity without a tile and without a
+/// leak.
+[[nodiscard]] std::vector<double> tileMixing(const ResponseSettings &settings);
+
+/// The inverse of `tileMixing()`, row-major, or empty if the mixing is
+/// singular. A leak under `CROSSTALK_MAX_LEAK` does not reach the
+/// singularity over a Bayer tile, but an arbitrary tile might.
+[[nodiscard]] std::vector<double>
+tileMixingInverse(const ResponseSettings &settings);
+
+/// The most negative value any crosstalk-free curve takes under the
+/// response's own leaks, as a fraction of the largest stated value: zero
+/// or above is a curve set the leaks fit, and below
+/// `-CROSSTALK_NEGATIVE_TOLERANCE` is one they do not.
+///
+/// Pushing the leak past what a curve set carries makes the de-mixed
+/// curves dip below zero, which says the band overlap the measurement
+/// shows is the color filter's own transmission rather than charge
+/// crossing between pixels, and no amount of transport can explain it.
+/// That is the one bound on a leak that comes from data rather than from
+/// a guess, since no per-pitch, per-wavelength cross-talk table exists in
+/// public.
+///
+/// Exact: a de-mixed curve is a linear combination of piecewise-linear
+/// curves, so it is piecewise linear on the union of their knots and
+/// takes its minimum at one of them. Zero for a response with no leak,
+/// with no tile, or whose mixing is singular.
+[[nodiscard]] double crosstalkFloor(const ResponseSettings &settings);
 
 /// The `detector` a sensor reads out with: what turns the electrons the
 /// response counts into the digital numbers the instrument writes. Every
