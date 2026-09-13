@@ -138,6 +138,42 @@ public:
   [[nodiscard]] Color trace(const CameraSample &camera);
 
 private:
+  // What a phase of the walk tells the loop to do with the vertex it is
+  // standing on.
+  enum class Step {
+    // Carry on with this vertex.
+    VERTEX,
+
+    // Begin the next segment: the phase re-based `ray` itself, and the
+    // vertex is finished.
+    SEGMENT,
+
+    // The walk is over, and `mEnd` says why.
+    STOP,
+  };
+
+  // Sample the medium of the segment in flight, which weighs `mBeta` by
+  // the scattering weight on a collision and by the transmittance on
+  // surviving to the far end. A collision is a volume vertex: it
+  // scatters, arms the manifold coverage, grows the cone, and re-bases
+  // `ray`, so the walk goes straight on to the next segment.
+  //
+  // Only for a segment that has a medium to resolve: the caller tests
+  // that, so that a vacuum segment pays no call. See the call site.
+  [[nodiscard]] Step scatterInMedium(Ray &ray);
+
+  // Add the environment the walk escaped into, MIS-weighted against what
+  // the gather at the previous vertex would have produced, and retain the
+  // record the trainer needs. Ends the walk.
+  void arriveAtEnvironment(const Ray &ray, const EnvLight *envLight);
+
+  // Add the emission of the emitter the segment landed on, MIS-weighted
+  // against the same gather, and arm what the manifold estimators weigh
+  // the arrival by. Only for a material that emits: the caller tests that,
+  // so that a vertex on one that does not pays no call.
+  void addEmissionArrival(smdl::JIT::Material &material, const Hit &hit,
+                          const float3 &wo);
+
   // The clamp scale of a contribution with the given number of bounces:
   // 1 outside the contribution bound's reach, else what scales the
   // largest band down to the bound. Applied to what a contribution adds
@@ -342,6 +378,9 @@ private:
 
   PrevBounce mPrev{};
 
+  // Why the walk ended, for the tally. Set by whichever phase ends it.
+  PathEnd mEnd{};
+
   // The path LOD context, which an all-zero camera cone leaves all-zero,
   // and that is "LOD off" per the `State` conventions.
   int mOrder{};
@@ -383,6 +422,204 @@ const MediumStack *PathWalk::exteriorMedium() {
   return mExteriorMedium;
 }
 
+PathWalk::Step PathWalk::scatterInMedium(Ray &ray) {
+  {
+    mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
+                       mPath.wavelengthHero, ray.org, ray.dir);
+    if (mPath.medium.hasMedium()) {
+      // Sample a free-flight distance over the cast, which
+      // `Scene::intersect` bounded at the hit parameter (or left
+      // unbounded on a miss). The medium weighs `mBeta` itself: the
+      // scattering weight on an event, the transmittance weight on
+      // surviving to the surface or escape. The medium's own emission
+      // along the segment accumulates separately, weighted by the
+      // throughput from before the segment, and lands at weight 1:
+      // light sampling never competes with it, the same as an
+      // unregistered emitter. No guide record retains it, since the
+      // trainer learns the reflected field.
+      float t{};
+      Color emitted{};
+      bool hasScattered{};
+      if (SMDL_UNLIKELY(mPath.medium.hasEmission())) {
+        const Color betaStart{mBeta};
+        hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
+                                                   mBeta, emitted);
+        const Color Lemit{betaStart * emitted};
+        if (!Lemit.isAnyNonFinite()) {
+          mL += Lemit;
+          if (mPath.stats) mPath.stats->recordMediumEmission(Lemit);
+        }
+      } else {
+        hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
+                                                   mBeta, emitted);
+      }
+      if (hasScattered) {
+        // A volume scattering event.
+        ++mDepth;
+        ++mOrder;
+        mTravel += t;
+        mWidth += mSpread * t;
+        const float3 point{ray(t)};
+        const float3 wo{-ray.dir};
+        GuideRecord *record{mPath.records ? &mPath.records[mPath.numRecords++]
+                                          : nullptr};
+        if (record) {
+          *record = GuideRecord{};
+          record->point = point;
+          record->beta = mBeta;
+        }
+        if (isAtMaxBounces()) {
+          mEnd = PathEnd::BOUND;
+          return Step::STOP;
+        }
+        // The phase function of the vertex: the haze's own, or the
+        // medium's (with additive overlap, the component the collision
+        // picked), which is the instance's VDF when the definition
+        // proves it point-independent and otherwise the VDF evaluated
+        // at the collision into the path's allocator. Whatever it
+        // names outlives the view, so the gather below is free to
+        // retarget the view.
+        const Scatterer phase{mPath.medium.scatterer(mPath.allocator)};
+        bool ranManifold{false};
+        {
+          PathVertex vertex{phase};
+          vertex.kind = VertexKind::VOLUME;
+          vertex.point = point;
+          vertex.wo = wo;
+          vertex.mediumStack = mMediumStack;
+          // A phase function receives every light, as a smooth lobe.
+          vertex.finiteLobes = smdl::DF_SMOOTH;
+          // The SD-tree never participates at volume vertices, so the
+          // vertex keeps its null cell and the continuation density
+          // the gather weighs against is the phase function alone.
+          Color direct{gatherDirect(mRender, mPath, mGatherState, vertex)};
+          addGathered(direct, record);
+          ranManifold = vertex.ranManifold;
+        }
+        // Sample the vertex's phase function. It returns the phase
+        // value, which is also the solid-angle PDF of having sampled
+        // it, so the throughput weight is exactly 1 and `mBeta` is
+        // unchanged.
+        float3 wNext{};
+        float phaseValue{
+            phase.volumeScatterSample(float4(mPath.sampler), wo, wNext)};
+        if (!(phaseValue > 0)) {
+          mEnd = PathEnd::ABSORBED;
+          return Step::STOP;
+        }
+        if (record) {
+          record->wNext = wNext;
+          record->wNextPdf = phaseValue;
+        }
+        mPrev.pdf = phaseValue;
+        mPrev.isDirac = false;
+        // A phase function has no lobe that would not receive.
+        mPrev.receiverShare = ReceiverShare::whole();
+        mPrev.point = point;
+        mPrev.isAreaSampled = ranManifold;
+        // A volume vertex is a manifold-NEE receiver like any other.
+        mCoverage.arm(mRender.mneeOptions.isEnabled(),
+                      MNEEReceiver{point, wo, mMediumStack}, phaseValue,
+                      ReceiverShare::whole());
+        // Phase functions scatter wide, so grow the cone like a
+        // diffuse bounce.
+        mSpread = std::min(mSpread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
+        // No SD-tree steers a volume vertex, so the throughput is the
+        // only thing the roulette can weigh here.
+        if (!rouletteSurvives(/*dtree=*/nullptr, ROULETTE_VOLUME_GATE)) {
+          mEnd = PathEnd::ROULETTE;
+          return Step::STOP;
+        }
+        ray = Ray{point, wNext, EPS, INF, mPath.time.fraction};
+        return Step::SEGMENT;
+      }
+    }
+  }
+  return Step::VERTEX;
+}
+
+void PathWalk::arriveAtEnvironment(const Ray &ray, const EnvLight *envLight) {
+  // The walk escaped the scene: the segment is the BSDF-sampling half
+  // of the MIS pair, so add the environment weighted against what the
+  // light-sampling gather at the previous vertex would have produced.
+  // No pdf gate on the radiance: with MIS compensation the environment
+  // sampling density is zero below the mean radiance, but the radiance
+  // is not; those directions are exactly the ones this half alone must
+  // cover, at weight 1, which is what the power heuristic degrades to.
+  if (envLight) {
+    float Lipdf{};
+    Color Li{envLight->Li(mRender.compiler, mGatherState, mPath.skyBasis,
+                          ray.dir, Lipdf)};
+    float weight{
+        mDepth == 1 || mPrev.isDirac
+            ? 1.0f
+            : smdl::powerHeuristic(mPrev.pdf,
+                                   mRender.lights.envSelectionPMF(mPrev.point) *
+                                       Lipdf)};
+    // The re-walk's `coverWeight` returns 1 whenever the gather
+    // cannot produce this transport, which covers the dim sky the
+    // compensated environment sampler never draws (`Lipdf` zero),
+    // fold solutions the walk does not find, and failed walks. A
+    // sun-gated sky arrival reports no target at all, so it keeps
+    // its ordinary weight without spending a re-walk; the gather
+    // side stands down by the same predicate.
+    addArrival(
+        Li, weight, mDepth - 1, mRender.lights.isCausticEnv(),
+        mPath.records && mPath.numRecords > 0
+            ? &mPath.records[mPath.numRecords - 1]
+            : nullptr,
+        [&](ManifoldTarget &target) {
+          if (!mRender.mneeOptions.isEnvTarget(ray.dir)) return -1.0f;
+          target.wl = ray.dir;
+          return mRender.lights.envSelectionPMF(mCoverage.receiver().point) *
+                 Lipdf;
+        },
+        [&](const float3 &) {
+          return mRender.lights.angularRadiusOfEnv(ray.dir);
+        });
+  }
+  if (mPath.records) {
+    mPath.records[mPath.numRecords] = GuideRecord{};
+    mPath.records[mPath.numRecords].isInfiniteLight = true;
+    ++mPath.numRecords;
+  }
+}
+
+void PathWalk::addEmissionArrival(smdl::JIT::Material &material, const Hit &hit,
+                                  const float3 &wo) {
+  Color Le{};
+  if (mRender.lights.emittedRadiance(material, hit.instIndex, wo, Le)) {
+    float weight{mDepth == 2 || mPrev.isDirac
+                     ? 1.0f
+                     : smdl::powerHeuristic(
+                           mPrev.pdf,
+                           mRender.lights.solidAnglePDF(
+                               hit.instIndex, hit.faceIndex, hit.point, hit.Ng,
+                               mPrev.point, mPrev.isAreaSampled, hit.time))};
+    addArrival(
+        Le, weight, mDepth - 2, mRender.lights.isCausticLight(hit.instIndex),
+        mPath.records && mPath.numRecords > 1
+            ? &mPath.records[mPath.numRecords - 2]
+            : nullptr,
+        [&](ManifoldTarget &target) {
+          const float3 toLight{hit.point - mCoverage.receiver().point};
+          const float distStraight{length(toLight)};
+          if (!(distStraight > 0.0f)) return -1.0f;
+          target.wl = toLight / distStraight;
+          target.point = hit.point;
+          target.isInfinite = false;
+          target.normal = hit.Ng;
+          return mRender.lights.solidAnglePDF(hit.instIndex, hit.faceIndex,
+                                              hit.point, hit.Ng,
+                                              mCoverage.receiver().point,
+                                              /*isAreaSampled=*/true, hit.time);
+        },
+        [&](const float3 &point) {
+          return mRender.lights.angularRadiusOfInstance(hit.instIndex, point);
+        });
+  }
+}
+
 Color PathWalk::trace(const CameraSample &camera) {
   // Begin the path: nothing below reads what the last one left, other
   // than through these.
@@ -396,6 +633,7 @@ Color PathWalk::trace(const CameraSample &camera) {
   mPrev.reset();
   mOrder = 0;
   mTravel = 0.0f;
+  mEnd = PathEnd{};
   // The camera's own per-pixel cone spread seeds the LOD context.
   mSpread = camera.coneAngle;
   mWidth = 0.0f;
@@ -410,178 +648,26 @@ Color PathWalk::trace(const CameraSample &camera) {
   // The JIT ABI reports a reverse PDF alongside every forward PDF, which a
   // forward path tracer never consumes; every call shares this sink.
   float wpdfRevUnused{};
-  // The walk ends by escape, absorption, roulette, or the bounce bound,
-  // never by this loop's own condition.
   // The hit the casts fill, one record for the whole walk: `intersect()`
   // writes every field where it finds a surface and the walk ends where
   // it does not, so nothing reads what the last vertex left.
   Hit hit{};
-  // Why the walk ended, for the tally.
-  PathEnd end{};
+  // The walk ends by escape, absorption, roulette, or the bounce bound,
+  // never by this loop's own condition.
   while (true) {
     bool hasHitSurface{mRender.scene.intersect(ray, hit)};
-    // The stack being empty is the exterior segment, and with no haze
-    // it is vacuum, the common case: the view is left alone rather than
-    // resolved to nothing, which would still walk the stack.
+    // The stack being empty is the exterior segment, and with no haze it
+    // is vacuum, the common case. The guard sits here rather than inside
+    // the phase so that a vacuum segment pays one branch and no call; the
+    // bench sees a percent on a scene with no medium either way.
     if (mMediumStack || mPath.medium.hasHaze()) {
-      mPath.medium.reset(mMediumStack, mPath.wavelengths, mPath.time,
-                         mPath.wavelengthHero, ray.org, ray.dir);
-      if (mPath.medium.hasMedium()) {
-        // Sample a free-flight distance over the cast, which
-        // `Scene::intersect` bounded at the hit parameter (or left
-        // unbounded on a miss). The medium weighs `mBeta` itself: the
-        // scattering weight on an event, the transmittance weight on
-        // surviving to the surface or escape. The medium's own emission
-        // along the segment accumulates separately, weighted by the
-        // throughput from before the segment, and lands at weight 1:
-        // light sampling never competes with it, the same as an
-        // unregistered emitter. No guide record retains it, since the
-        // trainer learns the reflected field.
-        float t{};
-        Color emitted{};
-        bool hasScattered{};
-        if (SMDL_UNLIKELY(mPath.medium.hasEmission())) {
-          const Color betaStart{mBeta};
-          hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
-                                                     mBeta, emitted);
-          const Color Lemit{betaStart * emitted};
-          if (!Lemit.isAnyNonFinite()) {
-            mL += Lemit;
-            if (mPath.stats) mPath.stats->recordMediumEmission(Lemit);
-          }
-        } else {
-          hasScattered = mPath.medium.sampleDistance(mPath.sampler, ray.tmax, t,
-                                                     mBeta, emitted);
-        }
-        if (hasScattered) {
-          // A volume scattering event.
-          ++mDepth;
-          ++mOrder;
-          mTravel += t;
-          mWidth += mSpread * t;
-          const float3 point{ray(t)};
-          const float3 wo{-ray.dir};
-          GuideRecord *record{mPath.records ? &mPath.records[mPath.numRecords++]
-                                            : nullptr};
-          if (record) {
-            *record = GuideRecord{};
-            record->point = point;
-            record->beta = mBeta;
-          }
-          if (isAtMaxBounces()) {
-            end = PathEnd::BOUND;
-            break;
-          }
-          // The phase function of the vertex: the haze's own, or the
-          // medium's (with additive overlap, the component the collision
-          // picked), which is the instance's VDF when the definition
-          // proves it point-independent and otherwise the VDF evaluated
-          // at the collision into the path's allocator. Whatever it
-          // names outlives the view, so the gather below is free to
-          // retarget the view.
-          const Scatterer phase{mPath.medium.scatterer(mPath.allocator)};
-          bool ranManifold{false};
-          {
-            PathVertex vertex{phase};
-            vertex.kind = VertexKind::VOLUME;
-            vertex.point = point;
-            vertex.wo = wo;
-            vertex.mediumStack = mMediumStack;
-            // A phase function receives every light, as a smooth lobe.
-            vertex.finiteLobes = smdl::DF_SMOOTH;
-            // The SD-tree never participates at volume vertices, so the
-            // vertex keeps its null cell and the continuation density
-            // the gather weighs against is the phase function alone.
-            Color direct{gatherDirect(mRender, mPath, mGatherState, vertex)};
-            addGathered(direct, record);
-            ranManifold = vertex.ranManifold;
-          }
-          // Sample the vertex's phase function. It returns the phase
-          // value, which is also the solid-angle PDF of having sampled
-          // it, so the throughput weight is exactly 1 and `mBeta` is
-          // unchanged.
-          float3 wNext{};
-          float phaseValue{
-              phase.volumeScatterSample(float4(mPath.sampler), wo, wNext)};
-          if (!(phaseValue > 0)) {
-            end = PathEnd::ABSORBED;
-            break;
-          }
-          if (record) {
-            record->wNext = wNext;
-            record->wNextPdf = phaseValue;
-          }
-          mPrev.pdf = phaseValue;
-          mPrev.isDirac = false;
-          // A phase function has no lobe that would not receive.
-          mPrev.receiverShare = ReceiverShare::whole();
-          mPrev.point = point;
-          mPrev.isAreaSampled = ranManifold;
-          // A volume vertex is a manifold-NEE receiver like any other.
-          mCoverage.arm(mRender.mneeOptions.isEnabled(),
-                        MNEEReceiver{point, wo, mMediumStack}, phaseValue,
-                        ReceiverShare::whole());
-          // Phase functions scatter wide, so grow the cone like a
-          // diffuse bounce.
-          mSpread = std::min(mSpread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
-          // No SD-tree steers a volume vertex, so the throughput is the
-          // only thing the roulette can weigh here.
-          if (!rouletteSurvives(/*dtree=*/nullptr, ROULETTE_VOLUME_GATE)) {
-            end = PathEnd::ROULETTE;
-            break;
-          }
-          ray = Ray{point, wNext, EPS, INF, mPath.time.fraction};
-          continue;
-        }
-      }
+      const Step step{scatterInMedium(ray)};
+      if (step == Step::STOP) break;
+      if (step == Step::SEGMENT) continue;
     }
     if (!hasHitSurface) {
-      // The walk escaped the scene: the segment is the BSDF-sampling half
-      // of the MIS pair, so add the environment weighted against what the
-      // light-sampling gather at the previous vertex would have produced.
-      // No pdf gate on the radiance: with MIS compensation the environment
-      // sampling density is zero below the mean radiance, but the radiance
-      // is not; those directions are exactly the ones this half alone must
-      // cover, at weight 1, which is what the power heuristic degrades to.
-      if (envLight) {
-        float Lipdf{};
-        Color Li{envLight->Li(mRender.compiler, mGatherState, mPath.skyBasis,
-                              ray.dir, Lipdf)};
-        float weight{
-            mDepth == 1 || mPrev.isDirac
-                ? 1.0f
-                : smdl::powerHeuristic(
-                      mPrev.pdf,
-                      mRender.lights.envSelectionPMF(mPrev.point) * Lipdf)};
-        // The re-walk's `coverWeight` returns 1 whenever the gather
-        // cannot produce this transport, which covers the dim sky the
-        // compensated environment sampler never draws (`Lipdf` zero),
-        // fold solutions the walk does not find, and failed walks. A
-        // sun-gated sky arrival reports no target at all, so it keeps
-        // its ordinary weight without spending a re-walk; the gather
-        // side stands down by the same predicate.
-        addArrival(
-            Li, weight, mDepth - 1, mRender.lights.isCausticEnv(),
-            mPath.records && mPath.numRecords > 0
-                ? &mPath.records[mPath.numRecords - 1]
-                : nullptr,
-            [&](ManifoldTarget &target) {
-              if (!mRender.mneeOptions.isEnvTarget(ray.dir)) return -1.0f;
-              target.wl = ray.dir;
-              return mRender.lights.envSelectionPMF(
-                         mCoverage.receiver().point) *
-                     Lipdf;
-            },
-            [&](const float3 &) {
-              return mRender.lights.angularRadiusOfEnv(ray.dir);
-            });
-      }
-      if (mPath.records) {
-        mPath.records[mPath.numRecords] = GuideRecord{};
-        mPath.records[mPath.numRecords].isInfiniteLight = true;
-        ++mPath.numRecords;
-      }
-      end = PathEnd::ESCAPED;
+      arriveAtEnvironment(ray, envLight);
+      mEnd = PathEnd::ESCAPED;
       break;
     }
 
@@ -667,51 +753,11 @@ Color PathWalk::trace(const CameraSample &camera) {
       record->beta = mBeta;
     }
 
-    // A directly visible emitter: the segment that found it is the
-    // BSDF-sampling half of the MIS pair, so weigh the emission against
-    // what the light-sampling gather at the previous vertex would have
-    // produced. The camera hit (`mDepth` counts the camera, so that is
-    // depth 2) has no competing strategy, and neither does a Dirac bounce,
-    // whose direction light sampling can never generate; both add at
-    // weight 1. An unregistered emitter (one light selection never picks)
-    // reports a zero density and lands at weight 1 the same way.
-    if (material.hasEmission()) {
-      Color Le{};
-      if (mRender.lights.emittedRadiance(material, hit.instIndex, wo, Le)) {
-        float weight{mDepth == 2 || mPrev.isDirac
-                         ? 1.0f
-                         : smdl::powerHeuristic(
-                               mPrev.pdf, mRender.lights.solidAnglePDF(
-                                              hit.instIndex, hit.faceIndex,
-                                              hit.point, hit.Ng, mPrev.point,
-                                              mPrev.isAreaSampled, hit.time))};
-        addArrival(
-            Le, weight, mDepth - 2,
-            mRender.lights.isCausticLight(hit.instIndex),
-            mPath.records && mPath.numRecords > 1
-                ? &mPath.records[mPath.numRecords - 2]
-                : nullptr,
-            [&](ManifoldTarget &target) {
-              const float3 toLight{hit.point - mCoverage.receiver().point};
-              const float distStraight{length(toLight)};
-              if (!(distStraight > 0.0f)) return -1.0f;
-              target.wl = toLight / distStraight;
-              target.point = hit.point;
-              target.isInfinite = false;
-              target.normal = hit.Ng;
-              return mRender.lights.solidAnglePDF(
-                  hit.instIndex, hit.faceIndex, hit.point, hit.Ng,
-                  mCoverage.receiver().point,
-                  /*isAreaSampled=*/true, hit.time);
-            },
-            [&](const float3 &point) {
-              return mRender.lights.angularRadiusOfInstance(hit.instIndex,
-                                                            point);
-            });
-      }
-    }
+    // Guarded here rather than inside, so that a vertex on a material
+    // with no emission, which is most of them, pays a branch and no call.
+    if (material.hasEmission()) addEmissionArrival(material, hit, wo);
     if (isAtMaxBounces()) {
-      end = PathEnd::BOUND;
+      mEnd = PathEnd::BOUND;
       break;
     }
     // With guiding active, non-Dirac surface bounces one-sample-MIS the
@@ -794,7 +840,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       // is a finite-density direction.
       if (!material.hairScatterSample(float4(mPath.sampler), wo, wNext, wpdf,
                                       wpdfRevUnused, f)) {
-        end = PathEnd::ABSORBED;
+        mEnd = PathEnd::ABSORBED;
         break;
       }
     } else if (dtree) {
@@ -805,7 +851,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       if (float(mPath.sampler) < bsdfFraction) {
         if (!material.scatterSample(float4(mPath.sampler), wo, wNext, bsdfPdf,
                                     wpdfRevUnused, f, sampledLobe)) {
-          end = PathEnd::ABSORBED;
+          mEnd = PathEnd::ABSORBED;
           break;
         }
         if (isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0; !isDiracBounce)
@@ -814,7 +860,7 @@ Color PathWalk::trace(const CameraSample &camera) {
         if (wNext = dtree->sampleDirection(mPath.sampler, guidePdf);
             !(guidePdf > 0) ||
             !material.scatterEvaluate(wo, wNext, bsdfPdf, wpdfRevUnused, f)) {
-          end = PathEnd::ABSORBED;
+          mEnd = PathEnd::ABSORBED;
           break;
         }
       }
@@ -836,7 +882,7 @@ Color PathWalk::trace(const CameraSample &camera) {
                                       wpdfRevUnused, f, sampledLobe)) {
       isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0;
     } else {
-      end = PathEnd::ABSORBED;
+      mEnd = PathEnd::ABSORBED;
       break;
     }
     // Grow the ray cone for the bounce. Dirac bounces leave the spread
@@ -910,11 +956,11 @@ Color PathWalk::trace(const CameraSample &camera) {
     mPrev.claimedReceiverPoint = pointBehind;
     for (size_t b = 0; b < mBeta.size(); b++) mBeta[b] *= f[b] / wpdf;
     if (mBeta.isAnyNonFinite()) {
-      end = PathEnd::FAILED;
+      mEnd = PathEnd::FAILED;
       break;
     }
     if (!rouletteSurvives(dtree)) {
-      end = PathEnd::ROULETTE;
+      mEnd = PathEnd::ROULETTE;
       break;
     }
     if (!isHair)
@@ -926,8 +972,8 @@ Color PathWalk::trace(const CameraSample &camera) {
   // made: at the bound the walk folded one more vertex's arrival in
   // and stopped short of its gather.
   if (mPath.stats)
-    mPath.stats->recordPath(end == PathEnd::BOUND ? mDepth - 2 : mDepth - 1,
-                            end);
+    mPath.stats->recordPath(mEnd == PathEnd::BOUND ? mDepth - 2 : mDepth - 1,
+                            mEnd);
   return mL;
 }
 
