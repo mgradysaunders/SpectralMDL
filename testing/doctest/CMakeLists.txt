@@ -25,6 +25,7 @@ set_target_properties(
 if(RTTI_FLAG)
   target_compile_options("doctest-runner" PRIVATE "${RTTI_FLAG}")
 endif()
+smdl_shorten_file_macro("doctest-runner" "${PROJECT_SOURCE_DIR}/testing")
 
 # One seed per configure, shared by the suites. The suites run in a random
 # order ('-ob=rand' below, which is what makes '-rs' mean anything), so
