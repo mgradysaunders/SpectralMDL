@@ -471,8 +471,8 @@ void Medium::rebuild(const MediumStack *stack, const Color &wavelengths,
     return;
   }
 
-  const smdl::State renderState{
-      makeRenderState(wavelengths, nullptr, time.seconds, wavelengthHero)};
+  const smdl::State renderState{makeRenderState(
+      wavelengths, nullptr, time.seconds, wavelengthHero, mGridIndex)};
   // Coefficients are in inverse meters per the MDL specification, and
   // the toy's scene unit is the meter, so they are in inverse scene
   // units as they come.

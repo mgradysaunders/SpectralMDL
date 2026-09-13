@@ -62,16 +62,14 @@ std::string bandFilmFileName(const std::string &spectrumName) {
   return besideSpectrum(spectrumName, "-bands");
 }
 
-LensWavelengthDraw::LensWavelengthDraw(smdl::Span<const double> knots,
-                                       smdl::Span<const double> values,
-                                       double lo, double hi,
-                                       const SensorSpectrum &illuminant) {
-  SMDL_SANITY_CHECK(knots.size() == values.size() && !knots.empty());
-  SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
+std::vector<double>
+WavelengthDensity::breakpointsOf(smdl::Span<const double> knots, double lo,
+                                 double hi) {
+  SMDL_SANITY_CHECK(!knots.empty());
   lo = std::max(lo, knots.front());
   hi = std::min(hi, knots.back());
-  if (!(lo < hi)) return;
-  std::vector<double> &w{mWavelengths};
+  std::vector<double> w{};
+  if (!(lo < hi)) return w;
   w.push_back(lo);
   for (int64_t nm{int64_t(std::floor(lo)) + 1}; double(nm) < hi; nm++)
     w.push_back(double(nm));
@@ -80,44 +78,123 @@ LensWavelengthDraw::LensWavelengthDraw(smdl::Span<const double> knots,
   w.push_back(hi);
   std::sort(w.begin(), w.end());
   w.erase(std::unique(w.begin(), w.end()), w.end());
+  return w;
+}
+
+WavelengthDensity::WavelengthDensity(std::vector<double> breakpoints,
+                                     smdl::Span<const float> masses)
+    : mWavelengths(std::move(breakpoints)), mPieces(masses) {
+  SMDL_SANITY_CHECK(masses.size() + 1 == mWavelengths.size());
+  if (!(mPieces.unnormalizedSum() > 0)) {
+    mWavelengths.clear();
+    mPieces.clear();
+  }
+}
+
+WavelengthDensity
+WavelengthDensity::ofResponse(smdl::Span<const double> knots,
+                              smdl::Span<const double> values, double lo,
+                              double hi, const SensorSpectrum &illuminant) {
+  SMDL_SANITY_CHECK(knots.size() == values.size());
+  SMDL_SANITY_CHECK(illuminant.size() == SENSOR_WAVELENGTH_COUNT);
+  std::vector<double> w{breakpointsOf(knots, lo, hi)};
+  if (w.empty()) return {};
   // The photon factor's `1 / (h c)` and the curve's scale cancel in the
-  // normalization, so the density here is the curve, the illuminant, and
-  // the wavelength.
-  mCDF.assign(1, 0.0);
+  // normalization, so a piece's mass is the curve, the illuminant, and
+  // the wavelength at its middle, times its width.
+  std::vector<float> masses{};
+  masses.reserve(w.size() - 1);
   for (size_t i = 0; i + 1 < w.size(); i++) {
     const double middle{0.5 * (w[i] + w[i + 1])};
-    mCDF.push_back(mCDF.back() + curveAt(knots, values, middle) *
-                                     sensorSpectrumAt(illuminant, middle) *
-                                     middle * (w[i + 1] - w[i]));
+    masses.push_back(float(curveAt(knots, values, middle) *
+                           sensorSpectrumAt(illuminant, middle) * middle *
+                           (w[i + 1] - w[i])));
   }
-  const double total{mCDF.back()};
-  if (!(total > 0)) {
-    mWavelengths.clear();
-    mCDF.clear();
-    return;
+  return WavelengthDensity(std::move(w), masses);
+}
+WavelengthDensity
+WavelengthDensity::ofPlacement(smdl::Span<const PlacementCurve> curves,
+                               double lo, double hi) {
+  // Every curve's knots together, so that each curve is linear between
+  // any two neighboring breakpoints.
+  std::vector<double> knots{};
+  for (const auto &curve : curves) {
+    SMDL_SANITY_CHECK(curve.knots.size() == curve.values.size() &&
+                      !curve.knots.empty());
+    knots.insert(knots.end(), curve.knots.begin(), curve.knots.end());
   }
-  for (auto &value : mCDF) value /= total;
-  mCDF.back() = 1;
+  std::sort(knots.begin(), knots.end());
+  knots.erase(std::unique(knots.begin(), knots.end()), knots.end());
+  std::vector<double> w{breakpointsOf(knots, lo, hi)};
+  if (w.empty()) return {};
+  // The slope of each curve at its peak times the wavelength over each
+  // piece, to the two thirds, times the width, summed over the curves;
+  // then the two halves each normalized to one. Curves with no slope
+  // anywhere, flat or zero, leave the uniform half alone.
+  const size_t numPieces{w.size() - 1};
+  std::vector<double> slopes(numPieces);
+  for (const auto &curve : curves) {
+    const double peak{
+        *std::max_element(curve.values.begin(), curve.values.end())};
+    if (!(peak > 0)) continue;
+    for (size_t i = 0; i < numPieces; i++) {
+      const double f0{curveAt(curve.knots, curve.values, w[i]) / peak * w[i]};
+      const double f1{curveAt(curve.knots, curve.values, w[i + 1]) / peak *
+                      w[i + 1]};
+      const double width{w[i + 1] - w[i]};
+      slopes[i] += std::pow(std::abs(f1 - f0) / width, 2.0 / 3.0) * width;
+    }
+  }
+  double slopeTotal{};
+  for (const auto slope : slopes) slopeTotal += slope;
+  const double span{w.back() - w.front()};
+  std::vector<float> masses(numPieces);
+  for (size_t i = 0; i < numPieces; i++) {
+    const double uniform{(w[i + 1] - w[i]) / span};
+    masses[i] =
+        float(slopeTotal > 0 ? 0.5 * slopes[i] / slopeTotal + 0.5 * uniform
+                             : uniform);
+  }
+  return WavelengthDensity(std::move(w), masses);
 }
 
-double LensWavelengthDraw::at(double xi) const noexcept {
-  // The piece whose share of the distribution reaches past `xi`. A piece
-  // with no share leaves the distribution flat across it, and the search
-  // steps over it, so the draw never lands where the density is zero.
-  const auto itr{std::upper_bound(mCDF.begin() + 1, mCDF.end() - 1, xi)};
-  const size_t k{size_t(itr - mCDF.begin()) - 1};
-  const double share{mCDF[k + 1] - mCDF[k]};
-  const double t{share > 0 ? std::clamp((xi - mCDF[k]) / share, 0.0, 1.0)
-                           : 0.0};
-  return mWavelengths[k] + t * (mWavelengths[k + 1] - mWavelengths[k]);
+double WavelengthDensity::at(float xi) const noexcept {
+  // The piece the distribution puts `xi` in, which always has mass, and
+  // the fraction of the way across it.
+  float t{};
+  const int k{mPieces.indexSample(xi, &t)};
+  return mWavelengths[k] + double(t) * (mWavelengths[k + 1] - mWavelengths[k]);
 }
 
-TracedSpan LensWavelengthDraw::span() const noexcept {
-  size_t first{0}, last{mCDF.size() - 2};
-  while (!(mCDF[first + 1] > mCDF[first])) first++;
-  while (!(mCDF[last + 1] > mCDF[last])) last--;
-  return TracedSpan{float(mWavelengths[first]), float(at(0.5)),
+std::pair<size_t, size_t> WavelengthDensity::massRange() const noexcept {
+  int first{0}, last{mPieces.size() - 1};
+  while (!(mPieces.indexPMF(first) > 0)) first++;
+  while (!(mPieces.indexPMF(last) > 0)) last--;
+  return {size_t(first), size_t(last)};
+}
+
+TracedSpan WavelengthDensity::span() const noexcept {
+  const auto [first, last]{massRange()};
+  return TracedSpan{float(mWavelengths[first]), float(at(0.5f)),
                     float(mWavelengths[last + 1])};
+}
+
+WavelengthCells WavelengthDensity::cells(size_t count) const {
+  SMDL_SANITY_CHECK(!isEmpty() && count > 0);
+  const auto [first, last]{massRange()};
+  WavelengthCells cells{};
+  // The ends are where the mass begins and ends, exactly; the edges
+  // between are the draw at the fractions.
+  cells.edges.resize(count + 1);
+  cells.edges.front() = mWavelengths[first];
+  cells.edges.back() = mWavelengths[last + 1];
+  for (size_t i = 1; i < count; i++)
+    cells.edges[i] = at(float(i) / float(count));
+  cells.wavelengths.resize(count);
+  for (size_t i = 0; i < count; i++)
+    cells.wavelengths[i] = float(0.5 * (cells.edges[i] + cells.edges[i + 1]));
+  SMDL_SANITY_CHECK(cells.isValid());
+  return cells;
 }
 
 std::string spellTracedSpan(const TracedSpan &span) {
@@ -130,38 +207,95 @@ std::optional<TracedSpan> tracedSpanOf(const ResponseBand &band,
   const std::vector<double> knots(band.wavelengths.begin(),
                                   band.wavelengths.end());
   const std::vector<double> values(band.values.begin(), band.values.end());
-  const LensWavelengthDraw draw{knots, values, knots.front(), knots.back(),
-                                illuminant};
-  if (draw.isEmpty()) return std::nullopt;
-  return draw.span();
+  const WavelengthDensity density{WavelengthDensity::ofResponse(
+      knots, values, knots.front(), knots.back(), illuminant)};
+  if (density.isEmpty()) return std::nullopt;
+  return density.span();
 }
 
-Response::Response(const ResponseSettings &settings, const Color &wavelengths,
+namespace {
+
+// The grid `bands` place together over the union of their knots.
+[[nodiscard]] WavelengthCells placeCells(smdl::Span<const ResponseBand> bands,
+                                         size_t count) {
+  std::vector<std::vector<double>> knots{};
+  std::vector<std::vector<double>> values{};
+  double lo{INF};
+  double hi{-INF};
+  for (const auto &band : bands) {
+    knots.emplace_back(band.wavelengths.begin(), band.wavelengths.end());
+    values.emplace_back(band.values.begin(), band.values.end());
+    lo = std::min(lo, knots.back().front());
+    hi = std::max(hi, knots.back().back());
+  }
+  std::vector<WavelengthDensity::PlacementCurve> curves{};
+  for (size_t i = 0; i < knots.size(); i++)
+    curves.push_back({knots[i], values[i]});
+  return WavelengthDensity::ofPlacement(curves, lo, hi).cells(count);
+}
+
+} // namespace
+
+WavelengthCells bandWavelengthCells(const ResponseBand &band, size_t count) {
+  return placeCells(smdl::Span<const ResponseBand>(&band, 1), count);
+}
+
+WavelengthCells responseWavelengthCells(const ResponseSettings &settings,
+                                        size_t count) {
+  return placeCells(settings.bands, count);
+}
+
+Response::Response(const ResponseSettings &settings,
                    const SensorSpectrum &illuminant)
     : mHash(responseHash(settings)),
       mFilmBandNames(responseFilmBandNames(settings)),
       mCFAColumns(settings.cfaColumns), mCFARows(settings.cfaRows()),
-      mCFA(settings.cfa), mIsJittering(!gRenderGrid.bandEdges.empty()) {
+      mCFA(settings.cfa), mIsJittering(gRenderGrid.isJittering) {
   for (const auto index : mCFA)
     mTileNames.push_back(settings.bands[index].name);
-  const size_t numBands{wavelengths.size()};
-  // What the grid can see and what each band weighs, which the jitter
-  // leaves alone: its rectangles tile the same span with the same widths.
-  const double gridLo{double(wavelengths[0])};
-  const double gridHi{double(wavelengths[numBands - 1])};
-  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
-  if (mIsJittering) mWidths = widths;
-  double minSpacing{gridHi - gridLo};
-  for (size_t i = 1; i < numBands; i++)
-    minSpacing = std::min(minSpacing,
-                          double(wavelengths[i]) - double(wavelengths[i - 1]));
+  const std::vector<size_t> tileBandIndices{tileBands(mCFA)};
+  for (const auto index : tileBandIndices)
+    mTileBandNames.push_back(settings.bands[index].name);
+  // The grid a band projects on: under a tile the grid of its pixels,
+  // which is the render's tile's, else the one grid; null for a band the
+  // tile does not lay down, which projects never.
+  const RenderGrid &grids{gRenderGrid};
+  SMDL_SANITY_CHECK(!grids.hasTile() ||
+                    (grids.tileColumns == mCFAColumns &&
+                     grids.tileGrids.size() == mCFA.size()));
+  const auto gridOf{[&](size_t bandIndex) -> const WavelengthGrid * {
+    if (!hasTile()) return &grids.first();
+    for (size_t cell = 0; cell < mCFA.size(); cell++)
+      if (mCFA[cell] == bandIndex)
+        return &grids.grids[grids.hasTile() ? grids.tileGrids[cell] : 0];
+    return nullptr;
+  }};
   const double scale{settings.qeScale()};
-  for (const auto &curve : settings.bands) {
+  for (size_t bandIndex = 0; bandIndex < settings.bands.size(); bandIndex++) {
+    const ResponseBand &curve{settings.bands[bandIndex]};
     Band band{};
     band.name = curve.name;
     band.wavelengths.assign(curve.wavelengths.begin(), curve.wavelengths.end());
     for (const auto value : curve.values)
       band.values.push_back(scale * double(value));
+    const WavelengthGrid *grid{gridOf(bandIndex)};
+    if (!grid) {
+      mBands.push_back(std::move(band));
+      continue;
+    }
+    // What the grid can see and what each cell weighs, which the jitter
+    // leaves alone: the samples move inside the cells, which tile the
+    // same span with the same widths.
+    const smdl::SpectralColor &wavelengths{grid->wavelengths};
+    const size_t numBands{wavelengths.size()};
+    SMDL_SANITY_CHECK(numBands == grids.numBands);
+    const double gridLo{double(grid->minWavelength())};
+    const double gridHi{double(grid->maxWavelength())};
+    const std::vector<double> &widths{grid->widths};
+    double minSpacing{gridHi - gridLo};
+    for (size_t i = 1; i < numBands; i++)
+      minSpacing = std::min(minSpacing, double(wavelengths[i]) -
+                                            double(wavelengths[i - 1]));
     const double whole{
         integrate(band, band.wavelengths.front(), band.wavelengths.back())};
     const double inside{integrate(band, gridLo, gridHi)};
@@ -215,16 +349,20 @@ Response::Response(const ResponseSettings &settings, const Color &wavelengths,
         band.fixedWeights[i] =
             evaluate(band, lambda) * widths[i] * photonsPerJoule(lambda);
       }
+    } else {
+      band.widths = widths;
     }
     mBands.push_back(std::move(band));
   }
-  // Each band the tile lays down draws from inside what the grid sees,
-  // even when the grid holds still: a lens's geometry is continuous in the
-  // wavelength, so it has no comb to alias against.
-  for (const auto index : tileBands(mCFA)) {
+  // Each band the tile lays down draws from inside what its grid sees,
+  // even when the grid holds still: a lens's geometry is continuous in
+  // the wavelength, so it has no comb to alias against.
+  for (const auto index : tileBandIndices) {
     Band &band{mBands[index]};
-    band.draw = LensWavelengthDraw(band.wavelengths, band.values, gridLo,
-                                   gridHi, illuminant);
+    const WavelengthGrid &grid{*gridOf(index)};
+    band.draw = WavelengthDensity::ofResponse(
+        band.wavelengths, band.values, double(grid.minWavelength()),
+        double(grid.maxWavelength()), illuminant);
     if (band.draw.isEmpty())
       SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name),
                     " sees none of the white balance's illuminant inside the "
@@ -259,7 +397,7 @@ double Response::project(const Band &band, smdl::Span<const float> wavelengths,
   }
   for (size_t i = 0; i < E.size(); i++) {
     const double lambda{double(wavelengths[i])};
-    total += evaluate(band, lambda) * mWidths[i] * photonsPerJoule(lambda) *
+    total += evaluate(band, lambda) * band.widths[i] * photonsPerJoule(lambda) *
              double(E[i]);
   }
   return total;
@@ -279,8 +417,8 @@ void Response::accumulate(smdl::Span<const float> wavelengths,
 
 float Response::traceWavelengthAt(size_t x, size_t y, float xi) const noexcept {
   SMDL_DEBUG_CHECK(hasTile());
-  const LensWavelengthDraw &draw{mBands[bandAt(x, y)].draw};
-  return draw.isEmpty() ? 0.0f : float(draw.at(double(xi)));
+  const WavelengthDensity &draw{mBands[bandAt(x, y)].draw};
+  return draw.isEmpty() ? 0.0f : float(draw.at(xi));
 }
 
 void Response::logTracedSpans() const {
@@ -295,8 +433,8 @@ void Response::logTracedSpans() const {
 
 std::optional<Response>
 resolveResponse(const std::optional<ResponseSettings> &settings,
-                const Color &wavelengths, const SensorSpectrum &illuminant) {
+                const SensorSpectrum &illuminant) {
   std::optional<Response> response{};
-  if (settings) response.emplace(*settings, wavelengths, illuminant);
+  if (settings) response.emplace(*settings, illuminant);
   return response;
 }

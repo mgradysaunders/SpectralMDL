@@ -93,6 +93,16 @@ public:
   /// resolved; restating the haze already set does nothing.
   void setHaze(const smdl::Haze *haze) noexcept;
 
+  /// Set the render grid the paths through this view evaluate on,
+  /// `PathContext::gridIndex`, which the state a resolution evaluates
+  /// the medium's materials in carries. A change invalidates whatever is
+  /// resolved, as `setHaze()` does.
+  void setGridIndex(size_t gridIndex) noexcept {
+    if (gridIndex == mGridIndex) return;
+    mGridIndex = gridIndex;
+    mKey.isResolved = false;
+  }
+
   /// Is there a scene-wide exterior haze? A caller that skips the view
   /// outright for an empty stack, the exterior vacuum being the common
   /// case, must not skip it when there is.
@@ -450,6 +460,10 @@ private:
   };
 
   HazeState mHaze{};
+
+  /// See `setGridIndex()`.
+
+  size_t mGridIndex{};
 
   /// Is the resolved medium the exterior haze? Never true on a
   /// non-empty stack: the haze is the atmosphere, which a walk inside an

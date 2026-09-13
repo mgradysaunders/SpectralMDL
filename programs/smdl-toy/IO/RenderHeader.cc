@@ -33,6 +33,17 @@ SMDL_ALWAYS_INLINE void spell(std::string &line,
     line += (i > 0 ? ", " : "") + values[i];
   line += '}';
 }
+void spell(std::string &line, const std::vector<double> &values) {
+  line += '{';
+  for (size_t i = 0; i < values.size(); i++) {
+    if (i > 0) line += ", ";
+    spell(line, values[i]);
+  }
+  line += '}';
+}
+void spell(std::string &line, const std::vector<float> &values) {
+  spell(line, std::vector<double>(values.begin(), values.end()));
+}
 
 SMDL_ALWAYS_INLINE void parse(const std::string &text, uint64_t &value) {
   value = std::strtoull(text.c_str(), nullptr, 10);
@@ -66,6 +77,42 @@ void parse(const std::string &text, std::vector<std::string> &values) {
     if (!name.empty()) values.push_back(std::move(name));
     pos = end + 1;
   }
+}
+void parse(const std::string &text, std::vector<double> &values) {
+  // A list with an entry that is not a number is no list at all, so the
+  // field reads as absent rather than as a grid with a hole in it.
+  std::vector<std::string> items{};
+  parse(text, items);
+  values.clear();
+  for (const auto &item : items) {
+    char *end{};
+    const double value{std::strtod(item.c_str(), &end)};
+    if (end == item.c_str() || *end != '\0' || !std::isfinite(value)) {
+      values.clear();
+      return;
+    }
+    values.push_back(value);
+  }
+}
+void parse(const std::string &text, std::vector<float> &values) {
+  std::vector<double> parsed{};
+  parse(text, parsed);
+  values.assign(parsed.begin(), parsed.end());
+}
+
+// The grid fields, each name spelled here alone: the one grid's edges,
+// the names of a tile's grids, and each grid's two lists by its index in
+// that list. By index rather than by name because a reader folds a
+// field's key to lower case, and a band's name is the sensor's.
+[[nodiscard]] std::string fieldBandEdges() {
+  return smdl::concat(PREFIX, "band edges");
+}
+[[nodiscard]] std::string fieldGrids() { return smdl::concat(PREFIX, "grids"); }
+[[nodiscard]] std::string fieldGridWavelengths(size_t index) {
+  return smdl::concat(PREFIX, "grid ", index, " wavelengths");
+}
+[[nodiscard]] std::string fieldGridBandEdges(size_t index) {
+  return smdl::concat(PREFIX, "grid ", index, " band edges");
 }
 
 // The field table: one row per field, walked by both directions, which
@@ -145,6 +192,48 @@ std::vector<std::string> RenderHeader::headerLines() const {
 void RenderHeader::readFrom(const std::map<std::string, std::string> &fields) {
   readInto(*this, fields,
            [](auto &self, auto &&visit) { visitFields(self, visit); });
+}
+
+std::vector<std::string> GridHeader::headerLines() const {
+  std::vector<std::string> lines{};
+  const auto push{[&](const std::string &name, const auto &value) {
+    std::string line{smdl::concat(name, " = ")};
+    spell(line, value);
+    lines.push_back(std::move(line));
+  }};
+  if (grids.size() == 1 && grids.front().name.empty()) {
+    push(fieldBandEdges(), grids.front().bandEdges);
+    return lines;
+  }
+  std::vector<std::string> names{};
+  for (const auto &grid : grids) names.push_back(grid.name);
+  push(fieldGrids(), names);
+  for (size_t k = 0; k < grids.size(); k++) {
+    push(fieldGridWavelengths(k), grids[k].wavelengths);
+    push(fieldGridBandEdges(k), grids[k].bandEdges);
+  }
+  return lines;
+}
+
+void GridHeader::readFrom(const std::map<std::string, std::string> &fields) {
+  grids.clear();
+  const auto read{[&](const std::string &name, auto &value) {
+    if (auto itr{fields.find(name)}; itr != fields.end())
+      parse(itr->second, value);
+  }};
+  std::vector<std::string> names{};
+  read(fieldGrids(), names);
+  if (!names.empty()) {
+    for (size_t k = 0; k < names.size(); k++) {
+      Grid &grid{grids.emplace_back()};
+      grid.name = names[k];
+      read(fieldGridWavelengths(k), grid.wavelengths);
+      read(fieldGridBandEdges(k), grid.bandEdges);
+    }
+    return;
+  }
+  if (fields.count(fieldBandEdges()) > 0)
+    read(fieldBandEdges(), grids.emplace_back().bandEdges);
 }
 
 std::vector<std::string> ResponseHeader::headerLines() const {

@@ -105,3 +105,13 @@ public:
   /// shutter and the right time for a probe that has none.
   float time{};
 };
+
+/// The index into a tile `columns` wide and `rows` tall that frame pixel
+/// `(x, y)` reads through, anchored at the frame's origin so that a crop
+/// window changes nothing about which band a pixel sees. The rule a
+/// sensor's color filter array and the wavelength grids it implies both
+/// address by.
+[[nodiscard]] inline size_t tileIndexAt(size_t columns, size_t rows, size_t x,
+                                        size_t y) noexcept {
+  return (y % rows) * columns + x % columns;
+}

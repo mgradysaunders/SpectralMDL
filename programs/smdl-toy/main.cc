@@ -94,9 +94,8 @@ int main(int argc, char **argv) try {
   // it draws the wavelengths a lens whose glasses disperse is traced at,
   // under the white balance's illuminant, which `auto` reads as D65 until
   // the frame is measured.
-  const std::optional<Response> response{
-      resolveResponse(responseSettings, grid.wavelengths,
-                      whiteBalanceSpectrum(frame.model.whiteBalance))};
+  const std::optional<Response> response{resolveResponse(
+      responseSettings, whiteBalanceSpectrum(frame.model.whiteBalance))};
   // The compiler outlives every render below it, because the JIT'd
   // material code embeds absolute pointers into the data it owns.
   smdl::Compiler compiler{};

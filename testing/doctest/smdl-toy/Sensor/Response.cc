@@ -75,7 +75,8 @@ projectSwept(const Response &response, const Color &wavelengths,
   std::vector<double> total(response.filmBandCount());
   Color jittered{wavelengths};
   for (size_t k = 0; k < numOffsets; k++) {
-    jitterWavelengths(jittered, (float(k) + 0.5f) / float(numOffsets));
+    jitterWavelengths(jittered, gRenderGrid.first(),
+                      (float(k) + 0.5f) / float(numOffsets));
     const std::vector<double> sums{
         projectOnce(response, jittered, irradiance(jittered))};
     for (size_t b = 0; b < total.size(); b++) total[b] += sums[b];
@@ -86,10 +87,10 @@ projectSwept(const Response &response, const Color &wavelengths,
 
 // The hand integral of a flat `qe` under a flat irradiance `E` over the
 // grid held still: the photon rate is the irradiance times lambda over
-// h c, summed with the trapezoid widths.
+// h c, summed with the grid's widths.
 [[nodiscard]] double flatOnStillGrid(const Color &wavelengths, double qe,
                                      double E) {
-  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
+  const std::vector<double> &widths{gRenderGrid.first().widths};
   double expected{};
   for (size_t i = 0; i < wavelengths.size(); i++)
     expected +=
@@ -106,7 +107,7 @@ TEST_CASE("Response: a band counts the photoelectrons its curve turns the "
   SUBCASE("A flat curve over a flat irradiance is the photon integral, with "
           "the grid held still") {
     ScopedGrid scoped{coarseGrid(), false};
-    const Response response{qe, scoped.wavelengths(), d65()};
+    const Response response{qe, d65()};
     CHECK(response.bandCount() == 1);
     CHECK(response.filmBandCount() == 1);
     CHECK(response.filmBandNames() == std::vector<std::string>{"e"});
@@ -122,7 +123,7 @@ TEST_CASE("Response: a band counts the photoelectrons its curve turns the "
   SUBCASE("And under the jitter, averaged over the offset, it is the same "
           "integral") {
     ScopedGrid scoped{coarseGrid(), true};
-    const Response response{qe, scoped.wavelengths(), d65()};
+    const Response response{qe, d65()};
     // The rectangles tile the grid's own 400 to 700 nm, over which the
     // integral of lambda is closed form, and which the trapezoid of the
     // grid held still takes exactly, lambda being a line.
@@ -139,7 +140,7 @@ TEST_CASE("Response: a band counts the photoelectrons its curve turns the "
     const ResponseSettings wide{
         oneBand("all", {300, 1000}, {0.5, 0.5}, ResponseKind::QE)};
     ScopedGrid scoped{coarseGrid(), false};
-    const Response response{wide, scoped.wavelengths(), d65()};
+    const Response response{wide, d65()};
     const double expected{flatOnStillGrid(scoped.wavelengths(), 0.5, 2.0)};
     const std::vector<double> sums{
         projectOnce(response, scoped.wavelengths(), Color(2.0f))};
@@ -148,7 +149,7 @@ TEST_CASE("Response: a band counts the photoelectrons its curve turns the "
   SUBCASE("A curve the grid cannot see at all is refused") {
     const ResponseSettings nir{oneBand("nir", {800, 900, 1000}, {0, 1, 0})};
     ScopedGrid scoped{coarseGrid(), false};
-    CHECK_THROWS((void)Response(nir, scoped.wavelengths(), d65()));
+    CHECK_THROWS((void)Response(nir, d65()));
   }
 }
 
@@ -164,7 +165,7 @@ TEST_CASE("Response: a relative curve is scaled to its peak quantum "
   SUBCASE("Unstated, the peak is the generic one, and the second band reads "
           "its ratio of it") {
     CHECK(settings.qeScale() == doctest::Approx(DEFAULT_PEAK_QE));
-    const Response response{settings, wavelengths, d65()};
+    const Response response{settings, d65()};
     const std::vector<double> sums{
         projectOnce(response, wavelengths, Color(2.0f))};
     CHECK(sums[0] ==
@@ -175,7 +176,7 @@ TEST_CASE("Response: a relative curve is scaled to its peak quantum "
   SUBCASE("Stated, it scales the whole set, so the ratio holds") {
     settings.peakQE = 0.8f;
     CHECK(settings.qeScale() == doctest::Approx(0.8));
-    const Response response{settings, wavelengths, d65()};
+    const Response response{settings, d65()};
     const std::vector<double> sums{
         projectOnce(response, wavelengths, Color(2.0f))};
     CHECK(sums[0] ==
@@ -189,10 +190,10 @@ TEST_CASE("Response: a relative curve is scaled to its peak quantum "
         oneBand("a", {380, 720}, {0.5, 0.5}, ResponseKind::QE)};
     const ResponseSettings asRelative{oneBand("a", {380, 720}, {1, 1})};
     CHECK(asQE.qeScale() == 1.0);
-    const std::vector<double> qeSums{projectOnce(
-        Response{asQE, wavelengths, d65()}, wavelengths, Color(2.0f))};
-    const std::vector<double> relativeSums{projectOnce(
-        Response{asRelative, wavelengths, d65()}, wavelengths, Color(2.0f))};
+    const std::vector<double> qeSums{
+        projectOnce(Response{asQE, d65()}, wavelengths, Color(2.0f))};
+    const std::vector<double> relativeSums{
+        projectOnce(Response{asRelative, d65()}, wavelengths, Color(2.0f))};
     CHECK(qeSums[0] == doctest::Approx(relativeSums[0]).epsilon(1e-12));
     CHECK(responseHash(asQE) == responseHash(asRelative));
   }
@@ -208,12 +209,12 @@ TEST_CASE("Response: a band narrower than the grid needs the jitter") {
   const ResponseSettings narrow{oneBand("line", {557, 562, 567}, {0, 1, 0})};
   SUBCASE("With the grid held still no sample can see it, which is refused") {
     ScopedGrid scoped{coarseGrid(), false};
-    CHECK_THROWS((void)Response(narrow, scoped.wavelengths(), d65()));
+    CHECK_THROWS((void)Response(narrow, d65()));
   }
   SUBCASE("Under the jitter it integrates the irradiance over its own "
           "width") {
     ScopedGrid scoped{coarseGrid(), true};
-    const Response response{narrow, scoped.wavelengths(), d65()};
+    const Response response{narrow, d65()};
     // The triangle has an area of 5 nm about 562 nm, where the slope
     // reads 0.562, to the sweep's precision and the triangle's own
     // width, though it straddles the edge between two of the grid's
@@ -228,7 +229,7 @@ TEST_CASE("Response: a band narrower than the grid needs the jitter") {
           "the warning") {
     ScopedGrid scoped{coarseGrid(), false};
     const ResponseSettings onNode{oneBand("line", {545, 550, 555}, {0, 1, 0})};
-    const Response response{onNode, scoped.wavelengths(), d65()};
+    const Response response{onNode, d65()};
     // The one node it lands on, at the generic peak, over the 25 nm the
     // grid gives that node.
     const double expected{double(DEFAULT_PEAK_QE) * 25.0 * 3.0 * 550.0 *
@@ -246,7 +247,7 @@ TEST_CASE("Response: the band film is the projection of the spectral film") {
   ScopedGrid scoped{coarseGrid(), false};
   const ResponseSettings bumpy{
       oneBand("g", {400, 500, 550, 600, 700}, {0, 1, 0.2, 1, 0})};
-  const Response response{bumpy, scoped.wavelengths(), d65()};
+  const Response response{bumpy, d65()};
   const Color &wavelengths{scoped.wavelengths()};
   constexpr size_t NUM_SAMPLES = 8;
   smdl::SpectralFilm film{wavelengths.size(), 1, 1};
@@ -282,7 +283,7 @@ TEST_CASE("Response: the tile picks one band per pixel") {
   settings.cfa = {0, 1, 1, 2};
   SUBCASE("The film has one band, and the tile repeats from the frame's "
           "origin") {
-    const Response response{settings, scoped.wavelengths(), d65()};
+    const Response response{settings, d65()};
     CHECK(response.hasTile());
     CHECK(response.bandCount() == 3);
     CHECK(response.filmBandCount() == 1);
@@ -299,15 +300,15 @@ TEST_CASE("Response: the tile picks one band per pixel") {
     ResponseSettings five{untiled};
     five.cfaColumns = 5;
     for (size_t i = 0; i < 25; i++) five.cfa.push_back(i % 3);
-    const Response response{five, scoped.wavelengths(), d65()};
+    const Response response{five, d65()};
     for (size_t y = 30; y < 40; y++)
       for (size_t x = 100; x < 110; x++)
         CHECK(response.bandAt(x, y) == five.cfa[(y % 5) * 5 + x % 5]);
   }
   SUBCASE("The mosaic value is the picked band of the untiled projection, "
           "with the two greens identical") {
-    const Response tiled{settings, scoped.wavelengths(), d65()};
-    const Response plain{untiled, scoped.wavelengths(), d65()};
+    const Response tiled{settings, d65()};
+    const Response plain{untiled, d65()};
     const Color E{sloped(scoped.wavelengths())};
     const std::vector<double> all{projectOnce(plain, scoped.wavelengths(), E)};
     REQUIRE(all.size() == 3);
@@ -410,7 +411,7 @@ TEST_CASE("Response: the wavelength a lens whose glasses disperse is traced "
           "at") {
   // Under the jitter, since the line falls between the grid's wavelengths.
   ScopedGrid scoped{coarseGrid(), true};
-  const Response response{shapedTile(), scoped.wavelengths(), d65()};
+  const Response response{shapedTile(), d65()};
   SUBCASE("Every draw lies inside its band and inside what the grid sees") {
     // The grid cuts R at its red end, 700 nm, and B at its blue end, 400.
     const auto numOutside{[&](size_t x, size_t y, float lo, float hi) {
@@ -448,7 +449,7 @@ TEST_CASE("Response: the wavelength a lens whose glasses disperse is traced "
   SUBCASE("The draw leans the way the illuminant does") {
     // Tungsten is red-heavy against daylight, so the R pixels trace
     // redder under it.
-    const Response underTungsten{shapedTile(), scoped.wavelengths(),
+    const Response underTungsten{shapedTile(),
                                  planckSpectrum(ILLUMINANT_A_KELVIN)};
     CHECK(underTungsten.traceWavelengthAt(0, 0, 0.5f) >
           response.traceWavelengthAt(0, 0, 0.5f));
@@ -463,11 +464,173 @@ TEST_CASE("Response: the wavelength a lens whose glasses disperse is traced "
     CHECK(span->median > 600.0f);
     CHECK(span->median < 700.0f);
   }
+  SUBCASE("A stretch of zeros inside a curve is never drawn, and the span "
+          "starts after it") {
+    ResponseBand band{};
+    band.name = "Z";
+    band.wavelengths = {500, 520, 540, 560};
+    band.values = {0, 0, 1, 0};
+    const std::optional<TracedSpan> span{tracedSpanOf(band, d65())};
+    REQUIRE(span);
+    CHECK(span->lo == 520.0f);
+    CHECK(span->hi == 560.0f);
+    const std::vector<double> knots(band.wavelengths.begin(),
+                                    band.wavelengths.end());
+    const std::vector<double> values(band.values.begin(), band.values.end());
+    const WavelengthDensity density{
+        WavelengthDensity::ofResponse(knots, values, 500, 560, d65())};
+    CHECK(density.at(0.0f) >= 520.0);
+    CHECK(density.at(1.0f) <= 560.0);
+  }
   SUBCASE("A band the illuminant leaves dark has nothing to draw, and its "
           "pixels trace the reference") {
     const std::vector<double> dark{SensorSpectrum(SENSOR_WAVELENGTH_COUNT)};
     CHECK(!tracedSpanOf(shapedTile().bands[0], dark));
-    const Response unlit{shapedTile(), scoped.wavelengths(), dark};
+    const Response unlit{shapedTile(), dark};
     CHECK(unlit.traceWavelengthAt(0, 0, 0.5f) == 0.0f);
+  }
+}
+
+TEST_CASE("Response: the grid a band places itself") {
+  // A trapezoid: 20 nm skirts either side of a 60 nm plateau.
+  const auto bandOf{[](std::vector<float> values) {
+    ResponseBand band{};
+    band.name = "T";
+    band.wavelengths = {500, 520, 580, 600};
+    band.values = std::move(values);
+    return band;
+  }};
+  const ResponseBand band{bandOf({0, 1, 1, 0})};
+  const WavelengthCells cells{bandWavelengthCells(band, 10)};
+  const auto widthOf{[&](const WavelengthCells &c, size_t i) {
+    return c.edges[i + 1] - c.edges[i];
+  }};
+  SUBCASE("The cells tile the band's knots and describe a grid") {
+    REQUIRE(cells.edges.size() == 11);
+    REQUIRE(cells.wavelengths.size() == 10);
+    CHECK(cells.edges.front() == 500.0);
+    CHECK(cells.edges.back() == 600.0);
+    CHECK(cells.isValid());
+    CHECK(bandWavelengthCells(band, 3).wavelengths.size() == 3);
+  }
+  SUBCASE("Every wavelength is its cell's midpoint") {
+    for (size_t i = 0; i < 10; i++)
+      CHECK(double(cells.wavelengths[i]) ==
+            doctest::Approx(0.5 * (cells.edges[i] + cells.edges[i + 1])));
+  }
+  SUBCASE("The cells are narrower on the skirts, where the curve is steep, "
+          "than on the plateau") {
+    double skirt{}, plateau{};
+    size_t numSkirt{}, numPlateau{};
+    for (size_t i = 0; i < 10; i++) {
+      const bool isSkirt{cells.wavelengths[i] < 520 ||
+                         cells.wavelengths[i] > 580};
+      (isSkirt ? skirt : plateau) += widthOf(cells, i);
+      (isSkirt ? numSkirt : numPlateau)++;
+    }
+    REQUIRE(numSkirt > 0);
+    REQUIRE(numPlateau > 0);
+    CHECK(skirt / double(numSkirt) < plateau / double(numPlateau));
+  }
+  SUBCASE("No cell is wider than twice a uniform grid's") {
+    for (size_t i = 0; i < 10; i++) CHECK(widthOf(cells, i) <= 20.0 + 1e-6);
+  }
+  SUBCASE("A curve with no slope, flat or zero, places a uniform grid") {
+    for (const auto &flat : {bandOf({1, 1, 1, 1}), bandOf({0, 0, 0, 0})}) {
+      const WavelengthCells uniform{bandWavelengthCells(flat, 10)};
+      for (size_t i = 0; i < 10; i++)
+        CHECK(widthOf(uniform, i) == doctest::Approx(10.0).epsilon(1e-6));
+    }
+  }
+}
+
+TEST_CASE("Response: the grid a response places itself, every band from one "
+          "grid") {
+  // A broad band over 400 to 700 nm and a narrow one at 550, the narrow
+  // one at a tenth of the peak so that the normalization has something
+  // to undo.
+  const auto settingsOf{[](float broadPeak, float narrowPeak) {
+    ResponseSettings settings{};
+    ResponseBand &broad{settings.bands.emplace_back()};
+    broad.name = "W";
+    broad.wavelengths = {400, 450, 650, 700};
+    broad.values = {0, broadPeak, broadPeak, 0};
+    ResponseBand &narrow{settings.bands.emplace_back()};
+    narrow.name = "N";
+    narrow.wavelengths = {540, 550, 560};
+    narrow.values = {0, narrowPeak, 0};
+    return settings;
+  }};
+  constexpr double UNIFORM_WIDTH = 300.0 / 16;
+  const WavelengthCells cells{responseWavelengthCells(settingsOf(1, 0.1f), 16)};
+  const auto widthOf{[&](const WavelengthCells &c, size_t i) {
+    return c.edges[i + 1] - c.edges[i];
+  }};
+  SUBCASE("The cells tile the union of the knots and describe a grid") {
+    REQUIRE(cells.edges.size() == 17);
+    CHECK(cells.edges.front() == 400.0);
+    CHECK(cells.edges.back() == 700.0);
+    CHECK(cells.isValid());
+  }
+  SUBCASE("The narrow band's skirts draw cells in, though the broad band is "
+          "flat there") {
+    size_t numNarrow{0};
+    for (size_t i = 0; i < 16; i++)
+      if (cells.wavelengths[i] > 540 && cells.wavelengths[i] < 560) {
+        CHECK(widthOf(cells, i) < UNIFORM_WIDTH);
+        numNarrow++;
+      }
+    CHECK(numNarrow >= 2);
+  }
+  SUBCASE("A band's peak quantum efficiency does not change the placement") {
+    const WavelengthCells same{
+        responseWavelengthCells(settingsOf(0.2f, 1), 16)};
+    for (size_t i = 0; i < 17; i++)
+      CHECK(same.edges[i] == doctest::Approx(cells.edges[i]).epsilon(1e-6));
+  }
+  SUBCASE("No cell is wider than twice a uniform grid's") {
+    for (size_t i = 0; i < 16; i++)
+      CHECK(widthOf(cells, i) <= 2 * UNIFORM_WIDTH + 1e-6);
+  }
+}
+
+TEST_CASE("Response: under a tile each band projects on the grid of its own "
+          "pixels") {
+  // Three grids of four bands, one over each band's own span, tiled as
+  // the bands are, and held still so that the projection is a dot
+  // product with the grid's own widths.
+  const auto listOf{[](std::vector<float> list) {
+    return WavelengthCells::fromWavelengths(
+        smdl::Span<const float>(list.data(), list.size()));
+  }};
+  const std::vector<WavelengthCells> family{listOf({550, 600, 650, 700}),
+                                            listOf({557, 560, 564, 567}),
+                                            listOf({400, 430, 470, 500})};
+  const ScopedGrid scoped{family, 2, {0, 1, 1, 2}, false};
+  const ResponseSettings settings{shapedTile()};
+  const Response response{settings, d65()};
+  const auto expectedAt{[&](size_t bandIndex, size_t gridIndex) {
+    const WavelengthGrid &grid{gRenderGrid.grids[gridIndex]};
+    double expected{};
+    for (size_t i = 0; i < grid.size(); i++) {
+      const double lambda{double(grid.wavelengths[i])};
+      expected += settings.bands[bandIndex].at(lambda) * settings.qeScale() *
+                  grid.widths[i] * lambda * PHOTONS_PER_JOULE_NM;
+    }
+    return expected;
+  }};
+  Color flat{1.0f};
+  SUBCASE("Each tile band integrates on its own grid, the narrow one "
+          "included, which a shared grid would miss") {
+    CHECK(projectOnce(response, gRenderGrid.at(0, 0).wavelengths, flat, 0,
+                      0)[0] == doctest::Approx(expectedAt(0, 0)));
+    CHECK(projectOnce(response, gRenderGrid.at(1, 0).wavelengths, flat, 1,
+                      0)[0] == doctest::Approx(expectedAt(1, 1)));
+    CHECK(projectOnce(response, gRenderGrid.at(1, 1).wavelengths, flat, 1,
+                      1)[0] == doctest::Approx(expectedAt(2, 2)));
+    CHECK(expectedAt(1, 1) > 0);
+  }
+  SUBCASE("The tile band names come in the order the tile first names them") {
+    CHECK(response.tileBandNames() == std::vector<std::string>{"R", "G", "B"});
   }
 }

@@ -233,16 +233,20 @@ struct GuideOptions final {
 
 /// The wavelength grid the command line asks for, already parsed.
 struct GridOptions final {
-  /// The uniform grid `-wavelength-range` spells, or the default range
-  /// when it was not given.
-  WavelengthRange range{};
+  /// The uniform grid `-wavelength-range` spells; when it was not given,
+  /// the default span and band count.
+  Flag<WavelengthRange> range{};
 
   /// The explicit grid `-wavelengths` spells, empty when it was not
   /// given.
   std::vector<float> explicitWavelengths{};
 
-  /// Did either grid flag speak? A resumed render with neither adopts
-  /// the grid recorded in the file it resumes from.
+  /// The band count of the grid the renderer places itself,
+  /// `-wavelength-count`, when neither of the above spells one.
+  Flag<unsigned> count{};
+
+  /// Did any grid flag speak? A resumed render with none adopts the
+  /// grid recorded in the file it resumes from.
   bool wasGiven{};
 
   /// Draw each sample's own grid from within the bands. Whether it was

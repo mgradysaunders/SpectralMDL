@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@
 #include "Render/Autolook.h"
 #include "Resume.h"
 #include "Scene/Scene.h"
+#include "Sensor/Response.h"
 #include "Stage.h"
 
 // The material a scene falls back to when it has none of its own: a
@@ -137,75 +139,211 @@ Frame resolveFrame(const Options &opts) {
 }
 ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                                    const ResumedSequence &resumed) {
-  // The wavelength grid, in priority order: explicit '-wavelengths',
-  // '-wavelength-range' uniform bands (endpoint-inclusive), or, when
-  // resuming with no grid flags at all, the grid recorded in the resumed
-  // file, so a resumed render needs no grid retyping. The band count
-  // seeds every 'Color' constructed from here on.
-  const bool shouldAdoptResumedGrid{!opts.render.grid.wasGiven &&
-                                    resumed.wasLoaded};
-  std::vector<float> gridSpec{opts.render.grid.explicitWavelengths};
-  if (shouldAdoptResumedGrid) {
-    if (resumed.info.wavelengths.empty())
-      throw smdl::Error(
-          "Cannot resume: the file carries no wavelengths to adopt, give "
-          "the grid explicitly with -wavelength-range or -wavelengths");
-    gridSpec = resumed.info.wavelengths;
-  }
-  if (gridSpec.empty()) {
-    WavelengthRange range{opts.render.grid.range};
-    // With a physical sensor and no grid flags, the grid spans the union
-    // of its curves at the default band count, so that no band is cut
-    // off by the visible default: a user should not have to know that
-    // the curves must lie inside the grid.
-    if (frame.model.hasPhysicalSensor() && !opts.render.grid.wasGiven) {
-      range.range = float2(INF, -INF);
-      for (const auto &band : frame.model.sensor->settings().response.bands) {
-        range.range.x = std::min(range.range.x, band.wavelengths.front());
-        range.range.y = std::max(range.range.y, band.wavelengths.back());
-      }
-      SMDL_LOG_INFO("Wavelength grid: ", range.bandCount, " bands over ",
-                    range.range.x, "-", range.range.y,
-                    " nm, the span of the sensor's curves");
+  // The wavelength grid, in priority order: explicit '-wavelengths';
+  // '-wavelength-range' uniform bands (endpoint-inclusive); when resuming
+  // with no grid flags at all, the grid recorded in the resumed file, so
+  // a resumed render needs no grid retyping; else the grid the renderer
+  // places itself, '-wavelength-count' bands: by a physical sensor's
+  // curves when every sample projects onto every band, uniform over
+  // their span under a tile, whose per-band grids are the render loop's,
+  // or uniform over the visible default. The band count seeds every
+  // 'Color' constructed from here on.
+  const GridOptions &gridOptions{opts.render.grid};
+  const bool shouldAdoptResumedGrid{!gridOptions.wasGiven && resumed.wasLoaded};
+  const ResponseSettings *response{
+      frame.model.hasPhysicalSensor() ? &frame.model.sensor->settings().response
+                                      : nullptr};
+  const auto uniform{[](const WavelengthRange &range) {
+    std::vector<float> grid(size_t(range.bandCount));
+    for (size_t i = 0; i < grid.size(); i++) {
+      const float t{float(i) / float(grid.size() - 1)};
+      grid[i] = (1 - t) * range.range.x + t * range.range.y;
     }
-    gridSpec.resize(size_t(range.bandCount));
-    for (size_t i = 0; i < gridSpec.size(); i++) {
-      const float t{float(i) / float(gridSpec.size() - 1)};
-      gridSpec[i] = (1 - t) * range.range.x + t * range.range.y;
+    return WavelengthCells::fromWavelengths(
+        smdl::Span<const float>(grid.data(), grid.size()));
+  }};
+  const auto asSpan{[](const std::vector<float> &list) {
+    return smdl::Span<const float>(list.data(), list.size());
+  }};
+  // The grids: one, or under a tile one per band the tile lays down, and
+  // then the tile as grid indices, which is the sensor's tile with each
+  // band replaced by the index of its grid.
+  std::vector<WavelengthCells> family{};
+  size_t tileColumns{0};
+  std::vector<size_t> tile{};
+  const auto placeTile{[&]() {
+    const std::vector<size_t> bands{tileBands(response->cfa)};
+    tileColumns = response->cfaColumns;
+    for (const auto index : response->cfa)
+      tile.push_back(
+          size_t(std::find(bands.begin(), bands.end(), index) - bands.begin()));
+  }};
+  const std::vector<GridHeader::Grid> &records{resumed.grids.grids};
+  const bool isFilePerBand{!records.empty() && !records.front().name.empty()};
+  bool wasLogged{false};
+  if (!gridOptions.explicitWavelengths.empty()) {
+    family.push_back(WavelengthCells::fromWavelengths(
+        asSpan(gridOptions.explicitWavelengths)));
+  } else if (gridOptions.range.wasGiven) {
+    family.push_back(uniform(gridOptions.range.value));
+  } else if (shouldAdoptResumedGrid) {
+    if (isFilePerBand) {
+      if (!response || !response->hasCFA())
+        throw smdl::Error(
+            "Cannot resume: the file holds a grid per tile band, and this "
+            "camera's sensor has no tile; render through the sensor the "
+            "file was rendered through");
+      for (const auto index : tileBands(response->cfa)) {
+        const std::string &name{response->bands[index].name};
+        const auto itr{std::find_if(records.begin(), records.end(),
+                                    [&](const GridHeader::Grid &record) {
+                                      return record.name == name;
+                                    })};
+        if (itr == records.end())
+          throw smdl::Error(
+              smdl::concat("Cannot resume: the file states no grid for the "
+                           "tile band ",
+                           smdl::Quoted(name)));
+        family.push_back(WavelengthCells{itr->bandEdges, itr->wavelengths});
+      }
+      placeTile();
+    } else {
+      if (resumed.info.wavelengths.empty())
+        throw smdl::Error(
+            "Cannot resume: the file carries no wavelengths to adopt, give "
+            "the grid explicitly with -wavelength-range or -wavelengths");
+      // The file's own cells when it states them, else the ones its list
+      // implies, which is what a file written before the cells were
+      // recorded meant.
+      if (records.empty() || records.front().bandEdges.empty())
+        family.push_back(
+            WavelengthCells::fromWavelengths(asSpan(resumed.info.wavelengths)));
+      else
+        family.push_back(WavelengthCells{records.front().bandEdges,
+                                         resumed.info.wavelengths});
+    }
+    for (const auto &cells : family)
+      if (!cells.isValid())
+        throw smdl::Error("Cannot resume: the file's band edges do not "
+                          "describe its wavelengths");
+  } else {
+    WavelengthRange range{gridOptions.range.value};
+    if (gridOptions.count.wasGiven) range.bandCount = gridOptions.count.value;
+    const size_t count{size_t(range.bandCount)};
+    const auto describeCells{[](const WavelengthCells &cells) {
+      double narrowest{INF};
+      double widest{0};
+      for (size_t i = 0; i + 1 < cells.edges.size(); i++) {
+        narrowest = std::min(narrowest, cells.edges[i + 1] - cells.edges[i]);
+        widest = std::max(widest, cells.edges[i + 1] - cells.edges[i]);
+      }
+      return smdl::concat(float(cells.edges.front()), "-",
+                          float(cells.edges.back()), " nm, from ",
+                          smdl::Brief(narrowest, 3), " to ",
+                          smdl::Brief(widest, 3), " nm wide");
+    }};
+    if (response && response->hasCFA()) {
+      // Under a tile each band the tile lays down places its own grid,
+      // which its pixels alone evaluate on.
+      for (const auto index : tileBands(response->cfa)) {
+        const ResponseBand &band{response->bands[index]};
+        family.push_back(bandWavelengthCells(band, count));
+        SMDL_LOG_INFO("Wavelength grid: ", count,
+                      " bands placed by the "
+                      "sensor's ",
+                      smdl::Quoted(band.name), " curve for its pixels over ",
+                      describeCells(family.back()));
+      }
+      placeTile();
+      wasLogged = true;
+    } else if (response) {
+      family.push_back(responseWavelengthCells(*response, count));
+      SMDL_LOG_INFO("Wavelength grid: ", count,
+                    " bands placed by the sensor's curves over ",
+                    describeCells(family.back()));
+      wasLogged = true;
+    } else {
+      family.push_back(uniform(range));
     }
   }
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
   const bool shouldJitter{frame.shouldJitterWavelength};
-  if (shouldJitter && !opts.render.grid.shouldJitter.wasGiven)
+  if (shouldJitter && !gridOptions.shouldJitter.wasGiven)
     SMDL_LOG_INFO("Wavelength jitter: on for a physical sensor, so a band "
                   "narrower than the grid's spacing integrates without "
                   "aliasing; -wavelength-jitter=false turns it off");
-  gRenderGrid.reset(smdl::Span<const float>(gridSpec.data(), gridSpec.size()),
+  gRenderGrid.reset(std::move(family), tileColumns, std::move(tile),
                     shouldJitter);
-  if (shouldJitter && gRenderGrid.bandEdges.empty())
+  if (shouldJitter && !gRenderGrid.isJittering)
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
-  const Color wavelengths{
-      smdl::Span<const float>(gridSpec.data(), gridSpec.size())};
+  const Color wavelengths{gRenderGrid.first().wavelengths};
   if (resumed.wasLoaded) {
-    if (resumed.film.getNumBands() != wavelengths.size())
+    if (resumed.film.getNumBands() != gRenderGrid.numBands)
       throw smdl::Error(smdl::concat(
           "Cannot resume: the file has ", resumed.film.getNumBands(),
-          " bands against the renderer's ", wavelengths.size()));
-    for (size_t i = 0; i < wavelengths.size(); i++)
-      if (i >= resumed.info.wavelengths.size() ||
-          !(std::abs(resumed.info.wavelengths[i] - wavelengths[i]) < 0.5f))
-        throw smdl::Error(
-            "Cannot resume: the wavelength grid does not match the "
-            "renderer's");
+          " bands against the renderer's ", gRenderGrid.numBands));
+    // Each grid against what the file states for it: the one grid
+    // against the format's list and the edges when stated, a tile's
+    // grids against their records. Adoption took them from there; a
+    // session with grid flags of its own has to land on the same ones.
+    if (isFilePerBand != gRenderGrid.hasTile() ||
+        (isFilePerBand && records.size() != gRenderGrid.grids.size()))
+      throw smdl::Error(smdl::concat(
+          "Cannot resume: the file was rendered on ",
+          isFilePerBand ? "a grid per tile band" : "one grid",
+          " and this session renders on ",
+          gRenderGrid.hasTile() ? "a grid per tile band" : "one grid",
+          "; give the grid flags the first session was given, or none"));
+    const auto check{[](const WavelengthGrid &grid,
+                        const std::vector<float> &fileWavelengths,
+                        const std::vector<double> &fileEdges) {
+      for (size_t i = 0; i < grid.size(); i++)
+        if (i >= fileWavelengths.size() ||
+            !(std::abs(fileWavelengths[i] - grid.wavelengths[i]) < 0.5f))
+          throw smdl::Error(
+              "Cannot resume: the wavelength grid does not match the "
+              "renderer's");
+      for (size_t i = 0; i < fileEdges.size(); i++)
+        if (i >= grid.bandEdges.size() ||
+            !(std::abs(fileEdges[i] - grid.bandEdges[i]) < 0.5))
+          throw smdl::Error("Cannot resume: the file's band edges do not "
+                            "match the renderer's");
+    }};
+    if (isFilePerBand) {
+      const std::vector<size_t> bands{tileBands(response->cfa)};
+      for (size_t k = 0; k < bands.size(); k++) {
+        const std::string &name{response->bands[bands[k]].name};
+        const auto itr{std::find_if(records.begin(), records.end(),
+                                    [&](const GridHeader::Grid &record) {
+                                      return record.name == name;
+                                    })};
+        if (itr == records.end())
+          throw smdl::Error(
+              smdl::concat("Cannot resume: the file states no grid for the "
+                           "tile band ",
+                           smdl::Quoted(name)));
+        check(gRenderGrid.grids[k], itr->wavelengths, itr->bandEdges);
+      }
+    } else {
+      check(gRenderGrid.first(), resumed.info.wavelengths,
+            records.empty() ? std::vector<double>{}
+                            : records.front().bandEdges);
+    }
   }
-  if (opts.render.grid.wasGiven || shouldAdoptResumedGrid)
-    SMDL_LOG_INFO(
-        "Wavelength grid: ", wavelengths.size(),
-        shouldAdoptResumedGrid ? " bands adopted from the resumed file, "
-                               : " bands, ",
-        wavelengths[0], "-", wavelengths[wavelengths.size() - 1], " nm");
+  if ((gridOptions.wasGiven || shouldAdoptResumedGrid) && !wasLogged) {
+    if (gRenderGrid.hasTile())
+      SMDL_LOG_INFO("Wavelength grid: ", gRenderGrid.numBands,
+                    " bands adopted from the resumed file, one grid per "
+                    "tile band");
+    else
+      SMDL_LOG_INFO(
+          "Wavelength grid: ", wavelengths.size(),
+          shouldAdoptResumedGrid ? " bands adopted from the resumed file, "
+                                 : " bands, ",
+          wavelengths[0], "-", wavelengths[wavelengths.size() - 1], " nm");
+  }
   if (wavelengths.size() > 256)
     SMDL_LOG_WARN(wavelengths.size(),
                   " bands: JIT compile time and per-sample cost both grow "
@@ -214,8 +352,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // Outside the visible, RGB-sourced spectra are extrapolated and the RGB
   // outputs see little; say so once rather than rendering a mysteriously
   // dark image.
-  const bool isBeyondVisible{wavelengths[0] < 379.0f ||
-                             wavelengths[wavelengths.size() - 1] > 781.0f};
+  const bool isBeyondVisible{gRenderGrid.minWavelength() < 379.0f ||
+                             gRenderGrid.maxWavelength() > 781.0f};
   if (isBeyondVisible)
     SMDL_LOG_WARN(
         "The wavelength grid leaves the visible (380-780nm): RGB colors, "
@@ -514,10 +652,11 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
         pick(opts.light.haze.scaleHeight, fileHaze.scaleHeight);
     if (fileHaze.baseHeight) options.baseHeight = *fileHaze.baseHeight;
     if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
-    haze = std::make_unique<smdl::Haze>(
-        options,
-        smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        makeRenderState(wavelengths).metersPerSceneUnit);
+    for (const auto &grid : gRenderGrid.grids)
+      hazes.emplace_back(options,
+                         smdl::Span<const float>(grid.wavelengths.data(),
+                                                 grid.wavelengths.size()),
+                         makeRenderState(wavelengths).metersPerSceneUnit);
     SMDL_LOG_INFO("Exterior haze: visibility ", options.visibility,
                   " km, scale height ", options.scaleHeight, " m");
   }

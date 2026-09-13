@@ -213,15 +213,15 @@ public:
     float worldArea{};
   };
 
-  /// Bake the lowered light at the render wavelengths: the spectral
-  /// shape (blackbody or flat, times the uplifted RGB tint) normalized
-  /// to unit integral over the band, scaled into the per-kind
-  /// directional intensity, or into the radiance for a shape. `state`
-  /// must carry the wavelength fields for the RGB uplift and the scene
-  /// units, and `profile` the loaded IES profile for a PROFILE light
+  /// Bake the lowered light on every render grid: the spectral shape
+  /// (blackbody or flat, times the uplifted RGB tint) normalized to unit
+  /// integral over the grid, scaled into the per-kind directional
+  /// intensity, or into the radiance for a shape. `state` must carry
+  /// the scene units; its wavelength fields are set per grid for the
+  /// RGB uplift. `profile` is the loaded IES profile for a PROFILE light
   /// (null otherwise).
   AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
-                const Color &wavelengths, const LayoutLight &light,
+                const LayoutLight &light,
                 std::shared_ptr<const smdl::LightProfile> profile);
 
   /// Is the directional density a delta? True for the punctual kinds,
@@ -233,11 +233,12 @@ public:
 
   /// Punctual kinds: the unoccluded spectral incident radiance
   /// equivalent at `point`, the directional intensity toward it over
-  /// the squared distance in meters. Zero outside a spot cone or the
-  /// profile's support. `time` is the path's shutter fraction, which
-  /// every method here takes and which only a moving light reads.
+  /// the squared distance in meters, on render grid `grid`. Zero outside
+  /// a spot cone or the profile's support. `time` is the path's shutter
+  /// fraction, which every method here takes and which only a moving
+  /// light reads.
   [[nodiscard]] Color Li(const float3 &point, float metersPerSceneUnit,
-                         float time) const noexcept;
+                         float time, size_t grid) const noexcept;
 
   /// Punctual kinds: the same with the directional (spot cone or
   /// profile) factor evaluated toward `incidencePoint` instead, what a
@@ -247,7 +248,8 @@ public:
   /// the straight-line solid-angle measure the gather's estimator is
   /// built in.
   [[nodiscard]] Color Li(const float3 &point, const float3 &incidencePoint,
-                         float metersPerSceneUnit, float time) const noexcept;
+                         float metersPerSceneUnit, float time,
+                         size_t grid) const noexcept;
 
   /// Shapes: a point on the shape as placed, and its density in solid
   /// angle at `receiver`. A rect whose placed axes are orthogonal is
@@ -266,9 +268,9 @@ public:
   /// `incidencePoint`, the baked radiance when that point is on the
   /// emitting side of the plane and zero behind it.
   [[nodiscard]] Color Le(const float3 &lightPoint, const float3 &incidencePoint,
-                         float time) const noexcept {
+                         float time, size_t grid) const noexcept {
     return dot(incidencePoint - lightPoint, normal(time)) > 0
-               ? Color(mIntensity)
+               ? Color(mIntensity[grid])
                : Color(0.0f);
   }
 
@@ -327,11 +329,12 @@ private:
   float2 mHalfExtent{};
   float mObjectArea{};
 
-  /// The per-band spectral intensity: for the punctual kinds W/(sr nm),
-  /// the full intensity of a point, the on-axis peak of a spot, and the
-  /// per-unit multiplier on the profile's broadband W/sr; for a shape
-  /// the radiance in W/(sr m^2 nm).
-  smdl::SpectralColor mIntensity{};
+  /// The per-band spectral intensity, one per render grid: for the
+  /// punctual kinds W/(sr nm), the full intensity of a point, the
+  /// on-axis peak of a spot, and the per-unit multiplier on the
+  /// profile's broadband W/sr; for a shape the radiance in
+  /// W/(sr m^2 nm).
+  std::vector<Color> mIntensity{};
 
   /// SPOT: the cosine of the outer (cutoff) and inner (full intensity)
   /// half angles.
@@ -524,9 +527,12 @@ public:
   /// reads, so the caller may reuse one sample across gathers instead of
   /// building a fresh one; a `false` return leaves it in no particular
   /// state, which is fine because nothing may read it then.
+  /// `grid` is the path's render grid, `PathContext::gridIndex`, which
+  /// a layout light's baked spectrum is read by; `basis` is the sun-sky
+  /// resolved onto the path's wavelengths.
   [[nodiscard]] bool sample(smdl::State &state, const smdl::SkyBasis &basis,
-                            Sampler &sampler, const float3 &point, float time,
-                            LightSample &lightSample,
+                            size_t grid, Sampler &sampler, const float3 &point,
+                            float time, LightSample &lightSample,
                             bool shouldKeepDark = false) const;
 
   /// The two halves of `sample()`, for a caller that has to know which
@@ -541,7 +547,7 @@ public:
                            float &selectPMF) const noexcept;
   [[nodiscard]] bool sampleSelected(int lightIndex, float selectPMF,
                                     smdl::State &state,
-                                    const smdl::SkyBasis &basis,
+                                    const smdl::SkyBasis &basis, size_t grid,
                                     Sampler &sampler, const float3 &point,
                                     float time, LightSample &lightSample,
                                     bool shouldKeepDark = false) const;
@@ -595,7 +601,8 @@ public:
   /// `time` is the path's shutter fraction, which a moving declared
   /// light is placed at; an area sample carries its own on its hit.
   [[nodiscard]] Color reevaluateLi(const LightSample &lightSample,
-                                   smdl::State &state, const float3 &point,
+                                   smdl::State &state, size_t grid,
+                                   const float3 &point,
                                    const float3 &incidencePoint,
                                    float time) const;
 

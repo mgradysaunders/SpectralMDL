@@ -124,6 +124,13 @@ cl::opt<std::string> optWavelengths{
              "whitespace-separated values (mutually exclusive with "
              "-wavelength-range)"),
     cl::cat(catCompile)};
+cl::opt<unsigned> optWavelengthCount{
+    "wavelength-count",
+    cl::desc("The band count of the grid the renderer places itself when "
+             "neither -wavelength-range nor -wavelengths spells one: "
+             "following a physical sensor's curves, or uniform over the "
+             "default range (default: 16)"),
+    cl::init(16U), cl::cat(catCompile)};
 //--}
 
 cl::OptionCategory catImage{"Image Options"};
@@ -604,10 +611,19 @@ Options parseCommandLine(int argc, char **argv) {
     throw smdl::Error("Expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
+  if (optWavelengthCount.getNumOccurrences() > 0 &&
+      (optWavelengths.getNumOccurrences() > 0 ||
+       optWavelengthRange.getNumOccurrences() > 0))
+    throw smdl::Error("Expected at most one of -wavelength-count and "
+                      "-wavelengths or -wavelength-range (the count sizes "
+                      "the grid the renderer places itself, and the other "
+                      "two spell a grid out)");
   // The shared parser admits a single band; a render wants a band width
   // to jitter and to integrate over, so it does not.
   if (parseWavelengthRange(std::string(optWavelengthRange)).bandCount < 2)
     throw smdl::Error("Expected -wavelength-range ':N' to be at least 2");
+  if (unsigned(optWavelengthCount) < 2)
+    throw smdl::Error("Expected -wavelength-count to be at least 2");
   if (optRGBWavelengths.getNumOccurrences() > 0) {
     const float3 waves{float3(optRGBWavelengths)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
@@ -699,12 +715,15 @@ Options parseCommandLine(int argc, char **argv) {
   opts.render.guide.bsdfFraction = flag(optGuideBSDFFraction);
   opts.render.guide.split = float(optGuideSplit);
   // Parsed here so a typo fails before anything loads.
-  opts.render.grid.range =
-      parseWavelengthRange(std::string(optWavelengthRange));
+  opts.render.grid.range = Flag<WavelengthRange>{
+      parseWavelengthRange(std::string(optWavelengthRange)),
+      optWavelengthRange.getNumOccurrences() > 0};
   opts.render.grid.explicitWavelengths =
       parseWavelengths(std::string(optWavelengths));
-  opts.render.grid.wasGiven = optWavelengthRange.getNumOccurrences() > 0 ||
-                              optWavelengths.getNumOccurrences() > 0;
+  opts.render.grid.count = flag(optWavelengthCount);
+  opts.render.grid.wasGiven = opts.render.grid.range.wasGiven ||
+                              optWavelengths.getNumOccurrences() > 0 ||
+                              opts.render.grid.count.wasGiven;
   opts.render.grid.shouldJitter = flag(optWavelengthJitter);
   // The manifold estimator, minus what needs a scene.
   opts.render.useMNEE = bool(optMNEE);

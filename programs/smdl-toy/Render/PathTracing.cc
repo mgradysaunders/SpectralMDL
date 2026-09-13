@@ -370,7 +370,7 @@ const MediumStack *PathWalk::exteriorMedium() {
                   wavelengths.size() * sizeof(float)) != 0) {
     mExteriorAllocator.reset();
     smdl::State state{makeRenderState(wavelengths, &mExteriorAllocator, time,
-                                      wavelengthHero)};
+                                      wavelengthHero, mPath.gridIndex)};
     mExteriorMedium = new (mExteriorAllocator)
         MediumStack{nullptr,
                     mExteriorAllocator.allocate<smdl::JIT::Material>(

@@ -482,12 +482,12 @@ namespace {
   const size_t numPixelsX{film.getNumPixelsX()};
   const size_t numPixelsY{film.getNumPixelsY()};
   // The luminous efficiency curves at their photometric peaks, 683 lm/W
-  // photopic and 1700 lm/W scotopic, integrated over the render's band
-  // grid by trapezoid weights.
+  // photopic and 1700 lm/W scotopic, integrated over the render's grid
+  // by its widths.
   const size_t numBands{wavelengths.size()};
   std::vector<double> weightPhotopic(numBands);
   std::vector<double> weightScotopic(numBands);
-  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
+  const std::vector<double> &widths{gRenderGrid.first().widths};
   double photopicMass{};
   for (size_t i = 0; i < numBands; i++) {
     const double lambda{double(wavelengths[i])};

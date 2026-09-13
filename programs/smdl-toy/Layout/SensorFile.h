@@ -98,14 +98,6 @@ public:
   }
 };
 
-/// The index into a tile `columns` wide and `rows` tall that frame pixel
-/// `(x, y)` reads through, anchored at the frame's origin so that a crop
-/// window changes nothing about which band a pixel sees.
-[[nodiscard]] inline size_t tileIndexAt(size_t columns, size_t rows, size_t x,
-                                        size_t y) noexcept {
-  return (y % rows) * columns + x % columns;
-}
-
 /// The distinct bands the tile `cfa` lays down, in the order it first
 /// names them, which is the order anything that speaks about them once
 /// each walks them in. Empty without a tile.

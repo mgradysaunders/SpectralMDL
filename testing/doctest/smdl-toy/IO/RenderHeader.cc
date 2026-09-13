@@ -1,5 +1,6 @@
 #include "Fixtures.h"
 
+#include <cctype>
 #include <map>
 #include <string>
 
@@ -17,7 +18,9 @@ asFields(const std::vector<std::string> &lines) {
   for (const auto &line : lines) {
     const size_t eq{line.find(" = ")};
     REQUIRE(eq != std::string::npos);
-    fields[line.substr(0, eq)] = line.substr(eq + 3);
+    std::string key{line.substr(0, eq)};
+    for (auto &c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+    fields[key] = line.substr(eq + 3);
   }
   return fields;
 }
@@ -196,5 +199,60 @@ TEST_CASE("ResponseHeader: round trip") {
     read.readFrom({});
     CHECK(read.hash == written.hash);
     CHECK(read.cfa.size() == 4);
+  }
+}
+
+TEST_CASE("GridHeader: round trip") {
+  SUBCASE("The band edges survive the header at nine digits") {
+    GridHeader header{};
+    header.grids.emplace_back().bandEdges = {380, 391.123456789, 402.5, 720};
+    const std::vector<std::string> lines{header.headerLines()};
+    REQUIRE(lines.size() == 1);
+    CHECK_CONTAINS(lines[0], "render band edges = {380, ");
+    GridHeader read{};
+    read.readFrom(asFields(lines));
+    REQUIRE(read.grids.size() == 1);
+    CHECK(read.grids[0].name.empty());
+    CHECK(read.grids[0].wavelengths.empty());
+    REQUIRE(read.grids[0].bandEdges.size() == 4);
+    CHECK(read.grids[0].bandEdges[0] == 380.0);
+    CHECK(read.grids[0].bandEdges[1] ==
+          doctest::Approx(391.123456789).epsilon(1e-8));
+    CHECK(read.grids[0].bandEdges[2] == 402.5);
+    CHECK(read.grids[0].bandEdges[3] == 720.0);
+  }
+  SUBCASE("Under a tile the grids are named and each states both lists") {
+    GridHeader header{};
+    GridHeader::Grid &r{header.grids.emplace_back()};
+    r.name = "R";
+    r.wavelengths = {600, 650};
+    r.bandEdges = {580, 620, 700};
+    GridHeader::Grid &g{header.grids.emplace_back()};
+    g.name = "G";
+    g.wavelengths = {520, 560};
+    g.bandEdges = {500, 540, 600};
+    const std::vector<std::string> lines{header.headerLines()};
+    REQUIRE(lines.size() == 5);
+    CHECK(lines[0] == "render grids = {R, G}");
+    CHECK(lines[1] == "render grid 0 wavelengths = {600, 650}");
+    CHECK(lines[2] == "render grid 0 band edges = {580, 620, 700}");
+    CHECK(lines[3] == "render grid 1 wavelengths = {520, 560}");
+    GridHeader read{};
+    read.readFrom(asFields(lines));
+    REQUIRE(read.grids.size() == 2);
+    CHECK(read.grids[1].name == "G");
+    CHECK(read.grids[1].wavelengths == std::vector<float>{520, 560});
+    CHECK(read.grids[1].bandEdges == std::vector<double>{500, 540, 600});
+  }
+  SUBCASE("A file without the fields states no grid") {
+    GridHeader read{};
+    read.readFrom({});
+    CHECK(read.grids.empty());
+  }
+  SUBCASE("A list with an entry that is not a number reads as none") {
+    GridHeader read{};
+    read.readFrom({{"render band edges", "{380, x, 720}"}});
+    REQUIRE(read.grids.size() == 1);
+    CHECK(read.grids[0].bandEdges.empty());
   }
 }

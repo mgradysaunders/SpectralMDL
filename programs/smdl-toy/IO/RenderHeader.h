@@ -60,6 +60,38 @@ struct RenderHeader final {
   void readFrom(const std::map<std::string, std::string> &fields);
 };
 
+/// What the spectral film's header says about its grids beyond the
+/// `wavelength` list the format carries, so that a resumed session and a
+/// reader have the cells a placed grid was integrated over, which no
+/// list of wavelengths implies. One grid states its cell edges beside
+/// the format's list. Under a tile the film has no one list to give the
+/// format, since each pixel holds its own band's grid, so the grids are
+/// listed by their tile bands' names and each states its wavelengths and
+/// its edges under its index in that list. Every field name is spelled
+/// once, for the reason `RenderHeader` gives.
+struct GridHeader final {
+  /// One grid: the tile band's name, empty for the one grid of a render
+  /// without a tile; its wavelengths in nanometers, which the one grid
+  /// leaves empty, the format's `wavelength` list carrying them; and its
+  /// cell edges, `WavelengthGrid::bandEdges`.
+  struct Grid final {
+    std::string name{};
+    std::vector<float> wavelengths{};
+    std::vector<double> bandEdges{};
+  };
+
+  /// The grids, one or one per tile band; empty when the file states
+  /// none.
+  std::vector<Grid> grids{};
+
+  /// The lines to hand `smdl::SpectralFilm::writeENVIFile()`.
+  [[nodiscard]] std::vector<std::string> headerLines() const;
+
+  /// Take whatever of these `fields` carries, leaving `grids` empty when
+  /// there is nothing.
+  void readFrom(const std::map<std::string, std::string> &fields);
+};
+
 /// What the band film's header says about the response that produced
 /// it: the fingerprint a resumed session has to match, since the curves
 /// decide what the file's numbers are, the way the resolution decides

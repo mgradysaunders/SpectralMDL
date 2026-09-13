@@ -488,7 +488,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   Color Li{lightSample.Li};
   if (!lightSample.isInfinite) {
     if (Li = render.lights.reevaluateLi(lightSample, path.lightState,
-                                        vertex.point, lastPoint,
+                                        path.gridIndex, vertex.point, lastPoint,
                                         path.time.fraction);
         Li.isAllZero())
       return {};
@@ -528,7 +528,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   // `Hit::applyGeometryToState()`.
   smdl::State crossState{makeRenderState(path.wavelengths, &path.allocator,
                                          gatherState.animationTime,
-                                         path.wavelengthHero)};
+                                         path.wavelengthHero, path.gridIndex)};
   for (int i = 0; i < connection.count; i++) {
     const ManifoldConnectionVertex &crossing{connection.vertices[i]};
     VisibilityWalk segWalk{
@@ -936,9 +936,9 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
   if (lightIndex < 0) return direct;
   const bool isEnvLight{render.lights.isEnv(lightIndex)};
   if (isEnvLight &&
-      !render.lights.sampleSelected(lightIndex, selectPMF, path.lightState,
-                                    path.skyBasis, path.sampler, vertex.point,
-                                    path.time.fraction, lightSample))
+      !render.lights.sampleSelected(
+          lightIndex, selectPMF, path.lightState, path.skyBasis, path.gridIndex,
+          path.sampler, vertex.point, path.time.fraction, lightSample))
     return direct;
   const float angularRadius{
       isEnvLight ? render.lights.angularRadiusOfEnv(lightSample.wi)
@@ -951,10 +951,10 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
       receiveLobes != 0 &&
       gatherRunsManifold(render.mneeOptions, vertex.kind, vertex.isReceiver)};
   vertex.ranManifold = shouldRunManifold;
-  if (!isEnvLight &&
-      !render.lights.sampleSelected(
-          lightIndex, selectPMF, path.lightState, path.skyBasis, path.sampler,
-          vertex.point, path.time.fraction, lightSample, shouldRunManifold))
+  if (!isEnvLight && !render.lights.sampleSelected(
+                         lightIndex, selectPMF, path.lightState, path.skyBasis,
+                         path.gridIndex, path.sampler, vertex.point,
+                         path.time.fraction, lightSample, shouldRunManifold))
     return direct;
   {
     const MNEEGather mneeGather{render, path, gatherState, vertex, lightSample};

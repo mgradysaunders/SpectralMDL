@@ -36,7 +36,8 @@ public:
              mGatherBlocker,
              wavelengths,
              PathTime{0.0f},
-             smdl::FRAUNHOFER_D_LINE} {}
+             smdl::FRAUNHOFER_D_LINE,
+             0} {}
 
   PathHarness(const PathHarness &) = delete;
 

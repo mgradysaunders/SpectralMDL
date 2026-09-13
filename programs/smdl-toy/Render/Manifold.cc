@@ -100,7 +100,7 @@ namespace {
   Hit hit{};
   scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time, hit);
   if (!hit.instance) return false;
-  smdl::State state{makeRenderState(gRenderGrid.wavelengths)};
+  smdl::State state{makeRenderState(gRenderGrid.first().wavelengths)};
   hit.applyGeometryToState(state, float3());
   float3 internalNormal{};
   materialDef.geometryNormalEvaluate(state, internalNormal);

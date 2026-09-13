@@ -100,7 +100,7 @@ public:
   for (int i = 0; i < numDraws; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample lightSample{};
-    if (lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+    if (lights.sample(state, NO_SKY, 0, sampler, Fixture::RECEIVER, 0.0f,
                       lightSample)) {
       CHECK(!lightSample.isDirac);
       CHECK(!lightSample.isInfinite);
@@ -213,7 +213,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   for (int i = 0; i < 512; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+    if (!lights.sample(state, NO_SKY, 0, sampler, Fixture::RECEIVER, 0.0f,
                        sample)) {
       allocator.reset();
       continue;
@@ -228,7 +228,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       CHECK(lengthSquared(sample.normal) == 0.0f);
       // A point light has no directional factor, so re-evaluating toward
       // any other point leaves the radiance alone.
-      const Color again{lights.reevaluateLi(sample, state, Fixture::RECEIVER,
+      const Color again{lights.reevaluateLi(sample, state, 0, Fixture::RECEIVER,
                                             float3(0.0f), 0.0f)};
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(again[k] == doctest::Approx(sample.Li[k]));
@@ -241,12 +241,12 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       // Toward the receiver it was sampled from, the re-evaluation is the
       // sample's own radiance; toward the sphere's center, behind the
       // emitting surface, it is zero.
-      const Color same{lights.reevaluateLi(sample, state, Fixture::RECEIVER,
+      const Color same{lights.reevaluateLi(sample, state, 0, Fixture::RECEIVER,
                                            Fixture::RECEIVER, 0.0f)};
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(same[k] == doctest::Approx(sample.Li[k]));
       const Color behind{lights.reevaluateLi(
-          sample, state, Fixture::RECEIVER,
+          sample, state, 0, Fixture::RECEIVER,
           Fixture::center(int(sample.hit.instIndex)), 0.0f)};
       CHECK(behind.isAllZero());
     }
@@ -281,7 +281,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   for (int i = 0; i < 256; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (lights.sample(state, NO_SKY, sampler, Fixture::RECEIVER, 0.0f,
+    if (lights.sample(state, NO_SKY, 0, sampler, Fixture::RECEIVER, 0.0f,
                       sample)) {
       CAPTURE(i);
       if (sample.isDirac) {
@@ -384,7 +384,7 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
       const bool shouldKeepDark{pass == 1};
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, NO_SKY, sampler, ConeFixture::RECEIVER, 0.0f,
+      if (!lights.sample(state, NO_SKY, 0, sampler, ConeFixture::RECEIVER, 0.0f,
                          sample, shouldKeepDark)) {
         allocator.reset();
         continue;
@@ -539,7 +539,7 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
   for (int i = 0; i < NUM_DRAWS; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+    if (!lights.sample(state, NO_SKY, 0, sampler, LampFixture::RECEIVER, 0.0f,
                        sample)) {
       allocator.reset();
       continue;
@@ -619,7 +619,7 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+      if (!lights.sample(state, NO_SKY, 0, sampler, LampFixture::RECEIVER, 0.0f,
                          sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
@@ -667,7 +667,7 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < 1024; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, NO_SKY, sampler, LampFixture::RECEIVER, 0.0f,
+      if (!lights.sample(state, NO_SKY, 0, sampler, LampFixture::RECEIVER, 0.0f,
                          sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
@@ -711,10 +711,11 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
       const bool wasDrawn{
-          lights.sample(state, NO_SKY, sampler, above, 0.0f, sample)};
+          lights.sample(state, NO_SKY, 0, sampler, above, 0.0f, sample)};
       if (wasDrawn) CHECK(sample.analyticIndex == INVALID_INDEX);
       sampler.startPixelSample(0, uint32_t(i));
-      if (!lights.sample(state, NO_SKY, sampler, above, 0.0f, sample, true) ||
+      if (!lights.sample(state, NO_SKY, 0, sampler, above, 0.0f, sample,
+                         true) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -724,11 +725,11 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       CHECK(!wasDrawn);
       CHECK(sample.Li.isAllZero());
       CHECK(sample.normal.z == doctest::Approx(-1.0f));
-      const Color below{lights.reevaluateLi(sample, state, above,
+      const Color below{lights.reevaluateLi(sample, state, 0, above,
                                             LampFixture::RECEIVER, 0.0f)};
       CHECK(below[0] == doctest::Approx(LampFixture::RADIANCE));
-      CHECK(
-          lights.reevaluateLi(sample, state, above, beside, 0.0f).isAllZero());
+      CHECK(lights.reevaluateLi(sample, state, 0, above, beside, 0.0f)
+                .isAllZero());
       allocator.reset();
     }
     CHECK(numDark > 8);
@@ -745,7 +746,7 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
     for (int i = 0; i < 64; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, NO_SKY, sampler, above, 0.0f, sample) ||
+      if (!lights.sample(state, NO_SKY, 0, sampler, above, 0.0f, sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -754,9 +755,10 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       numUp++;
       CHECK(sample.normal.z == doctest::Approx(1.0f));
       CHECK(sample.Li[0] == doctest::Approx(LampFixture::RADIANCE));
-      CHECK(
-          lights.reevaluateLi(sample, state, above, LampFixture::RECEIVER, 0.0f)
-              .isAllZero());
+      CHECK(lights
+                .reevaluateLi(sample, state, 0, above, LampFixture::RECEIVER,
+                              0.0f)
+                .isAllZero());
       allocator.reset();
     }
     CHECK(numUp > 8);
@@ -852,7 +854,7 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+        const bool wasDrawn{lights.sample(state, NO_SKY, 0, sampler,
                                           MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
         if (!wasDrawn || sample.hit.instIndex != 0) continue;
@@ -886,7 +888,7 @@ TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
       for (int i = 0; i < NUM_DRAWS; i++) {
         sampler.startPixelSample(0, uint32_t(i));
         LightSample sample{};
-        const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+        const bool wasDrawn{lights.sample(state, NO_SKY, 0, sampler,
                                           MotionFixture::RECEIVER, u, sample)};
         allocator.reset();
         if (!wasDrawn || sample.hit.instIndex != 3) continue;
@@ -933,8 +935,7 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     lamp.decl.power = 10.0f;
     lamp.lightToWorld = translated(float3(0.0f, 0.0f, 5.0f));
     lamp.lightToWorldShut = translated(float3(4.0f, 0.0f, 5.0f));
-    const AnalyticLight light{fixture.compiler, state, fixture.wavelengths,
-                              lamp, nullptr};
+    const AnalyticLight light{fixture.compiler, state, lamp, nullptr};
     CHECK(light.position(0.0f).x == 0.0f);
     CHECK(light.position(1.0f).x == 4.0f);
     CHECK(light.position(0.5f).x == doctest::Approx(2.0f));
@@ -947,15 +948,14 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     LayoutLight still{lamp};
     still.lightToWorld = *lamp.lightToWorldShut;
     still.lightToWorldShut.reset();
-    const AnalyticLight stillLight{fixture.compiler, state, fixture.wavelengths,
-                                   still, nullptr};
+    const AnalyticLight stillLight{fixture.compiler, state, still, nullptr};
     const float3 point{4.0f, 1.0f, 0.0f};
-    const Color moving{light.Li(point, 1.0f, 1.0f)};
-    const Color placed{stillLight.Li(point, 1.0f, 0.0f)};
+    const Color moving{light.Li(point, 1.0f, 1.0f, 0)};
+    const Color placed{stillLight.Li(point, 1.0f, 0.0f, 0)};
     for (size_t k = 0; k < fixture.wavelengths.size(); k++)
       CHECK(moving[k] == placed[k]);
     CHECK(moving[0] > 0.0f);
-    CHECK(light.Li(point, 1.0f, 0.0f)[0] < moving[0]);
+    CHECK(light.Li(point, 1.0f, 0.0f, 0)[0] < moving[0]);
   }
   SUBCASE("A rect pays its area at the time") {
     LayoutLight panel{};
@@ -968,13 +968,11 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     shut[1].y = 2.0f;
     shut[3].z = 7.0f;
     panel.lightToWorldShut = shut;
-    const AnalyticLight light{fixture.compiler, state, fixture.wavelengths,
-                              panel, nullptr};
+    const AnalyticLight light{fixture.compiler, state, panel, nullptr};
     LayoutLight still{panel};
     still.lightToWorld = shut;
     still.lightToWorldShut.reset();
-    const AnalyticLight stillLight{fixture.compiler, state, fixture.wavelengths,
-                                   still, nullptr};
+    const AnalyticLight stillLight{fixture.compiler, state, still, nullptr};
     const float3 receiver{0.5f, 0.2f, 0.0f};
     for (int i = 0; i < 16; i++) {
       CAPTURE(i);
@@ -1005,10 +1003,10 @@ TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
     // times what the still twin does from the same power; the emitting
     // side faces the receiver below at both keys.
     const float3 onPanel{0.0f, 0.0f, 7.0f};
-    CHECK(light.Le(onPanel, receiver, 1.0f)[0] ==
-          doctest::Approx(4.0f * stillLight.Le(onPanel, receiver, 0.0f)[0])
+    CHECK(light.Le(onPanel, receiver, 1.0f, 0)[0] ==
+          doctest::Approx(4.0f * stillLight.Le(onPanel, receiver, 0.0f, 0)[0])
               .epsilon(1.0e-5));
-    CHECK(light.Le(onPanel, receiver, 1.0f)[0] > 0.0f);
+    CHECK(light.Le(onPanel, receiver, 1.0f, 0)[0] > 0.0f);
     const BoundBox3 box{light.bounds()};
     CHECK(box.lower.z == 5.0f);
     CHECK(box.upper.z == 7.0f);
@@ -1070,7 +1068,7 @@ TEST_CASE("LightSampler: a deforming emitter is drawn on its surface at the "
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool wasDrawn{lights.sample(state, NO_SKY, sampler,
+      const bool wasDrawn{lights.sample(state, NO_SKY, 0, sampler,
                                         DeformFixture::RECEIVER, u, sample)};
       allocator.reset();
       if (!wasDrawn) continue;

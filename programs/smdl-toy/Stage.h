@@ -169,7 +169,8 @@ public:
   /// of everything outside all geometry, which is where the `medium`
   /// directive puts its material too, so the two cannot both be asked
   /// for.
-  std::unique_ptr<smdl::Haze> haze{};
+  /// The exterior haze on each render grid, empty without one.
+  std::vector<smdl::Haze> hazes{};
 
   /// The material the layout's `medium` directive names, which every
   /// camera path evaluates at its head to seed its medium stack. Null

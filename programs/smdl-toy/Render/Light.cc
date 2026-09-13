@@ -129,10 +129,9 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
 }
 
 AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
-                             const Color &wavelengths, const LayoutLight &light,
+                             const LayoutLight &light,
                              std::shared_ptr<const smdl::LightProfile> profile)
-    : mKind(light.decl.kind), mIntensity(wavelengths.size()),
-      mProfile(std::move(profile)) {
+    : mKind(light.decl.kind), mProfile(std::move(profile)) {
   const LayoutLightDecl &decl{light.decl};
   mLightToWorld = light.lightToWorld;
   if (light.lightToWorldShut) {
@@ -147,34 +146,44 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
         isRect ? decl.size.x * decl.size.y : PI * decl.radius * decl.radius;
   }
   mPlacement = derivePlacement(mLightToWorld);
-  // The spectral shape: blackbody or flat, normalized to unit integral
-  // over the grid by the trapezoid widths the meter and the response
-  // integrate with, then the RGB tint applied WITHOUT renormalizing, so
-  // tinting dims the way dimming a lamp does.
-  Color shape{1.0f};
-  if (decl.temperature > 0) {
-    for (size_t i = 0; i < wavelengths.size(); i++) {
-      const float lambda{wavelengths[i] * 1.0e-3f}; // micrometers
-      constexpr float c2 = 1.4388e4f;               // micrometer kelvins
-      shape[i] = 1.0f / (lambda * lambda * lambda * lambda * lambda *
-                         std::expm1(c2 / (lambda * decl.temperature)));
+  // The spectral shape on each grid: blackbody or flat, normalized to
+  // unit integral over the grid by its widths, which the meter and the
+  // response integrate with too, then the RGB tint uplifted at the
+  // grid's wavelengths and applied WITHOUT renormalizing, so tinting
+  // dims the way dimming a lamp does.
+  std::vector<Color> shapes{};
+  for (const auto &grid : gRenderGrid.grids) {
+    const smdl::SpectralColor &wavelengths{grid.wavelengths};
+    Color shape{1.0f};
+    if (decl.temperature > 0) {
+      for (size_t i = 0; i < wavelengths.size(); i++) {
+        const float lambda{wavelengths[i] * 1.0e-3f}; // micrometers
+        constexpr float c2 = 1.4388e4f;               // micrometer kelvins
+        shape[i] = 1.0f / (lambda * lambda * lambda * lambda * lambda *
+                           std::expm1(c2 / (lambda * decl.temperature)));
+      }
     }
+    double integral{};
+    for (size_t i = 0; i < wavelengths.size(); i++)
+      integral += double(shape[i]) * grid.widths[i];
+    if (integral > 0) shape *= float(1.0 / integral);
+    if (decl.color.x != 1.0f || decl.color.y != 1.0f || decl.color.z != 1.0f) {
+      smdl::State gridState{state};
+      gridState.wavelengthBase = wavelengths.data();
+      grid.applyTo(gridState);
+      Color tint{};
+      compiler.convertRGBToColor(gridState, decl.color, tint.data());
+      shape *= tint;
+    }
+    shapes.push_back(std::move(shape));
   }
-  const std::vector<double> widths{wavelengthTrapezoidWidths(wavelengths)};
-  double integral{};
-  for (size_t i = 0; i < wavelengths.size(); i++)
-    integral += double(shape[i]) * widths[i];
-  if (integral > 0) shape *= float(1.0 / integral);
-  if (decl.color.x != 1.0f || decl.color.y != 1.0f || decl.color.z != 1.0f) {
-    Color tint{};
-    compiler.convertRGBToColor(state, decl.color, tint.data());
-    shape *= tint;
-  }
-  // The per-band mean of the unit-power spectrum after the tint, which
-  // turns a broadband power into the selection weight; see `weight()`.
+  // The per-band mean of the unit-power spectrum after the tint on the
+  // first grid, which turns a broadband power into the selection
+  // weight; see `weight()`.
+  const Color &shape{shapes.front()};
   double meanShape{};
-  for (size_t i = 0; i < wavelengths.size(); i++) meanShape += shape[i];
-  if (wavelengths.size() > 0) meanShape /= double(wavelengths.size());
+  for (size_t i = 0; i < shape.size(); i++) meanShape += shape[i];
+  if (shape.size() > 0) meanShape /= double(shape.size());
   // The per-kind directional intensity scale, and the broadband power
   // the selection weight starts from.
   float intensityScale{};
@@ -222,8 +231,8 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   }
   }
   mWeight = power * float(meanShape);
-  for (size_t i = 0; i < wavelengths.size(); i++)
-    mIntensity[i] = intensityScale * shape[i];
+  mIntensity = std::move(shapes);
+  for (auto &intensity : mIntensity) intensity *= intensityScale;
 }
 
 AnalyticLight::Placement
@@ -270,12 +279,13 @@ AnalyticLight::placementAt(float time,
 }
 
 Color AnalyticLight::Li(const float3 &point, float metersPerSceneUnit,
-                        float time) const noexcept {
-  return Li(point, point, metersPerSceneUnit, time);
+                        float time, size_t grid) const noexcept {
+  return Li(point, point, metersPerSceneUnit, time, grid);
 }
 
 Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
-                        float metersPerSceneUnit, float time) const noexcept {
+                        float metersPerSceneUnit, float time,
+                        size_t grid) const noexcept {
   std::optional<Placement> scratch{};
   const Placement &placed{placementAt(time, scratch)};
   const float distSq{lengthSquared(point - placed.position)};
@@ -304,7 +314,7 @@ Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
     if (!(factor > 0)) return Color(0.0f);
   }
   const float distSqMeters{distSq * metersPerSceneUnit * metersPerSceneUnit};
-  Color Li{mIntensity};
+  Color Li{mIntensity[grid]};
   Li *= factor / distSqMeters;
   return Li;
 }
@@ -705,7 +715,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         profile = cached;
       }
       AnalyticLight &light{mAnalyticLights.emplace_back(
-          compiler, state, wavelengths, layoutLight, std::move(profile))};
+          compiler, state, layoutLight, std::move(profile))};
       light.isCaustic = layoutLight.decl.isCaustic;
       bounds.push_back({light.bounds(), light.weight()});
     }
@@ -756,13 +766,14 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
 }
 
 bool LightSampler::sample(smdl::State &state, const smdl::SkyBasis &basis,
-                          Sampler &sampler, const float3 &point, float time,
-                          LightSample &lightSample, bool shouldKeepDark) const {
+                          size_t grid, Sampler &sampler, const float3 &point,
+                          float time, LightSample &lightSample,
+                          bool shouldKeepDark) const {
   float selectPMF{};
   const int lightIndex{select(sampler, point, selectPMF)};
   return lightIndex >= 0 &&
-         sampleSelected(lightIndex, selectPMF, state, basis, sampler, point,
-                        time, lightSample, shouldKeepDark);
+         sampleSelected(lightIndex, selectPMF, state, basis, grid, sampler,
+                        point, time, lightSample, shouldKeepDark);
 }
 
 int LightSampler::select(Sampler &sampler, const float3 &point,
@@ -826,9 +837,9 @@ float LightSampler::angularRadiusOf(const LightSample &lightSample,
 
 bool LightSampler::sampleSelected(int lightIndex, float selectPMF,
                                   smdl::State &state,
-                                  const smdl::SkyBasis &basis, Sampler &sampler,
-                                  const float3 &point, float time,
-                                  LightSample &lightSample,
+                                  const smdl::SkyBasis &basis, size_t grid,
+                                  Sampler &sampler, const float3 &point,
+                                  float time, LightSample &lightSample,
                                   bool shouldKeepDark) const {
   // Everything a `true` return leaves standing is established here, so
   // that a caller may hand the same sample back over and over rather
@@ -866,7 +877,7 @@ bool LightSampler::sampleSelected(int lightIndex, float selectPMF,
       const float3 position{light.position(time)};
       float3 direction{position - point};
       if (!(lengthSquared(direction) > 0)) return false;
-      lightSample.Li = light.Li(point, state.metersPerSceneUnit, time);
+      lightSample.Li = light.Li(point, state.metersPerSceneUnit, time, grid);
       if (lightSample.Li.isAllZero() && !shouldKeepDark) return false;
       lightSample.wi = normalize(direction);
       lightSample.pdf = selectPMF;
@@ -884,7 +895,7 @@ bool LightSampler::sampleSelected(int lightIndex, float selectPMF,
     float3 direction{lightPoint - point};
     if (!(lengthSquared(direction) > 0.0f)) return false;
     lightSample.wi = normalize(direction);
-    lightSample.Li = light.Le(lightPoint, point, time);
+    lightSample.Li = light.Le(lightPoint, point, time, grid);
     if (lightSample.Li.isAllZero() && !shouldKeepDark) return false;
     lightSample.pdf = selectPMF * shapePDF;
     lightSample.target = lightPoint;
@@ -1141,7 +1152,8 @@ bool LightSampler::sampleSphereCone(const AreaLight &light,
 }
 
 Color LightSampler::reevaluateLi(const LightSample &lightSample,
-                                 smdl::State &state, const float3 &point,
+                                 smdl::State &state, size_t grid,
+                                 const float3 &point,
                                  const float3 &incidencePoint,
                                  float time) const {
   if (lightSample.isInfinite) return lightSample.Li;
@@ -1149,8 +1161,9 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
     if (lightSample.analyticIndex >= mAnalyticLights.size()) return 0.0f;
     const AnalyticLight &light{mAnalyticLights[lightSample.analyticIndex]};
     return light.isDirac()
-               ? light.Li(point, incidencePoint, state.metersPerSceneUnit, time)
-               : light.Le(lightSample.target, incidencePoint, time);
+               ? light.Li(point, incidencePoint, state.metersPerSceneUnit, time,
+                          grid)
+               : light.Le(lightSample.target, incidencePoint, time, grid);
   }
   const Hit &hit{lightSample.hit};
   if (!hit.materialDef) return 0.0f;

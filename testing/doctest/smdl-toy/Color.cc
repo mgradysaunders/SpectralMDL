@@ -6,132 +6,189 @@
 #include "Color.h"
 #include "Render/Sampler.h"
 
-// The wavelength jitter: the band rectangles the grid implies, the
+// The wavelength grid: the cells a list of wavelengths tiles into, the
 // per-sample grid drawn inside them, and the offset sequence that draws
-// it. What matters is that the rectangles tile the grid's span with no
-// gap or overlap, each as wide as the trapezoid weighs its band, and
-// that a band's samples are uniform over its own rectangle, since that
+// it. What matters is that the cells tile the list's span with no gap
+// or overlap, each as wide as the trapezoid rule weighs its wavelength,
+// and that a band's samples are uniform over its own cell, since that
 // is what makes the accumulated band the mean radiance over the band and
 // the jittered grid integrate what the grid held still does.
 
-TEST_CASE("wavelengthTrapezoidWidths: what every integral over the grid "
-          "weighs") {
-  SUBCASE("A uniform grid weighs every band its spacing, halved at the ends") {
-    ScopedGrid scoped{{400, 500, 600, 700}, false};
-    const std::vector<double> widths{
-        wavelengthTrapezoidWidths(scoped.wavelengths())};
-    REQUIRE(widths.size() == 4);
-    CHECK(widths[0] == 50.0);
-    CHECK(widths[1] == 100.0);
-    CHECK(widths[2] == 100.0);
-    CHECK(widths[3] == 50.0);
-    CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
+TEST_CASE("WavelengthGrid: the cells a list of wavelengths tiles into") {
+  SUBCASE("A uniform list has cells of the spacing, halved at the ends, "
+          "edged halfway between neighbors") {
+    const ScopedGrid scoped{{400, 500, 600, 700}, false};
+    REQUIRE(gRenderGrid.numBands == 4);
+    CHECK(gRenderGrid.first().bandEdges ==
+          std::vector<double>{400, 450, 550, 650, 700});
+    CHECK(gRenderGrid.first().widths == std::vector<double>{50, 100, 100, 50});
+    // The inner cells are centered on their wavelengths; the end cells
+    // stop at the list's ends, so their wavelengths sit on their outer
+    // edges.
+    for (size_t i = 1; i + 1 < 4; i++)
+      CHECK(0.5 * (gRenderGrid.first().bandEdges[i] +
+                   gRenderGrid.first().bandEdges[i + 1]) ==
+            double(gRenderGrid.first().wavelengths[i]));
+    CHECK(gRenderGrid.first().bandEdges.front() ==
+          double(gRenderGrid.first().wavelengths[0]));
+    CHECK(gRenderGrid.first().bandEdges.back() ==
+          double(gRenderGrid.first().wavelengths[3]));
   }
-  SUBCASE("A non-uniform grid weighs each band half the distance between its "
-          "neighbors") {
-    const std::vector<float> grid{400, 450, 600, 700};
-    const std::vector<double> widths{wavelengthTrapezoidWidths(
-        smdl::Span<const float>(grid.data(), grid.size()))};
-    REQUIRE(widths.size() == 4);
-    CHECK(widths[0] == 25.0);
-    CHECK(widths[1] == 100.0);
-    CHECK(widths[2] == 125.0);
-    CHECK(widths[3] == 50.0);
-    CHECK(widths[0] + widths[1] + widths[2] + widths[3] == 300.0);
+  SUBCASE("A non-uniform list splits each gap down the middle, so a band "
+          "weighs half the distance between its neighbors") {
+    const ScopedGrid scoped{{400, 450, 600, 700}, false};
+    CHECK(gRenderGrid.first().bandEdges ==
+          std::vector<double>{400, 425, 525, 650, 700});
+    CHECK(gRenderGrid.first().widths == std::vector<double>{25, 100, 125, 50});
+    const ScopedGrid wider{{400, 420, 500, 900}, false};
+    CHECK(gRenderGrid.first().bandEdges ==
+          std::vector<double>{400, 410, 460, 700, 900});
+    CHECK(gRenderGrid.first().widths == std::vector<double>{10, 50, 240, 200});
   }
-  SUBCASE("A grid of one band is half a unit wide") {
-    const std::vector<float> grid{550};
-    const std::vector<double> widths{wavelengthTrapezoidWidths(
-        smdl::Span<const float>(grid.data(), grid.size()))};
-    REQUIRE(widths.size() == 1);
-    CHECK(widths[0] == 0.5);
+  SUBCASE("The widths are the cells' own and tile the span, on any list") {
+    for (const auto &grid :
+         {std::vector<float>{400, 500, 600, 700},
+          std::vector<float>{400, 450, 600, 700},
+          std::vector<float>{380, 391.3f, 402.7f, 461, 720}}) {
+      const ScopedGrid scoped{grid, false};
+      const std::vector<double> &edges{gRenderGrid.first().bandEdges};
+      const std::vector<double> &widths{gRenderGrid.first().widths};
+      REQUIRE(edges.size() == widths.size() + 1);
+      double sum{};
+      for (size_t i = 0; i < widths.size(); i++) {
+        CHECK(widths[i] == edges[i + 1] - edges[i]);
+        sum += widths[i];
+      }
+      CHECK(sum == doctest::Approx(double(grid.back()) - double(grid.front())));
+    }
   }
-  SUBCASE("The JIT is handed the same widths, on any grid") {
+  SUBCASE("The JIT is handed the widths as floats, on any list") {
     for (const auto &grid : {std::vector<float>{400, 500, 600, 700},
                              std::vector<float>{400, 450, 600, 700}}) {
       const ScopedGrid scoped{grid, false};
-      const std::vector<double> widths{
-          wavelengthTrapezoidWidths(scoped.wavelengths())};
-      REQUIRE(gRenderGrid.weights.size() == widths.size());
+      REQUIRE(gRenderGrid.first().weights.size() ==
+              gRenderGrid.first().widths.size());
       CHECK(gRenderGrid.stateBase.wavelengthWeight ==
-            gRenderGrid.weights.data());
-      for (size_t i = 0; i < widths.size(); i++)
-        CHECK(gRenderGrid.weights[i] == float(widths[i]));
+            gRenderGrid.first().weights.data());
+      for (size_t i = 0; i < gRenderGrid.first().widths.size(); i++)
+        CHECK(gRenderGrid.first().weights[i] ==
+              float(gRenderGrid.first().widths[i]));
     }
+  }
+  SUBCASE("The jitter is a flag on the grid") {
+    const ScopedGrid still{{400, 500, 600, 700}, false};
+    CHECK(!gRenderGrid.isJittering);
+    const ScopedGrid jittered{{400, 500, 600, 700}, true};
+    CHECK(gRenderGrid.isJittering);
+  }
+  SUBCASE("A placed grid keeps its own cells, its labels inside them, and "
+          "spans its edges") {
+    WavelengthCells cells{};
+    cells.edges = {400, 430, 500, 700};
+    cells.wavelengths = {410, 470, 560};
+    REQUIRE(cells.isValid());
+    const ScopedGrid scoped{cells, true};
+    CHECK(gRenderGrid.first().bandEdges == cells.edges);
+    CHECK(gRenderGrid.first().widths == std::vector<double>{30, 70, 200});
+    CHECK(gRenderGrid.first().weights == std::vector<float>{30, 70, 200});
+    CHECK(gRenderGrid.first().wavelengths[1] == 470.0f);
+    CHECK(gRenderGrid.stateBase.wavelengthMin == 400.0f);
+    CHECK(gRenderGrid.stateBase.wavelengthMax == 700.0f);
+    CHECK(gRenderGrid.isJittering);
+  }
+  SUBCASE("Cells that do not describe a grid are told apart") {
+    WavelengthCells cells{};
+    cells.edges = {400, 430, 500, 700};
+    cells.wavelengths = {410, 470, 560};
+    CHECK(cells.isValid());
+    cells.wavelengths[2] = 720;
+    CHECK(!cells.isValid());
+    cells.wavelengths[2] = 560;
+    cells.edges[2] = 430;
+    CHECK(!cells.isValid());
+    cells.edges = {400, 700};
+    CHECK(!cells.isValid());
+    cells.edges.clear();
+    CHECK(!cells.isValid());
+    cells.wavelengths = {550};
+    CHECK(cells.isValid());
+    cells.wavelengths.clear();
+    CHECK(!cells.isValid());
+  }
+  SUBCASE("A list of one wavelength has no cells, weighs half a unit by "
+          "convention, and cannot jitter") {
+    const ScopedGrid scoped{{550}, true};
+    CHECK(gRenderGrid.first().bandEdges.empty());
+    CHECK(gRenderGrid.first().widths == std::vector<double>{0.5});
+    CHECK(gRenderGrid.first().weights == std::vector<float>{0.5f});
+    CHECK(!gRenderGrid.isJittering);
+    CHECK(wavelengthBandEdges(smdl::Span<const float>()).empty());
   }
 }
 
-TEST_CASE("wavelengthBandEdges: the rectangles a grid tiles into") {
-  SUBCASE("A uniform grid tiles its span with bands of the spacing, halved "
-          "at the ends") {
-    const std::vector<float> wavelens{400, 500, 600, 700};
-    const std::vector<float> edges{wavelengthBandEdges(
-        smdl::Span<const float>(wavelens.data(), wavelens.size()))};
-    REQUIRE(edges.size() == wavelens.size() + 1);
-    // The end bands stop at the grid's ends, half the spacing wide; the
-    // inner ones are the spacing wide and centered on their nominal
-    // wavelengths.
-    CHECK(edges[0] == doctest::Approx(400.0f));
-    CHECK(edges[1] == doctest::Approx(450.0f));
-    CHECK(edges[2] == doctest::Approx(550.0f));
-    CHECK(edges[3] == doctest::Approx(650.0f));
-    CHECK(edges[4] == doctest::Approx(700.0f));
-    for (size_t i = 1; i + 1 < wavelens.size(); i++) {
-      CHECK(edges[i + 1] - edges[i] == doctest::Approx(100.0f));
-      CHECK(0.5f * (edges[i] + edges[i + 1]) == doctest::Approx(wavelens[i]));
-    }
+TEST_CASE("RenderGrid: one grid per tile band") {
+  const auto listOf{[](std::vector<float> list) {
+    return WavelengthCells::fromWavelengths(
+        smdl::Span<const float>(list.data(), list.size()));
+  }};
+  const std::vector<WavelengthCells> family{listOf({400, 500, 600, 700}),
+                                            listOf({500, 550, 600, 650})};
+  SUBCASE("Each pixel evaluates on the grid its tile cell names, anchored "
+          "at the frame's origin") {
+    const ScopedGrid scoped{family, 2, {0, 1, 1, 0}, false};
+    REQUIRE(gRenderGrid.grids.size() == 2);
+    CHECK(gRenderGrid.hasTile());
+    CHECK(gRenderGrid.numBands == 4);
+    CHECK(gRenderGrid.gridIndexAt(0, 0) == 0);
+    CHECK(gRenderGrid.gridIndexAt(1, 0) == 1);
+    CHECK(gRenderGrid.gridIndexAt(0, 1) == 1);
+    CHECK(gRenderGrid.gridIndexAt(1, 1) == 0);
+    CHECK(gRenderGrid.gridIndexAt(2, 0) == 0);
+    CHECK(gRenderGrid.gridIndexAt(3, 1) == 0);
+    CHECK(gRenderGrid.at(1, 0).wavelengths[0] == 500.0f);
+    CHECK(&gRenderGrid.first() == &gRenderGrid.grids[0]);
+    CHECK(gRenderGrid.stateBase.wavelengthMin == 400.0f);
+    CHECK(gRenderGrid.minWavelength() == 400.0f);
+    CHECK(gRenderGrid.maxWavelength() == 700.0f);
   }
-  SUBCASE("A non-uniform grid splits each gap down the middle") {
-    const std::vector<float> wavelens{400, 420, 500, 900};
-    const std::vector<float> edges{wavelengthBandEdges(
-        smdl::Span<const float>(wavelens.data(), wavelens.size()))};
-    REQUIRE(edges.size() == wavelens.size() + 1);
-    CHECK(edges[0] == doctest::Approx(400.0f));
-    CHECK(edges[1] == doctest::Approx(410.0f));
-    CHECK(edges[2] == doctest::Approx(460.0f));
-    CHECK(edges[3] == doctest::Approx(700.0f));
-    CHECK(edges[4] == doctest::Approx(900.0f));
+  SUBCASE("One grid has no tile and is every pixel's") {
+    const ScopedGrid scoped{{400, 500, 600, 700}, false};
+    CHECK(!gRenderGrid.hasTile());
+    CHECK(gRenderGrid.grids.size() == 1);
+    CHECK(gRenderGrid.gridIndexAt(5, 7) == 0);
   }
-  SUBCASE("Every band is as wide as the trapezoid weighs it") {
-    for (const auto &wavelens : {std::vector<float>{400, 500, 600, 700},
-                                 std::vector<float>{400, 420, 500, 900}}) {
-      const ScopedGrid grid{wavelens, true};
-      const std::vector<float> &edges{gRenderGrid.bandEdges};
-      const std::vector<double> widths{
-          wavelengthTrapezoidWidths(grid.wavelengths())};
-      REQUIRE(edges.size() == widths.size() + 1);
-      for (size_t i = 0; i < widths.size(); i++)
-        CHECK(double(edges[i + 1]) - double(edges[i]) ==
-              doctest::Approx(widths[i]));
-    }
-  }
-  SUBCASE("A grid with no band width has no rectangles") {
-    const std::vector<float> wavelens{550};
-    CHECK(wavelengthBandEdges(
-              smdl::Span<const float>(wavelens.data(), wavelens.size()))
-              .empty());
-    CHECK(wavelengthBandEdges(smdl::Span<const float>()).empty());
+  SUBCASE("A state built for a path on a grid carries that grid") {
+    const ScopedGrid scoped{family, 2, {0, 1, 1, 0}, true};
+    const smdl::State state{
+        makeRenderState(gRenderGrid.at(1, 0).wavelengths, nullptr, 0.0f,
+                        gRenderGrid.stateBase.wavelengthHero, 1)};
+    CHECK(state.wavelengthMin == 500.0f);
+    CHECK(state.wavelengthMax == 650.0f);
+    CHECK(state.wavelengthWeight == gRenderGrid.grids[1].weights.data());
+    Color drawn{};
+    jitterWavelengths(drawn, gRenderGrid.at(1, 0), 0.5f);
+    CHECK(drawn[0] == doctest::Approx(512.5f));
   }
 }
 
 TEST_CASE("jitterWavelengths: every sample inside its own band") {
   const std::vector<float> wavelens{400, 420, 500, 900};
   const ScopedGrid grid{wavelens, true};
-  const std::vector<float> &edges{gRenderGrid.bandEdges};
+  const std::vector<double> &edges{gRenderGrid.first().bandEdges};
   SUBCASE("The offset places every band at the same point of its band") {
     Color wavelengths{Color(smdl::Span<const float>(wavelens.data(), //
                                                     wavelens.size()))};
-    jitterWavelengths(wavelengths, 0.0f);
+    jitterWavelengths(wavelengths, gRenderGrid.first(), 0.0f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] == doctest::Approx(edges[i]));
-    jitterWavelengths(wavelengths, 1.0f);
+    jitterWavelengths(wavelengths, gRenderGrid.first(), 1.0f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] == doctest::Approx(edges[i + 1]));
     // The midpoint is the band center, which is NOT the nominal
     // wavelength of an end band, or of a band whose neighbors sit at
     // unequal distances: the bands have to tile the grid's span, so the
     // first runs from its nominal wavelength to the halfway point.
-    jitterWavelengths(wavelengths, 0.5f);
+    jitterWavelengths(wavelengths, gRenderGrid.first(), 0.5f);
     for (size_t i = 0; i < wavelens.size(); i++)
       CHECK(wavelengths[i] ==
             doctest::Approx(0.5f * (edges[i] + edges[i + 1])));
@@ -147,7 +204,8 @@ TEST_CASE("jitterWavelengths: every sample inside its own band") {
     Color wavelengths{};
     std::vector<double> sums(wavelens.size());
     for (uint32_t index = 0; index < NUM_SAMPLES; index++) {
-      jitterWavelengths(wavelengths, wavelengthJitterOffset(7, index));
+      jitterWavelengths(wavelengths, gRenderGrid.first(),
+                        wavelengthJitterOffset(7, index));
       for (size_t i = 0; i < wavelens.size(); i++) {
         CHECK(wavelengths[i] >= edges[i]);
         CHECK(wavelengths[i] <= edges[i + 1]);

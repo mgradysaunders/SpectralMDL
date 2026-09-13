@@ -363,21 +363,28 @@ public:
   /// the well at the base and less above it.
   [[nodiscard]] double topCodeElectrons(double iso) const noexcept;
 
-  /// The observer's weights on the render grid `wavelengths`: `V_i w_i`
-  /// such that `683 sum_i(E_i V_i w_i)` is the illuminance of a spectral
-  /// irradiance sampled on it, under the grid's own rule: the trapezoid
-  /// over a grid held still, and under the jitter each band's rectangle
-  /// of `gRenderGrid.bandEdges`, with `V` averaged over the rectangle,
-  /// since the film's band holds the irradiance averaged over it.
-  [[nodiscard]] static std::vector<double>
-  luminanceWeights(const Color &wavelengths);
+  /// The observer's weights on each render grid: `V_i w_i` such that
+  /// `683 sum_i(E_i V_i w_i)` is the illuminance of a spectral
+  /// irradiance sampled on the grid, under the grid's own rule: its
+  /// widths over a grid held still, and under the jitter each band's
+  /// cell of the grid's edges, with `V` averaged over the cell, since the
+  /// film's band holds the irradiance averaged over it.
+  ///
+  /// Under a tile each pixel's film holds its own grid's span and nothing
+  /// else, and the meter wants the mean illuminance over the window, so
+  /// a wavelength is weighed by one over the share of the tile whose
+  /// grids cover it: the classes interleave at pixel pitch, so their
+  /// window means agree, and the sum over the window is then unbiased
+  /// for the mean illuminance wherever some grid covers the visible.
+  /// Where none does, the meter reads less, as it does for any grid that
+  /// misses the visible.
+  [[nodiscard]] static std::vector<std::vector<double>> luminanceWeights();
 
   /// Meter `film`, the spectral irradiance at the sensor, over `window`
   /// at an exposure of `seconds`: the ISO a reflected-light meter would
   /// have set, held within the instrument's range. See `MeteredExposure`.
   [[nodiscard]] MeteredExposure meter(const smdl::SpectralFilm &film,
-                                      const Color &wavelengths, int4 window,
-                                      double seconds) const;
+                                      int4 window, double seconds) const;
 
   /// Fit the color matrix of `bands` under `illuminant`: white-preserving
   /// least squares (Finlayson and Drew 1997) from the bands' responses to

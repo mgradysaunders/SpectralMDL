@@ -38,6 +38,17 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     CHECK(histogram[3] * 1e-5 ==
           doctest::Approx(distr.indexPMF(3)).epsilon(1e-3));
   }
+  SUBCASE("Distribution1D never draws an index with no probability, even "
+          "at the bottom of the range") {
+    smdl::Distribution1D distr =
+        smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 1.0f, 2.0f});
+    float xiRemap{-1.0f};
+    CHECK(distr.indexSample(0.0f, &xiRemap) == 2);
+    CHECK(xiRemap >= 0.0f);
+    CHECK(distr.indexSample(1e-30f) == 2);
+    CHECK(distr.indexSample(0.5f) == 3);
+    CHECK(distr.indexSample(1.0f) == 3);
+  }
   SUBCASE("Distribution1D with all-zero values draws uniformly") {
     smdl::Distribution1D distr =
         smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 0.0f});

@@ -113,7 +113,8 @@ void renderSamples(const Options &opts, const Frame &frame,
   const Scene &scene{*staged.scene};
   const LightSampler &lights{*staged.lights};
   const EnvLight *envLight{staged.envLight.get()};
-  const smdl::Haze *haze{staged.haze.get()};
+  const std::vector<smdl::Haze> &hazes{staged.hazes};
+  const smdl::Haze *haze{hazes.empty() ? nullptr : &hazes.front()};
   const smdl::JIT::MaterialDef *exteriorMediumDef{staged.exteriorMediumDef};
   const BoundBox3 &guideBound{staged.guideBound};
   const bool hasValidGuideBounds{staged.hasValidGuideBounds};
@@ -295,8 +296,12 @@ void renderSamples(const Options &opts, const Frame &frame,
   std::mutex statsMutex;
   if (opts.render.shouldReportStats) stats.emplace();
   // Whether every sample draws its own wavelength grid; see
-  // `WavelengthGrid::bandEdges` and `jitterWavelengths()`.
-  const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
+  // `WavelengthGrid::bandEdges` and `jitterWavelengths()`. And whether
+  // every pixel evaluates on the grid of its own tile band, in which
+  // case the grid moves per pixel where the jitter moves it per sample.
+  const bool shouldJitterWavelength{gRenderGrid.isJittering};
+  const bool hasPixelGrids{gRenderGrid.hasTile()};
+  const bool hasMovingGrid{shouldJitterWavelength || hasPixelGrids};
   // Whether every sample traces the lens at a wavelength of its own, drawn
   // from its pixel's band; see `Response::traceWavelengthAt()`. Only a
   // tile sets the range a camera needs to disperse, so there is always a
@@ -343,7 +348,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   // threads start. A jittering render cannot use it: its grid moves with
   // every sample, so each block resolves its own below.
   smdl::SkyBasis renderSkyBasis;
-  if (!shouldJitterWavelength && lights.env())
+  if (!hasMovingGrid && lights.env())
     lights.env()->resolve(wavelengths, renderSkyBasis);
   const auto renderStartWall{std::chrono::steady_clock::now()};
   const double renderStartCompute{cpuTimeSeconds()};
@@ -405,6 +410,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         // `PathContext::medium`.
         Medium medium;
         medium.setHaze(haze);
+        medium.setGridIndex(0);
         // Training records for `trainGuiding()`, one per vertex the walk
         // may reach, sized only on the pre-final guiding passes that fill
         // them: at a runtime band count every record holds sized vectors,
@@ -415,25 +421,26 @@ void renderSamples(const Options &opts, const Frame &frame,
         GuideRecord *const records{shouldRecordPass ? guideRecords.data()
                                                     : nullptr};
         // The sample's own wavelength grid, rewritten in place once per
-        // sample: a `Color` past `SpectralColor::INLINE_CAPACITY` bands
-        // heaps, and every state built from it holds the pointer rather
-        // than a copy, so one buffer serves the block.
+        // sample under the jitter and once per pixel under a tile: a
+        // `Color` past `SpectralColor::INLINE_CAPACITY` bands heaps, and
+        // every state built from it holds the pointer rather than a
+        // copy, so one buffer serves the block.
         std::optional<Color> jittered;
-        if (shouldJitterWavelength) jittered.emplace(wavelengths);
+        if (hasMovingGrid) jittered.emplace(wavelengths);
         // The sun-sky resolved onto this sample's own grid, rewritten
         // below once per sample, which still amortizes over the many
         // evaluations one sample makes. Empty and unused when the
         // wavelengths hold still, where `renderSkyBasis` serves instead.
         smdl::SkyBasis jitteredSkyBasis;
-        const smdl::SkyBasis &skyBasis{shouldJitterWavelength ? jitteredSkyBasis
-                                                              : renderSkyBasis};
+        const smdl::SkyBasis &skyBasis{hasMovingGrid ? jitteredSkyBasis
+                                                     : renderSkyBasis};
         // The four states every path of the block works in, built here
-        // rather than per path: only the animation time and the hero
-        // wavelength below tell one path's from another's, and the
-        // jittered grid is rewritten in place, so the wavelength pointer
-        // holds still too. See `PathContext`.
-        const Color &blockWavelengths{shouldJitterWavelength ? *jittered
-                                                             : wavelengths};
+        // rather than per path: only the animation time, the hero
+        // wavelength, and under a tile the pixel's grid below tell one
+        // path's from another's, and the jittered grid is rewritten in
+        // place, so the wavelength pointer holds still too. See
+        // `PathContext`.
+        const Color &blockWavelengths{hasMovingGrid ? *jittered : wavelengths};
         smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
         smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
@@ -462,6 +469,7 @@ void renderSamples(const Options &opts, const Frame &frame,
                          blockWavelengths,
                          PathTime{0.0f},
                          smdl::FRAUNHOFER_D_LINE,
+                         0,
                          &guiding,
                          records};
         // The block's own tally, which the walk fills and the end of the
@@ -486,6 +494,26 @@ void renderSamples(const Options &opts, const Frame &frame,
                          (size_t(window[0]) + k % windowWidth)};
           const size_t x{i % numPixelsX};
           const size_t y{i / numPixelsX};
+          // Under a tile, the pixel's own grid: what its states carry,
+          // what its baked spectra are read by, and, held still, what
+          // its samples are evaluated at.
+          const size_t gridIndex{gRenderGrid.gridIndexAt(x, y)};
+          const WavelengthGrid &grid{gRenderGrid.grids[gridIndex]};
+          if (hasPixelGrids) {
+            grid.applyTo(gatherState);
+            grid.applyTo(walkState);
+            grid.applyTo(shadeState);
+            grid.applyTo(lightState);
+            path.gridIndex = gridIndex;
+            medium.setHaze(hazes.empty() ? nullptr : &hazes[gridIndex]);
+            medium.setGridIndex(gridIndex);
+            if (!shouldJitterWavelength) {
+              for (size_t b = 0; b < jittered->size(); b++)
+                (*jittered)[b] = grid.wavelengths[b];
+              if (render.lights.env())
+                render.lights.env()->resolve(*jittered, jitteredSkyBasis);
+            }
+          }
           Color Lsum{};
           std::fill(bandSums.begin(), bandSums.end(), 0.0);
           PassCombiner::PixelHalves halves{};
@@ -530,7 +558,8 @@ void renderSamples(const Options &opts, const Frame &frame,
             sampler = batchSamplers[j];
             if (shouldJitterWavelength) {
               jitterWavelengths(
-                  *jittered, wavelengthJitterOffset(uint32_t(i), sampleIndex));
+                  *jittered, grid,
+                  wavelengthJitterOffset(uint32_t(i), sampleIndex));
               if (render.lights.env())
                 render.lights.env()->resolve(*jittered, jitteredSkyBasis);
             }

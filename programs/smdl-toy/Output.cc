@@ -144,8 +144,8 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
   shot.fNumber = frame.camera->fNumber();
   const double irradianceScale{
       model.hasPhysicalSensor() ? 1.0 : model.previewIrradianceScale};
-  const MeteredExposure metered{sensor.meter(film, wavelengths, frame.window,
-                                             shot.exposure * irradianceScale)};
+  const MeteredExposure metered{
+      sensor.meter(film, frame.window, shot.exposure * irradianceScale)};
   shot.wasISOMetered = !model.iso && !sensor.hasFixedGain();
   shot.iso = sensor.hasFixedGain() ? sensor.fixedGainISO()
              : model.iso           ? double(*model.iso)
@@ -177,8 +177,8 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
   const double developed{0.2126 * double(rgb[0]) + 0.7152 * double(rgb[1]) +
                          0.0722 * double(rgb[2])};
   double nits{};
-  for (const auto weight : Sensor::luminanceWeights(wavelengths))
-    nits += LUMENS_PER_WATT * weight;
+  const std::vector<std::vector<double>> weights{Sensor::luminanceWeights()};
+  for (const auto weight : weights.front()) nits += LUMENS_PER_WATT * weight;
   const double gain{
       developed > 0
           ? developedLuminance(
@@ -255,7 +255,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   const size_t spp{frame.spp};
   // Whether every sample drew its own wavelength grid, which a resumed
   // session compares against its own.
-  const bool shouldJitterWavelength{!gRenderGrid.bandEdges.empty()};
+  const bool shouldJitterWavelength{gRenderGrid.isJittering};
   // The tally accumulated above is the sequence's, but the fingerprint
   // is this session's: the settings a later resume compares itself
   // against are the ones the samples now in the film were drawn under.
@@ -361,6 +361,28 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // whoever opens the file next, and never read back, so none of it
     // joins the fingerprint a resumed session compares.
     std::vector<std::string> headerLines{resumed.header.headerLines()};
+    // The grids' cells, which a resumed session adopts with the
+    // wavelengths: for a grid the sensor placed, the list alone does not
+    // imply them, and under a tile each pixel holds its own band's grid,
+    // so the format's one list is left out and the grids are stated by
+    // band.
+    GridHeader gridHeader{};
+    if (gRenderGrid.hasTile()) {
+      SMDL_SANITY_CHECK(response && response->tileBandNames().size() ==
+                                        gRenderGrid.grids.size());
+      for (size_t k = 0; k < gRenderGrid.grids.size(); k++) {
+        const WavelengthGrid &grid{gRenderGrid.grids[k]};
+        GridHeader::Grid &record{gridHeader.grids.emplace_back()};
+        record.name = response->tileBandNames()[k];
+        record.wavelengths.assign(grid.wavelengths.data(),
+                                  grid.wavelengths.data() + grid.size());
+        record.bandEdges = grid.bandEdges;
+      }
+    } else {
+      gridHeader.grids.emplace_back().bandEdges = gRenderGrid.first().bandEdges;
+    }
+    for (const auto &line : gridHeader.headerLines())
+      headerLines.push_back(line);
     headerLines.push_back(
         smdl::concat(ENVI_RADIOMETRIC_UNITS, " = ",
                      model.filmQuantity() == FilmQuantity::IRRADIANCE
@@ -371,9 +393,11 @@ void writeOutputs(const Options &opts, const Frame &frame,
       float elevationDeg{};
       std::vector<float> irradiance{};
       // Only the procedural sun says any of this: an image environment
-      // has no sun to place, and moonlight's source is not the sun.
-      if (envLight && envLight->sunMetadata(wavelengths, azimuthDeg,
-                                            elevationDeg, irradiance)) {
+      // has no sun to place, and moonlight's source is not the sun. Under
+      // a tile there is no one grid to state the irradiance on.
+      if (envLight && !gRenderGrid.hasTile() &&
+          envLight->sunMetadata(wavelengths, azimuthDeg, elevationDeg,
+                                irradiance)) {
         headerLines.push_back(
             smdl::concat(ENVI_SUN_AZIMUTH, " = ", azimuthDeg));
         headerLines.push_back(
@@ -388,8 +412,10 @@ void writeOutputs(const Options &opts, const Frame &frame,
     // does not know: a windowed render still carries a full frame of
     // pixels, and the header must not describe the untouched ones as
     // samples.
-    film.writeENVIFile(wavelengths, partName, headerLines, window, {},
-                       opts.image.shouldWriteDouble);
+    film.writeENVIFile(
+        gRenderGrid.hasTile() ? smdl::Span<const float>{}
+                              : smdl::Span<const float>(wavelengths),
+        partName, headerLines, window, {}, opts.image.shouldWriteDouble);
     // Both members of the ENVI pair; `writeENVIFile()` wrote them under
     // the temporary name and its own '.hdr' suffix.
     smdl::renameOnto(partName, outputSpectrum);

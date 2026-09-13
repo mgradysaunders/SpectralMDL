@@ -44,6 +44,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "median-filter-radius",
                                                          "wavelength-range",
                                                          "wavelengths",
+                                                         "wavelength-count",
                                                          "crop-window",
                                                          "resolution-scale",
                                                          "guide-bsdf-fraction",
@@ -243,6 +244,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   // this session here and replaced by it when it is written back.
   header.sampleOffset = 0;
   header.readFrom(info.fields);
+  result.grids.readFrom(info.fields);
   // A file written before the film could hold anything but radiance
   // says nothing, and means radiance.
   const std::string fileQuantity{header.quantity.empty() ? "radiance"

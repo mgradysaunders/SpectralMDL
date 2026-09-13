@@ -189,7 +189,7 @@ public:
   }
 
   // The render basis, as the `Color` the medium's interface takes.
-  const Color wavelengths{gRenderGrid.wavelengths};
+  const Color wavelengths{gRenderGrid.first().wavelengths};
 
   smdl::Compiler compiler{uint32_t(GRID.size())};
   smdl::BumpPtrAllocator allocator{};

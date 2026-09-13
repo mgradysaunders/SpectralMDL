@@ -88,7 +88,8 @@ void checkPlanes(const std::vector<float> &planes,
 // responses are the observer's XYZ, with blue's scaled by `blueScale`,
 // which a fit absorbs; under the RGGB tile, or none. Knots at 1 nm,
 // where the fit integrates.
-[[nodiscard]] SensorSettings lutherSensor(bool isTiled, double blueScale = 1.0) {
+[[nodiscard]] SensorSettings lutherSensor(bool isTiled,
+                                          double blueScale = 1.0) {
   SensorSettings value{};
   value.pixels = int2(8, 6);
   value.pitchUM = float2(4.0f, 4.0f);
@@ -429,8 +430,7 @@ TEST_CASE("Develop: a metered neutral develops to middle gray") {
   }
   film.addSamples(1);
   bandFilm.addSamples(1);
-  const MeteredExposure metered{
-      sensor.meter(film, scoped.wavelengths(), whole, seconds)};
+  const MeteredExposure metered{sensor.meter(film, whole, seconds)};
   CHECK(metered.iso == doctest::Approx(400.0).epsilon(0.01));
   DetectorShot shot{};
   shot.exposure = seconds;

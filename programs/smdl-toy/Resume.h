@@ -40,6 +40,12 @@ struct ResumedSequence final {
   /// session given no grid flags adopts.
   smdl::SpectralFilm::ENVIFileInfo info{};
 
+  /// The grids the file states beyond its wavelength list: the one
+  /// grid's edges, or under a tile one grid per tile band; nothing for a
+  /// file written before they were recorded, whose cells are the ones
+  /// its wavelengths imply.
+  GridHeader grids{};
+
   /// The sequence's tally and fingerprint, seeded from the file and
   /// added to by this session before being written back.
   RenderHeader header{};

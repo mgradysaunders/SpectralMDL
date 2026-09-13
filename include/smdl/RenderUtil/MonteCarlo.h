@@ -48,7 +48,8 @@ public:
     return i < 0 ? 0.0f : 1.0f;
   }
 
-  /// The index sampling routine.
+  /// The index sampling routine. Never an index with no probability,
+  /// even at the bottom of the range, so long as some index has one.
   ///
   /// \param[in]  xi       The random sample \f$ \xi \in (0,1) \f$.
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.

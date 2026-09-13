@@ -263,6 +263,12 @@ struct PathContext final {
   /// drew one.
   float wavelengthHero;
 
+  /// The grid the path evaluates on, `RenderGrid::gridIndexAt()` of its
+  /// pixel, which the caller sets at the head of each pixel beside the
+  /// states it applied the grid to: what a spectrum baked per grid, a
+  /// layout light's, is read by. 0 without a tile.
+  size_t gridIndex;
+
   /// The SD-tree the walk steers by and the pixel estimate that drives
   /// its Russian roulette, or null for plain path tracing; a null
   /// `Guiding::tree` behaves the same way.

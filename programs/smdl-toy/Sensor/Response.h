@@ -8,8 +8,10 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Support/Span.h"
 
 #include "Color.h"
@@ -54,62 +56,134 @@ struct TracedSpan final {
 /// `"<lo>-<hi> nm, median <median>"`.
 [[nodiscard]] std::string spellTracedSpan(const TracedSpan &span);
 
-/// The wavelength a lens whose glasses disperse is traced at, drawn for
-/// the pixels of one band. See `Response::traceWavelengthAt()`.
-///
-/// The density is the band's curve, times the illuminant, times the
-/// photon factor. It is held constant between breakpoints, which are the
-/// curve's knots, every whole nanometer, and the ends of what the grid
-/// sees, each piece at its middle. The curve is linear between its knots,
-/// so each piece carries the curve's own integral over it, and the
-/// cumulative distribution inverts exactly.
-class LensWavelengthDraw final {
+/// A piecewise-constant density over wavelength, sampled by the inverse
+/// of its cumulative distribution. Its breakpoints are a curve's knots,
+/// every whole nanometer, and the ends of the range, each piece at its
+/// middle. Two densities are built over them: `ofResponse()`, what the
+/// pixels of one band trace a lens whose glasses disperse at, see
+/// `Response::traceWavelengthAt()`; and `ofPlacement()`, what a grid
+/// placed by the curve tiles its cells by, see `cells()`.
+class WavelengthDensity final {
 public:
-  LensWavelengthDraw() = default;
+  WavelengthDensity() = default;
 
-  /// Tabulate the draw of the curve through `knots` and `values` over
-  /// `[lo, hi]`, what the grid sees, under `illuminant`. Empty when the
-  /// density is zero throughout: a curve the range misses, or one the
-  /// illuminant leaves dark.
-  LensWavelengthDraw(smdl::Span<const double> knots,
-                     smdl::Span<const double> values, double lo, double hi,
-                     const SensorSpectrum &illuminant);
+  /// The response density of the curve through `knots` and `values`
+  /// over `[lo, hi]`, what the grid sees, under `illuminant`: the curve,
+  /// times the illuminant, times the photon factor. The curve is linear
+  /// between its knots, so each piece carries the curve's own integral
+  /// over it, and the cumulative distribution inverts exactly. Empty
+  /// when the density is zero throughout: a curve the range misses, or
+  /// one the illuminant leaves dark.
+  [[nodiscard]] static WavelengthDensity
+  ofResponse(smdl::Span<const double> knots, smdl::Span<const double> values,
+             double lo, double hi, const SensorSpectrum &illuminant);
 
-  [[nodiscard]] bool isEmpty() const noexcept { return mCDF.empty(); }
+  /// One curve of a placement: its knots and values.
+  struct PlacementCurve final {
+    smdl::Span<const double> knots{};
+    smdl::Span<const double> values{};
+  };
+
+  /// The placement density of `curves` over `[lo, hi]`: half the sum
+  /// over the curves, each at its peak, of the slope of the curve times
+  /// the photon factor to the two thirds power, and half uniform over
+  /// the range. Never empty.
+  ///
+  /// A grid's band estimates its integral from the curve at one point
+  /// drawn uniformly across the cell, weighed by the cell's width, so
+  /// its variance follows not the curve's mass in the cell but its
+  /// variation across it: the slope times the width, squared, times the
+  /// width squared again for the weight. Cells narrow where the curve is
+  /// steep and wide where it is flat minimize that sum, and the slope to
+  /// the two thirds is the density that places them, the photon factor's
+  /// own slope keeping a plateau from collapsing into one cell. Cells of
+  /// equal mass in the curve itself, the draw that suits a sample weighed
+  /// by its own probability, leave a band's steep skirts in wide cells
+  /// and come out two to three times worse than a uniform grid. The
+  /// uniform half is a floor: no cell is wider than twice a uniform
+  /// grid's, so a scene spectrum climbing across a band's far tail,
+  /// where the curve is flat and nearly nothing, is never left in one
+  /// cell. Half is where the placement stops being worse than uniform on
+  /// a ramp of a percent per nanometer over every shipped curve, alone
+  /// or every band of a sensor from one grid, at almost no cost on a
+  /// smooth spectrum. Summing the curves' slopes rather than taking the
+  /// slope of their sum is what lets one grid serve every band: each
+  /// band's skirts buy their cells whatever the others do there.
+  [[nodiscard]] static WavelengthDensity
+  ofPlacement(smdl::Span<const PlacementCurve> curves, double lo, double hi);
+
+  [[nodiscard]] bool isEmpty() const noexcept { return mWavelengths.empty(); }
 
   /// The wavelength at the fraction `xi` of the distribution, which rises
   /// with `xi` and lies where the density is positive. Not for an empty
-  /// draw.
-  [[nodiscard]] double at(double xi) const noexcept;
+  /// density.
+  [[nodiscard]] double at(float xi) const noexcept;
 
-  /// The span the density is positive over, and the median. Not for an
-  /// empty draw.
+  /// The span the draw can land in, which is where the density is
+  /// positive, and the median. Not for an empty density.
   [[nodiscard]] TracedSpan span() const noexcept;
 
+  /// `count` cells of equal mass tiling the span, each labeled by its
+  /// midpoint, where a curve linear across the cell takes its mean. Not
+  /// for an empty density.
+  [[nodiscard]] WavelengthCells cells(size_t count) const;
+
 private:
-  /// The breakpoints, and the cumulative distribution at each, from 0 at
-  /// the first to 1 at the last.
+  /// The pieces' masses over `breakpoints`; empty when there is no mass
+  /// at all.
+  WavelengthDensity(std::vector<double> breakpoints,
+                    smdl::Span<const float> masses);
+
+  /// The breakpoints over `[lo, hi]` held inside the sorted `knots`: the
+  /// knots between, every whole nanometer, and the ends; empty when
+  /// nothing is left of the range.
+  [[nodiscard]] static std::vector<double>
+  breakpointsOf(smdl::Span<const double> knots, double lo, double hi);
+
+  /// The first and last piece with mass.
+  [[nodiscard]] std::pair<size_t, size_t> massRange() const noexcept;
+
+  /// The breakpoints.
   std::vector<double> mWavelengths{};
-  std::vector<double> mCDF{};
+
+  /// The mass of each piece between two breakpoints, one fewer than the
+  /// breakpoints, which the draw picks a piece from.
+  smdl::Distribution1D mPieces{};
 };
 
 /// What `band` draws for a lens whose glasses disperse, under
 /// `illuminant`, over the band's own knots: what a grid spanning the
-/// curves sees, which is a physical sensor's default. Nothing for a band
-/// the illuminant leaves dark or that is zero throughout.
+/// curves sees. Nothing for a band the illuminant leaves dark or that is
+/// zero throughout.
 [[nodiscard]] std::optional<TracedSpan>
 tracedSpanOf(const ResponseBand &band, const SensorSpectrum &illuminant);
 
-/// A response resolved against the render-wide wavelength grid: what
+/// The grid `band` places itself: `count` cells over its knots by
+/// `WavelengthDensity::ofPlacement()`. The illuminant has no part in it,
+/// so the grid is the sensor's alone and a resumed sequence finds the
+/// same one under any white balance.
+[[nodiscard]] WavelengthCells bandWavelengthCells(const ResponseBand &band,
+                                                  size_t count);
+
+/// The grid a response places itself for every band at once: `count`
+/// cells over the union of its bands' knots by
+/// `WavelengthDensity::ofPlacement()` of every curve, for a sensor
+/// without a tile, whose every sample projects onto every band.
+[[nodiscard]] WavelengthCells
+responseWavelengthCells(const ResponseSettings &settings, size_t count);
+
+/// A response resolved against the render's wavelength grids: what
 /// each sample of spectral irradiance contributes to each band.
 ///
 /// A band is the photon integral of the sample against its curve in
-/// electrons per photon, under the rule the sample's wavelengths follow.
-/// Without `-wavelength-jitter` the wavelengths are the grid's and the
-/// rule is the trapezoid over it, so the band film is exactly the dot
-/// product of the spectral film's means with fixed weights; with the
-/// jitter each band of the sample covers its own rectangle, as wide as
-/// the trapezoid weighs the band, and the curve is evaluated at the
+/// electrons per photon, under the rule the sample's wavelengths follow
+/// on the grid the band projects on: under a tile the grid of its own
+/// pixels, else the one grid. Without `-wavelength-jitter` the
+/// wavelengths are the grid's and the rule is its widths, so the band
+/// film is exactly the dot product of the spectral film's means with
+/// fixed weights; with the jitter each band of the sample covers its
+/// own cell, as wide as the grid weighs the band, and the curve is
+/// evaluated at the
 /// sample's own wavelengths, which is what lets a band narrower than the
 /// grid integrate without bias. The photon factor `lambda / (h c)` sits
 /// inside the integral, which is what makes a readout exact.
@@ -118,19 +192,19 @@ tracedSpanOf(const ResponseBand &band, const SensorSpectrum &illuminant);
 /// grid cannot see is refused.
 class Response final {
 public:
-  /// Resolve `settings` against `wavelengths`, the render grid, jittered
-  /// when `gRenderGrid` has band edges. Under a tile, also tabulate the
-  /// draw of each band the tile lays down under `illuminant`, the white
-  /// balance's; see `traceWavelengthAt()`. Warns about a band the grid only
-  /// partly sees, about one narrow enough to alias against a grid held
-  /// still, and about a tiled one the illuminant leaves dark.
+  /// Resolve `settings` against `gRenderGrid`, jittered when it
+  /// jitters. Under a tile, also tabulate the draw of each band the tile
+  /// lays down under `illuminant`, the white balance's; see
+  /// `traceWavelengthAt()`. Warns about a band its grid only partly
+  /// sees, about one narrow enough to alias against a grid held still,
+  /// and about a tiled one the illuminant leaves dark. A band the tile
+  /// does not lay down projects never, and is left alone.
   ///
-  /// \throws smdl::Error  If a band has no weight inside the grid, or
+  /// \throws smdl::Error  If a band has no weight inside its grid, or
   ///                      falls between the wavelengths of a grid held
   ///                      still.
   ///
-  Response(const ResponseSettings &settings, const Color &wavelengths,
-           const SensorSpectrum &illuminant);
+  Response(const ResponseSettings &settings, const SensorSpectrum &illuminant);
 
   /// The curves.
   [[nodiscard]] size_t bandCount() const noexcept { return mBands.size(); }
@@ -151,6 +225,13 @@ public:
   /// The tile row by row as band names, empty without one.
   [[nodiscard]] const std::vector<std::string> &tileNames() const noexcept {
     return mTileNames;
+  }
+
+  /// The names of the bands the tile lays down, once each in the order
+  /// it first names them, which is the order of the render's grids under
+  /// a tile; empty without one.
+  [[nodiscard]] const std::vector<std::string> &tileBandNames() const noexcept {
+    return mTileBandNames;
   }
 
   [[nodiscard]] size_t tileColumns() const noexcept { return mCFAColumns; }
@@ -189,7 +270,7 @@ public:
   /// that has no color of its own: the black-and-white edge a lens's
   /// color is judged on. What is left is color and geometry varying
   /// together inside one band. Each band draws only inside what the grid
-  /// sees, from `LensWavelengthDraw`.
+  /// sees, from `WavelengthDensity`.
   [[nodiscard]] float traceWavelengthAt(size_t x, size_t y,
                                         float xi) const noexcept;
 
@@ -211,9 +292,13 @@ private:
     /// projects by one dot product; empty under the jitter.
     std::vector<double> fixedWeights{};
 
+    /// The width of each cell of the band's grid under the jitter; empty
+    /// otherwise.
+    std::vector<double> widths{};
+
     /// Under a tile, what the band's pixels trace a dispersive lens at;
     /// empty without a tile, and for a band the tile does not lay down.
-    LensWavelengthDraw draw{};
+    WavelengthDensity draw{};
   };
 
   /// The band's curve at `lambda`; see `curveAt()`.
@@ -246,16 +331,14 @@ private:
 
   std::vector<std::string> mTileNames{};
 
+  std::vector<std::string> mTileBandNames{};
+
   /// Is the grid jittered, so that the curve is evaluated per sample?
   bool mIsJittering{};
-
-  /// The width of each grid band's rectangle under the jitter, empty
-  /// otherwise.
-  std::vector<double> mWidths{};
 };
 
-/// The response of a frame resolved against the grid, under the white
+/// The response of a frame resolved against the grids, under the white
 /// balance's `illuminant`, or nothing without one. See `Response`.
 [[nodiscard]] std::optional<Response>
 resolveResponse(const std::optional<ResponseSettings> &settings,
-                const Color &wavelengths, const SensorSpectrum &illuminant);
+                const SensorSpectrum &illuminant);

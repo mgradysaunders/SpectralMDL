@@ -65,6 +65,9 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
   if (itr == mCMFs.begin()) ++itr;
   if (itr == mCMFs.end()) --itr;
   --itr;
+  // A key of zero stops the search at the first entry whatever its mass,
+  // so step past the indexes with none.
+  while (itr + 2 < mCMFs.end() && itr[0] == itr[1]) ++itr;
   int i{int(itr - mCMFs.begin())};
   uint32_t cmf0{*itr++};
   uint32_t cmf1{*itr};
