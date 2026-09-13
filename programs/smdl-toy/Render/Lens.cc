@@ -299,8 +299,8 @@ template <size_t W>
 
 template <size_t W> void normalize(Vector3Pack<W> &v) noexcept {
   const Pack<W> length{simd::sqrt(dot<W>(v, v))};
-  const Pack<W> inverse{
-      simd::select(length > Pack<W>(0.0f), Pack<W>(1.0f) / length, Pack<W>(0.0f))};
+  const Pack<W> inverse{simd::select(length > Pack<W>(0.0f),
+                                     Pack<W>(1.0f) / length, Pack<W>(0.0f))};
   v.x = v.x * inverse, v.y = v.y * inverse, v.z = v.z * inverse;
 }
 
@@ -311,7 +311,8 @@ template <size_t W>
 void sagOf(const LensElement &elem, const Pack<W> &u, Pack<W> &sag,
            Pack<W> &dSagDu, Mask<W> &ok) noexcept {
   const Pack<W> kappa{elem.curvature()};
-  const Pack<W> wSq{Pack<W>(1.0f) - Pack<W>(1 + elem.conic) * kappa * kappa * u};
+  const Pack<W> wSq{Pack<W>(1.0f) -
+                    Pack<W>(1 + elem.conic) * kappa * kappa * u};
   const Mask<W> live{wSq > Pack<W>(0.0f)};
   ok = ok & live;
   const Pack<W> w{simd::sqrt(simd::select(live, wSq, Pack<W>(1.0f)))};
@@ -352,8 +353,7 @@ void spanOverElement(const LensElement &elem, const Vector3Pack<W> &org,
   const Pack<W> root{simd::sqrt(simd::select(discrim > zero, discrim, zero))};
   // The stable pairing of the roots, `q / a` and `c / q`, which takes
   // the root the subtraction would cancel off the product instead.
-  const Pack<W> q{Pack<W>(-0.5f) *
-                  (b + simd::select(b >= zero, root, -root))};
+  const Pack<W> q{Pack<W>(-0.5f) * (b + simd::select(b >= zero, root, -root))};
   const Pack<W> t1{q / simd::select(crossing, a, Pack<W>(1.0f))};
   const Pack<W> t2{c / simd::select(q != zero, q, Pack<W>(1.0f))};
   tLo = simd::select(crossing, simd::max(tLo, simd::min(t1, t2)), tLo);
@@ -419,7 +419,8 @@ void intersectAspheric(const LensElement &elem, const Vector3Pack<W> &org,
     const Mask<W> pending{~done & ~isBracketed};
     const Mask<W> accepts{pending & (simd::abs(h) <= tolerance)};
     land(accepts, t);
-    const Mask<W> crosses{pending & ~accepts & ((h < Pack<W>(0.0f)) ^ isBelowAtLo)};
+    const Mask<W> crosses{pending & ~accepts &
+                          ((h < Pack<W>(0.0f)) ^ isBelowAtLo)};
     tB = simd::select(crosses, t, tB);
     isBracketed = isBracketed | crosses;
     tA = simd::select(pending & ~accepts & ~crosses, t, tA);
@@ -437,11 +438,13 @@ void intersectAspheric(const LensElement &elem, const Vector3Pack<W> &org,
     // How fast the height closes: the ray climbing in z against the
     // surface receding under it as the radius grows.
     const Pack<W> px{org.x + t * dir.x}, py{org.y + t * dir.y};
-    const Pack<W> slope{dir.z - Pack<W>(2.0f) * dSagDu * (px * dir.x + py * dir.y)};
+    const Pack<W> slope{dir.z -
+                        Pack<W>(2.0f) * dSagDu * (px * dir.x + py * dir.y)};
     const Mask<W> sloped{slope != Pack<W>(0.0f)};
     const Pack<W> step2{t - h / simd::select(sloped, slope, Pack<W>(1.0f))};
     const Pack<W> next{simd::select(sloped, step2, Pack<W>(FLOAT_MAX))};
-    t = simd::select((tA < next) & (next < tB), next, (tA + tB) * Pack<W>(0.5f));
+    t = simd::select((tA < next) & (next < tB), next,
+                     (tA + tB) * Pack<W>(0.5f));
   }
   alive = alive & ok & done;
   point.x = org.x + tBest * dir.x;
@@ -472,22 +475,23 @@ void intersectSurface(const LensElement &elem, const Vector3Pack<W> &org,
     point.x = org.x + t * dir.x;
     point.y = org.y + t * dir.y;
     point.z = org.z + t * dir.z;
-    normal.x = Pack<W>(0.0f), normal.y = Pack<W>(0.0f), normal.z = Pack<W>(-1.0f);
+    normal.x = Pack<W>(0.0f), normal.y = Pack<W>(0.0f),
+    normal.z = Pack<W>(-1.0f);
   } else {
     const Pack<W> a{kappa *
-                 (dir.x * dir.x + dir.y * dir.y + kPlus1 * dir.z * dir.z)};
-    const Pack<W> b{Pack<W>(2.0f) *
-                 (kappa * (org.x * dir.x + org.y * dir.y + kPlus1 * os * dir.z) -
-                  dir.z)};
+                    (dir.x * dir.x + dir.y * dir.y + kPlus1 * dir.z * dir.z)};
+    const Pack<W> b{Pack<W>(2.0f) * (kappa * (org.x * dir.x + org.y * dir.y +
+                                              kPlus1 * os * dir.z) -
+                                     dir.z)};
     const Pack<W> c{kappa * (org.x * org.x + org.y * org.y + kPlus1 * os * os) -
-                 Pack<W>(2.0f) * os};
+                    Pack<W>(2.0f) * os};
     const Pack<W> discrim{b * b - Pack<W>(4.0f) * a * c};
     const Mask<W> real{discrim >= Pack<W>(0.0f)};
     alive = alive & real;
     const Pack<W> root{simd::sqrt(simd::select(real, discrim, Pack<W>(0.0f)))};
     // The stable pairing: `q` takes the sign of `b`.
     const Pack<W> q{Pack<W>(-0.5f) *
-                 (b + simd::select(b >= Pack<W>(0.0f), root, -root))};
+                    (b + simd::select(b >= Pack<W>(0.0f), root, -root))};
     const Mask<W> hasA{a != Pack<W>(0.0f)}, hasQ{q != Pack<W>(0.0f)};
     const Pack<W> t1{q / simd::select(hasA, a, Pack<W>(1.0f))};
     const Pack<W> t2{c / simd::select(hasQ, q, Pack<W>(1.0f))};
@@ -521,9 +525,10 @@ void refract(Vector3Pack<W> &dir, const Vector3Pack<W> &normal,
   const Pack<W> sin2ThetaT{eta * eta * (Pack<W>(1.0f) - cosThetaI * cosThetaI)};
   const Mask<W> transmits{sin2ThetaT < Pack<W>(1.0f)};
   alive = alive & transmits;
-  const Pack<W> scale{eta * cosThetaI -
-                   simd::sqrt(Pack<W>(1.0f) -
-                              simd::select(transmits, sin2ThetaT, Pack<W>(0.0f)))};
+  const Pack<W> scale{
+      eta * cosThetaI -
+      simd::sqrt(Pack<W>(1.0f) -
+                 simd::select(transmits, sin2ThetaT, Pack<W>(0.0f)))};
   dir.x = eta * dir.x + scale * normal.x;
   dir.y = eta * dir.y + scale * normal.y;
   dir.z = eta * dir.z + scale * normal.z;
@@ -844,11 +849,10 @@ public:
   std::array<Ray, Lens::TRACE_WIDTH> rays{};
   std::array<bool, Lens::TRACE_WIDTH> gotOut{};
   for (int i = 0; i < NUM_FOCUS_FAN_RAYS; i += int(Lens::TRACE_WIDTH)) {
-    const int count{
-        std::min(int(Lens::TRACE_WIDTH), NUM_FOCUS_FAN_RAYS - i)};
+    const int count{std::min(int(Lens::TRACE_WIDTH), NUM_FOCUS_FAN_RAYS - i)};
     for (int k = 0; k < count; k++)
-      rays[k] = Ray{film, float3(heightAt(i + k), 0, lens.rearZ()) - film, EPS,
-                    INF};
+      rays[k] =
+          Ray{film, float3(heightAt(i + k), 0, lens.rearZ()) - film, EPS, INF};
     lens.traceFromFilm(smdl::Span<Ray>(rays.data(), count),
                        smdl::Span<bool>(gotOut.data(), count));
     for (int k = 0; k < count; k++) {
@@ -1125,8 +1129,8 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     // scaling `smdl::uniformApertureSample()` samples the thin lens
     // aperture with.
     const float n{float(mNumBlades)};
-    const float circumRadius{
-        workingStopRadius * std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)))};
+    const float circumRadius{workingStopRadius *
+                             std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)))};
     // The half planes the trace tests against. `bladeAngle` is measured
     // so that zero puts a vertex at screen right, so the edge between
     // two vertices faces half a sector off that.
@@ -1206,9 +1210,9 @@ float Lens::paraxialFilmZAt(float wavelength) const noexcept {
 }
 
 template <size_t W>
-void Lens::traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
-                      smdl::Span<const smdl::Span<const float>> indices)
-    const noexcept {
+void Lens::traceBatch(
+    smdl::Span<Ray> rays, smdl::Span<bool> passes,
+    smdl::Span<const smdl::Span<const float>> indices) const noexcept {
   SMDL_SANITY_CHECK(rays.size() == passes.size());
   SMDL_SANITY_CHECK(rays.size() == indices.size());
   SMDL_SANITY_CHECK(rays.size() <= W);
@@ -1274,9 +1278,9 @@ void Lens::traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
   }
 }
 
-void Lens::traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
-                         smdl::Span<const smdl::Span<const float>> indices)
-    const noexcept {
+void Lens::traceFromFilm(
+    smdl::Span<Ray> rays, smdl::Span<bool> passes,
+    smdl::Span<const smdl::Span<const float>> indices) const noexcept {
   traceBatch<TRACE_WIDTH>(rays, passes, indices);
 }
 
@@ -1286,9 +1290,9 @@ void Lens::traceFromFilm(smdl::Span<Ray> rays,
                                           mReferenceIndices.size()};
   std::array<smdl::Span<const float>, TRACE_WIDTH> indices{};
   indices.fill(reference);
-  traceFromFilm(rays, passes,
-                smdl::Span<const smdl::Span<const float>>(indices.data(),
-                                                          rays.size()));
+  traceFromFilm(
+      rays, passes,
+      smdl::Span<const smdl::Span<const float>>(indices.data(), rays.size()));
 }
 
 void Lens::traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
@@ -1307,7 +1311,6 @@ bool Lens::traceThrough(Ray &ray, const float *indices) const noexcept {
                 smdl::Span<const smdl::Span<const float>>(&span, 1));
   return passes;
 }
-
 
 void Lens::logSummary() const {
   // TODO Having all of the log info messages emitted separately, all prefixed

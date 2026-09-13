@@ -137,8 +137,8 @@ Frame resolveFrame(const Options &opts) {
   frame.numWindowPixels = numWindowPixels;
   return frame;
 }
-ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
-                                   const ResumedSequence &resumed) {
+void resolveWavelengthGrid(const Options &opts, const Frame &frame,
+                           const ResumedSequence &resumed) {
   // The wavelength grid, in priority order: explicit '-wavelengths';
   // '-wavelength-range' uniform bands (endpoint-inclusive); when resuming
   // with no grid flags at all, the grid recorded in the resumed file, so
@@ -152,7 +152,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   const bool shouldAdoptResumedGrid{!gridOptions.wasGiven && resumed.wasLoaded};
   const ResponseSettings *response{
       frame.model.hasSensor() ? &frame.model.sensor->settings().response
-                                      : nullptr};
+                              : nullptr};
   const auto uniform{[](const WavelengthRange &range) {
     std::vector<float> grid(size_t(range.bandCount));
     for (size_t i = 0; i < grid.size(); i++) {
@@ -362,10 +362,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                   "render");
   // Outside the visible, RGB-sourced spectra are extrapolated and the RGB
   // outputs see little; say so once rather than rendering a mysteriously
-  // dark image.
-  const bool isBeyondVisible{gRenderGrid.minWavelength() < 379.0f ||
-                             gRenderGrid.maxWavelength() > 781.0f};
-  if (isBeyondVisible)
+  // dark image. Every later stage reads the same flag off the grid.
+  if (gRenderGrid.isBeyondVisible)
     SMDL_LOG_WARN(
         "The wavelength grid leaves the visible (380-780nm): RGB colors, "
         "textures, and images extend flat from their 380 and 780nm values "
@@ -376,9 +374,8 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // The accumulation buffers scale as bands times pixels, the film's
   // bands being the grid's for the observer and the sensor's through a
   // sensor; say so before allocating gigabytes.
-  const SensorSettings *sensor{frame.model.hasSensor()
-                                   ? &frame.model.sensor->settings()
-                                   : nullptr};
+  const SensorSettings *sensor{
+      frame.model.hasSensor() ? &frame.model.sensor->settings() : nullptr};
   const double filmBytes{sensor
                              ? 8.0 * double(sensor->response.hasCFA()
                                                 ? 1
@@ -392,12 +389,11 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                        (1024.0 * 1024.0 * 1024.0)};
       gib > 1.0)
     SMDL_LOG_INFO("Accumulation buffers: ", gib, " GiB");
-  return ResolvedGrid{wavelengths, isBeyondVisible};
 }
 
 void setUpCompiler(const Options &opts, const Frame &frame,
-                   const ResolvedGrid &grid, smdl::Compiler &compiler) {
-  compiler.wavelengthBaseMax = uint32_t(grid.wavelengths.size());
+                   smdl::Compiler &compiler) {
+  compiler.wavelengthBaseMax = uint32_t(gRenderGrid.numBands);
   compiler.isDebugEnabled = opts.compile.isDebugEnabled;
   compiler.shouldEmitUnitTests = false;
   registerSceneData(compiler);
@@ -423,10 +419,10 @@ void setUpCompiler(const Options &opts, const Frame &frame,
 }
 
 StagedScene::StagedScene(const Options &opts, Frame &frame,
-                         const ResolvedGrid &grid, smdl::Compiler &compiler) {
+                         smdl::Compiler &compiler) {
   const Layout &layout{frame.layout};
-  const Color &wavelengths{grid.wavelengths};
-  const bool isGridBeyondVisible{grid.isBeyondVisible};
+  const Color wavelengths{gRenderGrid.wavelengths()};
+  const bool isGridBeyondVisible{gRenderGrid.isBeyondVisible};
   CameraOptions &cameraOptions{frame.model.cameraOptions};
   std::optional<Camera> &camera{frame.camera};
   const int2 resolution{frame.resolution};

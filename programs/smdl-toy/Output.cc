@@ -16,6 +16,7 @@
 #include "Render/Guiding.h"
 #include "Render/Light.h"
 #include "Render/Sampler.h"
+#include "RenderFilm.h"
 #include "Resume.h"
 #include "Sensor/Detector.h"
 #include "Sensor/Develop.h"
@@ -136,21 +137,18 @@ struct SensorReadout final {
 } // namespace
 
 std::vector<float> developPreview(const Options &opts, const Frame &frame,
-                                  const ResolvedGrid &grid,
                                   smdl::Compiler &compiler,
                                   const RenderHeader &header,
-                                  const smdl::SpectralFilm *film,
-                                  const smdl::SpectralFilm *bandFilm) {
-  SMDL_SANITY_CHECK((film != nullptr) != (bandFilm != nullptr));
-  if (!frame.model.hasSensor()) {
-    SMDL_SANITY_CHECK(film);
+                                  const RenderFilm &target) {
+  const Color wavelengths{gRenderGrid.wavelengths()};
+  if (const smdl::SpectralFilm *film{target.spectralFilm()}) {
     std::vector<float> rgbImage{
-        resolveRGB(compiler, *film, grid.wavelengths, opts.image.rgbPolicy)};
+        resolveRGB(compiler, *film, wavelengths, opts.image.rgbPolicy)};
     if (frame.model.hasPreviewedSensor())
-      exposePreview(frame, compiler, header, grid.wavelengths, rgbImage, false);
+      exposePreview(frame, compiler, header, wavelengths, rgbImage, false);
     return rgbImage;
   }
-  SMDL_SANITY_CHECK(bandFilm);
+  const smdl::SpectralFilm *bandFilm{target.bandFilm()};
   DetectorReadoutOptions noiseless{opts.image.readout};
   noiseless.noise = DetectorNoise::NONE;
   const SensorReadout sensorReadout{
@@ -166,29 +164,30 @@ bool hasFloatImageExtension(const std::string &fileName) {
 }
 
 std::optional<smdl::Error> writeRGBImage(const Options &opts,
-                                         const ResolvedGrid &grid,
-                                         const smdl::SpectralFilm *film,
+                                         const RenderFilm &target,
                                          const std::string &fileName,
                                          const std::vector<float> &rgb,
                                          size_t numPixelsX, size_t numPixelsY) {
   if (hasFloatImageExtension(fileName))
     return smdl::writeFloatImage(fileName, int(numPixelsX), int(numPixelsY), 3,
                                  rgb.data());
-  const std::vector<uint8_t> ldrImage{tonemap(
-      opts.image.tonemap, rgb, numPixelsX, numPixelsY, film, grid.wavelengths)};
+  const std::vector<uint8_t> ldrImage{
+      tonemap(opts.image.tonemap, rgb, numPixelsX, numPixelsY,
+              target.spectralFilm(), gRenderGrid.wavelengths())};
   return smdl::write8bitImage(fileName, int(numPixelsX), int(numPixelsY), 3,
                               ldrImage.data());
 }
 
 void writeOutputs(const Options &opts, const Frame &frame,
-                  const ResolvedGrid &grid, smdl::Compiler &compiler,
-                  const EnvLight *envLight, const smdl::SpectralFilm *film,
-                  const Response *response, const smdl::SpectralFilm *bandFilm,
-                  ResumedSequence &resumed, const std::string &outputBands,
-                  const STree *sdtree) {
-  SMDL_SANITY_CHECK((film != nullptr) != (bandFilm != nullptr));
-  SMDL_SANITY_CHECK(!bandFilm || response);
-  const Color &wavelengths{grid.wavelengths};
+                  smdl::Compiler &compiler, const EnvLight *envLight,
+                  const RenderFilm &target, ResumedSequence &resumed,
+                  const std::string &outputBands, const STree *sdtree) {
+  // The film seen both ways, exactly one of which is there; see
+  // `RenderFilm`.
+  const smdl::SpectralFilm *const film{target.spectralFilm()};
+  const smdl::SpectralFilm *const bandFilm{target.bandFilm()};
+  const Response *const response{target.response()};
+  const Color wavelengths{gRenderGrid.wavelengths()};
   const CameraModel &model{frame.model};
   const size_t numPixelsX{frame.numPixelsX};
   const size_t numPixelsY{frame.numPixelsY};
@@ -427,7 +426,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   }
   for (const auto &fileName : opts.image.outputRGB) {
     if (std::optional<smdl::Error> error{writeRGBImage(
-            opts, grid, film, fileName, rgbImage, numPixelsX, numPixelsY)}) {
+            opts, target, fileName, rgbImage, numPixelsX, numPixelsY)}) {
       error->print();
     }
   }

@@ -7,29 +7,26 @@
 #include <vector>
 
 #include "smdl/Compiler.h"
-#include "smdl/RenderUtil/SpectralFilm.h"
 
 struct Options;
 struct Frame;
 struct RenderHeader;
-struct ResolvedGrid;
 struct ResumedSequence;
 class EnvLight;
-class Response;
+class RenderFilm;
 class STree;
 
 /// The picture as linear sRGB, developed the way the camera develops it:
-/// the observer's develop of the spectral `film`, or a physical sensor's
-/// of its `bandFilm` read out noise-free, at the ISO of the shot, which
-/// `header` carries when the meter chose it. Exactly one of the two
-/// films is there. For a checkpoint, so nothing is logged and the
-/// preview differs from the final picture in its samples and its noise
-/// alone.
-[[nodiscard]] std::vector<float>
-developPreview(const Options &opts, const Frame &frame,
-               const ResolvedGrid &grid, smdl::Compiler &compiler,
-               const RenderHeader &header, const smdl::SpectralFilm *film,
-               const smdl::SpectralFilm *bandFilm);
+/// the observer's develop of `target`'s spectral film, or a physical
+/// sensor's of its band film read out noise-free, at the ISO of the shot,
+/// which `header` carries when the meter chose it. For a checkpoint, so
+/// nothing is logged and the preview differs from the final picture in
+/// its samples and its noise alone.
+[[nodiscard]] std::vector<float> developPreview(const Options &opts,
+                                                const Frame &frame,
+                                                smdl::Compiler &compiler,
+                                                const RenderHeader &header,
+                                                const RenderFilm &target);
 
 /// Does `fileName` name a floating point image? By its extension,
 /// case-insensitively: `.exr` or `.hdr`, the two formats
@@ -40,16 +37,14 @@ developPreview(const Options &opts, const Frame &frame,
 /// Write the picture `rgb`, `numPixelsX` by `numPixelsY` of linear sRGB,
 /// to `fileName`: as floats when `hasFloatImageExtension()`, which is
 /// the linear picture before the tone map and its exposure, else tone
-/// mapped to 8 bits. `film` is the spectral film the picture was
-/// developed from, which the night tone map reads, or null for a
-/// sensor's picture. The final write and every checkpoint come through
-/// here, so a checkpoint differs from the final picture in its samples
-/// alone.
+/// mapped to 8 bits. The night tone map reads `target`'s spectral film,
+/// and is refused before the render through a sensor, which has none. The
+/// final write and every checkpoint come through here, so a checkpoint
+/// differs from the final picture in its samples alone.
 [[nodiscard]] std::optional<smdl::Error>
-writeRGBImage(const Options &opts, const ResolvedGrid &grid,
-              const smdl::SpectralFilm *film, const std::string &fileName,
-              const std::vector<float> &rgb, size_t numPixelsX,
-              size_t numPixelsY);
+writeRGBImage(const Options &opts, const RenderFilm &target,
+              const std::string &fileName, const std::vector<float> &rgb,
+              size_t numPixelsX, size_t numPixelsY);
 
 /// Write everything the command line asked for: the film as an ENVI
 /// pair, the guide tree beside it, the readout, and the RGB pictures.
@@ -61,10 +56,10 @@ writeRGBImage(const Options &opts, const ResolvedGrid &grid,
 /// one RGB write per name, as floats or tone mapped by the name's
 /// extension.
 ///
-/// Exactly one of `film` and `bandFilm` is there: the observer's
-/// spectral film, or the band film a physical sensor's `response`
-/// accumulated into, and it must already hold every sample the session
-/// took, resumed ones included. `outputBands` is where it goes, empty
+/// `target` is the observer's spectral film, or the band film a physical
+/// sensor's response accumulated into (see `RenderFilm`), and it must
+/// already hold every sample the session took, resumed ones included.
+/// `outputBands` is where it goes, empty
 /// for none, which `-resume` implies back to the file it read: the
 /// spectral film with its wavelengths and grid, the band film with its
 /// bands named, its grid stated, and the response's fingerprint for a
@@ -81,8 +76,6 @@ writeRGBImage(const Options &opts, const ResolvedGrid &grid,
 /// shone when there was a procedural one. That is written for a reader
 /// and never read back, which is why it is not part of `resumed.header`.
 void writeOutputs(const Options &opts, const Frame &frame,
-                  const ResolvedGrid &grid, smdl::Compiler &compiler,
-                  const EnvLight *envLight, const smdl::SpectralFilm *film,
-                  const Response *response, const smdl::SpectralFilm *bandFilm,
-                  ResumedSequence &resumed, const std::string &outputBands,
-                  const STree *sdtree);
+                  smdl::Compiler &compiler, const EnvLight *envLight,
+                  const RenderFilm &target, ResumedSequence &resumed,
+                  const std::string &outputBands, const STree *sdtree);
