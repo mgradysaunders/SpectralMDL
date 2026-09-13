@@ -359,9 +359,9 @@ cl::opt<unsigned> optMNEEMaxTrials{
 cl::opt<float> optMNEEReceiverAlpha{
     "mnee-receiver-alpha",
     cl::desc("With -mnee, squared roughness a glossy lobe needs to "
-             "receive connections (default: 0.005, 0 takes every finite "
+             "receive connections (default: 0.06, 0 takes every finite "
              "lobe)"),
-    cl::init(0.005f), cl::cat(catRendering)};
+    cl::init(0.06f), cl::cat(catRendering)};
 cl::opt<unsigned> optMNEEBiased{
     "mnee-biased",
     cl::desc("With -mnee, enable biased mode with this many walks per estimate "
