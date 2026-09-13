@@ -31,6 +31,7 @@ smdl_add_doctest(
     "Resource/VoxelGrid.cc"
     "SceneData.cc"
     "Support/BumpPtrAllocator.cc"
+    "Support/Compress.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
     "Support/FlatYAML.cc"

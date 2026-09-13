@@ -3,7 +3,7 @@
 #include "BuiltinAccess.h"
 #include "llvm/Support/xxhash.h"
 
-#include "../thirdparty/miniz.h"
+#include "smdl/Support/Compress.h"
 
 // The optional dependencies define these on the library target only when
 // they are actually linked, so give them a value either way and hand it
@@ -19,15 +19,18 @@ namespace smdl {
 
 namespace {
 [[nodiscard]] std::string
-decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
+decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) try {
   std::string result(sourceCode.uncompressedSize, '\0');
-  size_t resultSize{mz_ulong(sourceCode.uncompressedSize)};
-  if (mz_uncompress(reinterpret_cast<unsigned char *>(result.data()),
-                    &resultSize, sourceCode.compressed,
-                    mz_ulong(sourceCode.compressedSize)) != MZ_OK ||
-      resultSize != sourceCode.uncompressedSize)
-    throw Error("Cannot decompress builtin module source code");
+  decompressBytesInto(
+      Span<std::byte>(reinterpret_cast<std::byte *>(result.data()),
+                      result.size()),
+      Span<const std::byte>(
+          reinterpret_cast<const std::byte *>(sourceCode.compressed),
+          sourceCode.compressedSize));
   return result;
+} catch (const Error &error) {
+  throw Error(concat("Cannot decompress builtin module source code: ",
+                     error.message));
 }
 } // namespace
 

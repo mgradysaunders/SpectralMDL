@@ -50,6 +50,7 @@ add_library(
     "Resource/VoxelGrid.cc"
     "SceneData.cc"
     "Support/BumpPtrAllocator.cc"
+    "Support/Compress.cc"
     "Support/Error.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
