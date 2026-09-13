@@ -54,6 +54,7 @@ target_sources(
     "Scene/Subdivide.cc"
     "Sensor/Detector.cc"
     "Sensor/Develop.cc"
+    "Sensor/Meter.cc"
     "Sensor/Response.cc"
     "Sensor/Sensor.cc"
     "Render/Autolook.cc"

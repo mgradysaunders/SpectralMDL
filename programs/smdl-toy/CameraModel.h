@@ -68,9 +68,9 @@ struct CameraModel final {
   float temperature{25.0f};
 
   /// The ISO the sensor is read out at, or nothing for auto: metered from
-  /// the rendered film, see `Sensor::meter()`, or the stated gain's own
-  /// speed when the sensor's detector fixes it. Meaningful to a physical
-  /// sensor alone.
+  /// the scene before the first sample and held for the sequence, see
+  /// `Sensor/Meter.h`, or the stated gain's own speed when the sensor's
+  /// detector fixes it. Meaningful to a physical sensor alone.
   std::optional<float> iso{};
 
   /// For the log and report: The associated camera file name, if applicable.

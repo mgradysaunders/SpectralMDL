@@ -190,101 +190,57 @@ double Sensor::topCodeElectrons(double iso) const noexcept {
   return mFullWell * mBaseISO / iso;
 }
 
-std::vector<std::vector<double>> Sensor::luminanceWeights() {
-  const RenderGrid &grids{gRenderGrid};
-  const size_t numGrids{grids.grids.size()};
-  // The share of the tile each grid's pixels are, one without a tile,
-  // and the span of each grid, so that a wavelength's coverage is the
-  // sum of the shares of the grids spanning it.
-  std::vector<double> share(numGrids, 1.0);
-  if (grids.hasTile()) {
-    std::fill(share.begin(), share.end(), 0.0);
-    for (const auto index : grids.tileGrids)
-      share[index] += 1.0 / double(grids.tileGrids.size());
-  }
-  std::vector<double> breaks{};
-  for (const auto &grid : grids.grids) {
-    breaks.push_back(double(grid.minWavelength()));
-    breaks.push_back(double(grid.maxWavelength()));
-  }
-  std::sort(breaks.begin(), breaks.end());
-  const auto coverageAt{[&](double lambda) {
-    double total{};
-    for (size_t k = 0; k < numGrids; k++)
-      if (double(grids.grids[k].minWavelength()) <= lambda &&
-          lambda <= double(grids.grids[k].maxWavelength()))
-        total += share[k];
-    return total;
-  }};
-  std::vector<std::vector<double>> weights(numGrids);
-  for (size_t k = 0; k < numGrids; k++) {
-    const WavelengthGrid &grid{grids.grids[k]};
-    const size_t numBands{grid.size()};
-    weights[k].resize(numBands);
-    for (size_t i = 0; i < numBands; i++) {
-      if (!grids.isJittering) {
-        const double lambda{double(grid.wavelengths[i])};
-        const double coverage{coverageAt(lambda)};
-        weights[k][i] = coverage > 0
-                            ? smdl::wymanY(lambda) * grid.widths[i] / coverage
-                            : 0.0;
-        continue;
-      }
-      // The cell, split where the coverage changes, which is at another
-      // grid's end.
-      const double lo{grid.bandEdges[i]};
-      const double hi{grid.bandEdges[i + 1]};
-      std::vector<double> pieces{lo};
-      for (const auto edge : breaks)
-        if (edge > lo && edge < hi) pieces.push_back(edge);
-      pieces.push_back(hi);
-      double weight{};
-      for (size_t p = 0; p + 1 < pieces.size(); p++) {
-        const double a{pieces[p]};
-        const double b{pieces[p + 1]};
-        const double coverage{coverageAt(0.5 * (a + b))};
-        if (coverage > 0)
-          weight += meanLuminousEfficiency(a, b) * (b - a) / coverage;
-      }
-      weights[k][i] = weight;
+std::vector<double> Sensor::luminanceWeights(const WavelengthGrid &grid,
+                                             bool isJittering) {
+  const size_t numBands{grid.size()};
+  std::vector<double> weights(numBands);
+  for (size_t i = 0; i < numBands; i++) {
+    if (!isJittering) {
+      weights[i] = smdl::wymanY(double(grid.wavelengths[i])) * grid.widths[i];
+      continue;
     }
+    const double lo{grid.bandEdges[i]};
+    const double hi{grid.bandEdges[i + 1]};
+    weights[i] = meanLuminousEfficiency(lo, hi) * (hi - lo);
   }
   return weights;
 }
 
-MeteredExposure Sensor::meter(const smdl::SpectralFilm &film, int4 window,
-                              double seconds) const {
-  const std::vector<std::vector<double>> weights{luminanceWeights()};
-  const size_t numBands{film.getNumBands()};
-  SMDL_SANITY_CHECK(numBands == gRenderGrid.numBands);
-  const size_t numRows{size_t(std::max(window[3] - window[1], 0))};
-  const double total{parallelRowFold(
-      size_t(window[1]), size_t(window[1]) + numRows, 0.0,
-      [&](size_t y) {
-        double sum{};
-        for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
-          const std::vector<double> &pixelWeights{
-              weights[gRenderGrid.gridIndexAt(x, y)]};
-          for (size_t i = 0; i < numBands; i++)
-            sum += filmMean(film, x, y, i) * pixelWeights[i];
-        }
-        return sum;
-      },
-      [](double &running, double sum) { running += sum; })};
-  const size_t numPixels{numRows * size_t(std::max(window[2] - window[0], 0))};
+double Sensor::luxSecondsOf(double meanElectronRate,
+                            double seconds) const noexcept {
+  const double electrons{seconds * pixelArea() * meanElectronRate};
+  return mPeakElectronsPerLuxSecond > 0 && electrons > 0
+             ? electrons / mPeakElectronsPerLuxSecond
+             : 0.0;
+}
+
+MeteredExposure Sensor::meter(double luxSeconds) const noexcept {
   MeteredExposure metered{};
-  metered.luxSeconds =
-      numPixels > 0 ? seconds * LUMENS_PER_WATT * total / double(numPixels)
-                    : 0.0;
+  metered.luxSeconds = luxSeconds > 0 ? luxSeconds : 0.0;
   metered.wantedISO = metered.luxSeconds > 0
                           ? METER_Q * METER_K / metered.luxSeconds
                           : double(INF);
-  metered.iso = std::clamp(metered.wantedISO, mBaseISO, mMaxISO);
+  metered.iso = nearestISO(metered.wantedISO);
   metered.stopsOff =
       metered.wantedISO < mBaseISO  ? std::log2(mBaseISO / metered.wantedISO)
       : metered.wantedISO > mMaxISO ? -std::log2(metered.wantedISO / mMaxISO)
                                     : 0.0;
   return metered;
+}
+
+double Sensor::nearestISO(double wanted) const noexcept {
+  if (!(wanted > mBaseISO)) return mBaseISO;
+  if (!(wanted < mMaxISO)) return mMaxISO;
+  // The rungs below and above, in stops: the nearer wins, and the base
+  // and the top stand in where the series has no entry between.
+  double below{mBaseISO};
+  double above{mMaxISO};
+  for (const auto rung : NOMINAL_ISO_SERIES) {
+    if (rung <= mBaseISO || rung >= mMaxISO) continue;
+    if (rung <= wanted) below = rung;
+    if (rung >= wanted && above == mMaxISO) above = rung;
+  }
+  return std::log2(wanted / below) <= std::log2(above / wanted) ? below : above;
 }
 
 ColorFit Sensor::fitColor(const std::array<size_t, 3> &bands,

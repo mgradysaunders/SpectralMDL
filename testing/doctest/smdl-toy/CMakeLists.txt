@@ -31,6 +31,7 @@ smdl_add_doctest(
     "Scene/Scene.cc"
     "Sensor/Detector.cc"
     "Sensor/Develop.cc"
+    "Sensor/Meter.cc"
     "Sensor/Response.cc"
     "Sensor/Sensor.cc"
   LINK

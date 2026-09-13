@@ -696,15 +696,16 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
 
 std::vector<uint8_t> tonemap(const TonemapOptions &options,
                              const std::vector<float> &rgbImage,
-                             const smdl::SpectralFilm &film,
+                             size_t numPixelsX, size_t numPixelsY,
+                             const smdl::SpectralFilm *film,
                              const Color &wavelengths) {
-  const size_t numPixelsX{film.getNumPixelsX()};
-  const size_t numPixelsY{film.getNumPixelsY()};
+  SMDL_SANITY_CHECK(!options.isNight || film);
+  SMDL_SANITY_CHECK(rgbImage.size() == 3 * numPixelsX * numPixelsY);
   DisplayCurve curve{};
   curve.kind = options.curve;
   curve.logDecades = options.logDecades;
   Appearance appearance{options.isNight
-                            ? applyNightFilter(rgbImage, film, wavelengths)
+                            ? applyNightFilter(rgbImage, *film, wavelengths)
                             : Appearance{rgbImage, 1.0f}};
   std::vector<float> gain{};
   float autoExposure{1.0f};

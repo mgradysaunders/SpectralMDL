@@ -29,11 +29,13 @@ struct ResumedSequence final {
   /// how a sequence is started rather than an error.
   bool wasLoaded{};
 
-  /// What the prior sessions accumulated, empty unless `loaded`. It is
-  /// merged into the render's own film before the first sample, so that
-  /// every preview written along the way already stands on every sample
-  /// taken; `clear()` it once that is done, since it is as large as the
-  /// film being rendered into.
+  /// What the prior sessions accumulated, empty unless `loaded`: the
+  /// observer's spectral film, or through a sensor its band film, which
+  /// is the kind this session's camera makes. It is merged into the
+  /// render's own film before the first sample, so that every preview
+  /// written along the way already stands on every sample taken;
+  /// `clear()` it once that is done, since it is as large as the film
+  /// being rendered into.
   smdl::SpectralFilm film{};
 
   /// The header the file carried, including the wavelength grid a
@@ -41,25 +43,22 @@ struct ResumedSequence final {
   smdl::SpectralFilm::ENVIFileInfo info{};
 
   /// The grids the file states beyond its wavelength list: the one
-  /// grid's edges, or under a tile one grid per tile band; nothing for a
-  /// file written before they were recorded, whose cells are the ones
-  /// its wavelengths imply.
+  /// grid's edges, and its wavelengths when the file is a band film,
+  /// or under a tile one grid per tile band; nothing for a file written
+  /// before they were recorded, whose cells are the ones its wavelengths
+  /// imply.
   GridHeader grids{};
 
-  /// The sequence's tally and fingerprint, seeded from the file and
-  /// added to by this session before being written back.
+  /// The sequence's tally, its fingerprint, and the meter's record,
+  /// seeded from the file and added to by this session before being
+  /// written back.
   RenderHeader header{};
 
-  /// The band film beside the accumulation, what its header carried, and
-  /// the response it recorded; empty unless a response is present and the
-  /// accumulation loaded, in which case all of them are, since a band
-  /// film that cannot be continued is an error rather than a gap.
-  ///
-  /// \{
-  smdl::SpectralFilm bandFilm{};
-  smdl::SpectralFilm::ENVIFileInfo bandInfo{};
+  /// The response a band film recorded; empty unless a response is
+  /// present and the film loaded, in which case it matched this one,
+  /// since a band film drawn under other curves is an error rather than
+  /// a gap.
   ResponseHeader responseHeader{};
-  /// \}
 
   /// The sample index this session starts drawing at.
   size_t sampleIndexBase{};
@@ -79,11 +78,9 @@ struct ResumedSequence final {
 /// window the file must match, the film quantity it must hold, and the
 /// jitter it is compared against.
 ///
-/// `response` is this render's sensor response, or null for none.
-/// With one, the band film beside the accumulation is loaded too, and
-/// everything about it is a hard error: that it exists, that it holds the
-/// accumulation's sample count, that its bands are this response's, and
-/// that the curves are the same by hash. The curves decide what the
+/// `response` is this render's sensor response, or null for none. With
+/// one, the file must be a band film of the same bands drawn under the
+/// same curves by hash, both hard errors: the curves decide what the
 /// file's numbers are, and a re-run of the output stage would relabel a
 /// mixture as one sensor with nothing to say so.
 ///

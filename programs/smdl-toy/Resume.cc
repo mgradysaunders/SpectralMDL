@@ -36,7 +36,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
   static constexpr auto SESSION_ONLY_VALUES = std::array{"resume",
                                                          "spp",
                                                          "output-rgb",
-                                                         "output-spectrum",
+                                                         "output-bands",
                                                          "exposure",
                                                          "tonemap",
                                                          "median-filter-factor",
@@ -58,16 +58,15 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "detector-noise",
                                                          "iso",
                                                          "white-balance"};
-  static constexpr auto SESSION_ONLY_FLAGS =
-      std::array{"guide",
-                 "guide-adrrs",
-                 "mnee",
-                 "mnee-sun-only",
-                 "mnee-test-normalhook",
-                 "median-filter",
-                 "output-spectrum-double",
-                 "report",
-                 "json"};
+  static constexpr auto SESSION_ONLY_FLAGS = std::array{"guide",
+                                                        "guide-adrrs",
+                                                        "mnee",
+                                                        "mnee-sun-only",
+                                                        "mnee-test-normalhook",
+                                                        "median-filter",
+                                                        "output-bands-double",
+                                                        "report",
+                                                        "json"};
   std::vector<std::string> tokens{};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -118,54 +117,6 @@ namespace {
   for (size_t i = 0; i < names.size(); i++)
     text += (i > 0 ? ", " : "") + names[i];
   return text + "}";
-}
-
-// The band film beside the accumulation, with what its header carried.
-struct BandFilm final {
-  smdl::SpectralFilm film{};
-  smdl::SpectralFilm::ENVIFileInfo info{};
-};
-
-// Load the band film at `name` and hold it to the accumulation: present
-// as a pair, the same resolution and window, the same sample count, and
-// the bands `names`. Everything is a hard error; see `resumeSequence()`.
-[[nodiscard]] BandFilm loadBandFilm(const std::string &name, int2 resolution,
-                                    int4 window, uint64_t samplesPerPixel,
-                                    const std::vector<std::string> &names) {
-  const bool hasData{smdl::exists(name)};
-  const bool hasHeader{smdl::exists(name + ".hdr")};
-  if (!hasData || !hasHeader)
-    throw smdl::Error(smdl::concat(
-        "Cannot resume: the band film ", smdl::Quoted(name),
-        " beside the accumulation ",
-        hasData || hasHeader ? "is half a pair" : "does not exist",
-        "; the sequence was rendered without a response, or its last "
-        "session was interrupted between the files"));
-  BandFilm result{};
-  result.info = result.film.readENVIFile(name);
-  if (result.film.getNumPixelsX() != size_t(resolution.x) ||
-      result.film.getNumPixelsY() != size_t(resolution.y))
-    throw smdl::Error(smdl::concat(
-        "Cannot resume: the band film is ", result.film.getNumPixelsX(), "x",
-        result.film.getNumPixelsY(), " against -resolution ", resolution.x, ",",
-        resolution.y));
-  if (result.info.samplesPerPixel != samplesPerPixel)
-    throw smdl::Error(smdl::concat(
-        "Cannot resume: the band film holds ", result.info.samplesPerPixel,
-        " samples per pixel against the accumulation's ", samplesPerPixel,
-        "; the last session was interrupted between the files, or rendered "
-        "without the response"));
-  if (!smdl::isAllTrue(result.info.cropWindow == window))
-    throw smdl::Error(smdl::concat(
-        "Cannot resume: the band film was rendered with -crop-window ",
-        spellVector(result.info.cropWindow), " against this session's ",
-        spellVector(window)));
-  if (result.info.bandNames != names)
-    throw smdl::Error(smdl::concat("Cannot resume: the band film's bands are ",
-                                   spellNames(result.info.bandNames),
-                                   " against this response's ",
-                                   spellNames(names)));
-  return result;
 }
 
 } // namespace
@@ -223,7 +174,7 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
                      resolution.x, ",", resolution.y));
   if (info.samplesPerPixel == 0)
     throw smdl::Error("Cannot resume: the header has no 'render spp' count "
-                      "(the file was not written by -output-spectrum)");
+                      "(the file was not written by -output-bands)");
   // The window is what the recorded count applies to, so a session
   // that moved it would accumulate over a different set of pixels and
   // the film would stop having a single samples per pixel. Both
@@ -255,7 +206,23 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
         filmQuantityName(frame.model.filmQuantity()),
         " (a physical sensor's film and the observer's are different "
         "quantities); render with the same sensor, or start a fresh "
-        "-output-spectrum"));
+        "-output-bands"));
+  // Through a sensor the file is its band film, whose bands and curves
+  // decide what its numbers are: both are held to this response's.
+  if (response) {
+    const std::vector<std::string> names{responseFilmBandNames(*response)};
+    if (info.bandNames != names)
+      throw smdl::Error(
+          smdl::concat("Cannot resume: the band film's bands are ",
+                       spellNames(info.bandNames), " against this response's ",
+                       spellNames(names)));
+    result.responseHeader.readFrom(info.fields);
+    if (result.responseHeader.hash != responseHash(*response))
+      throw smdl::Error(
+          "Cannot resume: the response's curves differ from the ones the band "
+          "film was rendered with; start a fresh -output-bands, or render "
+          "through the sensor the file was rendered through");
+  }
   if (header.sampler != SAMPLER_VERSION)
     SMDL_LOG_WARN("Resuming a file from a different sampler: the continuation "
                   "samples are independent of the first session's rather than "
@@ -276,29 +243,10 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   result.sampleIndexBase = header.sampleOffset + info.samplesPerPixel;
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
                 smdl::Quoted(opts.image.resume), " (sample offset ",
-                header.sampleOffset, ")");
-  // The band film beside the accumulation. Without a response it is left
-  // where it is, and said so, since it falls behind from here on.
-  const std::string bandName{bandFilmFileName(opts.image.resume)};
-  if (!response) {
-    if (smdl::exists(bandName) || smdl::exists(bandName + ".hdr"))
-      SMDL_LOG_WARN("The band film ", smdl::Quoted(bandName),
-                    " beside the accumulation is not continued: this "
-                    "session has no response, so it falls behind");
-    return result;
-  }
-  const std::vector<std::string> names{responseFilmBandNames(*response)};
-  BandFilm bands{
-      loadBandFilm(bandName, resolution, window, info.samplesPerPixel, names)};
-  result.responseHeader.readFrom(bands.info.fields);
-  if (result.responseHeader.hash != responseHash(*response))
-    throw smdl::Error(
-        "Cannot resume: the response's curves differ from the ones the band "
-        "film was rendered with; start a fresh -output-spectrum, or render "
-        "without the response");
-  result.bandFilm = std::move(bands.film);
-  result.bandInfo = std::move(bands.info);
-  SMDL_LOG_INFO("Resuming the band film: ", smdl::Quoted(bandName), ", ",
-                smdl::Counted(names.size(), "band"));
+                header.sampleOffset, ")",
+                response
+                    ? smdl::concat(", the band film of ",
+                                   smdl::Counted(info.bandNames.size(), "band"))
+                    : std::string());
   return result;
 }

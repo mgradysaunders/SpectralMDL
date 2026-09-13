@@ -19,8 +19,10 @@
 // on its lattice, that a neutral and a clipped white develop neutral,
 // that a sensor whose curves are the observer's develops the training
 // reflectances to the observer's own colors, that a neutral the meter
-// aimed at lands at middle gray whichever band the ISO was rated in,
-// that a sensor that cannot carry color still develops, and that the
+// aimed at lands at middle gray under the rating illuminant whichever
+// band the ISO was rated in and where the band's own reading puts it
+// under any other, that a sensor that cannot carry color still develops,
+// and that the
 // picture is a function of the readout alone. The observer's develop
 // needs the JIT and is not here.
 
@@ -397,11 +399,13 @@ TEST_CASE("Develop: a sensor whose curves are the observer's develops the "
   CHECK(worst < 0.5);
 }
 
-TEST_CASE("Develop: a metered neutral develops to middle gray") {
-  // A D65 field on a 5 nm grid, metered at 10 ms, and read out
-  // noise-free at the ISO the meter asks for. The sensor's blue is its most
-  // sensitive band, so the ISO is rated in blue and the develop has to
-  // carry that over to green.
+TEST_CASE("Develop: a metered neutral develops to the gray the meter asked "
+          "for") {
+  // A neutral field on a 5 nm grid, metered through the peak band at 10
+  // ms, and read out noise-free at the ISO the meter asks for. The
+  // sensor's blue is its most sensitive band, so the ISO is rated in
+  // blue, the meter reads through blue, and the develop has to carry
+  // that over to green.
   std::vector<float> grid{};
   for (float w = 380; w <= 780; w += 5) grid.push_back(w);
   ScopedGrid scoped{grid, false};
@@ -411,37 +415,61 @@ TEST_CASE("Develop: a metered neutral develops to middle gray") {
   constexpr size_t NUM_X{8};
   constexpr size_t NUM_Y{6};
   const int4 whole{0, 0, int(NUM_X), int(NUM_Y)};
-  const std::vector<double> d65{daylightSpectrum(D65_KELVIN)};
+  const SensorSpectrum d55{daylightSpectrum(D55_KELVIN)};
+  const SensorSpectrum d65{daylightSpectrum(D65_KELVIN)};
   const double seconds{0.01};
-  // 2.03 lux, which wants ISO 400 at 10 ms.
-  const double scale{0.0203 / (seconds * Sensor::illuminance(d65))};
-  smdl::SpectralFilm film{grid.size(), NUM_X, NUM_Y};
+  // The field at 2.03 lux, which is 0.0203 lux-seconds at 10 ms and
+  // wants ISO 400 of the observer: the band film it makes, and the peak
+  // band's own rate under it.
   smdl::SpectralFilm bandFilm{1, NUM_X, NUM_Y};
-  std::vector<double> sums(grid.size());
-  for (size_t i = 0; i < grid.size(); i++)
-    sums[i] = scale * d65[size_t(grid[i]) - 300];
-  for (size_t y = 0; y < NUM_Y; y++) {
-    for (size_t x = 0; x < NUM_X; x++) {
-      film.addTotals(x, y, sums.data());
-      const double rate{scale *
-                        sensor.electronRate(bandAt(response, x, y), d65)};
-      bandFilm.addTotals(x, y, &rate);
+  double peakRate{};
+  const auto expose{[&](const SensorSpectrum &field) {
+    const double scale{0.0203 / (seconds * Sensor::illuminance(field))};
+    bandFilm = smdl::SpectralFilm{1, NUM_X, NUM_Y};
+    for (size_t y = 0; y < NUM_Y; y++) {
+      for (size_t x = 0; x < NUM_X; x++) {
+        const double rate{scale *
+                          sensor.electronRate(bandAt(response, x, y), field)};
+        bandFilm.addTotals(x, y, &rate);
+      }
     }
-  }
-  film.addSamples(1);
-  bandFilm.addSamples(1);
-  const MeteredExposure metered{sensor.meter(film, whole, seconds)};
-  CHECK(metered.iso == doctest::Approx(400.0).epsilon(0.01));
+    bandFilm.addSamples(1);
+    peakRate = scale * sensor.electronRate(sensor.peakBand(), field);
+  }};
+  WhiteBalance whiteBalance{};
   DetectorShot shot{};
   shot.exposure = seconds;
   shot.fNumber = 8;
-  shot.iso = metered.iso;
-  // What `developedLuminance()` says the neutral develops to, at the
-  // exposure of 2.03 lux for 10 ms: middle gray at the metered ISO.
-  double expected{developedLuminance(metered.iso, 0.0203)};
-  CHECK(expected == doctest::Approx(DEVELOP_MIDDLE_GRAY).epsilon(0.01));
-  SUBCASE("At the ISO the meter asks for") {}
+  double expected{};
+  SUBCASE("Under the rating illuminant, at the ISO the meter asks for, it "
+          "lands on middle gray") {
+    expose(d55);
+    whiteBalance.kind = WhiteBalanceKind::DAYLIGHT;
+    const MeteredExposure metered{
+        sensor.meter(sensor.luxSecondsOf(peakRate, seconds))};
+    CHECK(metered.luxSeconds == doctest::Approx(0.0203).epsilon(1e-6));
+    CHECK(metered.iso == 400.0);
+    shot.iso = metered.iso;
+    expected = developedLuminance(metered.iso, 0.0203);
+    CHECK(expected == doctest::Approx(DEVELOP_MIDDLE_GRAY).epsilon(0.01));
+  }
+  SUBCASE("Under D65 the blue-rated meter reads more than the observer, asks "
+          "for less, and the neutral lands where that rung puts it") {
+    expose(d65);
+    const double ratio{
+        (sensor.electronRate(2, d65) / Sensor::illuminance(d65)) /
+        (sensor.electronRate(2, d55) / Sensor::illuminance(d55))};
+    CHECK(ratio > 1.1);
+    const MeteredExposure metered{
+        sensor.meter(sensor.luxSecondsOf(peakRate, seconds))};
+    CHECK(metered.luxSeconds == doctest::Approx(0.0203 * ratio).epsilon(1e-6));
+    CHECK(metered.iso == 320.0);
+    shot.iso = metered.iso;
+    expected = developedLuminance(metered.iso, 0.0203);
+    CHECK(expected < DEVELOP_MIDDLE_GRAY);
+  }
   SUBCASE("At a stated ISO, where developedLuminance() puts it") {
+    expose(d65);
     shot.iso = 800;
     expected = developedLuminance(800, 0.0203);
     CHECK(expected == doctest::Approx(2 * DEVELOP_MIDDLE_GRAY).epsilon(0.01));
@@ -450,7 +478,7 @@ TEST_CASE("Develop: a metered neutral develops to middle gray") {
   const Readout readout{detector.readOut(
       bandFilm, DetectorReadoutOptions{0, DetectorNoise::NONE}, whole)};
   const std::vector<float> rgbImage{
-      developReadout(sensor, detector, readout, WhiteBalance{}, whole, false)};
+      developReadout(sensor, detector, readout, whiteBalance, whole, false)};
   for (const auto value : rgbImage)
     CHECK(double(value) == doctest::Approx(expected).epsilon(0.01));
 }

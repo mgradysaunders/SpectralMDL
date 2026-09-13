@@ -180,6 +180,13 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   }};
   const std::vector<GridHeader::Grid> &records{resumed.grids.grids};
   const bool isFilePerBand{!records.empty() && !records.front().name.empty()};
+  // The one grid's wavelengths as the file states them: the format's
+  // list, which the observer's film carries, or the record's, which a
+  // band film states in its place, its own bands being the sensor's.
+  const std::vector<float> &fileWavelengths{resumed.info.wavelengths.empty() &&
+                                                    !records.empty()
+                                                ? records.front().wavelengths
+                                                : resumed.info.wavelengths};
   bool wasLogged{false};
   if (!gridOptions.explicitWavelengths.empty()) {
     family.push_back(WavelengthCells::fromWavelengths(
@@ -208,19 +215,21 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
       }
       placeTile();
     } else {
-      if (resumed.info.wavelengths.empty())
+      if (fileWavelengths.empty())
         throw smdl::Error(
-            "Cannot resume: the file carries no wavelengths to adopt, give "
-            "the grid explicitly with -wavelength-range or -wavelengths");
+            "Cannot resume: the file carries no wavelengths to adopt; give "
+            "the grid explicitly with -wavelength-range or -wavelengths, or "
+            "for a band film written before its grid was recorded, start a "
+            "fresh -output-bands");
       // The file's own cells when it states them, else the ones its list
       // implies, which is what a file written before the cells were
       // recorded meant.
       if (records.empty() || records.front().bandEdges.empty())
         family.push_back(
-            WavelengthCells::fromWavelengths(asSpan(resumed.info.wavelengths)));
+            WavelengthCells::fromWavelengths(asSpan(fileWavelengths)));
       else
-        family.push_back(WavelengthCells{records.front().bandEdges,
-                                         resumed.info.wavelengths});
+        family.push_back(
+            WavelengthCells{records.front().bandEdges, fileWavelengths});
     }
     for (const auto &cells : family)
       if (!cells.isValid())
@@ -280,7 +289,9 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
                   "band width to jitter within, so it does nothing here");
   const Color wavelengths{gRenderGrid.first().wavelengths};
   if (resumed.wasLoaded) {
-    if (resumed.film.getNumBands() != gRenderGrid.numBands)
+    // The observer's film holds the grid's bands; a band film holds the
+    // sensor's, which the resume already held to the response's.
+    if (!response && resumed.film.getNumBands() != gRenderGrid.numBands)
       throw smdl::Error(smdl::concat(
           "Cannot resume: the file has ", resumed.film.getNumBands(),
           " bands against the renderer's ", gRenderGrid.numBands));
@@ -327,7 +338,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         check(gRenderGrid.grids[k], itr->wavelengths, itr->bandEdges);
       }
     } else {
-      check(gRenderGrid.first(), resumed.info.wavelengths,
+      check(gRenderGrid.first(), fileWavelengths,
             records.empty() ? std::vector<double>{}
                             : records.front().bandEdges);
     }
@@ -362,18 +373,19 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
         "ranges, and the RGB outputs project through CIE color matching, so "
         "they darken wherever the grid misses the visible; the ENVI output "
         "is the radiometric record");
-  // The accumulation buffers scale as bands times pixels; say so before
-  // allocating gigabytes.
+  // The accumulation buffers scale as bands times pixels, the film's
+  // bands being the grid's for the observer and the sensor's through a
+  // sensor; say so before allocating gigabytes.
   const SensorSettings *sensor{frame.model.hasPhysicalSensor()
                                    ? &frame.model.sensor->settings()
                                    : nullptr};
-  const double bandFilmBytes{
-      sensor ? 8.0 * double(sensor->response.hasCFA()
-                                ? 1
-                                : sensor->response.bands.size())
-             : 0.0};
+  const double filmBytes{sensor
+                             ? 8.0 * double(sensor->response.hasCFA()
+                                                ? 1
+                                                : sensor->response.bands.size())
+                             : 8.0 * double(wavelengths.size())};
   if (const double gib{double(frame.numPixelsX * frame.numPixelsY) *
-                       (8.0 + 8.0 * double(wavelengths.size()) + bandFilmBytes +
+                       (8.0 + filmBytes +
                         (opts.render.guide.isEnabled
                              ? 16.0 * double(wavelengths.size()) + 24.0
                              : 0.0)) /

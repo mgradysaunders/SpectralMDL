@@ -35,6 +35,8 @@ asFields(const std::vector<std::string> &lines) {
   header.hasWavelengthJitter = true;
   header.args = "scene.layout -spp 64 -resume out.envi";
   header.quantity = "irradiance";
+  header.meteredLuxSeconds = 0.0203;
+  header.meteredISO = 400;
   return header;
 }
 
@@ -55,12 +57,14 @@ TEST_CASE("RenderHeader: round trip") {
     CHECK(read.hasWavelengthJitter == written.hasWavelengthJitter);
     CHECK(read.args == written.args);
     CHECK(read.quantity == written.quantity);
+    CHECK(read.meteredLuxSeconds == doctest::Approx(written.meteredLuxSeconds));
+    CHECK(read.meteredISO == written.meteredISO);
   }
   SUBCASE("Every field is written, under the 'render' prefix") {
     // The count is the guard against a field being added to the struct
     // and left out of the table, which is the drift this type exists to
     // prevent; bump it when a field is genuinely added.
-    CHECK(fields.size() == 8);
+    CHECK(fields.size() == 10);
     for (const auto &field : fields) {
       CAPTURE(field.first);
       CHECK(field.first.rfind("render ", 0) == 0);
@@ -104,6 +108,9 @@ TEST_CASE("RenderHeader: round trip") {
     // A file written before the film could hold anything but radiance
     // says nothing, which a resume reads as radiance.
     CHECK(read.quantity.empty());
+    // And one nothing metered records no reading and no rung.
+    CHECK(read.meteredLuxSeconds == 0.0);
+    CHECK(read.meteredISO == 0.0);
   }
 }
 
@@ -220,6 +227,23 @@ TEST_CASE("GridHeader: round trip") {
           doctest::Approx(391.123456789).epsilon(1e-8));
     CHECK(read.grids[0].bandEdges[2] == 402.5);
     CHECK(read.grids[0].bandEdges[3] == 720.0);
+  }
+  SUBCASE("The one grid states its wavelengths beside its edges when the "
+          "film's bands are not its own") {
+    GridHeader header{};
+    GridHeader::Grid &grid{header.grids.emplace_back()};
+    grid.wavelengths = {400, 450, 500};
+    grid.bandEdges = {380, 425, 475, 520};
+    const std::vector<std::string> lines{header.headerLines()};
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0] == "render band edges = {380, 425, 475, 520}");
+    CHECK(lines[1] == "render grid wavelengths = {400, 450, 500}");
+    GridHeader read{};
+    read.readFrom(asFields(lines));
+    REQUIRE(read.grids.size() == 1);
+    CHECK(read.grids[0].name.empty());
+    CHECK(read.grids[0].wavelengths == std::vector<float>{400, 450, 500});
+    CHECK(read.grids[0].bandEdges == std::vector<double>{380, 425, 475, 520});
   }
   SUBCASE("Under a tile the grids are named and each states both lists") {
     GridHeader header{};

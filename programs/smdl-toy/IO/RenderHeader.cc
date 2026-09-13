@@ -100,12 +100,16 @@ void parse(const std::string &text, std::vector<float> &values) {
   values.assign(parsed.begin(), parsed.end());
 }
 
-// The grid fields, each name spelled here alone: the one grid's edges,
-// the names of a tile's grids, and each grid's two lists by its index in
+// The grid fields, each name spelled here alone: the one grid's edges
+// and, when the format's list does not carry them, its wavelengths; the
+// names of a tile's grids, and each grid's two lists by its index in
 // that list. By index rather than by name because a reader folds a
 // field's key to lower case, and a band's name is the sensor's.
 [[nodiscard]] std::string fieldBandEdges() {
   return smdl::concat(PREFIX, "band edges");
+}
+[[nodiscard]] std::string fieldGridWavelengths() {
+  return smdl::concat(PREFIX, "grid wavelengths");
 }
 [[nodiscard]] std::string fieldGrids() { return smdl::concat(PREFIX, "grids"); }
 [[nodiscard]] std::string fieldGridWavelengths(size_t index) {
@@ -129,6 +133,8 @@ void visitFields(Self &self, Visitor &&visit) {
   visit("wavelength jitter", self.hasWavelengthJitter);
   visit("args", self.args);
   visit("quantity", self.quantity);
+  visit("metered exposure", self.meteredLuxSeconds);
+  visit("metered iso", self.meteredISO);
 }
 
 // The band film's table, under the same prefix.
@@ -203,6 +209,8 @@ std::vector<std::string> GridHeader::headerLines() const {
   }};
   if (grids.size() == 1 && grids.front().name.empty()) {
     push(fieldBandEdges(), grids.front().bandEdges);
+    if (!grids.front().wavelengths.empty())
+      push(fieldGridWavelengths(), grids.front().wavelengths);
     return lines;
   }
   std::vector<std::string> names{};
@@ -232,8 +240,11 @@ void GridHeader::readFrom(const std::map<std::string, std::string> &fields) {
     }
     return;
   }
-  if (fields.count(fieldBandEdges()) > 0)
-    read(fieldBandEdges(), grids.emplace_back().bandEdges);
+  if (fields.count(fieldBandEdges()) > 0) {
+    Grid &grid{grids.emplace_back()};
+    read(fieldBandEdges(), grid.bandEdges);
+    read(fieldGridWavelengths(), grid.wavelengths);
+  }
 }
 
 std::vector<std::string> ResponseHeader::headerLines() const {

@@ -48,7 +48,7 @@ struct ProgressOptions final {
 
 /// Format seconds as `M:SS`, or `H:MM:SS` past an hour. This is how the
 /// bar prints elapsed time and the ETA, and how the render times recorded
-/// in the spectral output's header are logged.
+/// in the film's header are logged.
 [[nodiscard]] std::string formatDuration(double seconds);
 
 /// A progress bar drawn in place on stderr, in the style of a package

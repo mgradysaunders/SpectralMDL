@@ -1,9 +1,10 @@
 /// \file
-/// The sensor's response: the per-sample projection of the spectral film
-/// onto named bands, and the tile that picks one band per pixel. The band
-/// film this fills is written beside the spectral film and resumed with
-/// it. Under a tile it also draws the wavelength a lens whose glasses
-/// disperse is traced at.
+/// The sensor's response: the per-sample projection of spectral
+/// irradiance onto named bands, and the tile that picks one band per
+/// pixel. The band film this fills is the sensor's film, what
+/// `-output-bands` writes and `-resume` reads through a sensor. Under a
+/// tile it also draws the wavelength a lens whose glasses disperse is
+/// traced at.
 #pragma once
 
 #include <optional>
@@ -36,12 +37,6 @@ responseFilmBandNames(const ResponseSettings &settings);
 /// name and knots in electrons per photon, so that `peak_qe` is in it,
 /// and the tile, as text.
 [[nodiscard]] std::string responseHash(const ResponseSettings &settings);
-
-/// Where the band film goes beside a spectral film: `out.img` becomes
-/// `out-bands.img`, with the header at `out-bands.img.hdr`. Not a suffix
-/// on the whole name, because a reader that finds the header by
-/// replacing the extension would open the spectral film's.
-[[nodiscard]] std::string bandFilmFileName(const std::string &spectrumName);
 
 /// The wavelengths one band traces a lens whose glasses disperse at, in
 /// nanometers: the span its draw's density is positive over, and the
@@ -172,21 +167,83 @@ tracedSpanOf(const ResponseBand &band, const SensorSpectrum &illuminant);
 [[nodiscard]] WavelengthCells
 responseWavelengthCells(const ResponseSettings &settings, size_t count);
 
-/// A response resolved against the render's wavelength grids: what
-/// each sample of spectral irradiance contributes to each band.
+/// One curve resolved against one wavelength grid: what a sample of
+/// spectral irradiance evaluated on that grid contributes to the band.
 ///
-/// A band is the photon integral of the sample against its curve in
+/// The band is the photon integral of the sample against its curve in
 /// electrons per photon, under the rule the sample's wavelengths follow
-/// on the grid the band projects on: under a tile the grid of its own
-/// pixels, else the one grid. Without `-wavelength-jitter` the
-/// wavelengths are the grid's and the rule is its widths, so the band
-/// film is exactly the dot product of the spectral film's means with
-/// fixed weights; with the jitter each band of the sample covers its
-/// own cell, as wide as the grid weighs the band, and the curve is
-/// evaluated at the
-/// sample's own wavelengths, which is what lets a band narrower than the
-/// grid integrate without bias. The photon factor `lambda / (h c)` sits
+/// on the grid. Without `-wavelength-jitter` the wavelengths are the
+/// grid's and the rule is its widths, so a band film is exactly the dot
+/// product of a spectral film's means with fixed weights; with the
+/// jitter each band of the sample covers its own cell, as wide as the
+/// grid weighs the band, and the curve is evaluated at the sample's own
+/// wavelengths, which is what lets a band narrower than the grid
+/// integrate without bias. The photon factor `lambda / (h c)` sits
 /// inside the integral, which is what makes a readout exact.
+///
+/// `Response` holds one per band on the grid of the band's pixels, and
+/// the meter holds one for the band it reads through.
+class BandProjection final {
+public:
+  BandProjection() = default;
+
+  /// Resolve `band`, its values scaled by `qeScale` into electrons per
+  /// photon, against `grid`: the fixed weights when the grid holds
+  /// still, the cell widths when `isJittering`.
+  BandProjection(const ResponseBand &band, double qeScale,
+                 const WavelengthGrid &grid, bool isJittering);
+
+  /// The knots in double, in electrons per photon.
+  ///
+  /// \{
+  [[nodiscard]] const std::vector<double> &wavelengths() const noexcept {
+    return mWavelengths;
+  }
+  [[nodiscard]] const std::vector<double> &values() const noexcept {
+    return mValues;
+  }
+  /// \}
+
+  /// The curve at `lambda`; see `curveAt()`.
+  [[nodiscard]] double evaluate(double lambda) const noexcept {
+    return curveAt(mWavelengths, mValues, lambda);
+  }
+
+  /// The curve integrated over `[lo, hi]`, exactly, by the trapezoid rule
+  /// over its knots clipped to the range.
+  [[nodiscard]] double integrate(double lo, double hi) const noexcept;
+
+  /// Does the grid held still see the curve at all? A band that falls
+  /// between the wavelengths of a still grid projects to nothing from
+  /// every sample; under the jitter every band is seen.
+  [[nodiscard]] bool isSeen() const noexcept;
+
+  /// One sample's projection: the spectral irradiance `E` evaluated at
+  /// `wavelengths`, the grid's or the sample's own under the jitter.
+  [[nodiscard]] double project(smdl::Span<const float> wavelengths,
+                               smdl::Span<const float> E) const noexcept;
+
+private:
+  std::vector<double> mWavelengths{};
+
+  std::vector<double> mValues{};
+
+  /// The per-grid-band weight when the grid holds still, so a sample
+  /// projects by one dot product; empty under the jitter.
+  std::vector<double> mFixedWeights{};
+
+  /// The width of each cell of the grid under the jitter; empty
+  /// otherwise.
+  std::vector<double> mWidths{};
+
+  /// Is the grid jittered, so that the curve is evaluated per sample?
+  bool mIsJittering{};
+};
+
+/// A response resolved against the render's wavelength grids: what
+/// each sample of spectral irradiance contributes to each band, see
+/// `BandProjection`, each band on the grid it projects on: under a tile
+/// the grid of its own pixels, else the one grid.
 ///
 /// Construction is where the curves meet the grid, and where a band the
 /// grid cannot see is refused.
@@ -283,39 +340,14 @@ private:
   struct Band final {
     std::string name{};
 
-    /// The knots in double, in electrons per photon, for the evaluation
-    /// and the integrals.
-    std::vector<double> wavelengths{};
-    std::vector<double> values{};
-
-    /// The per-grid-band weight when the grid holds still, so a sample
-    /// projects by one dot product; empty under the jitter.
-    std::vector<double> fixedWeights{};
-
-    /// The width of each cell of the band's grid under the jitter; empty
-    /// otherwise.
-    std::vector<double> widths{};
+    /// The curve on the grid of the band's pixels; default-constructed
+    /// for a band the tile does not lay down, which projects never.
+    BandProjection projection{};
 
     /// Under a tile, what the band's pixels trace a dispersive lens at;
     /// empty without a tile, and for a band the tile does not lay down.
     WavelengthDensity draw{};
   };
-
-  /// The band's curve at `lambda`; see `curveAt()`.
-  [[nodiscard]] static double evaluate(const Band &band,
-                                       double lambda) noexcept {
-    return curveAt(band.wavelengths, band.values, lambda);
-  }
-
-  /// The curve integrated over `[lo, hi]`, exactly, by the trapezoid rule
-  /// over its knots clipped to the range.
-  [[nodiscard]] static double integrate(const Band &band, double lo,
-                                        double hi) noexcept;
-
-  /// One sample's projection onto one band.
-  [[nodiscard]] double project(const Band &band,
-                               smdl::Span<const float> wavelengths,
-                               smdl::Span<const float> E) const noexcept;
 
   std::string mHash{};
 
@@ -332,9 +364,6 @@ private:
   std::vector<std::string> mTileNames{};
 
   std::vector<std::string> mTileBandNames{};
-
-  /// Is the grid jittered, so that the curve is evaluated per sample?
-  bool mIsJittering{};
 };
 
 /// The response of a frame resolved against the grids, under the white

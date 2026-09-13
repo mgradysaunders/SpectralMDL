@@ -1,6 +1,6 @@
 /// \file
-/// The `render *` lines the renderer adds to its spectral output's ENVI
-/// header, beyond the ones `smdl::SpectralFilm` writes for itself.
+/// The `render *` lines the renderer adds to its film's ENVI header,
+/// beyond the ones `smdl::SpectralFilm` writes for itself.
 #pragma once
 
 #include <cstdint>
@@ -10,11 +10,12 @@
 
 /// What one render sequence has accumulated, and under what settings.
 ///
-/// `-output-spectrum` stamps these onto the header and `-resume` reads
+/// `-output-bands` stamps these onto the header and `-resume` reads
 /// them back. Some are a tally the sequence continues across sessions;
-/// the rest are a fingerprint of the settings the samples were drawn
-/// under, which a resumed session compares against its own and warns
-/// about rather than refuses.
+/// the meter's reading is a decision the first session took for every
+/// later one; the rest are a fingerprint of the settings the samples
+/// were drawn under, which a resumed session compares against its own
+/// and warns about rather than refuses.
 ///
 /// Every field name is spelled exactly once, in the table both
 /// directions walk. That is not tidiness. A name written at one site and
@@ -51,6 +52,19 @@ struct RenderHeader final {
   /// before there was a choice, which is radiance.
   std::string quantity{};
 
+  /// What the meter read before the sequence's first sample, and the
+  /// ISO it chose: the exposure in lux-seconds, see `MeteredExposure`,
+  /// and the rung. A camera meters once and then exposes, so every
+  /// later session reads the same rung back rather than metering again;
+  /// a stated ISO is the session's own and is never written here. Both
+  /// 0 for a sequence nothing metered: the observer's, or a sensor
+  /// whose gain is stated.
+  ///
+  /// \{
+  double meteredLuxSeconds{};
+  double meteredISO{};
+  /// \}
+
   /// The lines to hand `smdl::SpectralFilm::writeENVIFile()`.
   [[nodiscard]] std::vector<std::string> headerLines() const;
 
@@ -72,8 +86,10 @@ struct RenderHeader final {
 struct GridHeader final {
   /// One grid: the tile band's name, empty for the one grid of a render
   /// without a tile; its wavelengths in nanometers, which the one grid
-  /// leaves empty, the format's `wavelength` list carrying them; and its
-  /// cell edges, `WavelengthGrid::bandEdges`.
+  /// leaves empty when the format's `wavelength` list carries them, as
+  /// the observer's film does, and states when the film's bands are
+  /// the sensor's rather than the grid's; and its cell edges,
+  /// `WavelengthGrid::bandEdges`.
   struct Grid final {
     std::string name{};
     std::vector<float> wavelengths{};
@@ -169,7 +185,7 @@ struct DetectorHeader final {
   double baseISO{};
   /// \}
 
-  /// Was the ISO metered from the film rather than stated?
+  /// Was the ISO metered rather than stated?
   bool wasISOMetered{};
 
   /// The digital number a saturated pixel reads, which a develop takes

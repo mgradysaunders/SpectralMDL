@@ -30,6 +30,7 @@
 #include "Render/PathTracing.h"
 #include "Render/Sampler.h"
 #include "Resume.h"
+#include "Sensor/Meter.h"
 #include "Sensor/Response.h"
 #include "Stage.h"
 
@@ -71,6 +72,45 @@ namespace {
 // into the final pass, so it always holds at least half the budget. Solved
 // up front rather than as the loop runs so that the progress bar can say
 // which pass of how many.
+// The meter's tally of one call of the kernel: each block's sum of the
+// projections of its samples and their count, folded in block order
+// afterward, so the reading is the same on any thread count.
+struct MeterTally final {
+  const MeterProjection *projection{};
+  std::vector<double> sums{};
+  std::vector<uint64_t> counts{};
+};
+
+// One call of the render kernel: what it draws, which pixels, and what
+// it feeds. The render feeds the film, the band film, the combiner, the
+// guide accumulator, the tally, and the progress bar, a chunk of the
+// window at a time; the metering pass feeds the meter alone, over its
+// lattice. A null sink is not fed.
+struct PassTarget final {
+  // The samples per pixel this call draws, from `sampleIndexBase`.
+  size_t spp{};
+  size_t sampleIndexBase{};
+
+  // The pass's offset of the first sample, which decides which half a
+  // guided sample lands in.
+  size_t passOffset{};
+
+  // The pixels: `numPixels` of them, as frame indices in `pixels`, or
+  // the window's when `pixels` is empty.
+  size_t numPixels{};
+  smdl::Span<const size_t> pixels{};
+
+  size_t blockSize{};
+
+  smdl::SpectralFilm *film{};
+  smdl::SpectralFilm *bandFilm{};
+  PassCombiner *combiner{};
+  GuideAccumulator *guideAccumulator{};
+  PathStats *stats{};
+  ProgressBar *progress{};
+  MeterTally *meter{};
+};
+
 [[nodiscard]]
 std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
                                       size_t trainedSpp) {
@@ -95,18 +135,18 @@ std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
 } // namespace
 
 bool savesGuideTree(const Options &opts, const Frame &frame,
-                    const std::string &outputSpectrum) {
-  return opts.render.guide.isEnabled && frame.spp > 0 &&
-         !outputSpectrum.empty();
+                    const std::string &outputBands) {
+  return opts.render.guide.isEnabled && frame.spp > 0 && !outputBands.empty();
 }
 
 void renderSamples(const Options &opts, const Frame &frame,
                    const ResolvedGrid &grid, smdl::Compiler &compiler,
                    const StagedScene &staged, ResumedSequence &resumed,
-                   smdl::SpectralFilm &film, const Response *response,
+                   smdl::SpectralFilm *film, const Response *response,
                    smdl::SpectralFilm *bandFilm,
-                   const std::string &outputSpectrum,
+                   const std::string &outputBands,
                    std::unique_ptr<STree> &sdtree) {
+  SMDL_SANITY_CHECK((film != nullptr) != (bandFilm != nullptr));
   SMDL_SANITY_CHECK(!bandFilm || response);
   const Color &wavelengths{grid.wavelengths};
   const Scene &scene{*staged.scene};
@@ -123,7 +163,7 @@ void renderSamples(const Options &opts, const Frame &frame,
   const size_t numWindowPixels{frame.numWindowPixels};
   const int4 window{frame.window};
   const size_t spp{frame.spp};
-  const bool isSavingTree{savesGuideTree(opts, frame, outputSpectrum)};
+  const bool isSavingTree{savesGuideTree(opts, frame, outputBands)};
   ProgressOptions progressOptions{opts.utility.progress};
   // How many samples per pixel trained the resumed tree, 0 without one:
   // what the pass schedule continues from.
@@ -178,15 +218,19 @@ void renderSamples(const Options &opts, const Frame &frame,
   }
   // The combination of the guided passes, which also maintains the
   // ADRRS pixel estimates between passes. Null without guiding, where
-  // the single pass accumulates straight into `film`.
+  // the single pass accumulates straight into the film; and null through
+  // a sensor unless ADRRS wants the estimates, since the band film
+  // accumulates straight through, guided or not, and there is no
+  // spectral film to resolve into.
   std::unique_ptr<PassCombiner> combiner{};
-  if (opts.render.guide.isEnabled) {
+  if (opts.render.guide.isEnabled &&
+      (film || opts.render.guide.useADRRS)) {
     combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY, window);
     // Seed with the prior session's accumulation, so resolve() below
     // reproduces the full merged image (the unguided path adds it into
     // the accumulation instead, just below) and the first pass's ADRRS
     // starts from the resumed estimates rather than zero.
-    if (resumed.wasLoaded) {
+    if (resumed.wasLoaded && film) {
       combiner->seed(resumed.film);
       combiner->rebuildPixelEstimates();
     }
@@ -197,15 +241,11 @@ void renderSamples(const Options &opts, const Frame &frame,
   // is. One image-level add, which is exactly the merge the
   // sums-plus-count invariant makes safe; every read below divides by
   // the combined count.
-  if (resumed.wasLoaded && !combiner) film.add(resumed.film);
-  // The band film accumulates straight through, guided or not, so the
-  // resumed one merges the same way on both paths.
-  if (bandFilm && resumed.bandFilm.getNumSamples() > 0)
-    bandFilm->add(resumed.bandFilm);
-  // Nothing reads them again, and they are the size of the films being
+  if (resumed.wasLoaded && film && !combiner) film->add(resumed.film);
+  if (resumed.wasLoaded && bandFilm) bandFilm->add(resumed.film);
+  // Nothing reads it again, and it is the size of the film being
   // rendered into.
   resumed.film.clear();
-  resumed.bandFilm.clear();
   // Progress is counted in samples rather than pixels, so that the
   // geometrically growing passes below read as one bar that only ever
   // moves forward. The counters still show pixels, which is the number a
@@ -225,26 +265,28 @@ void renderSamples(const Options &opts, const Frame &frame,
     // so far, the resumed seed included, instead of the newest pass
     // alone. Guided checkpoints only happen on pass boundaries, where the
     // pass just rendered is already folded in.
-    if (combiner) combiner->resolve(film);
-    const std::filesystem::path path{opts.image.outputRGB};
-    std::filesystem::path partPath{path};
-    partPath.replace_extension("part" + path.extension().string());
+    if (combiner && film) combiner->resolve(*film);
     // Developed as the final picture is, a physical sensor's without its
     // noise.
-    std::vector<float> rgb{
-        developPreview(opts, frame, grid, compiler, film, bandFilm)};
+    std::vector<float> rgb{developPreview(opts, frame, grid, compiler,
+                                          resumed.header, film, bandFilm)};
     // Filtered like the final write, so that a checkpoint differs from
     // it only in how many samples stand behind it.
     (void)medianFilterRGB(opts.image.medianFilter, rgb, numPixelsX, window);
-    if (std::optional<smdl::Error> error{
-            writeRGBImage(opts, grid, film, partPath.string(), rgb,
-                          numPixelsX, numPixelsY)}) {
-      error->print();
-      return;
+    for (const auto &fileName : opts.image.outputRGB) {
+      const std::filesystem::path path{fileName};
+      std::filesystem::path partPath{path};
+      partPath.replace_extension("part" + path.extension().string());
+      if (std::optional<smdl::Error> error{
+              writeRGBImage(opts, grid, film, partPath.string(), rgb,
+                            numPixelsX, numPixelsY)}) {
+        error->print();
+        continue;
+      }
+      // A checkpoint that loses the rename is one missed preview, not a
+      // reason to stop the render.
+      (void)smdl::tryRenameOnto(partPath.string(), path.string());
     }
-    // A checkpoint that loses the rename is one missed preview, not a
-    // reason to stop the render.
-    (void)smdl::tryRenameOnto(partPath.string(), path.string());
   }};
   auto lastCheckpoint{std::chrono::steady_clock::now()};
   const auto checkpoint{[&] {
@@ -327,7 +369,6 @@ void renderSamples(const Options &opts, const Frame &frame,
   const size_t blockSize{std::clamp<size_t>(
       numWindowPixels / (BLOCKS_PER_THREAD * smdl::getThreadCount()), 1,
       MAX_PIXELS_PER_BLOCK)};
-  const size_t numBlocks{(numWindowPixels + blockSize - 1) / blockSize};
   progressOptions.total = numWindowPixels * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary =
@@ -347,42 +388,17 @@ void renderSamples(const Options &opts, const Frame &frame,
   smdl::SkyBasis renderSkyBasis;
   if (!hasMovingGrid && lights.env())
     lights.env()->resolve(wavelengths, renderSkyBasis);
-  const auto renderStartWall{std::chrono::steady_clock::now()};
-  const double renderStartCompute{cpuTimeSeconds()};
-  ProgressBar progress{progressOptions};
-  size_t sppDone{0};
-  size_t chunkSpp{1};
-  for (size_t passIndex = 0; passIndex < passes.size(); passIndex++) {
-    const size_t thisPass{passes[passIndex]};
-    const bool isFinal{passIndex + 1 == passes.size()};
-    if (opts.render.guide.isEnabled)
-      progress.setNote(
-          smdl::concat("pass ", passIndex + 1, "/", passes.size()));
-    // Pre-final passes train the SD-tree; every pass contributes to the
-    // output through the pass combination below. When the tree will be
-    // saved the final pass trains too: its training is no longer wasted,
-    // it is what the next session of the sequence inherits.
-    const bool shouldRecordPass{opts.render.guide.isEnabled &&
-                                (!isFinal || isSavingTree)};
-    // The per-thread training mirrors for this pass, absorbed into the
-    // tree after the pass renders and before it refines; the tree
-    // structure the layout mirrors is frozen in between.
-    std::unique_ptr<GuideAccumulator> guideAccumulator{};
-    if (shouldRecordPass)
-      guideAccumulator = std::make_unique<GuideAccumulator>(*sdtree);
-    // Without guiding the whole budget is one pass, so checkpointing has
-    // to split it; the chunk starts at one sample, so the first image
-    // lands almost immediately, and then grows toward the interval asked
-    // for. With guiding the passes are the chunks: they already grow
-    // geometrically, and splitting one would change what the combiner
-    // weights.
-    const bool isChunked{isCheckpointing && !combiner};
-    for (size_t passDone{0}; passDone < thisPass;) {
-      const size_t chunk{isChunked ? std::min(chunkSpp, thisPass - passDone)
-                                   : thisPass - passDone};
-      const size_t chunkBase{passDone};
-      const auto chunkStart{std::chrono::steady_clock::now()};
-      smdl::parallelFor(0, numBlocks, [&](size_t block) {
+  // The kernel: one call draws `target.spp` samples at each of its pixels
+  // and feeds what it names. The render calls it a chunk at a time below,
+  // and the meter calls it once first.
+  const auto renderBlocks{[&](const PassTarget &target) {
+    const size_t numBlocks{(target.numPixels + target.blockSize - 1) /
+                           target.blockSize};
+    if (target.meter) {
+      target.meter->sums.assign(numBlocks, 0.0);
+      target.meter->counts.assign(numBlocks, 0);
+    }
+    smdl::parallelFor(0, numBlocks, [&](size_t block) {
         // Denormals are worth flushing for the whole task: the material
         // code the walk runs produces them, and the microcode assist each one
         // costs is a measurable fraction of the render.
@@ -414,9 +430,10 @@ void renderSamples(const Options &opts, const Frame &frame,
         // too much to pay per pixel of a non-guiding render. The walk
         // resets every record it appends, so one buffer serves the block.
         std::vector<GuideRecord> guideRecords;
-        if (shouldRecordPass) guideRecords.resize(pathOptions.maxBounces + 1);
-        GuideRecord *const records{shouldRecordPass ? guideRecords.data()
-                                                    : nullptr};
+        if (target.guideAccumulator)
+          guideRecords.resize(pathOptions.maxBounces + 1);
+        GuideRecord *const records{
+            target.guideAccumulator ? guideRecords.data() : nullptr};
         // The sample's own wavelength grid, rewritten in place once per
         // sample under the jitter and once per pixel under a tile: a
         // `Color` past `SpectralColor::INLINE_CAPACITY` bands heaps, and
@@ -472,7 +489,7 @@ void renderSamples(const Options &opts, const Frame &frame,
         // The block's own tally, which the walk fills and the end of the
         // block folds into the render's.
         std::optional<PathStats> blockStats;
-        if (stats) {
+        if (target.stats) {
           blockStats.emplace();
           path.stats = &*blockStats;
         }
@@ -480,15 +497,20 @@ void renderSamples(const Options &opts, const Frame &frame,
             makePathWalk(render, path)};
         // The block's per-pixel band sums, when there is a response to
         // project onto.
-        std::vector<double> bandSums(bandFilm ? response->filmBandCount() : 0);
-        const size_t kBegin{block * blockSize};
-        const size_t kEnd{std::min(numWindowPixels, kBegin + blockSize)};
+        std::vector<double> bandSums(
+            target.bandFilm ? response->filmBandCount() : 0);
+        const size_t kBegin{block * target.blockSize};
+        const size_t kEnd{
+            std::min(target.numPixels, kBegin + target.blockSize)};
         for (size_t k = kBegin; k < kEnd; k++) {
           // The pixel index in the whole frame, which seeds the sampler and
           // addresses every per-pixel buffer, so a window renders the same
           // pixels the whole frame would.
-          const size_t i{(size_t(window[1]) + k / windowWidth) * numPixelsX +
-                         (size_t(window[0]) + k % windowWidth)};
+          const size_t i{
+              target.pixels.empty()
+                  ? (size_t(window[1]) + k / windowWidth) * numPixelsX +
+                        (size_t(window[0]) + k % windowWidth)
+                  : target.pixels[k]};
           const size_t x{i % numPixelsX};
           const size_t y{i / numPixelsX};
           // Under a tile, the pixel's own grid: what its states carry,
@@ -514,9 +536,10 @@ void renderSamples(const Options &opts, const Frame &frame,
           Color Lsum{};
           std::fill(bandSums.begin(), bandSums.end(), 0.0);
           PassCombiner::PixelHalves halves{};
-          guiding.pixelEstimate = combiner && opts.render.guide.useADRRS
-                                      ? combiner->pixelEstimate(i)
-                                      : 0.0f;
+          guiding.pixelEstimate =
+              target.combiner && opts.render.guide.useADRRS
+                  ? target.combiner->pixelEstimate(i)
+                  : 0.0f;
           // The samples of a pixel are drawn in batches so that the
           // camera rays can be traced together: a real lens traces
           // several times faster on a batch than on one ray at a time,
@@ -525,16 +548,17 @@ void renderSamples(const Options &opts, const Frame &frame,
           // from the (pixel, sample index) pair and each sample's draws
           // follow from that alone, so a batched sample draws exactly
           // what it would have drawn on its own.
-          for (size_t sBase = 0; sBase < chunk; sBase += Camera::TRACE_WIDTH) {
+          for (size_t sBase = 0; sBase < target.spp;
+               sBase += Camera::TRACE_WIDTH) {
             const size_t batch{
-                std::min(chunk - sBase, size_t(Camera::TRACE_WIDTH))};
+                std::min(target.spp - sBase, size_t(Camera::TRACE_WIDTH))};
             // Draw the batch, stopping short of the glass. The
             // wavelength a dispersing lens is traced at comes from the
             // pixel's band and the sample index, and reads none of the
             // per-sample state the walk below sets up.
             for (size_t j = 0; j < batch; j++) {
               const uint32_t sampleIndex =
-                  resumed.sampleIndexBase + sppDone + chunkBase + sBase + j;
+                  target.sampleIndexBase + sBase + j;
               batchSamplers[j].startPixelSample(uint32_t(i), sampleIndex);
               batchWavelengths[j] =
                   disperses ? response->traceWavelengthAt(
@@ -550,8 +574,7 @@ void renderSamples(const Options &opts, const Frame &frame,
 
           for (size_t j = 0; j < batch; j++) {
             const size_t s{sBase + j};
-            const uint32_t sampleIndex =
-                resumed.sampleIndexBase + sppDone + chunkBase + s;
+            const uint32_t sampleIndex = target.sampleIndexBase + s;
             sampler = batchSamplers[j];
             if (shouldJitterWavelength) {
               jitterWavelengths(
@@ -601,19 +624,28 @@ void renderSamples(const Options &opts, const Frame &frame,
               numRecords = path.numRecords;
             }
             // Train the SD-tree on the records the walk retained.
-            if (shouldRecordPass && numRecords > 0)
-              trainGuiding(*sdtree, *guideAccumulator, sampler,
+            if (target.guideAccumulator && numRecords > 0)
+              trainGuiding(*sdtree, *target.guideAccumulator, sampler,
                            guideRecords.data(), numRecords);
             Lsum += Lsample;
-            if (bandFilm)
+            if (target.bandFilm)
               response->accumulate(smdl::Span<const float>(blockWavelengths),
                                    smdl::Span<const float>(Lsample), x, y,
                                    bandSums.data());
-            if (combiner) {
+            if (target.meter) {
+              // A poisoned sample reads as black, as `filmMean()` reads
+              // a poisoned pixel.
+              const double value{target.meter->projection->project(
+                  smdl::Span<const float>(blockWavelengths),
+                  smdl::Span<const float>(Lsample))};
+              target.meter->sums[block] += std::isfinite(value) ? value : 0.0;
+              target.meter->counts[block]++;
+            }
+            if (target.combiner) {
               // Split the samples into two half images so the combination can
               // cross-weight each half by the other's variance estimate.
               float value{Lsample.average()};
-              if ((chunkBase + s) % 2 == 0) {
+              if ((target.passOffset + s) % 2 == 0) {
                 halves.halfA += Lsample;
                 halves.squaresA += value * value;
               } else {
@@ -626,27 +658,126 @@ void renderSamples(const Options &opts, const Frame &frame,
           }
           // With guiding the combination owns the film and resolves into
           // it, pass by pass; without, the accumulation is the film.
-          if (combiner) {
-            combiner->deposit(i, halves);
-          } else {
-            film.addTotals(x, y, Lsum.data());
+          if (target.combiner) {
+            target.combiner->deposit(i, halves);
+          } else if (target.film) {
+            target.film->addTotals(x, y, Lsum.data());
           }
-          if (bandFilm) bandFilm->addTotals(x, y, bandSums.data());
+          if (target.bandFilm) target.bandFilm->addTotals(x, y, bandSums.data());
         }
         if (blockStats) {
-          blockStats->addSamples(chunk * (kEnd - kBegin));
+          blockStats->addSamples(target.spp * (kEnd - kBegin));
           const std::lock_guard<std::mutex> lock{statsMutex};
-          stats->add(*blockStats);
+          target.stats->add(*blockStats);
         }
         // Counted where the work is finished rather than where it starts,
         // which at thumbnail sizes is a whole pool's worth of pixels.
-        progress.advance(chunk * (kEnd - kBegin));
-      });
+        if (target.progress)
+          target.progress->advance(target.spp * (kEnd - kBegin));
+    });
+  }};
+  // The meter, before the shutter opens: a sensor whose ISO nothing states
+  // is metered once for the sequence, from one sample at each pixel of a
+  // sparse lattice over the window, read through the sensor's most
+  // sensitive band, and every later session reads the rung back. The
+  // samples are thrown away; they overlap the render's first sample at
+  // those pixels, which costs the lattice's worth of paths, a fraction of
+  // a sample per pixel. Not timed as the render is: a resumed session
+  // pays nothing for it.
+  const CameraModel &model{frame.model};
+  const bool isMetering{model.sensor && needsMeter(*model.sensor, resumed.header)};
+  if (isMetering) {
+    const Sensor &sensor{*model.sensor};
+    const MeterProjection projection{sensor};
+    const MeterLattice lattice{window, numPixelsX, gRenderGrid.tileColumns,
+                               gRenderGrid.tileRows,
+                               projection.countingCells()};
+    MeterTally tally{};
+    tally.projection = &projection;
+    PassTarget target{};
+    target.spp = 1;
+    target.sampleIndexBase = resumed.sampleIndexBase;
+    target.numPixels = lattice.pixels().size();
+    target.pixels = smdl::Span<const size_t>(lattice.pixels().data(),
+                                             lattice.pixels().size());
+    // A fixed block size, so the fold below associates the same way on
+    // any thread count and the rung stamped in the header is the same on
+    // any machine.
+    target.blockSize = MAX_PIXELS_PER_BLOCK;
+    target.meter = &tally;
+    renderBlocks(target);
+    MeterReading reading{};
+    for (size_t b = 0; b < tally.sums.size(); b++) {
+      reading.sum += tally.sums[b];
+      reading.count += tally.counts[b];
+    }
+    SMDL_LOG_DEBUG("Meter: ", smdl::Counted(reading.count, "sample"),
+                   " through ", smdl::Quoted(projection.bandName()),
+                   " pixels, one per ", lattice.stride(), " tiles");
+    // Under -ideal the film is the observer's radiance, which the model's
+    // preview scale turns into the irradiance the sensor would have
+    // metered.
+    const double irradianceScale{
+        model.hasPhysicalSensor() ? 1.0 : model.previewIrradianceScale};
+    recordMeter(sensor, reading, gRenderShutter.exposure * irradianceScale,
+                resumed.header);
+  }
+  if (model.sensor)
+    logISO(*model.sensor, model.iso, resumed.header, gRenderShutter.exposure,
+           camera->fNumber(), !isMetering);
+  const auto renderStartWall{std::chrono::steady_clock::now()};
+  const double renderStartCompute{cpuTimeSeconds()};
+  ProgressBar progress{progressOptions};
+  size_t sppDone{0};
+  size_t chunkSpp{1};
+  for (size_t passIndex = 0; passIndex < passes.size(); passIndex++) {
+    const size_t thisPass{passes[passIndex]};
+    const bool isFinal{passIndex + 1 == passes.size()};
+    if (opts.render.guide.isEnabled)
+      progress.setNote(
+          smdl::concat("pass ", passIndex + 1, "/", passes.size()));
+    // Pre-final passes train the SD-tree; every pass contributes to the
+    // output through the pass combination below. When the tree will be
+    // saved the final pass trains too: its training is no longer wasted,
+    // it is what the next session of the sequence inherits.
+    const bool shouldRecordPass{opts.render.guide.isEnabled &&
+                                (!isFinal || isSavingTree)};
+    // The per-thread training mirrors for this pass, absorbed into the
+    // tree after the pass renders and before it refines; the tree
+    // structure the layout mirrors is frozen in between.
+    std::unique_ptr<GuideAccumulator> guideAccumulator{};
+    if (shouldRecordPass)
+      guideAccumulator = std::make_unique<GuideAccumulator>(*sdtree);
+    // Without guiding the whole budget is one pass, so checkpointing has
+    // to split it; the chunk starts at one sample, so the first image
+    // lands almost immediately, and then grows toward the interval asked
+    // for. With guiding the passes are the chunks: they already grow
+    // geometrically, and splitting one would change what the combiner
+    // weights.
+    const bool isChunked{isCheckpointing && !combiner};
+    for (size_t passDone{0}; passDone < thisPass;) {
+      const size_t chunk{isChunked ? std::min(chunkSpp, thisPass - passDone)
+                                   : thisPass - passDone};
+      const size_t chunkBase{passDone};
+      const auto chunkStart{std::chrono::steady_clock::now()};
+      PassTarget target{};
+      target.spp = chunk;
+      target.sampleIndexBase = resumed.sampleIndexBase + sppDone + chunkBase;
+      target.passOffset = chunkBase;
+      target.numPixels = numWindowPixels;
+      target.blockSize = blockSize;
+      target.film = film;
+      target.bandFilm = bandFilm;
+      target.combiner = combiner.get();
+      target.guideAccumulator = guideAccumulator.get();
+      target.stats = stats ? &*stats : nullptr;
+      target.progress = &progress;
+      renderBlocks(target);
       // Every pixel of the window took the same samples, so the count
       // belongs to the film rather than to each pixel, and is recorded
       // once here where the chunk is finished. It has to land before the
       // checkpoint below, which divides by it.
-      if (!combiner) film.addSamples(chunk);
+      if (film && !combiner) film->addSamples(chunk);
       if (bandFilm) bandFilm->addSamples(chunk);
       passDone += chunk;
       if (isChunked) {
@@ -668,7 +799,7 @@ void renderSamples(const Options &opts, const Frame &frame,
     if (combiner) combiner->foldPass(thisPass);
     if (shouldRecordPass) {
       guideAccumulator->absorbInto(*sdtree);
-      combiner->rebuildPixelEstimates();
+      if (combiner) combiner->rebuildPixelEstimates();
       // Refine: split spatial leaves past c*sqrt(2^k) records (k this
       // pass's index), rebuild the directional quadtrees with the 1% flux
       // threshold.
@@ -710,5 +841,5 @@ void renderSamples(const Options &opts, const Frame &frame,
   // Resolve the pass combination back into the film every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.
-  if (combiner) combiner->resolve(film);
+  if (combiner && film) combiner->resolve(*film);
 }

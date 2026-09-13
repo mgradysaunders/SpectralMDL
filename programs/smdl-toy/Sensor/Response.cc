@@ -2,7 +2,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <filesystem>
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
@@ -20,15 +19,6 @@ void appendNumber(std::string &text, double value) {
   std::snprintf(buffer, sizeof(buffer), "%.9g", value);
   text += buffer;
   text += ' ';
-}
-
-// The name beside a spectral film with `suffix` before its extension.
-[[nodiscard]] std::string besideSpectrum(const std::string &spectrumName,
-                                         const char *suffix) {
-  std::filesystem::path path{spectrumName};
-  const std::string extension{path.extension().string()};
-  path.replace_extension();
-  return path.string() + suffix + extension;
 }
 
 } // namespace
@@ -63,10 +53,6 @@ std::string responseHash(const ResponseSettings &settings) {
   if (settings.hasCrosstalk())
     for (const auto leak : settings.crosstalk) appendNumber(text, leak);
   return std::string(smdl::MD5Hash::hashMemory(text));
-}
-
-std::string bandFilmFileName(const std::string &spectrumName) {
-  return besideSpectrum(spectrumName, "-bands");
 }
 
 std::vector<double>
@@ -257,7 +243,7 @@ Response::Response(const ResponseSettings &settings,
     : mHash(responseHash(settings)),
       mFilmBandNames(responseFilmBandNames(settings)),
       mCFAColumns(settings.cfaColumns), mCFARows(settings.cfaRows()),
-      mCFA(settings.cfa), mIsJittering(gRenderGrid.isJittering) {
+      mCFA(settings.cfa) {
   for (const auto index : mCFA)
     mTileNames.push_back(settings.bands[index].name);
   const std::vector<size_t> tileBandIndices{tileBands(mCFA)};
@@ -277,14 +263,12 @@ Response::Response(const ResponseSettings &settings,
         return &grids.grids[grids.hasTile() ? grids.tileGrids[cell] : 0];
     return nullptr;
   }};
+  const bool isJittering{grids.isJittering};
   const double scale{settings.qeScale()};
   for (size_t bandIndex = 0; bandIndex < settings.bands.size(); bandIndex++) {
     const ResponseBand &curve{settings.bands[bandIndex]};
     Band band{};
     band.name = curve.name;
-    band.wavelengths.assign(curve.wavelengths.begin(), curve.wavelengths.end());
-    for (const auto value : curve.values)
-      band.values.push_back(scale * double(value));
     const WavelengthGrid *grid{gridOf(bandIndex)};
     if (!grid) {
       mBands.push_back(std::move(band));
@@ -298,67 +282,53 @@ Response::Response(const ResponseSettings &settings,
     SMDL_SANITY_CHECK(numBands == grids.numBands);
     const double gridLo{double(grid->minWavelength())};
     const double gridHi{double(grid->maxWavelength())};
-    const std::vector<double> &widths{grid->widths};
     double minSpacing{gridHi - gridLo};
     for (size_t i = 1; i < numBands; i++)
       minSpacing = std::min(minSpacing, double(wavelengths[i]) -
                                             double(wavelengths[i - 1]));
-    const double whole{
-        integrate(band, band.wavelengths.front(), band.wavelengths.back())};
-    const double inside{integrate(band, gridLo, gridHi)};
+    band.projection = BandProjection(curve, scale, *grid, isJittering);
+    const BandProjection &projection{band.projection};
+    const std::vector<double> &knots{projection.wavelengths()};
+    const double whole{projection.integrate(knots.front(), knots.back())};
+    const double inside{projection.integrate(gridLo, gridHi)};
     if (!(inside > 0))
-      throw smdl::Error(
-          smdl::concat("Response band ", smdl::Quoted(band.name), " (",
-                       smdl::Brief(band.wavelengths.front(), 6), "-",
-                       smdl::Brief(band.wavelengths.back(), 6),
-                       " nm) lies outside the wavelength grid (",
-                       smdl::Brief(gridLo, 6), "-", smdl::Brief(gridHi, 6),
-                       " nm); widen -wavelength-range to "
-                       "cover it"));
+      throw smdl::Error(smdl::concat(
+          "Response band ", smdl::Quoted(band.name), " (",
+          smdl::Brief(knots.front(), 6), "-", smdl::Brief(knots.back(), 6),
+          " nm) lies outside the wavelength grid (", smdl::Brief(gridLo, 6),
+          "-", smdl::Brief(gridHi, 6),
+          " nm); widen -wavelength-range to "
+          "cover it"));
     if (inside < 0.99 * whole)
-      SMDL_LOG_WARN(
-          "Response band ", smdl::Quoted(band.name), " has ",
-          smdl::Brief(100.0 * (1.0 - inside / whole), 3),
-          "% of its weight outside the wavelength grid (",
-          smdl::Brief(gridLo, 6), "-", smdl::Brief(gridHi, 6),
-          " nm), so the band sees only the part inside; "
-          "-wavelength-range ",
-          int64_t(std::floor(std::min(band.wavelengths.front(), gridLo))), ",",
-          int64_t(std::ceil(std::max(band.wavelengths.back(), gridHi))),
-          " would cover it");
+      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name), " has ",
+                    smdl::Brief(100.0 * (1.0 - inside / whole), 3),
+                    "% of its weight outside the wavelength grid (",
+                    smdl::Brief(gridLo, 6), "-", smdl::Brief(gridHi, 6),
+                    " nm), so the band sees only the part inside; "
+                    "-wavelength-range ",
+                    int64_t(std::floor(std::min(knots.front(), gridLo))), ",",
+                    int64_t(std::ceil(std::max(knots.back(), gridHi))),
+                    " would cover it");
     // The equivalent width, the integral over the peak, which has no
     // edge cases where a full width at half maximum has several.
-    const double peak{
-        *std::max_element(band.values.begin(), band.values.end())};
+    const double peak{*std::max_element(projection.values().begin(),
+                                        projection.values().end())};
     const double equivalentWidth{peak > 0 ? whole / peak : 0.0};
-    if (!mIsJittering && equivalentWidth < minSpacing)
+    if (!isJittering && equivalentWidth < minSpacing)
       SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name), " is ",
                     smdl::Brief(equivalentWidth, 3),
                     " nm wide against a grid spaced ",
                     smdl::Brief(minSpacing, 3),
                     " nm; without -wavelength-jitter the band comb aliases "
                     "against it");
-    if (!mIsJittering) {
-      // A grid held still sees the curve at its own wavelengths and
-      // nowhere else, so a band that falls between them is invisible
-      // to every sample.
-      double seen{0.0};
-      for (size_t i = 0; i < numBands; i++)
-        seen += evaluate(band, double(wavelengths[i])) * widths[i];
-      if (!(seen > 0))
-        throw smdl::Error(smdl::concat(
-            "Response band ", smdl::Quoted(band.name),
-            " falls between the wavelengths of the grid, so no sample "
-            "can see it; use -wavelength-jitter, or a finer grid"));
-      band.fixedWeights.resize(numBands);
-      for (size_t i = 0; i < numBands; i++) {
-        const double lambda{double(wavelengths[i])};
-        band.fixedWeights[i] =
-            evaluate(band, lambda) * widths[i] * photonsPerJoule(lambda);
-      }
-    } else {
-      band.widths = widths;
-    }
+    // A grid held still sees the curve at its wavelengths and nowhere
+    // else, so a band that falls between them is invisible to every
+    // sample.
+    if (!projection.isSeen())
+      throw smdl::Error(smdl::concat(
+          "Response band ", smdl::Quoted(band.name),
+          " falls between the wavelengths of the grid, so no sample "
+          "can see it; use -wavelength-jitter, or a finer grid"));
     mBands.push_back(std::move(band));
   }
   // Each band the tile lays down draws from inside what its grid sees,
@@ -368,8 +338,8 @@ Response::Response(const ResponseSettings &settings,
     Band &band{mBands[index]};
     const WavelengthGrid &grid{*gridOf(index)};
     band.draw = WavelengthDensity::ofResponse(
-        band.wavelengths, band.values, double(grid.minWavelength()),
-        double(grid.maxWavelength()), illuminant);
+        band.projection.wavelengths(), band.projection.values(),
+        double(grid.minWavelength()), double(grid.maxWavelength()), illuminant);
     if (band.draw.isEmpty())
       SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name),
                     " sees none of the white balance's illuminant inside the "
@@ -378,9 +348,29 @@ Response::Response(const ResponseSettings &settings,
   }
 }
 
-double Response::integrate(const Band &band, double lo, double hi) noexcept {
-  const std::vector<double> &w{band.wavelengths};
-  const std::vector<double> &v{band.values};
+BandProjection::BandProjection(const ResponseBand &band, double qeScale,
+                               const WavelengthGrid &grid, bool isJittering)
+    : mIsJittering(isJittering) {
+  mWavelengths.assign(band.wavelengths.begin(), band.wavelengths.end());
+  for (const auto value : band.values)
+    mValues.push_back(qeScale * double(value));
+  const smdl::SpectralColor &wavelengths{grid.wavelengths};
+  const size_t numBands{wavelengths.size()};
+  if (mIsJittering) {
+    mWidths = grid.widths;
+    return;
+  }
+  mFixedWeights.resize(numBands);
+  for (size_t i = 0; i < numBands; i++) {
+    const double lambda{double(wavelengths[i])};
+    mFixedWeights[i] =
+        evaluate(lambda) * grid.widths[i] * photonsPerJoule(lambda);
+  }
+}
+
+double BandProjection::integrate(double lo, double hi) const noexcept {
+  const std::vector<double> &w{mWavelengths};
+  const std::vector<double> &v{mValues};
   double total{};
   for (size_t i = 0; i + 1 < w.size(); i++) {
     const double a{std::max(w[i], lo)};
@@ -394,18 +384,25 @@ double Response::integrate(const Band &band, double lo, double hi) noexcept {
   return total;
 }
 
-double Response::project(const Band &band, smdl::Span<const float> wavelengths,
-                         smdl::Span<const float> E) const noexcept {
+bool BandProjection::isSeen() const noexcept {
+  if (mIsJittering) return true;
+  double seen{};
+  for (const auto weight : mFixedWeights) seen += weight;
+  return seen > 0;
+}
+
+double BandProjection::project(smdl::Span<const float> wavelengths,
+                               smdl::Span<const float> E) const noexcept {
   double total{};
   if (!mIsJittering) {
     for (size_t i = 0; i < E.size(); i++)
-      total += band.fixedWeights[i] * double(E[i]);
+      total += mFixedWeights[i] * double(E[i]);
     return total;
   }
   for (size_t i = 0; i < E.size(); i++) {
     const double lambda{double(wavelengths[i])};
-    total += evaluate(band, lambda) * band.widths[i] * photonsPerJoule(lambda) *
-             double(E[i]);
+    total +=
+        evaluate(lambda) * mWidths[i] * photonsPerJoule(lambda) * double(E[i]);
   }
   return total;
 }
@@ -415,11 +412,11 @@ void Response::accumulate(smdl::Span<const float> wavelengths,
                           double *sums) const noexcept {
   SMDL_SANITY_CHECK(wavelengths.size() == E.size());
   if (hasTile()) {
-    sums[0] += project(mBands[bandAt(x, y)], wavelengths, E);
+    sums[0] += mBands[bandAt(x, y)].projection.project(wavelengths, E);
     return;
   }
   for (size_t b = 0; b < mBands.size(); b++)
-    sums[b] += project(mBands[b], wavelengths, E);
+    sums[b] += mBands[b].projection.project(wavelengths, E);
 }
 
 float Response::traceWavelengthAt(size_t x, size_t y, float xi) const noexcept {

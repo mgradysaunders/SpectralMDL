@@ -75,7 +75,8 @@ struct TonemapOptions final {
 ///
 [[nodiscard]] TonemapOptions parseTonemapOptions(std::string_view spec);
 
-/// Tone map the resolved RGB image to 8-bit display values.
+/// Tone map the resolved RGB image, `numPixelsX` by `numPixelsY`, to
+/// 8-bit display values.
 ///
 /// The `film` and its `wavelengths` back the night filter, which needs
 /// the absolute photopic and scotopic luminance of every pixel rather
@@ -85,8 +86,11 @@ struct TonemapOptions final {
 /// `medianFilterRGB()`, which the night filter cannot see: a replaced
 /// pixel still reads as bright in the film, so it stays cone adapted
 /// while its rod adapted neighbors desaturate, and a removed firefly can
-/// leave a faint colored dot in a moonlit frame.
+/// leave a faint colored dot in a moonlit frame. A sensor's picture has
+/// no spectral film, so `film` is null and the night filter is refused
+/// before the render.
 [[nodiscard]] std::vector<uint8_t> tonemap(const TonemapOptions &options,
                                            const std::vector<float> &rgbImage,
-                                           const smdl::SpectralFilm &film,
+                                           size_t numPixelsX, size_t numPixelsY,
+                                           const smdl::SpectralFilm *film,
                                            const Color &wavelengths);

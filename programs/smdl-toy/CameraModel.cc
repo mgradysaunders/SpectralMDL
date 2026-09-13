@@ -170,7 +170,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 }
 
 // One line on the ISO the sensor reads out at: stated, the fixed gain's
-// own, or metered from the film, which cannot be known before it.
+// own, or metered from the scene, which cannot be known before it.
 [[nodiscard]] std::string describeISO(const Sensor &sensor,
                                       const std::optional<float> &iso) {
   if (sensor.hasFixedGain())
@@ -184,8 +184,8 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
         *iso < sensor.baseISO()
             ? ", below the base, so the well clips before the ADC does"
             : "");
-  return smdl::concat("auto, metered from the film once it is rendered, "
-                      "from the base ",
+  return smdl::concat("auto, metered before the first sample and held for "
+                      "the sequence, a third stop from the base ",
                       smdl::Brief(sensor.baseISO(), 5), " up to ",
                       smdl::Brief(sensor.maxISO(), 6));
 }

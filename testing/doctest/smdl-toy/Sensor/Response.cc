@@ -321,7 +321,7 @@ TEST_CASE("Response: the tile picks one band per pixel") {
   }
 }
 
-TEST_CASE("Response: the fingerprint and the file beside the film") {
+TEST_CASE("Response: the fingerprint and the film's band names") {
   SUBCASE("The hash follows the knots in electrons per photon, the peak "
           "included") {
     ResponseSettings a{oneBand("vis", {380, 720}, {1, 1})};
@@ -368,11 +368,6 @@ TEST_CASE("Response: the fingerprint and the file beside the film") {
     settings.cfa = {0, 1};
     CHECK(responseFilmBandNames(settings) ==
           std::vector<std::string>{"mosaic"});
-  }
-  SUBCASE("The band film sits beside the spectral one, before the extension") {
-    CHECK(bandFilmFileName("dir/out.img") == "dir/out-bands.img");
-    CHECK(bandFilmFileName("out") == "out-bands");
-    CHECK(bandFilmFileName("a.b.img") == "a.b-bands.img");
   }
 }
 

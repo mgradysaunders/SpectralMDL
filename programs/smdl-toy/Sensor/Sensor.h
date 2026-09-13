@@ -1,9 +1,9 @@
 /// \file
 /// The physical sensor as physics: what its curves, its pixel, and its
-/// detector imply before any picture is taken, and the meter that reads
-/// a taken one. Independent of the render grid: the integrals here run
-/// at 1 nm over the range the CIE tables span, so a sensor's numbers are
-/// the sensor's alone.
+/// detector imply before any picture is taken, and the meter that turns
+/// a reading of the scene into the ISO it is taken at. Independent of
+/// the render grid: the integrals here run at 1 nm over the range the
+/// CIE tables span, so a sensor's numbers are the sensor's alone.
 #pragma once
 
 #include <algorithm>
@@ -141,6 +141,19 @@ constexpr double METER_K{12.5};
 constexpr double METER_Q{0.65};
 /// \}
 
+/// The ISO speeds a camera offers, the photographic third-stop series:
+/// `{1, 1.25, 1.6, 2, 2.5, 3.2, 4, 5, 6.4, 8}` times a power of ten,
+/// except that above 10000 the whole stops are the powers of two a body
+/// prints (12800, 25600, and on) in place of 12500 and 25000. A table
+/// rather than a rule, since that is what it is; the meter snaps to it
+/// from a sensor's base ISO up, see `Sensor::nearestISO()`.
+constexpr double NOMINAL_ISO_SERIES[]{
+    6,     8,     10,     12,     16,     20,     25,     32,     40,    50,
+    64,    80,    100,    125,    160,    200,    250,    320,    400,   500,
+    640,   800,   1000,   1250,   1600,   2000,   2500,   3200,   4000,  5000,
+    6400,  8000,  10000,  12800,  16000,  20000,  25600,  32000,  40000, 51200,
+    64000, 80000, 102400, 128000, 160000, 204800, 256000, 320000, 409600};
+
 /// The generic well, electrons per square micrometer of pixel, for a
 /// sensor that states neither its well nor its base ISO.
 constexpr double GENERIC_ELECTRONS_PER_SQUARE_MICROMETER{1000.0};
@@ -188,18 +201,20 @@ template <typename Tally, typename TallyRow, typename Fold>
   return std::isfinite(value) ? value : 0.0;
 }
 
-/// What the meter read of a film.
+/// What the meter read of the scene.
 struct MeteredExposure final {
-  /// The frame's mean photometric exposure over the window in
-  /// lux-seconds: the shutter times the illuminance the irradiance
-  /// film holds, weighed by the observer.
+  /// The frame's mean exposure over the window in lux-seconds, read
+  /// through the sensor's most sensitive band and stated as the D55
+  /// exposure that band would count the same electrons under; see
+  /// `Sensor::luxSecondsOf()`.
   double luxSeconds{};
 
   /// The ISO the meter asks for, `q K` over that exposure, before the
   /// instrument's range: infinite for a dark frame.
   double wantedISO{};
 
-  /// The ISO chosen: the wanted one, held within the base and the top.
+  /// The ISO chosen: the rung of the series nearest the wanted one,
+  /// held within the base and the top; see `Sensor::nearestISO()`.
   double iso{};
 
   /// How far the frame sits from where the meter wanted it at the ISO
@@ -363,28 +378,34 @@ public:
   /// the well at the base and less above it.
   [[nodiscard]] double topCodeElectrons(double iso) const noexcept;
 
-  /// The observer's weights on each render grid: `V_i w_i` such that
+  /// The observer's weights on `grid`: `V_i w_i` such that
   /// `683 sum_i(E_i V_i w_i)` is the illuminance of a spectral
   /// irradiance sampled on the grid, under the grid's own rule: its
-  /// widths over a grid held still, and under the jitter each band's
-  /// cell of the grid's edges, with `V` averaged over the cell, since the
+  /// widths over a grid held still, and when `isJittering` each band's
+  /// cell of the grid's edges, with `V` averaged over the cell, since a
   /// film's band holds the irradiance averaged over it.
-  ///
-  /// Under a tile each pixel's film holds its own grid's span and nothing
-  /// else, and the meter wants the mean illuminance over the window, so
-  /// a wavelength is weighed by one over the share of the tile whose
-  /// grids cover it: the classes interleave at pixel pitch, so their
-  /// window means agree, and the sum over the window is then unbiased
-  /// for the mean illuminance wherever some grid covers the visible.
-  /// Where none does, the meter reads less, as it does for any grid that
-  /// misses the visible.
-  [[nodiscard]] static std::vector<std::vector<double>> luminanceWeights();
+  [[nodiscard]] static std::vector<double>
+  luminanceWeights(const WavelengthGrid &grid, bool isJittering);
 
-  /// Meter `film`, the spectral irradiance at the sensor, over `window`
-  /// at an exposure of `seconds`: the ISO a reflected-light meter would
-  /// have set, held within the instrument's range. See `MeteredExposure`.
-  [[nodiscard]] MeteredExposure meter(const smdl::SpectralFilm &film,
-                                      int4 window, double seconds) const;
+  /// The exposure in lux-seconds that the most sensitive band reads a
+  /// mean of `meanElectronRate` electrons per square meter and second
+  /// over `seconds` as: the electrons the pixel counts, over the
+  /// electrons a lux-second of D55 puts in that band. Under D55 this is
+  /// the photometric exposure exactly, and under any other light it is
+  /// what a body that meters through its own sensor reads.
+  [[nodiscard]] double luxSecondsOf(double meanElectronRate,
+                                    double seconds) const noexcept;
+
+  /// Meter an exposure of `luxSeconds`: the ISO a reflected-light meter
+  /// asks for, snapped to the nearest rung of the series and held within
+  /// the instrument's range. See `MeteredExposure`.
+  [[nodiscard]] MeteredExposure meter(double luxSeconds) const noexcept;
+
+  /// The rung of the ISO series nearest `wanted` in stops: the base
+  /// ISO, every entry of `NOMINAL_ISO_SERIES` between the base and the
+  /// top, and the top; the base for anything below it and the top for
+  /// anything above.
+  [[nodiscard]] double nearestISO(double wanted) const noexcept;
 
   /// Fit the color matrix of `bands` under `illuminant`: white-preserving
   /// least squares (Finlayson and Drew 1997) from the bands' responses to

@@ -475,8 +475,9 @@ TEST_CASE("CameraModel: the ISO") {
                            "well; base ISO ");
     CHECK_CONTAINS(report, " from the well, \"R\" counting ");
     CHECK_CONTAINS(report, " e- per lux-second under D55\n");
-    CHECK_CONTAINS(report, "  iso: auto, metered from the film once it is "
-                           "rendered, from the base ");
+    CHECK_CONTAINS(report, "  iso: auto, metered before the first sample and "
+                           "held for the sequence, a third stop from the "
+                           "base ");
     const CameraModel stated{resolveCameraModel(
         files.camera("camera { sensor \"body.sensor\" fstop 8 iso 800 }\n"))};
     CHECK_CONTAINS(describeCamera(stated), "  iso: 800 stated, ");

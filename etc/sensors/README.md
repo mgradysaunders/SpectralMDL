@@ -15,19 +15,22 @@ camera {
 ```
 
 ```
-smdl-toy shot.layout -output-spectrum out.img -output-dn out-dn.img
+smdl-toy shot.layout -output-bands out.img -output-dn out-dn.img
 ```
 
 A body decides the picture: the render is exactly its pixels (leave
 `-resolution` out, or use `-crop-window` for part of the frame), the
-spectral film holds the irradiance at the sensor rather than the scene
-radiance, the wavelength grid spans the body's curves with the jitter on
-unless the flags say otherwise, and the band film beside the spectral
-one (`out-bands.img`) holds the mosaic the tile reads, in photoelectrons
-per square meter and second. `-output-dn` reads it out through the
-detector as a 16-bit ENVI pair of digital numbers, with every factor in
-its header. `-describe-camera` prints what a camera resolves to before
-anything renders.
+wavelength grid spans the body's curves with the jitter on unless the
+flags say otherwise, and the film is the band film: the irradiance at
+the sensor projected onto the response bands, the mosaic the tile reads
+or every band of an untiled body, in photoelectrons per square meter and
+second, which `-output-bands` writes and `-resume` continues. There is
+no spectral film through a body; the observer's film is what
+`-output-bands` writes through `sensor human` or under `-ideal`.
+`-output-dn` reads the band film out through the detector as a 16-bit
+ENVI pair of digital numbers, with every factor in its header.
+`-describe-camera` prints what a camera resolves to before anything
+renders.
 
 Every curve here runs from 380 to 780 nm at 5 nm.
 
@@ -50,13 +53,18 @@ thousands of electrons (the a7 III at 52,000), which is the right order
 against the measured wells, and no better than the peak they rest on.
 The log and `-describe-camera` state every derived number as derived.
 
-An unstated ISO is metered from the rendered film as a reflected-light
-meter would set it, never below the base, and the log says what the
+An unstated ISO is metered before the first sample, as a camera meters
+and then exposes: a pass over a sparse lattice of the window, read
+through the body's most sensitive band as a body that meters through
+its own sensor reads, snapped to the nearest third stop of the ISO
+series a camera offers, never below the base, and held for every
+session of the sequence in the film's header. The log says what the
 meter asked for and, when the frame ran past the base or the top, the
 shutter or the stop that would bring it back; `iso` in the camera file
-or `-iso` states one instead. The gain follows the ISO from the same
-line: at the base it fills the well to the top code, and above the base
-the ADC clips before the well does.
+or `-iso` states one instead, and the log then says how far the frame
+sits from metered. The gain follows the ISO from the same line: at the
+base it fills the well to the top code, and above the base the ADC
+clips before the well does.
 
 The Hasselblad L1D-20c is stated at 12 bits; its own raw files are
 16-bit DNG containers.
@@ -72,10 +80,11 @@ a copy of the file, or in the camera file.
 ## Reading a sensor out
 
 `-output-dn` needs an exposure (`shutter`) and a pupil (`fstop` or
-`aperture` with the thin lens, or a `.lens`). A saved film reads out
-again with `-spp 0 -resume out.img -output-dn ...`, as many times as
-there are realizations to draw, and at any ISO; `-detector-seed` picks
-the realization and `-detector-noise none|shot|all` isolates a term.
+`aperture` with the thin lens, or a `.lens`). A saved band film reads
+out again with `-spp 0 -resume out.img -output-dn ...`, as many times
+as there are realizations to draw, at the ISO the meter chose for it or
+at any `-iso`; `-detector-seed` picks the realization and
+`-detector-noise none|shot|all` isolates a term.
 The readout's header carries the ISO, the base ISO, whether the ISO was
 metered, and the white level beside the gain and the black level.
 

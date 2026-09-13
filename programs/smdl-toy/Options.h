@@ -86,10 +86,11 @@ struct CameraFlags final {
 
   /// `-iso N|auto`: the ISO a physical sensor is read out at, over the
   /// camera file's, and the meter flagged apart, since it is a
-  /// measurement of the film rather than a value. One flag, so at most
-  /// one of the two is set. It acts after the last sample, so a readout
-  /// of a saved film turns it without editing the file. See
-  /// `CameraSettings::iso`.
+  /// measurement of the scene rather than a value. One flag, so at most
+  /// one of the two is set. A number acts after the last sample, so a
+  /// readout of a saved film turns it without editing the file; the
+  /// meter's own rung is the sequence's, recorded when it was first
+  /// rendered. See `CameraSettings::iso`.
   ///
   /// \{
   Flag<float> iso{};
@@ -129,24 +130,25 @@ struct ImageOptions final {
   /// The tone map applied to the 8-bit output.
   TonemapOptions tonemap{};
 
-  /// The firefly filter applied to the RGB output, and to neither the
-  /// spectral output nor anything a later session resumes from.
+  /// The firefly filter applied to the RGB pictures, and to neither the
+  /// film nor anything a later session resumes from.
   MedianFilterOptions medianFilter{};
 
-  /// The RGB picture: the linear picture as floats when the name ends
-  /// in '.exr' or '.hdr', else tone mapped to 8 bits; see
+  /// The RGB pictures, one per name: the linear picture as floats when
+  /// the name ends in '.exr' or '.hdr', else tone mapped to 8 bits; see
   /// `hasFloatImageExtension()`. Empty means none.
-  std::string outputRGB{};
+  std::vector<std::string> outputRGB{};
 
-  /// The spectral output. Empty means none; `-resume` implies it back
-  /// to the file being resumed.
-  std::string outputSpectrum{};
+  /// The film's output: the observer's spectral film, or a sensor's band
+  /// film. Empty means none; `-resume` implies it back to the file being
+  /// resumed.
+  std::string outputBands{};
 
-  bool wasOutputSpectrumGiven{};
+  bool wasOutputBandsGiven{};
 
-  /// Write the spectral output, and the band film beside it, as 64-bit
-  /// floats rather than 32-bit: for a byte-for-byte comparison that must
-  /// see every bit the accumulation holds.
+  /// Write the film as 64-bit floats rather than 32-bit: for a
+  /// byte-for-byte comparison that must see every bit the accumulation
+  /// holds.
   bool shouldWriteDouble{};
 
   std::string resume{};
@@ -399,8 +401,8 @@ struct Options final {
 
   UtilityOptions utility{};
 
-  /// The command line as it was given, joined, for the spectral
-  /// output's `render args` field.
+  /// The command line as it was given, joined, for the film's
+  /// `render args` field.
   std::string argsEcho{};
 };
 

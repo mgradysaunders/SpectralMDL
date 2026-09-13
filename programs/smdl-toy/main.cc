@@ -142,32 +142,34 @@ int main(int argc, char **argv) try {
   }
   // The render loop is deliberately outside the trace; see -profile.
   if (isProfiling) smdl::profilerFinalize(profileFileName.c_str());
-  smdl::SpectralFilm film{grid.wavelengths.size(), frame.numPixelsX,
-                          frame.numPixelsY};
-  // -resume implies writing back to the file being resumed, so one
-  // command line re-runs to keep accumulating; an explicitly given
-  // -output-spectrum wins verbatim, redirecting or (when empty)
-  // suppressing the write.
-  const std::string outputSpectrum{opts.image.wasOutputSpectrumGiven ||
-                                           !resumed.wasRequested
-                                       ? opts.image.outputSpectrum
-                                       : opts.image.resume};
-  // The band film, which a physical sensor always accumulates: it goes
-  // beside the spectral one and into the readout, and a resumed
-  // sequence needs it whether or not this session writes either.
+  // The film: the observer's spectral film, or through a physical sensor
+  // its band film, which the response projects every sample onto and the
+  // readout reads. One or the other, never both.
+  std::optional<smdl::SpectralFilm> film{};
   std::optional<smdl::SpectralFilm> bandFilm{};
   if (response)
     bandFilm.emplace(response->filmBandCount(), frame.numPixelsX,
                      frame.numPixelsY);
+  else
+    film.emplace(grid.wavelengths.size(), frame.numPixelsX, frame.numPixelsY);
+  // -resume implies writing back to the file being resumed, so one
+  // command line re-runs to keep accumulating; an explicitly given
+  // -output-bands wins verbatim, redirecting or (when empty)
+  // suppressing the write.
+  const std::string outputBands{opts.image.wasOutputBandsGiven ||
+                                        !resumed.wasRequested
+                                    ? opts.image.outputBands
+                                    : opts.image.resume};
+  smdl::SpectralFilm *filmOrNull{film ? &*film : nullptr};
   const Response *responseOrNull{response ? &*response : nullptr};
   smdl::SpectralFilm *bandFilmOrNull{bandFilm ? &*bandFilm : nullptr};
   std::unique_ptr<STree> sdtree{};
-  renderSamples(opts, frame, grid, compiler, staged, resumed, film,
-                responseOrNull, bandFilmOrNull, outputSpectrum, sdtree);
-  writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), film,
-               responseOrNull, bandFilmOrNull, resumed, outputSpectrum,
-               savesGuideTree(opts, frame, outputSpectrum) ? sdtree.get()
-                                                           : nullptr);
+  renderSamples(opts, frame, grid, compiler, staged, resumed, filmOrNull,
+                responseOrNull, bandFilmOrNull, outputBands, sdtree);
+  writeOutputs(opts, frame, grid, compiler, staged.envLight.get(), filmOrNull,
+               responseOrNull, bandFilmOrNull, resumed, outputBands,
+               savesGuideTree(opts, frame, outputBands) ? sdtree.get()
+                                                        : nullptr);
   return EXIT_SUCCESS;
 } catch (const smdl::Error &error) {
   error.print();

@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "smdl/RenderUtil/Colorimetry.h"
-#include "smdl/RenderUtil/SpectralFilm.h"
 
 #include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
@@ -18,8 +17,9 @@
 // follows the ISO. What matters is that the integrals match hand
 // integrals, that the well and the base ISO invert each other, that the
 // gain at the base fills the well and scales with the ISO, and that the
-// meter reads a flat field of known luminance to the ISO a
-// reflected-light meter would set, held within the instrument's range.
+// meter reads a field of known exposure to the ISO a reflected-light
+// meter would set, on the nearest rung of the series, held within the
+// instrument's range.
 
 namespace {
 
@@ -51,24 +51,6 @@ namespace {
   for (size_t i = 0; i < SENSOR_WAVELENGTH_COUNT; i++)
     total += smdl::wymanY(sensorWavelength(i));
   return total;
-}
-
-// A film of `numX` by `numY` pixels holding the flat spectral irradiance
-// `E` in every band inside `window`, and nothing outside it.
-[[nodiscard]] smdl::SpectralFilm flatFilm(size_t numBands, size_t numX,
-                                          size_t numY, double E, int4 window) {
-  smdl::SpectralFilm film{numBands, numX, numY};
-  std::vector<double> sums(numBands);
-  for (size_t y = 0; y < numY; y++) {
-    for (size_t x = 0; x < numX; x++) {
-      const bool isLit{int(x) >= window[0] && int(x) < window[2] &&
-                       int(y) >= window[1] && int(y) < window[3]};
-      for (size_t b = 0; b < numBands; b++) sums[b] = isLit ? E : 0.0;
-      film.addTotals(x, y, sums.data());
-    }
-  }
-  film.addSamples(1);
-  return film;
 }
 
 // A 10 nm grid from 400 to 700 nm, 31 bands.
@@ -235,27 +217,18 @@ TEST_CASE("Sensor: the gain follows the ISO") {
 }
 
 TEST_CASE("Sensor: the meter") {
-  // By value: the weights come as a vector per grid, and ranging over
-  // the first of a temporary would dangle.
-  const auto firstWeights{[] { return Sensor::luminanceWeights().front(); }};
   SensorSettings settings{flatSensor()};
   settings.detector.baseISO = 100.0f;
   settings.detector.maxISO = 6400.0f;
   const Sensor sensor{settings};
   const std::vector<float> grid{fineGrid()};
   ScopedGrid scoped{grid, false};
-  const Color &wavelengths{scoped.wavelengths()};
-  const int4 whole{0, 0, 4, 4};
-  // A flat spectral irradiance `E` over the grid reads
-  // `683 E integral(y-bar)` lux over the grid's span, by the trapezoid.
-  const auto luxOf{[&](double E) {
-    double total{};
-    for (const auto weight : firstWeights()) total += weight;
-    return LUMENS_PER_WATT * E * total;
-  }};
-  SUBCASE("The weights integrate y-bar over the grid, still or jittered") {
+  SUBCASE("The luminance weights integrate y-bar over the grid, still or "
+          "jittered") {
     double still{};
-    for (const auto weight : firstWeights()) still += weight;
+    for (const auto weight :
+         Sensor::luminanceWeights(gRenderGrid.first(), false))
+      still += weight;
     double expected{};
     for (double lambda = 400; lambda <= 700; lambda += 1)
       expected +=
@@ -263,92 +236,86 @@ TEST_CASE("Sensor: the meter") {
     CHECK(still == doctest::Approx(expected).epsilon(0.002));
     ScopedGrid jittered{grid, true};
     double moving{};
-    for (const auto weight : firstWeights()) moving += weight;
+    for (const auto weight :
+         Sensor::luminanceWeights(gRenderGrid.first(), true))
+      moving += weight;
     // The jitter's rectangles tile the same span and average y-bar over
     // each, which integrates it more closely than the trapezoid does.
     CHECK(moving == doctest::Approx(expected).epsilon(1e-4));
   }
-  SUBCASE("Under a tile a wavelength is weighed by one over the share of the "
-          "tile whose grids see it, so the window's mean is the illuminance") {
-    const auto listOf{[](std::vector<float> list) {
-      return WavelengthCells::fromWavelengths(
-          smdl::Span<const float>(list.data(), list.size()));
-    }};
-    // Two grids of seven bands, one over 400 to 700 nm and one over 400
-    // to 500 nm, half the tile each: below 500 nm both see, above only
-    // the first does.
-    const std::vector<WavelengthCells> family{
-        listOf({400, 450, 500, 550, 600, 650, 700}),
-        listOf({400, 417, 433, 450, 467, 483, 500})};
-    const ScopedGrid tiled{family, 2, {0, 1}, true};
-    const std::vector<std::vector<double>> weights{Sensor::luminanceWeights()};
-    REQUIRE(weights.size() == 2);
-    double wide{}, narrow{};
-    for (const auto weight : weights[0]) wide += weight;
-    for (const auto weight : weights[1]) narrow += weight;
-    const ScopedGrid alone{family.front(), true};
-    double whole{};
-    for (const auto weight : firstWeights()) whole += weight;
-    // To the 64-step rule's own accuracy: the cell straddling 500 nm is
-    // integrated in two pieces here and in one alone.
-    CHECK(0.5 * (wide + narrow) == doctest::Approx(whole).epsilon(1e-4));
-    CHECK(wide > whole);
-    CHECK(narrow < whole);
+  SUBCASE("A reading through the peak band is the D55 exposure that counts "
+          "the same electrons") {
+    // A D55 field of 2.03 lux: the band counts its electrons per
+    // lux-second of D55 times 2.03 per second, and 10 ms of that reads
+    // back as 0.0203 lux-seconds exactly, whatever the pixel.
+    const SensorSpectrum d55{daylightSpectrum(D55_KELVIN)};
+    const double rate{sensor.electronRate(0, d55) * 2.03 /
+                      Sensor::illuminance(d55)};
+    CHECK(sensor.luxSecondsOf(rate, 0.01) ==
+          doctest::Approx(0.0203).epsilon(1e-9));
+    // Under a flat field the band reads what a flat field puts in it
+    // against what D55 does, which is not the illuminance: the meter is
+    // through the sensor's band, not the observer.
+    const double flatRate{sensor.electronRate(0, flatSpectrum()) * 2.03 /
+                          Sensor::illuminance(flatSpectrum())};
+    CHECK(sensor.luxSecondsOf(flatRate, 0.01) != doctest::Approx(0.0203));
+    CHECK(sensor.luxSecondsOf(0.0, 0.01) == 0.0);
   }
-  SUBCASE("A flat field of known luminance meters to q K over its exposure") {
-    // 2.03 lux at 10 ms is 0.0203 lux-seconds, which wants ISO 400.
-    const double E{2.03 / luxOf(1.0)};
-    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
-    const MeteredExposure metered{sensor.meter(film, whole, 0.01)};
-    CHECK(metered.luxSeconds == doctest::Approx(0.0203).epsilon(1e-4));
+  SUBCASE("A field of known exposure meters to q K over it, on the nearest "
+          "rung") {
+    // 0.0203 lux-seconds wants ISO 400.25, whose rung is 400.
+    const MeteredExposure metered{sensor.meter(0.0203)};
+    CHECK(metered.luxSeconds == 0.0203);
     CHECK(metered.wantedISO ==
-          doctest::Approx(METER_Q * METER_K / 0.0203).epsilon(1e-4));
-    CHECK(metered.iso == doctest::Approx(400.25).epsilon(1e-3));
+          doctest::Approx(METER_Q * METER_K / 0.0203).epsilon(1e-9));
+    CHECK(metered.iso == 400.0);
     CHECK(metered.stopsOff == 0.0);
     CHECK(!metered.isOverexposed());
     CHECK(!metered.isUnderexposed());
   }
+  SUBCASE("The rung is the nearest in stops") {
+    // 450 sits 0.17 stops over 400 and 0.15 under 500; 440 sits 0.14
+    // over 400 and 0.18 under 500.
+    CHECK(sensor.nearestISO(450) == 500.0);
+    CHECK(sensor.nearestISO(440) == 400.0);
+    CHECK(sensor.nearestISO(125) == 125.0);
+    CHECK(sensor.nearestISO(6399) == 6400.0);
+    CHECK(sensor.meter(METER_Q * METER_K / 450).iso == 500.0);
+  }
+  SUBCASE("A base the series does not name is its own floor rung, and the "
+          "top its own ceiling") {
+    SensorSettings odd{settings};
+    odd.detector.baseISO = 83.7f;
+    odd.detector.maxISO = 7000.0f;
+    const Sensor sensor2{odd};
+    CHECK(sensor2.nearestISO(10) == doctest::Approx(83.7));
+    CHECK(sensor2.nearestISO(90) == doctest::Approx(83.7));
+    CHECK(sensor2.nearestISO(95) == 100.0);
+    CHECK(sensor2.nearestISO(6800) == 7000.0);
+    CHECK(sensor2.nearestISO(1e6) == 7000.0);
+  }
   SUBCASE("A bright field wants less than the base, and is overexposed by "
           "the stops between") {
-    const double E{2.03 / luxOf(1.0)};
-    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
     // Eight times the exposure wants ISO 50, a stop under the base.
-    const MeteredExposure metered{sensor.meter(film, whole, 0.08)};
+    const MeteredExposure metered{sensor.meter(0.0203 * 8)};
     CHECK(metered.wantedISO == doctest::Approx(50.0).epsilon(1e-3));
     CHECK(metered.iso == 100.0);
     CHECK(metered.stopsOff == doctest::Approx(1.0).epsilon(1e-3));
     CHECK(metered.isOverexposed());
   }
   SUBCASE("A dim field wants more than the top, and is underexposed") {
-    const double E{2.03 / luxOf(1.0)};
-    const smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, whole)};
     // A 64th of the exposure wants ISO 25600, two stops over the top.
-    const MeteredExposure metered{sensor.meter(film, whole, 0.01 / 64.0)};
+    const MeteredExposure metered{sensor.meter(0.0203 / 64)};
     CHECK(metered.iso == 6400.0);
     CHECK(metered.stopsOff == doctest::Approx(-2.0).epsilon(1e-3));
     CHECK(metered.isUnderexposed());
   }
-  SUBCASE("A dark film wants everything, and gets the top") {
-    const smdl::SpectralFilm film{grid.size(), 4, 4};
-    const MeteredExposure metered{sensor.meter(film, whole, 0.01)};
+  SUBCASE("A dark reading wants everything, and gets the top") {
+    const MeteredExposure metered{sensor.meter(0.0)};
     CHECK(metered.luxSeconds == 0.0);
     CHECK(std::isinf(metered.wantedISO));
     CHECK(metered.iso == 6400.0);
     CHECK(metered.isUnderexposed());
-  }
-  SUBCASE("The mean is over the window, and a poisoned pixel reads as "
-          "black") {
-    const double E{2.03 / luxOf(1.0)};
-    const int4 window{0, 0, 2, 2};
-    smdl::SpectralFilm film{flatFilm(grid.size(), 4, 4, E, window)};
-    const MeteredExposure over{sensor.meter(film, whole, 0.01)};
-    const MeteredExposure within{sensor.meter(film, window, 0.01)};
-    CHECK(over.luxSeconds == doctest::Approx(0.0203 / 4.0).epsilon(1e-4));
-    CHECK(within.luxSeconds == doctest::Approx(0.0203).epsilon(1e-4));
-    std::vector<double> poison(grid.size(), double(INF));
-    film.addTotals(0, 0, poison.data());
-    const MeteredExposure poisoned{sensor.meter(film, window, 0.01)};
-    CHECK(poisoned.luxSeconds == doctest::Approx(0.75 * 0.0203).epsilon(1e-4));
   }
 }
 

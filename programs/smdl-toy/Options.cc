@@ -92,9 +92,10 @@ cl::opt<bool> optAutolookIgnoreBackfaces{
 cl::opt<std::string> optISO{
     "iso",
     cl::desc("The ISO a physical sensor is read out at, or 'auto' to meter it "
-             "from the rendered film as the saturation speed of ISO 12232, "
-             "never below the sensor's base ISO, overriding the camera file's "
-             "'iso' (default: the camera file's, else auto)"),
+             "from the scene before the first sample as the saturation speed "
+             "of ISO 12232, to the nearest third stop and never below the "
+             "sensor's base ISO, overriding the camera file's 'iso' (default: "
+             "the camera file's, else auto)"),
     cl::cat(catCamera)};
 cl::opt<std::string> optWhiteBalance{
     "white-balance",
@@ -169,8 +170,8 @@ cl::opt<float3> optRGBWavelengths{
 cl::opt<bool> optMedianFilter{
     "median-filter",
     cl::desc("Replace firefly pixels with a neighbor in the RGB outputs\n"
-             "* the spectral output stays radiometric, and so does the "
-             "sequence a later -resume reads"),
+             "* the film stays radiometric, and so does the sequence a later "
+             "-resume reads"),
     cl::init(false), cl::cat(catImage)};
 cl::opt<float> optMedianFilterFactor{
     "median-filter-factor",
@@ -185,21 +186,24 @@ cl::opt<int> optMedianFilterRadius{
              "(default: 1, a 3x3 window)\n"
              "* raise it only for a block of fireflies wider than the window"),
     cl::init(1), cl::cat(catImage)};
-cl::opt<std::string> optOutputRGB{
+cl::list<std::string> optOutputRGB{
     "output-rgb",
-    cl::desc("The RGB image filename (default: output.png)\n"
+    cl::desc("The RGB image filename, repeatable (default: output.png)\n"
              "* '.exr' or '.hdr' holds the linear picture as floats, before "
              "the tone map and -exposure; any other extension holds the tone "
-             "mapped 8-bit picture"),
-    cl::init(std::string("output.png")), cl::cat(catImage)};
-cl::opt<std::string> optOutputSpectrum{
-    "output-spectrum",
-    cl::desc("Also write linear spectral radiance to this ENVI file"),
+             "mapped 8-bit picture\n"
+             "* an empty name writes none"),
     cl::cat(catImage)};
-cl::opt<bool> optOutputSpectrumDouble{
-    "output-spectrum-double",
-    cl::desc("Write -output-spectrum, and the band film beside it, as 64-bit "
-             "floats rather than 32-bit\n"
+cl::opt<std::string> optOutputBands{
+    "output-bands",
+    cl::desc("Also write the film to this ENVI file: the observer's linear "
+             "spectral radiance, or through a '.sensor' its band film, the "
+             "photoelectrons each response band counts\n"
+             "* -resume implies writing back to the file it reads"),
+    cl::cat(catImage)};
+cl::opt<bool> optOutputBandsDouble{
+    "output-bands-double",
+    cl::desc("Write -output-bands as 64-bit floats rather than 32-bit\n"
              "* for a byte-for-byte comparison of two renders: a 32-bit mean "
              "is far finer than any render's noise, and -resume reads "
              "either"),
@@ -207,7 +211,7 @@ cl::opt<bool> optOutputSpectrumDouble{
 cl::opt<std::string> optResume{
     "resume",
     cl::desc("Resume accumulating from this ENVI file written by a previous "
-             "-output-spectrum"),
+             "-output-bands"),
     cl::cat(catImage)};
 cl::opt<std::string> optOutputDN{
     "output-dn",
@@ -672,10 +676,17 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.medianFilter.isEnabled = bool(optMedianFilter);
   opts.image.medianFilter.factor = float(optMedianFilterFactor);
   opts.image.medianFilter.radius = int(optMedianFilterRadius);
-  opts.image.outputRGB = std::string(optOutputRGB);
-  opts.image.outputSpectrum = std::string(optOutputSpectrum);
-  opts.image.wasOutputSpectrumGiven = optOutputSpectrum.getNumOccurrences() > 0;
-  opts.image.shouldWriteDouble = optOutputSpectrumDouble;
+  // One PNG unless the flag says: every name it gives, the empty ones
+  // dropped, so that an empty name alone asks for no picture at all.
+  if (optOutputRGB.empty()) {
+    opts.image.outputRGB.push_back("output.png");
+  } else {
+    for (const auto &name : optOutputRGB)
+      if (!name.empty()) opts.image.outputRGB.push_back(name);
+  }
+  opts.image.outputBands = std::string(optOutputBands);
+  opts.image.wasOutputBandsGiven = optOutputBands.getNumOccurrences() > 0;
+  opts.image.shouldWriteDouble = optOutputBandsDouble;
   opts.image.resume = std::string(optResume);
   opts.image.outputDN = std::string(optOutputDN);
   opts.image.readout.seed = unsigned(optDetectorSeed);
@@ -775,8 +786,8 @@ Options parseCommandLine(int argc, char **argv) {
                              : std::string(optProfile);
   opts.utility.isProfiling = optProfile.getNumOccurrences() > 0;
 
-  // The command line as it was given, for the spectral output's
-  // 'render args' field.
+  // The command line as it was given, for the film's 'render args'
+  // field.
   for (int i = 1; i < argc; i++) {
     if (i > 1) opts.argsEcho += ' ';
     opts.argsEcho += argv[i];
