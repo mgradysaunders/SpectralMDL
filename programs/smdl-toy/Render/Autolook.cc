@@ -226,8 +226,9 @@ AutolookResult solveAutolook(const Scene &scene,
     float minFraction{+INF};
     for (const auto &candidate : candidates)
       minFraction = std::min(minFraction, candidate.backfaceFraction);
-    const bool shouldCull{!options.ignoreBackfaces && minFraction <= 0.1f};
-    if (!options.ignoreBackfaces && !shouldCull)
+    const bool shouldCull{!options.shouldIgnoreBackfaces &&
+                          minFraction <= 0.1f};
+    if (!options.shouldIgnoreBackfaces && !shouldCull)
       SMDL_LOG_INFO("Autolook: every view shows at least ",
                     100.0f * minFraction,
                     "% backfaces, so they are treated as two-sided "
@@ -242,7 +243,7 @@ AutolookResult solveAutolook(const Scene &scene,
         best = i;
       }
     }
-  } else if (!options.ignoreBackfaces &&
+  } else if (!options.shouldIgnoreBackfaces &&
              candidates[0].backfaceFraction > 0.1f) {
     SMDL_LOG_WARN(
         "-autolook-azimuth ", azimuths[0], ": ",

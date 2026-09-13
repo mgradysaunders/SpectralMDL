@@ -25,6 +25,11 @@ namespace smdl {
 class Compiler;
 }
 
+/// Whether a develop says what it did. The picture says how it was
+/// balanced and exposed; a checkpoint preview, which develops the same
+/// film again every few seconds, stays quiet.
+enum class DevelopLogging { SILENT, VERBOSE };
+
 //--{ The observer's develop
 
 /// How `resolveRGB()` maps the film to RGB when the CIE projection is
@@ -204,12 +209,11 @@ struct DevelopFit final {
 /// badly develop as false color, each band on its own channel, and fewer
 /// than three as gray, both balanced and exposed the same way.
 ///
-/// The pixels outside `window` develop to black. `shouldLog` says what
-/// was done; a preview passes false.
+/// The pixels outside `window` develop to black.
 [[nodiscard]] std::vector<float>
 developReadout(const Sensor &sensor, const Detector &detector,
                const Readout &readout, const WhiteBalance &whiteBalance,
-               int4 window, bool shouldLog);
+               int4 window, DevelopLogging logging);
 //--}
 
 //--{ The develop a DNG hands over

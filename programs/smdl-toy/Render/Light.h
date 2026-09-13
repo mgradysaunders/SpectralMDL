@@ -475,7 +475,7 @@ private:
 /// MIS weight 1; see `AreaLight::isSampled`.
 class LightSampler final {
 public:
-  /// `allLights` samples every emissive instance whether or not it is
+  /// `useAllLights` samples every emissive instance whether or not it is
   /// marked: the `-mark-all-lights` switch, and what a render without a
   /// layout to carry marks wants. `useTree` selects through the
   /// `LightTree` rather than the flat distribution, which is what
@@ -483,7 +483,7 @@ public:
   LightSampler(smdl::Compiler &compiler, const Scene &scene,
                const EnvLight *envLight,
                const std::vector<LayoutLight> &layoutLights,
-               const Color &wavelengths, bool allLights = false,
+               const Color &wavelengths, bool useAllLights = false,
                bool useTree = false);
 
   /// Are there no lights to sample?

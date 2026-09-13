@@ -341,7 +341,7 @@ TEST_CASE("Develop: a neutral develops neutral") {
   }};
   const auto develop{[&](const Readout &readout, WhiteBalanceKind kind) {
     return developReadout(sensor, detector, readout, WhiteBalance{kind, 0.0f},
-                          whole, false);
+                          whole, DevelopLogging::SILENT);
   }};
   SUBCASE("Under D65, balanced to D65") {
     CHECK(isNeutral(develop(grayField(d65), WhiteBalanceKind::D65)));
@@ -373,7 +373,7 @@ TEST_CASE("Develop: a clipped white stays white") {
         readoutOf(detector, bandCount, 4, 4,
                   std::vector<double>(16 * bandCount, fraction))};
     CHECK(isNeutral(developReadout(sensor, detector, readout, WhiteBalance{},
-                                   int4{0, 0, 4, 4}, false)));
+                                   int4{0, 0, 4, 4}, DevelopLogging::SILENT)));
   }
 }
 
@@ -396,7 +396,7 @@ TEST_CASE("Develop: a sensor whose curves are the observer's develops the "
   }
   const std::vector<float> rgbImage{developReadout(
       sensor, detector, readoutOf(detector, 3, numPixels, 1, fractions),
-      WhiteBalance{}, int4{0, 0, int(numPixels), 1}, false)};
+      WhiteBalance{}, int4{0, 0, int(numPixels), 1}, DevelopLogging::SILENT)};
   // Back to XYZ through the builtin's matrix; each patch against the
   // observer's own XYZ of it, adapted as the develop adapts, both in
   // CIELAB about their white, so that the exposure cancels.
@@ -494,8 +494,8 @@ TEST_CASE("Develop: a metered neutral develops to the gray the meter asked "
   const Detector detector{sensor, shot};
   const Readout readout{detector.readOut(
       bandFilm, DetectorReadoutOptions{0, DetectorNoise::NONE}, whole)};
-  const std::vector<float> rgbImage{
-      developReadout(sensor, detector, readout, whiteBalance, whole, false)};
+  const std::vector<float> rgbImage{developReadout(
+      sensor, detector, readout, whiteBalance, whole, DevelopLogging::SILENT)};
   for (const auto value : rgbImage)
     CHECK(double(value) == doctest::Approx(expected).epsilon(0.01));
 }
@@ -507,7 +507,7 @@ TEST_CASE("Develop: a sensor that cannot carry color still develops") {
     const Detector detector{detectorFor(sensor)};
     const std::vector<float> rgbImage{developReadout(
         sensor, detector, readoutOf(detector, 3, 1, 1, {0.1, 0.2, 0.3}),
-        WhiteBalance{}, int4{0, 0, 1, 1}, false)};
+        WhiteBalance{}, int4{0, 0, 1, 1}, DevelopLogging::SILENT)};
     const double3 rgb{pixelOf(rgbImage, 0)};
     CHECK(rgb.y == doctest::Approx(2.0 * rgb.x).epsilon(1e-3));
     CHECK(rgb.z == doctest::Approx(3.0 * rgb.x).epsilon(1e-3));
@@ -517,7 +517,7 @@ TEST_CASE("Develop: a sensor that cannot carry color still develops") {
     const Detector detector{detectorFor(sensor)};
     const std::vector<float> rgbImage{developReadout(
         sensor, detector, readoutOf(detector, 1, 2, 1, {0.1, 0.3}),
-        WhiteBalance{}, int4{0, 0, 2, 1}, false)};
+        WhiteBalance{}, int4{0, 0, 2, 1}, DevelopLogging::SILENT)};
     CHECK(isNeutral(rgbImage));
     CHECK(rgbImage[3] == doctest::Approx(3.0 * rgbImage[0]).epsilon(1e-3));
   }
@@ -533,14 +533,15 @@ TEST_CASE("Develop: the picture is a function of the readout alone") {
   SUBCASE("The same readout develops the same, gray world and all") {
     const WhiteBalance automatic{WhiteBalanceKind::AUTO, 0.0f};
     CHECK(developReadout(sensor, detector, readout, automatic, int4{0, 0, 8, 6},
-                         false) == developReadout(sensor, detector, readout,
-                                                  automatic, int4{0, 0, 8, 6},
-                                                  false));
+                         DevelopLogging::SILENT) ==
+          developReadout(sensor, detector, readout, automatic, int4{0, 0, 8, 6},
+                         DevelopLogging::SILENT));
   }
   SUBCASE("Outside the window is black") {
     const int4 window{2, 1, 6, 5};
-    const std::vector<float> rgbImage{developReadout(
-        sensor, detector, readout, WhiteBalance{}, window, false)};
+    const std::vector<float> rgbImage{developReadout(sensor, detector, readout,
+                                                     WhiteBalance{}, window,
+                                                     DevelopLogging::SILENT)};
     for (size_t y = 0; y < 6; y++)
       for (size_t x = 0; x < 8; x++) {
         const bool isInside{int(x) >= window[0] && int(x) < window[2] &&

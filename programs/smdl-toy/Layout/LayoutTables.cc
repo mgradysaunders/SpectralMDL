@@ -386,7 +386,7 @@ void dumpCurves(const std::string &fileName) {
 }
 
 void packPlaces(const std::string &layoutFileName, std::string outputFileName,
-                bool isRigid, bool isCompressed) {
+                const PackPlacesOptions &options) {
   if (outputFileName.empty())
     outputFileName = std::filesystem::path(layoutFileName)
                          .replace_extension(PLACES_EXTENSION)
@@ -402,8 +402,8 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
                                    smdl::QuotedPath(layoutFileName), ": ",
                                    diags.summary()));
   PlacesFile places{};
-  places.isRigid = isRigid;
-  places.isCompressed = isCompressed;
+  places.isRigid = options.isRigid;
+  places.isCompressed = options.isCompressed;
   std::string assetName{};
   using Overrides = std::map<std::string, std::string, std::less<>>;
   std::vector<Overrides> variants{};

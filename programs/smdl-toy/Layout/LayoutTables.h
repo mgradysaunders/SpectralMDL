@@ -40,6 +40,14 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout);
 void printMaterialTableJSON(const smdl::Compiler *compiler,
                             const Layout &layout);
 
+/// How `packPlaces()` writes the records it packs, which is
+/// `PlacesFile::isRigid` and `PlacesFile::isCompressed` verbatim.
+struct PackPlacesOptions final {
+  bool isRigid{};
+
+  bool isCompressed{};
+};
+
 /// Pack a layout's top-level `place` statements into a `.places`
 /// buffer: each place becomes one record carrying its transform, and
 /// the distinct per-place override sets become the variant table, which
@@ -49,7 +57,7 @@ void printMaterialTableJSON(const smdl::Compiler *compiler,
 /// \throws smdl::Error  On parse errors, mixed content, or write
 ///                      failure.
 void packPlaces(const std::string &layoutFileName, std::string outputFileName,
-                bool isRigid, bool isCompressed);
+                const PackPlacesOptions &options);
 
 /// Print a `.places` buffer as the one-line place text `packPlaces()`
 /// consumes, one `place` per record with its variant's overrides

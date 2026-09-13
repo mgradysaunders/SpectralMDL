@@ -10,6 +10,13 @@
 /// prints, one struct apiece, so that where a setting lives here and
 /// where a user finds it are the same question. Anything finer is a
 /// struct nested inside its category.
+///
+/// Every struct declared here is `*Flags`: it holds what the command
+/// line said, and nothing outside names its type. A `*Options` member is
+/// a lowered value bag declared in the header of the layer that consumes
+/// it, `PathOptions` and `TonemapOptions` among them, which is why
+/// `AutolookFlags` is what `-autolook` was given and `AutolookOptions`
+/// is what the solver runs on.
 #pragma once
 
 #include <optional>
@@ -32,7 +39,7 @@
 //--{ Compile Options
 /// What the MDL compiler bakes into the material code. No scene file has
 /// a say in any of it.
-struct CompileOptions final {
+struct CompileFlags final {
   smdl::OptLevel optLevel{smdl::OPT_LEVEL_O2};
 
   bool isDebugEnabled{};
@@ -52,7 +59,7 @@ struct AutolookFlags final {
 
   float margin{};
 
-  bool ignoreBackfaces{};
+  bool shouldIgnoreBackfaces{};
 };
 
 /// The camera: which file describes it, and the few things the command
@@ -109,7 +116,7 @@ struct CameraFlags final {
 //--{ Image Options
 /// The picture: how big it is, how it is tone mapped, and where it goes.
 /// No scene file has a say in any of it.
-struct ImageOptions final {
+struct ImageFlags final {
   /// The image dimensions in pixels. Whether it was given matters: a
   /// physical sensor renders exactly its own pixels, and a `-resolution`
   /// that disagrees is refused rather than stretched.
@@ -195,7 +202,7 @@ struct SkyFlags final {
 
 /// The exterior haze, which the layout's `haze` directive also sets.
 struct HazeFlags final {
-  bool isOn{};
+  bool isEnabled{};
 
   /// No haze, whichever source asked for it.
   Flag<bool> none{};
@@ -215,7 +222,7 @@ struct LightFlags final {
 
 //--{ Rendering Options
 /// The sample budget and how it is spent.
-struct SamplingOptions final {
+struct SamplingFlags final {
   unsigned spp{};
 
   unsigned sampleOffset{};
@@ -224,7 +231,7 @@ struct SamplingOptions final {
 };
 
 /// SD-tree path guiding.
-struct GuideOptions final {
+struct GuideFlags final {
   bool isEnabled{};
 
   bool useADRRS{};
@@ -236,7 +243,7 @@ struct GuideOptions final {
 };
 
 /// The wavelength grid the command line asks for, already parsed.
-struct GridOptions final {
+struct GridFlags final {
   /// The uniform grid `-wavelength-range` spells; when it was not given,
   /// the default span and band count.
   Flag<WavelengthRange> range{};
@@ -261,13 +268,13 @@ struct GridOptions final {
 /// How the picture is computed: the budget, the estimators, and the
 /// spectral grid they work on.
 struct RenderFlags final {
-  SamplingOptions sampling{};
+  SamplingFlags sampling{};
 
   PathOptions path{};
 
-  GuideOptions guide{};
+  GuideFlags guide{};
 
-  GridOptions grid{};
+  GridFlags grid{};
 
   /// The manifold estimator, filled with everything the command line
   /// decides; the caster set and the sun cone need the scene and are
@@ -285,7 +292,7 @@ struct RenderFlags final {
   bool shouldTestMNEENormalHook{};
 
   /// Aim light selection at every emitter, whatever the layout marks.
-  bool allLights{};
+  bool useAllLights{};
 
   /// Select lights from a flat power-weighted distribution rather than
   /// from the spatial tree.
@@ -299,7 +306,7 @@ struct RenderFlags final {
 
 //--{ Scene Options
 /// What to build the scene out of, and which instant of it to render.
-struct SceneOptions final {
+struct SceneFlags final {
   std::string inputSceneFile{};
 
   std::vector<std::string> inputMDLFiles{};
@@ -329,7 +336,7 @@ struct SceneOptions final {
 /// The tools and the machinery around a render: the flags that do their
 /// whole job and bow out before a scene is loaded, and the ones that say
 /// how the work is scheduled and reported.
-struct UtilityOptions final {
+struct UtilityFlags final {
   std::string dumpPlaces{};
 
   std::string dumpCurves{};
@@ -358,7 +365,7 @@ struct UtilityOptions final {
 
   /// Compile every material the MDL files declare, not only the ones
   /// the scene asks for.
-  bool allMaterials{};
+  bool useAllMaterials{};
 
   unsigned threads{};
 
@@ -388,19 +395,19 @@ struct UtilityOptions final {
 /// Everything the command line asked for, grouped as the help text
 /// groups it.
 struct Options final {
-  CompileOptions compile{};
+  CompileFlags compile{};
 
   CameraFlags camera{};
 
-  ImageOptions image{};
+  ImageFlags image{};
 
   LightFlags light{};
 
   RenderFlags render{};
 
-  SceneOptions scene{};
+  SceneFlags scene{};
 
-  UtilityOptions utility{};
+  UtilityFlags utility{};
 
   /// The command line as it was given, joined, for the film's
   /// `render args` field.

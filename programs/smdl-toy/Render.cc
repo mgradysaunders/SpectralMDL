@@ -498,16 +498,10 @@ void RenderKernel::operator()(const PassTarget &pass) const {
     const smdl::SkyBasis &skyBasis{hasMovingGrid ? jitteredSkyBasis
                                                  : renderSkyBasis};
     // The four states every path of the block works in, built here
-    // rather than per path: only the animation time, the hero
-    // wavelength, and under a tile the pixel's grid below tell one
-    // path's from another's, and the jittered grid is rewritten in
-    // place, so the wavelength pointer holds still too. See
-    // `PathContext`.
+    // rather than per path; see `PathStates`. The jittered grid is
+    // rewritten in place, so the wavelength pointer holds still too.
     const Color &blockWavelengths{hasMovingGrid ? *jittered : wavelengths};
-    smdl::State gatherState{makeRenderState(blockWavelengths, &allocator)};
-    smdl::State walkState{makeRenderState(blockWavelengths, &allocator)};
-    smdl::State shadeState{makeRenderState(blockWavelengths, &allocator)};
-    smdl::State lightState{makeRenderState(blockWavelengths, &allocator)};
+    PathStates states{blockWavelengths, allocator};
     // The gather scratch, bought here for the same reason.
     LightSample gatherSample{};
     Hit gatherBlocker{};
@@ -523,10 +517,7 @@ void RenderKernel::operator()(const PassTarget &pass) const {
                      sampler,
                      medium,
                      skyBasis,
-                     gatherState,
-                     walkState,
-                     shadeState,
-                     lightState,
+                     states,
                      gatherSample,
                      gatherBlocker,
                      blockWavelengths,
@@ -565,10 +556,7 @@ void RenderKernel::operator()(const PassTarget &pass) const {
       const size_t gridIndex{gRenderGrid.gridIndexAt(x, y)};
       const WavelengthGrid &grid{gRenderGrid.grids[gridIndex]};
       if (hasPixelGrids) {
-        grid.applyTo(gatherState);
-        grid.applyTo(walkState);
-        grid.applyTo(shadeState);
-        grid.applyTo(lightState);
+        states.applyGrid(grid);
         path.gridIndex = gridIndex;
         medium.setHaze(hazes.empty() ? nullptr : &hazes[gridIndex]);
         medium.setGridIndex(gridIndex);
@@ -652,14 +640,7 @@ void RenderKernel::operator()(const PassTarget &pass) const {
             if (gRenderShutter.hasExposure()) xi = float(sampler);
             const PathTime time{gRenderShutter.fractionAt(x, y, xi)};
             camera->toWorld(cameraSample, time.fraction);
-            gatherState.animationTime = time.seconds;
-            walkState.animationTime = time.seconds;
-            shadeState.animationTime = time.seconds;
-            lightState.animationTime = time.seconds;
-            gatherState.wavelengthHero = wavelengthHero;
-            walkState.wavelengthHero = wavelengthHero;
-            shadeState.wavelengthHero = wavelengthHero;
-            lightState.wavelengthHero = wavelengthHero;
+            states.beginPath(time.seconds, wavelengthHero);
             path.time = time;
             path.wavelengthHero = wavelengthHero;
             Lsample = tracePath(*walk, cameraSample);

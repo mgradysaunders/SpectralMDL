@@ -105,7 +105,7 @@ void narrowDesiredMaterials(const Options &opts, const Layout &layout,
                             const Scene &scene,
                             const std::string &fallbackMaterial,
                             smdl::Compiler &compiler) {
-  if (opts.utility.allMaterials || opts.scene.inputMDLFiles.empty()) return;
+  if (opts.utility.useAllMaterials || opts.scene.inputMDLFiles.empty()) return;
   std::vector<std::string> desiredMaterials{scene.usedMaterialNames()};
   if (!fallbackMaterial.empty()) desiredMaterials.push_back(fallbackMaterial);
   if (!layout.exteriorMediumName.empty())
@@ -158,7 +158,8 @@ solveAutolookInto(const Options &opts, Frame &frame, const Scene &scene,
                   *frame.layout.frontAzimuth, " degrees");
   }
   autolookOptions.margin = opts.camera.autolook.margin;
-  autolookOptions.ignoreBackfaces = opts.camera.autolook.ignoreBackfaces;
+  autolookOptions.shouldIgnoreBackfaces =
+      opts.camera.autolook.shouldIgnoreBackfaces;
   autolookOptions.skipInstance = groundInstance;
   const AutolookResult autolook{solveAutolook(scene, autolookOptions)};
   cameraOptions.lookFrom = autolook.lookFrom;
@@ -273,7 +274,7 @@ buildHazes(const Options &opts, const Layout &layout,
            const smdl::JIT::MaterialDef *exteriorMediumDef,
            const Color &wavelengths) {
   const LayoutHaze &fileHaze{layout.haze};
-  bool isEnabled{opts.light.haze.isOn || layout.hasHaze};
+  bool isEnabled{opts.light.haze.isEnabled || layout.hasHaze};
   if (pick(opts.light.haze.none, fileHaze.none)) isEnabled = false;
   if (!isEnabled) return {};
   if (exteriorMediumDef)
@@ -362,7 +363,7 @@ struct GridFamily final {
 [[nodiscard]] GridFamily chooseGridFamily(const Options &opts,
                                           const Frame &frame,
                                           const ResumedSequence &resumed) {
-  const GridOptions &gridOptions{opts.render.grid};
+  const GridFlags &gridFlags{opts.render.grid};
   const ResponseSettings *response{responseSettingsOf(frame)};
   const std::vector<GridHeader::Grid> &records{resumed.grids.grids};
   const bool isFilePerBand{!records.empty() && !records.front().name.empty()};
@@ -386,16 +387,16 @@ struct GridFamily final {
       result.tile.push_back(
           size_t(std::find(bands.begin(), bands.end(), index) - bands.begin()));
   }};
-  if (!gridOptions.explicitWavelengths.empty()) {
+  if (!gridFlags.explicitWavelengths.empty()) {
     result.cells.push_back(WavelengthCells::fromWavelengths(
-        asSpan(gridOptions.explicitWavelengths)));
+        asSpan(gridFlags.explicitWavelengths)));
     return result;
   }
-  if (gridOptions.range.wasGiven) {
-    result.cells.push_back(uniform(gridOptions.range.value));
+  if (gridFlags.range.wasGiven) {
+    result.cells.push_back(uniform(gridFlags.range.value));
     return result;
   }
-  if (!gridOptions.wasGiven && resumed.wasLoaded) {
+  if (!gridFlags.wasGiven && resumed.wasLoaded) {
     if (isFilePerBand) {
       if (!response || !response->hasCFA())
         throw smdl::Error(
@@ -434,8 +435,8 @@ struct GridFamily final {
                           "describe its wavelengths");
     return result;
   }
-  WavelengthRange range{gridOptions.range.value};
-  if (gridOptions.count.wasGiven) range.bandCount = gridOptions.count.value;
+  WavelengthRange range{gridFlags.range.value};
+  if (gridFlags.count.wasGiven) range.bandCount = gridFlags.count.value;
   const size_t count{size_t(range.bandCount)};
   const auto describeCells{[](const WavelengthCells &cells) {
     double narrowest{INF};
@@ -791,6 +792,6 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   smdl::ProfilerEntry *profLightSampler{
       smdl::profilerEntryBegin("Build light sampler")};
   lights.emplace(compiler, *scene, envLight.get(), layout.lights, wavelengths,
-                 opts.render.allLights, !opts.render.noLightTree);
+                 opts.render.useAllLights, !opts.render.noLightTree);
   smdl::profilerEntryEnd(profLightSampler);
 }

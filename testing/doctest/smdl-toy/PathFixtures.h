@@ -19,19 +19,13 @@ public:
   PathHarness(smdl::Compiler &compiler, const Scene &scene,
               const Color &wavelengths)
       : mLights(compiler, scene, nullptr, {}, wavelengths),
-        mGatherState(makeRenderState(wavelengths, &allocator)),
-        mWalkState(makeRenderState(wavelengths, &allocator)),
-        mShadeState(makeRenderState(wavelengths, &allocator)),
-        mLightState(makeRenderState(wavelengths, &allocator)),
+        mStates(wavelengths, allocator),
         render{compiler, scene, mLights, mneeOptions, pathOptions},
         path{allocator,
              sampler,
              mMedium,
              mSkyBasis,
-             mGatherState,
-             mWalkState,
-             mShadeState,
-             mLightState,
+             mStates,
              mGatherSample,
              mGatherBlocker,
              wavelengths,
@@ -60,10 +54,7 @@ private:
   LightSampler mLights;
   Medium mMedium{};
   smdl::SkyBasis mSkyBasis{};
-  smdl::State mGatherState;
-  smdl::State mWalkState;
-  smdl::State mShadeState;
-  smdl::State mLightState;
+  PathStates mStates;
   LightSample mGatherSample{};
   Hit mGatherBlocker{};
 

@@ -513,7 +513,7 @@ float LightSelection::pmf(int lightIndex, const float3 &point) const noexcept {
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                            const EnvLight *envLight,
                            const std::vector<LayoutLight> &layoutLights,
-                           const Color &wavelengths, bool allLights,
+                           const Color &wavelengths, bool useAllLights,
                            bool useTree)
     : mCompiler(compiler), mScene(scene), mEnvLight(envLight) {
   smdl::BumpPtrAllocator allocator{};
@@ -568,7 +568,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     AreaLight light{};
     light.instIndex = instIndex;
-    light.isSampled = instance.isLight || allLights;
+    light.isSampled = instance.isLight || useAllLights;
     light.isCaustic = instance.isCausticLight;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and

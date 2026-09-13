@@ -165,6 +165,55 @@ struct RenderContext final {
   const smdl::JIT::MaterialDef *exteriorMediumDef{};
 };
 
+/// The four shading states every path of a block works in, built once
+/// for the block: only the animation time, the hero wavelength and,
+/// under a tile, the pixel's grid tell one path's from another's, and
+/// every field a vertex varies is overwritten at the vertex, so building
+/// them per path would be half a kilobyte of copy each for two fields'
+/// worth of difference. Whatever holds for all four is set through the
+/// two calls below, so a state cannot be left behind at one of them.
+struct PathStates final {
+  PathStates(const Color &wavelengths, smdl::BumpPtrAllocator &allocator)
+      : gather{makeRenderState(wavelengths, &allocator)},
+        walk{makeRenderState(wavelengths, &allocator)},
+        shade{makeRenderState(wavelengths, &allocator)},
+        light{makeRenderState(wavelengths, &allocator)} {}
+
+  /// The pristine gather-side state, which nothing writes geometry into.
+  smdl::State gather;
+
+  /// The walk's own vertex state, which carries the level-of-detail
+  /// fields the walk tracks along the path.
+  smdl::State walk;
+
+  /// The state `PathContext::shadeHit()` shades in, which deliberately
+  /// carries no level-of-detail so that opacity evaluates at full
+  /// fidelity.
+  smdl::State shade;
+
+  /// The state a light sample's emitter is evaluated in, which likewise
+  /// carries no level-of-detail: `LightSampler::sample()` applies the
+  /// light point's geometry to it over whatever the last sample left.
+  smdl::State light;
+
+  /// Put every state on `grid`, which under a tile is the pixel's own.
+  void applyGrid(const WavelengthGrid &grid) noexcept {
+    grid.applyTo(gather);
+    grid.applyTo(walk);
+    grid.applyTo(shade);
+    grid.applyTo(light);
+  }
+
+  /// Put every state on this path's time and hero wavelength, which the
+  /// caller does at the head of each path.
+  void beginPath(float seconds, float wavelengthHero) noexcept {
+    gather.animationTime = walk.animationTime = shade.animationTime =
+        light.animationTime = seconds;
+    gather.wavelengthHero = walk.wavelengthHero = shade.wavelengthHero =
+        light.wavelengthHero = wavelengthHero;
+  }
+};
+
 /// What the camera paths of a block of pixels are traced with, what
 /// they work in, and what each leaves behind.
 ///
@@ -203,29 +252,9 @@ struct PathContext final {
   const smdl::SkyBasis &skyBasis;
 
   /// The four shading states the path works in, borrowed for the reason
-  /// `medium` is: everything in one but the animation time is a property
-  /// of the block rather than the path, and every field a vertex varies
-  /// is overwritten at the vertex, so building them per path is half a
-  /// kilobyte of copy each for two fields' worth of difference. The
-  /// caller sets `animationTime` on all four at the head of the path.
-  ///
-  /// \{
-
-  /// The pristine gather-side state, which nothing writes geometry into.
-  smdl::State &gatherState;
-
-  /// The walk's own vertex state, which carries the level-of-detail
-  /// fields the walk tracks along the path.
-  smdl::State &walkState;
-
-  /// The state `shadeHit()` shades in, which deliberately carries no
-  /// level-of-detail so that opacity evaluates at full fidelity.
-  smdl::State &shadeState;
-
-  /// The state a light sample's emitter is evaluated in, which likewise
-  /// carries no level-of-detail: `LightSampler::sample()` applies the
-  /// light point's geometry to it over whatever the last sample left.
-  smdl::State &lightState;
+  /// `medium` is: they are the block's rather than the path's; see
+  /// `PathStates`.
+  PathStates &states;
 
   /// The light sample and the blocker a gather works in, borrowed for
   /// the reason the states above are: between them they are six hundred
@@ -298,7 +327,7 @@ struct PathContext final {
   /// one state, so they all see the wavelengths, allocator and time it
   /// carries, which are the path's.
   [[nodiscard]] smdl::State &shadeHit(const Hit &hit, const float3 &wState) {
-    hit.applyGeometryToState(shadeState, wState);
-    return shadeState;
+    hit.applyGeometryToState(states.shade, wState);
+    return states.shade;
   }
 };

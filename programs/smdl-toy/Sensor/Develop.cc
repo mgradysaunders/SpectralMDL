@@ -463,7 +463,7 @@ std::vector<float> developReadout(const Sensor &sensor,
                                   const Detector &detector,
                                   const Readout &readout,
                                   const WhiteBalance &whiteBalance, int4 window,
-                                  bool shouldLog) {
+                                  DevelopLogging logging) {
   const ResponseSettings &response{sensor.settings().response};
   const size_t numPixelsX{readout.pixelCountX};
   const size_t numPixelsY{readout.pixelCountY};
@@ -548,7 +548,7 @@ std::vector<float> developReadout(const Sensor &sensor,
       texel[2] = float(color.z);
     }
   });
-  if (shouldLog) {
+  if (logging == DevelopLogging::VERBOSE) {
     const std::string balance{
         !resolved.wasAuto ? whiteBalanceName(whiteBalance)
         : !resolved.hasGrayWorld

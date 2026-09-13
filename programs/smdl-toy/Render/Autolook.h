@@ -30,7 +30,7 @@ struct AutolookOptions final {
   /// when false, the veto stands down on its own when every candidate
   /// shows backfaces, which is what unshaded two-sided geometry looks
   /// like.
-  bool ignoreBackfaces{};
+  bool shouldIgnoreBackfaces{};
 
   /// A mesh instance to leave out of the fit and the probe, or
   /// `INVALID_INDEX`; used for the ground plane, which is scenery rather

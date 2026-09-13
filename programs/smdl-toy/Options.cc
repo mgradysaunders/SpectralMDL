@@ -664,7 +664,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.camera.autolook.azimuthDeg = flag(optAutolookAzimuth);
   opts.camera.autolook.zenithDeg = float(optAutolookZenith);
   opts.camera.autolook.margin = float(optAutolookMargin);
-  opts.camera.autolook.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
+  opts.camera.autolook.shouldIgnoreBackfaces = bool(optAutolookIgnoreBackfaces);
 
   opts.image.resolution = flag(optResolution);
   opts.image.resolutionScale = flag(optResolutionScale);
@@ -706,7 +706,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.light.sky.moonDistance = flag(optMoonDistance);
   opts.light.sky.iblFileName = flag(optIBLFilename);
   opts.light.sky.iblScale = flag(optIBLScale);
-  opts.light.haze.isOn = bool(optHaze);
+  opts.light.haze.isEnabled = bool(optHaze);
   opts.light.haze.none = flag(optNoHaze);
   opts.light.haze.visibility = flag(optHazeVisibility);
   opts.light.haze.scaleHeight = flag(optHazeScaleHeight);
@@ -749,7 +749,7 @@ Options parseCommandLine(int argc, char **argv) {
                                : 0;
   opts.render.mnee.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
   opts.render.mnee.biasedTrials = int(unsigned(optMNEEBiased));
-  opts.render.allLights = bool(optMarkAllLights);
+  opts.render.useAllLights = bool(optMarkAllLights);
   opts.render.noLightTree = bool(optNoLightTree);
   opts.render.noRobustIntersection = bool(optNoRobustIntersection);
 
@@ -775,7 +775,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.utility.shouldListObjects = bool(optListObjects);
   opts.utility.shouldDescribeCamera = bool(optDescribeCamera);
   opts.utility.useJSON = bool(optJSON);
-  opts.utility.allMaterials = bool(optCompileAllMaterials);
+  opts.utility.useAllMaterials = bool(optCompileAllMaterials);
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
   opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);

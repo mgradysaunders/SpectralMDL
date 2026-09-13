@@ -111,7 +111,7 @@ struct StateOptions final {
 
 //--{ Utility Options
 /// How the run is presented and scheduled. Shared, name for name, with
-/// the renderer's group of the same name.
+/// the renderer's `UtilityFlags`.
 struct UtilityOptions final {
   unsigned threads{};
 

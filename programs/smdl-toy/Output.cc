@@ -81,7 +81,7 @@ constexpr const char *DIGITAL_NUMBER_UNITS{"DN"};
 /// each band) cancels.
 void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                    const RenderHeader &header, const Color &wavelengths,
-                   std::vector<float> &rgbImage, bool shouldLog) {
+                   std::vector<float> &rgbImage, DevelopLogging logging) {
   const CameraModel &model{frame.model};
   const Sensor &sensor{*model.sensor};
   const DetectorShot shot{takeShot(frame, sensor, header)};
@@ -102,7 +102,7 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
                 developed
           : 0.0};
   for (auto &value : rgbImage) value = float(double(value) * gain);
-  if (shouldLog)
+  if (logging == DevelopLogging::VERBOSE)
     SMDL_LOG_INFO("Preview: the observer's picture exposed as the sensor's "
                   "develop would expose it, times ",
                   smdl::Brief(gain, 4), " (", smdl::Brief(std::log2(gain), 3),
@@ -114,22 +114,20 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
 /// detector at the shot's ISO and the readout it takes of the band
 /// film. The checkpoint's preview and the final write both go through
 /// here, so that the two read the sensor the same way and differ only in
-/// what they say about it.
+/// what the caller says about it.
 struct SensorReadout final {
   Detector detector;
   Readout readout;
   DetectorShot shot;
 };
 
-[[nodiscard]] SensorReadout readOutSensor(const Frame &frame,
-                                          const RenderHeader &header,
-                                          const smdl::SpectralFilm &bandFilm,
-                                          const DetectorReadoutOptions &options,
-                                          bool shouldLog) {
+[[nodiscard]] SensorReadout
+readOutSensor(const Frame &frame, const RenderHeader &header,
+              const smdl::SpectralFilm &bandFilm,
+              const DetectorReadoutOptions &options) {
   const Sensor &sensor{*frame.model.sensor};
   const DetectorShot shot{takeShot(frame, sensor, header)};
   const Detector detector{sensor, shot};
-  if (shouldLog) detector.logSummary();
   Readout readout{detector.readOut(bandFilm, options, frame.window)};
   return SensorReadout{detector, std::move(readout), shot};
 }
@@ -368,17 +366,18 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
     std::vector<float> rgbImage{
         resolveRGB(compiler, *film, wavelengths, opts.image.rgbPolicy)};
     if (frame.model.hasPreviewedSensor())
-      exposePreview(frame, compiler, header, wavelengths, rgbImage, false);
+      exposePreview(frame, compiler, header, wavelengths, rgbImage,
+                    DevelopLogging::SILENT);
     return rgbImage;
   }
   const smdl::SpectralFilm *bandFilm{target.bandFilm()};
   DetectorReadoutOptions noiseless{opts.image.readout};
   noiseless.noise = DetectorNoise::NONE;
   const SensorReadout sensorReadout{
-      readOutSensor(frame, header, *bandFilm, noiseless, false)};
+      readOutSensor(frame, header, *bandFilm, noiseless)};
   return developReadout(*frame.model.sensor, sensorReadout.detector,
                         sensorReadout.readout, frame.model.whiteBalance,
-                        frame.window, false);
+                        frame.window, DevelopLogging::SILENT);
 }
 
 bool hasFloatImageExtension(const std::string &fileName) {
@@ -422,21 +421,22 @@ void writeOutputs(const Options &opts, const Frame &frame,
   std::vector<float> rgbImage{};
   if (target.hasResponse()) {
     const SensorReadout sensorReadout{readOutSensor(
-        frame, resumed.header, *target.bandFilm(), opts.image.readout, true)};
+        frame, resumed.header, *target.bandFilm(), opts.image.readout)};
+    sensorReadout.detector.logSummary();
     logReadout(sensorReadout.readout);
     if (!opts.image.outputRaw.empty())
       writeReadoutFile(opts, frame, target, resumed.header, sensorReadout,
                        responseLines);
     rgbImage = developReadout(*model.sensor, sensorReadout.detector,
                               sensorReadout.readout, model.whiteBalance,
-                              frame.window, true);
+                              frame.window, DevelopLogging::VERBOSE);
   } else {
     const Color wavelengths{gRenderGrid.wavelengths()};
     rgbImage = resolveRGB(compiler, *target.spectralFilm(), wavelengths,
                           opts.image.rgbPolicy);
     if (model.hasPreviewedSensor())
       exposePreview(frame, compiler, resumed.header, wavelengths, rgbImage,
-                    true);
+                    DevelopLogging::VERBOSE);
   }
   filterRGB(opts.image.medianFilter, rgbImage, frame.numPixelsX, frame.window);
   if (!outputBands.empty()) {

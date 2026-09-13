@@ -420,8 +420,8 @@ struct Guiding final {
 /// the mixture to draw, else null and the BSDF samples alone.
 [[nodiscard]] inline const DTree *guidingCellAt(const Guiding *guiding,
                                                 const float3 &point,
-                                                bool anyFiniteLobes) noexcept {
-  return guiding && guiding->tree && anyFiniteLobes
+                                                bool hasFiniteLobes) noexcept {
+  return guiding && guiding->tree && hasFiniteLobes
              ? &guiding->tree->samplingAt(point)
              : nullptr;
 }
@@ -445,8 +445,8 @@ struct Guiding final {
 /// match what the sampler actually pays there.
 [[nodiscard]] inline float diracBranchChance(const Guiding *guiding,
                                              const float3 &point,
-                                             bool anyFiniteLobes) noexcept {
-  const DTree *dtree{guidingCellAt(guiding, point, anyFiniteLobes)};
+                                             bool hasFiniteLobes) noexcept {
+  const DTree *dtree{guidingCellAt(guiding, point, hasFiniteLobes)};
   return dtree ? bsdfFractionAt(guiding, dtree) : 1.0f;
 }
 

@@ -130,8 +130,8 @@ struct PrevBounce final {
 class PathWalk final {
 public:
   PathWalk(const RenderContext &render, PathContext &path)
-      : mRender(render), mPath(path), mGatherState(path.gatherState),
-        mState(path.walkState) {}
+      : mRender(render), mPath(path), mGatherState(path.states.gather),
+        mState(path.states.walk) {}
 
   // Trace the path the camera sample starts and return its radiance
   // estimate; see `tracePath()`.
