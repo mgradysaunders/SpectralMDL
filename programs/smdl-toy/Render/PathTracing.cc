@@ -77,6 +77,14 @@ bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
   }
 }
 
+// Whether a share (see `receiverShareOf()`) leaves anything to the other
+// side of the partition in any band.
+[[nodiscard]] bool isAnyBelowOne(const Color &share) noexcept {
+  for (size_t b = 0; b < share.size(); b++)
+    if (share[b] < 1.0f) return true;
+  return false;
+}
+
 // Ask the interface for the Dirac branch `diracMask` names, toward the
 // far side of a crossing: sampled rather than evaluated, so a material
 // mixing several Dirac lobes renormalizes over the mix, reporting the
@@ -140,8 +148,24 @@ struct PathVertex final {
   bool isArmedBehind{};
 
   // Whether this vertex is one the gathers run from at all; see
-  // `isManifoldReceiver()`.
+  // `manifoldReceiverLobes()`.
   bool isReceiver{true};
+
+  // The lobes the gathers value this receiver with, as a mask over the
+  // lobes it scatters with, `DF_ALL` where every finite lobe receives;
+  // see `manifoldReceiverLobes()`. The arrivals behind keep the share
+  // of this vertex's bounce the other lobes carried, so the two halves
+  // partition the transport the same way the casters' claims do.
+  int receiveMask{smdl::DF_ALL};
+
+  // The share of the bounce behind this vertex its receiver's receiving
+  // lobes carried, per wavelength: what that receiver's reflective
+  // gather claims of a reflection here (the previous vertex's), and
+  // what the armed receiver's chain gather claims of a transmission
+  // here. Light sampling here keeps the rest of the claimed lobes. One
+  // where nothing is partitioned.
+  Color reflectShareBehind{1.0f};
+  Color refractShareBehind{1.0f};
 
   // The vertex as the receiver a connection leaves from; see
   // `MNEEReceiver`.
@@ -584,11 +608,13 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   // unmasked density, which is what the MIS below competes against.
   // `receiverMask` is everything for the reflective gather; the chain
   // gather narrows it to everything but the transmission lobes a gather
-  // behind this receiver already claims through it; see `gatherDirect()`.
+  // behind this receiver already claims through it (see `gatherDirect()`),
+  // and the receiver's own mask keeps the lobes that receive, the rest of
+  // its bounce staying with the arrivals; see `PathVertex::receiveMask`.
   float fPdf{};
   Color f{};
   if (!scatterEvaluate(vertex.scatterer, vertex.kind, vertex.wo, connection.wr,
-                       fPdf, f, receiverMask))
+                       fPdf, f, receiverMask & vertex.receiveMask))
     return {};
   // The per-crossing throughput and the continuation's chance of taking
   // this chain, both accumulated below from the interface material
@@ -883,7 +909,9 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
 // chain is weighed against the gather at the receiver by `coverWeight()`;
 // one through a glossy chain is claimed outright, to the share of the
 // throughput the chain's claimed lobes carry; any other bounce breaks the
-// chain and restores the ordinary weights.
+// chain and restores the ordinary weights. Either way the claim extends
+// only to the share of the receiver's own bounce its receiving lobes
+// carried (`receiverShare()`).
 class MNEECoverage final {
 public:
   // What the chain since the receiver is made of. A chain of one kind is
@@ -892,12 +920,18 @@ public:
 
   // Begin a fresh receiver, the vertex a gather could connect from.
   // `isEnabled` is false when manifold NEE is off, which leaves the state
-  // permanently disarmed.
-  void arm(bool isEnabled, const MNEEReceiver &receiver, float pdf) noexcept {
+  // permanently disarmed. `share` is the share of the receiver's bounce
+  // its receiving lobes carried (see `PathVertex::receiveMask`), which
+  // every claim through this chain is scaled by: the chain share starts
+  // from it, and a Dirac chain's arrival keeps its ordinary weight for
+  // the rest.
+  void arm(bool isEnabled, const MNEEReceiver &receiver, float pdf,
+           const Color &share) noexcept {
     mIsArmed = isEnabled;
     mFamily = MNEEChainFamily{};
     mChainKind = ChainKind::NONE;
-    mChainShare = Color(1.0f);
+    mChainShare = share;
+    mReceiverShare = share;
     mReceiver = receiver;
     mReceiverPdf = pdf;
   }
@@ -939,6 +973,12 @@ public:
   }
 
   [[nodiscard]] const Color &chainShare() const noexcept { return mChainShare; }
+
+  // The share of the armed receiver's bounce its receiving lobes
+  // carried; see `arm()`.
+  [[nodiscard]] const Color &receiverShare() const noexcept {
+    return mReceiverShare;
+  }
 
   [[nodiscard]] ChainKind chainKind() const noexcept { return mChainKind; }
 
@@ -1011,6 +1051,7 @@ private:
   Color mChainShare{1.0f};
   MNEEReceiver mReceiver{};
   float mReceiverPdf{};
+  Color mReceiverShare{};
 
   // The crossings the path took since the receiver, as a family and as
   // the hits themselves, the latter below `MANIFOLD_MAX_DEPTH` only.
@@ -1201,7 +1242,9 @@ float MNEECoverage::coverWeight(const RenderContext &render, PathContext &path,
 // light sampling here covers the other lobes only, weighed against the
 // unmasked continuation density exactly as the continuation's arrivals
 // are weighed for those lobes (`tracePath()` keeps their share of each
-// arrival and drops the claimed share).
+// arrival and drops the claimed share). The receiver's gather produces
+// only the share of its own bounce its receiving lobes carried, so
+// light sampling keeps the rest of the claimed lobes to match.
 [[nodiscard]]
 Color gatherDirect(const RenderContext &render, PathContext &path,
                    const smdl::State &gatherState, const PathVertex &vertex) {
@@ -1238,12 +1281,34 @@ Color gatherDirect(const RenderContext &render, PathContext &path,
     // raw BSDF density while the continuation samples the mixture makes
     // the two halves sum past 1 and reads several percent bright.
     const auto gatherPlain{[&](const Color &Tr) {
+      if (lightSample.Li.isAllZero()) return;
       float fPdf{};
       Color f{};
-      if (neeMask == 0 || lightSample.Li.isAllZero() ||
-          !scatterEvaluate(vertex.scatterer, vertex.kind, vertex.wo,
-                           lightSample.wi, fPdf, f, neeMask))
-        return;
+      bool hasValue{neeMask != 0 &&
+                    scatterEvaluate(vertex.scatterer, vertex.kind, vertex.wo,
+                                    lightSample.wi, fPdf, f, neeMask)};
+      if (!hasValue) f.fill(0.0f);
+      // The claimed lobes stay with light sampling to the share of the
+      // receiver's bounce its gather does not produce; see
+      // `PathVertex::reflectShareBehind`. Every evaluation reports the
+      // same unmasked density.
+      if (shouldSplit) {
+        const auto addRemainder{[&](int lobes, const Color &share) {
+          if (lobes == 0 || !isAnyBelowOne(share)) return;
+          float pdfLobes{};
+          Color fLobes{};
+          if (!scatterEvaluate(vertex.scatterer, vertex.kind, vertex.wo,
+                               lightSample.wi, pdfLobes, fLobes, lobes))
+            return;
+          if (!hasValue) fPdf = pdfLobes;
+          hasValue = true;
+          for (size_t b = 0; b < f.size(); b++)
+            f[b] += (1.0f - share[b]) * fLobes[b];
+        }};
+        addRemainder(lightClaim.reflectLobes, vertex.reflectShareBehind);
+        addRemainder(lightClaim.refractLobes, vertex.refractShareBehind);
+      }
+      if (!hasValue) return;
       const float continuationPdf{guidedContinuationPdf(
           vertex.dtree, vertex.bsdfFraction, lightSample.wi, fPdf)};
       Color D{};
@@ -1371,6 +1436,36 @@ Color claimedShareOf(const smdl::JIT::Material &material,
   return claimedShare;
 }
 
+// The share of one bounce's throughput the vertex's receiving lobes
+// carry, per wavelength: the value without the finite lobes that do not
+// receive over the value with them, which is what the gathers at the
+// vertex estimate of the transport through this bounce and what the
+// arrivals behind therefore drop of it; see `PathVertex::receiveMask`.
+// One where every finite lobe receives; zero for a Dirac bounce, which
+// no lobe receives with, and at a vertex that is no receiver.
+[[nodiscard]]
+Color receiverShareOf(const smdl::JIT::Material &material, int excludedLobes,
+                      const float3 &wo, const float3 &wNext, const Color &f,
+                      bool isDiracBounce, bool isReceiver) {
+  Color share{};
+  if (!isReceiver || isDiracBounce) return share;
+  if (excludedLobes == 0) {
+    share.fill(1.0f);
+    return share;
+  }
+  float pdfUnused{}, pdfRevUnused{};
+  Color fExcluded{};
+  if (material.scatterEvaluate(wo, wNext, pdfUnused, pdfRevUnused, fExcluded,
+                               excludedLobes))
+    for (size_t b = 0; b < share.size(); b++)
+      share[b] = f[b] > 0.0f
+                     ? std::clamp(1.0f - fExcluded[b] / f[b], 0.0f, 1.0f)
+                     : 0.0f;
+  else
+    share.fill(1.0f);
+  return share;
+}
+
 // The bounce that produced the segment in flight, as an arrival at the
 // far end of that segment is weighed against. Meaningless on the camera
 // segment, which no light sampling competes with.
@@ -1402,6 +1497,13 @@ struct PrevBounce final {
   // gather's and applies to any.
   bool shouldShareCausticOnly{};
 
+  // The share of the segment's bounce the vertex's receiving lobes
+  // carried, per wavelength, which its reflective gather's claim at the
+  // next vertex is scaled by; see `PathVertex::receiveMask`. Zero on the
+  // camera segment and after a Dirac bounce, which no gather claims
+  // through.
+  Color receiverShare{};
+
   // Begin a path: no bounce behind the camera segment, and no share of
   // it claimed, which is what the arrival sites read on that segment.
   void reset() noexcept {
@@ -1411,6 +1513,7 @@ struct PrevBounce final {
     isAreaSampled = false;
     claimedShare.fill(0.0f);
     shouldShareCausticOnly = false;
+    receiverShare.fill(0.0f);
   }
 };
 
@@ -1516,6 +1619,7 @@ private:
     // weight across the bands for a covered Dirac chain, and otherwise
     // the ordinary weight on the share of each band nobody claims.
     float uniform{weight};
+    bool isCoverWeighed{false};
     const Color *share{nullptr};
     if (mCoverage.coversDirac(mRender.mneeOptions)) {
       ManifoldTarget target{};
@@ -1533,12 +1637,20 @@ private:
             caster && (caster->refractLobes & smdl::DF_DIRAC_BTDF) != 0};
         uniform = mCoverage.coverWeight(mRender, mPath, target, lightPdf,
                                         isCasterChain);
+        isCoverWeighed = true;
       }
     } else if (!(mPrev.shouldShareCausticOnly && !isCausticTarget)) {
       share = &mPrev.claimedShare;
     }
+    // A share already carries the receiver's own share of its bounce; a
+    // cover weight applies to that share of the arrival only, and the
+    // rest keeps the ordinary weight; see `MNEECoverage::arm()`.
+    const Color &receiverShare{mCoverage.receiverShare()};
     const auto factorAt{[&](size_t b) {
-      return share ? (1.0f - (*share)[b]) * weight : uniform;
+      if (share) return (1.0f - (*share)[b]) * weight;
+      if (isCoverWeighed)
+        return uniform + (1.0f - receiverShare[b]) * (weight - uniform);
+      return uniform;
     }};
     Color contribution{};
     for (size_t b = 0; b < contribution.size(); b++)
@@ -1785,12 +1897,15 @@ Color PathWalk::trace(const CameraSample &camera) {
           }
           mPrev.pdf = phaseValue;
           mPrev.isDirac = false;
+          // A phase function has no lobe that would not receive.
+          mPrev.receiverShare.fill(1.0f);
           mPrev.point = point;
           mPrev.isAreaSampled =
               gatherRunsManifold(mRender.mneeOptions, VertexKind::VOLUME, true);
           // A volume vertex is a manifold-NEE receiver like any other.
           mCoverage.arm(mRender.mneeOptions.isEnabled(),
-                        MNEEReceiver{point, wo, mMediumStack}, phaseValue);
+                        MNEEReceiver{point, wo, mMediumStack}, phaseValue,
+                        Color(1.0f));
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           mSpread = std::min(mSpread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
@@ -2006,13 +2121,20 @@ Color PathWalk::trace(const CameraSample &camera) {
             : ManifoldClaim()};
     const ManifoldClaim reachable{
         mCoverage.reach(claim, mRender.mneeOptions, mPrev.isDirac)};
-    // Whether this vertex is a manifold receiver: the gathers run from it
-    // and it arms for the claims behind, or neither.
-    const bool isReceiver{mRender.mneeOptions.isEnabled() && !isHair &&
-                          isManifoldReceiver(
-                              material, isBackface,
-                              [&] { return float4(mPath.sampler); },
-                              mRender.mneeOptions.minReceiverAlpha)};
+    // The lobes this vertex receives with, if any: the gathers run from
+    // it and value those lobes, it arms for the claims behind, and the
+    // finite lobes left out stay with ordinary sampling; see
+    // `manifoldReceiverLobes()`.
+    const int receiveLobes{mRender.mneeOptions.isEnabled() && !isHair
+                               ? manifoldReceiverLobes(
+                                     material, isBackface,
+                                     [&] { return float4(mPath.sampler); },
+                                     mRender.mneeOptions.minReceiverAlpha)
+                               : 0};
+    const bool isReceiver{receiveLobes != 0};
+    const int excludedLobes{isReceiver ? material.getLobes(isBackface) &
+                                             smdl::DF_FINITE & ~receiveLobes
+                                       : 0};
     // Gather direct lighting at this vertex, before the bounce, so the
     // cone the gather rays inherit is the arrival cone.
     {
@@ -2027,6 +2149,9 @@ Color PathWalk::trace(const CameraSample &camera) {
       vertex.reachableClaim = reachable;
       vertex.isArmedBehind = wasArmed;
       vertex.isReceiver = isReceiver;
+      vertex.receiveMask = smdl::DF_ALL & ~excludedLobes;
+      vertex.reflectShareBehind = mPrev.receiverShare;
+      vertex.refractShareBehind = mCoverage.receiverShare();
       Color direct{gatherDirect(mRender, mPath, mGatherState, vertex)};
       addGathered(direct, record);
     }
@@ -2108,9 +2233,15 @@ Color PathWalk::trace(const CameraSample &camera) {
         mRender.mneeOptions, isHair ? VertexKind::HAIR : VertexKind::SURFACE,
         isReceiver);
     const bool transmits{!isHair && material.isTransmitting(wo, wNext)};
-    const Color claimedShare{claimedShareOf(material, reachable, wo, wNext, f,
-                                            isDiracBounce, transmits,
-                                            sampledLobe)};
+    // A reflection claimed here is the previous receiver's gather's, to
+    // the share of that receiver's bounce its receiving lobes carried; a
+    // claimed transmission extends a chain whose share started from the
+    // armed receiver's.
+    Color claimedShare{claimedShareOf(material, reachable, wo, wNext, f,
+                                      isDiracBounce, transmits, sampledLobe)};
+    if (!transmits) claimedShare *= mPrev.receiverShare;
+    const Color receiverShare{receiverShareOf(
+        material, excludedLobes, wo, wNext, f, isDiracBounce, isReceiver)};
     // Advance the MNEE coverage: a non-Dirac, non-hair
     // vertex is a fresh receiver whose gather may attempt a connection,
     // if it is a receiver at all (a narrow glossy vertex is not, and
@@ -2130,7 +2261,7 @@ Color PathWalk::trace(const CameraSample &camera) {
       mCoverage.arm(
           isReceiver,
           MNEEReceiver{hit.point, wo, mMediumStack, &material, hit.instance},
-          wpdf);
+          wpdf, receiverShare);
     } else {
       mCoverage.disarm();
     }
@@ -2144,6 +2275,7 @@ Color PathWalk::trace(const CameraSample &camera) {
                                     : Color(0.0f))
                              : claimedShare;
     mPrev.shouldShareCausticOnly = !hasExtendedChain;
+    mPrev.receiverShare = receiverShare;
     for (size_t b = 0; b < mBeta.size(); b++) mBeta[b] *= f[b] / wpdf;
     if (mBeta.isAnyNonFinite()) {
       end = PathEnd::FAILED;

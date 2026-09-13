@@ -26,7 +26,7 @@ class VisibilityWalk;
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.
 using smdl::buildManifoldSeedFrame;
-using smdl::isManifoldReceiver;
+using smdl::manifoldReceiverLobes;
 using smdl::isSameManifoldSolution;
 using smdl::MANIFOLD_IDENTITY_FRACTION;
 using smdl::MANIFOLD_MAX_DEPTH;

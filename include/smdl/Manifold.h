@@ -591,26 +591,32 @@ manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
 manifoldClaim(const JIT::Material &material, bool isMarked);
 
-/// Is a vertex whose evaluated material is `material` one the manifold
-/// gathers run from and claim for? A receiver's BSDF is evaluated at
-/// whatever bent direction a connection lands on, so a narrow lobe
-/// there makes an estimator that is zero almost always and enormous
-/// otherwise; the paths it claims are then lost at any feasible sample
-/// count, while ordinary sampling handles a narrow lobe well. So a
-/// vertex receives only with a smooth (diffuse-like) lobe, a microfacet
-/// lobe above the glossy cutoff among them (see `DF_GLOSSY_BRDF`), or
-/// with a glossy lobe whose squared roughness reaches `minAlpha`, read from the
-/// normal hook on the side the path arrived (a material layering several
-/// lobes reports the one its proposal draws from `xi`, which makes
-/// the answer a draw too; it is made once per vertex and both the
-/// gathers and the claims behind read the same one). The hook takes one
-/// glossy kind, and the predicate asks for the reflection kind when the
-/// material has it and the transmission kind otherwise: a single
-/// reflect-transmit leaf reports the same lobe either way, and a
-/// layering that differs by domain answers for its reflection side,
-/// which is the side the receiver's own gather evaluates. Without the
-/// hook (see `Compiler::shouldEmitScatterNormal`), every vertex with a
-/// finite lobe receives, as the Dirac estimator always has.
+/// The lobes a vertex whose evaluated material is `material` receives
+/// with: the ones the manifold gathers run from and value, and whose
+/// share of the vertex's bounce the arrivals behind it drop. A
+/// receiver's BSDF is evaluated at whatever bent direction a connection
+/// lands on, so a narrow lobe there makes an estimator that is zero
+/// almost always and enormous otherwise, while ordinary sampling handles
+/// a narrow lobe well. So the smooth (diffuse-like) lobes receive, a
+/// microfacet lobe above the glossy cutoff among them (see
+/// `DF_GLOSSY_BRDF`), and the glossy lobes receive when their squared
+/// roughness reaches `minAlpha`, read from the normal hook on the side
+/// the path arrived (a material layering several glossy lobes reports
+/// the one its proposal draws from `xi`, which makes that part of the
+/// answer a draw; it is made once per vertex). The hook takes one glossy
+/// kind, and the query asks for the reflection kind when the material
+/// has it and the transmission kind otherwise: a single reflect-transmit
+/// leaf reports the same lobe either way, and a layering that differs
+/// by domain answers for its reflection side, which is the side the
+/// receiver's own gather evaluates. Without the hook (see
+/// `Compiler::shouldEmitScatterNormal`), every finite lobe receives, as
+/// the Dirac estimator always has. Zero means the vertex is no receiver.
+///
+/// The answer is a mask rather than a verdict on the vertex so that a
+/// narrow coat over a wide base leaves the base receiving and the coat
+/// to ordinary sampling: the gathers value the receiving lobes only,
+/// and an arrival behind keeps the share of the receiver's bounce the
+/// other lobes carried, the same partition the casters' claims make.
 ///
 /// The right threshold is the lobe's angular width against the light's
 /// angular radius from the receiver, which is a property of the scene;
@@ -620,22 +626,23 @@ manifoldClaim(const JIT::Material &material, bool isMarked);
 /// consulted only on the path that actually draws, so a renderer's
 /// deterministic sampler advances exactly when a lobe is proposed.
 template <typename DrawXi>
-[[nodiscard]] inline bool isManifoldReceiver(const JIT::Material &material,
-                                             bool isBackface, DrawXi &&drawXi,
-                                             float minAlpha) {
+[[nodiscard]] inline int manifoldReceiverLobes(const JIT::Material &material,
+                                               bool isBackface, DrawXi &&drawXi,
+                                               float minAlpha) {
   const int dfLobes{material.getLobes(isBackface)};
-  if ((dfLobes & DF_FINITE) == 0) return false;
-  if ((dfLobes & DF_SMOOTH) != 0) return true;
-  if (!(minAlpha > 0.0f) || !material.def->scatterNormalSample) return true;
+  const int glossy{dfLobes & DF_GLOSSY};
+  if (glossy == 0 || !(minAlpha > 0.0f) || !material.def->scatterNormalSample)
+    return dfLobes & DF_FINITE;
   // One glossy kind, per the hook's contract; see above.
-  const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
-                                                 : DF_GLOSSY_BTDF};
+  const int kind{(glossy & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
+                                                : DF_GLOSSY_BTDF};
   float3 wm{};
   float pdf{};
   float2 alpha{};
-  if (!material.scatterNormalSample(drawXi(), isBackface, wm, pdf, alpha, kind))
-    return false;
-  return std::sqrt(alpha.x * alpha.y) >= minAlpha;
+  const bool isWide{material.scatterNormalSample(drawXi(), isBackface, wm, pdf,
+                                                 alpha, kind) &&
+                    std::sqrt(alpha.x * alpha.y) >= minAlpha};
+  return (dfLobes & DF_SMOOTH) | (isWide ? glossy : 0);
 }
 
 /// \}

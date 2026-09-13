@@ -1,6 +1,8 @@
+#include "CompileFixtures.h"
 #include "Fixtures.h"
 
 #include <cmath>
+#include <utility>
 
 #include "smdl/Manifold.h"
 
@@ -251,4 +253,83 @@ TEST_CASE("Manifold: the trials a reciprocal walk counts") {
   }};
   CHECK(!smdl::manifoldReciprocal(receiver, connection, 4, trials,
                                   inverseProbability, elsewhere));
+}
+
+TEST_CASE("Manifold: the lobes a receiver receives with") {
+  // The answer is a mask over the material's lobes, so a narrow coat over
+  // a diffuse base leaves the base receiving and hands the coat to
+  // ordinary sampling, with the draw made only where a glossy lobe has
+  // a width to read.
+  smdl::Compiler compiler{};
+  compiler.shouldEmitScatterNormal = true;
+  REQUIRE_OK(compiler.addCode(
+      "::receivers",
+      "#smdl\nimport ::df::*;\n"
+      "export material diffuse() = material(surface: material_surface(\n"
+      "  scattering: df::diffuse_reflection_bsdf(tint: 0.6)));\n"
+      "export material narrow() = material(surface: material_surface(\n"
+      "  scattering: df::microfacet_ggx_smith_bsdf(roughness_u: 0.05, "
+      "tint: 0.9)));\n"
+      "export material wide() = material(surface: material_surface(\n"
+      "  scattering: df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, "
+      "tint: 0.9)));\n"
+      "export material coated() = material(surface: material_surface(\n"
+      "  scattering: df::fresnel_layer(ior: 1.5,\n"
+      "    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.05, "
+      "tint: 1.0),\n"
+      "    base: df::diffuse_reflection_bsdf(tint: 0.6))));\n"
+      "export material mirror() = material(surface: material_surface(\n"
+      "  scattering: df::specular_bsdf()));\n"));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+  REQUIRE_OK(compiler.jitCompile());
+  StateStorage storage{compiler};
+  smdl::State state{storage.makeState()};
+  state.finalize();
+  // The receiving lobes and how many times the hook was drawn.
+  const auto lobesOf{[&](const char *name, float minAlpha) {
+    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
+    REQUIRE(materialDef);
+    smdl::JIT::Material material{state, materialDef};
+    int draws{0};
+    const int lobes{smdl::manifoldReceiverLobes(
+        material, /*isBackface=*/false,
+        [&] {
+          draws++;
+          return smdl::float4(0.3f, 0.7f, 0.5f, 0.5f);
+        },
+        minAlpha)};
+    return std::pair<int, int>{lobes, draws};
+  }};
+  SUBCASE("A diffuse lobe receives without a draw") {
+    const auto [lobes, draws]{lobesOf("diffuse", 0.005f)};
+    CHECK(lobes == smdl::DF_SMOOTH_BRDF);
+    CHECK(draws == 0);
+  }
+  SUBCASE("A glossy lobe receives by its width") {
+    // Squared roughness 0.0025 is under the floor and 0.04 is over it.
+    const auto [narrow, narrowDraws]{lobesOf("narrow", 0.005f)};
+    CHECK(narrow == 0);
+    CHECK(narrowDraws == 1);
+    const auto [wide, wideDraws]{lobesOf("wide", 0.005f)};
+    CHECK(wide == smdl::DF_GLOSSY_BRDF);
+    CHECK(wideDraws == 1);
+    // No floor: every finite lobe receives, and nothing is drawn.
+    const auto [any, anyDraws]{lobesOf("narrow", 0.0f)};
+    CHECK(any == smdl::DF_GLOSSY_BRDF);
+    CHECK(anyDraws == 0);
+  }
+  SUBCASE("A narrow coat over a diffuse base leaves the base receiving") {
+    const auto [lobes, draws]{lobesOf("coated", 0.005f)};
+    CHECK(lobes == smdl::DF_SMOOTH_BRDF);
+    CHECK(draws == 1);
+    // A floor the coat clears lets it receive too.
+    const auto [both, bothDraws]{lobesOf("coated", 0.001f)};
+    CHECK(both == (smdl::DF_SMOOTH_BRDF | smdl::DF_GLOSSY_BRDF));
+    CHECK(bothDraws == 1);
+  }
+  SUBCASE("A Dirac lobe never receives") {
+    const auto [lobes, draws]{lobesOf("mirror", 0.005f)};
+    CHECK(lobes == 0);
+    CHECK(draws == 0);
+  }
 }

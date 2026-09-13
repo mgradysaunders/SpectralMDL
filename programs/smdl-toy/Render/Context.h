@@ -61,8 +61,9 @@ public:
   /// figure 15).
   int biasedTrials{};
 
-  /// The squared roughness a glossy-only vertex needs to be a receiver
-  /// the gathers run from and claim for; see `isManifoldReceiver()`.
+  /// The squared roughness a vertex's glossy lobes need to receive
+  /// connections, its smooth lobes receiving regardless; see
+  /// `manifoldReceiverLobes()`.
   float minReceiverAlpha{0.005f};
 
   /// Restrict the Dirac-chain machinery to the environment's sun cone:
