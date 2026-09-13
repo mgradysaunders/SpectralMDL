@@ -62,6 +62,7 @@ function(smdl_add_doctest BIN_NAME)
   if(CXX_FP_FLAGS)
     target_compile_options(${BIN_NAME} PRIVATE ${CXX_FP_FLAGS})
   endif()
+  smdl_shorten_file_macro(${BIN_NAME} "${PROJECT_SOURCE_DIR}/testing")
   set_target_properties(
     ${BIN_NAME}
     PROPERTIES

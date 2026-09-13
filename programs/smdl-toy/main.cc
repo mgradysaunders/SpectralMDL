@@ -84,7 +84,7 @@ int main(int argc, char **argv) try {
   Frame frame{resolveFrame(opts)};
   // The sensor's response, which exists exactly when a sensor does.
   std::optional<ResponseSettings> responseSettings{};
-  if (frame.model.hasPhysicalSensor())
+  if (frame.model.hasSensor())
     responseSettings = frame.model.sensor->settings().response;
   ResumedSequence resumed{resumeSequence(
       opts, frame, responseSettings ? &*responseSettings : nullptr)};

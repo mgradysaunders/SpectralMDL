@@ -3,6 +3,7 @@
 #include <string>
 
 #include "smdl/Support/Error.h"
+#include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
@@ -10,8 +11,10 @@
 
 #include "CameraModel.h"
 #include "Layout/LensFile.h"
+#include "Layout/SensorFile.h"
 #include "Options.h"
 #include "Sensor/Detector.h"
+#include "Sensor/Develop.h"
 #include "Sensor/Response.h"
 #include "Sensor/Sensor.h"
 
@@ -23,7 +26,7 @@ namespace {
 // so that a 3:2 picture gets the 36 by 24 of full frame to the bit.
 [[nodiscard]] float2 observerFrameSize(int2 resolution, float heightMM) {
   const float aspect{float(resolution.x) / float(resolution.y)};
-  return 1e-3f * float2(heightMM * aspect, heightMM);
+  return 1e-3f * heightMM * float2(aspect, 1.0f);
 }
 
 // A refusal of a setting the camera file stated, once the lens and the
@@ -429,7 +432,7 @@ struct SensorLines final {
     return "not at all, since -ideal looks through the thin lens fitted to "
            "it, which has no color; a material that disperses refracts at "
            "the d line (588 nm)";
-  if (!model.options.traceWavelengthRange)
+  if (!model.cameraOptions.traceWavelengthRange)
     return "at the d line (588 nm) alone, the film having no color filter "
            "array to draw a wavelength from, which is also what a material "
            "that disperses refracts at";
@@ -494,42 +497,33 @@ tileSpanOf(const ResponseSettings &response) {
 // The lens the model names, built as the camera builds it, for the
 // report.
 [[nodiscard]] Lens buildLens(const CameraModel &model) {
-  return Lens{*model.options.lens, lensOptionsOf(model.options)};
+  return Lens{*model.cameraOptions.lens, lensOptionsOf(model.cameraOptions)};
 }
 
 } // namespace
 
-const char *filmQuantityName(FilmQuantity quantity) noexcept {
-  return quantity == FilmQuantity::IRRADIANCE ? "irradiance" : "radiance";
-}
-
-float thinLensFocalLength(const CameraOptions &options) noexcept {
-  return 0.5f / std::tan(smdl::radians(options.fovYDeg / 2)) *
-         options.frameSize.y;
-}
-
-CameraModel resolveCameraModel(const Options &opts) {
+CameraModel resolveCameraModel(const Options &options) {
   CameraModel model{};
-  CameraOptions &options{model.options};
+  CameraOptions &cameraOptions{model.cameraOptions};
   // The camera file first: '-camera' if it was given, else the '.camera'
   // beside the layout. Its settings are resolved at shutter open, which
   // is where everything but the framing is read: the renderer varies the
   // framing within one shutter and holds the rest. The document stays
   // with the model for the locations of its keys.
   model.cameraFileName =
-      resolveCameraFileName(opts.camera.file, opts.scene.inputSceneFile);
+      resolveCameraFileName(options.camera.file, options.scene.inputSceneFile);
   if (!model.cameraFileName.empty())
-    model.document = readCamera(model.documentDiags, model.cameraFileName);
-  const CameraDocument &document{model.document};
-  const CameraSettings settings{document.camera.at(opts.scene.time)};
+    model.cameraDoc = readCamera(model.cameraDocDiags, model.cameraFileName);
+  const CameraDocument &cameraDoc{model.cameraDoc};
+  const CameraSettings cameraSettings{cameraDoc.camera.at(options.scene.time)};
   // The sensor the camera file names, else the observer. Under -ideal the
   // observer stands in for the sensor on its frame and pixels, so the
   // framing never changes between the preview and the render.
-  model.isPreview = opts.camera.isIdeal;
+  model.isPreview = options.camera.isIdeal;
   std::optional<SensorSettings> sensorSettings{};
-  if (settings.sensor && *settings.sensor != SENSOR_HUMAN) {
+  if (cameraSettings.sensor && *cameraSettings.sensor != SENSOR_HUMAN) {
     model.sensorFileName =
-        resolveSensorFileName(*settings.sensor, model.cameraFileName);
+        resolveSensorFileName(*cameraSettings.sensor, model.cameraFileName);
     // A sink of its own, so that the sensor's diagnostics are printed once
     // rather than again with the camera's. Only the sensor outlives it,
     // which carries no locations; a refusal here is made while the
@@ -551,161 +545,173 @@ CameraModel resolveCameraModel(const Options &opts) {
   // over the observer's frame, 24 mm tall unless the field of view and
   // the focal length together say otherwise below.
   if (sensorSettings) {
-    if (opts.image.resolution.wasGiven &&
-        !smdl::isAllTrue(opts.image.resolution.value == sensorSettings->pixels))
+    if (options.image.resolution.wasGiven &&
+        !smdl::isAllTrue(options.image.resolution.value ==
+                         sensorSettings->pixels))
       throw smdl::Error(smdl::concat(
-          "-resolution ", spellVector(opts.image.resolution.value),
+          "-resolution ", spellVector(options.image.resolution.value),
           " is not the sensor's ", sensorSettings->pixels.x, ",",
           sensorSettings->pixels.y,
           ": a sensor renders exactly its own pixels; leave -resolution "
           "out, or use -crop-window to render part of the frame"));
-    options.resolution = sensorSettings->pixels;
-    options.frameSize =
+    cameraOptions.resolution = sensorSettings->pixels;
+    cameraOptions.frameSize =
         1e-6f *
         float2(sensorSettings->pitchUM.x * float(sensorSettings->pixels.x),
                sensorSettings->pitchUM.y * float(sensorSettings->pixels.y));
   } else {
-    options.resolution = opts.image.resolution.value;
-    options.frameSize = observerFrameSize(options.resolution, 24.0f);
+    cameraOptions.resolution = options.image.resolution.value;
+    cameraOptions.frameSize =
+        observerFrameSize(cameraOptions.resolution, 24.0f);
   }
   // The picture the frame was sized for, which -resolution-scale renders
   // fewer pixels of: a smaller picture of the same frame. A sensor renders
   // exactly its own pixels.
-  const int2 resolution{options.resolution};
-  if (opts.image.resolutionScale.wasGiven) {
-    if (model.hasPhysicalSensor())
+  const int2 resolution{cameraOptions.resolution};
+  if (options.image.resolutionScale.wasGiven) {
+    if (model.hasSensor())
       throw smdl::Error("-resolution-scale renders a smaller picture of the "
                         "frame, and a sensor renders exactly its own pixels: "
                         "preview it with -ideal");
-    const float scale{opts.image.resolutionScale.value};
-    options.resolution =
+    const float scale{options.image.resolutionScale.value};
+    cameraOptions.resolution =
         int2(std::max(1, int(std::lround(scale * float(resolution.x)))),
              std::max(1, int(std::lround(scale * float(resolution.y)))));
     SMDL_LOG_INFO("Resolution: -resolution-scale ", smdl::Brief(scale, 4),
-                  " renders ", options.resolution.x, " by ",
-                  options.resolution.y, " of the frame's ", resolution.x,
+                  " renders ", cameraOptions.resolution.x, " by ",
+                  cameraOptions.resolution.y, " of the frame's ", resolution.x,
                   " by ", resolution.y, " pixels");
   }
-  options.filmQuantity = model.hasPhysicalSensor() ? FilmQuantity::IRRADIANCE
-                                                   : FilmQuantity::RADIANCE;
+  cameraOptions.filmQuantity =
+      model.hasSensor() ? FilmQuantity::IRRADIANCE : FilmQuantity::RADIANCE;
   // The two clocks. Which instant to photograph is the command line's
   // alone, so one camera file renders every frame of a shot; how long
   // the shutter stays open is the camera's; how long the readout takes
   // to sweep the frame and which way is the sensor's, which the camera
   // file overrides.
-  gRenderShutter.time = opts.scene.time;
-  gRenderShutter.exposure = settings.shutter.value_or(0.0f);
-  gRenderShutter.readout = settings.readout ? *settings.readout
-                           : sensorSettings ? sensorSettings->readout
-                                            : 0.0f;
-  settleReadoutLines(settings.readoutDirection ? *settings.readoutDirection
+  gRenderShutter.time = options.scene.time;
+  gRenderShutter.exposure = cameraSettings.shutter.value_or(0.0f);
+  gRenderShutter.readout = cameraSettings.readout ? *cameraSettings.readout
+                           : sensorSettings       ? sensorSettings->readout
+                                                  : 0.0f;
+  settleReadoutLines(cameraSettings.readoutDirection
+                         ? *cameraSettings.readoutDirection
                      : sensorSettings ? sensorSettings->readoutDirection
                                       : ReadoutDirection::DOWN,
-                     options.resolution);
+                     cameraOptions.resolution);
   // The lens the camera file names, else the thin lens. Under -ideal
   // the prescription stays in the options for the thin lens fitted to
   // it.
-  if (settings.lens && *settings.lens != LENS_IDEAL) {
+  if (cameraSettings.lens && *cameraSettings.lens != LENS_IDEAL) {
     model.lensFileName =
-        resolveLensFileName(*settings.lens, model.cameraFileName);
+        resolveLensFileName(*cameraSettings.lens, model.cameraFileName);
     // A sink of its own, for the reason the sensor's is.
     LayoutDiagnostics lensDiags{};
-    options.lens = readLens(lensDiags, model.lensFileName).lens;
-    refuseThinLensSettings(document, settings);
+    cameraOptions.lens = readLens(lensDiags, model.lensFileName).lens;
+    refuseThinLensSettings(cameraDoc, cameraSettings);
     if (model.isPreview)
       SMDL_LOG_INFO("Lens: -ideal previews ",
-                    options.lens->name.empty()
+                    cameraOptions.lens->name.empty()
                         ? smdl::concat(smdl::QuotedPath(model.lensFileName))
-                        : smdl::concat(smdl::Quoted(options.lens->name)),
+                        : smdl::concat(smdl::Quoted(cameraOptions.lens->name)),
                     " through the thin lens fitted to it");
   }
   // Under a tile every pixel reads through one band, so a lens whose
   // glasses disperse is bounded over the span of the bands the tile lays
   // down. Without a tile, and under -ideal, whose observer has none, the
   // lens is bounded at its reference alone.
-  if (model.hasPhysicalSensor() && sensorSettings->response.hasCFA() &&
-      options.lens && options.lens->isDispersive())
-    options.traceWavelengthRange = tileSpanOf(sensorSettings->response);
+  if (model.hasSensor() && sensorSettings->response.hasCFA() &&
+      cameraOptions.lens && cameraOptions.lens->isDispersive())
+    cameraOptions.traceWavelengthRange = tileSpanOf(sensorSettings->response);
   // The camera: the defaults in `CameraOptions`, whatever the camera
   // file's 'camera' directive named over them, and the framing flags
   // over both. A framing flag that was not given must not override the
   // file, so what decides is the occurrence count rather than the value.
-  options.lookFrom = pick(opts.camera.lookFrom, settings.lookFrom);
-  options.lookTo = pick(opts.camera.lookTo, settings.lookTo);
-  options.lookUp = pick(opts.camera.lookUp, settings.lookUp);
-  options.fovYDeg = settings.fovYDeg.value_or(options.fovYDeg);
-  options.fStop = settings.fStop.value_or(options.fStop);
-  options.aperture = settings.aperture.value_or(options.aperture);
-  options.focus = settings.focus.value_or(options.focus);
-  options.blades = settings.blades.value_or(options.blades);
-  options.bladeAngleDeg =
-      settings.bladeAngleDeg.value_or(options.bladeAngleDeg);
-  options.distortionK1 = settings.distortionK1.value_or(options.distortionK1);
-  options.distortionK2 = settings.distortionK2.value_or(options.distortionK2);
-  options.shouldFitDistortion =
-      settings.shouldFitDistortion.value_or(options.shouldFitDistortion);
-  options.vignetting = settings.vignetting.value_or(options.vignetting);
-  options.catEye = settings.catEye.value_or(options.catEye);
-  options.catEyeRadius = settings.catEyeRadius.value_or(options.catEyeRadius);
-  options.noLOD = opts.render.sampling.noLOD;
+  cameraOptions.lookFrom =
+      pick(options.camera.lookFrom, cameraSettings.lookFrom);
+  cameraOptions.lookTo = pick(options.camera.lookTo, cameraSettings.lookTo);
+  cameraOptions.lookUp = pick(options.camera.lookUp, cameraSettings.lookUp);
+  cameraOptions.fovYDeg =
+      cameraSettings.fovYDeg.value_or(cameraOptions.fovYDeg);
+  cameraOptions.fStop = cameraSettings.fStop.value_or(cameraOptions.fStop);
+  cameraOptions.aperture =
+      cameraSettings.aperture.value_or(cameraOptions.aperture);
+  cameraOptions.focus = cameraSettings.focus.value_or(cameraOptions.focus);
+  cameraOptions.blades = cameraSettings.blades.value_or(cameraOptions.blades);
+  cameraOptions.bladeAngleDeg =
+      cameraSettings.bladeAngleDeg.value_or(cameraOptions.bladeAngleDeg);
+  cameraOptions.distortionK1 =
+      cameraSettings.distortionK1.value_or(cameraOptions.distortionK1);
+  cameraOptions.distortionK2 =
+      cameraSettings.distortionK2.value_or(cameraOptions.distortionK2);
+  cameraOptions.shouldFitDistortion =
+      cameraSettings.shouldFitDistortion.value_or(
+          cameraOptions.shouldFitDistortion);
+  cameraOptions.vignetting =
+      cameraSettings.vignetting.value_or(cameraOptions.vignetting);
+  cameraOptions.catEye = cameraSettings.catEye.value_or(cameraOptions.catEye);
+  cameraOptions.catEyeRadius =
+      cameraSettings.catEyeRadius.value_or(cameraOptions.catEyeRadius);
+  cameraOptions.noLOD = options.render.sampling.noLOD;
   // The autofocus is a measurement of the committed scene, so it leaves
   // the distance to the stage.
-  model.shouldAutofocus = settings.shouldAutofocus;
+  model.shouldAutofocus = cameraSettings.shouldAutofocus;
   // The thin lens's field, from the two ways of stating it. The focal
   // length alone implies the field of view over the frame. Both together
   // are two statements of one fact over a sensor, whose frame is its own,
   // and size the frame itself over the observer's.
-  if (!options.lens && settings.focalLengthMM) {
-    const float focalLength{1e-3f * *settings.focalLengthMM};
-    if (!settings.fovYDeg) {
-      options.fovYDeg =
-          2 *
-          smdl::degrees(std::atan(0.5f * options.frameSize.y / focalLength));
-      SMDL_LOG_INFO("Field of view: ", smdl::Brief(options.fovYDeg, 4),
+  if (!cameraOptions.lens && cameraSettings.focalLengthMM) {
+    const float focalLength{1e-3f * *cameraSettings.focalLengthMM};
+    if (!cameraSettings.fovYDeg) {
+      cameraOptions.fovYDeg =
+          2 * smdl::degrees(
+                  std::atan(0.5f * cameraOptions.frameSize.y / focalLength));
+      SMDL_LOG_INFO("Field of view: ", smdl::Brief(cameraOptions.fovYDeg, 4),
                     " degrees top to bottom, from a focal length of ",
                     smdl::Brief(1e3f * focalLength, 4), " mm over the ",
                     sensorSettings ? "sensor's " : "observer's ",
-                    smdl::Brief(1e3f * options.frameSize.y, 4), " mm frame");
+                    smdl::Brief(1e3f * cameraOptions.frameSize.y, 4),
+                    " mm frame");
     } else if (sensorSettings) {
-      refuse(document, "focal_length",
+      refuse(cameraDoc, "focal_length",
              "'fovy' and 'focal_length' are two statements of the thin "
              "lens's field over a sensor, whose frame is its own: state one");
     } else {
       const float heightMM{2e3f * focalLength *
-                           std::tan(smdl::radians(options.fovYDeg / 2))};
-      options.frameSize = observerFrameSize(resolution, heightMM);
-      SMDL_LOG_INFO("Frame: ", smdl::Brief(1e3f * options.frameSize.x, 4),
+                           std::tan(smdl::radians(cameraOptions.fovYDeg / 2))};
+      cameraOptions.frameSize = observerFrameSize(resolution, heightMM);
+      SMDL_LOG_INFO("Frame: ", smdl::Brief(1e3f * cameraOptions.frameSize.x, 4),
                     " by ", smdl::Brief(heightMM, 4),
                     " mm, from a focal length of ",
                     smdl::Brief(1e3f * focalLength, 4), " mm spanning ",
-                    smdl::Brief(options.fovYDeg, 4), " degrees");
+                    smdl::Brief(cameraOptions.fovYDeg, 4), " degrees");
     }
   }
   // Either spelling of the aperture may come from the block or from a key
   // of its motion, so only the settings at shutter open can be checked
   // for naming both.
-  if (options.fStop > 0 && options.aperture > 0)
-    refuse(document, "aperture",
+  if (cameraOptions.fStop > 0 && cameraOptions.aperture > 0)
+    refuse(cameraDoc, "aperture",
            "expected at most one of 'fstop' and 'aperture' (they are two "
            "spellings of the same quantity)");
   // What a physical sensor needs of the optics, refused here so that it
   // fails before anything slow loads, since under -autolook the camera
   // is built after the scene.
-  if (sensorSettings && !options.lens && !(options.fStop > 0) &&
-      !(options.aperture > 0))
-    refuse(document, "sensor",
+  if (sensorSettings && !cameraOptions.lens && !(cameraOptions.fStop > 0) &&
+      !(cameraOptions.aperture > 0))
+    refuse(cameraDoc, "sensor",
            "a physical sensor integrates the irradiance over a pupil, and a "
            "pinhole has none: state 'fstop' or 'aperture'");
   // The sensor's condition over the shot, which only a sensor has, and which
   // the preview, drawing no noise, has no use for.
-  if (settings.temperature) {
-    if (model.hasPhysicalSensor()) {
-      model.temperature = *settings.temperature;
+  if (cameraSettings.temperature) {
+    if (model.hasSensor()) {
+      model.temperature = *cameraSettings.temperature;
     } else if (model.hasPreviewedSensor()) {
       SMDL_LOG_INFO("Sensor: 'temperature' is ignored, since -ideal "
                     "previews the sensor through the observer");
     } else {
-      refuse(document, "temperature",
+      refuse(cameraDoc, "temperature",
              "'temperature' is a physical sensor's condition, and this "
              "camera's sensor is 'human'");
     }
@@ -715,67 +721,73 @@ CameraModel resolveCameraModel(const Options &opts) {
   // gain has one speed, which a number would contradict.
   const std::optional<Sensor> &sensor{model.sensor};
   if (!sensorSettings) {
-    if (opts.camera.iso.wasGiven || opts.camera.shouldMeterISO)
+    if (options.camera.iso.wasGiven || options.camera.shouldMeterISO)
       throw smdl::Error("-iso is a physical sensor's setting, and this "
                         "camera's sensor is 'human'");
-    if (settings.iso || settings.shouldMeterISO)
-      refuse(document, "iso",
+    if (cameraSettings.iso || cameraSettings.shouldMeterISO)
+      refuse(cameraDoc, "iso",
              "'iso' is a physical sensor's setting, and this camera's "
              "sensor is 'human'");
   } else {
-    if (opts.camera.iso.wasGiven)
-      model.iso = opts.camera.iso.value;
-    else if (!opts.camera.shouldMeterISO)
-      model.iso = settings.iso;
+    if (options.camera.iso.wasGiven)
+      model.iso = options.camera.iso.value;
+    else if (!options.camera.shouldMeterISO)
+      model.iso = cameraSettings.iso;
     if (model.iso && sensor->hasFixedGain()) {
       const std::string why{smdl::concat(
           " has no meaning with a fixed gain: the sensor's detector states "
           "'gain', whose saturation speed is ISO ",
           smdl::Brief(sensor->fixedGainISO(), 5))};
-      if (opts.camera.iso.wasGiven) throw smdl::Error("-iso" + why);
-      refuse(document, "iso", "'iso'" + why);
+      if (options.camera.iso.wasGiven) throw smdl::Error("-iso" + why);
+      refuse(cameraDoc, "iso", "'iso'" + why);
     }
   }
   // The white balance, which only a sensor's develop has: -white-balance
   // over the file.
-  if (model.hasPhysicalSensor()) {
-    model.whiteBalance = pick(opts.camera.whiteBalance, settings.whiteBalance);
-  } else if (opts.camera.whiteBalance.wasGiven || settings.whiteBalance) {
+  if (model.hasSensor()) {
+    model.whiteBalance =
+        pick(options.camera.whiteBalance, cameraSettings.whiteBalance);
+  } else if (options.camera.whiteBalance.wasGiven ||
+             cameraSettings.whiteBalance) {
     if (model.hasPreviewedSensor())
       SMDL_LOG_INFO("Sensor: 'white_balance' is ignored, since -ideal "
                     "previews the sensor through the observer");
-    else if (opts.camera.whiteBalance.wasGiven)
+    else if (options.camera.whiteBalance.wasGiven)
       throw smdl::Error("-white-balance is a physical sensor's setting, and "
                         "this camera's sensor is 'human'");
     else
-      refuse(document, "white_balance",
+      refuse(cameraDoc, "white_balance",
              "'white_balance' is a physical sensor's setting, and this "
              "camera's sensor is 'human'");
   }
-  // What a readout needs, refused here for the same reason.
-  if (!opts.image.outputDN.empty()) {
+  // What a readout needs, refused here for the same reason, the DNG's
+  // own shape included: nothing renders before a sensor the format
+  // cannot carry is refused.
+  if (!options.image.outputRaw.empty()) {
     if (model.hasPreviewedSensor())
-      throw smdl::Error("-output-dn reads a sensor out, and -ideal previews it "
-                        "through the observer");
-    if (!model.hasPhysicalSensor())
-      throw smdl::Error("-output-dn reads a sensor out, and this camera's "
+      throw smdl::Error("-output-raw reads a sensor out, and -ideal previews "
+                        "it through the observer");
+    if (!model.hasSensor())
+      throw smdl::Error("-output-raw reads a sensor out, and this camera's "
                         "sensor is 'human': name a '.sensor' file with "
                         "'sensor' in the camera file");
     if (!gRenderShutter.hasExposure())
-      throw smdl::Error("-output-dn needs an exposure: state 'shutter'");
+      throw smdl::Error("-output-raw needs an exposure: state 'shutter'");
+    if (smdl::hasExtension(options.image.outputRaw, DNG_EXTENSION))
+      requireDNGSensor(*model.sensor);
   }
   // What the observer's develop does and a sensor's does not.
-  if (model.hasPhysicalSensor()) {
-    if (opts.image.tonemap.isNight)
+  if (model.hasSensor()) {
+    if (options.image.tonemap.isNight)
       throw smdl::Error("-tonemap night models the observer's eyes at the "
                         "scene's own luminance, and a physical sensor's "
                         "film holds the irradiance at the sensor: render "
                         "the scene through a camera whose sensor is "
                         "'human'");
-    if (opts.image.rgbPolicy.shouldForceFalseColor)
+    if (options.image.rgbPolicy.shouldForceFalseColor)
       throw smdl::Error(smdl::concat(
-          opts.image.rgbPolicy.falseColorWaves.empty() ? "-false-color"
-                                                       : "-rgb-wavelengths",
+          options.image.rgbPolicy.falseColorWaves.empty() ? "-false-color"
+                                                          : "-rgb-wavelengths",
           " maps the spectral film's bands to RGB, and a physical sensor "
           "develops its own: map the spectrum through a camera whose "
           "sensor is 'human'"));
@@ -783,13 +795,13 @@ CameraModel resolveCameraModel(const Options &opts) {
   // The camera's framing at shutter shut. The keys are absolute readings
   // of the clock, so a flag that replaces the framing drops the track
   // rather than moving a camera the file never described.
-  if (!document.camera.motion.empty()) {
+  if (!cameraDoc.camera.motion.empty()) {
     const float shutSeconds{gRenderShutter.secondsAt(1.0f)};
-    const char *framingFlag{opts.camera.autolook.isEnabled  ? "-autolook"
-                            : opts.camera.lookFrom.wasGiven ? "-look-from"
-                            : opts.camera.lookTo.wasGiven   ? "-look-to"
-                            : opts.camera.lookUp.wasGiven   ? "-look-up"
-                                                            : nullptr};
+    const char *framingFlag{options.camera.autolook.isEnabled  ? "-autolook"
+                            : options.camera.lookFrom.wasGiven ? "-look-from"
+                            : options.camera.lookTo.wasGiven   ? "-look-to"
+                            : options.camera.lookUp.wasGiven   ? "-look-up"
+                                                               : nullptr};
     if (framingFlag) {
       SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
                     " replaces the framing the camera file's 'motion' "
@@ -799,18 +811,19 @@ CameraModel resolveCameraModel(const Options &opts) {
                     "holds its framing at ",
                     gRenderShutter.time, " s");
     } else {
-      const CameraSettings shutCamera{document.camera.at(shutSeconds)};
-      options.hasMotion = true;
-      options.lookFromShut = pick(opts.camera.lookFrom, shutCamera.lookFrom);
-      options.lookToShut = pick(opts.camera.lookTo, shutCamera.lookTo);
-      options.lookUpShut = pick(opts.camera.lookUp, shutCamera.lookUp);
+      const CameraSettings shutCamera{cameraDoc.camera.at(shutSeconds)};
+      cameraOptions.hasMotion = true;
+      cameraOptions.lookFromShut =
+          pick(options.camera.lookFrom, shutCamera.lookFrom);
+      cameraOptions.lookToShut = pick(options.camera.lookTo, shutCamera.lookTo);
+      cameraOptions.lookUpShut = pick(options.camera.lookUp, shutCamera.lookUp);
     }
     // What the shutter cannot carry: a lens setting the track varies
     // over the shutter is read once, at open, and held.
     if (gRenderShutter.spansTime()) {
       if (const std::vector<std::string_view> held{
-              document.camera.heldOverShutter(gRenderShutter.time,
-                                              shutSeconds)};
+              cameraDoc.camera.heldOverShutter(gRenderShutter.time,
+                                               shutSeconds)};
           !held.empty()) {
         std::string names{};
         for (const auto &name : held)
@@ -819,13 +832,13 @@ CameraModel resolveCameraModel(const Options &opts) {
                       " vary over the shutter, which only the framing does; "
                       "they hold the value at shutter open");
       }
-      if (document.camera.hasKeyBetween(gRenderShutter.time, shutSeconds))
+      if (cameraDoc.camera.hasKeyBetween(gRenderShutter.time, shutSeconds))
         SMDL_LOG_INFO("Camera motion: a key sits inside the shutter, so the "
                       "camera moves along the chord of its two ends");
     }
   }
   // What was resolved, one line per part.
-  if (model.hasPhysicalSensor()) {
+  if (model.hasSensor()) {
     const float2 sizeMM{sensorSettings->sizeMM()};
     SMDL_LOG_INFO(
         "Sensor: ",
@@ -847,17 +860,17 @@ CameraModel resolveCameraModel(const Options &opts) {
     SMDL_LOG_INFO("ISO: ", lines.iso);
     SMDL_LOG_INFO("Color: ", lines.color);
   } else if (sensorSettings) {
-    const float2 frameMM{1e3f * options.frameSize};
-    SMDL_LOG_INFO("Sensor: the observer on a ", smdl::Brief(frameMM.x, 4),
-                  " by ", smdl::Brief(frameMM.y, 4), " mm frame of ",
-                  options.resolution.x, " by ", options.resolution.y,
-                  " pixels; the film holds radiance");
+    const float2 frameMM{1e3f * cameraOptions.frameSize};
+    SMDL_LOG_INFO(
+        "Sensor: the observer on a ", smdl::Brief(frameMM.x, 4), " by ",
+        smdl::Brief(frameMM.y, 4), " mm frame of ", cameraOptions.resolution.x,
+        " by ", cameraOptions.resolution.y, " pixels; the film holds radiance");
   }
   return model;
 }
 
 std::string describeCamera(const CameraModel &model) {
-  const CameraOptions &options{model.options};
+  const CameraOptions &options{model.cameraOptions};
   std::string text{};
   const auto line{[&](auto &&...parts) {
     text += smdl::concat(parts...);
@@ -870,10 +883,9 @@ std::string describeCamera(const CameraModel &model) {
   const float2 frameMM{1e3f * options.frameSize};
   // The sensor's own pitch, or the observer's square one off the frame's
   // height, which is what its width was made from.
-  const float2 pitchUM{
-      model.hasPhysicalSensor()
-          ? model.sensor->settings().pitchUM
-          : float2(1e6f * options.frameSize.y / float(options.resolution.y))};
+  const float2 pitchUM{model.hasSensor() ? model.sensor->settings().pitchUM
+                                         : float2(1e6f * options.frameSize.y /
+                                                  float(options.resolution.y))};
   line("camera: ",
        model.cameraFileName.empty()
            ? std::string("the defaults and the command line")
@@ -906,7 +918,7 @@ std::string describeCamera(const CameraModel &model) {
                      : (gRenderShutter.isReadoutReversed ? "bottom to top"
                                                          : "top to bottom"))
            : std::string(", global"),
-       model.hasPhysicalSensor() && !gRenderShutter.hasExposure()
+       model.hasSensor() && !gRenderShutter.hasExposure()
            ? "; a physical sensor cannot render with a shut shutter: state "
              "'shutter'"
            : "");
@@ -1002,7 +1014,7 @@ std::string describeCamera(const CameraModel &model) {
       line("  a pinhole, so everything is in focus");
     }
   }
-  if (model.hasPhysicalSensor()) {
+  if (model.hasSensor()) {
     const Sensor &sensor{*model.sensor};
     const SensorSettings &settings{sensor.settings()};
     line("sensor: ",
@@ -1040,7 +1052,7 @@ std::string describeCamera(const CameraModel &model) {
 }
 
 Camera buildCamera(CameraModel &model) {
-  CameraOptions options{model.options};
+  CameraOptions options{model.cameraOptions};
   if (model.shouldApproximateLens()) {
     const LensApproximation fit{approximateLens(options)};
     const std::string lensName{
@@ -1093,12 +1105,12 @@ Camera buildCamera(CameraModel &model) {
 
 void refuseUnrenderable(const CameraModel &model) {
   if (gRenderShutter.hasExposure()) return;
-  if (model.hasPhysicalSensor())
-    refuse(model.document, "sensor",
+  if (model.hasSensor())
+    refuse(model.cameraDoc, "sensor",
            "a physical sensor counts the electrons of an exposure, and the "
            "shutter is shut: state 'shutter' in the camera file");
   if (model.hasPreviewedSensor())
-    refuse(model.document, "sensor",
+    refuse(model.cameraDoc, "sensor",
            "-ideal exposes the picture as the sensor would, and the shutter "
            "is shut: state 'shutter' in the camera file");
 }

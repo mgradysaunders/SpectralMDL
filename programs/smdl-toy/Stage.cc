@@ -102,7 +102,7 @@ Frame resolveFrame(const Options &opts) {
   std::optional<Camera> camera{};
   if (!opts.camera.autolook.isEnabled && !model.shouldAutofocus)
     camera.emplace(buildCamera(model));
-  const int2 resolution{model.options.resolution};
+  const int2 resolution{model.cameraOptions.resolution};
   const size_t numPixelsX{size_t(resolution.x)};
   const size_t numPixelsY{size_t(resolution.y)};
   const size_t spp{size_t(opts.render.sampling.spp)};
@@ -124,7 +124,7 @@ Frame resolveFrame(const Options &opts) {
   Frame frame{};
   frame.layout = std::move(layout);
   frame.shouldJitterWavelength =
-      opts.render.grid.shouldJitter.wasGiven || !model.hasPhysicalSensor()
+      opts.render.grid.shouldJitter.wasGiven || !model.hasSensor()
           ? opts.render.grid.shouldJitter.value
           : true;
   frame.model = std::move(model);
@@ -151,7 +151,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   const GridOptions &gridOptions{opts.render.grid};
   const bool shouldAdoptResumedGrid{!gridOptions.wasGiven && resumed.wasLoaded};
   const ResponseSettings *response{
-      frame.model.hasPhysicalSensor() ? &frame.model.sensor->settings().response
+      frame.model.hasSensor() ? &frame.model.sensor->settings().response
                                       : nullptr};
   const auto uniform{[](const WavelengthRange &range) {
     std::vector<float> grid(size_t(range.bandCount));
@@ -376,7 +376,7 @@ ResolvedGrid resolveWavelengthGrid(const Options &opts, const Frame &frame,
   // The accumulation buffers scale as bands times pixels, the film's
   // bands being the grid's for the observer and the sensor's through a
   // sensor; say so before allocating gigabytes.
-  const SensorSettings *sensor{frame.model.hasPhysicalSensor()
+  const SensorSettings *sensor{frame.model.hasSensor()
                                    ? &frame.model.sensor->settings()
                                    : nullptr};
   const double filmBytes{sensor
@@ -427,7 +427,7 @@ StagedScene::StagedScene(const Options &opts, Frame &frame,
   const Layout &layout{frame.layout};
   const Color &wavelengths{grid.wavelengths};
   const bool isGridBeyondVisible{grid.isBeyondVisible};
-  CameraOptions &cameraOptions{frame.model.options};
+  CameraOptions &cameraOptions{frame.model.cameraOptions};
   std::optional<Camera> &camera{frame.camera};
   const int2 resolution{frame.resolution};
   // A scene given no MDL at all is a layout that has not been shaded yet,

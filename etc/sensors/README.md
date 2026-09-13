@@ -15,7 +15,7 @@ camera {
 ```
 
 ```
-smdl-toy shot.layout -output-bands out.img -output-dn out-dn.img
+smdl-toy shot.layout -output-bands out.img -output-raw out.dng
 ```
 
 A body decides the picture: the render is exactly its pixels (leave
@@ -27,8 +27,9 @@ or every band of an untiled body, in photoelectrons per square meter and
 second, which `-output-bands` writes and `-resume` continues. There is
 no spectral film through a body; the observer's film is what
 `-output-bands` writes through `sensor human` or under `-ideal`.
-`-output-dn` reads the band film out through the detector as a 16-bit
-ENVI pair of digital numbers, with every factor in its header.
+`-output-raw` reads the band film out through the detector: a 16-bit
+ENVI pair of digital numbers with every factor in its header (`.img`),
+or the same numbers as a DNG a raw developer takes (`.dng`).
 `-describe-camera` prints what a camera resolves to before anything
 renders.
 
@@ -128,14 +129,33 @@ does not also lose.
 
 ## Reading a sensor out
 
-`-output-dn` needs an exposure (`shutter`) and a pupil (`fstop` or
+`-output-raw` needs an exposure (`shutter`) and a pupil (`fstop` or
 `aperture` with the thin lens, or a `.lens`). A saved band film reads
-out again with `-spp 0 -resume out.img -output-dn ...`, as many times
+out again with `-spp 0 -resume out.img -output-raw ...`, as many times
 as there are realizations to draw, at the ISO the meter chose for it or
 at any `-iso`; `-detector-seed` picks the realization and
 `-detector-noise none|shot|all` isolates a term.
 The readout's header carries the ISO, the base ISO, whether the ISO was
 metered, and the white level beside the gain and the black level.
+
+The extension decides the file. `.img` is the ENVI pair, which any
+sensor writes, whatever its bands are named and however its tile is
+laid out. `.dng` is a raw a photographic pipeline develops, and the
+format is narrower than the format of a sensor here: it holds three
+color planes keyed to red, green, and blue, on a 2 by 2 tile or none, so
+a body writes one and anything else is refused before the render starts,
+with the ENVI pair named in the refusal. The DNG carries the mosaic as
+it was read out, the black and white levels, the noise the detector
+implies, the balance and the exposure the develop resolved, and two
+color matrices fitted under CIE illuminant A and D65, so that a
+developer lands where `-output-rgb` lands: on this machine's LibRaw, the
+color chart of `etc/targets` develops to within 0.3 CIEDE2000 of the
+built-in develop, patch by patch, against a color fit whose own residual
+is 1.4. Its `UniqueCameraModel` is prefixed with `smdl-toy`, so that a
+developer holding a profile for the body the curves were measured from
+takes the matrices in the file rather than its own.
+
+This product includes DNG technology under license by Adobe.
 
 The noise model assumes a converged film. It takes the band film's mean
 as the exact signal and draws the shot noise on it in full, so the

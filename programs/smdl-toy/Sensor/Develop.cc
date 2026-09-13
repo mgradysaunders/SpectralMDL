@@ -235,10 +235,19 @@ void refineHamiltonAdams(const ResponseSettings &response,
 // thread took which row.
 [[nodiscard]] std::vector<double> grayWorld(const ResponseSettings &response,
                                             smdl::Span<const size_t> bands,
-                                            const std::vector<float> &values,
-                                            size_t bandCount, size_t numPixelsX,
+                                            const Readout &readout,
+                                            const Detector &detector,
                                             int4 window, float saturation) {
   const size_t numBands{bands.size()};
+  const size_t bandCount{readout.bandCount};
+  const size_t numPixelsX{readout.pixelCountX};
+  const double black{detector.blackLevel()};
+  const double range{detector.codeRange()};
+  // The fraction of the code range a sample reads, which is what the
+  // develop makes of it too.
+  const auto sampleAt{[&](size_t i) {
+    return float((double(readout.digitalNumbers[i]) - black) / range);
+  }};
   // Each band's sum and its count, side by side.
   const std::vector<double> totals{parallelRowFold(
       size_t(window[1]), size_t(window[3]), std::vector<double>(numBands * 2),
@@ -248,18 +257,20 @@ void refineHamiltonAdams(const ResponseSettings &response,
           const size_t pixel{y * numPixelsX + x};
           if (response.hasCFA()) {
             const size_t k{positionOf(bands, response.bandAt(x, y))};
-            if (k < numBands && values[pixel] < saturation) {
-              tally[2 * k] += double(values[pixel]);
+            if (const float value{sampleAt(pixel)};
+                k < numBands && value < saturation) {
+              tally[2 * k] += double(value);
               tally[2 * k + 1] += 1.0;
             }
             continue;
           }
-          const float *samples{&values[pixel * bandCount]};
+          const auto sampleOf{
+              [&](size_t b) { return sampleAt(pixel * bandCount + b); }};
           if (!std::all_of(bands.begin(), bands.end(),
-                           [&](size_t b) { return samples[b] < saturation; }))
+                           [&](size_t b) { return sampleOf(b) < saturation; }))
             continue;
           for (size_t k = 0; k < numBands; k++) {
-            tally[2 * k] += double(samples[bands[k]]);
+            tally[2 * k] += double(sampleOf(bands[k]));
             tally[2 * k + 1] += 1.0;
           }
         }
@@ -367,6 +378,87 @@ std::vector<float> demosaic(DemosaicMethod method,
   return planes;
 }
 
+DevelopFit resolveDevelopFit(const Sensor &sensor, const Detector &detector,
+                             const Readout &readout,
+                             const WhiteBalance &whiteBalance, int4 window) {
+  const ResponseSettings &response{sensor.settings().response};
+  DevelopFit resolved{};
+  // What a sample at the white level reads as a fraction of the code
+  // range over the black level, 1 unless the well clips below the top
+  // code.
+  resolved.saturation =
+      float((double(detector.whiteLevel()) - detector.blackLevel()) /
+            detector.codeRange());
+  // What the picture is made of: three bands through the fitted matrix,
+  // or as they are when they fit the observer badly, or fewer as a gray.
+  const std::optional<std::array<size_t, 3>> rgb{response.rgbBands()};
+  if (rgb) {
+    resolved.bands.assign(rgb->begin(), rgb->end());
+  } else {
+    for (size_t b = 0; b < response.bands.size(); b++)
+      resolved.bands.push_back(b);
+  }
+  const smdl::Span<const size_t> bandSpan{resolved.bands.data(),
+                                          resolved.bands.size()};
+  // The white balance: the illuminant it names, or for `auto` the one the
+  // frame's gray world reads as.
+  resolved.wasAuto = whiteBalance.kind == WhiteBalanceKind::AUTO;
+  resolved.illuminant = whiteBalanceSpectrum(whiteBalance);
+  const std::vector<double> gray{
+      resolved.wasAuto ? grayWorld(response, bandSpan, readout, detector,
+                                   window, resolved.saturation)
+                       : std::vector<double>()};
+  resolved.hasGrayWorld =
+      resolved.wasAuto && std::all_of(gray.begin(), gray.end(),
+                                      [](double mean) { return mean > 0; });
+  resolved.multipliers.assign(resolved.bands.size(), 1.0);
+  size_t reference{sensor.peakBand()};
+  if (rgb) {
+    ColorFit &fit{resolved.fit};
+    reference = (*rgb)[1];
+    fit = sensor.fitColor(*rgb, resolved.illuminant);
+    if (resolved.hasGrayWorld && !fit.isSingular) {
+      double3 balanced{};
+      for (size_t k = 0; k < 3; k++) balanced[k] = gray[k] * fit.multipliers[k];
+      const double3 xyz{fit.cameraToXYZ * balanced};
+      if (const double sum{xyz.x + xyz.y + xyz.z}; sum > 0) {
+        resolved.measuredKelvin =
+            std::clamp(smdl::mccamyKelvin(double2(xyz.x / sum, xyz.y / sum)),
+                       AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
+        resolved.illuminant = kelvinSpectrum(resolved.measuredKelvin);
+        fit = sensor.fitColor(*rgb, resolved.illuminant);
+        for (size_t k = 0; k < 3; k++) fit.multipliers[k] = gray[1] / gray[k];
+      }
+    }
+    resolved.mode =
+        fit.isFaithful() ? DevelopMode::TRUE_COLOR : DevelopMode::FALSE_COLOR;
+    for (size_t k = 0; k < 3; k++) resolved.multipliers[k] = fit.multipliers[k];
+  } else {
+    // Each band against the most sensitive, whose saturation the ISO was
+    // rated at.
+    const double referenceRate{
+        sensor.electronRate(reference, resolved.illuminant)};
+    for (size_t k = 0; k < resolved.bands.size(); k++) {
+      const double rate{
+          sensor.electronRate(resolved.bands[k], resolved.illuminant)};
+      resolved.multipliers[k] = resolved.hasGrayWorld
+                                    ? gray[reference] / gray[k]
+                                : rate > 0 ? referenceRate / rate
+                                           : 1.0;
+    }
+  }
+  // The exposure: the baseline that puts a metered mean at middle gray,
+  // times the ratio that keeps a neutral under the illuminant there
+  // whichever band the ISO was rated in.
+  const double rated{sensor.peakElectronsPerLuxSecond()};
+  const double referenceRated{
+      sensor.electronsPerLuxSecond(reference, resolved.illuminant)};
+  resolved.exposure =
+      DEVELOP_MIDDLE_GRAY * ISO_SATURATION_LUX_SECONDS / (METER_Q * METER_K) *
+      (rated > 0 && referenceRated > 0 ? rated / referenceRated : 1.0);
+  return resolved;
+}
+
 std::vector<float> developReadout(const Sensor &sensor,
                                   const Detector &detector,
                                   const Readout &readout,
@@ -378,81 +470,22 @@ std::vector<float> developReadout(const Sensor &sensor,
   const size_t bandCount{readout.bandCount};
   SMDL_SANITY_CHECK(bandCount ==
                     (response.hasCFA() ? 1 : response.bands.size()));
+  const DevelopFit resolved{
+      resolveDevelopFit(sensor, detector, readout, whiteBalance, window)};
+  const std::vector<size_t> &bands{resolved.bands};
+  const std::vector<double> &multipliers{resolved.multipliers};
+  const ColorFit &fit{resolved.fit};
+  const DevelopMode mode{resolved.mode};
+  const double exposure{resolved.exposure};
+  const float saturation{resolved.saturation};
+  const smdl::Span<const size_t> bandSpan{bands.data(), bands.size()};
   // Fractions of the top code over the black level, which keeps the read
-  // noise's lower half as negatives; a sample at the white level reads
-  // `saturation`, 1 unless the well clips below the top code.
+  // noise's lower half as negatives.
   const double black{detector.blackLevel()};
   const double range{detector.codeRange()};
-  const float saturation{
-      float((double(detector.whiteLevel()) - black) / range)};
   std::vector<float> values(readout.digitalNumbers.size());
   for (size_t i = 0; i < values.size(); i++)
     values[i] = float((double(readout.digitalNumbers[i]) - black) / range);
-  // What the picture is made of: three bands through the fitted matrix,
-  // or as they are when they fit the observer badly, or fewer as a gray.
-  enum class Mode { TRUE_COLOR, FALSE_COLOR, GRAYSCALE };
-  const std::optional<std::array<size_t, 3>> rgb{response.rgbBands()};
-  std::vector<size_t> bands{};
-  if (rgb) {
-    bands.assign(rgb->begin(), rgb->end());
-  } else {
-    for (size_t b = 0; b < response.bands.size(); b++) bands.push_back(b);
-  }
-  const smdl::Span<const size_t> bandSpan{bands.data(), bands.size()};
-  // The white balance: the illuminant it names, or for `auto` the one the
-  // frame's gray world reads as.
-  const bool isAuto{whiteBalance.kind == WhiteBalanceKind::AUTO};
-  SensorSpectrum illuminant{whiteBalanceSpectrum(whiteBalance)};
-  const std::vector<double> gray{isAuto ? grayWorld(response, bandSpan, values,
-                                                    bandCount, numPixelsX,
-                                                    window, saturation)
-                                        : std::vector<double>()};
-  const bool hasGray{isAuto &&
-                     std::all_of(gray.begin(), gray.end(),
-                                 [](double mean) { return mean > 0; })};
-  double measuredKelvin{};
-  Mode mode{Mode::GRAYSCALE};
-  ColorFit fit{};
-  std::vector<double> multipliers(bands.size(), 1.0);
-  size_t reference{sensor.peakBand()};
-  if (rgb) {
-    reference = (*rgb)[1];
-    fit = sensor.fitColor(*rgb, illuminant);
-    if (hasGray && !fit.isSingular) {
-      double3 balanced{};
-      for (size_t k = 0; k < 3; k++) balanced[k] = gray[k] * fit.multipliers[k];
-      const double3 xyz{fit.cameraToXYZ * balanced};
-      if (const double sum{xyz.x + xyz.y + xyz.z}; sum > 0) {
-        measuredKelvin =
-            std::clamp(smdl::mccamyKelvin(double2(xyz.x / sum, xyz.y / sum)),
-                       AUTO_KELVIN_MIN, AUTO_KELVIN_MAX);
-        illuminant = kelvinSpectrum(measuredKelvin);
-        fit = sensor.fitColor(*rgb, illuminant);
-        for (size_t k = 0; k < 3; k++) fit.multipliers[k] = gray[1] / gray[k];
-      }
-    }
-    mode = fit.isFaithful() ? Mode::TRUE_COLOR : Mode::FALSE_COLOR;
-    for (size_t k = 0; k < 3; k++) multipliers[k] = fit.multipliers[k];
-  } else {
-    // Each band against the most sensitive, whose saturation the ISO was
-    // rated at.
-    const double referenceRate{sensor.electronRate(reference, illuminant)};
-    for (size_t k = 0; k < bands.size(); k++) {
-      const double rate{sensor.electronRate(bands[k], illuminant)};
-      multipliers[k] = hasGray    ? gray[reference] / gray[k]
-                       : rate > 0 ? referenceRate / rate
-                                  : 1.0;
-    }
-  }
-  // The exposure: the baseline that puts a metered mean at middle gray,
-  // times the ratio that keeps a neutral under the illuminant there
-  // whichever band the ISO was rated in.
-  const double rated{sensor.peakElectronsPerLuxSecond()};
-  const double referenceRated{
-      sensor.electronsPerLuxSecond(reference, illuminant)};
-  const double exposure{
-      DEVELOP_MIDDLE_GRAY * ISO_SATURATION_LUX_SECONDS / (METER_Q * METER_K) *
-      (rated > 0 && referenceRated > 0 ? rated / referenceRated : 1.0)};
   // Balanced, and every sample held where the least multiplied band
   // saturates, so that a saturated white stays white rather than taking
   // the color of the other multipliers.
@@ -490,7 +523,7 @@ std::vector<float> developReadout(const Sensor &sensor,
   // Into linear sRGB: the fitted matrix to XYZ under the illuminant,
   // Bradford to the sRGB white, and the builtin's matrix out.
   const double3x3 toSRGB{
-      mode == Mode::TRUE_COLOR
+      mode == DevelopMode::TRUE_COLOR
           ? smdl::xyzToLinearSRGB() *
                 (smdl::bradfordAdaptation(fit.white, smdl::linearSRGBWhite()) *
                  fit.cameraToXYZ)
@@ -500,7 +533,7 @@ std::vector<float> developReadout(const Sensor &sensor,
     for (size_t x = size_t(window[0]); x < size_t(window[2]); x++) {
       const size_t pixel{y * numPixelsX + x};
       double3 color{};
-      if (mode == Mode::GRAYSCALE) {
+      if (mode == DevelopMode::GRAYSCALE) {
         double total{};
         for (size_t k = 0; k < bands.size(); k++) total += sampleOf(pixel, k);
         color = double3(total / double(bands.size()));
@@ -517,12 +550,13 @@ std::vector<float> developReadout(const Sensor &sensor,
   });
   if (shouldLog) {
     const std::string balance{
-        !isAuto    ? whiteBalanceName(whiteBalance)
-        : !hasGray ? std::string("auto, which found no gray world in the "
-                                 "frame and took D65")
-        : measuredKelvin > 0
+        !resolved.wasAuto ? whiteBalanceName(whiteBalance)
+        : !resolved.hasGrayWorld
+            ? std::string("auto, which found no gray world in the "
+                          "frame and took D65")
+        : resolved.measuredKelvin > 0
             ? smdl::concat("auto, the frame's gray world reading ",
-                           smdl::Brief(measuredKelvin, 4), " K")
+                           smdl::Brief(resolved.measuredKelvin, 4), " K")
             : std::string("auto, the frame's gray world")};
     std::string factors{};
     for (size_t k = 0; k < bands.size(); k++)
@@ -536,7 +570,7 @@ std::vector<float> developReadout(const Sensor &sensor,
                      " EV, so that a metered neutral develops to ",
                      smdl::Brief(DEVELOP_MIDDLE_GRAY, 3))};
     const std::string names{spellBands(response, bandSpan)};
-    if (mode == Mode::TRUE_COLOR)
+    if (mode == DevelopMode::TRUE_COLOR)
       SMDL_LOG_INFO("Develop: ", names,
                     " to XYZ through the matrix fitted "
                     "over ",
@@ -544,7 +578,7 @@ std::vector<float> developReadout(const Sensor &sensor,
                     " training reflectances, a mean of ",
                     smdl::Brief(fit.meanDeltaE00, 3),
                     " dE00, then Bradford to the sRGB white; ", how);
-    else if (mode == Mode::FALSE_COLOR)
+    else if (mode == DevelopMode::FALSE_COLOR)
       SMDL_LOG_WARN(
           "Develop: ", names,
           fit.isSingular
@@ -560,4 +594,149 @@ std::vector<float> developReadout(const Sensor &sensor,
                     " cannot carry color, so the picture is gray; ", how);
   }
   return rgbImage;
+}
+
+namespace {
+
+// The D50 white the DNG color model refers a forward matrix to, which
+// is ICC's own rather than an integral of a spectrum.
+constexpr double3 DNG_D50_WHITE{0.9642, 1.0, 0.8249};
+
+// The Exif light source codes of the two calibrations below.
+//
+// \{
+constexpr uint16_t DNG_ILLUMINANT_A{17};
+constexpr uint16_t DNG_ILLUMINANT_D65{21};
+// \}
+
+// One calibration a camera profile carries: how the three bands see
+// color under one illuminant, and the matrix from the camera's own
+// three, as they read before any balance, to XYZ under it, which is the
+// fit after what balances it.
+struct Calibration final {
+  ColorFit fit{};
+
+  double3x3 cameraToXYZ{};
+};
+
+[[nodiscard]] Calibration calibrationAt(const Sensor &sensor,
+                                        const std::array<size_t, 3> &rgb,
+                                        double kelvin) {
+  Calibration calibration{};
+  calibration.fit = sensor.fitColor(rgb, kelvinSpectrum(kelvin));
+  calibration.cameraToXYZ = calibration.fit.cameraToXYZ;
+  for (size_t k = 0; k < 3; k++)
+    calibration.cameraToXYZ[k] *= calibration.fit.multipliers[k];
+  return calibration;
+}
+
+// What the calibration's matrix reads backward, which is the direction
+// the format states it in.
+[[nodiscard]] double3x3 xyzToCameraOf(const Calibration &calibration,
+                                      double kelvin) {
+  double3x3 matrix{calibration.cameraToXYZ};
+  if (!tryInvert(matrix))
+    throw smdl::Error(smdl::concat(
+        "This sensor's three bands respond too much alike under ",
+        smdl::Brief(kelvin, 4),
+        " K to carry the color matrix a DNG states. Write the readout to a "
+        "'.img' instead"));
+  return matrix;
+}
+
+} // namespace
+
+void requireDNGSensor(const Sensor &sensor) {
+  const ResponseSettings &response{sensor.settings().response};
+  const auto refuse{[](auto &&...args) {
+    throw smdl::Error(smdl::concat(
+        args..., ". Write the readout to a '.img' instead, which carries "
+                 "any number of bands under any name"));
+  }};
+  if (response.bands.size() != 3)
+    refuse("A DNG holds red, green, and blue alone, and this sensor has ",
+           smdl::Counted(response.bands.size(), "band"));
+  if (response.hasCFA()) {
+    if (response.cfaColumns != 2 || response.cfaRows() != 2)
+      refuse("A DNG's mosaic is a 2 by 2 tile, and this sensor's is ",
+             response.cfaColumns, " by ", response.cfaRows());
+    if (const size_t count{tileBands(response.cfa).size()}; count != 3)
+      refuse("A DNG's mosaic lays down all three colors, and this sensor's "
+             "tile lays down ",
+             smdl::Counted(count, "band"));
+  }
+  const std::array<size_t, 3> rgb{*response.rgbBands()};
+  for (const double kelvin : {ILLUMINANT_A_KELVIN, D65_KELVIN})
+    xyzToCameraOf(calibrationAt(sensor, rgb, kelvin), kelvin);
+}
+
+DNGImage makeDNGImage(const Sensor &sensor, const Detector &detector,
+                      const Readout &readout, const DevelopFit &develop,
+                      const DetectorShot &shot, int4 window,
+                      std::vector<uint16_t> &planes) {
+  const SensorSettings &settings{sensor.settings()};
+  const ResponseSettings &response{settings.response};
+  SMDL_SANITY_CHECK(response.bands.size() == 3 && develop.bands.size() == 3);
+  const std::array<size_t, 3> rgb{*response.rgbBands()};
+  const smdl::Span<const size_t> rgbSpan{rgb.data(), rgb.size()};
+  DNGImage image{};
+  image.pixelCountX = readout.pixelCountX;
+  image.pixelCountY = readout.pixelCountY;
+  image.window = window;
+  image.hasCFA = response.hasCFA();
+  if (image.hasCFA) {
+    for (size_t i = 0; i < 4; i++)
+      image.cfa[i] = uint8_t(positionOf(rgbSpan, response.cfa[i]));
+    image.digitalNumbers = smdl::Span<const uint16_t>(
+        readout.digitalNumbers.data(), readout.digitalNumbers.size());
+  } else {
+    // The planes in red, green, blue order, which the bands are in only
+    // where the file named them that way.
+    planes.resize(readout.digitalNumbers.size());
+    for (size_t pixel = 0; 3 * pixel < planes.size(); pixel++)
+      for (size_t k = 0; k < 3; k++)
+        planes[3 * pixel + k] = readout.digitalNumbers[3 * pixel + rgb[k]];
+    image.digitalNumbers =
+        smdl::Span<const uint16_t>(planes.data(), planes.size());
+  }
+  image.blackLevel = detector.blackLevel();
+  image.whiteLevel = detector.whiteLevel();
+  // The two calibrations, so that a developer interpolates the matrix by
+  // the temperature the neutral reads as, the way it does for a body,
+  // rather than taking one light's fit for every light.
+  const Calibration warm{calibrationAt(sensor, rgb, ILLUMINANT_A_KELVIN)};
+  const Calibration cool{calibrationAt(sensor, rgb, D65_KELVIN)};
+  image.illuminant1 = DNG_ILLUMINANT_A;
+  image.illuminant2 = DNG_ILLUMINANT_D65;
+  image.xyzToCamera1 = xyzToCameraOf(warm, ILLUMINANT_A_KELVIN);
+  image.xyzToCamera2 = xyzToCameraOf(cool, D65_KELVIN);
+  image.cameraToXYZ1 = smdl::bradfordAdaptation(warm.fit.white, DNG_D50_WHITE) *
+                       warm.fit.cameraToXYZ;
+  image.cameraToXYZ2 = smdl::bradfordAdaptation(cool.fit.white, DNG_D50_WHITE) *
+                       cool.fit.cameraToXYZ;
+  // The balance the develop resolved, as what a neutral reads in the
+  // camera's own three with green at 1, which is how a body writes it.
+  for (size_t k = 0; k < 3; k++)
+    image.asShotNeutral[k] = develop.multipliers[1] / develop.multipliers[k];
+  image.baselineExposure = std::log2(develop.exposure);
+  // The noise the chain implies over the signal the tag is stated in: a
+  // unit of it stands for `codeRange / gain` electrons, whose shot noise
+  // is the scale, and the read noise through the same gain is the
+  // offset. A real profile is measured; this one is the instrument's own
+  // numbers read forward.
+  const double scale{detector.gain() / detector.codeRange()};
+  const double offset{detector.gain() * detector.readNoise() /
+                      detector.codeRange()};
+  image.noiseProfile.fill(double2(scale, offset * offset));
+  image.make = "smdl-toy";
+  image.model = settings.name.empty() ? std::string("sensor") : settings.name;
+  // Prefixed, so that a developer holding a profile for the body whose
+  // curves these are takes the matrices in the file rather than its own
+  // for that name.
+  image.uniqueCameraModel = smdl::concat("smdl-toy ", image.model);
+  image.software = "smdl-toy";
+  image.exposureTime = shot.exposure;
+  image.fNumber = shot.fNumber;
+  image.iso = shot.iso;
+  return image;
 }

@@ -35,6 +35,7 @@ target_sources(
     "Transform.cc"
     "IO/AssetFile.cc"
     "IO/CurvesFile.cc"
+    "IO/DNG.cc"
     "IO/MeshDeform.cc"
     "IO/MeshImport.cc"
     "IO/PlacesFile.cc"

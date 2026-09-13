@@ -8,6 +8,7 @@ smdl_add_doctest(
     "MedianFilter.cc"
     "Output.cc"
     "IO/CurvesFile.cc"
+    "IO/DNG.cc"
     "IO/MeshDeform.cc"
     "IO/PlacesFile.cc"
     "IO/RenderHeader.cc"

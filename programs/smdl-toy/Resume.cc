@@ -53,7 +53,7 @@ std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
                                                          "mnee-biased",
                                                          "sample-offset",
                                                          "threads",
-                                                         "output-dn",
+                                                         "output-raw",
                                                          "detector-seed",
                                                          "detector-noise",
                                                          "iso",

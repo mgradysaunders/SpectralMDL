@@ -718,7 +718,7 @@ void renderSamples(const Options &opts, const Frame &frame,
     // preview scale turns into the irradiance the sensor would have
     // metered.
     const double irradianceScale{
-        model.hasPhysicalSensor() ? 1.0 : model.previewIrradianceScale};
+        model.hasSensor() ? 1.0 : model.previewIrradianceScale};
     recordMeter(sensor, reading, gRenderShutter.exposure * irradianceScale,
                 resumed.header);
   }

@@ -93,9 +93,9 @@ if(UNIX)
       "-Wall"
       "-Wextra"
       "-Wno-unused-parameter"
-      "-fmacro-prefix-map=${PROJECT_SOURCE_DIR}=."
     )
 endif()
+smdl_shorten_file_macro(SpectralMDL "${PROJECT_SOURCE_DIR}")
 target_compile_options(
   SpectralMDL
   PRIVATE

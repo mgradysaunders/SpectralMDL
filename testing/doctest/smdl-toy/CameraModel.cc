@@ -147,12 +147,12 @@ TEST_CASE("CameraModel: the observer's frame follows the picture") {
   SUBCASE("A 16:9 picture is 24 mm tall and as wide as it is for its "
           "height, with square pixels") {
     const CameraModel model{resolveCameraModel(opts)};
-    CHECK(!model.hasPhysicalSensor());
+    CHECK(!model.hasSensor());
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
     CHECK(model.resolution().x == 1280);
     CHECK(model.resolution().y == 720);
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
-    CHECK(model.options.frameSize.x ==
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(1e-3f * 24.0f));
+    CHECK(model.cameraOptions.frameSize.x ==
           doctest::Approx(1e-3f * 24.0f * 1280.0f / 720.0f));
     CHECK(model.cameraFileName.empty());
     CHECK(model.sensorFileName.empty());
@@ -161,19 +161,19 @@ TEST_CASE("CameraModel: the observer's frame follows the picture") {
   SUBCASE("A 3:2 picture is full frame to the bit") {
     opts.image.resolution.value = int2(1200, 800);
     const CameraModel model{resolveCameraModel(opts)};
-    CHECK(model.options.frameSize.x == 1e-3f * 36.0f);
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.cameraOptions.frameSize.x == doctest::Approx(1e-3f * 36.0f));
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(1e-3f * 24.0f));
   }
   SUBCASE("The defaults, the file, and the framing flags win in that "
           "order") {
     Files files{"camera-model-order"};
-    CHECK(resolveCameraModel(baseOptions()).options.fovYDeg == 37.8f);
+    CHECK(resolveCameraModel(baseOptions()).cameraOptions.fovYDeg == 37.8f);
     Options fromFile{files.camera("camera { fovy 30 look_from 1 2 3 }\n")};
     const CameraModel model{resolveCameraModel(fromFile)};
-    CHECK(model.options.fovYDeg == 30.0f);
-    CHECK(model.options.lookFrom.x == 1.0f);
+    CHECK(model.cameraOptions.fovYDeg == 30.0f);
+    CHECK(model.cameraOptions.lookFrom.x == 1.0f);
     fromFile.camera.lookFrom = Flag<float3>{float3(4.0f, 5.0f, 6.0f), true};
-    CHECK(resolveCameraModel(fromFile).options.lookFrom.x == 4.0f);
+    CHECK(resolveCameraModel(fromFile).cameraOptions.lookFrom.x == 4.0f);
   }
 }
 
@@ -184,13 +184,13 @@ TEST_CASE("CameraModel: a sensor decides the pixels and the frame") {
   SUBCASE("The pixels are the sensor's, the frame is the pitch over them, and "
           "the film holds irradiance") {
     const CameraModel model{resolveCameraModel(opts)};
-    REQUIRE(model.hasPhysicalSensor());
+    REQUIRE(model.hasSensor());
     CHECK(model.sensor->settings().name == "Test body");
     CHECK(model.filmQuantity() == FilmQuantity::IRRADIANCE);
     CHECK(model.resolution().x == 600);
     CHECK(model.resolution().y == 400);
-    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
-    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.cameraOptions.frameSize.x == doctest::Approx(3.6e-3f));
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(2.4e-3f));
     CHECK(model.sensorFileName == files.path("body.sensor"));
     CHECK(model.temperature == 25.0f);
   }
@@ -235,14 +235,14 @@ TEST_CASE("CameraModel: the stand-ins") {
   SUBCASE("A camera whose own sensor is human is the plain observer") {
     const CameraModel model{
         resolveCameraModel(files.camera("camera { sensor human }\n"))};
-    CHECK(!model.hasPhysicalSensor());
+    CHECK(!model.hasSensor());
     CHECK(model.resolution().x == 1280);
   }
   SUBCASE("A lens file is read and looked through") {
     const CameraModel model{
         resolveCameraModel(files.camera("camera { lens \"singlet.lens\" }\n"))};
-    REQUIRE(model.options.lens);
-    CHECK(model.options.lens->surfaces.size() == 3);
+    REQUIRE(model.cameraOptions.lens);
+    CHECK(model.cameraOptions.lens->surfaces.size() == 3);
     CHECK(model.lensFileName == files.path("singlet.lens"));
     CHECK(!model.shouldApproximateLens());
   }
@@ -250,14 +250,14 @@ TEST_CASE("CameraModel: the stand-ins") {
     Options opts{files.camera("camera { lens ideal }\n")};
     opts.camera.isIdeal = true;
     const CameraModel model{resolveCameraModel(opts)};
-    CHECK(!model.options.lens);
+    CHECK(!model.cameraOptions.lens);
     CHECK(!model.shouldApproximateLens());
   }
   SUBCASE("A lens on the observer keeps the observer's frame") {
     const CameraModel model{
         resolveCameraModel(files.camera("camera { lens \"singlet.lens\" }\n"))};
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.cameraOptions.frameSize.y == 1e-3f * 24.0f);
   }
   SUBCASE("The report fits the thin lens to a lens whether or not it "
           "previews") {
@@ -319,11 +319,11 @@ TEST_CASE("CameraModel: what has no meaning with the instrument is refused") {
   }
   SUBCASE("A readout of the observer, or with no exposure") {
     Options human{files.camera("camera { }\n")};
-    human.image.outputDN = "out-dn.img";
-    CHECK_ERROR(refused(human), "-output-dn reads a sensor out");
+    human.image.outputRaw = "out-raw.img";
+    CHECK_ERROR(refused(human), "-output-raw reads a sensor out");
     Options shut{files.camera("camera { sensor \"body.sensor\" fstop 8 }\n")};
-    shut.image.outputDN = "out-dn.img";
-    CHECK_ERROR(refused(shut), "-output-dn needs an exposure");
+    shut.image.outputRaw = "out-raw.img";
+    CHECK_ERROR(refused(shut), "-output-raw needs an exposure");
   }
   SUBCASE("The old response sidecar") {
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.response\" }\n")),
@@ -392,26 +392,26 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
     const CameraModel model{
         resolveCameraModel(files.camera("camera { focal_length "
                                         "50 }\n"))};
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
-    CHECK(model.options.fovYDeg ==
+    CHECK(model.cameraOptions.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.cameraOptions.fovYDeg ==
           doctest::Approx(2 * smdl::degrees(std::atan(12.0f / 50.0f))));
-    CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
+    CHECK(thinLensFocalLength(model.cameraOptions) == doctest::Approx(0.05f));
   }
   SUBCASE("Both together size the observer's frame") {
     const CameraModel model{resolveCameraModel(
         files.camera("camera { fovy 30 focal_length 50 }\n"))};
-    CHECK(model.options.fovYDeg == 30.0f);
-    CHECK(model.options.frameSize.y ==
+    CHECK(model.cameraOptions.fovYDeg == 30.0f);
+    CHECK(model.cameraOptions.frameSize.y ==
           doctest::Approx(2 * 0.05f * std::tan(smdl::radians(15.0f))));
-    CHECK(model.options.frameSize.x ==
-          doctest::Approx(model.options.frameSize.y * 1280.0f / 720.0f));
-    CHECK(thinLensFocalLength(model.options) == doctest::Approx(0.05f));
-    CHECK(!model.hasPhysicalSensor());
+    CHECK(model.cameraOptions.frameSize.x ==
+          doctest::Approx(model.cameraOptions.frameSize.y * 1280.0f / 720.0f));
+    CHECK(thinLensFocalLength(model.cameraOptions) == doctest::Approx(0.05f));
+    CHECK(!model.hasSensor());
   }
   SUBCASE("Neither leaves the default field over 24 mm") {
     const CameraModel model{resolveCameraModel(files.camera("camera { }\n"))};
-    CHECK(model.options.fovYDeg == 37.8f);
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.cameraOptions.fovYDeg == 37.8f);
+    CHECK(model.cameraOptions.frameSize.y == 1e-3f * 24.0f);
   }
   SUBCASE("Over a sensor the focal length states the field over the sensor's "
           "frame") {
@@ -419,17 +419,17 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
         "camera { sensor \"body.sensor\" focal_length 4.8 fstop 2 }\n"))};
     // A 2.4 mm frame under a 4.8 mm lens: the half height is a quarter
     // of the focal length.
-    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
-    CHECK(model.options.fovYDeg ==
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.cameraOptions.fovYDeg ==
           doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
-    CHECK(thinLensFocalLength(model.options) == doctest::Approx(4.8e-3f));
+    CHECK(thinLensFocalLength(model.cameraOptions) == doctest::Approx(4.8e-3f));
   }
   SUBCASE("Over a sensor the field of view alone states it too, and both "
           "are refused") {
     const CameraModel model{resolveCameraModel(
         files.camera("camera { sensor \"body.sensor\" fovy 30 fstop 2 }\n"))};
-    CHECK(model.options.fovYDeg == 30.0f);
-    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.cameraOptions.fovYDeg == 30.0f);
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(2.4e-3f));
     CHECK_ERROR(refused(files.camera("camera { sensor \"body.sensor\" fovy 30 "
                                      "focal_length 5 fstop 2 }\n")),
                 "'fovy' and 'focal_length' are two statements");
@@ -440,9 +440,9 @@ TEST_CASE("CameraModel: the thin lens's field, two ways") {
                      "fstop 2 }\n")};
     opts.camera.isIdeal = true;
     const CameraModel model{resolveCameraModel(opts)};
-    CHECK(!model.hasPhysicalSensor());
-    CHECK(model.options.frameSize.y == doctest::Approx(2.4e-3f));
-    CHECK(model.options.fovYDeg ==
+    CHECK(!model.hasSensor());
+    CHECK(model.cameraOptions.frameSize.y == doctest::Approx(2.4e-3f));
+    CHECK(model.cameraOptions.fovYDeg ==
           doctest::Approx(2 * smdl::degrees(std::atan(0.25f))));
   }
 }
@@ -523,15 +523,15 @@ TEST_CASE("CameraModel: the focus") {
   Files files{"camera-model-focus"};
   SUBCASE("A distance, infinity, or the autofocus, from the file") {
     CHECK(resolveCameraModel(files.camera("camera { focus 4 }\n"))
-              .options.focus == 4.0f);
+              .cameraOptions.focus == 4.0f);
     const CameraModel atInfinity{
         resolveCameraModel(files.camera("camera { focus infinity }\n"))};
-    CHECK(std::isinf(atInfinity.options.focus));
+    CHECK(std::isinf(atInfinity.cameraOptions.focus));
     CHECK(!atInfinity.shouldAutofocus);
     const CameraModel automatic{
         resolveCameraModel(files.camera("camera { focus auto }\n"))};
     CHECK(automatic.shouldAutofocus);
-    CHECK(automatic.options.focus == 0.0f);
+    CHECK(automatic.cameraOptions.focus == 0.0f);
   }
   SUBCASE("The report states the focus and the depth of field") {
     const std::string report{describeCamera(resolveCameraModel(
@@ -662,14 +662,14 @@ TEST_CASE("CameraModel: the preview") {
     const CameraModel model{resolveCameraModel(
         preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" }\n"))};
     CHECK(model.isPreview);
-    CHECK(!model.hasPhysicalSensor());
+    CHECK(!model.hasSensor());
     REQUIRE(model.hasPreviewedSensor());
     CHECK(model.sensor->settings().name == "Test body");
     CHECK(model.sensorFileName == files.path("body.sensor"));
     CHECK(model.shouldApproximateLens());
     CHECK(model.filmQuantity() == FilmQuantity::RADIANCE);
     CHECK(model.resolution().x == 600);
-    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
+    CHECK(model.cameraOptions.frameSize.x == doctest::Approx(3.6e-3f));
   }
   SUBCASE("The ISO stays for the exposure, and what only the develop and "
           "the noise use goes") {
@@ -691,10 +691,10 @@ TEST_CASE("CameraModel: the preview") {
   }
   SUBCASE("A readout has no sensor to read") {
     Options opts{preview("camera { sensor \"body.sensor\" fstop 8 }\n")};
-    opts.image.outputDN = files.path("shot.img");
+    opts.image.outputRaw = files.path("shot.img");
     CHECK_ERROR(
         smdl::catchAndReturnError([&] { (void)resolveCameraModel(opts); }),
-        "-output-dn reads a sensor out, and -ideal previews it");
+        "-output-raw reads a sensor out, and -ideal previews it");
   }
   SUBCASE("Through the thin lens, the sensor's film would hold its pupil "
           "integral on axis") {
@@ -711,7 +711,7 @@ TEST_CASE("CameraModel: the preview") {
     CameraModel model{resolveCameraModel(
         preview("camera { sensor \"body.sensor\" lens \"singlet.lens\" focus "
                 "infinity }\n"))};
-    CameraOptions irradiance{model.options};
+    CameraOptions irradiance{model.cameraOptions};
     irradiance.filmQuantity = FilmQuantity::IRRADIANCE;
     const Camera traced{irradiance};
     constexpr uint32_t NUM_SAMPLES = 256;
@@ -760,7 +760,7 @@ TEST_CASE("CameraModel: the resolution scale") {
     const CameraModel model{resolveCameraModel(opts)};
     CHECK(model.resolution().x == 150);
     CHECK(model.resolution().y == 100);
-    CHECK(model.options.frameSize.x == doctest::Approx(3.6e-3f));
+    CHECK(model.cameraOptions.frameSize.x == doctest::Approx(3.6e-3f));
   }
   SUBCASE("For the observer it scales -resolution over the same frame") {
     Options opts{baseOptions()};
@@ -768,8 +768,8 @@ TEST_CASE("CameraModel: the resolution scale") {
     const CameraModel model{resolveCameraModel(opts)};
     CHECK(model.resolution().x == 640);
     CHECK(model.resolution().y == 360);
-    CHECK(model.options.frameSize.y == 1e-3f * 24.0f);
-    CHECK(model.options.frameSize.x ==
+    CHECK(model.cameraOptions.frameSize.y == 1e-3f * 24.0f);
+    CHECK(model.cameraOptions.frameSize.x ==
           doctest::Approx(1e-3f * 24.0f * 1280.0f / 720.0f));
   }
 }
@@ -784,26 +784,26 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
     // B is zero up to 380 nm and R from 700 nm on, whatever knots are
     // stated past them, and the band the tile leaves out reaches past
     // both.
-    REQUIRE(model.options.traceWavelengthRange);
-    CHECK(model.options.traceWavelengthRange->x == 380.0f);
-    CHECK(model.options.traceWavelengthRange->y == 700.0f);
+    REQUIRE(model.cameraOptions.traceWavelengthRange);
+    CHECK(model.cameraOptions.traceWavelengthRange->x == 380.0f);
+    CHECK(model.cameraOptions.traceWavelengthRange->y == 700.0f);
   }
   SUBCASE("A lens whose glasses do not disperse sets none") {
     const CameraModel model{resolveCameraModel(files.camera(
         "camera { sensor \"shaped.sensor\" lens \"singlet.lens\" }\n"))};
-    CHECK(!model.options.traceWavelengthRange);
+    CHECK(!model.cameraOptions.traceWavelengthRange);
   }
   SUBCASE("Nor does a sensor without a tile, the observer, or the preview") {
     CHECK(!resolveCameraModel(
                files.camera(
                    "camera { sensor \"quiet.sensor\" lens \"glass.lens\" }\n"))
-               .options.traceWavelengthRange);
+               .cameraOptions.traceWavelengthRange);
     CHECK(!resolveCameraModel(files.camera("camera { lens \"glass.lens\" }\n"))
-               .options.traceWavelengthRange);
+               .cameraOptions.traceWavelengthRange);
     Options preview{files.camera(
         "camera { sensor \"shaped.sensor\" lens \"glass.lens\" }\n")};
     preview.camera.isIdeal = true;
-    CHECK(!resolveCameraModel(preview).options.traceWavelengthRange);
+    CHECK(!resolveCameraModel(preview).cameraOptions.traceWavelengthRange);
   }
   SUBCASE("The report states the media, the color, and what each band "
           "traces the lens at") {

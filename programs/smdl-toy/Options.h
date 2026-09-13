@@ -153,9 +153,10 @@ struct ImageOptions final {
 
   std::string resume{};
 
-  /// The detector readout, empty for none: a 16-bit ENVI pair of digital
-  /// numbers through the camera's sensor.
-  std::string outputDN{};
+  /// The detector readout, empty for none: the digital numbers the
+  /// camera's sensor reads, as a 16-bit ENVI pair or as a DNG, by the
+  /// extension the name carries.
+  std::string outputRaw{};
 
   /// The readout's realization and which noise it draws.
   DetectorReadoutOptions readout{};

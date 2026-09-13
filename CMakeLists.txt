@@ -18,6 +18,7 @@ include(CTest)
 include(cmake/Git.cmake)
 include(cmake/Options.cmake)
 include(cmake/NativeArch.cmake)
+include(cmake/FileMacro.cmake)
 include(cmake/Dependencies.cmake)
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -193,6 +193,11 @@ public:
   /// The dark electrons at the exposure and temperature.
   [[nodiscard]] double darkElectrons() const noexcept { return mDarkElectrons; }
 
+  /// The read noise in electrons rms.
+  [[nodiscard]] double readNoise() const noexcept {
+    return double(mSettings.readNoise);
+  }
+
   /// The signal electrons one unit of film is worth.
   [[nodiscard]] double electronsPerFilmUnit() const noexcept {
     return mElectronsPerFilmUnit;

@@ -213,18 +213,22 @@ cl::opt<std::string> optResume{
     cl::desc("Resume accumulating from this ENVI file written by a previous "
              "-output-bands"),
     cl::cat(catImage)};
-cl::opt<std::string> optOutputDN{
-    "output-dn",
-    cl::desc("Also write the detector readout to this 16-bit ENVI file of "
-             "digital numbers, through the camera's '.sensor'"),
+cl::opt<std::string> optOutputRaw{
+    "output-raw",
+    cl::desc("Also write the detector readout to this file of digital "
+             "numbers, through the camera's '.sensor', as the extension "
+             "says\n"
+             "* '.img' is a 16-bit ENVI pair, which any sensor writes\n"
+             "* '.dng' is a raw a photographic pipeline develops, which a "
+             "sensor of red, green, and blue on a 2 by 2 tile writes"),
     cl::cat(catImage)};
 cl::opt<unsigned> optDetectorSeed{
     "detector-seed",
-    cl::desc("With -output-dn, which noise realization to draw (default: 0)"),
+    cl::desc("With -output-raw, which noise realization to draw (default: 0)"),
     cl::init(0), cl::cat(catImage)};
 cl::opt<std::string> optDetectorNoise{
     "detector-noise",
-    cl::desc("With -output-dn, which noise to draw: 'none', 'shot', or "
+    cl::desc("With -output-raw, which noise to draw: 'none', 'shot', or "
              "'all' (default: all), each in full on the film's mean, which "
              "the readout takes as converged\n"
              "* 'none' makes the digital numbers a function of the film "
@@ -688,7 +692,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.image.wasOutputBandsGiven = optOutputBands.getNumOccurrences() > 0;
   opts.image.shouldWriteDouble = optOutputBandsDouble;
   opts.image.resume = std::string(optResume);
-  opts.image.outputDN = std::string(optOutputDN);
+  opts.image.outputRaw = std::string(optOutputRaw);
   opts.image.readout.seed = unsigned(optDetectorSeed);
   opts.image.readout.noise = parseDetectorNoise(std::string(optDetectorNoise));
 

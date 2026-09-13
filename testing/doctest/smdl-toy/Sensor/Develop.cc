@@ -134,13 +134,29 @@ void checkPlanes(const std::vector<float> &planes,
   return value;
 }
 
-// The detector at the sensor's base ISO, whose levels the develop reads.
-[[nodiscard]] Detector detectorFor(const Sensor &sensor) {
+// The shot every case below takes, at the sensor's base ISO.
+[[nodiscard]] DetectorShot shotFor(const Sensor &sensor) {
   DetectorShot shot{};
   shot.exposure = 0.01;
   shot.fNumber = 8;
   shot.iso = sensor.baseISO();
-  return Detector{sensor, shot};
+  return shot;
+}
+
+// The detector of that shot, whose levels the develop reads.
+[[nodiscard]] Detector detectorFor(const Sensor &sensor) {
+  return Detector{sensor, shotFor(sensor)};
+}
+
+// The same sensor with its bands named backward and its `rgb` saying
+// which is which, so that the plane order a DNG lays down is not the
+// band order the file happens to carry.
+[[nodiscard]] SensorSettings reversedLutherSensor(bool isTiled) {
+  SensorSettings value{lutherSensor(isTiled)};
+  std::reverse(value.response.bands.begin(), value.response.bands.end());
+  value.response.rgb = std::array<size_t, 3>{2, 1, 0};
+  if (isTiled) value.response.cfa = {2, 1, 1, 0};
+  return value;
 }
 
 // The readout of `fractions`, each sample a fraction of the top code over
@@ -530,5 +546,155 @@ TEST_CASE("Develop: the picture is a function of the readout alone") {
                             int(y) >= window[1] && int(y) < window[3]};
         CHECK((pixelOf(rgbImage, y * 8 + x).y != 0.0) == isInside);
       }
+  }
+}
+
+TEST_CASE("Develop: the sensors a DNG cannot carry") {
+  const auto refused{[](const SensorSettings &settings) {
+    const Sensor sensor{settings};
+    return smdl::catchAndReturnError([&] { requireDNGSensor(sensor); });
+  }};
+  SUBCASE("Red, green, and blue on a Bayer tile, or at every pixel, are the "
+          "two it can") {
+    CHECK_OK(refused(lutherSensor(true)));
+    CHECK_OK(refused(lutherSensor(false)));
+    CHECK_OK(refused(reversedLutherSensor(true)));
+  }
+  SUBCASE("More or fewer than three bands") {
+    CHECK_ERROR(refused(flatBands(1)), "red, green, and blue alone");
+    CHECK_ERROR(refused(flatBands(2)), "red, green, and blue alone");
+    SensorSettings four{lutherSensor(false)};
+    four.response.bands.push_back(four.response.bands[1]);
+    four.response.bands.back().name = "G2";
+    CHECK_ERROR(refused(four), "red, green, and blue alone");
+  }
+  SUBCASE("A tile that is not 2 by 2") {
+    SensorSettings wide{lutherSensor(true)};
+    wide.response.cfaColumns = 4;
+    wide.response.cfa = {0, 1, 0, 1, 1, 2, 1, 2};
+    CHECK_ERROR(refused(wide), "2 by 2 tile, and this sensor's is 4 by 2");
+  }
+  SUBCASE("A 2 by 2 tile that lays down fewer than all three") {
+    SensorSettings partial{lutherSensor(true)};
+    partial.response.cfa = {0, 1, 1, 0};
+    CHECK_ERROR(refused(partial), "all three colors");
+  }
+  SUBCASE("Three bands too much alike to fit a matrix") {
+    CHECK_ERROR(refused(flatBands(3)), "respond too much alike");
+  }
+}
+
+TEST_CASE("Develop: the DNG a readout hands a raw developer") {
+  const int4 window{0, 0, 8, 6};
+  const Sensor sensor{lutherSensor(true)};
+  const Detector detector{detectorFor(sensor)};
+  const Readout readout{
+      readoutOf(detector, 1, 8, 6, std::vector<double>(48, 0.25))};
+  const auto imageOf{[&](const Sensor &instrument, const Detector &chain,
+                         const Readout &numbers, WhiteBalanceKind kind,
+                         std::vector<uint16_t> &planes) {
+    WhiteBalance balance{};
+    balance.kind = kind;
+    const DevelopFit develop{
+        resolveDevelopFit(instrument, chain, numbers, balance, window)};
+    return std::make_pair(makeDNGImage(instrument, chain, numbers, develop,
+                                       shotFor(instrument), window, planes),
+                          develop);
+  }};
+  std::vector<uint16_t> planes{};
+  const auto [image, develop]{
+      imageOf(sensor, detector, readout, WhiteBalanceKind::D65, planes)};
+  SUBCASE("Says which plane every pixel of the tile holds, whatever order "
+          "the file names the bands in") {
+    CHECK(image.hasCFA);
+    CHECK(image.cfa == std::array<uint8_t, 4>{0, 1, 1, 2});
+    const Sensor reversed{reversedLutherSensor(true)};
+    const Detector chain{detectorFor(reversed)};
+    std::vector<uint16_t> reversedPlanes{};
+    const auto [other, ignored]{imageOf(reversed, chain, readout,
+                                        WhiteBalanceKind::D65, reversedPlanes)};
+    CHECK(other.cfa == std::array<uint8_t, 4>{0, 1, 1, 2});
+  }
+  SUBCASE("States a forward matrix a developer can take at its word") {
+    // The format's own constraint: the matrix takes a balanced neutral
+    // to the D50 white, so its rows sum to it.
+    const double3 white{0.9642, 1.0, 0.8249};
+    for (size_t i = 0; i < 3; i++) {
+      CAPTURE(i);
+      CHECK(dot(image.cameraToXYZ1.row(i), double3(1.0)) ==
+            doctest::Approx(white[i]));
+      CHECK(dot(image.cameraToXYZ2.row(i), double3(1.0)) ==
+            doctest::Approx(white[i]));
+    }
+  }
+  SUBCASE("States a color matrix the forward matrix undoes") {
+    // What a developer does with the pair: XYZ to the camera's own
+    // three, balanced by the neutral the calibration's own white reads
+    // as, and back to XYZ under D50. Whatever goes in comes out adapted
+    // and nothing else, which is what makes the two agree.
+    const SensorSpectrum illuminant{kelvinSpectrum(D65_KELVIN)};
+    const double3 white{illuminantWhite(illuminant)};
+    const double3 neutral{image.xyzToCamera2 * white};
+    const double3x3 adapt{
+        smdl::bradfordAdaptation(white, double3(0.9642, 1.0, 0.8249))};
+    const double3 xyz{observerXYZ(illuminant, trainingReflectances()[7])};
+    double3 camera{image.xyzToCamera2 * xyz};
+    for (size_t k = 0; k < 3; k++) camera[k] /= neutral[k];
+    CHECK_NEAR(image.cameraToXYZ2 * camera, adapt * xyz, 1e-9);
+  }
+  SUBCASE("Records the balance the develop resolved, green at one") {
+    CHECK(image.asShotNeutral.y == doctest::Approx(1.0));
+    for (size_t k = 0; k < 3; k++) {
+      CAPTURE(k);
+      CHECK(image.asShotNeutral[k] ==
+            doctest::Approx(develop.multipliers[1] / develop.multipliers[k]));
+    }
+    // A warmer balance asks less of red and more of blue, so the neutral
+    // it records reads the other way around.
+    std::vector<uint16_t> warmPlanes{};
+    const auto [warm, ignored]{imageOf(sensor, detector, readout,
+                                       WhiteBalanceKind::TUNGSTEN, warmPlanes)};
+    CHECK(warm.asShotNeutral.x > image.asShotNeutral.x);
+    CHECK(warm.asShotNeutral.z < image.asShotNeutral.z);
+  }
+  SUBCASE("Records the levels, the exposure, and the shot") {
+    CHECK(image.blackLevel == detector.blackLevel());
+    CHECK(image.whiteLevel == detector.whiteLevel());
+    CHECK(image.baselineExposure ==
+          doctest::Approx(std::log2(develop.exposure)));
+    CHECK(image.exposureTime == doctest::Approx(0.01));
+    CHECK(image.fNumber == doctest::Approx(8.0));
+    CHECK(image.iso == doctest::Approx(sensor.baseISO()));
+    CHECK_CONTAINS(image.uniqueCameraModel, "smdl-toy");
+  }
+  SUBCASE("Records the noise the chain implies, per plane") {
+    const double scale{detector.gain() / detector.codeRange()};
+    const double offset{detector.gain() * detector.readNoise() /
+                        detector.codeRange()};
+    for (const auto &plane : image.noiseProfile) {
+      CHECK(plane.x == doctest::Approx(scale));
+      CHECK(plane.y == doctest::Approx(offset * offset));
+    }
+  }
+  SUBCASE("Lays an untiled sensor's planes down in red, green, blue order") {
+    const Sensor reversed{reversedLutherSensor(false)};
+    const Detector chain{detectorFor(reversed)};
+    // A different fraction in every band, so that a plane out of place
+    // is a number out of place.
+    std::vector<double> fractions{};
+    for (size_t pixel = 0; pixel < 48; pixel++)
+      for (size_t k = 0; k < 3; k++) fractions.push_back(0.1 + 0.2 * double(k));
+    const Readout numbers{readoutOf(chain, 3, 8, 6, fractions)};
+    std::vector<uint16_t> reversedPlanes{};
+    const auto [other, ignored]{imageOf(reversed, chain, numbers,
+                                        WhiteBalanceKind::D65, reversedPlanes)};
+    CHECK(!other.hasCFA);
+    REQUIRE(other.digitalNumbers.size() == numbers.digitalNumbers.size());
+    for (size_t pixel = 0; pixel < 48; pixel++) {
+      CAPTURE(pixel);
+      for (size_t k = 0; k < 3; k++)
+        CHECK(other.digitalNumbers[3 * pixel + k] ==
+              numbers.digitalNumbers[3 * pixel + (2 - k)]);
+    }
   }
 }

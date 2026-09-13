@@ -4,6 +4,10 @@
 /// cannot carry color; and a physical sensor's, from its readout the way
 /// a raw developer takes one. What `-output-rgb` holds as floats, and
 /// what the display transform in `Tonemap.h` starts from.
+///
+/// A DNG is the third path and the one this file only prepares: the
+/// readout and the same white balance handed to somebody else's raw
+/// developer, which `IO/DNG.h` writes.
 #pragma once
 
 #include <vector>
@@ -12,6 +16,7 @@
 #include "smdl/Support/Span.h"
 
 #include "Color.h"
+#include "IO/DNG.h"
 #include "Layout/CameraFile.h"
 #include "Sensor/Detector.h"
 #include "Sensor/Sensor.h"
@@ -111,6 +116,67 @@ demosaic(DemosaicMethod method, const ResponseSettings &response,
          smdl::Span<const size_t> bands, smdl::Span<const float> mosaic,
          size_t numPixelsX, size_t numPixelsY, int4 window);
 
+/// What a develop is made of: three bands through the fitted matrix, the
+/// bands as they are where they fit the observer badly, or fewer bands
+/// as a gray.
+enum class DevelopMode { TRUE_COLOR, FALSE_COLOR, GRAYSCALE };
+
+/// What a develop resolves before it touches a pixel: which bands make
+/// the picture, what balances them, the fit that takes them to XYZ, and
+/// the exposure that lands a metered neutral on middle gray.
+///
+/// `developReadout()` applies it, and a DNG records it, so that a raw
+/// developer takes the file the way this develop takes the readout.
+struct DevelopFit final {
+  /// The bands the picture is made of, as indices into the response's:
+  /// the three a develop maps to R, G, and B, else every band.
+  std::vector<size_t> bands{};
+
+  /// What each of `bands` is multiplied by to balance the white.
+  std::vector<double> multipliers{};
+
+  /// How the three bands see color under `illuminant`, meaningful for
+  /// three bands alone.
+  ColorFit fit{};
+
+  /// The illuminant the balance and the fit were taken under: the one
+  /// the white balance names, or the one `auto` measured.
+  SensorSpectrum illuminant{};
+
+  /// The temperature `auto` read the frame's gray world as, or 0 where
+  /// the balance named its illuminant or the frame carried no gray
+  /// world.
+  double measuredKelvin{};
+
+  DevelopMode mode{DevelopMode::GRAYSCALE};
+
+  /// The gain the develop applies, so that a neutral at the exposure the
+  /// meter aims at develops to `DEVELOP_MIDDLE_GRAY`.
+  double exposure{};
+
+  /// The fraction of the code range a saturated sample reads, 1 unless
+  /// the well clips below the top code.
+  float saturation{};
+
+  /// Was the balance `auto`, and did the frame carry a gray world for it
+  /// to read?
+  ///
+  /// \{
+  bool wasAuto{};
+  bool hasGrayWorld{};
+  /// \}
+};
+
+/// Resolve the develop of `readout` under `whiteBalance`, which is
+/// everything about the picture that the pixels do not decide; see
+/// `DevelopFit`. The tallies `auto` takes are over `window`, where the
+/// samples are.
+[[nodiscard]] DevelopFit resolveDevelopFit(const Sensor &sensor,
+                                           const Detector &detector,
+                                           const Readout &readout,
+                                           const WhiteBalance &whiteBalance,
+                                           int4 window);
+
 /// Develop a physical sensor's readout to linear sRGB, the way a raw
 /// developer takes one:
 ///
@@ -144,4 +210,34 @@ demosaic(DemosaicMethod method, const ResponseSettings &response,
 developReadout(const Sensor &sensor, const Detector &detector,
                const Readout &readout, const WhiteBalance &whiteBalance,
                int4 window, bool shouldLog);
+//--}
+
+//--{ The develop a DNG hands over
+/// Refuse a sensor whose readout a DNG cannot carry, before anything
+/// renders. The format holds three color planes keyed to red, green,
+/// and blue, on a 2 by 2 tile or none, and a body is exactly that; every
+/// other instrument this program can describe writes its readout to the
+/// ENVI pair instead, which carries any number of bands under any name.
+///
+/// \throws smdl::Error  Naming what the sensor is and what a DNG takes.
+///
+void requireDNGSensor(const Sensor &sensor);
+
+/// The readout as a DNG: the mosaic, the levels, the noise the detector
+/// implies, the two calibrations a camera profile carries, and the white
+/// balance and the exposure `develop` resolved, so that a raw developer
+/// takes the file the way `developReadout()` takes the readout.
+///
+/// The image points at the readout's own numbers where the sensor has a
+/// tile, and otherwise at `planes`, which it fills with the samples in
+/// red, green, blue order; both must outlive the write.
+///
+/// \throws smdl::Error  If a calibration has no matrix to write.
+///
+[[nodiscard]] DNGImage makeDNGImage(const Sensor &sensor,
+                                    const Detector &detector,
+                                    const Readout &readout,
+                                    const DevelopFit &develop,
+                                    const DetectorShot &shot, int4 window,
+                                    std::vector<uint16_t> &planes);
 //--}

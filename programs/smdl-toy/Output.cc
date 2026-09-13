@@ -8,6 +8,7 @@
 #include "smdl/Support/Strings.h"
 
 #include "CameraModel.h"
+#include "IO/DNG.h"
 #include "MedianFilter.h"
 #include "Options.h"
 #include "Output.h"
@@ -116,6 +117,7 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
 struct SensorReadout final {
   Detector detector;
   Readout readout;
+  DetectorShot shot;
 };
 
 [[nodiscard]] SensorReadout readOutSensor(const Frame &frame,
@@ -124,10 +126,11 @@ struct SensorReadout final {
                                           const DetectorReadoutOptions &options,
                                           bool shouldLog) {
   const Sensor &sensor{*frame.model.sensor};
-  const Detector detector{sensor, takeShot(frame, sensor, header)};
+  const DetectorShot shot{takeShot(frame, sensor, header)};
+  const Detector detector{sensor, shot};
   if (shouldLog) detector.logSummary();
   Readout readout{detector.readOut(bandFilm, options, frame.window)};
-  return SensorReadout{detector, std::move(readout)};
+  return SensorReadout{detector, std::move(readout), shot};
 }
 
 } // namespace
@@ -139,7 +142,7 @@ std::vector<float> developPreview(const Options &opts, const Frame &frame,
                                   const smdl::SpectralFilm *film,
                                   const smdl::SpectralFilm *bandFilm) {
   SMDL_SANITY_CHECK((film != nullptr) != (bandFilm != nullptr));
-  if (!frame.model.hasPhysicalSensor()) {
+  if (!frame.model.hasSensor()) {
     SMDL_SANITY_CHECK(film);
     std::vector<float> rgbImage{
         resolveRGB(compiler, *film, grid.wavelengths, opts.image.rgbPolicy)};
@@ -211,7 +214,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     responseHeader.cfa = response->tileNames();
     responseHeader.crosstalk = response->crosstalk();
     responseLines = responseHeader.headerLines();
-    if (model.hasPhysicalSensor() && !model.sensor->settings().name.empty())
+    if (model.hasSensor() && !model.sensor->settings().name.empty())
       responseLines.push_back(
           smdl::concat(ENVI_SENSOR_NAME, " = ", model.sensor->settings().name));
   }
@@ -223,7 +226,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
   // its own pair under the usual discipline when asked for, and the
   // develop makes the picture of it.
   std::vector<float> rgbImage{};
-  if (model.hasPhysicalSensor()) {
+  if (model.hasSensor()) {
     SMDL_SANITY_CHECK(bandFilm);
     const SensorReadout sensorReadout{readOutSensor(
         frame, resumed.header, *bandFilm, opts.image.readout, true)};
@@ -236,29 +239,56 @@ void writeOutputs(const Options &opts, const Frame &frame,
                         double(std::max<uint64_t>(readout.windowCount, 1)),
                     3),
         "% of pixel bands at the well");
-    if (!opts.image.outputDN.empty()) {
-      const std::string &dnName{opts.image.outputDN};
-      const std::string dnPartName{dnName + ".part"};
-      std::vector<std::string> dnLines{resumed.header.headerLines()};
-      for (const auto &line : responseLines) dnLines.push_back(line);
-      for (auto &line : detector.header(opts.image.readout).headerLines())
-        dnLines.push_back(std::move(line));
-      dnLines.push_back(
-          smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
-      const std::vector<std::string> &bandNames{response->filmBandNames()};
-      smdl::writeENVIFileUInt16(
-          smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
-                                     readout.digitalNumbers.size()),
-          readout.bandCount, readout.pixelCountX, readout.pixelCountY,
-          dnPartName,
-          smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
-          smdl::Span<const std::string>(dnLines.data(), dnLines.size()), window,
-          bandFilm->getNumSamples());
-      smdl::renameOnto(dnPartName, dnName);
-      smdl::renameOnto(dnPartName + ".hdr", dnName + ".hdr");
-      SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(dnName), ", ",
-                    smdl::Counted(bandNames.size(), "band"),
-                    " of digital numbers up to ", detector.topCode());
+    // The readout, as the extension the name carries: the ENVI pair any
+    // sensor writes, or the DNG a body writes. Both go through a
+    // temporary and a rename, so that an interrupted write cannot
+    // destroy a file already there.
+    if (!opts.image.outputRaw.empty()) {
+      const std::string &rawName{opts.image.outputRaw};
+      const std::string partName{rawName + ".part"};
+      if (smdl::hasExtension(rawName, DNG_EXTENSION)) {
+        // The same white balance the develop below resolves, which is
+        // what makes the file develop elsewhere the way the picture
+        // beside it developed here.
+        const DevelopFit develop{resolveDevelopFit(
+            *model.sensor, detector, readout, model.whiteBalance, window)};
+        std::vector<uint16_t> planes{};
+        DNGImage image{makeDNGImage(*model.sensor, detector, readout, develop,
+                                    sensorReadout.shot, window, planes)};
+        image.description = smdl::concat(
+            "smdl-toy readout, ", detectorNoiseName(opts.image.readout.noise),
+            " noise, seed ", opts.image.readout.seed);
+        writeDNGFile(partName, image);
+        smdl::renameOnto(partName, rawName);
+        SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(rawName),
+                      ", a DNG of digital numbers up to ",
+                      detector.whiteLevel());
+        if (develop.mode != DevelopMode::TRUE_COLOR)
+          SMDL_LOG_WARN("The DNG states the fitted matrix all the same, so a "
+                        "raw developer will make color of the file where the "
+                        "picture beside it is not");
+      } else {
+        std::vector<std::string> rawLines{resumed.header.headerLines()};
+        for (const auto &line : responseLines) rawLines.push_back(line);
+        for (auto &line : detector.header(opts.image.readout).headerLines())
+          rawLines.push_back(std::move(line));
+        rawLines.push_back(
+            smdl::concat(ENVI_BAND_UNITS, " = ", DIGITAL_NUMBER_UNITS));
+        const std::vector<std::string> &bandNames{response->filmBandNames()};
+        smdl::writeENVIFileUInt16(
+            smdl::Span<const uint16_t>(readout.digitalNumbers.data(),
+                                       readout.digitalNumbers.size()),
+            readout.bandCount, readout.pixelCountX, readout.pixelCountY,
+            partName,
+            smdl::Span<const std::string>(bandNames.data(), bandNames.size()),
+            smdl::Span<const std::string>(rawLines.data(), rawLines.size()),
+            window, bandFilm->getNumSamples());
+        smdl::renameOnto(partName, rawName);
+        smdl::renameOnto(partName + ".hdr", rawName + ".hdr");
+        SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(rawName), ", ",
+                      smdl::Counted(bandNames.size(), "band"),
+                      " of digital numbers up to ", detector.topCode());
+      }
     }
     rgbImage = developReadout(*model.sensor, detector, readout,
                               model.whiteBalance, window, true);

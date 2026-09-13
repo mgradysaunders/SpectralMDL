@@ -34,9 +34,7 @@ macro(smdl_add_program BIN_NAME)
       )
     target_sources(${BIN_NAME} PRIVATE "${Args_SOURCES}")
     target_compile_options(${BIN_NAME} PRIVATE "${RTTI_FLAG}")
-    if(UNIX)
-      target_compile_options(${BIN_NAME} PRIVATE "-fmacro-prefix-map=${PROJECT_SOURCE_DIR}/programs=.")
-    endif()
+    smdl_shorten_file_macro(${BIN_NAME} "${PROJECT_SOURCE_DIR}/programs")
     # The programs use LLVM only for command line parsing and diagnostics
     # ('llvm/Support/...'), so they want LLVMSupport and nothing else. All of
     # the code generation lives inside SpectralMDL itself, which links the
