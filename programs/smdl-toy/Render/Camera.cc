@@ -480,11 +480,25 @@ float Camera::fNumber() const noexcept {
 
 CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
                             float wavelength) const noexcept {
+  CameraSample result{};
+  sampleDeferred(x, y, sampler, wavelength, result);
+  traceDeferred(smdl::Span<CameraSample>(&result, 1),
+                smdl::Span<const float>(&wavelength, 1));
+  return result;
+}
+
+void Camera::sampleDeferred(size_t x, size_t y, Sampler &sampler,
+                            float wavelength, CameraSample &sample) const noexcept {
   // The pixel jitter is always dimensions 0-1 of the sequence.
   const float2 xi{float2(sampler)};
   const float u{(float(x) + xi.x) / mNumPixelsX};
   const float v{(float(y) + xi.y) / mNumPixelsY};
-  if (mLens) return sampleThroughLens(u, v, sampler, wavelength);
+  (void)wavelength;
+  if (mLens) {
+    sampleThroughLens(u, v, sampler, sample);
+    return;
+  }
+  // The thin lens, which has nothing to defer.
   // The image-plane point: the film point inverted through the lens.
   const float2 image{+(u - 0.5f) * mAspectRatio, -(v - 0.5f)};
   // Distortion remaps only the direction this sensor point looks in;
@@ -553,11 +567,11 @@ CameraSample Camera::sample(size_t x, size_t y, Sampler &sampler,
       result.weight = 0;
   }
   result.coneAngle = mConeAngleBase * distortConeScale;
-  return result;
+  sample = result;
 }
 
-CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
-                                       float wavelength) const noexcept {
+void Camera::sampleThroughLens(float u, float v, Sampler &sampler,
+                               CameraSample &sample) const noexcept {
   CameraSample result{};
   result.coneAngle = mConeAngleBase;
   // The film point: the sensor coordinate, with the image inverted on it
@@ -577,7 +591,8 @@ CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
       Ray{film, float3(pupil.x, pupil.y, mLens->rearZ()) - film, EPS, INF};
   if (pupilArea <= 0) {
     result.weight = 0;
-    return result;
+    sample = result;
+    return;
   }
   // The pupil integral: the area drawn from, over the density it was
   // drawn with, times the `cos^4` falloff. Unlike the thin lens's, that
@@ -586,16 +601,60 @@ CameraSample Camera::sampleThroughLens(float u, float v, Sampler &sampler,
   const float cosTheta{-result.ray.dir.z / length(result.ray.dir)};
   const float cosSquared{cosTheta * cosTheta};
   result.weight = mExposurePerPupilArea * pupilArea * cosSquared * cosSquared;
-  // A lens that disperses is traced at the wavelength drawn for this
-  // sample, which the exit pupil's table was bounded to hold.
-  SMDL_DEBUG_CHECK(!(mDisperses && wavelength > 0) ||
-                   (wavelength >= mTraceWavelengthRange.x &&
-                    wavelength <= mTraceWavelengthRange.y));
-  const bool passes{mDisperses && wavelength > 0
-                        ? mLens->traceFromFilm(result.ray, wavelength)
-                        : mLens->traceFromFilm(result.ray)};
-  if (!passes) result.weight = 0;
-  return result;
+  sample = result;
+}
+
+void Camera::traceDeferred(smdl::Span<CameraSample> samples,
+                           smdl::Span<const float> wavelengths) const noexcept {
+  SMDL_SANITY_CHECK(samples.size() == wavelengths.size());
+  SMDL_SANITY_CHECK(samples.size() <= TRACE_WIDTH);
+  if (!mLens) return;
+  // Only the samples that survived the pupil draw are worth tracing, and
+  // gathering them keeps the batch full of rays that can still get out.
+  std::array<Ray, TRACE_WIDTH> rays{};
+  std::array<bool, TRACE_WIDTH> passes{};
+  std::array<size_t, TRACE_WIDTH> which{};
+  size_t count{0};
+  for (size_t k = 0; k < samples.size(); k++) {
+    if (samples[k].weight <= 0) continue;
+    rays[count] = samples[k].ray;
+    which[count] = k;
+    count++;
+  }
+  if (count == 0) return;
+  if (mDisperses) {
+    // A lens that disperses refracts each ray at the indices of its own
+    // wavelength, which the exit pupil's table was bounded to hold.
+    std::array<Lens::Indices, TRACE_WIDTH> indices{};
+    std::array<smdl::Span<const float>, TRACE_WIDTH> spans{};
+    const size_t numMedia{mLens->media().size()};
+    for (size_t k = 0; k < count; k++) {
+      const float wavelength{wavelengths[which[k]]};
+      SMDL_DEBUG_CHECK(!(wavelength > 0) ||
+                       (wavelength >= mTraceWavelengthRange.x &&
+                        wavelength <= mTraceWavelengthRange.y));
+      indices[k] = wavelength > 0 ? mLens->indicesAt(wavelength)
+                                  : Lens::Indices{};
+      spans[k] = wavelength > 0
+                     ? smdl::Span<const float>(indices[k].data(), numMedia)
+                     : mLens->referenceIndices();
+    }
+    mLens->traceFromFilm(
+        smdl::Span<Ray>(rays.data(), count),
+        smdl::Span<bool>(passes.data(), count),
+        smdl::Span<const smdl::Span<const float>>(spans.data(), count));
+  } else {
+    mLens->traceFromFilm(smdl::Span<Ray>(rays.data(), count),
+                         smdl::Span<bool>(passes.data(), count));
+  }
+  for (size_t k = 0; k < count; k++) {
+    CameraSample &sample{samples[which[k]]};
+    if (passes[k]) {
+      sample.ray = rays[k];
+    } else {
+      sample.weight = 0;
+    }
+  }
 }
 
 void Camera::toWorldMoving(CameraSample &sample, float u) const noexcept {

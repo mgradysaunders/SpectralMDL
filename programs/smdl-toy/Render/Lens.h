@@ -168,6 +168,43 @@ public:
   traceFromFilm(Ray &ray, smdl::Span<const float> indices) const noexcept;
   /// \}
 
+  /// How many rays the batched trace takes at once.
+  ///
+  /// One ray through the surfaces is a serial chain of divides and
+  /// square roots, too thin to fill a modern core: the scalar trace
+  /// retires about one instruction per cycle against the four it could.
+  /// Rays do not depend on each other, so tracing eight at once fills
+  /// the machine, and measures six times faster on a spherical design
+  /// and four on an aspheric one.
+  static constexpr size_t TRACE_WIDTH = 8;
+
+  /// Trace a batch of rays from the film, as `traceFromFilm()` does one.
+  ///
+  /// `rays` and `passes` must be the same length, at most `TRACE_WIDTH`.
+  /// A short batch is traced correctly and costs what a full one costs,
+  /// so a caller with more rays than that should fill whole batches.
+  /// Every ray refracts at the indices of `indices`, one span per ray,
+  /// so that a batch drawn at several wavelengths traces each ray at its
+  /// own; pass the same span for all of them to trace at one.
+  ///
+  /// The result is what `traceFromFilm()` gives, ray for ray, up to the
+  /// last bits: the vector arithmetic contracts multiplies and adds
+  /// where the scalar arithmetic does not, so the two agree on which
+  /// rays get out and differ slightly on where they point.
+  void traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                     smdl::Span<const smdl::Span<const float>> indices)
+      const noexcept;
+
+  /// The batch of `rays` traced at the reference indices, which is the d
+  /// line, as the one-ray `traceFromFilm(Ray &)` is.
+  void traceFromFilm(smdl::Span<Ray> rays,
+                     smdl::Span<bool> passes) const noexcept;
+
+  /// The batch of `rays` traced at one set of indices, for a caller
+  /// asking many rays about the same lens at the same wavelength.
+  void traceFromFilm(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                     smdl::Span<const float> indices) const noexcept;
+
   /// Room for every medium a prescription can have: the air in front,
   /// and one space per surface. A trace at a wavelength holds its indices
   /// in one of these on the stack, so that a camera sample never
@@ -349,6 +386,18 @@ public:
 
 private:
   /// The trace itself, with every medium at `indices`.
+  /// The trace, over `W` rays at once. Both the one-ray and the batched
+  /// entry points are this, at width one and at `TRACE_WIDTH`, so there
+  /// is one implementation of the optics rather than two to keep in
+  /// step. A width-one pack compiles to the scalar instruction for each
+  /// operation, so the one-ray path costs what a scalar one would.
+  template <size_t W>
+  void traceBatch(smdl::Span<Ray> rays, smdl::Span<bool> passes,
+                  smdl::Span<const smdl::Span<const float>> indices)
+      const noexcept;
+
+  /// Trace the ray through every element, refracting at each.
+
   [[nodiscard]] bool traceThrough(Ray &ray,
                                   const float *indices) const noexcept;
 

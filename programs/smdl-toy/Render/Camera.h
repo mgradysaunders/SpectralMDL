@@ -343,6 +343,34 @@ public:
   [[nodiscard]] CameraSample sample(size_t x, size_t y, Sampler &sampler,
                                     float wavelength = 0) const noexcept;
 
+  /// How many samples `traceDeferred()` takes at once, which is what a
+  /// caller batching camera rays should group its samples into.
+  static constexpr size_t TRACE_WIDTH = Lens::TRACE_WIDTH;
+
+  /// Draw one camera sample, stopping short of the lens trace.
+  ///
+  /// A real lens is the one camera whose ray costs anything to make, and
+  /// the trace goes faster on several rays at once than on one, so a
+  /// caller that has several samples to draw may draw them all and trace
+  /// them together. Every draw here takes the dimensions `sample()`
+  /// takes, in the same order, so a sample drawn this way is the sample
+  /// `sample()` would have drawn.
+  ///
+  /// The thin lens has nothing to defer and comes back finished, which
+  /// is why this is not conditional on there being a lens: the pair
+  /// below is one shape for both cameras.
+  void sampleDeferred(size_t x, size_t y, Sampler &sampler, float wavelength,
+                      CameraSample &sample) const noexcept;
+
+  /// Trace what `sampleDeferred()` drew, blocking whatever the glass
+  /// blocks by weighting it zero. Does nothing without a lens.
+  ///
+  /// `wavelengths` names the wavelength each sample is traced at, as
+  /// `sampleDeferred()` was given, and is read only by a lens that
+  /// disperses. At most `TRACE_WIDTH` samples.
+  void traceDeferred(smdl::Span<CameraSample> samples,
+                     smdl::Span<const float> wavelengths) const noexcept;
+
   /// Does the camera trace its lens at a wavelength of each sample's own?
   /// Only a lens whose glasses disperse, bounded over a range of
   /// wavelengths, which `CameraOptions::traceWavelengthRange` gives for a
@@ -403,8 +431,8 @@ private:
 
   /// The lens half of `sample()`, out of line as `toWorldMoving()` is,
   /// so that the thin lens keeps the smaller body.
-  [[nodiscard]] SMDL_NO_INLINE CameraSample sampleThroughLens(
-      float u, float v, Sampler &sampler, float wavelength) const noexcept;
+  SMDL_NO_INLINE void sampleThroughLens(float u, float v, Sampler &sampler,
+                                        CameraSample &sample) const noexcept;
 
   /// The moving half of `toWorld()`: the look-at of the framing vectors
   /// interpolated to `u`, see `mLookFrom`.

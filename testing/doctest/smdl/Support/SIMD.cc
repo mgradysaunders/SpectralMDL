@@ -93,6 +93,23 @@ TEST_CASE("SIMD: comparisons, masks and select") {
   }
 }
 
+TEST_CASE("SIMD: width one is the same kernel with one lane") {
+  // What lets a packed kernel serve a caller with a single item rather
+  // than keeping a scalar copy of itself alongside.
+  const float1 a{float1::load(A.data())};
+  const float1 b{float1::load(B.data())};
+  std::array<float, 1> out{};
+  (a * b + a - b).store(out.data());
+  CHECK(out[0] == A[0] * B[0] + A[0] - B[0]);
+  sqrt(a).store(out.data());
+  CHECK(out[0] == std::sqrt(A[0]));
+  select(a < b, a, b).store(out.data());
+  CHECK(out[0] == std::min(A[0], B[0]));
+  CHECK(anyTrue(a < b));
+  CHECK(allTrue(a < b));
+  CHECK_FALSE(anyTrue(a > b));
+}
+
 TEST_CASE("SIMD: the four-wide pack agrees with the eight-wide one") {
   const float4 a{float4::load(A.data())};
   const float4 b{float4::load(B.data())};
