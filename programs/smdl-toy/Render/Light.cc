@@ -1105,13 +1105,8 @@ bool LightSampler::sampleAreaMoving(const AreaLight &light,
   // face's share over its world area then.
   const int faceIndex{light.faceDistr.indexSample(float(sampler))};
   const float3 bary{smdl::uniformTriangleSample(float2(sampler))};
-  if (instance.isDeforming) {
-    mScene.makeHitDeforming(frame, light.instIndex, uint32_t(faceIndex), bary,
-                            time, hit);
-  } else {
-    mScene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary, time,
+  mScene.makeHitAt(frame, light.instIndex, uint32_t(faceIndex), bary, time,
                    hit);
-  }
   positionPDF = faceAreaDensity(mScene, light, instance, frame,
                                 uint32_t(faceIndex), time);
   return positionPDF > 0;

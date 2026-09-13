@@ -886,18 +886,21 @@ private:
   /// vectors must not change size afterward.
   void buildMeshGeometry(Mesh &mesh);
 
-public:
+private:
   /// The builders under a given frame, the bodies of the public ones:
   /// `frame` is the instance's at `time`, as `frameAt()` answers it. A
   /// public builder tail-calls its `Moving` twin for a moving or
-  /// deforming instance and otherwise runs the body under `frame`;
+  /// deforming instance and otherwise runs the body under `frame`, and
   /// `intersect()` resolves the frame once for the hit it is about to
-  /// build and calls the body directly, and so does the light sampler
-  /// for a moving emitter, whose stretch and sphere fields come off the
-  /// same frame. The split is what keeps the static path a leaf: a call
-  /// on a branch inside a body, even the cold moving-instance query,
-  /// costs every static hit the callee-saved register traffic of a
-  /// non-leaf, which the bench sees.
+  /// build and calls the body directly. The split is what keeps the
+  /// static path a leaf: a call on a branch inside a body, even the cold
+  /// moving-instance query, costs every static hit the callee-saved
+  /// register traffic of a non-leaf, which the bench sees.
+  ///
+  /// A caller that already holds the frame, which the light sampler does
+  /// for an emitter whose stretch and sphere fields come off the same
+  /// one, goes through `makeHitAt()` or `makePrimitiveHitFrom()` rather
+  /// than reaching in here.
   ///
   /// The mesh body reads the face's three vertex records out of
   /// `Mesh::verts` and runs `makeHitFrom()` over them; its deforming
@@ -924,13 +927,6 @@ public:
   void makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
                         uint32_t primID, const float3 &bary, float time,
                         Hit &hit) const;
-
-  /// The common tail of the primitive hit builders: the world-space
-  /// record from an object-space surface, whose parameters become
-  /// `bary[1]`, `bary[2]`, and the texture coordinate.
-  void makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
-                            uint32_t primID, float time,
-                            const PrimitiveSurface &surface, Hit &hit) const;
 
   [[nodiscard]] ManifoldGeometry
   manifoldGeometry(const InstanceFrame &frame, uint32_t instIndex,
@@ -1048,6 +1044,29 @@ public:
   /// meaningful as a visibility answer where `useOpaqueShadows` holds, since
   /// it cannot say what was hit.
   [[nodiscard]] bool isOccluded(const Ray &ray) const;
+
+  /// Build the hit record for a barycentric point on a mesh triangle
+  /// whose frame the caller already holds, which is what the light
+  /// sampler holds once it has drawn an emitter's point: the deforming
+  /// and static bodies below, chosen here rather than by the caller.
+  ///
+  /// Mesh instances only. A primitive's point is a surface evaluation
+  /// rather than a barycentric, so it goes through
+  /// `makePrimitiveHitFrom()`, and a curve's needs the ray.
+  void makeHitAt(const InstanceFrame &frame, uint32_t instIndex,
+                 uint32_t faceIndex, const float3 &bary, float time,
+                 Hit &hit) const;
+
+  /// Build the hit record for an object-space surface point on a
+  /// primitive whose frame the caller already holds, the parameters
+  /// becoming `bary[1]`, `bary[2]`, and the texture coordinate.
+  ///
+  /// The light sampler's entry for a point it drew itself, by area or
+  /// within a sphere's cone; also the common tail of the primitive hit
+  /// builders.
+  void makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t primID, float time,
+                            const PrimitiveSurface &surface, Hit &hit) const;
 
   /// Build the hit record for a barycentric point on a triangle, in world
   /// space.
