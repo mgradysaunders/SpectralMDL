@@ -103,9 +103,9 @@ PlacesFile readPlacesFile(const std::string &fileName) {
   }};
   const std::string contents{smdl::readOrThrow(fileName)};
   PlacesHeader header{};
-  if (contents.size() < sizeof(header) ||
-      (std::memcpy(&header, contents.data(), sizeof(header)),
-       !hasMagic(header.magic, PLACES_MAGIC)))
+  if (contents.size() >= sizeof(header))
+    std::memcpy(&header, contents.data(), sizeof(header));
+  if (!hasMagic(header.magic, PLACES_MAGIC))
     throw smdl::Error(smdl::concat(
         smdl::QuotedPath(fileName),
         " is not a '.places' buffer (bad magic; expected it to begin "

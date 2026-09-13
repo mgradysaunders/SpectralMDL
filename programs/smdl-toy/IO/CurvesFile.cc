@@ -122,9 +122,9 @@ CurvesFile readCurvesFile(const std::string &fileName) {
   }};
   const std::string contents{smdl::readOrThrow(fileName)};
   CurvesHeader header{};
-  if (contents.size() < sizeof(header) ||
-      (std::memcpy(&header, contents.data(), sizeof(header)),
-       !hasMagic(header.magic, CURVES_MAGIC)))
+  if (contents.size() >= sizeof(header))
+    std::memcpy(&header, contents.data(), sizeof(header));
+  if (!hasMagic(header.magic, CURVES_MAGIC))
     throw smdl::Error(smdl::concat(
         smdl::QuotedPath(fileName),
         " is not a '.curves' file (bad magic; expected it to begin "
