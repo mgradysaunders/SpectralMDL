@@ -1,5 +1,7 @@
 #include "Render/Light.h"
 
+#include "Render/MaterialProbe.h"
+
 #include "smdl/Support/Logger.h"
 
 #include <cmath>
@@ -532,15 +534,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     const uint32_t matIndex{scene.materialIndexOf(instance)};
     const smdl::JIT::MaterialDef *materialDef{scene.materialDefs[matIndex]};
     if (!materialDef) continue;
-    // Evaluate the material once with a placeholder state to read the
-    // structural emission flags and a representative intensity. The flags
-    // are decided by whether the emission EDF is non-default, so they do
-    // not depend on the state; the intensity may be spatially varying, in
-    // which case its value here is only a representative selection weight.
-    smdl::State state{makeRenderState(wavelengths, &allocator)};
-    state.textureSpaceCount = 1;
-    state.finalize();
-    smdl::JIT::Material material{state, materialDef};
+    MaterialProbe probe{allocator, wavelengths, *materialDef};
+    smdl::JIT::Material &material{probe.material()};
     if (!material.hasEmission()) {
       // The mark is scene judgment about an emitter; on anything else it
       // is a mistake worth one line, as the caster mark's is.

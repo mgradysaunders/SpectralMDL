@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "Render/Manifold.h"
+#include "Render/MaterialProbe.h"
 #include "Render/Visibility.h"
 #include "Scene/Primitive.h"
 
@@ -163,10 +164,8 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths)
     const uint32_t matIndex{scene.materialIndexOf(instance)};
     const smdl::JIT::MaterialDef *materialDef{scene.materialDefs[matIndex]};
     if (!materialDef) continue;
-    smdl::State state{makeRenderState(wavelengths, &allocator)};
-    state.textureSpaceCount = 1;
-    state.finalize();
-    smdl::JIT::Material material{state, materialDef};
+    MaterialProbe probe{allocator, wavelengths, *materialDef};
+    smdl::JIT::Material &material{probe.material()};
     // The transmission claim measures the index contrast against the
     // exterior the instance sits in; here that is the vacuum, which is
     // what an unplaced material sees, and the per-hit claim measures it

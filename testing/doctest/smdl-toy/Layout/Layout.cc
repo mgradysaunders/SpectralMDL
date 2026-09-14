@@ -32,6 +32,24 @@ public:
     return path;
   }
 
+  /// A `.places` sidecar of `transforms` translated along X, each
+  /// record carrying the variant index at the same position of
+  /// `variants`; an empty `variants` writes no column at all.
+  std::string writePlaces(const std::string &name,
+                          const std::vector<float> &offsetsX,
+                          const std::vector<uint32_t> &variants) const {
+    const std::string path{(root / name).string()};
+    PlacesFile places{};
+    for (const auto offsetX : offsetsX) {
+      float4x4 xf{float4x4(1.0f)};
+      xf[3].x = offsetX;
+      places.transforms.push_back(xf);
+    }
+    places.variants = variants;
+    writePlacesFile(path, places);
+    return path;
+  }
+
   TempDir root{"toy-layout"};
 };
 
@@ -117,6 +135,68 @@ TEST_CASE("Layout lowering: the marks compose") {
   // The group's translations survive the composition.
   CHECK(layout.items[4].objectToWorld[3].x == doctest::Approx(1.0f));
   CHECK(layout.items[5].objectToWorld[3].x == doctest::Approx(2.0f));
+}
+
+// A bulk place batches its records by variant class: one item per
+// distinct override set, carrying every record of that class in
+// `batchXfs`, so the scene builds one instance array per mesh instead of
+// one geometry per record. Every item is finished the same way whatever
+// path built it, which is what this pins on the path that builds several
+// at once. A bulk place takes no `as` of its own, so its identity is the
+// group's, which is the only way a batch has a name at all.
+TEST_CASE("Layout lowering: a bulk place batches its records by variant") {
+  LayoutDir dir{};
+  // Five records over two variants, in an order that interleaves the
+  // classes, so the batching cannot be a run of adjacent records.
+  dir.writePlaces("out.places", {0.0f, 2.0f, 4.0f, 6.0f, 8.0f},
+                  {PlacesFile::NO_VARIANT, 0, 1, 0, PlacesFile::NO_VARIANT});
+  const std::string entry{dir.write(
+      "entry.layout",
+      "asset ball = sphere { radius 0.5 material base caster caustic }\n"
+      "group cluster {\n"
+      "  place ball * \"out.places\" {\n"
+      "    variant { material \"base\" = red }\n"
+      "    variant { material \"base\" = blue }\n"
+      "  }\n"
+      "}\n"
+      "place cluster as scatter\n")};
+  LayoutDiagnostics diags{};
+  const Layout layout{lowerOK(diags, entry)};
+
+  SUBCASE("One item per variant class, in the order the variants are written") {
+    REQUIRE(layout.items.size() == 3);
+    CHECK(layout.items[0].materials.resolve("base") == "base");
+    CHECK(layout.items[1].materials.resolve("base") == "red");
+    CHECK(layout.items[2].materials.resolve("base") == "blue");
+  }
+  SUBCASE("Every record reaches the item of its own class") {
+    REQUIRE(layout.items.size() == 3);
+    const std::vector<std::vector<float>> expected{
+        {0.0f, 8.0f}, {2.0f, 6.0f}, {4.0f}};
+    for (size_t i = 0; i < expected.size(); i++) {
+      CAPTURE(i);
+      const LayoutItem &item{layout.items[i]};
+      // A class of one record needs no batch array and stands in
+      // `objectToWorld`, exactly as an ordinary place does.
+      if (expected[i].size() == 1) {
+        CHECK(item.batchXfs.empty());
+        CHECK(item.objectToWorld[3].x == doctest::Approx(expected[i][0]));
+        continue;
+      }
+      REQUIRE(item.batchXfs.size() == expected[i].size());
+      for (size_t k = 0; k < expected[i].size(); k++)
+        CHECK(item.batchXfs[k][3].x == doctest::Approx(expected[i][k]));
+    }
+  }
+  SUBCASE("Every item of the batch carries the same marks and identity") {
+    for (const auto &item : layout.items) {
+      CHECK(item.isCaster == true);
+      CHECK(item.isLight == true);
+      CHECK(item.isCausticLight == true);
+      CHECK(item.placeName == "scatter");
+      CHECK(item.primitive.shape == PrimitiveSpec::Shape::SPHERE);
+    }
+  }
 }
 
 TEST_CASE("Layout lowering: 'light off' cannot undo 'caustic'") {

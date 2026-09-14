@@ -8,11 +8,11 @@ ctest --test-dir build          # all three suites, including smdl-language
 ./build/bin/smdl-toy-doctest    # the renderer
 ```
 
-167 test cases and 533 subcases, about ten seconds and nine. Useful flags,
-all of which work because `doctest.cc` forwards the command line untouched:
-`-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=` filter by case,
-subcase, and source file, `-s` reports the passing assertions too, and `-d`
-gives the per-case durations.
+343 test cases and 1266 subcases, about thirty seconds and twenty-four.
+Useful flags, all of which work because `doctest.cc` forwards the command
+line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
+filter by case, subcase, and source file, `-s` reports the passing
+assertions too, and `-d` gives the per-case durations.
 
 Both suites run in a **random order** (`-ob=rand` with the seed CTest
 prints), so a case that only passes after another case ran shows up here
@@ -156,13 +156,21 @@ and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
 (641 lines) has exactly one subcase, and it lives in `smdl/Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
-On the renderer side 16 of the 43 sources have no test, including
-`Render/PathTracing.cc` (2239 lines), `Options.cc` (819), `Render/Guiding.cc`
-(747) and `Tonemap.cc` (728). The middle two of those are the cheap ones:
-both are input to output with no Embree and no JIT. `Sensor/Develop.cc` is
-tested for the physical develop alone; the observer's develop beside it
-needs the JIT, and is reached only through `MedianFilter.cc`'s use of what
-it hands over.
+On the renderer side 15 of the 49 sources have no test, including
+`Render/MNEE.cc` (1140 lines), `Render/PathTracing.cc` (989), `Options.cc`
+(800) and `Stage.cc` (797). `Options.cc` looks like the cheap one and is
+not: `parseCommandLine()` drives `llvm::cl`'s process-wide registry, which
+nothing here can put back.
+
+Three files are tested for one thing each and not for the rest.
+`Render/Guiding.cc` is tested for the `.sdtree` round trip, not for what
+`record()` deposits or what `refine()` rebuilds from it. `Tonemap.cc` is
+tested for the spec parser, the display transform itself needing a
+spectral film and the JIT behind it. `Render.cc` is tested for
+`solveSamplePasses()`, the render loop needing both and Embree besides.
+`Sensor/Develop.cc` is tested for the physical develop alone; the
+observer's develop beside it needs the JIT, and is reached only through
+`MedianFilter.cc`'s use of what it hands over.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero
 assertions when the build lacks NanoVDB, and doctest reports them as

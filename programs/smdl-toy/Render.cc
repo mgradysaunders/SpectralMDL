@@ -105,34 +105,6 @@ struct PassTarget final {
   MeterTally *meter{};
 };
 
-// How the sample budget is split into passes.
-//
-// Without guiding there is a single pass of the whole budget. With guiding,
-// passes grow geometrically (1, 2, 4, ... spp) and the remainder is dumped
-// into the final pass, so it always holds at least half the budget. Solved
-// up front rather than as the loop runs so that the progress bar can say
-// which pass of how many.
-[[nodiscard]]
-std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
-                                      size_t trainedSpp) {
-  // The geometric warmup exists to bound the samples spent while the
-  // tree is immature, so a session that resumed a saved tree skips it:
-  // the first pass starts at the largest power of two at or below what
-  // already trained the tree, and the refine threshold keeps scaling
-  // with the pass size.
-  size_t firstPass{1};
-  while (useGuiding && firstPass * 2 <= trainedSpp) firstPass *= 2;
-  std::vector<size_t> passes{};
-  for (size_t sppDone{0}; sppDone < spp;) {
-    size_t thisPass{
-        useGuiding ? std::min(firstPass << passes.size(), spp - sppDone) : spp};
-    if (useGuiding && (spp - sppDone) < 2 * thisPass) thisPass = spp - sppDone;
-    passes.push_back(thisPass);
-    sppDone += thisPass;
-  }
-  return passes;
-}
-
 // The pixels one call of the kernel hands a thread, and how many such
 // blocks each thread gets.
 //
@@ -700,6 +672,23 @@ void RenderKernel::operator()(const PassTarget &pass) const {
 }
 
 } // namespace
+
+std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
+                                      size_t trainedSpp) {
+  // The refine threshold scales with the pass size, so a first pass that
+  // skipped the warmup refines where the saved tree left off.
+  size_t firstPass{1};
+  while (useGuiding && firstPass * 2 <= trainedSpp) firstPass *= 2;
+  std::vector<size_t> passes{};
+  for (size_t sppDone{0}; sppDone < spp;) {
+    size_t thisPass{
+        useGuiding ? std::min(firstPass << passes.size(), spp - sppDone) : spp};
+    if (useGuiding && (spp - sppDone) < 2 * thisPass) thisPass = spp - sppDone;
+    passes.push_back(thisPass);
+    sppDone += thisPass;
+  }
+  return passes;
+}
 
 bool savesGuideTree(const Options &opts, const Frame &frame,
                     const std::string &outputBands) {

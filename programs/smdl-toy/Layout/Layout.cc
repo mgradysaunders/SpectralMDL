@@ -84,6 +84,18 @@ public:
   }
 };
 
+// The composed marks an item carries, resolved from the overrides above
+// before any item exists, so that a refused mark leaves nothing
+// half-built behind its diagnostic, and once for a whole batch, so that
+// one refusal is diagnosed once.
+struct ItemMarks final {
+  bool isCaster{};
+
+  bool isLight{};
+
+  bool isCausticLight{};
+};
+
 // What one written path turns out to name.
 class Target final {
 public:
@@ -460,12 +472,15 @@ private:
                      " from ", smdl::QuotedPath(resolved.string()));
       const auto recordXf{
           [&](size_t i) { return placeXf * MotionXf(places.transforms[i]); }};
+      const auto outerOfVariant{
+          [&](uint32_t variantIndex) -> const RenameMap & {
+            return variantIndex == PlacesFile::NO_VARIANT
+                       ? baseOuter
+                       : outerByVariant[variantIndex];
+          }};
       const auto outerFor{[&](size_t i) -> const RenameMap & {
-        const uint32_t variantIndex{
-            places.hasVariants() ? places.variants[i] : PlacesFile::NO_VARIANT};
-        return variantIndex == PlacesFile::NO_VARIANT
-                   ? baseOuter
-                   : outerByVariant[variantIndex];
+        return outerOfVariant(places.hasVariants() ? places.variants[i]
+                                                   : PlacesFile::NO_VARIANT);
       }};
       // A group or a layout target scatters record by record, because
       // their contents multiply through recursion. A direct mesh or
@@ -506,10 +521,7 @@ private:
                 : recordXf(i) * MotionXf(decl->transform) *
                       MotionXf(target.correction));
       }
-      // The marks are resolved before any item exists, so a refused
-      // mark leaves nothing half-built behind its diagnostic.
-      const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
-      const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
+      const ItemMarks marks{marksOf(*decl, effectiveMarks, &target)};
       for (auto &[variantIndex, xfs] : batches) {
         LayoutItem &item{mResult.items.emplace_back()};
         if (decl->primitive.isActive()) {
@@ -524,15 +536,8 @@ private:
           item.subdiv = decl->subdiv;
           item.animation = animationOf(*decl, placeXf);
         }
-        item.materials = decl->materials;
-        item.materials.renames = composeRename(
-            document.materialAliases, variantIndex == PlacesFile::NO_VARIANT
-                                          ? baseOuter
-                                          : outerByVariant[variantIndex]);
-        item.isCaster = isCaster;
-        item.isLight = hasLightMark;
-        item.isCausticLight = decl->isCaustic;
-        item.placeName = placeName;
+        finishItem(item, document, decl->materials,
+                   outerOfVariant(variantIndex), marks, placeName);
         if (xfs.size() == 1) {
           placeItem(item, xfs[0]);
         } else {
@@ -596,18 +601,12 @@ private:
     // A primitive is pure geometry by construction: no path to resolve,
     // no file to read, and the parser already guaranteed the assignment.
     if (decl->primitive.isActive()) {
-      const bool isCaster{isCasterOf(*decl, effectiveMarks, nullptr)};
-      const bool hasLightMark{isLightOf(*decl, effectiveMarks, nullptr)};
+      const ItemMarks marks{marksOf(*decl, effectiveMarks, nullptr)};
       LayoutItem &item{mResult.items.emplace_back()};
       item.primitive = decl->primitive;
       placeItem(item, combinedXf * MotionXf(decl->transform));
-      item.materials = decl->materials;
-      item.materials.renames =
-          composeRename(document.materialAliases, effectiveOuter);
-      item.isCaster = isCaster;
-      item.isLight = hasLightMark;
-      item.isCausticLight = decl->isCaustic;
-      item.placeName = placeName;
+      finishItem(item, document, decl->materials, effectiveOuter, marks,
+                 placeName);
       return;
     }
     const Target target{resolveTarget(document, decl->path, decl->pathLoc)};
@@ -632,8 +631,7 @@ private:
                 passed, false, decl->pathLoc);
       return;
     }
-    const bool isCaster{isCasterOf(*decl, effectiveMarks, &target)};
-    const bool hasLightMark{isLightOf(*decl, effectiveMarks, &target)};
+    const ItemMarks marks{marksOf(*decl, effectiveMarks, &target)};
     LayoutItem &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     placeItem(item, combinedXf * MotionXf(decl->transform) *
@@ -646,13 +644,8 @@ private:
       item.subdiv = decl->subdiv;
       item.animation = animationOf(*decl, combinedXf);
     }
-    item.materials = decl->materials;
-    item.materials.renames =
-        composeRename(document.materialAliases, effectiveOuter);
-    item.isCaster = isCaster;
-    item.isLight = hasLightMark;
-    item.isCausticLight = decl->isCaustic;
-    item.placeName = placeName;
+    finishItem(item, document, decl->materials, effectiveOuter, marks,
+               placeName);
   }
 
   // The composed caster mark of an item lowered from `decl`, through a
@@ -699,6 +692,34 @@ private:
       throw SkipPlacement();
     }
     return isLight;
+  }
+
+  // The composed marks of an item lowered from `decl`, through a target
+  // of known kind or through no target at all.
+  [[nodiscard]] ItemMarks marksOf(const LayoutAssetDecl &decl,
+                                  const MarkOverrides &marks,
+                                  const Target *target) {
+    ItemMarks result{};
+    result.isCaster = isCasterOf(decl, marks, target);
+    result.isLight = isLightOf(decl, marks, target);
+    result.isCausticLight = decl.isCaustic;
+    return result;
+  }
+
+  // Everything a lowered item carries however it was reached: the
+  // materials it was written with, the document's aliases under `outer`
+  // renaming them, and the composed marks. Four paths build an item, so
+  // this is one place rather than four, and a field added to
+  // `LayoutItem` cannot be set along three of them.
+  void finishItem(LayoutItem &item, const LayoutDocument &document,
+                  const MaterialAssignment &materials, const RenameMap &outer,
+                  const ItemMarks &marks, const std::string &placeName) {
+    item.materials = materials;
+    item.materials.renames = composeRename(document.materialAliases, outer);
+    item.isCaster = marks.isCaster;
+    item.isLight = marks.isLight;
+    item.isCausticLight = marks.isCausticLight;
+    item.placeName = placeName;
   }
 
   // The kind-specific properties an asset block can write, cross-checked
@@ -805,11 +826,14 @@ private:
     if (target.kind == Target::Kind::MESH) item.animation.offset = xf.offset;
     placeItem(item,
               xf * MotionXf(placement.transform) * MotionXf(target.correction));
-    item.materials = placement.importMaterials;
-    item.materials.renames =
-        composeRename(document.materialAliases, outerRenames);
-    item.isCaster = effectiveMarks.isCaster.value_or(false);
-    item.isLight = effectiveMarks.isLight.value_or(false);
+    // An import has no asset declaration to carry `caustic`, and `as` is
+    // a word of `place` alone, so it has neither of those marks; it is
+    // also always top level, where the name prefix is empty.
+    ItemMarks marks{};
+    marks.isCaster = effectiveMarks.isCaster.value_or(false);
+    marks.isLight = effectiveMarks.isLight.value_or(false);
+    finishItem(item, document, placement.importMaterials, outerRenames, marks,
+               std::string());
   }
 
   // The `material` assignments written against a layout target, turned

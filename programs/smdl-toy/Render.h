@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "smdl/Compiler.h"
 
@@ -13,6 +14,24 @@ struct ResumedSequence;
 class RenderFilm;
 class StagedScene;
 class STree;
+
+/// How a sample budget is split into passes.
+///
+/// Without guiding, one pass of the whole budget. With guiding the passes
+/// grow geometrically (1, 2, 4, ...), which bounds what is spent while the
+/// tree is immature, and the remainder becomes the final pass once it is
+/// less than twice the next pass would be. The final pass is therefore
+/// never smaller than the one before it, and always more than a third of
+/// the budget though not always half: the warmup costs 2^k - 1 samples
+/// whatever the budget is, so a budget just past a power of two spends
+/// most of itself warming up.
+///
+/// A session that resumes a tree `trainedSpp` samples already trained
+/// starts at the largest power of two at or below `trainedSpp`, skipping
+/// the warmup it has outgrown. Solved up front rather than as the loop
+/// runs, so that the progress bar can say which pass of how many.
+[[nodiscard]] std::vector<size_t> solveSamplePasses(size_t spp, bool useGuiding,
+                                                    size_t trainedSpp);
 
 /// Will this session leave a guide tree behind?
 ///
