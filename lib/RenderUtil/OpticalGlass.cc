@@ -199,7 +199,8 @@ constexpr CatalogAlias ALIASES[] = {
 
 OpticalGlass OpticalGlass::constant(float index) {
   if (!(std::isfinite(index) && index >= 1))
-    throw Error(concat("Expected an index of at least 1, got ", Brief(index)));
+    throw Error(
+        concat("Expected an index of at least 1, got ", SpellFloat(index)));
   OpticalGlass glass{};
   glass.mCoefficients[0] = index;
   return glass;
@@ -208,13 +209,14 @@ OpticalGlass OpticalGlass::constant(float index) {
 OpticalGlass OpticalGlass::abbe(float nd, float abbeNumber,
                                 std::optional<float> partialDispersion) {
   if (!(std::isfinite(nd) && nd > 1))
-    throw Error(concat("Expected an index greater than 1, got ", Brief(nd)));
-  if (!(std::isfinite(abbeNumber) && abbeNumber > 0))
     throw Error(
-        concat("Expected a positive Abbe number, got ", Brief(abbeNumber)));
+        concat("Expected an index greater than 1, got ", SpellFloat(nd)));
+  if (!(std::isfinite(abbeNumber) && abbeNumber > 0))
+    throw Error(concat("Expected a positive Abbe number, got ",
+                       SpellFloat(abbeNumber)));
   if (partialDispersion && !(*partialDispersion > 0 && *partialDispersion < 1))
     throw Error(concat("Expected a partial dispersion between 0 and 1, got ",
-                       Brief(*partialDispersion)));
+                       SpellFloat(*partialDispersion)));
   const double pgF{partialDispersion
                        ? double(*partialDispersion)
                        : partialDispersionOr(double(abbeNumber), 0.0)};
@@ -235,7 +237,7 @@ OpticalGlass OpticalGlass::sellmeier(const std::array<float, 3> &b,
     // A term with no weight has no pole, wherever its C would put one.
     if (b[i] != 0 && c[i] >= DOMAIN_MIN_SQUARED && c[i] <= DOMAIN_MAX_SQUARED)
       throw Error(concat("Sellmeier term ", i + 1, " has its pole at ",
-                         Brief(1e3 * std::sqrt(double(c[i]))),
+                         SpellFloat(1e3 * std::sqrt(double(c[i]))),
                          " nm, inside the ", OPTICAL_GLASS_WAVELENGTH_MIN,
                          " to ", OPTICAL_GLASS_WAVELENGTH_MAX,
                          " nm a glass is evaluated over"));
@@ -263,7 +265,7 @@ void OpticalGlass::validate() const {
       throw Error(
           concat("The index is not a finite number at ", wavelength, " nm"));
     if (index < 1)
-      throw Error(concat("The index falls to ", Brief(index), " at ",
+      throw Error(concat("The index falls to ", SpellFloat(index), " at ",
                          wavelength, " nm, below the index of air"));
     if (index > previous)
       throw Error(concat("The index rises with wavelength at ", wavelength,

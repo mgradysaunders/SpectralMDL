@@ -42,7 +42,12 @@ namespace {
 constexpr std::string_view ANSI_RESET{"\033[0m"};
 constexpr std::string_view ANSI_BOLD{"\033[1m"};
 constexpr std::string_view ANSI_DIM{"\033[2m"};
-constexpr std::string_view ANSI_CYAN{"\033[36m"};
+// constexpr std::string_view ANSI_RED{"\033[31m"};
+// constexpr std::string_view ANSI_GREEN{"\033[32m"};
+// constexpr std::string_view ANSI_YELLOW{"\033[33m"};
+// constexpr std::string_view ANSI_BLUE{"\033[34m"};
+// constexpr std::string_view ANSI_MAGENTA{"\033[35m"};
+// constexpr std::string_view ANSI_CYAN{"\033[36m"};
 constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 
 [[nodiscard]] bool isWordChar(char ch) noexcept {
@@ -56,7 +61,7 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
 }
 
 // The length of the location `str` starts with, `[file:line]` or
-// `[file:line:col]` as `LocationMarkup` writes it, or 0 if there is none.
+// `[file:line:col]` as `SpellLocation` writes it, or 0 if there is none.
 // A name that is itself a number makes a clock time or a range, which
 // is not a location.
 [[nodiscard]] size_t locationLength(std::string_view str) noexcept {
@@ -74,20 +79,6 @@ constexpr std::string_view ANSI_CARET{"\033[1;32m"};
   if (!dropNumber()) return 0;
   (void)dropNumber(); // The column, if there is one
   return name.empty() || isAllDigits(name) ? 0 : close + 1;
-}
-
-// The length of the quoted string `str` starts with, quotes included, or
-// 0 if it is never closed. Both quotes count: `Quoted` writes double
-// quotes, while a message that spells a language token out writes it in
-// single quotes ('for', ';'). A quote closes only where no word goes on
-// after it, so that the apostrophe in 'bob's.png' does not.
-[[nodiscard]] size_t quotedLength(std::string_view str) noexcept {
-  const char quote{str.empty() ? '\0' : str[0]};
-  if (quote != '\'' && quote != '"') return 0;
-  for (size_t i = 1; i < str.size(); i++)
-    if (str[i] == quote && (i + 1 == str.size() || !isWordChar(str[i + 1])))
-      return i + 1;
-  return 0;
 }
 
 // The length of the gutter `line` starts with, through its bar, or 0 if
@@ -136,19 +127,14 @@ void appendSnippetLine(std::string &result, std::string_view line,
   appendStyled(result, ANSI_CARET, line.substr(caret));
 }
 
-// Append a line of message text with its locations and quoted strings
-// highlighted. Either begins only where no word runs into it.
+// Append a line of message text with its locations highlighted. A
+// location begins only where no word runs into it, so that a path
+// written before one ('x[a.mdl:3]') is not taken for one.
 void appendHighlighted(std::string &result, std::string_view line) {
   for (size_t i = 0; i < line.size();) {
     if (i == 0 || !isWordChar(line[i - 1])) {
-      const std::string_view rest{line.substr(i)};
-      if (const size_t n{locationLength(rest)}; n > 0) {
-        appendStyled(result, ANSI_BOLD, rest.substr(0, n));
-        i += n;
-        continue;
-      }
-      if (const size_t n{quotedLength(rest)}; n > 0) {
-        appendStyled(result, ANSI_CYAN, rest.substr(0, n));
+      if (const size_t n{locationLength(line.substr(i))}; n > 0) {
+        appendStyled(result, ANSI_BOLD, line.substr(i, n));
         i += n;
         continue;
       }

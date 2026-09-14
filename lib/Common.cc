@@ -188,8 +188,8 @@ void SourceLocation::throwError(std::string message) const {
 
 SourceLocation::operator std::string() const {
   if (!module_) return {};
-  return concat(LocationMarkup(module_->getDisplayName(), lineNo, charNo,
-                               module_->isFileBacked()));
+  return concat(SpellLocation(module_->getDisplayName(), lineNo, charNo,
+                              module_->isFileBacked()));
 }
 
 void State::finalize() noexcept {

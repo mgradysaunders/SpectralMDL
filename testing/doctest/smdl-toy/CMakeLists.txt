@@ -5,6 +5,7 @@ smdl_add_doctest(
   SOURCES
     "CameraModel.cc"
     "Color.cc"
+    "Common.cc"
     "MedianFilter.cc"
     "Output.cc"
     "Render.cc"

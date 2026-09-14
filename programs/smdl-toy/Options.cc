@@ -416,7 +416,9 @@ cl::opt<bool> optWavelengthJitter{
     cl::desc("Jitter each wavelength to estimate the mean radiance over the "
              "band rather than the radiance at one wavelength\n"
              "* each band reaches halfway to its neighbors, and the end bands "
-             "stop at the grid's ends"),
+             "stop at the grid's ends\n"
+             "* always on through a physical sensor, whose bands may be "
+             "narrower than the grid's spacing, where '=false' is refused"),
     cl::init(false), cl::cat(catRendering)};
 //--}
 
@@ -585,7 +587,7 @@ Options parseCommandLine(int argc, char **argv) {
       if (text.empty() || *end != '\0' || !std::isfinite(value) || !(value > 0))
         throw smdl::Error(smdl::concat(
             "Expected -iso to be a positive number or 'auto', got ",
-            smdl::Quoted(text)));
+            SpellQuoted(text)));
       iso = Flag<float>{value, true};
     }
   }
@@ -598,7 +600,7 @@ Options parseCommandLine(int argc, char **argv) {
           "Expected -white-balance to be D65, daylight, cloudy, shade, "
           "tungsten, fluorescent, auto, or a color temperature from ",
           int(WHITE_BALANCE_KELVIN_MIN), " to ", int(WHITE_BALANCE_KELVIN_MAX),
-          " K, got ", smdl::Quoted(text)));
+          " K, got ", SpellQuoted(text)));
     whiteBalance = Flag<WhiteBalance>{*parsed, true};
   }
   if (!(float(optResolutionScale) > 0 && float(optResolutionScale) <= 1))

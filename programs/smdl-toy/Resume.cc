@@ -143,9 +143,9 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
     if (hasData != hasHeader)
       throw smdl::Error(smdl::concat(
           "Cannot resume: ",
-          smdl::Quoted(hasData ? resumeName : resumeName + ".hdr"),
+          SpellQuoted(hasData ? resumeName : resumeName + ".hdr"),
           " exists but ",
-          smdl::Quoted(hasData ? resumeName + ".hdr" : resumeName),
+          SpellQuoted(hasData ? resumeName + ".hdr" : resumeName),
           " does not; refusing to start fresh over a damaged session"));
     if (!hasData) {
       // -spp 0 re-runs the output stage, which is meaningless with
@@ -153,11 +153,10 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
       // no 'render spp' field and could not itself be resumed.
       if (opts.render.sampling.spp == 0)
         throw smdl::Error(smdl::concat(
-            "Cannot resume with '-spp 0': ", smdl::Quoted(resumeName),
+            "Cannot resume with '-spp 0': ", SpellQuoted(resumeName),
             " does not exist, so there is no output stage to re-run"));
-      SMDL_LOG_INFO(
-          "Starting a new render sequence: ", smdl::Quoted(resumeName),
-          " does not exist yet, this session writes it");
+      SMDL_LOG_INFO("Starting a new render sequence: ", SpellQuoted(resumeName),
+                    " does not exist yet, this session writes it");
     }
     result.wasLoaded = hasData;
   }
@@ -168,10 +167,10 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   info = film.readENVIFile(opts.image.resume);
   if (film.getNumPixelsX() != size_t(resolution.x) ||
       film.getNumPixelsY() != size_t(resolution.y))
-    throw smdl::Error(
-        smdl::concat("Cannot resume: the file is ", film.getNumPixelsX(), "x",
-                     film.getNumPixelsY(), " against -resolution ",
-                     resolution.x, ",", resolution.y));
+    throw smdl::Error(smdl::concat(
+        "Cannot resume: the file is ",
+        SpellDimensions(film.getNumPixelsX(), film.getNumPixelsY()),
+        " against -resolution ", resolution.x, ",", resolution.y));
   if (info.samplesPerPixel == 0)
     throw smdl::Error("Cannot resume: the header has no 'render spp' count "
                       "(the file was not written by -output-bands)");
@@ -237,16 +236,16 @@ ResumedSequence resumeSequence(const Options &opts, const Frame &frame,
   if (!header.args.empty() &&
       stripSessionOnlyArgs(header.args) != stripSessionOnlyArgs(opts.argsEcho))
     SMDL_LOG_WARN("Resuming with different flags: the file records ",
-                  smdl::Quoted(header.args),
+                  SpellQuoted(header.args),
                   "; if the scene or camera changed, the merged image "
                   "mixes two different renders");
   result.sampleIndexBase = header.sampleOffset + info.samplesPerPixel;
   SMDL_LOG_INFO("Resuming: ", info.samplesPerPixel, " samples per pixel from ",
-                smdl::Quoted(opts.image.resume), " (sample offset ",
+                SpellQuoted(opts.image.resume), " (sample offset ",
                 header.sampleOffset, ")",
                 response
                     ? smdl::concat(", the band film of ",
-                                   smdl::Counted(info.bandNames.size(), "band"))
+                                   SpellCounted(info.bandNames.size(), "band"))
                     : std::string());
   return result;
 }

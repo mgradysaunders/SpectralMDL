@@ -184,18 +184,18 @@ public:
   BinaryPayload(std::string_view contents, size_t offset, size_t size,
                 bool isCompressed, const std::string &what) {
     const auto fail{[&](auto &&...args) {
-      throw smdl::Error(
-          smdl::concat("Cannot read ", smdl::QuotedPath(what), ": ", args...));
+      throw smdl::Error(smdl::concat("Cannot read ", smdl::SpellFilePath(what),
+                                     ": ", args...));
     }};
     if (offset > contents.size()) fail("truncated (the header does not fit)");
     const std::string_view rest{contents.substr(offset)};
     const auto *first{reinterpret_cast<const std::byte *>(rest.data())};
     if (!isCompressed) {
       if (rest.size() != size)
-        fail("it holds ", smdl::Bytes(rest.size()),
+        fail("it holds ", smdl::SpellByteSize(rest.size()),
              " where its header "
              "promises ",
-             smdl::Bytes(size));
+             smdl::SpellByteSize(size));
       mBytes = smdl::Span<const std::byte>(first, size);
       return;
     }

@@ -117,7 +117,7 @@ private:
 
 /// A vector in the comma-separated syntax an option is typed in, so that
 /// what `-print-options` shows, and what a diagnostic quotes back, can be
-/// pasted onto a command line. `smdl::Brief` rather than `concat`'s bare
+/// pasted onto a command line. `smdl::SpellFloat` rather than `concat`'s bare
 /// arithmetic path, which is six decimal places and would print a frame
 /// width as `1280.000000`.
 template <typename T, size_t N>
@@ -126,7 +126,7 @@ template <typename T, size_t N>
   for (size_t i{}; i < N; i++) {
     if (i != 0) result += ',';
     if constexpr (std::is_floating_point_v<T>) {
-      smdl::Brief(value[i]).appendTo(result);
+      smdl::SpellFloat(value[i]).appendTo(result);
     } else {
       result += std::to_string(value[i]);
     }
@@ -148,7 +148,7 @@ public:
     SmallVector<StringRef> tokens{};
     Arg.split(tokens, ",");
     if (tokens.size() != N) {
-      O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+      O.error(smdl::concat(smdl::SpellQuoted(std::string_view(Arg)),
                            " value invalid for ",
                            std::string_view(getValueName())));
       return true;
@@ -157,7 +157,7 @@ public:
       if constexpr (std::is_floating_point_v<T>) {
         double result{};
         if (tokens[i].getAsDouble(result)) {
-          O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+          O.error(smdl::concat(smdl::SpellQuoted(std::string_view(Arg)),
                                " value invalid for ",
                                std::string_view(getValueName())));
           return true;
@@ -166,7 +166,7 @@ public:
       } else {
         unsigned result{};
         if (tokens[i].getAsInteger(10, result)) {
-          O.error(smdl::concat(smdl::Quoted(std::string_view(Arg)),
+          O.error(smdl::concat(smdl::SpellQuoted(std::string_view(Arg)),
                                " value invalid for ",
                                std::string_view(getValueName())));
           return true;
@@ -236,7 +236,7 @@ struct WavelengthRange final {
   if (flagStr == "error") return smdl::LOG_LEVEL_ERROR;
   throw smdl::Error(smdl::concat("Expected -log-level to be 'debug', 'info', "
                                  "'warn', or 'error', got ",
-                                 smdl::Quoted(flagStr)));
+                                 smdl::SpellQuoted(flagStr)));
 }
 
 /// The '-unicode' flag as `smdl::UnicodeMode` spells it: unset leaves the
@@ -266,7 +266,7 @@ parseWavelengths(const std::string &flagStr) {
     text.assign(std::istreambuf_iterator<char>(file), {});
     if (text.empty())
       throw smdl::Error(smdl::concat("-wavelengths file ",
-                                     smdl::Quoted(flagStr), " is empty"));
+                                     smdl::SpellQuoted(flagStr), " is empty"));
   }
   const char *ptr{text.c_str()};
   while (*ptr) {
@@ -277,8 +277,9 @@ parseWavelengths(const std::string &flagStr) {
     char *numEnd{};
     const float value{std::strtof(ptr, &numEnd)};
     if (numEnd == ptr)
-      throw smdl::Error(smdl::concat("Cannot parse -wavelengths near ",
-                                     smdl::Quoted(std::string(ptr, 0, 12))));
+      throw smdl::Error(
+          smdl::concat("Cannot parse -wavelengths near ",
+                       smdl::SpellQuoted(std::string(ptr, 0, 12))));
     ptr = numEnd;
     values.push_back(value);
   }
@@ -313,24 +314,25 @@ parseWavelengthRange(const std::string &flagStr) {
   result.range.x = std::strtof(ptr, &numEnd);
   if (numEnd == ptr || *numEnd != ',')
     throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
+                                   smdl::SpellQuoted(std::string(ptr, 0, 12))));
   ptr = numEnd + 1;
   result.range.y = std::strtof(ptr, &numEnd);
   if (numEnd == ptr)
     throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
+                                   smdl::SpellQuoted(std::string(ptr, 0, 12))));
   ptr = numEnd;
   if (*ptr == ':') {
     ptr++;
     if (!std::isdigit(static_cast<unsigned char>(*ptr)))
-      throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
-                                     smdl::Quoted(std::string(ptr, 0, 12))));
+      throw smdl::Error(
+          smdl::concat("Cannot parse -wavelength-range near ",
+                       smdl::SpellQuoted(std::string(ptr, 0, 12))));
     result.bandCount = unsigned(std::strtoul(ptr, &numEnd, 10));
     ptr = numEnd;
   }
   if (*ptr != '\0')
     throw smdl::Error(smdl::concat("Cannot parse -wavelength-range near ",
-                                   smdl::Quoted(std::string(ptr, 0, 12))));
+                                   smdl::SpellQuoted(std::string(ptr, 0, 12))));
   if (!(std::isfinite(result.range.x) && std::isfinite(result.range.y) &&
         result.range.x > 0 && result.range.x < result.range.y))
     throw smdl::Error(

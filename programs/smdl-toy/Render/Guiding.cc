@@ -391,7 +391,7 @@ void STree::writeFile(const std::string &fileName,
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("Cannot write guide tree ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write guide tree ", SpellFilePath(fileName)));
   TreeFileHeader header{};
   setMagic(header.magic, GUIDE_TREE_MAGIC);
   header.version = 1;
@@ -428,7 +428,7 @@ void STree::writeFile(const std::string &fileName,
   }
   if (!stream)
     throw smdl::Error(
-        smdl::concat("Cannot write guide tree ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write guide tree ", SpellFilePath(fileName)));
 }
 
 STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
@@ -436,10 +436,10 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
   std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("Cannot open guide tree ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot open guide tree ", SpellFilePath(fileName)));
   const auto corrupt{[&](const char *what) {
     return smdl::Error(smdl::concat("Cannot read guide tree ",
-                                    smdl::QuotedPath(fileName), ": ", what));
+                                    SpellFilePath(fileName), ": ", what));
   }};
   TreeFileHeader header{};
   getRecord(stream, header);
@@ -447,7 +447,7 @@ STree STree::readFile(const std::string &fileName, uint64_t &samplesPerPixel) {
     throw corrupt("bad magic; expected it to begin with \"SMDLSDTR\"");
   if (header.version != 1)
     throw smdl::Error(smdl::concat(
-        "Cannot read guide tree ", smdl::QuotedPath(fileName), ": version ",
+        "Cannot read guide tree ", SpellFilePath(fileName), ": version ",
         header.version, " (this build reads version 1)"));
   if (header.reserved != 0) throw corrupt("the reserved field is not 0");
   // Caps against a corrupt count allocating the world. The spatial cap

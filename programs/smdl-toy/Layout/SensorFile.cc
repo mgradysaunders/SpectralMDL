@@ -61,7 +61,7 @@ private:
   void parseStatement() {
     if (mToken.kind != Token::WORD) {
       mDiags.error(location(), smdl::concat("expected a directive, got ",
-                                            smdl::Quoted(mToken.text)));
+                                            SpellQuoted(mToken.text)));
       throw Recover();
     }
     if (mToken.text == "sensor") {
@@ -69,13 +69,13 @@ private:
     } else {
       LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
-                                                smdl::Quoted(mToken.text)))};
+                                                SpellQuoted(mToken.text)))};
       if (mToken.text == "camera" || mToken.text == "lens") {
         error.note({}, "a sensor file describes the sensor alone; where the "
                        "picture is taken from and through what belongs in "
                        "the '.camera' file that names this one");
       } else if (mToken.text == "response" || mToken.text == "detector") {
-        error.note({}, smdl::concat(smdl::Quoted(mToken.text),
+        error.note({}, smdl::concat(SpellQuoted(mToken.text),
                                     " is a block inside 'sensor', not a "
                                     "directive of its own"));
       } else {
@@ -202,7 +202,7 @@ private:
         } else {
           mDiags.error(keyLoc,
                        smdl::concat("unknown readout direction ",
-                                    smdl::Quoted(word),
+                                    SpellQuoted(word),
                                     " (expected down, up, left, or right)"));
           throw Recover();
         }
@@ -214,21 +214,21 @@ private:
         throw Recover();
       } else if (key == "kind" || key == "peak_qe" || key == "band" ||
                  key == "cfa" || key == "rgb" || key == "crosstalk") {
-        mDiags.error(keyLoc, smdl::concat(smdl::Quoted(key),
+        mDiags.error(keyLoc, smdl::concat(SpellQuoted(key),
                                           " belongs inside the 'response' "
                                           "block"));
         throw Recover();
       } else if (key == "full_well" || key == "base_iso" ||
                  key == "read_noise" || key == "dark_current" ||
                  key == "black_level" || key == "bits" || key == "gain") {
-        mDiags.error(keyLoc, smdl::concat(smdl::Quoted(key),
+        mDiags.error(keyLoc, smdl::concat(SpellQuoted(key),
                                           " belongs inside the 'detector' "
                                           "block"));
         throw Recover();
       } else {
         mDiags.error(
             keyLoc,
-            smdl::concat("unknown sensor setting ", smdl::Quoted(key),
+            smdl::concat("unknown sensor setting ", SpellQuoted(key),
                          " (expected name, pixels, pitch, size, response, "
                          "detector, readout, or readout_direction)"));
         throw Recover();
@@ -259,14 +259,13 @@ private:
           PITCH_TOLERANCE * std::max(pitch.x, pitch.y)) {
         mDiags
             .error(sizeLoc,
-                   smdl::concat(
-                       "'size' ", smdl::Brief(sizeMM.x, 6), " by ",
-                       smdl::Brief(sizeMM.y, 6), " mm over ", sensor.pixels.x,
-                       " by ", sensor.pixels.y, " pixels gives a pitch of ",
-                       smdl::Brief(pitch.x, 5), " by ", smdl::Brief(pitch.y, 5),
-                       " um, which is not square"))
-            .note({}, smdl::concat("state 'pitch ", smdl::Brief(pitch.x, 5),
-                                   " ", smdl::Brief(pitch.y, 5),
+                   smdl::concat("'size' ", SpellDimensions(sizeMM, 3),
+                                " mm over ", SpellDimensions(sensor.pixels),
+                                " pixels gives a pitch of ",
+                                SpellDimensions(pitch, 3),
+                                " um, which is not square"))
+            .note({}, smdl::concat("state 'pitch ", SpellFloat(pitch.x, 5), " ",
+                                   SpellFloat(pitch.y, 5),
                                    "' to mean it, or fix the size"));
         throw Recover();
       }
@@ -306,9 +305,9 @@ private:
         } else if (word == "qe") {
           response.kind = ResponseKind::QE;
         } else {
-          mDiags.error(keyLoc, smdl::concat("unknown response kind ",
-                                            smdl::Quoted(word),
-                                            " (expected relative or qe)"));
+          mDiags.error(keyLoc,
+                       smdl::concat("unknown response kind ", SpellQuoted(word),
+                                    " (expected relative or qe)"));
           throw Recover();
         }
       } else if (key == "peak_qe") {
@@ -368,10 +367,10 @@ private:
             .note({}, "state it in the 'sensor' block, one level up");
         throw Recover();
       } else {
-        mDiags.error(keyLoc, smdl::concat("unknown response setting ",
-                                          smdl::Quoted(key),
-                                          " (expected kind, peak_qe, band, "
-                                          "cfa, rgb, or crosstalk)"));
+        mDiags.error(keyLoc,
+                     smdl::concat("unknown response setting ", SpellQuoted(key),
+                                  " (expected kind, peak_qe, band, "
+                                  "cfa, rgb, or crosstalk)"));
         throw Recover();
       }
     });
@@ -390,7 +389,7 @@ private:
       const std::optional<size_t> index{response.bandIndex(tileNames[i])};
       if (!index) {
         mDiags.error(tileLocs[i],
-                     smdl::concat("the tile names ", smdl::Quoted(tileNames[i]),
+                     smdl::concat("the tile names ", SpellQuoted(tileNames[i]),
                                   ", which is not a band of this response"));
         throw Recover();
       }
@@ -402,7 +401,7 @@ private:
         const std::optional<size_t> index{response.bandIndex(rgbNames[i])};
         if (!index) {
           mDiags.error(rgbLocs[i],
-                       smdl::concat("'rgb' names ", smdl::Quoted(rgbNames[i]),
+                       smdl::concat("'rgb' names ", SpellQuoted(rgbNames[i]),
                                     ", which is not a band of "
                                     "this response"));
           throw Recover();
@@ -419,7 +418,7 @@ private:
         if (!index) {
           mDiags.error(leakLocs[i],
                        smdl::concat("'crosstalk' names ",
-                                    smdl::Quoted(leakNames[i]),
+                                    SpellQuoted(leakNames[i]),
                                     ", which is not a band of this response"));
           throw Recover();
         }
@@ -428,7 +427,7 @@ private:
           mDiags
               .error(leakLocs[i],
                      smdl::concat("'crosstalk' states band ",
-                                  smdl::Quoted(leakNames[i]), " twice"))
+                                  SpellQuoted(leakNames[i]), " twice"))
               .note(leakLocs[j], "the first one is here");
           throw Recover();
         }
@@ -458,7 +457,7 @@ private:
         .error(crosstalkLoc,
                smdl::concat("this response cannot carry a leak that large: "
                             "the crosstalk-free curves it implies fall to ",
-                            smdl::Brief(floor, 3),
+                            SpellFloat(floor, 3),
                             " of the largest stated value"))
         .note({}, "a measured curve is what the whole array reads at once, "
                   "so it already carries whatever charge crosses between "
@@ -466,7 +465,7 @@ private:
                   "transport for what is the color filter's own "
                   "transmission")
         .note({}, smdl::concat("these curves carry a leak of up to ",
-                               smdl::Brief(largestUniformLeak(response), 3),
+                               SpellFloat(largestUniformLeak(response), 3),
                                " in every band"));
     throw Recover();
   }
@@ -487,16 +486,15 @@ private:
     ResponseBand band{};
     band.name = mToken.text;
     if (response.bandIndex(band.name)) {
-      mDiags.error(location(), smdl::concat("band ", smdl::Quoted(band.name),
+      mDiags.error(location(), smdl::concat("band ", SpellQuoted(band.name),
                                             " is declared twice"));
       throw Recover();
     }
     advance();
     if (mToken.kind != Token::OPEN) {
-      mDiags.error(
-          location(),
-          smdl::concat("expected '{' after ",
-                       smdl::Quoted(smdl::concat("band ", band.name))));
+      mDiags.error(location(),
+                   smdl::concat("expected '{' after ",
+                                SpellQuoted(smdl::concat("band ", band.name))));
       throw Recover();
     }
     advance(); // '{'
@@ -509,8 +507,8 @@ private:
       if (mToken.kind != Token::WORD || !tryNumber(mToken, value)) {
         mDiags.error(location(), smdl::concat("expected a number or '}' in "
                                               "band ",
-                                              smdl::Quoted(band.name), ", got ",
-                                              smdl::Quoted(mToken.text)));
+                                              SpellQuoted(band.name), ", got ",
+                                              SpellQuoted(mToken.text)));
         throw Recover();
       }
       values.push_back(value);
@@ -521,13 +519,13 @@ private:
       mDiags.error(bandLoc,
                    smdl::concat("expected wavelength and value pairs "
                                 "in band ",
-                                smdl::Quoted(band.name), ", got ",
-                                smdl::Counted(values.size(), "number")));
+                                SpellQuoted(band.name), ", got ",
+                                SpellCounted(values.size(), "number")));
       throw Recover();
     }
     if (values.size() < 4) {
       mDiags.error(bandLoc, smdl::concat("expected at least two pairs in band ",
-                                         smdl::Quoted(band.name),
+                                         SpellQuoted(band.name),
                                          " (a curve needs two knots)"));
       throw Recover();
     }
@@ -537,24 +535,23 @@ private:
       if (!(std::isfinite(wavelength) && wavelength > 0)) {
         mDiags.error(bandLoc, smdl::concat("expected a positive wavelength in "
                                            "nanometers in band ",
-                                           smdl::Quoted(band.name)));
+                                           SpellQuoted(band.name)));
         throw Recover();
       }
       if (i > 0 && !(wavelength > band.wavelengths.back())) {
         mDiags.error(bandLoc,
                      smdl::concat("expected ascending wavelengths in band ",
-                                  smdl::Quoted(band.name), " (",
-                                  smdl::Brief(wavelength, 6), " nm follows ",
-                                  smdl::Brief(band.wavelengths.back(), 6),
-                                  ")"));
+                                  SpellQuoted(band.name), " (",
+                                  SpellFloat(wavelength, 6), " nm follows ",
+                                  SpellFloat(band.wavelengths.back(), 6), ")"));
         throw Recover();
       }
       if (!(std::isfinite(value) && value >= 0)) {
         mDiags.error(bandLoc,
                      smdl::concat("expected a finite nonnegative "
                                   "value at ",
-                                  smdl::Brief(wavelength, 6), " nm in band ",
-                                  smdl::Quoted(band.name)));
+                                  SpellFloat(wavelength, 6), " nm in band ",
+                                  SpellQuoted(band.name)));
         throw Recover();
       }
       band.wavelengths.push_back(wavelength);
@@ -582,7 +579,7 @@ private:
       if (!isIdentifier(name)) {
         mDiags.error(nameLoc,
                      smdl::concat("expected a band name in 'crosstalk', got ",
-                                  smdl::Quoted(name)));
+                                  SpellQuoted(name)));
         throw Recover();
       }
       names.push_back(name);
@@ -597,7 +594,7 @@ private:
     if (!(std::isfinite(value) && value >= 0 && value < CROSSTALK_MAX_LEAK)) {
       mDiags.error(keyLoc,
                    smdl::concat("expected a 'crosstalk' leak in [0, ",
-                                smdl::Brief(CROSSTALK_MAX_LEAK, 4),
+                                SpellFloat(CROSSTALK_MAX_LEAK, 4),
                                 "), the fraction of a pixel's charge each "
                                 "one of its four neighbors collects"));
       throw Recover();
@@ -621,7 +618,7 @@ private:
                                              const LayoutLocation &keyLoc) {
       if (key != "row") {
         mDiags.error(keyLoc, smdl::concat("expected 'row' in 'cfa', got ",
-                                          smdl::Quoted(key)));
+                                          SpellQuoted(key)));
         throw Recover();
       }
       size_t numColumns{};
@@ -629,7 +626,7 @@ private:
         if (!isIdentifier(mToken.text)) {
           mDiags.error(location(), smdl::concat("expected a band name in the "
                                                 "row, got ",
-                                                smdl::Quoted(mToken.text)));
+                                                SpellQuoted(mToken.text)));
           throw Recover();
         }
         names.push_back(mToken.text);
@@ -647,7 +644,7 @@ private:
         mDiags.error(
             keyLoc,
             smdl::concat("expected ",
-                         smdl::Counted(response.cfaColumns, "band name"),
+                         SpellCounted(response.cfaColumns, "band name"),
                          " in this row, as in the first, got ", numColumns));
         throw Recover();
       }
@@ -674,7 +671,7 @@ private:
         if (!(value >= 0)) {
           mDiags.error(settingLoc,
                        smdl::concat("expected a nonnegative number for ",
-                                    smdl::Quoted(key)));
+                                    SpellQuoted(key)));
           throw Recover();
         }
         return value;
@@ -722,7 +719,7 @@ private:
       } else {
         mDiags.error(
             settingLoc,
-            smdl::concat("unknown detector setting ", smdl::Quoted(key),
+            smdl::concat("unknown detector setting ", SpellQuoted(key),
                          " (expected base_iso, full_well, read_noise, "
                          "dark_current, reference_temperature, "
                          "doubling_temperature, black_level, bits, gain, or "
@@ -928,7 +925,7 @@ std::string resolveSensorFileName(const std::string &stated,
   // meaning went.
   if (std::filesystem::path(stated).extension() == RESPONSE_EXTENSION)
     throw smdl::Error(smdl::concat(
-        "The camera file's 'sensor' ", smdl::QuotedPath(stated),
+        "The camera file's 'sensor' ", SpellFilePath(stated),
         " names a '.response' file, a format that no longer exists: the "
         "response is now the 'response' block of a '.sensor' file, which "
         "holds the sensor's 'pixels' and 'pitch' beside it (see "

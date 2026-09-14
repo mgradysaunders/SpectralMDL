@@ -42,7 +42,7 @@ private:
   void parseStatement() {
     if (mToken.kind != Token::WORD) {
       mDiags.error(location(), smdl::concat("expected a directive, got ",
-                                            smdl::Quoted(mToken.text)));
+                                            SpellQuoted(mToken.text)));
       throw Recover();
     }
     if (mToken.text == "asset") {
@@ -66,7 +66,7 @@ private:
     } else {
       LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
-                                                smdl::Quoted(mToken.text)))};
+                                                SpellQuoted(mToken.text)))};
       if (mToken.text == CAMERA_FILE_KEYWORD) {
         error.note({}, "'camera' belongs in a '.camera' file, which the render "
                        "finds beside the layout or takes from '-camera'");
@@ -82,7 +82,7 @@ private:
                      smdl::suggestNearest(mToken.text, TOP_LEVEL_KEYWORDS)};
                  !nearest.empty()) {
         error.note({},
-                   smdl::concat("did you mean ", smdl::Quoted(nearest), "?"));
+                   smdl::concat("did you mean ", SpellQuoted(nearest), "?"));
       }
       throw Recover();
     }
@@ -101,7 +101,7 @@ private:
     if (const LayoutLocation previous{findDeclaration(decl.name, &decl)}) {
       mDiags
           .error(decl.nameLoc, smdl::concat("redeclaration of asset ",
-                                            smdl::Quoted(decl.name)))
+                                            SpellQuoted(decl.name)))
           .note(previous, "previous declaration is here");
       mDocument.assets.pop_back();
       throw Recover();
@@ -128,7 +128,7 @@ private:
                      smdl::concat("expected a quoted path, or one of the "
                                   "shapes 'sphere', 'box', 'disk', "
                                   "'cylinder', or 'cone', after '=', got ",
-                                  smdl::Quoted(mToken.text)));
+                                  SpellQuoted(mToken.text)));
         throw Recover();
       }
       advance();
@@ -142,7 +142,7 @@ private:
       if (decl.materials.all.empty())
         mDiags.error(decl.nameLoc,
                      smdl::concat("the ", decl.primitive.name(), " asset ",
-                                  smdl::Quoted(decl.name),
+                                  SpellQuoted(decl.name),
                                   " needs 'material <name>' in its block"));
       if (!decl.materials.bySlot.empty())
         mDiags.error(decl.nameLoc, smdl::concat("a ", decl.primitive.name(),
@@ -159,7 +159,7 @@ private:
         // Analytic shapes have no objects to pick, no polygons to refine,
         // and displacement would need vertices to move.
         if (decl.primitive.isActive()) {
-          mDiags.error(opLoc, smdl::concat(smdl::Quoted(op),
+          mDiags.error(opLoc, smdl::concat(SpellQuoted(op),
                                            " applies to a mesh file, but this "
                                            "asset is a ",
                                            decl.primitive.name()));
@@ -178,7 +178,7 @@ private:
       } else if (op == "radius" || op == "height" || op == "size") {
         if (!decl.primitive.isActive()) {
           mDiags.error(opLoc,
-                       smdl::concat(smdl::Quoted(op),
+                       smdl::concat(SpellQuoted(op),
                                     " is a shape parameter, and this asset "
                                     "is a file"));
           throw Recover();
@@ -187,7 +187,7 @@ private:
             (op == "height" && !decl.primitive.hasHeight()) ||
             (op == "size" && !decl.primitive.hasSize())) {
           mDiags.error(opLoc, smdl::concat("a ", decl.primitive.name(),
-                                           " has no ", smdl::Quoted(op)));
+                                           " has no ", SpellQuoted(op)));
           throw Recover();
         }
         if (op == "size") {
@@ -207,7 +207,7 @@ private:
         // which is never one.
         if (decl.primitive.isActive()) {
           mDiags.error(opLoc,
-                       smdl::concat(smdl::Quoted(op),
+                       smdl::concat(SpellQuoted(op),
                                     " applies to a curves file, but this "
                                     "asset is a ",
                                     decl.primitive.name()));
@@ -248,7 +248,7 @@ private:
         throw Recover();
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         mDiags.error(opLoc,
-                     smdl::concat("unknown asset operation ", smdl::Quoted(op),
+                     smdl::concat("unknown asset operation ", SpellQuoted(op),
                                   decl.primitive.isActive()
                                       ? " (expected radius, height, size, "
                                         "material, caster, light, translate, "
@@ -364,7 +364,7 @@ private:
     if (const LayoutLocation previous{findDeclaration(decl.name, &decl)}) {
       mDiags
           .error(decl.nameLoc, smdl::concat("redeclaration of light ",
-                                            smdl::Quoted(decl.name)))
+                                            SpellQuoted(decl.name)))
           .note(previous, "previous declaration is here");
       mDocument.lights.pop_back();
       throw Recover();
@@ -398,7 +398,7 @@ private:
       mDiags.error(location(),
                    smdl::concat("expected 'point', 'spot', 'profile', 'rect', "
                                 "or 'disk' after '=', got ",
-                                smdl::Quoted(mToken.text)));
+                                SpellQuoted(mToken.text)));
       throw Recover();
     }
     if (mToken.kind == Token::OPEN) parseLightBody(decl);
@@ -427,7 +427,7 @@ private:
       } else if (op == "angle" || op == "blend") {
         if (!isSpot) {
           mDiags.error(opLoc,
-                       smdl::concat(smdl::Quoted(op),
+                       smdl::concat(SpellQuoted(op),
                                     " applies to a spot, and this light is "
                                     "a ",
                                     decl.kindName()));
@@ -490,7 +490,7 @@ private:
         // other blocks it is not offered as a transform here; a shape is
         // stretched by the place line's 'scale' instead.
         mDiags.error(opLoc,
-                     smdl::concat("unknown light setting ", smdl::Quoted(op),
+                     smdl::concat("unknown light setting ", SpellQuoted(op),
                                   " (expected power, temperature, color, ",
                                   isSpot      ? "angle, blend, "
                                   : isProfile ? "scale, "
@@ -520,7 +520,7 @@ private:
     if (const LayoutLocation previous{findDeclaration(group.name, &group)}) {
       mDiags
           .error(group.nameLoc, smdl::concat("redeclaration of group ",
-                                             smdl::Quoted(group.name)))
+                                             SpellQuoted(group.name)))
           .note(previous, "previous declaration is here");
       mDocument.groups.pop_back();
       throw Recover();
@@ -542,7 +542,7 @@ private:
       }
       LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("expected 'place' or '}', got ",
-                                                smdl::Quoted(mToken.text)))};
+                                                SpellQuoted(mToken.text)))};
       if (mToken.kind == Token::WORD &&
           (mToken.text == "import" || mToken.text == "asset" ||
            mToken.text == "group" || mToken.text == "light"))
@@ -605,7 +605,7 @@ private:
         mDiags
             .warn(placement.asNameLoc,
                   smdl::concat("duplicate place name ",
-                               smdl::Quoted(placement.asName)))
+                               SpellQuoted(placement.asName)))
             .note(itr->second, "first placed here");
       advance();
     }
@@ -642,7 +642,7 @@ private:
         op == "displace" || op == "tube" || op == "ribbon" ||
         op == "radius_scale" || op == "animation") {
       mDiags.error(opLoc,
-                   smdl::concat(smdl::Quoted(op),
+                   smdl::concat(SpellQuoted(op),
                                 " is a property of what is loaded, so it "
                                 "belongs on the 'asset' declaration"));
       throw Recover();
@@ -698,7 +698,7 @@ private:
         std::string to{expect(Token::WORD, "an MDL material name after '='")};
         if (!variant.try_emplace(from, std::move(to)).second) {
           mDiags.error(pairLoc,
-                       smdl::concat("the material ", smdl::Quoted(from),
+                       smdl::concat("the material ", SpellQuoted(from),
                                     " is overridden twice in one variant"));
           throw Recover();
         }
@@ -740,7 +740,7 @@ private:
       advance(); // '='
       std::string to{expect(Token::WORD, "an MDL material name after '='")};
       if (!placement.overrides.try_emplace(from, std::move(to)).second) {
-        mDiags.error(opLoc, smdl::concat("the material ", smdl::Quoted(from),
+        mDiags.error(opLoc, smdl::concat("the material ", SpellQuoted(from),
                                          " is overridden twice in one place"));
         throw Recover();
       }
@@ -756,7 +756,7 @@ private:
     }
     if (!parseTransformOp(op, opLoc, placement.transform)) {
       mDiags.error(opLoc,
-                   smdl::concat("unknown place operation ", smdl::Quoted(op),
+                   smdl::concat("unknown place operation ", SpellQuoted(op),
                                 " (expected material, variant, caster, "
                                 "light, motion, offset, translate, scale, "
                                 "rotate, rotate_x, rotate_y, rotate_z, or "
@@ -836,7 +836,7 @@ private:
         mDiags.error(wordLoc,
                      smdl::concat("expected 'at' or a transform operation "
                                   "inside 'motion', got ",
-                                  smdl::Quoted(word),
+                                  SpellQuoted(word),
                                   " (translate, scale, rotate, rotate_x, "
                                   "rotate_y, rotate_z, or matrix)"));
         throw Recover();
@@ -858,7 +858,7 @@ private:
                          const LayoutLocation &opLoc, std::string_view word,
                          std::string_view where) {
     if (mark) {
-      mDiags.error(opLoc, smdl::concat(smdl::Quoted(word),
+      mDiags.error(opLoc, smdl::concat(SpellQuoted(word),
                                        " appears twice in one ", where));
       throw Recover();
     }
@@ -897,7 +897,7 @@ private:
           op == "radius_scale" || op == "animation") {
         mDiags
             .error(opLoc,
-                   smdl::concat(smdl::Quoted(op),
+                   smdl::concat(SpellQuoted(op),
                                 " is a property of what is loaded, so it "
                                 "belongs on an 'asset' declaration"))
             .note({}, "declare 'asset <name> = \"<path>\" { ... }' and "
@@ -913,7 +913,7 @@ private:
       }
       if (op == "motion" || op == "offset") {
         mDiags
-            .error(opLoc, smdl::concat(smdl::Quoted(op),
+            .error(opLoc, smdl::concat(SpellQuoted(op),
                                        " is a place operation, not an import "
                                        "operation"))
             .note({}, smdl::concat("declare the file as an asset and 'place' "
@@ -932,7 +932,7 @@ private:
                           "light", "import");
       } else if (!parseTransformOp(op, opLoc, placement.transform)) {
         mDiags.error(opLoc,
-                     smdl::concat("unknown import operation ", smdl::Quoted(op),
+                     smdl::concat("unknown import operation ", SpellQuoted(op),
                                   " (expected material, caster, light, "
                                   "translate, scale, rotate, rotate_x, "
                                   "rotate_y, rotate_z, or matrix)"));
@@ -955,7 +955,7 @@ private:
       std::string target{expect(Token::WORD, "an MDL material name after '='")};
       if (!materials.bySlot.try_emplace(slot, std::move(target)).second) {
         mDiags.error(opLoc,
-                     smdl::concat("the material slot ", smdl::Quoted(slot),
+                     smdl::concat("the material slot ", SpellQuoted(slot),
                                   " is assigned twice in one ", where));
         throw Recover();
       }
@@ -1000,7 +1000,7 @@ private:
       bool &saw{mToken.text == "loop" ? hasSeenLoop : hasSeenLinear};
       if (saw) {
         mDiags.error(location(),
-                     smdl::concat(smdl::Quoted(mToken.text),
+                     smdl::concat(SpellQuoted(mToken.text),
                                   " appears twice in one 'subdivide'"));
         throw Recover();
       }
@@ -1072,7 +1072,7 @@ private:
         sky.iblScale = positive(keyLoc, key, numbers<1>()[0]);
       } else {
         mDiags.error(keyLoc,
-                     smdl::concat("unknown sky setting ", smdl::Quoted(key),
+                     smdl::concat("unknown sky setting ", SpellQuoted(key),
                                   " (expected none, sun_zenith, sun_azimuth, "
                                   "visibility, water_vapor, scale, moon, "
                                   "moon_distance, ibl, or ibl_scale)"));
@@ -1106,7 +1106,7 @@ private:
         haze.droplet = positive(keyLoc, key, numbers<1>()[0]);
       } else {
         mDiags.error(keyLoc,
-                     smdl::concat("unknown haze setting ", smdl::Quoted(key),
+                     smdl::concat("unknown haze setting ", SpellQuoted(key),
                                   " (expected none, visibility, scale_height, "
                                   "base_height, or droplet)"));
         throw Recover();

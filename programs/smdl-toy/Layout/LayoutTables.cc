@@ -63,9 +63,9 @@ void printObjectUsageRows(llvm::raw_ostream &os,
   size_t countWidth{};
   for (const auto &entry : usage) {
     names.push_back(smdl::concat(std::string(2 * entry.depth, ' '),
-                                 smdl::Quoted(entry.path)));
+                                 SpellQuoted(entry.path)));
     counts.push_back(smdl::concat(
-        smdl::Counted(entry.triangleCount, "tri"),
+        SpellCounted(entry.triangleCount, "tri"),
         entry.instanceCount == 1
             ? std::string()
             : smdl::concat(" in ", entry.instanceCount, " meshes"),
@@ -83,7 +83,7 @@ void printObjectUsageRows(llvm::raw_ostream &os,
     os.indent(countWidth - counts[i].size() + 2);
     if (entry.materialNames.size() == 1) {
       llvm::WithColor(os, llvm::HighlightColor::Attribute)
-          << smdl::concat(smdl::Quoted(entry.materialNames[0]));
+          << smdl::concat(SpellQuoted(entry.materialNames[0]));
     } else {
       llvm::WithColor(os, llvm::HighlightColor::Note)
           << smdl::concat(entry.materialNames.size(), " materials");
@@ -128,11 +128,11 @@ void printObjectTable(const Layout &layout) {
       const CurvesFile file{readCurvesFile(item.fileName)};
       os << smdl::concat(
           item.fileName, ": curves, ",
-          smdl::Counted(file.strandCount(), "strand"), ", ",
-          smdl::Counted(file.pointCount(), "point"), ", ",
+          SpellCounted(file.strandCount(), "strand"), ", ",
+          SpellCounted(file.pointCount(), "point"), ", ",
           CurvesFile::basisName(file.basis), " basis",
           file.isMoving()
-              ? smdl::concat(", ", smdl::Counted(file.keyCount(), "key"))
+              ? smdl::concat(", ", SpellCounted(file.keyCount(), "key"))
               : std::string(),
           file.hasRootUVs() ? ", root UVs" : "", "\n\n");
       continue;
@@ -144,15 +144,15 @@ void printObjectTable(const Layout &layout) {
     for (const auto &entry : usage)
       if (entry.depth == 0) numTriangles += entry.triangleCount;
     os << smdl::concat(item.fileName, ": ",
-                       smdl::Counted(usage.size(), "object"), ", ",
-                       smdl::Counted(numTriangles, "triangle"), "\n");
+                       SpellCounted(usage.size(), "object"), ", ",
+                       SpellCounted(numTriangles, "triangle"), "\n");
     if (!info.animations.empty()) {
       os << "  animations:";
       for (size_t i = 0; i < info.animations.size(); i++) {
         const ClipInfo &clip{info.animations[i]};
         os << (i == 0 ? " " : ", ")
-           << smdl::concat(smdl::Quoted(clip.name), " (",
-                           smdl::Brief(clip.duration, 3), " s)");
+           << smdl::concat(SpellQuoted(clip.name), " (",
+                           SpellFloat(clip.duration, 3), " s)");
       }
       os << '\n';
     }
@@ -263,9 +263,9 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
     for (const auto &fileName : seenFiles)
       os << (i++ == 0 ? "" : ", ") << fileName;
   }
-  os << smdl::concat(": ", smdl::Counted(usage.size(), "material"), " on ",
-                     smdl::Counted(numMeshes, "mesh", "meshes"), ", ",
-                     smdl::Counted(numInstances, "instance"), "\n");
+  os << smdl::concat(": ", SpellCounted(usage.size(), "material"), " on ",
+                     SpellCounted(numMeshes, "mesh", "meshes"), ", ",
+                     SpellCounted(numInstances, "instance"), "\n");
   if (usage.empty()) return;
   // Pad the name and count fields to a common width so the statuses line up
   // in a column, which is the thing being scanned for.
@@ -274,10 +274,10 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
   size_t nameWidth{};
   size_t countWidth{};
   for (const auto &entry : usage) {
-    names.push_back(smdl::concat(smdl::Quoted(entry.name)));
+    names.push_back(smdl::concat(SpellQuoted(entry.name)));
     counts.push_back(
-        smdl::concat(smdl::Counted(entry.meshCount, "mesh", "meshes"), ", ",
-                     smdl::Counted(entry.triangleCount, "tri")));
+        smdl::concat(SpellCounted(entry.meshCount, "mesh", "meshes"), ", ",
+                     SpellCounted(entry.triangleCount, "tri")));
     nameWidth = std::max(nameWidth, names.back().size());
     countWidth = std::max(countWidth, counts.back().size());
   }
@@ -307,7 +307,7 @@ void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
       os << (entry.name.empty()
                  ? std::string("    unnamed; give it a name in the layout")
                  : smdl::concat("    not an MDL identifier; try ",
-                                smdl::Quoted(toMDLIdentifier(entry.name))));
+                                SpellQuoted(toMDLIdentifier(entry.name))));
       os << '\n';
       continue;
     }
@@ -338,7 +338,7 @@ void dumpPlaces(const std::string &fileName) {
   const PlacesFile places{readPlacesFile(fileName)};
   llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat("# ", fileName, ": version ", places.version, ", ",
-                     smdl::Counted(places.transforms.size(), "record"),
+                     SpellCounted(places.transforms.size(), "record"),
                      places.isRigid ? ", rigid" : ", general",
                      places.isCompressed ? ", deflated" : "",
                      places.hasVariants() ? ", with a variant column" : "",
@@ -349,7 +349,7 @@ void dumpPlaces(const std::string &fileName) {
     os << "place thing matrix";
     for (int row = 0; row < 4; row++)
       for (int column = 0; column < 4; column++)
-        os << ' ' << smdl::concat(smdl::Precise(transform[column][row]));
+        os << ' ' << smdl::concat(SpellExact(transform[column][row]));
     if (places.hasVariants() && places.variants[i] != PlacesFile::NO_VARIANT)
       os << smdl::concat("  # variant ", places.variants[i]);
     os << '\n';
@@ -373,10 +373,10 @@ void dumpCurves(const std::string &fileName) {
       fileName, ": version ", file.version, ", ",
       CurvesFile::basisName(file.basis), " basis",
       file.isCompressed ? ", deflated" : "", "\n  ",
-      smdl::Counted(file.strandCount(), "strand"), ", ",
-      smdl::Counted(file.pointCount(), "point"),
+      SpellCounted(file.strandCount(), "strand"), ", ",
+      SpellCounted(file.pointCount(), "point"),
       file.hasRootUVs() ? ", with a root UV column" : "", "\n  ",
-      smdl::Counted(file.keyCount(), "key"),
+      SpellCounted(file.keyCount(), "key"),
       file.isMoving() ? smdl::concat(" from ", file.keyTimes.front(), " s to ",
                                      file.keyTimes.back(), " s")
                       : std::string(),
@@ -398,9 +398,8 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
       std::filesystem::path(layoutFileName).parent_path().string())};
   if (!diags.empty()) diags.printAll();
   if (diags.hasErrors())
-    throw smdl::Error(smdl::concat("Cannot pack ",
-                                   smdl::QuotedPath(layoutFileName), ": ",
-                                   diags.summary()));
+    throw smdl::Error(smdl::concat(
+        "Cannot pack ", SpellFilePath(layoutFileName), ": ", diags.summary()));
   PlacesFile places{};
   places.isRigid = options.isRigid;
   places.isCompressed = options.isCompressed;
@@ -415,14 +414,14 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
     if (placement.kind != LayoutPlacement::Kind::PLACE ||
         !placement.placesPath.empty())
       throw smdl::Error(smdl::concat(
-          "Cannot pack ", smdl::QuotedPath(layoutFileName),
+          "Cannot pack ", SpellFilePath(layoutFileName),
           ": every top-level placement must be an ordinary 'place'"));
     if (assetName.empty()) {
       assetName = placement.assetName;
     } else if (assetName != placement.assetName) {
       throw smdl::Error(smdl::concat(
-          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": it places ",
-          smdl::Quoted(assetName), " and ", smdl::Quoted(placement.assetName),
+          "Cannot pack ", SpellFilePath(layoutFileName), ": it places ",
+          SpellQuoted(assetName), " and ", SpellQuoted(placement.assetName),
           ", and a '.places' buffer scatters one asset or group"));
     }
     // A record carries a transform and a variant index and nothing
@@ -431,8 +430,8 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
     // and a scatter moves as a whole through the bulk place's own.
     const auto refuseMark{[&](const char *word) {
       throw smdl::Error(smdl::concat(
-          "Cannot pack ", smdl::QuotedPath(layoutFileName), ": a ",
-          smdl::Quoted(word),
+          "Cannot pack ", SpellFilePath(layoutFileName), ": a ",
+          SpellQuoted(word),
           " override on a place has no record to live in; mark the asset "
           "instead"));
     }};
@@ -440,7 +439,7 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
     if (placement.lightOverride) refuseMark("light");
     if (!placement.motion.empty())
       throw smdl::Error(smdl::concat(
-          "Cannot pack ", smdl::QuotedPath(layoutFileName),
+          "Cannot pack ", SpellFilePath(layoutFileName),
           ": a 'motion' track on a place has no record to live in; write it "
           "on the bulk place instead, where it moves the whole scatter"));
     places.transforms.push_back(placement.transform);
@@ -456,20 +455,20 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName,
   }
   if (places.transforms.empty())
     throw smdl::Error(smdl::concat("Cannot pack ",
-                                   smdl::QuotedPath(layoutFileName),
+                                   SpellFilePath(layoutFileName),
                                    ": it has no 'place' statements"));
   if (!anyVariant) places.variants.clear();
   writePlacesFile(outputFileName, places);
   // The wrapper the buffer wants to live under, ready to paste.
   llvm::raw_ostream &os{llvm::outs()};
   os << smdl::concat(
-      "Packed ", smdl::Counted(places.transforms.size(), "record"),
+      "Packed ", SpellCounted(places.transforms.size(), "record"),
       anyVariant
-          ? smdl::concat(" over ", smdl::Counted(variants.size(), "variant"))
+          ? smdl::concat(" over ", SpellCounted(variants.size(), "variant"))
           : std::string(),
       places.isRigid ? " as rigid records" : "",
       places.isCompressed ? ", deflated" : "", " into ",
-      smdl::QuotedPath(outputFileName), ". Scatter it with:\n\n");
+      SpellFilePath(outputFileName), ". Scatter it with:\n\n");
   const std::string relative{
       std::filesystem::path(outputFileName).filename().string()};
   os << smdl::concat("  place ", assetName, " * \"", relative, "\"");

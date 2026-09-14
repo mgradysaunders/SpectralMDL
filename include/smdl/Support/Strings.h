@@ -70,142 +70,198 @@ namespace smdl {
   return 0;
 }
 
-inline namespace string_markup {
+/// The spellings: how one value is written into a message, a diagnostic,
+/// or a text file, each a small class that `concat` recognizes by its
+/// `appendTo()` and writes in one place, so that the same kind of value
+/// reads the same way whoever wrote the line.
+///
+/// Three of them spell a number, and which one to reach for is the whole
+/// question:
+///
+/// * `SpellFloat` is what a message wants, and is what `concat` gives a
+///   bare `float` or `double` anyway, so a message rarely names it.
+/// * `SpellFixed` is `SpellFloat` with the exponent refused, for a table
+///   or a column that must not sprout one mid-row.
+/// * `SpellExact` is for a number something will read back: a header
+///   field, a re-parsable dump, a JSON number, a key compared as text.
+inline namespace spelling {
 
 /// A double-quoted string for use with `concat`. Everything a message
-/// quotes goes through this or `QuotedPath`, so that the quoting does
+/// quotes goes through this or `SpellFilePath`, so that the quoting does
 /// not vary with who wrote the message.
-class SMDL_EXPORT Quoted final {
+class SMDL_EXPORT SpellQuoted final {
 public:
-  constexpr Quoted(std::string_view str) : str(str) {}
+  constexpr SpellQuoted(std::string_view str) : mStr(str) {}
   void appendTo(std::string &result) const;
 
-public:
-  std::string_view str{};
+private:
+  std::string_view mStr{};
 };
 
 /// A quoted path string for use with `concat`. This quotes like
-/// `Quoted` and differs only in shortening the path first, as
+/// `SpellQuoted` and differs only in shortening the path first, as
 /// `bestPathForPrinting()` shortens it.
-class SMDL_EXPORT QuotedPath final {
+class SMDL_EXPORT SpellFilePath final {
 public:
-  constexpr QuotedPath(std::string_view str) : str(str) {}
+  constexpr SpellFilePath(std::string_view str) : mStr(str) {}
   void appendTo(std::string &result) const;
 
-public:
-  std::string_view str{};
+private:
+  std::string_view mStr{};
 };
 
 /// A location in a source for use with `concat`, written the one way every
 /// diagnostic writes one: `[file:line:col]`, or `[file:line]` when the
-/// column is zero, meaning unknown. The file shortens as `QuotedPath`
+/// column is zero, meaning unknown. The file shortens as `SpellFilePath`
 /// shortens it, unless `isPath` says the name is not a path at all, like
 /// the `<builtin ::df>` of a module with no file.
-class SMDL_EXPORT LocationMarkup final {
+class SMDL_EXPORT SpellLocation final {
 public:
-  constexpr LocationMarkup(std::string_view name, uint32_t lineNo,
-                           uint32_t charNo = 0, bool isPath = true)
-      : name(name), lineNo(lineNo), charNo(charNo), isPath(isPath) {}
+  constexpr SpellLocation(std::string_view name, uint32_t lineNo,
+                          uint32_t charNo = 0, bool isPath = true)
+      : mName(name), mLineNo(lineNo), mCharNo(charNo), mIsPath(isPath) {}
   void appendTo(std::string &result) const;
 
-public:
-  std::string_view name{};
-
-  uint32_t lineNo{};
-
-  uint32_t charNo{};
-
-  bool isPath{true};
+private:
+  std::string_view mName{};
+  uint32_t mLineNo{};
+  uint32_t mCharNo{};
+  bool mIsPath{true};
 };
 
-/// A number written with enough digits to read back exactly, for use
-/// with `concat`. This is what a number something will parse again
-/// needs: nine significant digits round-trip every `float`, and trailing
-/// zeros are dropped, so the small integers a text format is mostly made
-/// of still read as themselves.
-class SMDL_EXPORT Precise final {
-public:
-  constexpr Precise(double value) : value(value) {}
-  void appendTo(std::string &result) const;
-
-public:
-  double value{};
-};
-
-/// A number written to a few significant digits, for use with `concat`.
-///
-/// This is what a log line or a diagnostic wants. `concat` sends a bare
-/// arithmetic value through `std::to_string`, which is six decimal
-/// places whatever the magnitude, so a scene height reads as `0.000000`
-/// and a plane extent as `1000.000000`; those are the sites this is for.
+/// A number written to a few significant digits, for use with `concat`:
+/// what a log line or a diagnostic wants, and what `concat` spells a
+/// bare `float` or `double` as.
 ///
 /// The digits are SIGNIFICANT digits, not decimal places, and six is the
 /// default because that is where the ordinary run of scene-scale numbers
 /// stops going exponential: `1000` stays `1000` and only past a million
 /// does a magnitude earn an exponent. Ask for fewer where the quantity
 /// is one a reader skims rather than reads, such as a duration.
-class SMDL_EXPORT Brief final {
+class SMDL_EXPORT SpellFloat final {
 public:
-  constexpr Brief(double value, int digits = 6)
-      : value(value), digits(digits) {}
+  constexpr SpellFloat(double value, int digits = 6)
+      : mValue(value), mDigits(digits) {}
   void appendTo(std::string &result) const;
 
-public:
-  double value{};
+private:
+  double mValue{};
+  int mDigits{6}; ///< The significant digits, clamped to `[1, 17]`.
+};
 
-  /// The significant digits, clamped to `[1, 17]` when written.
-  int digits{6};
+/// A number written to a few significant digits and never as an
+/// exponent, for use with `concat`.
+///
+/// The digits mean what they mean in `SpellFloat`, and the decimal
+/// places follow from the magnitude, so nine digits of `1.23456789e-12`
+/// is the twenty places of `0.00000000000123456789` rather than an
+/// exponent. Unlike `SpellFloat`, the places stay put where a value
+/// ends in zeros, three digits of `2` being `2.00`: this is for a
+/// column a reader scans down, where an exponential row is harder to
+/// read than a long one and a ragged one is harder than either.
+class SMDL_EXPORT SpellFixed final {
+public:
+  constexpr SpellFixed(double value, int digits = 9)
+      : mValue(value), mDigits(digits) {}
+  void appendTo(std::string &result) const;
+
+private:
+  double mValue{};
+  int mDigits{9}; ///< The significant digits, clamped to `[1, 17]`.
+};
+
+/// A number written so that it reads back as itself, for use with
+/// `concat`: a header field, a dump something parses again, a JSON
+/// number, a key compared as text.
+///
+/// The spelling is the SHORTEST one that reads back exactly, by the
+/// length of the string rather than the count of digits, so `600` wins
+/// over `6e+02`. A `float` is spelled as the float it is: the same value
+/// widened to `double` and written to nine digits reads `0.0120000001`
+/// where the float alone reads `0.012`, which is why the two overloads
+/// are separate.
+class SMDL_EXPORT SpellExact final {
+public:
+  constexpr SpellExact(float value) : mValue(value), mIsFloat(true) {}
+  constexpr SpellExact(double value) : mValue(value) {}
+  void appendTo(std::string &result) const;
+
+private:
+  double mValue{};
+  bool mIsFloat{};
+};
+
+/// A fraction written as a percent for use with `concat`, as in `12.3%`:
+/// one takes the whole, and a ratio past one or below zero is written as
+/// what it is, since a corner brighter than the middle is a real
+/// measurement.
+class SMDL_EXPORT SpellPercent final {
+public:
+  constexpr SpellPercent(double value, int decimals = 1)
+      : mValue(value), mDecimals(decimals) {}
+  void appendTo(std::string &result) const;
+
+private:
+  double mValue{};
+  int mDecimals{1}; ///< The decimal places, clamped to `[0, 9]`.
 };
 
 /// A size in bytes, for use with `concat`: whole bytes below a KiB, and
 /// otherwise the largest binary unit that keeps the number at least one,
 /// to three significant digits, as in `2.67 MiB`.
-class SMDL_EXPORT Bytes final {
+class SMDL_EXPORT SpellByteSize final {
 public:
-  constexpr Bytes(size_t count) : count(count) {}
+  constexpr SpellByteSize(size_t count) : mCount(count) {}
   void appendTo(std::string &result) const;
 
-public:
-  size_t count{};
+private:
+  size_t mCount{};
 };
 
 /// A count and the noun it counts, for use with `concat`: the noun is
 /// singular for exactly one and plural otherwise, as in `1 image` and
 /// `0 images`.
-class SMDL_EXPORT Counted final {
+class SMDL_EXPORT SpellCounted final {
 public:
-  constexpr Counted(size_t count, std::string_view singular,
-                    std::string_view plural = {})
-      : count(count), singular(singular), plural(plural) {}
+  constexpr SpellCounted(size_t count, std::string_view singular,
+                         std::string_view plural = {})
+      : mCount(count), mSingular(singular), mPlural(plural) {}
   void appendTo(std::string &result) const;
 
-public:
-  size_t count{};
-
-  std::string_view singular{};
-
-  /// The plural, if it is not the singular followed by `s`.
-  std::string_view plural{};
+private:
+  size_t mCount{};
+  std::string_view mSingular{};
+  std::string_view mPlural{};
 };
 
-} // namespace string_markup
+} // namespace spelling
 
 #if !SMDL_DOXYGEN
 namespace detail {
 
+/// Does `T` spell itself, so that `concat` writes it through
+/// `appendTo()` rather than appending it? Every spelling is recognized
+/// this way rather than by name, so that a program may add one of its
+/// own and `concat` takes it.
+template <typename T, typename = void> struct HasAppendTo : std::false_type {};
+
+template <typename T>
+struct HasAppendTo<T, std::void_t<decltype(std::declval<const T &>().appendTo(
+                          std::declval<std::string &>()))>> : std::true_type {};
+
 template <typename T, typename... Ts>
 inline void doConcat(std::string &str, T &&value, Ts &&...values) {
   using DecayT = std::decay_t<T>;
-  if constexpr (std::is_arithmetic_v<DecayT>) {
-    str += std::to_string(value);
-  } else if constexpr (std::is_same_v<DecayT, Quoted> ||
-                       std::is_same_v<DecayT, QuotedPath> ||
-                       std::is_same_v<DecayT, LocationMarkup> ||
-                       std::is_same_v<DecayT, Precise> ||
-                       std::is_same_v<DecayT, Brief> ||
-                       std::is_same_v<DecayT, Bytes> ||
-                       std::is_same_v<DecayT, Counted>) {
+  if constexpr (HasAppendTo<DecayT>::value) {
     value.appendTo(str);
+  } else if constexpr (std::is_floating_point_v<DecayT>) {
+    // One rule for a number in a message: the significant digits
+    // `SpellFloat` writes, rather than the six decimal places
+    // `std::to_string` writes whatever the magnitude, which spells a
+    // scene height `0.000000` and a plane extent `1000.000000`.
+    SpellFloat(value).appendTo(str);
+  } else if constexpr (std::is_arithmetic_v<DecayT>) {
+    str += std::to_string(value);
   } else {
     str += value;
   }

@@ -1,19 +1,26 @@
 /// \file
 /// The vocabulary every part of the program shares: the vector and
 /// matrix aliases, the math constants, the invalid index, the bounding
-/// box, and the ray. Nothing here depends on Embree, assimp, or the
-/// compiler, so the format readers include it without pulling in the
-/// renderer.
+/// box, the ray, and the two spellings a message writes a pair of sizes
+/// and a range of wavelengths with. Nothing here depends on Embree,
+/// assimp, or the compiler, so the format readers include it without
+/// pulling in the renderer.
 #pragma once
 
 #include <algorithm>
 #include <cstdint>
+#include <type_traits>
 
 #include "smdl/Support/Macros.h"
+#include "smdl/Support/Strings.h"
 #include "smdl/Support/VectorMath.h"
 
 using namespace smdl::vector_types;
 using namespace smdl::matrix_types;
+
+// The spellings, which every message the program writes goes through.
+// See `smdl::spelling`.
+using namespace smdl::spelling;
 
 // The math constants the programs spell unqualified. They live in the
 // library so that host and library agree on them by construction.
@@ -64,6 +71,7 @@ public:
 /// The self-intersection offset, in scene units.
 constexpr float EPS = 0.0001f;
 
+// TODO Lift this into `include/smdl/Support/VectorMath.h`
 /// The area of the triangle on the given corners, in whatever space
 /// they are given in. Zero for a degenerate triangle, never negative.
 [[nodiscard]] SMDL_ALWAYS_INLINE float
@@ -111,7 +119,65 @@ public:
 /// window changes nothing about which band a pixel sees. The rule a
 /// sensor's color filter array and the wavelength grids it implies both
 /// address by.
-[[nodiscard]] inline size_t tileIndexAt(size_t columns, size_t rows, size_t x,
-                                        size_t y) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE size_t tileIndexAt(size_t columns, size_t rows,
+                                                    size_t x,
+                                                    size_t y) noexcept {
   return (y % rows) * columns + x % columns;
 }
+
+/// Two sizes as one measurement: `1280x720`, `35.82x23.88`. Every
+/// message spells a pair of sizes this way, so that a pixel count, a
+/// filter tile, and a frame in millimeters all read alike.
+class SpellDimensions final {
+public:
+  /// Whole sizes, as pixels and tiles are counted. Every count a
+  /// picture has is exact in the `double` they are kept in.
+  template <typename T, typename U,
+            typename = std::enable_if_t<std::is_integral_v<T> &&
+                                        std::is_integral_v<U>>>
+  constexpr SpellDimensions(T x, U y) noexcept
+      : mX(double(x)), mY(double(y)), mDecimals(0) {}
+
+  /// Measured sizes, each to the same decimal places, so that the two
+  /// line up however their magnitudes differ.
+  constexpr SpellDimensions(double x, double y, int decimals = 1) noexcept
+      : mX(x), mY(y), mDecimals(decimals) {}
+
+  constexpr SpellDimensions(int2 dims) noexcept
+      : SpellDimensions(dims.x, dims.y) {}
+
+  constexpr SpellDimensions(float2 dims, int decimals = 1) noexcept
+      : SpellDimensions(double(dims.x), double(dims.y), decimals) {}
+
+  constexpr SpellDimensions(double2 dims, int decimals = 1) noexcept
+      : SpellDimensions(dims.x, dims.y, decimals) {}
+
+  void appendTo(std::string &result) const;
+
+private:
+  double mX{};
+
+  double mY{};
+
+  int mDecimals{};
+};
+
+/// The span of wavelengths something covers, in nanometers and with the
+/// unit: `380.0-780.0 nm`. The one spelling for the range a grid, a
+/// response band, or a traced lens reaches over.
+class SpellWavelengthRange final {
+public:
+  constexpr SpellWavelengthRange(double wavelengthMin, double wavelengthMax,
+                                 int decimals = 1) noexcept
+      : mWavelengthMin(wavelengthMin), mWavelengthMax(wavelengthMax),
+        mDecimals(decimals) {}
+
+  void appendTo(std::string &result) const;
+
+private:
+  double mWavelengthMin{};
+
+  double mWavelengthMax{};
+
+  int mDecimals{1};
+};

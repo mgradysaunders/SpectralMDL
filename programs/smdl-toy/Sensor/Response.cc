@@ -13,11 +13,11 @@
 namespace {
 
 // Nine significant digits, which is every bit of a float, so that the
-// hash changes exactly when a knot does.
+// hash changes exactly when a knot does. Deliberately not `SpellExact`,
+// whose shorter spelling of the same number would change every hash and
+// refuse every film rendered before it.
 void appendNumber(std::string &text, double value) {
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", value);
-  text += buffer;
+  SpellFloat(value, 9).appendTo(text);
   text += ' ';
 }
 
@@ -194,8 +194,8 @@ WavelengthCells WavelengthDensity::cells(size_t count) const {
 }
 
 std::string spellTracedSpan(const TracedSpan &span) {
-  return smdl::concat(smdl::Brief(span.lo, 4), "-", smdl::Brief(span.hi, 4),
-                      " nm, median ", smdl::Brief(span.median, 4));
+  return smdl::concat(SpellWavelengthRange(span.lo, span.hi), ", median ",
+                      SpellFloat(span.median, 4));
 }
 
 std::optional<TracedSpan> tracedSpanOf(const ResponseBand &band,
@@ -298,19 +298,18 @@ Response::Response(const ResponseSettings &settings,
     const double whole{projection.integrate(knots.front(), knots.back())};
     const double inside{projection.integrate(gridLo, gridHi)};
     if (!(inside > 0))
-      throw smdl::Error(smdl::concat(
-          "Response band ", smdl::Quoted(band.name), " (",
-          smdl::Brief(knots.front(), 6), "-", smdl::Brief(knots.back(), 6),
-          " nm) lies outside the wavelength grid (", smdl::Brief(gridLo, 6),
-          "-", smdl::Brief(gridHi, 6),
-          " nm); widen -wavelength-range to "
-          "cover it"));
+      throw smdl::Error(
+          smdl::concat("Response band ", SpellQuoted(band.name), " (",
+                       SpellWavelengthRange(knots.front(), knots.back()),
+                       ") lies outside the wavelength grid (",
+                       SpellWavelengthRange(gridLo, gridHi),
+                       "); widen -wavelength-range to cover it"));
     if (inside < 0.99 * whole)
-      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name), " has ",
-                    smdl::Brief(100.0 * (1.0 - inside / whole), 3),
-                    "% of its weight outside the wavelength grid (",
-                    smdl::Brief(gridLo, 6), "-", smdl::Brief(gridHi, 6),
-                    " nm), so the band sees only the part inside; "
+      SMDL_LOG_WARN("Response band ", SpellQuoted(band.name), " has ",
+                    SpellPercent(1.0 - inside / whole),
+                    " of its weight outside the wavelength grid (",
+                    SpellWavelengthRange(gridLo, gridHi),
+                    "), so the band sees only the part inside; "
                     "-wavelength-range ",
                     int64_t(std::floor(std::min(knots.front(), gridLo))), ",",
                     int64_t(std::ceil(std::max(knots.back(), gridHi))),
@@ -321,10 +320,10 @@ Response::Response(const ResponseSettings &settings,
                                         projection.values().end())};
     const double equivalentWidth{peak > 0 ? whole / peak : 0.0};
     if (!isJittering && equivalentWidth < minSpacing)
-      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name), " is ",
-                    smdl::Brief(equivalentWidth, 3),
+      SMDL_LOG_WARN("Response band ", SpellQuoted(band.name), " is ",
+                    SpellFloat(equivalentWidth, 3),
                     " nm wide against a grid spaced ",
-                    smdl::Brief(minSpacing, 3),
+                    SpellFloat(minSpacing, 3),
                     " nm; without -wavelength-jitter the band comb aliases "
                     "against it");
     // A grid held still sees the curve at its wavelengths and nowhere
@@ -332,7 +331,7 @@ Response::Response(const ResponseSettings &settings,
     // sample.
     if (!projection.isSeen())
       throw smdl::Error(smdl::concat(
-          "Response band ", smdl::Quoted(band.name),
+          "Response band ", SpellQuoted(band.name),
           " falls between the wavelengths of the grid, so no sample "
           "can see it; use -wavelength-jitter, or a finer grid"));
     mBands.push_back(std::move(band));
@@ -347,7 +346,7 @@ Response::Response(const ResponseSettings &settings,
         band.projection.wavelengths(), band.projection.values(),
         double(grid.minWavelength()), double(grid.maxWavelength()), illuminant);
     if (band.draw.isEmpty())
-      SMDL_LOG_WARN("Response band ", smdl::Quoted(band.name),
+      SMDL_LOG_WARN("Response band ", SpellQuoted(band.name),
                     " sees none of the white balance's illuminant inside the "
                     "wavelength grid, so its pixels trace a lens whose "
                     "glasses disperse at the d line");
@@ -435,7 +434,7 @@ void Response::logTracedSpans() const {
   for (const auto index : tileBands(mCFA)) {
     const Band &band{mBands[index]};
     if (band.draw.isEmpty()) continue;
-    SMDL_LOG_INFO("Lens color: the ", smdl::Quoted(band.name),
+    SMDL_LOG_INFO("Lens color: the ", SpellQuoted(band.name),
                   " pixels trace the lens at ",
                   spellTracedSpan(band.draw.span()));
   }

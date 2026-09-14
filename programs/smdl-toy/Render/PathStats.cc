@@ -8,8 +8,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -80,35 +78,33 @@ constexpr size_t MAX_BOUND_ROWS{15};
 
 constexpr double MAX_BOUND_REMOVAL{0.25};
 
-// A number through a printf format, for the '%g' spellings the tables
-// read best in.
-[[nodiscard]] std::string spell(const char *format, double value) {
-  char buffer[64]{};
-  std::snprintf(buffer, sizeof(buffer), format, value);
-  return buffer;
+// A number for the tables, to the significant digits the column reads
+// best in.
+[[nodiscard]] std::string spellNumber(double value, int digits) {
+  return smdl::concat(SpellFloat(value, digits));
 }
 
-[[nodiscard]] std::string spellPercent(double fraction) {
-  return spell("%.3g%%", 100.0 * fraction);
+// A mean for the tables, which keeps its places where a number ends in
+// zeros so that a column of means lines up, and which never goes
+// exponential mid-column.
+[[nodiscard]] std::string spellMean(double value) {
+  return smdl::concat(SpellFixed(value, 3));
 }
 
-// A double with the fewest digits that read back exactly: an edge of
-// 2e-10 prints as that, not as the seventeen digits of its nearest
-// double. Every double in the JSON goes through this, the attributes
-// included, so the document spells its numbers one way.
-[[nodiscard]] std::string spellDouble(double value) {
-  for (int precision = 15; precision < 17; precision++) {
-    char buffer[64]{};
-    std::snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
-    if (std::strtod(buffer, nullptr) == value) return buffer;
-  }
-  return spell("%.17g", value);
+// A share for the tables, in significant digits rather than the decimal
+// places `SpellPercent` writes: a tail row of a few thousandths of a
+// percent says something, and rounded to one place it would say zero.
+[[nodiscard]] std::string spellShare(double fraction) {
+  return smdl::concat(SpellFloat(100.0 * fraction, 3), "%");
 }
 
-// A double attribute, spelled by `spellDouble()`.
+// A double attribute, spelled so that it reads back as itself: an edge
+// of 2e-10 writes as that, not as the seventeen digits of its nearest
+// double. Every double in the JSON goes through `SpellExact`, the
+// attributes included, so the document spells its numbers one way.
 void attributeDouble(llvm::json::OStream &json, const char *key, double value) {
   json.attributeBegin(key);
-  json.rawValue(spellDouble(value));
+  json.rawValue(smdl::concat(SpellExact(value)));
   json.attributeEnd();
 }
 
@@ -245,12 +241,12 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
     rows.push_back(
         {KIND_NAMES[k], std::to_string(counts.estimateCount),
          smdl::concat(counts.firstConvergedCount, " (",
-                      spellPercent(ratio(double(counts.firstConvergedCount),
-                                         double(counts.estimateCount))),
+                      spellShare(ratio(double(counts.firstConvergedCount),
+                                       double(counts.estimateCount))),
                       ")"),
          std::to_string(counts.trialEstimateCount),
-         spell("%.2f", ratio(double(counts.trialCount),
-                             double(counts.trialEstimateCount))),
+         spellMean(ratio(double(counts.trialCount),
+                         double(counts.trialEstimateCount))),
          std::to_string(counts.trialsMax),
          std::to_string(counts.capDropCount)});
   }
@@ -260,7 +256,7 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
              rows);
   const auto share{[](uint64_t part, uint64_t whole) {
     return smdl::concat(part, " (",
-                        spellPercent(ratio(double(part), double(whole))), ")");
+                        spellShare(ratio(double(part), double(whole))), ")");
   }};
   os << "  walks: " << walkCount << ", " << share(walkConvergedCount, walkCount)
      << " converged, " << walkRejectedCount << " rejected after converging\n";
@@ -270,8 +266,8 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
     os << (f == size_t(Failure::START) ? " " : ", ") << FAILURE_NAMES[f] << ' '
        << walkFailureCounts[f];
   os << "\n    iterations: avg "
-     << spell("%.2f", ratio(double(walkIterations), double(walkCount)))
-     << ", max " << walkIterationsMax;
+     << spellMean(ratio(double(walkIterations), double(walkCount))) << ", max "
+     << walkIterationsMax;
   size_t top{};
   bool hasConverged{false};
   for (size_t b = 0; b < NUM_ITERATION_BINS; b++)
@@ -285,8 +281,8 @@ void MNEEStats::print(llvm::raw_ostream &os) const {
        << ", p99.9 " << iterationsPercentile(0.999) << ", p99.99 "
        << iterationsPercentile(0.9999) << ", max " << top;
   os << "\n    residual over converged walks: avg "
-     << spell("%.3g", ratio(walkResidual, double(walkConvergedCount)))
-     << ", max " << spell("%.3g", walkResidualMax) << '\n';
+     << spellNumber(ratio(walkResidual, double(walkConvergedCount)), 3)
+     << ", max " << spellNumber(walkResidualMax, 3) << '\n';
   os << "  re-walks for MIS: " << rewalkCount << ", "
      << share(rewalkConvergedCount, rewalkCount) << " converged\n";
   os << "  covered arrivals: " << coverArrivalCount << ", "
@@ -531,7 +527,7 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
   if (mNumSamples > mNumPaths)
     os << " (" << mNumSamples - mNumPaths
        << " camera samples vignetted and not traced)";
-  os << "\n  bounces: mean " << spell("%.2f", meanBounces()) << ", max "
+  os << "\n  bounces: mean " << spellMean(meanBounces()) << ", max "
      << maxBouncesReached() << '\n';
   os << "  ended by:";
   {
@@ -543,7 +539,7 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
       // A failure is a bug, so it is named only when it happened.
       if (ends[e] == 0 && PathEnd(e) == PathEnd::FAILED) continue;
       os << (isFirst ? " " : ", ") << END_NAMES[e] << ' '
-         << spellPercent(ratio(double(ends[e]), double(mNumPaths)));
+         << spellShare(ratio(double(ends[e]), double(mNumPaths)));
       isFirst = false;
     }
   }
@@ -552,11 +548,11 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
   // bound: volume emission is neither bounce-indexed nor boundable.
   const double energy{energyFrom(0)};
   os << "  radiance per sample: "
-     << spell("%.4g", ratio(totalEnergy(), double(mNumSamples)))
+     << spellNumber(ratio(totalEnergy(), double(mNumSamples)), 4)
      << " (band average, before the bound)";
   if (mMediumEmission > 0.0)
     os << ", of which volume emission "
-       << spell("%.4g", ratio(mMediumEmission, double(mNumSamples)));
+       << spellNumber(ratio(mMediumEmission, double(mNumSamples)), 4);
   os << "\n\n";
 
   const bool hasBound{path.maxContribution > 0.0f};
@@ -566,7 +562,7 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
         "energy", "cumulative",   "largest"};
     if (hasBound)
       header.push_back(
-          smdl::concat("removed at ", smdl::Brief(path.maxContribution)));
+          smdl::concat("removed at ", SpellFloat(path.maxContribution)));
     std::vector<std::vector<std::string>> rows{};
     uint64_t pathsPast{mNumPaths};
     double cumulative{};
@@ -576,14 +572,14 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
       cumulative += row.energy();
       std::vector<std::string> cells{
           std::to_string(i),
-          spellPercent(ratio(double(row.pathCount()), double(mNumPaths))),
-          spellPercent(ratio(double(pathsPast), double(mNumPaths))),
+          spellShare(ratio(double(row.pathCount()), double(mNumPaths))),
+          spellShare(ratio(double(pathsPast), double(mNumPaths))),
           std::to_string(row.contributionCount()),
-          spellPercent(ratio(row.energy(), energy)),
-          spellPercent(ratio(cumulative, energy)),
-          spell("%.3g", row.maxContribution)};
+          spellShare(ratio(row.energy(), energy)),
+          spellShare(ratio(cumulative, energy)),
+          spellNumber(row.maxContribution, 3)};
       if (hasBound)
-        cells.push_back(spellPercent(ratio(row.energyClamped, energy)));
+        cells.push_back(spellShare(ratio(row.energyClamped, energy)));
       rows.push_back(std::move(cells));
     }
     os << "By bounce, energy as a share of the contribution energy and the "
@@ -595,11 +591,11 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
   const uint64_t gatedCount{contributionCountFrom(gate)};
   os << "\nBound on the largest band of a contribution, over the " << gatedCount
      << " non-zero contributions of at least "
-     << smdl::concat(smdl::Counted(gate, "bounce"))
+     << smdl::concat(SpellCounted(gate, "bounce"))
      << ", energy as a share of the contribution energy:\n";
   if (gatedCount == 0) {
     os << "  No contribution reaches "
-       << smdl::concat(smdl::Counted(gate, "bounce"))
+       << smdl::concat(SpellCounted(gate, "bounce"))
        << ", so no bound would apply.\n";
   } else {
     // From the top populated bin of the gated rows downward.
@@ -615,9 +611,9 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
       const double bound{binEdge(b)};
       const uint64_t above{countAbove(bound, gate)};
       const double removed{ratio(energyRemovedAbove(bound, gate), energy)};
-      rows.push_back({spell("%g", bound), std::to_string(above),
-                      spellPercent(ratio(double(above), double(gatedCount))),
-                      spellPercent(removed)});
+      rows.push_back({spellNumber(bound, 6), std::to_string(above),
+                      spellShare(ratio(double(above), double(gatedCount))),
+                      spellShare(removed)});
       if (removed > MAX_BOUND_REMOVAL) break;
     }
     printTable(os, {"bound", "at or above", "share", "energy removed"}, rows);
@@ -630,11 +626,11 @@ void PathStats::print(llvm::raw_ostream &os, const PathStatsSession &session,
 
   if (hasBound)
     os << "\nThe bound in force, -max-contribution "
-       << smdl::concat(smdl::Brief(path.maxContribution)) << " from "
-       << smdl::concat(smdl::Counted(gate, "bounce")) << ", scaled "
+       << smdl::concat(SpellFloat(path.maxContribution)) << " from "
+       << smdl::concat(SpellCounted(gate, "bounce")) << ", scaled "
        << clampedCount() << " contributions ("
-       << spellPercent(ratio(double(clampedCount()), double(gatedCount)))
-       << ") and removed " << spellPercent(ratio(energyClamped(), energy))
+       << spellShare(ratio(double(clampedCount()), double(gatedCount)))
+       << ") and removed " << spellShare(ratio(energyClamped(), energy))
        << " of the energy.\n";
   if (!path.useRoulette)
     os << "\nThe walk was bounded at -max-bounces " << path.maxBounces
@@ -691,7 +687,7 @@ void PathStats::printJSON(llvm::raw_ostream &os,
     {
       std::string edges{"["};
       for (size_t b = 0; b < NUM_BINS; b++)
-        edges += (b > 0 ? ", " : "") + spellDouble(binEdge(b));
+        edges += (b > 0 ? ", " : "") + smdl::concat(SpellExact(binEdge(b)));
       json.rawValue(edges + "]");
     }
     json.attributeEnd();
@@ -714,9 +710,10 @@ void PathStats::printJSON(llvm::raw_ostream &os,
             std::string bins{"["};
             for (size_t b = 0; b < NUM_BINS; b++) {
               const Bin &bin{row.bins[b]};
-              bins += smdl::concat(b > 0 ? ", [" : "[", bin.count, ", ",
-                                   spellDouble(bin.sumAverage), ", ",
-                                   spellDouble(bin.sumAverageOverMax), "]");
+              bins += smdl::concat(
+                  b > 0 ? ", [" : "[", bin.count, ", ",
+                  smdl::concat(SpellExact(bin.sumAverage)), ", ",
+                  smdl::concat(SpellExact(bin.sumAverageOverMax)), "]");
             }
             json.rawValue(bins + "]");
           }

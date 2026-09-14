@@ -2,23 +2,19 @@
 
 #include "smdl/Support/Logger.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <iostream>
 #include <iterator>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
 constexpr smdl::LogLevel LEVELS[]{smdl::LOG_LEVEL_DEBUG, smdl::LOG_LEVEL_INFO,
                                   smdl::LOG_LEVEL_WARN, smdl::LOG_LEVEL_ERROR};
-
-const std::string RESET{"\033[0m"};
-const std::string BOLD{"\033[1m"};
-const std::string DIM{"\033[2m"};
-const std::string CYAN{"\033[36m"};
-const std::string CARET{"\033[1;32m"};
 
 // `str` with its escape sequences taken out, which for anything
 // `formatLogMessage()` colors must be the uncolored rendering.
@@ -44,6 +40,32 @@ const std::string CARET{"\033[1;32m"};
       smdl::formatLogMessage(smdl::LOG_LEVEL_WARN, message, true, false)};
   REQUIRE(smdl::startsWith(str, label));
   return str.substr(label.size());
+}
+
+using Runs = std::vector<std::string>;
+
+// The runs of that rendering that carry a style of their own, in order
+// and with the escape codes taken off: what the highlighter picked out
+// of the message, whatever palette it picked it out with. The palette
+// is a matter of taste and no test pins it; which text is picked out is
+// the behavior.
+[[nodiscard]] Runs styledRuns(std::string_view message) {
+  const std::string str{highlighted(message)};
+  Runs runs{};
+  bool isStyled{false};
+  for (size_t i = 0; i < str.size(); i++) {
+    if (str[i] == '\033') {
+      const size_t end{str.find('m', i)};
+      if (end == std::string::npos) break;
+      const bool isReset{str.substr(i, end - i + 1) == "\033[0m"};
+      if (!isReset && !isStyled) runs.emplace_back();
+      isStyled = !isReset;
+      i = end;
+      continue;
+    }
+    if (isStyled) runs.back() += str[i];
+  }
+  return runs;
 }
 
 // Point a standard stream at a string for a scope.
@@ -278,12 +300,11 @@ TEST_CASE("Logger: message formatting") {
                     smdl::formatLogMessage(level, message, true, useUnicode)) ==
                 smdl::formatLogMessage(level, message, false, useUnicode));
   }
-  SUBCASE("A location is bold wherever it is") {
-    CHECK(highlighted("[a.mdl:3:1] x") == BOLD + "[a.mdl:3:1]" + RESET + " x");
-    CHECK(highlighted("::m declared at [a.mdl:12]") ==
-          "::m declared at " + BOLD + "[a.mdl:12]" + RESET);
-    CHECK(highlighted("[<builtin ::df>:1036:12] y") ==
-          BOLD + "[<builtin ::df>:1036:12]" + RESET + " y");
+  SUBCASE("A location is picked out wherever it is") {
+    CHECK(styledRuns("[a.mdl:3:1] x") == Runs{"[a.mdl:3:1]"});
+    CHECK(styledRuns("::m declared at [a.mdl:12]") == Runs{"[a.mdl:12]"});
+    CHECK(styledRuns("[<builtin ::df>:1036:12] y") ==
+          Runs{"[<builtin ::df>:1036:12]"});
   }
   SUBCASE("A bracket that is not a location is left alone") {
     for (const char *message :
@@ -291,56 +312,46 @@ TEST_CASE("Logger: message formatting") {
           "x[a.mdl:3]", "[a.mdl:3", "[a.mdl:x]", "[:3]"})
       CHECK(highlighted(message) == message);
   }
-  SUBCASE("A quoted string is cyan, apostrophes and all") {
-    CHECK(highlighted("cannot load 'x.png': y") ==
-          "cannot load " + CYAN + "'x.png'" + RESET + ": y");
-    CHECK(highlighted("'bob's.png'") == CYAN + "'bob's.png'" + RESET);
-    CHECK(highlighted("'::a' imports '::b'") ==
-          CYAN + "'::a'" + RESET + " imports " + CYAN + "'::b'" + RESET);
-  }
-  SUBCASE("A double-quoted path is cyan the same way") {
-    // 'QuotedPath' double quotes, so a path highlights like the code
-    // identifiers 'Quoted' single quotes, and the two mix in one message.
-    CHECK(highlighted("Cannot load \"x.png\": y") ==
-          "Cannot load " + CYAN + "\"x.png\"" + RESET + ": y");
-    CHECK(highlighted("Unused variable 'v' in \"a.mdl\"") ==
-          "Unused variable " + CYAN + "'v'" + RESET + " in " + CYAN +
-              "\"a.mdl\"" + RESET);
-    CHECK(highlighted("\"bob's.png\"") == CYAN + "\"bob's.png\"" + RESET);
-  }
-  SUBCASE("A double quote that never closes is left alone") {
-    for (const char *message : {"begins with \"SMDLPLCS", "a \" b"})
-      CHECK(highlighted(message) == message);
-  }
-  SUBCASE("An apostrophe is not a quote") {
+  SUBCASE("The location is the only thing a message line picks out") {
+    // The quoted strings, the numbers and the dimensions a message is
+    // built from are left exactly as they were written.
+    CHECK(styledRuns("[a.mdl:3:1] cannot load 'x2.png' after 4 tries") ==
+          Runs{"[a.mdl:3:1]"});
     for (const char *message :
-         {"don't", "the materials' names", "an unclosed 'quote"})
+         {"cannot load 'x.png': y", "11 bands over 380.0-780.0 nm",
+          "a 1280x720 frame at 35.82x23.88 mm", "weighs 1.234e-4 of it"})
       CHECK(highlighted(message) == message);
   }
   SUBCASE("A source snippet keeps its source line as written") {
     const smdl::Error error{
         compileError("#smdl\nexec { int i = nope; } // not 'this' [a:1]\n")};
-    const std::string str{highlighted(error.message + error.snippet)};
-    CHECK(smdl::startsWith(str, BOLD + "[<string ::diag>:2:16]" + RESET));
-    CHECK_CONTAINS(str, DIM + "  2 |" + RESET +
-                            " exec { int i = nope; } // not 'this' [a:1]\n");
-    CHECK_CONTAINS(str, DIM + "    |" + RESET);
-    const std::string tail{CARET + "^" + RESET};
-    REQUIRE(str.size() > tail.size());
-    CHECK(str.substr(str.size() - tail.size()) == tail);
+    const std::string message{error.message + error.snippet};
+    const Runs runs{styledRuns(message)};
+    const auto picksOut{[&](const std::string &run) {
+      return std::find(runs.begin(), runs.end(), run) != runs.end();
+    }};
+    CHECK(stripEscapes(highlighted(message)) == message);
+    REQUIRE(!runs.empty());
+    CHECK(runs.front() == "[<string ::diag>:2:16]");
+    CHECK(picksOut("  2 |"));
+    CHECK(picksOut("    |"));
+    CHECK(runs.back() == "^");
+    // The source line is left as written: its quotes and brackets are
+    // code rather than a message's.
+    CHECK_FALSE(picksOut("'this'"));
+    CHECK_FALSE(picksOut("[a:1]"));
   }
   SUBCASE("A caret line without a gutter marks its source line too") {
-    CHECK(highlighted("refused\n  fovy 'x'\n  ^~~~") ==
-          "refused\n  fovy 'x'\n  " + CARET + "^~~~" + RESET);
+    CHECK(styledRuns("refused\n  fovy 'x'\n  ^~~~") == Runs{"^~~~"});
   }
   SUBCASE("A debug message is dimmed whole and nothing in it highlighted") {
     const std::string_view message{
         std::string_view("New material '::m' at [a.mdl:3]")};
-    CHECK(smdl::formatLogMessage(smdl::LOG_LEVEL_DEBUG, message, true, false) ==
-          DIM +
-              std::string(
-                  smdl::logLevelLabel(smdl::LOG_LEVEL_DEBUG, true, false)) +
-              DIM + std::string(message) + RESET);
+    const std::string str{
+        smdl::formatLogMessage(smdl::LOG_LEVEL_DEBUG, message, true, false)};
+    CHECK(smdl::startsWith(str, "\033["));
+    // Whole, which is to say the message survives in it unbroken.
+    CHECK_CONTAINS(str, std::string(message));
   }
   SUBCASE("A message with escape codes of its own is left as it is") {
     const std::string_view message{

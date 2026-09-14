@@ -155,27 +155,27 @@ size_t Type::getFirstNonPointerTypeDepth() const {
 Value Type::invoke(Emitter &emitter, const ArgumentList &args,
                    const SourceLocation &srcLoc) {
   if (args.isOnePositional(this)) return emitter.rvalue(args[0].value);
-  srcLoc.throwError("Type ", Quoted(displayName),
+  srcLoc.throwError("Type ", SpellQuoted(displayName),
                     " has unimplemented constructor");
   return Value();
 }
 
 Value Type::accessField(Emitter &, Value, std::string_view,
                         const SourceLocation &srcLoc) {
-  srcLoc.throwError("Type ", Quoted(displayName),
+  srcLoc.throwError("Type ", SpellQuoted(displayName),
                     " has no field access operator");
   return Value();
 }
 
 Value Type::accessIndex(Emitter &, Value, Value, const SourceLocation &srcLoc) {
-  srcLoc.throwError("Type ", Quoted(displayName),
+  srcLoc.throwError("Type ", SpellQuoted(displayName),
                     " has no index access operator");
   return Value();
 }
 
 Value Type::insert(Emitter &, Value, Value, unsigned,
                    const SourceLocation &srcLoc) {
-  srcLoc.throwError("Type ", Quoted(displayName),
+  srcLoc.throwError("Type ", SpellQuoted(displayName),
                     " has unimplemented insert method");
   return Value();
 }
@@ -255,7 +255,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (extent.isScalar()) {
     if (!args.isOnePositional())
-      srcLoc.throwError("Scalar ", Quoted(displayName),
+      srcLoc.throwError("Scalar ", SpellQuoted(displayName),
                         " constructor expects 1 positional argument");
     Value value{args[0].value};
     // If constructing bool from pointer, check that it is non-NULL.
@@ -309,7 +309,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         // so it needs the wavelengths in '$state'. Say so here: letting the
         // call fail names an internal function the user never wrote.
         if (!emitter.state)
-          srcLoc.throwError("Cannot convert 'color' to ", Quoted(displayName),
+          srcLoc.throwError("Cannot convert 'color' to ",
+                            SpellQuoted(displayName),
                             " in a '@(pure)' context; "
                             "the conversion is colorimetric and needs the "
                             "wavelengths in '$state'");
@@ -450,18 +451,18 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
   // arguments did not fit it.
   std::string accepts{};
   if (extent.isVector()) {
-    accepts = concat("; ", Quoted(displayName),
+    accepts = concat("; ", SpellQuoted(displayName),
                      " takes one scalar, or scalars and shorter vectors "
                      "totalling ",
                      extent.getVectorSize(), " components");
   } else if (extent.isMatrix()) {
     accepts =
-        concat("; ", Quoted(displayName), " takes one scalar, ", extent.numCols,
-               " column vectors of ", extent.numRows, " components, or ",
-               extent.numCols * extent.numRows, " scalars");
+        concat("; ", SpellQuoted(displayName), " takes one scalar, ",
+               extent.numCols, " column vectors of ", extent.numRows,
+               " components, or ", extent.numCols * extent.numRows, " scalars");
   }
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)), accepts);
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)), accepts);
   return Value();
 }
 
@@ -477,7 +478,7 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
                                   std::string_view name,
                                   const SourceLocation &srcLoc) {
   if (extent.isScalar()) {
-    srcLoc.throwError("Scalar ", Quoted(displayName),
+    srcLoc.throwError("Scalar ", SpellQuoted(displayName),
                       " has no field access operator");
   }
   // Set LLVM name for more readable LLVM-IR.
@@ -511,12 +512,12 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     components += "xyzw"[i];
     colorComponents += "rgba"[i];
   }
-  srcLoc.throwError("No field ", Quoted(name), " in ", Quoted(displayName),
-                    components.empty()
-                        ? std::string()
-                        : concat("; the components are ", components,
-                                 extent.isVector()
-                                     ? concat(" (or ", colorComponents, ")")
+  srcLoc.throwError(
+      "No field ", SpellQuoted(name), " in ", SpellQuoted(displayName),
+      components.empty()
+          ? std::string()
+          : concat("; the components are ", components,
+                   extent.isVector() ? concat(" (or ", colorComponents, ")")
                                      : std::string()));
   return Value();
 }
@@ -524,14 +525,14 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
 Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
                                   const SourceLocation &srcLoc) {
   if (extent.isScalar())
-    srcLoc.throwError("Scalar ", Quoted(displayName),
+    srcLoc.throwError("Scalar ", SpellQuoted(displayName),
                       " has no index access operator");
   if (i.isComptimeInt()) {
     const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
     const int64_t count{
         int64_t(extent.isVector() ? extent.numRows : extent.numCols)};
     if (!iNow || *iNow < 0 || *iNow >= count)
-      srcLoc.throwError("Index out of bounds for ", Quoted(displayName));
+      srcLoc.throwError("Index out of bounds for ", SpellQuoted(displayName));
   }
   if (value.isRValue()) {
     if (i.isComptimeInt()) {
@@ -579,7 +580,7 @@ Value ArithmeticType::insert(Emitter &emitter, Value value, Value elem,
         emitter.builder.CreateInsertValue(
             emitter.rvalue(value),
             emitter.invoke(getColumnType(emitter.context), elem, srcLoc), {i}));
-  srcLoc.throwError("Cannot insert into ", Quoted(displayName));
+  srcLoc.throwError("Cannot insert into ", SpellQuoted(displayName));
   return Value();
 }
 
@@ -627,7 +628,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isNull()) {
     if (isAbstract())
       srcLoc.throwError("Cannot zero construct abstract array ",
-                        Quoted(displayName));
+                        SpellQuoted(displayName));
     return Value::zero(this);
   }
   if (args.isOnePositional(this)) {
@@ -639,8 +640,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
           args.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
       if (!emitter.context.isPerfectlyConvertible(argElemType, elemType))
         srcLoc.throwError("Cannot construct abstract array ",
-                          Quoted(displayName), " from element ",
-                          Quoted(argElemType->displayName));
+                          SpellQuoted(displayName), " from element ",
+                          SpellQuoted(argElemType->displayName));
       return emitter.invoke(emitter.context.getArrayType(argElemType, size),
                             args, srcLoc);
     } else {
@@ -670,9 +671,10 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
             tryConstructFromPointer(emitter, this, elemType, value)})
       return *loaded;
   }
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)), "; ", Quoted(displayName),
-                    " takes ", size, " elements or one array of that size");
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)), "; ",
+                    SpellQuoted(displayName), " takes ", size,
+                    " elements or one array of that size");
   return Value();
 }
 
@@ -696,8 +698,8 @@ Value ArrayType::accessField(Emitter &emitter, Value value,
         emitter.context.getArrayType(emitter.context.getAutoType(), size),
         llvm::ArrayRef<Value>(elems), srcLoc);
   }
-  srcLoc.throwError("No field ", Quoted(name), " in array type ",
-                    Quoted(displayName));
+  srcLoc.throwError("No field ", SpellQuoted(name), " in array type ",
+                    SpellQuoted(displayName));
   return Value();
 }
 
@@ -707,7 +709,7 @@ Value ArrayType::accessIndex(Emitter &emitter, Value value, Value i,
   if (i.isComptimeInt()) {
     const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
     if (!iNow || *iNow < 0 || *iNow >= int64_t(size))
-      srcLoc.throwError("Index out of bounds for ", Quoted(displayName));
+      srcLoc.throwError("Index out of bounds for ", SpellQuoted(displayName));
   }
   if (i.isComptimeInt() && value.isRValue()) {
     return RValue(elemType, emitter.builder.CreateExtractValue(
@@ -782,7 +784,8 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
                           args, srcLoc);
   }
   // TODO Infer struct type?
-  srcLoc.throwError("Cannot construct 'auto' from ", Quoted(std::string(args)));
+  srcLoc.throwError("Cannot construct 'auto' from ",
+                    SpellQuoted(std::string(args)));
   return Value();
 }
 //--}
@@ -878,7 +881,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     }
   }
   srcLoc.throwError(
-      "Cannot construct 'color' from ", Quoted(std::string(args)),
+      "Cannot construct 'color' from ", SpellQuoted(std::string(args)),
       "; 'color' takes one scalar, one 'float3' or 'spectral_curve', "
       "'(r, g, b)', or '(wavelengths, amplitudes)'");
   return Value();
@@ -889,7 +892,7 @@ Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
   if (i.isComptimeInt()) {
     const std::optional<int64_t> iNow{i.getComptimeSignedInt()};
     if (!iNow || *iNow < 0 || *iNow >= int64_t(wavelengthBaseMax))
-      srcLoc.throwError("Index out of bounds for ", Quoted(displayName));
+      srcLoc.throwError("Index out of bounds for ", SpellQuoted(displayName));
   }
   if (value.isRValue()) {
     if (i.isComptimeInt()) {
@@ -942,13 +945,13 @@ ComptimeUnionType::ComptimeUnionType(UnionType *unionType)
 Value ComptimeUnionType::invoke(Emitter &emitter, const ArgumentList &args,
                                 const SourceLocation &srcLoc) {
   if (args.empty()) {
-    srcLoc.throwError("Cannot default construct ", Quoted(displayName));
+    srcLoc.throwError("Cannot default construct ", SpellQuoted(displayName));
   }
   if (args.isOnePositional() && unionType->hasCaseType(args[0].value.type)) {
     return emitter.rvalue(args[0].value);
   }
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)));
   return Value();
 }
 //--}
@@ -972,7 +975,7 @@ void EnumType::initialize(Emitter &emitter) {
       return Value::zero(context.getIntType());
     }()};
     if (!value.isComptimeInt())
-      name.srcLoc.throwError("Expected ", Quoted(name),
+      name.srcLoc.throwError("Expected ", SpellQuoted(name),
                              " initializer to resolve to compile-time int");
     emitter.rejectSameScopeShadow(name.srcName, name.srcLoc);
     emitter.declare(name.srcName, &declarator, RValue(this, value));
@@ -1024,8 +1027,8 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
       return RValue(
           this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
   }
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)));
   return Value();
 }
 //--}
@@ -1039,8 +1042,8 @@ void rejectDuplicateParameterNames(const ParameterList &params,
   llvm::StringSet<> uniqueNames{};
   for (auto &param : params)
     if (!uniqueNames.insert(param.name).second)
-      param.getSourceLocation().throwError("Duplicate parameter name ",
-                                           Quoted(param.name), " in ", owner);
+      param.getSourceLocation().throwError(
+          "Duplicate parameter name ", SpellQuoted(param.name), " in ", owner);
 }
 } // namespace
 
@@ -1054,7 +1057,7 @@ void FunctionType::initialize(Emitter &emitter) {
                        ? prev.getComptimeMetaType(context, decl.srcLoc)
                        : nullptr};
     if (!prevType || !prevType->isFunction())
-      decl.srcLoc.throwError("Function ", Quoted(declName),
+      decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                              " shadows non-function");
     // Only overload within a single module. A declaration over a function
     // imported from another module shadows it instead: linking would mutate
@@ -1064,17 +1067,17 @@ void FunctionType::initialize(Emitter &emitter) {
     FunctionType *prevFunc{static_cast<FunctionType *>(prevType)};
     if (prevFunc->decl.srcLoc.module_ == decl.srcLoc.module_) {
       if (prevFunc->isVariant())
-        decl.srcLoc.throwError("Function ", Quoted(declName),
+        decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                                " must not overload function variant");
       if (prevFunc->isForeign())
-        decl.srcLoc.throwError("Function ", Quoted(declName),
+        decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                                " must not overload '@(foreign)' function");
       if (decl.isVariant())
-        decl.srcLoc.throwError("Function variant ", Quoted(declName),
+        decl.srcLoc.throwError("Function variant ", SpellQuoted(declName),
                                " must not overload another function");
       if (decl.hasAttribute("foreign"))
         decl.srcLoc.throwError(
-            "Function ", Quoted(declName),
+            "Function ", SpellQuoted(declName),
             " declared '@(foreign)' must not overload another function");
       prevOverload = prevFunc;
       prevOverload->nextOverload = this;
@@ -1091,11 +1094,12 @@ void FunctionType::initialize(Emitter &emitter) {
         Parameter{emitter.emit(param.type)
                       .getComptimeMetaType(context, param.name.srcLoc),
                   param.name, /*astParam=*/&param});
-  rejectDuplicateParameterNames(params, concat("function ", Quoted(declName)));
+  rejectDuplicateParameterNames(params,
+                                concat("function ", SpellQuoted(declName)));
   // Initialize whether parameter list is variadic.
   params.isVariadic = decl.isVariadic();
   if (decl.hasAttribute("macro") && decl.isVariadic()) {
-    decl.srcLoc.throwError("Function ", Quoted(declName),
+    decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                            " declared '@(macro)' must not be variadic");
   }
   auto compileNow{[&] {
@@ -1106,10 +1110,10 @@ void FunctionType::initialize(Emitter &emitter) {
   if (decl.hasAttribute("foreign")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
-          "Function ", Quoted(declName),
+          "Function ", SpellQuoted(declName),
           " declared '@(foreign)' must have concrete parameters");
     if (decl.definition)
-      decl.srcLoc.throwError("Function ", Quoted(declName),
+      decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                              " declared '@(foreign)' must not have definition");
     compileNow();
   }
@@ -1118,10 +1122,10 @@ void FunctionType::initialize(Emitter &emitter) {
   if (decl.hasAttribute("visible")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
-          "Function ", Quoted(declName),
+          "Function ", SpellQuoted(declName),
           " declared '@(visible)' must have concrete parameters");
     if (!decl.definition)
-      decl.srcLoc.throwError("Function ", Quoted(declName),
+      decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                              " declared '@(visible)' must have definition");
     compileNow();
   }
@@ -1130,10 +1134,10 @@ void FunctionType::initialize(Emitter &emitter) {
   if (returnType == context.mMaterialType &&
       (params.empty() || params.hasAllDefaultInitializers())) {
     if (decl.hasAttribute("pure"))
-      decl.srcLoc.throwError("Material ", Quoted(declName),
+      decl.srcLoc.throwError("Material ", SpellQuoted(declName),
                              " must not be declared '@(pure)'");
     if (decl.hasAttribute("macro"))
-      decl.srcLoc.throwError("Material ", Quoted(declName),
+      decl.srcLoc.throwError("Material ", SpellQuoted(declName),
                              " must not be declared '@(macro)'");
     isMaterial = true;
     initializeMaterialFunctions(emitter);
@@ -1195,8 +1199,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
         // Lead with the call as it was actually written and keep the
         // underlying reason as a note.
         srcLoc.throwError(concat(
-            "Cannot call ", Quoted(declName), " with arguments ",
-            Quoted(std::string(args)),
+            "Cannot call ", SpellQuoted(declName), " with arguments ",
+            SpellQuoted(std::string(args)),
             "\n  forwards to: ", dropSourceLocation(error.message, srcLoc)));
       }
       // Skip the conversion when the type already matches exactly, so
@@ -1217,7 +1221,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
   if (func->isMacro()) {
     ++macroRecursionDepth;
     if (macroRecursionDepth >= 1024)
-      srcLoc.throwError("Call to ", Quoted(func->declName),
+      srcLoc.throwError("Call to ", SpellQuoted(func->declName),
                         " exceeds compile-time recursion limit 1024");
     SMDL_PRESERVE(emitter.scope, emitter.anchors);
     emitter.restoreResolutionAnchor(func->params);
@@ -1233,7 +1237,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     return result;
   } else {
     if (!func->isPure() && !emitter.state)
-      srcLoc.throwError("Cannot call ", Quoted(func->declName),
+      srcLoc.throwError("Cannot call ", SpellQuoted(func->declName),
                         " from '@(pure)' context");
     Instance &instance{
         func->getInstance(emitter, resolvedArgs.getNonVariadicTypes())};
@@ -1320,9 +1324,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // If no matching declarations, fail, including the reason each
   // candidate was rejected.
   if (overloads.empty())
-    srcLoc.throwError("Function ", Quoted(declName),
+    srcLoc.throwError("Function ", SpellQuoted(declName),
                       " has no overload for arguments ",
-                      Quoted(std::string(args)), overloadErrors);
+                      SpellQuoted(std::string(args)), overloadErrors);
   // Candidate A beats candidate B by conversion quality if A converts every
   // argument at least as well as B and at least one argument strictly better
   // ('CONVERSION_RULE_PERFECT' beats 'CONVERSION_RULE_IMPLICIT'). This is
@@ -1395,9 +1399,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
       candidateNotes += " declared at ";
       candidateNotes += std::string(overload.func->decl.srcLoc);
     }
-    srcLoc.throwError("Function ", Quoted(declName),
-                      " is ambiguous for arguments ", Quoted(std::string(args)),
-                      candidateNotes);
+    srcLoc.throwError("Function ", SpellQuoted(declName),
+                      " is ambiguous for arguments ",
+                      SpellQuoted(std::string(args)), candidateNotes);
   }
   return overloads[0].func;
 }
@@ -1506,7 +1510,7 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
       srcLoc.throwError(
           concat("Mismatch between C++ 'JIT::MaterialDef::Eval' and SMDL "
                  "'_MaterialEval' structures (field ",
-                 Quoted(fieldName), " is misaligned)"));
+                 SpellQuoted(fieldName), " is misaligned)"));
   }
 }
 } // namespace
@@ -1542,12 +1546,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           compiler.mDesiredMaterialNames.end(), [&](const auto &desiredName) {
             return Compiler::matchesMaterialName(desiredName, qualifiedName);
           })) {
-    decl.srcLoc.logDebug(concat("Skipping material ", Quoted(qualifiedName),
+    decl.srcLoc.logDebug(concat("Skipping material ",
+                                SpellQuoted(qualifiedName),
                                 ": not a desired material"));
     compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
     return;
   }
-  decl.srcLoc.logDebug(concat("New material ", Quoted(qualifiedName)));
+  decl.srcLoc.logDebug(concat("New material ", SpellQuoted(qualifiedName)));
   auto &jitMaterial{compiler.mMaterialDefs.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
@@ -2073,7 +2078,7 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isAnyNamed())
     srcLoc.throwError(
         "Unexpected named arguments in constructor of inferred-size array ",
-        Quoted(displayName));
+        SpellQuoted(displayName));
 
   // Infer!
   ArrayType *inferredArrayType{[&]() {
@@ -2112,14 +2117,15 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       const std::optional<int64_t> existingSize{
           existing->value.getComptimeSignedInt()};
       if (!existingSize)
-        srcLoc.throwError("Inferred array size name ", Quoted(sizeName),
-                          " conflicts with a declaration of ", Quoted(sizeName),
-                          " in the same scope");
+        srcLoc.throwError("Inferred array size name ", SpellQuoted(sizeName),
+                          " conflicts with a declaration of ",
+                          SpellQuoted(sizeName), " in the same scope");
       if (*existingSize != size)
-        srcLoc.throwError(
-            "Inferred array size ", Quoted(sizeName), " = ",
-            std::to_string(size), " conflicts with ", Quoted(sizeName), " = ",
-            std::to_string(*existingSize), " already bound in the same scope");
+        srcLoc.throwError("Inferred array size ", SpellQuoted(sizeName), " = ",
+                          std::to_string(size), " conflicts with ",
+                          SpellQuoted(sizeName), " = ",
+                          std::to_string(*existingSize),
+                          " already bound in the same scope");
     } else {
       // The temporary view is safe: 'declare' interns the name.
       emitter.declare(std::string_view(sizeName), nullptr,
@@ -2191,7 +2197,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
   if (isAbstract()) {
     if (args.empty() || args.isNull())
       srcLoc.throwError("Cannot zero construct abstract pointer ",
-                        Quoted(displayName));
+                        SpellQuoted(displayName));
     if (args.isOnePositional()) {
       Value value{args[0].value};
       if (value.type->isPointer() &&
@@ -2231,8 +2237,8 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       }
     }
   }
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)));
   return Value();
 }
 
@@ -2246,7 +2252,7 @@ Value PointerType::accessField(Emitter &emitter, Value value,
 Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
                                const SourceLocation &srcLoc) {
   if (pointeeType->isVoid())
-    srcLoc.throwError("Cannot index into ", Quoted(displayName));
+    srcLoc.throwError("Cannot index into ", SpellQuoted(displayName));
   return LValue(pointeeType, emitter.builder.CreateGEP(
                                  pointeeType->llvmType, emitter.rvalue(value),
                                  {emitter.rvalue(i).llvmValue}));
@@ -2307,7 +2313,7 @@ StateType::StateType(Context &context) {
     if (mFields[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
       throw Error(
           concat("Mismatch between C++ and SMDL 'state' structures (field ",
-                 Quoted(mFields[i].name), " is misaligned)"));
+                 SpellQuoted(mFields[i].name), " is misaligned)"));
 }
 
 Value StateType::accessField(Emitter &emitter, Value value,
@@ -2324,7 +2330,7 @@ Value StateType::accessField(Emitter &emitter, Value value,
       return LValue(field.type, llvmValue);
     }
   }
-  srcLoc.throwError("No field ", Quoted(name), " in 'state'");
+  srcLoc.throwError("No field ", SpellQuoted(name), " in 'state'");
   return Value();
 }
 //--}
@@ -2351,7 +2357,7 @@ Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
                               {emitter.rvalue(value).llvmValue}));
   }
   srcLoc.throwError("Cannot construct 'string' from ",
-                    Quoted(std::string(args)));
+                    SpellQuoted(std::string(args)));
   return Value();
 }
 
@@ -2372,7 +2378,7 @@ Value StringType::accessField(Emitter &emitter, Value value,
                        emitter.context.getIntType()->llvmType));
     }
   }
-  srcLoc.throwError("No field ", Quoted(name), " in 'string'");
+  srcLoc.throwError("No field ", SpellQuoted(name), " in 'string'");
   return Value();
 }
 //--}
@@ -2394,7 +2400,7 @@ void StructType::initialize(Emitter &emitter) {
     if (!tagType) decl.srcLoc.throwError("Unknown tag");
     if (tag.isDefault()) {
       if (tagType->defaultType)
-        decl.srcLoc.throwError("Tag ", Quoted(tagType->displayName),
+        decl.srcLoc.throwError("Tag ", SpellQuoted(tagType->displayName),
                                " already has default");
       tagType->defaultType = this;
     }
@@ -2411,7 +2417,7 @@ void StructType::initialize(Emitter &emitter) {
             .getComptimeMetaType(emitter.context, field.name.srcLoc)};
     if (fieldType == this)
       field.name.srcLoc.throwError(
-          "Struct ", Quoted(displayName),
+          "Struct ", SpellQuoted(displayName),
           " cannot be type of field in its definition");
     // Handle static constant fields!
     if (field.type->hasQualifier("static")) {
@@ -2421,7 +2427,7 @@ void StructType::initialize(Emitter &emitter) {
           : !field.exprInit                    ? "must have initializer"
                                                : nullptr;
       if (reasonForError)
-        field.name.srcLoc.throwError("Field ", Quoted(field.name),
+        field.name.srcLoc.throwError("Field ", SpellQuoted(field.name),
                                      " declared 'static' ", reasonForError);
       Value value{emitter.invoke(fieldType, emitter.emit(field.exprInit),
                                  field.name.srcLoc)};
@@ -2540,7 +2546,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isNull()) {
     if (isAbstract())
       srcLoc.throwError("Cannot zero construct abstract struct type ",
-                        Quoted(displayName));
+                        SpellQuoted(displayName));
     return Value::zero(this);
   }
   if (args.isOnePositional()) {
@@ -2631,8 +2637,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       ambiguousNotes += " declared at ";
       ambiguousNotes += std::string(constructor->astConstructor->name.srcLoc);
     }
-    srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                      Quoted(std::string(args)), ambiguousNotes);
+    srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                      SpellQuoted(std::string(args)), ambiguousNotes);
   }
   whyNot.clear();
   if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
@@ -2649,8 +2655,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
           const Value &value{resolvedArgs.values[size_t(param - &params[0])]};
           if (!(value.isComptime() && value.llvmValue == param->bakedConstant))
             srcLoc.throwError(
-                "Cannot construct ", Quoted(displayName), ": field ",
-                Quoted(param->name),
+                "Cannot construct ", SpellQuoted(displayName), ": field ",
+                SpellQuoted(param->name),
                 " is baked to a compile-time constant in this instance");
         }
       }
@@ -2745,8 +2751,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   addCandidateNote("field-wise", params, decl.name.srcLoc,
                    dropSourceLocation(std::move(whyNot), srcLoc));
-  srcLoc.throwError("Cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)), candidateNotes);
+  srcLoc.throwError("Cannot construct ", SpellQuoted(displayName), " from ",
+                    SpellQuoted(std::string(args)), candidateNotes);
   return {};
 }
 
@@ -2822,9 +2828,9 @@ Value StructType::accessField(Emitter &emitter, Value value,
   std::string suggestion{};
   if (std::string_view similar{suggestNearestName(name, fieldNames)};
       !similar.empty())
-    suggestion = concat("; did you mean ", Quoted(similar), "?");
-  srcLoc.throwError("No field ", Quoted(name), " in struct ",
-                    Quoted(displayName), suggestion);
+    suggestion = concat("; did you mean ", SpellQuoted(similar), "?");
+  srcLoc.throwError("No field ", SpellQuoted(name), " in struct ",
+                    SpellQuoted(displayName), suggestion);
   return {};
 }
 
@@ -2848,17 +2854,18 @@ Value TagType::invoke(Emitter &emitter, const ArgumentList &args,
                       const SourceLocation &srcLoc) {
   if (args.empty() || args.isNull()) {
     if (!defaultType)
-      srcLoc.throwError("Cannot default construct tag ", Quoted(displayName));
+      srcLoc.throwError("Cannot default construct tag ",
+                        SpellQuoted(displayName));
     return defaultType->invoke(emitter, args, srcLoc);
   } else if (args.isOnePositional()) {
     Value value{args[0].value};
     if (!emitter.context.isPerfectlyConvertible(value.type, this))
-      srcLoc.throwError("Cannot construct tag ", Quoted(displayName), " from ",
-                        Quoted(value.type->displayName));
+      srcLoc.throwError("Cannot construct tag ", SpellQuoted(displayName),
+                        " from ", SpellQuoted(value.type->displayName));
     return emitter.rvalue(value);
   } else {
-    srcLoc.throwError("Cannot construct tag ", Quoted(displayName), " from ",
-                      Quoted(std::string(args)));
+    srcLoc.throwError("Cannot construct tag ", SpellQuoted(displayName),
+                      " from ", SpellQuoted(std::string(args)));
     return Value();
   }
 }
@@ -2915,7 +2922,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.empty() || args.isNull()) {
     if (!isOptionalUnion())
       srcLoc.throwError("Cannot zero construct non-optional union type ",
-                        Quoted(displayName));
+                        SpellQuoted(displayName));
     Value result{Value::zero(this)};
     result.llvmValue = emitter.builder.CreateInsertValue(
         result.llvmValue, context.getComptimeInt(int(caseTypes.size() - 1)),
@@ -2966,8 +2973,8 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       return result;
     } else {
       if (!hasCaseType(arg.type))
-        srcLoc.throwError("Cannot construct union ", Quoted(displayName),
-                          " from ", Quoted(arg.type->displayName));
+        srcLoc.throwError("Cannot construct union ", SpellQuoted(displayName),
+                          " from ", SpellQuoted(arg.type->displayName));
       int i{getCaseTypeIndex(arg.type)};
       // A union is built by storing the payload and then the tag, so it
       // needs a slot, and module scope has no function to allocate one in.
@@ -2978,7 +2985,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       // union rather than of 'texture_2d'.
       if (!emitter.getLLVMFunction())
         srcLoc.throwError(
-            "Cannot construct union ", Quoted(displayName),
+            "Cannot construct union ", SpellQuoted(displayName),
             " outside of a function: a union is built in storage, so it "
             "must not appear in a module-scope initializer");
       Value lv{emitter.createAlloca(this, "union.lv")};
@@ -2995,8 +3002,8 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       return rv;
     }
   }
-  srcLoc.throwError("Cannot construct union ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+  srcLoc.throwError("Cannot construct union ", SpellQuoted(displayName),
+                    " from ", SpellQuoted(std::string(args)));
   return Value();
 }
 
@@ -3048,8 +3055,8 @@ Value UnionType::accessField(Emitter &emitter, Value value,
       });
     }
   }
-  srcLoc.throwError("No field ", Quoted(name), " in union ",
-                    Quoted(displayName));
+  srcLoc.throwError("No field ", SpellQuoted(name), " in union ",
+                    SpellQuoted(displayName));
   return Value();
 }
 

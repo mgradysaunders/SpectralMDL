@@ -82,7 +82,7 @@ constexpr int NUM_FIT_RADII = 32;
 std::string describeField(const Lens &lens, float2 frameSize) {
   const auto spell{[](const std::optional<float> &angle, const char *where,
                       const char *dark) {
-    return angle ? smdl::concat(smdl::Brief(2 * smdl::degrees(*angle), 4),
+    return angle ? smdl::concat(SpellFloat(2 * smdl::degrees(*angle), 4),
                                 " degrees ", where)
                  : std::string(dark);
   }};
@@ -277,14 +277,14 @@ Camera::Camera(const CameraOptions &options) {
                   " is sharp from ", dof.nearLimit, " to ",
                   dof.farLimit < INF ? smdl::concat(dof.farLimit)
                                      : std::string("infinity"),
-                  " scene units, hyperfocal ", dof.hyperfocal,
+                  " meters, hyperfocal ", dof.hyperfocal,
                   ", at a circle of confusion of ",
                   1e3f * dof.circleOfConfusion, " mm");
   }
   if (mIsMoving) {
     SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
                   length(mLookFromShut - mLookFrom),
-                  " scene units and the target moves ",
+                  " meters and the target moves ",
                   length(mLookToShut - mLookTo));
   } else if (options.hasMotion) {
     SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
@@ -307,8 +307,6 @@ void Camera::buildLens(const CameraOptions &options) {
           : std::atan(mFrameHeight / (mNumPixelsY * mLens->focalLength()));
   mLens->logSummary();
   const float halfDiagonal{0.5f * std::hypot(mFrameWidth, mFrameHeight)};
-  mExitPupil.emplace(*mLens, halfDiagonal, options.traceWavelengthRange);
-  mExitPupil->logSummary();
   // A lens whose glasses disperse shows its color only under a tile,
   // whose pixels each trace it at a wavelength of their own band's.
   mDisperses = options.traceWavelengthRange && mLens->isDispersive();
@@ -317,15 +315,16 @@ void Camera::buildLens(const CameraOptions &options) {
     const float pitch{pixelPitch(options)};
     if (const float lateral{mLens->lateralColorAt(halfDiagonal) / pitch};
         std::isfinite(lateral))
-      SMDL_LOG_INFO("Lens color: at the frame's corner the F line (486 nm) "
-                    "lands ",
-                    smdl::Brief(std::abs(lateral), 3), " pixels ",
-                    lateral > 0 ? "outside" : "inside", " the C line (656 nm)");
+      SMDL_LOG_INFO("Lens color: the F line (486 nm) lands ",
+                    SpellFloat(std::abs(lateral), 3), " px ",
+                    lateral > 0 ? "outside" : "inside",
+                    " the C line (656 nm) at the corner");
     if (!mDisperses)
-      SMDL_LOG_INFO("Lens color: the film has no color filter array to draw "
-                    "a wavelength from, so the lens is traced at the d line "
-                    "(588 nm) and shows no chromatic aberration");
+      SMDL_LOG_WARN("The sensor has no CFA so dispersion is disabled, "
+                    "the lens is traced at the d line (588 nm)");
   }
+  mExitPupil.emplace(*mLens, halfDiagonal, options.traceWavelengthRange);
+  mExitPupil->logSummary();
   // What one unit of drawn pupil area is worth. Irradiance at a film
   // point is the pupil integral of `L cos^4(theta) dA / d^2`, with `d`
   // the axial distance from the film to the plane the point is drawn on.
@@ -338,16 +337,14 @@ void Camera::buildLens(const CameraOptions &options) {
   if (mFilmQuantity == FilmQuantity::IRRADIANCE) {
     mExposurePerPupilArea = 1 / (filmToPupil * filmToPupil);
     SMDL_LOG_INFO("Lens exposure: f/", mLens->fNumber(),
-                  ", the film holds the irradiance at the sensor");
+                  ", the film measures irradiance at the sensor");
   } else {
     mExposurePerPupilArea = 4 / (PI * filmToPupil * filmToPupil);
     mExposurePerPupilArea *= mLens->fNumber() * mLens->fNumber();
     SMDL_LOG_INFO("Lens exposure: normalized to f/", mLens->fNumber(),
-                  ", so the film holds the scene radiance on axis whatever "
-                  "lens takes it and however far it is stopped down");
+                  ", the film measures radiance at the sensor");
   }
-  SMDL_LOG_INFO("Lens frame: a ", smdl::Brief(frameMM.x, 4), " by ",
-                smdl::Brief(frameMM.y, 4), " mm frame, ",
+  SMDL_LOG_INFO("Lens frame: a ", SpellDimensions(frameMM, 2), " mm frame, ",
                 describeField(*mLens, options.frameSize));
   // The two ends of the frame, as areas on the plane of the rear vertex
   // rather than shares of it: what the corner gets against what the
@@ -362,17 +359,13 @@ void Camera::buildLens(const CameraOptions &options) {
   const float atCorner{mLens->transmittedArea(halfDiagonal)};
   if (!(atCorner > 0)) {
     SMDL_LOG_WARN(
-        "Lens: nothing reaches the corner of the frame through "
-        "this lens, so ",
-        smdl::Brief(100 * darkShareOfFrame(float2(mFrameWidth, mFrameHeight),
-                                           mLens->imageCircleRadius()),
-                    3),
-        "% of the frame is dark outside the circle it covers; a "
-        "smaller sensor is what fits it");
+        "Lens vignette: nothing reaches the corner, ",
+        SpellPercent(darkShareOfFrame(float2(mFrameWidth, mFrameHeight),
+                                      mLens->imageCircleRadius())),
+        " of the frame is dark");
   } else {
-    SMDL_LOG_INFO("Lens vignetting: the frame corner sees ",
-                  100 * atCorner / onAxis,
-                  "% of what its middle sees, measured through the glass");
+    SMDL_LOG_INFO("Lens vignette: the corner dims to ",
+                  SpellPercent(atCorner / onAxis), " from the middle");
   }
 }
 
@@ -397,8 +390,9 @@ void Camera::buildThinLens(const CameraOptions &options) {
   if (mHasDistortion) {
     SMDL_LOG_INFO(
         "Lens distortion: corner displacement ",
-        100 * (mDistortionScale * (1 + mDistortionK1 + mDistortionK2) - 1),
-        "%, center scale ", mDistortionScale);
+        SpellPercent(
+            (mDistortionScale * (1 + mDistortionK1 + mDistortionK2) - 1)),
+        ", center scale ", mDistortionScale);
   }
   // `lookAt()` is orthonormal, so the lens disk needs no unit conversion.
   // The LOD ray cone keeps the per-pixel spread: defocus blur comes out of
@@ -425,9 +419,9 @@ void Camera::buildThinLens(const CameraOptions &options) {
                         "'aperture'");
     const float focalLength{mFocalLength * mFrameHeight};
     if (!(mFocusDistance > focalLength))
-      throw smdl::Error(smdl::concat(
-          "The thin lens cannot focus at ", mFocusDistance,
-          " scene units, inside its focal length of ", focalLength));
+      throw smdl::Error(
+          smdl::concat("The thin lens cannot focus at ", mFocusDistance,
+                       " meters, inside its focal length of ", focalLength));
     mImageDistance = mIsFocusedAtInfinity ? focalLength
                                           : focalLength * mFocusDistance /
                                                 (mFocusDistance - focalLength);
@@ -452,7 +446,7 @@ void Camera::buildThinLens(const CameraOptions &options) {
   mRimRadius = options.catEyeRadius > 0 ? options.catEyeRadius : mLensRadius;
   mRimSlope = options.catEye * mRimRadius / mRCorner;
   if (mLensRadius > 0) {
-    SMDL_LOG_INFO("Thin lens: radius ", mLensRadius, " scene units",
+    SMDL_LOG_INFO("Thin lens: radius ", mLensRadius, " meters",
                   mNumBlades >= 3 ? smdl::concat(", ", mNumBlades, " blades")
                                   : std::string());
   }
@@ -466,7 +460,7 @@ void Camera::buildThinLens(const CameraOptions &options) {
   }
   if (mRimSlope > 0 && mLensRadius > 0) {
     SMDL_LOG_INFO("Mechanical vignetting: rim radius ", mRimRadius,
-                  " scene units against a lens radius of ", mLensRadius,
+                  " meters against a lens radius of ", mLensRadius,
                   ", displaced ", options.catEye * mRimRadius,
                   " at the frame corner");
   }

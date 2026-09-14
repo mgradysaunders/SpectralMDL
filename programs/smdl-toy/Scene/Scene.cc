@@ -149,7 +149,7 @@ void MeshInstance::setObjectToWorld(const float4x4 &xf,
   const float scale{
       (length(axis0) + length(float3(xf[1])) + length(float3(xf[2]))) / 3.0f};
   if (!(std::fabs(determinant) > 1e-9f * std::max(scale * scale * scale, 1.0f)))
-    SMDL_LOG_WARN("Instance transform in ", smdl::QuotedPath(fileName),
+    SMDL_LOG_WARN("Instance transform in ", SpellFilePath(fileName),
                   " is degenerate: it collapses the object onto a plane or a "
                   "line, which has no volume to intersect and no surface "
                   "normal to shade");
@@ -240,7 +240,7 @@ void Scene::addMesh(const std::string &fileName,
     key += "|anim " + animationKey;
   if (subdiv.levels >= 5)
     SMDL_LOG_WARN("A 'subdivide ", subdiv.levels, "' in ",
-                  smdl::QuotedPath(fileName), " multiplies the face count by ",
+                  SpellFilePath(fileName), " multiplies the face count by ",
                   (uint64_t(1) << (2 * subdiv.levels)),
                   "; expect memory and build time to match");
   auto entry{importCache.find(key)};
@@ -266,7 +266,7 @@ void Scene::addMesh(const std::string &fileName,
         assImporter.ReadFile(fileName.c_str(), flags & ~DEFERRED_FLAGS)};
     if (!assScene)
       throw smdl::Error(smdl::concat("Assimp failed to read ",
-                                     smdl::QuotedPath(fileName), ": ",
+                                     SpellFilePath(fileName), ": ",
                                      assImporter.GetErrorString()));
     const aiAnimation *clip{resolveClip(*assScene, animation, fileName)};
     bool anyDeforms{false};
@@ -276,7 +276,7 @@ void Scene::addMesh(const std::string &fileName,
       assScene = assImporter.ApplyPostProcessing(flags & DEFERRED_FLAGS);
       if (!assScene)
         throw smdl::Error(smdl::concat("Assimp failed to post-process ",
-                                       smdl::QuotedPath(fileName), ": ",
+                                       SpellFilePath(fileName), ": ",
                                        assImporter.GetErrorString()));
     }
     const size_t meshBase{meshes.size()};
@@ -287,16 +287,16 @@ void Scene::addMesh(const std::string &fileName,
     uint64_t numFaces{};
     for (size_t i = meshBase; i < meshes.size(); i++)
       numFaces += meshes[i]->faces.size() + meshes[i]->baseFaceCounts.size();
-    SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
-                   smdl::Counted(meshes.size() - meshBase, "mesh", "meshes"),
-                   ", ", smdl::Counted(file.placements.size(), "placement"),
+    SMDL_LOG_DEBUG("Read ", SpellFilePath(fileName), ": ",
+                   SpellCounted(meshes.size() - meshBase, "mesh", "meshes"),
+                   ", ", SpellCounted(file.placements.size(), "placement"),
                    ", ",
-                   smdl::Counted(numFaces, subdiv.levels > 0 ? "base polygon"
-                                                             : "triangle"));
+                   SpellCounted(numFaces, subdiv.levels > 0 ? "base polygon"
+                                                            : "triangle"));
     entry = importCache.emplace(std::move(key), std::move(file)).first;
   } else {
-    SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
-                   smdl::Counted(entry->second.placements.size(), "placement"));
+    SMDL_LOG_DEBUG("Reusing ", SpellFilePath(fileName), ": ",
+                   SpellCounted(entry->second.placements.size(), "placement"));
   }
   const ImportFile &file{entry->second};
   const std::vector<uint32_t> selectedRoot{
@@ -352,14 +352,14 @@ void Scene::addMesh(const std::string &fileName,
     numInstances += uint32_t(worldXfs.size());
   }
   if (numSkippedOnRoot > 0)
-    SMDL_LOG_WARN("Selection in ", smdl::QuotedPath(fileName), " skipped ",
-                  smdl::Counted(numSkippedOnRoot, "mesh", "meshes"),
+    SMDL_LOG_WARN("Selection in ", SpellFilePath(fileName), " skipped ",
+                  SpellCounted(numSkippedOnRoot, "mesh", "meshes"),
                   numSkippedOnRoot == 1 ? " that sits" : " that sit",
                   " directly on the file's root node, which has no name to "
                   "select it by");
   if (!selection.patterns.empty())
-    SMDL_LOG_DEBUG("Selected ", smdl::Counted(numInstances, "instance"),
-                   " from ", smdl::QuotedPath(fileName));
+    SMDL_LOG_DEBUG("Selected ", SpellCounted(numInstances, "instance"),
+                   " from ", SpellFilePath(fileName));
 }
 
 void Scene::add(const LayoutItem &item) {
@@ -414,7 +414,7 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
                                        useRobustIntersection));
     primitiveCache.emplace(std::move(key), primIndex);
     SMDL_LOG_DEBUG("Built ", spec.key(), ": ",
-                   smdl::Counted(primitivePieceCount(spec), "piece"), ", area ",
+                   SpellCounted(primitivePieceCount(spec), "piece"), ", area ",
                    primitives.back()->objectArea);
   } else {
     primIndex = entry->second;
@@ -449,7 +449,7 @@ uint32_t Scene::addCurves(const std::string &fileName,
                                   gRenderShutter.secondsAt(1.0f)};
     CurvesFile file{readCurvesFile(fileName)};
     if (file.hasKeyBetween(sampling.open, sampling.shut))
-      SMDL_LOG_WARN("A key of ", smdl::QuotedPath(fileName),
+      SMDL_LOG_WARN("A key of ", SpellFilePath(fileName),
                     " sits inside the shutter, so the strands move along "
                     "the chord of its two ends");
     curvesIndex = uint32_t(curves.size());
@@ -457,16 +457,16 @@ uint32_t Scene::addCurves(const std::string &fileName,
                                 internMaterial(baseName), useRobustIntersection,
                                 sampling));
     curvesCache.emplace(std::move(key), curvesIndex);
-    SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
-                   smdl::Counted(curves.back()->strandCount(), "strand"), ", ",
-                   smdl::Counted(curves.back()->segCount(), "segment"), ", ",
+    SMDL_LOG_DEBUG("Read ", SpellFilePath(fileName), ": ",
+                   SpellCounted(curves.back()->strandCount(), "strand"), ", ",
+                   SpellCounted(curves.back()->segCount(), "segment"), ", ",
                    CurvesFile::basisName(curves.back()->basis), " basis, ",
                    spec.mode == CurvesSpec::Mode::RIBBON ? "ribbon" : "tube",
                    " mode", curves.back()->moves() ? ", moving" : "");
   } else {
     curvesIndex = entry->second;
-    SMDL_LOG_DEBUG("Reusing ", smdl::QuotedPath(fileName), ": ",
-                   smdl::Counted(curves[curvesIndex]->strandCount(), "strand"));
+    SMDL_LOG_DEBUG("Reusing ", SpellFilePath(fileName), ": ",
+                   SpellCounted(curves[curvesIndex]->strandCount(), "strand"));
   }
   const uint32_t matIndex{instanceMaterialIndex(materials, baseName)};
   fileNames.push_back(fileName);
@@ -534,20 +534,20 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
         node.moves = node.nodeToFile[j][k] != node.nodeToFileShut[j][k];
     numMoving += node.moves;
   }
-  const smdl::Brief at{ticksOpen / ticksPerSecond(*clip), 3};
-  const smdl::Brief duration{clip->mDuration / ticksPerSecond(*clip), 3};
+  const SpellFloat at{ticksOpen / ticksPerSecond(*clip), 3};
+  const SpellFloat duration{clip->mDuration / ticksPerSecond(*clip), 3};
   if (poseShut) {
-    SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " plays ",
-                  smdl::Quoted(clip->mName.C_Str()), " at ", at, " s (",
+    SMDL_LOG_INFO("Animation: ", SpellFilePath(fileName), " plays ",
+                  SpellQuoted(clip->mName.C_Str()), " at ", at, " s (",
                   animation.shouldPlayOnce ? "once" : "looping", ", ", duration,
-                  " s long): ", smdl::Counted(numDeforming, "mesh", "meshes"),
-                  " deform and ", smdl::Counted(numMoving, "node"),
+                  " s long): ", SpellCounted(numDeforming, "mesh", "meshes"),
+                  " deform and ", SpellCounted(numMoving, "node"),
                   " move over the shutter");
   } else {
-    SMDL_LOG_INFO("Animation: ", smdl::QuotedPath(fileName), " holds ",
-                  smdl::Quoted(clip->mName.C_Str()), " at ", at,
+    SMDL_LOG_INFO("Animation: ", SpellFilePath(fileName), " holds ",
+                  SpellQuoted(clip->mName.C_Str()), " at ", at,
                   " s, the shutter being shut: ",
-                  smdl::Counted(numDeforming, "mesh", "meshes"), " posed");
+                  SpellCounted(numDeforming, "mesh", "meshes"), " posed");
   }
   return file;
 }
@@ -580,7 +580,7 @@ namespace {
     return dot(float3(m[0]), cross(float3(m[1]), float3(m[2])));
   }};
   if ((det(xf) < 0.0f) != (det(xfShut) < 0.0f)) {
-    SMDL_LOG_WARN("Instance motion in ", smdl::QuotedPath(fileName),
+    SMDL_LOG_WARN("Instance motion in ", SpellFilePath(fileName),
                   " turns the object inside out over the shutter, which no "
                   "interpolation can render; it holds its open key");
     return false;
@@ -677,7 +677,7 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
     rtcSetGeometryTransformQuaternion(inst, 0, &open);
     rtcSetGeometryTransformQuaternion(inst, 1, &shut);
     instance.isMoving = true;
-    SMDL_LOG_DEBUG("Moving instance of ", smdl::QuotedPath(fileName));
+    SMDL_LOG_DEBUG("Moving instance of ", SpellFilePath(fileName));
   } else {
     rtcSetGeometryTimeStepCount(inst, 1);
     rtcSetGeometryTransform(inst, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR,
@@ -764,7 +764,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
   }
   rtcCommitGeometry(geometry);
   attachInstance(geometry, base);
-  SMDL_LOG_DEBUG("Instance array: ", smdl::Counted(worldXfs.size(), "element"),
+  SMDL_LOG_DEBUG("Instance array: ", SpellCounted(worldXfs.size(), "element"),
                  " of ", fileName, isMoving ? ", moving" : "");
   return base;
 }
@@ -862,13 +862,13 @@ void Scene::commit(const Color &wavelengths) {
   boundRadius = 0.5f * length(upper - lower);
   uint64_t numTriangles{};
   for (const auto &mesh : meshes) numTriangles += mesh->faces.size();
-  SMDL_LOG_DEBUG("Committed ", smdl::Counted(fileNames.size(), "file"), ": ",
-                 smdl::Counted(meshes.size(), "mesh", "meshes"), ", ",
-                 smdl::Counted(primitives.size(), "primitive"), ", ",
-                 smdl::Counted(curves.size(), "groom"), ", ",
-                 smdl::Counted(meshInstances.size(), "instance"), ", ",
-                 smdl::Counted(materialDefs.size(), "material"), ", ",
-                 smdl::Counted(numTriangles, "triangle"), ", center (",
+  SMDL_LOG_DEBUG("Committed ", SpellCounted(fileNames.size(), "file"), ": ",
+                 SpellCounted(meshes.size(), "mesh", "meshes"), ", ",
+                 SpellCounted(primitives.size(), "primitive"), ", ",
+                 SpellCounted(curves.size(), "groom"), ", ",
+                 SpellCounted(meshInstances.size(), "instance"), ", ",
+                 SpellCounted(materialDefs.size(), "material"), ", ",
+                 SpellCounted(numTriangles, "triangle"), ", center (",
                  boundCenter.x, ", ", boundCenter.y, ", ", boundCenter.z,
                  ") radius ", boundRadius,
                  useOpaqueShadows ? ", boolean shadows" : "");
@@ -915,7 +915,7 @@ void Scene::resolveMaterials(const std::vector<bool> &isUsed) {
     // into, so stop here and say exactly which names need attention, and
     // why, each explanation's own list of candidates indented under it.
     std::string message{smdl::concat(
-        "cannot resolve ", smdl::Counted(unresolved.size(), "material name"),
+        "cannot resolve ", SpellCounted(unresolved.size(), "material name"),
         " in the scene to an MDL material:")};
     for (const auto &name : unresolved) {
       const std::string explanation{
@@ -1174,7 +1174,7 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
                            std::chrono::steady_clock::now() - startTime)
                            .count()};
   SMDL_LOG_INFO("Subdivision/displacement: ",
-                smdl::Counted(pending.size(), "mesh", "meshes"), ", ",
+                SpellCounted(pending.size(), "mesh", "meshes"), ", ",
                 facesBefore, " faces to ", facesAfter, " triangles, ",
                 numDisplaced.load(), " displaced, in ", seconds, "s");
   // 'displace' with nothing to displace usually means the scene resolved

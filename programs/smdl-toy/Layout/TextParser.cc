@@ -20,7 +20,7 @@ std::string resolveSiblingFile(const std::string &stated,
     path = std::filesystem::path(cameraFileName).parent_path() / path;
   if (!std::filesystem::exists(path))
     throw smdl::Error(smdl::concat("The camera file names the ", what, " ",
-                                   smdl::QuotedPath(stated),
+                                   SpellFilePath(stated),
                                    ", which does not exist beside it"));
   return path.string();
 }
@@ -93,7 +93,7 @@ float TextParser::positive(const LayoutLocation &keyLoc, std::string_view key,
                            float value) {
   if (!(value > 0)) {
     mDiags.error(keyLoc, smdl::concat("expected a positive number for ",
-                                      smdl::Quoted(key),
+                                      SpellQuoted(key),
                                       " (omit it to leave it unset)"));
     throw Recover();
   }
@@ -104,7 +104,7 @@ float TextParser::finite(const LayoutLocation &keyLoc, std::string_view key,
                          float value) {
   if (!std::isfinite(value)) {
     mDiags.error(keyLoc, smdl::concat("expected a finite number for ",
-                                      smdl::Quoted(key)));
+                                      SpellQuoted(key)));
     throw Recover();
   }
   return value;

@@ -98,8 +98,8 @@ rigidOf(const TransformDecomposition &parts) noexcept {
 PlacesFile readPlacesFile(const std::string &fileName) {
   requireLittleEndianHost("'.places'");
   const auto fail{[&](auto &&...args) {
-    throw smdl::Error(smdl::concat("Cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", args...));
+    throw smdl::Error(
+        smdl::concat("Cannot read ", SpellFilePath(fileName), ": ", args...));
   }};
   const std::string contents{smdl::readOrThrow(fileName)};
   PlacesHeader header{};
@@ -107,7 +107,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
     std::memcpy(&header, contents.data(), sizeof(header));
   if (!hasMagic(header.magic, PLACES_MAGIC))
     throw smdl::Error(smdl::concat(
-        smdl::QuotedPath(fileName),
+        SpellFilePath(fileName),
         " is not a '.places' buffer (bad magic; expected it to begin "
         "with \"SMDLPLCS\")"));
   if (header.version != 1)
@@ -142,7 +142,7 @@ PlacesFile readPlacesFile(const std::string &fileName) {
   if (hasVariants) reader.takeArray(places.variants, header.count);
   if (!reader.empty())
     fail("truncated (the header promises ",
-         smdl::Counted(header.count, "record"), ")");
+         SpellCounted(header.count, "record"), ")");
   return places;
 }
 
@@ -169,8 +169,8 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
         decomposeTransform(places.transforms[i])};
     if (!parts.isRigid())
       throw smdl::Error(smdl::concat(
-          "Cannot write places buffer ", smdl::QuotedPath(fileName),
-          ": record ", i,
+          "Cannot write places buffer ", SpellFilePath(fileName), ": record ",
+          i,
           " is scaled, skewed, or mirrored, which a rigid record cannot "
           "express"));
     pushRecord(payload, rigidOf(parts));
@@ -179,8 +179,8 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
   if (places.isCompressed) payload = smdl::compressBytes(payload);
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
-    throw smdl::Error(smdl::concat("Cannot write places buffer ",
-                                   smdl::QuotedPath(fileName)));
+    throw smdl::Error(
+        smdl::concat("Cannot write places buffer ", SpellFilePath(fileName)));
   PlacesHeader header{};
   setMagic(header.magic, PLACES_MAGIC);
   header.version = 1;
@@ -192,6 +192,6 @@ void writePlacesFile(const std::string &fileName, const PlacesFile &places) {
   stream.write(reinterpret_cast<const char *>(payload.data()),
                std::streamsize(payload.size()));
   if (!stream)
-    throw smdl::Error(smdl::concat("Cannot write places buffer ",
-                                   smdl::QuotedPath(fileName)));
+    throw smdl::Error(
+        smdl::concat("Cannot write places buffer ", SpellFilePath(fileName)));
 }

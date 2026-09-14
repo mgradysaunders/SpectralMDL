@@ -105,9 +105,9 @@ void exposePreview(const Frame &frame, const smdl::Compiler &compiler,
   if (logging == DevelopLogging::VERBOSE)
     SMDL_LOG_INFO("Preview: the observer's picture exposed as the sensor's "
                   "develop would expose it, times ",
-                  smdl::Brief(gain, 4), " (", smdl::Brief(std::log2(gain), 3),
+                  SpellFloat(gain, 4), " (", SpellFloat(std::log2(gain), 3),
                   " EV), so that a neutral at the meter's aim lands on ",
-                  smdl::Brief(DEVELOP_MIDDLE_GRAY, 3));
+                  SpellFloat(DEVELOP_MIDDLE_GRAY, 3));
 }
 
 /// What the sensor makes of the films before there is a picture: the
@@ -154,12 +154,11 @@ responseHeaderLines(const CameraModel &model, const Response *response) {
 /// What the readout made of the film, for the line that reports it.
 void logReadout(const Readout &readout) {
   SMDL_LOG_INFO(
-      "Readout: mean ", smdl::Brief(readout.meanElectrons, 4),
+      "Readout: mean ", SpellFloat(readout.meanElectrons, 4),
       " e- over the window, ",
-      smdl::Brief(100.0 * double(readout.wellCount) /
-                      double(std::max<uint64_t>(readout.windowCount, 1)),
-                  3),
-      "% of pixel bands at the well");
+      SpellPercent(double(readout.wellCount) /
+                   double(std::max<uint64_t>(readout.windowCount, 1))),
+      " of pixel bands at the well");
 }
 
 /// Write the readout as the extension `-output-raw` carries: the ENVI
@@ -189,7 +188,7 @@ void writeReadoutFile(const Options &opts, const Frame &frame,
         " noise, seed ", opts.image.readout.seed);
     writeDNGFile(partName, image);
     smdl::renameOnto(partName, rawName);
-    SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(rawName),
+    SMDL_LOG_INFO("Wrote the readout: ", SpellQuoted(rawName),
                   ", a DNG of digital numbers up to ", detector.whiteLevel());
     if (develop.mode != DevelopMode::TRUE_COLOR)
       SMDL_LOG_WARN("The DNG states the fitted matrix all the same, so a "
@@ -213,8 +212,8 @@ void writeReadoutFile(const Options &opts, const Frame &frame,
       frame.window, target.bandFilm()->getNumSamples());
   smdl::renameOnto(partName, rawName);
   smdl::renameOnto(partName + ".hdr", rawName + ".hdr");
-  SMDL_LOG_INFO("Wrote the readout: ", smdl::Quoted(rawName), ", ",
-                smdl::Counted(bandNames.size(), "band"),
+  SMDL_LOG_INFO("Wrote the readout: ", SpellQuoted(rawName), ", ",
+                SpellCounted(bandNames.size(), "band"),
                 " of digital numbers up to ", detector.topCode());
 }
 
@@ -226,15 +225,13 @@ void filterRGB(const MedianFilterOptions &options, std::vector<float> &rgbImage,
   const MedianFilterReport report{
       medianFilterRGB(options, rgbImage, numPixelsX, window)};
   if (report.replacedCount == 0) return;
-  const double sharePixels{100.0 * double(report.replacedCount) /
+  const double sharePixels{double(report.replacedCount) /
                            double(report.examinedCount)};
   const double shareEnergy{
-      report.energyTotal > 0 ? 100.0 * report.energyRemoved / report.energyTotal
-                             : 0.0};
+      report.energyTotal > 0 ? report.energyRemoved / report.energyTotal : 0.0};
   SMDL_LOG_INFO("Median filter replaced ", report.replacedCount, " of ",
-                report.examinedCount, " pixels (", smdl::Brief(sharePixels, 3),
-                "%) and removed ", smdl::Brief(shareEnergy, 3),
-                "% of the energy");
+                report.examinedCount, " pixels (", SpellPercent(sharePixels),
+                ") and removed ", SpellPercent(shareEnergy), " of the energy");
 }
 
 /// The grids' cells, which a resumed session adopts with the wavelengths.
@@ -288,11 +285,13 @@ void appendSpectralReaderLines(const CameraModel &model,
   if (!envLight ||
       !envLight->sunMetadata(wavelengths, azimuthDeg, elevationDeg, irradiance))
     return;
-  headerLines.push_back(smdl::concat(ENVI_SUN_AZIMUTH, " = ", azimuthDeg));
-  headerLines.push_back(smdl::concat(ENVI_SUN_ELEVATION, " = ", elevationDeg));
+  headerLines.push_back(
+      smdl::concat(ENVI_SUN_AZIMUTH, " = ", SpellExact(azimuthDeg)));
+  headerLines.push_back(
+      smdl::concat(ENVI_SUN_ELEVATION, " = ", SpellExact(elevationDeg)));
   std::string line{smdl::concat(ENVI_SOLAR_IRRADIANCE, " = {")};
   for (size_t i = 0; i < irradiance.size(); i++)
-    line += smdl::concat(i > 0 ? ", " : "", irradiance[i]);
+    line += smdl::concat(i > 0 ? ", " : "", SpellExact(irradiance[i]));
   headerLines.push_back(line + "}");
 }
 
@@ -324,8 +323,8 @@ void writeFilmFile(const Options &opts, const Frame &frame,
                         opts.image.shouldWriteDouble);
     smdl::renameOnto(partName, outputBands);
     smdl::renameOnto(partName + ".hdr", outputBands + ".hdr");
-    SMDL_LOG_INFO("Wrote the film: ", smdl::Quoted(outputBands), ", ",
-                  smdl::Counted(wavelengths.size(), "band"), " in ",
+    SMDL_LOG_INFO("Wrote the film: ", SpellQuoted(outputBands), ", ",
+                  SpellCounted(wavelengths.size(), "band"), " in ",
                   model.filmQuantity() == FilmQuantity::IRRADIANCE
                       ? SPECTRAL_IRRADIANCE_UNITS
                       : SPECTRAL_RADIANCE_UNITS);
@@ -338,8 +337,8 @@ void writeFilmFile(const Options &opts, const Frame &frame,
                                    bandNames, opts.image.shouldWriteDouble);
   smdl::renameOnto(partName, outputBands);
   smdl::renameOnto(partName + ".hdr", outputBands + ".hdr");
-  SMDL_LOG_INFO("Wrote the band film: ", smdl::Quoted(outputBands), ", ",
-                smdl::Counted(bandNames.size(), "band"), " in ", BAND_UNITS);
+  SMDL_LOG_INFO("Wrote the band film: ", SpellQuoted(outputBands), ", ",
+                SpellCounted(bandNames.size(), "band"), " in ", BAND_UNITS);
 }
 
 /// Write the guide tree beside the film, with the same
@@ -351,7 +350,7 @@ void writeGuideTreeFile(const STree &sdtree, const std::string &outputBands,
   const std::string treePartName{treeName + ".part"};
   sdtree.writeFile(treePartName, samplesPerPixel);
   smdl::renameOnto(treePartName, treeName);
-  SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
+  SMDL_LOG_INFO("Wrote guide tree: ", SpellQuoted(treeName), ", ",
                 sdtree.leafCount(), " spatial leaves");
 }
 
@@ -448,7 +447,7 @@ void writeOutputs(const Options &opts, const Frame &frame,
     SMDL_LOG_INFO(
         "Cumulative render time: ", formatDuration(resumed.header.seconds),
         " wall, ", formatDuration(resumed.header.cpuSeconds), " compute over ",
-        smdl::Counted(resumed.header.sessions, "session"));
+        SpellCounted(resumed.header.sessions, "session"));
   }
   for (const auto &fileName : opts.image.outputRGB)
     if (std::optional<smdl::Error> error{

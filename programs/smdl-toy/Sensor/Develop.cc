@@ -71,7 +71,7 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   }
   if (mode == Mode::GRAYSCALE) {
     std::cerr << smdl::concat(
-        "spectral to RGB: ", smdl::Counted(numBands, "band"),
+        "spectral to RGB: ", SpellCounted(numBands, "band"),
         " cannot carry color, writing the grayscale mean radiance\n");
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
       const size_t x{p % numPixelsX}, y{p / numPixelsX};
@@ -98,14 +98,13 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
       bandG = nearestBand(wavelengths, waveMin + (waveMax - waveMin) / 2);
       bandB = nearestBand(wavelengths, waveMin + (waveMax - waveMin) / 6);
     }
-    char note[160]{};
-    std::snprintf(note, sizeof(note),
-                  "spectral to RGB: false color%s, R=%.0fnm G=%.0fnm "
-                  "B=%.0fnm (the grid covers %.0f%% of the visible)\n",
-                  policy.shouldForceFalseColor ? " (forced)" : "",
-                  double(wavelengths[bandR]), double(wavelengths[bandG]),
-                  double(wavelengths[bandB]), 100.0 * coverage);
-    std::cerr << note;
+    std::cerr << smdl::concat("spectral to RGB: false color",
+                              policy.shouldForceFalseColor ? " (forced)" : "",
+                              ", R=", SpellFloat(wavelengths[bandR], 3),
+                              "nm G=", SpellFloat(wavelengths[bandG], 3),
+                              "nm B=", SpellFloat(wavelengths[bandB], 3),
+                              "nm (the grid covers ", SpellPercent(coverage, 0),
+                              " of the visible)\n");
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
       const size_t x{p % numPixelsX}, y{p / numPixelsX};
       float *texel{&rgbImage[3 * p]};
@@ -116,12 +115,10 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
     return rgbImage;
   }
   if (coverage < 0.9) {
-    char note[160]{};
-    std::snprintf(note, sizeof(note),
-                  "spectral to RGB: the grid covers %.0f%% of the visible, "
-                  "true color will be band-limited (dim or tinted)\n",
-                  100.0 * coverage);
-    std::cerr << note;
+    std::cerr << smdl::concat(
+        "spectral to RGB: the grid covers ", SpellPercent(coverage, 0),
+        " of the visible, true color will be band-limited (dim or "
+        "tinted)\n");
   }
   // The JIT'd conversion reads only the state it is handed, so the rows
   // go in parallel.
@@ -299,8 +296,9 @@ void refineHamiltonAdams(const ResponseSettings &response,
   case DemosaicMethod::HAMILTON_ADAMS:
     return "Hamilton-Adams demosaic";
   case DemosaicMethod::BILINEAR:
-    return smdl::concat("bilinear demosaic over the ", response.cfaColumns, "x",
-                        response.cfaRows(), " tile");
+    return smdl::concat(
+        "bilinear demosaic over the ",
+        SpellDimensions(response.cfaColumns, response.cfaRows()), " tile");
   default:
     return "no demosaic, every pixel holding every band";
   }
@@ -556,19 +554,19 @@ std::vector<float> developReadout(const Sensor &sensor,
                           "frame and took D65")
         : resolved.measuredKelvin > 0
             ? smdl::concat("auto, the frame's gray world reading ",
-                           smdl::Brief(resolved.measuredKelvin, 4), " K")
+                           SpellFloat(resolved.measuredKelvin, 4), " K")
             : std::string("auto, the frame's gray world")};
     std::string factors{};
     for (size_t k = 0; k < bands.size(); k++)
       factors += smdl::concat(k > 0 ? ", " : "", response.bands[bands[k]].name,
-                              " ", smdl::Brief(multipliers[k], 4));
+                              " ", SpellFloat(multipliers[k], 4));
     SMDL_LOG_INFO("Develop: white balance ", balance, ": ", factors,
-                  ", every sample held at ", smdl::Brief(ceiling, 4));
+                  ", every sample held at ", SpellFloat(ceiling, 4));
     const std::string how{
         smdl::concat(describeDemosaic(method, response), "; exposed by ",
-                     smdl::Brief(std::log2(exposure), 3),
+                     SpellFloat(std::log2(exposure), 3),
                      " EV, so that a metered neutral develops to ",
-                     smdl::Brief(DEVELOP_MIDDLE_GRAY, 3))};
+                     SpellFloat(DEVELOP_MIDDLE_GRAY, 3))};
     const std::string names{spellBands(response, bandSpan)};
     if (mode == DevelopMode::TRUE_COLOR)
       SMDL_LOG_INFO("Develop: ", names,
@@ -576,7 +574,7 @@ std::vector<float> developReadout(const Sensor &sensor,
                     "over ",
                     trainingReflectances().size(),
                     " training reflectances, a mean of ",
-                    smdl::Brief(fit.meanDeltaE00, 3),
+                    SpellFloat(fit.meanDeltaE00, 3),
                     " dE00, then Bradford to the sRGB white; ", how);
     else if (mode == DevelopMode::FALSE_COLOR)
       SMDL_LOG_WARN(
@@ -584,13 +582,13 @@ std::vector<float> developReadout(const Sensor &sensor,
           fit.isSingular
               ? std::string(" respond too much alike to tell colors apart")
               : smdl::concat(" fit the observer to a mean of ",
-                             smdl::Brief(fit.meanDeltaE00, 3),
+                             SpellFloat(fit.meanDeltaE00, 3),
                              " dE00 over the training reflectances, past ",
-                             smdl::Brief(FAITHFUL_FIT_DELTA_E00, 3)),
+                             SpellFloat(FAITHFUL_FIT_DELTA_E00, 3)),
           ", so the picture is false color, each band on its own channel; ",
           how);
     else
-      SMDL_LOG_INFO("Develop: ", smdl::Counted(bands.size(), "band"),
+      SMDL_LOG_INFO("Develop: ", SpellCounted(bands.size(), "band"),
                     " cannot carry color, so the picture is gray; ", how);
   }
   return rgbImage;
@@ -638,7 +636,7 @@ struct Calibration final {
   if (!tryInvert(matrix))
     throw smdl::Error(smdl::concat(
         "This sensor's three bands respond too much alike under ",
-        smdl::Brief(kelvin, 4),
+        SpellFloat(kelvin, 4),
         " K to carry the color matrix a DNG states. Write the readout to a "
         "'.img' instead"));
   return matrix;
@@ -655,15 +653,15 @@ void requireDNGSensor(const Sensor &sensor) {
   }};
   if (response.bands.size() != 3)
     refuse("A DNG holds red, green, and blue alone, and this sensor has ",
-           smdl::Counted(response.bands.size(), "band"));
+           SpellCounted(response.bands.size(), "band"));
   if (response.hasCFA()) {
     if (response.cfaColumns != 2 || response.cfaRows() != 2)
-      refuse("A DNG's mosaic is a 2 by 2 tile, and this sensor's is ",
-             response.cfaColumns, " by ", response.cfaRows());
+      refuse("A DNG's mosaic is a 2x2 tile, and this sensor's is ",
+             SpellDimensions(response.cfaColumns, response.cfaRows()));
     if (const size_t count{tileBands(response.cfa).size()}; count != 3)
       refuse("A DNG's mosaic lays down all three colors, and this sensor's "
              "tile lays down ",
-             smdl::Counted(count, "band"));
+             SpellCounted(count, "band"));
   }
   // The matrices themselves are wanted at readout and not here; building
   // one is the check, since that is what refuses a sensor whose three

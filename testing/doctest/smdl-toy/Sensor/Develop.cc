@@ -574,7 +574,7 @@ TEST_CASE("Develop: the sensors a DNG cannot carry") {
     SensorSettings wide{lutherSensor(true)};
     wide.response.cfaColumns = 4;
     wide.response.cfa = {0, 1, 0, 1, 1, 2, 1, 2};
-    CHECK_ERROR(refused(wide), "2 by 2 tile, and this sensor's is 4 by 2");
+    CHECK_ERROR(refused(wide), "2x2 tile, and this sensor's is 4x2");
   }
   SUBCASE("A 2 by 2 tile that lays down fewer than all three") {
     SensorSettings partial{lutherSensor(true)};

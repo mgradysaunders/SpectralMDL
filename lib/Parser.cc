@@ -107,7 +107,7 @@ std::string Parser::explainToken(std::string_view token) const {
     bool isExtension{token.size() > 1 && (token[0] == '#' || token[0] == '$')};
     for (auto extension : extensions) isExtension |= token == extension;
     if (isExtension)
-      return concat("; ", Quoted(token),
+      return concat("; ", SpellQuoted(token),
                     " is a SpectralMDL extension, so the file must begin "
                     "with '#smdl'");
   }
@@ -158,7 +158,7 @@ void Parser::throwUnexpectedToken(const SourceLocation &srcLoc,
     srcLoc.throwError(
         concat(message, ", but reached the end of the file", explanation));
   srcLoc.throwError(
-      concat(message, ", but found ", Quoted(token), explanation));
+      concat(message, ", but found ", SpellQuoted(token), explanation));
 }
 
 std::optional<std::string_view> Parser::nextWord() {
@@ -994,7 +994,7 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
   auto parseIntWithPrefix{[&](auto &&isDigit, int radix, const char *prefix,
                               const char *info, std::string &digitsStr) {
     if (!isDigit(peek()))
-      srcLoc0.throwError("Expected literal prefix ", Quoted(prefix),
+      srcLoc0.throwError("Expected literal prefix ", SpellQuoted(prefix),
                          " to be followed by ", info);
     std::string digits{parseDigits(isDigit)};
     unsigned bits{llvm::APInt::getBitsNeeded(digits, radix)};
@@ -1203,7 +1203,7 @@ auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
     if (std::from_chars(srcNumber.data(), srcNumber.data() + srcNumber.size(),
                         number)
             .ec != std::errc())
-      srcLoc0.throwError("Version number ", Quoted(srcNumber),
+      srcLoc0.throwError("Version number ", SpellQuoted(srcNumber),
                          " is out of range");
     return number;
   }};
@@ -1372,7 +1372,7 @@ auto Parser::parseAttributes() -> std::optional<AST::Decl::Attributes> {
       if (peek() != ')') {
         SourceLocation srcLocAttr{mSrcLoc};
         if (std::optional<std::string_view> word{nextWord()})
-          srcLocAttr.throwError("Unrecognized attribute ", Quoted(*word),
+          srcLocAttr.throwError("Unrecognized attribute ", SpellQuoted(*word),
                                 ", expected one of ", join(attrNames, ", "));
         srcLocAttr.throwError("Expected attribute name or ')' after '@('");
       }
@@ -1505,7 +1505,7 @@ auto Parser::parseStructTypeDeclaration() -> BumpPtr<AST::Struct> {
     if (!constructor) break;
     if (constructor->name.srcName != name->srcName)
       constructor->name.srcLoc.throwError(
-          "Constructor must name the containing struct ", Quoted(*name));
+          "Constructor must name the containing struct ", SpellQuoted(*name));
     constructors.push_back(std::move(*constructor));
     skip();
     if (peek() == '}') break;

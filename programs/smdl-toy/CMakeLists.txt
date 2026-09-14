@@ -24,6 +24,7 @@ target_sources(
   "smdl-toy-objects"
   PRIVATE
     "CameraModel.cc"
+    "Common.cc"
     "MedianFilter.cc"
     "Options.cc"
     "Output.cc"

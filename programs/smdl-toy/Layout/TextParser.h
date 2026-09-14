@@ -40,7 +40,7 @@ template <typename Parse>
   const LayoutSource &source{diags.loadSource(fileName)};
   auto document{parse(diags, source)};
   diags.printAllAndRefuse(fileName);
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName));
+  SMDL_LOG_DEBUG("Read ", SpellFilePath(fileName));
   return document;
 }
 
@@ -180,13 +180,13 @@ protected:
     for (size_t i = 0; i < N; i++) {
       if (mToken.kind != Token::WORD) {
         mDiags.error(location(),
-                     smdl::concat("expected ", smdl::Counted(N, "number"),
+                     smdl::concat("expected ", SpellCounted(N, "number"),
                                   ", got ", i, " of them"));
         throw Recover();
       }
       if (!tryNumber(mToken, values[i])) {
         mDiags.error(location(), smdl::concat("expected a number, got ",
-                                              smdl::Quoted(mToken.text)));
+                                              SpellQuoted(mToken.text)));
         throw Recover();
       }
       advance();

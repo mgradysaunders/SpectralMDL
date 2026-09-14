@@ -55,7 +55,7 @@ constexpr double TWO_PI_DOUBLE{6.283185307179586476925};
   std::string text{};
   for (size_t i = 0; i < (isUniform ? size_t(1) : leaks.size()); i++) {
     if (i > 0) text += ", ";
-    smdl::Brief(leaks[i], 3).appendTo(text);
+    SpellFloat(leaks[i], 3).appendTo(text);
   }
   return text;
 }
@@ -68,7 +68,7 @@ DetectorNoise parseDetectorNoise(const std::string &name) {
   if (name == "all") return DetectorNoise::ALL;
   throw smdl::Error(smdl::concat("Expected -detector-noise to be 'none', "
                                  "'shot', or 'all', got ",
-                                 smdl::Quoted(name)));
+                                 SpellQuoted(name)));
 }
 
 const char *detectorNoiseName(DetectorNoise noise) noexcept {
@@ -120,27 +120,26 @@ void Detector::logSummary() const {
                              ? "from the base ISO"
                              : "from the pitch"};
   SMDL_LOG_INFO(
-      "Readout: ", smdl::Brief(mPitchUM.x, 4), " by ",
-      smdl::Brief(mPitchUM.y, 4), " um pixels, ",
-      smdl::Brief(1e3 * shot.exposure, 4), " ms at f/",
-      smdl::Brief(shot.fNumber, 4), ", ", smdl::Brief(mElectronsPerFilmUnit, 4),
-      " electrons per unit of film; dark ", smdl::Brief(mDarkElectrons, 4),
-      " e- at ", smdl::Brief(shot.temperature, 4), " C; well ",
-      smdl::Brief(mFullWell, 6), " e- ", wellSource, "; ISO ",
-      smdl::Brief(shot.iso, 6),
+      "Readout: ", SpellDimensions(mPitchUM, 2), " um pixels, ",
+      SpellFloat(1e3 * shot.exposure, 4), " ms at f/",
+      SpellFloat(shot.fNumber, 4), ", ", SpellFloat(mElectronsPerFilmUnit, 4),
+      " electrons per unit of film; dark ", SpellFloat(mDarkElectrons, 4),
+      " e- at ", SpellFloat(shot.temperature, 4), " C; well ",
+      SpellFloat(mFullWell, 6), " e- ", wellSource, "; ISO ",
+      SpellFloat(shot.iso, 6),
       mHasFixedGain        ? " of the stated gain"
       : shot.wasISOMetered ? " metered"
                            : " stated",
-      ", ", smdl::Brief(mGain, 6), " DN/e- over ", settings.bits,
-      " bits, black level ", smdl::Brief(settings.blackLevel, 6),
+      ", ", SpellFloat(mGain, 6), " DN/e- over ", settings.bits,
+      " bits, black level ", SpellFloat(settings.blackLevel, 6),
       " DN, white level ", mWhiteLevel, " DN, top code at ",
-      smdl::Brief(topCodeElectrons, 6), " e-");
+      SpellFloat(topCodeElectrons, 6), " e-");
   if (topCodeElectrons < mFullWell)
     SMDL_LOG_INFO("Readout: the top code sits at ",
-                  smdl::Brief(topCodeElectrons, 6), " e-, below the well of ",
-                  smdl::Brief(mFullWell, 6), " e-, so the ADC clips before ",
+                  SpellFloat(topCodeElectrons, 6), " e-, below the well of ",
+                  SpellFloat(mFullWell, 6), " e-, so the ADC clips before ",
                   "the pixel does, as it does above the base ISO of ",
-                  smdl::Brief(mBaseISO, 6));
+                  SpellFloat(mBaseISO, 6));
   else if (topCodeElectrons > 1.001 * mFullWell)
     SMDL_LOG_WARN("The well clips at ", mWhiteLevel,
                   " DN, below the top code of ", mTopCode, ", as it does ",
@@ -152,10 +151,10 @@ void Detector::logSummary() const {
     meanLeak /= double(mCrosstalk.leak.size());
     SMDL_LOG_INFO("Readout: cross-talk ", spellLeaks(mCrosstalk.leak),
                   " per side, so a pixel keeps ",
-                  smdl::Brief(1.0 - 4.0 * meanLeak, 4),
+                  SpellFloat(1.0 - 4.0 * meanLeak, 4),
                   " of its own charge and a checker of alternating pixels "
                   "reads at ",
-                  smdl::Brief(1.0 - 8.0 * meanLeak, 4), " of its contrast");
+                  SpellFloat(1.0 - 8.0 * meanLeak, 4), " of its contrast");
   }
 }
 

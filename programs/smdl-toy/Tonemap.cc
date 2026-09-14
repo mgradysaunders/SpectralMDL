@@ -610,14 +610,14 @@ namespace {
     const float value{std::strtof(ptr, &numEnd)};
     if (numEnd == ptr || *numEnd != '\0' || !std::isfinite(value))
       throw smdl::Error(smdl::concat("Cannot parse -tonemap ",
-                                     smdl::Quoted(stage), " parameter ",
-                                     smdl::Quoted(piece)));
+                                     SpellQuoted(stage), " parameter ",
+                                     SpellQuoted(piece)));
     values.push_back(value);
   }
   if (values.size() > maxCount)
     throw smdl::Error(smdl::concat("Expected at most ",
-                                   smdl::Counted(maxCount, "parameter"),
-                                   " for -tonemap ", smdl::Quoted(stage)));
+                                   SpellCounted(maxCount, "parameter"),
+                                   " for -tonemap ", SpellQuoted(stage)));
   return values;
 }
 } // namespace
@@ -659,7 +659,7 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
       if (hasParams) {
         if (name != "log")
           throw smdl::Error(smdl::concat("Expected no parameters for -tonemap ",
-                                         smdl::Quoted(name)));
+                                         SpellQuoted(name)));
         options.logDecades = parseStageParams(name, params, 1)[0];
         if (!(options.logDecades > 0))
           throw smdl::Error("Expected the -tonemap 'log' DECADES to be "
@@ -686,7 +686,7 @@ TonemapOptions parseTonemapOptions(std::string_view spec) {
                           "nonnegative (0 infers the bracket)");
     } else {
       throw smdl::Error(
-          smdl::concat("Unknown -tonemap stage ", smdl::Quoted(name),
+          smdl::concat("Unknown -tonemap stage ", SpellQuoted(name),
                        " (expected 'night', 'gamma', 'log', 'filmic', or "
                        "'fusion')"));
     }

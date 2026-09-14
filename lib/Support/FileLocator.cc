@@ -21,7 +21,7 @@ void warnAboutDefaultSearchDir(llvm::StringRef entry) {
     std::scoped_lock guard{mutex};
     if (!warnedEntries.insert(entry).second) return;
   }
-  SMDL_LOG_WARN("SMDL_DEFAULT_SEARCH_DIRS names ", Quoted(entry),
+  SMDL_LOG_WARN("SMDL_DEFAULT_SEARCH_DIRS names ", SpellQuoted(entry),
                 ", which is not a directory");
 }
 } // namespace

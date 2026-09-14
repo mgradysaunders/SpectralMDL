@@ -17,7 +17,8 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
   clear();
   std::optional<Error> error{catchAndReturnError([&] {
     auto throwError{[&](std::string_view message) {
-      throw Error(concat("Cannot load ", QuotedPath(fileName), ": ", message));
+      throw Error(
+          concat("Cannot load ", SpellFilePath(fileName), ": ", message));
     }};
     std::string hdrFile{readOrThrow(fileName + ".hdr")};
     llvm::StringRef hdr{hdrFile};
@@ -73,7 +74,8 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       if (key.equals_insensitive("file type")) {
         if (!value.equals_insensitive("ENVI Spectral Library")) {
           throwError(concat("'file type'", onLine(keyLine), " is ",
-                            Quoted(value), ", not 'ENVI Spectral Library'"));
+                            SpellQuoted(value),
+                            ", not 'ENVI Spectral Library'"));
         }
       } else if (key.equals_insensitive("data type")) {
         if (value.getAsInteger(10, dataType)) {
@@ -118,8 +120,8 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
         } else if (value.equals_insensitive("ghz")) {
           units = WAVE_UNITS_GIGAHERTZ;
         } else {
-          throwError(concat("Unsupported 'wavelength units' ", Quoted(value),
-                            onLine(keyLine)));
+          throwError(concat("Unsupported 'wavelength units' ",
+                            SpellQuoted(value), onLine(keyLine)));
         }
       } else if (key.equals_insensitive("wavelength")) {
         mWavelengths.clear();
@@ -144,12 +146,12 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     if (mWavelengths.size() != size_t(samples)) {
       throwError(concat("'samples'", onLine(samplesLine), " is ", samples,
                         ", but 'wavelength' lists ",
-                        Counted(mWavelengths.size(), "wavelength")));
+                        SpellCounted(mWavelengths.size(), "wavelength")));
     }
     if (mCurveNames.size() != size_t(lines) && !mCurveNames.empty()) {
       throwError(concat("'lines'", onLine(linesLine), " is ", lines,
                         ", but 'spectra names' lists ",
-                        Counted(mCurveNames.size(), "name")));
+                        SpellCounted(mCurveNames.size(), "name")));
     }
     // Of the ENVI data types, only 4 (32-bit float) and 5 (64-bit float)
     // make sense for a spectral library.

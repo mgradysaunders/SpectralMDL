@@ -62,7 +62,7 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 // not here: `loadImage()` only probes the file, so an image is described
 // once it is decoded, at the end of `compile()`.
 [[nodiscard]] std::string describeResource(const Ptexture &ptexture) {
-  std::string result{concat(Counted(ptexture.channelCount, "channel"))};
+  std::string result{concat(SpellCounted(ptexture.channelCount, "channel"))};
 #if SMDL_HAS_PTEX
   result = concat(static_cast<PtexTexture *>(ptexture.texture)->numFaces(),
                   " faces, ", result);
@@ -79,7 +79,8 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
       ", ", measurement.numTheta, " x ", measurement.numTheta, " x ",
       measurement.numPhi,
       measurement.type == BSDFMeasurement::TYPE_FLOAT ? " float" : " float3",
-      ", ", Bytes(numValues * BSDFMeasurement::sizeOf(measurement.type)));
+      ", ",
+      SpellByteSize(numValues * BSDFMeasurement::sizeOf(measurement.type)));
 }
 
 [[nodiscard]] std::string describeResource(const LightProfile &lightProfile) {
@@ -90,9 +91,9 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 
 [[nodiscard]] std::string describeSamples(Span<const float> wavelengths) {
   if (wavelengths.empty()) return "no samples";
-  return concat(Counted(wavelengths.size(), "sample"), " from ",
-                Brief(wavelengths[0]), " to ",
-                Brief(wavelengths[wavelengths.size() - 1]), " nm");
+  return concat(SpellCounted(wavelengths.size(), "sample"), " from ",
+                SpellFloat(wavelengths[0]), " to ",
+                SpellFloat(wavelengths[wavelengths.size() - 1]), " nm");
 }
 
 [[nodiscard]] std::string describeResource(const Spectrum &spectrum) {
@@ -103,16 +104,16 @@ void forEachModuleGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
 describeResource(const SpectrumLibrary &spectrumLibrary) {
   const size_t numCurves{spectrumLibrary.getNumCurves()};
   return concat(
-      Counted(numCurves, "curve"), " of ",
+      SpellCounted(numCurves, "curve"), " of ",
       describeSamples(spectrumLibrary.getCurveByIndex(0).wavelengths));
 }
 
 [[nodiscard]] std::string describeResource(const VoxelGrid &voxelGrid) {
   const int3 extent{voxelGrid.getExtent()};
   return concat(extent.x, " x ", extent.y, " x ", extent.z, " voxels, values ",
-                Brief(voxelGrid.getMinValue()), " to ",
-                Brief(voxelGrid.getMaxValue()), ", ",
-                Bytes(voxelGrid.getSizeInBytes()));
+                SpellFloat(voxelGrid.getMinValue()), " to ",
+                SpellFloat(voxelGrid.getMaxValue()), ", ",
+                SpellByteSize(voxelGrid.getSizeInBytes()));
 }
 
 [[nodiscard]] std::string describeImage(const Image &image) {
@@ -122,14 +123,14 @@ describeResource(const SpectrumLibrary &spectrumLibrary) {
                 Image::getFormatName(image.getFormat()),
                 numLevels > 1 ? concat(", ", numLevels, " mip levels")
                               : std::string(),
-                ", ", Bytes(image.getSizeInBytes()));
+                ", ", SpellByteSize(image.getSizeInBytes()));
 }
 
 // A duration for the log, in milliseconds below a second. The thresholds
 // sit where three significant digits would round up into exponent form.
 [[nodiscard]] std::string describeDuration(double seconds) {
-  if (seconds < 0.9995) return concat(Brief(seconds * 1e3, 3), " ms");
-  return concat(Brief(seconds, seconds < 999.5 ? 3 : 6), " s");
+  if (seconds < 0.9995) return concat(SpellFloat(seconds * 1e3, 3), " ms");
+  return concat(SpellFloat(seconds, seconds < 999.5 ? 3 : 6), " s");
 }
 
 // The entries of a resource cache in file name order. The caches are keyed
@@ -205,7 +206,7 @@ parseArchivePackagePrefix(const std::string &fileName) {
   std::vector<std::string> prefix{};
   for (auto component : components) {
     if (component.empty())
-      throw Error(concat("Invalid archive name ", QuotedPath(fileName),
+      throw Error(concat("Invalid archive name ", SpellFilePath(fileName),
                          ": empty package prefix component"));
     prefix.push_back(component.str());
   }
@@ -256,9 +257,9 @@ void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
     // module still loads and compiles, and relative imports within
     // its own tree still resolve to it.
     module_.mIsShadowed = true;
-    SMDL_LOG_WARN("Module ", Quoted(qualifiedName), " in ",
-                  QuotedPath(module_.getDisplayName()), " is shadowed by ",
-                  QuotedPath(itr->second->getDisplayName()));
+    SMDL_LOG_WARN("Module ", SpellQuoted(qualifiedName), " in ",
+                  SpellFilePath(module_.getDisplayName()), " is shadowed by ",
+                  SpellFilePath(itr->second->getDisplayName()));
   }
   if (addedModuleNames) {
     addedModuleNames->push_back(std::move(qualifiedName));
@@ -283,12 +284,13 @@ std::string normalizeModuleName(const std::string &moduleName) {
   }};
   std::vector<std::string_view> components{splitQualifiedName(moduleName)};
   if (components.empty()) {
-    throw Error(concat("Module name ", Quoted(moduleName), " is empty"));
+    throw Error(concat("Module name ", SpellQuoted(moduleName), " is empty"));
   }
   for (const auto &component : components) {
     if (!isIdentifier(component)) {
-      throw Error(concat("Module name ", Quoted(moduleName), " has component ",
-                         Quoted(component), " that is not an identifier"));
+      throw Error(concat("Module name ", SpellQuoted(moduleName),
+                         " has component ", SpellQuoted(component),
+                         " that is not an identifier"));
     }
   }
   return joinQualifiedName(components);
@@ -312,9 +314,9 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
           itr->second->getSourceCode() == sourceCode) {
         return;
       }
-      throw Error(concat("Cannot add module ", Quoted(qualifiedName),
+      throw Error(concat("Cannot add module ", SpellQuoted(qualifiedName),
                          ": the name is already taken by ",
-                         QuotedPath(itr->second->getDisplayName())));
+                         SpellFilePath(itr->second->getDisplayName())));
     }
     // An absolute import resolves builtins first, so a module named
     // after one compiles but is unreachable by qualified name.
@@ -324,18 +326,18 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
                       return joinQualifiedName(splitQualifiedName(
                                  builtinName)) == qualifiedName;
                     }))
-      SMDL_LOG_WARN("Module ", Quoted(qualifiedName),
+      SMDL_LOG_WARN("Module ", SpellQuoted(qualifiedName),
                     " has the same name as a builtin module, so imports "
                     "of that name resolve to the builtin");
     if (!anchorDirectory.empty()) {
       if (!isDirectory(anchorDirectory)) {
-        throw Error(concat("Cannot add module ", Quoted(qualifiedName),
-                           ": the anchor ", QuotedPath(anchorDirectory),
+        throw Error(concat("Cannot add module ", SpellQuoted(qualifiedName),
+                           ": the anchor ", SpellFilePath(anchorDirectory),
                            " is not an existing directory"));
       }
       anchorDirectory = makePathCanonical(std::move(anchorDirectory));
     }
-    SMDL_LOG_DEBUG("Adding MDL source code as ", Quoted(qualifiedName));
+    SMDL_LOG_DEBUG("Adding MDL source code as ", SpellQuoted(qualifiedName));
     registerModule(Module::loadFromSourceCode(
                        qualifiedName, std::move(sourceCode), anchorDirectory),
                    nullptr);
@@ -350,7 +352,7 @@ Compiler::add(std::string fileOrDirName,
   // throw; catch everything so the 'optional<Error>' contract holds.
   return catchAndReturnError([&] {
     auto addMDLE{[&](const std::string &fileName) {
-      SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
+      SMDL_LOG_DEBUG("Adding MDLE ", SpellFilePath(fileName));
       // An MDLE is a self-contained encapsulated material. Identity
       // is content-based: the qualified name is '::mdle::<md5>' of
       // the container bytes, so identical containers at different
@@ -388,75 +390,76 @@ Compiler::add(std::string fileOrDirName,
         }
       }
       if (!mainSource) {
-        throw Error(concat("MDLE ", QuotedPath(fileName),
+        throw Error(concat("MDLE ", SpellFilePath(fileName),
                            " does not contain 'main.mdl'"));
       }
-      SMDL_LOG_DEBUG("Extracted ", Counted(numExtracted, "resource"),
-                     " of MDLE ", QuotedPath(fileName), " into ",
-                     QuotedPath(extractDir));
+      SMDL_LOG_DEBUG("Extracted ", SpellCounted(numExtracted, "resource"),
+                     " of MDLE ", SpellFilePath(fileName), " into ",
+                     SpellFilePath(extractDir));
       registerModule(Module::loadFromMDLE(fileName, *mainSource, qualifiedName,
                                           extractDir),
                      addedModuleNames);
     }};
-    auto addArchive{[&](const std::string &fileName,
-                        const std::string &searchRoot) {
-      SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
-      // Per the MDL specification, the archive file name encodes the
-      // enclosed package prefix: 'vendor.metals.mdr' provides
-      // '::vendor::metals', and every '.mdl' entry must be the
-      // enclosed module ('vendor/metals.mdl') or live under the
-      // enclosed package directory ('vendor/metals/...').
-      std::vector<std::string> prefix{parseArchivePackagePrefix(fileName)};
-      {
-        // Duplicating the enclosed contents as loose files in the
-        // same search root is an error.
-        std::string loosePath{searchRoot};
-        for (const auto &component : prefix) {
-          loosePath = joinPaths(loosePath, component);
-        }
-        if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
-            isFile(loosePath + ".smdl")) {
-          throw Error(concat("Archive ", QuotedPath(fileName),
-                             " conflicts with loose contents at ",
-                             QuotedPath(loosePath),
-                             " in the same search root"));
-        }
-      }
-      Archive archive{fileName};
-      for (int i = 0; i < archive.get_file_count(); i++) {
-        if (std::string entryName{archive.get_file_name(i)};
-            hasExtension(entryName, ".mdl")) {
-          if (!isConformingArchiveEntry(prefix, entryName)) {
-            throw Error(concat(
-                "Archive ", QuotedPath(fileName), " entry ", Quoted(entryName),
-                " does not conform to the package prefix encoded "
-                "by the archive file name"));
+    auto addArchive{
+        [&](const std::string &fileName, const std::string &searchRoot) {
+          SMDL_LOG_DEBUG("Adding MDL archive ", SpellFilePath(fileName));
+          // Per the MDL specification, the archive file name encodes the
+          // enclosed package prefix: 'vendor.metals.mdr' provides
+          // '::vendor::metals', and every '.mdl' entry must be the
+          // enclosed module ('vendor/metals.mdl') or live under the
+          // enclosed package directory ('vendor/metals/...').
+          std::vector<std::string> prefix{parseArchivePackagePrefix(fileName)};
+          {
+            // Duplicating the enclosed contents as loose files in the
+            // same search root is an error.
+            std::string loosePath{searchRoot};
+            for (const auto &component : prefix) {
+              loosePath = joinPaths(loosePath, component);
+            }
+            if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
+                isFile(loosePath + ".smdl")) {
+              throw Error(concat("Archive ", SpellFilePath(fileName),
+                                 " conflicts with loose contents at ",
+                                 SpellFilePath(loosePath),
+                                 " in the same search root"));
+            }
           }
-          if (std::string entryPath{joinPaths(fileName, entryName)};
-              mModuleFileNames.count(entryPath) == 0) {
-            SMDL_LOG_DEBUG("Adding MDL file from archive ",
-                           QuotedPath(entryPath));
-            registerModule(
-                Module::loadFromFileExtractedFromArchive(
-                    fileName, entryName, archive.extract_file(i), searchRoot),
-                addedModuleNames);
+          Archive archive{fileName};
+          for (int i = 0; i < archive.get_file_count(); i++) {
+            if (std::string entryName{archive.get_file_name(i)};
+                hasExtension(entryName, ".mdl")) {
+              if (!isConformingArchiveEntry(prefix, entryName)) {
+                throw Error(
+                    concat("Archive ", SpellFilePath(fileName), " entry ",
+                           SpellQuoted(entryName),
+                           " does not conform to the package prefix encoded "
+                           "by the archive file name"));
+              }
+              if (std::string entryPath{joinPaths(fileName, entryName)};
+                  mModuleFileNames.count(entryPath) == 0) {
+                SMDL_LOG_DEBUG("Adding MDL file from archive ",
+                               SpellFilePath(entryPath));
+                registerModule(Module::loadFromFileExtractedFromArchive(
+                                   fileName, entryName, archive.extract_file(i),
+                                   searchRoot),
+                               addedModuleNames);
+              }
+            }
           }
-        }
-      }
-    }};
+        }};
     auto addLooseFile{
         [&](const std::string &fileName, const std::string &searchRoot) {
           if (auto itr{mModuleFileNames.find(fileName)};
               itr == mModuleFileNames.end()) {
-            SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
+            SMDL_LOG_DEBUG("Adding MDL file ", SpellFilePath(fileName));
             registerModule(Module::loadFromFile(fileName, searchRoot),
                            addedModuleNames);
           } else if (itr->second->getSearchRoot() != searchRoot) {
             // Already added under a different search root: the first
             // identity wins.
-            SMDL_LOG_WARN("Module file ", QuotedPath(fileName),
+            SMDL_LOG_WARN("Module file ", SpellFilePath(fileName),
                           " was already added as ",
-                          Quoted(itr->second->getQualifiedName()),
+                          SpellQuoted(itr->second->getQualifiedName()),
                           "; keeping the existing identity");
           }
         }};
@@ -485,9 +488,9 @@ Compiler::add(std::string fileOrDirName,
         for (const auto &dir : mModuleDirSearchPaths) {
           if (isLexicalSubPath(dir, path) || isLexicalSubPath(path, dir)) {
             throw Error(
-                concat("Cannot add search root ", QuotedPath(path),
+                concat("Cannot add search root ", SpellFilePath(path),
                        ": nested inside or encloses another search root ",
-                       QuotedPath(dir),
+                       SpellFilePath(dir),
                        " (would give modules ambiguous qualified names)"));
           }
         }
@@ -515,14 +518,14 @@ Compiler::add(std::string fileOrDirName,
                            prefixJ.begin())) {
               throw Error(concat(
                   "Archives ", //
-                  QuotedPath(archivePaths[i]), " and ",
-                  QuotedPath(archivePaths[j]),
+                  SpellFilePath(archivePaths[i]), " and ",
+                  SpellFilePath(archivePaths[j]),
                   " have overlapping package prefixes in the same search "
                   "root"));
             }
           }
         }
-        SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
+        SMDL_LOG_DEBUG("Adding MDL directory ", SpellFilePath(path));
         mModuleDirNames.insert(path);
         mModuleDirSearchPaths.emplace_back(path);
         for (const auto &archivePath : archivePaths) {
@@ -539,17 +542,17 @@ Compiler::add(std::string fileOrDirName,
                        !isPathEquivalent(parentPathOf(entryPath), path)) {
               // Per the MDL specification, archives are only recognized
               // at the top level of a search root.
-              SMDL_LOG_WARN("Ignoring archive ", QuotedPath(entryPath),
+              SMDL_LOG_WARN("Ignoring archive ", SpellFilePath(entryPath),
                             " because it is not at the top level of search "
                             "root ",
-                            QuotedPath(path));
+                            SpellFilePath(path));
             }
           }
         }
         return;
       }
     }
-    throw Error(concat("Cannot locate ", QuotedPath(fileOrDirName)));
+    throw Error(concat("Cannot locate ", SpellFilePath(fileOrDirName)));
   });
 }
 
@@ -818,7 +821,7 @@ size_t Compiler::dropUnusedImages() {
       if (!llvmGlobal->use_empty()) continue;
     }
     SMDL_LOG_DEBUG("Dropping image ",
-                   QuotedPath(fileHash->canonicalFileNames[0]),
+                   SpellFilePath(fileHash->canonicalFileNames[0]),
                    ": never read by the compiled code");
     if (llvmGlobal) llvmGlobal->eraseFromParent();
     image->abandonLoad();
@@ -849,12 +852,12 @@ describeJITSessionError(llvm::Error error, char globalPrefix,
               itr != foreignFunctionSourceLocations.end()) {
             const SourceLocation &srcLoc{itr->second};
             errors.emplace_back(srcLoc.formatMessage(concat(
-                                    "'@(foreign)' function ", Quoted(name),
+                                    "'@(foreign)' function ", SpellQuoted(name),
                                     " is not defined in the host process")),
                                 srcLoc.getSourceSnippet());
           } else {
             if (!otherNames.empty()) otherNames += ", ";
-            otherNames += concat(Quoted(name));
+            otherNames += concat(SpellQuoted(name));
           }
         }
         if (!otherNames.empty())
@@ -950,11 +953,12 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                                                     jitMaterial.qualifiedName);
                        })) {
         std::string suggestion{suggestMaterialName(*this, desiredName)};
-        SMDL_LOG_WARN("Desired material ", Quoted(desiredName),
-                      " does not match any material in the added modules",
-                      suggestion.empty()
-                          ? std::string()
-                          : concat("; did you mean ", Quoted(suggestion), "?"));
+        SMDL_LOG_WARN(
+            "Desired material ", SpellQuoted(desiredName),
+            " does not match any material in the added modules",
+            suggestion.empty()
+                ? std::string()
+                : concat("; did you mean ", SpellQuoted(suggestion), "?"));
       }
     }
     if (optLevel != OPT_LEVEL_NONE) {
@@ -1011,22 +1015,22 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
             imageEntries[i].first->canonicalFileNames[0]};
         const Image &image{*imageEntries[i].second};
         if (errors[i]) {
-          SMDL_LOG_WARN("Cannot load ", QuotedPath(fileName), ": ",
+          SMDL_LOG_WARN("Cannot load ", SpellFilePath(fileName), ": ",
                         errors[i]->message);
           continue;
         }
-        SMDL_LOG_DEBUG("Loaded image ", QuotedPath(fileName), ": ",
+        SMDL_LOG_DEBUG("Loaded image ", SpellFilePath(fileName), ": ",
                        describeImage(image));
         numLoaded++;
         numBytes += image.getSizeInBytes();
       }
       if (numLoaded > 0) {
-        SMDL_LOG_INFO("Loaded ", Counted(numLoaded, "image"), " (",
-                      Bytes(numBytes), ") in ", describeDuration(seconds),
-                      numDropped > 0
-                          ? concat(", skipping ", numDropped,
-                                   " that the compiled code never reads")
-                          : std::string());
+        SMDL_LOG_INFO(
+            "Loaded ", SpellCounted(numLoaded, "image"), " (",
+            SpellByteSize(numBytes), ") in ", describeDuration(seconds),
+            numDropped > 0 ? concat(", skipping ", numDropped,
+                                    " that the compiled code never reads")
+                           : std::string());
       }
     }
   });
@@ -1090,7 +1094,7 @@ T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
       srcLoc.logWarn(error->message);
     } else if constexpr (!std::is_same_v<T, Image>) {
       if (Logger::get().isEnabled(LOG_LEVEL_DEBUG))
-        srcLoc.logDebug(concat("Loaded ", QuotedPath(fileName),
+        srcLoc.logDebug(concat("Loaded ", SpellFilePath(fileName),
                                part.empty() ? "" : " ", part, ": ",
                                describeResource(*itr->second)));
     }
@@ -1135,7 +1139,7 @@ const Image &Compiler::loadImage(const std::string &fileName,
       }};
       srcLoc.throwError(
           "Cannot request a ", filterName(filter), " mip chain for ",
-          QuotedPath(fileName), ": a ", filterName(image.getMipFilter()),
+          SpellFilePath(fileName), ": a ", filterName(image.getMipFilter()),
           " mip chain was requested at ", std::string(itr->second),
           ", and an image holds one chain");
     }
@@ -1154,14 +1158,14 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
         PtexTexture *texture{PtexTexture::open(fileName.c_str(), message,
                                                /*premultiply=*/false)};
         if (!texture)
-          return Error(concat("Cannot load ", QuotedPath(fileName), ": ",
+          return Error(concat("Cannot load ", SpellFilePath(fileName), ": ",
                               message.c_str()));
         ptexture.texture = texture;
         ptexture.channelCount = texture->numChannels();
         ptexture.alphaIndex = texture->alphaChannel();
         return std::nullopt;
 #else
-        return Error(concat("Cannot load ", QuotedPath(fileName),
+        return Error(concat("Cannot load ", SpellFilePath(fileName),
                             ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
       });
@@ -1197,7 +1201,8 @@ const VoxelGrid &Compiler::loadVoxelGrid(const std::string &fileName,
         SMDL_PROFILER_ENTRY("Compiler::loadVoxelGrid()", fileName.c_str());
         return voxelGrid.loadFromFile(fileName, gridName);
       },
-      gridName.empty() ? std::string() : concat("grid ", Quoted(gridName)));
+      gridName.empty() ? std::string()
+                       : concat("grid ", SpellQuoted(gridName)));
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
@@ -1219,9 +1224,9 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
   if (const size_t numCurves{spectrumLibrary.getNumCurves()};
       spectrumView.curveValues.empty() && numCurves > 0) {
     logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveIndex),
-                           concat("Spectrum library ", QuotedPath(fileName),
+                           concat("Spectrum library ", SpellFilePath(fileName),
                                   " has no curve at index ", curveIndex,
-                                  " (it has ", Counted(numCurves, "curve"),
+                                  " (it has ", SpellCounted(numCurves, "curve"),
                                   ")"));
   }
   return spectrumView;
@@ -1233,8 +1238,8 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
   const SpectrumLibrary &spectrumLibrary{loadSpectrumLibrary(fileName, srcLoc)};
   SpectrumView spectrumView{spectrumLibrary.getCurveByName(curveName)};
   if (spectrumView.curveValues.empty() && spectrumLibrary.getNumCurves() > 0) {
-    std::string message{concat("Spectrum library ", QuotedPath(fileName),
-                               " has no curve named ", Quoted(curveName))};
+    std::string message{concat("Spectrum library ", SpellFilePath(fileName),
+                               " has no curve named ", SpellQuoted(curveName))};
     const Span<const std::string> curveNames{spectrumLibrary.getCurveNames()};
     if (curveNames.empty()) {
       message += " (its curves are unnamed)";
@@ -1243,7 +1248,7 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
           std::vector<std::string_view>(curveNames.begin(), curveNames.end())};
       if (std::string_view similar{suggestNearestName(curveName, candidates)};
           !similar.empty())
-        message += concat("; did you mean ", Quoted(similar), "?");
+        message += concat("; did you mean ", SpellQuoted(similar), "?");
     }
     logResourceWarningOnce(srcLoc, concat(fileName, "\n", curveName), message);
   }
@@ -1374,7 +1379,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
 void *Compiler::jitLookup(std::string_view name) {
   llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJit->lookup(name)};
   if (!symbol)
-    throw Error(concat("Cannot resolve JIT symbol ", Quoted(name), ": ",
+    throw Error(concat("Cannot resolve JIT symbol ", SpellQuoted(name), ": ",
                        llvm::toString(symbol.takeError())));
   return symbol->toPtr<void *>();
 }
@@ -1392,28 +1397,29 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
   std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
   if (results.size() == 1) return {};
   if (results.size() > 1) {
-    std::string message{concat("Material name ", Quoted(materialName),
+    std::string message{concat("Material name ", SpellQuoted(materialName),
                                " is ambiguous, matching ", results.size(),
                                " materials:")};
     for (const auto *jitMaterial : results)
       message += concat(
-          "\n  ", Quoted(jitMaterial->qualifiedName), " declared at ",
-          LocationMarkup(jitMaterial->moduleDisplayName, jitMaterial->lineNo,
-                         /*charNo=*/0, !jitMaterial->moduleFileName.empty()));
+          "\n  ", SpellQuoted(jitMaterial->qualifiedName), " declared at ",
+          SpellLocation(jitMaterial->moduleDisplayName, jitMaterial->lineNo,
+                        /*charNo=*/0, !jitMaterial->moduleFileName.empty()));
     return message;
   }
   // Distinguish "never existed" from "excluded by the desired-material
   // filter", so a host that forgot a name gets an actionable error.
   for (const auto &skippedName : mSkippedMaterialNames)
     if (matchesMaterialName(materialName, skippedName))
-      return concat("Material name ", Quoted(materialName), " matches ",
-                    Quoted(skippedName),
+      return concat("Material name ", SpellQuoted(materialName), " matches ",
+                    SpellQuoted(skippedName),
                     ", which was not compiled because it is not a desired "
                     "material (see 'Compiler::setDesiredMaterials()')");
-  std::string message{concat("No material matches ", Quoted(materialName))};
+  std::string message{
+      concat("No material matches ", SpellQuoted(materialName))};
   if (std::string suggestion{suggestMaterialName(*this, materialName)};
       !suggestion.empty())
-    message += concat("; did you mean ", Quoted(suggestion), "?");
+    message += concat("; did you mean ", SpellQuoted(suggestion), "?");
   return message;
 }
 
@@ -1483,18 +1489,18 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
         mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
           os << "Running tests in ";
           llvm::WithColor(os, testColorFile, llvmColorMode)
-              << concat(QuotedPath(itr0->moduleDisplayName));
+              << concat(SpellFilePath(itr0->moduleDisplayName));
           os << ":\n";
           for (; itr0 != itr1; ++itr0) {
             os << "  ";
             llvm::WithColor(os, testColorName, llvmColorMode)
-                << concat(Quoted(itr0->testName));
+                << concat(SpellQuoted(itr0->testName));
             llvm::WithColor(os, testColorMetadata, llvmColorMode)
                 << concat(" (line ", itr0->lineNo, ")");
             os << " ... ";
             try {
               if (!itr0->test)
-                throw Error(concat("Unit test ", Quoted(itr0->testName),
+                throw Error(concat("Unit test ", SpellQuoted(itr0->testName),
                                    " has no JIT-compiled function"));
               itr0->test(state);
               llvm::WithColor(os, testColorSuccess, llvmColorMode) << "success";
@@ -1514,7 +1520,7 @@ std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
     for (auto &jitExec : mExecs) {
       if (!jitExec.func)
-        throw Error(concat("Exec ", Quoted(jitExec.name),
+        throw Error(concat("Exec ", SpellQuoted(jitExec.name),
                            " has no JIT-compiled function: 'jitCompile()' "
                            "must be called first"));
       jitExec();
@@ -1544,12 +1550,12 @@ std::string Compiler::printMaterialSummary() const {
   std::string message{};
   forEachModuleGroup(
       mMaterialDefs.begin(), mMaterialDefs.end(), [&](auto itr0, auto itr1) {
-        message += concat(QuotedPath(itr0->moduleDisplayName), " contains ",
-                          Counted(size_t(itr1 - itr0), "material"), ":\n");
+        message += concat(SpellFilePath(itr0->moduleDisplayName), " contains ",
+                          SpellCounted(size_t(itr1 - itr0), "material"), ":\n");
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
-          message += concat(Quoted(itr0->materialName), " (line ", itr0->lineNo,
-                            ")", printStaticFlags(*itr0), "\n");
+          message += concat(SpellQuoted(itr0->materialName), " (line ",
+                            itr0->lineNo, ")", printStaticFlags(*itr0), "\n");
         }
       });
   return message;

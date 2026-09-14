@@ -34,7 +34,7 @@ void printVolumeInfo(const std::string &fileName, const std::string &gridName,
   llvm::outs() << smdl::concat(
       smdl::bestPathForPrinting(fileName),
       gridName.empty() ? std::string()
-                       : smdl::concat(": grid ", smdl::Quoted(gridName)),
+                       : smdl::concat(": grid ", smdl::SpellQuoted(gridName)),
       "\n  extent ", extent.x, " x ", extent.y, " x ", extent.z, " (",
       brickCount.x, " x ", brickCount.y, " x ", brickCount.z, " bricks)",
       "\n  background ", grid.getBackground(), //

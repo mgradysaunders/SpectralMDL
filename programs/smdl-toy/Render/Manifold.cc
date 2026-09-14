@@ -195,8 +195,8 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths)
                  "detaches it from the remapped field, so the mark is "
                  "ignored";
       SMDL_LOG_WARN("The 'caster' on ",
-                    smdl::QuotedPath(scene.fileNames[instIndex]), " (material ",
-                    smdl::Quoted(scene.materialNames[matIndex]), reason);
+                    SpellFilePath(scene.fileNames[instIndex]), " (material ",
+                    SpellQuoted(scene.materialNames[matIndex]), reason);
       continue;
     }
     MNEECaster caster{};

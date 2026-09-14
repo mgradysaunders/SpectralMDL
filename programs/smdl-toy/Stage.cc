@@ -90,7 +90,7 @@ struct GroundPlane final {
     groundMaterial = alias->second;
   ground.instance = scene.addGroundPlane(z, halfExtent, groundMaterial);
   SMDL_LOG_INFO("Ground plane: z = ", z, ", half extent ", halfExtent,
-                ", material ", smdl::Quoted(groundMaterial));
+                ", material ", SpellQuoted(groundMaterial));
   return ground;
 }
 
@@ -256,9 +256,9 @@ resolveExteriorMedium(const Options &opts, const Layout &layout,
                                          : ""));
   if (!materialDef->hasVolume())
     throw smdl::Error(smdl::concat("The 'medium' directive material ",
-                                   smdl::Quoted(layout.exteriorMediumName),
+                                   SpellQuoted(layout.exteriorMediumName),
                                    " has no 'volume'"));
-  SMDL_LOG_INFO("Exterior medium: ", smdl::Quoted(layout.exteriorMediumName));
+  SMDL_LOG_INFO("Exterior medium: ", SpellQuoted(layout.exteriorMediumName));
   return materialDef;
 }
 
@@ -320,7 +320,7 @@ findResumedGrid(const std::vector<GridHeader::Grid> &records,
   if (itr == records.end())
     throw smdl::Error(smdl::concat(
         "Cannot resume: the file states no grid for the tile band ",
-        smdl::Quoted(name)));
+        SpellQuoted(name)));
   return *itr;
 }
 
@@ -445,10 +445,10 @@ struct GridFamily final {
       narrowest = std::min(narrowest, cells.edges[i + 1] - cells.edges[i]);
       widest = std::max(widest, cells.edges[i + 1] - cells.edges[i]);
     }
-    return smdl::concat(float(cells.edges.front()), "-",
-                        float(cells.edges.back()), " nm, from ",
-                        smdl::Brief(narrowest, 3), " to ",
-                        smdl::Brief(widest, 3), " nm wide");
+    return smdl::concat(
+        SpellWavelengthRange(cells.edges.front(), cells.edges.back()),
+        ", from ", SpellFloat(narrowest, 3), " to ", SpellFloat(widest, 3),
+        " nm wide");
   }};
   if (response && response->hasCFA()) {
     // Under a tile each band the tile lays down places its own grid,
@@ -457,7 +457,7 @@ struct GridFamily final {
       const ResponseBand &band{response->bands[index]};
       result.cells.push_back(bandWavelengthCells(band, count));
       SMDL_LOG_INFO("Wavelength grid: ", count,
-                    " bands placed by the sensor's ", smdl::Quoted(band.name),
+                    " bands placed by the sensor's ", SpellQuoted(band.name),
                     " curve for its pixels over ",
                     describeCells(result.cells.back()));
     }
@@ -546,11 +546,12 @@ void logGridAdvisories(const Options &opts, const Frame &frame,
                     " bands adopted from the resumed file, one grid per "
                     "tile band");
     else
-      SMDL_LOG_INFO(
-          "Wavelength grid: ", wavelengths.size(),
-          shouldAdoptResumedGrid ? " bands adopted from the resumed file, "
-                                 : " bands, ",
-          wavelengths[0], "-", wavelengths[wavelengths.size() - 1], " nm");
+      SMDL_LOG_INFO("Wavelength grid: ", wavelengths.size(),
+                    shouldAdoptResumedGrid
+                        ? " bands adopted from the resumed file, "
+                        : " bands, ",
+                    SpellWavelengthRange(wavelengths[0],
+                                         wavelengths[wavelengths.size() - 1]));
   }
   if (wavelengths.size() > 256)
     SMDL_LOG_WARN(wavelengths.size(),
@@ -634,8 +635,8 @@ Frame resolveFrame(const Options &opts) {
       numMovingLights += light.lightToWorldShut.has_value();
     if (numMovingItems + numMovingLights > 0)
       SMDL_LOG_INFO(
-          "Instance motion: ", smdl::Counted(numMovingItems, "placement"),
-          " and ", smdl::Counted(numMovingLights, "light"),
+          "Instance motion: ", SpellCounted(numMovingItems, "placement"),
+          " and ", SpellCounted(numMovingLights, "light"),
           " move over the shutter");
   }
   // Under -autolook the position, and under 'focus auto' the focus, come
@@ -667,10 +668,18 @@ Frame resolveFrame(const Options &opts) {
                                size_t(window[3] - window[1])};
   Frame frame{};
   frame.layout = std::move(layout);
+  // A physical sensor renders on a jittered grid, and not by default:
+  // its bands may be narrower than the grid's spacing, and a grid held
+  // still then sees each curve at its wavelengths and nowhere else. The
+  // observer has no band comb to alias, so it jitters only when asked.
+  if (model.hasSensor() && opts.render.grid.shouldJitter.wasGiven &&
+      !opts.render.grid.shouldJitter.value)
+    throw smdl::Error(
+        "-wavelength-jitter=false has no meaning with a physical sensor: a "
+        "band narrower than the grid's spacing integrates only because the "
+        "samples move within the cells");
   frame.shouldJitterWavelength =
-      opts.render.grid.shouldJitter.wasGiven || !model.hasSensor()
-          ? opts.render.grid.shouldJitter.value
-          : true;
+      model.hasSensor() || opts.render.grid.shouldJitter.value;
   frame.model = std::move(model);
   frame.camera = std::move(camera);
   frame.resolution = resolution;
@@ -685,21 +694,28 @@ void resolveWavelengthGrid(const Options &opts, const Frame &frame,
                            const ResumedSequence &resumed) {
   GridFamily family{chooseGridFamily(opts, frame, resumed)};
   const bool wasGridLogged{family.wasLogged};
-  // Whether every sample draws its own grid within the cells: on for a
-  // physical sensor unless told otherwise, since its bands may be
-  // narrower than the grid's spacing.
+  // Whether every sample draws its own grid within the cells: always
+  // through a physical sensor, since its bands may be narrower than the
+  // grid's spacing, and otherwise only when asked.
   const bool shouldJitter{frame.shouldJitterWavelength};
   if (shouldJitter && !opts.render.grid.shouldJitter.wasGiven)
-    SMDL_LOG_INFO("Wavelength jitter: on for a physical sensor, so a band "
-                  "narrower than the grid's spacing integrates without "
-                  "aliasing; -wavelength-jitter=false turns it off");
+    SMDL_LOG_INFO("Wavelength jitter: always on through a physical sensor, "
+                  "so a band narrower than the grid's spacing integrates "
+                  "without aliasing");
   // The band count has to land before the first `Color` is built, since
   // that is what sizes it.
   gRenderGrid.reset(std::move(family.cells), family.tileColumns,
                     std::move(family.tile), shouldJitter);
-  if (shouldJitter && !gRenderGrid.isJittering)
+  if (shouldJitter && !gRenderGrid.isJittering) {
+    // A sensor has no still-grid mode to fall back on, so the grid it is
+    // given has to have cells to jitter within.
+    if (frame.model.hasSensor())
+      throw smdl::Error("A physical sensor renders on a jittered grid, and a "
+                        "grid of one band has no band width to jitter "
+                        "within; give at least 2 wavelengths");
     SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
                   "band width to jitter within, so it does nothing here");
+  }
   refuseResumedGridMismatch(frame, resumed);
   logGridAdvisories(opts, frame, resumed, wasGridLogged);
 }

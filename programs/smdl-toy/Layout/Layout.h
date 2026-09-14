@@ -163,12 +163,14 @@ public:
   /// A key that distinguishes two specs, for callers that cache by it.
   [[nodiscard]] std::string key() const {
     if (!isActive()) return {};
+    // Every number here is spelled exactly, since two specs that differ
+    // past the sixth decimal place are two specs.
     std::string result{name()};
-    if (hasRadius()) result += " r=" + std::to_string(radius);
-    if (hasHeight()) result += " h=" + std::to_string(height);
+    if (hasRadius()) result += smdl::concat(" r=", SpellExact(radius));
+    if (hasHeight()) result += smdl::concat(" h=", SpellExact(height));
     if (hasSize())
-      result += " s=" + std::to_string(size.x) + "," + std::to_string(size.y) +
-                "," + std::to_string(size.z);
+      result += smdl::concat(" s=", SpellExact(size.x), ",", SpellExact(size.y),
+                             ",", SpellExact(size.z));
     return result;
   }
 };
@@ -220,7 +222,8 @@ public:
   [[nodiscard]] std::string key() const {
     if (!isActive) return {};
     std::string result{mode == Mode::RIBBON ? "curves ribbon" : "curves tube"};
-    if (radiusScale != 1.0f) result += " x" + std::to_string(radiusScale);
+    if (radiusScale != 1.0f)
+      result += smdl::concat(" x", SpellExact(radiusScale));
     return result;
   }
 };

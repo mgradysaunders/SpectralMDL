@@ -144,7 +144,7 @@ void Module::computeSearchDirs() {
       dir = joinPaths(getDirectory(), dir);
     dir = makePathCanonical(std::move(dir));
     if (!isDirectory(dir))
-      srcLoc.logWarn(concat("The '#search_dir' path ", QuotedPath(dir),
+      srcLoc.logWarn(concat("The '#search_dir' path ", SpellFilePath(dir),
                             " is not an existing directory"));
     mSearchDirs.push_back(std::move(dir));
   }
@@ -156,7 +156,8 @@ std::optional<Error> Module::compile(Context &context) noexcept {
   }
   return catchAndReturnError([&] {
     if (mCompileStatus == COMPILE_STATUS_IN_PROGRESS)
-      throw Error(concat("Detected cyclic import of module ", Quoted(mName)));
+      throw Error(
+          concat("Detected cyclic import of module ", SpellQuoted(mName)));
     if (mCompileStatus == COMPILE_STATUS_FAILED)
       throw Error(mCompileErrorMessage);
     if (mCompileStatus == COMPILE_STATUS_NOT_STARTED) {
@@ -185,8 +186,8 @@ std::optional<Error> Module::compile(Context &context) noexcept {
         throw;
       } catch (...) {
         mCompileStatus = COMPILE_STATUS_FAILED;
-        mCompileErrorMessage =
-            concat("module ", Quoted(mName), " previously failed to compile");
+        mCompileErrorMessage = concat("module ", SpellQuoted(mName),
+                                      " previously failed to compile");
         throw;
       }
     }
@@ -196,7 +197,7 @@ std::optional<Error> Module::compile(Context &context) noexcept {
 std::optional<Error>
 Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
   if (!isFileBacked()) {
-    return Error(concat("Cannot format ", Quoted(mDisplayName),
+    return Error(concat("Cannot format ", SpellQuoted(mDisplayName),
                         " because the module has no file"));
   }
   if (!isParsed()) {
@@ -214,7 +215,7 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("Cannot format module extracted from archive in-place ",
-                   QuotedPath(mFileName)));
+                   SpellFilePath(mFileName)));
       }
       std::basic_fstream<char> stream{openOrThrow(mFileName, std::ios::out)};
       stream << formatted;

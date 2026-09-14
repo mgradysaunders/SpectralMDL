@@ -215,8 +215,8 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
     for (unsigned k = 0; k < key.mNumValuesAndWeights; k++) {
       if (key.mValues[k] >= assMesh.mNumAnimMeshes)
         throw smdl::Error(smdl::concat(
-            "Morph channel ", smdl::Quoted(channel->mName.C_Str()), " in ",
-            smdl::QuotedPath(fileName), " keys target ", key.mValues[k],
+            "Morph channel ", SpellQuoted(channel->mName.C_Str()), " in ",
+            SpellFilePath(fileName), " keys target ", key.mValues[k],
             " of a mesh with ", assMesh.mNumAnimMeshes));
       result[key.mValues[k]] = float(key.mWeights[k]);
     }
@@ -249,8 +249,8 @@ findMorphChannel(const aiAnimation &clip, const aiMesh &assMesh,
   for (unsigned i = 0; i < assScene.mNumAnimations; i++) {
     const aiAnimation &clip{*assScene.mAnimations[i]};
     listing += smdl::concat(
-        "\n  ", i, ": ", smdl::Quoted(clip.mName.C_Str()), " (",
-        smdl::Brief(clip.mDuration / ticksPerSecond(clip), 3), " s)");
+        "\n  ", i, ": ", SpellQuoted(clip.mName.C_Str()), " (",
+        SpellFloat(clip.mDuration / ticksPerSecond(clip), 3), " s)");
   }
   return listing;
 }
@@ -261,12 +261,11 @@ std::string AnimationSpec::key() const {
   if (isOff) return "off";
   std::vector<std::string> parts{};
   if (!clipName.empty())
-    parts.push_back(smdl::concat("clip ", smdl::Quoted(clipName)));
+    parts.push_back(smdl::concat("clip ", SpellQuoted(clipName)));
   else if (clipIndex != INVALID_INDEX)
     parts.push_back(smdl::concat("clip ", clipIndex));
-  if (offset != 0)
-    parts.push_back(smdl::concat("offset ", smdl::Precise(offset)));
-  if (speed != 1) parts.push_back(smdl::concat("speed ", smdl::Precise(speed)));
+  if (offset != 0) parts.push_back(smdl::concat("offset ", SpellExact(offset)));
+  if (speed != 1) parts.push_back(smdl::concat("speed ", SpellExact(speed)));
   if (shouldPlayOnce) parts.push_back("once");
   std::string result{};
   for (const auto &part : parts) {
@@ -297,8 +296,7 @@ const aiAnimation *resolveClip(const aiScene &assScene,
   if (assScene.mNumAnimations == 0) {
     if (spec.hasClip())
       throw smdl::Error(smdl::concat("The 'animation' names a clip, but ",
-                                     smdl::QuotedPath(fileName),
-                                     " carries none"));
+                                     SpellFilePath(fileName), " carries none"));
     return nullptr;
   }
   const aiAnimation *clip{};
@@ -308,28 +306,27 @@ const aiAnimation *resolveClip(const aiScene &assScene,
           spec.clipName)
         clip = assScene.mAnimations[i];
     if (!clip)
-      throw smdl::Error(
-          smdl::concat("No clip named ", smdl::Quoted(spec.clipName), " in ",
-                       smdl::QuotedPath(fileName),
-                       ", which carries:", clipListing(assScene)));
+      throw smdl::Error(smdl::concat(
+          "No clip named ", SpellQuoted(spec.clipName), " in ",
+          SpellFilePath(fileName), ", which carries:", clipListing(assScene)));
   } else if (spec.clipIndex != INVALID_INDEX) {
     if (spec.clipIndex >= assScene.mNumAnimations)
       throw smdl::Error(smdl::concat(
-          "No clip ", spec.clipIndex, " in ", smdl::QuotedPath(fileName),
+          "No clip ", spec.clipIndex, " in ", SpellFilePath(fileName),
           ", which carries:", clipListing(assScene)));
     clip = assScene.mAnimations[spec.clipIndex];
   } else if (assScene.mNumAnimations == 1) {
     clip = assScene.mAnimations[0];
   } else {
     throw smdl::Error(smdl::concat(
-        smdl::QuotedPath(fileName), " carries ", assScene.mNumAnimations,
+        SpellFilePath(fileName), " carries ", assScene.mNumAnimations,
         " clips; choose one with 'animation \"<name>\"' or 'animation "
         "<index>':",
         clipListing(assScene)));
   }
   if (!(clip->mTicksPerSecond > 0))
-    SMDL_LOG_WARN("Clip ", smdl::Quoted(clip->mName.C_Str()), " in ",
-                  smdl::QuotedPath(fileName),
+    SMDL_LOG_WARN("Clip ", SpellQuoted(clip->mName.C_Str()), " in ",
+                  SpellFilePath(fileName),
                   " has no tick rate; assuming 25 ticks per second");
   return clip;
 }
@@ -459,11 +456,10 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       if (w == 0) continue;
       const aiAnimMesh &target{*assMesh.mAnimMeshes[t]};
       if (target.mNumVertices != numVerts)
-        throw smdl::Error(smdl::concat("Morph target ", t, " of mesh ",
-                                       smdl::Quoted(assMesh.mName.C_Str()),
-                                       " in ", smdl::QuotedPath(fileName),
-                                       " has ", target.mNumVertices,
-                                       " vertices, the mesh ", numVerts));
+        throw smdl::Error(smdl::concat(
+            "Morph target ", t, " of mesh ", SpellQuoted(assMesh.mName.C_Str()),
+            " in ", SpellFilePath(fileName), " has ", target.mNumVertices,
+            " vertices, the mesh ", numVerts));
       anyMoved = true;
       // Relative to the base the file stores, whatever this bake has
       // already accumulated from the other targets.
@@ -496,11 +492,11 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       const aiBone &bone{*assMesh.mBones[b]};
       for (unsigned k = 0; k < bone.mNumWeights; k++) {
         if (bone.mWeights[k].mVertexId >= numVerts)
-          throw smdl::Error(smdl::concat(
-              "Bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
-              smdl::Quoted(assMesh.mName.C_Str()), " in ",
-              smdl::QuotedPath(fileName), " weights vertex ",
-              bone.mWeights[k].mVertexId, " of ", numVerts));
+          throw smdl::Error(
+              smdl::concat("Bone ", SpellQuoted(bone.mName.C_Str()),
+                           " of mesh ", SpellQuoted(assMesh.mName.C_Str()),
+                           " in ", SpellFilePath(fileName), " weights vertex ",
+                           bone.mWeights[k].mVertexId, " of ", numVerts));
         offsets[bone.mWeights[k].mVertexId + 1]++;
       }
     }
@@ -518,9 +514,9 @@ MeshBake bakeMesh(const aiScene &assScene, uint32_t meshIndex,
       const uint32_t nodeIndex{pose.find(bone.mName.C_Str())};
       if (nodeIndex == INVALID_INDEX)
         throw smdl::Error(smdl::concat(
-            "Bone ", smdl::Quoted(bone.mName.C_Str()), " of mesh ",
-            smdl::Quoted(assMesh.mName.C_Str()), " in ",
-            smdl::QuotedPath(fileName), " names no node in the file"));
+            "Bone ", SpellQuoted(bone.mName.C_Str()), " of mesh ",
+            SpellQuoted(assMesh.mName.C_Str()), " in ", SpellFilePath(fileName),
+            " names no node in the file"));
       boneXfs[b] = pose.nodeToFile[nodeIndex] * fromAssimp(bone.mOffsetMatrix);
       for (unsigned k = 0; k < bone.mNumWeights; k++)
         influences[cursor[bone.mWeights[k].mVertexId]++] = {

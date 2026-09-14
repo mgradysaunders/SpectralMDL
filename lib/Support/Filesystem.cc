@@ -91,8 +91,8 @@ std::string expandPathVariables(std::string_view path) {
     }
     char *value{std::getenv(std::string(name).c_str())};
     if (!value)
-      throw Error(concat("Undefined environment variable ", Quoted(name),
-                         " in path ", QuotedPath(fullPath)));
+      throw Error(concat("Undefined environment variable ", SpellQuoted(name),
+                         " in path ", SpellFilePath(fullPath)));
     result += value;
     path.remove_prefix(lenConsumed);
   }
@@ -159,8 +159,8 @@ void renameOnto(const std::string &from, const std::string &to) {
   std::error_code error{};
   std::filesystem::rename(from, to, error);
   if (error)
-    throw Error(concat("Cannot rename ", QuotedPath(from), " onto ",
-                       QuotedPath(to), ": ", error.message()));
+    throw Error(concat("Cannot rename ", SpellFilePath(from), " onto ",
+                       SpellFilePath(to), ": ", error.message()));
 }
 
 bool tryRenameOnto(const std::string &from, const std::string &to) noexcept
@@ -175,8 +175,8 @@ bool tryRenameOnto(const std::string &from, const std::string &to) noexcept
 std::fstream openOrThrow(const std::string &path, std::ios::openmode mode) {
   std::fstream stream{path, mode};
   if (!stream.is_open())
-    throw Error(
-        concat("Cannot open ", QuotedPath(path), ": ", std::strerror(errno)));
+    throw Error(concat("Cannot open ", SpellFilePath(path), ": ",
+                       std::strerror(errno)));
   return stream;
 }
 

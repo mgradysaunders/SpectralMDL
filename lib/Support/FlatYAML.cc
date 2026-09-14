@@ -124,7 +124,7 @@ private:
                       std::string_view key, int lineNo) {
     auto [itr, inserted] = seen.try_emplace(std::string(key), lineNo);
     if (!inserted)
-      mDoc.fail(lineNo, concat("Duplicate key ", Quoted(key),
+      mDoc.fail(lineNo, concat("Duplicate key ", SpellQuoted(key),
                                " (already on line ", itr->second, ")"));
   }
 
@@ -152,7 +152,7 @@ private:
         if (i >= mLines.size() || mLines[i].indent <= indent)
           mDoc.fail(line.lineNo,
                     concat("Expected a value or an indented block after ",
-                           Quoted(line.key), ":"));
+                           SpellQuoted(line.key), ":"));
         if (indent > 0)
           mDoc.fail(mLines[i].lineNo,
                     "Nested blocks are only supported one level deep");
@@ -319,12 +319,12 @@ FlatYAML FlatYAML::parse(std::string_view source, std::string sourceName) {
 }
 
 void FlatYAML::fail(int lineNo, std::string_view message) const {
-  throw Error(concat(LocationMarkup(sourceName, lineNo), " ", message));
+  throw Error(concat(SpellLocation(sourceName, lineNo), " ", message));
 }
 
 const std::string &FlatYAML::toString(const Entry &entry) const {
   if (entry.value.kind != Node::SCALAR)
-    fail(entry, concat("Expected a string for ", Quoted(entry.key)));
+    fail(entry, concat("Expected a string for ", SpellQuoted(entry.key)));
   return entry.value.text;
 }
 
@@ -336,7 +336,7 @@ float FlatYAML::toFloat(const Entry &entry, const Node &item) const {
   if (item.kind == Node::SCALAR && !item.isQuoted)
     if (std::optional<double> number{parseNumber(item.text)})
       return float(*number);
-  fail(entry, concat("Expected a real number for ", Quoted(entry.key)));
+  fail(entry, concat("Expected a real number for ", SpellQuoted(entry.key)));
 }
 
 long FlatYAML::toInt(const Entry &entry) const {
@@ -346,13 +346,13 @@ long FlatYAML::toInt(const Entry &entry) const {
     long result{std::strtol(text.c_str(), &end, 10)};
     if (!text.empty() && end == text.c_str() + text.size()) return result;
   }
-  fail(entry, concat("Expected an integer for ", Quoted(entry.key)));
+  fail(entry, concat("Expected an integer for ", SpellQuoted(entry.key)));
 }
 
 const std::vector<FlatYAML::Node> &FlatYAML::toList(const Entry &entry) const {
   if (entry.value.kind != Node::LIST)
-    fail(entry,
-         concat("Expected an inline list '[...]' for ", Quoted(entry.key)));
+    fail(entry, concat("Expected an inline list '[...]' for ",
+                       SpellQuoted(entry.key)));
   return entry.value.items;
 }
 
@@ -367,15 +367,15 @@ std::vector<float> FlatYAML::toFloats(const Entry &entry, size_t count) const {
     }
   }
   if (result.size() != count)
-    fail(entry, concat("Expected a list of ", Counted(count, "real"), " for ",
-                       Quoted(entry.key)));
+    fail(entry, concat("Expected a list of ", SpellCounted(count, "real"),
+                       " for ", SpellQuoted(entry.key)));
   return result;
 }
 
 const FlatYAML::Map &FlatYAML::toMap(const Entry &entry) const {
   if (entry.value.kind != Node::MAP)
-    fail(entry,
-         concat("Expected an indented block after ", Quoted(entry.key), ":"));
+    fail(entry, concat("Expected an indented block after ",
+                       SpellQuoted(entry.key), ":"));
   return entry.value.map;
 }
 
@@ -384,7 +384,7 @@ FlatYAML::toSequence(const Entry &entry) const {
   if (entry.value.kind != Node::SEQUENCE)
     fail(entry, concat("Expected an indented sequence of '- key: value' "
                        "items after ",
-                       Quoted(entry.key), ":"));
+                       SpellQuoted(entry.key), ":"));
   return entry.value.sequence;
 }
 

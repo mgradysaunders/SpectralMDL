@@ -218,7 +218,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
     outputFile.emplace(opts.output.fileName.value, errorCode);
     if (errorCode)
       throw smdl::Error(smdl::concat(
-          "Cannot open ", smdl::QuotedPath(opts.output.fileName.value), ": ",
+          "Cannot open ", smdl::SpellFilePath(opts.output.fileName.value), ": ",
           errorCode.message()));
   }
   llvm::raw_ostream &os{outputFile
@@ -252,8 +252,8 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
       }
       std::vector<const smdl::DocEntry *> found{docs.findSymbol(query)};
       if (found.empty())
-        throw smdl::Error(
-            smdl::concat("No documentation found for ", smdl::Quoted(query)));
+        throw smdl::Error(smdl::concat("No documentation found for ",
+                                       smdl::SpellQuoted(query)));
       for (const auto *entry : found) printer.printEntry(*entry);
     }
   }

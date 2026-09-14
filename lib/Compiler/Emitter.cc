@@ -117,7 +117,7 @@ Value Emitter::createFunctionImplementation(
     if (result.isRValue())
       result = RValue(result.type, foldConstantPHI(result.llvmValue));
     if (!result.isComptime())
-      srcLoc.throwError("Call to ", Quoted(name),
+      srcLoc.throwError("Call to ", SpellQuoted(name),
                         " does not resolve to a compile-time constant and "
                         "cannot be used at module scope");
   }
@@ -210,7 +210,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
     llvm::FunctionCallee llvmCallee{context.getBuiltinCallee(name, llvmFuncTy)};
     if (llvmFuncTy != llvmCallee.getFunctionType()) {
       srcLoc.throwError("Conflicting definitions of '@(foreign)' function ",
-                        Quoted(name));
+                        SpellQuoted(name));
     }
     context.compiler.mForeignFunctionSourceLocations.try_emplace(
         std::string(name), srcLoc);
@@ -370,7 +370,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
     std::string message{};
     if (llvm::raw_string_ostream os{message};
         llvm::verifyFunction(*llvmFunc, &os))
-      srcLoc.throwError("Function ", Quoted(name),
+      srcLoc.throwError("Function ", SpellQuoted(name),
                         " LLVM-IR verification failed: ", message);
   }
 }
@@ -499,10 +499,10 @@ void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
                                     const SourceLocation &srcLoc) {
   if (Declaration * c{findSameScopeDeclaration(name)}) {
     if (SourceLocation prevSrcLoc{c->getSourceLocation()})
-      srcLoc.throwError("Redeclaration of ", Quoted(join(name, "::")),
+      srcLoc.throwError("Redeclaration of ", SpellQuoted(join(name, "::")),
                         " in the same scope, previously declared at ",
                         std::string(prevSrcLoc));
-    srcLoc.throwError("Redeclaration of ", Quoted(join(name, "::")),
+    srcLoc.throwError("Redeclaration of ", SpellQuoted(join(name, "::")),
                       " in the same scope");
   }
 }
@@ -532,7 +532,7 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
       resolveModule(importPath.dropBack(), isAbs, decl.srcLoc)};
   if (!importedModule)
     decl.srcLoc.throwError("Cannot resolve import identifier ",
-                           Quoted(join(importPath, "::")),
+                           SpellQuoted(join(importPath, "::")),
                            suggestForFailedImport(importPath.dropBack()));
   if (importPath.back() == "*") {
     importPath = importPath.dropBack();
@@ -546,9 +546,9 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
       if (std::string_view similar{suggestNearestName(
               importPath.back(), exportedNamesOf(importedModule))};
           !similar.empty())
-        suggestion = concat("; did you mean ", Quoted(similar), "?");
+        suggestion = concat("; did you mean ", SpellQuoted(similar), "?");
       decl.srcLoc.throwError("Cannot resolve import identifier ",
-                             Quoted(join(importPath, "::")), suggestion);
+                             SpellQuoted(join(importPath, "::")), suggestion);
     }
     declare(importPath.dropFrontWhile(isDots), &decl,
             importedDeclaration->value);
@@ -603,9 +603,9 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
         resultTypes, /*shouldDefaultToUnion=*/true, srcLoc)};
     if (context.getConversionRule(resultType, type) ==
         CONVERSION_RULE_NOT_ALLOWED)
-      srcLoc.throwError("Inferred result type ",
-                        Quoted(resultType->displayName),
-                        " is not convertible to ", Quoted(type->displayName));
+      srcLoc.throwError(
+          "Inferred result type ", SpellQuoted(resultType->displayName),
+          " is not convertible to ", SpellQuoted(type->displayName));
     type = resultType;
     SMDL_SANITY_CHECK(!type->isAbstract());
   }
@@ -650,8 +650,8 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
           context.getConversionRule(value.type, type) ==
               CONVERSION_RULE_NOT_ALLOWED)
         valueSrcLoc.throwError("Cannot convert ", resultKind, " of type ",
-                               Quoted(value.type->displayName), " to ",
-                               Quoted(type->displayName));
+                               SpellQuoted(value.type->displayName), " to ",
+                               SpellQuoted(type->displayName));
       // The 'rvalue' matters: conversions may come back memory-resident
       // (see e.g. 'UnionType::invoke'), and the PHI merges values here.
       value = rvalue(invoke(type, value, valueSrcLoc));
@@ -736,7 +736,7 @@ Value Emitter::emit(AST::Variable &decl) {
   Type *type{emit(decl.type).getComptimeMetaType(context, decl.srcLoc)};
   if (type->isFunction())
     decl.srcLoc.throwError("Variable must not have function type ",
-                           Quoted(type->displayName));
+                           SpellQuoted(type->displayName));
   const bool isConst{decl.type->hasQualifier("const")};
   const bool isStatic{decl.type->hasQualifier("static")};
   const bool isInline{decl.type->hasQualifier("inline")};
@@ -779,8 +779,8 @@ Value Emitter::emit(AST::Variable &decl) {
       if (StructType * structType{llvm::dyn_cast<StructType>(value.type)}) {
         if (structType->params.size() != declarator.names.size())
           declarator.srcLoc.throwError(
-              "Cannot destructure ", Quoted(structType->displayName),
-              ", expected ", Counted(structType->params.size(), "name"));
+              "Cannot destructure ", SpellQuoted(structType->displayName),
+              ", expected ", SpellCounted(structType->params.size(), "name"));
         if (!isConst) {
           Value valueAlloca{createAlloca(value.type)};
           createLifetimeStart(valueAlloca);
@@ -810,14 +810,14 @@ Value Emitter::emit(AST::Variable &decl) {
           value.getComptimeMetaType(context, declarator.srcLoc)->isFunction() &&
           (isStatic || !isConst))
         declarator.srcLoc.throwError(
-            "Variable ", Quoted(name.srcName),
+            "Variable ", SpellQuoted(name.srcName),
             " holding a function must be declared 'const'",
             isStatic ? " without 'static'" : "");
       if (!value.isVoid()) {
         if (isStatic) {
           if (!value.isComptime())
             declarator.srcLoc.throwError(
-                "Variable ", Quoted(name.srcName),
+                "Variable ", SpellQuoted(name.srcName),
                 " declared 'static' requires compile-time initializer");
           llvm::GlobalVariable *llvmGlobal{new llvm::GlobalVariable(
               context.llvmModule, value.type->llvmType, /*isConstant=*/true,
@@ -906,7 +906,7 @@ void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
               declaration->node)};
       declarator && declarator->decl && declarator->decl->type)
     isConst = declarator->decl->type->hasQualifier("const");
-  std::string message{concat("Cannot assign to ", Quoted(names[0]),
+  std::string message{concat("Cannot assign to ", SpellQuoted(names[0]),
                              isConst ? " because it is declared 'const'"
                                      : " because it is not a variable")};
   if (SourceLocation declSrcLoc{declaration->getSourceLocation()})
@@ -1296,14 +1296,14 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     case UNOP_DEREF:
       if (type->isPointer())
         return context.getComptimeMetaType(type->getPointeeType());
-      srcLoc.throwError("Cannot dereference ", Quoted(type->displayName));
+      srcLoc.throwError("Cannot dereference ", SpellQuoted(type->displayName));
       break;
     // Union with `void`, e.g., `?int`
     case UNOP_MAYBE:
       if (type->isVoid()) srcLoc.throwError("Cannot optionalize 'void'");
       if (type->isAbstract())
         srcLoc.throwError("Cannot optionalize abstract type ",
-                          Quoted(type->displayName));
+                          SpellQuoted(type->displayName));
       return context.getComptimeMetaType(
           context.getUnionType({context.getVoidType(), type}));
     default:
@@ -1328,7 +1328,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
         return emitOp(op == UNOP_INC ? BINOP_EQ_ADD : BINOP_EQ_SUB, value,
                       context.getComptimeInt(1), srcLoc);
       srcLoc.throwError("Cannot increment or decrement ",
-                        Quoted(value.type->displayName));
+                        SpellQuoted(value.type->displayName));
     }
     // Unary positive, e.g., `+value`
     if (op == UNOP_POS) {
@@ -1395,8 +1395,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
       }
     }
   }
-  srcLoc.throwError("No unary operator ", Quoted(to_string(op)), " for type ",
-                    Quoted(value.type->displayName));
+  srcLoc.throwError("No unary operator ", SpellQuoted(to_string(op)),
+                    " for type ", SpellQuoted(value.type->displayName));
 }
 //--}
 
@@ -1532,7 +1532,8 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   if (op == BINOP_COMMA) return rhs;
   if ((op & BINOP_EQ) == BINOP_EQ) {
     if (!lhs.isLValue())
-      srcLoc.throwError("Cannot apply ", Quoted(to_string(op)), " to rvalue");
+      srcLoc.throwError("Cannot apply ", SpellQuoted(to_string(op)),
+                        " to rvalue");
     if (op != BINOP_EQ) rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
     createStore(invoke(lhs.type, rhs, srcLoc), lhs);
     return lhs;
@@ -1645,8 +1646,8 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
             llvmCmpOp(Scalar::Intent::Int, op)}) {
       if (lhs.type != rhs.type)
         srcLoc.throwError("Cannot compare different enum types ",
-                          Quoted(lhs.type->displayName), " and ",
-                          Quoted(rhs.type->displayName));
+                          SpellQuoted(lhs.type->displayName), " and ",
+                          SpellQuoted(rhs.type->displayName));
       return RValue(context.getBoolType(),
                     builder.CreateCmp(*llvmOp, lhs, rhs));
     }
@@ -1775,9 +1776,9 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
                   lhsExtent.numCols, ") to match the rows of the right (",
                   rhsExtent.numRows, ")");
   }
-  srcLoc.throwError("No binary operator ", Quoted(to_string(op)),
-                    " for argument types ", Quoted(lhs.type->displayName),
-                    " and ", Quoted(rhs.type->displayName), note);
+  srcLoc.throwError("No binary operator ", SpellQuoted(to_string(op)),
+                    " for argument types ", SpellQuoted(lhs.type->displayName),
+                    " and ", SpellQuoted(rhs.type->displayName), note);
 }
 //--}
 
@@ -1946,9 +1947,10 @@ IntrinsicID Emitter::resolveIntrinsic(std::string_view name,
     std::string_view similar{getSimilarIntrinsicName(name)};
     // The name is quoted with its '#' because that is how it is written.
     if (!similar.empty())
-      srcLoc.throwError("No intrinsic ", Quoted(concat("#", name)),
-                        "; did you mean ", Quoted(concat("#", similar)), "?");
-    srcLoc.throwError("No intrinsic ", Quoted(concat("#", name)));
+      srcLoc.throwError("No intrinsic ", SpellQuoted(concat("#", name)),
+                        "; did you mean ", SpellQuoted(concat("#", similar)),
+                        "?");
+    srcLoc.throwError("No intrinsic ", SpellQuoted(concat("#", name)));
   }
   return intrinsicID;
 }
@@ -2001,19 +2003,19 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     builder.SetInsertPoint(blockEntry);
     Value value{emitIntrinsic(intrinsicID, args, srcLoc)};
     if (scratchFunc->size() > 1 || !blockEntry->empty())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " does not resolve to a compile-time constant and "
                         "cannot be used at module scope");
     return value;
   }
   auto expectOne{[&]() {
     if (args.size() != 1)
-      srcLoc.throwError("Intrinsic ", Quoted(name), " expects 1 argument");
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name), " expects 1 argument");
     return args[0].value;
   }};
   auto expectOneVectorized{[&]() {
     if (args.size() != 1 || !args[0].value.type->isVectorized())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 vectorized argument");
     return args[0].value;
   }};
@@ -2021,7 +2023,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (args.size() != 1 ||                    //
         !args[0].value.type->isVectorized() || //
         !args[0].value.type->isArithmeticIntegral())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 int or int vector argument");
     return args[0].value;
   }};
@@ -2047,7 +2049,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (!(args.size() == 1 || args.size() == 2) ||
         !arg0.type->isArithmeticScalarInt() ||
         !arg1.type->isArithmeticScalarInt())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 or 2 int arguments");
     Type *intType{context.getIntType()};
     return std::pair{invoke(intType, rvalue(arg0), srcLoc),
@@ -2065,7 +2067,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   // Shared by '#bump' and '#bumpAllocate'.
   auto emitBumpAllocate{[&](Value size, Value align) {
     if (!state)
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " requires '$state' and cannot be used in '@(pure)' "
                         "context");
     llvm::FunctionCallee callee{
@@ -2105,7 +2107,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::All: {
     Value value{expectOne()};
     if (!value.type->isArithmeticScalar() && !value.type->isArithmeticVector())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 scalar or vector argument");
     value = invoke(static_cast<ArithmeticType *>(value.type)
                        ->getWithDifferentScalar(context, Scalar::getBool()),
@@ -2193,7 +2195,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     const AlbedoLUT *lut{context.getBuiltinAlbedo(lutName)};
     if (!lut)
       srcLoc.throwError(
-          "Intrinsic 'albedoLUT' passed invalid name ", Quoted(lutName),
+          "Intrinsic 'albedoLUT' passed invalid name ", SpellQuoted(lutName),
           " that does not identify any known look-up table at compile time");
     PointerType *floatPtrType{context.getPointerType(context.getFloatType())};
     ArgumentList lutArgs{};
@@ -2364,7 +2366,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
       Type *type{value.getComptimeMetaType(context, srcLoc)};
       if (type->isAbstract())
         srcLoc.throwError("Intrinsic 'hasField' cannot query abstract type ",
-                          Quoted(type->displayName));
+                          SpellQuoted(type->displayName));
       return context.getComptimeBool(
           type->hasNonVoidField(*this, Value(), fieldName, srcLoc));
     }
@@ -2380,7 +2382,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::HeapFree: {
     Value value{expectOne()};
     if (!value.type->isPointer())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 pointer argument");
     llvm::FunctionCallee callee{
         context.getBuiltinCallee("smdlFree", &smdlFree)};
@@ -2496,7 +2498,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
           return arg.value.type->isVectorized();
         }))
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 2 vectorized arguments");
     Value value0{args[0].value};
     Value value1{args[1].value};
@@ -2536,7 +2538,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::NumCols: {
     Type *type{expectOneType()};
     if (!type->isArithmeticMatrix())
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 matrix argument");
     return context.getComptimeInt(
         intrinsicID == IntrinsicID::NumRows
@@ -2586,7 +2588,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (!(args.size() == 2 && //
           args[0].value.type->isArithmeticIntegral() &&
           args[1].value.type->isArithmeticIntegral())) {
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 2 integer or vectorized integer arguments");
     }
     Type *intType{
@@ -2656,10 +2658,10 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     if (valueCond.type->isArithmeticVector() &&
         numComponents(valueCond.type) != numComponents(type))
       srcLoc.throwError("Intrinsic 'select' expects the condition ",
-                        Quoted(valueCond.type->displayName),
+                        SpellQuoted(valueCond.type->displayName),
                         " to have the same number of components as the "
                         "selection arguments ",
-                        Quoted(type->displayName));
+                        SpellQuoted(type->displayName));
     valueThen = invoke(type, valueThen, srcLoc);
     valueElse = invoke(type, valueElse, srcLoc);
     return RValue(type, builder.CreateSelect(valueCond, valueThen, valueElse));
@@ -2976,7 +2978,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     break;
   }
   }
-  srcLoc.throwError("Intrinsic ", Quoted(concat("#", name)),
+  srcLoc.throwError("Intrinsic ", SpellQuoted(concat("#", name)),
                     " is recognized but not implemented");
 }
 
@@ -2991,7 +2993,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   const std::string_view name{getIntrinsicName(intrinsicID)};
   auto expectOneComptimeString{[&]() {
     if (!(args.size() == 1 && args[0].value.isComptimeString()))
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 compile-time string argument");
     return std::string(args[0].value.getComptimeString());
   }};
@@ -3000,7 +3002,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt()))
       srcLoc.throwError(
-          "Intrinsic ", Quoted(name),
+          "Intrinsic ", SpellQuoted(name),
           " expects 1 compile-time string argument and 1 int argument");
     return std::make_pair(std::string(args[0].value.getComptimeString()),
                           rvalue(args[1].value));
@@ -3014,7 +3016,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           args[1].value.type->isArithmeticScalarInt() &&
           args[2].value.isComptimeInt() && //
           args[3].value.isComptimeInt()))
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 compile-time string argument, 1 int "
                         "argument, and 2 compile-time bool arguments");
     return std::make_tuple(std::string(args[0].value.getComptimeString()),
@@ -3040,11 +3042,13 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       return;
     constexpr size_t MAX_LISTED{10};
     const std::vector<std::string> searchDirs{context.getSearchDirs()};
-    std::string message{concat(
-        "Searched ", Counted(searchDirs.size(), "directory", "directories"),
-        " for ", Quoted(fileName))};
+    std::string message{
+        concat("Searched ",
+               SpellCounted(searchDirs.size(), "directory", "directories"),
+               " for ", SpellQuoted(fileName))};
     for (size_t i = 0; i < std::min(searchDirs.size(), MAX_LISTED); i++)
-      message += concat(i == 0 ? ":\n  " : "\n  ", QuotedPath(searchDirs[i]));
+      message +=
+          concat(i == 0 ? ":\n  " : "\n  ", SpellFilePath(searchDirs[i]));
     if (searchDirs.size() > MAX_LISTED)
       message += concat("\n  and ", searchDirs.size() - MAX_LISTED, " more");
     resourceSourceLocation(srcLoc).logDebug(message);
@@ -3055,7 +3059,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     if (!resolvedFileName) {
       if (context.compiler.logResourceWarningOnce(
               resourceSourceLocation(srcLoc), fileName,
-              concat("Cannot load ", Quoted(fileName), ": file not found")))
+              concat("Cannot load ", SpellQuoted(fileName),
+                     ": file not found")))
         logSearchedDirs(fileName);
       return invoke(resultType, {}, srcLoc);
     }
@@ -3084,7 +3089,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     if (resolvedImagePaths.empty()) {
       if (context.compiler.logResourceWarningOnce(
               resourceSourceLocation(srcLoc), fileName,
-              concat("Cannot load ", Quoted(fileName), ": file not found")))
+              concat("Cannot load ", SpellQuoted(fileName),
+                     ": file not found")))
         logSearchedDirs(fileName);
       return invoke(texture2DType, {}, srcLoc);
     }
@@ -3103,16 +3109,18 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         // The tiles all come from one directory, so the file name is
         // enough to tell them apart.
         const auto describeTile{[&](size_t i) {
-          return concat(Quoted(std::filesystem::path(resolvedImagePaths[i].path)
-                                   .filename()
-                                   .string()),
-                        " is ", images[i]->getNumChannels(), "-channel ",
-                        Image::getFormatName(images[i]->getFormat()));
+          return concat(
+              SpellQuoted(std::filesystem::path(resolvedImagePaths[i].path)
+                              .filename()
+                              .string()),
+              " is ", images[i]->getNumChannels(), "-channel ",
+              Image::getFormatName(images[i]->getFormat()));
         }};
         context.compiler.logResourceWarningOnce(
             resourceSourceLocation(srcLoc), fileName,
-            concat("Inconsistent image formats for ", Quoted(fileName), ": ",
-                   describeTile(0), ", but ", describeTile(images.size() - 1)));
+            concat("Inconsistent image formats for ", SpellQuoted(fileName),
+                   ": ", describeTile(0), ", but ",
+                   describeTile(images.size() - 1)));
         return invoke(texture2DType, {}, srcLoc);
       }
     }
@@ -3186,7 +3194,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt() &&
           args[2].value.isComptimeString()))
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 compile-time string argument, 1 int "
                         "argument, and 1 compile-time string argument");
     std::string fileName{args[0].value.getComptimeString()};
@@ -3324,19 +3332,19 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     StructType *spectralCurveType{context.getSpectralCurveType()};
     if (args.size() == 1) {
       if (!args[0].value.isComptimeString()) {
-        srcLoc.throwError("Intrinsic ", Quoted(name),
+        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                           " expects 1 compile-time string argument");
       }
     } else if (args.size() == 2) {
       if (!(args[0].value.isComptimeString() &&
             (args[1].value.isComptimeString() ||
              args[1].value.isComptimeInt()))) {
-        srcLoc.throwError("Intrinsic ", Quoted(name),
+        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                           " expects 1 compile-time string argument and 1 "
                           "compile-time string or int argument");
       }
     } else {
-      srcLoc.throwError("Intrinsic ", Quoted(name),
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
                         " expects 1 or 2 arguments");
     }
     std::string fileName{args[0].value.getComptimeString()};
@@ -3405,10 +3413,10 @@ void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
                               accessField(value, param.name, srcLoc), &astArg});
   } else if (type->isPointer()) {
     srcLoc.throwError("Cannot expand 'inline' argument of pointer type ",
-                      Quoted(type->displayName), "; dereference it first");
+                      SpellQuoted(type->displayName), "; dereference it first");
   } else {
     srcLoc.throwError("Cannot expand 'inline' argument of type ",
-                      Quoted(type->displayName),
+                      SpellQuoted(type->displayName),
                       "; expected a vector, array, or concrete struct");
   }
 }
@@ -3427,10 +3435,10 @@ void Emitter::rejectAssignmentAsNamedArgument(AST::Argument &astArg) {
   Declaration *unusableMatch{};
   if (probeName(names, getLLVMFunction(), &unusableMatch)) return;
   const std::string_view name{names[0]};
-  identifier->srcLoc.throwError("Cannot resolve identifier ", Quoted(name),
+  identifier->srcLoc.throwError("Cannot resolve identifier ", SpellQuoted(name),
                                 "; a named argument is written ",
-                                Quoted(concat(name, ": ...")), ", not ",
-                                Quoted(concat(name, " = ...")));
+                                SpellQuoted(concat(name, ": ...")), ", not ",
+                                SpellQuoted(concat(name, " = ...")));
 }
 
 Value Emitter::emitCall(Value callee, const ArgumentList &args,
@@ -3730,7 +3738,7 @@ Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
     candidates.push_back(std::string_view(qualifiedName).substr(2));
   if (std::string_view similar{suggestNearestName(typed, candidates)};
       !similar.empty())
-    return concat("; did you mean ", Quoted(concat("::", similar)), "?");
+    return concat("; did you mean ", SpellQuoted(concat("::", similar)), "?");
   // Nothing is close, so answer the question the user actually has, which
   // for a failed import is where the compiler looked.
   const std::vector<std::string> &searchPaths{
@@ -3740,7 +3748,7 @@ Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
   std::string str{"; searched "};
   for (size_t i{}; i < searchPaths.size(); i++) {
     if (i > 0) str += ", ";
-    str += concat(QuotedPath(searchPaths[i]));
+    str += concat(SpellFilePath(searchPaths[i]));
   }
   return str;
 }
@@ -3749,7 +3757,7 @@ std::string
 Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
                                   const SourceLocation &srcLoc) {
   auto suggest{[](std::string_view name) {
-    return concat("; did you mean ", Quoted(name), "?");
+    return concat("; did you mean ", SpellQuoted(name), "?");
   }};
   const bool isSMDL{currentModule == nullptr || currentModule->isSMDLSyntax()};
   if (names.size() > 1) {
@@ -3784,9 +3792,9 @@ Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
         !Declaration::findInModule(context, name, getLLVMFunction(), module_))
       return hint;
     const std::string_view moduleName{declaration->name[0]};
-    hint = concat("; ", Quoted(moduleName),
+    hint = concat("; ", SpellQuoted(moduleName),
                   " is imported but not opened, did you mean ",
-                  Quoted(concat(moduleName, "::", name)),
+                  SpellQuoted(concat(moduleName, "::", name)),
                   ", or 'using ::", moduleName, " import ", name, ";'?");
     return hint;
   }};
@@ -3845,10 +3853,11 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
   if (unusableMatch) {
     if (SourceLocation prevSrcLoc{unusableMatch->getSourceLocation()})
       srcLoc.throwError("Cannot reference run-time value of ",
-                        Quoted(join(names, "::")), " declared at ",
+                        SpellQuoted(join(names, "::")), " declared at ",
                         std::string(prevSrcLoc), " from a different function");
     srcLoc.throwError("Cannot reference run-time value of ",
-                      Quoted(join(names, "::")), " from a different function");
+                      SpellQuoted(join(names, "::")),
+                      " from a different function");
   }
   if (declaration) {
     return declaration->value;
@@ -3871,7 +3880,8 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
   if (shouldDefaultToVoid) {
     return RValue(context.getVoidType(), nullptr);
   }
-  srcLoc.throwError("Cannot resolve identifier ", Quoted(join(names, "::")),
+  srcLoc.throwError("Cannot resolve identifier ",
+                    SpellQuoted(join(names, "::")),
                     suggestForUnresolvedName(names, srcLoc));
   return Value();
 }
@@ -3901,13 +3911,13 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                                         : "No parameters named ")};
     for (size_t i{}; i < invalidNames.size(); i++) {
       if (i > 0) message += ", ";
-      message += concat(Quoted(invalidNames[i]));
+      message += concat(SpellQuoted(invalidNames[i]));
     }
     // Only the first offender gets a suggestion. Past that the user is not
     // making a typo, they are calling something else entirely.
     if (std::string_view similar{suggestNearest(invalidNames[0], paramNames)};
         !similar.empty())
-      message += concat("; did you mean ", Quoted(similar), "?");
+      message += concat("; did you mean ", SpellQuoted(similar), "?");
     srcLoc.throwError(std::move(message));
   }
   // The primary resolution logic.
@@ -3929,7 +3939,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           // If this has already been resolved by a positional argument,
           // resolution fails.
           if (resolvedArgs.isResolved(iArg))
-            srcLoc.throwError("Named argument ", Quoted(arg.name),
+            srcLoc.throwError("Named argument ", SpellQuoted(arg.name),
                               " already resolved by positional argument");
           resolvedArgs.argParams[iArg] = &param;
           return &arg;
@@ -3949,10 +3959,10 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
       resolvedArgs.values[iParam] = arg->value;
       if (!context.isImplicitlyConvertible(arg->value.type, param.type))
         srcLoc.throwError("Argument type ",
-                          Quoted(arg->value.type->displayName),
+                          SpellQuoted(arg->value.type->displayName),
                           " is not implicitly convertible to type ",
-                          Quoted(param.type->displayName), " of parameter ",
-                          Quoted(param.name));
+                          SpellQuoted(param.type->displayName),
+                          " of parameter ", SpellQuoted(param.name));
       // Deduce named array sizes, descending through nested arrays.
       Type *paramType{param.type};
       Type *argType{arg->value.type};
@@ -3970,12 +3980,12 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
             deducedSizes.push_back({inferredType->sizeName, arrayType->size});
           } else if (deduced->second != arrayType->size) {
             srcLoc.throwError(
-                "Argument type ", Quoted(arg->value.type->displayName),
-                " of parameter ", Quoted(param.name), " deduces array size ",
-                Quoted(inferredType->sizeName), " = ",
-                std::to_string(arrayType->size),
+                "Argument type ", SpellQuoted(arg->value.type->displayName),
+                " of parameter ", SpellQuoted(param.name),
+                " deduces array size ", SpellQuoted(inferredType->sizeName),
+                " = ", std::to_string(arrayType->size),
                 " but an earlier argument deduced ",
-                Quoted(inferredType->sizeName), " = ",
+                SpellQuoted(inferredType->sizeName), " = ",
                 std::to_string(deduced->second));
           }
         }
@@ -3983,7 +3993,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         argType = arrayType->elemType;
       }
     } else if (!param.getASTInitializer() && !param.builtinDefaultValue) {
-      srcLoc.throwError("Missing argument for parameter ", Quoted(param.name),
+      srcLoc.throwError("Missing argument for parameter ",
+                        SpellQuoted(param.name),
                         " without default initializer");
     }
   }
@@ -4094,13 +4105,13 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     if (const Module *const *itr{
             std::find(inProgress.begin(), inProgress.end(), &otherModule)};
         itr != inProgress.end()) {
-      std::string message{
-          concat("cyclic import: ", Quoted(otherModule.getQualifiedName()))};
+      std::string message{concat("cyclic import: ",
+                                 SpellQuoted(otherModule.getQualifiedName()))};
       for (auto next{itr + 1}; next != inProgress.end(); ++next)
         message += concat(next == itr + 1 ? " imports " : ", which imports ",
-                          Quoted((*next)->getQualifiedName()));
-      message +=
-          concat(", which imports ", Quoted(otherModule.getQualifiedName()));
+                          SpellQuoted((*next)->getQualifiedName()));
+      message += concat(", which imports ",
+                        SpellQuoted(otherModule.getQualifiedName()));
       srcLoc.throwError(std::move(message));
     }
     if (std::optional<Error> error{otherModule.compile(context)})

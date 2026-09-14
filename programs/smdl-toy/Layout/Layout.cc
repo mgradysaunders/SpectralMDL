@@ -288,17 +288,17 @@ private:
       if (!usedAssets[i])
         mDiags.warn(document.assets[i].nameLoc,
                     smdl::concat("unused asset ",
-                                 smdl::Quoted(document.assets[i].name)));
+                                 SpellQuoted(document.assets[i].name)));
     for (size_t i = 0; i < document.groups.size(); i++)
       if (!usedGroups[i])
         mDiags.warn(document.groups[i].nameLoc,
                     smdl::concat("unused group ",
-                                 smdl::Quoted(document.groups[i].name)));
+                                 SpellQuoted(document.groups[i].name)));
     for (size_t i = 0; i < document.lights.size(); i++)
       if (!usedLights[i])
         mDiags.warn(document.lights[i].nameLoc,
                     smdl::concat("unused light ",
-                                 smdl::Quoted(document.lights[i].name)));
+                                 SpellQuoted(document.lights[i].name)));
   }
 
   // One `place` of a group on the lowering stack, for cycle detection
@@ -373,7 +373,7 @@ private:
       LayoutDiagnostic &error{
           mDiags.error(placement.assetNameLoc,
                        smdl::concat("no asset, group, or light named ",
-                                    smdl::Quoted(placement.assetName)))};
+                                    SpellQuoted(placement.assetName)))};
       std::vector<std::string_view> candidates{};
       for (const auto &asset : document.assets)
         candidates.push_back(asset.name);
@@ -385,7 +385,7 @@ private:
               smdl::suggestNearest(placement.assetName, candidates)};
           !nearest.empty())
         error.note({},
-                   smdl::concat("did you mean ", smdl::Quoted(nearest), "?"));
+                   smdl::concat("did you mean ", SpellQuoted(nearest), "?"));
       throw SkipPlacement();
     }
     // A light has no material slots, so a place-site override on one is a
@@ -393,17 +393,17 @@ private:
     if (light && (!placement.overrides.empty() || !placement.variants.empty()))
       mDiags.warn(placement.assetNameLoc,
                   smdl::concat("material overrides on the light ",
-                               smdl::Quoted(placement.assetName),
+                               SpellQuoted(placement.assetName),
                                " have no effect"));
     if (light && placement.casterOverride)
       mDiags.warn(placement.casterLoc,
                   smdl::concat("'caster' on the light ",
-                               smdl::Quoted(placement.assetName),
+                               SpellQuoted(placement.assetName),
                                " has no effect"));
     if (light && placement.lightOverride)
       mDiags.warn(placement.lightLoc,
                   smdl::concat("'light' on the light ",
-                               smdl::Quoted(placement.assetName),
+                               SpellQuoted(placement.assetName),
                                " has no effect"));
     // The place's own overrides apply outside everything the target says
     // for itself, and inside everything above: each syntactic enclosure
@@ -453,8 +453,8 @@ private:
           mDiags.error(placement.placesPathLoc,
                        smdl::concat("record ", i, " picks variant ",
                                     places.variants[i], ", but only ",
-                                    smdl::Counted(placement.variants.size(),
-                                                  "variant block"),
+                                    SpellCounted(placement.variants.size(),
+                                                 "variant block"),
                                     placement.variants.size() == 1
                                         ? " is declared"
                                         : " are declared"));
@@ -468,8 +468,8 @@ private:
       for (const auto &variant : placement.variants)
         outerByVariant.push_back(composeRename(variant, baseOuter));
       SMDL_LOG_DEBUG("Scattering ",
-                     smdl::Counted(places.transforms.size(), "record"),
-                     " from ", smdl::QuotedPath(resolved.string()));
+                     SpellCounted(places.transforms.size(), "record"), " from ",
+                     SpellFilePath(resolved.string()));
       const auto recordXf{
           [&](size_t i) { return placeXf * MotionXf(places.transforms[i]); }};
       const auto outerOfVariant{
@@ -658,10 +658,9 @@ private:
     const bool isCaster{marks.isCaster.value_or(decl.isCaster)};
     if (isCaster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
-                   smdl::concat(smdl::Quoted("caster"),
+                   smdl::concat(SpellQuoted("caster"),
                                 " applies to a mesh file or a shape, but ",
-                                smdl::QuotedPath(decl.path),
-                                " is a curves file"));
+                                SpellFilePath(decl.path), " is a curves file"));
       throw SkipPlacement();
     }
     return isCaster;
@@ -677,7 +676,7 @@ private:
       mDiags
           .error(marks.lightLoc,
                  smdl::concat("'light off' cannot apply to ",
-                              smdl::Quoted(decl.name),
+                              SpellQuoted(decl.name),
                               ": its 'caustic' mark makes it a light"))
           .note(decl.nameLoc, "declared 'caustic' here");
       throw SkipPlacement();
@@ -685,10 +684,9 @@ private:
     const bool isLight{marks.isLight.value_or(decl.isLight) || decl.isCaustic};
     if (isLight && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
-                   smdl::concat(smdl::Quoted("light"),
+                   smdl::concat(SpellQuoted("light"),
                                 " applies to a mesh file or a shape, but ",
-                                smdl::QuotedPath(decl.path),
-                                " is a curves file"));
+                                SpellFilePath(decl.path), " is a curves file"));
       throw SkipPlacement();
     }
     return isLight;
@@ -735,7 +733,7 @@ private:
       mDiags.error(decl.pathLoc,
                    smdl::concat("'select', 'recenter', 'subdivide', and "
                                 "'displace' apply to a mesh file, but ",
-                                smdl::QuotedPath(decl.path), " is a ",
+                                SpellFilePath(decl.path), " is a ",
                                 target.kindName()));
       throw SkipPlacement();
     }
@@ -743,14 +741,14 @@ private:
       mDiags.error(decl.curvesOpsLoc,
                    smdl::concat("'tube', 'ribbon', and 'radius_scale' apply "
                                 "to a curves file, but ",
-                                smdl::QuotedPath(decl.path), " is a ",
+                                SpellFilePath(decl.path), " is a ",
                                 target.kindName()));
       throw SkipPlacement();
     }
     if (target.kind != Target::Kind::MESH && decl.animationLoc) {
       mDiags.error(decl.animationLoc,
                    smdl::concat("'animation' applies to a mesh file, but ",
-                                smdl::QuotedPath(decl.path), " is a ",
+                                SpellFilePath(decl.path), " is a ",
                                 target.kindName()));
       throw SkipPlacement();
     }
@@ -764,7 +762,7 @@ private:
       }
       if (decl.materials.all.empty()) {
         mDiags.error(decl.nameLoc,
-                     smdl::concat("the curves asset ", smdl::Quoted(decl.name),
+                     smdl::concat("the curves asset ", SpellQuoted(decl.name),
                                   " needs 'material <name>' in its block"));
         throw SkipPlacement();
       }
@@ -790,9 +788,9 @@ private:
       const auto refuseMark{[&](const LayoutLocation &markLoc,
                                 std::string_view word) {
         mDiags.error(markLoc ? markLoc : placement.importPathLoc,
-                     smdl::concat(smdl::Quoted(word),
+                     smdl::concat(SpellQuoted(word),
                                   " applies to a mesh file or a shape, but ",
-                                  smdl::QuotedPath(placement.importPath),
+                                  SpellFilePath(placement.importPath),
                                   " is a curves file"));
         throw SkipPlacement();
       }};
@@ -814,7 +812,7 @@ private:
         mDiags
             .error(placement.importPathLoc,
                    smdl::concat("importing the curves file ",
-                                smdl::QuotedPath(placement.importPath),
+                                SpellFilePath(placement.importPath),
                                 " needs a material"))
             .note({}, "write 'import \"<path>\" { material <name> }'");
         throw SkipPlacement();
@@ -869,7 +867,7 @@ private:
         if (manifest.empty()) {
           mDiags.error(location,
                        smdl::concat("cannot import the directory ",
-                                    smdl::QuotedPath(resolved.string()),
+                                    SpellFilePath(resolved.string()),
                                     ": it holds no '.asset' manifest, so it "
                                     "is not an asset"));
           throw SkipPlacement();
@@ -887,13 +885,13 @@ private:
     }
     if (resolved.extension() == ".scene") {
       mDiags.error(location, smdl::concat("the '.scene' format was retired; ",
-                                          smdl::QuotedPath(path),
+                                          SpellFilePath(path),
                                           " must be ported to '.layout'"));
       throw SkipPlacement();
     }
     if (resolved.extension() == PLACES_EXTENSION) {
       mDiags.error(location,
-                   smdl::concat(smdl::QuotedPath(path),
+                   smdl::concat(SpellFilePath(path),
                                 " is a '.places' buffer, which is scattered "
                                 "with 'place <asset> * \"<file>\"' rather "
                                 "than imported"));
@@ -928,9 +926,9 @@ private:
     // Name every place it was looked for. A path that is subtly wrong is
     // the common case, and the list is what shows which part of it is.
     std::string message{
-        smdl::concat("cannot find ", smdl::QuotedPath(path), ", looked for:")};
+        smdl::concat("cannot find ", SpellFilePath(path), ", looked for:")};
     for (const auto &candidate : candidates)
-      message += smdl::concat("\n  ", smdl::QuotedPath(candidate.string()));
+      message += smdl::concat("\n  ", SpellFilePath(candidate.string()));
     if (mSearch.empty() && !written.is_absolute())
       message += "\n  (pass -asset-dir to say where the asset library is)";
     mDiags.error(location, message);
@@ -968,8 +966,8 @@ Layout readLayout(const std::string &fileName, const AssetSearchPath &search,
   LayoutDiagnostics diags{};
   Layout result{lowerLayout(diags, fileName, search, sampling)};
   diags.printAllAndRefuse(fileName);
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": ",
-                 smdl::Counted(result.items.size(), "item"));
+  SMDL_LOG_DEBUG("Read ", SpellFilePath(fileName), ": ",
+                 SpellCounted(result.items.size(), "item"));
   return result;
 }
 
@@ -979,11 +977,11 @@ Layout resolveLayoutArgument(const std::string &fileName,
   std::filesystem::path path{fileName};
   if (path.extension() == ".scene")
     throw smdl::Error(smdl::concat("The '.scene' format was retired; ",
-                                   smdl::QuotedPath(fileName),
+                                   SpellFilePath(fileName),
                                    " must be ported to '.layout'"));
   if (path.extension() == CAMERA_EXTENSION)
     throw smdl::Error(
-        smdl::concat(smdl::QuotedPath(fileName),
+        smdl::concat(SpellFilePath(fileName),
                      " is a camera, not a scene; give it with '-camera', or "
                      "name it after the layout it belongs to and it is found "
                      "beside it"));
@@ -995,7 +993,7 @@ Layout resolveLayoutArgument(const std::string &fileName,
     std::string manifest{findAssetManifest(path.string())};
     if (manifest.empty())
       throw smdl::Error(smdl::concat("Cannot render the directory ",
-                                     smdl::QuotedPath(path.string()),
+                                     SpellFilePath(path.string()),
                                      ": it holds no '.asset' manifest, so it "
                                      "is not an asset"));
     path = manifest;

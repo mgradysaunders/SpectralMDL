@@ -280,7 +280,7 @@ public:
               astParam->annotations->isMarkedUnused())) {
           astParam->wasWarningIssued = true;
           getSourceLocation().logWarn(
-              concat("Unused parameter ", Quoted(name[0])));
+              concat("Unused parameter ", SpellQuoted(name[0])));
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
@@ -291,7 +291,7 @@ public:
               declarator->annotations->isMarkedUnused())) {
           declarator->wasWarningIssued = true;
           getSourceLocation().logWarn(
-              concat("Unused variable ", Quoted(name[0])));
+              concat("Unused variable ", SpellQuoted(name[0])));
         }
       }
     }

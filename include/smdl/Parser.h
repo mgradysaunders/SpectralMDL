@@ -388,16 +388,16 @@ private:
             srcLoc0.throwError(
                 "'[EPSILON]' syntax was replaced: use '|EPSILON|' for "
                 "absolute or '(EPSILON)' for relative tolerance after ",
-                Quoted(op->srcOp));
+                SpellQuoted(op->srcOp));
           }
         }
         if (!srcDelimL || !exprEps || !srcDelimR)
           srcLoc0.throwError("expected '|EPSILON|' or '(EPSILON)' after ",
-                             Quoted(op->srcOp));
+                             SpellQuoted(op->srcOp));
         BumpPtr<AST::Expr> exprRhs{parseInner()};
         if (!exprRhs)
           srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
-                             Quoted(op->srcOp));
+                             SpellQuoted(op->srcOp));
         accept();
         exprLhs = allocate<AST::Binary>(
             srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,
@@ -526,7 +526,7 @@ private:
     std::optional<AST::LateIf> lateIf{parseLateIf()};
     std::optional<std::string_view> srcSemicolon{nextDelimiter(";")};
     if (!srcSemicolon)
-      kw->srcLoc.throwError("expected ';' after ", Quoted(keyword));
+      kw->srcLoc.throwError("expected ';' after ", SpellQuoted(keyword));
     return allocate<Node>(kw->srcLoc, std::in_place, kw->src, std::move(lateIf),
                           *srcSemicolon);
   }

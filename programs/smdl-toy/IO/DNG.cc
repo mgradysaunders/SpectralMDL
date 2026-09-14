@@ -404,8 +404,8 @@ void putDirectory(std::vector<uint8_t> &bytes, std::vector<Field> fields,
 
 void writeDNGFile(const std::string &fileName, const DNGImage &image) {
   const auto fail{[&](auto &&...args) {
-    throw smdl::Error(smdl::concat("Cannot write DNG ",
-                                   smdl::QuotedPath(fileName), ": ", args...));
+    throw smdl::Error(smdl::concat("Cannot write DNG ", SpellFilePath(fileName),
+                                   ": ", args...));
   }};
   const size_t sampleCount{image.sampleCount()};
   const size_t valueCount{image.pixelCountX * image.pixelCountY * sampleCount};
@@ -413,8 +413,8 @@ void writeDNGFile(const std::string &fileName, const DNGImage &image) {
     fail("the frame is empty");
   if (image.digitalNumbers.size() != valueCount)
     fail(image.digitalNumbers.size(), " digital numbers for ",
-         smdl::Counted(sampleCount, "sample"), " over ", image.pixelCountX, "x",
-         image.pixelCountY, " pixels");
+         SpellCounted(sampleCount, "sample"), " over ",
+         SpellDimensions(image.pixelCountX, image.pixelCountY), " pixels");
   if (image.hasCFA && std::any_of(image.cfa.begin(), image.cfa.end(),
                                   [](uint8_t plane) { return plane > 2; }))
     fail("the tile names a plane that is not red, green, or blue");

@@ -36,7 +36,7 @@ private:
   void parseStatement() {
     if (mToken.kind != Token::WORD) {
       mDiags.error(location(), smdl::concat("expected a directive, got ",
-                                            smdl::Quoted(mToken.text)));
+                                            SpellQuoted(mToken.text)));
       throw Recover();
     }
     if (mToken.text == "camera") {
@@ -44,7 +44,7 @@ private:
     } else {
       LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
-                                                smdl::Quoted(mToken.text)))};
+                                                SpellQuoted(mToken.text)))};
       if (std::find(TRANSFORM_OPS.begin(), TRANSFORM_OPS.end(), mToken.text) !=
           TRANSFORM_OPS.end()) {
         error.note({}, "a camera is framed by 'look_from' and 'look_to', not "
@@ -76,9 +76,9 @@ private:
                                     const LayoutLocation &keyLoc) {
     if (key == "response" || key == "detector") {
       mDiags
-          .error(keyLoc, smdl::concat(smdl::Quoted(key),
+          .error(keyLoc, smdl::concat(SpellQuoted(key),
                                       " is no longer a camera setting"))
-          .note({}, smdl::concat("it is the ", smdl::Quoted(key),
+          .note({}, smdl::concat("it is the ", SpellQuoted(key),
                                  " block of the '.sensor' file the camera "
                                  "names with 'sensor'"));
       return true;
@@ -176,7 +176,7 @@ private:
         } else {
           mDiags.error(keyLoc,
                        smdl::concat("unknown readout direction ",
-                                    smdl::Quoted(word),
+                                    SpellQuoted(word),
                                     " (expected down, up, left, or right)"));
           throw Recover();
         }
@@ -195,7 +195,7 @@ private:
       } else {
         mDiags.error(
             keyLoc,
-            smdl::concat("unknown camera setting ", smdl::Quoted(key),
+            smdl::concat("unknown camera setting ", SpellQuoted(key),
                          " (expected look_from, look_to, look_up, fovy, "
                          "focal_length, shutter, readout, readout_direction, "
                          "lens, sensor, temperature, iso, white_balance, "
@@ -245,7 +245,7 @@ private:
       mDiags.error(location(),
                    smdl::concat("expected a distance, 'infinity', or 'auto' "
                                 "after 'focus', got ",
-                                smdl::Quoted(mToken.text)));
+                                SpellQuoted(mToken.text)));
       throw Recover();
     }
     camera.focus =
@@ -266,7 +266,7 @@ private:
       mDiags.error(location(),
                    smdl::concat("expected a number or 'auto' after 'iso', "
                                 "got ",
-                                smdl::Quoted(mToken.text)));
+                                SpellQuoted(mToken.text)));
       throw Recover();
     }
     camera.iso =
@@ -300,7 +300,7 @@ private:
                               "tungsten, fluorescent, auto, or a color "
                               "temperature in kelvin after 'white_balance', "
                               "got ",
-                              smdl::Quoted(mToken.text)));
+                              SpellQuoted(mToken.text)));
     throw Recover();
   }
 
@@ -319,9 +319,9 @@ private:
       advance();
       return std::string(word);
     }
-    mDiags.error(location(), smdl::concat("expected a quoted ", extension,
-                                          " path or ", smdl::Quoted(word),
-                                          " after ", smdl::Quoted(key)));
+    mDiags.error(location(),
+                 smdl::concat("expected a quoted ", extension, " path or ",
+                              SpellQuoted(word), " after ", SpellQuoted(key)));
     throw Recover();
   }
 
@@ -452,15 +452,15 @@ private:
                setting == "white_balance") {
       mDiags
           .error(settingLoc,
-                 smdl::concat(smdl::Quoted(setting),
+                 smdl::concat(SpellQuoted(setting),
                               " is not a quantity to interpolate, so it "
                               "cannot be keyed"))
           .note({}, "state it once in the 'camera' block instead");
       throw Recover();
     } else {
       mDiags.error(settingLoc,
-                   smdl::concat("unknown camera setting ",
-                                smdl::Quoted(setting), " in a 'motion' key"));
+                   smdl::concat("unknown camera setting ", SpellQuoted(setting),
+                                " in a 'motion' key"));
       throw Recover();
     }
   }
@@ -587,7 +587,7 @@ std::optional<WhiteBalance> parseWhiteBalance(std::string_view text) {
 
 std::string whiteBalanceName(const WhiteBalance &whiteBalance) {
   if (whiteBalance.kind == WhiteBalanceKind::KELVIN)
-    return smdl::concat(smdl::Brief(whiteBalance.kelvin, 6), " K");
+    return smdl::concat(SpellFloat(whiteBalance.kelvin, 6), " K");
   for (const auto &[word, kind] : WHITE_BALANCE_WORDS)
     if (whiteBalance.kind == kind) return std::string(word);
   return {};
@@ -611,7 +611,7 @@ std::string resolveCameraFileName(const std::string &given,
   if (!given.empty()) {
     if (!std::filesystem::exists(given))
       throw smdl::Error(
-          smdl::concat("-camera ", smdl::QuotedPath(given), " does not exist"));
+          smdl::concat("-camera ", SpellFilePath(given), " does not exist"));
     return given;
   }
   if (sceneFileName.empty()) return {};

@@ -49,7 +49,7 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
                          std::string_view verb) {
   auto fail{[&](auto &&...args) {
     throw smdl::Error(smdl::concat("Cannot ", verb, " curves ",
-                                   smdl::QuotedPath(fileName), ": ", args...));
+                                   SpellFilePath(fileName), ": ", args...));
   }};
   if (curves.basis != CurvesFile::Basis::LINEAR &&
       curves.basis != CurvesFile::Basis::BSPLINE &&
@@ -66,10 +66,10 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
   }
   if (curves.points.size() % curves.keyTimes.size() != 0)
     fail("the point block holds ",
-         smdl::Counted(curves.points.size(), "entry", "entries"),
+         SpellCounted(curves.points.size(), "entry", "entries"),
          ", which is "
          "not a whole number of points at ",
-         smdl::Counted(curves.keyTimes.size(), "key"), " each");
+         SpellCounted(curves.keyTimes.size(), "key"), " each");
   if (curves.strandOffsets.empty() || curves.strandOffsets.front() != 0 ||
       curves.strandOffsets.back() != curves.pointCount())
     fail("the offset table must start at 0 and end at the point count");
@@ -80,8 +80,8 @@ void validateCurvesShape(const CurvesFile &curves, const std::string &fileName,
            " is empty or out of order)");
     if (curves.strandOffsets[i + 1] - curves.strandOffsets[i] < minPoints)
       fail("strand ", i, " has ",
-           smdl::Counted(curves.strandOffsets[i + 1] - curves.strandOffsets[i],
-                         "point"),
+           SpellCounted(curves.strandOffsets[i + 1] - curves.strandOffsets[i],
+                        "point"),
            ", but the ", CurvesFile::basisName(curves.basis),
            " basis needs at least ", minPoints);
   }
@@ -118,7 +118,7 @@ CurvesFile readCurvesFile(const std::string &fileName) {
   requireLittleEndianHost("'.curves'");
   const auto fail{[&](auto &&...args) {
     throw smdl::Error(smdl::concat("Cannot read curves ",
-                                   smdl::QuotedPath(fileName), ": ", args...));
+                                   SpellFilePath(fileName), ": ", args...));
   }};
   const std::string contents{smdl::readOrThrow(fileName)};
   CurvesHeader header{};
@@ -126,7 +126,7 @@ CurvesFile readCurvesFile(const std::string &fileName) {
     std::memcpy(&header, contents.data(), sizeof(header));
   if (!hasMagic(header.magic, CURVES_MAGIC))
     throw smdl::Error(smdl::concat(
-        smdl::QuotedPath(fileName),
+        SpellFilePath(fileName),
         " is not a '.curves' file (bad magic; expected it to begin "
         "with \"SMDLCRVS\")"));
   if (header.version != 1)
@@ -159,9 +159,9 @@ CurvesFile readCurvesFile(const std::string &fileName) {
     reader.takeArray(curves.rootUVs, header.strandCount);
   if (!reader.empty())
     fail("truncated (the header promises ",
-         smdl::Counted(header.strandCount, "strand"), " and ",
-         smdl::Counted(header.pointCount, "point"), " at ",
-         smdl::Counted(header.keyCount, "key"), ")");
+         SpellCounted(header.strandCount, "strand"), " and ",
+         SpellCounted(header.pointCount, "point"), " at ",
+         SpellCounted(header.keyCount, "key"), ")");
   validateCurvesShape(curves, fileName, "read");
   return curves;
 }
@@ -171,8 +171,8 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   validateCurvesShape(curves, fileName, "write");
   if (curves.keyTimes.size() > 0xFFFF)
     throw smdl::Error(
-        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName), ": ",
-                     smdl::Counted(curves.keyTimes.size(), "key time"),
+        smdl::concat("Cannot write curves ", SpellFilePath(fileName), ": ",
+                     SpellCounted(curves.keyTimes.size(), "key time"),
                      " exceeds the 65535 the header can state"));
   std::vector<std::byte> payload{};
   payload.reserve(curves.strandOffsets.size() * sizeof(uint32_t) +
@@ -185,7 +185,7 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
   std::ofstream stream{fileName, std::ios::binary};
   if (!stream)
     throw smdl::Error(
-        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write curves ", SpellFilePath(fileName)));
   CurvesHeader header{};
   setMagic(header.magic, CURVES_MAGIC);
   header.version = 1;
@@ -201,7 +201,7 @@ void writeCurvesFile(const std::string &fileName, const CurvesFile &curves) {
                std::streamsize(payload.size()));
   if (!stream)
     throw smdl::Error(
-        smdl::concat("Cannot write curves ", smdl::QuotedPath(fileName)));
+        smdl::concat("Cannot write curves ", SpellFilePath(fileName)));
 }
 
 CurveAxis evalCurveAxis(CurvesFile::Basis basis, const float4 *window,

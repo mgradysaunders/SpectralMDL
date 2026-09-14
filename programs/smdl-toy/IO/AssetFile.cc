@@ -39,7 +39,7 @@ public:
         const std::string &up{mDoc.toString(entry)};
         if (up != "y" && up != "z")
           mDoc.fail(entry, smdl::concat("expected 'y' or 'z' for 'up', got ",
-                                        smdl::Quoted(up)));
+                                        SpellQuoted(up)));
         mUpIsY = up == "y";
       } else if (key == "scale") {
         mScale = mDoc.toFloat(entry);
@@ -52,7 +52,7 @@ public:
       } else if (key == "objects") {
         readObjects(entry);
       } else {
-        mDoc.fail(entry, smdl::concat("unknown key ", smdl::Quoted(key),
+        mDoc.fail(entry, smdl::concat("unknown key ", SpellQuoted(key),
                                       " (expected asset, name, render, "
                                       "proxy, up, scale, front, materials, "
                                       "or objects)"));
@@ -89,7 +89,7 @@ private:
         } else if (key == "triangles") {
           object.triangleCount = uint64_t(std::max(0L, mDoc.toInt(sub)));
         } else {
-          mDoc.fail(sub, smdl::concat("unknown object key ", smdl::Quoted(key),
+          mDoc.fail(sub, smdl::concat("unknown object key ", SpellQuoted(key),
                                       " (expected select, materials, pivot, "
                                       "or triangles)"));
         }
@@ -107,7 +107,7 @@ private:
     for (const auto &item : mDoc.toList(entry)) {
       if (item.kind != FlatYAML::Node::SCALAR)
         mDoc.fail(entry, smdl::concat("expected a list of names for ",
-                                      smdl::Quoted(entry.key)));
+                                      SpellQuoted(entry.key)));
       result.push_back(item.text);
     }
     return result;
@@ -121,12 +121,12 @@ private:
     if (file[0] == '/' || file[0] == '~' || file.find('\\') != file.npos ||
         (file.size() > 1 && file[1] == ':'))
       mDoc.fail(entry, smdl::concat("expected a relative file name, got ",
-                                    smdl::QuotedPath(file)));
+                                    SpellFilePath(file)));
     for (const auto &part : std::filesystem::path(file))
       if (part == "..")
         mDoc.fail(entry, smdl::concat("expected a file name inside the asset "
                                       "directory, got ",
-                                      smdl::QuotedPath(file)));
+                                      SpellFilePath(file)));
     return file;
   }
 
@@ -147,16 +147,15 @@ AssetFile readAssetFile(const std::string &fileName) {
       std::filesystem::path(fileName).parent_path()};
   const std::filesystem::path renderPath{directory / asset.renderFileName};
   if (!std::filesystem::exists(renderPath))
-    throw smdl::Error(smdl::concat(fileName, ": the 'render' mesh ",
-                                   smdl::QuotedPath(asset.renderFileName),
-                                   " does not exist in ",
-                                   smdl::QuotedPath(directory.string())));
+    throw smdl::Error(smdl::concat(
+        fileName, ": the 'render' mesh ", SpellFilePath(asset.renderFileName),
+        " does not exist in ", SpellFilePath(directory.string())));
   asset.renderFileName = renderPath.string();
   if (!asset.proxyFileName.empty())
     asset.proxyFileName = (directory / asset.proxyFileName).string();
-  SMDL_LOG_DEBUG("Read ", smdl::QuotedPath(fileName), ": render ",
-                 smdl::QuotedPath(asset.renderFileName), ", ",
-                 smdl::Counted(asset.objects.size(), "object"));
+  SMDL_LOG_DEBUG("Read ", SpellFilePath(fileName), ": render ",
+                 SpellFilePath(asset.renderFileName), ", ",
+                 SpellCounted(asset.objects.size(), "object"));
   return asset;
 }
 
@@ -165,7 +164,7 @@ std::string findAssetManifest(const std::string &directory) {
   const std::filesystem::directory_iterator dirItr{directory, errorCode};
   if (errorCode)
     throw smdl::Error(smdl::concat("Cannot read directory ",
-                                   smdl::QuotedPath(directory), ": ",
+                                   SpellFilePath(directory), ": ",
                                    errorCode.message()));
   std::vector<std::string> candidates{};
   for (const auto &entry : dirItr)
@@ -176,10 +175,10 @@ std::string findAssetManifest(const std::string &directory) {
   if (candidates.size() > 1) {
     std::sort(candidates.begin(), candidates.end());
     std::string message{smdl::concat("cannot resolve asset ",
-                                     smdl::QuotedPath(directory),
+                                     SpellFilePath(directory),
                                      ": more than one '.asset' manifest:")};
     for (const auto &candidate : candidates)
-      message += smdl::concat("\n  ", smdl::QuotedPath(candidate));
+      message += smdl::concat("\n  ", SpellFilePath(candidate));
     throw smdl::Error(std::move(message));
   }
   return candidates[0];

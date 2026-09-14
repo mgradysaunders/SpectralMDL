@@ -2,36 +2,39 @@
 #include "smdl/Support/Filesystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iterator>
 #include <vector>
 
 namespace smdl {
 
-void Quoted::appendTo(std::string &result) const {
+void SpellQuoted::appendTo(std::string &result) const {
   result += '"';
-  result += str;
-  result += '"';
-}
-
-void QuotedPath::appendTo(std::string &result) const {
-  result += '"';
-  result += bestPathForPrinting(std::string(str));
+  result += mStr;
   result += '"';
 }
 
-void LocationMarkup::appendTo(std::string &result) const {
+void SpellFilePath::appendTo(std::string &result) const {
+  result += '"';
+  result += bestPathForPrinting(std::string(mStr));
+  result += '"';
+}
+
+void SpellLocation::appendTo(std::string &result) const {
   result += '[';
-  if (isPath) {
-    result += bestPathForPrinting(std::string(name));
+  if (mIsPath) {
+    result += bestPathForPrinting(std::string(mName));
   } else {
-    result += name;
+    result += mName;
   }
   result += ':';
-  result += std::to_string(lineNo);
-  if (charNo > 0) {
+  result += std::to_string(mLineNo);
+  if (mCharNo > 0) {
     result += ':';
-    result += std::to_string(charNo);
+    result += std::to_string(mCharNo);
   }
   result += ']';
 }
@@ -39,33 +42,75 @@ void LocationMarkup::appendTo(std::string &result) const {
 // The numbers below go through `snprintf` rather than the `<charconv>`
 // floating point overloads, which libstdc++ only grew in GCC 11 and
 // which this build's floor does not assume.
-void Precise::appendTo(std::string &result) const {
-  // Nine significant digits round-trip every float, and seventeen every
-  // double; nine is the right number here because every caller is
-  // writing a float that came out of a `float` field.
+void SpellFloat::appendTo(std::string &result) const {
   // NOLINTNEXTLINE
   char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", value);
+  std::snprintf(buffer, sizeof(buffer), "%.*g", std::clamp(mDigits, 1, 17),
+                mValue);
   result += buffer;
 }
 
-void Brief::appendTo(std::string &result) const {
+void SpellFixed::appendTo(std::string &result) const {
+  // The decimal places that give the significant digits asked for: one
+  // for every digit past the leading one, plus however many the leading
+  // digit sits below the decimal point. A value of zero has no magnitude
+  // to ask, and takes the digits as places.
+  const int digits{std::clamp(mDigits, 1, 17)};
+  int places{digits - 1};
+  if (std::isfinite(mValue) && mValue != 0)
+    places =
+        std::max(places - int(std::floor(std::log10(std::abs(mValue)))), 0);
+  // The places stay as the digits asked for, trailing zeros and all: a
+  // value that happens to end in one is the reason a column lines up.
   // NOLINTNEXTLINE
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.*g", std::clamp(digits, 1, 17),
-                value);
+  char buffer[512]{};
+  std::snprintf(buffer, sizeof(buffer), "%.*f", std::min(places, 350), mValue);
   result += buffer;
 }
 
-void Bytes::appendTo(std::string &result) const {
+void SpellExact::appendTo(std::string &result) const {
+  // The shortest spelling that reads back as the same number. Shortest
+  // by the string rather than by the digits, since `%g` turns
+  // exponential once the exponent reaches the precision and `6e+02` is
+  // no improvement on `600`.
+  const int maxDigits{mIsFloat ? 9 : 17};
+  // NOLINTNEXTLINE
+  char shortest[64]{};
+  for (int digits = 1; digits <= maxDigits; digits++) {
+    // NOLINTNEXTLINE
+    char buffer[64]{};
+    std::snprintf(buffer, sizeof(buffer), "%.*g", digits, mValue);
+    if (mIsFloat ? std::strtof(buffer, nullptr) != float(mValue)
+                 : std::strtod(buffer, nullptr) != mValue)
+      continue;
+    if (!shortest[0] || std::strlen(buffer) < std::strlen(shortest))
+      std::snprintf(shortest, sizeof(shortest), "%s", buffer);
+  }
+  // Nothing reads back for an infinity or a NaN, which have no decimal
+  // spelling to be exact about; they are written as they are written.
+  if (!shortest[0])
+    std::snprintf(shortest, sizeof(shortest), "%.*g", maxDigits, mValue);
+  result += shortest;
+}
+
+void SpellPercent::appendTo(std::string &result) const {
+  // NOLINTNEXTLINE
+  char buffer[64]{};
+  std::snprintf(buffer, sizeof(buffer), "%.*f", std::clamp(mDecimals, 0, 9),
+                100 * mValue);
+  result += buffer;
+  result += '%';
+}
+
+void SpellByteSize::appendTo(std::string &result) const {
   // NOLINTNEXTLINE
   constexpr const char *UNITS[]{"KiB", "MiB", "GiB", "TiB"};
-  if (count < 1024) {
-    result += std::to_string(count);
+  if (mCount < 1024) {
+    result += std::to_string(mCount);
     result += " B";
     return;
   }
-  double value{double(count) / 1024.0};
+  double value{double(mCount) / 1024.0};
   size_t unit{0};
   for (; value >= 1024.0 && unit + 1 < std::size(UNITS); unit++)
     value /= 1024.0;
@@ -79,16 +124,16 @@ void Bytes::appendTo(std::string &result) const {
   result += UNITS[unit];
 }
 
-void Counted::appendTo(std::string &result) const {
-  result += std::to_string(count);
+void SpellCounted::appendTo(std::string &result) const {
+  result += std::to_string(mCount);
   result += ' ';
-  if (count == 1) {
-    result += singular;
-  } else if (plural.empty()) {
-    result += singular;
+  if (mCount == 1) {
+    result += mSingular;
+  } else if (mPlural.empty()) {
+    result += mSingular;
     result += 's';
   } else {
-    result += plural;
+    result += mPlural;
   }
 }
 

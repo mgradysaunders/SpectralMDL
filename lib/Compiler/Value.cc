@@ -254,7 +254,7 @@ void ArgumentList::validateNames() {
     if (arg.isNamed()) {
       auto [itr, inserted] = uniqueNames.insert(arg.name);
       if (!inserted)
-        getSourceLocation().throwError("Ambiguous name ", Quoted(arg.name),
+        getSourceLocation().throwError("Ambiguous name ", SpellQuoted(arg.name),
                                        " in argument list");
     } else if (!uniqueNames.empty()) {
       getSourceLocation().throwError(

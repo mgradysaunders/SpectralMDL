@@ -69,8 +69,8 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
         throw Error(concat("Expected 'TILT=' ", where()));
       std::string tiltKind{line.trim()};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
-        throw Error(concat("Unsupported tilt ", Quoted(tiltKind), " on line ",
-                           lineOf(line)));
+        throw Error(concat("Unsupported tilt ", SpellQuoted(tiltKind),
+                           " on line ", lineOf(line)));
       text = remainder;
       if (tiltKind == "INCLUDE") {
         tilt = Tilt();
@@ -175,7 +175,7 @@ LightProfile::loadFromFile(const std::string &fileName) noexcept {
     return error;
   if (std::optional<Error> error{loadFromFileMemory(std::move(file))})
     return Error(
-        concat("Cannot load ", QuotedPath(fileName), ": ", error->message));
+        concat("Cannot load ", SpellFilePath(fileName), ": ", error->message));
   return std::nullopt;
 }
 

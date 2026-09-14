@@ -36,7 +36,7 @@ void profilerFinalize(const char *outputFilename) {
     // when the message is enabled.
     const std::string reason{llvm::toString(std::move(error))};
     SMDL_LOG_ERROR("Cannot write profiler time-trace file ",
-                   QuotedPath(outputFilename), ": ", reason);
+                   SpellFilePath(outputFilename), ": ", reason);
   }
   llvm::timeTraceProfilerCleanup();
   isProfilerRunning = false;

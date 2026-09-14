@@ -150,7 +150,7 @@ constexpr size_t BLOCKS_PER_THREAD{8};
         uint64_t treeSpp{};
         sdtree = std::make_unique<STree>(STree::readFile(treeName, treeSpp));
         trainedSpp = size_t(treeSpp);
-        SMDL_LOG_INFO("Resuming guide tree: ", smdl::Quoted(treeName), ", ",
+        SMDL_LOG_INFO("Resuming guide tree: ", SpellQuoted(treeName), ", ",
                       sdtree->leafCount(), " spatial leaves trained by ",
                       treeSpp, " spp");
         if (treeSpp != resumed.info.samplesPerPixel)
@@ -164,7 +164,7 @@ constexpr size_t BLOCKS_PER_THREAD{8};
                       error.message);
       }
     } else {
-      SMDL_LOG_INFO("No guide tree at ", smdl::Quoted(treeName),
+      SMDL_LOG_INFO("No guide tree at ", SpellQuoted(treeName),
                     ", retraining from scratch");
     }
   }
@@ -228,7 +228,7 @@ makePassCombiner(const Options &opts, const Frame &frame,
   casters = MNEECasterSet(scene, wavelengths);
   mneeOptions.casters = &casters;
   SMDL_LOG_DEBUG("MNEE casters: ",
-                 smdl::Counted(casters.casters.size(), "instance"));
+                 SpellCounted(casters.casters.size(), "instance"));
   if (opts.render.useMNEESunOnly && envLight)
     mneeOptions.isSunOnly =
         envLight->sunCone(mneeOptions.sunDirection, mneeOptions.cosSunRadius);
@@ -358,8 +358,8 @@ void meterAndLogISO(const Frame &frame, ResumedSequence &resumed,
       reading.sum += tally.sums[b];
       reading.count += tally.counts[b];
     }
-    SMDL_LOG_DEBUG("Meter: ", smdl::Counted(reading.count, "sample"),
-                   " through ", smdl::Quoted(projection.bandName()),
+    SMDL_LOG_DEBUG("Meter: ", SpellCounted(reading.count, "sample"),
+                   " through ", SpellQuoted(projection.bandName()),
                    " pixels, one per ", lattice.stride(), " tiles");
     // Under -ideal the film is the observer's radiance, which the model's
     // preview scale turns into the irradiance the sensor would have
@@ -794,9 +794,10 @@ void renderSamples(const Options &opts, const Frame &frame,
   progressOptions.summary =
       opts.image.cropWindow.wasGiven
           ? smdl::concat("Rendered window ", spellVector(window), " of ",
-                         numPixelsX, "x", numPixelsY, " at ", spp, " spp")
-          : smdl::concat("Rendered ", numPixelsX, "x", numPixelsY, " at ", spp,
-                         " spp");
+                         SpellDimensions(numPixelsX, numPixelsY), " at ", spp,
+                         " spp")
+          : smdl::concat("Rendered ", SpellDimensions(numPixelsX, numPixelsY),
+                         " at ", spp, " spp");
   // The sun-sky resolved onto the render-wide grid, which every path of
   // every block shares because the grid holds still. Read-only once the
   // threads start. A jittering render cannot use it: its grid moves with

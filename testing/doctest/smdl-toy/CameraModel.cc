@@ -224,7 +224,7 @@ TEST_CASE("CameraModel: a sensor decides the pixels and the frame") {
     const std::string report{describeCamera(model)};
     CHECK_CONTAINS(report, "Test body");
     CHECK_CONTAINS(report, "spectral irradiance");
-    CHECK_CONTAINS(report, "600 by 400 pixels at 6 um");
+    CHECK_CONTAINS(report, "600x400 pixels at 6 um");
     CHECK_CONTAINS(report, "f/8");
   }
 }
@@ -536,7 +536,7 @@ TEST_CASE("CameraModel: the focus") {
   SUBCASE("The report states the focus and the depth of field") {
     const std::string report{describeCamera(resolveCameraModel(
         files.camera("camera { focal_length 50 fstop 8 focus 5 }\n")))};
-    CHECK_CONTAINS(report, "focus: 5 scene units");
+    CHECK_CONTAINS(report, "focus: 5 meters");
     // 50 mm at f/8 focused at 5 m on a 42.67 by 24 mm frame, whose
     // circle of confusion is 0.0326 mm: hyperfocal at 9.63 m, sharp
     // from 3.30 to 10.35 m.
@@ -815,9 +815,10 @@ TEST_CASE("CameraModel: the wavelengths a dispersive lens is bounded over") {
     // 700 nm. The same wavelength reaches the scene as
     // `State::wavelengthHero`, which the line says so that a material's
     // dispersion and the lens's are read off one place.
-    CHECK_CONTAINS(report, "  traced: at a wavelength each pixel draws from "
-                           "its band, which is also what a material that "
-                           "disperses refracts at: \"R\" 560-700 nm, median ");
+    CHECK_CONTAINS(report,
+                   "  traced: at a wavelength each pixel draws from "
+                   "its band, which is also what a material that "
+                   "disperses refracts at: \"R\" 560.0-700.0 nm, median ");
   }
   SUBCASE("Without a tile the report says the d line, and under the preview "
           "nothing") {

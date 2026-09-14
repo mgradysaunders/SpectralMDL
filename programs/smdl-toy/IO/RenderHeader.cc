@@ -1,7 +1,5 @@
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <utility>
 
 #include "smdl/Support/Macros.h"
@@ -20,7 +18,7 @@ SMDL_ALWAYS_INLINE void spell(std::string &line, uint64_t value) {
   line += std::to_string(value);
 }
 SMDL_ALWAYS_INLINE void spell(std::string &line, double value) {
-  smdl::Brief(value, 9).appendTo(line);
+  smdl::SpellExact(value).appendTo(line);
 }
 SMDL_ALWAYS_INLINE void spell(std::string &line, bool value) {
   line += value ? '1' : '0';
@@ -43,22 +41,11 @@ void spell(std::string &line, const std::vector<double> &values) {
   }
   line += '}';
 }
-// The shortest spelling that reads back as the same float. The widening
-// to double is what makes the long way round wrong: a leak a file states
-// as 0.012 is 0.0120000001 at nine digits of the double it becomes, and
-// nothing is gained by writing that down. Shortest by the string rather
-// than by the digits, since `%g` turns exponential once the exponent
-// reaches the precision and `6e+02` is no improvement on `600`.
-void spell(std::string &line, float value) {
-  char shortest[32]{};
-  for (int digits = 1; digits <= 9; digits++) {
-    char buffer[32]{};
-    std::snprintf(buffer, sizeof(buffer), "%.*g", digits, double(value));
-    if (std::strtof(buffer, nullptr) != value) continue;
-    if (!shortest[0] || std::strlen(buffer) < std::strlen(shortest))
-      std::snprintf(shortest, sizeof(shortest), "%s", buffer);
-  }
-  line += shortest;
+// A float is spelled as the float it is rather than as the double it
+// widens to: a leak a file states as 0.012 is 0.0120000001 at nine
+// digits of that double, and nothing is gained by writing it down.
+SMDL_ALWAYS_INLINE void spell(std::string &line, float value) {
+  smdl::SpellExact(value).appendTo(line);
 }
 void spell(std::string &line, const std::vector<float> &values) {
   line += '{';

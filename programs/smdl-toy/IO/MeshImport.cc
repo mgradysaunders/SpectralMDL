@@ -58,7 +58,7 @@ const aiScene *readLossless(Assimp::Importer &importer,
   const aiScene *assScene{importer.ReadFile(fileName.c_str(), 0)};
   if (!assScene)
     throw smdl::Error(smdl::concat("Assimp failed to read ",
-                                   smdl::QuotedPath(fileName), ": ",
+                                   SpellFilePath(fileName), ": ",
                                    importer.GetErrorString()));
   return assScene;
 }
@@ -160,11 +160,11 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
     if (!patternMatched[j]) unmatched.push_back(selection.patterns[j]);
   if (!unmatched.empty()) {
     std::string message{
-        smdl::concat(smdl::Counted(unmatched.size(), "selection pattern"),
+        smdl::concat(SpellCounted(unmatched.size(), "selection pattern"),
                      unmatched.size() == 1 ? " matches" : " match",
-                     " nothing in ", smdl::QuotedPath(fileName), ":")};
+                     " nothing in ", SpellFilePath(fileName), ":")};
     for (const auto &pattern : unmatched)
-      message += smdl::concat("\n  ", smdl::Quoted(pattern));
+      message += smdl::concat("\n  ", SpellQuoted(pattern));
     message += "\nThe file contains:";
     size_t numListed{};
     for (const auto &node : nodes) {
@@ -174,7 +174,7 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
             smdl::concat("\n  ... and ", nodes.size() - numListed, " more");
         break;
       }
-      message += smdl::concat("\n  ", smdl::Quoted(node.path));
+      message += smdl::concat("\n  ", SpellQuoted(node.path));
     }
     message += "\nRun with -list-objects to see them with their geometry.";
     throw smdl::Error(std::move(message));
@@ -222,7 +222,7 @@ const aiScene *readForListing(Assimp::Importer &assImporter,
       assImporter.ReadFile(fileName.c_str(), MATERIAL_POSTPROCESS_FLAGS)};
   if (!assScene)
     throw smdl::Error(smdl::concat("Assimp failed to read ",
-                                   smdl::QuotedPath(fileName), ": ",
+                                   SpellFilePath(fileName), ": ",
                                    assImporter.GetErrorString()));
   flattenNodes(*assScene->mRootNode, float4x4(1.0f), INVALID_INDEX, {}, 0,
                file);
@@ -351,7 +351,7 @@ namespace {
 // non-finite value is reported as the absence of a number.
 [[nodiscard]] std::string jsonFloat(float value) {
   if (!std::isfinite(value)) return "null";
-  return smdl::concat(smdl::Precise(value));
+  return smdl::concat(SpellExact(value));
 }
 
 // Coordinate triples are written whole rather than through `array()`,

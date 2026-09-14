@@ -267,7 +267,7 @@ BSDFMeasurement::loadFromFile(const std::string &fileName) noexcept {
     return error;
   if (std::optional<Error> error{loadFromFileMemory(file)})
     return Error(
-        concat("Cannot load ", QuotedPath(fileName), ": ", error->message));
+        concat("Cannot load ", SpellFilePath(fileName), ": ", error->message));
   return std::nullopt;
 }
 

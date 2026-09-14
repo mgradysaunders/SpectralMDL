@@ -230,8 +230,8 @@ AutolookResult solveAutolook(const Scene &scene,
                           minFraction <= 0.1f};
     if (!options.shouldIgnoreBackfaces && !shouldCull)
       SMDL_LOG_INFO("Autolook: every view shows at least ",
-                    100.0f * minFraction,
-                    "% backfaces, so they are treated as two-sided "
+                    SpellPercent(minFraction),
+                    " backfaces, so they are treated as two-sided "
                     "geometry rather than as a wrong side");
     float bestArea{-INF};
     for (size_t i = 0; i < candidates.size(); i++) {
@@ -245,11 +245,10 @@ AutolookResult solveAutolook(const Scene &scene,
     }
   } else if (!options.shouldIgnoreBackfaces &&
              candidates[0].backfaceFraction > 0.1f) {
-    SMDL_LOG_WARN(
-        "-autolook-azimuth ", azimuths[0], ": ",
-        100.0f * candidates[0].backfaceFraction,
-        "% of the visible surface is backfacing, which looks like the "
-        "side of an open mesh that is never meant to be seen");
+    SMDL_LOG_WARN("-autolook-azimuth ", azimuths[0], ": ",
+                  SpellPercent(candidates[0].backfaceFraction),
+                  " of the visible surface is backfacing, which looks like the "
+                  "side of an open mesh that is never meant to be seen");
   }
   const Candidate &chosen{candidates[best]};
   const AutolookBasis basis{options.zenithDeg, azimuths[best]};
@@ -266,8 +265,8 @@ AutolookResult solveAutolook(const Scene &scene,
   SMDL_LOG_INFO("Autolook: azimuth ", result.azimuthDeg, " deg, look from (",
                 result.lookFrom.x, ", ", result.lookFrom.y, ", ",
                 result.lookFrom.z, "), visible area ", result.visibleArea,
-                ", fill ", 100.0f * result.fill, "%, backface ",
-                100.0f * result.backfaceFraction, "%");
+                ", fill ", SpellPercent(result.fill), ", backface ",
+                SpellPercent(result.backfaceFraction));
   return result;
 }
 
@@ -326,6 +325,6 @@ AutofocusResult solveAutofocus(const Scene &scene,
                 result.distance, " scene units on instance ", result.instIndex,
                 materialName.empty()
                     ? std::string()
-                    : smdl::concat(", material ", smdl::Quoted(materialName)));
+                    : smdl::concat(", material ", SpellQuoted(materialName)));
   return result;
 }

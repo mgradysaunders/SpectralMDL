@@ -373,7 +373,8 @@ private:
     func.func = reinterpret_cast<typename JIT::Function<T>::FunctionPointer>(
         jitLookup(func.name));
     if (!func.func)
-      throw Error(concat("cannot resolve JIT function ", Quoted(func.name)));
+      throw Error(
+          concat("cannot resolve JIT function ", SpellQuoted(func.name)));
   }
 
 public:

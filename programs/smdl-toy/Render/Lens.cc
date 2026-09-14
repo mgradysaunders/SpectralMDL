@@ -17,7 +17,7 @@ namespace {
 // meter (`State::metersPerSceneUnit` stays 1 here), so this is the only
 // conversion in the whole path from the file to the trace.
 constexpr float MM_TO_SCENE = 1e-3f;
-constexpr float SCENE_TO_MM = 1e3f;
+constexpr float SCENE_TO_MM = 1e+3f;
 
 // How many passes the aspheric solve may take, and how close to the
 // surface it has to land as a fraction of the clear aperture radius. The
@@ -93,7 +93,7 @@ constexpr int NUM_TRANSMITTED_AREA_STEPS = 32;
 }
 
 // The sag of a surface at squared radius `u`, and, when the caller
-// wants it, its derivative with respect to `u`, both in scene units.
+// wants it, its derivative with respect to `u`, both in meters.
 // False is a radius past where the base conic turns back on itself,
 // which no point of the surface is.
 //
@@ -113,7 +113,7 @@ template <bool WantDerivative = true>
   if (SMDL_UNLIKELY(elem.numAsphericTerms > 0)) {
     // The polynomial is evaluated in the millimeters its coefficients are
     // written in and converted once, here. Scaling the coefficients into
-    // scene units instead would multiply the `r^18` one by 1e51 and divide
+    // meters instead would multiply the `r^18` one by 1e51 and divide
     // its argument by the same, which is off the end of a float at both
     // ends of the product.
     u *= SCENE_TO_MM * SCENE_TO_MM;
@@ -1038,7 +1038,7 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
         "Expected air behind the last surface, got ",
         mediumName.empty()
             ? smdl::concat("an index of ", mReferenceIndices.back())
-            : smdl::concat("the medium ", smdl::Quoted(mediumName)),
+            : smdl::concat("the medium ", SpellQuoted(mediumName)),
         ": the film is not immersed, so the prescription is missing the "
         "surface that brings the light back out"));
   mDesignBackFocus = surfaces.back().thickness * MM_TO_SCENE;
@@ -1158,11 +1158,11 @@ Lens::Lens(const LensPrescription &prescription, const LensOptions &options) {
     throw smdl::Error("Expected a nonnegative focus distance");
   const std::optional<float> imageZ{points.imagePlane(mFocusDistance)};
   if (!imageZ)
-    throw smdl::Error(smdl::concat(
-        "Cannot focus at ", mFocusDistance,
-        " scene units: that is inside the lens's front focal point, ",
-        (mFocalLength - points.frontPrincipalZ),
-        " scene units out, and no film position images it"));
+    throw smdl::Error(
+        smdl::concat("Cannot focus at ", mFocusDistance,
+                     " m: that is inside the lens's front focal point, ",
+                     (mFocalLength - points.frontPrincipalZ),
+                     " m out, and no film position images it"));
   mParaxialFilmZ = *imageZ;
   // The paraxial plane is where the film starts and not where it ends:
   // the trace moves it onto the focus the whole cone comes to, which is
@@ -1318,8 +1318,8 @@ void Lens::logSummary() const {
   // entire info message in an intermediate, nicely formatted multiline string
   // (perhaps with indentation or bullets) and emit the entire info message once
   // at the end
-  SMDL_LOG_INFO("Lens ", smdl::Quoted(mName.empty() ? "(unnamed)" : mName),
-                ": ", mElements.size(), " surfaces, focal length ",
+  SMDL_LOG_INFO("Lens ", SpellQuoted(mName.empty() ? "(unnamed)" : mName), ": ",
+                mElements.size(), " surfaces, focal length ",
                 mFocalLength * SCENE_TO_MM, " mm, f/", mFNumberWideOpen,
                 " wide open");
   if (mFNumber != mFNumberWideOpen)
@@ -1332,14 +1332,12 @@ void Lens::logSummary() const {
   // The exit pupil's z is signed and often negative: on a double Gauss it
   // stands in front of the entrance pupil, which is the origin.
   SMDL_LOG_INFO("Lens pupils: entrance ",
-                2 * mEntrancePupilRadius * SCENE_TO_MM,
-                " mm across at the camera origin, exit ",
+                2 * mEntrancePupilRadius * SCENE_TO_MM, " mm across, exit ",
                 2 * mExitPupilRadius * SCENE_TO_MM,
                 " mm across at z = ", mExitPupilZ * SCENE_TO_MM, " mm");
   SMDL_LOG_INFO("Lens focus: at ",
-                mFocusDistance > 0
-                    ? smdl::concat(mFocusDistance, " scene units")
-                    : std::string("infinity"),
+                mFocusDistance > 0 ? smdl::concat(mFocusDistance, " m")
+                                   : std::string("infinity"),
                 ", film ", (mFilmZ - rearZ()) * SCENE_TO_MM,
                 " mm behind the rear vertex (back focal distance ",
                 mBackFocalDistance * SCENE_TO_MM, " mm)");
@@ -1451,15 +1449,15 @@ float ExitPupil::areaFraction(float filmRadius) const noexcept {
 }
 
 void ExitPupil::logSummary() const {
-  SMDL_LOG_INFO("Lens pupil bounds: ", mBounds.size(), " film radii",
-                mWavelengthRange
-                    ? smdl::concat(" over ",
-                                   smdl::Brief(mWavelengthRange->x, 5), "-",
-                                   smdl::Brief(mWavelengthRange->y, 5), " nm")
-                    : std::string(),
-                ", drawing the pupil point from ", 100 * areaFraction(0.0f),
-                "% of the rear aperture in the middle of the frame and ",
-                100 * areaFraction(mMaxFilmRadius), "% at the corner");
+  SMDL_LOG_INFO(
+      "Lens pupil bounds: ", mBounds.size(), " film radii",
+      mWavelengthRange
+          ? smdl::concat(" over ", SpellWavelengthRange(mWavelengthRange->x,
+                                                        mWavelengthRange->y))
+          : std::string(),
+      ", drawing the pupil point from ", SpellPercent(areaFraction(0.0f)),
+      " of the rear aperture in the middle of the frame and ",
+      SpellPercent(areaFraction(mMaxFilmRadius)), " at the corner");
 }
 
 std::optional<float> Lens::fieldAngleAt(float filmRadius) const noexcept {

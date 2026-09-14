@@ -142,7 +142,7 @@ int main(int argc, char **argv) try {
     if (failures == 0)
       std::cout << "All unmapped instances agree\n";
     else
-      std::cout << smdl::concat(smdl::Counted(failures, "instance"),
+      std::cout << smdl::concat(SpellCounted(failures, "instance"),
                                 failures == 1 ? " disagrees\n" : " disagree\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }

@@ -72,7 +72,7 @@ private:
   void parseStatement() {
     if (mToken.kind != Token::WORD) {
       mDiags.error(location(), smdl::concat("expected a directive, got ",
-                                            smdl::Quoted(mToken.text)));
+                                            SpellQuoted(mToken.text)));
       throw Recover();
     }
     if (mToken.text == "lens") {
@@ -80,7 +80,7 @@ private:
     } else {
       LayoutDiagnostic &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
-                                                smdl::Quoted(mToken.text)))};
+                                                SpellQuoted(mToken.text)))};
       if (mToken.text == "surface" || mToken.text == "stop") {
         error.note({}, "a surface belongs inside the 'lens' block, which "
                        "is what puts it in order with the others");
@@ -154,7 +154,7 @@ private:
         mediumLocs.push_back(mediumLoc);
       } else {
         LayoutDiagnostic &error{mDiags.error(
-            keyLoc, smdl::concat("unknown lens setting ", smdl::Quoted(key),
+            keyLoc, smdl::concat("unknown lens setting ", SpellQuoted(key),
                                  " (expected name, medium, surface, or "
                                  "stop)"))};
         if (key == "glass")
@@ -187,7 +187,7 @@ private:
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(),
                    smdl::concat("expected '{' after ",
-                                smdl::Quoted(isStop ? "stop" : "surface")));
+                                SpellQuoted(isStop ? "stop" : "surface")));
       throw Recover();
     }
     LensSurface surface{};
@@ -200,7 +200,7 @@ private:
       if (isStop && (key == "radius" || key == "ior" || key == "medium" ||
                      key == "conic" || key == "aspheric")) {
         LayoutDiagnostic &error{mDiags.error(
-            keyLoc, smdl::concat(smdl::Quoted(key),
+            keyLoc, smdl::concat(SpellQuoted(key),
                                  " has no meaning on the aperture stop"))};
         if (key == "ior" || key == "medium") {
           error.note({}, "the stop sits in the space the surface before it "
@@ -264,7 +264,7 @@ private:
       } else {
         LayoutDiagnostic &error{mDiags.error(
             keyLoc,
-            smdl::concat("unknown surface setting ", smdl::Quoted(key),
+            smdl::concat("unknown surface setting ", SpellQuoted(key),
                          isStop ? " (expected thickness or diameter)"
                                 : " (expected radius, thickness, ior, "
                                   "medium, diameter, conic, or aspheric)"))};
@@ -343,10 +343,10 @@ private:
       mDiags
           .error(definition.nameLoc,
                  name == entry->name
-                     ? smdl::concat(smdl::Quoted(name), " is a built-in glass")
-                     : smdl::concat(smdl::Quoted(name),
+                     ? smdl::concat(SpellQuoted(name), " is a built-in glass")
+                     : smdl::concat(SpellQuoted(name),
                                     " names the built-in glass ",
-                                    smdl::Quoted(entry->name)))
+                                    SpellQuoted(entry->name)))
           .note({}, "a built-in glass is one definition shared by every "
                     "lens that names it, so a medium of this file's own "
                     "needs a name of its own");
@@ -354,13 +354,13 @@ private:
     }
     if (const MediumDefinition *first{findDefinition(name)}) {
       mDiags
-          .error(definition.nameLoc, smdl::concat("medium ", smdl::Quoted(name),
+          .error(definition.nameLoc, smdl::concat("medium ", SpellQuoted(name),
                                                   " is defined twice"))
           .note(first->nameLoc,
                 first->name == name
                     ? "the first definition is here"
                     : smdl::concat("the first definition is here, as ",
-                                   smdl::Quoted(first->name),
+                                   SpellQuoted(first->name),
                                    ", and medium names match ignoring "
                                    "case"));
       throw Recover();
@@ -368,7 +368,7 @@ private:
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(),
                    smdl::concat("expected '{' after ",
-                                smdl::Quoted(smdl::concat("medium ", name))));
+                                SpellQuoted(smdl::concat("medium ", name))));
       throw Recover();
     }
     std::optional<float> nd{};
@@ -396,7 +396,7 @@ private:
         parseSellmeier(keyLoc, b, c);
       } else {
         mDiags.error(keyLoc,
-                     smdl::concat("unknown medium setting ", smdl::Quoted(key),
+                     smdl::concat("unknown medium setting ", SpellQuoted(key),
                                   " (expected ior, abbe, partial_dispersion, "
                                   "or sellmeier)"));
         throw Recover();
@@ -438,7 +438,7 @@ private:
               partialLoc,
               smdl::concat("the normal line puts a medium of this "
                            "Abbe number at ",
-                           smdl::Brief(normal.partialDispersion(), 4)));
+                           SpellFloat(normal.partialDispersion(), 4)));
         throw Recover();
       }
     } else if (partialDispersion) {
@@ -448,14 +448,14 @@ private:
       throw Recover();
     } else if (nd) {
       mDiags
-          .error(definition.nameLoc, smdl::concat("medium ", smdl::Quoted(name),
+          .error(definition.nameLoc, smdl::concat("medium ", SpellQuoted(name),
                                                   " states only an index"))
           .note({}, "an index alone has no dispersion, so write it as 'ior' "
                     "on the surface");
       throw Recover();
     } else {
       mDiags.error(definition.nameLoc,
-                   smdl::concat("medium ", smdl::Quoted(name),
+                   smdl::concat("medium ", SpellQuoted(name),
                                 " needs 'ior' and 'abbe', or 'sellmeier'"));
       throw Recover();
     }
@@ -488,7 +488,7 @@ private:
         c = row(keyLoc, key);
       } else {
         mDiags.error(keyLoc,
-                     smdl::concat("unknown Sellmeier row ", smdl::Quoted(key),
+                     smdl::concat("unknown Sellmeier row ", SpellQuoted(key),
                                   " (expected b or c)"));
         throw Recover();
       }
@@ -510,7 +510,7 @@ private:
         smdl::catchAndReturnError([&] { definition.medium = factory(); })};
     if (!error) return nullptr;
     return &mDiags.error(definition.nameLoc,
-                         smdl::concat("medium ", smdl::Quoted(definition.name),
+                         smdl::concat("medium ", SpellQuoted(definition.name),
                                       ": ", error->message));
   }
 
@@ -525,12 +525,11 @@ private:
                         float printed, float computed, int digits) {
       mDiags
           .warn(keyLoc,
-                smdl::concat(smdl::Quoted(key), " ",
-                             smdl::Brief(printed, digits),
+                smdl::concat(SpellQuoted(key), " ", SpellFloat(printed, digits),
                              " disagrees with the Sellmeier coefficients of "
                              "medium ",
-                             smdl::Quoted(definition.name), ", which give ",
-                             smdl::Brief(computed, digits)))
+                             SpellQuoted(definition.name), ", which give ",
+                             SpellFloat(computed, digits)))
           .note({}, "beside 'sellmeier', 'ior' and 'abbe' are the printed "
                     "values the coefficients are checked against, and a "
                     "disagreement is usually a coefficient typed wrong");
@@ -569,7 +568,7 @@ private:
     for (const auto &definition : mMedia)
       if (!definition.isUsed)
         mDiags.warn(definition.nameLoc,
-                    smdl::concat("medium ", smdl::Quoted(definition.name),
+                    smdl::concat("medium ", SpellQuoted(definition.name),
                                  " is defined, and no surface names it"));
   }
 
@@ -591,7 +590,7 @@ private:
     const size_t numBuiltIn{names.size()};
     for (const auto &definition : mMedia) names.push_back(definition.name);
     LayoutDiagnostic &error{mDiags.error(
-        nameLoc, smdl::concat("unknown medium ", smdl::Quoted(name)))};
+        nameLoc, smdl::concat("unknown medium ", SpellQuoted(name)))};
     // The distance is taken between folded names, since the match ignores
     // case, and the suggestion is spelled as the catalog or the file
     // spells it.
@@ -605,8 +604,7 @@ private:
       const size_t i{
           size_t(std::find(candidates.begin(), candidates.end(), nearest) -
                  candidates.begin())};
-      error.note({},
-                 smdl::concat("did you mean ", smdl::Quoted(names[i]), "?"));
+      error.note({}, smdl::concat("did you mean ", SpellQuoted(names[i]), "?"));
     }
     error.note({}, smdl::concat("the built-in glasses are ",
                                 smdl::join(smdl::Span<const std::string_view>(

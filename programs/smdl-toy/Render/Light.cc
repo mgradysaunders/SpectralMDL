@@ -219,7 +219,7 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   case LayoutLightDecl::Kind::RECT:
   case LayoutLightDecl::Kind::DISK: {
     if (!(mPlacement.worldArea > 0)) {
-      SMDL_LOG_WARN("The ", decl.kindName(), " light ", smdl::Quoted(decl.name),
+      SMDL_LOG_WARN("The ", decl.kindName(), " light ", SpellQuoted(decl.name),
                     " is placed with no area and is never sampled");
       power = 0.0f;
       break;
@@ -541,7 +541,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       // is a mistake worth one line, as the caster mark's is.
       if (instance.isLight && warnedMarkMaterials.insert(matIndex).second)
         SMDL_LOG_WARN("The material ",
-                      smdl::Quoted(scene.materialNames[matIndex]),
+                      SpellQuoted(scene.materialNames[matIndex]),
                       " is marked 'light' but has no emission; the mark is "
                       "ignored");
       allocator.reset();
@@ -555,7 +555,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       if (warnedCurveMaterials.insert(scene.materialIndexOf(instance)).second)
         SMDL_LOG_WARN(
             "Curves shaded by the emissive material ",
-            smdl::Quoted(scene.materialNames[scene.materialIndexOf(instance)]),
+            SpellQuoted(scene.materialNames[scene.materialIndexOf(instance)]),
             " do not register as area lights; their emission renders "
             "through path hits only");
       allocator.reset();
@@ -747,16 +747,16 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
   // not been marked yet, and gets one line.
   if (numSampledArea == 0 && numUnsampledArea > 0)
     SMDL_LOG_INFO("No emitter is marked 'light': ",
-                  smdl::Counted(numUnsampledArea, "emissive instance"),
+                  SpellCounted(numUnsampledArea, "emissive instance"),
                   numUnsampledArea == 1 ? " renders" : " render",
                   " through path hits alone; mark emitters in the layout, "
                   "or pass -mark-all-lights");
-  SMDL_LOG_DEBUG("Light sampler: ", smdl::Counted(numSampledArea, "area light"),
-                 ", ", smdl::Counted(numUnsampledArea, "unsampled emitter"),
-                 ", ", smdl::Counted(mAnalyticLights.size(), "analytic light"),
+  SMDL_LOG_DEBUG("Light sampler: ", SpellCounted(numSampledArea, "area light"),
+                 ", ", SpellCounted(numUnsampledArea, "unsampled emitter"),
+                 ", ", SpellCounted(mAnalyticLights.size(), "analytic light"),
                  envLight ? ", plus the environment" : "");
   if (const LightTree *tree{mSelection.tree()})
-    SMDL_LOG_DEBUG("Light tree: ", smdl::Counted(tree->nodeCount(), "node"),
+    SMDL_LOG_DEBUG("Light tree: ", SpellCounted(tree->nodeCount(), "node"),
                    ", depth ", tree->depth());
 }
 

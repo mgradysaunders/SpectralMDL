@@ -275,7 +275,7 @@ public:
   /// Is valid?
   [[nodiscard]] operator bool() const { return module_; }
 
-  /// Convert to the markup `LocationMarkup` writes, or to the empty string
+  /// Convert to the markup `SpellLocation` writes, or to the empty string
   /// if there is no module.
   [[nodiscard]] operator std::string() const;
 

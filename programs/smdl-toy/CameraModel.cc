@@ -80,7 +80,7 @@ void refuseThinLensSettings(const CameraDocument &document,
   for (const auto &refusal : refusals)
     if (refusal.wasStated)
       refuse(document, refusal.key,
-             smdl::concat(smdl::Quoted(refusal.key),
+             smdl::concat(SpellQuoted(refusal.key),
                           " has no meaning with a lens: ", refusal.why));
 }
 
@@ -106,17 +106,17 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                       : direction == ReadoutDirection::LEFT ? "right to left"
                                                             : "left to right"};
     SMDL_LOG_INFO(
-        "Rolling shutter: ", smdl::Brief(1000.0f * gRenderShutter.readout, 4),
+        "Rolling shutter: ", SpellFloat(1000.0f * gRenderShutter.readout, 4),
         " ms readout ", sweep, " over ",
-        smdl::Brief(1000.0f * gRenderShutter.exposure, 4),
+        SpellFloat(1000.0f * gRenderShutter.exposure, 4),
         " ms exposure, so the frame spans ",
-        smdl::Brief(1000.0f * gRenderShutter.length(), 4), " ms");
+        SpellFloat(1000.0f * gRenderShutter.length(), 4), " ms");
   }
 }
 
 // One line naming the sensor's bands and their tile.
 [[nodiscard]] std::string describeResponse(const ResponseSettings &response) {
-  std::string line{smdl::concat(smdl::Counted(response.bands.size(), "band"))};
+  std::string line{smdl::concat(SpellCounted(response.bands.size(), "band"))};
   for (size_t i = 0; i < response.bands.size(); i++)
     line += smdl::concat(i == 0 ? " " : ", ", response.bands[i].name);
   if (response.kind == ResponseKind::QE) {
@@ -124,12 +124,13 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
   } else {
     line += smdl::concat(
         " as relative weights scaled to a peak quantum efficiency of ",
-        smdl::Brief(response.peakQE.value_or(DEFAULT_PEAK_QE), 4),
+        SpellFloat(response.peakQE.value_or(DEFAULT_PEAK_QE), 4),
         response.peakQE ? "" : " (generic)");
   }
   if (response.hasCFA()) {
-    line += smdl::concat(", tiled ", response.cfaColumns, "x",
-                         response.cfaRows(), " as");
+    line += smdl::concat(
+        ", tiled ", SpellDimensions(response.cfaColumns, response.cfaRows()),
+        " as");
     for (size_t i = 0; i < response.cfa.size(); i++)
       line += smdl::concat(i > 0 && i % response.cfaColumns == 0 ? " /" : "",
                            " ", response.bands[response.cfa[i]].name);
@@ -142,15 +143,15 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 [[nodiscard]] std::string describeDetector(const Sensor &sensor) {
   const DetectorSettings &detector{sensor.settings().detector};
   return smdl::concat(
-      "read noise ", smdl::Brief(detector.readNoise, 4), " e-, dark ",
-      smdl::Brief(detector.darkCurrent, 4), " e-/s at ",
-      smdl::Brief(detector.referenceTemperature, 4), " C doubling every ",
-      smdl::Brief(detector.doublingTemperature, 4), " C; ", detector.bits,
-      " bits, black level ", smdl::Brief(detector.blackLevel, 6), " DN, ",
+      "read noise ", SpellFloat(detector.readNoise, 4), " e-, dark ",
+      SpellFloat(detector.darkCurrent, 4), " e-/s at ",
+      SpellFloat(detector.referenceTemperature, 4), " C doubling every ",
+      SpellFloat(detector.doublingTemperature, 4), " C; ", detector.bits,
+      " bits, black level ", SpellFloat(detector.blackLevel, 6), " DN, ",
       sensor.hasFixedGain()
-          ? smdl::concat("a stated gain of ", smdl::Brief(*detector.gain, 6),
+          ? smdl::concat("a stated gain of ", SpellFloat(*detector.gain, 6),
                          " DN/e-")
-          : smdl::concat(smdl::Brief(sensor.gain(sensor.baseISO()), 6),
+          : smdl::concat(SpellFloat(sensor.gain(sensor.baseISO()), 6),
                          " DN/e- at the base ISO"));
 }
 
@@ -159,16 +160,16 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 [[nodiscard]] std::string describeWell(const Sensor &sensor) {
   const std::vector<ResponseBand> &bands{sensor.settings().response.bands};
   return smdl::concat(
-      smdl::Brief(sensor.fullWell(), 6), " e- ",
+      SpellFloat(sensor.fullWell(), 6), " e- ",
       sensor.wellSource() == WellSource::STATED ? "stated"
       : sensor.wellSource() == WellSource::FROM_BASE_ISO
           ? "from the base ISO"
           : "from the pitch, the generic well",
-      "; base ISO ", smdl::Brief(sensor.baseISO(), 5),
+      "; base ISO ", SpellFloat(sensor.baseISO(), 5),
       sensor.isBaseISOStated() ? " stated" : " from the well", ", ",
       bands.empty() ? std::string("no band")
-                    : smdl::concat(smdl::Quoted(bands[sensor.peakBand()].name)),
-      " counting ", smdl::Brief(sensor.peakElectronsPerLuxSecond(), 4),
+                    : smdl::concat(SpellQuoted(bands[sensor.peakBand()].name)),
+      " counting ", SpellFloat(sensor.peakElectronsPerLuxSecond(), 4),
       " e- per lux-second under D55");
 }
 
@@ -177,20 +178,20 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
 [[nodiscard]] std::string describeISO(const Sensor &sensor,
                                       const std::optional<float> &iso) {
   if (sensor.hasFixedGain())
-    return smdl::concat(smdl::Brief(sensor.fixedGainISO(), 5),
+    return smdl::concat(SpellFloat(sensor.fixedGainISO(), 5),
                         ", the saturation speed of the stated gain, so "
                         "nothing is metered");
   if (iso)
     return smdl::concat(
-        smdl::Brief(*iso, 6), " stated, ", smdl::Brief(sensor.gain(*iso), 6),
+        SpellFloat(*iso, 6), " stated, ", SpellFloat(sensor.gain(*iso), 6),
         " DN/e-",
         *iso < sensor.baseISO()
             ? ", below the base, so the well clips before the ADC does"
             : "");
   return smdl::concat("auto, metered before the first sample and held for "
                       "the sequence, a third stop from the base ",
-                      smdl::Brief(sensor.baseISO(), 5), " up to ",
-                      smdl::Brief(sensor.maxISO(), 6));
+                      SpellFloat(sensor.baseISO(), 5), " up to ",
+                      SpellFloat(sensor.maxISO(), 6));
 }
 
 // One line on how the sensor sees color under its white balance: the fit
@@ -208,7 +209,7 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                        : "")};
   const std::optional<std::array<size_t, 3>> rgb{response.rgbBands()};
   if (!rgb)
-    return smdl::concat(smdl::Counted(response.bands.size(), "band"),
+    return smdl::concat(SpellCounted(response.bands.size(), "band"),
                         " cannot carry color, so the develop is gray; ",
                         balance);
   const std::string &r{response.bands[(*rgb)[0]].name};
@@ -222,15 +223,15 @@ void settleReadoutLines(ReadoutDirection direction, int2 resolution) {
                         balance);
   return smdl::concat(
       r, ", ", g, ", ", b, " fitted over ", trainingReflectances().size(),
-      " training reflectances to a mean of ", smdl::Brief(fit.meanDeltaE00, 3),
-      " dE00 and a largest of ", smdl::Brief(fit.maxDeltaE00, 3),
-      ", an index of ", smdl::Brief(fit.index(), 3), " over this set",
+      " training reflectances to a mean of ", SpellFloat(fit.meanDeltaE00, 3),
+      " dE00 and a largest of ", SpellFloat(fit.maxDeltaE00, 3),
+      ", an index of ", SpellFloat(fit.index(), 3), " over this set",
       fit.isFaithful()
           ? std::string()
-          : smdl::concat(", past ", smdl::Brief(FAITHFUL_FIT_DELTA_E00, 3),
+          : smdl::concat(", past ", SpellFloat(FAITHFUL_FIT_DELTA_E00, 3),
                          " dE00, so the develop is false color"),
-      "; ", balance, ", ", r, " ", smdl::Brief(fit.multipliers.x, 4), " and ",
-      b, " ", smdl::Brief(fit.multipliers.z, 4), " against ", g);
+      "; ", balance, ", ", r, " ", SpellFloat(fit.multipliers.x, 4), " and ", b,
+      " ", SpellFloat(fit.multipliers.z, 4), " against ", g);
 }
 
 // What the log says about the sensor once the camera resolves, and what
@@ -258,18 +259,18 @@ struct SensorLines final {
 // A shutter time as a photographer spells it: a fraction of a second
 // below half a second, to the whole denominator from a tenth down.
 [[nodiscard]] std::string spellShutter(double seconds) {
-  if (seconds >= 0.5) return smdl::concat(smdl::Brief(seconds, 3), " s");
+  if (seconds >= 0.5) return smdl::concat(SpellFloat(seconds, 3), " s");
   const double denominator{1.0 / seconds};
   return smdl::concat("1/",
                       denominator >= 10.0
-                          ? smdl::Brief(std::round(denominator), 7)
-                          : smdl::Brief(denominator, 2),
+                          ? SpellFloat(std::round(denominator), 7)
+                          : SpellFloat(denominator, 2),
                       " s");
 }
 
 // An exposure value to a tenth of a stop.
-[[nodiscard]] smdl::Brief spellEV(double ev) {
-  return smdl::Brief(std::round(10.0 * ev) / 10.0, 3);
+[[nodiscard]] SpellFloat spellEV(double ev) {
+  return SpellFloat(std::round(10.0 * ev) / 10.0, 3);
 }
 
 // The light a scene metered at `ev100` is typically in, by the usual
@@ -317,7 +318,7 @@ struct SensorLines final {
                                            double fNumber, double seconds) {
   const double ev{std::log2(fNumber * fNumber / seconds)};
   const std::string settings{smdl::concat("EV ", spellEV(ev), " (f/",
-                                          smdl::Brief(fNumber, 3), " at ",
+                                          SpellFloat(fNumber, 3), " at ",
                                           spellShutter(seconds), ")")};
   const auto ev100At{
       [&](double speed) { return ev - std::log2(speed / 100.0); }};
@@ -326,19 +327,19 @@ struct SensorLines final {
                                              : double(*iso)};
     const double ev100{ev100At(speed)};
     return smdl::concat(
-        settings, ": at ISO ", smdl::Brief(speed, 5), " it suits EV100 ",
+        settings, ": at ISO ", SpellFloat(speed, 5), " it suits EV100 ",
         spellEV(ev100), ", ", describeLight(ev100),
         ", a mean scene luminance of ",
-        smdl::Brief(METER_K * fNumber * fNumber / (seconds * speed), 3),
+        SpellFloat(METER_K * fNumber * fNumber / (seconds * speed), 3),
         " cd/m^2");
   }
   const double top{ev100At(sensor.baseISO())};
   const double bottom{ev100At(sensor.maxISO())};
   return smdl::concat(
       settings, ": the meter's ISO fits it to scenes from EV100 ", spellEV(top),
-      " at the base ISO ", smdl::Brief(sensor.baseISO(), 5), ", ",
+      " at the base ISO ", SpellFloat(sensor.baseISO(), 5), ", ",
       describeLight(top), ", down to EV100 ", spellEV(bottom), " at ISO ",
-      smdl::Brief(sensor.maxISO(), 6), ", ", describeLight(bottom));
+      SpellFloat(sensor.maxISO(), 6), ", ", describeLight(bottom));
 }
 
 // One line on the dynamic range at the ISO the sensor reads out at, or at
@@ -366,10 +367,10 @@ struct SensorLines final {
                                detector.darkElectrons() +
                                1.0 / (12.0 * gain * gain))};
   return smdl::concat(
-      smdl::Brief(std::log2(clip / floor), 3), " stops at ",
-      isChosen ? "ISO " : "the base ISO ", smdl::Brief(shot.iso, 5), ": ",
-      smdl::Brief(std::round(clip), 7), " e- over a floor of ",
-      smdl::Brief(floor, 3), " e- of read, dark, and quantization noise",
+      SpellFloat(std::log2(clip / floor), 3), " stops at ",
+      isChosen ? "ISO " : "the base ISO ", SpellFloat(shot.iso, 5), ": ",
+      SpellFloat(std::round(clip), 7), " e- over a floor of ",
+      SpellFloat(floor, 3), " e- of read, dark, and quantization noise",
       isChosen ? ""
                : ", less by about a stop for each stop the meter goes "
                  "above the base");
@@ -383,15 +384,15 @@ struct SensorLines final {
   const float focalLength{thinLensFocalLength(fit.options)};
   const float pitch{pixelPitch(options)};
   return smdl::concat(
-      "a focal length of ", smdl::Brief(1e3f * focalLength, 5), " mm at f/",
-      smdl::Brief(focalLength / (2 * fit.options.aperture), 4),
+      "a focal length of ", SpellFloat(1e3f * focalLength, 5), " mm at f/",
+      SpellFloat(focalLength / (2 * fit.options.aperture), 4),
       fit.doesFold
           ? std::string(" with no distortion, since the fit folds")
           : smdl::concat(", distortion ",
-                         smdl::Brief(fit.options.distortionK1, 3), " and ",
-                         smdl::Brief(fit.options.distortionK2, 3)),
+                         SpellFloat(fit.options.distortionK1, 3), " and ",
+                         SpellFloat(fit.options.distortionK2, 3)),
       ", and no vignetting; its chief rays land within ",
-      smdl::Brief(fit.maxChiefRayError / pitch, 3), " pixels of the lens's at ",
+      SpellFloat(fit.maxChiefRayError / pitch, 3), " pixels of the lens's at ",
       fit.numFittedRadii, " radii",
       fit.numDroppedRadii > 0 ? smdl::concat(", ", fit.numDroppedRadii,
                                              " past the image circle dropped")
@@ -408,14 +409,14 @@ struct SensorLines final {
   if (!medium.isDispersive())
     return medium.nd() == 1
                ? std::string()
-               : smdl::concat("an index of ", smdl::Brief(medium.nd(), 6),
+               : smdl::concat("an index of ", SpellFloat(medium.nd(), 6),
                               ", which does not disperse");
   return smdl::concat(surface.mediumName.empty()
                           ? std::string("a medium")
-                          : smdl::concat(smdl::Quoted(surface.mediumName)),
-                      ", nd ", smdl::Brief(medium.nd(), 6), ", Vd ",
-                      smdl::Brief(medium.abbeNumber(), 4), ", PgF ",
-                      smdl::Brief(medium.partialDispersion(), 4),
+                          : smdl::concat(SpellQuoted(surface.mediumName)),
+                      ", nd ", SpellFloat(medium.nd(), 6), ", Vd ",
+                      SpellFloat(medium.abbeNumber(), 4), ", PgF ",
+                      SpellFloat(medium.partialDispersion(), 4),
                       medium.kind() == smdl::OpticalGlass::Kind::SELLMEIER
                           ? ", by its Sellmeier"
                           : ", by nd and Vd");
@@ -444,7 +445,7 @@ struct SensorLines final {
   for (const auto index : tileBands(response.cfa)) {
     const ResponseBand &band{response.bands[index]};
     if (const std::optional<TracedSpan> span{tracedSpanOf(band, illuminant)}) {
-      text += smdl::concat(separator, smdl::Quoted(band.name), " ",
+      text += smdl::concat(separator, SpellQuoted(band.name), " ",
                            spellTracedSpan(*span));
       separator = "; ";
     }
@@ -454,7 +455,7 @@ struct SensorLines final {
 
 // A distance for the report, which may be infinite.
 [[nodiscard]] std::string spellDistance(float distance) {
-  return distance < INF ? smdl::concat(smdl::Brief(distance, 5), " scene units")
+  return distance < INF ? smdl::concat(SpellFloat(distance, 5), " meters")
                         : std::string("infinity");
 }
 
@@ -465,7 +466,7 @@ struct SensorLines final {
                       " to ", spellDistance(dof.farLimit), ", hyperfocal ",
                       spellDistance(dof.hyperfocal),
                       ", at a circle of confusion of ",
-                      smdl::Brief(1e3f * dof.circleOfConfusion, 4), " mm\n");
+                      SpellFloat(1e3f * dof.circleOfConfusion, 4), " mm\n");
 }
 
 // The span over which some band the tile lays down is not zero, shortest
@@ -536,8 +537,8 @@ CameraModel resolveCameraModel(const Options &options) {
     if (model.isPreview)
       SMDL_LOG_INFO("Sensor: -ideal previews ",
                     sensorSettings->name.empty()
-                        ? smdl::concat(smdl::QuotedPath(model.sensorFileName))
-                        : smdl::concat(smdl::Quoted(sensorSettings->name)),
+                        ? smdl::concat(SpellFilePath(model.sensorFileName))
+                        : smdl::concat(SpellQuoted(sensorSettings->name)),
                     " through the observer, on its frame and pixels, and "
                     "exposes the picture as it would");
   }
@@ -577,10 +578,9 @@ CameraModel resolveCameraModel(const Options &options) {
     cameraOptions.resolution =
         int2(std::max(1, int(std::lround(scale * float(resolution.x)))),
              std::max(1, int(std::lround(scale * float(resolution.y)))));
-    SMDL_LOG_INFO("Resolution: -resolution-scale ", smdl::Brief(scale, 4),
-                  " renders ", cameraOptions.resolution.x, " by ",
-                  cameraOptions.resolution.y, " of the frame's ", resolution.x,
-                  " by ", resolution.y, " pixels");
+    SMDL_LOG_INFO("Resolution: -resolution-scale ", SpellFloat(scale, 4),
+                  " renders ", SpellDimensions(cameraOptions.resolution),
+                  " of the frame's ", SpellDimensions(resolution), " pixels");
   }
   cameraOptions.filmQuantity =
       model.hasSensor() ? FilmQuantity::IRRADIANCE : FilmQuantity::RADIANCE;
@@ -612,8 +612,8 @@ CameraModel resolveCameraModel(const Options &options) {
     if (model.isPreview)
       SMDL_LOG_INFO("Lens: -ideal previews ",
                     cameraOptions.lens->name.empty()
-                        ? smdl::concat(smdl::QuotedPath(model.lensFileName))
-                        : smdl::concat(smdl::Quoted(cameraOptions.lens->name)),
+                        ? smdl::concat(SpellFilePath(model.lensFileName))
+                        : smdl::concat(SpellQuoted(cameraOptions.lens->name)),
                     " through the thin lens fitted to it");
   }
   // Under a tile every pixel reads through one band, so a lens whose
@@ -666,11 +666,11 @@ CameraModel resolveCameraModel(const Options &options) {
       cameraOptions.fovYDeg =
           2 * smdl::degrees(
                   std::atan(0.5f * cameraOptions.frameSize.y / focalLength));
-      SMDL_LOG_INFO("Field of view: ", smdl::Brief(cameraOptions.fovYDeg, 4),
+      SMDL_LOG_INFO("Field of view: ", SpellFloat(cameraOptions.fovYDeg, 4),
                     " degrees top to bottom, from a focal length of ",
-                    smdl::Brief(1e3f * focalLength, 4), " mm over the ",
+                    SpellFloat(1e3f * focalLength, 4), " mm over the ",
                     sensorSettings ? "sensor's " : "observer's ",
-                    smdl::Brief(1e3f * cameraOptions.frameSize.y, 4),
+                    SpellFloat(1e3f * cameraOptions.frameSize.y, 4),
                     " mm frame");
     } else if (sensorSettings) {
       refuse(cameraDoc, "focal_length",
@@ -680,11 +680,11 @@ CameraModel resolveCameraModel(const Options &options) {
       const float heightMM{2e3f * focalLength *
                            std::tan(smdl::radians(cameraOptions.fovYDeg / 2))};
       cameraOptions.frameSize = observerFrameSize(resolution, heightMM);
-      SMDL_LOG_INFO("Frame: ", smdl::Brief(1e3f * cameraOptions.frameSize.x, 4),
-                    " by ", smdl::Brief(heightMM, 4),
-                    " mm, from a focal length of ",
-                    smdl::Brief(1e3f * focalLength, 4), " mm spanning ",
-                    smdl::Brief(cameraOptions.fovYDeg, 4), " degrees");
+      SMDL_LOG_INFO(
+          "Frame: ",
+          SpellDimensions(1e3f * cameraOptions.frameSize.x, heightMM, 2),
+          " mm, from a focal length of ", SpellFloat(1e3f * focalLength, 4),
+          " mm spanning ", SpellFloat(cameraOptions.fovYDeg, 4), " degrees");
     }
   }
   // Either spelling of the aperture may come from the block or from a key
@@ -737,7 +737,7 @@ CameraModel resolveCameraModel(const Options &options) {
       const std::string why{smdl::concat(
           " has no meaning with a fixed gain: the sensor's detector states "
           "'gain', whose saturation speed is ISO ",
-          smdl::Brief(sensor->fixedGainISO(), 5))};
+          SpellFloat(sensor->fixedGainISO(), 5))};
       if (options.camera.iso.wasGiven) throw smdl::Error("-iso" + why);
       refuse(cameraDoc, "iso", "'iso'" + why);
     }
@@ -750,7 +750,7 @@ CameraModel resolveCameraModel(const Options &options) {
   } else if (options.camera.whiteBalance.wasGiven ||
              cameraSettings.whiteBalance) {
     if (model.hasPreviewedSensor())
-      SMDL_LOG_INFO("Sensor: 'white_balance' is ignored, since -ideal "
+      SMDL_LOG_INFO("Sensor: \"white_balance\" is ignored, since -ideal "
                     "previews the sensor through the observer");
     else if (options.camera.whiteBalance.wasGiven)
       throw smdl::Error("-white-balance is a physical sensor's setting, and "
@@ -844,15 +844,13 @@ CameraModel resolveCameraModel(const Options &options) {
         "Sensor: ",
         sensorSettings->name.empty()
             ? std::string("(unnamed)")
-            : smdl::concat(smdl::Quoted(sensorSettings->name)),
-        " from ", smdl::QuotedPath(model.sensorFileName), ": ",
-        sensorSettings->pixels.x, " by ", sensorSettings->pixels.y,
-        " pixels at ", smdl::Brief(sensorSettings->pitchUM.x, 4),
+            : smdl::concat(SpellQuoted(sensorSettings->name)),
+        " from ", SpellFilePath(model.sensorFileName), ": ",
+        SpellDimensions(sensorSettings->pixels), " px at ",
         sensorSettings->pitchUM.x != sensorSettings->pitchUM.y
-            ? smdl::concat(" by ", smdl::Brief(sensorSettings->pitchUM.y, 4))
-            : std::string(),
-        " um, a ", smdl::Brief(sizeMM.x, 4), " by ", smdl::Brief(sizeMM.y, 4),
-        " mm frame; the film holds the irradiance at it");
+            ? smdl::concat(SpellDimensions(sensorSettings->pitchUM, 2))
+            : smdl::concat(SpellFloat(sensorSettings->pitchUM.x, 4)),
+        " um, a ", SpellDimensions(sizeMM, 2), " mm frame");
     const SensorLines lines{sensorLinesOf(*sensor, model)};
     SMDL_LOG_INFO("Response: ", lines.response);
     SMDL_LOG_INFO("Detector: ", lines.detector);
@@ -860,11 +858,10 @@ CameraModel resolveCameraModel(const Options &options) {
     SMDL_LOG_INFO("ISO: ", lines.iso);
     SMDL_LOG_INFO("Color: ", lines.color);
   } else if (sensorSettings) {
-    const float2 frameMM{1e3f * cameraOptions.frameSize};
-    SMDL_LOG_INFO(
-        "Sensor: the observer on a ", smdl::Brief(frameMM.x, 4), " by ",
-        smdl::Brief(frameMM.y, 4), " mm frame of ", cameraOptions.resolution.x,
-        " by ", cameraOptions.resolution.y, " pixels; the film holds radiance");
+    const float2 frameMM{1e+3f * cameraOptions.frameSize};
+    SMDL_LOG_INFO("Sensor: the observer on a ", SpellDimensions(frameMM, 2),
+                  " mm frame of ", SpellDimensions(cameraOptions.resolution),
+                  " px");
   }
   return model;
 }
@@ -877,8 +874,8 @@ std::string describeCamera(const CameraModel &model) {
     text += '\n';
   }};
   const auto spell3{[](float3 v) {
-    return smdl::concat(smdl::Brief(v.x, 5), " ", smdl::Brief(v.y, 5), " ",
-                        smdl::Brief(v.z, 5));
+    return smdl::concat(SpellFloat(v.x, 5), " ", SpellFloat(v.y, 5), " ",
+                        SpellFloat(v.z, 5));
   }};
   const float2 frameMM{1e3f * options.frameSize};
   // The sensor's own pitch, or the observer's square one off the frame's
@@ -889,16 +886,15 @@ std::string describeCamera(const CameraModel &model) {
   line("camera: ",
        model.cameraFileName.empty()
            ? std::string("the defaults and the command line")
-           : smdl::concat(smdl::QuotedPath(model.cameraFileName)),
+           : smdl::concat(SpellFilePath(model.cameraFileName)),
        model.isPreview ? ", previewed with -ideal" : "");
   line("  looks from ", spell3(options.lookFrom), " to ",
        spell3(options.lookTo), ", up ", spell3(options.lookUp),
        options.hasMotion ? ", and moves over the shutter" : "");
-  line("  frame: ", smdl::Brief(frameMM.x, 5), " by ",
-       smdl::Brief(frameMM.y, 5), " mm, ", options.resolution.x, " by ",
-       options.resolution.y, " pixels at ", smdl::Brief(pitchUM.x, 4),
-       pitchUM.x != pitchUM.y ? smdl::concat(" by ", smdl::Brief(pitchUM.y, 4))
-                              : std::string(),
+  line("  frame: ", SpellDimensions(frameMM, 3), " mm, ",
+       SpellDimensions(options.resolution), " pixels at ",
+       pitchUM.x != pitchUM.y ? smdl::concat(SpellDimensions(pitchUM, 2))
+                              : smdl::concat(SpellFloat(pitchUM.x, 4)),
        " um");
   line("  film: spectral ", filmQuantityName(options.filmQuantity),
        options.filmQuantity == FilmQuantity::IRRADIANCE
@@ -906,12 +902,12 @@ std::string describeCamera(const CameraModel &model) {
            : ", W/(m^2 sr nm) of the scene");
   line("  shutter: ",
        gRenderShutter.hasExposure()
-           ? smdl::concat(smdl::Brief(1e3f * gRenderShutter.exposure, 5), " ms")
+           ? smdl::concat(SpellFloat(1e3f * gRenderShutter.exposure, 5), " ms")
            : std::string("shut"),
        gRenderShutter.readout > 0
            ? smdl::concat(
                  ", read out over ",
-                 smdl::Brief(1e3f * gRenderShutter.readout, 5), " ms ",
+                 SpellFloat(1e3f * gRenderShutter.readout, 5), " ms ",
                  gRenderShutter.isReadoutAlongX
                      ? (gRenderShutter.isReadoutReversed ? "right to left"
                                                          : "left to right")
@@ -947,27 +943,26 @@ std::string describeCamera(const CameraModel &model) {
     line("lens: ",
          options.lens->name.empty()
              ? std::string("(unnamed)")
-             : smdl::concat(smdl::Quoted(options.lens->name)),
-         " from ", smdl::QuotedPath(model.lensFileName));
-    line("  focal length ", smdl::Brief(1e3f * lens.focalLength(), 5),
-         " mm, f/", smdl::Brief(lens.fNumberWideOpen(), 4), " wide open",
+             : smdl::concat(SpellQuoted(options.lens->name)),
+         " from ", SpellFilePath(model.lensFileName));
+    line("  focal length ", SpellFloat(1e3f * lens.focalLength(), 5), " mm, f/",
+         SpellFloat(lens.fNumberWideOpen(), 4), " wide open",
          lens.fNumber() != lens.fNumberWideOpen()
              ? smdl::concat(", stopped down to f/",
-                            smdl::Brief(lens.fNumber(), 4))
+                            SpellFloat(lens.fNumber(), 4))
              : std::string());
     line("  focus: ", focusText);
     text += dofText(lens.focalLength(), lens.fNumber());
     line("  field: ", describeField(lens, options.frameSize));
-    line("  image circle: ", smdl::Brief(2e3f * circle, 4),
+    line("  image circle: ", SpellFloat(2e3f * circle, 4),
          " mm across, against a frame diagonal of ",
-         smdl::Brief(2e3f * halfDiagonal, 4), " mm",
+         SpellFloat(2e3f * halfDiagonal, 4), " mm",
          circle >= halfDiagonal
              ? std::string(", which it covers")
              : smdl::concat(
                    ", which reaches past it and leaves ",
-                   smdl::Brief(
-                       100 * darkShareOfFrame(options.frameSize, circle), 3),
-                   "% of the frame dark"));
+                   SpellPercent(darkShareOfFrame(options.frameSize, circle)),
+                   " of the frame dark"));
     const LensApproximation fit{approximateLens(lens, options)};
     const float pitch{pixelPitch(options)};
     line("  ideal fit: the thin lens -ideal looks through, ",
@@ -988,11 +983,11 @@ std::string describeCamera(const CameraModel &model) {
                            lens.paraxialFilmZAt(smdl::FRAUNHOFER_C_LINE))};
       const float lateral{lens.lateralColorAt(halfDiagonal) / pitch};
       if (std::isfinite(apartMM))
-        line("  color: the F line focuses ", smdl::Brief(std::abs(apartMM), 3),
+        line("  color: the F line focuses ", SpellFloat(std::abs(apartMM), 3),
              " mm ", apartMM > 0 ? "behind" : "in front of",
              " the C line, paraxially, and ",
              std::isfinite(lateral)
-                 ? smdl::concat("lands ", smdl::Brief(std::abs(lateral), 3),
+                 ? smdl::concat("lands ", SpellFloat(std::abs(lateral), 3),
                                 " pixels ", lateral > 0 ? "outside" : "inside",
                                 " it at the frame's corner")
                  : std::string("the frame's corner is past the image circle "
@@ -1004,11 +999,11 @@ std::string describeCamera(const CameraModel &model) {
     fNumber = options.aperture > 0 ? focalLength / (2 * options.aperture)
                                    : options.fStop;
     line("lens: the thin lens");
-    line("  field ", smdl::Brief(options.fovYDeg, 4),
+    line("  field ", SpellFloat(options.fovYDeg, 4),
          " degrees top to bottom, a focal length of ",
-         smdl::Brief(1e3f * focalLength, 5), " mm over the frame");
+         SpellFloat(1e3f * focalLength, 5), " mm over the frame");
     if (fNumber > 0) {
-      line("  f/", smdl::Brief(fNumber, 4), ", focus: ", focusText);
+      line("  f/", SpellFloat(fNumber, 4), ", focus: ", focusText);
       text += dofText(focalLength, fNumber);
     } else {
       line("  a pinhole, so everything is in focus");
@@ -1019,8 +1014,8 @@ std::string describeCamera(const CameraModel &model) {
     const SensorSettings &settings{sensor.settings()};
     line("sensor: ",
          settings.name.empty() ? std::string("(unnamed)")
-                               : smdl::concat(smdl::Quoted(settings.name)),
-         " from ", smdl::QuotedPath(model.sensorFileName));
+                               : smdl::concat(SpellQuoted(settings.name)),
+         " from ", SpellFilePath(model.sensorFileName));
     const SensorLines lines{sensorLinesOf(sensor, model)};
     line("  response: ", lines.response);
     line("  detector: ", lines.detector);
@@ -1032,14 +1027,14 @@ std::string describeCamera(const CameraModel &model) {
     line("  dynamic range: ",
          describeDynamicRange(sensor, model.iso, model.temperature));
     line("  color: ", lines.color);
-    line("  temperature: ", smdl::Brief(model.temperature, 4), " C");
+    line("  temperature: ", SpellFloat(model.temperature, 4), " C");
   } else if (model.hasPreviewedSensor()) {
     const Sensor &sensor{*model.sensor};
     const SensorSettings &settings{sensor.settings()};
     line("sensor: the observer, previewing ",
          settings.name.empty() ? std::string("(unnamed)")
-                               : smdl::concat(smdl::Quoted(settings.name)),
-         " from ", smdl::QuotedPath(model.sensorFileName),
+                               : smdl::concat(SpellQuoted(settings.name)),
+         " from ", SpellFilePath(model.sensorFileName),
          " and exposing the picture as its develop would");
     line("  iso: ", describeISO(sensor, model.iso));
     if (gRenderShutter.hasExposure() && fNumber > 0)
@@ -1057,8 +1052,8 @@ Camera buildCamera(CameraModel &model) {
     const LensApproximation fit{approximateLens(options)};
     const std::string lensName{
         options.lens->name.empty()
-            ? smdl::concat(smdl::QuotedPath(model.lensFileName))
-            : smdl::concat(smdl::Quoted(options.lens->name))};
+            ? smdl::concat(SpellFilePath(model.lensFileName))
+            : smdl::concat(SpellQuoted(options.lens->name))};
     SMDL_LOG_INFO("Lens: the thin lens fitted to ", lensName, " is ",
                   describeFit(fit, options));
     const float pitch{pixelPitch(options)};
@@ -1069,7 +1064,7 @@ Camera buildCamera(CameraModel &model) {
                     "elsewhere than the lens's do");
     else if (fit.maxChiefRayError > pitch)
       SMDL_LOG_WARN("Lens: the thin lens misses ", lensName, " by up to ",
-                    smdl::Brief(fit.maxChiefRayError / pitch, 3),
+                    SpellFloat(fit.maxChiefRayError / pitch, 3),
                     " pixels, so what the preview frames near the edges "
                     "sits elsewhere in the render");
     options = fit.options;
@@ -1093,7 +1088,7 @@ Camera buildCamera(CameraModel &model) {
       const double s{focusDistanceOf(options)};
       if (!(s > f))
         throw smdl::Error(smdl::concat("The thin lens cannot focus at ", s,
-                                       " scene units, inside its focal "
+                                       " meters, inside its focal "
                                        "length of ",
                                        f));
       const double z{std::isinf(s) ? f : f * s / (s - f)};

@@ -47,8 +47,8 @@ LayoutDiagnostic &LayoutDiagnostic::note(LayoutLocation noteLoc,
 const LayoutSource &LayoutDiagnostics::loadSource(const std::string &fileName) {
   std::ifstream stream{fileName, std::ios::binary};
   if (!stream)
-    throw smdl::Error(
-        smdl::concat("Cannot open layout file ", smdl::QuotedPath(fileName)));
+    throw smdl::Error(smdl::concat("Cannot open layout file ",
+                                   smdl::SpellFilePath(fileName)));
   return mSources.emplace_back(
       fileName, std::string(std::istreambuf_iterator<char>(stream),
                             std::istreambuf_iterator<char>()));
@@ -205,10 +205,10 @@ std::string LayoutDiagnostics::summary() const {
   if (mDiagnostics.empty()) return {};
   std::string result{};
   if (mErrorCount > 0)
-    result += smdl::concat(smdl::Counted(mErrorCount, "error"));
+    result += smdl::concat(smdl::SpellCounted(mErrorCount, "error"));
   if (mWarningCount > 0) {
     if (!result.empty()) result += ", ";
-    result += smdl::concat(smdl::Counted(mWarningCount, "warning"));
+    result += smdl::concat(smdl::SpellCounted(mWarningCount, "warning"));
   }
   return result;
 }
@@ -221,6 +221,6 @@ void LayoutDiagnostics::printAll() const {
 void LayoutDiagnostics::printAllAndRefuse(const std::string &fileName) const {
   if (!empty()) printAll();
   if (hasErrors())
-    throw smdl::Error(smdl::concat("Cannot read ", smdl::QuotedPath(fileName),
-                                   ": ", summary()));
+    throw smdl::Error(smdl::concat(
+        "Cannot read ", smdl::SpellFilePath(fileName), ": ", summary()));
 }

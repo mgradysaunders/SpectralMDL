@@ -11,9 +11,9 @@ namespace {
 // A shutter for the log, in seconds and as a reciprocal.
 [[nodiscard]] std::string spellShutter(double seconds) {
   return seconds > 0 && seconds < 1
-             ? smdl::concat(smdl::Brief(seconds, 4), " s (1/",
-                            smdl::Brief(1.0 / seconds, 4), ")")
-             : smdl::concat(smdl::Brief(seconds, 4), " s");
+             ? smdl::concat(SpellFloat(seconds, 4), " s (1/",
+                            SpellFloat(1.0 / seconds, 4), ")")
+             : smdl::concat(SpellFloat(seconds, 4), " s");
 }
 
 } // namespace
@@ -39,7 +39,7 @@ MeterProjection::MeterProjection(const Sensor &sensor) {
     }
     if (std::none_of(mCountingCells.begin(), mCountingCells.end(),
                      [](bool counts) { return counts; }))
-      SMDL_LOG_WARN("The tile lays down no ", smdl::Quoted(mBandName),
+      SMDL_LOG_WARN("The tile lays down no ", SpellQuoted(mBandName),
                     " pixel, the sensor's most sensitive band, so the meter "
                     "reads nothing");
   }
@@ -115,7 +115,7 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
             bool wasRead) {
   const ShotISO shot{resolveShotISO(sensor, stated, header)};
   if (sensor.hasFixedGain()) {
-    SMDL_LOG_INFO("ISO: ", smdl::Brief(shot.iso, 5),
+    SMDL_LOG_INFO("ISO: ", SpellFloat(shot.iso, 5),
                   ", the saturation speed of the stated gain, so nothing is "
                   "metered");
     return;
@@ -125,30 +125,30 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
   const std::string reading{
       isDark
           ? std::string("the frame is dark, so the meter reads nothing")
-          : smdl::concat("the meter reads ", smdl::Brief(metered.luxSeconds, 4),
+          : smdl::concat("the meter reads ", SpellFloat(metered.luxSeconds, 4),
                          " lux-seconds over the window and asks for ISO ",
-                         smdl::Brief(metered.wantedISO, 5))};
+                         SpellFloat(metered.wantedISO, 5))};
   const char *source{wasRead ? " off the resumed file" : ""};
   // Where a given ISO leaves the frame against the meter's wish.
   const auto against{[&](double iso) {
     if (isDark) return std::string();
     const double stops{std::log2(double(iso) / metered.wantedISO)};
     return smdl::concat(", so the frame comes out ",
-                        smdl::Brief(std::abs(stops), 3), " stops ",
+                        SpellFloat(std::abs(stops), 3), " stops ",
                         stops >= 0 ? "brighter" : "darker", " than metered");
   }};
   if (stated) {
-    SMDL_LOG_INFO("ISO: ", smdl::Brief(shot.iso, 6), " stated; ", reading,
+    SMDL_LOG_INFO("ISO: ", SpellFloat(shot.iso, 6), " stated; ", reading,
                   source, against(shot.iso));
     if (shot.iso < sensor.baseISO())
-      SMDL_LOG_WARN("ISO ", smdl::Brief(shot.iso, 6),
+      SMDL_LOG_WARN("ISO ", SpellFloat(shot.iso, 6),
                     " is below the base ISO of ",
-                    smdl::Brief(sensor.baseISO(), 5),
+                    SpellFloat(sensor.baseISO(), 5),
                     ", so the well clips before the ADC does");
     else if (shot.iso > sensor.maxISO())
-      SMDL_LOG_WARN("ISO ", smdl::Brief(shot.iso, 6),
+      SMDL_LOG_WARN("ISO ", SpellFloat(shot.iso, 6),
                     " is above the top ISO of ",
-                    smdl::Brief(sensor.maxISO(), 6));
+                    SpellFloat(sensor.maxISO(), 6));
     return;
   }
   if (metered.stopsOff != 0) {
@@ -163,21 +163,21 @@ void logISO(const Sensor &sensor, const std::optional<float> &stated,
             : smdl::concat(
                   ": a shutter of ",
                   spellShutter(exposure * metered.wantedISO / end), ", or f/",
-                  smdl::Brief(fNumber * std::sqrt(end / metered.wantedISO), 4),
+                  SpellFloat(fNumber * std::sqrt(end / metered.wantedISO), 4),
                   ", would meter to it")};
     SMDL_LOG_WARN(
-        "ISO ", smdl::Brief(shot.iso, 6),
+        "ISO ", SpellFloat(shot.iso, 6),
         isOver ? ", the base; " : ", the top; ", reading, source,
         ", so the frame is ",
         isDark ? std::string("dark")
-               : smdl::concat(smdl::Brief(std::abs(metered.stopsOff), 3),
+               : smdl::concat(SpellFloat(std::abs(metered.stopsOff), 3),
                               " stops ", isOver ? "over" : "under", "exposed"),
         " at the ", isOver ? "base" : "top", " ISO", fix);
     return;
   }
-  SMDL_LOG_INFO("ISO: ", smdl::Brief(shot.iso, 5), " metered", source,
+  SMDL_LOG_INFO("ISO: ", SpellFloat(shot.iso, 5), " metered", source,
                 ", the nearest third stop to the ",
-                smdl::Brief(metered.wantedISO, 5), " that ",
-                smdl::Brief(metered.luxSeconds, 4),
+                SpellFloat(metered.wantedISO, 5), " that ",
+                SpellFloat(metered.luxSeconds, 4),
                 " lux-seconds over the window asks for");
 }

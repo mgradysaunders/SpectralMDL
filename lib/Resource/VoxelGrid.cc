@@ -239,7 +239,7 @@ listNanoGridNames(const std::vector<nanovdb::io::FileGridMetaData> &grids) {
       result += grids.size() == 2       ? " and "
                 : i + 1 == grids.size() ? ", and "
                                         : ", ";
-    Quoted(grids[i].gridName).appendTo(result);
+    SpellQuoted(grids[i].gridName).appendTo(result);
   }
   return result;
 }
@@ -269,15 +269,15 @@ void loadNanoVDB(const std::string &fileName, const std::string &gridName,
   if (!gridName.empty()) {
     while (index < grids.size() && grids[index].gridName != gridName) index++;
     if (index == grids.size())
-      throw Error(concat("No grid named ", Quoted(gridName),
+      throw Error(concat("No grid named ", SpellQuoted(gridName),
                          " in NanoVDB file, which holds ",
                          listNanoGridNames(grids)));
   }
   if (const nanovdb::GridType gridType{grids[index].gridType};
       !isFloatNanoGridType(gridType))
-    throw Error(concat("NanoVDB grid ", Quoted(grids[index].gridName),
+    throw Error(concat("NanoVDB grid ", SpellQuoted(grids[index].gridName),
                        " has unsupported type ",
-                       Quoted(nanoGridTypeName(gridType)),
+                       SpellQuoted(nanoGridTypeName(gridType)),
                        "; expected a float or quantized-float grid"));
   stream.clear();
   stream.seekg(0);
@@ -291,7 +291,7 @@ void loadNanoVDB(const std::string &fileName, const std::string &gridName,
         tryFlattenNanoGrid<nanovdb::Fp16>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::FpN>(handle, flat)))
     throw Error(concat("Unsupported NanoVDB grid type ",
-                       Quoted(nanoGridTypeName(handle.gridType())),
+                       SpellQuoted(nanoGridTypeName(handle.gridType())),
                        "; expected a float or quantized-float grid"));
 #else
   (void)fileName, (void)gridName, (void)flat;
@@ -524,7 +524,7 @@ void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
                    std::streamsize(row.size() * sizeof(uint32_t)));
     }
   if (!stream)
-    throw Error(concat("Cannot write ", QuotedPath(fileName), ": ",
+    throw Error(concat("Cannot write ", SpellFilePath(fileName), ": ",
                        std::strerror(errno)));
 }
 } // namespace
@@ -558,7 +558,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
       if (!gridName.empty())
         throw Error(concat("Mitsuba volumes have no named grids, cannot "
                            "select ",
-                           Quoted(gridName)));
+                           SpellQuoted(gridName)));
       loadMitsubaVol(fileName, flat);
     } else {
       throw Error("Unrecognized volume file extension");
@@ -602,7 +602,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
   if (error) {
     clear();
     error->message =
-        concat("Cannot load ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot load ", SpellFilePath(fileName), ": ", error->message);
   }
   return error;
 }
@@ -620,7 +620,7 @@ VoxelGrid::saveToFile(const std::string &fileName,
       if (!gridName.empty())
         throw Error(concat("Mitsuba volumes have no named grids, cannot name "
                            "one ",
-                           Quoted(gridName)));
+                           SpellQuoted(gridName)));
       saveMitsubaVol(fileName, *this);
     } else {
       throw Error("Unrecognized volume file extension");
@@ -628,7 +628,7 @@ VoxelGrid::saveToFile(const std::string &fileName,
   })};
   if (error)
     error->message =
-        concat("Cannot save ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot save ", SpellFilePath(fileName), ": ", error->message);
   return error;
 }
 
@@ -641,8 +641,8 @@ VoxelGrid::saveToFile(const std::string &fileName,
       throw Error("Several named grids need a '.nvdb' file");
     if (voxelGrids.empty()) throw Error("No grids to save");
     if (voxelGrids.size() != gridNames.size())
-      throw Error(concat("Have ", Counted(voxelGrids.size(), "grid"), " but ",
-                         Counted(gridNames.size(), "name")));
+      throw Error(concat("Have ", SpellCounted(voxelGrids.size(), "grid"),
+                         " but ", SpellCounted(gridNames.size(), "name")));
     for (size_t i = 0; i < voxelGrids.size(); i++) {
       if (!voxelGrids[i] || !voxelGrids[i]->isValid())
         throw Error(concat("Grid ", i, " is empty"));
@@ -650,13 +650,13 @@ VoxelGrid::saveToFile(const std::string &fileName,
       for (size_t j = 0; j < i; j++)
         if (gridNames[j] == gridNames[i])
           throw Error(
-              concat("Two grids are both named ", Quoted(gridNames[i])));
+              concat("Two grids are both named ", SpellQuoted(gridNames[i])));
     }
     saveNanoVDB(fileName, voxelGrids, gridNames);
   })};
   if (error)
     error->message =
-        concat("Cannot save ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot save ", SpellFilePath(fileName), ": ", error->message);
   return error;
 }
 

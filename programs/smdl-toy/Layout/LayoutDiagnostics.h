@@ -147,7 +147,7 @@ public:
   /// which is a
   /// capitalized sentence. A directive spelled out in the message text
   /// is single quoted as the format writes it; a name or value that
-  /// comes from the file goes through `smdl::Quoted`.
+  /// comes from the file goes through `smdl::SpellQuoted`.
   LayoutDiagnostic &error(LayoutLocation location, std::string message);
 
   /// Report a warning. Returns the diagnostic so notes can chain.

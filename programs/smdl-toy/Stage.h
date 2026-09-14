@@ -51,11 +51,12 @@ struct Frame final {
   /// camera below from it, once `-autolook` has had its say.
   CameraModel model{};
 
-  /// Does each sample draw its own wavelength grid? `-wavelength-jitter`
-  /// when it was given, and otherwise on for a physical sensor, whose
-  /// bands may be narrower than the grid's spacing, and off for the
-  /// observer. Decided here rather than with the grid because a resume
-  /// compares it before the grid exists.
+  /// Does each sample draw its own wavelength grid? Always through a
+  /// physical sensor, whose bands may be narrower than the grid's
+  /// spacing, which is why `-wavelength-jitter=false` is refused with
+  /// one; otherwise `-wavelength-jitter` alone, the observer having no
+  /// band comb to alias. Decided here rather than with the grid because
+  /// a resume compares it before the grid exists.
   bool shouldJitterWavelength{};
 
   /// The camera itself.
