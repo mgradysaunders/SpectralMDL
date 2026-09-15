@@ -34,7 +34,6 @@ smdl_add_doctest(
     "Support/Compress.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
-    "Support/FlatYAML.cc"
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
     "Support/Profiler.cc"

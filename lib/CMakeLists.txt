@@ -54,7 +54,6 @@ add_library(
     "Support/Error.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
-    "Support/FlatYAML.cc"
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
     "Support/Macros.cc"
