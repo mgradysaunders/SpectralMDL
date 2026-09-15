@@ -25,19 +25,18 @@ them.
 
 ## Where a test lives
 
-    smdl/       the library: the test for lib/X/Y.cc lives at smdl/X/Y.cc
-
-A test file is named for the thing it tests, at the path that thing lives
-at, whether that is a `lib/` source or a public header with no source of
-its own (`RenderUtil/FastMath.cc`, `Support/VectorMath.cc`, `JIT.cc`).
-Where a contract is spread across several sources and observable only from
-outside, the file is named for the contract and sits under the directory of
-the component that surfaces it: `smdl/Compiler/Diagnostics.cc` for the
-words a failing compile fails with, `smdl/Compiler/Resources.cc` for the
-resources a compile loads and caches.
+**The test for `lib/X/Y.cc` lives at `X/Y.cc` here**, beside the framework
+it is built with. A test file is named for the thing it tests, at the path
+that thing lives at, whether that is a `lib/` source or a public header
+with no source of its own (`RenderUtil/FastMath.cc`,
+`Support/VectorMath.cc`, `JIT.cc`). Where a contract is spread across
+several sources and observable only from outside, the file is named for the
+contract and sits under the directory of the component that surfaces it:
+`Compiler/Diagnostics.cc` for the words a failing compile fails with,
+`Compiler/Resources.cc` for the resources a compile loads and caches.
 
 **Against `testing/language/`, the line is what the test can see.** The
-SMDL-language suite pins what the language *means*. These suites pin what
+SMDL-language suite pins what the language *means*. This suite pins what
 the *host* sees: a compile that must fail and the words it fails with, the
 IR that must be emitted, the entry points the host calls, the files on
 disk, and anything at a `wavelengthBaseMax` other than the default. None of
@@ -55,7 +54,7 @@ and a lowercase phrase. That phrase is a claim when the case proves one
 thing and a topic when it groups subcases that each prove one. The reporter
 prints the file above the name, so the three lines read together:
 
-    testing/doctest/smdl/Resource/Image.cc:59:
+    doctest/Resource/Image.cc:13:
     TEST CASE:  Image: reading, writing, and the mip chains
       A chain is built down to the 1x1 level
 
@@ -95,12 +94,11 @@ body meaningless. `CHECK` is for the claim itself.
 Headers in two layers, the way `lib/Support/` -> `lib/` is.
 
     Fixtures.h                    needs only the public library
-    smdl/CompileFixtures.h        what only the library suite needs
+    CompileFixtures.h             adds what only this suite needs
 
-`Fixtures.h` is reachable as `#include "Fixtures.h"` from any depth,
-because the framework's own include directory is exported.
-`CompileFixtures.h` sits beside the suite it serves, which is on that
-suite's include path.
+Both sit at the top level, which is the suite's include path, so a test
+source at any depth includes either unqualified. `Fixtures.h` includes
+`doctest.h` and is what a test file includes instead of it.
 
 **A test owns nothing global.** Anything process-wide that a test installs
 is put back by a destructor, never by a statement at the end of a body: a
@@ -121,14 +119,13 @@ Two constraints worth knowing:
 
 ## Adding a file
 
-The suite lists its sources explicitly; there is no glob, so a file
-added and not listed compiles nowhere and passes silently. Put its path in
-`smdl/CMakeLists.txt` and nothing else. The
-C++ standard, the visibility, the RTTI flag and the floating-point flags
-come from `smdl_add_doctest` in `CMakeLists.txt`; the last two matter,
-because `BuildInfo`'s RTTI check and `FastMath`'s and `SpectralColor`'s
-error bounds only mean what they mean under the flags the library itself
-compiles with.
+The suite lists its sources explicitly; there is no glob, so a file added
+and not listed compiles nowhere and passes silently. Put its path in
+`CMakeLists.txt` and nothing else. The C++ standard, the visibility, the
+RTTI flag and the floating-point flags come from the target set up there;
+the last two matter, because `BuildInfo`'s RTTI check and `FastMath`'s and
+`SpectralColor`'s error bounds only mean what they mean under the flags the
+library itself compiles with.
 
 The two golden tables (`RenderUtil/HazeGolden.inl`,
 `RenderUtil/SunSkyGolden.inl`) are included rather than compiled, so they
@@ -146,7 +143,7 @@ On the library side `lib/Compiler/Type.cc` (2990 lines) has no test at all,
 and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
 `lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc` and
 `lib/Support/Parallel.cc`. `lib/Formatter.cc`
-(641 lines) has exactly one subcase, and it lives in `smdl/Module.cc`.
+(641 lines) has exactly one subcase, and it lives in `Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero

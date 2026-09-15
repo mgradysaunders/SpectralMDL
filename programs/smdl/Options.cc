@@ -1,7 +1,7 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include <algorithm>
 
-#include "../CommandLine.h"
+#include "CommandLine.h"
 
 #include "smdl/Common.h"
 #include "smdl/RenderUtil/OpticalGlass.h"

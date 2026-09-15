@@ -1,12 +1,12 @@
 /// \file
-/// The vocabulary the two programs' command lines share: the `llvm::cl`
-/// glue that teaches it to carry vector-valued options, the `Flag` that
+/// The vocabulary the command line is built out of: the `llvm::cl` glue
+/// that teaches it to carry vector-valued options, the `Flag` that
 /// remembers whether an option was given at all, and the hand parsers
-/// for the settings both programs spell the same way.
+/// for the settings that `cl` has no parser for.
 ///
-/// The `cl::opt` objects themselves never leave either program's
-/// `Options.cc`. What crosses this header is the machinery to declare
-/// them and the plain values they lower into.
+/// The `cl::opt` objects themselves never leave `Options.cc`. What
+/// crosses this header is the machinery to declare them and the plain
+/// values they lower into.
 #pragma once
 
 #include <cassert>

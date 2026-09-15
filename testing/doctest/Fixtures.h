@@ -1,9 +1,9 @@
 /// \file
-/// The vocabulary a suite shares at every depth: scratch directories,
+/// The vocabulary the suite shares at every depth: scratch directories,
 /// environment variables set for a scope, assertions that say what went
 /// wrong, and comparisons over the library's vector types. Everything
-/// here needs the public library and nothing else; `smdl/Fixtures.h`
-/// adds what only the library suite needs.
+/// here needs the public library and nothing else; `CompileFixtures.h`
+/// adds what only this suite needs.
 #pragma once
 
 #include "doctest.h"

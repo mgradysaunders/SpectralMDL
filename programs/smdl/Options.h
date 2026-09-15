@@ -19,7 +19,7 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
 
-#include "../CommandLine.h"
+#include "CommandLine.h"
 
 /// Which subcommand ran. There is always exactly one; `cl` rejects a
 /// command line naming none.
