@@ -16,7 +16,6 @@
 #include "smdl/Resource/VoxelGrid.h"
 #include "smdl/SceneData.h"
 #include "smdl/Support/FileLocator.h"
-#include "smdl/Support/Logger.h"
 #include "smdl/Support/MD5Hash.h"
 
 namespace smdl {
@@ -477,10 +476,33 @@ public:
   void convertRGBToColor(const State &state, const float3 &rgb,
                          float *color) const noexcept;
 
+  /// Whether the unit test report `runUnitTests()` prints is colored
+  /// with ANSI escape codes.
+  enum class ANSIColorMode : int {
+    AUTO,   ///< Colorize a terminal, if the environment allows.
+    ALWAYS, ///< Colorize even if standard error is redirected.
+    NEVER   ///< Never colorize.
+  };
+
+  /// Resolve `mode` for a stream, given whether the stream is a terminal.
+  ///
+  /// `ANSIColorMode::AUTO` also wants the environment to allow colors:
+  /// `NO_COLOR` unset or empty (the no-color.org convention), and `TERM`
+  /// set to something other than `dumb`. The explicit modes override
+  /// both, as that convention asks.
+  ///
+  /// This is the whole of the library's color policy, and it is public
+  /// so that a host coloring its own output for a different stream
+  /// resolves `-color` (or whatever it calls the option) the same way.
+  [[nodiscard]] static bool shouldUseColors(ANSIColorMode mode,
+                                            bool isTerminal) noexcept;
+
   /// Run JIT-compiled unit tests and print results to standard error,
-  /// colorized according to `ansiColorMode`. Stops at the first failure,
-  /// which is what the returned `Error` describes.
-  [[nodiscard]] std::optional<Error> runUnitTests(const State &state) noexcept;
+  /// colorized as `colorMode` asks, resolved for standard error. Stops
+  /// at the first failure, which is what the returned `Error` describes.
+  [[nodiscard]] std::optional<Error>
+  runUnitTests(const State &state,
+               ANSIColorMode colorMode = ANSIColorMode::AUTO) noexcept;
 
   /// Run JIT-compiled execs.
   [[nodiscard]] std::optional<Error> runExecs() noexcept;
@@ -497,10 +519,6 @@ public:
 
   /// Enable unit tests?
   bool shouldEmitUnitTests{false};
-
-  /// Colorize the unit test results printed by `runUnitTests()`? This
-  /// resolves for standard error as `shouldUseColors()` does.
-  ANSIColorMode ansiColorMode{ANSI_COLOR_MODE_AUTO};
 
   /// The number of wavelengths per MDL `color`.
   uint32_t wavelengthBaseMax{16};

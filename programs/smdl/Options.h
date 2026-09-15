@@ -119,14 +119,12 @@ struct UtilityOptions final {
   /// logger before anything else can say anything.
   smdl::LogLevel logLevel{smdl::LOG_LEVEL_INFO};
 
-  /// Whether log messages, the unit test report, and the documentation
-  /// text are colored, which each resolves for its own stream with
-  /// `smdl::shouldUseColors()`.
-  smdl::ANSIColorMode ansiColorMode{smdl::ANSI_COLOR_MODE_AUTO};
-
-  /// Whether log messages are labeled with Unicode symbols, which the
-  /// log sink decides for itself when this is `UNICODE_MODE_AUTO`.
-  smdl::UnicodeMode unicodeMode{smdl::UNICODE_MODE_AUTO};
+  /// Whether the unit test report and the documentation text are
+  /// colored, which each resolves for its own stream with
+  /// `smdl::Compiler::shouldUseColors()`. Log messages are never
+  /// colored: the default sinks print plain ASCII.
+  smdl::Compiler::ANSIColorMode ansiColorMode{
+      smdl::Compiler::ANSIColorMode::AUTO};
 
   /// The time-trace file, and whether `-profile` was given at all,
   /// since it takes an optional value.

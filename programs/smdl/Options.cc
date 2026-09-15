@@ -159,12 +159,11 @@ cl::OptionCategory catUtility{"Utility Options"};
 // the coloring explicitly, which keeps the behavior independent of that
 // LLVM-internal option. Keep it scoped to subcommands: registering a
 // '--color' at the top level would land in the same option map as
-// LLVM's, and `cl` aborts on a duplicate name. That is also why the
-// renderer, which has no subcommands, cannot have one at all.
+// LLVM's, and `cl` aborts on a duplicate name.
 cl::opt<cl::boolOrDefault> optColor{
     "color",
-    cl::desc("Colorize log messages, the unit test report, and the "
-             "documentation text (default: autodetect)\n"
+    cl::desc("Colorize the unit test report and the documentation text "
+             "(default: autodetect)\n"
              "* autodetect colors a terminal, unless NO_COLOR is set or "
              "TERM is 'dumb'"),
     cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
@@ -174,12 +173,6 @@ cl::opt<std::string> optLogLevel{
     cl::desc("The log level to filter output verbosity, must be "
              "'debug', 'info', 'warn', or 'error' (default: 'info')"),
     cl::init(std::string("info")), cl::sub(allSubs), cl::cat(catUtility)};
-cl::opt<cl::boolOrDefault> optUnicode{
-    "unicode",
-    cl::desc("Label log messages with Unicode symbols rather than bracketed "
-             "words (default: autodetect)"),
-    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
-    cl::cat(catUtility)};
 cl::opt<std::string> optProfile{
     "profile",
     cl::desc("Write a time-trace JSON of the work this subcommand does "
@@ -315,11 +308,7 @@ Options parseCommandLine(int argc, char **argv) {
 
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
-  opts.utility.ansiColorMode =
-      optColor == cl::boolOrDefault::BOU_TRUE    ? smdl::ANSI_COLOR_MODE_ALWAYS
-      : optColor == cl::boolOrDefault::BOU_FALSE ? smdl::ANSI_COLOR_MODE_NEVER
-                                                 : smdl::ANSI_COLOR_MODE_AUTO;
-  opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
+  opts.utility.ansiColorMode = lowerColorMode(optColor);
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl.trace.json")
                              : std::string(optProfile);

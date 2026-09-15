@@ -35,7 +35,8 @@ void runUnitTests(const Options &opts, smdl::Compiler &compiler) {
   state.wavelengthMin = opts.compile.wavelengthRange.x;
   state.wavelengthMax = opts.compile.wavelengthRange.y;
   state.wavelengthBase = wavelengths.data();
-  if (std::optional<smdl::Error> error{compiler.runUnitTests(state)}) {
+  if (std::optional<smdl::Error> error{
+          compiler.runUnitTests(state, opts.utility.ansiColorMode)}) {
     std::cerr << '\n';
     error->printAndExit();
   }

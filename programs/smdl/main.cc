@@ -17,16 +17,13 @@
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
-  smdl::LogSinks::PrintToCerr &logSink{
-      smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>()};
+  smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>();
   const Options opts{parseCommandLine(argc, argv)};
   // Before anything is logged: the sink above is already in place, and
   // the parse itself says nothing, so this is the first point at which a
-  // message could be filtered and labeled as asked, and the last at which
-  // nothing has been missed.
+  // message could be filtered as asked, and the last at which nothing
+  // has been missed.
   smdl::Logger::get().setMinLevel(opts.utility.logLevel);
-  logSink.setUnicodeMode(opts.utility.unicodeMode);
-  logSink.setColorMode(opts.utility.ansiColorMode);
   // Before anything parallel: the thread pool is built by whichever
   // parallel operation runs first (the compile's image loads, usually)
   // and cannot be resized afterward.

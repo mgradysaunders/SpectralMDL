@@ -21,23 +21,6 @@ enum LogLevel : int {
   LOG_LEVEL_ERROR,     ///< Error!
 };
 
-/// Whether the default log sinks label a message with a Unicode symbol
-/// or with a bracketed ASCII word. See `LogSinks`.
-enum UnicodeMode : int {
-  UNICODE_MODE_AUTO,   ///< Symbols only on a terminal in a UTF-8 locale.
-  UNICODE_MODE_ALWAYS, ///< Symbols even if the stream is redirected.
-  UNICODE_MODE_NEVER   ///< Always the bracketed words.
-};
-
-/// Whether output is colored with ANSI escape codes: the default log
-/// sinks' messages, and the report `Compiler::runUnitTests()` prints. See
-/// `shouldUseColors()`.
-enum ANSIColorMode : int {
-  ANSI_COLOR_MODE_AUTO,   ///< Colorize a terminal, if the environment allows.
-  ANSI_COLOR_MODE_ALWAYS, ///< Colorize even if the stream is redirected.
-  ANSI_COLOR_MODE_NEVER   ///< Never colorize.
-};
-
 /// A log sink to receive log messages.
 class SMDL_EXPORT LogSink {
 public:
@@ -135,118 +118,43 @@ private:
 #define SMDL_LOG_ERROR(...) SMDL_LOG(::smdl::LOG_LEVEL_ERROR, __VA_ARGS__)
 
 /// The label prefix for the given log level, as the default log sinks
-/// print it: a symbol or a bracketed word, with or without ANSI color
-/// codes, and always followed by a space. See `LogSinks` for the table.
+/// print it: a bracketed word, always followed by a space.
 ///
-/// This is public so that a host with its own sink prints the same
-/// labels as the default sinks without redefining them.
+/// | Level   | Label     |
+/// |---------|-----------|
+/// | `Debug` | `[debug]` |
+/// | `Info`  | `[info]`  |
+/// | `Warn`  | `[warn]`  |
+/// | `Error` | `[error]` |
+///
+/// This is public so that a host with its own sink can print the same
+/// labels rather than restate them.
 [[nodiscard]] SMDL_EXPORT std::string_view
-logLevelLabel(LogLevel level, bool useColors, bool useUnicode) noexcept;
+logLevelLabel(LogLevel level) noexcept;
 
-/// A message as the default log sinks print it, `logLevelLabel()` and
-/// then the message, without the trailing newline.
+/// The default log sinks, for convenience. Each prints
+/// `logLevelLabel()` and then the message, in plain ASCII with no
+/// escape codes at all.
 ///
-/// Without colors the message is exactly as given. With them, a debug
-/// message is dimmed whole, and any other has its locations (as
-/// `SpellLocation` writes them) in bold and nothing else touched. A
-/// source line followed by a caret line is left as written, except that
-/// its gutter is dimmed and its caret colored. A message that already
-/// contains an escape code is left as it is.
-///
-/// This reads the finished text, so the message a sink is handed stays
-/// plain, and a host with its own sink renders the same by calling this.
-[[nodiscard]] SMDL_EXPORT std::string formatLogMessage(LogLevel level,
-                                                       std::string_view message,
-                                                       bool useColors,
-                                                       bool useUnicode);
-
-/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal. See
-/// `shouldUseColors()` for whether it should be colored.
-[[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors() noexcept;
-
-/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal. See
-/// `shouldUseColors()` for whether it should be colored.
-[[nodiscard]] SMDL_EXPORT bool coutSupportsANSIColors() noexcept;
-
-/// Resolve `mode` for a stream, given whether the stream is a terminal.
-///
-/// `ANSI_COLOR_MODE_AUTO` also wants the environment to allow colors:
-/// `NO_COLOR` unset or empty (the no-color.org convention), and `TERM`
-/// set to something other than `dumb`. The explicit modes override both,
-/// as that convention asks.
-[[nodiscard]] SMDL_EXPORT bool shouldUseColors(ANSIColorMode mode,
-                                               bool isTerminal) noexcept;
-
-/// Does the environment claim UTF-8? Tests the locale variables in the
-/// order the C library resolves them, `LC_ALL`, `LC_CTYPE`, then `LANG`,
-/// and the first non-empty one decides, so that a specific `LC_CTYPE` is
-/// not overruled by a stale `LANG`.
-[[nodiscard]] SMDL_EXPORT bool localeIsUTF8() noexcept;
-
-/// Resolve `mode` for a stream, given whether the stream is a terminal.
-///
-/// `UNICODE_MODE_AUTO` wants a terminal as well as a UTF-8 locale because
-/// captured output is read back by tools, which match on the bracketed
-/// words.
-[[nodiscard]] SMDL_EXPORT bool shouldUseUnicode(UnicodeMode mode,
-                                                bool isTerminal) noexcept;
-
-/// The default log-sinks for convenience, which print each message as
-/// `formatLogMessage()` does, labeled as `logLevelLabel()` does:
-///
-/// | Level   | ASCII     | Unicode                     | Color      |
-/// |---------|-----------|-----------------------------|------------|
-/// | `Debug` | `[debug]` | U+2699, a gear              | cyan, dim  |
-/// | `Info`  | `[info]`  | U+2139, an information sign | green      |
-/// | `Warn`  | `[warn]`  | U+26A0, a warning sign      | yellow     |
-/// | `Error` | `[error]` | U+2718, a heavy ballot X    | bright red |
-///
-/// The message is colored when the sink's `ANSIColorMode` resolves to
-/// colors, and labeled with a symbol when its `UnicodeMode` resolves to
-/// one.
+/// A program that wants more of its terminal, a palette, symbols, or a
+/// message body picked apart and highlighted, installs a sink of its own
+/// and renders it there. That is presentation, and it belongs to the
+/// program that owns the terminal rather than to a middleware library
+/// writing into one it does not.
 namespace LogSinks {
 
 /// A default log sink to print to `std::cerr`.
 class SMDL_EXPORT PrintToCerr final : public LogSink {
 public:
-  explicit PrintToCerr(UnicodeMode unicodeMode = UNICODE_MODE_AUTO) noexcept;
-
   void logMessage(LogLevel level, std::string_view message) final;
-
-  /// Set whether messages are labeled with symbols. This is not mutex
-  /// protected and, like `Logger::setMinLevel()`, is understood to be set
-  /// once at program startup, before anything logs from another thread.
-  void setUnicodeMode(UnicodeMode unicodeMode) noexcept;
-
-  /// Set whether messages are colored, which is `ANSI_COLOR_MODE_AUTO`
-  /// until this is called. See `setUnicodeMode()` for when to call it.
-  void setColorMode(ANSIColorMode colorMode) noexcept;
-
-private:
-  bool mUseColors{};
-
-  bool mUseUnicode{};
 };
 
 /// A default log sink to print to `std::cout`.
 class SMDL_EXPORT PrintToCout final : public LogSink {
 public:
-  explicit PrintToCout(UnicodeMode unicodeMode = UNICODE_MODE_AUTO) noexcept;
-
   void logMessage(LogLevel level, std::string_view message) final;
 
   void flush() final;
-
-  /// See `PrintToCerr::setUnicodeMode()`.
-  void setUnicodeMode(UnicodeMode unicodeMode) noexcept;
-
-  /// See `PrintToCerr::setColorMode()`.
-  void setColorMode(ANSIColorMode colorMode) noexcept;
-
-private:
-  bool mUseColors{};
-
-  bool mUseUnicode{};
 };
 
 } // namespace LogSinks

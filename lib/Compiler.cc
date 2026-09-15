@@ -8,7 +8,19 @@
 #include <bitset>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
+
+// NOTE: Test for the header directly. Do not gate this on an OS list:
+// Darwin defines neither '__linux__' nor '__unix__', and '_POSIX_VERSION'
+// only exists after <unistd.h> has been included, so any such list
+// silently turns off 'isatty' (and therefore the colored unit test
+// report) on macOS.
+#if __has_include(<unistd.h>)
+#define SMDL_HAS_UNISTD 1
+#include <unistd.h>
+#endif // #if __has_include(<unistd.h>)
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
@@ -1467,22 +1479,47 @@ constexpr llvm::HighlightColor testColorName{llvm::HighlightColor::Attribute};
 constexpr llvm::HighlightColor testColorMetadata{llvm::HighlightColor::Note};
 constexpr llvm::HighlightColor testColorSuccess{llvm::HighlightColor::String};
 constexpr llvm::HighlightColor testColorFailure{llvm::HighlightColor::Error};
+
+// Does the environment allow colors on a terminal? See
+// `Compiler::shouldUseColors()`.
+[[nodiscard]] bool environmentAllowsColors() noexcept {
+  const char *noColor{std::getenv("NO_COLOR")};
+  const char *term{std::getenv("TERM")};
+  return !(noColor && *noColor) && term && *term &&
+         std::strcmp(term, "dumb") != 0;
+}
+
+// Does standard error route to a terminal?
+[[nodiscard]] bool cerrIsTerminal() noexcept {
+#if SMDL_HAS_UNISTD
+  return ::isatty(STDERR_FILENO);
+#else
+  return false;
+#endif // #if SMDL_HAS_UNISTD
+}
 } // namespace
 
-std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
+bool Compiler::shouldUseColors(ANSIColorMode mode, bool isTerminal) noexcept {
+  return mode == ANSIColorMode::ALWAYS ||
+         (mode == ANSIColorMode::AUTO && isTerminal &&
+          environmentAllowsColors());
+}
+
+std::optional<Error> Compiler::runUnitTests(const State &state,
+                                            ANSIColorMode colorMode) noexcept {
   return catchAndReturnError([&] {
     // NOTE: Print through `llvm::errs()` rather than `std::cerr` so that
     // `WithColor` can colorize. The mode is resolved here rather than
-    // left to its own detection, so that the report and the log sink
-    // agree on whether standard error is colored. Both streams write to
-    // file descriptor 2 unbuffered, so this stays correctly interleaved
-    // with the logger, which still prints through `std::cerr`.
+    // left to LLVM's own detection, so that this report and a host's own
+    // output answer one policy. Both streams write to file descriptor 2
+    // unbuffered, so this stays correctly interleaved with the logger,
+    // which prints through `std::cerr`.
     //
     // NOTE: Each colored span opens and closes before the test runs, so
     // that a test that crashes cannot leave the terminal colored.
     llvm::raw_fd_ostream &os{llvm::errs()};
     const llvm::ColorMode llvmColorMode{
-        shouldUseColors(ansiColorMode, cerrSupportsANSIColors())
+        shouldUseColors(colorMode, cerrIsTerminal())
             ? llvm::ColorMode::Enable
             : llvm::ColorMode::Disable};
     forEachModuleGroup(

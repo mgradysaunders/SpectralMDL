@@ -21,12 +21,21 @@
 #include <vector>
 
 #include "smdl/Common.h"
+#include "smdl/Compiler.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Strings.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+
+// NOTE: Test for the header directly. Do not gate this on an OS list:
+// Darwin defines neither '__linux__' nor '__unix__', so any such list
+// silently turns off 'isatty' on macOS.
+#if __has_include(<unistd.h>)
+#define SMDL_HAS_UNISTD 1
+#include <unistd.h>
+#endif // #if __has_include(<unistd.h>)
 
 namespace cl = llvm::cl;
 
@@ -239,13 +248,26 @@ struct WavelengthRange final {
                                  smdl::SpellQuoted(flagStr)));
 }
 
-/// The '-unicode' flag as `smdl::UnicodeMode` spells it: unset leaves the
-/// choice to autodetection, and either value overrides it.
-[[nodiscard]] inline smdl::UnicodeMode
-lowerUnicodeMode(cl::boolOrDefault value) {
-  return value == cl::boolOrDefault::BOU_TRUE    ? smdl::UNICODE_MODE_ALWAYS
-         : value == cl::boolOrDefault::BOU_FALSE ? smdl::UNICODE_MODE_NEVER
-                                                 : smdl::UNICODE_MODE_AUTO;
+/// The '-color' flag as `smdl::Compiler::ANSIColorMode` spells it: unset
+/// leaves the choice to autodetection, and either value overrides it.
+[[nodiscard]] inline smdl::Compiler::ANSIColorMode
+lowerColorMode(cl::boolOrDefault value) {
+  using ANSIColorMode = smdl::Compiler::ANSIColorMode;
+  return value == cl::boolOrDefault::BOU_TRUE    ? ANSIColorMode::ALWAYS
+         : value == cl::boolOrDefault::BOU_FALSE ? ANSIColorMode::NEVER
+                                                 : ANSIColorMode::AUTO;
+}
+
+/// Does standard output route to a terminal? The library resolves
+/// '-color' for standard error itself, where it prints the unit test
+/// report; this is the same question for the stream this program prints
+/// documentation text on.
+[[nodiscard]] inline bool coutIsTerminal() noexcept {
+#if SMDL_HAS_UNISTD
+  return ::isatty(STDOUT_FILENO);
+#else
+  return false;
+#endif // #if SMDL_HAS_UNISTD
 }
 
 /// Parse the '-wavelengths' flag: wavelengths in nanometers separated by

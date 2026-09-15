@@ -227,11 +227,11 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   // Colors are for a human reading a terminal: '-output' captures the
   // documentation into a file, and JSON and Markdown are machine and
   // document formats. Otherwise '-color' resolves for standard output as
-  // it does for the log on standard error.
+  // it does for the unit test report on standard error.
   const llvm::ColorMode colorMode{
       !outputFile && opts.doc.format == DocFormat::TEXT &&
-              smdl::shouldUseColors(opts.utility.ansiColorMode,
-                                    smdl::coutSupportsANSIColors())
+              smdl::Compiler::shouldUseColors(opts.utility.ansiColorMode,
+                                              coutIsTerminal())
           ? llvm::ColorMode::Enable
           : llvm::ColorMode::Disable};
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {
