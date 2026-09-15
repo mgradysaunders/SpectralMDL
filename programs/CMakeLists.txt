@@ -66,6 +66,3 @@ macro(smdl_add_program BIN_NAME)
 endmacro()
 
 add_subdirectory(smdl)
-if(SMDL_TOY)
-add_subdirectory(smdl-toy)
-endif()

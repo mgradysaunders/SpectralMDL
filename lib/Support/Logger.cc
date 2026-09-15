@@ -36,9 +36,10 @@ namespace {
          std::string_view(term) != "dumb";
 }
 
-// The palette `formatLogMessage()` highlights with, which is smdl-toy's
-// `LayoutDiagnostics` palette where the two overlap (the bold location,
-// the bold green caret), so that the two programs' errors look alike.
+// The palette `formatLogMessage()` highlights with, which is Gungnir's
+// `Console` palette where the two overlap (the bold location, the bold
+// green caret), so that a host program's errors and the library's look
+// alike.
 constexpr std::string_view ANSI_RESET{"\033[0m"};
 constexpr std::string_view ANSI_BOLD{"\033[1m"};
 constexpr std::string_view ANSI_DIM{"\033[2m"};

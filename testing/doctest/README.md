@@ -1,33 +1,31 @@
-# The C++ suites
+# The C++ suite
 
-Two executables over one vendored framework, run by
+One executable over a vendored framework, run by
 
 ```sh
-ctest --test-dir build          # all three suites, including smdl-language
+ctest --test-dir build          # this and smdl-language
 ./build/bin/smdl-doctest        # the library
-./build/bin/smdl-toy-doctest    # the renderer
 ```
 
-343 test cases and 1266 subcases, about thirty seconds and twenty-four.
+109 test cases and 499 subcases, about twenty seconds.
 Useful flags, all of which work because `doctest.cc` forwards the command
 line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
 filter by case, subcase, and source file, `-s` reports the passing
 assertions too, and `-d` gives the per-case durations.
 
-Both suites run in a **random order** (`-ob=rand` with the seed CTest
+The suite runs in a **random order** (`-ob=rand` with the seed CTest
 prints), so a case that only passes after another case ran shows up here
 rather than somewhere else. That is safe because nothing leaves
 process-wide state behind; see the fixtures below.
 
-CTest runs both suites, and `smdl-language`, with `SMDL_DEFAULT_SEARCH_DIRS`
+CTest runs this suite, and `smdl-language`, with `SMDL_DEFAULT_SEARCH_DIRS`
 cleared, since the default search directories belong to the developer's
 shell and no test may depend on them. Running a binary directly inherits
 them.
 
-## What each suite is for
+## Where a test lives
 
     smdl/       the library: the test for lib/X/Y.cc lives at smdl/X/Y.cc
-    smdl-toy/   the renderer: programs/smdl-toy/X/Y.cc at smdl-toy/X/Y.cc
 
 A test file is named for the thing it tests, at the path that thing lives
 at, whether that is a `lib/` source or a public header with no source of
@@ -71,7 +69,7 @@ not a name anywhere else. No two names inside one file are the same;
 across files they often are, on purpose.
 
 Reading `-ltc` end to end is the test of this: it should read as a
-specification of what the library and the renderer promise.
+specification of what the library promises.
 
 ## Assertions
 
@@ -94,20 +92,15 @@ body meaningless. `CHECK` is for the claim itself.
 
 ## Fixtures
 
-Headers in three layers, the way `lib/Support/` -> `lib/` -> `programs/`
-is, because the two suites cannot share renderer types.
+Headers in two layers, the way `lib/Support/` -> `lib/` is.
 
-    Fixtures.h                    both suites; needs only the public library
-    smdl/CompileFixtures.h        the library suite
-    smdl-toy/RenderFixtures.h     the renderer suite
-    smdl-toy/RigFixtures.h        the glTF rigs the deformation tests read
-    smdl-toy/LensFixtures.h       the published prescriptions the lens and
-                                  camera tests share
+    Fixtures.h                    needs only the public library
+    smdl/CompileFixtures.h        what only the library suite needs
 
-`Fixtures.h` is reachable as `#include "Fixtures.h"` from any depth in
-either suite, because the framework's own include directory is exported.
-The others sit beside the suite they serve, which is on that suite's
-include path.
+`Fixtures.h` is reachable as `#include "Fixtures.h"` from any depth,
+because the framework's own include directory is exported.
+`CompileFixtures.h` sits beside the suite it serves, which is on that
+suite's include path.
 
 **A test owns nothing global.** Anything process-wide that a test installs
 is put back by a destructor, never by a statement at the end of a body: a
@@ -128,9 +121,9 @@ Two constraints worth knowing:
 
 ## Adding a file
 
-Both suites list their sources explicitly; there is no glob, so a file
+The suite lists its sources explicitly; there is no glob, so a file
 added and not listed compiles nowhere and passes silently. Put its path in
-`smdl/CMakeLists.txt` or `smdl-toy/CMakeLists.txt` and nothing else. The
+`smdl/CMakeLists.txt` and nothing else. The
 C++ standard, the visibility, the RTTI flag and the floating-point flags
 come from `smdl_add_doctest` in `CMakeLists.txt`; the last two matter,
 because `BuildInfo`'s RTTI check and `FastMath`'s and `SpectralColor`'s
@@ -155,22 +148,6 @@ and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
 `lib/Support/Parallel.cc`. `lib/Formatter.cc`
 (641 lines) has exactly one subcase, and it lives in `smdl/Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
-
-On the renderer side 15 of the 49 sources have no test, including
-`Render/MNEE.cc` (1140 lines), `Render/PathTracing.cc` (989), `Options.cc`
-(800) and `Stage.cc` (797). `Options.cc` looks like the cheap one and is
-not: `parseCommandLine()` drives `llvm::cl`'s process-wide registry, which
-nothing here can put back.
-
-Three files are tested for one thing each and not for the rest.
-`Render/Guiding.cc` is tested for the `.sdtree` round trip, not for what
-`record()` deposits or what `refine()` rebuilds from it. `Tonemap.cc` is
-tested for the spec parser, the display transform itself needing a
-spectral film and the JIT behind it. `Render.cc` is tested for
-`solveSamplePasses()`, the render loop needing both and Embree besides.
-`Sensor/Develop.cc` is tested for the physical develop alone; the
-observer's develop beside it needs the JIT, and is reached only through
-`MedianFilter.cc`'s use of what it hands over.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero
 assertions when the build lacks NanoVDB, and doctest reports them as

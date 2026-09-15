@@ -1,11 +1,9 @@
 /// \file
-/// The vocabulary both suites share: scratch directories, environment
-/// variables set for a scope, assertions that say what went wrong, and
-/// comparisons over the library's vector types.
-/// Everything here needs the public library and nothing else, so the
-/// renderer suite includes it too. `smdl/Fixtures.h` adds what only the
-/// library suite needs and `smdl-toy/Fixtures.h` what only the renderer
-/// suite does.
+/// The vocabulary a suite shares at every depth: scratch directories,
+/// environment variables set for a scope, assertions that say what went
+/// wrong, and comparisons over the library's vector types. Everything
+/// here needs the public library and nothing else; `smdl/Fixtures.h`
+/// adds what only the library suite needs.
 #pragma once
 
 #include "doctest.h"

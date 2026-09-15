@@ -496,7 +496,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
   const float meanSkyRadiance =
       sinThetaSum > 0 ? radianceSum / sinThetaSum : 0.0f;
 
-  // MIS compensation, matching `EnvLight` in smdl-toy: subtract the
+  // MIS compensation, matching `EnvLight` in Gungnir: subtract the
   // mean radiance from the tabulated density and clamp at zero,
   // falling back to the uncompensated weights if compensation removes
   // everything.

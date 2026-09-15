@@ -1,13 +1,11 @@
-# Two suites, one framework. 'doctest.h' and 'doctest.cc' at this level
-# are the vendored framework and its runner, built once as an object
-# library that every suite links, so the suites share one 'main()' and
-# one copy of the framework's implementation. Each suite is a
-# subdirectory named for the executable it tests, laid out to mirror
-# that executable's sources: 'smdl/' mirrors 'lib/', and 'smdl-toy/'
-# mirrors 'programs/smdl-toy/'.
+# 'doctest.h' and 'doctest.cc' at this level are the vendored framework
+# and its runner, built once as an object library the suite links, so
+# the framework's 'main()' and its implementation are compiled in one
+# place. A suite is a subdirectory named for the executable it tests,
+# laid out to mirror that executable's sources: 'smdl/' mirrors 'lib/'.
 add_library("doctest-runner" OBJECT "doctest.cc")
 # So test sources at any depth can '#include "Fixtures.h"' unqualified,
-# which is how both suites reach the vocabulary they share; 'Fixtures.h'
+# which is how a suite reaches the shared vocabulary; 'Fixtures.h'
 # includes 'doctest.h' and is what a test file includes instead of it.
 target_include_directories(
   "doctest-runner"
@@ -27,24 +25,24 @@ if(RTTI_FLAG)
 endif()
 smdl_shorten_file_macro("doctest-runner" "${PROJECT_SOURCE_DIR}/testing")
 
-# One seed per configure, shared by the suites. The suites run in a random
-# order ('-ob=rand' below, which is what makes '-rs' mean anything), so
+# One seed per configure. The suite runs in a random order ('-ob=rand'
+# below, which is what makes '-rs' mean anything), so
 # that a case which only passes after another case ran shows up here
 # instead of somewhere else; the CTest log prints the seed to reproduce it
 # with. Every test that installs process-wide state puts it back, which is
-# what makes a random order safe: see 'smdl-toy/RenderFixtures.h'.
+# what makes a random order safe.
 string(RANDOM LENGTH 8 ALPHABET "0123456789" SEED)
 
 # Add one suite: an executable of the given test sources over the
-# runner and whatever LINK names (the library, or the renderer's object
-# library), registered with CTest under its own name.
+# runner and whatever LINK names, registered with CTest under its own
+# name.
 #
 # The RTTI flag matches the library's, as 'lib' and 'programs' do; the
 # 'BuildInfo' test relies on this to check 'hasRTTI' against the test
 # binary's own compile. The floating-point flags match too, because the
-# suites test inline header code (the spectral color predicates, the
+# suite tests inline header code (the spectral color predicates, the
 # fast-math approximations) that only means what it means under the
-# flags the library and the renderer compile it with.
+# flags the library compiles it with.
 #
 # CTest runs the suite with 'SMDL_DEFAULT_SEARCH_DIRS' cleared: those
 # directories belong to the developer's shell, and what a test resolves
@@ -82,9 +80,3 @@ function(smdl_add_doctest BIN_NAME)
 endfunction()
 
 add_subdirectory(smdl)
-# The renderer suite links the renderer's object library, which exists
-# only when 'programs' built 'smdl-toy' (see 'SMDL_TOY' and the
-# dependency checks in 'programs/smdl-toy/CMakeLists.txt').
-if(TARGET smdl-toy-objects)
-  add_subdirectory(smdl-toy)
-endif()
