@@ -5,6 +5,12 @@
 
 import ::state::*;
 
+unit_test "A bare state reports the d line as the hero wavelength" {
+  #assert(#abs(state::wavelength_hero() - 587.5618) < 1e-3);
+  #assert(state::wavelength_hero() > state::wavelength_min());
+  #assert(state::wavelength_hero() < state::wavelength_max());
+}
+
 unit_test "A bare state reports one opaque white vertex color" {
   #assert(state::vertex_color_max() == 0);
   #assert(#all(state::vertex_color() == float4(1.0, 1.0, 1.0, 1.0)));

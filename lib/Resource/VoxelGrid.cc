@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -56,7 +57,7 @@ namespace {
 // brick table.
 void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
   if (!(extent.x > 0 && extent.y > 0 && extent.z > 0))
-    throw Error(concat("invalid voxel grid extent (", extent.x, ", ", extent.y,
+    throw Error(concat("Invalid voxel grid extent (", extent.x, ", ", extent.y,
                        ", ", extent.z, ")"));
   flat.extent = extent;
   flat.brickCount = int3((extent.x + B - 1) / B, //
@@ -145,7 +146,7 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   // the active tiles of the internal levels cover constant regions. The
   // spans are those of the fixed NanoVDB configuration (8, 128) plus
   // the leaf span itself.
-  auto occupied{std::vector<char>(flat.brickTable.size(), 0)};
+  std::vector<char> occupied(flat.brickTable.size(), 0);
   const auto localCoord{[&](const nanovdb::Coord &ijk) {
     return int3(ijk[0] - bboxMin[0], ijk[1] - bboxMin[1], ijk[2] - bboxMin[2]);
   }};
@@ -174,9 +175,9 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   for (int bz = 0; bz < flat.brickCount.z; bz++)
     for (int by = 0; by < flat.brickCount.y; by++)
       for (int bx = 0; bx < flat.brickCount.x; bx++) {
-        const auto tableIndex{size_t(
+        const size_t tableIndex{size_t(
             bx + flat.brickCount.x * (by + int64_t(flat.brickCount.y) * bz))};
-        const auto brickIndex{flat.brickTable[tableIndex]};
+        const int32_t brickIndex{flat.brickTable[tableIndex]};
         if (brickIndex < 0) continue;
         float *block{&flat.brickData[size_t(brickIndex) * BRICK_VOLUME]};
         const int3 lo{bx * B, by * B, bz * B};
@@ -202,6 +203,46 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   finalizeValueBounds(flat, sawAnyValue);
   return true;
 }
+
+// NanoVDB reports failure with standard exceptions of its own, which would
+// reach the user worded after their C++ type, so they become `Error`s.
+template <typename F> auto callNanoVDB(F &&f) {
+  try {
+    return std::forward<F>(f)();
+  } catch (const Error &) {
+    throw;
+  } catch (const std::exception &error) {
+    throw Error(error.what());
+  }
+}
+
+[[nodiscard]] std::string nanoGridTypeName(nanovdb::GridType gridType) {
+  // NOLINTNEXTLINE
+  char name[int(nanovdb::GridType::StrLen)]{};
+  return nanovdb::toStr(name, gridType);
+}
+
+[[nodiscard]] bool isFloatNanoGridType(nanovdb::GridType gridType) noexcept {
+  return gridType == nanovdb::GridType::Float ||
+         gridType == nanovdb::GridType::Fp4 ||
+         gridType == nanovdb::GridType::Fp8 ||
+         gridType == nanovdb::GridType::Fp16 ||
+         gridType == nanovdb::GridType::FpN;
+}
+
+// The names of the grids a NanoVDB file holds, as a sentence lists them.
+[[nodiscard]] std::string
+listNanoGridNames(const std::vector<nanovdb::io::FileGridMetaData> &grids) {
+  std::string result{};
+  for (size_t i = 0; i < grids.size(); i++) {
+    if (i > 0)
+      result += grids.size() == 2       ? " and "
+                : i + 1 == grids.size() ? ", and "
+                                        : ", ";
+    SpellQuoted(grids[i].gridName).appendTo(result);
+  }
+  return result;
+}
 } // namespace
 
 #endif // #if SMDL_HAS_NANOVDB
@@ -210,24 +251,51 @@ namespace {
 void loadNanoVDB(const std::string &fileName, const std::string &gridName,
                  FlatGrid &flat) {
 #if SMDL_HAS_NANOVDB
-  auto handle{
-      gridName.empty()
-          ? nanovdb::io::readGrid<nanovdb::HostBuffer>(fileName)
-          : nanovdb::io::readGrid<nanovdb::HostBuffer>(fileName, gridName)};
-  if (!handle)
-    throw Error(gridName.empty() ? std::string("no grid in NanoVDB file")
-                                 : concat("no grid named ", Quoted(gridName),
-                                          " in NanoVDB file"));
+  // NanoVDB never returns from a stream shorter than the grid header it
+  // probes for first, because its segment reader then loops on the failed
+  // read, so such a file is refused before NanoVDB sees it.
+  std::fstream stream{openOrThrow(fileName, std::ios::in | std::ios::binary)};
+  stream.seekg(0, std::ios::end);
+  if (stream.tellg() < std::streamoff(sizeof(nanovdb::GridData)))
+    throw Error("Too short to be a NanoVDB file");
+  stream.seekg(0);
+  // The grid list comes first, so that a grid the file does not hold, or
+  // holds in a type this cannot read, is refused by name before any of
+  // it is read.
+  const std::vector<nanovdb::io::FileGridMetaData> grids{
+      callNanoVDB([&] { return nanovdb::io::readGridMetaData(stream); })};
+  if (grids.empty()) throw Error("No grid in NanoVDB file");
+  size_t index{0};
+  if (!gridName.empty()) {
+    while (index < grids.size() && grids[index].gridName != gridName) index++;
+    if (index == grids.size())
+      throw Error(concat("No grid named ", SpellQuoted(gridName),
+                         " in NanoVDB file, which holds ",
+                         listNanoGridNames(grids)));
+  }
+  if (const nanovdb::GridType gridType{grids[index].gridType};
+      !isFloatNanoGridType(gridType))
+    throw Error(concat("NanoVDB grid ", SpellQuoted(grids[index].gridName),
+                       " has unsupported type ",
+                       SpellQuoted(nanoGridTypeName(gridType)),
+                       "; expected a float or quantized-float grid"));
+  stream.clear();
+  stream.seekg(0);
+  const nanovdb::GridHandle<nanovdb::HostBuffer> handle{callNanoVDB([&] {
+    return nanovdb::io::readGrid<nanovdb::HostBuffer>(stream, int(index),
+                                                      nanovdb::HostBuffer());
+  })};
   if (!(tryFlattenNanoGrid<float>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp4>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp8>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::Fp16>(handle, flat) ||
         tryFlattenNanoGrid<nanovdb::FpN>(handle, flat)))
-    throw Error(concat("unsupported NanoVDB grid type ", int(handle.gridType()),
+    throw Error(concat("Unsupported NanoVDB grid type ",
+                       SpellQuoted(nanoGridTypeName(handle.gridType())),
                        "; expected a float or quantized-float grid"));
 #else
   (void)fileName, (void)gridName, (void)flat;
-  throw Error("built without NanoVDB!");
+  throw Error("Built without NanoVDB!");
 #endif // #if SMDL_HAS_NANOVDB
 }
 } // namespace
@@ -243,10 +311,10 @@ namespace {
 // the world bounds.
 [[nodiscard]] nanovdb::GridHandle<nanovdb::HostBuffer>
 buildNanoGrid(const VoxelGrid &voxelGrid, const std::string &gridName) {
-  const auto extent{voxelGrid.getExtent()};
-  const auto background{voxelGrid.getBackground()};
-  auto srcGrid{nanovdb::tools::build::Grid<float>(
-      background, gridName, nanovdb::GridClass::FogVolume)};
+  const int3 extent{voxelGrid.getExtent()};
+  const float background{voxelGrid.getBackground()};
+  nanovdb::tools::build::Grid<float> srcGrid{background, gridName,
+                                             nanovdb::GridClass::FogVolume};
   auto accessor{srcGrid.getAccessor()};
   for (int z = 0; z < extent.z; z++)
     for (int y = 0; y < extent.y; y++)
@@ -270,8 +338,8 @@ buildNanoGrid(const VoxelGrid &voxelGrid, const std::string &gridName) {
   // the upper corner offset by one voxel. Writing it this way is what
   // makes `getWorldBoundMin()` and `getWorldBoundMax()` survive a round
   // trip exactly instead of drifting half a voxel per conversion.
-  const auto boundMin{voxelGrid.getWorldBoundMin()};
-  const auto boundMax{voxelGrid.getWorldBoundMax()};
+  const float3 boundMin{voxelGrid.getWorldBoundMin()};
+  const float3 boundMax{voxelGrid.getWorldBoundMax()};
   const double voxelSize[3]{double(boundMax.x - boundMin.x) / extent.x,
                             double(boundMax.y - boundMin.y) / extent.y,
                             double(boundMax.z - boundMin.z) / extent.z};
@@ -310,7 +378,7 @@ void saveNanoVDB(const std::string &fileName,
   nanovdb::io::writeGrids(fileName, handles, nanovdb::io::Codec::NONE);
 #else
   (void)fileName, (void)voxelGrids, (void)gridNames;
-  throw Error("built without NanoVDB!");
+  throw Error("Built without NanoVDB!");
 #endif // #if SMDL_HAS_NANOVDB
 }
 } // namespace
@@ -323,45 +391,46 @@ namespace {
 // world-space bounding box, followed by the values x-fastest. Only the
 // single-channel `float32` encoding is supported.
 void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
-  const auto file{readOrThrow(fileName)};
-  const auto mem{llvm::StringRef(file)};
+  const std::string file{readOrThrow(fileName)};
+  const llvm::StringRef mem{file};
   if (!(mem.size() >= 48 && mem.starts_with("VOL") && mem[3] == 3))
-    throw Error("not a version-3 Mitsuba volume");
-  const auto *header{reinterpret_cast<const unsigned char *>(mem.data())};
+    throw Error("Not a version-3 Mitsuba volume");
+  const unsigned char *header{
+      reinterpret_cast<const unsigned char *>(mem.data())};
   const auto readInt32{[&](size_t offset) {
     return int32_t(llvm::support::endian::read32le(header + offset));
   }};
   const auto readFloat{[&](size_t offset) {
-    const auto bits{llvm::support::endian::read32le(header + offset)};
+    const uint32_t bits{llvm::support::endian::read32le(header + offset)};
     float value{};
     std::memcpy(&value, &bits, sizeof(value));
     return value;
   }};
-  const auto encoding{readInt32(4)};
-  const auto extent{int3(readInt32(8), readInt32(12), readInt32(16))};
-  const auto numChannels{readInt32(20)};
+  const int32_t encoding{readInt32(4)};
+  const int3 extent{readInt32(8), readInt32(12), readInt32(16)};
+  const int32_t numChannels{readInt32(20)};
   if (encoding != 1)
-    throw Error(concat("unsupported Mitsuba volume encoding ", encoding,
+    throw Error(concat("Unsupported Mitsuba volume encoding ", encoding,
                        "; expected 1 (float32)"));
   if (numChannels != 1)
-    throw Error(concat("unsupported Mitsuba volume channel count ", numChannels,
+    throw Error(concat("Unsupported Mitsuba volume channel count ", numChannels,
                        "; expected 1"));
   initFlatGrid(flat, extent, /*background=*/0.0f);
   flat.worldBoundMin = float3(readFloat(24), readFloat(28), readFloat(32));
   flat.worldBoundMax = float3(readFloat(36), readFloat(40), readFloat(44));
-  const auto numValues{int64_t(extent.x) * extent.y * extent.z};
+  const int64_t numValues{int64_t(extent.x) * extent.y * extent.z};
   if (mem.size() < 48 + size_t(numValues) * 4)
     throw Error("Mitsuba volume file is truncated");
-  const auto *values{header + 48};
+  const unsigned char *values{header + 48};
   const auto fetchDense{[&](int x, int y, int z) {
-    const auto bits{llvm::support::endian::read32le(
+    const uint32_t bits{llvm::support::endian::read32le(
         values + 4 * (x + int64_t(extent.x) * (y + int64_t(extent.y) * z)))};
     float value{};
     std::memcpy(&value, &bits, sizeof(value));
     return value;
   }};
   // Every brick that is not uniformly background is occupied.
-  auto occupied{std::vector<char>(flat.brickTable.size(), 0)};
+  std::vector<char> occupied(flat.brickTable.size(), 0);
   bool sawAnyValue{false};
   for (int bz = 0; bz < flat.brickCount.z; bz++)
     for (int by = 0; by < flat.brickCount.y; by++)
@@ -392,9 +461,9 @@ void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
   for (int bz = 0; bz < flat.brickCount.z; bz++)
     for (int by = 0; by < flat.brickCount.y; by++)
       for (int bx = 0; bx < flat.brickCount.x; bx++) {
-        const auto tableIndex{size_t(
+        const size_t tableIndex{size_t(
             bx + flat.brickCount.x * (by + int64_t(flat.brickCount.y) * bz))};
-        const auto brickIndex{flat.brickTable[tableIndex]};
+        const int32_t brickIndex{flat.brickTable[tableIndex]};
         if (brickIndex < 0) continue;
         float *block{&flat.brickData[size_t(brickIndex) * BRICK_VOLUME]};
         const int3 lo{bx * B, by * B, bz * B};
@@ -419,10 +488,10 @@ namespace {
 // The format is dense and has no background, so an empty brick is
 // written out in full as the background value.
 void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
-  auto stream{openOrThrow(fileName, std::ios::out | std::ios::binary)};
-  const auto extent{voxelGrid.getExtent()};
-  const auto boundMin{voxelGrid.getWorldBoundMin()};
-  const auto boundMax{voxelGrid.getWorldBoundMax()};
+  std::fstream stream{openOrThrow(fileName, std::ios::out | std::ios::binary)};
+  const int3 extent{voxelGrid.getExtent()};
+  const float3 boundMin{voxelGrid.getWorldBoundMin()};
+  const float3 boundMax{voxelGrid.getWorldBoundMax()};
   unsigned char header[48]{'V', 'O', 'L', 3};
   const auto writeInt32{[&](size_t offset, int32_t value) {
     llvm::support::endian::write32le(header + offset, uint32_t(value));
@@ -441,7 +510,7 @@ void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
   stream.write(reinterpret_cast<const char *>(header), sizeof(header));
   // One row at a time, so that the buffer is the row rather than the
   // whole grid: a dense 512^3 field is half a gigabyte.
-  auto row{std::vector<uint32_t>(size_t(extent.x))};
+  std::vector<uint32_t> row(size_t(extent.x));
   for (int z = 0; z < extent.z; z++)
     for (int y = 0; y < extent.y; y++) {
       for (int x = 0; x < extent.x; x++) {
@@ -455,7 +524,7 @@ void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
                    std::streamsize(row.size() * sizeof(uint32_t)));
     }
   if (!stream)
-    throw Error(concat("cannot write ", QuotedPath(fileName), ": ",
+    throw Error(concat("Cannot write ", SpellFilePath(fileName), ": ",
                        std::strerror(errno)));
 }
 } // namespace
@@ -480,19 +549,19 @@ std::optional<Error>
 VoxelGrid::loadFromFile(const std::string &fileName,
                         const std::string &gridName) noexcept {
   clear();
-  auto error{catchAndReturnError([&] {
-    auto flat{FlatGrid{}};
-    const auto fileNameRef{llvm::StringRef(fileName)};
+  std::optional<Error> error{catchAndReturnError([&] {
+    FlatGrid flat{};
+    const llvm::StringRef fileNameRef{fileName};
     if (fileNameRef.ends_with_insensitive(".nvdb")) {
       loadNanoVDB(fileName, gridName, flat);
     } else if (fileNameRef.ends_with_insensitive(".vol")) {
       if (!gridName.empty())
         throw Error(concat("Mitsuba volumes have no named grids, cannot "
                            "select ",
-                           Quoted(gridName)));
+                           SpellQuoted(gridName)));
       loadMitsubaVol(fileName, flat);
     } else {
-      throw Error("unrecognized volume file extension");
+      throw Error("Unrecognized volume file extension");
     }
     mExtent = flat.extent;
     mBrickCount = flat.brickCount;
@@ -533,7 +602,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
   if (error) {
     clear();
     error->message =
-        concat("cannot load ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot load ", SpellFilePath(fileName), ": ", error->message);
   }
   return error;
 }
@@ -541,9 +610,9 @@ VoxelGrid::loadFromFile(const std::string &fileName,
 std::optional<Error>
 VoxelGrid::saveToFile(const std::string &fileName,
                       const std::string &gridName) const noexcept {
-  auto error{catchAndReturnError([&] {
-    if (!isValid()) throw Error("the grid is empty");
-    const auto fileNameRef{llvm::StringRef(fileName)};
+  std::optional<Error> error{catchAndReturnError([&] {
+    if (!isValid()) throw Error("The grid is empty");
+    const llvm::StringRef fileNameRef{fileName};
     if (fileNameRef.ends_with_insensitive(".nvdb")) {
       saveNanoVDB(fileName, {this},
                   {gridName.empty() ? std::string("density") : gridName});
@@ -551,15 +620,15 @@ VoxelGrid::saveToFile(const std::string &fileName,
       if (!gridName.empty())
         throw Error(concat("Mitsuba volumes have no named grids, cannot name "
                            "one ",
-                           Quoted(gridName)));
+                           SpellQuoted(gridName)));
       saveMitsubaVol(fileName, *this);
     } else {
-      throw Error("unrecognized volume file extension");
+      throw Error("Unrecognized volume file extension");
     }
   })};
   if (error)
     error->message =
-        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot save ", SpellFilePath(fileName), ": ", error->message);
   return error;
 }
 
@@ -567,27 +636,27 @@ std::optional<Error>
 VoxelGrid::saveToFile(const std::string &fileName,
                       const std::vector<const VoxelGrid *> &voxelGrids,
                       const std::vector<std::string> &gridNames) noexcept {
-  auto error{catchAndReturnError([&] {
+  std::optional<Error> error{catchAndReturnError([&] {
     if (!llvm::StringRef(fileName).ends_with_insensitive(".nvdb"))
-      throw Error("several named grids need a '.nvdb' file");
-    if (voxelGrids.empty()) throw Error("no grids to save");
+      throw Error("Several named grids need a '.nvdb' file");
+    if (voxelGrids.empty()) throw Error("No grids to save");
     if (voxelGrids.size() != gridNames.size())
-      throw Error(concat("have ", voxelGrids.size(), " grid(s) but ",
-                         gridNames.size(), " name(s)"));
+      throw Error(concat("Have ", SpellCounted(voxelGrids.size(), "grid"),
+                         " but ", SpellCounted(gridNames.size(), "name")));
     for (size_t i = 0; i < voxelGrids.size(); i++) {
       if (!voxelGrids[i] || !voxelGrids[i]->isValid())
-        throw Error(concat("grid ", i, " is empty"));
-      if (gridNames[i].empty()) throw Error(concat("grid ", i, " has no name"));
+        throw Error(concat("Grid ", i, " is empty"));
+      if (gridNames[i].empty()) throw Error(concat("Grid ", i, " has no name"));
       for (size_t j = 0; j < i; j++)
         if (gridNames[j] == gridNames[i])
           throw Error(
-              concat("two grids are both named ", Quoted(gridNames[i])));
+              concat("Two grids are both named ", SpellQuoted(gridNames[i])));
     }
     saveNanoVDB(fileName, voxelGrids, gridNames);
   })};
   if (error)
     error->message =
-        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
+        concat("Cannot save ", SpellFilePath(fileName), ": ", error->message);
   return error;
 }
 
@@ -596,7 +665,7 @@ float VoxelGrid::fetch(int x, int y, int z) const noexcept {
       y < 0 || y >= mExtent.y || //
       z < 0 || z >= mExtent.z)
     return mBackground;
-  const auto brickIndex{mBrickTable[size_t(
+  const int32_t brickIndex{mBrickTable[size_t(
       (x / B) + mBrickCount.x * ((y / B) + int64_t(mBrickCount.y) * (z / B)))]};
   if (brickIndex < 0) return mBackground;
   return mBrickData[size_t(brickIndex) * BRICK_VOLUME + (x % B) +

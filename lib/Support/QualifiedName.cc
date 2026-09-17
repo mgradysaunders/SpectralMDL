@@ -6,7 +6,7 @@ namespace smdl {
 
 std::vector<std::string_view>
 splitQualifiedName(std::string_view qualifiedName) {
-  auto components{std::vector<std::string_view>()};
+  std::vector<std::string_view> components{};
   if (qualifiedName.substr(0, 2) == "::") {
     qualifiedName.remove_prefix(2);
   }
@@ -14,7 +14,7 @@ splitQualifiedName(std::string_view qualifiedName) {
     return components;
   }
   while (true) {
-    auto pos{qualifiedName.find("::")};
+    size_t pos{qualifiedName.find("::")};
     if (pos == qualifiedName.npos) {
       components.push_back(qualifiedName);
       return components;
@@ -25,7 +25,7 @@ splitQualifiedName(std::string_view qualifiedName) {
 }
 
 std::string joinQualifiedName(Span<const std::string_view> components) {
-  auto name{std::string()};
+  std::string name{};
   for (const auto &component : components) {
     name += "::";
     name += component;
@@ -35,8 +35,8 @@ std::string joinQualifiedName(Span<const std::string_view> components) {
 
 bool isQualifiedNameSuffix(std::string_view name,
                            std::string_view qualifiedName) {
-  auto nameComponents{splitQualifiedName(name)};
-  auto components{splitQualifiedName(qualifiedName)};
+  std::vector<std::string_view> nameComponents{splitQualifiedName(name)};
+  std::vector<std::string_view> components{splitQualifiedName(qualifiedName)};
   if (nameComponents.empty() || nameComponents.size() > components.size()) {
     return false;
   }

@@ -341,7 +341,7 @@ unit_test "A sample reports the one lobe it came from" {
   const auto scattering = df::weighted_layer(
     weight: 0.4,
     layer: df::microfacet_ggx_smith_bsdf(
-      roughness_u: 0.6, roughness_v: 0.6, tint: 0.9, multiscatter_tint: color(1.0),
+      roughness_u: 0.3, roughness_v: 0.3, tint: 0.9, multiscatter_tint: color(1.0),
       mode: df::scatter_reflect_transmit),
     base: df::weighted_layer(
       weight: 0.5,
@@ -385,20 +385,23 @@ unit_test "A sample reports the one lobe it came from" {
 unit_test "Multiscatter compensation is a lobe of its own" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
   const auto wi = math::normalize(float3(-0.2, 0.4, 0.88));
+  // Rough enough for the compensation to be worth something, and still
+  // under the glossy cutoff so the two kinds are distinct; see the test
+  // of the cutoff below.
   const auto rough = df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.8, roughness_v: 0.8, tint: 0.9, multiscatter_tint: color(1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 0.9, multiscatter_tint: color(1.0));
   // Declared only when the compensation is actually there, and only on the
   // domain it scatters to.
   #assert(scatter::surfaceLobes(rough) == (df::DF_GLOSSY_BRDF | df::DF_SMOOTH_BRDF));
   #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
-            roughness_u: 0.8, roughness_v: 0.8, tint: 0.9)) == df::DF_GLOSSY_BRDF);
+            roughness_u: 0.3, roughness_v: 0.3, tint: 0.9)) == df::DF_GLOSSY_BRDF);
   #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
-            roughness_u: 0.8, roughness_v: 0.8, tint: 0.9,
+            roughness_u: 0.3, roughness_v: 0.3, tint: 0.9,
             multiscatter_tint: 0.0)) == df::DF_GLOSSY_BRDF);
   // A lobe that only transmits never reaches the compensation, which
   // reflects, so it declares nothing smooth either.
   #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
-            roughness_u: 0.8, roughness_v: 0.8, tint: 0.9, multiscatter_tint: color(1.0),
+            roughness_u: 0.3, roughness_v: 0.3, tint: 0.9, multiscatter_tint: color(1.0),
             mode: df::scatter_transmit)) == df::DF_GLOSSY_BTDF);
   // The two kinds partition the value.
   const auto all = scatter::evaluate(rough, wo, wi);
@@ -424,7 +427,7 @@ unit_test "Multiscatter compensation is a lobe of its own" {
 unit_test "The compensation lobe's selection chance is the unmasked one" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
   const auto rough = df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.8, roughness_v: 0.8, tint: 0.9, multiscatter_tint: color(1.0));
+    roughness_u: 0.3, roughness_v: 0.3, tint: 0.9, multiscatter_tint: color(1.0));
   // `xi.w` below the chance takes the compensation lobe and above it takes
   // the single scattering. Nothing else chooses here, so the two reported
   // chances are the selection and its complement.
@@ -452,6 +455,79 @@ unit_test "The compensation lobe's selection chance is the unmasked one" {
   }
 }
 
+// Width is part of the kind. A microfacet lobe wider than the glossy cutoff
+// (squared roughness 0.25) labels itself SMOOTH: there is no half vector
+// worth constraining, so a manifold estimator leaves the lobe to ordinary
+// sampling, and a layered material carries a narrow lobe as GLOSSY over a
+// wide one as SMOOTH with nothing asking either its width.
+unit_test "A microfacet lobe wider than the glossy cutoff is smooth" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  const auto wi = math::normalize(float3(-0.2, 0.4, 0.88));
+  // Squared roughness 0.25 is the cutoff itself and 0.36 is over it, on
+  // either domain and for every distribution.
+  #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
+            roughness_u: 0.5, tint: 0.9)) == df::DF_GLOSSY_BRDF);
+  #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
+            roughness_u: 0.6, tint: 0.9)) == df::DF_SMOOTH_BRDF);
+  #assert(scatter::surfaceLobes(df::microfacet_beckmann_smith_bsdf(
+            roughness_u: 0.6, tint: 0.9, mode: df::scatter_transmit)) == df::DF_SMOOTH_BTDF);
+  #assert(scatter::surfaceLobes(df::simple_glossy_bsdf(
+            roughness_u: 0.6, tint: 0.9, mode: df::scatter_reflect_transmit)) == df::DF_SMOOTH);
+  #assert(scatter::surfaceLobes(df::ward_geisler_moroder_bsdf(
+            roughness_u: 0.5, tint: 0.9)) == df::DF_GLOSSY_BRDF);
+  #assert(scatter::surfaceLobes(df::ward_geisler_moroder_bsdf(
+            roughness_u: 0.6, tint: 0.9)) == df::DF_SMOOTH_BRDF);
+  // By the narrower axis: a brushed lobe with one narrow axis has a half
+  // vector worth constraining along it.
+  #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
+            roughness_u: 0.4, roughness_v: 0.9, tint: 0.9)) == df::DF_GLOSSY_BRDF);
+  #assert(scatter::surfaceLobes(df::microfacet_ggx_smith_bsdf(
+            roughness_u: 0.9, roughness_v: 0.4, tint: 0.9)) == df::DF_GLOSSY_BRDF);
+  // A wide lobe's compensation is SMOOTH like the lobe itself, so the two
+  // live and die together under a mask: the smooth part is all of it, on
+  // the evaluation path and on the sampling path.
+  const auto wide = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.6, roughness_v: 0.6, tint: 0.9, multiscatter_tint: color(1.0));
+  #assert(scatter::surfaceLobes(wide) == df::DF_SMOOTH_BRDF);
+  const auto all = scatter::evaluate(wide, wo, wi);
+  const auto smooth = scatter::evaluate(wide, wo, wi, lobeMask: df::DF_SMOOTH);
+  const auto glossy = scatter::evaluate(wide, wo, wi, lobeMask: df::DF_GLOSSY);
+  #assert(all.success & #any(all.f > 0.0)); // Else the checks pass vacuously
+  #assert(#all(smooth.f ~== |1e-5| all.f));
+  #assert(smooth.pdf.x ~== |1e-5| all.pdf.x);
+  #assert(!glossy.success | #all(glossy.f == 0.0));
+  for (int i = 0; i < 4; i++) {
+    const auto xi = float4(0.3, 0.7, 0.5, (i + 0.5) / 4);
+    const auto r = scatter::sample(wide, xi, wo, lobeMask: df::DF_SMOOTH);
+    #assert(r.success);
+    #assert(r.sampledLobe == df::DF_SMOOTH_BRDF);
+    #assert(!scatter::sample(wide, xi, wo, lobeMask: df::DF_GLOSSY).success);
+  }
+  // No distribution to report: the normal query passes the lobe by.
+  #assert(!scatter::normalSample(wide, float4(0.3, 0.7, 0.5, 0.5)).success);
+  #assert(scatter::normalEvaluate(wide, math::normalize(float3(0.1, 0.1, 1.0))) == 0.0);
+  // A narrow lobe over a wide one: the word carries both kinds, the masked
+  // values sum, the glossy part is the narrow lobe's alone, and the normal
+  // query draws the narrow lobe every time whatever the layer's coin says.
+  const auto narrow = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.2, roughness_v: 0.2, tint: 0.9);
+  const auto layered = df::weighted_layer(weight: 0.5, layer: narrow, base: wide);
+  #assert(scatter::surfaceLobes(layered) == (df::DF_GLOSSY_BRDF | df::DF_SMOOTH_BRDF));
+  const auto both = scatter::evaluate(layered, wo, wi);
+  const auto top = scatter::evaluate(layered, wo, wi, lobeMask: df::DF_GLOSSY);
+  const auto bottom = scatter::evaluate(layered, wo, wi, lobeMask: df::DF_SMOOTH);
+  #assert(#any(top.f > 0.0) & #any(bottom.f > 0.0)); // Else the split is not exercised
+  #assert(#all(both.f ~== |1e-5| top.f + bottom.f));
+  #assert(#all(top.f ~== |1e-5| 0.5 * scatter::evaluate(narrow, wo, wi).f));
+  for (int i = 0; i < 8; i++) {
+    const auto xi = float4(0.3, 0.7, (i + 0.5) / 8, (i + 0.5) / 8);
+    const auto r = scatter::normalSample(layered, xi);
+    #assert(r.success);
+    #assert(r.alpha.x ~== |1e-6| 0.04);
+    #assert(scatter::normalEvaluate(layered, r.wm) ~== |1e-5| scatter::normalEvaluate(narrow, r.wm));
+  }
+}
+
 // A layer whose own lobe the mask removes still weights its base by what the
 // layer transmits: the pore visibility is this layer's weight on the base,
 // not a lobe of its own, so masking cannot drop it.
@@ -462,7 +538,7 @@ unit_test "The compensation lobe's selection chance is the unmasked one" {
 unit_test "A micrograin layer's masked values sum to all of it" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
   const auto wi = math::normalize(float3(-0.25, 0.35, 0.9));
-  const auto base = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 0.8);
+  const auto base = df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.8);
   const auto scattering = df::micrograin_layer(
     filling_factor: 0.4, beta_u: 0.3, beta_v: 0.3,
     grain_diffuse_albedo: color(0.5), base: base);

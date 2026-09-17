@@ -11,7 +11,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
 # than of configuring at all.
 if(CMAKE_VERSION VERSION_LESS "3.28")
   set(FetchingOptions)
-  foreach(Opt SMDL_ENABLE_NANOVDB SMDL_ENABLE_PTEX SMDL_TOY)
+  foreach(Opt SMDL_ENABLE_NANOVDB SMDL_ENABLE_PTEX)
     if(${Opt})
       list(APPEND FetchingOptions "-D${Opt}=OFF")
     endif()
@@ -270,54 +270,6 @@ if(SMDL_ENABLE_PTEX)
       PTEX_BUILD_SHARED_LIBS OFF
       PTEX_BUILD_DOCS OFF
     )
-  # Assimp
-  #
-  # Narrowed to the widely adopted formats. Assimp reads roughly fifty, most
-  # of them for games and modelers that no asset pipeline is going to hand us,
-  # and every one costs build time and binary size. Exporters are on because
-  # the asset processing tooling reads and writes through Assimp both ways,
-  # so each format is enabled in both directions where a writer exists (there
-  # is no OFF exporter). 'assbin' is Assimp's own container and the only
-  # lossless one of the set, which is what makes it a round-trip test
-  # fixture rather than a delivery format.
-  #
-  # At some point, it might be nice for smdl-toy to be able to re-export a
-  # mesh it imported after applying subdivision and/or displacement, either
-  # for debugging or to function as part of a procedural geometry toolchain on
-  # the command line using scripted MDL displacement, in which case we would
-  # want to enable the Assimp export capabilities. We set ASSIMP_NO_EXPORT ON 
-  # to save on build time and binary size in the meantime. 
-  smdl_fetch_dependency(
-    "Assimp"
-    REPOSITORY "https://github.com/assimp/assimp"
-    TAG "v6.0.5"
-    OPTIONS
-      ASSIMP_WARNINGS_AS_ERRORS OFF
-      ASSIMP_BUILD_SAMPLES OFF
-      ASSIMP_BUILD_TESTS OFF
-      ASSIMP_BUILD_ZLIB ON
-      ASSIMP_INSTALL OFF
-      ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF
-      ASSIMP_BUILD_ASSBIN_IMPORTER ON
-      ASSIMP_BUILD_COLLADA_IMPORTER ON
-      ASSIMP_BUILD_FBX_IMPORTER ON
-      ASSIMP_BUILD_GLTF_IMPORTER ON
-      ASSIMP_BUILD_OBJ_IMPORTER ON
-      ASSIMP_BUILD_OFF_IMPORTER ON
-      ASSIMP_BUILD_OPENGEX_IMPORTER ON
-      ASSIMP_BUILD_PLY_IMPORTER ON
-      ASSIMP_BUILD_STL_IMPORTER ON
-      ASSIMP_NO_EXPORT ON
-      #ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF
-      #ASSIMP_BUILD_ASSBIN_EXPORTER ON
-      #ASSIMP_BUILD_COLLADA_EXPORTER ON
-      #ASSIMP_BUILD_FBX_EXPORTER ON
-      #ASSIMP_BUILD_GLTF_EXPORTER ON
-      #ASSIMP_BUILD_OBJ_EXPORTER ON
-      #ASSIMP_BUILD_OPENGEX_EXPORTER ON
-      #ASSIMP_BUILD_PLY_EXPORTER ON
-      #ASSIMP_BUILD_STL_EXPORTER ON
-    )
 endif()
 
 if(SMDL_ENABLE_NANOVDB)
@@ -331,68 +283,5 @@ if(SMDL_ENABLE_NANOVDB)
     REPOSITORY "https://github.com/AcademySoftwareFoundation/openvdb"
     TAG "v13.0.0"
     SOURCE_SUBDIR "nanovdb"
-    )
-endif()
-
-if(SMDL_TOY)
-  # Embree
-  #
-  # Only the geometry types smdl-toy actually creates are compiled in:
-  # triangles, curves, user geometry for the analytic primitives, and the two
-  # instance kinds. Turning off everything irrelevant alongside the default
-  # SMDL_TOY_EMBREE_X86_ISA=AVX2 reduces the smdl-toy binary size by ~20MB.
-  set(EmbreeISAOption)
-  if(SMDL_ARCH STREQUAL "X86")
-    list(APPEND EmbreeISAOption EMBREE_MAX_ISA "${SMDL_TOY_EMBREE_X86_ISA}")
-  endif()
-  smdl_fetch_dependency(
-    "Embree"
-    REPOSITORY "https://github.com/RenderKit/embree"
-    TAG "v4.4.1"
-    OPTIONS
-      EMBREE_STATIC_LIB ON
-      EMBREE_TUTORIALS OFF
-      EMBREE_ISPC_SUPPORT OFF
-      EMBREE_TASKING_SYSTEM OFF
-      EMBREE_TESTING_INTENSITY 0  # The documented "no testing" setting
-      EMBREE_GEOMETRY_QUAD OFF
-      EMBREE_GEOMETRY_SUBDIVISION OFF
-      EMBREE_GEOMETRY_GRID OFF
-      EMBREE_GEOMETRY_POINT OFF
-      EMBREE_RAY_PACKETS OFF
-      EMBREE_FILTER_FUNCTION OFF
-      EMBREE_RAY_MASK OFF
-      ${EmbreeISAOption}
-    )
-
-  # OpenSubdiv
-  #
-  # CPU only: smdl-toy uses Far/Sdc/Vtr for load-time uniform refinement,
-  # which the 'osd_static_cpu' library carries. Everything GPU, every
-  # tasking backend, and all of the examples and regression suites are
-  # switched off. The library does not export its include directory, so
-  # 'smdl_add_program' passes '${opensubdiv_SOURCE_DIR}' by hand.
-  smdl_fetch_dependency(
-    "OpenSubdiv"
-    REPOSITORY "https://github.com/PixarAnimationStudios/OpenSubdiv"
-    TAG "v3_7_0"
-    OPTIONS
-      NO_EXAMPLES ON
-      NO_TUTORIALS ON
-      NO_REGRESSION ON
-      NO_TESTS ON
-      NO_GLTESTS ON
-      NO_DOC ON
-      NO_OMP ON
-      NO_TBB ON
-      NO_CUDA ON
-      NO_OPENCL ON
-      NO_CLEW ON
-      NO_DX ON
-      NO_METAL ON
-      NO_OPENGL ON
-      NO_GLEW ON
-      NO_GLFW ON
-      NO_PTEX ON
     )
 endif()

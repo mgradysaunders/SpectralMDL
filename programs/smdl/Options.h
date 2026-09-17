@@ -19,7 +19,7 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
 
-#include "../CommandLine.h"
+#include "CommandLine.h"
 
 /// Which subcommand ran. There is always exactly one; `cl` rejects a
 /// command line naming none.
@@ -94,6 +94,11 @@ struct OutputOptions final {
 struct StateOptions final {
   float time{};
 
+  /// The wavelength in nanometers a dispersive material evaluates its
+  /// index of refraction at; see `state::wavelength_hero()`. A renderer
+  /// draws this per path, so a unit test states it instead.
+  float wavelengthHero{};
+
   int objectID{};
 
   smdl::float3 texCoord{};
@@ -106,7 +111,7 @@ struct StateOptions final {
 
 //--{ Utility Options
 /// How the run is presented and scheduled. Shared, name for name, with
-/// the renderer's group of the same name.
+/// the renderer's `UtilityFlags`.
 struct UtilityOptions final {
   unsigned threads{};
 
@@ -114,13 +119,12 @@ struct UtilityOptions final {
   /// logger before anything else can say anything.
   smdl::LogLevel logLevel{smdl::LOG_LEVEL_INFO};
 
-  /// Whether the unit test report and the documentation text colorize,
-  /// which they decide for themselves when this is `ANSI_COLOR_MODE_AUTO`.
-  smdl::ANSIColorMode ansiColorMode{smdl::ANSI_COLOR_MODE_AUTO};
-
-  /// Whether log messages are labeled with Unicode symbols, which the
-  /// log sink decides for itself when this is `UNICODE_MODE_AUTO`.
-  smdl::UnicodeMode unicodeMode{smdl::UNICODE_MODE_AUTO};
+  /// Whether the unit test report and the documentation text are
+  /// colored, which each resolves for its own stream with
+  /// `smdl::Compiler::shouldUseColors()`. Log messages are never
+  /// colored: the default sinks print plain ASCII.
+  smdl::Compiler::ANSIColorMode ansiColorMode{
+      smdl::Compiler::ANSIColorMode::AUTO};
 
   /// The time-trace file, and whether `-profile` was given at all,
   /// since it takes an optional value.

@@ -226,6 +226,13 @@ public:
   void sunRadiance(int numWavelens, const float *wavelens,
                    float *radiance) const;
 
+  /// The sun-disk spectral radiance over a resolved grid, writing
+  /// `basis.numBands()` values: what `radiance()` adds to the sky inside
+  /// the disk. For a caller that judges whether a direction is inside the
+  /// disk for itself, in more precision than the cosine `radiance()`
+  /// compares in single precision can hold.
+  void sunRadiance(const SkyBasis &basis, float *radiance) const;
+
   /// The total spectral radiance toward `direction`: the sky plus the
   /// sun disk when `direction` is inside it. The direction must be
   /// normalized.

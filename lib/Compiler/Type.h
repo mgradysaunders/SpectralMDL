@@ -288,8 +288,8 @@ public:
 
   /// Get common scalar between this and the given `other` scalar.
   [[nodiscard]] Scalar getCommon(const Scalar &other) const {
-    auto result{Scalar{std::max(intent, other.intent),
-                       std::max(numBits, other.numBits)}};
+    Scalar result{std::max(intent, other.intent),
+                  std::max(numBits, other.numBits)};
     if (result.intent == Intent::FP) {
       if (result.numBits > 80)
         result.numBits = 128; // FP 128
@@ -553,7 +553,7 @@ private:
     if (!extent.isScalar()) {
       // Only the first 4 components are nameable: larger vectors would
       // read past the "xyzw"/"rgba" literals.
-      const auto count{std::min<uint16_t>(
+      const uint16_t count{std::min<uint16_t>(
           extent.isVector() ? extent.numRows : extent.numCols, 4)};
       for (uint16_t i{}; i < count; i++) {
         if (c == "xyzw"[i] || (extent.isVector() && c == "rgba"[i])) {
@@ -570,7 +570,7 @@ private:
     if (extent.isVector()) {
       llvm::SmallVector<int> swizzle{};
       for (char c : name) {
-        auto i{toIndex(c)};
+        std::optional<unsigned> i{toIndex(c)};
         if (!i) return std::nullopt;
         swizzle.push_back(static_cast<int>(*i));
       }

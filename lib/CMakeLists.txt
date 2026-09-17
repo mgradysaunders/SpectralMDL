@@ -34,11 +34,12 @@ add_library(
     "Manifold.cc"
     "Module.cc"
     "Parser.cc"
+    "RenderUtil/Colorimetry.cc"
     "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
     "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
-    "RenderUtil/SpectralFilm.cc"
+    "RenderUtil/OpticalGlass.cc"
     "RenderUtil/SunSky.cc"
     "Resource/BSDFMeasurement.cc"
     "Resource/Image.cc"
@@ -48,10 +49,10 @@ add_library(
     "Resource/VoxelGrid.cc"
     "SceneData.cc"
     "Support/BumpPtrAllocator.cc"
+    "Support/Compress.cc"
     "Support/Error.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
-    "Support/FlatYAML.cc"
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
     "Support/Macros.cc"
@@ -90,9 +91,9 @@ if(UNIX)
       "-Wall"
       "-Wextra"
       "-Wno-unused-parameter"
-      "-fmacro-prefix-map=${PROJECT_SOURCE_DIR}=."
     )
 endif()
+smdl_shorten_file_macro(SpectralMDL "${PROJECT_SOURCE_DIR}")
 target_compile_options(
   SpectralMDL
   PRIVATE

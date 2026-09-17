@@ -87,14 +87,6 @@ enum DumpFormat : int {
   DUMP_FORMAT_OBJ  ///< Native object code.
 };
 
-/// Whether `Compiler::runUnitTests()` colors its report with ANSI escape
-/// codes.
-enum ANSIColorMode : int {
-  ANSI_COLOR_MODE_AUTO,   ///< Colorize only if standard error is a terminal.
-  ANSI_COLOR_MODE_ALWAYS, ///< Colorize even if standard error is redirected.
-  ANSI_COLOR_MODE_NEVER   ///< Never colorize.
-};
-
 /// The compiler.
 ///
 /// \note
@@ -233,7 +225,7 @@ public:
   /// materials that instantiate it compile unaffected, and unit tests
   /// and execs are unaffected entirely. The skipped material itself is
   /// absent from `getMaterials()` and unreachable by `findMaterial()`,
-  /// which logs the exclusion when asked for it (see
+  /// and `explainMaterialLookup()` gives the exclusion as the reason (see
   /// `getSkippedMaterialNames()`). Desired names that match no material
   /// at all are warned about during `compile()`. Note that a skipped
   /// material's body is never emitted, so errors inside it may go
@@ -264,29 +256,30 @@ private:
   /// `compile()` has not run yet or `jitCompile()` already consumed it).
   [[nodiscard]] llvm::Module &getLLVMModule();
 
-  /// Warn about the resource `fileName`, at most once per distinct file
-  /// name per `compile()`.
+  /// Warn about a resource at most once per distinct `key` per `compile()`.
+  /// The key is the file name, or the file name and what was looked up
+  /// inside the file.
   ///
   /// This is for diagnostics raised while emitting a `#load_*` intrinsic,
   /// which is not once per mention in the source: a material body is
-  /// emitted three times (once each for the `evaluate`, `opacityEvaluate`
-  /// and `thinWalledProbe` functions that `Type.cc` generates), so a
+  /// emitted once for each function `Type.cc` generates from it (the
+  /// `evaluate` and `opacityEvaluate` entry points and the probes), so a
   /// `texture_2d("missing.png")` in a material would otherwise report the
-  /// same warning three times over.
+  /// same warning several times over.
   ///
-  /// The `load*()` functions below need no such thing: they memoize by file
-  /// hash, so a resource that is found but fails to load already reports
-  /// exactly once. A file that is never found has no hash to key on, which
-  /// is how it slips past that memo.
+  /// The `load*()` functions below need no such thing for the file itself:
+  /// they memoize by file hash, so a resource that is found but fails to
+  /// load already reports exactly once. A file that is never found has no
+  /// hash to key on, which is how it slips past that memo.
   ///
-  /// Deduplication is by file name alone, deliberately. The source location
-  /// cannot help: all three reports carry the same one, the builtin
-  /// `texture_2d` constructor in `api.smdl`, not the call site in the
-  /// user's module.
+  /// The key leaves out the source location on purpose, so that a missing
+  /// file is one warning however many materials name it.
   ///
-  void logResourceWarningOnce(const SourceLocation &srcLoc,
-                              const std::string &fileName,
-                              std::string_view message);
+  /// Returns whether this call logged the warning, so that anything said
+  /// alongside it is said once too.
+  ///
+  bool logResourceWarningOnce(const SourceLocation &srcLoc,
+                              const std::string &key, std::string_view message);
 
   /// Load image.
   ///
@@ -379,7 +372,8 @@ private:
     func.func = reinterpret_cast<typename JIT::Function<T>::FunctionPointer>(
         jitLookup(func.name));
     if (!func.func)
-      throw Error(concat("cannot resolve JIT function ", Quoted(func.name)));
+      throw Error(
+          concat("cannot resolve JIT function ", SpellQuoted(func.name)));
   }
 
 public:
@@ -398,19 +392,32 @@ public:
   /// `Module::isShadowed()`.
   ///
   /// \return
-  /// The unique match, or `nullptr` if nothing matches. Also
-  /// returns `nullptr` if more than one material matches, in which
-  /// case an error is logged that lists every candidate. Use a longer
-  /// suffix to disambiguate, or use `findMaterials()` to get all
-  /// candidates.
+  /// The unique match, or `nullptr` if nothing matches or more than one
+  /// material matches. Nothing is logged either way; a host that wants
+  /// to say why asks `explainMaterialLookup()`. Use a longer suffix to
+  /// disambiguate, or use `findMaterials()` to get all candidates.
   ///
   [[nodiscard]] const JIT::MaterialDef *
   findMaterial(std::string_view materialName) const noexcept;
 
+  /// Explain why `findMaterial()` returns `nullptr` for `materialName`,
+  /// for a host to put in its own error: no material matches, with the
+  /// nearest name if one is close enough to be a typo; the name matches
+  /// a material that `setDesiredMaterials()` kept out of the compile; or
+  /// more than one material matches, each listed with where it is
+  /// declared.
+  ///
+  /// \return
+  /// The explanation, or an empty string if `findMaterial()` finds a
+  /// unique match.
+  ///
+  [[nodiscard]] std::string
+  explainMaterialLookup(std::string_view materialName) const;
+
   /// Find all JIT-compiled materials matching `materialName`, by the
   /// same matching rules as `findMaterial()`. This is useful for
   /// tooling, and for disambiguating the candidates when
-  /// `findMaterial()` reports an ambiguity.
+  /// `findMaterial()` finds more than one.
   [[nodiscard]] std::vector<const JIT::MaterialDef *>
   findMaterials(std::string_view materialName) const;
 
@@ -469,10 +476,33 @@ public:
   void convertRGBToColor(const State &state, const float3 &rgb,
                          float *color) const noexcept;
 
+  /// Whether the unit test report `runUnitTests()` prints is colored
+  /// with ANSI escape codes.
+  enum class ANSIColorMode : int {
+    AUTO,   ///< Colorize a terminal, if the environment allows.
+    ALWAYS, ///< Colorize even if standard error is redirected.
+    NEVER   ///< Never colorize.
+  };
+
+  /// Resolve `mode` for a stream, given whether the stream is a terminal.
+  ///
+  /// `ANSIColorMode::AUTO` also wants the environment to allow colors:
+  /// `NO_COLOR` unset or empty (the no-color.org convention), and `TERM`
+  /// set to something other than `dumb`. The explicit modes override
+  /// both, as that convention asks.
+  ///
+  /// This is the whole of the library's color policy, and it is public
+  /// so that a host coloring its own output for a different stream
+  /// resolves `-color` (or whatever it calls the option) the same way.
+  [[nodiscard]] static bool shouldUseColors(ANSIColorMode mode,
+                                            bool isTerminal) noexcept;
+
   /// Run JIT-compiled unit tests and print results to standard error,
-  /// colorized according to `ansiColorMode`. Stops at the first failure,
-  /// which is what the returned `Error` describes.
-  [[nodiscard]] std::optional<Error> runUnitTests(const State &state) noexcept;
+  /// colorized as `colorMode` asks, resolved for standard error. Stops
+  /// at the first failure, which is what the returned `Error` describes.
+  [[nodiscard]] std::optional<Error>
+  runUnitTests(const State &state,
+               ANSIColorMode colorMode = ANSIColorMode::AUTO) noexcept;
 
   /// Run JIT-compiled execs.
   [[nodiscard]] std::optional<Error> runExecs() noexcept;
@@ -489,9 +519,6 @@ public:
 
   /// Enable unit tests?
   bool shouldEmitUnitTests{false};
-
-  /// Colorize the unit test results printed by `runUnitTests()`?
-  ANSIColorMode ansiColorMode{ANSI_COLOR_MODE_AUTO};
 
   /// The number of wavelengths per MDL `color`.
   uint32_t wavelengthBaseMax{16};
@@ -539,11 +566,11 @@ private:
   ///
   MD5FileHasher mFileHasher{};
 
-  /// The file names already reported by `logResourceWarningOnce()`. Not
-  /// keyed on `MD5FileHash` like the resource tables below, because the
-  /// usual reason to warn is that the file does not exist, and a file that
-  /// does not exist has nothing to hash.
-  std::unordered_set<std::string> mWarnedResourceFileNames;
+  /// The keys already reported by `logResourceWarningOnce()`. Not keyed on
+  /// `MD5FileHash` like the resource tables below, because the usual reason
+  /// to warn is that the file does not exist, and a file that does not
+  /// exist has nothing to hash.
+  std::unordered_set<std::string> mWarnedResourceKeys;
 
   /// The images used by textures, keyed by content hash alone: one
   /// decoded image per file, however its references differ in gamma or
@@ -575,7 +602,7 @@ private:
   struct VoxelGridKeyHash final {
     [[nodiscard]] size_t operator()(
         const std::pair<const MD5FileHash *, std::string> &key) const noexcept {
-      auto hash{std::hash<const MD5FileHash *>()(key.first)};
+      size_t hash{std::hash<const MD5FileHash *>()(key.first)};
       hash ^= std::hash<std::string>()(key.second) + 0x9E3779B97F4A7C15ULL +
               (hash << 6) + (hash >> 2);
       return hash;
@@ -656,10 +683,19 @@ private:
   /// The LLVM JIT.
   std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
 
-  /// Asynchronous errors reported by the LLVM JIT execution session,
-  /// accumulated so they can be surfaced in the `Error` returned by
-  /// `jitCompile()` instead of only going to standard error.
-  std::string mJITSessionErrors;
+  /// Where each `@(foreign)` function was declared, so that one the host
+  /// process does not define is reported at its declaration. Cleared by
+  /// `jitCompile()`, which frees the builtin modules these may point into.
+  std::unordered_map<std::string, SourceLocation>
+      mForeignFunctionSourceLocations;
+
+  /// Is `jitCompile()` running? While it is, the errors the JIT execution
+  /// session reports collect in `mJITSessionErrors`, and lead the `Error`
+  /// it returns; at any other time they are logged as they arrive.
+  bool mIsJITCompiling{};
+
+  /// See `mIsJITCompiling`.
+  std::vector<Error> mJITSessionErrors;
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>

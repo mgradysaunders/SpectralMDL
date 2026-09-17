@@ -239,13 +239,8 @@ export color _samplesToColor(
   return c;
 }
 
-/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
-///
-/// NOTE: The implementation here does not exactly look like the published
-/// piecewise gaussian equations because it is calculating the X, Y, and Z
-/// fits in parallel by explicitly evaluating the first few terms of the
-/// exponential series.
-///
+/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers,
+/// the seven piecewise Gaussian lobes evaluated in parallel.
 @(pure)
 export float3 _wymanXYZ(const float w) {
   auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
@@ -254,29 +249,19 @@ export float3 _wymanXYZ(const float w) {
     auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
     auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725),
   );
-  x *= 0.5 * x;
-  const auto x1(x);
-  auto y(1 + x);
-  y += (x *= x1 * 0.5);
-  y += (x *= x1 * 0.333333);
-  y += (x *= x1 * 0.25);
-  y = auto(0.362, 1.056, -0.065, 0.821, 0.286, 1.217, 0.681) * 0.01 / y;
+  const auto y(
+    auto(0.362, 1.056, -0.065, 0.821, 0.286, 1.217, 0.681) * 0.01 *
+    #exp(-0.5 * x * x));
   return float3(y[0] + y[1] + y[2], y[3] + y[4], y[5] + y[6]);
 }
 
-/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit
-/// for wavelength in nanometers.
+/// The fit of CIE 1931 Y alone by Wyman et al for wavelength in
+/// nanometers.
 @(pure)
 export float _wymanY(const float w) {
   auto x(w - auto(568.8, 530.9));
   x *= #select(x < 0, auto(0.0213, 0.0613), auto(0.0247, 0.0322));
-  x *= 0.5 * x;
-  const auto x1(x);
-  auto y(1 + x);
-  y += (x *= x1 * 0.5);
-  y += (x *= x1 * 0.333333);
-  y += (x *= x1 * 0.25);
-  return #sum(auto(0.821, 0.286) * 0.01 / y);
+  return #sum(auto(0.821, 0.286) * 0.01 * #exp(-0.5 * x * x));
 }
 
 /// Convert color to RGB, used by `float3` constructor!
@@ -292,6 +277,9 @@ export float3 _colorToRgb(const color c) {
   } else {
     // The uniform quadrature: every band weighs
     // `(wavelength_max - wavelength_min) / WAVELENGTH_BASE_MAX`.
+    // TODO: That fits samples centered in equal bands between the two
+    // ends, not a grid whose end samples clamp to them, whose end bands
+    // are half width; such a host passes trapezoid weights for now.
     result = _spectralFold(
       float3(0.0),
       c,
@@ -732,6 +720,9 @@ export struct material {
   ///
   /// NOTE: In the MDL specification, IOR is type `color` but for
   /// implementation simplicity this is restricted to being type `float`.
+  /// A material that disperses says so by evaluating its index at
+  /// `state::wavelength_hero()`, the wavelength the path is committed to,
+  /// rather than by carrying one index per band. See `models::glass_ior`.
   ///
   float ior = 1.4;
 
@@ -768,12 +759,12 @@ const int MATERIAL_HAS_HAIR = (1 << 7);
 
 const int MATERIAL_HAS_CUTOUT = (1 << 8);
 
-/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME`, which
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS`, which
 /// only ever appears in the compile-time `staticFlags` derived by the
 /// C++ compiler from the per-material `volumeEvaluate` entry point.
 /// Position dependence is not observable at instance evaluation time,
 /// so the instance `flags` below never set this bit.
-const int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
+const int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
 
 /// Reserved for `smdl::MATERIAL_HAS_DISPLACEMENT`, which only
 /// ever appears in the compile-time `staticFlags` derived by the C++
@@ -783,6 +774,13 @@ const int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 const int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
 const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
+
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VDF`, which only ever
+/// appears in the compile-time `staticFlags` derived by the C++ compiler
+/// from the per-material `vdfEvaluate` entry point, the way bit 9 is
+/// derived from `volumeEvaluate`. The instance `flags` below never set
+/// this bit.
+const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 
 /// The multiplier of the linear congruential generator that advances
 /// `$state.rng`. This and the output permutation in `_randomInt()` must
@@ -903,6 +901,11 @@ export struct _MaterialEval {
   &color volumeEmissionIntensity = #hasField(ptr.volume, "emission_intensity")
                                      ? &ptr.volume.emission_intensity
                                      : none;
+
+  /// The VDF, which the volume scattering entry points take in place of
+  /// the instance (see `df::_volumeScatterEvaluate()`), so that a host
+  /// may hand them the VDF evaluated at a collision instead of this one.
+  &void volumeScattering = &ptr.volume.scattering;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
   /// non-default emission EDF. See `df::_emissionEvaluate()` for how the

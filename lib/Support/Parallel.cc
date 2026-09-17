@@ -25,7 +25,7 @@ bool hasRunParallelWork{};
 
 void setThreadCount(unsigned numThreads) {
   if (hasRunParallelWork) {
-    SMDL_LOG_WARN("ignoring setThreadCount(", numThreads,
+    SMDL_LOG_WARN("Ignoring setThreadCount(", numThreads,
                   "): parallel work has already started");
     return;
   }

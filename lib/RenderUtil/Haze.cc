@@ -199,10 +199,10 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
   const float sigmaRayleigh{std::min(hazeRural::RAYLEIGH_550, sigmaTotal) *
                             metersPerSceneUnit};
   const float sigmaAerosol{sigmaTotal * metersPerSceneUnit - sigmaRayleigh};
-  mSigmaRef = SpectralColor(wavelens.size());
-  mSigmaScaRef = SpectralColor(wavelens.size());
+  mSigmaRef.assign(wavelens.size(), 0.0f);
+  mSigmaScaRef.assign(wavelens.size(), 0.0f);
   for (size_t i = 0; i < mSigmaRef.size(); i++) {
-    const auto lerp{channelOf(wavelens[i])};
+    const ChannelLerp lerp{channelOf(wavelens[i])};
     const float rayleigh{sigmaRayleigh *
                          lookup(hazeRural::RAYLEIGH_EXTINCTION, lerp)};
     mSigmaRef[i] =

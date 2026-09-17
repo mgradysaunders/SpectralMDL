@@ -17,14 +17,13 @@
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
-  auto &logSink{smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>()};
-  const auto opts{parseCommandLine(argc, argv)};
+  smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>();
+  const Options opts{parseCommandLine(argc, argv)};
   // Before anything is logged: the sink above is already in place, and
   // the parse itself says nothing, so this is the first point at which a
-  // message could be filtered and labeled as asked, and the last at which
-  // nothing has been missed.
+  // message could be filtered as asked, and the last at which nothing
+  // has been missed.
   smdl::Logger::get().setMinLevel(opts.utility.logLevel);
-  logSink.setUnicodeMode(opts.utility.unicodeMode);
   // Before anything parallel: the thread pool is built by whichever
   // parallel operation runs first (the compile's image loads, usually)
   // and cannot be resized afterward.
@@ -38,7 +37,7 @@ int main(int argc, char **argv) try {
   if (opts.utility.isProfiling) smdl::profilerInitialize();
   // The compiler outlives every use of the code it emits, because the
   // JIT'd material code embeds absolute pointers into the data it owns.
-  auto compiler{smdl::Compiler{}};
+  smdl::Compiler compiler{};
   setUpCompiler(opts, compiler);
   switch (opts.subcommand) {
   case Subcommand::DUMP:

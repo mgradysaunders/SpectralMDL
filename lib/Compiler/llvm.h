@@ -69,12 +69,14 @@ public:
   }
 
   void run(llvm::Module &mod, llvm::OptimizationLevel level) {
-    auto pipeline{passBuilder.buildPerModuleDefaultPipeline(level)};
+    llvm::ModulePassManager pipeline{
+        passBuilder.buildPerModuleDefaultPipeline(level)};
     pipeline.run(mod, moduleAnalysis);
   }
   void run(llvm::Function &function, llvm::OptimizationLevel level) {
-    auto pipeline{passBuilder.buildFunctionSimplificationPipeline(
-        level, llvm::ThinOrFullLTOPhase::None)};
+    llvm::FunctionPassManager pipeline{
+        passBuilder.buildFunctionSimplificationPipeline(
+            level, llvm::ThinOrFullLTOPhase::None)};
     pipeline.run(function, funcAnalysis);
   }
 
@@ -100,7 +102,8 @@ public:
 
 template <typename T>
 [[nodiscard]] inline T *llvmConstantIntAsPtr(llvm::Value *value) {
-  if (auto constantInt{llvm::dyn_cast<llvm::ConstantInt>(value)}) {
+  if (llvm::ConstantInt *
+      constantInt{llvm::dyn_cast<llvm::ConstantInt>(value)}) {
     uintptr_t addr = constantInt->getValue().getLimitedValue(
         std::numeric_limits<uintptr_t>::max());
     T *ptr{};

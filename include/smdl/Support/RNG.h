@@ -50,18 +50,18 @@ public:
   [[nodiscard]] constexpr uint32_t generate() noexcept {
     const uint64_t state0{state};
     state = state0 * MULTIPLIER + increment;
-    const auto val{uint32_t(((state0 >> 18) ^ state0) >> 27)};
-    const auto rot{uint32_t(state0 >> 59)};
+    const uint32_t val{uint32_t(((state0 >> 18) ^ state0) >> 27)};
+    const uint32_t rot{uint32_t(state0 >> 59)};
     return (val >> rot) | (val << ((32 - rot) % 32));
   }
 
   /// Generates a uniform integer in `[0, bound)` by rejection sampling.
   [[nodiscard]] constexpr int generateInt(int bound) noexcept {
     if (SMDL_LIKELY(bound > 1)) {
-      const auto xMax{uint32_t(bound)};
-      const auto xMin{(uint32_t(0) - xMax) % xMax};
+      const uint32_t xMax{uint32_t(bound)};
+      const uint32_t xMin{(uint32_t(0) - xMax) % xMax};
       while (true) {
-        if (const auto x{generate()}; SMDL_LIKELY(x >= xMin))
+        if (const uint32_t x{generate()}; SMDL_LIKELY(x >= xMin))
           return int(x % xMax);
       }
     }

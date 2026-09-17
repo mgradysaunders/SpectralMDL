@@ -8,9 +8,9 @@
 namespace smdl {
 
 MD5Hash MD5Hash::hashFile(const std::string &fileName) noexcept try {
-  auto hasher{llvm::MD5()};
-  auto buffer{std::array<char, 128>{}};
-  auto stream{openOrThrow(fileName, std::ios::in | std::ios::binary)};
+  llvm::MD5 hasher{};
+  std::array<char, 128> buffer{};
+  std::fstream stream{openOrThrow(fileName, std::ios::in | std::ios::binary)};
   while (!stream.eof()) {
     stream.read(buffer.data(), buffer.size());
     hasher.update(llvm::StringRef(buffer.data(), stream.gcount()));
@@ -21,13 +21,13 @@ MD5Hash MD5Hash::hashFile(const std::string &fileName) noexcept try {
 }
 
 MD5Hash MD5Hash::hashMemory(const void *mem, size_t memSize) noexcept {
-  auto result{llvm::MD5::hash(
+  llvm::MD5::MD5Result result{llvm::MD5::hash(
       llvm::ArrayRef<uint8_t>{static_cast<const uint8_t *>(mem), memSize})};
   return MD5Hash{result.words()};
 }
 
 MD5Hash::operator std::string() const {
-  auto bytes{std::array<uint8_t, 16>{}};
+  std::array<uint8_t, 16> bytes{};
   llvm::support::endian::write64le(&bytes[0], getLowerBits());
   llvm::support::endian::write64le(&bytes[8], getUpperBits());
   return llvm::toHex(llvm::ArrayRef<uint8_t>{bytes.data(), 16},
@@ -35,16 +35,16 @@ MD5Hash::operator std::string() const {
 }
 
 const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
-  auto canonicalFileName{makePathCanonical(fileName)};
+  std::string canonicalFileName{makePathCanonical(fileName)};
   auto [nameItr, nameInserted] =
       mFileHashesByName.try_emplace(canonicalFileName);
   if (nameInserted) {
-    auto hash{MD5Hash::hashFile(canonicalFileName)};
+    MD5Hash hash{MD5Hash::hashFile(canonicalFileName)};
     // Identical files at different paths share one entry. The zero hash
     // means the file was unreadable; keep those per-path so distinct
     // broken files are not conflated.
-    auto &fileHash{mFileHashes[std::pair(hash, !hash ? canonicalFileName
-                                                     : std::string())]};
+    std::unique_ptr<MD5FileHash> &fileHash{mFileHashes[std::pair(
+        hash, !hash ? canonicalFileName : std::string())]};
     if (!fileHash) fileHash = std::make_unique<MD5FileHash>();
     fileHash->hash = hash;
     fileHash->canonicalFileNames.push_back(canonicalFileName);

@@ -243,10 +243,20 @@ public:
   /// Returns the empty string if there is no source code to show.
   [[nodiscard]] std::string getSourceSnippet() const;
 
+  /// Get `message` as a diagnostic at this location reads: the location, a
+  /// space, and the message, or the message alone if there is no location.
+  [[nodiscard]] std::string formatMessage(std::string_view message) const;
+
+  /// Log a debug message.
+  void logDebug(std::string_view message) const;
+
+  /// Log an informational message.
+  void logInfo(std::string_view message) const;
+
   /// Log a warning.
   void logWarn(std::string_view message) const;
 
-  /// Log an error.
+  /// Log an error, with the source snippet beneath it.
   void logError(std::string_view message) const;
 
   /// Throw an `Error`.
@@ -265,7 +275,8 @@ public:
   /// Is valid?
   [[nodiscard]] operator bool() const { return module_; }
 
-  /// Convert to string.
+  /// Convert to the markup `SpellLocation` writes, or to the empty string
+  /// if there is no module.
   [[nodiscard]] operator std::string() const;
 
 public:
@@ -372,9 +383,9 @@ public:
     // transpose and a direction maps to its three dots with the axes,
     // which is the whole of `affineInverse()` and the 4x4 product for a
     // vector whose `w` is zero.
-    const auto u{geometryTangentU[0]};
-    const auto v{geometryTangentV[0]};
-    const auto w{geometryNormal};
+    const float3 u{geometryTangentU[0]};
+    const float3 v{geometryTangentV[0]};
+    const float3 w{geometryNormal};
     const auto toTangent{[&](const float3 &d) {
       return float3(dot(d, u), dot(d, v), dot(d, w));
     }};
@@ -424,6 +435,26 @@ public:
 
   /// The maximum wavelength in nanometers.
   float wavelengthMax{};
+
+  /// The wavelength in nanometers the path is committed to: what a lens
+  /// whose glasses disperse was traced at, and what a material evaluates
+  /// a wavelength-dependent index of refraction at. The same at every
+  /// point of one path, and always positive.
+  ///
+  /// This does not narrow a `color`, which still carries every band of
+  /// `wavelengthBase`; only the refraction geometry is the hero's, which
+  /// is dispersion approximated by committing the whole spectrum of a
+  /// path to one index. It is therefore not hero wavelength spectral
+  /// sampling in the usual sense: no band is zeroed and there is no
+  /// multiple importance sampling over wavelength shifts.
+  ///
+  /// The default is the helium d line, which is the wavelength a glass
+  /// catalog states `nd` at and a lens prescription's bare index means,
+  /// so a host that never draws one evaluates every dispersion model at
+  /// its published reference.
+  ///
+  /// \note This is non-standard!
+  float wavelengthHero{587.5618f};
 
   /// If non-null, this necessarily points to `wavelengthBaseMax`
   /// per-band quadrature weights in nanometers: the effective width of

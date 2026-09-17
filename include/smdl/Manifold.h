@@ -197,11 +197,13 @@ public:
   /// has no offset to draw and no chance of drawing it.
   float offsetDensity{1.0f};
 
-  /// The squared roughness of the lobe the offset was drawn from, the
-  /// smaller of its two axes, in the slope units the offset is measured
-  /// in: the width of the distribution the estimate evaluates at the
-  /// converged half vector, which is how precisely that half vector has
-  /// to match the offset. Zero for a Dirac crossing.
+  /// The squared roughness of the narrowest lobe of the distribution
+  /// the offset was drawn from, the smaller of its two axes, in the
+  /// slope units the offset is measured in: the finest scale of the
+  /// density the estimate divides by at the converged half vector, which
+  /// is how precisely that half vector has to match the offset. A
+  /// mixture of widths is as fine as its narrowest part, whichever lobe
+  /// the draw took. Zero for a Dirac crossing.
   float alpha{};
 
   /// The world-space vector the walk's tangent frame at this vertex is
@@ -235,8 +237,9 @@ public:
   /// they are on a reflection, that IS the reflection half vector; only
   /// which side the two segments have to be on differs. What differs
   /// outside the constraint is where the seed comes from: a refractive
-  /// crossing lies on the straight shadow segment and is handed one, and a
-  /// reflective one does not and has to be searched for.
+  /// crossing may lie on the straight shadow segment and be handed one,
+  /// and a reflective one never does and has to be searched for, as a
+  /// refractive one is too wherever the straight segment crosses nothing.
   bool isReflect{};
 
   /// Is this a glossy crossing rather than a Dirac one? Per crossing:
@@ -255,7 +258,9 @@ public:
 
 /// A seed chain: the interfaces a connection is solved through, in order
 /// from the receiver: the eligible crossings of the straight shadow segment
-/// for a refractive connection, a sampled caster point for a reflective one.
+/// for a refractive connection handed them, a sampled caster point for a
+/// reflective one, and for a caster refractive one the sampled caster
+/// point and the crossings a ray refracted through it goes on to meet.
 class ManifoldChain final {
 public:
   [[nodiscard]] size_t size() const noexcept {
@@ -508,13 +513,16 @@ manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
 /// bar the renderer's path tracer from, by domain.
 ///
 /// Only the Dirac transmission is claimed without the renderer's caster
-/// mark, and it is the one claim that bars nothing: the refractive walk
-/// is deterministic, so its gather and the path tracer's own arrivals
-/// are weighed against each other by re-walk MIS. Everything else, the
-/// reflections and the glossy transmission, is searched for with random
-/// starts, reaches each solution with a probability it cannot report,
-/// and so has to be claimed outright, which is a decision the scene
-/// makes by marking the instance. The claim is a static, whole-tree
+/// mark, and without the mark it is the one claim that bars nothing: the
+/// straight-line refractive walk is deterministic, so its gather and the
+/// path tracer's own arrivals are weighed against each other by re-walk
+/// MIS. Everything else, the reflections and the glossy transmission, is
+/// searched for with random starts, reaches each solution with a
+/// probability it cannot report, and so has to be claimed outright,
+/// which is a decision the scene makes by marking the instance; on a
+/// marked instance the Dirac transmission is searched for the same way
+/// wherever the straight segment does not hand it a crossing, and those
+/// chains are claimed outright too. The claim is a static, whole-tree
 /// question asked of one side's `df_lobes`, so it can only say that the
 /// material HAS a kind on the side asked, never that a given crossing
 /// reaches it; both halves of the estimator confirm that with a masked
@@ -535,8 +543,9 @@ public:
     return reflectLobes | refractLobes;
   }
 
-  /// The kinds the path tracer is barred from: every claimed kind but
-  /// the Dirac transmission, which is weighed against instead.
+  /// The kinds the path tracer is barred from by a share of its
+  /// throughput: every claimed kind but the Dirac transmission, whose
+  /// chains are weighed against, or dropped whole, by family instead.
   [[nodiscard]] int barredLobes() const noexcept {
     return reflectLobes | (refractLobes & ~DF_DIRAC_BTDF);
   }
@@ -567,72 +576,80 @@ public:
 /// claim needs a solid that bends: thin walls transmit without bending
 /// and an index-matched boundary has no refraction to solve.
 ///
-/// `maxGlossyAlpha`, when positive, hands glossy lobes wider than that
-/// squared roughness to ordinary sampling: the estimator's variance
-/// grows with the lobe width while ordinary sampling's shrinks, so past
-/// some width the claim costs more than it saves (the reference's
-/// figure 17 trade). The width is read from the normal hook at a fixed
-/// center draw on the side asked, which both halves of the estimator
-/// meet a crossing from, so the two gate identically; for a single-lobe
-/// material that is the lobe's own width exactly. Dirac kinds are never
-/// gated, having no width.
+/// The width of a glossy lobe is never read here: it is part of the
+/// kind. A microfacet lobe wider than the builtin cutoff labels itself
+/// `DF_SMOOTH_BRDF` (see `DF_GLOSSY_BRDF`), so a layered material's word
+/// carries its narrow lobe as glossy and its wide one as smooth, the
+/// claim takes the one and leaves the other to ordinary sampling, and
+/// both halves of the estimator read the same word.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
-manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked,
-              float maxGlossyAlpha = 0.0f);
+manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
 
 /// The claim on either side, the union of the two: what a caller with no
 /// one side in hand asks, a load-time enumeration of marked instances
 /// among them, where a walk's starts may land on either side of the
 /// instance and the masked query at the converged crossing settles which
 /// one actually scatters.
-[[nodiscard]] SMDL_EXPORT ManifoldClaim manifoldClaim(
-    const JIT::Material &material, bool isMarked, float maxGlossyAlpha = 0.0f);
+[[nodiscard]] SMDL_EXPORT ManifoldClaim
+manifoldClaim(const JIT::Material &material, bool isMarked);
 
-/// Is a vertex whose evaluated material is `material` one the manifold
-/// gathers run from and claim for? A receiver's BSDF is evaluated at
-/// whatever bent direction a connection lands on, so a narrow lobe
-/// there makes an estimator that is zero almost always and enormous
-/// otherwise; the paths it claims are then lost at any feasible sample
-/// count, while ordinary sampling handles a narrow lobe well. So a
-/// vertex receives only with a smooth (diffuse-like) lobe, or with a
-/// glossy lobe whose squared roughness reaches `minAlpha`, read from the
-/// normal hook on the side the path arrived (a material layering several
-/// lobes reports the one its proposal draws from `xi`, which makes
-/// the answer a draw too; it is made once per vertex and both the
-/// gathers and the claims behind read the same one). The hook takes one
-/// glossy kind, and the predicate asks for the reflection kind when the
-/// material has it and the transmission kind otherwise: a single
-/// reflect-transmit leaf reports the same lobe either way, and a
-/// layering that differs by domain answers for its reflection side,
-/// which is the side the receiver's own gather evaluates. Without the
-/// hook (see `Compiler::shouldEmitScatterNormal`), every vertex with a
-/// finite lobe receives, as the Dirac estimator always has.
-///
-/// The right threshold is the lobe's angular width against the light's
-/// angular radius from the receiver, which is a property of the scene;
-/// until a partition reads it, `minAlpha` is the renderer's one knob.
-///
-/// `drawXi` is a callable producing the `float4` for the hook's draw,
-/// consulted only on the path that actually draws, so a renderer's
-/// deterministic sampler advances exactly when a lobe is proposed.
+/// The narrowest width of the glossy lobes of `material` on the side
+/// `isBackface`, read from the normal hook, which reports it whichever
+/// lobe its draw takes; `drawXi` is a callable producing the `float4`
+/// for that draw, consulted only when there is a glossy lobe to read,
+/// so a renderer's deterministic sampler advances exactly then. The
+/// width is the squared roughness, the slope of the lobe's half-width,
+/// which is what `manifoldReceiverLobes()` judges against a light's
+/// angular radius. `INFINITY` without a glossy lobe, so that the
+/// question never arises, and zero without the hook (see
+/// `Compiler::shouldEmitScatterNormal`), so that every finite lobe
+/// receives, as the Dirac estimator always has.
 template <typename DrawXi>
-[[nodiscard]] inline bool isManifoldReceiver(const JIT::Material &material,
-                                             bool isBackface, DrawXi &&drawXi,
-                                             float minAlpha) {
+[[nodiscard]] inline float manifoldGlossyWidth(const JIT::Material &material,
+                                               bool isBackface,
+                                               DrawXi &&drawXi) {
   const int dfLobes{material.getLobes(isBackface)};
-  if ((dfLobes & DF_FINITE) == 0) return false;
-  if ((dfLobes & DF_SMOOTH) != 0) return true;
-  if (!(minAlpha > 0.0f) || !material.def->scatterNormalSample)
-    return true;
-  // One glossy kind, per the hook's contract; see above.
-  const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
-                                                 : DF_GLOSSY_BTDF};
+  const int glossy{dfLobes & DF_GLOSSY};
+  if (glossy == 0) return INFINITY;
+  if (!material.def->scatterNormalSample) return 0.0f;
+  // One glossy kind, per the hook's contract: the reflection kind when
+  // the material has it and the transmission kind otherwise, since a
+  // single reflect-transmit leaf reports the same lobe either way and a
+  // layering that differs by domain answers for its reflection side,
+  // which is the side the receiver's own gather evaluates.
+  const int kind{(glossy & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
+                                                : DF_GLOSSY_BTDF};
   float3 wm{};
   float pdf{};
   float2 alpha{};
   if (!material.scatterNormalSample(drawXi(), isBackface, wm, pdf, alpha, kind))
-    return false;
-  return std::sqrt(alpha.x * alpha.y) >= minAlpha;
+    return 0.0f;
+  return std::sqrt(alpha.x * alpha.y);
+}
+
+/// The lobes a vertex whose lobe word is `dfLobes` receives a light
+/// with: the ones the manifold gathers run from and value, and whose
+/// share of the vertex's bounce the arrivals behind it drop. A
+/// receiver's BSDF is evaluated at whatever bent direction a connection
+/// lands on, and the connections toward one light spread over its
+/// angular extent from the receiver, so a lobe narrower than that
+/// extent makes an estimator that is zero almost always and enormous
+/// otherwise, while ordinary sampling handles a narrow lobe well. So the
+/// smooth (diffuse-like) lobes receive, a microfacet lobe above the
+/// glossy cutoff among them (see `DF_GLOSSY_BRDF`), and the glossy
+/// lobes receive when `glossyWidth` (see `manifoldGlossyWidth()`)
+/// reaches `minWidth`, which a renderer sets from the light's angular
+/// radius. Zero means the vertex is no receiver of that light.
+///
+/// The answer is a mask rather than a verdict on the vertex so that a
+/// narrow coat over a wide base leaves the base receiving and the coat
+/// to ordinary sampling: the gathers value the receiving lobes only,
+/// and an arrival behind keeps the share of the receiver's bounce the
+/// other lobes carried, the same partition the casters' claims make.
+[[nodiscard]] inline int manifoldReceiverLobes(int dfLobes, float glossyWidth,
+                                               float minWidth) noexcept {
+  return (dfLobes & DF_SMOOTH) |
+         (glossyWidth >= minWidth ? dfLobes & DF_GLOSSY : 0);
 }
 
 /// \}

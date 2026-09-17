@@ -16,18 +16,19 @@ namespace {
 // The color scheme of the plain text output: identity in blue, structure
 // in cyan, and metadata in grey, with the documentation text left
 // unstyled so that the prose stays the easiest thing to read.
-constexpr auto docColorName{llvm::HighlightColor::Tag};
-constexpr auto docColorSignature{llvm::HighlightColor::Attribute};
-constexpr auto docColorMetadata{llvm::HighlightColor::Note};
+constexpr llvm::HighlightColor docColorName{llvm::HighlightColor::Tag};
+constexpr llvm::HighlightColor docColorSignature{
+    llvm::HighlightColor::Attribute};
+constexpr llvm::HighlightColor docColorMetadata{llvm::HighlightColor::Note};
 
 // The plain text printer, for symbol and module queries. The Markdown
 // and JSON printers live in the library, but this one colors as it goes,
 // which a `std::string` cannot carry.
 //
-// NOTE: All coloring must go through `WithColor`, which is what detects
-// the terminal. On POSIX, `raw_ostream::changeColor()` writes escape
-// codes whether or not the stream is a terminal, so calling it directly
-// would corrupt piped and redirected output.
+// NOTE: All coloring must go through `WithColor` and the resolved color
+// mode. On POSIX, `raw_ostream::changeColor()` writes escape codes
+// whether or not the stream is a terminal, so calling it directly would
+// corrupt piped and redirected output.
 class DocTextPrinter final {
 public:
   DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
@@ -80,7 +81,7 @@ private:
 
   void emit(std::string_view text, std::optional<llvm::HighlightColor> color) {
     if (text.empty()) return; // Do not wrap nothing in escape codes
-    auto str{llvm::StringRef(text.data(), text.size())};
+    llvm::StringRef str{text.data(), text.size()};
     if (color) {
       llvm::WithColor(mOS, *color, mColorMode) << str;
     } else {
@@ -95,7 +96,7 @@ private:
                     std::optional<llvm::HighlightColor> color) {
     size_t i{0};
     while (i < text.size()) {
-      auto j{text.find('\n', i)};
+      size_t j{text.find('\n', i)};
       if (j == std::string_view::npos) j = text.size();
       // Leave blank lines truly blank instead of indenting them.
       if (j > i) {
@@ -114,8 +115,8 @@ private:
     // NOTE: `nameOffset` is `NO_NAME_OFFSET` when the name does not
     // appear in the signature, which fails the bounds test below and
     // falls through to the unsplit signature.
-    const auto begin{size_t(item.nameOffset)};
-    const auto end{begin + item.name.size()};
+    const size_t begin{size_t(item.nameOffset)};
+    const size_t end{begin + item.name.size()};
     if (end <= item.signature.size()) {
       emit(std::string_view(item.signature).substr(0, begin),
            docColorSignature);
@@ -131,12 +132,12 @@ private:
   // Print the documented parameters, skipping the undocumented ones,
   // which the signature already shows.
   void printParams(const smdl::DocEntry &entry) {
-    auto anyParamDocs{false};
+    bool anyParamDocs{false};
     for (const auto &param : entry.params)
       anyParamDocs |= !param.docText.empty();
     if (!anyParamDocs) return;
     mOS << '\n';
-    auto isAfterDocText{false};
+    bool isAfterDocText{false};
     for (const auto &param : entry.params) {
       if (param.docText.empty()) continue;
       if (isAfterDocText) mOS << '\n';
@@ -150,8 +151,8 @@ private:
   // ends the previous member is separated from it by a blank line, so
   // that multi-line texts do not run into the next signature.
   void printMembers(const smdl::DocEntry &entry) {
-    auto anyMembers{false};
-    auto isAfterDocText{false};
+    bool anyMembers{false};
+    bool isAfterDocText{false};
     for (const auto &member : entry.members) {
       if (isHidden(member)) continue;
       if (!anyMembers) {
@@ -178,11 +179,12 @@ private:
 // database. A module already added from an input file wins, so that
 // documenting a local copy of a builtin shows the local copy.
 void loadBuiltinDocModules(const Options &opts, smdl::DocDatabase &docs) {
-  const auto builtinNames{smdl::getBuiltinModuleNames()};
+  const std::vector<std::string_view> builtinNames{
+      smdl::getBuiltinModuleNames()};
   auto loadBuiltin{[&](std::string_view name) {
     for (const auto &mod : docs.modules)
       if (mod.name == name) return;
-    if (auto mod{smdl::extractBuiltinDocModule(name)})
+    if (std::optional<smdl::DocModule> mod{smdl::extractBuiltinDocModule(name)})
       docs.modules.push_back(std::move(*mod));
   }};
   if (opts.doc.allBuiltins) {
@@ -191,7 +193,7 @@ void loadBuiltinDocModules(const Options &opts, smdl::DocDatabase &docs) {
   }
   for (const auto &query : opts.docQueries) {
     for (const auto &name : builtinNames) {
-      auto prefix{"::" + std::string(name)};
+      std::string prefix{"::" + std::string(name)};
       if (query == prefix || smdl::startsWith(query, prefix + "::"))
         loadBuiltin(name);
     }
@@ -201,36 +203,37 @@ void loadBuiltinDocModules(const Options &opts, smdl::DocDatabase &docs) {
 } // namespace
 
 void runDoc(const Options &opts, smdl::Compiler &compiler) {
-  auto docs{smdl::DocDatabase{}};
-  if (auto error{compiler.extractDocs(docs)}) error->printAndExit();
+  smdl::DocDatabase docs{};
+  if (std::optional<smdl::Error> error{compiler.extractDocs(docs)})
+    error->printAndExit();
   loadBuiltinDocModules(opts, docs);
   if (docs.modules.empty())
-    throw smdl::Error("nothing to document: pass input files, '::'-prefixed "
+    throw smdl::Error("Nothing to document: pass input files, '::'-prefixed "
                       "queries, or '-builtins'");
   // Open the destination up front: the text printer colors as it goes,
   // which a `std::string` cannot carry.
-  auto errorCode{std::error_code{}};
-  auto outputFile{std::optional<llvm::raw_fd_ostream>{}};
+  std::error_code errorCode{};
+  std::optional<llvm::raw_fd_ostream> outputFile{};
   if (opts.output.fileName.wasGiven) {
     outputFile.emplace(opts.output.fileName.value, errorCode);
     if (errorCode)
-      throw smdl::Error(smdl::concat("cannot open ",
-                                     smdl::Quoted(opts.output.fileName.value),
-                                     ": ", errorCode.message()));
+      throw smdl::Error(smdl::concat(
+          "Cannot open ", smdl::SpellFilePath(opts.output.fileName.value), ": ",
+          errorCode.message()));
   }
-  auto &os{outputFile ? static_cast<llvm::raw_ostream &>(*outputFile)
-                      : llvm::outs()};
+  llvm::raw_ostream &os{outputFile
+                            ? static_cast<llvm::raw_ostream &>(*outputFile)
+                            : llvm::outs()};
   // Colors are for a human reading a terminal: '-output' captures the
   // documentation into a file, and JSON and Markdown are machine and
-  // document formats. Otherwise honor '-color', and without it let
-  // `WithColor` detect the terminal itself.
-  const auto ansiColorMode{opts.utility.ansiColorMode};
-  const auto colorMode{
-      outputFile || opts.doc.format != DocFormat::TEXT
-          ? llvm::ColorMode::Disable
-      : ansiColorMode == smdl::ANSI_COLOR_MODE_ALWAYS ? llvm::ColorMode::Enable
-      : ansiColorMode == smdl::ANSI_COLOR_MODE_NEVER  ? llvm::ColorMode::Disable
-                                                      : llvm::ColorMode::Auto};
+  // document formats. Otherwise '-color' resolves for standard output as
+  // it does for the unit test report on standard error.
+  const llvm::ColorMode colorMode{
+      !outputFile && opts.doc.format == DocFormat::TEXT &&
+              smdl::Compiler::shouldUseColors(opts.utility.ansiColorMode,
+                                              coutIsTerminal())
+          ? llvm::ColorMode::Enable
+          : llvm::ColorMode::Disable};
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {
     // Whole-database output. Symbol queries only participate by loading
     // the builtin modules they name.
@@ -238,7 +241,7 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
     os << (opts.doc.format == DocFormat::JSON ? docs.printJSON()
                                               : docs.printMarkdown());
   } else {
-    auto printer{DocTextPrinter(os, colorMode, opts.doc.shouldIncludeHidden)};
+    DocTextPrinter printer{os, colorMode, opts.doc.shouldIncludeHidden};
     for (const auto &query : opts.docQueries) {
       const smdl::DocModule *moduleMatch{};
       for (const auto &mod : docs.modules)
@@ -247,10 +250,10 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
         printer.printModule(*moduleMatch);
         continue;
       }
-      auto found{docs.findSymbol(query)};
+      std::vector<const smdl::DocEntry *> found{docs.findSymbol(query)};
       if (found.empty())
-        throw smdl::Error(
-            smdl::concat("no documentation found for ", smdl::Quoted(query)));
+        throw smdl::Error(smdl::concat("No documentation found for ",
+                                       smdl::SpellQuoted(query)));
       for (const auto *entry : found) printer.printEntry(*entry);
     }
   }

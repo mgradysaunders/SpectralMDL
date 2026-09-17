@@ -1,11 +1,9 @@
 /// \file
-/// The vocabulary both suites share: scratch directories, environment
-/// variables set for a scope, assertions that say what went wrong, and
-/// comparisons over the library's vector types.
-/// Everything here needs the public library and nothing else, so the
-/// renderer suite includes it too. `smdl/Fixtures.h` adds what only the
-/// library suite needs and `smdl-toy/Fixtures.h` what only the renderer
-/// suite does.
+/// The vocabulary the suite shares at every depth: scratch directories,
+/// environment variables set for a scope, assertions that say what went
+/// wrong, and comparisons over the library's vector types. Everything
+/// here needs the public library and nothing else; `CompileFixtures.h`
+/// adds what only this suite needs.
 #pragma once
 
 #include "doctest.h"
@@ -65,7 +63,7 @@
 /// reporting the message if it does. The expression is evaluated once.
 #define CHECK_OK(EXPR)                                                       \
   do {                                                                       \
-    const auto smdlTestError{EXPR};                                          \
+    const std::optional<smdl::Error> smdlTestError{EXPR};                    \
     CHECK_MESSAGE(!smdlTestError,                                            \
                   (smdlTestError ? smdlTestError->message : std::string())); \
   } while (false)
@@ -74,7 +72,7 @@
 /// See `CHECK_OK`.
 #define REQUIRE_OK(EXPR)                                                       \
   do {                                                                         \
-    const auto smdlTestError{EXPR};                                            \
+    const std::optional<smdl::Error> smdlTestError{EXPR};                      \
     REQUIRE_MESSAGE(!smdlTestError,                                            \
                     (smdlTestError ? smdlTestError->message : std::string())); \
   } while (false)
@@ -83,7 +81,7 @@
 /// whose message contains `NEEDLE`. The expression is evaluated once.
 #define CHECK_ERROR(EXPR, NEEDLE)                             \
   do {                                                        \
-    const auto smdlTestError{EXPR};                           \
+    const std::optional<smdl::Error> smdlTestError{EXPR};     \
     REQUIRE_MESSAGE(smdlTestError.has_value(),                \
                     "expected an error containing ", NEEDLE); \
     CHECK_CONTAINS(smdlTestError->message, NEEDLE);           \
@@ -132,7 +130,7 @@ public:
   TempDir &operator=(const TempDir &) = delete;
 
   ~TempDir() {
-    auto ignored{std::error_code()};
+    std::error_code ignored{};
     std::filesystem::remove_all(mPath, ignored);
   }
 
@@ -151,9 +149,10 @@ public:
   /// are the bytes given.
   std::filesystem::path write(std::string_view name,
                               std::string_view text) const {
-    auto path{operator/(name)};
+    std::filesystem::path path{operator/(name)};
     std::filesystem::create_directories(path.parent_path());
-    auto stream{std::ofstream(path, std::ios::binary | std::ios::trunc)};
+    std::ofstream stream{
+        std::ofstream(path, std::ios::binary | std::ios::trunc)};
     stream.write(text.data(), std::streamsize(text.size()));
     REQUIRE_MESSAGE(bool(stream), "cannot write ", path.string());
     return path;
@@ -161,7 +160,7 @@ public:
 
   /// Read `name` back.
   [[nodiscard]] std::string read(std::string_view name) const {
-    auto stream{std::ifstream(operator/(name), std::ios::binary)};
+    std::ifstream stream{operator/(name), std::ios::binary};
     return std::string(std::istreambuf_iterator<char>(stream),
                        std::istreambuf_iterator<char>());
   }
@@ -240,6 +239,11 @@ template <typename T, size_t N>
   return true;
 }
 
+/// Is `a` within `tolerance` of `b`?
+[[nodiscard]] inline bool isNear(double a, double b, double tolerance = 1e-5) {
+  return std::abs(a - b) <= tolerance;
+}
+
 /// Is every component of `a` within `tolerance` of `b`'s?
 template <typename T, size_t N>
 [[nodiscard]] inline bool isNear(const smdl::Vector<T, N> &a,
@@ -278,7 +282,7 @@ namespace doctest {
 /// So that a failing comparison prints the vectors instead of `false`.
 template <typename T, size_t N> struct StringMaker<smdl::Vector<T, N>> {
   static String convert(const smdl::Vector<T, N> &value) {
-    auto text{std::string("(")};
+    std::string text{"("};
     for (size_t i = 0; i < N; i++) {
       if (i > 0) text += ", ";
       text += std::to_string(value[i]);
@@ -291,7 +295,7 @@ template <typename T, size_t N> struct StringMaker<smdl::Vector<T, N>> {
 template <typename T, size_t N, size_t M>
 struct StringMaker<smdl::Matrix<T, N, M>> {
   static String convert(const smdl::Matrix<T, N, M> &value) {
-    auto text{std::string("[")};
+    std::string text{"["};
     for (size_t j = 0; j < N; j++) {
       if (j > 0) text += ", ";
       text += StringMaker<smdl::Vector<T, M>>::convert(value[j]).c_str();

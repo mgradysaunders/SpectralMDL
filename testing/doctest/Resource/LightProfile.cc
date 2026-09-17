@@ -1,0 +1,165 @@
+#include "Fixtures.h"
+
+#include <random>
+
+#include "smdl/Resource/LightProfile.h"
+
+namespace {
+// An axially symmetric Type C profile, brightest toward +Z and dimming
+// toward -Z. Candela values are multiples of 683 so the parsed
+// radiometric intensities are 1.0, 0.8, 0.6, 0.4, 0.2 W/sr.
+const char *axialIES = //
+    "IESNA:LM-63-1995\n"
+    "[TEST] Synthetic axially symmetric\n"
+    "TILT=NONE\n"
+    "1 1000 1 5 1 1 2 0.1 0.1 0.1\n"
+    "1.0 1.0 100\n"
+    "0 45 90 135 180\n"
+    "0\n"
+    "683 546.4 409.8 273.2 136.6\n";
+
+// A quadrant symmetric Type C profile that varies in both the vertical
+// and horizontal angles, with no emission below the horizon.
+const char *quadrantIES = //
+    "IESNA:LM-63-1995\n"
+    "[TEST] Synthetic quadrant symmetric\n"
+    "TILT=NONE\n"
+    "1 1000 1 3 3 1 2 0.1 0.1 0.1\n"
+    "1.0 1.0 100\n"
+    "0 45 90\n"
+    "0 45 90\n"
+    "683 546.4 409.8\n"
+    "546.4 409.8 273.2\n"
+    "409.8 273.2 136.6\n";
+
+// Check that `directionPDF` and `directionSample` are consistent with
+// each other and with `interpolate`:
+// 1. The PDF must integrate to one over the sphere.
+// 2. The PDF returned by sampling must agree with `directionPDF` at the
+//    sampled direction.
+// 3. Importance sampling `interpolate` must reproduce the intensity
+//    integral computed by independent quadrature.
+void checkDistributionConsistency(const smdl::LightProfile &profile) {
+  double pdfIntegral{};
+  double intensityIntegral{};
+  const int nY{256};
+  const int nX{512};
+  for (int iY = 0; iY < nY; iY++) {
+    double theta{smdl::PI * (iY + 0.5) / nY};
+    double sinTheta{std::sin(theta)};
+    double cosTheta{std::cos(theta)};
+    for (int iX = 0; iX < nX; iX++) {
+      double phi{2.0 * smdl::PI * (iX + 0.5) / nX};
+      smdl::float3 w{smdl::float3(float(sinTheta * std::cos(phi)),
+                                  float(sinTheta * std::sin(phi)),
+                                  float(cosTheta))};
+      double dOmega{sinTheta * (smdl::PI / nY) * (2.0 * smdl::PI / nX)};
+      pdfIntegral += profile.directionPDF(w) * dOmega;
+      intensityIntegral += profile.interpolate(w) * dOmega;
+    }
+  }
+  CHECK(pdfIntegral == doctest::Approx(1.0).epsilon(0.02));
+  // The radiometric power is the intensity integrated over the sphere.
+  CHECK(profile.power() == doctest::Approx(intensityIntegral).epsilon(0.02));
+  std::mt19937 prng{};
+  for (int iter = 0; iter < 100; iter++) {
+    float pdf{};
+    smdl::float3 w{
+        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    REQUIRE(pdf > 0);
+    CHECK(profile.directionPDF(w) == doctest::Approx(pdf).epsilon(1e-3));
+  }
+  double mcIntegral{};
+  int numInvalid{};
+  const int n{100'000};
+  for (int iter = 0; iter < n; iter++) {
+    float pdf{};
+    smdl::float3 w{
+        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    if (!(pdf > 0)) {
+      numInvalid++;
+      continue;
+    }
+    mcIntegral += profile.interpolate(w) / pdf;
+  }
+  CHECK(numInvalid == 0);
+  CHECK(mcIntegral / n == doctest::Approx(intensityIntegral).epsilon(0.02));
+}
+} // namespace
+
+TEST_CASE("LightProfile: the IES symmetries and the sampling") {
+  SUBCASE("A default profile is invalid and safe to query") {
+    smdl::LightProfile profile{};
+    CHECK(!profile.isValid());
+    CHECK(profile.directionPDF(smdl::float3(0, 0, 1)) == 0.0f);
+    float pdf{1.0f};
+    smdl::float3 w{profile.directionSample(smdl::float2(0.5f, 0.5f), &pdf)};
+    CHECK(pdf == 0.0f);
+    CHECK(w.x == 0.0f);
+    CHECK(w.y == 0.0f);
+    CHECK(w.z == 0.0f);
+  }
+  SUBCASE("An axially symmetric profile reads back its angles") {
+    smdl::LightProfile profile{};
+    REQUIRE_OK(profile.loadFromFileMemory(axialIES));
+    REQUIRE(profile.isValid());
+    CHECK(profile.maxIntensity() == doctest::Approx(1.0f));
+    // Spot check the parsed intensities through the interpolator.
+    CHECK(profile.interpolate(smdl::float3(0, 0, +1)) ==
+          doctest::Approx(1.0f).epsilon(1e-3));
+    CHECK(profile.interpolate(smdl::float3(1, 0, 0)) ==
+          doctest::Approx(0.6f).epsilon(1e-3));
+    CHECK(profile.interpolate(smdl::float3(0, 0, -1)) ==
+          doctest::Approx(0.2f).epsilon(1e-3));
+    checkDistributionConsistency(profile);
+  }
+  SUBCASE("A quadrant symmetric profile mirrors into four") {
+    smdl::LightProfile profile{};
+    REQUIRE_OK(profile.loadFromFileMemory(quadrantIES));
+    REQUIRE(profile.isValid());
+    // The quadrant unfolds by mirroring, so the +X and -X directions
+    // agree, and there is no emission below the horizon.
+    CHECK(profile.interpolate(smdl::float3(+1, 0, 0)) ==
+          doctest::Approx(profile.interpolate(smdl::float3(-1, 0, 0))));
+    CHECK(profile.interpolate(smdl::float3(0, 0, -1)) == 0.0f);
+    checkDistributionConsistency(profile);
+  }
+}
+
+TEST_CASE("LightProfile: where a malformed file goes wrong") {
+  // `axialIES` with one line replaced, the lines counting from 1.
+  const auto withLine{[](int lineNo, const std::string &replacement) {
+    std::string text(axialIES);
+    size_t begin{0};
+    for (int i = 1; i < lineNo; i++) begin = text.find('\n', begin) + 1;
+    text.replace(begin, text.find('\n', begin) - begin, replacement);
+    return text;
+  }};
+  const auto refusal{[](std::string text) {
+    smdl::LightProfile profile{};
+    std::optional<smdl::Error> error{
+        profile.loadFromFileMemory(std::move(text))};
+    REQUIRE(error.has_value());
+    CHECK(!profile.isValid());
+    return error->message;
+  }};
+  SUBCASE("A number that does not parse names its line and its field") {
+    CHECK(refusal(withLine(6, "0 45 ninety 135 180")) ==
+          "Expected a float for vertical angle on line 6");
+    CHECK(refusal(withLine(4, "one 1000 1 5 1 1 2 0.1 0.1 0.1")) ==
+          "Expected an int for num lamps on line 4");
+  }
+  SUBCASE("A file that stops short says so") {
+    CHECK(refusal(withLine(8, "")) ==
+          "Expected a float for candela value at the end of the file");
+  }
+  SUBCASE("The tilt line and the type codes name their lines") {
+    CHECK(refusal(withLine(3, "TILTED")) == "Expected 'TILT=' on line 3");
+    CHECK(refusal(withLine(3, "TILT=SOMETIMES")) ==
+          "Unsupported tilt \"SOMETIMES\" on line 3");
+    CHECK(refusal(withLine(4, "1 1000 1 5 1 4 2 0.1 0.1 0.1")) ==
+          "Unknown photometric type 4 on line 4");
+    CHECK(refusal(withLine(4, "1 1000 1 5 1 1 3 0.1 0.1 0.1")) ==
+          "Unknown units type 3 on line 4");
+  }
+}

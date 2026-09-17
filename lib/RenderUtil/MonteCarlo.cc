@@ -24,8 +24,8 @@ constexpr double CMF_SCALE = 4294967296.0; // 2^32
 // sequence nondecreasing; the top of the range saturates because 1.0
 // scales to exactly one past the largest representable value.
 [[nodiscard]]
-SMDL_ALWAYS_INLINE std::uint32_t quantizeCMF(double cmf) noexcept {
-  return std::uint32_t(std::min(CMF_SCALE * cmf, 4294967295.0));
+SMDL_ALWAYS_INLINE uint32_t quantizeCMF(double cmf) noexcept {
+  return uint32_t(std::min(CMF_SCALE * cmf, 4294967295.0));
 }
 
 } // namespace
@@ -34,7 +34,7 @@ Distribution1D::Distribution1D(Span<const float> values) {
   // Accumulate and normalize in double, then quantize once, so that each
   // stored entry carries the rounding of a single conversion rather than
   // the accumulated drift of a running fixed-point sum.
-  auto sums{std::vector<double>{}};
+  std::vector<double> sums{};
   sums.reserve(values.size() + 1);
   sums.emplace_back(0.0);
   for (const auto &value : values) {
@@ -60,16 +60,19 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
     if (pmf) *pmf = 1;
     return 0;
   }
-  const std::uint32_t key{quantizeCMF(std::clamp(double(xi), 0.0, 1.0))};
+  const uint32_t key{quantizeCMF(std::clamp(double(xi), 0.0, 1.0))};
   auto itr{std::lower_bound(mCMFs.begin(), mCMFs.end(), key)};
   if (itr == mCMFs.begin()) ++itr;
   if (itr == mCMFs.end()) --itr;
   --itr;
-  auto i{int(itr - mCMFs.begin())};
-  auto cmf0{*itr++};
-  auto cmf1{*itr};
+  // A key of zero stops the search at the first entry whatever its mass,
+  // so step past the indexes with none.
+  while (itr + 2 < mCMFs.end() && itr[0] == itr[1]) ++itr;
+  int i{int(itr - mCMFs.begin())};
+  uint32_t cmf0{*itr++};
+  uint32_t cmf1{*itr};
   // Nondecreasing entries, so this cannot wrap.
-  const std::uint32_t width{cmf1 - cmf0};
+  const uint32_t width{cmf1 - cmf0};
   if (xiRemap) {
     // Against the dequantized bounds rather than against `key`, so the
     // remapped sample keeps the resolution of the incoming float instead
@@ -125,32 +128,7 @@ float2 uniformApertureSample(int numBlades, float bladeAngle,
 }
 
 float erfInverse(float y) noexcept {
-  float w =
-      -std::log(std::max(std::numeric_limits<float>::min(), (1 - y) * (1 + y)));
-  float x = 0;
-  if (w < 5) {
-    w = w - 2.5f;
-    x = w * 2.81022636e-08f + 3.43273939e-7f;
-    x = w * x - 3.52338770e-6f;
-    x = w * x - 4.39150654e-6f;
-    x = w * x + 2.18580870e-4f;
-    x = w * x - 1.25372503e-3f;
-    x = w * x - 4.17768164e-3f;
-    x = w * x + 2.46640727e-1f;
-    x = w * x + 1.50140941f;
-  } else {
-    w = std::sqrt(w) - 3;
-    x = x * -2.00214257e-4f + 1.00950558e-4f;
-    x = w * x + 1.34934322e-3f;
-    x = w * x - 3.67342844e-3f;
-    x = w * x + 5.73950773e-3f;
-    x = w * x - 7.62246130e-3f;
-    x = w * x + 9.43887047e-3f;
-    x = w * x + 1.00167406f;
-    x = w * x + 2.83297682f;
-  }
-  x *= y;
-  return x;
+  return simd::erfInverse(simd::float1(y))[0];
 }
 
 Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
@@ -160,7 +138,7 @@ Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
   SMDL_SANITY_CHECK(numTexelsY >= 0);
   SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
   mConditionals.reserve(numTexelsY);
-  auto margins{std::vector<float>(size_t(numTexelsY))};
+  std::vector<float> margins(static_cast<size_t>(numTexelsY));
   for (int iY = 0; iY < numTexelsY; iY++) {
     mConditionals.emplace_back(
         values.subspan(size_t(numTexelsX) * size_t(iY), numTexelsX));

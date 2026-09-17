@@ -16,7 +16,7 @@ void llvmThrowIfError(llvm::Error error) {
 
 llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
                           llvm::Type *dstType) {
-  auto srcType{value->getType()};
+  llvm::Type *srcType{value->getType()};
   if (srcType == dstType) return value;
   bool isSrcFP{srcType->isFPOrFPVectorTy()};
   bool isDstFP{dstType->isFPOrFPVectorTy()};
@@ -42,7 +42,7 @@ llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
   // float => int
   if (isSrcFP && isDstInt) {
     if (srcType->getScalarSizeInBits() != dstType->getScalarSizeInBits()) {
-      auto dstTypeSameSize =
+      llvm::Type *dstTypeSameSize =
           dstType->getWithNewBitWidth(srcType->getScalarSizeInBits());
       value = builder.CreateFPToSI(value, dstTypeSameSize);
       return builder.CreateIntCast(value, dstType, /*isSigned=*/true);
@@ -58,7 +58,7 @@ llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
 
 llvm::Value *llvmEmitPowi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
                           llvm::Value *rhs) {
-  auto func{llvm::Intrinsic::getOrInsertDeclaration(
+  llvm::Function *func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::powi,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
@@ -66,25 +66,25 @@ llvm::Value *llvmEmitPowi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
 
 llvm::Value *llvmEmitLdexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
                            llvm::Value *rhs) {
-  auto func{llvm::Intrinsic::getOrInsertDeclaration(
+  llvm::Function *func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::ldexp,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
 }
 
 llvm::InlineResult llvmForceInline(llvm::Value *value, bool isRecursive) {
-  auto call{llvm::dyn_cast_if_present<llvm::CallBase>(value)};
+  llvm::CallBase *call{llvm::dyn_cast_if_present<llvm::CallBase>(value)};
   if (!call) return llvm::InlineResult::failure("expected 'llvm::CallBase'");
-  auto resultInfo{llvm::InlineFunctionInfo{}};
-  auto result{llvm::InlineFunction(*call, resultInfo)};
+  llvm::InlineFunctionInfo resultInfo{};
+  llvm::InlineResult result{llvm::InlineFunction(*call, resultInfo)};
   if (result.isSuccess() && isRecursive) {
-    auto todo{llvm::SmallVector<llvm::CallBase *>{}};
+    llvm::SmallVector<llvm::CallBase *> todo{};
     todo.insert(todo.end(), resultInfo.InlinedCallSites.begin(),
                 resultInfo.InlinedCallSites.end());
     while (!todo.empty()) {
-      auto next{todo.back()};
+      llvm::CallBase *next{todo.back()};
       todo.pop_back();
-      auto info{llvm::InlineFunctionInfo{}};
+      llvm::InlineFunctionInfo info{};
       if (llvm::InlineFunction(*next, info).isSuccess()) {
         todo.insert(todo.end(), info.InlinedCallSites.begin(),
                     info.InlinedCallSites.end());
@@ -95,10 +95,10 @@ llvm::InlineResult llvmForceInline(llvm::Value *value, bool isRecursive) {
 }
 
 void llvmForceInlineFlatten(llvm::Function &func) {
-  auto calls{llvm::SmallVector<llvm::CallBase *>{}};
+  llvm::SmallVector<llvm::CallBase *> calls{};
   for (auto &block : func) {
     for (auto &inst : block) {
-      if (auto call{llvm::dyn_cast<llvm::CallBase>(&inst)}) {
+      if (llvm::CallBase * call{llvm::dyn_cast<llvm::CallBase>(&inst)}) {
         calls.push_back(call);
       }
     }
@@ -109,7 +109,7 @@ void llvmForceInlineFlatten(llvm::Function &func) {
 }
 
 void llvmMoveBlockToEnd(llvm::BasicBlock *block) {
-  auto func{block->getParent()};
+  llvm::Function *func{block->getParent()};
   SMDL_SANITY_CHECK(func);
   block->removeFromParent();
   func->insert(func->end(), block);

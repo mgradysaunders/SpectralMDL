@@ -37,8 +37,9 @@ namespace smdl {
 /// work without a `#search_dir` in every module that uses it, and they
 /// come last so that they only resolve a name nothing else does. The
 /// variable is read on every lookup. A leading `~` in an entry expands
-/// but `$VAR` does not, an entry that is empty or not an existing
-/// directory is skipped, and no entry is searched recursively.
+/// but `$VAR` does not, an empty entry is skipped, an entry that is not
+/// an existing directory is skipped with a warning (once per process),
+/// and no entry is searched recursively.
 class SMDL_EXPORT FileLocator final {
 public:
   FileLocator() = default;

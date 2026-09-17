@@ -18,6 +18,7 @@ include(CTest)
 include(cmake/Git.cmake)
 include(cmake/Options.cmake)
 include(cmake/NativeArch.cmake)
+include(cmake/FileMacro.cmake)
 include(cmake/Dependencies.cmake)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -133,6 +134,18 @@ endif()
 # Assimp are added, so their builds are not affected.
 if(MSVC)
   add_compile_options("/utf-8" "/bigobj")
+endif()
+
+# The GNU-vector 'Pack' in 'Support/SIMD.h' is wider than a build without
+# the ISA to back it can pass in registers, so GCC and Clang warn that the
+# calling convention of anything taking or returning one depends on the ISA
+# flags. That is the design rather than a hazard: a 'Pack' never appears in
+# anything the library exports, and within one target every translation unit
+# is compiled the same way, so the warning cannot report a mismatch that can
+# actually happen. Set here, after 'Dependencies.cmake', for the same reason
+# and with the same caveat as the MSVC options above.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options("-Wno-psabi")
 endif()
 
 if(SMDL_SANITIZE)

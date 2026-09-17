@@ -72,7 +72,8 @@ private:
   [[nodiscard]] std::optional<std::string_view>
   nextKeyword(std::initializer_list<std::string_view> strs) {
     for (auto str : strs)
-      if (auto result{nextKeyword(str)}) return result;
+      if (std::optional<std::string_view> result{nextKeyword(str)})
+        return result;
     return std::nullopt;
   }
 
@@ -92,8 +93,9 @@ private:
   [[nodiscard]] std::optional<ParsedToken>
   nextKeywordAndLocation(std::string_view str) {
     skip();
-    auto srcLoc{mSrcLoc};
-    if (auto srcKw{nextKeyword(str)}) return ParsedToken{srcLoc, *srcKw};
+    SourceLocation srcLoc{mSrcLoc};
+    if (std::optional<std::string_view> srcKw{nextKeyword(str)})
+      return ParsedToken{srcLoc, *srcKw};
     return std::nullopt;
   }
 
@@ -101,8 +103,9 @@ private:
   [[nodiscard]] std::optional<ParsedToken>
   nextDelimiterAndLocation(std::string_view str) {
     skip();
-    auto srcLoc{mSrcLoc};
-    if (auto src{next(str)}) return ParsedToken{srcLoc, *src};
+    SourceLocation srcLoc{mSrcLoc};
+    if (std::optional<std::string_view> src{next(str)})
+      return ParsedToken{srcLoc, *src};
     return std::nullopt;
   }
 
@@ -246,7 +249,7 @@ private:
       auto item{parseItem()};
       if (!item) break;
       items.push_back(std::move(*item));
-      auto srcComma{nextDelimiter(",")};
+      std::optional<std::string_view> srcComma{nextDelimiter(",")};
       if (!srcComma) break;
       items.back().srcComma = *srcComma;
       if (!srcCloser.empty()) {
@@ -351,13 +354,13 @@ private:
   [[nodiscard]] auto parseBinaryLeftAssociative(Span<const AST::BinaryOp> ops,
                                                 const Func &parseInner)
       -> BumpPtr<AST::Expr> {
-    auto exprLhs{parseInner()};
+    BumpPtr<AST::Expr> exprLhs{parseInner()};
     if (!exprLhs) {
       return nullptr;
     }
     while (true) {
-      auto srcLoc0{checkpoint()};
-      auto op{parseBinaryOp(ops)};
+      SourceLocation srcLoc0{checkpoint()};
+      std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
       if (!op) {
         reject();
         break;
@@ -370,9 +373,9 @@ private:
       // is a relative tolerance. This is extended syntax!
       if (op->op == BINOP_APPROX_CMP_EQ || //
           op->op == BINOP_APPROX_CMP_NE) {
-        auto srcDelimL{nextDelimiter("|")};
-        auto exprEps{BumpPtr<AST::Expr>{}};
-        auto srcDelimR{std::optional<std::string_view>{}};
+        std::optional<std::string_view> srcDelimL{nextDelimiter("|")};
+        BumpPtr<AST::Expr> exprEps{};
+        std::optional<std::string_view> srcDelimR{};
         if (srcDelimL) {
           exprEps = parseUnaryExpression();
           srcDelimR = nextDelimiter("|");
@@ -385,16 +388,16 @@ private:
             srcLoc0.throwError(
                 "'[EPSILON]' syntax was replaced: use '|EPSILON|' for "
                 "absolute or '(EPSILON)' for relative tolerance after ",
-                Quoted(op->srcOp));
+                SpellQuoted(op->srcOp));
           }
         }
         if (!srcDelimL || !exprEps || !srcDelimR)
           srcLoc0.throwError("expected '|EPSILON|' or '(EPSILON)' after ",
-                             Quoted(op->srcOp));
-        auto exprRhs{parseInner()};
+                             SpellQuoted(op->srcOp));
+        BumpPtr<AST::Expr> exprRhs{parseInner()};
         if (!exprRhs)
           srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
-                             Quoted(op->srcOp));
+                             SpellQuoted(op->srcOp));
         accept();
         exprLhs = allocate<AST::Binary>(
             srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,
@@ -402,7 +405,7 @@ private:
         continue;
       }
 
-      auto exprRhs{parseInner()};
+      BumpPtr<AST::Expr> exprRhs{parseInner()};
       if (!exprRhs) {
         reject();
         break;
@@ -420,16 +423,16 @@ private:
   [[nodiscard]] auto parseBinaryRightAssociative(Span<const AST::BinaryOp> ops,
                                                  const Func &parseInner)
       -> BumpPtr<AST::Expr> {
-    auto exprLhs{parseInner()};
+    BumpPtr<AST::Expr> exprLhs{parseInner()};
     if (!exprLhs) return nullptr;
-    auto srcLoc0{checkpoint()};
-    auto op{parseBinaryOp(ops)};
+    SourceLocation srcLoc0{checkpoint()};
+    std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
     if (!op) {
       reject();
       return exprLhs;
     }
     skip();
-    auto exprRhs{parseBinaryRightAssociative(ops, parseInner)};
+    BumpPtr<AST::Expr> exprRhs{parseBinaryRightAssociative(ops, parseInner)};
     if (!exprRhs) {
       reject();
       return exprLhs;
@@ -518,12 +521,12 @@ private:
   /// for the keyword and the AST node type.
   template <typename Node>
   [[nodiscard]] BumpPtr<Node> parseJumpStatement(std::string_view keyword) {
-    auto kw{nextKeywordAndLocation(keyword)};
+    std::optional<Parser::ParsedToken> kw{nextKeywordAndLocation(keyword)};
     if (!kw) return nullptr;
-    auto lateIf{parseLateIf()};
-    auto srcSemicolon{nextDelimiter(";")};
+    std::optional<AST::LateIf> lateIf{parseLateIf()};
+    std::optional<std::string_view> srcSemicolon{nextDelimiter(";")};
     if (!srcSemicolon)
-      kw->srcLoc.throwError("expected ';' after ", Quoted(keyword));
+      kw->srcLoc.throwError("expected ';' after ", SpellQuoted(keyword));
     return allocate<Node>(kw->srcLoc, std::in_place, kw->src, std::move(lateIf),
                           *srcSemicolon);
   }

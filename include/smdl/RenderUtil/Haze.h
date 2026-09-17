@@ -2,9 +2,9 @@
 #pragma once
 
 #include <cmath>
+#include <vector>
 
 #include "smdl/Export.h"
-#include "smdl/RenderUtil/SpectralColor.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/VectorMath.h"
 
@@ -40,22 +40,6 @@ public:
   /// into `[0, 50]`, the domain of the parameter fits.
   explicit MiePhase(float dropletSize);
 
-  /// The phase function of the deflection cosine `u`.
-  [[nodiscard]] float evaluate(float u) const noexcept;
-
-  /// The phase function of a direction pair, both pointing away from
-  /// the scattering vertex.
-  [[nodiscard]] float evaluate(const float3 &wo,
-                               const float3 &wi) const noexcept {
-    return evaluate(-dot(wo, wi));
-  }
-
-  /// Sample the phase function, returning its value, which is also the
-  /// solid-angle density of the sample. The third component of `xi`
-  /// picks the lobe.
-  [[nodiscard]] float sample(float3 xi, const float3 &wo,
-                             float3 &wi) const noexcept;
-
   /// \name Fitted parameters
   ///
   /// The lobe parameters the droplet diameter resolved to, which are
@@ -77,6 +61,22 @@ public:
   [[nodiscard]] float weightDraine() const noexcept { return mWD; }
 
   /// \}
+
+  /// The phase function of the deflection cosine `u`.
+  [[nodiscard]] float evaluate(float u) const noexcept;
+
+  /// The phase function of a direction pair, both pointing away from
+  /// the scattering vertex.
+  [[nodiscard]] float evaluate(const float3 &wo,
+                               const float3 &wi) const noexcept {
+    return evaluate(-dot(wo, wi));
+  }
+
+  /// Sample the phase function, returning its value, which is also the
+  /// solid-angle density of the sample. The third component of `xi`
+  /// picks the lobe.
+  [[nodiscard]] float sample(float3 xi, const float3 &wo,
+                             float3 &wi) const noexcept;
 
 private:
   float mGHG{};
@@ -195,7 +195,8 @@ public:
   /// The shared distance shape of the optical depth over `[0, t]`, which
   /// the per-band extinction at the segment origin scales. Inline, as
   /// is `shapeInverse()`: every haze segment evaluates one or both.
-  [[nodiscard]] static float shape(float k, float t) noexcept {
+  [[nodiscard]] 
+  SMDL_ALWAYS_INLINE static float shape(float k, float t) noexcept {
     // The horizontal ray is not a special case of the formula below but
     // its removable singularity, and the series is what keeps a shallow
     // one from evaluating a difference of nearly equal exponentials over
@@ -209,7 +210,8 @@ public:
 
   /// The distance at which `shape` reaches `s`, or infinity when it
   /// never does, which is an upward ray leaving the atmosphere.
-  [[nodiscard]] static float shapeInverse(float k, float s) noexcept {
+  [[nodiscard]] 
+  SMDL_ALWAYS_INLINE static float shapeInverse(float k, float s) noexcept {
     if (!(s > 0.0f)) return 0.0f;
     if (k == 0.0f) return s;
     // An upward ray reaches at most `1/k`, the finite zenith shape; past
@@ -221,10 +223,10 @@ public:
 
 private:
   /// The extinction spectrum at `mBaseHeight`, in inverse scene units.
-  SpectralColor mSigmaRef{};
+  std::vector<float> mSigmaRef{};
 
   /// The scattering spectrum at `mBaseHeight`, in inverse scene units.
-  SpectralColor mSigmaScaRef{};
+  std::vector<float> mSigmaScaRef{};
 
   /// One over the scale height, in inverse scene units.
   float mInvScaleHeight{};

@@ -47,25 +47,25 @@ private:
   enum Command { INCREMENT_INDENT, ALIGN_INDENT, PUSH_INDENT, POP_INDENT };
 
   llvm::StringRef consumeInput(size_t numChars) {
-    auto inSrc{mInputSrc.take_front(numChars)};
+    llvm::StringRef inSrc{mInputSrc.take_front(numChars)};
     mInputSrc = mInputSrc.drop_front(numChars);
     return inSrc;
   }
 
   llvm::StringRef consumeInputSpace() {
-    auto inSrc{mInputSrc.take_while(isSpace)};
+    llvm::StringRef inSrc{mInputSrc.take_while(isSpace)};
     mInputSrc = mInputSrc.drop_front(inSrc.size());
     return inSrc;
   }
 
   [[nodiscard]] llvm::StringRef consumeInputComment() {
     if (mInputSrc.starts_with("//")) {
-      auto pos{mInputSrc.find('\n', 1)};
+      size_t pos{mInputSrc.find('\n', 1)};
       return consumeInput(pos == llvm::StringRef::npos ? mInputSrc.size()
                                                        : pos + 1);
     }
     if (mInputSrc.starts_with("/*")) {
-      auto pos{mInputSrc.find("*/", 2)};
+      size_t pos{mInputSrc.find("*/", 2)};
       return consumeInput(pos == llvm::StringRef::npos ? mInputSrc.size()
                                                        : pos + 2);
     }
@@ -77,13 +77,13 @@ private:
   }
 
   [[nodiscard]] char lastOutput(int i) const {
-    auto outputSrcSize{int(mOutputSrc.size())};
+    int outputSrcSize{int(mOutputSrc.size())};
     if (i += outputSrcSize; 0 <= i && i < outputSrcSize) return mOutputSrc[i];
     return '\0';
   }
 
   [[nodiscard]] int currentColumn() const {
-    auto column{int(0)};
+    int column{0};
     auto itr{mOutputSrc.rbegin()};
     while (itr != mOutputSrc.rend() && *itr != '\n') {
       ++column;
@@ -95,9 +95,9 @@ private:
   /// The indentation of the line currently being written, which is where
   /// a block opened part way along that line belongs.
   [[nodiscard]] int currentLineIndent() const {
-    auto i{mOutputSrc.size()};
+    size_t i{mOutputSrc.size()};
     while (i > 0 && mOutputSrc[i - 1] != '\n') i--;
-    auto column{int(0)};
+    int column{0};
     while (i < mOutputSrc.size() && mOutputSrc[i] == ' ') i++, column++;
     return column;
   }
@@ -150,7 +150,7 @@ private:
 
   void writeMoreComments() {
     while (true) {
-      auto nextComment{consumeInputComment()};
+      llvm::StringRef nextComment{consumeInputComment()};
       if (!nextComment.empty())
         writeComment(nextComment);
       else
@@ -187,7 +187,7 @@ private:
     // over several: the text that follows would land in the middle of the
     // result.
     auto writeItemsOnOneLine{[&] {
-      auto hasMoreOnLine{
+      bool hasMoreOnLine{
           std::exchange(mHasMoreOnLine, mHasMoreOnLine || size > 1)};
       writeItems(DELIM_UNNECESSARY_SPACE);
       mHasMoreOnLine = hasMoreOnLine;
@@ -201,8 +201,8 @@ private:
     }};
     if (!shouldForceNewLines && !nextCommentForcesNewLine()) {
       if (canBreak && canTrial()) {
-        auto here{measureInPlace(writeHere)};
-        auto onNextLine{measureInPlace(writeOnNextLine)};
+        Measure here{measureInPlace(writeHere)};
+        Measure onNextLine{measureInPlace(writeOnNextLine)};
         // Give the list the next line to itself when it fits there, the
         // opening bracket is still on the page, and the list is wide
         // enough to be worth a line of its own. Otherwise the break this
@@ -233,9 +233,9 @@ private:
   /// block say, stays where it is.
   template <typename... Ts> void writeAfterEqual(Ts &&...args) {
     if (canTrial()) {
-      auto here{
+      Measure here{
           measureInPlace([&] { write(DELIM_UNNECESSARY_SPACE, args...); })};
-      auto onNextLine{measureInPlace(
+      Measure onNextLine{measureInPlace(
           [&] { write(INCREMENT_INDENT, DELIM_NEWLINE, args...); })};
       // The trial on the next line opens with the line break itself, so
       // one line break is what one line looks like there. Move the
@@ -269,7 +269,7 @@ private:
   /// nothing in them rearranges itself over several lines and leaves that
   /// text stranded in the middle of the result.
   template <typename... Ts> void writeWithMoreOnLine(const Ts &...args) {
-    auto hasMoreOnLine{std::exchange(mHasMoreOnLine, true)};
+    bool hasMoreOnLine{std::exchange(mHasMoreOnLine, true)};
     write(args...);
     mHasMoreOnLine = hasMoreOnLine;
   }
@@ -277,13 +277,14 @@ private:
   /// Write whatever `writeTrial` writes, measure it, and undo it.
   template <typename Trial>
   [[nodiscard]] Measure measureInPlace(Trial &&writeTrial) {
-    auto state{saveState()};
-    auto startColumn{currentColumn()};
+    State state{saveState()};
+    int startColumn{currentColumn()};
     ++mNumTrials;
     writeTrial();
     --mNumTrials;
-    auto outSrc{llvm::StringRef(mOutputSrc).drop_front(state.outputSrcSize)};
-    auto measure{Measure{0, int(outSrc.count('\n'))}};
+    llvm::StringRef outSrc{
+        llvm::StringRef(mOutputSrc).drop_front(state.outputSrcSize)};
+    Measure measure{0, int(outSrc.count('\n'))};
     for (auto column{startColumn}; !outSrc.empty();) {
       auto [line, rest] = outSrc.split('\n');
       if (!line.empty())
@@ -333,7 +334,7 @@ private:
       break;
     case ALIGN_INDENT:
       if (lastOutput() != '\n')
-        if (auto column{currentColumn()}; canAlignTo(column)) mIndent = column;
+        if (int column{currentColumn()}; canAlignTo(column)) mIndent = column;
       break;
     case PUSH_INDENT:
       mIndentStack.push_back(mIndent);
@@ -774,7 +775,7 @@ private:
   };
 
   [[nodiscard]] State saveState() {
-    auto state{State{}};
+    State state{};
     while (lastOutput() == ' ') {
       mOutputSrc.pop_back();
       state.numTrailingSpaces++;

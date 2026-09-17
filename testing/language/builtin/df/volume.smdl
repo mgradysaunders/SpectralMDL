@@ -110,10 +110,11 @@ unit_test "A tinted VDF folds its tint to the average" {
     scattering: df::anisotropic_vdf(directional_bias: 0.4)));
   auto matTinted = material(volume: material_volume(scattering: df::tint(
     tint: color(0.5), base: df::anisotropic_vdf(directional_bias: 0.4))));
-  auto plainEval = _MaterialEval(&matPlain);
-  auto tintedEval = _MaterialEval(&matTinted);
-  const auto pPlain = df::_volumeScatterEvaluate(&plainEval, &wo, &wi);
-  const auto pTinted = df::_volumeScatterEvaluate(&tintedEval, &wo, &wi);
+  // The volume entry point takes the VDF itself rather than the instance.
+  const auto pPlain =
+    df::_volumeScatterEvaluate(&matPlain.volume.scattering, &wo, &wi);
+  const auto pTinted =
+    df::_volumeScatterEvaluate(&matTinted.volume.scattering, &wo, &wi);
   #assert(pPlain > 0.0);
   // The scalar volume entry point folds a color tint to its average.
   #assert(pTinted ~== |1e-6| 0.5 * pPlain);

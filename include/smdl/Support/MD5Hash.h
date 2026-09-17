@@ -120,7 +120,7 @@ private:
   struct FileHashKeyHash final {
     [[nodiscard]] size_t
     operator()(const std::pair<MD5Hash, std::string> &key) const noexcept {
-      auto hash{std::hash<std::string>()(key.second)};
+      size_t hash{std::hash<std::string>()(key.second)};
       hash ^= size_t(key.first.getLowerBits()) + 0x9E3779B97F4A7C15ULL +
               (hash << 6) + (hash >> 2);
       hash ^= size_t(key.first.getUpperBits()) + 0x9E3779B97F4A7C15ULL +

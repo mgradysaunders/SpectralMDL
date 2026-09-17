@@ -152,10 +152,10 @@ Lambda::~Lambda() = default;
 
 Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
   if (!(isVariant() && definition && llvm::isa<Return>(definition.get())))
-    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+    srcLoc.throwError(concat("Function variant ", SpellQuoted(name.srcName),
                              " has invalid declaration"));
-  auto letAndCall{LetAndCall{}};
-  auto expr{static_cast<Return *>(definition.get())->expr.get()};
+  LetAndCall letAndCall{};
+  AST::Expr *expr{static_cast<Return *>(definition.get())->expr.get()};
   if (llvm::isa<Call>(expr)) {
     letAndCall.call = static_cast<Call *>(expr);
   } else if (llvm::isa<Let>(expr)) {
@@ -163,18 +163,18 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
     letAndCall.call = llvm::dyn_cast<Call>(letAndCall.let->expr.get());
     if (!letAndCall.call) {
       srcLoc.throwError(
-          concat("function variant ", Quoted(name.srcName),
+          concat("Function variant ", SpellQuoted(name.srcName),
                  " definition with 'let' must be followed by call expression"));
     }
   }
   if (!letAndCall.call) {
-    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+    srcLoc.throwError(concat("Function variant ", SpellQuoted(name.srcName),
                              " definition must be 'let' or call expression"));
   }
   for (auto &arg : letAndCall.call->args) {
     if (!arg.isNamed()) {
-      srcLoc.throwError(concat("call in definition of function variant ",
-                               Quoted(name.srcName),
+      srcLoc.throwError(concat("Call in definition of function variant ",
+                               SpellQuoted(name.srcName),
                                " must only use named arguments"));
     }
   }
@@ -182,9 +182,9 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
 }
 
 std::string getDocCommentText(std::string_view srcDocComment) {
-  auto text{std::string{}};
+  std::string text{};
   while (!srcDocComment.empty()) {
-    auto line{srcDocComment.substr(0, srcDocComment.find('\n'))};
+    std::string_view line{srcDocComment.substr(0, srcDocComment.find('\n'))};
     srcDocComment.remove_prefix(
         std::min(line.size() + 1, srcDocComment.size()));
     while (!line.empty() && isSpace(line.front())) line.remove_prefix(1);

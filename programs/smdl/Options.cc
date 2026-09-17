@@ -1,9 +1,10 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include <algorithm>
 
-#include "../CommandLine.h"
+#include "CommandLine.h"
 
 #include "smdl/Common.h"
+#include "smdl/RenderUtil/OpticalGlass.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
@@ -22,9 +23,6 @@ cl::SubCommand subVolume{"volume",
 cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                            &subTest};
 cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
-// The two that have anything colored to print: the unit test report and
-// the documentation text.
-cl::SubCommandGroup subsWithColor{&subTest, &subDoc};
 cl::SubCommandGroup allSubs{&subDump,   &subList, &subRun,   &subTest,
                             &subFormat, &subDoc,  &subVolume};
 
@@ -133,6 +131,11 @@ cl::OptionCategory catState{"State Options"};
 cl::opt<float> optTime{"time",
                        cl::desc("The animation time in seconds (default: 0)"),
                        cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
+cl::opt<float> optWavelengthHero{
+    "wavelength-hero",
+    cl::desc("The hero wavelength in nanometers (default: 587.5618, the d "
+             "line)"),
+    cl::init(smdl::FRAUNHOFER_D_LINE), cl::sub(subTest), cl::cat(catState)};
 cl::opt<int> optObjectID{"object-id", cl::desc("The object ID (default: 0)"),
                          cl::init(0), cl::sub(subTest), cl::cat(catState)};
 cl::opt<smdl::float3> optTexCoord{
@@ -150,33 +153,26 @@ cl::OptionCategory catUtility{"Utility Options"};
 //--{ Utility Options
 // NOTE: LLVM registers a '--color' of its own on the top-level
 // subcommand, in a hidden category that `HideUnrelatedOptions` filters
-// out, so it never appears in any '--help'. It is nonetheless accepted
-// everywhere, because an option a subcommand does not recognize falls
-// back to the top-level lookup (`CommandLine.cpp`, `LookupLongOption`).
-// That is why 'smdl list --color' is quietly tolerated and does nothing.
-//
-// This option shadows it for the two subcommands that print something
-// colored, since the subcommand is searched first, and drives the
-// coloring explicitly, which keeps the behavior independent of that
+// out, so it never appears in any '--help'. This option shadows it in
+// every subcommand, since an option is looked up in the subcommand ahead
+// of the top level (`CommandLine.cpp`, `LookupLongOption`), and drives
+// the coloring explicitly, which keeps the behavior independent of that
 // LLVM-internal option. Keep it scoped to subcommands: registering a
 // '--color' at the top level would land in the same option map as
-// LLVM's, and `cl` aborts on a duplicate name. That is also why the
-// renderer, which has no subcommands, cannot have one at all.
+// LLVM's, and `cl` aborts on a duplicate name.
 cl::opt<cl::boolOrDefault> optColor{
-    "color", cl::desc("Colorize the output (default: autodetect)"),
-    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(subsWithColor),
+    "color",
+    cl::desc("Colorize the unit test report and the documentation text "
+             "(default: autodetect)\n"
+             "* autodetect colors a terminal, unless NO_COLOR is set or "
+             "TERM is 'dumb'"),
+    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
     cl::cat(catUtility)};
 cl::opt<std::string> optLogLevel{
     "log-level",
     cl::desc("The log level to filter output verbosity, must be "
              "'debug', 'info', 'warn', or 'error' (default: 'info')"),
     cl::init(std::string("info")), cl::sub(allSubs), cl::cat(catUtility)};
-cl::opt<cl::boolOrDefault> optUnicode{
-    "unicode",
-    cl::desc("Label log messages with Unicode symbols rather than bracketed "
-             "words (default: autodetect)"),
-    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(allSubs),
-    cl::cat(catUtility)};
 cl::opt<std::string> optProfile{
     "profile",
     cl::desc("Write a time-trace JSON of the work this subcommand does "
@@ -220,7 +216,7 @@ cl::opt<std::string> optVolumeOutput{
   if (subFormat) return Subcommand::FORMAT;
   if (subDoc) return Subcommand::DOC;
   if (subVolume) return Subcommand::VOLUME;
-  throw smdl::Error("expected a subcommand");
+  throw smdl::Error("Expected a subcommand");
 }
 
 // The wavelength grid the material code compiles for. An explicit
@@ -230,7 +226,7 @@ cl::opt<std::string> optVolumeOutput{
 [[nodiscard]] std::vector<float>
 resolveWavelengths(const WavelengthRange &range, std::vector<float> given) {
   if (!given.empty()) return given;
-  auto wavelengths{std::vector<float>(range.bandCount)};
+  std::vector<float> wavelengths(range.bandCount);
   for (unsigned i = 0; i < range.bandCount; i++) {
     const float fac{range.bandCount > 1 ? float(i) / float(range.bandCount - 1)
                                         : 0.5f};
@@ -252,7 +248,7 @@ Options parseCommandLine(int argc, char **argv) {
   // one of them was given.
   cl::PrintOptionValues();
 
-  auto opts{Options{}};
+  Options opts{};
   opts.subcommand = activeSubcommand();
 
   // The '::'-prefixed positionals are queries rather than file names,
@@ -267,17 +263,18 @@ Options parseCommandLine(int argc, char **argv) {
   // `doc` is the exception: '--builtins' and the queries above give it
   // something to document without any input at all.
   if (opts.inputs.empty() && opts.subcommand != Subcommand::DOC)
-    throw smdl::Error("expected at least one input");
+    throw smdl::Error("Expected at least one input");
   if (optWavelengths.getNumOccurrences() > 0 &&
       optWavelengthRange.getNumOccurrences() > 0)
-    throw smdl::Error("expected at most one of -wavelengths and "
+    throw smdl::Error("Expected at most one of -wavelengths and "
                       "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
   if (!optVolumeGrids.empty() && optVolumeGrids.size() != opts.inputs.size())
-    throw smdl::Error("expected one -grid per input, or none at all");
+    throw smdl::Error("Expected one -grid per input, or none at all");
 
   // Parsed here so a typo fails before anything loads.
-  const auto range{parseWavelengthRange(std::string(optWavelengthRange))};
+  const WavelengthRange range{
+      parseWavelengthRange(std::string(optWavelengthRange))};
   opts.compile.optLevel = smdl::OptLevel(std::min(unsigned(optOptLevel), 3U));
   opts.compile.isDebugEnabled = bool(optDebug);
   opts.compile.wavelengths =
@@ -303,6 +300,7 @@ Options parseCommandLine(int argc, char **argv) {
   opts.output.fileName = flag(optOutput);
 
   opts.state.time = float(optTime);
+  opts.state.wavelengthHero = float(optWavelengthHero);
   opts.state.objectID = int(optObjectID);
   opts.state.texCoord = smdl::float3(optTexCoord);
   opts.state.ptexFaceID = int(optPtexFaceID);
@@ -310,11 +308,7 @@ Options parseCommandLine(int argc, char **argv) {
 
   opts.utility.threads = unsigned(optThreads);
   opts.utility.logLevel = parseLogLevel(std::string(optLogLevel));
-  opts.utility.ansiColorMode =
-      optColor == cl::boolOrDefault::BOU_TRUE    ? smdl::ANSI_COLOR_MODE_ALWAYS
-      : optColor == cl::boolOrDefault::BOU_FALSE ? smdl::ANSI_COLOR_MODE_NEVER
-                                                 : smdl::ANSI_COLOR_MODE_AUTO;
-  opts.utility.unicodeMode = lowerUnicodeMode(optUnicode);
+  opts.utility.ansiColorMode = lowerColorMode(optColor);
   opts.utility.profile = std::string(optProfile).empty()
                              ? std::string("smdl.trace.json")
                              : std::string(optProfile);

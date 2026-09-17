@@ -7,6 +7,7 @@
 
 #include "smdl/Export.h"
 #include "smdl/Support/Macros.h"
+#include "smdl/Support/SIMD.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/VectorMath.h"
 
@@ -48,7 +49,8 @@ public:
     return i < 0 ? 0.0f : 1.0f;
   }
 
-  /// The index sampling routine.
+  /// The index sampling routine. Never an index with no probability,
+  /// even at the bottom of the range, so long as some index has one.
   ///
   /// \param[in]  xi       The random sample \f$ \xi \in (0,1) \f$.
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.
@@ -88,18 +90,6 @@ private:
   return std::clamp(xi, FLOAT_MIN, ONE_MINUS_EPS);
 }
 
-/// The canonical random sample in \f$ (0,1) \f$ that `bits` names: the
-/// bit pattern read as a fraction of \f$ 2^{32} \f$, canonicalized.
-///
-/// Both clamps do work. Only `bits == 0` reaches the bottom, the next
-/// pattern up already landing at \f$ 2^{-32} \f$; every pattern near
-/// \f$ 2^{32} \f$ reaches the top, because `float(bits)` rounds up to
-/// that power of two and the product lands exactly on 1.
-[[nodiscard]] SMDL_ALWAYS_INLINE float
-canonicalFromBits(std::uint32_t bits) noexcept {
-  return canonicalize(float(bits) * 0x1p-32f);
-}
-
 /// Generate canonical random sample in \f$ (0,1) \f$.
 template <typename G> [[nodiscard]] inline float generateCanonical(G &g) {
   return canonicalize(std::generate_canonical<float, 32>(g));
@@ -119,38 +109,6 @@ template <typename G> [[nodiscard]] inline float3 generateCanonical3(G &g) {
 template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return {generateCanonical(g), generateCanonical(g), generateCanonical(g),
           generateCanonical(g)};
-}
-
-/// Advance the given quasi-random sample according to a 2-D low
-/// discrepancy sequence.
-[[nodiscard]] inline float2 advanceLowDiscrepancy2(float2 &xi) {
-  xi = xi + float2(0.7548776662466927f, 0.5698402909980532f);
-  xi.x -= std::floor(xi.x);
-  xi.y -= std::floor(xi.y);
-  return xi;
-}
-
-/// Advance the given quasi-random sample according to a 3-D low
-/// discrepancy sequence.
-[[nodiscard]] inline float3 advanceLowDiscrepancy3(float3 &xi) {
-  xi = xi + float3(0.8191725133961644f, 0.671043606703789f, //
-                   0.5497004779019701f);
-  xi.x -= std::floor(xi.x);
-  xi.y -= std::floor(xi.y);
-  xi.z -= std::floor(xi.z);
-  return xi;
-}
-
-/// Advance the given quasi-random sample according to a 4-D low
-/// discrepancy sequence.
-[[nodiscard]] inline float4 advanceLowDiscrepancy4(float4 &xi) {
-  xi = xi + float4(0.8566748838545029f, 0.733891856627126f, 0.6287067210378086f,
-                   0.53859725722361f);
-  xi.x -= std::floor(xi.x);
-  xi.y -= std::floor(xi.y);
-  xi.z -= std::floor(xi.z);
-  xi.w -= std::floor(xi.w);
-  return xi;
 }
 
 /// Uniform disk PDF.
@@ -200,8 +158,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
 [[nodiscard]] inline float3 cosineHemisphereSample(float2 xi) noexcept {
-  auto sinTheta{uniformDiskSample(xi)};
-  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
+  float2 sinTheta{uniformDiskSample(xi)};
+  float cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
   return {sinTheta.x, sinTheta.y, cosTheta};
 }
 
@@ -288,8 +246,9 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
                                                        float bladeAngle,
                                                        float2 xi) noexcept;
 
-/// The error function inverse, necessary to sample the standard normal
-/// distribution.
+/// The inverse error function on \f$ [-1, 1] \f$, necessary to sample the
+/// standard normal distribution: the width-one instance of
+/// `simd::erfInverse`, which states the approximation and its bounds.
 [[nodiscard]] SMDL_EXPORT float erfInverse(float y) noexcept;
 
 /// The standard normal distribution PDF.
@@ -308,6 +267,61 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 }
 
 /// \}
+
+namespace simd {
+
+/// The inverse error function of every element, each in \f$ [-1, 1] \f$,
+/// to 5e-7 relative, exactly odd, and nondecreasing up to 2 ulp of the
+/// result, which is what keeps stratified samples stratified through
+/// `standardNormalSample`.
+///
+/// Giles' single-precision approximation (M. Giles, "Approximating the
+/// erfinv function", GPU Computing Gems Jade Edition, 2011): with
+/// \f$ w = -\ln((1 - y)(1 + y)) \f$, `y` times a polynomial in `w` below
+/// `w = 5` and one in \f$ \sqrt{w} \f$ above it, the two differing by 1e-7
+/// where they meet. Every lane evaluates both and selects, in Estrin's form
+/// rather than Horner's, because what bounds a caller drawing sample after
+/// sample is the longest chain of dependent multiplies, and Estrin's form
+/// halves it.
+///
+/// The product is held at \f$ 2^{-24} \f$, half the smallest any float
+/// inside the interval makes, so an end of the interval continues the
+/// curve (`y = 1` gives 3.92, the last float below it 3.83) rather than
+/// running the tail polynomial out to where it no longer holds.
+template <std::size_t N>
+[[nodiscard]] inline Pack<float, N>
+erfInverse(const Pack<float, N> &y) noexcept {
+  using P = Pack<float, N>;
+  const P w{-log(max((P(1.0f) - y) * (P(1.0f) + y), P(0x1p-24f)))};
+  const P u{w - P(2.5f)};
+  const P u2{u * u};
+  const P u4{u2 * u2};
+  const P central{(P(1.50140941f) + P(2.46640727e-1f) * u) +
+                  u2 * (P(-4.17768164e-3f) + P(-1.25372503e-3f) * u) +
+                  u4 * ((P(2.18580870e-4f) + P(-4.39150654e-6f) * u) +
+                        u2 * (P(-3.52338770e-6f) + P(3.43273939e-7f) * u)) +
+                  (u4 * u4) * P(2.81022636e-8f)};
+  const P v{sqrt(w) - P(3.0f)};
+  const P v2{v * v};
+  const P v4{v2 * v2};
+  const P tail{(P(2.83297682f) + P(1.00167406f) * v) +
+               v2 * (P(9.43887047e-3f) + P(-7.62246130e-3f) * v) +
+               v4 * ((P(5.73950773e-3f) + P(-3.67342844e-3f) * v) +
+                     v2 * (P(1.34934322e-3f) + P(1.00950558e-4f) * v)) +
+               (v4 * v4) * P(-2.00214257e-4f)};
+  return y * select(w < P(5.0f), central, tail);
+}
+
+/// The standard normal distribution sample of every element, each a
+/// canonical sample in \f$ (0,1) \f$; the packed `smdl::standardNormalSample`.
+template <std::size_t N>
+[[nodiscard]] inline Pack<float, N>
+standardNormalSample(const Pack<float, N> &xi) noexcept {
+  using P = Pack<float, N>;
+  return P(/*sqrt(2)=*/1.41421356237f) * erfInverse(P(2.0f) * xi - P(1.0f));
+}
+
+} // namespace simd
 
 /// A data-driven distribution in 2 dimensions.
 class SMDL_EXPORT Distribution2D final {
@@ -395,205 +409,6 @@ private:
   int mNumTexelsY{};
   std::vector<Distribution1D> mConditionals{};
   Distribution1D mMarginal{};
-};
-
-/// \name Functions (quasi-Monte Carlo)
-/// \{
-
-/// The murmur3 finalizer, spreading every input bit over the whole word.
-[[nodiscard]] inline uint32_t mixBits(uint32_t x) noexcept {
-  x ^= x >> 16;
-  x *= 0x85EBCA6BU;
-  x ^= x >> 13;
-  x *= 0xC2B2AE35U;
-  x ^= x >> 16;
-  return x;
-}
-
-/// The splitmix64 finalizer, the 64-bit analogue of `mixBits(uint32_t)`.
-/// Overload resolution needs an exact-width argument: in particular a
-/// `ULL` literal is `unsigned long long`, which is ambiguous against the
-/// 32-bit overload on LP64, so cast to `uint64_t` first.
-[[nodiscard]] inline uint64_t mixBits(uint64_t x) noexcept {
-  x ^= x >> 30;
-  x *= 0xBF58476D1CE4E5B9ULL;
-  x ^= x >> 27;
-  x *= 0x94D049BB133111EBULL;
-  x ^= x >> 31;
-  return x;
-}
-
-/// Reverse the order of the bits.
-[[nodiscard]] inline uint32_t reverseBits(uint32_t x) noexcept {
-  x = (x << 16) | (x >> 16);
-  x = ((x & 0x00FF00FFU) << 8) | ((x & 0xFF00FF00U) >> 8);
-  x = ((x & 0x0F0F0F0FU) << 4) | ((x & 0xF0F0F0F0U) >> 4);
-  x = ((x & 0x33333333U) << 2) | ((x & 0xCCCCCCCCU) >> 2);
-  x = ((x & 0x55555555U) << 1) | ((x & 0xAAAAAAAAU) >> 1);
-  return x;
-}
-
-/// The hash-based Owen scramble (Burley, "Practical Hash-Based Owen
-/// Scrambling," JCGT 9(4) 2020): reverse so the high (most significant)
-/// bits sit low, run the Laine-Karras permutation, which only lets each
-/// bit affect bits above it, and reverse back. Inputs agreeing in their
-/// most significant bits therefore map to outputs agreeing in at least as
-/// many most significant bits, which is what preserves net structure in
-/// scrambled low-discrepancy points.
-[[nodiscard]] inline uint32_t nestedUniformScramble(uint32_t x,
-                                                    uint32_t seed) noexcept {
-  x = reverseBits(x);
-  x += seed;
-  x ^= x * 0x6C50B47CU;
-  x ^= x * 0xB82F1E52U;
-  x ^= x * 0xC7AFE638U;
-  x ^= x * 0x8D22F6E6U;
-  return reverseBits(x);
-}
-
-/// The second Sobol dimension at `index`. (The first Sobol dimension is
-/// just `reverseBits`.)
-///
-/// The direction numbers are Pascal's triangle mod two, so by Lucas'
-/// theorem bit 31-j of the result is the XOR of the index bits k whose
-/// binary digits cover j. That is the superset zeta transform over the
-/// five-bit cube of bit positions, which is five shift-mask-XOR
-/// butterflies, and the reversal puts j back where the direction
-/// numbers had it. The doctest checks this against the table.
-[[nodiscard]] inline uint32_t sobolDim1(uint32_t index) noexcept {
-  uint32_t w{index};
-  w ^= (w >> 1) & 0x55555555U;
-  w ^= (w >> 2) & 0x33333333U;
-  w ^= (w >> 4) & 0x0F0F0F0FU;
-  w ^= (w >> 8) & 0x00FF00FFU;
-  w ^= (w >> 16) & 0x0000FFFFU;
-  return reverseBits(w);
-}
-
-/// \}
-
-/// A hash-based Owen-scrambled Sobol sampler after Burley, "Practical
-/// Hash-Based Owen Scrambling," JCGT 9(4) 2020.
-///
-/// Each (seed, index) pair yields a deterministic low-discrepancy point
-/// sequence consumed two dimensions at a time; the seed selects the
-/// sequence and the index the point within it. Every 2D pair reuses the
-/// first two Sobol dimensions with an independently hashed index shuffle
-/// and per-dimension Owen scramble, which keeps each pair's stratification
-/// while decorrelating the pairs from one another, so the sequence
-/// extends to arbitrarily many dimensions with no direction-number tables
-/// beyond the second dimension's.
-///
-/// The stratification is per 2D pair and lives entirely in the dimension
-/// counter: a pair is stratified across the point indexes of a seed only
-/// when every index reaches it at the same dimension, aligned on an even
-/// one. A caller that consumes a data-dependent count therefore costs
-/// every draw after it, not just its own. None of the draw methods
-/// realign implicitly; when to call `alignPair()` is caller policy.
-class OwenSobolSampler final {
-public:
-  OwenSobolSampler() = default;
-
-  /// Begin the point `index` of the sequence selected by `seed`,
-  /// resetting the dimension counter.
-  void start(uint32_t seed, uint32_t index) noexcept {
-    mSeedHash = mixBits(seed);
-    mIndex = index;
-    mDimension = 0;
-    mPairIndex = ~uint32_t(0);
-  }
-
-  /// Generates the next scrambled sample as raw bits, advancing the
-  /// dimension counter.
-  [[nodiscard]] uint32_t generate() noexcept {
-    const uint32_t pair{mDimension >> 1};
-    const uint32_t component{mDimension & 1};
-    ++mDimension;
-    formPair(pair);
-    const uint32_t X{component == 0 ? reverseBits(mPairShuffled)
-                                    : sobolDim1(mPairShuffled)};
-    return nestedUniformScramble(X, componentSeed(component));
-  }
-
-  /// Generates the next canonical sample in `(0,1)`.
-  [[nodiscard]] float generateFloat() noexcept {
-    return canonicalFromBits(generate());
-  }
-
-  /// Generates the next 2 canonical samples in `(0,1)^2`: the two
-  /// `generateFloat()` would return in turn, and on an even dimension,
-  /// where they are the components of one pair, in one call that forms
-  /// the pair once for both.
-  [[nodiscard]] float2 generateFloat2() noexcept {
-    if (mDimension & 1) {
-      const float x{generateFloat()};
-      return {x, generateFloat()};
-    }
-    const uint32_t pair{mDimension >> 1};
-    mDimension += 2;
-    formPair(pair);
-    return {canonicalFromBits(nestedUniformScramble(reverseBits(mPairShuffled),
-                                                    componentSeed(0))),
-            canonicalFromBits(nestedUniformScramble(sobolDim1(mPairShuffled),
-                                                    componentSeed(1)))};
-  }
-
-  /// Generates the next 3 canonical samples in `(0,1)^3`.
-  [[nodiscard]] float3 generateFloat3() noexcept {
-    const float2 xy{generateFloat2()};
-    return {xy.x, xy.y, generateFloat()};
-  }
-
-  /// Generates the next 4 canonical samples in `(0,1)^4`.
-  [[nodiscard]] float4 generateFloat4() noexcept {
-    const float2 xy{generateFloat2()};
-    const float2 zw{generateFloat2()};
-    return {xy.x, xy.y, zw.x, zw.y};
-  }
-
-  /// Round the dimension counter up to a pair boundary, so that the next
-  /// draw begins a jointly stratified 2D pair. The skipped dimension
-  /// costs nothing, the pairs being padded rather than consecutive Sobol
-  /// dimensions.
-  void alignPair() noexcept { mDimension = (mDimension + 1U) & ~1U; }
-
-  /// The dimension counter, i.e., the number of dimensions consumed.
-  [[nodiscard]] uint32_t dimension() const noexcept { return mDimension; }
-
-private:
-  /// Form the seed and shuffled index of `pair` unless they are the
-  /// cached ones. Both components of a pair share them, so the pair
-  /// pays for them once.
-  void formPair(uint32_t pair) noexcept {
-    if (pair != mPairIndex) {
-      mPairIndex = pair;
-      mPairSeed = mixBits(mSeedHash ^ (0x9E3779B9U * pair));
-      mPairShuffled = nestedUniformScramble(mIndex, mPairSeed);
-    }
-  }
-
-  /// The Owen scramble seed of the given component of the cached pair.
-  [[nodiscard]] uint32_t componentSeed(uint32_t component) const noexcept {
-    return mixBits(mPairSeed ^ (0x55555555U + component));
-  }
-
-  /// The hashed sequence-selecting seed.
-  uint32_t mSeedHash{};
-
-  /// The point index.
-  uint32_t mIndex{};
-
-  /// The dimension counter.
-  uint32_t mDimension{};
-
-  /// The pair the cache below belongs to, or `~0` for none.
-  uint32_t mPairIndex{~uint32_t(0)};
-
-  /// The pair's hashed seed.
-  uint32_t mPairSeed{};
-
-  /// The pair's shuffled point index.
-  uint32_t mPairShuffled{};
 };
 
 /// \}
