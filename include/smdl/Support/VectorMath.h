@@ -380,6 +380,8 @@ SMDL_ALWAYS_INLINE Vector<bool, N> operator!=(const Vector<T, N> &v0,
 /// components (`dot`, `cross`, `operator==`) stay component-wise above.
 /// \{
 
+namespace detail {
+
 /// Load all four lanes of a vector as one pack.
 template <size_t N>
 [[nodiscard]] SMDL_ALWAYS_INLINE simd::Pack<float, 4>
@@ -398,82 +400,83 @@ vectorOf(const simd::Pack<float, 4> &pack) noexcept {
   return v;
 }
 
+} // namespace detail
+
 #if SMDL_SIMD_VECTOR_EXTENSION
 
 /// Vector unary `operator-`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v) noexcept {
-  return vectorOf<3>(-packOf(v));
+  return detail::vectorOf<3>(-detail::packOf(v));
 }
 
 /// Vector-vector `operator+`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator+(const float3 &v0,
                                                   const float3 &v1) noexcept {
-  return vectorOf<3>(packOf(v0) + packOf(v1));
+  return detail::vectorOf<3>(detail::packOf(v0) + detail::packOf(v1));
 }
 
 /// Vector-vector `operator-`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v0,
                                                   const float3 &v1) noexcept {
-  return vectorOf<3>(packOf(v0) - packOf(v1));
+  return detail::vectorOf<3>(detail::packOf(v0) - detail::packOf(v1));
 }
 
 /// Scalar-vector `operator*`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float &s0,
                                                   const float3 &v1) noexcept {
-  return vectorOf<3>(simd::Pack<float, 4>(s0) * packOf(v1));
+  return detail::vectorOf<3>(simd::Pack<float, 4>(s0) * detail::packOf(v1));
 }
 
 /// Vector-scalar `operator*`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float3 &v0,
                                                   const float &s1) noexcept {
-  return vectorOf<3>(packOf(v0) * simd::Pack<float, 4>(s1));
+  return detail::vectorOf<3>(detail::packOf(v0) * simd::Pack<float, 4>(s1));
 }
 
 /// Vector-scalar `operator/`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float3 operator/(const float3 &v0,
                                                   const float &s1) noexcept {
-  return vectorOf<3>(packOf(v0) / simd::Pack<float, 4>(s1));
+  return detail::vectorOf<3>(detail::packOf(v0) / simd::Pack<float, 4>(s1));
 }
 
 /// Vector unary `operator-`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v) noexcept {
-  return vectorOf<4>(-packOf(v));
+  return detail::vectorOf<4>(-detail::packOf(v));
 }
 
 /// Vector-vector `operator+`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator+(const float4 &v0,
                                                   const float4 &v1) noexcept {
-  return vectorOf<4>(packOf(v0) + packOf(v1));
+  return detail::vectorOf<4>(detail::packOf(v0) + detail::packOf(v1));
 }
 
 /// Vector-vector `operator-`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v0,
                                                   const float4 &v1) noexcept {
-  return vectorOf<4>(packOf(v0) - packOf(v1));
+  return detail::vectorOf<4>(detail::packOf(v0) - detail::packOf(v1));
 }
 
 /// Scalar-vector `operator*`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float &s0,
                                                   const float4 &v1) noexcept {
-  return vectorOf<4>(simd::Pack<float, 4>(s0) * packOf(v1));
+  return detail::vectorOf<4>(simd::Pack<float, 4>(s0) * detail::packOf(v1));
 }
 
 /// Vector-scalar `operator*`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float4 &v0,
                                                   const float &s1) noexcept {
-  return vectorOf<4>(packOf(v0) * simd::Pack<float, 4>(s1));
+  return detail::vectorOf<4>(detail::packOf(v0) * simd::Pack<float, 4>(s1));
 }
 
 /// Vector-scalar `operator/`.
 [[nodiscard]] SMDL_ALWAYS_INLINE float4 operator/(const float4 &v0,
                                                   const float &s1) noexcept {
-  return vectorOf<4>(packOf(v0) / simd::Pack<float, 4>(s1));
+  return detail::vectorOf<4>(detail::packOf(v0) / simd::Pack<float, 4>(s1));
 }
 
 #endif // #if SMDL_SIMD_VECTOR_EXTENSION
 
 /// \}
-
 
 /// Vector dot product in 2 dimensions.
 template <typename T>
