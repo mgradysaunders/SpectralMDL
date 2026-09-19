@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "smdl/Support/Macros.h"
+#include "smdl/Support/SIMD.h"
 
 namespace smdl {
 
@@ -129,7 +130,7 @@ public:
   constexpr Vector(T x) : Vector(x, x, x) {}
 
   // NOLINTNEXTLINE
-  constexpr Vector(T x, T y, T z) : x(x), y(y), z(z) {}
+  constexpr Vector(T x, T y, T z) : x(x), y(y), z(z), padding() {}
 
   template <typename U>
   explicit constexpr Vector(const U *v) : Vector(v[0], v[1], v[2]) {}
@@ -150,7 +151,12 @@ public:
     return result;
   }
 
-  T x, y, z;
+  /// The fourth lane that `alignas` already sizes the vector to, declared
+  /// so that it is storage rather than padding, which is what lets the
+  /// packed operators load and store the whole vector at once. It holds no
+  /// component and is indeterminate unless a component constructor ran, so
+  /// nothing that reduces across components may look at it.
+  T x, y, z, padding;
 };
 
 /// The vector template for `N = 4`.
@@ -361,6 +367,113 @@ SMDL_ALWAYS_INLINE Vector<bool, N> operator!=(const Vector<T, N> &v0,
   for (size_t i = 0; i < N; i++) v[i] = v0[i] != v1[i];
   return v;
 }
+
+/// \name Functions (packed vector math)
+///
+/// The generic operators above walk one component at a time, which the
+/// vectorizer reassembles into two lanes plus a remainder rather than one
+/// whole register. These overloads say the same thing as one pack, and
+/// overload resolution prefers them for the two types that fill a pack
+/// exactly. The pack covers all four lanes, `Vector<float, 3>` included,
+/// so whatever sits in `padding` is carried along and never read back;
+/// every operation here is element-wise, and the ones that reduce across
+/// components (`dot`, `cross`, `operator==`) stay component-wise above.
+/// \{
+
+/// Load all four lanes of a vector as one pack.
+template <size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE simd::Pack<float, 4>
+packOf(const Vector<float, N> &v) noexcept {
+  static_assert(N == 3 || N == 4, "The pack covers the whole vector");
+  return simd::Pack<float, 4>::load(&v.x);
+}
+
+/// Store all four lanes of a pack as a vector.
+template <size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE Vector<float, N>
+vectorOf(const simd::Pack<float, 4> &pack) noexcept {
+  static_assert(N == 3 || N == 4, "The pack covers the whole vector");
+  Vector<float, N> v;
+  pack.store(&v.x);
+  return v;
+}
+
+#if SMDL_SIMD_VECTOR_EXTENSION
+
+/// Vector unary `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v) noexcept {
+  return vectorOf<3>(-packOf(v));
+}
+
+/// Vector-vector `operator+`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator+(const float3 &v0,
+                                                  const float3 &v1) noexcept {
+  return vectorOf<3>(packOf(v0) + packOf(v1));
+}
+
+/// Vector-vector `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v0,
+                                                  const float3 &v1) noexcept {
+  return vectorOf<3>(packOf(v0) - packOf(v1));
+}
+
+/// Scalar-vector `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float &s0,
+                                                  const float3 &v1) noexcept {
+  return vectorOf<3>(simd::Pack<float, 4>(s0) * packOf(v1));
+}
+
+/// Vector-scalar `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float3 &v0,
+                                                  const float &s1) noexcept {
+  return vectorOf<3>(packOf(v0) * simd::Pack<float, 4>(s1));
+}
+
+/// Vector-scalar `operator/`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator/(const float3 &v0,
+                                                  const float &s1) noexcept {
+  return vectorOf<3>(packOf(v0) / simd::Pack<float, 4>(s1));
+}
+
+/// Vector unary `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v) noexcept {
+  return vectorOf<4>(-packOf(v));
+}
+
+/// Vector-vector `operator+`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator+(const float4 &v0,
+                                                  const float4 &v1) noexcept {
+  return vectorOf<4>(packOf(v0) + packOf(v1));
+}
+
+/// Vector-vector `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v0,
+                                                  const float4 &v1) noexcept {
+  return vectorOf<4>(packOf(v0) - packOf(v1));
+}
+
+/// Scalar-vector `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float &s0,
+                                                  const float4 &v1) noexcept {
+  return vectorOf<4>(simd::Pack<float, 4>(s0) * packOf(v1));
+}
+
+/// Vector-scalar `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float4 &v0,
+                                                  const float &s1) noexcept {
+  return vectorOf<4>(packOf(v0) * simd::Pack<float, 4>(s1));
+}
+
+/// Vector-scalar `operator/`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator/(const float4 &v0,
+                                                  const float &s1) noexcept {
+  return vectorOf<4>(packOf(v0) / simd::Pack<float, 4>(s1));
+}
+
+#endif // #if SMDL_SIMD_VECTOR_EXTENSION
+
+/// \}
+
 
 /// Vector dot product in 2 dimensions.
 template <typename T>
@@ -629,11 +742,25 @@ inline Vector<T, M> operator*(const Matrix<T, N, M> &m0,
 /// dimensions means, said once: the homogeneous coordinate is the entire
 /// difference between transforming a point and transforming a direction,
 /// and it is the easiest part of the spelling to mistype.
+///
+/// \note
+/// The products accumulate one statement at a time rather than summing in
+/// a single expression. Under `-ffp-contract=on` a multiply fuses into the
+/// add that follows it in the same statement, so this spelling pins the
+/// association instead of leaving it to the compiler, and the association
+/// is part of the result.
 template <typename T>
 [[nodiscard]]
 inline Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
                                    const Vector<T, 3> &p) noexcept {
-  return Vector<T, 3>(m * Vector<T, 4>(p, T(1)));
+  Vector<T, 3> v{};
+  for (size_t i = 0; i < 3; i++) {
+    v[i] += m[0][i] * p.x;
+    v[i] += m[1][i] * p.y;
+    v[i] += m[2][i] * p.z;
+    v[i] += m[3][i];
+  }
+  return v;
 }
 
 /// Apply an affine transform to a direction, i.e., without the
@@ -647,7 +774,13 @@ template <typename T>
 [[nodiscard]]
 inline Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
                                        const Vector<T, 3> &v) noexcept {
-  return Vector<T, 3>(m * Vector<T, 4>(v, T(0)));
+  Vector<T, 3> r{};
+  for (size_t i = 0; i < 3; i++) {
+    r[i] += m[0][i] * v.x;
+    r[i] += m[1][i] * v.y;
+    r[i] += m[2][i] * v.z;
+  }
+  return r;
 }
 
 /// Matrix transpose.
