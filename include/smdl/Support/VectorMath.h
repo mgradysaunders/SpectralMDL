@@ -72,8 +72,7 @@ template <typename T>
   return (1 - t) * a + t * b;
 }
 
-template <typename T>
-[[nodiscard]] constexpr T clamp01(const T& x) noexcept {
+template <typename T> [[nodiscard]] constexpr T clamp01(const T &x) noexcept {
   return std::clamp(x, T(0), T(1));
 }
 
@@ -253,14 +252,14 @@ template <typename T, size_t N>
 /// Vector unary `operator+`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator+(Vector<T, N> v) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator+(Vector<T, N> v) noexcept {
   return v;
 }
 
 /// Vector unary `operator-`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator-(Vector<T, N> v) noexcept {
   for (size_t i = 0; i < N; i++) v[i] = -v[i];
   return v;
 }
@@ -268,8 +267,8 @@ SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
 /// Vector-vector `operator+`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N>
-operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator+(const Vector<T, N> &v0,
+                                          const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] + v1[i];
   return v;
@@ -278,8 +277,8 @@ operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 /// Vector-vector `operator-`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N>
-operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator-(const Vector<T, N> &v0,
+                                          const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] - v1[i];
   return v;
@@ -287,23 +286,23 @@ operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
 
 /// Vector-vector `operator+=`.
 template <typename T, size_t N>
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> &
-operator+=(Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> &operator+=(Vector<T, N> &v0,
+                                            const Vector<T, N> &v1) noexcept {
   return v0 = v0 + v1;
 }
 
 /// Vector-vector `operator-=`.
 template <typename T, size_t N>
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> &
-operator-=(Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> &operator-=(Vector<T, N> &v0,
+                                            const Vector<T, N> &v1) noexcept {
   return v0 = v0 - v1;
 }
 
 /// Scalar-vector `operator*`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N>
-operator*(const T &s0, const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator*(const T &s0,
+                                          const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = s0 * v1[i];
   return v;
@@ -312,8 +311,8 @@ operator*(const T &s0, const Vector<T, N> &v1) noexcept {
 /// Vector-scalar `operator*`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
-                                                    const T &s1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator*(const Vector<T, N> &v0,
+                                          const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] * s1;
   return v;
@@ -322,8 +321,8 @@ SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
 /// Vector-scalar `operator/`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
-                                                    const T &s1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> operator/(const Vector<T, N> &v0,
+                                          const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] / s1;
   return v;
@@ -331,23 +330,23 @@ SMDL_ALWAYS_INLINE constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
 
 /// Vector-scalar `operator*=`.
 template <typename T, size_t N>
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> &operator*=(Vector<T, N> &v0,
-                                                      const T &s1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> &operator*=(Vector<T, N> &v0,
+                                            const T &s1) noexcept {
   return v0 = v0 * s1;
 }
 
 /// Vector-scalar `operator/=`.
 template <typename T, size_t N>
-SMDL_ALWAYS_INLINE constexpr Vector<T, N> &operator/=(Vector<T, N> &v0,
-                                                      const T &s1) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, N> &operator/=(Vector<T, N> &v0,
+                                            const T &s1) noexcept {
   return v0 = v0 / s1;
 }
 
 /// Vector-vector `operator==`.
 template <typename T, size_t N>
 [[nodiscard]]
-constexpr Vector<bool, N> operator==(const Vector<T, N> &v0,
-                                     const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<bool, N> operator==(const Vector<T, N> &v0,
+                                              const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] == v1[i];
   return v;
@@ -356,8 +355,8 @@ constexpr Vector<bool, N> operator==(const Vector<T, N> &v0,
 /// Vector-vector `operator!=`.
 template <typename T, size_t N>
 [[nodiscard]]
-constexpr Vector<bool, N> operator!=(const Vector<T, N> &v0,
-                                     const Vector<T, N> &v1) noexcept {
+SMDL_ALWAYS_INLINE Vector<bool, N> operator!=(const Vector<T, N> &v0,
+                                              const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
   for (size_t i = 0; i < N; i++) v[i] = v0[i] != v1[i];
   return v;
@@ -365,43 +364,41 @@ constexpr Vector<bool, N> operator!=(const Vector<T, N> &v0,
 
 /// Vector dot product in 2 dimensions.
 template <typename T>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 2> u, Vector<T, 2> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 2> u,
+                                       Vector<T, 2> v) noexcept {
   return u.x * v.x + u.y * v.y;
 }
 
 /// Vector dot product in 3 dimensions.
 template <typename T>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 3> u, Vector<T, 3> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 3> u,
+                                       Vector<T, 3> v) noexcept {
   return u.x * v.x + u.y * v.y + u.z * v.z;
 }
 
 /// Vector dot product in 4 dimensions.
 template <typename T>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr T dot(Vector<T, 4> u, Vector<T, 4> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 4> u,
+                                       Vector<T, 4> v) noexcept {
   return (u.x * v.x + u.y * v.y) + (u.z * v.z + u.w * v.w);
 }
 
 /// Absolute value of dot product.
 template <typename T, size_t N>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr T absDot(Vector<T, N> u, Vector<T, N> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T absDot(Vector<T, N> u,
+                                          Vector<T, N> v) noexcept {
   return std::abs(dot(u, v));
 }
 
 /// Vector length squared.
 template <typename T, size_t N>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr T lengthSquared(Vector<T, N> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T lengthSquared(Vector<T, N> v) noexcept {
   return dot(v, v);
 }
 
 /// Vector length.
 template <typename T, size_t N>
-[[nodiscard]]
-SMDL_ALWAYS_INLINE T length(Vector<T, N> v) noexcept {
+[[nodiscard]] SMDL_ALWAYS_INLINE T length(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   return std::sqrt(dot(v, v));
 }
@@ -432,8 +429,7 @@ SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
 /// Vector cross product in 3 dimensions.
 template <typename T>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE constexpr Vector<T, 3> cross(Vector<T, 3> u,
-                                                Vector<T, 3> v) noexcept {
+SMDL_ALWAYS_INLINE Vector<T, 3> cross(Vector<T, 3> u, Vector<T, 3> v) noexcept {
   return {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
 }
 
@@ -607,8 +603,8 @@ using double4x4 = Matrix<double, 4, 4>;
 /// Matrix-Matrix `operator*`.
 template <typename T, size_t P, size_t N, size_t M>
 [[nodiscard]]
-constexpr Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
-                                    const Matrix<T, P, N> &m1) noexcept {
+inline Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
+                                 const Matrix<T, P, N> &m1) noexcept {
   Matrix<T, P, M> m{};
   for (size_t i = 0; i < M; i++)
     for (size_t j = 0; j < P; j++)
@@ -619,8 +615,8 @@ constexpr Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
 /// Matrix-Vector `operator*`.
 template <typename T, size_t N, size_t M>
 [[nodiscard]]
-constexpr Vector<T, M> operator*(const Matrix<T, N, M> &m0,
-                                 const Vector<T, N> &v1) noexcept {
+inline Vector<T, M> operator*(const Matrix<T, N, M> &m0,
+                              const Vector<T, N> &v1) noexcept {
   Vector<T, M> v{};
   for (size_t i = 0; i < M; i++)
     for (size_t k = 0; k < N; k++) v[i] += m0[k][i] * v1[k];
@@ -635,8 +631,8 @@ constexpr Vector<T, M> operator*(const Matrix<T, N, M> &m0,
 /// and it is the easiest part of the spelling to mistype.
 template <typename T>
 [[nodiscard]]
-constexpr Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
-                                      const Vector<T, 3> &p) noexcept {
+inline Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
+                                   const Vector<T, 3> &p) noexcept {
   return Vector<T, 3>(m * Vector<T, 4>(p, T(1)));
 }
 
@@ -649,15 +645,15 @@ constexpr Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
 /// (`cof(A) = det(A) A^-T`) rather than `A` itself.
 template <typename T>
 [[nodiscard]]
-constexpr Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
-                                          const Vector<T, 3> &v) noexcept {
+inline Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
+                                       const Vector<T, 3> &v) noexcept {
   return Vector<T, 3>(m * Vector<T, 4>(v, T(0)));
 }
 
 /// Matrix transpose.
 template <typename T, size_t N, size_t M>
 [[nodiscard]]
-constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
+inline Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
   Matrix<T, M, N> mT{};
   for (size_t i = 0; i < N; i++)
     for (size_t j = 0; j < M; j++) mT[j][i] = m[i][j];
@@ -667,7 +663,7 @@ constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
 /// Calculate affine inverse.
 template <typename T>
 [[nodiscard]]
-constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
+inline Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   Matrix<T, 4, 4> mI{};
   mI[0] = {m[0].x, m[1].x, m[2].x, T(0)};
   mI[1] = {m[0].y, m[1].y, m[2].y, T(0)};

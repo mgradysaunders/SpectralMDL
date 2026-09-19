@@ -61,15 +61,15 @@ template <typename T, std::size_t N> struct RawVector;
 /// The compiler emits the scalar instruction for each operation, which
 /// is what a hand-written scalar version would have been.
 template <> struct RawVector<float, 1> {
-  typedef float Type __attribute__((vector_size(4)));
+  using Type = float __attribute__((vector_size(4)));
 };
 
 template <> struct RawVector<float, 4> {
-  typedef float Type __attribute__((vector_size(16)));
+  using Type = float __attribute__((vector_size(16)));
 };
 
 template <> struct RawVector<float, 8> {
-  typedef float Type __attribute__((vector_size(32)));
+  using Type = float __attribute__((vector_size(32)));
 };
 
 /// The raw storage behind `Mask`: the integer vector a comparison of
@@ -77,15 +77,15 @@ template <> struct RawVector<float, 8> {
 template <typename T, std::size_t N> struct RawMask;
 
 template <> struct RawMask<float, 1> {
-  typedef int Type __attribute__((vector_size(4)));
+  using Type = int __attribute__((vector_size(4)));
 };
 
 template <> struct RawMask<float, 4> {
-  typedef int Type __attribute__((vector_size(16)));
+  using Type = int __attribute__((vector_size(16)));
 };
 
 template <> struct RawMask<float, 8> {
-  typedef int Type __attribute__((vector_size(32)));
+  using Type = int __attribute__((vector_size(32)));
 };
 
 /// The unsigned integer vector the size of `RawVector<T, N>`, for a kernel
@@ -94,15 +94,15 @@ template <> struct RawMask<float, 8> {
 template <typename T, std::size_t N> struct RawBits;
 
 template <> struct RawBits<float, 1> {
-  typedef unsigned Type __attribute__((vector_size(4)));
+  using Type = unsigned __attribute__((vector_size(4)));
 };
 
 template <> struct RawBits<float, 4> {
-  typedef unsigned Type __attribute__((vector_size(16)));
+  using Type = unsigned __attribute__((vector_size(16)));
 };
 
 template <> struct RawBits<float, 8> {
-  typedef unsigned Type __attribute__((vector_size(32)));
+  using Type = unsigned __attribute__((vector_size(32)));
 };
 
 #else
@@ -319,21 +319,21 @@ template <typename T, std::size_t N> struct Pack final {
   /// produces all ones or all zeros per lane, which is what `Mask` is.
   /// \{
 #if SMDL_SIMD_VECTOR_EXTENSION
-#define SMDL_SIMD_COMPARE(op)                                       \
-  [[nodiscard]] friend Mask<T, N> operator op(const Pack &lhs,      \
+#define SMDL_SIMD_COMPARE(op)                                             \
+  [[nodiscard]] friend Mask<T, N> operator op(const Pack &lhs,            \
                                               const Pack &rhs) noexcept { \
-    Mask<T, N> mask;                                                \
-    mask.values = lhs.values op rhs.values;                         \
-    return mask;                                                    \
+    Mask<T, N> mask;                                                      \
+    mask.values = lhs.values op rhs.values;                               \
+    return mask;                                                          \
   }
 #else
-#define SMDL_SIMD_COMPARE(op)                                       \
-  [[nodiscard]] friend Mask<T, N> operator op(const Pack &lhs,      \
+#define SMDL_SIMD_COMPARE(op)                                             \
+  [[nodiscard]] friend Mask<T, N> operator op(const Pack &lhs,            \
                                               const Pack &rhs) noexcept { \
-    Mask<T, N> mask;                                                \
-    for (std::size_t i = 0; i < N; i++)                             \
-      mask.values[i] = (lhs.values[i] op rhs.values[i]) ? -1 : 0;   \
-    return mask;                                                    \
+    Mask<T, N> mask;                                                      \
+    for (std::size_t i = 0; i < N; i++)                                   \
+      mask.values[i] = (lhs.values[i] op rhs.values[i]) ? -1 : 0;         \
+    return mask;                                                          \
   }
 #endif
   SMDL_SIMD_COMPARE(<)
@@ -347,9 +347,7 @@ template <typename T, std::size_t N> struct Pack final {
 
   /// Read one lane. Present for the edges of a kernel, never for its
   /// inner loop, where a scalar read defeats the point.
-  [[nodiscard]] T operator[](std::size_t i) const noexcept {
-    return values[i];
-  }
+  [[nodiscard]] T operator[](std::size_t i) const noexcept { return values[i]; }
 
   Raw values{};
 };
@@ -382,7 +380,8 @@ template <typename T, std::size_t N>
 #else
   // The loop is what GCC and the fallback get. With '-fno-math-errno',
   // which this project sets, it vectorizes to the same instruction.
-  for (std::size_t i = 0; i < N; i++) result.values[i] = std::sqrt(pack.values[i]);
+  for (std::size_t i = 0; i < N; i++)
+    result.values[i] = std::sqrt(pack.values[i]);
 #endif
   return result;
 }
