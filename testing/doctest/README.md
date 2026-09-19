@@ -7,7 +7,7 @@ ctest --test-dir build          # this and smdl-language
 ./build/bin/smdl-doctest        # the library
 ```
 
-109 test cases and 499 subcases, about twenty seconds.
+99 test cases and 447 subcases, about thirty seconds.
 Useful flags, all of which work because `doctest.cc` forwards the command
 line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
 filter by case, subcase, and source file, `-s` reports the passing
@@ -49,7 +49,7 @@ positive behavior lives there, and neither is a duplicate of the other.
 
 **A test name is `Subject: what it is about`.** The subject is the type,
 function, or facility the case is about, spelled as the source spells it
-(`Image`, `MotionTrack`, `smdlEvalMetalIOR`, `findMaterial`), then a colon
+(`Image`, `MaterialDef`, `smdlEvalMetalIOR`, `findMaterial`), then a colon
 and a lowercase phrase. That phrase is a claim when the case proves one
 thing and a topic when it groups subcases that each prove one. The reporter
 prints the file above the name, so the three lines read together:
@@ -103,10 +103,9 @@ source at any depth includes either unqualified. `Fixtures.h` includes
 **A test owns nothing global.** Anything process-wide that a test installs
 is put back by a destructor, never by a statement at the end of a body: a
 throwing `REQUIRE` would skip the statement. That covers the scratch
-directory (`TempDir`), the wavelength grid and the shutter (`ScopedGrid`,
-`ScopedShutter`), the logger's sinks (`CollectedLog`), and the environment
-(`ScopedEnv`). It is what makes the random order safe, and
-the one thing to get right when adding a test that touches any of them.
+directory (`TempDir`), the logger's sinks (`CollectedLog`), and the
+environment (`ScopedEnv`). It is what makes the random order safe, and the
+one thing to get right when adding a test that touches any of them.
 
 Two constraints worth knowing:
 
