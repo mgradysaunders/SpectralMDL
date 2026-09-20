@@ -101,32 +101,6 @@ float2 uniformDiskSample(float2 xi) noexcept {
   return {rad * std::cos(phi), rad * std::sin(phi)};
 }
 
-float2 uniformApertureSample(int numBlades, float bladeAngle,
-                             float2 xi) noexcept {
-  if (numBlades < 3) return uniformDiskSample(xi);
-  // Equal area with the unit disk
-  const float n{float(numBlades)};
-  const float circumRadius{std::sqrt(TWO_PI / (n * std::sin(TWO_PI / n)))};
-  // Pick one of the `n` triangles that meet at the center with the first
-  // dimension and rescale it back to (0,1), so the polygon costs nothing in
-  // dimensions over the disk.
-  const float i{std::floor(xi.x * n)};
-  xi.x = std::min(xi.x * n - i, 1.0f);
-  // Heitz's low-distortion square-to-triangle map
-  if (xi.y > xi.x) {
-    xi.x *= 0.5f;
-    xi.y -= xi.x;
-  } else {
-    xi.y *= 0.5f;
-    xi.x -= xi.y;
-  }
-  const float theta0{bladeAngle + TWO_PI * i / n};
-  const float theta1{theta0 + TWO_PI / n};
-  // Barycentric over (center, v0, v1); the center contributes nothing.
-  return circumRadius * (xi.x * float2(std::cos(theta0), std::sin(theta0)) +
-                         xi.y * float2(std::cos(theta1), std::sin(theta1)));
-}
-
 float erfInverse(float y) noexcept {
   return simd::erfInverse(simd::float1(y))[0];
 }
