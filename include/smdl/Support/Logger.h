@@ -29,7 +29,7 @@ public:
   virtual ~LogSink() = default;
 
   /// Write.
-  virtual void logMessage(LogLevel level, std::string_view message) {}
+  virtual void logMessage(LogLevel /*level*/, std::string_view /*message*/) {}
 
   /// Flush the file or stream if applicable.
   virtual void flush() {}
