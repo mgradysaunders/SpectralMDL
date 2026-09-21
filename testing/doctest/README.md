@@ -7,7 +7,7 @@ ctest --test-dir build          # this and smdl-language
 ./build/bin/smdl-doctest        # the library
 ```
 
-99 test cases and 447 subcases, about thirty seconds.
+102 test cases and 451 subcases, about thirty seconds.
 Useful flags, all of which work because `doctest.cc` forwards the command
 line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
 filter by case, subcase, and source file, `-s` reports the passing

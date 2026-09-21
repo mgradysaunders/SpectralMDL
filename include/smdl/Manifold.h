@@ -17,8 +17,8 @@
 /// instances alone.
 #pragma once
 
-#include <array>
 #include <cmath>
+#include <vector>
 
 #include "smdl/JIT.h"
 
@@ -28,7 +28,11 @@ namespace smdl {
 /// \{
 
 /// The most interfaces a connection may cross.
-inline constexpr int MANIFOLD_MAX_DEPTH{4};
+///
+/// A sanity bound: the walk's workspace is dynamically sizable
+/// to any conceivable chain, so this is what the solver refuses
+/// rather than what anything is built for.
+inline constexpr int MANIFOLD_MAX_DEPTH{16};
 
 /// How far a converged crossing may sit from the one a path actually
 /// took and still count as the same solution, as a fraction of the
@@ -56,11 +60,13 @@ inline constexpr float MANIFOLD_IDENTITY_FRACTION{1e-2f};
 /// of that loss.
 inline constexpr float MANIFOLD_SOLUTION_IDENTITY_FRACTION{1e-3f};
 
-/// The constraint residual a randomly started walk converges to, on top
-/// of the position test, so that its solutions are pinned well inside
-/// `MANIFOLD_SOLUTION_IDENTITY_FRACTION`; the reference implementation's
-/// solver threshold. A glossy chain tightens this further to a fraction
-/// of its lobe, see `ManifoldChain::residualTolerance`.
+/// The constraint residual a randomly started walk converges to on top
+/// of the position test so that its solutions are pinned well inside
+/// `MANIFOLD_SOLUTION_IDENTITY_FRACTION`.
+///
+/// \note
+/// A glossy chain tightens this further to a fraction of its lobe,
+/// see `ManifoldChain::residualTolerance`.
 inline constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
 
 /// How many fresh starts a reciprocal estimate may draw before giving up
@@ -263,25 +269,56 @@ public:
 /// point and the crossings a ray refracted through it goes on to meet.
 class ManifoldChain final {
 public:
-  [[nodiscard]] size_t size() const noexcept {
-    return static_cast<size_t>(count);
+  /// The number of crossings, as an `int` because every loop over a
+  /// chain is one and a `size_t` would sign-compare against all of them.
+  [[nodiscard]] int size() const noexcept {
+    return static_cast<int>(vertices.size());
   }
+
+  [[nodiscard]] bool empty() const noexcept { return vertices.empty(); }
 
   [[nodiscard]] auto *begin() noexcept { return vertices.data(); }
 
   [[nodiscard]] auto *begin() const noexcept { return vertices.data(); }
 
-  [[nodiscard]] auto *end() noexcept { return vertices.data() + size(); }
+  [[nodiscard]] auto *end() noexcept {
+    return vertices.data() + vertices.size();
+  }
 
-  [[nodiscard]] auto *end() const noexcept { return vertices.data() + size(); }
+  [[nodiscard]] auto *end() const noexcept {
+    return vertices.data() + vertices.size();
+  }
 
   [[nodiscard]] auto &operator[](int i) noexcept { return vertices[i]; }
 
   [[nodiscard]] auto &operator[](int i) const noexcept { return vertices[i]; }
 
+  /// Room for `depth` crossings without allocating again, which is the
+  /// only allocation the chain makes: a caller that reserves once and
+  /// refills in place never allocates after that. It never shrinks.
+  void reserve(int depth) { vertices.reserve(static_cast<size_t>(depth)); }
+
+  /// Empty the chain and leave room for `depth`: a chain reused from a
+  /// caller's scratch, as clean as a default-constructed one.
+  void restart(int depth) {
+    vertices.clear();
+    reserve(depth);
+    residualTolerance = 0.0f;
+  }
+
+  /// Admit one crossing and hand back the cleared seed to fill. A
+  /// filler that then refuses it calls `pop()`. The reference is good
+  /// until an `append()` outgrows the reserve, so reserve the whole
+  /// chain first, which `restart()` does.
+  [[nodiscard]] ManifoldVertexSeed &append() { return vertices.emplace_back(); }
+
+  /// Drop the crossing `append()` just admitted.
+  void pop() noexcept { vertices.pop_back(); }
+
 public:
-  std::array<ManifoldVertexSeed, MANIFOLD_MAX_DEPTH> vertices{};
-  int count{};
+  /// The crossings, which ARE the chain: there is no separate count to
+  /// disagree with them.
+  std::vector<ManifoldVertexSeed> vertices{};
 
   /// The constraint residual a walk must reach to count as converged,
   /// on top of the position test every walk passes; zero asks for no
@@ -330,9 +367,24 @@ public:
 /// A converged connection.
 class ManifoldConnection final {
 public:
-  std::array<ManifoldConnectionVertex, MANIFOLD_MAX_DEPTH> vertices;
+  /// The number of crossings; see `ManifoldChain::size()`.
+  [[nodiscard]] int size() const noexcept {
+    return static_cast<int>(vertices.size());
+  }
 
-  int count;
+  /// Room for `depth` crossings without allocating again; see
+  /// `ManifoldChain::reserve()`.
+  void reserve(int depth) { vertices.reserve(static_cast<size_t>(depth)); }
+
+  /// Give the connection exactly `count` crossings, keeping whatever
+  /// room it has and, as the records themselves do, leaving them
+  /// uninitialized: `solveManifoldConnection()` writes every field of
+  /// every crossing it keeps. Reused across an estimate's walks, which
+  /// all have one length, this does nothing after the first.
+  void resize(int count) { vertices.resize(static_cast<size_t>(count)); }
+
+public:
+  std::vector<ManifoldConnectionVertex> vertices;
 
   /// The unit direction from the receiver toward the first vertex.
   float3 wr;
@@ -371,7 +423,8 @@ public:
   /// carries one measure.
   [[nodiscard]] float measure(const ManifoldChain &chain) const noexcept {
     float result{offsetJacobian};
-    for (int i = 0; i < count; i++)
+    const int numCrossings{size()};
+    for (int i = 0; i < numCrossings; i++)
       if (!chain.vertices[i].isGlossy) result *= vertices[i].halfVectorJacobian;
     return result;
   }
@@ -426,14 +479,14 @@ public:
 /// writes the points below `count` and nothing past them.
 class ManifoldSolutionKey final {
 public:
-  void set(const ManifoldConnection &connection) noexcept {
-    count = connection.count;
-    for (int i = 0; i < count; i++)
+  void set(const ManifoldConnection &connection) {
+    const int numCrossings{connection.size()};
+    points.resize(static_cast<size_t>(numCrossings));
+    for (int i = 0; i < numCrossings; i++)
       points[i] = connection.vertices[i].vertex.point;
   }
 
-  std::array<float3, MANIFOLD_MAX_DEPTH> points;
-  int count;
+  std::vector<float3> points;
 };
 
 /// Are two converged connections of randomly started walks the same
@@ -464,6 +517,123 @@ buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
 [[nodiscard]] SMDL_EXPORT float3 manifoldFrameSeed(
     const ManifoldSurfaces &surfaces, const ManifoldVertex &vertex);
 
+/// The walk's iterate at one vertex of the chain: the differential
+/// geometry it last re-anchored to, the two segments meeting there, and
+/// the generalized half vector and tangent frame the constraint is
+/// expressed in.
+///
+/// This is `ManifoldWalkScratch`'s element rather than anything a caller
+/// reads. It is here, and not in the solver, only so that the workspace
+/// can hold it by value; a walk writes every field it reads and nothing
+/// past the chain's own length, so it carries no meaning between walks.
+/// Like the records above it carries no default values.
+class ManifoldWalkVertex final {
+public:
+  ManifoldGeometry geometry;
+
+  /// Toward the previous vertex, or the receiver, and its distance.
+  float3 wPrev;
+  float distPrev;
+
+  /// Toward the next vertex, or the light. The distance is 0 for a
+  /// distant target, which drops the position-derivative term.
+  float3 wNext;
+  float distNext;
+
+  /// The generalized half vector, and its length before normalizing.
+  float3 hHat;
+  float hLen;
+
+  /// The sign that orients `hHat` onto the shading normal's side, so
+  /// that the constraint means a microfacet normal rather than a line
+  /// through one.
+  float hSign;
+
+  /// The area element of the parameterization the Jacobian is expressed
+  /// in, and the half-vector measure of the crossing; see
+  /// `ManifoldConnectionVertex::halfVectorJacobian`.
+  float areaElement;
+  float halfVectorJacobian;
+
+  /// The tangents the constraint projects onto, built from the seed
+  /// vector the walk holds fixed.
+  float3 t1;
+  float3 t2;
+};
+
+/// The workspace one manifold walk runs in, sized once for the deepest
+/// chain a render can ask for and reused by every walk after, so that a
+/// walk allocates nothing however deep the chain.
+///
+/// Not thread safe: give each thread its own, as `BumpPtrAllocator`
+/// asks. A renderer buys one per thread or per block of work and hands
+/// the same one to every solve that thread runs.
+///
+/// The buffers are the solver's own and carry no meaning between walks:
+/// a walk writes every entry it reads, nothing past the chain's length
+/// is touched, and how they are carved up is the solver's business, not
+/// a promise. `reserve()` is the only member a caller has business
+/// calling; the sizes are documented so that the cost of a depth is
+/// possible to reason about, not so that anything may index them.
+class SMDL_EXPORT ManifoldWalkScratch final {
+public:
+  ManifoldWalkScratch() = default;
+
+  explicit ManifoldWalkScratch(int depth) { reserve(depth); }
+
+  /// Non-copyable: it is a thread's workspace, never a value.
+  ManifoldWalkScratch(const ManifoldWalkScratch &) = delete;
+
+  ManifoldWalkScratch &operator=(const ManifoldWalkScratch &) = delete;
+
+  /// Size the workspace for chains of up to `depth` crossings, which is
+  /// the only allocation this class makes. It never shrinks, so a
+  /// workspace reserved for a deeper chain serves a shallower one, and
+  /// a depth already covered costs one predicted branch. A solve
+  /// reserves for its own chain, so a caller that reserves for the
+  /// render's depth up front is buying the allocation at a moment of
+  /// its choosing rather than avoiding one.
+  void reserve(int depth) {
+    if (depth > maxDepth) grow(depth);
+  }
+
+public:
+  /// The deepest chain the buffers below are sized for, 0 until
+  /// `reserve()`.
+  int maxDepth{};
+
+  /// The walk's own iterate, then the trial step's: `maxDepth` apiece.
+  std::vector<ManifoldVertex> vertices;
+
+  /// The fixed frame seeds, then the world-space Newton steps:
+  /// `maxDepth` apiece.
+  std::vector<float3> vectors;
+
+  /// The two chain states the iteration swaps between: `maxDepth`
+  /// apiece.
+  std::vector<ManifoldWalkVertex> iterates;
+
+  /// The tangent-frame lengths of one iterate, `maxDepth`.
+  std::vector<float> frameLengths;
+
+  /// The two states' constraint residuals, `2 * maxDepth` apiece.
+  std::vector<float> constraints;
+
+  /// The two states' constraint Jacobians and the copy the solve
+  /// eliminates in place, `2 * maxDepth` rows of a fixed band width
+  /// apiece. The constraints couple neighbours only, so the system is
+  /// banded and nothing here grows faster than the depth.
+  std::vector<float> jacobians;
+
+  /// The solve's right-hand side, `2 * maxDepth`.
+  std::vector<float> rhs;
+
+private:
+  /// The out-of-line half of `reserve()`, so that the common call is a
+  /// branch rather than a call across a shared library boundary.
+  void grow(int depth);
+};
+
 /// Solve the connection from `receiver` to the light target through the
 /// seed chain, by damped Newton iteration on the block-coupled per-vertex
 /// constraints. Steps re-anchor onto the real surfaces through
@@ -475,10 +645,13 @@ buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
 /// seed surface, total internal reflection, a silhouette migration, a
 /// grazing or degenerate frame) means no contribution, never a wrong
 /// one. `report`, if given, receives what the walk did either way.
+/// `scratch` is the caller's workspace, reserved for this chain if it
+/// was not already; see `ManifoldWalkScratch`.
 [[nodiscard]] SMDL_EXPORT bool solveManifoldConnection(
-    const ManifoldSurfaces &surfaces, const float3 &receiver,
-    const ManifoldTarget &target, const ManifoldChain &chain,
-    ManifoldConnection &connection, ManifoldWalkReport *report = nullptr);
+    const ManifoldSurfaces &surfaces, ManifoldWalkScratch &scratch,
+    const float3 &receiver, const ManifoldTarget &target,
+    const ManifoldChain &chain, ManifoldConnection &connection,
+    ManifoldWalkReport *report = nullptr);
 
 /// The Bernoulli trial loop of the reciprocal estimators: draw fresh
 /// starts of the same estimate until one re-finds `connection`, judged
@@ -486,7 +659,9 @@ buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
 /// took. The count is geometric with mean one over the chance of
 /// reaching the solution, so `inverseProbability` (the attempt count)
 /// estimates that reciprocal without ever computing it; a caller
-/// multiplies it into the solution's value. `retry` re-seeds and solves
+/// multiplies it into the solution's value. `key` and `other` are the
+/// caller's scratch, so that a loop of trials allocates nothing; both
+/// are written here and carry nothing in. `retry` re-seeds and solves
 /// one fresh walk, filling its connection argument and returning false
 /// when no start could be drawn or the walk failed, which counts as an
 /// attempt that found nothing. Returns false when `maxTrials` attempts
@@ -495,12 +670,17 @@ buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
 template <typename Retry>
 [[nodiscard]] inline bool
 manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
+                   ManifoldSolutionKey &key, ManifoldConnection &other,
                    int maxTrials, int &trials, float &inverseProbability,
                    Retry &&retry) {
   inverseProbability = 1.0f;
+  // The solution is keyed once rather than on every comparison, since it
+  // does not move; `other` is one buffer for every trial, because `retry`
+  // writes the whole connection whenever it succeeds and one it refused is
+  // never read.
+  key.set(connection);
   for (trials = 1; trials <= maxTrials; trials++) {
-    ManifoldConnection other;
-    if (retry(other) && isSameManifoldSolution(receiver, connection, other))
+    if (retry(other) && isSameManifoldSolution(receiver, key, other))
       return true;
     inverseProbability += 1.0f;
   }
