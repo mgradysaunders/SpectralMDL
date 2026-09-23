@@ -750,7 +750,11 @@ struct ScatterSampleParameters {
   /// The active outgoing direction (expanded in the active tangent space).
   float3 wo = wo0;
 
-  /// The canonical random sample in `[0,1]^4`.
+  /// The canonical random sample in `[0,1]^4`. The direction reads `xy`
+  /// and every selection among lobes reads `z`, each rescaling it for the
+  /// next, so a host that stratifies `xyz` jointly stratifies the
+  /// directions each lobe takes. `w` is left for a fourth continuous
+  /// number, such as the hair azimuth.
   float4 xi;
 
   /// The discrete probability that an UNMASKED sample would have made
@@ -857,6 +861,7 @@ struct ScatterNormalParameters {
 
   /// The canonical random sample in `[0,1]^4`, unread on the evaluate path,
   /// which is why it has a default the sampling path always overrides.
+  /// Read as `ScatterSampleParameters.xi` is.
   float4 xi = float4(0.0);
 
   /// Which lobes to consider. Intersected with `DF_GLOSSY` throughout, since
@@ -1005,7 +1010,7 @@ auto ScatterEvaluateResultWithMultiscatter(
     // The selection is renormalized over whichever part the mask keeps, and
     // recorded at its unmasked chance, which is what `lobeChance` reports.
     if (sampling::bool_sample(
-          &xi.w,
+          &xi.z,
           maskedChance(MULTISCATTER_DIFFUSE_CHANCE, msLobes, ssLobes, lobeMask))) {
       lobeChance *= MULTISCATTER_DIFFUSE_CHANCE;
       sampledLobe &= msLobes;
@@ -1072,7 +1077,9 @@ struct EmissionEvaluateResult {
 };
 
 struct EmissionSampleParameters {
-  /// The canonical random sample in `[0,1]^4`.
+  /// The canonical random sample in `[0,1]^4`, read as
+  /// `ScatterSampleParameters.xi` is: the side and the component both
+  /// select on `z`.
   float4 xi;
 
   /// The normal direction.
@@ -1580,7 +1587,7 @@ auto scatterSample(
     const auto reflectChance(enabledMode == this.mode
                              ? rawReflectChance
                              : scatterReflectChance(enabledMode));
-    if (xi.x < reflectChance) {
+    if (xi.z < reflectChance) {
       const auto wiLocal(specular::reflect(wo, float3(0, 0, 1)));
       auto result = ScatterSampleResult(
         wi: (*tbn) * wiLocal, mode: scatter_reflect, fDirac: color(this.tint));
@@ -3807,7 +3814,7 @@ auto scatterSample(
     // The exact guarded branch matches the `pDiffuse` weights reported
     // by `scatterEvaluate`.
     const float chanceDiffuse((t := avgKd + avgF) > 0.0 ? avgKd / t : 0.0);
-    if (sampling::bool_sample(&xi.w, chanceDiffuse)) {
+    if (sampling::bool_sample(&xi.z, chanceDiffuse)) {
       return ScatterSampleResult(
                wi: (*tbn) * sampling::cosine_hemisphere_sample(xi.xy),
                mode: scatter_reflect);
@@ -5133,7 +5140,7 @@ auto scatterEvaluate(
 auto normalSample(
   const &weighted_layer this, inline const &ScatterNormalParameters params) {
   if (sampling::bool_sample(
-        &xi.w,
+        &xi.z,
         maskedNormalChance(
           this.chance, this.layer._lobes, this.base._lobes, lobeMask))) {
     preserve normal;
@@ -5168,7 +5175,7 @@ auto scatterSample(
   const &weighted_layer this, inline const &ScatterSampleParameters params) {
   const float chance(maskedChance(
     this.chance, this.layer._lobes, this.base._lobes, lobeMask));
-  if (sampling::bool_sample(&xi.w, chance)) {
+  if (sampling::bool_sample(&xi.z, chance)) {
     preserve normal;
     normal = layerNormal(this.normal, normal);
     lobeChance *= this.chance;
@@ -7347,7 +7354,7 @@ export int _emissionSample(
     normal: normalize(eval.geometry.normal),
   );
   const bool sampleFront =
-    sampling::bool_sample(&params.xi.w, weights.x / totalWeight);
+    sampling::bool_sample(&params.xi.z, weights.x / totalWeight);
   auto result = return_from {
     if (sampleFront) {
       return emissionSample(

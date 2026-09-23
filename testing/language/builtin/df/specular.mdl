@@ -255,14 +255,14 @@ unit_test "The Dirac dielectric weights divide by their selection chance" {
   // and carries the Fresnel weight over the chance; above it refracts with
   // the complementary ratio and the `ior * ior` compression.
   {
-    const auto r = scatter::sample(bRT, float4(0.9 * chance, 0.4, 0.5, 0.6), wo);
+    const auto r = scatter::sample(bRT, float4(0.3, 0.4, 0.9 * chance, 0.6), wo);
     #assert(r.success && r.isDirac);
     #assert(r.wi.z > 0.0);
     #assert(#all(r.f ~== |1e-5| color(F / chance)));
   }
   {
     const auto r = scatter::sample(
-      bRT, float4(chance + 0.9 * (1 - chance), 0.4, 0.5, 0.6), wo);
+      bRT, float4(0.3, 0.4, chance + 0.9 * (1 - chance), 0.6), wo);
     #assert(r.success && r.isDirac);
     #assert(r.wi.z < 0.0);
     #assert(#all(r.f ~== |1e-5| color(
@@ -274,7 +274,7 @@ unit_test "The Dirac dielectric weights divide by their selection chance" {
   const auto woIn = math::normalize(float3(0.8, 0.1, -0.6));
   for (int k = 0; k < 8; k++) {
     const auto r =
-      scatter::sample(bRT, float4((k + 0.5) / 8, 0.4, 0.5, 0.6), woIn);
+      scatter::sample(bRT, float4(0.3, 0.4, (k + 0.5) / 8, 0.6), woIn);
     #assert(r.success && r.isDirac);
     #assert(r.wi.z < 0.0); // Reflection stays on the incident side
     #assert(#all(r.f ~== |1e-5| color(1.0)));

@@ -250,7 +250,7 @@ unit_test "The normal density agrees with the normal sample" {
   // The mixture is strictly between the two lobes it mixes, which is what
   // makes the agreement above a statement about the mixture rather than
   // about one lobe the layer happened to always pick.
-  const auto wm = scatter::normalSample(layered, float4(0.3, 0.7, 0.5, 0.05)).wm;
+  const auto wm = scatter::normalSample(layered, float4(0.3, 0.7, 0.05, 0.5)).wm;
   const auto densitySmooth = scatter::normalEvaluate(smooth, wm);
   const auto densityRough = scatter::normalEvaluate(rough, wm);
   const auto densityBoth = scatter::normalEvaluate(layered, wm);

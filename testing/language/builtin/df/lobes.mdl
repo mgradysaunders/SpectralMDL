@@ -214,7 +214,7 @@ unit_test "A mask keeps the kinds apart across a layering" {
   #assert(!#any(masked.pdf > 0.0));
   // A masked sample transmits only through the Dirac lobe.
   for (int i = 0; i < 16; i++) {
-    const auto xi = float4(0.3, 0.7, (i % 4 + 0.5) / 4, (i / 4 + 0.5) / 4);
+    const auto xi = float4(0.3, 0.7, (i + 0.5) / 16, 0.5);
     const auto s = scatter::sample(mixedGlass, xi, wo, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF);
     continue if (!s.success);
     #assert((s.sampledLobe & df::DF_GLOSSY_BTDF) == 0);
@@ -236,16 +236,16 @@ unit_test "A mask on the sampling path reaches one Dirac lobe" {
   // The chances are renormalized over the lobes the mask keeps, so the dead
   // glossy layer is never selected however the selection sample falls.
   for (int i = 0; i < 8; i++) {
-    const auto result = scatter::sample(scattering, float4(0.3, 0.7, 0.5, i / 8.0), wo, lobeMask: masked);
+    const auto result = scatter::sample(scattering, float4(0.3, 0.7, i / 8.0, 0.5), wo, lobeMask: masked);
     #assert(result.success);
     #assert(result.isDirac);
     #assert(#any(result.f > 0.0));
   }
-  // Against the unmasked sampler forced onto the same branch: an `xi.w` of
+  // Against the unmasked sampler forced onto the same branch: an `xi.z` of
   // 0.75 exceeds the 0.5 chance, so the base is what it selects too. The
   // masked weight is the unmasked one scaled by the chance the mask removed,
   // which is what keeps the two estimators of the same lobe consistent.
-  const auto xi = float4(0.3, 0.7, 0.5, 0.75);
+  const auto xi = float4(0.3, 0.7, 0.75, 0.5);
   const auto whole = scatter::sample(scattering, xi, wo);
   const auto part = scatter::sample(scattering, xi, wo, lobeMask: masked);
   #assert(whole.isDirac & part.isDirac);
@@ -305,7 +305,7 @@ unit_test "A masked density is the restricted sampler's own" {
   const auto layer = df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.9);
   const auto scattering = df::weighted_layer(
     weight: 0.5, layer: layer, base: df::diffuse_reflection_bsdf(tint: 0.7));
-  const auto masked = scatter::sample(scattering, float4(0.3, 0.7, 0.5, 0.9), wo, lobeMask: df::DF_GLOSSY);
+  const auto masked = scatter::sample(scattering, float4(0.3, 0.7, 0.9, 0.5), wo, lobeMask: df::DF_GLOSSY);
   #assert(masked.success);
   #assert(!masked.isDirac);
   #assert(masked.pdf.x > 0.0);
@@ -428,11 +428,11 @@ unit_test "The compensation lobe's selection chance is the unmasked one" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
   const auto rough = df::microfacet_ggx_smith_bsdf(
     roughness_u: 0.3, roughness_v: 0.3, tint: 0.9, multiscatter_tint: color(1.0));
-  // `xi.w` below the chance takes the compensation lobe and above it takes
+  // `xi.z` below the chance takes the compensation lobe and above it takes
   // the single scattering. Nothing else chooses here, so the two reported
   // chances are the selection and its complement.
-  const auto comp = scatter::sample(rough, float4(0.3, 0.7, 0.5, 0.05), wo);
-  const auto ndf = scatter::sample(rough, float4(0.3, 0.7, 0.5, 0.95), wo);
+  const auto comp = scatter::sample(rough, float4(0.3, 0.7, 0.05, 0.5), wo);
+  const auto ndf = scatter::sample(rough, float4(0.3, 0.7, 0.95, 0.5), wo);
   #assert(comp.success & ndf.success);
   #assert(!#all(comp.wi ~== |1e-3| ndf.wi)); // Else the two lobes coincide
   #assert(comp.lobeChance + ndf.lobeChance ~== |1e-5| 1.0);
@@ -441,7 +441,7 @@ unit_test "The compensation lobe's selection chance is the unmasked one" {
   // unreachable under `DF_GLOSSY` and certain under `DF_SMOOTH` however the
   // selection sample falls, while the chance reported stays the unmasked one.
   for (int i = 0; i < 8; i++) {
-    const auto xi = float4(0.3, 0.7, 0.5, i / 8.0);
+    const auto xi = float4(0.3, 0.7, i / 8.0, 0.5);
     const auto glossyOnly = scatter::sample(rough, xi, wo, lobeMask: df::DF_GLOSSY);
     const auto smoothOnly = scatter::sample(rough, xi, wo, lobeMask: df::DF_SMOOTH);
     #assert(glossyOnly.success & smoothOnly.success);
