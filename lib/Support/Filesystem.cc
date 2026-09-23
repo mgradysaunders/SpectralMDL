@@ -3,6 +3,7 @@
 #include "smdl/Support/Strings.h"
 
 #include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <streambuf>
 
@@ -44,6 +45,18 @@ bool isParentPathOf(const std::string &path0, const std::string &path1) noexcept
   return std::filesystem::relative(makePathCanonical(path1),
                                    makePathCanonical(path0)) !=
          std::filesystem::path();
+} catch (...) {
+  return false;
+}
+
+bool sniffMagic(const std::string &filePath,
+                Span<const std::byte> magic) noexcept try {
+  std::ifstream stream{filePath, std::ios::binary};
+  if (!stream) return false;
+  std::string buffer(magic.size(), '\0');
+  stream.read(buffer.data(), std::streamsize(buffer.size()));
+  return size_t(stream.gcount()) == magic.size() &&
+         std::memcmp(buffer.data(), magic.data(), magic.size()) == 0;
 } catch (...) {
   return false;
 }

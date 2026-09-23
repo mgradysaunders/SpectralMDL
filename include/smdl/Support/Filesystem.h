@@ -1,12 +1,14 @@
 /// \file
 #pragma once
 
+#include <cstddef>
 #include <fstream>
 #include <ios>
 #include <string>
 #include <string_view>
 
 #include "smdl/Export.h"
+#include "smdl/Support/Span.h"
 
 namespace smdl {
 
@@ -38,6 +40,11 @@ SMDL_EXPORT bool isPathEquivalent(const std::string &path0,
 [[nodiscard]]
 SMDL_EXPORT bool isParentPathOf(const std::string &path0,
                                 const std::string &path1) noexcept;
+
+/// Does the file begin with `magic`? Reads only `magic.size()` bytes, so
+/// sniffing a large file costs nothing. False if the file cannot be read.
+[[nodiscard]] SMDL_EXPORT bool sniffMagic(const std::string &filePath,
+                                          Span<const std::byte> magic) noexcept;
 
 /// Join paths.
 [[nodiscard]] SMDL_EXPORT std::string joinPaths(std::string_view path0,
