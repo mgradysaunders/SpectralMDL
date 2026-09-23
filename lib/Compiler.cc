@@ -1708,7 +1708,7 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
         int channel{first + i};
         if (channel != ptex->alphaIndex) {
           // The piecewise sRGB decoding per IEC 61966-2-1, matching
-          // 'decodeSRGB' in 'Builtin/tex.smdl'.
+          // 'decodeSRGB' in 'Builtin/tex.mdl'.
           float value{out[i]};
           out[i] = value <= 0.04045f
                        ? value * (1.0f / 12.92f)

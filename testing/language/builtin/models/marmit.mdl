@@ -361,7 +361,7 @@ unit_test "The shortwave infrared values match the reference implementation" {
   // table therefore carries the model. The default spectral state never reaches
   // this far, so run it explicitly with
   //
-  //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/marmit.smdl
+  //   smdl test -wavelength-range 900,2400 testing/language/builtin/models/marmit.mdl
   //
   if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 900.0) < 1e-3 &&
       math::abs($state.wavelengthBase[15] - 2400.0) < 1e-3) {

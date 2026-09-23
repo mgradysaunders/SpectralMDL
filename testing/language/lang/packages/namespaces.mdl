@@ -1,6 +1,6 @@
 /// `export` on a namespace member gates access across module boundaries
 /// only, which is what makes an unexported member reachable here and
-/// unreachable from `modules.smdl`.
+/// unreachable from `modules.mdl`.
 #smdl
 
 export namespace shielded {

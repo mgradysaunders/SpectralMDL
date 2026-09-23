@@ -2,7 +2,7 @@
 /// optics. Given the pigment, water, and dry-matter contents per unit leaf
 /// area, it predicts the hemispherical reflectance and transmittance of a
 /// single leaf over 400..2500 nm. Built like the water-film model in
-/// `marmit.smdl`: interpolate tabulated optical constants per wavelength, then
+/// `marmit.mdl`: interpolate tabulated optical constants per wavelength, then
 /// evaluate a closed-form radiative-transfer expression using analytic fits in
 /// place of the special functions the reference model calls. Inputs are clamped
 /// at entry, so out-of-range values cannot corrupt the fits.

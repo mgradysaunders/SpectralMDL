@@ -262,7 +262,7 @@ unit_test "The normal density agrees with the normal sample" {
 
 unit_test "The normal density integrates to one" {
   // Every lobe under the glossy cutoff, since a wider one reports no
-  // distribution at all (see the cutoff test in lobes.smdl), and none
+  // distribution at all (see the cutoff test in lobes.mdl), and none
   // narrower than the helper's grid resolves.
   scatter::checkNormalDensityIntegral(df::microfacet_ggx_smith_bsdf(
     roughness_u: 0.3, roughness_v: 0.3, tint: 1.0));

@@ -47,7 +47,7 @@ int getTileIndex(const texture_2d tex, const int2 uv_tile) {
 }
 
 /// Where tile `i` starts in `tile_table`. See the layout note on
-/// `texture_2d` in `api.smdl`.
+/// `texture_2d` in `api.mdl`.
 @(pure macro)
 int getTileEntry(const texture_2d tex, const int i) = i * (tex.num_levels + 2);
 
@@ -287,7 +287,7 @@ auto levelTexelFetch(
   const auto tileBuffer(tex.tile_buffers[i]);
   return texel_type(0) if (!tileBuffer);
   // Where the level sits in the contiguous chain (see the layout note
-  // on 'texture_2d' in 'api.smdl').
+  // on 'texture_2d' in 'api.mdl').
   const int l(#max(0, #min(level, tex.num_levels - 1)));
   const int2 levelExtent(#max(getTileExtent(tex, i) >>> l, 1));
   const int levelOffset(getTileLevelOffset(tex, i, l));
@@ -854,7 +854,7 @@ export float4 lookup_float4_lod(
     return float4(0) if (!tileBuffer);
     coord -= tileIndex;
     // Where level 'l0' sits in the contiguous chain (see the layout
-    // note on 'texture_2d' in 'api.smdl'). A tile whose own chain runs
+    // note on 'texture_2d' in 'api.mdl'). A tile whose own chain runs
     // out before the tileset-wide level count repeats its last level,
     // which is what the tabulated offsets say.
     const int2 levelExtent(#max(getTileExtent(tex, i) >>> l0, 1));

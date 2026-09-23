@@ -1,6 +1,6 @@
 """PROSPECT leaf optical properties model, 400-2500nm.
 
-A Python port of `lib/Compiler/Builtin/models/prospect.smdl`, including its
+A Python port of `lib/Compiler/Builtin/models/prospect.mdl`, including its
 analytic fits, so what this plots is what the renderer computes. The tabulated
 optical constants are read out of the SMDL source at import time, which is
 therefore the single source of truth for both.
@@ -58,7 +58,7 @@ __all__ = ["MIN_WAVELENGTH", "MAX_WAVELENGTH", "NUM_WAVELENGTHS",
            "to_xyz", "to_srgb", "srgb"]
 
 SOURCE = (pathlib.Path(__file__).resolve().parents[1] /
-          "lib/Compiler/Builtin/models/prospect.smdl")
+          "lib/Compiler/Builtin/models/prospect.mdl")
 
 
 # ------------------------------------------------------------------------------
@@ -124,7 +124,7 @@ _CX_TABLE = _table("PROSPECT_CX_TABLE")
 
 def _lerp_table(table, wavelengths, wmin, wmax):
     """Linear interpolation of a uniformly sampled table, mirroring
-    `_uniform_lerp_index_and_fraction` in api.smdl: the position is clamped to
+    `_uniform_lerp_index_and_fraction` in api.mdl: the position is clamped to
     the table, so wavelengths outside wmin..wmax hold the endpoint value."""
     t = (len(table) - 1) * np.clip((wavelengths - wmin) / (wmax - wmin),
                                    0.0, 1.0)
@@ -223,7 +223,7 @@ _BY_NAME = {p.name: p for p in PARAMETERS}
 
 
 # ------------------------------------------------------------------------------
-# Evaluation. This follows prospect.smdl line for line, analytic fits included,
+# Evaluation. This follows prospect.mdl line for line, analytic fits included,
 # so that the curves here are the ones the renderer sees.
 # ------------------------------------------------------------------------------
 ProspectResult = namedtuple("ProspectResult", "reflectance transmittance")

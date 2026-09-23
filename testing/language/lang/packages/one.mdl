@@ -1,5 +1,5 @@
 /// One of two modules exporting the same name, so that a qualified lookup
-/// can prove which one it resolved through. See `two.smdl`.
+/// can prove which one it resolved through. See `two.mdl`.
 #smdl
 
 export const int shadowed = 1;

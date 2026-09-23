@@ -8,7 +8,7 @@ TEST_CASE("RNG: the golden sequence and the streams") {
   SUBCASE("The seeding sequence matches the PCG32 reference") {
     // The seeding sequence must match the PCG32 reference: starting from
     // zero, advance, add the seed, advance, with the stream selector
-    // mapped to an odd increment. The language test 'rng.smdl' pins the
+    // mapped to an odd increment. The language test 'rng.mdl' pins the
     // same states for the builtin mirror.
     smdl::RNG rng{42, 54};
     CHECK(rng.increment == 109ULL);

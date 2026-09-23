@@ -50,7 +50,7 @@ TEST_CASE("Emitter: a voided field") {
   }
   // The address-of error must not reach the meta-type branch of
   // 'emitOp()', where '&' builds a pointer type rather than taking an
-  // address. '&void' is a legal type, and 'api.smdl' uses it.
+  // address. '&void' is a legal type, and 'api.mdl' uses it.
   SUBCASE("The '&void' pointer type still compiles") {
     std::string error{compileSource(tmpDir, "#smdl\n"
                                             "unit_test \"t\" {\n"
@@ -79,7 +79,7 @@ TEST_CASE("Emitter: a voided field") {
 
 TEST_CASE("Emitter: a voided parameter") {
   TempDir tmpDir{"emitter-param"};
-  // Behavior is covered end to end by 'testing/language/lang/functions.smdl';
+  // Behavior is covered end to end by 'testing/language/lang/functions.mdl';
   // what only the IR can show is that the voided parameter is *absent*
   // from the signature rather than passed as an undefined placeholder,
   // which is the whole point of the change and which no '#assert' could
@@ -199,7 +199,7 @@ TEST_CASE("Emitter: the error paths of a lambda") {
   TempDir tmpDir{"lambda"};
   // Compile a single module and return the first error message, or the
   // empty string on success. The positive behavior of lambdas is covered
-  // by 'testing/language/lang/lambdas.smdl'; these subcases pin the error
+  // by 'testing/language/lang/lambdas.mdl'; these subcases pin the error
   // paths.
   auto build{[&](std::string_view text) {
     tmpDir.write("root/main.mdl", std::string("#smdl\n") += text);
@@ -308,7 +308,7 @@ TEST_CASE("Emitter: the error paths of an inline argument") {
   TempDir tmpDir{"inline-args"};
   // Compile a single module and return the first error message, or the
   // empty string on success. The positive behavior of call-site 'inline'
-  // is covered by 'testing/language/lang/structs.smdl'; these subcases pin the
+  // is covered by 'testing/language/lang/structs.mdl'; these subcases pin the
   // error paths.
   auto build{[&](std::string_view text) {
     tmpDir.write("root/main.mdl", std::string("#smdl\n") += text);

@@ -676,7 +676,7 @@ float VoxelGrid::sample(float3 coord) const noexcept {
   if (!isValid()) return mBackground;
   // Texture space [0,1]^3 spans the extent with values at voxel
   // centers, so the continuous voxel-space position is offset by half:
-  // this matches the 2D convention in 'tex.smdl', and the clamped
+  // this matches the 2D convention in 'tex.mdl', and the clamped
   // corner fetches below match 'wrap_clamp'. Clamping the coordinate
   // here is redundant with the corner clamping except that it keeps the
   // 'int' casts below in range for arbitrarily wild inputs.

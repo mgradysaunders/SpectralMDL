@@ -1,6 +1,6 @@
 # The SMDL language suite
 
-Every `.smdl` file here is compiled and every `unit_test` in it is run by
+Every `.mdl` file here is compiled and every `unit_test` in it is run by
 
 ```sh
 ./build/bin/smdl test testing/language        # or: ctest -R smdl-language
@@ -26,7 +26,7 @@ default search directories.
     fixtures/    images, IES profiles, measured BSDFs, voxel grids
 
 `builtin/` mirrors `lib/Compiler/Builtin/` file for file and directory for
-directory, so `builtin/extras/hex.smdl` tests `::extras::hex` and an empty
+directory, so `builtin/extras/tiling.mdl` tests `::extras::tiling` and an empty
 slot in the tree is a module with no tests. A module needing more than one
 file gets a directory of its own name, never a directory and a sibling file
 with the same stem, since a package and a module cannot share a name.
@@ -38,7 +38,7 @@ with the same stem, since a package and a module cannot share a name.
 
 Companion modules that exist only to be imported live under
 `lang/packages/`, and two of them carry the one test that can only be
-written from inside them. `lang/sibling.smdl` and `lang/search_dir/` sit
+written from inside them. `lang/sibling.mdl` and `lang/search_dir/` sit
 where they do because where a file sits is what those tests are about.
 
 ## Conventions
@@ -48,7 +48,7 @@ case, with no trailing period, and leaves out the subject the file already
 supplies. The runner prints the file above the names, so the two read
 together:
 
-    Running tests in 'testing/language/builtin/df/hair.smdl':
+    Running tests in 'testing/language/builtin/df/hair.mdl':
       'Energy is conserved in a white furnace' (line 155) ... success
 
 A bare noun phrase is not a name. Recurring claims get one spelling, so
@@ -98,7 +98,7 @@ inside its own frame.
 
 ## Two things that are not free to change
 
-`builtin/models/regolith.smdl` and `builtin/models/woody.smdl` each hold a
+`builtin/models/regolith.mdl` and `builtin/models/woody.mdl` each hold a
 region between `// BEGIN GENERATED PRESET TESTS` and `// END GENERATED
 PRESET TESTS`. It is written by a generator in another repository and must
 not be hand-edited, the name of its `unit_test` included. The generated code

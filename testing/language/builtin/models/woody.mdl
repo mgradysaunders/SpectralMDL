@@ -79,7 +79,7 @@ unit_test "The reflectance is monotone in each parameter" {
   // (on this file alone -- other files in the suite are not written for a
   // SWIR-only state) with
   //
-  //   smdl test -wavelength-min 1310 -wavelength-max 2400 testing/language/woody.smdl
+  //   smdl test -wavelength-range 1310,2400 testing/language/builtin/models/woody.mdl
   //
   if ($state.wavelengthMin >= 1310.0) {
     const auto plain = wd(0.5, 0.0, 0.5, 0.5, 0.0);
@@ -161,7 +161,7 @@ unit_test "The values match the reference implementation" {
   // and the cellulose/lignin absorptions. The default spectral state never
   // reaches this far, so run it explicitly (on this file alone) with
   //
-  //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/woody.smdl
+  //   smdl test -wavelength-range 900,2400 testing/language/builtin/models/woody.mdl
   //
   if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelengthBase[0] - 900.0) < 1e-3 &&
       math::abs($state.wavelengthBase[15] - 2400.0) < 1e-3) {

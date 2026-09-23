@@ -226,7 +226,7 @@ public:
   ///
   /// \param[in] packageName
   /// The package the module goes in, e.g., `::scene3`, so that the file
-  /// `mats.smdl` becomes `::scene3::mats`. The leading `::` is optional
+  /// `mats.mdl` becomes `::scene3::mats`. The leading `::` is optional
   /// and every component must be an identifier. If empty, the module is
   /// `::mats`. The stem stays last, so relative imports between siblings
   /// resolve exactly as they do for `add()`.

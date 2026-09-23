@@ -405,7 +405,7 @@ export struct texture_2d {
   /// side; the two must agree.
   ///
   /// Within a level, the rows run in file order, top row first, while
-  /// texel coordinates are v-up per the MDL convention. `tex.smdl`
+  /// texel coordinates are v-up per the MDL convention. `tex.mdl`
   /// mirrors the row on every fetch and is the only component that
   /// knows this, so nothing built on top of it sees the storage order.
   ///
@@ -473,7 +473,7 @@ export struct texture_3d {
   /// `background` value.
   ///
   /// Unlike 2D texture space, 3D texture space needs no v-flip, so
-  /// nothing here or in `tex.smdl` mirrors any axis: `w` of 0 is `z`
+  /// nothing here or in `tex.mdl` mirrors any axis: `w` of 0 is `z`
   /// of 0. The layout is produced by `smdl::VoxelGrid` on the C++
   /// side; the two must agree.
   const auto brick_table = cast<&int>(none);
@@ -785,7 +785,7 @@ const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 /// The multiplier of the linear congruential generator that advances
 /// `$state.rng`. This and the output permutation in `_randomInt()` must
 /// stay bit-exact with `::extras::rng` and with `smdl::RNG` in the C++
-/// API; the unit tests in `rng.smdl` pin the parity. (The duplication is
+/// API; the unit tests in `rng.mdl` pin the parity. (The duplication is
 /// deliberate: this module cannot import anything, because its exports
 /// become global keywords.)
 const int64_t RNG_MULTIPLIER = 6364136223846793005;

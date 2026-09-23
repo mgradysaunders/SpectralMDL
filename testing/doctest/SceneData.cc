@@ -14,7 +14,7 @@ TEST_CASE("SceneData: what a registered field answers") {
     const smdl::SceneData::Getter *getter{sceneData.get("matrix")};
     REQUIRE(getter);
     // The lookup kind and size are those emitted by
-    // 'data_lookup_float4x4' in 'Builtin/scene.smdl': kind Float, 16
+    // 'data_lookup_float4x4' in 'Builtin/scene.mdl': kind Float, 16
     // floats in column-major order.
     std::array<float, 16> out{};
     (*getter)(nullptr, smdl::SceneData::Kind::Float, 16, out.data());

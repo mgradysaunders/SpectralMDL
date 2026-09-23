@@ -14,7 +14,7 @@ class VoxelGrid;
 
 /// \name Material Flags
 ///
-/// The builtin `api.smdl` mirrors these constants by hand to compute
+/// The builtin `api.mdl` mirrors these constants by hand to compute
 /// `_MaterialEval.flags`, so a new flag that an evaluation sets must be
 /// added in both places.
 ///
@@ -168,7 +168,7 @@ inline constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 /// ever want to constrain, belongs in `DF_SMOOTH_BRDF`; the micrograin
 /// layer is both and is classified there. Width is part of the kind on
 /// the same ground: a microfacet lobe wider than the builtin cutoff
-/// (`MAX_GLOSSY_ALPHA` in `df.smdl`, squared roughness 0.25, the measured
+/// (`MAX_GLOSSY_ALPHA` in `df.mdl`, squared roughness 0.25, the measured
 /// equal-time break-even under a lamp) labels itself `DF_SMOOTH_BRDF`,
 /// since a walk toward a light has nothing left to win against ordinary
 /// sampling of a lobe that wide. So a manifold claim never reads a width,

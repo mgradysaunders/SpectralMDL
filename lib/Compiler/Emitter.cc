@@ -3129,7 +3129,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     // Only the level 0 texels of each tile are named; the higher
     // levels live contiguously behind them, at the offsets the tile
     // table below carries (see the layout note on 'texture_2d' in
-    // 'api.smdl').
+    // 'api.mdl').
     //
     // The level count is per texture, not per image: the images are
     // shared with every other reference to the same files, so a texture
@@ -3301,7 +3301,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     StructType *lightProfileType{context.getLightProfileType()};
     std::string fileName{expectOneComptimeString()};
     // Register the light profile runtime callees backing the
-    // '@(pure foreign)' declarations in 'df.smdl' (which implement
+    // '@(pure foreign)' declarations in 'df.mdl' (which implement
     // 'df::measured_edf'), so they resolve as absolute JIT symbols
     // even when the host process does not export its own dynamic
     // symbols. Any 'measured_edf' necessarily loads a light profile

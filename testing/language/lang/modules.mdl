@@ -2,7 +2,7 @@
 /// `export` does and does not gate.
 ///
 /// A module is a file. Its qualified name comes from its path relative to
-/// the search root the compiler was given, so `lang/packages/one.smdl`
+/// the search root the compiler was given, so `lang/packages/one.mdl`
 /// under this suite's root is `::lang::packages::one`. A leading `.::`
 /// spells a path relative to the importing module's own package and `..::`
 /// one level up, exactly as `.` and `..` do in a filesystem path.
@@ -21,7 +21,7 @@
 
 // A module alias. The quoted form resolves like a one-component import,
 // against the importing module's own directory first, which is why
-// `sibling.smdl` sits beside this file rather than under `packages/`.
+// `sibling.mdl` sits beside this file rather than under `packages/`.
 using quoted = "sibling";
 using reexported = .::packages::nested::reexport;
 
@@ -63,7 +63,7 @@ unit_test "A universal using-import works at any path depth" {
 }
 
 unit_test "A private overload does not leak across modules" {
-  // `packages/shadowing.smdl` declares a private `overloadTarget(int)`
+  // `packages/shadowing.mdl` declares a private `overloadTarget(int)`
   // over the name it imports from here. That declaration must not join
   // this overload set: `int` converts implicitly to `(int | float)` but not
   // the other way, so a leaked overload would deterministically win both

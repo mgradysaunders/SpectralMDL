@@ -22,7 +22,7 @@ struct CompressedSourceCode final {
 
 STR
 
-# Each entry is the path under 'Builtin/' without the '.smdl' extension.
+# Each entry is the path under 'Builtin/' without the '.mdl' extension.
 # The lookup key replaces '/' with '::' (so 'models/prospect' is addressed
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex',
@@ -41,8 +41,8 @@ fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std
           'models/regolith',
           'models/woody']
 for fname in fnames
-  text = `smdl format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
-  text = File.read "Builtin/#{fname}.smdl" unless $?.success?
+  text = `smdl format -c --no-comments --keep-doc-comments Builtin/#{fname}.mdl`
+  text = File.read "Builtin/#{fname}.mdl" unless $?.success?
   name = fname.gsub('/', '_')
   f.write "static const unsigned char #{name}_compressed[]{\n"
   Zlib::Deflate.deflate(text, Zlib::BEST_COMPRESSION).bytes.each_slice(24) do |row|

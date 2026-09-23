@@ -14,7 +14,7 @@ add_custom_target(
 # 'smdl' automatically.
 add_custom_target(
   builtin_albedo
-  COMMAND "$<TARGET_FILE:smdl>" test "tabulate.smdl"
+  COMMAND "$<TARGET_FILE:smdl>" test "tabulate.mdl"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler/Builtin/Albedo"
   )
 add_library(

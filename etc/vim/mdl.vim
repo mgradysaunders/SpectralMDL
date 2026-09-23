@@ -36,7 +36,7 @@ if !exists("g:mdl_no_buffer_options")
   setlocal comments=sO:*\ -,mO:*\ \ ,exO:*/,s1:/*,mb:*,ex:*/,:///,://
   setlocal commentstring=//\ %s
   setlocal formatoptions-=t formatoptions+=croql
-  setlocal suffixesadd=.smdl,.mdl
+  setlocal suffixesadd=.mdl,.smdl
 
   " MDL is close enough to C to reuse `cindent()`, with two adjustments:
   "   - `#` begins an intrinsic like `#assert(...)`, not a preprocessor

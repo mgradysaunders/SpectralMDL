@@ -1,7 +1,7 @@
 /// MARMIT: a physically based way to layer a film of water over an arbitrary
 /// diffuse reflectance spectrum, darkening and spectrally reshaping it the way
 /// a wet surface differs from a dry one. Built like the leaf model in
-/// `prospect.smdl`: interpolate tabulated optical constants of water per
+/// `prospect.mdl`: interpolate tabulated optical constants of water per
 /// wavelength, then evaluate a closed-form radiative-transfer expression using
 /// analytic fits in place of the special functions the reference model calls.
 ///
