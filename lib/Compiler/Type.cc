@@ -1523,12 +1523,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // enclosing namespace names, and the material name.
   Module *module_{decl.srcLoc.module_};
   SMDL_SANITY_CHECK(module_);
-  std::string qualifiedName{module_->getQualifiedName()};
-  if (qualifiedName.empty()) {
+  std::string moduleQualifiedName{module_->getQualifiedName()};
+  if (moduleQualifiedName.empty()) {
     // Builtin modules have no search root; use the bare name.
-    qualifiedName += "::";
-    qualifiedName += module_->getName();
+    moduleQualifiedName += "::";
+    moduleQualifiedName += module_->getName();
   }
+  std::string qualifiedName{moduleQualifiedName};
   for (const auto &namespaceName : context.currentNamespacePath) {
     qualifiedName += "::";
     qualifiedName += namespaceName;
@@ -1555,6 +1556,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   decl.srcLoc.logDebug(concat("New material ", SpellQuoted(qualifiedName)));
   auto &jitMaterial{compiler.mMaterialDefs.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
+  jitMaterial.moduleQualifiedName = std::move(moduleQualifiedName);
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.moduleDisplayName =
       std::string(decl.srcLoc.getModuleDisplayName());

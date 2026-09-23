@@ -76,12 +76,18 @@ public:
   /// directory of `fileName` is understood to be the search root, so the
   /// qualified name is just `::stem`.
   ///
+  /// \param[in] qualifiedName
+  /// If not empty, the qualified name, which is then not derived from
+  /// the search root. This is assumed to be normalized already, and to
+  /// end in the file stem, as `Compiler::addFile()` makes it.
+  ///
   /// \note
   /// This is not exception-safe, and there are no guarantees about
   /// what it may or may not throw on failure.
   ///
   [[nodiscard]] static std::unique_ptr<Module>
-  loadFromFile(const std::string &fileName, const std::string &searchRoot = {});
+  loadFromFile(const std::string &fileName, const std::string &searchRoot = {},
+               const std::string &qualifiedName = {});
 
   /// Load from file extracted from archive.
   ///
@@ -206,9 +212,9 @@ public:
 
   /// Get the qualified name derived from the path relative to the search
   /// root, e.g., `::vendor::metals::steel` for
-  /// `<searchRoot>/vendor/metals/steel.mdl`. For builtin modules this is
-  /// derived from the builtin lookup key instead, e.g.,
-  /// `::models::prospect`.
+  /// `<searchRoot>/vendor/metals/steel.mdl`, unless the host chose it (see
+  /// `Compiler::addFile()`). For builtin modules this is derived from the
+  /// builtin lookup key instead, e.g., `::models::prospect`.
   [[nodiscard]] std::string_view getQualifiedName() const noexcept {
     return mQualifiedName;
   }

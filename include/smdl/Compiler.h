@@ -138,6 +138,15 @@ public:
   /// imports within its own directory tree still resolve to it, but it
   /// is marked shadowed and a warning is logged.
   ///
+  /// A relative import that names no added module, made from a module
+  /// loaded from a loose file, loads the file it names from disk during
+  /// `compile()`: `<name>.mdl` or `<name>.smdl` in the importing module's
+  /// directory or a subdirectory of it, under the importer's package, so
+  /// `import helper::*` in `::pkg::main` loads `::pkg::helper`. A file
+  /// added alone thereby brings the modules it imports. An import that
+  /// climbs with `..` never loads anything, so a module outside the
+  /// importer's directory must be added.
+  ///
   /// MDL archives (`.mdr`) at the top level of each root are also added;
   /// archives deeper in the tree are ignored with a warning. Per the
   /// MDL specification, the archive file name encodes the enclosed
@@ -208,6 +217,30 @@ public:
   addCode(std::string moduleName, std::string sourceCode,
           std::string anchorDirectory = {}) noexcept;
 
+  /// Add one MDL module file under a package the host chooses.
+  ///
+  /// \param[in] fileName
+  /// The `.mdl` or `.smdl` file name, resolved through `fileLocator` if
+  /// relative, as in `add()`. An archive or a container names its own
+  /// modules, so `.mdr` and `.mdle` files are refused here.
+  ///
+  /// \param[in] packageName
+  /// The package the module goes in, e.g., `::scene3`, so that the file
+  /// `mats.smdl` becomes `::scene3::mats`. The leading `::` is optional
+  /// and every component must be an identifier. If empty, the module is
+  /// `::mats`. The stem stays last, so relative imports between siblings
+  /// resolve exactly as they do for `add()`.
+  ///
+  /// This is for a host that compiles the files its own documents name,
+  /// where two files in different directories may share a stem: it keeps
+  /// them apart by package rather than by search root, and never shadows.
+  /// It is an error for the qualified name to be taken by another module,
+  /// or for the file to have been added already under another name.
+  /// Adding the same file under the same package again is a no-op.
+  ///
+  [[nodiscard]] std::optional<Error>
+  addFile(std::string fileName, std::string packageName = {}) noexcept;
+
   /// Set the desired material names, which restricts the next
   /// `compile()` to the named materials.
   ///
@@ -227,7 +260,8 @@ public:
   /// absent from `getMaterials()` and unreachable by `findMaterial()`,
   /// and `explainMaterialLookup()` gives the exclusion as the reason (see
   /// `getSkippedMaterialNames()`). Desired names that match no material
-  /// at all are warned about during `compile()`. Note that a skipped
+  /// at all are warned about during `compile()`, unless
+  /// `shouldWarnUnmatchedDesiredMaterials` is off. Note that a skipped
   /// material's body is never emitted, so errors inside it may go
   /// undiagnosed. Passing an empty vector restores the default of
   /// compiling every material.
@@ -543,6 +577,12 @@ public:
   /// beforehand. Changing it means recompiling.
   bool shouldEmitScatterNormal{false};
 
+  /// Warn during `compile()` about each desired material name that
+  /// matches no material (see `setDesiredMaterials()`)? A host that
+  /// reports the names it cannot resolve itself, or that passes more
+  /// names than it will look up, turns this off.
+  bool shouldWarnUnmatchedDesiredMaterials{true};
+
 private:
   /// The allocator.
   ///
@@ -665,6 +705,14 @@ private:
   /// be retried instead of being silently skipped.
   void registerModule(std::unique_ptr<Module> loadedModule,
                       std::vector<std::string> *addedModuleNames);
+
+  /// Load the loose file a relative import names as `qualifiedName`,
+  /// register it, and parse it. Called by the `Emitter` while it
+  /// resolves the import, so the module joins `mModules` in the middle
+  /// of `compile()`.
+  [[nodiscard]] Module *loadImportedFile(const std::string &fileName,
+                                         const std::string &qualifiedName,
+                                         const std::string &searchRoot);
 
   /// The LLVM context for the module being compiled. Consumed (moved into
   /// the JIT) by `jitCompile()`.

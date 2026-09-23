@@ -6,6 +6,7 @@
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
+#include "smdl/Support/QualifiedName.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Format.h"
 #include <algorithm>
@@ -4151,8 +4152,11 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
           otherModule->getName() == resolvedImportPath.back() &&
           (isPathEquivalent(dirPath, otherDirPath) ||
            lexicalDirPath == normalizePath(otherDirPath))) {
-        compileImportedModule(*otherModule);
-        return otherModule.get();
+        // Held by pointer, because compiling it may load another module
+        // and reallocate the vector this loop walks.
+        Module *foundModule{otherModule.get()};
+        compileImportedModule(*foundModule);
+        return foundModule;
       }
     }
     return nullptr;
@@ -4161,6 +4165,36 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     if (std::string dirPath{thisModule->getDirectory()}; !dirPath.empty())
       if (Module * mod{findModuleInDirectory(std::move(dirPath))}) return mod;
     return nullptr;
+  }};
+  // The file a relative import names, loaded from disk when no added
+  // module is it (see `Compiler::add()`), under the importing module's
+  // package. Only a loose file imports this way, and never with '..'.
+  auto loadRelativeToCurrentModule{[&]() -> Module * {
+    if (thisModule->getOrigin() != Module::ORIGIN_FILE) return nullptr;
+    std::string filePath{thisModule->getDirectory()};
+    std::vector<std::string_view> components{
+        splitQualifiedName(thisModule->getQualifiedName())};
+    if (!components.empty()) components.pop_back();
+    for (auto element : resolvedImportPath) {
+      if (element == ".") continue;
+      if (element == "..") return nullptr;
+      filePath = joinPaths(filePath, element);
+      components.push_back(element);
+    }
+    const std::string mdlPath{filePath + ".mdl"};
+    const std::string smdlPath{filePath + ".smdl"};
+    const bool hasMDL{isFile(mdlPath)};
+    const bool hasSMDL{isFile(smdlPath)};
+    if (hasMDL && hasSMDL)
+      srcLoc.throwError(concat("Cannot import ", SpellFilePath(filePath),
+                               ": both '.mdl' and '.smdl' files exist"));
+    if (!hasMDL && !hasSMDL) return nullptr;
+    Module *loadedModule{context.compiler.loadImportedFile(
+        makePathCanonical(hasMDL ? mdlPath : smdlPath),
+        joinQualifiedName(components),
+        std::string(thisModule->getSearchRoot()))};
+    compileImportedModule(*loadedModule);
+    return loadedModule;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
     if (thisModule->isBuiltin()) return nullptr;
@@ -4207,8 +4241,10 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     if (Module * mod{searchCompilerDirPaths()}) return mod;
   } else {
     // If the import path is relative, meaning it does NOT starts with `::`,
-    // prioritize modules relative to the current module first.
+    // prioritize modules relative to the current module first, added or
+    // on disk.
     if (Module * mod{searchRelativeToCurrentModule()}) return mod;
+    if (Module * mod{loadRelativeToCurrentModule()}) return mod;
     // If the import path is not explicitly relative, meaning it does
     // not start with `.` or `..`, also search the compiler dir paths
     // first and then lastly default to compiler builtins.

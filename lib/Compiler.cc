@@ -278,6 +278,22 @@ void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
   }
 }
 
+Module *Compiler::loadImportedFile(const std::string &fileName,
+                                   const std::string &qualifiedName,
+                                   const std::string &searchRoot) {
+  if (auto itr{mModuleFileNames.find(fileName)}; itr != mModuleFileNames.end())
+    return itr->second;
+  SMDL_LOG_DEBUG("Adding MDL file ", SpellFilePath(fileName), " as ",
+                 SpellQuoted(qualifiedName), " for an import");
+  std::unique_ptr<Module> loadedModule{
+      Module::loadFromFile(fileName, searchRoot, qualifiedName)};
+  Module &module_{*loadedModule};
+  registerModule(std::move(loadedModule), nullptr);
+  if (std::optional<Error> error{module_.parse(mAllocator)})
+    throw std::move(*error);
+  return &module_;
+}
+
 namespace {
 // Normalize a host-supplied module name to an absolute qualified name,
 // or throw an `Error` explaining why it is not a legal module name. It
@@ -353,6 +369,44 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
     registerModule(Module::loadFromSourceCode(
                        qualifiedName, std::move(sourceCode), anchorDirectory),
                    nullptr);
+  });
+}
+
+std::optional<Error> Compiler::addFile(std::string fileName,
+                                       std::string packageName) noexcept {
+  SMDL_PROFILER_ENTRY("Compiler::addFile()", fileName.c_str());
+  return catchAndReturnError([&] {
+    std::optional<std::string> maybePath{
+        fileLocator.locate(fileName, {}, FileLocator::REGULAR_FILES)};
+    if (!maybePath)
+      throw Error(concat("Cannot add MDL file ", SpellFilePath(fileName),
+                         ": no such file"));
+    const std::string path{makePathCanonical(std::move(*maybePath))};
+    if (hasExtension(path, ".mdr") || hasExtension(path, ".mdle"))
+      throw Error(concat("Cannot add ", SpellFilePath(path),
+                         " under a package: an archive or a container "
+                         "names its own modules, so add it with 'add()'"));
+    std::string qualifiedName{
+        packageName.empty() ? std::string() : normalizeModuleName(packageName)};
+    qualifiedName += "::";
+    qualifiedName += std::filesystem::path(path).stem().string();
+    if (auto itr{mModuleFileNames.find(path)}; itr != mModuleFileNames.end()) {
+      if (itr->second->getQualifiedName() == qualifiedName) return;
+      throw Error(concat("Cannot add ", SpellFilePath(path), " as ",
+                         SpellQuoted(qualifiedName),
+                         ": it was already added as ",
+                         SpellQuoted(itr->second->getQualifiedName())));
+    }
+    if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
+        itr != mModulesByQualifiedName.end())
+      throw Error(concat("Cannot add ", SpellFilePath(path), " as ",
+                         SpellQuoted(qualifiedName),
+                         ": the name is already taken by ",
+                         SpellFilePath(itr->second->getDisplayName())));
+    SMDL_LOG_DEBUG("Adding MDL file ", SpellFilePath(path), " as ",
+                   SpellQuoted(qualifiedName));
+    registerModule(
+        Module::loadFromFile(path, parentPathOf(path), qualifiedName), nullptr);
   });
 }
 
@@ -948,8 +1002,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     }
     {
       SMDL_PROFILER_ENTRY("Emit LLVM-IR");
-      for (auto &module_ : mModules)
-        if (std::optional<Error> error{module_->compile(context)})
+      // By index, because a relative import may load a file and append
+      // its module while this loop runs (see 'loadImportedFile()').
+      for (size_t i = 0; i < mModules.size(); i++)
+        if (std::optional<Error> error{mModules[i]->compile(context)})
           throw std::move(*error);
     }
     // Sort JIT materials and unit tests by module and line number in
@@ -959,7 +1015,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     // Warn about desired material names that matched nothing at all, so
     // a typo does not silently skip the material it meant to keep.
     for (const auto &desiredName : mDesiredMaterialNames) {
-      if (std::none_of(mMaterialDefs.begin(), mMaterialDefs.end(),
+      if (shouldWarnUnmatchedDesiredMaterials &&
+          std::none_of(mMaterialDefs.begin(), mMaterialDefs.end(),
                        [&](const auto &jitMaterial) {
                          return matchesMaterialName(desiredName,
                                                     jitMaterial.qualifiedName);

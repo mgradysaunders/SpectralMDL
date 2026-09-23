@@ -280,8 +280,13 @@ public:
 /// `Compiler::wavelengthBaseMax` floats.
 struct MaterialDef final {
 public:
-  /// The module name.
+  /// The module name, which is the last component of
+  /// `moduleQualifiedName`: the file stem, for a module from a file.
   std::string moduleName{};
+
+  /// The qualified module name, e.g., `::vendor::metals::steel`, which
+  /// is where `qualifiedName` begins.
+  std::string moduleQualifiedName{};
 
   /// The module file name. This is empty if the module has no file, as
   /// is the case for builtin modules and modules supplied as source

@@ -52,7 +52,8 @@ namespace {
 } // namespace
 
 std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
-                                             const std::string &searchRoot) {
+                                             const std::string &searchRoot,
+                                             const std::string &qualifiedName) {
   std::unique_ptr<Module> module_{std::make_unique<Module>()};
   module_->mOrigin = ORIGIN_FILE;
   module_->mFileName = fileName;
@@ -60,7 +61,10 @@ std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
   module_->mName = std::filesystem::path(fileName).stem().string();
   module_->mSearchRoot =
       searchRoot.empty() ? parentPathOf(fileName) : searchRoot;
-  module_->mQualifiedName = deriveQualifiedName(fileName, module_->mSearchRoot);
+  module_->mQualifiedName =
+      qualifiedName.empty()
+          ? deriveQualifiedName(fileName, module_->mSearchRoot)
+          : qualifiedName;
   module_->mSourceCode = readOrThrow(fileName);
   return module_;
 }
