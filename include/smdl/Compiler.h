@@ -122,15 +122,14 @@ public:
   /// are appended in the order they were loaded. Files skipped because
   /// they were already added are not reported.
   ///
-  /// A directory is added as a *search root*: every `.mdl` and `.smdl`
-  /// file beneath it is loaded as a module whose qualified name is
-  /// derived from its relative path, so `<root>/vendor/metals/steel.mdl`
-  /// becomes `::vendor::metals::steel`. A single file is added with its
-  /// parent directory as an implicit search root, so its qualified name
-  /// is just `::stem`. Re-adding the same directory is a no-op. Adding a
-  /// directory nested inside, or enclosing, an existing search root is an
-  /// error, because nested roots would give modules ambiguous qualified
-  /// names.
+  /// A directory is added as a *search root*: every `.mdl` file beneath it
+  /// is loaded as a module whose qualified name is derived from its
+  /// relative path, so `<root>/vendor/metals/steel.mdl` becomes
+  /// `::vendor::metals::steel`. A single file is added with its parent
+  /// directory as an implicit search root, so its qualified name is just
+  /// `::stem`. Re-adding the same directory is a no-op. Adding a directory
+  /// nested inside, or enclosing, an existing search root is an error,
+  /// because nested roots would give modules ambiguous qualified names.
   ///
   /// If two modules under different roots derive the same qualified
   /// name, the module under the earlier root wins for qualified-name
@@ -140,12 +139,12 @@ public:
   ///
   /// A relative import that names no added module, made from a module
   /// loaded from a loose file, loads the file it names from disk during
-  /// `compile()`: `<name>.mdl` or `<name>.smdl` in the importing module's
-  /// directory or a subdirectory of it, under the importer's package, so
-  /// `import helper::*` in `::pkg::main` loads `::pkg::helper`. A file
-  /// added alone thereby brings the modules it imports. An import that
-  /// climbs with `..` never loads anything, so a module outside the
-  /// importer's directory must be added.
+  /// `compile()`: `<name>.mdl` in the importing module's directory or a
+  /// subdirectory of it, under the importer's package, so `import helper::*`
+  /// in `::pkg::main` loads `::pkg::helper`. A file added alone thereby
+  /// brings the modules it imports. An import that climbs with `..` never
+  /// loads anything, so a module outside the importer's directory must be
+  /// added.
   ///
   /// MDL archives (`.mdr`) at the top level of each root are also added;
   /// archives deeper in the tree are ignored with a warning. Per the
@@ -220,9 +219,9 @@ public:
   /// Add one MDL module file under a package the host chooses.
   ///
   /// \param[in] fileName
-  /// The `.mdl` or `.smdl` file name, resolved through `fileLocator` if
-  /// relative, as in `add()`. An archive or a container names its own
-  /// modules, so `.mdr` and `.mdle` files are refused here.
+  /// The `.mdl` file name, resolved through `fileLocator` if relative, as
+  /// in `add()`. An archive or a container names its own modules, so `.mdr`
+  /// and `.mdle` files are refused here.
   ///
   /// \param[in] packageName
   /// The package the module goes in, e.g., `::scene3`, so that the file

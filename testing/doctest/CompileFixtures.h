@@ -66,7 +66,7 @@ buildAll(smdl::Compiler &compiler,
 /// emitted, since otherwise nothing inside one would be diagnosed at all.
 [[nodiscard]] inline std::string compileSource(const TempDir &tmpDir,
                                                std::string_view sourceCode) {
-  const std::filesystem::path path{tmpDir.write("main.smdl", sourceCode)};
+  const std::filesystem::path path{tmpDir.write("main.mdl", sourceCode)};
   smdl::Compiler compiler{};
   compiler.shouldEmitUnitTests = true;
   if (std::optional<smdl::Error> error{compiler.add(path.string())})
@@ -103,7 +103,7 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
 /// unoptimized LLVM-IR.
 [[nodiscard]] inline std::string compileToIR(const TempDir &tmpDir,
                                              std::string_view sourceCode) {
-  const std::filesystem::path path{tmpDir.write("main.smdl", sourceCode)};
+  const std::filesystem::path path{tmpDir.write("main.mdl", sourceCode)};
   smdl::Compiler compiler{};
   REQUIRE_OK(compiler.add(path.string()));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));

@@ -482,8 +482,7 @@ Compiler::add(std::string fileOrDirName,
             for (const auto &component : prefix) {
               loosePath = joinPaths(loosePath, component);
             }
-            if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
-                isFile(loosePath + ".smdl")) {
+            if (isDirectory(loosePath) || isFile(loosePath + ".mdl")) {
               throw Error(concat("Archive ", SpellFilePath(fileName),
                                  " conflicts with loose contents at ",
                                  SpellFilePath(loosePath),
@@ -601,8 +600,7 @@ Compiler::add(std::string fileOrDirName,
              std::filesystem::recursive_directory_iterator(path)) {
           if (std::string entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath)) {
-            if (hasExtension(entryPath, ".mdl") ||
-                hasExtension(entryPath, ".smdl")) {
+            if (hasExtension(entryPath, ".mdl")) {
               addFile(entryPath, path);
             } else if (hasExtension(entryPath, ".mdr") &&
                        !isPathEquivalent(parentPathOf(entryPath), path)) {

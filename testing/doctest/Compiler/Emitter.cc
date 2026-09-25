@@ -120,7 +120,7 @@ TEST_CASE("Emitter: one mip chain per image") {
                               "tex::gamma_linear, max_mipmap: true);\n")};
     CHECK_CONTAINS(error, "maximum mip chain");
     CHECK_CONTAINS(error, "mean mip chain was requested at");
-    CHECK_CONTAINS(error, "main.smdl:3");
+    CHECK_CONTAINS(error, "main.mdl:3");
   }
   SUBCASE("Agreeing requests share the image") {
     CHECK(compileSource(tmpDir,

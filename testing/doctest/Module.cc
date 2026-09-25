@@ -30,7 +30,7 @@ TEST_CASE("Module: the search directories a module declares") {
   smdl::BumpPtrAllocator allocator{};
   std::unique_ptr<smdl::Module> module_{};
   SUBCASE("Relative and absolute paths expand and canonicalize in order") {
-    CHECK(parseModule(tmpDir, "mod.smdl",
+    CHECK(parseModule(tmpDir, "mod.mdl",
                       "#smdl\n"
                       "#search_dir \"./data/\"\n"
                       "#search_dir \"" +
@@ -44,7 +44,7 @@ TEST_CASE("Module: the search directories a module declares") {
   SUBCASE("Environment variables expand") {
     const ScopedEnv searchDir{"SMDL_TEST_SEARCH_DIR",
                               (tmpDir / "data").string()};
-    CHECK(parseModule(tmpDir, "mod.smdl",
+    CHECK(parseModule(tmpDir, "mod.mdl",
                       "#smdl\n"
                       "#search_dir \"${SMDL_TEST_SEARCH_DIR}\"\n"
                       "#search_dir \"$SMDL_TEST_SEARCH_DIR\"\n",
@@ -56,20 +56,20 @@ TEST_CASE("Module: the search directories a module declares") {
   }
   SUBCASE("Undefined environment variable is an error") {
     std::string message{
-        parseModule(tmpDir, "mod.smdl",
+        parseModule(tmpDir, "mod.mdl",
                     "#smdl\n"
                     "#search_dir \"${SMDL_TEST_SEARCH_DIR_UNDEF}\"\n",
                     module_, allocator)};
     CHECK_CONTAINS(message, "Undefined environment variable");
   }
   SUBCASE("Empty path is an error") {
-    std::string message{parseModule(tmpDir, "mod.smdl",
+    std::string message{parseModule(tmpDir, "mod.mdl",
                                     "#smdl\n#search_dir \"\"\n", //
                                     module_, allocator)};
     CHECK_CONTAINS(message, "must not be empty");
   }
   SUBCASE("Missing literal string path is an error") {
-    std::string message{parseModule(tmpDir, "mod.smdl",
+    std::string message{parseModule(tmpDir, "mod.mdl",
                                     "#smdl\n#search_dir 42\n", //
                                     module_, allocator)};
     CHECK_CONTAINS(message, "Expected literal string path");
@@ -81,7 +81,7 @@ TEST_CASE("Module: the search directories a module declares") {
     CHECK_CONTAINS(message, "requires the file to begin with '#smdl'");
   }
   SUBCASE("Misplaced after an import is an error") {
-    std::string message{parseModule(tmpDir, "mod.smdl",
+    std::string message{parseModule(tmpDir, "mod.mdl",
                                     "#smdl\n"
                                     "import ::df::*;\n"
                                     "#search_dir \"./data/\"\n",
@@ -89,7 +89,7 @@ TEST_CASE("Module: the search directories a module declares") {
     CHECK_CONTAINS(message, "only allowed at the top");
   }
   SUBCASE("Misplaced inside a function is an error") {
-    std::string message{parseModule(tmpDir, "mod.smdl",
+    std::string message{parseModule(tmpDir, "mod.mdl",
                                     "#smdl\n"
                                     "int bad() {\n"
                                     "  return #search_dir \"./data/\";\n"
@@ -98,7 +98,7 @@ TEST_CASE("Module: the search directories a module declares") {
     CHECK_CONTAINS(message, "only allowed at the top");
   }
   SUBCASE("Formatter preserves '#search_dir'") {
-    const std::filesystem::path path{tmpDir.write("mod.smdl",
+    const std::filesystem::path path{tmpDir.write("mod.mdl",
                                                   "#smdl\n"
                                                   "#search_dir    \"./data/\"\n"
                                                   "#search_dir\t\"$HOME\"\n")};
@@ -106,7 +106,7 @@ TEST_CASE("Module: the search directories a module declares") {
     smdl::FormatOptions formatOptions{};
     formatOptions.isInPlace = true;
     CHECK_OK(module_->formatSourceFiles(formatOptions));
-    std::string formatted{tmpDir.read("mod.smdl")};
+    std::string formatted{tmpDir.read("mod.mdl")};
     CHECK_CONTAINS(formatted, "#search_dir \"./data/\"");
     CHECK_CONTAINS(formatted, "#search_dir \"$HOME\"");
   }

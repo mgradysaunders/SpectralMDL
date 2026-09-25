@@ -4182,16 +4182,9 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
       components.push_back(element);
     }
     const std::string mdlPath{filePath + ".mdl"};
-    const std::string smdlPath{filePath + ".smdl"};
-    const bool hasMDL{isFile(mdlPath)};
-    const bool hasSMDL{isFile(smdlPath)};
-    if (hasMDL && hasSMDL)
-      srcLoc.throwError(concat("Cannot import ", SpellFilePath(filePath),
-                               ": both '.mdl' and '.smdl' files exist"));
-    if (!hasMDL && !hasSMDL) return nullptr;
+    if (!isFile(mdlPath)) return nullptr;
     Module *loadedModule{context.compiler.loadImportedFile(
-        makePathCanonical(hasMDL ? mdlPath : smdlPath),
-        joinQualifiedName(components),
+        makePathCanonical(mdlPath), joinQualifiedName(components),
         std::string(thisModule->getSearchRoot()))};
     compileImportedModule(*loadedModule);
     return loadedModule;

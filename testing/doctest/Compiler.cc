@@ -230,59 +230,58 @@ TEST_CASE("Compiler: a relative import loads the file it names") {
     return materialDef ? materialDef->moduleQualifiedName : std::string();
   }};
   SUBCASE("A file added alone brings the sibling it imports") {
-    tmpDir.write("dir/helper.smdl", helper);
-    tmpDir.write("dir/main.smdl",
+    tmpDir.write("dir/helper.mdl", helper);
+    tmpDir.write("dir/main.mdl",
                  "#smdl\nimport ::df::*;\nimport helper::marker;\n" +
                      minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
-    REQUIRE(buildAll(compiler, {tmpDir / "dir" / "main.smdl"}) == "");
+    REQUIRE(buildAll(compiler, {tmpDir / "dir" / "main.mdl"}) == "");
     CHECK(moduleOf(compiler, "main_ok") == "::main");
     CHECK(moduleOf(compiler, "helper_mat") == "::helper");
     CHECK(compiler.findMaterial("helper_mat")->moduleFileName ==
-          smdl::makePathCanonical((tmpDir / "dir" / "helper.smdl").string()));
+          smdl::makePathCanonical((tmpDir / "dir" / "helper.mdl").string()));
   }
   SUBCASE("A loaded module takes the importer's package") {
     tmpDir.write("dir/sub/util.mdl", helper);
-    tmpDir.write("dir/main.smdl",
+    tmpDir.write("dir/main.mdl",
                  "#smdl\nimport ::df::*;\nimport .::sub::util::marker;\n" +
                      minimalMaterial("main_ok"));
     smdl::Compiler compiler{};
     REQUIRE_OK(
-        compiler.addFile((tmpDir / "dir" / "main.smdl").string(), "::pkg"));
+        compiler.addFile((tmpDir / "dir" / "main.mdl").string(), "::pkg"));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
     CHECK(moduleOf(compiler, "main_ok") == "::pkg::main");
     CHECK(moduleOf(compiler, "helper_mat") == "::pkg::sub::util");
   }
   SUBCASE("A module imported twice is loaded once, and kept on recompile") {
-    tmpDir.write("dir/helper.smdl", helper);
-    tmpDir.write("dir/a.smdl", "#smdl\nimport helper::marker;\n");
-    tmpDir.write("dir/b.smdl", "#smdl\nimport .::helper::*;\n");
+    tmpDir.write("dir/helper.mdl", helper);
+    tmpDir.write("dir/a.mdl", "#smdl\nimport helper::marker;\n");
+    tmpDir.write("dir/b.mdl", "#smdl\nimport .::helper::*;\n");
     smdl::Compiler compiler{};
-    REQUIRE(buildAll(compiler, {tmpDir / "dir" / "a.smdl",
-                                tmpDir / "dir" / "b.smdl"}) == "");
+    REQUIRE(buildAll(compiler, {tmpDir / "dir" / "a.mdl",
+                                tmpDir / "dir" / "b.mdl"}) == "");
     CHECK(compiler.findMaterials("helper_mat").size() == 1);
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.findMaterials("helper_mat").size() == 1);
   }
   SUBCASE("An import that climbs with '..' loads nothing") {
-    tmpDir.write("dir/p2/helper.smdl", helper);
-    tmpDir.write("dir/p1/main.smdl", "#smdl\nimport ..::p2::helper::marker;\n");
+    tmpDir.write("dir/p2/helper.mdl", helper);
+    tmpDir.write("dir/p1/main.mdl", "#smdl\nimport ..::p2::helper::marker;\n");
     smdl::Compiler compiler{};
-    CHECK_CONTAINS(buildAll(compiler, {tmpDir / "dir" / "p1" / "main.smdl"}),
+    CHECK_CONTAINS(buildAll(compiler, {tmpDir / "dir" / "p1" / "main.mdl"}),
                    "Cannot resolve import");
   }
-  SUBCASE("A name with both extensions on disk is an error") {
-    tmpDir.write("dir/helper.mdl", helper);
-    tmpDir.write("dir/helper.smdl", helper);
-    tmpDir.write("dir/main.smdl", "#smdl\nimport helper::marker;\n");
+  SUBCASE("Only a '.mdl' file is loaded") {
+    tmpDir.write("dir/helper.txt", helper);
+    tmpDir.write("dir/main.mdl", "#smdl\nimport helper::marker;\n");
     smdl::Compiler compiler{};
-    CHECK_CONTAINS(buildAll(compiler, {tmpDir / "dir" / "main.smdl"}),
-                   "both '.mdl' and '.smdl' files exist");
+    CHECK_CONTAINS(buildAll(compiler, {tmpDir / "dir" / "main.mdl"}),
+                   "Cannot resolve import");
   }
   SUBCASE("Source code never loads from disk, even anchored") {
-    tmpDir.write("dir/helper.smdl", helper);
+    tmpDir.write("dir/helper.mdl", helper);
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addCode("::host", "#smdl\nimport .::helper::marker;\n",
                                 (tmpDir / "dir").string()));
@@ -297,6 +296,7 @@ TEST_CASE("Compiler: the qualified name a search root derives") {
     tmpDir.write("root/top.mdl", "#smdl\nexport const int x = 1;\n");
     tmpDir.write("root/vendor/metals/steel.mdl",
                  "#smdl\nexport const int x = 1;\n");
+    tmpDir.write("root/notes.txt", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     std::vector<std::string> names{};
     REQUIRE_OK(compiler.add((tmpDir / "root").string(), &names));
@@ -872,7 +872,7 @@ TEST_CASE(
   // comparisons over 'color' (at 1 band the compare result is a scalar
   // bool rather than a bool vector), '#any'/'#all' reductions of those
   // results, and RGB-to-color construction.
-  tmpDir.write("spectral.smdl",
+  tmpDir.write("spectral.mdl",
                "#smdl\nimport ::df::*;\n" + minimalMaterial("main") +
                    "unit_test \"Spectral basics\" {\n"
                    "  const color c = color(float3(0.8, 0.5, 0.2));\n"
@@ -886,7 +886,7 @@ TEST_CASE(
     smdl::Compiler compiler{numBands};
     compiler.shouldEmitUnitTests = true;
     REQUIRE(compiler.wavelengthBaseMax == numBands);
-    REQUIRE(buildAll(compiler, {tmpDir / "spectral.smdl"}) == "");
+    REQUIRE(buildAll(compiler, {tmpDir / "spectral.mdl"}) == "");
     REQUIRE(compiler.findMaterial("main") != nullptr);
     // An endpoint-inclusive uniform grid over the visible; a single band
     // sits at the midpoint.
@@ -1120,11 +1120,11 @@ TEST_CASE("addCode: a module the host supplies as source") {
 TEST_CASE("addFile: a module file under a package the host chooses") {
   TempDir tmpDir{"add-file"};
   const std::string red{
-      (tmpDir.write("a/mats.smdl",
+      (tmpDir.write("a/mats.mdl",
                     "#smdl\nimport ::df::*;\n" + minimalMaterial("plastic")))
           .string()};
   const std::string blue{
-      (tmpDir.write("b/mats.smdl",
+      (tmpDir.write("b/mats.mdl",
                     "#smdl\nimport ::df::*;\n" + minimalMaterial("plastic")))
           .string()};
   auto compileAll{[](smdl::Compiler &compiler) {
@@ -1166,8 +1166,8 @@ TEST_CASE("addFile: a module file under a package the host chooses") {
   SUBCASE("The same file under the same package again is a no-op") {
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addFile(red, "::scene_a"));
-    CHECK_OK(compiler.addFile(
-        (tmpDir / "a" / ".." / "a" / "mats.smdl").string(), "scene_a"));
+    CHECK_OK(compiler.addFile((tmpDir / "a" / ".." / "a" / "mats.mdl").string(),
+                              "scene_a"));
     REQUIRE(compileAll(compiler) == "");
     CHECK(compiler.findMaterials("plastic").size() == 1);
   }
@@ -1192,13 +1192,13 @@ TEST_CASE("addFile: a module file under a package the host chooses") {
     smdl::Compiler compiler{};
     CHECK_ERROR(compiler.addFile((tmpDir / "pkg.mdr").string(), "::p"),
                 "names its own modules");
-    CHECK_ERROR(compiler.addFile((tmpDir / "missing.smdl").string(), "::p"),
+    CHECK_ERROR(compiler.addFile((tmpDir / "missing.mdl").string(), "::p"),
                 "no such file");
     CHECK_ERROR(compiler.addFile(red, "1bad"), "not an identifier");
   }
   SUBCASE("A compile error names the file") {
     const std::string bad{
-        tmpDir.write("c/bad.smdl", "#smdl\nimport ::nonexistent::*;\n")
+        tmpDir.write("c/bad.mdl", "#smdl\nimport ::nonexistent::*;\n")
             .string()};
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addFile(bad, "::scene_c"));

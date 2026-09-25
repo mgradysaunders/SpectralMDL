@@ -127,16 +127,16 @@ TEST_CASE("Compiler: the mip levels a texture bakes") {
   // folds at compile time or runs in the JIT, a mismatch comes back as a
   // message here.
   auto checkNumLevels{[&](std::string_view args, int numLevels) {
-    tmpDir.write("mips.smdl", "#smdl\nimport ::tex::*;\n"
-                              "unit_test \"Baked level count\" {\n"
-                              "  const auto t = texture_2d(\"mip.png\"" +
-                                  std::string(args) +
-                                  ");\n"
-                                  "  #assert(t.num_levels == " +
-                                  std::to_string(numLevels) + ");\n}\n");
+    tmpDir.write("mips.mdl", "#smdl\nimport ::tex::*;\n"
+                             "unit_test \"Baked level count\" {\n"
+                             "  const auto t = texture_2d(\"mip.png\"" +
+                                 std::string(args) +
+                                 ");\n"
+                                 "  #assert(t.num_levels == " +
+                                 std::to_string(numLevels) + ");\n}\n");
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
-    if (std::string message{buildAll(compiler, {tmpDir / "mips.smdl"})};
+    if (std::string message{buildAll(compiler, {tmpDir / "mips.mdl"})};
         !message.empty())
       return message;
     StateStorage storage{compiler};
@@ -177,14 +177,14 @@ TEST_CASE("Compiler: what a resource says at debug level") {
         "    tint: color(c) * color(spectral_curve(\"curve.txt\")))));\n");
   }};
   SUBCASE("A loaded resource says what it is, and an image once decoded") {
-    tmpDir.write("main.smdl", materialUsing("gray.png"));
+    tmpDir.write("main.mdl", materialUsing("gray.png"));
     const CollectedLog logged{"Loaded", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
     // Once each, however many times the material body was emitted, and
     // then the summary of the images decoded.
     REQUIRE(logged.messages().size() == 3);
-    CHECK(logged.count("main.smdl:9:") == 1);
+    CHECK(logged.count("main.mdl:9:") == 1);
     CHECK(logged.count("curve.txt\": 3 samples from 400 to 600 nm") == 1);
     CHECK(logged.count("Loaded image \"") == 1);
     CHECK(logged.count("gray.png\": 2 x 2, 1-channel uint8, 4 B") == 1);
@@ -205,7 +205,7 @@ TEST_CASE("Compiler: what a resource says at debug level") {
                        name, ".png\"), float2(0.5));\n");
       sum += smdl::concat(" + ", name);
     }
-    tmpDir.write("main.smdl",
+    tmpDir.write("main.mdl",
                  smdl::concat("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
                               "export material M() = let {\n",
                               declarations,
@@ -215,7 +215,7 @@ TEST_CASE("Compiler: what a resource says at debug level") {
                               sum, "))));\n"));
     const CollectedLog logged{"Loaded", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
     REQUIRE(logged.messages().size() == 9);
     for (size_t i = 0; i < 8; i++)
       CHECK_CONTAINS(logged.messages()[i],
@@ -223,12 +223,12 @@ TEST_CASE("Compiler: what a resource says at debug level") {
     CHECK_CONTAINS(logged.messages()[8], "Loaded 8 images (32 B) in ");
   }
   SUBCASE("A file not found is followed by where it was looked for") {
-    tmpDir.write("main.smdl", materialUsing("nowhere.png"));
+    tmpDir.write("main.mdl", materialUsing("nowhere.png"));
     const CollectedLog logged{"nowhere.png", /*shouldCollectDebug=*/true};
     smdl::Compiler compiler{};
     compiler.fileLocator.setSearchPwd(false);
     compiler.fileLocator.setSearchDefaultDirs(false);
-    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
     // The warning, then the one directory searched, once each.
     REQUIRE(logged.messages().size() == 2);
     CHECK(logged.warningCount() == 1);
@@ -241,10 +241,10 @@ TEST_CASE("Compiler: what a resource says at debug level") {
                                   gray));
     REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1002.png").string(), 2, 2, 4,
                                   rgba));
-    tmpDir.write("main.smdl", materialUsing("tile_<UDIM>.png"));
+    tmpDir.write("main.mdl", materialUsing("tile_<UDIM>.png"));
     const CollectedLog logged{"image formats for"};
     smdl::Compiler compiler{};
-    CHECK(buildAll(compiler, {tmpDir / "main.smdl"}).empty());
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
     REQUIRE(logged.messages().size() == 1);
     CHECK_CONTAINS(
         logged.messages()[0],
@@ -269,7 +269,7 @@ TEST_CASE("Compiler: dropping an image nothing reads") {
   // decode can be skipped. The unit test pins the extent staying valid
   // after the drop: a comptime-false '#assert' is a compile error.
   tmpDir.write(
-      "main.smdl",
+      "main.mdl",
       "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
       "export material M() = let {\n"
       "  auto tLive = texture_2d(\"live.png\", tex::gamma_srgb);\n"
@@ -287,7 +287,7 @@ TEST_CASE("Compiler: dropping an image nothing reads") {
     smdl::Compiler compiler{};
     compiler.shouldEmitUnitTests = true;
     if (std::optional<smdl::Error> error{
-            compiler.add((tmpDir / "main.smdl").string())})
+            compiler.add((tmpDir / "main.mdl").string())})
       return error->message;
     if (std::optional<smdl::Error> error{compiler.compile(optLevel)})
       return error->message;
@@ -340,7 +340,7 @@ TEST_CASE("Compiler: one image symbol per file") {
     // Two textures over 'a.png' differing in exactly the thing that is
     // per-texture rather than per-image: whether they read the chain.
     tmpDir.write(
-        "main.smdl",
+        "main.mdl",
         "#smdl\nimport ::tex::*;\n"
         "export const auto a0 = texture_2d(\"a.png\", tex::gamma_linear);\n"
         "export const auto a1 = texture_2d(\"a.png\", tex::gamma_linear, "
@@ -355,7 +355,7 @@ TEST_CASE("Compiler: one image symbol per file") {
         "tex::texel_float(a0, int2(0, 0)));\n"
         "}\n");
     smdl::Compiler compiler{};
-    REQUIRE_OK(compiler.add((tmpDir / "main.smdl").string()));
+    REQUIRE_OK(compiler.add((tmpDir / "main.mdl").string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
     std::string ir{};
     REQUIRE_OK(compiler.dump(smdl::DUMP_FORMAT_IR, ir));
@@ -373,7 +373,7 @@ TEST_CASE("Compiler: one image symbol per file") {
     // in file order, and level 2 as their mean, 120. Texture space is
     // v-up, so 'int2(0, 0)' of level 1 is the last row in file order.
     tmpDir.write(
-        "mips.smdl",
+        "mips.mdl",
         "#smdl\nimport ::tex::*;\n"
         "export const auto t = texture_2d(\"a.png\", tex::gamma_linear, "
         "use_mipmap: true);\n"
@@ -386,7 +386,7 @@ TEST_CASE("Compiler: one image symbol per file") {
         "120.0 / 255.0) < 1e-6);\n"
         "}\n");
     smdl::Compiler compiler{};
-    REQUIRE_OK(compiler.add((tmpDir / "mips.smdl").string()));
+    REQUIRE_OK(compiler.add((tmpDir / "mips.mdl").string()));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
     REQUIRE_OK(compiler.jitCompile());
     CHECK_OK(compiler.runExecs());
@@ -396,7 +396,7 @@ TEST_CASE("Compiler: one image symbol per file") {
     // resolves to a null address. The extent is zero, which is what
     // keeps the lookups away from it, but the link must still succeed.
     std::ofstream(tmpDir / "bad.png") << "This is not an image!\n";
-    tmpDir.write("bad.smdl",
+    tmpDir.write("bad.mdl",
                  "#smdl\nimport ::tex::*;\n"
                  "export const auto t = texture_2d(\"bad.png\", "
                  "tex::gamma_linear);\n"
@@ -405,7 +405,7 @@ TEST_CASE("Compiler: one image symbol per file") {
                  "  #assert(tex::texel_float(t, int2(0, 0)) == 0.0);\n"
                  "}\n");
     smdl::Compiler compiler{};
-    REQUIRE_OK(compiler.add((tmpDir / "bad.smdl").string()));
+    REQUIRE_OK(compiler.add((tmpDir / "bad.mdl").string()));
     // 'OPT_LEVEL_NONE' so the reads survive to the JIT rather than being
     // folded away along with the image.
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));

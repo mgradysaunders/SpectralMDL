@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language:    MDL / SMDL (the SpectralMDL dialect of NVIDIA's Material
 "              Definition Language)
-" Filenames:   *.mdl, *.smdl
+" Filenames:   *.mdl
 "
 " This file is derived directly from the SpectralMDL parser, so it recognizes
 " both plain MDL and the SMDL syntax extensions that are enabled by the `#smdl`
@@ -13,7 +13,7 @@
 "
 "   mkdir -p ~/.vim/syntax ~/.vim/ftdetect
 "   cp mdl.vim ~/.vim/syntax/mdl.vim
-"   echo 'au BufRead,BufNewFile *.mdl,*.smdl setf mdl' > ~/.vim/ftdetect/mdl.vim
+"   echo 'au BufRead,BufNewFile *.mdl setf mdl' > ~/.vim/ftdetect/mdl.vim
 "
 " Options:
 "
@@ -36,7 +36,7 @@ if !exists("g:mdl_no_buffer_options")
   setlocal comments=sO:*\ -,mO:*\ \ ,exO:*/,s1:/*,mb:*,ex:*/,:///,://
   setlocal commentstring=//\ %s
   setlocal formatoptions-=t formatoptions+=croql
-  setlocal suffixesadd=.mdl,.smdl
+  setlocal suffixesadd=.mdl
 
   " MDL is close enough to C to reuse `cindent()`, with two adjustments:
   "   - `#` begins an intrinsic like `#assert(...)`, not a preprocessor
