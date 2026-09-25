@@ -560,13 +560,13 @@ public:
   /// The renderer sets this and `sampleIndex` per evaluation. A draw is
   /// stratified across the evaluations that share a seed, differ in
   /// index, and reach it after as many draws, so a renderer with a
-  /// low-discrepancy sampler of its own keys the seed on the hit and
+  /// low-discrepancy sampler of its own derives the seed from the hit and
   /// passes its sample index through, and one without hashes a seed per
-  /// hit. The instance also keys stochastically evaluated BSDFs, e.g., the
-  /// diffuse component of `df::micrograin_layer`, on the two. The draw
-  /// lives in the builtin `::api` module with no C++ twin; the language
-  /// test `builtin/state.mdl` pins it to golden words that a host sampler
-  /// of the same construction can pin its own draw to.
+  /// hit. The instance also seeds stochastically evaluated BSDFs, e.g.,
+  /// the diffuse component of `df::micrograin_layer`, from the two. The
+  /// draw lives in the builtin `::api` module with no C++ twin; the
+  /// language test `builtin/state.mdl` pins it to golden words that a host
+  /// sampler of the same construction can pin its own draw to.
   uint32_t sampleSeed{};
 
   /// The sample index within the sequence `sampleSeed` selects.
