@@ -23,7 +23,6 @@
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Macros.h"
-#include "smdl/Support/RNG.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/Strings.h"
 #include "smdl/Support/VectorMath.h"
@@ -336,6 +335,32 @@ enum Transport : int {
   TRANSPORT_IMPORTANCE = 1,
 };
 
+/// The sampler for stochastic evaluation, which `State::sampler` carries:
+/// a position in a hash-based Owen-scrambled low-discrepancy sequence,
+/// after Burley, "Practical Hash-Based Owen Scrambling," JCGT 9(4) 2020.
+///
+/// `seed` selects the sequence, `index` the sample within it, and
+/// `dimension` the next draw. This is only the position: the draw itself
+/// lives in the builtin `::api` module, which the JIT compiles, and the
+/// library defines no C++ twin of it. A draw there is the bit-reversed
+/// index under an index shuffle and an output Owen scramble both hashed
+/// from the dimension, so at a fixed dimension every aligned power-of-two
+/// block of consecutive indices covers the unit interval evenly, and a
+/// host sampler of the same construction branches a stream of its own
+/// for the state, keyed on the hit, whose draws are then the material's.
+/// The language test `builtin/state.mdl` pins the draw to golden words
+/// such a host can pin its own draw to.
+struct Sampler final {
+  /// The sequence.
+  uint32_t seed{};
+
+  /// The sample within the sequence.
+  uint32_t index{};
+
+  /// The dimension the next draw spends.
+  uint32_t dimension{};
+};
+
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
 public:
@@ -553,19 +578,26 @@ public:
   /// The object-to-world matrix.
   float4x4 objectToWorld{float4x4(1.0f)};
 
-  /// The random number generator for stochastic evaluation.
+  /// The sampler for stochastic evaluation: where in a scrambled
+  /// low-discrepancy sequence the material's own draws begin.
   ///
   /// \note
-  /// The contract: the renderer initializes this randomly per evaluation,
-  /// e.g., `state.rng = RNG(seed)` or `RNG(seed, stream)`, and the
-  /// implementation may draw from it (advancing it) at will during
-  /// evaluation. The material instance captures a draw to seed the
-  /// generator used by stochastically evaluated BSDFs, e.g., the diffuse
-  /// component of `df::micrograin_layer`. Such evaluations are unbiased
-  /// in expectation; renderers should vary the seed per path vertex (or
-  /// per pixel sample) to decorrelate them. A fixed initial generator
-  /// keeps evaluations deterministic.
-  RNG rng{};
+  /// The contract: the renderer sets this per evaluation, e.g.,
+  /// `state.sampler = Sampler{seed, index}`, and the implementation may
+  /// draw from it at will during evaluation, each draw spending one
+  /// dimension. A draw is stratified across the evaluations whose
+  /// samplers share a seed, differ in index, and reach it at the same
+  /// dimension, which is what a renderer with a low-discrepancy sampler
+  /// of its own gets by branching a stream of it at every hit, a seed
+  /// keyed on the hit with the sample index passed through and the
+  /// dimension at zero; a renderer without one hashes a seed per hit
+  /// and gets independent draws. The material instance captures the
+  /// seed and index, never the dimension, to key stochastically
+  /// evaluated BSDFs, e.g., the diffuse component of
+  /// `df::micrograin_layer`, so that instances constructed from identical
+  /// samplers evaluate identically. Such evaluations are unbiased in
+  /// expectation, and a fixed initial sampler keeps them deterministic.
+  Sampler sampler{};
 
   /// The transport mode.
   ///

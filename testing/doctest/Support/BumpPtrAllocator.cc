@@ -1,10 +1,10 @@
 #include "Fixtures.h"
 
 #include <cstdint>
+#include <random>
 #include <vector>
 
 #include "smdl/Support/BumpPtrAllocator.h"
-#include "smdl/Support/RNG.h"
 
 namespace {
 
@@ -58,16 +58,18 @@ TEST_CASE("BumpPtrAllocator: alignment, slab growth, and reset") {
   }
   SUBCASE("Blocks do not overlap and survive slab growth") {
     smdl::BumpPtrAllocator allocator{};
-    smdl::RNG rng{1234};
+    std::mt19937 prng{1234};
+    const auto randomInt{
+        [&](int bound) { return int(prng() % uint32_t(bound)); }};
     std::vector<Block> blocks{};
     // Far past MIN_SLAB_SIZE, so the run spans many slabs, with the
     // occasional request too big for the slab it would land in.
     size_t total{};
     while (total < 8 * smdl::BumpPtrAllocator::MIN_SLAB_SIZE) {
-      const bool isHuge{rng.generateInt(32) == 0};
-      const size_t size{isHuge ? size_t(rng.generateInt(200000) + 1)
-                               : size_t(rng.generateInt(300) + 1)};
-      const size_t align{size_t(1) << rng.generateInt(7)};
+      const bool isHuge{randomInt(32) == 0};
+      const size_t size{isHuge ? size_t(randomInt(200000) + 1)
+                               : size_t(randomInt(300) + 1)};
+      const size_t align{size_t(1) << randomInt(7)};
       uint8_t *ptr{
           static_cast<unsigned char *>(allocator.allocate(size, align))};
       REQUIRE(ptr != nullptr);

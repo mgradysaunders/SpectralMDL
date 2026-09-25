@@ -3,11 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <random>
 #include <vector>
 
 #include "smdl/RenderUtil/MajorantWalk.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Resource/VoxelGrid.h"
-#include "smdl/Support/RNG.h"
 
 using smdl::float2;
 using smdl::float3;
@@ -89,21 +90,22 @@ TEST_CASE("MajorantSpanWalk: the spans a ray crosses through a grid") {
 
   // Segments from inside and outside the box in random directions, and
   // axis-aligned ones so that zero direction components are covered.
-  smdl::RNG rng{7};
+  std::mt19937 prng{7};
+  const auto randomFloat{[&] { return smdl::generateCanonical(prng); }};
   int numCellSpans{0}, numSkipped{0}, numOutsideSpans{0};
   for (int trial = 0; trial < 400; trial++) {
-    float3 org{(rng.generateFloat() * 1.6f - 0.3f) * boxMax.x,
-               (rng.generateFloat() * 1.6f - 0.3f) * boxMax.y,
-               (rng.generateFloat() * 1.6f - 0.3f) * boxMax.z};
-    float3 dir{rng.generateFloat() - 0.5f, rng.generateFloat() - 0.5f,
-               rng.generateFloat() - 0.5f};
+    float3 org{(randomFloat() * 1.6f - 0.3f) * boxMax.x,
+               (randomFloat() * 1.6f - 0.3f) * boxMax.y,
+               (randomFloat() * 1.6f - 0.3f) * boxMax.z};
+    float3 dir{randomFloat() - 0.5f, randomFloat() - 0.5f,
+               randomFloat() - 0.5f};
     if (trial % 7 == 1) dir.y = 0;
     if (trial % 7 == 2) dir.x = dir.z = 0;
     if (trial % 7 == 3) org = float3(3.5f, 3.5f, 3.5f);
     const float len{length(dir)};
     if (!(len > 0)) continue;
     dir = dir / len;
-    const float tEnd{rng.generateFloat() * 120.0f};
+    const float tEnd{randomFloat() * 120.0f};
     INFO("trial " << trial << " org " << org.x << "," << org.y << "," << org.z
                   << " dir " << dir.x << "," << dir.y << "," << dir.z
                   << " tEnd " << tEnd);

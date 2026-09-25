@@ -2292,7 +2292,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(geometryTangentV);
   ADD_FIELD(tangentToObject);
   ADD_FIELD(objectToWorld);
-  ADD_FIELD(rng);
+  ADD_FIELD(sampler);
   ADD_FIELD(transport);
   ADD_FIELD(scatteringOrder);
   ADD_FIELD(travelDistance);

@@ -246,18 +246,26 @@ export float transform_scale(
   return 1.0 * scale;
 }
 
-/// The next uniform random `float` in `[0, 1)`, drawn from the random
-/// number generator on the `$state`, advancing it. The renderer seeds the
-/// generator per evaluation, so sequential draws are decorrelated by
-/// construction, and a fixed initial generator keeps evaluations
-/// deterministic. Not available in `@(pure)` functions, which have no
-/// `$state`.
+/// The next uniform random `float` in `(0, 1)`, drawn from the sampler on
+/// the `$state`, spending one dimension of it. The sampler is a position
+/// in an Owen-scrambled low-discrepancy sequence, which the renderer sets
+/// per evaluation to the sequence and sample index of the path, so a draw
+/// is stratified across the samples of a pixel that reach it at the same
+/// dimension: a choice made on it lands in each stratum its share of the
+/// time rather than binomially. That holds only while every evaluation
+/// spends the same number of draws before it, so a draw inside a branch
+/// on texture content costs the draws after it their stratification, but
+/// nothing outside the material, since the sampler is the material's
+/// own. A fixed initial sampler keeps evaluations deterministic. Not
+/// available in `@(pure)` functions, which have no `$state`.
 ///
 /// NOTE: This is non-standard!
 @(macro)
 export float random_float() = _randomFloat();
 
-/// The next uniform random `float2` in `[0, 1)^2`, drawn component-wise.
+/// The next uniform random `float2` in `(0, 1)^2`, drawn component-wise,
+/// each component spending a dimension of its own and so stratified on
+/// its own rather than jointly with the other.
 ///
 /// NOTE: This is non-standard!
 @(macro)
@@ -267,7 +275,8 @@ export float2 random_float2() = return_from {
   return float2(x, y);
 };
 
-/// The next uniform random `float3` in `[0, 1)^3`, drawn component-wise.
+/// The next uniform random `float3` in `(0, 1)^3`, drawn component-wise
+/// as `random_float2()` is.
 ///
 /// NOTE: This is non-standard!
 @(macro)
@@ -278,7 +287,8 @@ export float3 random_float3() = return_from {
   return float3(x, y, z);
 };
 
-/// The next uniform random `float4` in `[0, 1)^4`, drawn component-wise.
+/// The next uniform random `float4` in `(0, 1)^4`, drawn component-wise
+/// as `random_float2()` is.
 ///
 /// NOTE: This is non-standard!
 @(macro)
@@ -290,28 +300,21 @@ export float4 random_float4() = return_from {
   return float4(x, y, z, w);
 };
 
-/// The next uniform random 32-bit integer, drawn from the random number
-/// generator on the `$state`, advancing it.
+/// The next uniform random 32-bit integer, drawn from the sampler on the
+/// `$state`, spending one dimension of it.
 ///
 /// NOTE: This is non-standard!
 @(macro)
 export int random_int() = _randomInt();
 
-/// The next uniform random integer in `[0, bound)`, by rejection sampling.
+/// The next uniform random integer in `[0, bound)`, by scaling one draw,
+/// so that exactly one dimension is spent whatever `bound` is: rejection
+/// sampling would spend a data-dependent number and cost every draw after
+/// it its stratification. Zero when `bound < 2`.
 ///
 /// NOTE: This is non-standard!
 @(macro)
-export int random_int(const int bound) {
-  if (bound > 1) {
-    // Work in 64-bit arithmetic so that the threshold remainder and the
-    // comparison below are effectively unsigned: zero-extend each 32-bit
-    // draw into [0, 2^32) instead of reinterpreting it as signed.
-    const auto bound64 = int64_t(bound);
-    const auto xmin = (int64_t(1) << 32) % bound64;
-    while (true) {
-      const auto x = (int64_t(_randomInt()) << 32) >>> 32;
-      return int(x % bound64) if (x >= xmin);
-    }
-  }
-  return 0;
-}
+export int random_int(const int bound) = return_from {
+  const auto u = _randomFloat();
+  return bound > 1 ? #min(int(float(bound) * u), bound - 1) : 0;
+};

@@ -30,7 +30,6 @@ fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std
           'extras/lod',
           'extras/noise',
           'extras/parallax',
-          'extras/rng',
           'extras/sampling',
           'extras/tiling',
           'models/illuminant',

@@ -20,7 +20,8 @@
 #smdl
 
 using ::math import *;
-using ::extras::rng import *;
+using noise = ::extras::noise;
+import noise::*;
 using sampling = ::extras::sampling;
 import sampling::*;
 import ::tex::*;
@@ -568,24 +569,44 @@ export auto conductor_fresnel(const float cosThetai, const auto ior) {
 //--}
 
 //--{ scattering infrastructure
-/// Hash a direction pair into an `rng_t` stream selector. Symmetric under
-/// swapping the two directions and invariant under jointly negating them,
-/// so stochastic BSDF evaluations remain exactly reciprocal and agree
-/// across radiance and importance transport, while distinct direction
-/// pairs at the same shading point draw decorrelated streams.
+/// Hash a direction pair into a key. Symmetric under swapping the two
+/// directions and invariant under jointly negating them, so stochastic
+/// BSDF evaluations remain exactly reciprocal and agree across radiance
+/// and importance transport, while distinct direction pairs at the same
+/// shading point draw decorrelated values.
 @(pure)
 int64_t directionPairHash(const float3 wa, const float3 wb) {
   const auto ws(#abs(wa + wb));
   return int64_t(ws.x * 2097152.0) ^ (int64_t(ws.y * 2097152.0) << 21) ^ (int64_t(ws.z * 2097152.0) << 42);
 }
 
+/// The key of a stochastic evaluation: the instance seed, being the
+/// `$state` sampler the instance was evaluated from, and the direction
+/// pair, avalanched together, so that an evaluation draws the same values
+/// whenever it is asked the same question and different values across the
+/// samples of a pixel.
+@(pure)
+int scatterKey(const int64_t seed, const int64_t pairHash) {
+  const auto h(noise::hash(int4(
+    int(seed >>> 32), int(seed), int(pairHash >>> 32), int(pairHash))));
+  return h.x ^ h.y ^ h.z ^ h.w;
+}
+
 struct ScatterEvaluateParameters {
   /// Is transporting importance? i.e., tracing rays from lights to cameras?
   bool isImportance;
 
-  /// The pseudo-random number generator for stochastically evaluated BSDF
-  /// components, e.g., the diffuse micrograin term.
-  rng_t rng = rng_t();
+  /// The key that stochastically evaluated BSDF components, e.g., the
+  /// diffuse micrograin term, hash their draws from, see `scatterKey()`.
+  /// Zero where no instance keys the evaluation, as for a VDF.
+  int key = 0;
+
+  /// The number of stochastic draws made so far in this evaluation, which
+  /// each draw folds into its hash and then counts, so that stacked
+  /// stochastic components decorrelate. The lobes are traversed in an
+  /// order the material fixes, never the directions, so the count keeps
+  /// the evaluation reciprocal.
+  int draws = 0;
 
   /// The reference outgoing direction in the natural tangent space.
   float3 wo0;
@@ -3378,8 +3399,8 @@ export auto microfacet_beckmann_vcavities_bsdf(*) = makeMicrofacetBSDF(
 // Pacanowski, and Barla, ACM Transactions on Graphics 43(4), 2024. The
 // diffuse micrograin component is the visibility integral of Eq. 21, which
 // has no closed form: following the paper, it is estimated stochastically
-// (one NDF-distributed normal per evaluation, drawn from the seeded
-// generator on the parameter struct).
+// (one NDF-distributed normal per evaluation, hashed from the key on the
+// parameter struct).
 export namespace micrograin {
 
 /// Clamp the filling factor away from the degenerate limits of the
@@ -3695,8 +3716,8 @@ auto scatterEvaluate(
     // integral [Eq. 21], which has no closed form and is estimated
     // stochastically with a single micrograin normal drawn proportional to
     // `D(m) m.z`, as the paper evaluates it. The estimate is unbiased, and
-    // because the generator stream depends only on the seed and the symmetric
-    // direction-pair hash, never on the order or transport sense of the
+    // because the draw is a hash of the instance seed and the symmetric
+    // direction-pair hash, never of the order or transport sense of the
     // directions, the evaluation remains exactly reciprocal. The
     // foreshortening and per-normal GAF concentrate the response in the
     // visible, doubly-lit part of the grain, which brightens toward grazing as
@@ -3704,7 +3725,8 @@ auto scatterEvaluate(
     const auto Kd(this.grain_diffuse_albedo);
     auto fDiffuse((1 - Fh) * (1 - Fh) * Kd * 0.0);
     if (average(Kd) > 0) {
-      const auto uD(generate_float2(&rng));
+      const auto uD(noise::hash_float2(int2(key, draws)));
+      draws++;
       const auto wmD(micrograin::normal_sample(tau0, beta, uD.x, uD.y));
       const float dotWoWmD(#sum(wo * wmD));
       const float dotWiWmD(#sum(wi * wmD));
@@ -6926,7 +6948,7 @@ export int _scatterEvaluate(
   const auto wi0(normalize((*wiWorld) * eval.tangentToWorld));
   auto params = ScatterEvaluateParameters(
     isImportance: (eval.flags & 1) != 0,
-    rng: make_rng(eval.seed, directionPairHash(wo0, wi0)),
+    key: scatterKey(eval.seed, directionPairHash(wo0, wi0)),
     ior: eval.exteriorIOR / eval.ior,
     exterior_ior: eval.exteriorIOR,
     wo0: wo0,
@@ -7176,10 +7198,13 @@ export int _hairScatterEvaluate(
   const &float pdfRev,   ///< output: The solid-angle PDF of sampling `wo` given `wi`
   const &float f,        ///< output: The scattering spectrum
 ) {
+  const auto wo0(normalize((*woWorld) * eval.tangentToWorld));
+  const auto wi0(normalize((*wiWorld) * eval.tangentToWorld));
   auto params = ScatterEvaluateParameters(
     isImportance: (eval.flags & 1) != 0,
-    wo0: normalize((*woWorld) * eval.tangentToWorld),
-    wi0: normalize((*wiWorld) * eval.tangentToWorld),
+    key: scatterKey(eval.seed, directionPairHash(wo0, wi0)),
+    wo0: wo0,
+    wi0: wi0,
     hitBackface: false, // Not applicable for hair scattering
     ior: 1.0,           // Not applicable for hair scattering
   );

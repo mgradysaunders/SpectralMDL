@@ -684,13 +684,13 @@ struct GetType<Matrix<T, N, M>, void> {
   }
 };
 
-template <> struct GetType<RNG, void> {
+template <> struct GetType<Sampler, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    // The builtin 'rng_t' struct compiles from source after 'StateType'
-    // is constructed, so 'State::rng' is mirrored structurally as
-    // 'int64_t[2]'; the startup offset check in 'StateType' proves the
-    // layouts agree. Only the builtin '_random_*' primitives access it.
-    return context.getArrayType(GetType<int64_t>::get(context), 2);
+    // 'State::sampler' is mirrored structurally as 'int[3]': the sequence
+    // seed, the sample index, and the dimension, in that order; the
+    // startup offset check in 'StateType' proves the layouts agree. Only
+    // the builtin '_random*' primitives and '_MaterialEval' access it.
+    return context.getArrayType(GetType<int32_t>::get(context), 3);
   }
 };
 

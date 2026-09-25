@@ -596,9 +596,9 @@ public:
     /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
     int emissionModes{};
 
-    /// The random seed captured from the raw state of `State::rng` at
-    /// evaluation, which seeds the generator for stochastically evaluated
-    /// BSDFs.
+    /// The sequence seed and sample index of `State::sampler` at
+    /// evaluation, packed high and low, which stochastically evaluated
+    /// BSDFs hash their draws from.
     int64_t seed{};
 
     /// The tangent-to-world space matrix at evaluation.

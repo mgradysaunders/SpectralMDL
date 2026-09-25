@@ -782,28 +782,62 @@ const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 /// this bit.
 const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 
-/// The multiplier of the linear congruential generator that advances
-/// `$state.rng`. This and the output permutation in `_randomInt()` must
-/// stay bit-exact with `::extras::rng` and with `smdl::RNG` in the C++
-/// API; the unit tests in `rng.mdl` pin the parity. (The duplication is
-/// deliberate: this module cannot import anything, because its exports
-/// become global keywords.)
-const int64_t RNG_MULTIPLIER = 6364136223846793005;
+/// The murmur3 finalizer, spreading every input bit over the whole word.
+/// (The sampler primitives are spelled out here rather than imported,
+/// because this module cannot import anything: its exports become global
+/// keywords.)
+@(pure)
+int mixBits(int x) {
+  x ^= x >>> 16;
+  x *= -2048144789; // 0x85EBCA6B as unsigned
+  x ^= x >>> 13;
+  x *= -1028477387; // 0xC2B2AE35 as unsigned
+  x ^= x >>> 16;
+  return x;
+}
 
-/// Draws the next uniform 32-bit integer from the `$state` random number
-/// generator, advancing it. NOTE: This is non-standard!
+/// The hash-based Owen scramble of Burley (JCGT 2020): reverse so the
+/// most significant bits sit low, run the Laine-Karras permutation, which
+/// only lets each bit affect bits above it, and reverse back.
+@(pure)
+int owenScramble(int x, const int seed) {
+  x = #bitReverse(x) + seed;
+  x ^= x * 1817228412;  // 0x6C50B47C
+  x ^= x * -1204871598; // 0xB82F1E52 as unsigned
+  x ^= x * -944773576;  // 0xC7AFE638 as unsigned
+  x ^= x * -1927088410; // 0x8D22F6E6 as unsigned
+  return #bitReverse(x);
+}
+
+/// Draws the next uniform 32-bit integer from the `$state` sampler,
+/// spending one dimension of it. The sampler is the `smdl::Sampler` of
+/// the `State`, mirrored as the sequence seed, the sample index, and the
+/// dimension the next draw spends: the draw is the bit-reversed index,
+/// shuffled under the dimension's seed before the reversal and
+/// Owen-scrambled under a component key of it after (Burley, JCGT 2020).
+/// This is the one implementation of the draw, with no C++ twin in the
+/// library; the unit tests in `state.mdl` pin it to golden words, which a
+/// host sampler of the same construction pins its own draw to. NOTE:
+/// This is non-standard!
 @(macro)
 export int _randomInt() = return_from {
-  const auto state0($state.rng[0]);
-  $state.rng[0] = state0 * RNG_MULTIPLIER + $state.rng[1];
-  return #rotr(int(((state0 >>> 18) ^ state0) >>> 27), int(state0 >>> 59));
+  const auto dimensionSeed(mixBits(
+    $state.sampler[0] ^ (-1640531527 * $state.sampler[2]))); // 0x9E3779B9 as unsigned
+  $state.sampler[2] = $state.sampler[2] + 1;
+  return owenScramble(
+           #bitReverse(owenScramble($state.sampler[1], dimensionSeed)),
+           mixBits(dimensionSeed ^ 1431655765)); // 0x55555555
 };
 
-/// Draws the next uniform `float` in `[0, 1)` from the `$state` random
-/// number generator, advancing it. NOTE: This is non-standard!
+/// Draws the next uniform `float` in `(0, 1)` from the `$state` sampler,
+/// spending one dimension of it: the word as a fraction of 2^32, held
+/// strictly inside the interval as `smdl::canonicalize()` in the C++ API
+/// holds any sample. NOTE: This is non-standard!
 @(macro)
-export float _randomFloat() = #min(
-  float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+export float _randomFloat() = #max(
+  #min(
+    float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2),
+  $FLOAT_MIN);
 
 /// The helper behind the generated per-material `volumeEvaluate` entry
 /// point: write the volume coefficients of `mat` to the caller
@@ -948,15 +982,17 @@ export struct _MaterialEval {
     (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
     | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
-  /// The random seed captured from the `$state` random number generator
-  /// (its current raw state, without advancing it), which seeds the
-  /// generator for stochastically evaluated BSDFs. The scattering entry
-  /// points are pure and take no `State`, so the seed must be captured
-  /// here at instance evaluation time. A copy rather than a draw so that
-  /// instances constructed from identical generator states evaluate
-  /// identically, which keeps stochastic BSDFs exactly consistent across
-  /// radiance and importance transport at the same shading point.
-  int64_t seed = $state.rng[0];
+  /// The sequence seed and sample index of the `$state` sampler, packed
+  /// high and low without spending a dimension, which stochastically
+  /// evaluated BSDFs hash their draws from, together with the direction
+  /// pair. The scattering entry points are pure and take no `State`, so
+  /// the key must be captured here at instance evaluation time. A copy
+  /// rather than a draw, and never the dimension, so that instances
+  /// constructed from identical samplers evaluate identically whatever
+  /// the material drew before, which keeps stochastic BSDFs exactly
+  /// consistent across radiance and importance transport at the same
+  /// shading point.
+  int64_t seed = (int64_t($state.sampler[0]) << 32) | (int64_t($state.sampler[1]) & 4294967295);
 
   /// The tangent-to-world matrix held by the `State` during construction.
   float3x3 tangentToWorld = let {
