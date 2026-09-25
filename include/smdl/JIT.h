@@ -596,9 +596,9 @@ public:
     /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
     int emissionModes{};
 
-    /// The sequence seed and sample index of `State::sampler` at
-    /// evaluation, packed high and low, which stochastically evaluated
-    /// BSDFs hash their draws from.
+    /// `State::sampleSeed` and `State::sampleIndex` at evaluation, packed
+    /// high and low, which stochastically evaluated BSDFs hash their draws
+    /// from.
     int64_t seed{};
 
     /// The tangent-to-world space matrix at evaluation.
@@ -1515,8 +1515,10 @@ public:
   /// The name of the test.
   std::string testName{};
 
-  /// The test function.
-  Function<void(const State &state)> test{};
+  /// The test function, which writes the state it is given: a test body
+  /// may assign `$state` fields, and the entry zeroes
+  /// `State::sampleDimension`.
+  Function<void(State &state)> test{};
 };
 
 } // namespace JIT

@@ -809,10 +809,9 @@ int owenScramble(int x, const int seed) {
   return #bitReverse(x);
 }
 
-/// Draws the next uniform 32-bit integer from the `$state` sampler,
-/// spending one dimension of it. The sampler is the `smdl::Sampler` of
-/// the `State`, mirrored as the sequence seed, the sample index, and the
-/// dimension the next draw spends: the draw is the bit-reversed index,
+/// Draws the next uniform 32-bit integer from the sequence
+/// `$state.sampleSeed` selects, at `$state.sampleIndex`, spending the
+/// dimension `$state.sampleDimension`: the draw is the bit-reversed index,
 /// shuffled under the dimension's seed before the reversal and
 /// Owen-scrambled under a component key of it after (Burley, JCGT 2020).
 /// This is the one implementation of the draw, with no C++ twin in the
@@ -822,10 +821,10 @@ int owenScramble(int x, const int seed) {
 @(macro)
 export int _randomInt() = return_from {
   const auto dimensionSeed(mixBits(
-    $state.sampler[0] ^ (-1640531527 * $state.sampler[2]))); // 0x9E3779B9 as unsigned
-  $state.sampler[2] = $state.sampler[2] + 1;
+    $state.sampleSeed ^ (-1640531527 * $state.sampleDimension))); // 0x9E3779B9 as unsigned
+  $state.sampleDimension = $state.sampleDimension + 1;
   return owenScramble(
-           #bitReverse(owenScramble($state.sampler[1], dimensionSeed)),
+           #bitReverse(owenScramble($state.sampleIndex, dimensionSeed)),
            mixBits(dimensionSeed ^ 1431655765)); // 0x55555555
 };
 
@@ -982,17 +981,15 @@ export struct _MaterialEval {
     (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
     | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
-  /// The sequence seed and sample index of the `$state` sampler, packed
-  /// high and low without spending a dimension, which stochastically
-  /// evaluated BSDFs hash their draws from, together with the direction
-  /// pair. The scattering entry points are pure and take no `State`, so
-  /// the key must be captured here at instance evaluation time. A copy
-  /// rather than a draw, and never the dimension, so that instances
-  /// constructed from identical samplers evaluate identically whatever
-  /// the material drew before, which keeps stochastic BSDFs exactly
-  /// consistent across radiance and importance transport at the same
-  /// shading point.
-  int64_t seed = (int64_t($state.sampler[0]) << 32) | (int64_t($state.sampler[1]) & 4294967295);
+  /// `$state.sampleSeed` and `$state.sampleIndex`, packed high and low,
+  /// which stochastically evaluated BSDFs hash their draws from, together
+  /// with the direction pair. The scattering entry points are pure and
+  /// take no `State`, so the key must be captured here at instance
+  /// evaluation time. A copy rather than a draw, so that instances
+  /// constructed from identical states evaluate identically whatever the
+  /// material drew before, which keeps stochastic BSDFs exactly consistent
+  /// across radiance and importance transport at the same shading point.
+  int64_t seed = (int64_t($state.sampleSeed) << 32) | (int64_t($state.sampleIndex) & 4294967295);
 
   /// The tangent-to-world matrix held by the `State` during construction.
   float3x3 tangentToWorld = let {

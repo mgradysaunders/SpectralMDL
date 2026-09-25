@@ -684,16 +684,6 @@ struct GetType<Matrix<T, N, M>, void> {
   }
 };
 
-template <> struct GetType<Sampler, void> {
-  [[nodiscard]] static Type *get(Context &context) {
-    // 'State::sampler' is mirrored structurally as 'int[3]': the sequence
-    // seed, the sample index, and the dimension, in that order; the
-    // startup offset check in 'StateType' proves the layouts agree. Only
-    // the builtin '_random*' primitives and '_MaterialEval' access it.
-    return context.getArrayType(GetType<int32_t>::get(context), 3);
-  }
-};
-
 template <typename T> inline Type *Context::getType() {
   return smdl::GetType<T>::get(*this);
 }

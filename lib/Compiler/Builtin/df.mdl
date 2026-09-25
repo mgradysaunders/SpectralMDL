@@ -581,10 +581,10 @@ int64_t directionPairHash(const float3 wa, const float3 wb) {
 }
 
 /// The key of a stochastic evaluation: the instance seed, being the
-/// `$state` sampler the instance was evaluated from, and the direction
-/// pair, avalanched together, so that an evaluation draws the same values
-/// whenever it is asked the same question and different values across the
-/// samples of a pixel.
+/// `$state` sequence and sample index the instance was evaluated at, and
+/// the direction pair, avalanched together, so that an evaluation draws
+/// the same values whenever it is asked the same question and different
+/// values across the samples of a pixel.
 @(pure)
 int scatterKey(const int64_t seed, const int64_t pairHash) {
   const auto h(noise::hash(int4(

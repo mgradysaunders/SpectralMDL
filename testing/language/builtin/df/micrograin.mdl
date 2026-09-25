@@ -260,13 +260,13 @@ unit_test "The layer degenerates to its base as the pores vanish" {
   #assert((0.0 < EDiff) & (EDiff < 1.02));
 }
 
-unit_test "The diffuse estimate is a hash of the sampler and the direction pair" {
+unit_test "The diffuse estimate is a hash of the sample and the direction pair" {
   // The diffuse micrograin term is a one-sample estimate of the visibility
-  // integral, hashed from the instance seed, being the `$state` sampler
-  // the instance was evaluated from, and the direction pair, rather than
-  // drawn from the sampler itself: an evaluation is then a pure function
-  // of the two, spends nothing on the sampler, and estimates afresh at
-  // each sample of a pixel. Unit-index grains on a black base leave only
+  // integral, hashed from the instance seed, being the `$state` sequence
+  // and sample index the instance was evaluated at, and the direction
+  // pair, rather than drawn from the sequence itself: an evaluation is
+  // then a pure function of the two, spends nothing on the sequence, and
+  // estimates afresh at each sample of a pixel. Unit-index grains on a black base leave only
   // this term, so `f` is the estimate itself. (That the estimate survives
   // swapping the directions is what `checkBidirectionalConsistency`
   // holds the layer to in `invariants.mdl`.)
@@ -278,23 +278,23 @@ unit_test "The diffuse estimate is a hash of the sampler and the direction pair"
       grain_diffuse_albedo: 0.8,
       grain_ior: 1.0,
       base: bsdf());
-  preserve $state.sampler;
-  $state.sampler[0] = 42;
-  $state.sampler[2] = 3;
+  preserve $state.sampleSeed, $state.sampleIndex, $state.sampleDimension;
+  $state.sampleSeed = 42;
+  $state.sampleDimension = 3;
   int distinct = 0;
   bool seedMatters = false;
   float fPrev = -1.0;
   for (int index = 0; index < 16; index++) {
-    $state.sampler[1] = index;
+    $state.sampleIndex = index;
     const auto f = math::average(scatter::evaluate(m, wo, wi).f);
     #assert(f == math::average(scatter::evaluate(m, wo, wi).f)); // Pure in the key
-    #assert($state.sampler[2] == 3);                             // And spends nothing
+    #assert($state.sampleDimension == 3);                             // And spends nothing
     distinct += #select(f != fPrev, 1, 0);
     fPrev = f;
-    $state.sampler[0] = 43;
+    $state.sampleSeed = 43;
     seedMatters = seedMatters | (f != math::average(
                                    scatter::evaluate(m, wo, wi).f));
-    $state.sampler[0] = 42;
+    $state.sampleSeed = 42;
   }
   #assert(distinct >= 8); // Another sample, another estimate
   #assert(seedMatters);   // Another sequence too

@@ -704,7 +704,10 @@ Value Emitter::emit(AST::UnitTest &decl) {
     Type *returnType{context.getVoidType()};
     llvm::Function *llvmFunc{
         createFunction(".unit_test", /*isPure=*/false, returnType,
-                       ParameterList(), decl.srcLoc, [&] { emit(decl.stmt); })};
+                       ParameterList(), decl.srcLoc, [&] {
+                         emitSampleDimensionReset(decl.srcLoc);
+                         emit(decl.stmt);
+                       })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     auto &unitTest{context.compiler.mUnitTests.emplace_back()};
     unitTest.moduleName = std::string(decl.srcLoc.getModuleName());

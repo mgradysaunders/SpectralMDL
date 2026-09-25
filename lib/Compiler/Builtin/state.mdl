@@ -246,18 +246,19 @@ export float transform_scale(
   return 1.0 * scale;
 }
 
-/// The next uniform random `float` in `(0, 1)`, drawn from the sampler on
-/// the `$state`, spending one dimension of it. The sampler is a position
-/// in an Owen-scrambled low-discrepancy sequence, which the renderer sets
-/// per evaluation to the sequence and sample index of the path, so a draw
-/// is stratified across the samples of a pixel that reach it at the same
-/// dimension: a choice made on it lands in each stratum its share of the
-/// time rather than binomially. That holds only while every evaluation
-/// spends the same number of draws before it, so a draw inside a branch
-/// on texture content costs the draws after it their stratification, but
-/// nothing outside the material, since the sampler is the material's
-/// own. A fixed initial sampler keeps evaluations deterministic. Not
-/// available in `@(pure)` functions, which have no `$state`.
+/// The next uniform random `float` in `(0, 1)`, drawn from the
+/// Owen-scrambled low-discrepancy sequence on the `$state`, spending one
+/// dimension of it. The renderer selects the sequence and the sample
+/// index within it per evaluation, the index being that of the path, so
+/// a draw is stratified across the samples of a pixel that reach it at
+/// the same dimension: a choice made on it lands in each stratum its
+/// share of the time rather than binomially. That holds only while every
+/// evaluation spends the same number of draws before it, so a draw inside
+/// a branch on texture content costs the draws after it their
+/// stratification, but nothing outside the material, since the sequence
+/// is the material's own. Every evaluation begins at the first dimension,
+/// so evaluating one state twice draws the same values. Not available in
+/// `@(pure)` functions, which have no `$state`.
 ///
 /// NOTE: This is non-standard!
 @(macro)
@@ -300,7 +301,7 @@ export float4 random_float4() = return_from {
   return float4(x, y, z, w);
 };
 
-/// The next uniform random 32-bit integer, drawn from the sampler on the
+/// The next uniform random 32-bit integer, drawn from the sequence on the
 /// `$state`, spending one dimension of it.
 ///
 /// NOTE: This is non-standard!

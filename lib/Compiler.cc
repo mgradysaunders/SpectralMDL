@@ -662,9 +662,11 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
 // checked against the allowed bytes, and a call to a function defined in
 // the module is followed into that parameter, so the RGB and spectral
 // conversions, which are 'noinline' and read only 'wavelengthBase', are
-// seen through. Anything else, a write, an escape, a variable index, a
-// call to a declaration (a scene-data getter or a '@(foreign)' function,
-// both of which see the whole state), makes the answer false, which hosts
+// seen through. A store is allowed only as the zeroing of
+// 'sampleDimension' every entry point opens with, which reads nothing.
+// Anything else, another write, an escape, a variable index, a call to
+// a declaration (a scene-data getter or a '@(foreign)' function, both of
+// which see the whole state), makes the answer false, which hosts
 // read as heterogeneous: the walk is conservative by construction, and an
 // argument with no uses at all is the empty read set and true. Loaded
 // values are never followed: a load of 'wavelengthBase' is a read of that
@@ -695,6 +697,12 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
         worklist.push_back({gep, offset + gepOffset.getZExtValue()});
       } else if (const auto *load{llvm::dyn_cast<llvm::LoadInst>(user)}) {
         if (!isAllowed(offset, layout.getTypeStoreSize(load->getType())))
+          return false;
+      } else if (const auto *store{llvm::dyn_cast<llvm::StoreInst>(user)}) {
+        if (store->getPointerOperand() != ptr ||
+            offset != offsetof(State, sampleDimension) ||
+            layout.getTypeStoreSize(store->getValueOperand()->getType()) !=
+                sizeof(State::sampleDimension))
           return false;
       } else if (const auto *transfer{
                      llvm::dyn_cast<llvm::MemTransferInst>(user)}) {
@@ -1594,7 +1602,9 @@ std::optional<Error> Compiler::runUnitTests(const State &state,
               if (!itr0->test)
                 throw Error(concat("Unit test ", SpellQuoted(itr0->testName),
                                    " has no JIT-compiled function"));
-              itr0->test(state);
+              // A copy per test, since a test writes the state it runs in.
+              State testState{state};
+              itr0->test(testState);
               llvm::WithColor(os, testColorSuccess, llvmColorMode) << "success";
               os << '\n';
             } catch (const Error &) {

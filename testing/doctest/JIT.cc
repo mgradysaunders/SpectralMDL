@@ -1157,3 +1157,44 @@ unit_test "Vertex color absent" {
         false);
   }
 }
+
+TEST_CASE("State: the draws of an evaluation begin at the first dimension") {
+  // Every entry point that takes a `State` zeroes `sampleDimension` before
+  // the material draws, so what an evaluation draws depends on the seed and
+  // the index alone. The word is the first the language test
+  // `builtin/state.mdl` pins at seed 42 and index 7.
+  smdl::Compiler compiler{};
+  compiler.shouldEmitUnitTests = true;
+  REQUIRE_OK(compiler.addCode("::draw_test", R"(#smdl
+import ::state::*;
+export material dithered() = material(
+  geometry: material_geometry(cutout_opacity: state::random_float()));
+unit_test "Draw from the first dimension" {
+  #assert($state.sampleDimension == 0);
+  #assert(state::random_int() == 1257564220);
+}
+)"));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const smdl::JIT::MaterialDef *dithered{requireMaterial(compiler, "dithered")};
+  StateStorage storage{compiler};
+  smdl::State state{storage.makeState()};
+  state.finalize();
+  state.sampleSeed = 42;
+  state.sampleIndex = 7;
+  state.sampleDimension = 5;
+  const float first{float(1257564220.0 / 4294967296.0)};
+  SUBCASE("Whatever the state holds, and on every evaluation") {
+    CHECK(dithered->opacityEvaluate(state) == first);
+    CHECK(dithered->opacityEvaluate(state) == first);
+    CHECK(smdl::JIT::Material(state, dithered).getCutoutOpacity() == first);
+  }
+  SUBCASE("Another sample index draws another value") {
+    state.sampleIndex = 8;
+    CHECK(dithered->opacityEvaluate(state) != first);
+  }
+  SUBCASE("A unit test begins there too, in a copy of the state") {
+    CHECK_OK(compiler.runUnitTests(state));
+    CHECK(state.sampleDimension == 5);
+  }
+}

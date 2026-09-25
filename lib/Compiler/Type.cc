@@ -1607,6 +1607,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     attrs.addDereferenceableAttr(count * context.getSizeOf(pointeeType));
     func->addParamAttrs(argIndex, attrs);
   }};
+  // The material as every host entry point below that takes a 'State'
+  // evaluates it, with the draw counter zeroed first. The probes are not
+  // entry points and invoke the material directly.
+  auto invokeFromEntry{[&] {
+    emitter.emitSampleDimensionReset(decl.srcLoc);
+    return invoke(emitter, {}, decl.srcLoc);
+  }};
   {
     // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1619,7 +1626,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         concat(symbolBase, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
-          Value materialValue{invoke(emitter, {}, decl.srcLoc)};
+          Value materialValue{invokeFromEntry()};
           materialType = materialValue.type;
           Value materialEval{emitter.emitCall(
               context.getKeyword("_MaterialEval"),
@@ -1825,12 +1832,11 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     llvm::Function *func{emitter.createFunction(
         concat(symbolBase, ".opacityEvaluate"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
-          emitter.emitReturn(
-              emitter.accessField(
-                  emitter.accessField(invoke(emitter, {}, decl.srcLoc),
-                                      "geometry"sv, decl.srcLoc),
-                  "cutout_opacity"sv, decl.srcLoc),
-              decl.srcLoc);
+          emitter.emitReturn(emitter.accessField(
+                                 emitter.accessField(invokeFromEntry(),
+                                                     "geometry"sv, decl.srcLoc),
+                                 "cutout_opacity"sv, decl.srcLoc),
+                             decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
@@ -1855,8 +1861,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         funcReturnType, {constParameter(float3PtrType, "displacement")},
         decl.srcLoc, [&] {
           Value value{emitter.accessField(
-              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
-                                  "geometry"sv, decl.srcLoc),
+              emitter.accessField(invokeFromEntry(), "geometry"sv, decl.srcLoc),
               "displacement"sv, decl.srcLoc)};
           Value out{emitter.rvalue(
               emitter.resolveIdentifier("displacement"sv, decl.srcLoc))};
@@ -1880,8 +1885,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         funcReturnType, {constParameter(float3PtrType, "normal")}, decl.srcLoc,
         [&] {
           Value value{emitter.accessField(
-              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
-                                  "geometry"sv, decl.srcLoc),
+              emitter.accessField(invokeFromEntry(), "geometry"sv, decl.srcLoc),
               "normal"sv, decl.srcLoc)};
           Value out{emitter.rvalue(
               emitter.resolveIdentifier("normal"sv, decl.srcLoc))};
@@ -1922,7 +1926,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           emitter.emitCall(
               context.getKeyword("_volumeEvaluate"),
               llvm::ArrayRef<Value>{
-                  invoke(emitter, {}, decl.srcLoc),
+                  invokeFromEntry(),
                   emitter.resolveIdentifier("sigmaA"sv, decl.srcLoc),
                   emitter.resolveIdentifier("sigmaS"sv, decl.srcLoc),
                   emitter.resolveIdentifier("emission"sv, decl.srcLoc)},
@@ -1965,10 +1969,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           emitter.emitReturn(
               emitter.emitIntrinsic(
                   "bump",
-                  emitter.accessField(
-                      emitter.accessField(invoke(emitter, {}, decl.srcLoc),
-                                          "volume"sv, decl.srcLoc),
-                      "scattering"sv, decl.srcLoc),
+                  emitter.accessField(emitter.accessField(invokeFromEntry(),
+                                                          "volume"sv,
+                                                          decl.srcLoc),
+                                      "scattering"sv, decl.srcLoc),
                   decl.srcLoc),
               decl.srcLoc);
         })};
@@ -2292,7 +2296,9 @@ StateType::StateType(Context &context) {
   ADD_FIELD(geometryTangentV);
   ADD_FIELD(tangentToObject);
   ADD_FIELD(objectToWorld);
-  ADD_FIELD(sampler);
+  ADD_FIELD(sampleSeed);
+  ADD_FIELD(sampleIndex);
+  ADD_FIELD(sampleDimension);
   ADD_FIELD(transport);
   ADD_FIELD(scatteringOrder);
   ADD_FIELD(travelDistance);

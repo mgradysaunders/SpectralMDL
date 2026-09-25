@@ -456,6 +456,14 @@ public:
     }
   }
 
+  /// Zero `$state.sampleDimension`, which every entry point that takes a
+  /// `State` does before anything else, so that the draws an evaluation
+  /// makes depend on the seed and index the host sets and nothing else.
+  void emitSampleDimensionReset(const SourceLocation &srcLoc) {
+    createStore(context.getComptimeInt(0),
+                accessField(state, "sampleDimension", srcLoc));
+  }
+
   /// Emit the pending unwind actions above the given stack depth,
   /// newest-first, without popping them: every control path that leaves a
   /// scope re-emits its actions. The stack itself is truncated when the
