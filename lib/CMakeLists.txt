@@ -60,6 +60,7 @@ add_library(
     "Support/Profiler.cc"
     "Support/QualifiedName.cc"
     "Support/Strings.cc"
+    "Support/Terminal.cc"
     "thirdparty/miniz.c"
   )
 add_library(

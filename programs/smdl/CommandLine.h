@@ -248,11 +248,11 @@ struct WavelengthRange final {
                                  smdl::SpellQuoted(flagStr)));
 }
 
-/// The '-color' flag as `smdl::Compiler::ANSIColorMode` spells it: unset
+/// The '-color' flag as `smdl::ANSIColorMode` spells it: unset
 /// leaves the choice to autodetection, and either value overrides it.
-[[nodiscard]] inline smdl::Compiler::ANSIColorMode
+[[nodiscard]] inline smdl::ANSIColorMode
 lowerColorMode(cl::boolOrDefault value) {
-  using ANSIColorMode = smdl::Compiler::ANSIColorMode;
+  using smdl::ANSIColorMode;
   return value == cl::boolOrDefault::BOU_TRUE    ? ANSIColorMode::ALWAYS
          : value == cl::boolOrDefault::BOU_FALSE ? ANSIColorMode::NEVER
                                                  : ANSIColorMode::AUTO;

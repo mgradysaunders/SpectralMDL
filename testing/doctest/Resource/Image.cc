@@ -319,4 +319,26 @@ TEST_CASE("Image: reading, writing, and the mip chains") {
     CHECK(smdl::write8bitImage((tmpDir / "test.webp").string(), 2, 2, 1, texels)
               .has_value());
   }
+  SUBCASE("Each writer writes every extension it lists, and none the other "
+          "lists") {
+    const uint8_t texels[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    const float floatTexels[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(smdl::write8bitImageExtensions().size() == 7);
+    CHECK(smdl::writeFloatImageExtensions().size() == 2);
+    for (const std::string_view extension : smdl::write8bitImageExtensions()) {
+      const std::string fileName{
+          (tmpDir / ("listed" + std::string(extension))).string()};
+      CHECK_MESSAGE(!smdl::write8bitImage(fileName, 2, 2, 3, texels),
+                    extension);
+      CHECK_MESSAGE(smdl::writeFloatImage(fileName, 2, 2, 3, floatTexels),
+                    extension);
+    }
+    for (const std::string_view extension : smdl::writeFloatImageExtensions()) {
+      const std::string fileName{
+          (tmpDir / ("listed" + std::string(extension))).string()};
+      CHECK_MESSAGE(!smdl::writeFloatImage(fileName, 2, 2, 3, floatTexels),
+                    extension);
+      CHECK_MESSAGE(smdl::write8bitImage(fileName, 2, 2, 3, texels), extension);
+    }
+  }
 }

@@ -230,8 +230,8 @@ void runDoc(const Options &opts, smdl::Compiler &compiler) {
   // it does for the unit test report on standard error.
   const llvm::ColorMode colorMode{
       !outputFile && opts.doc.format == DocFormat::TEXT &&
-              smdl::Compiler::shouldUseColors(opts.utility.ansiColorMode,
-                                              coutIsTerminal())
+              smdl::shouldUseColors(opts.utility.ansiColorMode,
+                                    coutIsTerminal())
           ? llvm::ColorMode::Enable
           : llvm::ColorMode::Disable};
   if (opts.docQueries.empty() || opts.doc.format != DocFormat::TEXT) {

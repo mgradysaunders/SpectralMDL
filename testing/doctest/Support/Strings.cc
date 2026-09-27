@@ -31,6 +31,25 @@ TEST_CASE("Strings: the did-you-mean suggestion") {
     CHECK(smdl::suggestNearest("placement", candidates, 4) == "place");
     CHECK(smdl::suggestNearest("improt", candidates, 1) == "");
   }
+  SUBCASE("A fold decides which characters match, and the list's spelling "
+          "is what comes back") {
+    const std::array<std::string_view, 3> glasses{"N-BK7", "N-SF11", "F2"};
+    auto upper{[](char c) { return 'a' <= c && c <= 'z' ? char(c - 32) : c; }};
+    // Three of the five characters differ by case alone, which is past
+    // two edits without the fold and none with it.
+    CHECK(smdl::suggestNearest("n-bk7", glasses) == "");
+    CHECK(smdl::suggestNearest("n-bk7", glasses, 2, upper) == "N-BK7");
+    CHECK(smdl::suggestNearest("n-sf1", glasses, 2, upper) == "N-SF11");
+    CHECK(smdl::suggestNearest("n-lak9", glasses, 2, upper) == "");
+  }
+  SUBCASE("The tolerance scales with what was typed") {
+    CHECK(smdl::suggestionTolerance(0) == 1);
+    CHECK(smdl::suggestionTolerance(3) == 1);
+    CHECK(smdl::suggestionTolerance(4) == 2);
+    CHECK(smdl::suggestionTolerance(8) == 3);
+    CHECK(smdl::suggestionTolerance(12) == 4);
+    CHECK(smdl::suggestionTolerance(64) == 4);
+  }
 }
 
 TEST_CASE("Spelling: the numbers") {

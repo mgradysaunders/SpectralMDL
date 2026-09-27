@@ -8,8 +8,6 @@
 #include <bitset>
 #include <chrono>
 #include <cstddef>
-#include <cstdlib>
-#include <cstring>
 #include <filesystem>
 
 // NOTE: Test for the header directly. Do not gate this on an OS list:
@@ -1543,15 +1541,6 @@ constexpr llvm::HighlightColor testColorMetadata{llvm::HighlightColor::Note};
 constexpr llvm::HighlightColor testColorSuccess{llvm::HighlightColor::String};
 constexpr llvm::HighlightColor testColorFailure{llvm::HighlightColor::Error};
 
-// Does the environment allow colors on a terminal? See
-// `Compiler::shouldUseColors()`.
-[[nodiscard]] bool environmentAllowsColors() noexcept {
-  const char *noColor{std::getenv("NO_COLOR")};
-  const char *term{std::getenv("TERM")};
-  return !(noColor && *noColor) && term && *term &&
-         std::strcmp(term, "dumb") != 0;
-}
-
 // Does standard error route to a terminal?
 [[nodiscard]] bool cerrIsTerminal() noexcept {
 #if SMDL_HAS_UNISTD
@@ -1561,12 +1550,6 @@ constexpr llvm::HighlightColor testColorFailure{llvm::HighlightColor::Error};
 #endif // #if SMDL_HAS_UNISTD
 }
 } // namespace
-
-bool Compiler::shouldUseColors(ANSIColorMode mode, bool isTerminal) noexcept {
-  return mode == ANSIColorMode::ALWAYS ||
-         (mode == ANSIColorMode::AUTO && isTerminal &&
-          environmentAllowsColors());
-}
 
 std::optional<Error> Compiler::runUnitTests(const State &state,
                                             ANSIColorMode colorMode) noexcept {

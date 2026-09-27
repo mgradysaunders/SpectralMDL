@@ -459,6 +459,17 @@ SMDL_EXPORT std::optional<Error>
 writeFloatImage(const std::string &fileName, int numTexelsX, int numTexelsY,
                 int numChannels, const float *texels);
 
+/// The extensions `write8bitImage()` recognizes, each with its dot and
+/// in lower case, so that a program can refuse an output name before
+/// the work the write would follow.
+[[nodiscard]] SMDL_EXPORT Span<const std::string_view>
+write8bitImageExtensions() noexcept;
+
+/// The extensions `writeFloatImage()` recognizes; see
+/// `write8bitImageExtensions()`.
+[[nodiscard]] SMDL_EXPORT Span<const std::string_view>
+writeFloatImageExtensions() noexcept;
+
 /// \}
 
 } // namespace smdl

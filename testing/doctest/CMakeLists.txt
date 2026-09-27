@@ -49,6 +49,7 @@ target_sources(
     "Support/QualifiedName.cc"
     "Support/SIMD.cc"
     "Support/Strings.cc"
+    "Support/Terminal.cc"
     "Support/VectorMath.cc"
   )
 target_link_libraries("smdl-doctest" PRIVATE "SpectralMDL::SpectralMDL")

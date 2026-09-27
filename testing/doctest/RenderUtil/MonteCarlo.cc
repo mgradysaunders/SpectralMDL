@@ -248,6 +248,79 @@ TEST_CASE("MonteCarlo: the inverse error function") {
   }
 }
 
+TEST_CASE("MonteCarlo: the cone by its versine") {
+  SUBCASE("The solid angle is the cap's") {
+    CHECK(smdl::coneSolidAngle(1.0) == doctest::Approx(2.0 * 3.14159265358979));
+    CHECK(smdl::coneSolidAngle(2.0f) ==
+          doctest::Approx(4.0f * 3.14159265f).epsilon(1e-6));
+  }
+  SUBCASE("A draw is a unit direction inside the cone, at any size") {
+    for (const float versine : {1e-7f, 1.08e-5f, 1e-2f, 0.5f, 1.0f, 2.0f}) {
+      CAPTURE(versine);
+      for (const float xiX : {0.0f, 0.125f, 0.5f, 1.0f}) {
+        for (const float xiY : {0.0f, 0.3f, 0.9f}) {
+          const smdl::float3 w{
+              smdl::uniformConeSampleVersine(versine, xiX, xiY)};
+          const double lengthSq{double(w.x) * double(w.x) +
+                                double(w.y) * double(w.y) +
+                                double(w.z) * double(w.z)};
+          CHECK(lengthSq == doctest::Approx(1.0).epsilon(1e-6));
+          CHECK(w.z >= 1.0f - versine);
+        }
+      }
+    }
+    CHECK(smdl::uniformConeSampleVersine(0.25, 0.0, 0.7).z == 1.0);
+  }
+  SUBCASE("The transverse components carry the angle of a cone the size "
+          "of the sun's disk") {
+    // The versine of 0.2666 degrees. The cosine is 182 floats below one,
+    // so a draw that interpolated it would land on one of 182 rings; the
+    // versine draws the ring each sample asks for.
+    const float versine{1.0826e-5f};
+    for (const float xiX : {1.0f / 3.0f, 0.5f, 0.999f}) {
+      CAPTURE(xiX);
+      const smdl::float3 w{smdl::uniformConeSampleVersine(versine, xiX, 0.0f)};
+      const double drawn{double(xiX) * double(versine)};
+      const double sinThetaSq{drawn * (2.0 - drawn)};
+      CHECK(double(w.x) * double(w.x) ==
+            doctest::Approx(sinThetaSq).epsilon(1e-6).scale(0.0));
+    }
+  }
+}
+
+TEST_CASE("MonteCarlo: the standard normal pair in double") {
+  SUBCASE("The radius and the angle are the two samples'") {
+    const auto [x, y]{smdl::standardNormalSamplePair(std::exp(-0.5), 0.0)};
+    CHECK(x == doctest::Approx(1.0));
+    CHECK(y == 0.0);
+    const auto [u, v]{smdl::standardNormalSamplePair(std::exp(-2.0), 0.25)};
+    CHECK(std::abs(u) < 1e-15);
+    CHECK(v == doctest::Approx(2.0));
+    CHECK(smdl::standardNormalSamplePair(1.0, 0.4).first == 0.0);
+  }
+  SUBCASE("The tail reaches where the single-precision sample cannot") {
+    CHECK(smdl::standardNormalSamplePair(1e-300, 0.0).first > 37.0);
+  }
+  SUBCASE("The moments are the standard normal's") {
+    const int count{256};
+    double sum{}, sumSq{}, sumCross{};
+    for (int i = 0; i < count; i++) {
+      for (int j = 0; j < count; j++) {
+        const auto [x, y]{smdl::standardNormalSamplePair(
+            (double(i) + 0.5) / count, (double(j) + 0.5) / count)};
+        sum += x + y;
+        sumSq += x * x + y * y;
+        sumCross += x * y;
+      }
+    }
+    const double total{2.0 * count * count};
+    CHECK(std::abs(sum / total) < 1e-9);
+    // The midpoint rule stops short of the logarithm's tail.
+    CHECK(std::abs(sumSq / total - 1.0) < 2e-3);
+    CHECK(std::abs(sumCross / total) < 1e-9);
+  }
+}
+
 // The alias table: that a draw lands on an index exactly as often as the
 // index's share of the weights, and that the degenerate tables a caller
 // can hand it are empty rather than wrong. The lopsided case is the one

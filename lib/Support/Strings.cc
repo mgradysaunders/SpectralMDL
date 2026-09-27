@@ -143,7 +143,7 @@ std::string_view suggestNearestName(std::string_view name,
     size_t i{str.rfind('_')};
     return i == std::string_view::npos ? std::string_view() : str.substr(i + 1);
   }};
-  const size_t maxDistance{std::min<size_t>(1 + name.size() / 4, 4)};
+  const size_t maxDistance{suggestionTolerance(name.size())};
   if (std::string_view tail{tailOf(name)}; !tail.empty()) {
     std::vector<std::string_view> sameKind{};
     for (auto candidate : candidates)
@@ -155,11 +155,13 @@ std::string_view suggestNearestName(std::string_view name,
 
 std::string_view suggestNearest(std::string_view name,
                                 Span<const std::string_view> candidates,
-                                size_t maxDistance) {
+                                size_t maxDistance, char (*fold)(char)) {
+  auto isSame{
+      [&](char a, char b) { return fold ? fold(a) == fold(b) : a == b; }};
   // Levenshtein over two rows. The candidate list is a keyword table or a
   // set of declared names, so everything here is tiny; clarity beats
   // cleverness.
-  auto distance{[](std::string_view a, std::string_view b) {
+  auto distance{[&](std::string_view a, std::string_view b) {
     std::vector<size_t> row(b.size() + 1);
     for (size_t j = 0; j <= b.size(); j++) row[j] = j;
     for (size_t i = 1; i <= a.size(); i++) {
@@ -167,7 +169,8 @@ std::string_view suggestNearest(std::string_view name,
       row[0] = i;
       for (size_t j = 1; j <= b.size(); j++) {
         const size_t previous{row[j]};
-        const size_t substitution{diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)};
+        const size_t substitution{diagonal +
+                                  (isSame(a[i - 1], b[j - 1]) ? 0 : 1)};
         row[j] = std::min({row[j] + 1, row[j - 1] + 1, substitution});
         diagonal = previous;
       }

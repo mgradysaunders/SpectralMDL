@@ -314,18 +314,29 @@ template <typename T, typename... Ts>
 /// `maxDistance` edits (Levenshtein), or empty if none is close enough.
 /// Ties keep the earliest candidate. The threshold is the caller's policy,
 /// because what counts as a plausible typo depends on how long the names
-/// in the candidate list tend to be.
+/// in the candidate list tend to be; `suggestionTolerance()` is the one
+/// that scales with what was typed.
+///
+/// With a `fold`, two characters match when they fold to the same one,
+/// so that a list matched ignoring case suggests ignoring case too. The
+/// answer is the candidate as the list spells it either way.
 [[nodiscard]] SMDL_EXPORT std::string_view
 suggestNearest(std::string_view name, Span<const std::string_view> candidates,
-               size_t maxDistance = 2);
+               size_t maxDistance = 2, char (*fold)(char) = nullptr);
+
+/// The edits a typo of a name `nameSize` characters long may be away
+/// from what it meant: one, and one more for every four characters, up
+/// to four, because one edit in `abs` is a much bigger relative error
+/// than one edit in `loadBSDFMeasurement`.
+[[nodiscard]] constexpr size_t suggestionTolerance(size_t nameSize) noexcept {
+  return nameSize < 12 ? 1 + nameSize / 4 : 4;
+}
 
 /// The did-you-mean helper with the compiler's own policy applied: the
-/// tolerance scales with the length of what was typed, because one edit in
-/// `abs` is a much bigger relative error than one edit in
-/// `loadBSDFMeasurement`; and a suggestion must keep the trailing `_word`
-/// of the typed name whenever any candidate has one to match, which keeps a
-/// missing `diffuse_bsdf` from being answered with the unrelated
-/// `diffuse_edf`.
+/// tolerance is `suggestionTolerance()` of what was typed; and a
+/// suggestion must keep the trailing `_word` of the typed name whenever
+/// any candidate has one to match, which keeps a missing `diffuse_bsdf`
+/// from being answered with the unrelated `diffuse_edf`.
 [[nodiscard]] SMDL_EXPORT std::string_view
 suggestNearestName(std::string_view name,
                    Span<const std::string_view> candidates);

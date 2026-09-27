@@ -2,8 +2,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <random>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "smdl/Export.h"
@@ -282,6 +285,38 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
 }
 
+/// The solid angle of a cone whose half angle has versine `oneMinusCos`,
+/// which is what a draw over it is weighed by; see
+/// `uniformConeSampleVersine()`.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T coneSolidAngle(T oneMinusCos) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  return T(TWO_PI) * oneMinusCos;
+}
+
+/// A direction drawn uniformly over a cone, in the cone's own frame with
+/// +z toward the middle: `oneMinusCos` is the versine of its half angle,
+/// and `xiX` and `xiY` the pair the draw spends.
+///
+/// Parametrized on the versine and not on the cosine, as
+/// `uniformConeSample()` is, which is what lets one sampler serve a cone
+/// of any size. A cone the size of the sun's disk has a cosine within a
+/// few ulps of one, so a draw that interpolates the cosine covers
+/// whatever solid angle those few representable values happen to span
+/// rather than the one its density is written for. Here the transverse
+/// components carry the angle instead, and they hold it at any size; the
+/// `z` rounding to one is the cosine of a very small angle honestly
+/// reported.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE Vector<T, 3>
+uniformConeSampleVersine(T oneMinusCos, T xiX, T xiY) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  const T versine{xiX * oneMinusCos};
+  const T sinTheta{std::sqrt(versine * (T(2) - versine))};
+  const T phi{T(TWO_PI) * xiY};
+  return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), T(1) - versine};
+}
+
 /// The inverse error function on \f$ [-1, 1] \f$, necessary to sample the
 /// standard normal distribution: the width-one instance of
 /// `simd::erfInverse`, which states the approximation and its bounds.
@@ -300,6 +335,22 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// The standard normal distribution sample.
 [[nodiscard]] inline float standardNormalSample(float xi) noexcept {
   return /*sqrt(2)=*/1.41421356237f * erfInverse(2 * xi - 1);
+}
+
+/// Two independent standard normal samples from two canonical samples,
+/// the first in \f$ (0,1] \f$ so that its logarithm is finite, by the
+/// Box-Muller transform in double precision.
+///
+/// For a caller that needs the tails as they are, which the
+/// single-precision `erfInverse()` behind `standardNormalSample()` holds
+/// to 5e-7 relative and no further out than its last float allows. The
+/// price is stratification: the pair is not a monotone image of either
+/// sample.
+[[nodiscard]] inline std::pair<double, double>
+standardNormalSamplePair(double xi0, double xi1) noexcept {
+  const double r{std::sqrt(-2.0 * std::log(xi0))};
+  const double theta{/*2pi=*/6.283185307179586476925 * xi1};
+  return {r * std::cos(theta), r * std::sin(theta)};
 }
 
 /// \}

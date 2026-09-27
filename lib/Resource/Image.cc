@@ -6,6 +6,8 @@
 
 #include "smdl/Resource/Image.h"
 
+#include <array>
+
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -696,6 +698,17 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
     return Error(concat("Cannot write ", SpellFilePath(fileName),
                         ": unrecognized extension"));
   }
+}
+
+Span<const std::string_view> write8bitImageExtensions() noexcept {
+  static constexpr std::array<std::string_view, 7> EXTENSIONS{
+      ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".pgm", ".ppm"};
+  return EXTENSIONS;
+}
+
+Span<const std::string_view> writeFloatImageExtensions() noexcept {
+  static constexpr std::array<std::string_view, 2> EXTENSIONS{".exr", ".hdr"};
+  return EXTENSIONS;
 }
 
 } // namespace smdl
