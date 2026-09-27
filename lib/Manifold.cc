@@ -172,8 +172,16 @@ float3 unitDirDeriv(const float3 &w, float d, const float3 &dp) {
   return -(dp - dot(w, dp) * w) / d;
 }
 
+// The segment from one point of the walk to another. The points are
+// differenced as doubles and the difference narrowed, which keeps every
+// digit a float has of a segment however short it is against where it
+// stands.
+[[nodiscard]] float3 segment(const double3 &from, const double3 &to) {
+  return float3(to - from);
+}
+
 [[nodiscard]]
-bool evaluateChain(const ManifoldSurfaces &surfaces, const float3 &receiver,
+bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
                    const ManifoldTarget &target, const ManifoldChain &chain,
                    const float3 *frameSeeds, const ManifoldVertex *vertices,
                    float *gLen, ChainState &chainState) {
@@ -190,13 +198,14 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const float3 &receiver,
   for (int i = 0; i < count; i++) {
     ManifoldWalkVertex &sv{chainState[i]};
     const ManifoldGeometry &geometry{sv.geometry};
-    const float3 prev{i == 0 ? receiver : chainState[i - 1].geometry.point};
-    float3 toPrev{prev - geometry.point};
+    const double3 &point{vertices[i].point};
+    const float3 toPrev{
+        segment(point, i == 0 ? receiver : vertices[i - 1].point)};
     sv.distPrev = length(toPrev);
     if (!(sv.distPrev > 1e-6f)) return false;
     sv.wPrev = toPrev / sv.distPrev;
     if (i + 1 < count) {
-      float3 toNext{chainState[i + 1].geometry.point - geometry.point};
+      const float3 toNext{segment(point, vertices[i + 1].point)};
       sv.distNext = length(toNext);
       if (!(sv.distNext > 1e-6f)) return false;
       sv.wNext = toNext / sv.distNext;
@@ -204,7 +213,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const float3 &receiver,
       sv.wNext = target.wl;
       sv.distNext = 0.0f;
     } else {
-      float3 toLight{target.point - geometry.point};
+      const float3 toLight{segment(point, target.point)};
       sv.distNext = length(toLight);
       if (!(sv.distNext > 1e-6f)) return false;
       sv.wNext = toLight / sv.distNext;
@@ -310,7 +319,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const float3 &receiver,
 // parameterization to the power of the dimension. So the whole product
 // accumulates in double and narrows once, after the ratio is taken.
 [[nodiscard]] bool computeOffsetJacobian(const ChainState &chainState,
-                                         double detJ, const float3 &receiver,
+                                         double detJ, const double3 &receiver,
                                          const ManifoldTarget &target,
                                          float &offsetJacobian) {
   const int count{chainState.count};
@@ -339,7 +348,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const float3 &receiver,
   // selftest's finite mirror is what caught its absence.
   if (!target.isInfinite) {
     const ManifoldWalkVertex &sv{chainState[last]};
-    const float distStraight{length(target.point - receiver)};
+    const float distStraight{length(segment(receiver, target.point))};
     const float distNext{sv.distNext};
     if (!(distStraight > 0.0f) || !(distNext > 0.0f)) return false;
     const float distFactor{distStraight / distNext};
@@ -423,7 +432,7 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked) {
 
 bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
                              ManifoldWalkScratch &scratch,
-                             const float3 &receiver,
+                             const double3 &receiver,
                              const ManifoldTarget &target,
                              const ManifoldChain &chain,
                              ManifoldConnection &connection,
@@ -470,7 +479,7 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   // the same cast a Newton step takes, so a displaced start is an ordinary
   // start somewhere else rather than a special case.
   {
-    float3 origin{receiver};
+    double3 origin{receiver};
     for (int i = 0; i < count; i++) {
       const float2 &jitter{chain[i].seedJitter};
       if (lengthSquared(jitter) > 0.0f) {
@@ -478,12 +487,13 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
         if (!buildManifoldSeedFrame(surfaces, vertices[i], frameSeeds[i],
                                     normal, t1, t2))
           return finish(Outcome::DIVERGED, Failure::START);
-        const float scale{length(vertices[i].point - receiver)};
+        const float scale{length(segment(receiver, vertices[i].point))};
         ManifoldVertex moved;
-        if (!surfaces.project(chain[i].vertex, origin,
-                              vertices[i].point +
-                                  scale * (jitter.x * t1 + jitter.y * t2),
-                              moved))
+        if (!surfaces.project(
+                chain[i].vertex, origin,
+                vertices[i].point +
+                    double3(scale * (jitter.x * t1 + jitter.y * t2)),
+                moved))
           return finish(Outcome::DIVERGED, Failure::START);
         vertices[i] = moved;
       }
@@ -539,7 +549,8 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       steps[i] = rhs[2 * i + 0] * sv.geometry.dPdu + //
                  rhs[2 * i + 1] * sv.geometry.dPdv;
       const float stepLen{length(steps[i])};
-      const float scale{std::max(1e-3f, length(sv.geometry.point - receiver))};
+      const float scale{
+          std::max(1e-3f, length(segment(receiver, vertices[i].point)))};
       maxStepLen = std::max(maxStepLen, stepLen);
       maxStepFraction = std::max(maxStepFraction, stepLen / scale);
       minDist = std::min(minDist, sv.distPrev);
@@ -571,11 +582,11 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     bool isAccepted{false};
     bool anyProjected{false};
     for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5f) {
-      float3 origin{receiver};
+      double3 origin{receiver};
       bool isProjected{true};
       for (int i = 0; i < count; i++) {
         if (!surfaces.project(chain[i].vertex, origin,
-                              (*state)[i].geometry.point + beta * steps[i],
+                              vertices[i].point + double3(beta * steps[i]),
                               stepVertices[i])) {
           isProjected = false;
           break;
@@ -662,21 +673,22 @@ float3 manifoldFrameSeed(const ManifoldSurfaces &surfaces,
   return tryNormalize(g) ? g : perpendicularTo(geometry.normal);
 }
 
-bool isSameManifoldSolution(const float3 &receiver,
+bool isSameManifoldSolution(const double3 &receiver,
                             const ManifoldSolutionKey &a,
                             const ManifoldConnection &b) {
   const int numCrossings{static_cast<int>(a.points.size())};
   if (numCrossings != b.size()) return false;
   for (int i = 0; i < numCrossings; i++) {
-    const float scale{std::max(1e-3f, length(a.points[i] - receiver))};
-    if (!(length(a.points[i] - b.vertices[i].vertex.point) <
+    const float scale{std::max(1e-3f, length(segment(receiver, a.points[i])))};
+    if (!(length(segment(a.points[i], b.vertices[i].vertex.point)) <
           MANIFOLD_SOLUTION_IDENTITY_FRACTION * scale))
       return false;
   }
   return true;
 }
 
-bool isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
+bool isSameManifoldSolution(const double3 &receiver,
+                            const ManifoldConnection &a,
                             const ManifoldConnection &b) {
   ManifoldSolutionKey key;
   key.set(a);

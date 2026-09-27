@@ -95,8 +95,20 @@ inline constexpr int MANIFOLD_MAX_TRIALS{64};
 /// them per estimate. Value-initialize (`{}`) one that must start zero.
 class ManifoldVertex final {
 public:
-  /// The world-space point on the surface.
-  float3 point;
+  /// The world-space point on the surface, in double. The constraint
+  /// is built from the segment between two crossings, and two points a
+  /// pane's thickness apart and a room's width from the origin have no
+  /// digits left to difference as floats: the direction of the segment
+  /// would be good to the spacing of the coordinates over its length,
+  /// a floor under the residual that no step gets beneath. Everything
+  /// differential stays a float, the segments included once they are
+  /// differenced.
+  ///
+  /// A vertex `ManifoldSurfaces::project()` fills is on its surface and
+  /// on the cast's line to double precision. A seed may carry a point
+  /// rounded to a float, a renderer's hit being one: the walk's first
+  /// step re-anchors it.
+  double3 point;
 
   /// The renderer's identity of the surface, e.g. an instance index.
   uint64_t surface;
@@ -114,11 +126,10 @@ public:
 /// shading normal field the walk constrains against and differentiates,
 /// the position partials of the face parameterization it steps in, and
 /// the geometric (facet) normal for the factors that belong to the real
-/// surface rather than the interpolated field.
+/// surface rather than the interpolated field. Where the vertex is, is
+/// the vertex's own to say (`ManifoldVertex::point`).
 class ManifoldGeometry final {
 public:
-  float3 point;
-
   /// The shading normal: the field the material's lobes actually
   /// scatter about, which for a material that remaps `geometry.normal`
   /// is the remapped field (see `JIT::MaterialDef::geometryNormalEvaluate`).
@@ -167,8 +178,15 @@ public:
   /// surface and smooth piece as `pin`, filling `moved` with the hit and
   /// its addressing. Anything else in the way fails the step, so a
   /// converged connection's segments are known to see their endpoints.
+  ///
+  /// The point of `moved` is where the line meets the surface in
+  /// double, whatever precision the cast that found the surface ran at:
+  /// a step that lands beside where it aimed by the rounding of a float
+  /// leaves a residual of that rounding over the distance to the next
+  /// crossing, which the next step cannot remove, landing no better.
   [[nodiscard]] virtual bool project(const ManifoldVertex &pin,
-                                     const float3 &origin, const float3 &target,
+                                     const double3 &origin,
+                                     const double3 &target,
                                      ManifoldVertex &moved) const = 0;
 };
 
@@ -438,7 +456,7 @@ public:
 class ManifoldTarget final {
 public:
   float3 wl{};
-  float3 point{};
+  double3 point{};
   /// The light surface normal at `point`, or zero when the target has no
   /// orientation, which is every distant and punctual one. Only the offset
   /// Jacobian reads it, to carry the light-side geometry term across from
@@ -486,19 +504,19 @@ public:
       points[i] = connection.vertices[i].vertex.point;
   }
 
-  std::vector<float3> points;
+  std::vector<double3> points;
 };
 
 /// Are two converged connections of randomly started walks the same
 /// solution? Compared by where the crossings land, within
 /// `MANIFOLD_SOLUTION_IDENTITY_FRACTION` of the receiver distance.
 [[nodiscard]] SMDL_EXPORT bool
-isSameManifoldSolution(const float3 &receiver, const ManifoldSolutionKey &a,
+isSameManifoldSolution(const double3 &receiver, const ManifoldSolutionKey &a,
                        const ManifoldConnection &b);
 
 /// The same, keyed on the fly.
 [[nodiscard]] SMDL_EXPORT bool
-isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
+isSameManifoldSolution(const double3 &receiver, const ManifoldConnection &a,
                        const ManifoldConnection &b);
 
 /// The walk's tangent frame at a vertex: the shading normal it
@@ -649,7 +667,7 @@ private:
 /// was not already; see `ManifoldWalkScratch`.
 [[nodiscard]] SMDL_EXPORT bool solveManifoldConnection(
     const ManifoldSurfaces &surfaces, ManifoldWalkScratch &scratch,
-    const float3 &receiver, const ManifoldTarget &target,
+    const double3 &receiver, const ManifoldTarget &target,
     const ManifoldChain &chain, ManifoldConnection &connection,
     ManifoldWalkReport *report = nullptr);
 
@@ -668,11 +686,10 @@ private:
 /// all missed, in which case the sample is dropped rather than
 /// truncated, the one knowing departure from unbiasedness.
 template <typename Retry>
-[[nodiscard]] inline bool
-manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
-                   ManifoldSolutionKey &key, ManifoldConnection &other,
-                   int maxTrials, int &trials, float &inverseProbability,
-                   Retry &&retry) {
+[[nodiscard]] inline bool manifoldReciprocal(
+    const double3 &receiver, const ManifoldConnection &connection,
+    ManifoldSolutionKey &key, ManifoldConnection &other, int maxTrials,
+    int &trials, float &inverseProbability, Retry &&retry) {
   inverseProbability = 1.0f;
   // The solution is keyed once rather than on every comparison, since it
   // does not move; `other` is one buffer for every trial, because `retry`
