@@ -34,7 +34,7 @@ export int _lowerBound(int count, const &float xs, const float x) {
     const int i = first + step;
     if (xs[i] < x) {
       first = i + 1;
-      count = count - step + 1;
+      count = count - step - 1;
     } else {
       count = step;
     }

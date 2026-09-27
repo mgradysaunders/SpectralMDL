@@ -31,3 +31,23 @@ unit_test "The observer is the Gaussian fit out to its tails" {
     #assert(_wymanY(w) ~== (1e-6) xyz.y);
   }
 }
+
+// The entries past `count` are sentinels a search that runs off the end of
+// its table would read: zeros below the query, which drag it further right,
+// then values above it. Confined to its three entries, the search answers
+// 3, one past the end, for anything above the table.
+unit_test "The binary search stays inside its table" {
+  auto xs = float[](
+      400.0, 500.0, 600.0, 0.0, 0.0, 0.0, 0.0,
+      1000.0, 1000.0, 1000.0, 1000.0, 1000.0);
+  #assert(_lowerBound(3, &xs[0], 350.0) == 0);
+  #assert(_lowerBound(3, &xs[0], 400.0) == 0);
+  #assert(_lowerBound(3, &xs[0], 450.0) == 1);
+  #assert(_lowerBound(3, &xs[0], 600.0) == 2);
+  #assert(_lowerBound(3, &xs[0], 650.0) == 3);
+  #assert(_lowerBound(0, &xs[0], 650.0) == 0);
+  #assert(_lowerBound(1, &xs[0], 650.0) == 1);
+  #assert(_polylineLerp(3, &xs[0], &xs[0], 650.0) == 600.0);
+  #assert(_polylineLerp(3, &xs[0], &xs[0], 350.0) == 400.0);
+  #assert(_polylineLerp(3, &xs[0], &xs[0], 450.0) == 450.0);
+}
