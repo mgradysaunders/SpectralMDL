@@ -15,12 +15,6 @@ constexpr int MAX_ITERATIONS{64};
 
 constexpr int MAX_HALVINGS{5};
 
-// A step can also fall small because the Jacobian is nearly singular
-// rather than because the walk has arrived, so the residual still has to
-// be plausible for a solution. Loose on purpose: it rejects a stuck
-// walk, not an imprecise one.
-constexpr float RESIDUAL_SANITY{1e-3f};
-
 // The pivot the dense solve refuses to divide by, as a fraction of the
 // largest entry of the system. Absolute would not do: the Jacobian
 // entries carry units of inverse distance, so one geometry measured in
@@ -518,8 +512,8 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     return finish(Outcome::DIVERGED, Failure::START);
   const float residualTolerance{
       chain.residualTolerance > 0.0f
-          ? std::min(chain.residualTolerance, RESIDUAL_SANITY)
-          : RESIDUAL_SANITY};
+          ? std::min(chain.residualTolerance, MANIFOLD_RESIDUAL)
+          : MANIFOLD_RESIDUAL};
   // The determinant of the constraint Jacobian, which the offset
   // Jacobian needs and the Newton solve already produces. The walk
   // leaves the loop below in the same iteration it solved in and
@@ -558,8 +552,9 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     if (!std::isfinite(maxStepLen))
       return finish(Outcome::DIVERGED, Failure::SINGULAR);
     // Arrived: the step left to take cannot move the answer far enough to
-    // change what the arrival side makes of it, and the residual agrees
-    // this is a solution rather than a stall. Stop without taking it.
+    // change what the arrival side makes of it, and the residual says the
+    // walk stands on the solution, which is where the connection is
+    // evaluated, and not beside it or at a stall. Stop without taking it.
     //
     // A small step with a bad residual is NOT an arrival, and it is not a
     // failure to declare here either: it is Newton making no progress,

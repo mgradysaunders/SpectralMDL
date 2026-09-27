@@ -429,7 +429,7 @@ TEST_CASE("Manifold: a slab is solved however thin and wherever it stands") {
                            double thickness, bool isRounded) {
     smdl::ManifoldChain chain{};
     chain.restart(2);
-    chain.residualTolerance = smdl::MANIFOLD_RECIPROCAL_RESIDUAL;
+    chain.residualTolerance = smdl::MANIFOLD_RESIDUAL;
     // Seeded where the straight line crosses, as a discovery would.
     for (int i = 0; i < 2; i++) {
       smdl::ManifoldVertexSeed &seed{chain.append()};
@@ -449,7 +449,7 @@ TEST_CASE("Manifold: a slab is solved however thin and wherever it stands") {
     smdl::ManifoldWalkReport report{};
     REQUIRE(smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
                                           chain, connection, &report));
-    CHECK(report.residual < smdl::MANIFOLD_RECIPROCAL_RESIDUAL);
+    CHECK(report.residual < smdl::MANIFOLD_RESIDUAL);
     CHECK(dot(connection.wr, wl) > 1.0f - 1e-6f);
     // The segment inside, differenced as the walk differences it.
     const double3 inside{normalize(connection.vertices[1].vertex.point -
@@ -480,6 +480,94 @@ TEST_CASE("Manifold: a slab is solved however thin and wherever it stands") {
                 /*isRounded=*/true);
     }
   }
+}
+
+namespace {
+
+// The unpolarized transmittance of a dielectric interface as a renderer
+// reads it: from the one direction it is handed, the other by Snell's
+// law.
+[[nodiscard]] double transmittanceFrom(double cosFrom, double etaFrom,
+                                       double etaTo) {
+  const double sinTo{etaFrom / etaTo * std::sqrt(1.0 - cosFrom * cosFrom)};
+  if (!(sinTo < 1.0)) return 0.0;
+  const double cosTo{std::sqrt(1.0 - sinTo * sinTo)};
+  const double rs{(etaFrom * cosFrom - etaTo * cosTo) /
+                  (etaFrom * cosFrom + etaTo * cosTo)};
+  const double rp{(etaTo * cosFrom - etaFrom * cosTo) /
+                  (etaTo * cosFrom + etaFrom * cosTo)};
+  return 1.0 - 0.5 * (rs * rs + rp * rp);
+}
+
+} // namespace
+
+TEST_CASE("Manifold: a walk stops at a solution and not beside one") {
+  // A ball of glass between a receiver and a distant light, seeded where
+  // the straight line crosses it, from receivers near enough that the
+  // connection leaves the ball toward grazing. What a renderer makes of
+  // a connection it makes where the walk stopped, and the transmittance
+  // out of the dense side is steep in the direction inside as the exit
+  // nears the critical angle: a walk that stops a thousandth beside the
+  // solution is worth percents less. So a chain that asks for nothing is
+  // held to the walk's own residual, and each crossing to Snell's law
+  // and to one transmittance, read from the arriving side or from the
+  // leaving one.
+  constexpr double IOR{1.5};
+  constexpr double TWO_PI{6.283185307179586};
+  smdl::ManifoldWalkScratch scratch{};
+  const SphereSurfaces surfaces{};
+  int numSolved{0};
+  double leastCos{1.0};
+  for (const double depth : {-1.2, -1.6, -3.0})
+    for (int k = 0; k < 64; k++) {
+      CAPTURE(depth);
+      CAPTURE(k);
+      const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+      const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+      const double radius{0.95 * std::sqrt(a)};
+      const double3 receiver{radius * std::cos(TWO_PI * b),
+                             radius * std::sin(TWO_PI * b), depth};
+      const double reach{std::sqrt(1.0 - radius * radius)};
+      smdl::ManifoldChain chain{};
+      chain.restart(2);
+      for (int i = 0; i < 2; i++) {
+        smdl::ManifoldVertexSeed &seed{chain.append()};
+        seed.vertex.point =
+            double3(receiver.x, receiver.y, i == 0 ? -reach : reach);
+        seed.vertex.coords = float3(seed.vertex.point);
+        seed.etaPrev = i == 0 ? 1.0f : float(IOR);
+        seed.etaNext = i == 0 ? float(IOR) : 1.0f;
+        seed.sideSign = i == 0 ? -1.0f : 1.0f;
+      }
+      smdl::ManifoldTarget target{};
+      target.wl = float3(0.0f, 0.0f, 1.0f);
+      smdl::ManifoldConnection connection{};
+      smdl::ManifoldWalkReport report{};
+      // Not every receiver sees the light from where its line crosses.
+      if (!smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
+                                         chain, connection, &report))
+        continue;
+      numSolved++;
+      CHECK(report.residual < smdl::MANIFOLD_RESIDUAL);
+      for (int i = 0; i < 2; i++) {
+        CAPTURE(i);
+        const smdl::ManifoldConnectionVertex &crossing{connection.vertices[i]};
+        const double etaPrev{chain[i].etaPrev};
+        const double etaNext{chain[i].etaNext};
+        const double cosPrev{crossing.cosPrev};
+        const double cosNext{crossing.cosNext};
+        CHECK(std::abs(etaPrev * std::sqrt(1.0 - cosPrev * cosPrev) -
+                       etaNext * std::sqrt(1.0 - cosNext * cosNext)) < 2e-5);
+        CHECK(transmittanceFrom(cosPrev, etaPrev, etaNext) ==
+              doctest::Approx(transmittanceFrom(cosNext, etaNext, etaPrev))
+                  .epsilon(2e-3));
+        leastCos = std::min(leastCos, std::min(cosPrev, cosNext));
+      }
+    }
+  // Enough of them, and toward grazing among them, or the case holds
+  // the walk to nothing.
+  CHECK(numSolved >= 100);
+  CHECK(leastCos < 0.2);
 }
 
 TEST_CASE("Manifold: the trials a reciprocal walk counts") {

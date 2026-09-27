@@ -54,20 +54,23 @@ inline constexpr float MANIFOLD_IDENTITY_FRACTION{1e-2f};
 /// approach each other at every caustic fold, and a test this coarse
 /// merges the pair and loses half of it, which on a surface with tens of
 /// solutions per receiver read 1.8 percent dark at 1e-2. The walks it
-/// judges converge on `MANIFOLD_RECIPROCAL_RESIDUAL` so that a re-hit of
-/// one solution reliably lands inside it; at 1e-2 they did not have to,
-/// and re-hits that fell outside inflated the trial count and hid most
-/// of that loss.
+/// judges converge on `MANIFOLD_RESIDUAL` so that a re-hit of one
+/// solution reliably lands inside it; at 1e-2 they did not have to, and
+/// re-hits that fell outside inflated the trial count and hid most of
+/// that loss.
 inline constexpr float MANIFOLD_SOLUTION_IDENTITY_FRACTION{1e-3f};
 
-/// The constraint residual a randomly started walk converges to on top
-/// of the position test so that its solutions are pinned well inside
-/// `MANIFOLD_SOLUTION_IDENTITY_FRACTION`.
+/// The constraint residual a walk converges to, on top of the position
+/// test. A connection is evaluated where its walk stopped, and what it
+/// is worth is steep in that where an exit nears the critical angle or
+/// the chain a fold, so a walk stops on the solution and not a step
+/// beside it; and two walks to one solution stop well inside
+/// `MANIFOLD_SOLUTION_IDENTITY_FRACTION` of each other.
 ///
 /// \note
 /// A glossy chain tightens this further to a fraction of its lobe,
 /// see `ManifoldChain::residualTolerance`.
-inline constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
+inline constexpr float MANIFOLD_RESIDUAL{1e-5f};
 
 /// How many fresh starts a reciprocal estimate may draw before giving up
 /// and dropping the sample, by default.
@@ -338,15 +341,12 @@ public:
   /// disagree with them.
   std::vector<ManifoldVertexSeed> vertices{};
 
-  /// The constraint residual a walk must reach to count as converged,
-  /// on top of the position test every walk passes; zero asks for no
-  /// more than the walk's own sanity bound, which is what the Dirac
-  /// re-walk pair wants. A randomly started walk asks for
-  /// `MANIFOLD_RECIPROCAL_RESIDUAL`, and a glossy chain for a fraction of
-  /// its lobe width besides: the estimate evaluates the interface
-  /// distribution at the converged half vector and divides by the density
-  /// of the drawn one, so the two must agree to a fraction of the lobe,
-  /// which a position test cannot promise.
+  /// The constraint residual a walk of this chain must reach where
+  /// that is less than `MANIFOLD_RESIDUAL`, which every walk reaches;
+  /// zero asks for no less. A glossy chain asks for a fraction of its
+  /// lobe width: the estimate evaluates the interface distribution at
+  /// the converged half vector and divides by the density of the drawn
+  /// one, so the two must agree to a fraction of the lobe.
   float residualTolerance{};
 };
 
