@@ -185,6 +185,11 @@ public:
   /// its addressing. Anything else in the way fails the step, so a
   /// converged connection's segments are known to see their endpoints.
   ///
+  /// The cast is of the whole line from `origin` through `target`, and
+  /// not of the segment between them: a walk following its chain as
+  /// light would aims along a direction, and its target says which way
+  /// and not how far.
+  ///
   /// The point of `moved` is where the line meets the surface in
   /// double, whatever precision the cast that found the surface ran at:
   /// a step that lands beside where it aimed by the rounding of a float
@@ -328,6 +333,7 @@ public:
     vertices.clear();
     reserve(depth);
     residualTolerance = 0.0f;
+    isThorough = false;
   }
 
   /// Admit one crossing and hand back the cleared seed to fill. A
@@ -351,6 +357,16 @@ public:
   /// the converged half vector and divides by the density of the drawn
   /// one, so the two must agree to a fraction of the lobe.
   float residualTolerance{};
+
+  /// Does a walk that fails walk again, by every way
+  /// `solveManifoldConnection()` has of walking? A walk reaches the
+  /// connection whose basin its start is in, and no one way of
+  /// walking is in every basin. For a chain that is the one chance at
+  /// its connection, seeded where a straight line crosses, whose
+  /// failure leaves the connection to whatever else finds it. Not for
+  /// a chain started at random, where a walk that fails is one trial
+  /// more and costs what it costs over again.
+  bool isThorough{};
 };
 
 /// One interface of a converged connection.
@@ -468,8 +484,9 @@ public:
   bool isInfinite{true};
 };
 
-/// What one Newton walk did, for the caller's statistics: the steps it
-/// took, the constraint residual where it stopped, and how it ended.
+/// What a solve did, for the caller's statistics: the steps it took,
+/// over every walk it tried, and of its last walk the constraint
+/// residual where it stopped and how it ended.
 class ManifoldWalkReport final {
 public:
   enum class Outcome {
@@ -660,15 +677,33 @@ private:
 
 /// Solve the connection from `receiver` to the light target through the
 /// seed chain, by damped Newton iteration on the block-coupled per-vertex
-/// constraints. Steps re-anchor onto the real surfaces through
-/// `ManifoldSurfaces::project()` from each vertex's (already updated)
-/// predecessor, so a converged connection's segments are known to see
-/// their endpoints, up to whatever the renderer's projection passes
-/// through. Returns true on convergence to a valid crossing on the
-/// seed's own side of every interface; failure (divergence, leaving a
-/// seed surface, total internal reflection, a silhouette migration, a
+/// constraints.
+///
+/// A walk starts from the seed as handed, takes its step at the first
+/// crossing, and follows the chain from there as light would, each
+/// crossing after it where the direction scattered at the one before
+/// lands (the manifold walk of Jakob & Marschner, "Manifold
+/// Exploration", SIGGRAPH 2012). Every iterate after the start then
+/// obeys its constraint at every crossing but the last, however weak an
+/// interface and however thin a wall.
+///
+/// A chain that asks (`ManifoldChain::isThorough`) is walked three
+/// ways, each where the one before failed: from the seed traced from
+/// its first crossing, as every step is; from the seed as handed; and
+/// from the seed as handed with every crossing stepping for itself.
+/// Where glass bends light much the connection is far from where a
+/// straight line crosses and nearer a trace of that; where light
+/// leaves its glass nearly straight, as through a hollow vessel, it is
+/// the other way round.
+///
+/// Every landing is a cast through `ManifoldSurfaces::project()` from
+/// the crossing before, so a converged connection's segments are known
+/// to see their endpoints, up to whatever the renderer's projection
+/// passes through. Returns true on convergence to a valid crossing on
+/// the seed's own side of every interface; failure (divergence, leaving
+/// a seed surface, total internal reflection, a silhouette migration, a
 /// grazing or degenerate frame) means no contribution, never a wrong
-/// one. `report`, if given, receives what the walk did either way.
+/// one. `report`, if given, receives what the solve did either way.
 /// `scratch` is the caller's workspace, reserved for this chain if it
 /// was not already; see `ManifoldWalkScratch`.
 [[nodiscard]] SMDL_EXPORT bool solveManifoldConnection(

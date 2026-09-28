@@ -166,14 +166,96 @@ double3 unitDirDeriv(const double3 &w, double invD, const double3 &dp) {
   return -invD * (dp - dot(w, dp) * w);
 }
 
+// The tangent frame a crossing's constraint projects onto, seeded from a
+// vector held FIXED for the whole walk, so the frame varies only
+// through the shading normal and the frame derivatives of the Jacobian
+// are exact. Seeding from the local dPdu instead would rotate the frame
+// with the parameterization itself, a variation dNdu cannot see (a
+// flat cap rotates its azimuthal tangent with zero dN), and the
+// resulting Jacobian error stalls the walk. `seedLength` is how much of
+// the seed lies in the tangent plane.
+[[nodiscard]] bool buildFrame(const double3 &n, const double3 &frameSeed,
+                              double3 &t1, double3 &t2, double &seedLength) {
+  const double3 g{frameSeed - dot(n, frameSeed) * n};
+  seedLength = length(g);
+  if (!(seedLength > 1e-6)) return false;
+  t1 = (1.0 / seedLength) * g;
+  t2 = cross(n, t1);
+  return true;
+}
+
+// The direction a crossing scatters `arriving` into, about the normal it
+// is solved for: the shading normal `n` for a Dirac crossing, and the
+// microfacet normal its offset names in the frame for a glossy one. By
+// Snell's law or the mirror's. False under total internal reflection.
+[[nodiscard]] bool scatter(const ManifoldVertexSeed &seed, const double3 &n,
+                           const double3 &t1, const double3 &t2,
+                           const double3 &arriving, double3 &leaving) {
+  const double x{seed.offset.x};
+  const double y{seed.offset.y};
+  double3 m{x * t1 + y * t2 +
+            std::sqrt(std::max(0.0, 1.0 - x * x - y * y)) * n};
+  double cosArriving{-dot(arriving, m)};
+  if (cosArriving < 0.0) m = -m, cosArriving = -cosArriving;
+  if (seed.isReflect) {
+    leaving = arriving + 2.0 * cosArriving * m;
+  } else {
+    const double eta{double(seed.etaPrev) / double(seed.etaNext)};
+    const double sinSquaredLeaving{eta * eta *
+                                   (1.0 - cosArriving * cosArriving)};
+    if (!(sinSquaredLeaving < 1.0)) return false;
+    leaving = eta * arriving +
+              (eta * cosArriving - std::sqrt(1.0 - sinSquaredLeaving)) * m;
+  }
+  return tryNormalize(leaving);
+}
+
+// Follow the chain from its first crossing as light would: every
+// crossing after the first is where the direction scattered at the one
+// before lands. `traced` holds the first crossing and takes the others.
+// `stood` is where the chain's crossings stood before, which says how
+// far off a landing is aimed and nothing else. The geometry of every
+// crossing but the last is left in `chainState` for the evaluation that
+// follows.
+[[nodiscard]] bool traceChain(const ManifoldSurfaces &surfaces,
+                              const double3 &receiver,
+                              const ManifoldChain &chain,
+                              const double3 *frameSeeds,
+                              const ManifoldVertex *stood,
+                              ManifoldVertex *traced, ChainState &chainState) {
+  double3 origin{receiver};
+  for (int i = 0; i + 1 < chain.size(); i++) {
+    ManifoldGeometry &geometry{chainState[i].geometry};
+    if (!surfaces.evaluateGeometry(traced[i], geometry)) return false;
+    double3 arriving{traced[i].point - origin};
+    if (!tryNormalize(arriving)) return false;
+    double3 t1{}, t2{}, leaving{};
+    double seedLength{};
+    if (!buildFrame(double3(geometry.normal), frameSeeds[i], t1, t2,
+                    seedLength) ||
+        !scatter(chain[i], double3(geometry.normal), t1, t2, arriving, leaving))
+      return false;
+    // The target is as far off as the crossing stood, which the margin
+    // a cast leaves at its origin may be a fraction of.
+    const double reach{length(stood[i + 1].point - stood[i].point)};
+    if (!surfaces.project(chain[i + 1].vertex, traced[i].point,
+                          traced[i].point + reach * leaving, traced[i + 1]))
+      return false;
+    origin = traced[i].point;
+  }
+  return true;
+}
+
+// `isTraced` says the geometry of every crossing but the last is in
+// `chainState` already, a trace having left it there.
 [[nodiscard]]
 bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
                    const ManifoldTarget &target, const ManifoldChain &chain,
                    const double3 *frameSeeds, const ManifoldVertex *vertices,
-                   double *gLen, ChainState &chainState) {
+                   double *gLen, ChainState &chainState, bool isTraced) {
   const int count{chain.size()};
   chainState.count = count;
-  for (int i = 0; i < count; i++)
+  for (int i = isTraced ? count - 1 : 0; i < count; i++)
     if (!surfaces.evaluateGeometry(vertices[i], chainState[i].geometry))
       return false;
   // Segment directions, half vectors, frames, and constraints. The last
@@ -216,18 +298,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
     // it the microfacet normal the interface's own distribution is
     // expressed in, which is what an offset has to be measured against.
     sv.hSign = dot(sv.hHat, n) < 0.0 ? -1.0 : 1.0;
-    // The tangent frame the constraint projects onto, seeded from a
-    // vector held FIXED for the whole walk, so the frame varies only
-    // through the shading normal and the frame derivatives below are
-    // exact. Seeding from the local dPdu instead would rotate the frame
-    // with the parameterization itself, a variation dNdu cannot see (a
-    // flat cap rotates its azimuthal tangent with zero dN), and the
-    // resulting Jacobian error stalls the walk.
-    const double3 g{frameSeeds[i] - dot(n, frameSeeds[i]) * n};
-    gLen[i] = length(g);
-    if (!(gLen[i] > 1e-6)) return false;
-    sv.t1 = (1.0 / gLen[i]) * g;
-    sv.t2 = cross(n, sv.t1);
+    if (!buildFrame(n, frameSeeds[i], sv.t1, sv.t2, gLen[i])) return false;
     // The constraint is the oriented tangential half vector against the
     // offset this crossing is solved for. At zero offset the sign cancels
     // out of every use, since the Newton step scales a row of the matrix
@@ -411,24 +482,41 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked) {
   return claim;
 }
 
-bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
-                             ManifoldWalkScratch &scratch,
-                             const double3 &receiver,
-                             const ManifoldTarget &target,
-                             const ManifoldChain &chain,
-                             ManifoldConnection &connection,
-                             ManifoldWalkReport *report) {
+namespace {
+
+// Where a walk starts and how it steps.
+enum class Walk {
+  // From the seed followed from its first crossing, stepping by trace.
+  RETRACED,
+  // From the seed as handed, stepping by trace.
+  TRACED,
+  // From the seed as handed, every crossing stepping for itself.
+  STEPPED,
+};
+
+// One damped Newton walk of the chain. A step by trace moves the first
+// crossing and follows the chain from it, so that every crossing but
+// the last obeys its constraint at every iterate and the step has only
+// the last segment to bring round to the light. A step for itself moves
+// every crossing by its own share and re-anchors it by a cast from the
+// one before, which holds the inner constraints to first order only:
+// too little where an interface is weak, the half vector there being as
+// long as the indices differ, and enough where the seed is all but the
+// connection.
+[[nodiscard]] bool
+walkChain(Walk walk, const ManifoldSurfaces &surfaces,
+          ManifoldWalkScratch &scratch, const double3 &receiver,
+          const ManifoldTarget &target, const ManifoldChain &chain,
+          ManifoldConnection &connection, ManifoldWalkReport &report) {
   using Outcome = ManifoldWalkReport::Outcome;
   using Failure = ManifoldWalkReport::Failure;
   int iterationsDone{0};
   double residual{0.0};
   const auto finish{[&](Outcome outcome, Failure failure = Failure::NONE) {
-    if (report) {
-      report->iterations = iterationsDone;
-      report->residual = static_cast<float>(residual);
-      report->outcome = outcome;
-      report->failure = failure;
-    }
+    report.iterations = iterationsDone;
+    report.residual = static_cast<float>(residual);
+    report.outcome = outcome;
+    report.failure = failure;
     return outcome == Outcome::CONVERGED;
   }};
   const int count{chain.size()};
@@ -494,8 +582,17 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
        BandView{scratch.jacobians.data() + bandSize}, count}};
   ChainState *state{&stateBuffers[0]};
   ChainState *trial{&stateBuffers[1]};
+  const bool isTraced{walk != Walk::STEPPED};
+  if (walk == Walk::RETRACED) {
+    stepVertices[0] = vertices[0];
+    if (!traceChain(surfaces, receiver, chain, frameSeeds, vertices,
+                    stepVertices, *state))
+      return finish(Outcome::DIVERGED, Failure::START);
+    for (int i = 1; i < count; i++) vertices[i] = stepVertices[i];
+  }
   if (!evaluateChain(surfaces, receiver, target, chain, frameSeeds, vertices,
-                     scratch.frameLengths.data(), *state))
+                     scratch.frameLengths.data(), *state,
+                     walk == Walk::RETRACED))
     return finish(Outcome::DIVERGED, Failure::START);
   const float residualTolerance{
       chain.residualTolerance > 0.0f
@@ -518,13 +615,11 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     for (int r = 0; r < dim; r++) rhs[r] = -state->C[r];
     if (!solveBand(dim, A, rhs, &detJ))
       return finish(Outcome::DIVERGED, Failure::SINGULAR);
-    // The world-space steps, clamped together so a bad early Jacobian
-    // cannot fling any vertex across the scene, and measured against the
-    // distance to the receiver, which is the scale the arrival side
-    // judges the same answer at.
+    // The world-space steps, measured against the distance to the
+    // receiver, which is the scale the arrival side judges the same
+    // answer at.
     double maxStepLen{};
     double maxStepFraction{};
-    double minDist{(*state)[0].distPrev};
     for (int i = 0; i < count; i++) {
       const ManifoldWalkVertex &sv{(*state)[i]};
       steps[i] = rhs[2 * i + 0] * double3(sv.geometry.dPdu) +
@@ -533,7 +628,6 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       const double scale{std::max(1e-3, length(vertices[i].point - receiver))};
       maxStepLen = std::max(maxStepLen, stepLen);
       maxStepFraction = std::max(maxStepFraction, stepLen / scale);
-      minDist = std::min(minDist, sv.distPrev);
     }
     if (!std::isfinite(maxStepLen))
       return finish(Outcome::DIVERGED, Failure::SINGULAR);
@@ -554,29 +648,53 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       break;
     }
     if (!(maxStepLen > 0.0)) return finish(Outcome::DIVERGED, Failure::STALLED);
+    // The step is held back so that a bad early Jacobian cannot fling
+    // the chain across the scene: no segment may change by more than
+    // half its length. By trace that is the first crossing's step
+    // against the way from the receiver, the rest of the chain
+    // following it. For itself it is what each crossing steps by less
+    // what the one before it does, the receiver standing still. The
+    // step itself held to half the shortest segment would cross a thin
+    // wall at half its thickness an iteration, however far the chain
+    // had to go.
     double beta{1.0};
-    if (maxStepLen > 0.5 * minDist) beta = 0.5 * minDist / maxStepLen;
-    // Damped Newton: re-anchor each stepped vertex by casting from its
-    // updated predecessor, and halve the step until the residual
+    const auto hold{[&](const double3 &change, double segment) {
+      const double changed{length(change)};
+      if (changed * beta > 0.5 * segment) beta = 0.5 * segment / changed;
+    }};
+    hold(steps[0], (*state)[0].distPrev);
+    if (!isTraced)
+      for (int i = 1; i < count; i++)
+        hold(steps[i] - steps[i - 1], (*state)[i].distPrev);
+    // Damped Newton: land the step, and halve it until the residual
     // decreases.
     bool isAccepted{false};
     bool anyProjected{false};
     for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5) {
-      double3 origin{receiver};
       bool isProjected{true};
-      for (int i = 0; i < count; i++) {
-        if (!surfaces.project(chain[i].vertex, origin,
-                              vertices[i].point + beta * steps[i],
-                              stepVertices[i])) {
-          isProjected = false;
-          break;
+      if (isTraced) {
+        isProjected = surfaces.project(chain[0].vertex, receiver,
+                                       vertices[0].point + beta * steps[0],
+                                       stepVertices[0]) &&
+                      traceChain(surfaces, receiver, chain, frameSeeds,
+                                 vertices, stepVertices, *trial);
+      } else {
+        double3 origin{receiver};
+        for (int i = 0; i < count; i++) {
+          if (!surfaces.project(chain[i].vertex, origin,
+                                vertices[i].point + beta * steps[i],
+                                stepVertices[i])) {
+            isProjected = false;
+            break;
+          }
+          origin = stepVertices[i].point;
         }
-        origin = stepVertices[i].point;
       }
       if (!isProjected) continue;
       anyProjected = true;
       if (!evaluateChain(surfaces, receiver, target, chain, frameSeeds,
-                         stepVertices, scratch.frameLengths.data(), *trial))
+                         stepVertices, scratch.frameLengths.data(), *trial,
+                         isTraced))
         continue;
       if (trial->residual() < residual) {
         for (int i = 0; i < count; i++) vertices[i] = stepVertices[i];
@@ -635,6 +753,33 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
                              connection.offsetJacobian))
     return finish(Outcome::REJECTED);
   return finish(Outcome::CONVERGED);
+}
+
+} // namespace
+
+bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
+                             ManifoldWalkScratch &scratch,
+                             const double3 &receiver,
+                             const ManifoldTarget &target,
+                             const ManifoldChain &chain,
+                             ManifoldConnection &connection,
+                             ManifoldWalkReport *report) {
+  // A chain of one crossing has nothing to trace: its walks are one.
+  constexpr Walk WALKS[]{Walk::RETRACED, Walk::TRACED, Walk::STEPPED};
+  const bool isThorough{chain.isThorough && chain.size() > 1};
+  ManifoldWalkReport last{};
+  int iterations{0};
+  bool isSolved{false};
+  for (const Walk walk : WALKS) {
+    if (!isThorough && walk != Walk::TRACED) continue;
+    isSolved = walkChain(walk, surfaces, scratch, receiver, target, chain,
+                         connection, last);
+    iterations += last.iterations;
+    if (isSolved) break;
+  }
+  last.iterations = iterations;
+  if (report) *report = last;
+  return isSolved;
 }
 
 bool buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,

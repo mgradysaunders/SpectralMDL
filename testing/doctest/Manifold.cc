@@ -663,8 +663,9 @@ TEST_CASE("Manifold: the measure through thin glass is the traced one") {
   // the order of one over the thickness and its determinant of one over
   // the focal length or the receiver's distance, so the measure is what
   // the arithmetic leaves of the difference. The walk is asked for a
-  // residual well under its own, so that where it stopped is not what
-  // is measured.
+  // residual under its own, so that where it stopped is less of what is
+  // measured, and no less than the normals it is handed let every walk
+  // reach, which are floats.
   constexpr double IOR{1.5};
   constexpr double TWO_PI{6.283185307179586};
   smdl::ManifoldWalkScratch scratch{};
@@ -705,7 +706,7 @@ TEST_CASE("Manifold: the measure through thin glass is the traced one") {
               IOR, points, leaving));
           smdl::ManifoldChain chain{};
           chain.restart(surfaces.faceCount());
-          chain.residualTolerance = 1e-7f;
+          chain.residualTolerance = 1e-6f;
           for (int i = 0; i < surfaces.faceCount(); i++) {
             smdl::ManifoldVertexSeed &seed{chain.append()};
             seed.vertex.point = points[i];
@@ -722,14 +723,418 @@ TEST_CASE("Manifold: the measure through thin glass is the traced one") {
           smdl::ManifoldWalkReport report{};
           REQUIRE(smdl::solveManifoldConnection(
               surfaces, scratch, receiver, target, chain, connection, &report));
-          CHECK(report.residual < 1e-7f);
+          CHECK(report.residual < 1e-6f);
           double traced{};
           REQUIRE(surfaces.tracedMeasure(receiver, double3(connection.wr), IOR,
                                          traced));
           CHECK(std::abs(double(connection.measure(chain)) / traced - 1.0) <
-                1e-5);
+                2e-5);
         }
       }
+}
+
+namespace {
+
+// Balls about the origin, each inside the one before it, and the index
+// inside each: a vessel and what it holds. `ManifoldVertex::surface`
+// says which ball.
+class BallSurfaces final : public smdl::ManifoldSurfaces {
+public:
+  class Ball final {
+  public:
+    double radius{};
+    double ior{};
+  };
+
+  // Where a line crosses a ball, and the indices either side of it in
+  // the order the line meets them.
+  class Crossing final {
+  public:
+    int ball{};
+    double3 point{};
+    double etaPrev{};
+    double etaNext{};
+  };
+
+  explicit BallSurfaces(std::vector<Ball> balls) : mBalls{std::move(balls)} {}
+
+  [[nodiscard]] bool
+  evaluateGeometry(const smdl::ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override {
+    const double radius{mBalls[vertex.surface].radius};
+    geometry = {};
+    geometry.normal = normalize(float3(vertex.point));
+    geometry.dPdu = smdl::perpendicularTo(geometry.normal);
+    geometry.dPdv = cross(geometry.normal, geometry.dPdu);
+    geometry.dNdu = geometry.dPdu / float(radius);
+    geometry.dNdv = geometry.dPdv / float(radius);
+    geometry.Ng = geometry.normal;
+    return true;
+  }
+
+  // As a renderer's cast: whatever ball the line meets first is what it
+  // lands on, and a landing on another than the pinned one fails.
+  [[nodiscard]] bool project(const smdl::ManifoldVertex &pin,
+                             const double3 &origin, const double3 &target,
+                             smdl::ManifoldVertex &moved) const override {
+    double3 dir{target - origin};
+    const double distance{length(dir)};
+    if (!smdl::tryNormalize(dir)) return false;
+    int ball{};
+    moved = {};
+    if (!cast(origin, dir, std::min(1e-4, 0.25 * distance), ball,
+              moved.point) ||
+        uint64_t(ball) != pin.surface)
+      return false;
+    moved.surface = pin.surface;
+    return true;
+  }
+
+  // The first crossing of any ball along a ray, past `margin`.
+  [[nodiscard]] bool cast(const double3 &origin, const double3 &dir,
+                          double margin, int &ball, double3 &point) const {
+    double nearest{INFINITY};
+    for (int i = 0; i < int(mBalls.size()); i++) {
+      const double b{dot(origin, dir)};
+      const double disc{b * b - lengthSquared(origin) +
+                        mBalls[i].radius * mBalls[i].radius};
+      if (!(disc > 0.0)) continue;
+      for (const double t : {-b - std::sqrt(disc), -b + std::sqrt(disc)})
+        if (t > margin && t < nearest) nearest = t, ball = i;
+    }
+    if (!(nearest < INFINITY)) return false;
+    point = mBalls[ball].radius * normalize(origin + nearest * dir);
+    return true;
+  }
+
+  // Follow a ray through the balls until it has left them, bent at
+  // every crossing by Snell's law where `bends` and straight through
+  // where not, as a discovery follows a shadow segment. False where the
+  // ray misses them or is totally reflected.
+  [[nodiscard]] bool trace(double3 origin, double3 dir, bool bends,
+                           std::vector<Crossing> &crossings,
+                           double3 &leavingFrom, double3 &leaving) const {
+    crossings.clear();
+    int ball{};
+    double3 point{};
+    while (crossings.size() < 2 * mBalls.size() &&
+           cast(origin, dir, 1e-9, ball, point)) {
+      const double3 outward{normalize(point)};
+      const bool isEntering{dot(dir, outward) < 0.0};
+      const double etaOutside{ball == 0 ? 1.0 : mBalls[ball - 1].ior};
+      const double etaInside{mBalls[ball].ior};
+      const Crossing crossing{ball, point, isEntering ? etaOutside : etaInside,
+                              isEntering ? etaInside : etaOutside};
+      crossings.push_back(crossing);
+      if (bends) {
+        const double3 normal{isEntering ? outward : -outward};
+        const double cosFrom{-dot(dir, normal)};
+        const double ratio{crossing.etaPrev / crossing.etaNext};
+        const double cosToSquared{1.0 -
+                                  ratio * ratio * (1.0 - cosFrom * cosFrom)};
+        if (!(cosToSquared > 0.0)) return false;
+        dir = normalize(ratio * dir +
+                        (ratio * cosFrom - std::sqrt(cosToSquared)) * normal);
+      }
+      origin = point;
+    }
+    leavingFrom = origin;
+    leaving = dir;
+    return !crossings.empty();
+  }
+
+private:
+  std::vector<Ball> mBalls{};
+};
+
+// How many chains through some balls a walk solves, seeded where the
+// straight line crosses as a discovery seeds them, from receivers on a
+// floor under the balls to the points of a lamp over them. Whatever
+// connection a walk comes to must obey Snell's law at every crossing.
+class FoundThrough final {
+public:
+  FoundThrough(std::vector<BallSurfaces::Ball> balls, bool isThorough) {
+    constexpr double TWO_PI{6.283185307179586};
+    const int numCrossings{2 * int(balls.size())};
+    const BallSurfaces surfaces{std::move(balls)};
+    smdl::ManifoldWalkScratch scratch{};
+    std::vector<BallSurfaces::Crossing> crossings{};
+    for (int k = 0; k < 1024; k++) {
+      const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+      const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+      const double c{std::fmod(0.569840 * double(k + 3), 1.0)};
+      const double d{std::fmod(0.819173 * double(k + 4), 1.0)};
+      const double3 receiver{1.4 * (a - 0.5) - 0.45, 1.4 * (b - 0.5) + 0.3,
+                             -0.8};
+      const double height{2.0 * c - 1.0};
+      const double3 light{
+          double3(1.2, -0.8, 2.2) +
+          0.3 * double3(std::sqrt(1.0 - height * height) * std::cos(TWO_PI * d),
+                        std::sqrt(1.0 - height * height) * std::sin(TWO_PI * d),
+                        height)};
+      const double3 wl{normalize(light - receiver)};
+      double3 leavingFrom{}, leaving{};
+      if (!surfaces.trace(receiver, wl, /*bends=*/false, crossings, leavingFrom,
+                          leaving) ||
+          int(crossings.size()) != numCrossings)
+        continue;
+      const size_t index{isFound.size()};
+      isFound.push_back(false);
+      iterationCounts.push_back(0);
+      smdl::ManifoldChain chain{};
+      chain.restart(numCrossings);
+      chain.isThorough = isThorough;
+      for (const BallSurfaces::Crossing &crossing : crossings) {
+        smdl::ManifoldVertexSeed &seed{chain.append()};
+        seed.vertex.point = crossing.point;
+        seed.vertex.surface = uint64_t(crossing.ball);
+        seed.etaPrev = float(crossing.etaPrev);
+        seed.etaNext = float(crossing.etaNext);
+        seed.sideSign = dot(wl, crossing.point) < 0.0 ? -1.0f : 1.0f;
+      }
+      smdl::ManifoldTarget target{};
+      target.wl = float3(wl);
+      target.point = light;
+      target.isInfinite = false;
+      smdl::ManifoldConnection connection{};
+      smdl::ManifoldWalkReport report{};
+      isFound[index] = smdl::solveManifoldConnection(
+          surfaces, scratch, receiver, target, chain, connection, &report);
+      iterationCounts[index] = report.iterations;
+      if (!isFound[index]) continue;
+      foundCount++;
+      for (int i = 0; i < numCrossings; i++) {
+        CAPTURE(k);
+        CAPTURE(i);
+        const smdl::ManifoldConnectionVertex &crossing{connection.vertices[i]};
+        const double3 normal{crossing.geometry.normal};
+        const double3 half{double(chain[i].etaPrev) * double3(crossing.wPrev) +
+                           double(chain[i].etaNext) * double3(crossing.wNext)};
+        CHECK(length(half - dot(half, normal) * normal) < 2e-5);
+        CHECK(dot(double3(crossing.wPrev), normal) *
+                  dot(double3(crossing.wNext), normal) <
+              0.0);
+      }
+    }
+  }
+
+  [[nodiscard]] int chainCount() const noexcept { return int(isFound.size()); }
+
+  // Whether each chain was solved, and the iterations its solve reports.
+  std::vector<bool> isFound{};
+  std::vector<int> iterationCounts{};
+  int foundCount{};
+};
+
+} // namespace
+
+TEST_CASE("Manifold: a connection is found through glass that bends") {
+  // A walk reaches the connection whose basin its start is in, and
+  // where glass bends light much the straight line's crossings are far
+  // from it. Through a vessel of water the inner interface is weak
+  // besides, and the half vector there as long as the indices differ,
+  // so that a walk moving every crossing for itself, which holds
+  // Snell's law at the inner ones to first order, holds it nowhere
+  // near. Each case needs one of the three ways of walking that the
+  // other two do not make up for, so each holds one to its place.
+  SUBCASE("A ball of glass, by a start that is traced") {
+    const FoundThrough thorough{{{0.5, 1.5}}, /*isThorough=*/true};
+    REQUIRE(thorough.chainCount() > 800);
+    CHECK(thorough.foundCount > 0.88 * thorough.chainCount());
+  }
+  SUBCASE("A vessel of water, by a seed that is traced from") {
+    const FoundThrough thorough{{{0.5, 1.5}, {0.498, 1.33}},
+                                /*isThorough=*/true};
+    const FoundThrough once{{{0.5, 1.5}, {0.498, 1.33}}, /*isThorough=*/false};
+    REQUIRE(thorough.chainCount() > 800);
+    REQUIRE(once.chainCount() == thorough.chainCount());
+    CHECK(thorough.foundCount > 0.64 * thorough.chainCount());
+    CHECK(once.foundCount > 0.62 * once.chainCount());
+    // A chain that asks is walked again where a walk fails, and what
+    // the solve reports is every walk's steps: no fewer than the one
+    // walk's, and fewer than a walk takes that crosses the wall at half
+    // its thickness a step.
+    int numFailed{0}, numLonger{0}, numSteps{0};
+    for (int k = 0; k < thorough.chainCount(); k++) {
+      if (thorough.isFound[k]) continue;
+      CAPTURE(k);
+      CHECK(!once.isFound[k]);
+      CHECK(thorough.iterationCounts[k] >= once.iterationCounts[k]);
+      numLonger += thorough.iterationCounts[k] > once.iterationCounts[k];
+      numSteps += thorough.iterationCounts[k];
+      numFailed++;
+    }
+    CHECK(numLonger > numFailed / 2);
+    CHECK(numSteps < 40 * numFailed);
+  }
+  SUBCASE("A hollow vessel, by every crossing stepping for itself") {
+    // Light leaves it nearly as straight as it came, so the seed is
+    // all but the connection, and a trace from the seed's first
+    // crossing is not.
+    const FoundThrough thorough{{{0.5, 1.5}, {0.45, 1.0}}, /*isThorough=*/true};
+    const FoundThrough once{{{0.5, 1.5}, {0.45, 1.0}}, /*isThorough=*/false};
+    REQUIRE(thorough.chainCount() > 700);
+    CHECK(thorough.foundCount > 0.98 * thorough.chainCount());
+    CHECK(once.foundCount < 0.95 * once.chainCount());
+  }
+}
+
+TEST_CASE("Manifold: a chain restarted is as a fresh one") {
+  smdl::ManifoldChain chain{};
+  chain.restart(2);
+  chain.residualTolerance = 1e-6f;
+  chain.isThorough = true;
+  (void)chain.append();
+  chain.restart(3);
+  CHECK(chain.empty());
+  CHECK(chain.residualTolerance == 0.0f);
+  CHECK(!chain.isThorough);
+}
+
+TEST_CASE("Manifold: a chain of one crossing is walked once") {
+  // It has nothing to trace, so its walks are one walk, and a chain
+  // that asks to be walked again is not.
+  smdl::ManifoldWalkScratch scratch{};
+  const PlaneSurfaces surfaces{};
+  const float3 receiver{0.5f, -0.8f, 1.2f};
+  smdl::ManifoldTarget target{};
+  // Under the mirror, where no reflection leaves for.
+  target.wl = normalize(float3(-0.2f, 0.35f, -0.91f));
+  int iterations[2]{};
+  for (const bool isThorough : {false, true}) {
+    smdl::ManifoldChain chain{};
+    chain.restart(1);
+    chain.isThorough = isThorough;
+    smdl::ManifoldVertexSeed &seed{chain.append()};
+    seed.vertex.point = float3(0.3f, 0.2f, 0.0f);
+    seed.vertex.coords = float3(seed.vertex.point);
+    seed.etaPrev = seed.etaNext = 1.0f;
+    seed.sideSign = 1.0f;
+    seed.isReflect = true;
+    smdl::ManifoldConnection connection{};
+    smdl::ManifoldWalkReport report{};
+    CHECK(!smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
+                                         chain, connection, &report));
+    iterations[isThorough ? 1 : 0] = report.iterations;
+  }
+  CHECK(iterations[0] > 0);
+  CHECK(iterations[1] == iterations[0]);
+}
+
+TEST_CASE("Manifold: a walk crosses a thin wall in a few steps") {
+  // A pane far thinner than the way its chain has to go, the seed up
+  // to a hundredth of the receiver's distance beside the connection.
+  // A step held to half the shortest segment of the chain would be
+  // half the pane's thickness, and a walk of such steps would not
+  // arrive.
+  constexpr float IOR{1.5f};
+  smdl::ManifoldWalkScratch scratch{};
+  const PlaneSurfaces surfaces{};
+  for (const bool isThorough : {false, true})
+    for (const double distance : {1.0, 10.0, 100.0})
+      for (const double thickness : {2e-3, 5e-5})
+        for (int k = 0; k < 16; k++) {
+          CAPTURE(isThorough);
+          CAPTURE(distance);
+          CAPTURE(thickness);
+          CAPTURE(k);
+          const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+          const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+          const double3 receiver{2.0 * a - 1.0, 2.0 * b - 1.0, 0.0};
+          const float3 wl{
+              normalize(float3(0.4f * float(b - 0.5), 0.5f, 0.85f))};
+          // Along the line to the light the pane is crossed at the
+          // connection, so the seed is along a line beside it.
+          const double3 beside{
+              normalize(double3(wl) + 0.01 * double3(b - 0.5, a - 0.5, 0.0))};
+          smdl::ManifoldChain chain{};
+          chain.restart(2);
+          chain.isThorough = isThorough;
+          for (int i = 0; i < 2; i++) {
+            smdl::ManifoldVertexSeed &seed{chain.append()};
+            const double z{distance + (i == 0 ? 0.0 : thickness)};
+            seed.vertex.point = receiver + z / beside.z * beside;
+            seed.vertex.point.z = z;
+            seed.vertex.surface = uint64_t(i);
+            seed.etaPrev = i == 0 ? 1.0f : IOR;
+            seed.etaNext = i == 0 ? IOR : 1.0f;
+            seed.sideSign = 1.0f;
+          }
+          smdl::ManifoldTarget target{};
+          target.wl = wl;
+          smdl::ManifoldConnection connection{};
+          smdl::ManifoldWalkReport report{};
+          REQUIRE(smdl::solveManifoldConnection(
+              surfaces, scratch, receiver, target, chain, connection, &report));
+          CHECK(report.iterations <= 4);
+          CHECK(dot(connection.wr, wl) > 1.0f - 1e-6f);
+        }
+}
+
+TEST_CASE("Manifold: a glossy chain is traced about the normals it is "
+          "solved for") {
+  // Each crossing of a glossy chain is solved for a microfacet normal,
+  // the offset of its seed in the walk's frame, and a walk that follows
+  // its chain scatters about that normal. The connection's half vector
+  // at each crossing is then the one the offset names.
+  smdl::ManifoldWalkScratch scratch{};
+  const BallSurfaces surfaces{{{0.5, 1.5}}};
+  std::vector<BallSurfaces::Crossing> crossings{};
+  const float2 offsets[2]{float2(0.05f, -0.03f), float2(-0.02f, 0.04f)};
+  int numSolved[2]{};
+  for (const bool isThorough : {false, true})
+    for (int k = 0; k < 128; k++) {
+      CAPTURE(isThorough);
+      CAPTURE(k);
+      const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+      const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+      const double3 receiver{1.4 * (a - 0.5) - 0.45, 1.4 * (b - 0.5) + 0.3,
+                             -0.8};
+      const double3 light{1.2 + 0.3 * (b - 0.5), -0.8 + 0.3 * (a - 0.5), 2.2};
+      const double3 wl{normalize(light - receiver)};
+      double3 leavingFrom{}, leaving{};
+      if (!surfaces.trace(receiver, wl, /*bends=*/false, crossings, leavingFrom,
+                          leaving))
+        continue;
+      REQUIRE(crossings.size() == 2);
+      smdl::ManifoldChain chain{};
+      chain.restart(2);
+      chain.isThorough = isThorough;
+      for (int i = 0; i < 2; i++) {
+        smdl::ManifoldVertexSeed &seed{chain.append()};
+        seed.vertex.point = crossings[i].point;
+        seed.vertex.surface = 0;
+        seed.etaPrev = float(crossings[i].etaPrev);
+        seed.etaNext = float(crossings[i].etaNext);
+        seed.sideSign = i == 0 ? -1.0f : 1.0f;
+        seed.isGlossy = true;
+        seed.offset = offsets[i];
+        seed.frameSeed = float3(0.8f, 0.3f, 0.1f);
+      }
+      smdl::ManifoldTarget target{};
+      target.wl = float3(wl);
+      target.point = light;
+      target.isInfinite = false;
+      smdl::ManifoldConnection connection{};
+      if (!smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
+                                         chain, connection))
+        continue;
+      numSolved[isThorough ? 1 : 0]++;
+      for (int i = 0; i < 2; i++) {
+        CAPTURE(i);
+        const smdl::ManifoldConnectionVertex &crossing{connection.vertices[i]};
+        float3 normal{}, t1{}, t2{};
+        REQUIRE(smdl::buildManifoldSeedFrame(
+            surfaces, crossing.vertex, chain[i].frameSeed, normal, t1, t2));
+        float3 half{normalize(chain[i].etaPrev * crossing.wPrev +
+                              chain[i].etaNext * crossing.wNext)};
+        if (dot(half, normal) < 0.0f) half = -half;
+        CHECK(std::abs(dot(half, t1) - offsets[i].x) < 2e-5f);
+        CHECK(std::abs(dot(half, t2) - offsets[i].y) < 2e-5f);
+      }
+    }
+  CHECK(numSolved[0] > 60);
+  CHECK(numSolved[1] > 80);
 }
 
 namespace {
