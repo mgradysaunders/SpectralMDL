@@ -103,9 +103,7 @@ public:
   /// pane's thickness apart and a room's width from the origin have no
   /// digits left to difference as floats: the direction of the segment
   /// would be good to the spacing of the coordinates over its length,
-  /// a floor under the residual that no step gets beneath. Everything
-  /// differential stays a float, the segments included once they are
-  /// differenced.
+  /// a floor under the residual that no step gets beneath.
   ///
   /// A vertex `ManifoldSurfaces::project()` fills is on its surface and
   /// on the cast's line to double precision. A seed may carry a point
@@ -131,6 +129,11 @@ public:
 /// the geometric (facet) normal for the factors that belong to the real
 /// surface rather than the interpolated field. Where the vertex is, is
 /// the vertex's own to say (`ManifoldVertex::point`).
+///
+/// These are floats, as a renderer's geometry is. A rounding here is a
+/// surface a little different, and a connection through it is worth the
+/// same to that rounding; it is the walk's own arithmetic on them that
+/// must not round, see `ManifoldWalkVertex`.
 class ManifoldGeometry final {
 public:
   /// The shading normal: the field the material's lobes actually
@@ -521,9 +524,9 @@ isSameManifoldSolution(const double3 &receiver, const ManifoldConnection &a,
 
 /// The walk's tangent frame at a vertex: the shading normal it
 /// constrains against and the two tangents an offset is expressed in,
-/// built from `frameSeed` exactly as the walk builds them at every
-/// iterate. Fails when the vertex cannot be evaluated or the seed is
-/// degenerate against the normal.
+/// built from `frameSeed` as the walk builds them at every iterate, to
+/// a float's rounding. Fails when the vertex cannot be evaluated or the
+/// seed is degenerate against the normal.
 [[nodiscard]] SMDL_EXPORT bool
 buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
                        const ManifoldVertex &vertex, const float3 &frameSeed,
@@ -540,6 +543,15 @@ buildManifoldSeedFrame(const ManifoldSurfaces &surfaces,
 /// the generalized half vector and tangent frame the constraint is
 /// expressed in.
 ///
+/// Everything the walk derives is a double, whatever the geometry it
+/// derives it from. The constraint Jacobian's entries for two crossings
+/// close together are of the order of one over the distance between
+/// them, and cancel in its determinant to what the rest of the chain
+/// leaves, of the order of one over the distance to the receiver or the
+/// focal length of the glass. Rounded each on its own as floats, the
+/// measure would be good to a float's rounding times the ratio of the
+/// two, which through a wall of glass is in the thousands.
+///
 /// This is `ManifoldWalkScratch`'s element rather than anything a caller
 /// reads. It is here, and not in the solver, only so that the workspace
 /// can hold it by value; a walk writes every field it reads and nothing
@@ -550,33 +562,27 @@ public:
   ManifoldGeometry geometry;
 
   /// Toward the previous vertex, or the receiver, and its distance.
-  float3 wPrev;
-  float distPrev;
+  double3 wPrev;
+  double distPrev;
 
   /// Toward the next vertex, or the light. The distance is 0 for a
   /// distant target, which drops the position-derivative term.
-  float3 wNext;
-  float distNext;
+  double3 wNext;
+  double distNext;
 
   /// The generalized half vector, and its length before normalizing.
-  float3 hHat;
-  float hLen;
+  double3 hHat;
+  double hLen;
 
   /// The sign that orients `hHat` onto the shading normal's side, so
   /// that the constraint means a microfacet normal rather than a line
   /// through one.
-  float hSign;
-
-  /// The area element of the parameterization the Jacobian is expressed
-  /// in, and the half-vector measure of the crossing; see
-  /// `ManifoldConnectionVertex::halfVectorJacobian`.
-  float areaElement;
-  float halfVectorJacobian;
+  double hSign;
 
   /// The tangents the constraint projects onto, built from the seed
   /// vector the walk holds fixed.
-  float3 t1;
-  float3 t2;
+  double3 t1;
+  double3 t2;
 };
 
 /// The workspace one manifold walk runs in, sized once for the deepest
@@ -625,26 +631,26 @@ public:
 
   /// The fixed frame seeds, then the world-space Newton steps:
   /// `maxDepth` apiece.
-  std::vector<float3> vectors;
+  std::vector<double3> vectors;
 
   /// The two chain states the iteration swaps between: `maxDepth`
   /// apiece.
   std::vector<ManifoldWalkVertex> iterates;
 
   /// The tangent-frame lengths of one iterate, `maxDepth`.
-  std::vector<float> frameLengths;
+  std::vector<double> frameLengths;
 
   /// The two states' constraint residuals, `2 * maxDepth` apiece.
-  std::vector<float> constraints;
+  std::vector<double> constraints;
 
   /// The two states' constraint Jacobians and the copy the solve
   /// eliminates in place, `2 * maxDepth` rows of a fixed band width
   /// apiece. The constraints couple neighbours only, so the system is
   /// banded and nothing here grows faster than the depth.
-  std::vector<float> jacobians;
+  std::vector<double> jacobians;
 
   /// The solve's right-hand side, `2 * maxDepth`.
-  std::vector<float> rhs;
+  std::vector<double> rhs;
 
 private:
   /// The out-of-line half of `reserve()`, so that the common call is a

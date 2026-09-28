@@ -15,13 +15,16 @@ constexpr int MAX_ITERATIONS{64};
 
 constexpr int MAX_HALVINGS{5};
 
-// The pivot the dense solve refuses to divide by, as a fraction of the
+// The pivot the elimination refuses to divide by, as a fraction of the
 // largest entry of the system. Absolute would not do: the Jacobian
 // entries carry units of inverse distance, so one geometry measured in
 // millimeters and the same in kilometers would land on opposite sides of
-// a fixed number. A pivot this far below the scale of the matrix is
-// noise at float precision, and the walk is better off failing.
-constexpr float MIN_PIVOT_RELATIVE{1e-7f};
+// a fixed number. A pivot far below the scale of the matrix is no sign
+// of trouble by itself: two crossings a wall's thickness apart leave one
+// of the order of the thickness over the distance to the receiver. One
+// this far below is noise at double precision, and the walk is better
+// off failing.
+constexpr double MIN_PIVOT_RELATIVE{1e-12};
 
 // The scalar bandwidths of the constraint system. Constraint `i`
 // couples vertices `i-1`, `i` and `i+1`, so row `2i+r` runs from column
@@ -42,22 +45,22 @@ constexpr int BAND_STRIDE{2 * BAND_LOWER + BAND_UPPER + 1};
 // creates, so an index past it is a bug rather than a zero.
 struct BandView final {
   void clear(int n) const noexcept {
-    std::fill_n(coeffs, n * BAND_STRIDE, 0.0f);
+    std::fill_n(coeffs, n * BAND_STRIDE, 0.0);
   }
   void copyFrom(const BandView &other, int n) const noexcept {
     std::copy_n(other.coeffs, n * BAND_STRIDE, coeffs);
   }
   // Row `i` addressed from its own diagonal, so that `row(i)[d]` is
   // `(i, i + d)` for `d` in `[-BAND_LOWER, BAND_LOWER + BAND_UPPER]`.
-  [[nodiscard]] float *row(int i) const noexcept {
+  [[nodiscard]] double *row(int i) const noexcept {
     return &coeffs[i * BAND_STRIDE + BAND_LOWER];
   }
-  [[nodiscard]] float &operator()(int i, int j) const noexcept {
+  [[nodiscard]] double &operator()(int i, int j) const noexcept {
     SMDL_DEBUG_CHECK(j >= i - BAND_LOWER && j <= i + BAND_LOWER + BAND_UPPER);
     return coeffs[i * BAND_STRIDE + (j - i + BAND_LOWER)];
   }
 
-  float *coeffs;
+  double *coeffs;
 };
 
 // Solve `A x = b` in place by Gaussian elimination with partial
@@ -65,27 +68,24 @@ struct BandView final {
 // when it is null. Returns false on a (numerically) singular system.
 // `det`, if given, receives the determinant, which is the signed
 // product of the pivots the elimination leaves on the diagonal and so
-// costs nothing to report. It is a double because those pivots each
-// carry the scale of the surface parameterization, so their product
-// leaves float's range at a depth and a fineness an ordinary scene
-// reaches; see `computeOffsetJacobian()`.
+// costs nothing to report.
 //
 // The band is what makes this linear in the chain's length rather than
 // cubic, and it changes no arithmetic on the way: the rows more than
 // `BAND_LOWER` below the column hold a structural zero there, so the
 // pivot search sees the candidates a dense elimination would see, picks
 // the same pivot and forms the same multipliers over the same columns.
-[[nodiscard]] bool solveBand(int n, BandView A, float *b = nullptr,
+[[nodiscard]] bool solveBand(int n, BandView A, double *b = nullptr,
                              double *det = nullptr) {
-  float scale{};
+  double scale{};
   for (int r = 0; r < n; r++) {
-    const float *coeffs{A.row(r)};
+    const double *coeffs{A.row(r)};
     for (int d = std::max(-BAND_LOWER, -r);
          d <= std::min(BAND_LOWER + BAND_UPPER, n - 1 - r); d++)
       scale = std::max(scale, std::abs(coeffs[d]));
   }
-  if (!(scale > 0.0f)) return false;
-  const float minPivot{scale * MIN_PIVOT_RELATIVE};
+  if (!(scale > 0.0)) return false;
+  const double minPivot{scale * MIN_PIVOT_RELATIVE};
   if (det) *det = 1.0;
   for (int c = 0; c < n; c++) {
     const int rowLast{std::min(c + BAND_LOWER, n - 1)};
@@ -96,20 +96,20 @@ struct BandView final {
     if (!(std::abs(A(pivot, c)) > minPivot)) return false;
     // Both rows store the whole span the elimination still touches, so
     // the exchange is that span and not the rows entire.
-    float *pivotRow{A.row(c)};
+    double *pivotRow{A.row(c)};
     if (pivot != c) {
-      float *other{A.row(pivot) + (c - pivot)};
+      double *other{A.row(pivot) + (c - pivot)};
       for (int k = 0; k < width; k++) std::swap(pivotRow[k], other[k]);
       if (b) std::swap(b[c], b[pivot]);
       if (det) *det = -*det;
     }
     // The pivot is guarded above, so its reciprocal is the standard
     // elimination form: one division a column instead of one a row.
-    const float invPivot{1.0f / pivotRow[0]};
+    const double invPivot{1.0 / pivotRow[0]};
     for (int r = c + 1; r <= rowLast; r++) {
-      float *coeffs{A.row(r) + (c - r)};
-      const float m{coeffs[0] * invPivot};
-      if (m == 0.0f) continue;
+      double *coeffs{A.row(r) + (c - r)};
+      const double m{coeffs[0] * invPivot};
+      if (m == 0.0) continue;
       for (int k = 0; k < width; k++) coeffs[k] -= m * pivotRow[k];
       if (b) b[r] -= m * b[c];
     }
@@ -118,9 +118,9 @@ struct BandView final {
     for (int c = 0; c < n; c++) *det *= A(c, c);
   if (b) {
     for (int c = n - 1; c >= 0; c--) {
-      const float *coeffs{A.row(c)};
+      const double *coeffs{A.row(c)};
       const int last{std::min(c + BAND_LOWER + BAND_UPPER, n - 1) - c};
-      float sum{b[c]};
+      double sum{b[c]};
       for (int j = 1; j <= last; j++) sum -= coeffs[j] * b[c + j];
       b[c] = sum / coeffs[0];
     }
@@ -144,15 +144,15 @@ public:
     return vertices[i];
   }
 
-  [[nodiscard]] float residual() const noexcept {
-    float sum{};
+  [[nodiscard]] double residual() const noexcept {
+    double sum{};
     for (int i = 0; i < 2 * count; i++) sum += C[i] * C[i];
     return std::sqrt(sum);
   }
 
 public:
   ManifoldWalkVertex *vertices;
-  float *C;
+  double *C;
   BandView J;
   int count;
 };
@@ -162,23 +162,15 @@ public:
 // over the distance, negated. A perturbation of the far point `q` is
 // the same expression with the opposite sign.
 [[nodiscard]]
-float3 unitDirDeriv(const float3 &w, float d, const float3 &dp) {
-  return -(dp - dot(w, dp) * w) / d;
-}
-
-// The segment from one point of the walk to another. The points are
-// differenced as doubles and the difference narrowed, which keeps every
-// digit a float has of a segment however short it is against where it
-// stands.
-[[nodiscard]] float3 segment(const double3 &from, const double3 &to) {
-  return float3(to - from);
+double3 unitDirDeriv(const double3 &w, double invD, const double3 &dp) {
+  return -invD * (dp - dot(w, dp) * w);
 }
 
 [[nodiscard]]
 bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
                    const ManifoldTarget &target, const ManifoldChain &chain,
-                   const float3 *frameSeeds, const ManifoldVertex *vertices,
-                   float *gLen, ChainState &chainState) {
+                   const double3 *frameSeeds, const ManifoldVertex *vertices,
+                   double *gLen, ChainState &chainState) {
   const int count{chain.size()};
   chainState.count = count;
   for (int i = 0; i < count; i++)
@@ -191,45 +183,39 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
   // formula picks up through the real distance).
   for (int i = 0; i < count; i++) {
     ManifoldWalkVertex &sv{chainState[i]};
-    const ManifoldGeometry &geometry{sv.geometry};
+    const double3 n{sv.geometry.normal};
+    const double etaPrev{chain[i].etaPrev};
+    const double etaNext{chain[i].etaNext};
     const double3 &point{vertices[i].point};
-    const float3 toPrev{
-        segment(point, i == 0 ? receiver : vertices[i - 1].point)};
+    const double3 toPrev{(i == 0 ? receiver : vertices[i - 1].point) - point};
     sv.distPrev = length(toPrev);
-    if (!(sv.distPrev > 1e-6f)) return false;
-    sv.wPrev = toPrev / sv.distPrev;
+    if (!(sv.distPrev > 1e-6)) return false;
+    sv.wPrev = (1.0 / sv.distPrev) * toPrev;
     if (i + 1 < count) {
-      const float3 toNext{segment(point, vertices[i + 1].point)};
+      const double3 toNext{vertices[i + 1].point - point};
       sv.distNext = length(toNext);
-      if (!(sv.distNext > 1e-6f)) return false;
-      sv.wNext = toNext / sv.distNext;
+      if (!(sv.distNext > 1e-6)) return false;
+      sv.wNext = (1.0 / sv.distNext) * toNext;
     } else if (target.isInfinite) {
       sv.wNext = target.wl;
-      sv.distNext = 0.0f;
+      sv.distNext = 0.0;
     } else {
-      const float3 toLight{segment(point, target.point)};
+      const double3 toLight{target.point - point};
       sv.distNext = length(toLight);
-      if (!(sv.distNext > 1e-6f)) return false;
-      sv.wNext = toLight / sv.distNext;
+      if (!(sv.distNext > 1e-6)) return false;
+      sv.wNext = (1.0 / sv.distNext) * toLight;
     }
     // The generalized half vector of refraction, parallel to the normal
     // exactly when the segment pair obeys Snell's law.
-    const float3 h{chain[i].etaPrev * sv.wPrev + chain[i].etaNext * sv.wNext};
+    const double3 h{etaPrev * sv.wPrev + etaNext * sv.wNext};
     sv.hLen = length(h);
-    if (!(sv.hLen > 1e-6f)) return false;
-    sv.hHat = h / sv.hLen;
+    if (!(sv.hLen > 1e-6)) return false;
+    sv.hHat = (1.0 / sv.hLen) * h;
     // `h` points into the denser medium, so which side it lands on depends
     // on which side is denser. Orienting it onto the shading normal makes
     // it the microfacet normal the interface's own distribution is
     // expressed in, which is what an offset has to be measured against.
-    sv.hSign = dot(sv.hHat, geometry.normal) < 0.0f ? -1.0f : 1.0f;
-    sv.areaElement = length(cross(geometry.dPdu, geometry.dPdv));
-    // `|d h / d omega_next|`, being the refraction half-vector Jacobian
-    // times the cosine that converts its solid angle into the projected
-    // measure the constraint lives in.
-    sv.halfVectorJacobian =
-        absDot(sv.hHat, geometry.normal) * absDot(sv.wNext, sv.hHat) *
-        (chain[i].etaNext * chain[i].etaNext) / (sv.hLen * sv.hLen);
+    sv.hSign = dot(sv.hHat, n) < 0.0 ? -1.0 : 1.0;
     // The tangent frame the constraint projects onto, seeded from a
     // vector held FIXED for the whole walk, so the frame varies only
     // through the shading normal and the frame derivatives below are
@@ -237,11 +223,10 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
     // with the parameterization itself, a variation dNdu cannot see (a
     // flat cap rotates its azimuthal tangent with zero dN), and the
     // resulting Jacobian error stalls the walk.
-    const float3 n{geometry.normal};
-    const float3 g{frameSeeds[i] - dot(n, frameSeeds[i]) * n};
+    const double3 g{frameSeeds[i] - dot(n, frameSeeds[i]) * n};
     gLen[i] = length(g);
-    if (!(gLen[i] > 1e-6f)) return false;
-    sv.t1 = g / gLen[i];
+    if (!(gLen[i] > 1e-6)) return false;
+    sv.t1 = (1.0 / gLen[i]) * g;
     sv.t2 = cross(n, sv.t1);
     // The constraint is the oriented tangential half vector against the
     // offset this crossing is solved for. At zero offset the sign cancels
@@ -258,37 +243,37 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
   // the geometry query cannot provide).
   chainState.J.clear(2 * count);
   for (int i = 0; i < count; i++) {
-    const ManifoldVertexSeed &seed{chain[i]};
     const ManifoldWalkVertex &seedv{chainState[i]};
-    const float3 n{seedv.geometry.normal};
+    const double3 n{seedv.geometry.normal};
+    const double etaPrev{chain[i].etaPrev};
+    const double etaNext{chain[i].etaNext};
+    const double invDistPrev{1.0 / seedv.distPrev};
+    const double invDistNext{seedv.distNext > 0 ? 1.0 / seedv.distNext : 0.0};
+    const double invHLen{1.0 / seedv.hLen};
+    const double invGLen{1.0 / gLen[i]};
     for (int j = std::max(i - 1, 0); j <= std::min(i + 1, count - 1); j++) {
-      const std::array<float3, 2> dPde{chainState[j].geometry.dPdu,
-                                       chainState[j].geometry.dPdv};
+      const std::array<double3, 2> dPde{double3(chainState[j].geometry.dPdu),
+                                        double3(chainState[j].geometry.dPdv)};
       for (int k = 0; k < 2; k++) {
-        float3 dh{};
+        double3 dh{};
         if (j == i) {
-          dh =
-              seed.etaPrev * unitDirDeriv(seedv.wPrev, seedv.distPrev, dPde[k]);
+          dh = etaPrev * unitDirDeriv(seedv.wPrev, invDistPrev, dPde[k]);
           if (seedv.distNext > 0)
-            dh += seed.etaNext *
-                  unitDirDeriv(seedv.wNext, seedv.distNext, dPde[k]);
+            dh += etaNext * unitDirDeriv(seedv.wNext, invDistNext, dPde[k]);
         } else if (j == i - 1) {
-          dh = -seed.etaPrev *
-               unitDirDeriv(seedv.wPrev, seedv.distPrev, dPde[k]);
+          dh = -etaPrev * unitDirDeriv(seedv.wPrev, invDistPrev, dPde[k]);
         } else {
-          dh = -seed.etaNext *
-               unitDirDeriv(seedv.wNext, seedv.distNext, dPde[k]);
+          dh = -etaNext * unitDirDeriv(seedv.wNext, invDistNext, dPde[k]);
         }
-        const float3 dhHat{(dh - dot(seedv.hHat, dh) * seedv.hHat) /
-                           seedv.hLen};
-        float term1{dot(dhHat, seedv.t1)};
-        float term2{dot(dhHat, seedv.t2)};
+        const double3 dhHat{invHLen * (dh - dot(seedv.hHat, dh) * seedv.hHat)};
+        double term1{dot(dhHat, seedv.t1)};
+        double term2{dot(dhHat, seedv.t2)};
         if (j == i) {
-          const float3 a{frameSeeds[i]};
-          const float3 dn{k == 0 ? seedv.geometry.dNdu : seedv.geometry.dNdv};
-          const float3 dg{-(dot(n, a) * dn + dot(dn, a) * n)};
-          const float3 dt1{(dg - dot(seedv.t1, dg) * seedv.t1) / gLen[i]};
-          const float3 dt2{cross(dn, seedv.t1) + cross(n, dt1)};
+          const double3 a{frameSeeds[i]};
+          const double3 dn{k == 0 ? seedv.geometry.dNdu : seedv.geometry.dNdv};
+          const double3 dg{-(dot(n, a) * dn + dot(dn, a) * n)};
+          const double3 dt1{invGLen * (dg - dot(seedv.t1, dg) * seedv.t1)};
+          const double3 dt2{cross(dn, seedv.t1) + cross(n, dt1)};
           term1 += dot(seedv.hHat, dt1);
           term2 += dot(seedv.hHat, dt2);
         }
@@ -310,8 +295,8 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
 // the surface parameterization, and the area elements convert it back out.
 // Their ratio is what is invariant; neither factor is on its own, and
 // neither stays in float's range either, both scaling as the
-// parameterization to the power of the dimension. So the whole product
-// accumulates in double and narrows once, after the ratio is taken.
+// parameterization to the power of the dimension. So the product narrows
+// once, after the ratio is taken.
 [[nodiscard]] bool computeOffsetJacobian(const ChainState &chainState,
                                          double detJ, const double3 &receiver,
                                          const ManifoldTarget &target,
@@ -322,13 +307,14 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
   double factor{1.0 / std::abs(detJ)};
   for (int i = 0; i < count; i++) {
     const ManifoldWalkVertex &sv{chainState[i]};
-    if (!(sv.distPrev > 0.0f)) return false;
+    if (!(sv.distPrev > 0.0)) return false;
     // Projected against the geometric normal: the area-to-solid-angle
     // factor is a property of the facet, not of the interpolated normal
     // the constraint is solved against.
-    const double distPrev{sv.distPrev};
-    factor *= absDot(sv.wPrev, sv.geometry.Ng) * sv.areaElement /
-              (distPrev * distPrev);
+    factor *=
+        absDot(sv.wPrev, double3(sv.geometry.Ng)) *
+        length(cross(double3(sv.geometry.dPdu), double3(sv.geometry.dPdv))) /
+        (sv.distPrev * sv.distPrev);
   }
   // The light-side correction, carrying the geometry term across from the
   // straight line the sampler measured in to the segment that arrives. A
@@ -342,18 +328,19 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
   // selftest's finite mirror is what caught its absence.
   if (!target.isInfinite) {
     const ManifoldWalkVertex &sv{chainState[last]};
-    const float distStraight{length(segment(receiver, target.point))};
-    const float distNext{sv.distNext};
-    if (!(distStraight > 0.0f) || !(distNext > 0.0f)) return false;
-    const float distFactor{distStraight / distNext};
+    const double3 wl{target.wl};
+    const double3 normal{target.normal};
+    const double distStraight{length(target.point - receiver)};
+    if (!(distStraight > 0.0) || !(sv.distNext > 0.0)) return false;
+    const double distFactor{distStraight / sv.distNext};
     factor *= distFactor * distFactor;
-    if (lengthSquared(target.normal) > 0.0f) {
-      const float cosStraight{absDot(target.normal, target.wl)};
-      const float cosNext{absDot(target.normal, sv.wNext)};
-      if (!(cosStraight > 0.0f)) return false;
+    if (lengthSquared(normal) > 0.0) {
+      const double cosStraight{absDot(normal, wl)};
+      const double cosNext{absDot(normal, sv.wNext)};
+      if (!(cosStraight > 0.0)) return false;
       factor *= cosNext / cosStraight;
     } else {
-      factor *= absDot(target.wl, sv.wNext);
+      factor *= absDot(wl, sv.wNext);
     }
   }
   offsetJacobian = static_cast<float>(factor);
@@ -365,7 +352,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
 // jitter has moved, since the frame has to be the same in every walk of an
 // estimate; see `ManifoldVertexSeed::frameSeed`.
 void buildFrameSeeds(const ManifoldSurfaces &surfaces,
-                     const ManifoldChain &chain, float3 *frameSeeds) {
+                     const ManifoldChain &chain, double3 *frameSeeds) {
   for (int i = 0; i < chain.size(); i++) {
     const float3 &seed{chain[i].frameSeed};
     frameSeeds[i] = lengthSquared(seed) > 0.0f
@@ -434,11 +421,11 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   using Outcome = ManifoldWalkReport::Outcome;
   using Failure = ManifoldWalkReport::Failure;
   int iterationsDone{0};
-  float residual{0.0f};
+  double residual{0.0};
   const auto finish{[&](Outcome outcome, Failure failure = Failure::NONE) {
     if (report) {
       report->iterations = iterationsDone;
-      report->residual = residual;
+      report->residual = static_cast<float>(residual);
       report->outcome = outcome;
       report->failure = failure;
     }
@@ -460,9 +447,9 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   const size_t bandSize{static_cast<size_t>(maxDim) * BAND_STRIDE};
   ManifoldVertex *const vertices{scratch.vertices.data()};
   ManifoldVertex *const stepVertices{vertices + scratch.maxDepth};
-  float3 *const frameSeeds{scratch.vectors.data()};
-  float3 *const steps{frameSeeds + scratch.maxDepth};
-  float *const rhs{scratch.rhs.data()};
+  double3 *const frameSeeds{scratch.vectors.data()};
+  double3 *const steps{frameSeeds + scratch.maxDepth};
+  double *const rhs{scratch.rhs.data()};
   // The elimination matrix, which the Newton step destroys every
   // iteration.
   const BandView A{scratch.jacobians.data() + 2 * bandSize};
@@ -478,16 +465,16 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       const float2 &jitter{chain[i].seedJitter};
       if (lengthSquared(jitter) > 0.0f) {
         float3 normal{}, t1{}, t2{};
-        if (!buildManifoldSeedFrame(surfaces, vertices[i], frameSeeds[i],
-                                    normal, t1, t2))
+        if (!buildManifoldSeedFrame(surfaces, vertices[i],
+                                    float3(frameSeeds[i]), normal, t1, t2))
           return finish(Outcome::DIVERGED, Failure::START);
-        const float scale{length(segment(receiver, vertices[i].point))};
+        const double scale{length(vertices[i].point - receiver)};
         ManifoldVertex moved;
-        if (!surfaces.project(
-                chain[i].vertex, origin,
-                vertices[i].point +
-                    double3(scale * (jitter.x * t1 + jitter.y * t2)),
-                moved))
+        if (!surfaces.project(chain[i].vertex, origin,
+                              vertices[i].point +
+                                  scale *
+                                      double3(jitter.x * t1 + jitter.y * t2),
+                              moved))
           return finish(Outcome::DIVERGED, Failure::START);
         vertices[i] = moved;
       }
@@ -535,16 +522,15 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
     // cannot fling any vertex across the scene, and measured against the
     // distance to the receiver, which is the scale the arrival side
     // judges the same answer at.
-    float maxStepLen{};
-    float maxStepFraction{};
-    float minDist{(*state)[0].distPrev};
+    double maxStepLen{};
+    double maxStepFraction{};
+    double minDist{(*state)[0].distPrev};
     for (int i = 0; i < count; i++) {
       const ManifoldWalkVertex &sv{(*state)[i]};
-      steps[i] = rhs[2 * i + 0] * sv.geometry.dPdu + //
-                 rhs[2 * i + 1] * sv.geometry.dPdv;
-      const float stepLen{length(steps[i])};
-      const float scale{
-          std::max(1e-3f, length(segment(receiver, vertices[i].point)))};
+      steps[i] = rhs[2 * i + 0] * double3(sv.geometry.dPdu) +
+                 rhs[2 * i + 1] * double3(sv.geometry.dPdv);
+      const double stepLen{length(steps[i])};
+      const double scale{std::max(1e-3, length(vertices[i].point - receiver))};
       maxStepLen = std::max(maxStepLen, stepLen);
       maxStepFraction = std::max(maxStepFraction, stepLen / scale);
       minDist = std::min(minDist, sv.distPrev);
@@ -567,21 +553,20 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
       hasConverged = true;
       break;
     }
-    if (!(maxStepLen > 0.0f))
-      return finish(Outcome::DIVERGED, Failure::STALLED);
-    float beta{1.0f};
-    if (maxStepLen > 0.5f * minDist) beta = 0.5f * minDist / maxStepLen;
+    if (!(maxStepLen > 0.0)) return finish(Outcome::DIVERGED, Failure::STALLED);
+    double beta{1.0};
+    if (maxStepLen > 0.5 * minDist) beta = 0.5 * minDist / maxStepLen;
     // Damped Newton: re-anchor each stepped vertex by casting from its
     // updated predecessor, and halve the step until the residual
     // decreases.
     bool isAccepted{false};
     bool anyProjected{false};
-    for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5f) {
+    for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5) {
       double3 origin{receiver};
       bool isProjected{true};
       for (int i = 0; i < count; i++) {
         if (!surfaces.project(chain[i].vertex, origin,
-                              vertices[i].point + double3(beta * steps[i]),
+                              vertices[i].point + beta * steps[i],
                               stepVertices[i])) {
           isProjected = false;
           break;
@@ -620,26 +605,32 @@ bool solveManifoldConnection(const ManifoldSurfaces &surfaces,
   // straight segment whose side it has to have kept.
   for (int i = 0; i < count; i++) {
     const ManifoldWalkVertex &sv{(*state)[i]};
-    const float sidePrev{dot(sv.wPrev, sv.geometry.normal)};
-    const float sideNext{dot(sv.wNext, sv.geometry.normal)};
-    const bool isCrossing{chain[i].isReflect
-                              ? sidePrev * sideNext > 0.0f &&
-                                    dot(sv.wPrev, sv.geometry.Ng) *
-                                            dot(sv.wNext, sv.geometry.Ng) >
-                                        0.0f
-                              : sidePrev * sideNext < 0.0f &&
-                                    -sidePrev * chain[i].sideSign > 0.0f};
+    const double3 n{sv.geometry.normal};
+    const double3 Ng{sv.geometry.Ng};
+    const double sidePrev{dot(sv.wPrev, n)};
+    const double sideNext{dot(sv.wNext, n)};
+    const bool isCrossing{
+        chain[i].isReflect ? sidePrev * sideNext > 0.0 &&
+                                 dot(sv.wPrev, Ng) * dot(sv.wNext, Ng) > 0.0
+                           : sidePrev * sideNext < 0.0 &&
+                                 -sidePrev * double(chain[i].sideSign) > 0.0};
     if (!isCrossing) return finish(Outcome::REJECTED);
     ManifoldConnectionVertex &vertex{connection.vertices[i]};
     vertex.vertex = vertices[i];
     vertex.geometry = sv.geometry;
-    vertex.wPrev = sv.wPrev;
-    vertex.wNext = sv.wNext;
-    vertex.cosPrev = std::abs(sidePrev);
-    vertex.cosNext = std::abs(sideNext);
-    vertex.halfVectorJacobian = sv.halfVectorJacobian;
+    vertex.wPrev = float3(sv.wPrev);
+    vertex.wNext = float3(sv.wNext);
+    vertex.cosPrev = static_cast<float>(std::abs(sidePrev));
+    vertex.cosNext = static_cast<float>(std::abs(sideNext));
+    // `|d h / d omega_next|`, being the refraction half-vector Jacobian
+    // times the cosine that converts its solid angle into the projected
+    // measure the constraint lives in.
+    const double etaNext{chain[i].etaNext};
+    vertex.halfVectorJacobian =
+        static_cast<float>(absDot(sv.hHat, n) * absDot(sv.wNext, sv.hHat) *
+                           (etaNext * etaNext) / (sv.hLen * sv.hLen));
   }
-  connection.wr = -(*state)[0].wPrev;
+  connection.wr = float3(-(*state)[0].wPrev);
   if (!computeOffsetJacobian(*state, detJ, receiver, target,
                              connection.offsetJacobian))
     return finish(Outcome::REJECTED);
@@ -674,9 +665,9 @@ bool isSameManifoldSolution(const double3 &receiver,
   const int numCrossings{static_cast<int>(a.points.size())};
   if (numCrossings != b.size()) return false;
   for (int i = 0; i < numCrossings; i++) {
-    const float scale{std::max(1e-3f, length(segment(receiver, a.points[i])))};
-    if (!(length(segment(a.points[i], b.vertices[i].vertex.point)) <
-          MANIFOLD_SOLUTION_IDENTITY_FRACTION * scale))
+    const double scale{std::max(1e-3, length(a.points[i] - receiver))};
+    if (!(length(b.vertices[i].vertex.point - a.points[i]) <
+          double(MANIFOLD_SOLUTION_IDENTITY_FRACTION) * scale))
       return false;
   }
   return true;

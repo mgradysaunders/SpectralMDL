@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <utility>
+#include <vector>
 
 #include "smdl/Manifold.h"
 
@@ -21,21 +22,25 @@ namespace {
 // bounces between: `project()` re-anchors onto the pinned vertex's own
 // plane, as the contract asks, so a vertex never migrates to another.
 // `scale` is the parameterization the measure is supposed to be
-// invariant to.
+// invariant to, and `normal` the shading normal, which need not be the
+// planes' own.
 class PlaneSurfaces final : public smdl::ManifoldSurfaces {
 public:
   PlaneSurfaces() = default;
 
   explicit PlaneSurfaces(float scale) : mScale{scale} {}
 
+  PlaneSurfaces(float scale, const float3 &normal)
+      : mScale{scale}, mNormal{normal} {}
+
   [[nodiscard]] bool
   evaluateGeometry(const smdl::ManifoldVertex &,
                    smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
-    geometry.normal = float3(0.0f, 0.0f, 1.0f);
+    geometry.normal = mNormal;
     geometry.dPdu = float3(mScale, 0.0f, 0.0f);
     geometry.dPdv = float3(0.0f, mScale, 0.0f);
-    geometry.Ng = geometry.normal;
+    geometry.Ng = float3(0.0f, 0.0f, 1.0f);
     return true;
   }
 
@@ -57,6 +62,7 @@ public:
 
 private:
   float mScale{1.0f};
+  float3 mNormal{0.0f, 0.0f, 1.0f};
 };
 
 class SphereSurfaces final : public smdl::ManifoldSurfaces {
@@ -209,6 +215,38 @@ TEST_CASE("Manifold: a connection through a flat mirror") {
     CHECK(finiteDifferenceMeasure(surfaces, scratch, receiver, target, chain) ==
           doctest::Approx(connection.measure(chain)).epsilon(0.02));
   }
+}
+
+TEST_CASE("Manifold: a crossing is judged against the shading normal") {
+  // A mirror whose shading normal leans from its plane's. The material
+  // scatters about the shading normal, so the connection reflects about
+  // it, and the cosines it reports are against it.
+  smdl::ManifoldWalkScratch scratch{};
+  const float3 normal{normalize(float3(0.3f, -0.2f, 1.0f))};
+  const PlaneSurfaces surfaces{1.0f, normal};
+  const float3 receiver{0.5f, -0.8f, 1.2f};
+  smdl::ManifoldChain chain{};
+  chain.restart(1);
+  smdl::ManifoldVertexSeed &seed{chain.append()};
+  seed.vertex.point = float3(0.3f, 0.2f, 0.0f);
+  seed.vertex.coords = seed.vertex.point;
+  seed.etaPrev = seed.etaNext = 1.0f;
+  seed.sideSign = 1.0f;
+  seed.isReflect = true;
+  smdl::ManifoldTarget target{};
+  target.wl = normalize(float3(-0.2f, 0.35f, 0.91f));
+  smdl::ManifoldConnection connection{};
+  REQUIRE(smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
+                                        chain, connection));
+  const smdl::ManifoldConnectionVertex &crossing{connection.vertices[0]};
+  CHECK_NEAR(connection.wr, target.wl - 2.0f * dot(target.wl, normal) * normal,
+             1e-5f);
+  CHECK(crossing.cosPrev ==
+        doctest::Approx(dot(crossing.wPrev, normal)).epsilon(1e-5));
+  CHECK(crossing.cosNext ==
+        doctest::Approx(dot(crossing.wNext, normal)).epsilon(1e-5));
+  // Which the cosine against the plane's own normal is not.
+  CHECK(std::abs(crossing.cosPrev - crossing.wPrev.z) > 0.05f);
 }
 
 TEST_CASE("Manifold: a chain of planar mirrors") {
@@ -421,19 +459,22 @@ TEST_CASE("Manifold: a slab is solved however thin and wherever it stands") {
   // Snell's law, which is the closed form the walk is held to. The
   // segment is as long as the pane is thick, and what the walk makes of
   // it must not depend on how many digits the pane's coordinates spend
-  // on where it stands.
+  // on where it stands, nor the measure on how far the receiver stands
+  // from a pane that thin: the constraint Jacobian's entries are of the
+  // order of one over the thickness, and its determinant is what they
+  // leave of one over the distance.
   constexpr float IOR{1.5f};
   smdl::ManifoldWalkScratch scratch{};
   const PlaneSurfaces surfaces{};
   const auto solveSlab{[&](const double3 &receiver, const float3 &wl,
-                           double thickness, bool isRounded) {
+                           double distance, double thickness, bool isRounded) {
     smdl::ManifoldChain chain{};
     chain.restart(2);
     chain.residualTolerance = smdl::MANIFOLD_RESIDUAL;
     // Seeded where the straight line crosses, as a discovery would.
     for (int i = 0; i < 2; i++) {
       smdl::ManifoldVertexSeed &seed{chain.append()};
-      const double z{1.0 + (i == 0 ? 0.0 : thickness)};
+      const double z{distance + (i == 0 ? 0.0 : thickness)};
       double3 point{receiver + (z - receiver.z) / double(wl.z) * double3(wl)};
       point.z = z;
       seed.vertex.point = isRounded ? double3(float3(point)) : point;
@@ -457,29 +498,238 @@ TEST_CASE("Manifold: a slab is solved however thin and wherever it stands") {
     const double sinOutside{std::sqrt(1.0 - double(wl.z) * double(wl.z))};
     const double sinInside{std::sqrt(1.0 - inside.z * inside.z)};
     CHECK(std::abs(sinInside * double(IOR) - sinOutside) < 1e-5);
-    CHECK(std::abs(double(connection.measure(chain)) - 1.0) < 0.02);
+    CHECK(std::abs(double(connection.measure(chain)) - 1.0) < 2e-6);
   }};
   for (const double offset : {0.0, 100.0, 1000.0})
-    for (const double thickness : {0.2, 2e-3, 5e-4}) {
-      CAPTURE(offset);
-      CAPTURE(thickness);
-      for (int k = 0; k < 64; k++) {
-        const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
-        const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
-        solveSlab(double3(offset + 2.0 * a - 1.0, offset + 2.0 * b - 1.0, 0.0),
-                  normalize(float3(0.4f * float(b - 0.5), 0.5f, 0.85f)),
-                  thickness, /*isRounded=*/false);
+    for (const double distance : {1.0, 30.0, 1000.0})
+      for (const double thickness : {0.2, 2e-3, 5e-5}) {
+        CAPTURE(offset);
+        CAPTURE(distance);
+        CAPTURE(thickness);
+        for (int k = 0; k < 64; k++) {
+          const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+          const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+          solveSlab(
+              double3(offset + 2.0 * a - 1.0, offset + 2.0 * b - 1.0, 0.0),
+              normalize(float3(0.4f * float(b - 0.5), 0.5f, 0.85f)), distance,
+              thickness, /*isRounded=*/false);
+        }
       }
-    }
   SUBCASE("A seed rounded to a float is re-anchored by the first step") {
     for (int k = 0; k < 64; k++) {
       const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
       const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
       solveSlab(double3(100.0 + 2.0 * a - 1.0, 100.0 + 2.0 * b - 1.0, 0.0),
-                normalize(float3(0.4f * float(b - 0.5), 0.5f, 0.85f)), 2e-3,
-                /*isRounded=*/true);
+                normalize(float3(0.4f * float(b - 0.5), 0.5f, 0.85f)), 1.0,
+                2e-3, /*isRounded=*/true);
     }
   }
+}
+
+namespace {
+
+// The faces of lens elements along the z axis, each a sphere, in the
+// order a chain from a receiver below them crosses: into the glass at
+// the even ones and out of it at the odd. `ManifoldVertex::surface`
+// says which.
+class LensSurfaces final : public smdl::ManifoldSurfaces {
+public:
+  class Face final {
+  public:
+    double3 center{};
+    double radius{};
+    // The point of the face on the axis, which tells the place a line
+    // meets the face from the other place it meets the sphere.
+    double3 pole{};
+  };
+
+  // Biconvex elements of glass `thickness` on the axis, their faces of
+  // radius `radius`, the first at the height `distance` and each next
+  // one `gap` above the last.
+  LensSurfaces(int numElements, double distance, double thickness,
+               double radius, double gap) {
+    for (int i = 0; i < numElements; i++) {
+      const double z{distance + double(i) * (thickness + gap)};
+      mFaces.push_back(
+          {double3(0.0, 0.0, z + radius), radius, double3(0.0, 0.0, z)});
+      mFaces.push_back({double3(0.0, 0.0, z + thickness - radius), radius,
+                        double3(0.0, 0.0, z + thickness)});
+    }
+  }
+
+  [[nodiscard]] int faceCount() const noexcept {
+    return static_cast<int>(mFaces.size());
+  }
+
+  [[nodiscard]] bool
+  evaluateGeometry(const smdl::ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override {
+    const Face &face{mFaces[vertex.surface]};
+    geometry = {};
+    geometry.normal = normalize(float3(vertex.point - face.center));
+    geometry.dPdu = smdl::perpendicularTo(geometry.normal);
+    geometry.dPdv = cross(geometry.normal, geometry.dPdu);
+    geometry.dNdu = geometry.dPdu / float(face.radius);
+    geometry.dNdv = geometry.dPdv / float(face.radius);
+    geometry.Ng = geometry.normal;
+    return true;
+  }
+
+  [[nodiscard]] bool project(const smdl::ManifoldVertex &pin,
+                             const double3 &origin, const double3 &target,
+                             smdl::ManifoldVertex &moved) const override {
+    double3 dir{target - origin};
+    if (!smdl::tryNormalize(dir)) return false;
+    moved = {};
+    moved.surface = pin.surface;
+    return meet(int(pin.surface), origin, dir, moved.point);
+  }
+
+  // Where the line from `origin` along the unit `dir` meets a face.
+  [[nodiscard]] bool meet(int index, const double3 &origin, const double3 &dir,
+                          double3 &point) const {
+    const Face &face{mFaces[index]};
+    const double3 offset{origin - face.center};
+    const double b{dot(offset, dir)};
+    const double disc{b * b - lengthSquared(offset) +
+                      face.radius * face.radius};
+    if (!(disc > 0.0)) return false;
+    const double3 near{origin + (-b - std::sqrt(disc)) * dir};
+    const double3 far{origin + (-b + std::sqrt(disc)) * dir};
+    point = lengthSquared(near - face.pole) < lengthSquared(far - face.pole)
+                ? near
+                : far;
+    point = face.center + face.radius * normalize(point - face.center);
+    return dot(point - origin, dir) > 0.0;
+  }
+
+  // The direction a ray from `origin` along `dir` leaves the last face
+  // in, bent at every face by Snell's law, and where it crossed each:
+  // the trace a connection through the elements is held to.
+  [[nodiscard]] bool trace(double3 origin, double3 dir, double ior,
+                           std::vector<double3> &points,
+                           double3 &leaving) const {
+    points.resize(mFaces.size());
+    for (int i = 0; i < faceCount(); i++) {
+      if (!meet(i, origin, dir, points[i])) return false;
+      double3 normal{normalize(points[i] - mFaces[i].center)};
+      double cosFrom{-dot(dir, normal)};
+      if (cosFrom < 0.0) normal = -normal, cosFrom = -cosFrom;
+      const double ratio{i % 2 == 0 ? 1.0 / ior : ior};
+      const double cosToSquared{1.0 -
+                                ratio * ratio * (1.0 - cosFrom * cosFrom)};
+      if (!(cosToSquared > 0.0)) return false;
+      origin = points[i];
+      dir = normalize(ratio * dir +
+                      (ratio * cosFrom - std::sqrt(cosToSquared)) * normal);
+    }
+    leaving = dir;
+    return true;
+  }
+
+  // |d omega_r / d omega_l| where the ray that leaves `origin` along
+  // `wr` leaves the elements, by central differences of the trace.
+  [[nodiscard]] bool tracedMeasure(const double3 &origin, const double3 &wr,
+                                   double ior, double &measure) const {
+    constexpr double STEP{1e-5};
+    const double3 axes[2]{smdl::perpendicularTo(wr),
+                          cross(wr, smdl::perpendicularTo(wr))};
+    std::vector<double3> points{};
+    double3 derivs[2]{};
+    for (int k = 0; k < 2; k++) {
+      double3 leaving[2]{};
+      for (int side = 0; side < 2; side++)
+        if (!trace(origin, normalize(wr + (side == 0 ? STEP : -STEP) * axes[k]),
+                   ior, points, leaving[side]))
+          return false;
+      derivs[k] = (leaving[0] - leaving[1]) / (2.0 * STEP);
+    }
+    measure = 1.0 / length(cross(derivs[0], derivs[1]));
+    return std::isfinite(measure);
+  }
+
+private:
+  std::vector<Face> mFaces{};
+};
+
+} // namespace
+
+TEST_CASE("Manifold: the measure through thin glass is the traced one") {
+  // A lens, and two of them, of glass as thin as a wall of a vessel,
+  // under a distant light. The measure of a connection is the solid
+  // angle at the receiver to one of light, which a bundle of rays traced
+  // from the receiver in double says on its own. The glass being thin
+  // and its faces curved, the entries of the constraint Jacobian are of
+  // the order of one over the thickness and its determinant of one over
+  // the focal length or the receiver's distance, so the measure is what
+  // the arithmetic leaves of the difference. The walk is asked for a
+  // residual well under its own, so that where it stopped is not what
+  // is measured.
+  constexpr double IOR{1.5};
+  constexpr double TWO_PI{6.283185307179586};
+  smdl::ManifoldWalkScratch scratch{};
+  std::vector<double3> points{};
+  for (const int numElements : {1, 2})
+    for (const double thickness : {2e-3, 5e-4})
+      for (const double distance : {1.0, 10.0, 100.0}) {
+        CAPTURE(numElements);
+        CAPTURE(thickness);
+        CAPTURE(distance);
+        const LensSurfaces surfaces{numElements, distance, thickness,
+                                    /*radius=*/2.5, /*gap=*/0.05};
+        for (int k = 0; k < 64; k++) {
+          CAPTURE(k);
+          const double a{std::fmod(0.618034 * double(k + 1), 1.0)};
+          const double b{std::fmod(0.754878 * double(k + 2), 1.0)};
+          const double c{std::fmod(0.569840 * double(k + 3), 1.0)};
+          const double d{std::fmod(0.819173 * double(k + 4), 1.0)};
+          const double3 receiver{0.3 * std::sqrt(a) * std::cos(TWO_PI * b),
+                                 0.3 * std::sqrt(a) * std::sin(TWO_PI * b),
+                                 0.0};
+          // The light is wherever the ray through a point of the first
+          // element leaves for, so that there is a connection to find.
+          const double3 aim{0.02 * std::sqrt(c) * std::cos(TWO_PI * d),
+                            0.02 * std::sqrt(c) * std::sin(TWO_PI * d),
+                            distance};
+          double3 leaving{};
+          REQUIRE(surfaces.trace(receiver, normalize(aim - receiver), IOR,
+                                 points, leaving));
+          smdl::ManifoldTarget target{};
+          target.wl = normalize(float3(leaving));
+          // Seeded where a ray beside the connection crosses, by less
+          // than the glass is thick.
+          REQUIRE(surfaces.trace(
+              receiver,
+              normalize(aim + thickness * double3(b - 0.5, a - 0.5, 0.0) -
+                        receiver),
+              IOR, points, leaving));
+          smdl::ManifoldChain chain{};
+          chain.restart(surfaces.faceCount());
+          chain.residualTolerance = 1e-7f;
+          for (int i = 0; i < surfaces.faceCount(); i++) {
+            smdl::ManifoldVertexSeed &seed{chain.append()};
+            seed.vertex.point = points[i];
+            seed.vertex.surface = uint64_t(i);
+            seed.etaPrev = i % 2 == 0 ? 1.0f : float(IOR);
+            seed.etaNext = i % 2 == 0 ? float(IOR) : 1.0f;
+            seed.sideSign = i % 2 == 0 ? -1.0f : 1.0f;
+            // A frame seed well out of the tangent plane and of no unit
+            // length, as a renderer may hand one: the measure is of the
+            // connection and not of the frame it was solved in.
+            seed.frameSeed = float3(0.9f, -0.4f, 0.7f);
+          }
+          smdl::ManifoldConnection connection{};
+          smdl::ManifoldWalkReport report{};
+          REQUIRE(smdl::solveManifoldConnection(
+              surfaces, scratch, receiver, target, chain, connection, &report));
+          CHECK(report.residual < 1e-7f);
+          double traced{};
+          REQUIRE(surfaces.tracedMeasure(receiver, double3(connection.wr), IOR,
+                                         traced));
+          CHECK(std::abs(double(connection.measure(chain)) / traced - 1.0) <
+                1e-5);
+        }
+      }
 }
 
 namespace {
@@ -568,6 +818,90 @@ TEST_CASE("Manifold: a walk stops at a solution and not beside one") {
   // the walk to nothing.
   CHECK(numSolved >= 100);
   CHECK(leastCos < 0.2);
+}
+
+TEST_CASE("Manifold: two solutions are one within a fraction of the distance") {
+  // The same displacement of a crossing is the same solution seen from
+  // far and another seen from near: the fraction is of the distance from
+  // the receiver.
+  const double3 receiver{0.0, 0.0, 0.0};
+  for (const double distance : {0.1, 10.0}) {
+    CAPTURE(distance);
+    smdl::ManifoldConnection a{};
+    a.resize(1);
+    a.vertices[0].vertex.point = double3(0.0, 0.0, distance);
+    const auto isSameBeside{[&](double fraction) {
+      smdl::ManifoldConnection b{a};
+      b.vertices[0].vertex.point.x = fraction * distance;
+      return smdl::isSameManifoldSolution(receiver, a, b);
+    }};
+    CHECK(
+        isSameBeside(0.5 * double(smdl::MANIFOLD_SOLUTION_IDENTITY_FRACTION)));
+    CHECK(
+        !isSameBeside(2.0 * double(smdl::MANIFOLD_SOLUTION_IDENTITY_FRACTION)));
+  }
+}
+
+namespace {
+
+// The planes, keeping where every projection was aimed.
+class RecordingSurfaces final : public smdl::ManifoldSurfaces {
+public:
+  [[nodiscard]] bool
+  evaluateGeometry(const smdl::ManifoldVertex &vertex,
+                   smdl::ManifoldGeometry &geometry) const override {
+    return mPlanes.evaluateGeometry(vertex, geometry);
+  }
+
+  [[nodiscard]] bool project(const smdl::ManifoldVertex &pin,
+                             const double3 &origin, const double3 &target,
+                             smdl::ManifoldVertex &moved) const override {
+    targets.push_back(target);
+    return mPlanes.project(pin, origin, target, moved);
+  }
+
+  mutable std::vector<double3> targets{};
+
+private:
+  PlaneSurfaces mPlanes{};
+};
+
+} // namespace
+
+TEST_CASE("Manifold: a jittered start is displaced by a fraction of the "
+          "distance") {
+  // The jitter is in units of the distance from the receiver to the
+  // seed, along the walk's own tangents there, and the start is where a
+  // cast from the receiver toward the displaced point lands.
+  smdl::ManifoldWalkScratch scratch{};
+  const RecordingSurfaces surfaces{};
+  const double3 receiver{0.5, -0.8, 4.0};
+  smdl::ManifoldChain chain{};
+  chain.restart(1);
+  smdl::ManifoldVertexSeed &seed{chain.append()};
+  seed.vertex.point = double3(0.3, 0.2, 0.0);
+  seed.vertex.coords = float3(seed.vertex.point);
+  seed.etaPrev = seed.etaNext = 1.0f;
+  seed.sideSign = 1.0f;
+  seed.isReflect = true;
+  seed.frameSeed = float3(1.0f, 0.0f, 0.0f);
+  seed.seedJitter = float2(0.05f, -0.02f);
+  smdl::ManifoldTarget target{};
+  target.wl = normalize(float3(-0.2f, 0.35f, 0.91f));
+  smdl::ManifoldConnection connection{};
+  REQUIRE(smdl::solveManifoldConnection(surfaces, scratch, receiver, target,
+                                        chain, connection));
+  REQUIRE(!surfaces.targets.empty());
+  const double distance{length(seed.vertex.point - receiver)};
+  // The plane's normal is z and the frame seed x, so the tangents are x
+  // and y.
+  CHECK_NEAR(surfaces.targets[0],
+             seed.vertex.point + distance * double3(double(seed.seedJitter.x),
+                                                    double(seed.seedJitter.y),
+                                                    0.0),
+             1e-6);
+  // And the walk finds the mirror's one connection from there.
+  CHECK(connection.measure(chain) == doctest::Approx(1.0).epsilon(1e-3));
 }
 
 TEST_CASE("Manifold: the trials a reciprocal walk counts") {
