@@ -7,6 +7,9 @@
 #include "smdl/Resource/Image.h"
 
 #include <array>
+#include <fstream>
+#include <memory>
+#include <mutex>
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
@@ -27,7 +30,7 @@ extern "C" {
 #define STBI_ONLY_HDR 1
 #define STB_IMAGE_STATIC 1
 #define STB_IMAGE_IMPLEMENTATION 1
-#include "thirdparty/stb_image.h"
+#include "thirdparty/stb/stb_image.h"
 
 #define STBIW_ASSERT(X) ((void)0)
 #define STBIW_MALLOC(sz) ::smdl::Image::image_malloc(sz)
@@ -35,7 +38,7 @@ extern "C" {
 #define STBIW_FREE(p) ::smdl::Image::image_free(p)
 #define STB_IMAGE_WRITE_STATIC 1
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
-#include "thirdparty/stb_image_write.h"
+#include "thirdparty/stb/stb_image_write.h"
 } // extern "C"
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -53,79 +56,17 @@ extern "C" {
 #define STBIR_FREE(p, user) ::smdl::Image::image_free(p)
 #define STB_IMAGE_RESIZE_STATIC 1
 #define STB_IMAGE_RESIZE_IMPLEMENTATION 1
-#include "thirdparty/stb_image_resize2.h"
+#include "thirdparty/stb/stb_image_resize2.h"
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
-#define TINYEXR_MALLOC(sz) ::smdl::Image::image_malloc(sz)
-#define TINYEXR_CALLOC(n, sz) ::smdl::Image::image_calloc(n, sz)
-#define TINYEXR_FREE(p) ::smdl::Image::image_free(p)
-#define TINYEXR_USE_MINIZ 1
-#define TINYEXR_USE_THREAD 0
-#define TINYEXR_IMPLEMENTATION 1
-#include "thirdparty/tinyexr.h"
+#include "thirdparty/tinyexr/exr.h"
 
-namespace tinyexr {
-
-namespace {
-[[nodiscard]] const EXRChannelInfo *FindChannel(const EXRHeader &header,
-                                                std::string_view name) {
-  for (int iC = 0; iC < header.num_channels; iC++)
-    if (header.channels[iC].name == name) return &header.channels[iC];
-  return nullptr;
-}
-
-[[nodiscard]] size_t GetPixelSize(const EXRChannelInfo &info) {
-  return info.pixel_type == TINYEXR_PIXELTYPE_HALF ? 2 : 4;
-}
-
-void ForEachPixel(
-    const EXRHeader &header, const EXRImage &image,
-    const std::function<void(int iX, int iY, int iC, const void *pixel,
-                             size_t pixelSize)> &callback) {
-  if (header.tiled) {
-    size_t nTileX{size_t(header.tile_size_x)};
-    size_t nTileY{size_t(header.tile_size_y)};
-    size_t nC{size_t(header.num_channels)};
-    for (size_t iTile = 0; iTile < size_t(image.num_tiles); iTile++) {
-      EXRTile &tile{image.tiles[iTile]};
-      size_t i{};
-      for (size_t iTileY = 0; iTileY < nTileY; iTileY++) {
-        for (size_t iTileX = 0; iTileX < nTileX; iTileX++) {
-          size_t iX{tile.offset_x * nTileX + iTileX};
-          size_t iY{tile.offset_y * nTileY + iTileY};
-          if (iX < size_t(image.width) && iY < size_t(image.height)) {
-            for (size_t iC = 0; iC < nC; iC++) {
-              size_t pixelSize{GetPixelSize(header.channels[iC])};
-              callback(int(iX), int(iY), int(iC),
-                       tile.images[iC] + pixelSize * i, pixelSize);
-            }
-          }
-          i++;
-        }
-      }
-    }
-  } else {
-    size_t nX{size_t(image.width)};
-    size_t nY{size_t(image.height)};
-    size_t nC{size_t(header.num_channels)};
-    size_t i{};
-    for (size_t iY = 0; iY < nY; iY++) {
-      for (size_t iX = 0; iX < nX; iX++) {
-        for (size_t iC = 0; iC < nC; iC++) {
-          size_t pixelSize{GetPixelSize(header.channels[iC])};
-          callback(int(iX), int(iY), int(iC), image.images[iC] + pixelSize * i,
-                   pixelSize);
-        }
-        i++;
-      }
-    }
-  }
-}
-} // namespace
-
-} // namespace tinyexr
+// NOTE: Not in 'exr.h', but tinyexr's own test hook for the B44 tables,
+// and the only way to set them up ahead of a decode. See 'warmUpEXR()'.
+extern "C" void exr_b44_debug_tables(const uint16_t **exp_tbl,
+                                     const uint16_t **log_tbl);
 
 namespace smdl {
 
@@ -134,6 +75,114 @@ namespace {
 [[nodiscard]] std::string stbFailureReason() {
   const char *reason{stbi_failure_reason()};
   return reason ? reason : "unknown error";
+}
+
+// Routes tinyexr's allocations through the same hooks as stb's.
+const exr_allocator EXRAllocator{
+    /*user=*/nullptr,
+    [](void *, size_t size) { return Image::image_malloc(size); },
+    [](void *, void *ptr) { Image::image_free(ptr); }};
+
+void throwIfEXRFailed(exr_result result, std::string_view what) {
+  if (!EXR_OK(result))
+    throw Error(concat(what, ": ", exr_result_string(result)));
+}
+
+// Whether the file starts with the EXR magic number. A file that cannot be
+// opened, or is too short to hold one, is not an EXR.
+[[nodiscard]] bool isEXRFile(const std::string &fileName) {
+  char magic[4]{};
+  std::ifstream stream{fileName, std::ios::binary};
+  return stream.read(magic, sizeof(magic)) &&
+         exr_is_exr_memory(magic, sizeof(magic));
+}
+
+struct EXRReaderDeleter final {
+  void operator()(exr_reader *reader) const noexcept {
+    exr_reader_close(reader);
+  }
+};
+
+using EXRReaderPtr = std::unique_ptr<exr_reader, EXRReaderDeleter>;
+
+// Open the file and parse its header. NOTE: The reader holds the whole
+// file in memory until it closes.
+[[nodiscard]] EXRReaderPtr openEXR(const std::string &fileName) {
+  exr_reader *ptr{};
+  throwIfEXRFailed(
+      exr_reader_open_file(fileName.c_str(), &EXRAllocator, &ptr),
+      "Cannot open EXR");
+  EXRReaderPtr reader{ptr};
+  throwIfEXRFailed(exr_reader_parse_header(reader.get()),
+                   "Cannot parse EXR header");
+  return reader;
+}
+
+// Set up, exactly once, the tables tinyexr otherwise sets up lazily and
+// without synchronization the first time a decode or encode needs them,
+// since 'finishLoad()' may be called from many threads at once. Those are
+// the SIMD dispatch table (with the CPU detection behind it) and the B44
+// tables. The only other such tables serve the HTJ2K encoder, which never
+// runs here.
+void warmUpEXR() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    exr_half_to_float(nullptr, nullptr, 0);
+    exr_b44_debug_tables(nullptr, nullptr);
+  });
+}
+
+// The channels of an EXR that load into an image, and what they load as.
+struct EXRChannels final {
+  // The number of image channels, 1 or 4.
+  int numChannels{};
+
+  // The EXR channel index for each image channel, or -1 for a missing
+  // alpha channel.
+  std::array<int, 4> indices{-1, -1, -1, -1};
+
+  // The pixel type all of them share.
+  exr_pixel_type pixelType{};
+};
+
+// A 1-channel EXR loads its one channel whatever its name, and any other
+// loads 'R', 'G', 'B', and, if present, 'A'.
+[[nodiscard]] EXRChannels selectEXRChannels(const exr_header &header) {
+  const auto findChannel{[&](std::string_view name) {
+    for (int i = 0; i < header.num_channels; i++)
+      if (header.channels[i].name == name) return i;
+    return -1;
+  }};
+  EXRChannels result{};
+  if (header.num_channels == 1) {
+    result.numChannels = 1;
+    result.indices[0] = 0;
+  } else {
+    result.numChannels = 4;
+    result.indices = {findChannel("R"), findChannel("G"), findChannel("B"),
+                      findChannel("A")};
+    if (result.indices[0] < 0)
+      throw Error("Expected EXR channel 'R' is missing");
+    if (result.indices[1] < 0)
+      throw Error("Expected EXR channel 'G' is missing");
+    if (result.indices[2] < 0)
+      throw Error("Expected EXR channel 'B' is missing");
+    // NOTE: We allow missing 'A' channel!
+  }
+  result.pixelType = header.channels[result.indices[0]].pixel_type;
+  for (int index : result.indices) {
+    if (index < 0) continue;
+    const exr_channel &channel{header.channels[index]};
+    // NOTE: A subsampled channel decodes to fewer samples than the data
+    // window has pixels.
+    if (channel.x_sampling != 1 || channel.y_sampling != 1)
+      throw Error("Subsampled EXR channels are not supported");
+    if (channel.pixel_type != result.pixelType)
+      throw Error("Inconsistent EXR pixel types");
+  }
+  if (result.pixelType == EXR_PIXEL_UINT)
+    throw Error("Uint EXR is not supported");
+  return result;
 }
 } // namespace
 
@@ -257,137 +306,70 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                         size_t(mTexelSize));
         stbi_image_free(ptr);
       };
-    } else if (EXRVersion version{};
-               ParseEXRVersionFromFile(&version, fileName.c_str()) ==
-               TINYEXR_SUCCESS) {
+    } else if (isEXRFile(fileName)) {
+      EXRReaderPtr reader{openEXR(fileName)};
+      const exr_header &header{*exr_reader_part_header(reader.get(), 0)};
       // Fail if deep or multipart!
-      if (version.non_image || version.multipart)
+      if (exr_reader_num_parts(reader.get()) != 1 ||
+          header.part_type == EXR_PART_DEEP_SCANLINE ||
+          header.part_type == EXR_PART_DEEP_TILED)
         throw Error("Deep or multipart EXR is not supported");
-      // Parse the header. Hold it in a shared pointer, so that exactly
-      // 1 'FreeEXRHeader()' happens no matter whether the finish
-      // function below runs, throws, is copied, or is dropped without
-      // ever being called.
-      std::shared_ptr<EXRHeader> header{new EXRHeader{}, [](EXRHeader *ptr) {
-                                          FreeEXRHeader(ptr);
-                                          delete ptr;
-                                        }};
-      InitEXRHeader(header.get());
-      const char *err{};
-      if (ParseEXRHeaderFromFile(header.get(), &version, fileName.c_str(),
-                                 &err) != TINYEXR_SUCCESS) {
-        std::string message{
-            concat("Cannot parse EXR header: ", err ? err : "unknown error")};
-        FreeEXRErrorMessage(err);
-        throw Error(std::move(message));
-      }
-      int nX{header->data_window.max_x - header->data_window.min_x + 1};
-      int nY{header->data_window.max_y - header->data_window.min_y + 1};
+      int nX{header.data_window.max_x - header.data_window.min_x + 1};
+      int nY{header.data_window.max_y - header.data_window.min_y + 1};
       if (nX < 0 || nY < 0)
         throw Error("Cannot parse EXR header: invalid data window");
-
-      const auto setFormatFromPixelType{[&](int pixelType) {
-        if (pixelType == TINYEXR_PIXELTYPE_UINT)
-          throw Error("Uint EXR is not supported");
-        else if (pixelType == TINYEXR_PIXELTYPE_HALF)
-          mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
-        else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
-          mFormat = FLOAT32, mTexelSize = 4 * mNumChannels;
-        else
-          SMDL_SANITY_CHECK_MSG(false, "unknown EXR pixel type");
-      }};
-      if (header->num_channels == 1) {
-        // 1-channel R
-        mNumChannels = 1;
-        setFormatFromPixelType(header->channels[0].pixel_type);
-      } else {
-        // 4-channel RGBA
-        mNumChannels = 4;
-        const EXRChannelInfo *channels[4] = {
-            tinyexr::FindChannel(*header, "R"), //
-            tinyexr::FindChannel(*header, "G"),
-            tinyexr::FindChannel(*header, "B"),
-            tinyexr::FindChannel(*header, "A")};
-        if (!channels[0]) throw Error("Expected EXR channel 'R' is missing");
-        if (!channels[1]) throw Error("Expected EXR channel 'G' is missing");
-        if (!channels[2]) throw Error("Expected EXR channel 'B' is missing");
-        // NOTE: We allow missing 'A' channel!
-        for (auto channel : channels)
-          if (channel && channel->pixel_type != channels[0]->pixel_type)
-            throw Error("Inconsistent EXR pixel types");
-        setFormatFromPixelType(channels[0]->pixel_type);
-      }
+      const EXRChannels channels{selectEXRChannels(header)};
+      mNumChannels = channels.numChannels;
+      if (channels.pixelType == EXR_PIXEL_HALF)
+        mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
+      else
+        mFormat = FLOAT32, mTexelSize = 4 * mNumChannels;
       mNumTexelsX = nX;
       mNumTexelsY = nY;
-      mFinishLoad = [this, fileName, header]() {
-        EXRImage image{};
-        InitEXRImage(&image);
-        const char *err{};
-        if (LoadEXRImageFromFile(&image, header.get(), fileName.c_str(),
-                                 &err) != TINYEXR_SUCCESS) {
-          std::string message{
-              concat("Cannot decode EXR: ", err ? err : "unknown error")};
-          FreeEXRErrorMessage(err);
-          throw Error(std::move(message));
+      // NOTE: The reader closes here and the finish function below opens
+      // another, rather than holding the whole file in memory until then.
+      mFinishLoad = [this, fileName]() {
+        warmUpEXR();
+        EXRReaderPtr reader{openEXR(fileName)};
+        // NOTE: A tiled EXR decodes to the same planar channels as a
+        // scanline EXR, taking the first level of a mipmapped one.
+        exr_part part{};
+        SMDL_DEFER([&part]() { exr_part_free(&EXRAllocator, &part); });
+        throwIfEXRFailed(exr_reader_read_part(reader.get(), 0, &part),
+                         "Cannot decode EXR");
+        // Select again from the decoded header rather than trusting what
+        // 'startLoad()' saw, which a file rewritten in between invalidates.
+        const EXRChannels channels{selectEXRChannels(part.header)};
+        if (channels.numChannels != mNumChannels ||
+            (channels.pixelType == EXR_PIXEL_HALF) != (mFormat == FLOAT16) ||
+            part.width != mNumTexelsX || part.height != mNumTexelsY)
+          throw Error("EXR changed since its header was parsed");
+        const size_t channelSize{size_t(mTexelSize / mNumChannels)};
+        const size_t numTexels{size_t(mNumTexelsX) * size_t(mNumTexelsY)};
+        for (int iC = 0; iC < mNumChannels; iC++) {
+          if (channels.indices[iC] < 0) continue;
+          const std::byte *src{
+              static_cast<const std::byte *>(part.images[channels.indices[iC]])};
+          std::byte *dst{mTexels.get() + channelSize * size_t(iC)};
+          for (size_t i = 0; i < numTexels; i++)
+            std::memcpy(dst + size_t(mTexelSize) * i, src + channelSize * i,
+                        channelSize);
         }
-        SMDL_DEFER([&image]() { FreeEXRImage(&image); });
-        SMDL_SANITY_CHECK(mNumTexelsX == image.width);
-        SMDL_SANITY_CHECK(mNumTexelsY == image.height);
-        if (mNumChannels == 1) {
-          // 1-channel R
-          tinyexr::ForEachPixel(
-              *header, image,
-              [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                size_t i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
-                std::byte *texel{mTexels.get() + size_t(mTexelSize) * i};
-                if (iC == 0) std::memcpy(texel, pixel, pixelSize);
-              });
-        } else {
-          // 4-channel RGBA
-          const EXRChannelInfo *channels[4] = {
-              tinyexr::FindChannel(*header, "R"),
-              tinyexr::FindChannel(*header, "G"),
-              tinyexr::FindChannel(*header, "B"),
-              tinyexr::FindChannel(*header, "A")};
-          // RGB Required!
-          int channelIndexR = int(channels[0] - &header->channels[0]);
-          int channelIndexG = int(channels[1] - &header->channels[0]);
-          int channelIndexB = int(channels[2] - &header->channels[0]);
-          int channelIndexA =
-              channels[3] ? int(channels[3] - &header->channels[0]) : -1;
-          tinyexr::ForEachPixel(
-              *header, image,
-              [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                size_t i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
-                std::byte *texel{mTexels.get() + size_t(mTexelSize) * i};
-                if (iC == channelIndexR) {
-                  std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
-                } else if (iC == channelIndexG) {
-                  std::memcpy(texel + 1 * pixelSize, pixel, pixelSize);
-                } else if (iC == channelIndexB) {
-                  std::memcpy(texel + 2 * pixelSize, pixel, pixelSize);
-                } else if (iC == channelIndexA) {
-                  std::memcpy(texel + 3 * pixelSize, pixel, pixelSize);
-                }
-              });
-          // If the alpha channel is missing, fill with 1.
-          if (!channels[3]) {
-            if (mFormat == FLOAT16) {
-              uint16_t one{0x3C00};
-              std::byte *itr{mTexels.get() + 6};
-              for (int i = 0; i < mNumTexelsX * mNumTexelsY; i++) {
-                std::memcpy(itr, &one, 2);
-                itr += mTexelSize;
-              }
-            } else if (mFormat == FLOAT32) {
-              float one{1.0f};
-              std::byte *itr{mTexels.get() + 12};
-              for (int i = 0; i < mNumTexelsX * mNumTexelsY; i++) {
-                std::memcpy(itr, &one, 4);
-                itr += mTexelSize;
-              }
-            } else {
-              SMDL_SANITY_CHECK_MSG(
-                  false, "format must be FLOAT16 or FLOAT32 by now!");
+        // If the alpha channel is missing, fill with 1.
+        if (mNumChannels == 4 && channels.indices[3] < 0) {
+          if (mFormat == FLOAT16) {
+            uint16_t one{0x3C00};
+            std::byte *itr{mTexels.get() + 6};
+            for (size_t i = 0; i < numTexels; i++) {
+              std::memcpy(itr, &one, 2);
+              itr += mTexelSize;
+            }
+          } else {
+            float one{1.0f};
+            std::byte *itr{mTexels.get() + 12};
+            for (size_t i = 0; i < numTexels; i++) {
+              std::memcpy(itr, &one, 4);
+              itr += mTexelSize;
             }
           }
         }
@@ -679,14 +661,19 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
   SMDL_SANITY_CHECK(numChannels == 1 || numChannels == 3 || numChannels == 4);
   SMDL_SANITY_CHECK(ptr);
   if (hasExtension(fileName, ".exr")) {
-    const char *message{};
-    if (SaveEXR(ptr, numTexelsX, numTexelsY, numChannels, /*save_as_fp16=*/0,
-                fileName.c_str(), &message) != TINYEXR_SUCCESS) {
-      Error error{concat("Cannot write ", SpellFilePath(fileName), ": ",
-                         message ? message : "unknown error")};
-      FreeEXRErrorMessage(message);
-      return error;
+    warmUpEXR();
+    exr_part part{};
+    SMDL_DEFER([&part]() { exr_part_free(&EXRAllocator, &part); });
+    exr_result result{exr_rgba_float_to_part(&EXRAllocator, ptr, numTexelsX,
+                                             numTexelsY, numChannels,
+                                             EXR_PIXEL_FLOAT, &part)};
+    if (EXR_OK(result)) {
+      const exr_image image{/*num_parts=*/1, &part, EXRAllocator};
+      result = exr_save_to_file(fileName.c_str(), &image, EXR_COMPRESSION_ZIP);
     }
+    if (!EXR_OK(result))
+      return Error(concat("Cannot write ", SpellFilePath(fileName), ": ",
+                          exr_result_string(result)));
     return std::nullopt;
   } else if (hasExtension(fileName, ".hdr")) {
     if (stbi_write_hdr(fileName.c_str(), numTexelsX, numTexelsY, numChannels,

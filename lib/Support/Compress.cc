@@ -2,7 +2,7 @@
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Strings.h"
 
-#include "../thirdparty/miniz.h"
+#include "../thirdparty/miniz/miniz.h"
 
 // The one-shot zlib codec every format in the project deflates through.
 // The buffers are whole files held in memory anyway, so there is no

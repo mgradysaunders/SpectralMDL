@@ -11,7 +11,7 @@
 #include "llvm/TargetParser/Host.h"
 
 #include "thirdparty/Versions.h"
-#include "thirdparty/miniz.h"
+#include "thirdparty/miniz/miniz.h"
 
 namespace smdl {
 

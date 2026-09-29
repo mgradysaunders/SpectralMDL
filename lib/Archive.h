@@ -3,7 +3,7 @@
 
 #include "smdl/Common.h"
 
-#include "thirdparty/miniz.h"
+#include "thirdparty/miniz/miniz.h"
 
 namespace smdl {
 

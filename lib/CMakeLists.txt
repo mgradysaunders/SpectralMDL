@@ -17,6 +17,54 @@ add_custom_target(
   COMMAND "$<TARGET_FILE:smdl>" test "tabulate.mdl"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler/Builtin/Albedo"
   )
+# The vendored tinyexr v3, a C11 library. zstd and libdeflate are left
+# out: tinyexr's own inflate serves ZIP, ZIPS, and PXR24, and ZSTD files
+# fail to load as unsupported. The CUDA and Vulkan backends and the
+# freestanding support are not vendored at all.
+set(
+  SMDL_TINYEXR_SOURCES
+    "thirdparty/tinyexr/exr_attr.c"
+    "thirdparty/tinyexr/exr_b44.c"
+    "thirdparty/tinyexr/exr_codec.c"
+    "thirdparty/tinyexr/exr_color.c"
+    "thirdparty/tinyexr/exr_convert.c"
+    "thirdparty/tinyexr/exr_core.c"
+    "thirdparty/tinyexr/exr_cpu.c"
+    "thirdparty/tinyexr/exr_deep.c"
+    "thirdparty/tinyexr/exr_deflate.c"
+    "thirdparty/tinyexr/exr_fpnge.c"
+    "thirdparty/tinyexr/exr_half.c"
+    "thirdparty/tinyexr/exr_jph.c"
+    "thirdparty/tinyexr/exr_jph_simd.c"
+    "thirdparty/tinyexr/exr_jph_simd_neon.c"
+    "thirdparty/tinyexr/exr_mip.c"
+    "thirdparty/tinyexr/exr_piz.c"
+    "thirdparty/tinyexr/exr_pxr24.c"
+    "thirdparty/tinyexr/exr_reader.c"
+    "thirdparty/tinyexr/exr_resize.c"
+    "thirdparty/tinyexr/exr_rle.c"
+    "thirdparty/tinyexr/exr_simd_neon.c"
+    "thirdparty/tinyexr/exr_simd_x86.c"
+    "thirdparty/tinyexr/exr_spectral.c"
+    "thirdparty/tinyexr/exr_stdio.c"
+    "thirdparty/tinyexr/exr_thread.c"
+    "thirdparty/tinyexr/exr_tonemap.c"
+    "thirdparty/tinyexr/exr_util_simd_neon.c"
+    "thirdparty/tinyexr/exr_util_simd_x86.c"
+    "thirdparty/tinyexr/exr_writer.c"
+    "thirdparty/tinyexr/exr_zip.c"
+  )
+set_source_files_properties(
+  ${SMDL_TINYEXR_SOURCES}
+  PROPERTIES
+    COMPILE_DEFINITIONS "EXR_NO_ZSTD"
+  )
+# Vendored code, so its warnings are not ours to fix.
+if(UNIX)
+  set_source_files_properties(
+    ${SMDL_TINYEXR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w"
+    )
+endif()
 add_library(
   SpectralMDL 
   SHARED
@@ -61,7 +109,8 @@ add_library(
     "Support/QualifiedName.cc"
     "Support/Strings.cc"
     "Support/Terminal.cc"
-    "thirdparty/miniz.c"
+    "thirdparty/miniz/miniz.c"
+    ${SMDL_TINYEXR_SOURCES}
   )
 add_library(
   ${PROJECT_NAME}::SpectralMDL ALIAS SpectralMDL
@@ -70,6 +119,7 @@ set_target_properties(
   SpectralMDL
   PROPERTIES
     CXX_VISIBILITY_PRESET hidden
+    C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     POSITION_INDEPENDENT_CODE ON
   )
@@ -78,6 +128,8 @@ set_target_properties(
   PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
     OUTPUT_NAME "SpectralMDL"
     VERSION "${PROJECT_VERSION}"
     SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
