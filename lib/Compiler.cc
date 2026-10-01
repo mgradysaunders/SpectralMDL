@@ -1197,9 +1197,11 @@ const Image &Compiler::loadImage(const std::string &fileName,
         return image.startLoad(fileName);
       })};
   // Named by content hash, so every reference to the same file resolves
-  // to one symbol and one set of texels.
-  mImageSymbolNames.try_emplace(
-      &image, concat("smdl.image.", std::string(fileHash->hash)));
+  // to one symbol and one set of texels. An image that failed to load
+  // has no texels to name.
+  if (image.hasPendingLoad())
+    mImageSymbolNames.try_emplace(
+        &image, concat("smdl.image.", std::string(fileHash->hash)));
   // The request is applied on every reference, not just the one that
   // decoded the image, so that it does not matter which reference comes
   // first: the mip levels are generated at the end of the compile, by

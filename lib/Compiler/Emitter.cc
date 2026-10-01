@@ -3100,7 +3100,17 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     }
     unsigned tileCountU{uint32_t(1)};
     unsigned tileCountV{uint32_t(1)};
+    // A file that is found and does not load was warned about by the
+    // load, and is left with no extent and no texels. Its tile is absent,
+    // exactly as if no file had resolved to it: the address of its texels
+    // must never be baked, because the optimizer takes the address of a
+    // symbol to be non-null and the texture would read as valid.
+    const auto hasTexels{[](const Image &image) {
+      return image.getNumTexelsX() > 0 && image.getNumTexelsY() > 0;
+    }};
     llvm::SmallVector<const Image *> images{};
+    // The first tile that loaded, which the rest must agree with.
+    std::optional<size_t> firstLoaded{};
     for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
       tileCountU = std::max(tileCountU, tileIndexU + 1);
       tileCountV = std::max(tileCountV, tileIndexV + 1);
@@ -3108,8 +3118,11 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       // errors and the mip chain requests are reported against it.
       images.push_back(&context.compiler.loadImage(
           filePath, resourceSourceLocation(srcLoc), useMipLevels, mipFilter));
-      if (images.back()->getFormat() != images.front()->getFormat() ||
-          images.back()->getNumChannels() != images.front()->getNumChannels()) {
+      if (!hasTexels(*images.back())) continue;
+      if (!firstLoaded) firstLoaded = images.size() - 1;
+      if (images.back()->getFormat() != images[*firstLoaded]->getFormat() ||
+          images.back()->getNumChannels() !=
+              images[*firstLoaded]->getNumChannels()) {
         // The tiles all come from one directory, so the file name is
         // enough to tell them apart.
         const auto describeTile{[&](size_t i) {
@@ -3123,12 +3136,13 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         context.compiler.logResourceWarningOnce(
             resourceSourceLocation(srcLoc), fileName,
             concat("Inconsistent image formats for ", SpellQuoted(fileName),
-                   ": ", describeTile(0), ", but ",
+                   ": ", describeTile(*firstLoaded), ", but ",
                    describeTile(images.size() - 1)));
         return invoke(texture2DType, {}, srcLoc);
       }
     }
-    PointerType *texelPtrType{texelPtrTypeOf(*images[0])};
+    if (!firstLoaded) return invoke(texture2DType, {}, srcLoc);
+    PointerType *texelPtrType{texelPtrTypeOf(*images[*firstLoaded])};
     // Only the level 0 texels of each tile are named; the higher
     // levels live contiguously behind them, at the offsets the tile
     // table below carries (see the layout note on 'texture_2d' in
@@ -3154,6 +3168,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
       auto &imagePath{resolvedImagePaths[i]};
       const Image *&image{images[i]};
+      if (!hasTexels(*image)) continue;
       unsigned insertPos{imagePath.tileIndexV * tileCountU +
                          imagePath.tileIndexU};
       valueTileBuffers = insert(valueTileBuffers,

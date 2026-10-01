@@ -1,9 +1,10 @@
 /// \file
 /// The resources a compile loads and caches: the warning a missing one
-/// raises and how often, the curve a spectrum library does not have, what
-/// each says in the log and in what order, the mip chain a texture bakes,
-/// the images an optimized module drops, and the one symbol per file the
-/// JIT defines.
+/// raises and how often, what an image that is found and does not load
+/// reads as, the curve a spectrum library does not have, what each says
+/// in the log and in what order, the mip chain a texture bakes, the
+/// images an optimized module drops, and the one symbol per file the JIT
+/// defines.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
@@ -63,6 +64,71 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
     CHECK(warnings.count("gone_a.png") == 1);
     CHECK(warnings.count("gone_b.png") == 1);
     CHECK(warnings.messages().size() == 2);
+  }
+}
+
+TEST_CASE("Compiler: an image that is found and does not load") {
+  TempDir tmpDir{"unloadable-image"};
+  // Found by name, and no decoder takes it: a load failure, where a name
+  // that resolves to nothing is a missing file. Optimized, because the
+  // optimizer is what takes the address of a symbol to be non-null, and
+  // a texture that baked the address of texels that were never allocated
+  // would read as valid and be sampled through a null base.
+  tmpDir.write("bad.png", "This is not an image!\n");
+  const uint8_t gray[4] = {0, 64, 128, 255};
+  auto runUnitTest{[&](std::string_view body) {
+    tmpDir.write("main.mdl", smdl::concat("#smdl\nimport ::tex::*;\n"
+                                          "unit_test \"The texture\" {\n",
+                                          body, "}\n"));
+    smdl::Compiler compiler{};
+    compiler.shouldEmitUnitTests = true;
+    if (std::string message{buildAll(compiler, {tmpDir / "main.mdl"}, nullptr,
+                                     smdl::OPT_LEVEL_O2)};
+        !message.empty())
+      return message;
+    StateStorage storage{compiler};
+    smdl::State state{storage.makeState()};
+    if (std::optional<smdl::Error> error{compiler.runUnitTests(state)})
+      return error->message;
+    return std::string();
+  }};
+  SUBCASE("The texture reads as invalid and samples black") {
+    const CollectedLog warnings{"bad.png"};
+    CHECK(
+        runUnitTest(
+            "  const auto t = texture_2d(\"bad.png\", tex::gamma_linear);\n"
+            "  #assert(!tex::texture_isvalid(t));\n"
+            "  #assert(tex::width(t) == 0);\n"
+            "  #assert(tex::height(t) == 0);\n"
+            "  #assert(#all(tex::lookup_float3(t, float2(0.5)) == 0.0));\n") ==
+        "");
+    REQUIRE(warnings.messages().size() == 1);
+    CHECK(warnings.warningCount() == 1);
+    CHECK_CONTAINS(warnings.messages()[0], "Cannot load \"");
+  }
+  SUBCASE("So does one that asked for a mip chain") {
+    CHECK(runUnitTest("  const auto t = texture_2d(\n"
+                      "    \"bad.png\", tex::gamma_linear, max_mipmap: true);\n"
+                      "  #assert(!tex::texture_isvalid(t));\n"
+                      "  #assert(t.num_levels == 1);\n"
+                      "  #assert(!t.max_mipmap);\n") == "");
+  }
+  SUBCASE("A tile that does not load is absent, and the rest stand") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1001.png").string(), 2, 2, 1,
+                                  gray));
+    tmpDir.write("tile_1002.png", "Neither is this!\n");
+    const CollectedLog warnings{"tile_"};
+    CHECK(runUnitTest(
+              "  const auto t =\n"
+              "    texture_2d(\"tile_<UDIM>.png\", tex::gamma_linear);\n"
+              "  #assert(tex::texture_isvalid(t));\n"
+              "  #assert(tex::width(t) == 2);\n"
+              "  #assert(tex::width(t, int2(1, 0)) == 0);\n"
+              "  #assert(tex::lookup_float(t, float2(1.5, 0.5)) == 0.0);\n") ==
+          "");
+    // The one load failure, and nothing about formats that disagree.
+    REQUIRE(warnings.messages().size() == 1);
+    CHECK_CONTAINS(warnings.messages()[0], "tile_1002.png");
   }
 }
 
