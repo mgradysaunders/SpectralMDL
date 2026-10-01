@@ -148,6 +148,34 @@ unit_test "A Dirac weight passes through or goes to zero" {
   #assert(#all(blocked.f == color(0.0)));
 }
 
+unit_test "The factor takes the curvature and the tilt of the march" {
+  // The light at an elevation slope of 1 is under the top of the wall on
+  // a flat surface. A surface that falls away under the ray lifts it
+  // over, and so does a base normal that leans toward the light.
+  const auto ridge =
+    texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto wi = scatter::dirAt(float2(1.0, 0.0), 1.0);
+  const auto base = scatter::evaluate(BASE, WO(), wi);
+  #assert(#any(base.f > 0.0));
+  const auto flat = df::relief_shadow_factor(
+    height: ridge, coord: ON_FLAT, scale: SCALE, base: BASE);
+  #assert(#all(scatter::evaluate(flat, WO(), wi).f == color(0.0)));
+  const auto curved = df::relief_shadow_factor(
+    height: ridge,
+    coord: ON_FLAT,
+    scale: SCALE,
+    curvature: float3(4.0, 0.0, 0.0),
+    base: BASE);
+  #assert(#all(scatter::evaluate(curved, WO(), wi).f == base.f));
+  const auto tilted = df::relief_shadow_factor(
+    height: ridge,
+    coord: ON_FLAT,
+    scale: SCALE,
+    tilt: float2(0.5, 0.0),
+    base: BASE);
+  #assert(#all(scatter::evaluate(tilted, WO(), wi).f == base.f));
+}
+
 unit_test "The factor agrees with relief_visible and only removes energy" {
   const auto bumps =
     texture_2d("bumps_32.png", tex::gamma_linear, max_mipmap: true);

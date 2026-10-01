@@ -653,8 +653,20 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
   return bytes;
 }
 
+// The bytes of a 'State' that are not its curvature.
+const std::bitset<sizeof(State)> &stateBytesExceptCurvature() {
+  static const std::bitset<sizeof(State)> bytes{[] {
+    std::bitset<sizeof(State)> bits{};
+    bits.set();
+    for (size_t i = 0; i < sizeof(State::curvature); i++)
+      bits.reset(offsetof(State, curvature) + i);
+    return bits;
+  }()};
+  return bytes;
+}
+
 // Does every byte of the 'State' that a function reads through its pointer
-// argument 'arg' lie in 'pathConstantStateBytes()'? This walks the uses of
+// argument 'arg' lie in the 'allowed' bytes? This walks the uses of
 // the argument after optimization: a constant GEP is followed at its
 // offset, a load or a constant-length memory read through the pointer is
 // checked against the allowed bytes, and a call to a function defined in
@@ -669,9 +681,9 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
 // argument with no uses at all is the empty read set and true. Loaded
 // values are never followed: a load of 'wavelengthBase' is a read of that
 // field, and the reads through the pointer it holds are not state reads.
-[[nodiscard]] bool readsOnlyPathConstantState(const llvm::DataLayout &layout,
-                                              const llvm::Argument *arg) {
-  const std::bitset<sizeof(State)> &allowed{pathConstantStateBytes()};
+[[nodiscard]] bool
+readsOnlyStateBytes(const llvm::DataLayout &layout, const llvm::Argument *arg,
+                    const std::bitset<sizeof(State)> &allowed) {
   auto isAllowed{[&](uint64_t offset, uint64_t size) {
     if (offset + size > sizeof(State)) return false;
     for (uint64_t i = offset; i < offset + size; i++)
@@ -736,6 +748,13 @@ const std::bitset<sizeof(State)> &pathConstantStateBytes() {
     }
   }
   return true;
+}
+
+// The same of 'pathConstantStateBytes()', which is what makes a volume
+// the same at every point of a path.
+[[nodiscard]] bool readsOnlyPathConstantState(const llvm::DataLayout &layout,
+                                              const llvm::Argument *arg) {
+  return readsOnlyStateBytes(layout, arg, pathConstantStateBytes());
 }
 
 // Derive the value-dependent static material flags after optimization.
@@ -852,6 +871,25 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
          readsOnlyPathConstantState(llvmModule.getDataLayout(),
                                     vdfEvaluateFunc->getArg(0)))) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_VDF;
+    }
+    // The curvature is read by nothing unless one of the entry points
+    // that take a surface point reads its bytes of the '%state' argument.
+    // Where every one of them is proven not to, mark
+    // 'MATERIAL_READS_CURVATURE' known and unset; otherwise the bit
+    // stays unknown, for the reasons the heterogeneity bits do, and hosts
+    // treat unknown as reading. See
+    // 'JIT::MaterialDef::canReadCurvature()'.
+    auto leavesCurvatureAlone{[&](const std::string &name) {
+      if (name.empty()) return true;
+      const llvm::Function *func{llvmModule.getFunction(name)};
+      return func && !func->isDeclaration() && func->arg_size() >= 1 &&
+             readsOnlyStateBytes(llvmModule.getDataLayout(), func->getArg(0),
+                                 stateBytesExceptCurvature());
+    }};
+    if (leavesCurvatureAlone(jitMaterial.evaluate.name) &&
+        leavesCurvatureAlone(jitMaterial.opacityEvaluate.name) &&
+        leavesCurvatureAlone(jitMaterial.geometryNormalEvaluate.name)) {
+      jitMaterial.staticFlagsKnown |= MATERIAL_READS_CURVATURE;
     }
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.

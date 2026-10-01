@@ -111,6 +111,20 @@ inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 ///
 inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 
+/// Indicates that the material reads `State::curvature` at a surface
+/// point.
+///
+/// \note
+/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// derived after optimization from which `State` fields the bodies of
+/// `JIT::MaterialDef::evaluate`, `JIT::MaterialDef::opacityEvaluate`, and
+/// `JIT::MaterialDef::geometryNormalEvaluate` still read, so it degrades
+/// to unknown at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags`
+/// never sets it. See `JIT::MaterialDef::canReadCurvature()` for the
+/// conservative reading.
+///
+inline constexpr int MATERIAL_READS_CURVATURE = (1 << 14);
+
 /// \}
 
 /// \name Distribution Function (DF) Lobes
@@ -436,6 +450,16 @@ public:
   [[nodiscard]] bool canRemapNormal() const noexcept {
     return (staticFlagsKnown & MATERIAL_REMAPS_NORMAL) == 0 ||
            (staticFlags & MATERIAL_REMAPS_NORMAL) != 0;
+  }
+
+  /// Possibly reads `State::curvature`: none of the entry points that
+  /// take a surface point is proven to leave the field alone. A host for
+  /// which the curvature of a surface costs something to derive may leave
+  /// the field at zero wherever this returns false, and must fill it
+  /// wherever this returns true, where the read is real *or unproven*.
+  [[nodiscard]] bool canReadCurvature() const noexcept {
+    return (staticFlagsKnown & MATERIAL_READS_CURVATURE) == 0 ||
+           (staticFlags & MATERIAL_READS_CURVATURE) != 0;
   }
 
   /// The definition evaluated at one shading point: the record the JIT

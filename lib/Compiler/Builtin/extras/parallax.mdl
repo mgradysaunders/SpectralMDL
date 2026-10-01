@@ -49,6 +49,10 @@
 /// only ever shrinks. The model is second order: it holds where the relief
 /// is shallow against the radius of curvature, and it errs toward no
 /// rejection as the two approach. With no curvature it is the flat march.
+/// What it returns also carries the curvature and how far the base normal
+/// has turned where the ray landed, which `perturbed_normal()` and
+/// `relief_visible()` take, so that the bump and the shadow stand on the
+/// surface where the relief is rather than where the ray came in.
 ///
 /// Self-shadowing runs inside the BSDF, where next-event estimation and
 /// BSDF sampling see it consistently, since light directions are unknown
@@ -131,8 +135,13 @@ export struct parallax_result {
 
   /// The slope of the base surface's normal at `coord` against the normal
   /// at the entry point, in the tangent frame the march ran in: the
-  /// curvature times the offset. Zero on a flat surface.
+  /// curvature times the offset. Zero on a flat surface. The relief at
+  /// `coord` stands on that normal and not on the entry's, which
+  /// `perturbed_normal()` and `relief_visible()` take it to say.
   float2 tilt = float2(0.0);
+
+  /// The curvature the march ran under, for the same two.
+  float3 curvature = float3(0.0);
 };
 
 /// The view ray of a march. Its lookup coordinate is `coord - slope * t`
@@ -145,6 +154,14 @@ struct ViewRay {
   float t_end = 1.0;
   bool leaves = false;
 };
+
+/// The quadratic coefficient of the height of a ray of tangent-plane
+/// `slope` (its tangent, before the relief depth `scale` multiplies it)
+/// over a surface of the given `curvature`: half the normal curvature
+/// along the ray, times the scale, times the squared tangent.
+@(pure macro)
+float rayCurve(const float3 curvature, const float2 slope, const float scale) =
+  0.5 * scale * (curvature.x * slope.x * slope.x + 2.0 * curvature.y * slope.x * slope.y + curvature.z * slope.y * slope.y);
 
 /// The view ray for the tangent-frame `view`, the relief depth `scale`,
 /// and the `curvature` of the surface as `texture_curvature()` gives it.
@@ -166,8 +183,7 @@ ViewRay viewRay(const float3 view, const float scale, const float3 curvature) {
   // instead of snapping back to the identity, and the slope stays finite
   // for arbitrarily small positive view.z.
   auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
-  const float curve(
-    0.5 * scale * (curvature.x * slope.x * slope.x + 2.0 * curvature.y * slope.x * slope.y + curvature.z * slope.y * slope.y));
+  const float curve(rayCurve(curvature, slope, scale));
   const auto slope_len(math::length(slope));
   const float cap(PARALLAX_MAX_SLOPE * #max(1.0, curve));
   slope *= cap / slope_len if (slope_len > cap);
@@ -182,6 +198,27 @@ ViewRay viewRay(const float3 view, const float scale, const float3 curvature) {
 float2 baseTilt(const float3 curvature, const float2 offset) = float2(
   curvature.x * offset.x + curvature.y * offset.y,
   curvature.y * offset.x + curvature.z * offset.y);
+
+/// The vector `v` of the tangent frame where the base normal has the
+/// slope `tilt`, in the frame of the entry point: the rotation that takes
+/// the entry's normal onto the tilted one by the shortest way.
+@(pure)
+float3 fromTilted(const float3 v, const float2 tilt) {
+  return v if ((tilt.x == 0.0) & (tilt.y == 0.0));
+  const float3 base(math::normalize(float3(tilt.x, tilt.y, 1.0)));
+  const float3 sum(base.x, base.y, base.z + 1.0);
+  return v - sum * (math::dot(v, sum) / sum.z) + 2.0 * v.z * base;
+}
+
+/// The inverse of `fromTilted()`: the vector `v` of the entry point's
+/// frame in the frame where the base normal has the slope `tilt`.
+@(pure)
+float3 toTilted(const float3 v, const float2 tilt) {
+  return v if ((tilt.x == 0.0) & (tilt.y == 0.0));
+  const float3 base(math::normalize(float3(tilt.x, tilt.y, 1.0)));
+  const float3 sum(base.x, base.y, base.z + 1.0);
+  return v - sum * (math::dot(v, sum) / sum.z) + float3(0.0, 0.0, 2.0 * math::dot(v, base));
+}
 
 /// The layer march of the height lambda `height_at` (`float2 -> float`,
 /// heights clamped to `[0, 1]`, 1 = un-displaced surface), viewed along
@@ -234,7 +271,7 @@ export parallax_result parallax_trace_with(
   // clearance means the surface is at its reference level and there is
   // nothing to march.
   float f0(-(1.0 - math::saturate(height_at(coord))));
-  return parallax_result(coord) if (f0 >= 0.0);
+  return parallax_result(coord, false, float2(0.0), curvature) if (f0 >= 0.0);
   const int n(#max(
     1,
     int(math::lerp(float(max_steps), float(min_steps), math::saturate(view.z)))));
@@ -254,7 +291,10 @@ export parallax_result parallax_trace_with(
     break if (f1 >= 0.0);
   }
   return parallax_result(
-           coord - ray.slope * l1, true, baseTilt(curvature, -ray.slope * l1)) if (ray.leaves & (f1 < 0.0));
+           coord - ray.slope * l1,
+           true,
+           baseTilt(curvature, -ray.slope * l1),
+           curvature) if (ray.leaves & (f1 < 0.0));
   // False-position refinement over the bracket `f0 < 0 <= f1`: the secant
   // estimate, then `refine_steps` passes that evaluate the clearance there
   // and shrink whichever side of the bracket it falls on.
@@ -272,7 +312,10 @@ export parallax_result parallax_trace_with(
     l = math::lerp(l0, l1, #min(-f0 / #max(f1 - f0, $FLOAT_MIN), 1.0));
   }
   return parallax_result(
-           coord - ray.slope * l, false, baseTilt(curvature, -ray.slope * l));
+           coord - ray.slope * l,
+           false,
+           baseTilt(curvature, -ray.slope * l),
+           curvature);
 }
 
 /// The parallax-adjusted UV coordinate for the height lambda `height_at`:
@@ -610,12 +653,13 @@ export parallax_result parallax_trace_max(
   const int2 extent(tex::extent(height_tex));
   return parallax_result(coord) if (#any(extent <= 0));
   const auto ray(viewRay(view, scale, curvature));
-  return parallax_result(coord) if (math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) >= 1.0);
+  return parallax_result(coord, false, float2(0.0), curvature) if (math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) >= 1.0);
   if (ray.leaves) {
     const float2 offset(-ray.slope * ray.t_end);
     const float highest(tex::level_texel_float(
       height_tex, height_tex.num_levels - 1, int2(0), wrap_u, wrap_v));
-    return parallax_result(coord + offset, true, baseTilt(curvature, offset)) if (1.0 - 0.25 / ray.curve > highest);
+    return parallax_result(
+             coord + offset, true, baseTilt(curvature, offset), curvature) if (1.0 - 0.25 / ray.curve > highest);
   }
   // The ray in level-0 texel coordinates, from the un-displaced surface
   // (height 1) down one relief depth per unit parameter at first.
@@ -635,7 +679,8 @@ export parallax_result parallax_trace_max(
   return parallax_result(
            coord + offset,
            ray.leaves & !hit.hit & !hit.is_capped,
-           baseTilt(curvature, offset));
+           baseTilt(curvature, offset),
+           curvature);
 }
 
 /// The parallax-adjusted UV coordinate for the height texture
@@ -666,6 +711,16 @@ export float2 parallax_offset_max(
 /// the sampler make the penumbra. `df::relief_shadow_factor` applies it
 /// inside a BSDF, per evaluated direction.
 ///
+/// On a curved surface pass the `curvature` and the `tilt` of the march
+/// that found `coord` (see `parallax_result`). The light is then taken
+/// in the frame of the base surface at `coord`, which stands turned
+/// against the frame `wi` is given in, and the ray rises as that surface
+/// falls away under it, `start + t + c t^2`, so it is clear of the relief
+/// sooner than a flat ray is. A light under that frame's own tangent
+/// plane is occluded: the surface itself stands in the way, and the BSDF
+/// cannot know. A concave surface is taken as flat, since what it puts
+/// in the way is the renderer's shadow ray's to find.
+///
 /// Visible whenever there is nothing to decide: `wi` at or below the
 /// tangent plane (the BSDF's business), a non-positive `scale` or
 /// `bias`, an invalid texture or one without a maximum chain, a point at
@@ -689,19 +744,27 @@ export bool relief_visible(
   const tex::wrap_mode wrap_v = tex::wrap_repeat [[anno::unused()]],
   const float bias = 0.02 [[anno::unused()]],
   const int max_steps = PARALLAX_MAX_CELL_STEPS [[anno::unused()]],
+  const float3 curvature = float3(0.0) [[anno::unused()]],
+  const float2 tilt = float2(0.0) [[anno::unused()]],
 ) {
   return true if (!(wi.z > 0.0) | !(scale > 0.0) | !(bias > 0.0) | !height_tex.max_mipmap);
   const int2 extent(tex::extent(height_tex));
   return true if (#any(extent <= 0));
-  auto slope(wi.xy / #max(wi.z, PARALLAX_MIN_VIEW_Z));
+  const float3 w(toTilted(wi, tilt));
+  return false if (!(w.z > 0.0));
+  auto slope(w.xy / #max(w.z, PARALLAX_MIN_VIEW_Z));
+  const float curve(#max(rayCurve(curvature, slope, scale), 0.0));
   const auto slope_len(math::length(slope));
-  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
+  const float cap(PARALLAX_MAX_SLOPE * #max(1.0, curve));
+  slope *= cap / slope_len if (slope_len > cap);
   slope *= scale;
   const float start(
     math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) + bias);
   return true if (start >= 1.0);
   // The ray in level-0 texel coordinates, rising one relief depth per
-  // unit parameter until it reaches the un-displaced surface.
+  // unit parameter at first, until it reaches the un-displaced surface:
+  // the root of `curve t^2 + t` at the rise it has to make.
+  const float rise(1.0 - start);
   const float2 extentF(extent);
   return !reliefMarch(
            height_tex,
@@ -711,8 +774,8 @@ export bool relief_visible(
            slope * extentF,
            start,
            1.0,
-           0.0,
-           1.0 - start,
+           curve,
+           2.0 * rise / (1.0 + #sqrt(1.0 + 4.0 * curve * rise)),
            max_steps).hit;
 }
 
@@ -792,6 +855,13 @@ export float3 texture_curvature(const int space = 0, const auto uv_scale = 1.0) 
 /// chosen as `parallax_uv()` chooses it, between `parallax_trace_max()`
 /// and `parallax_trace_with()`.
 ///
+/// On a mesh the curvature is that of the smooth surface its shading
+/// normals describe, and the faces at its outline reach a little further
+/// out than that surface does. A ray that meets the front of a face
+/// whose shading normal has already turned away from it is past the
+/// outline of the smooth surface, and where that surface is convex along
+/// the ray it is a miss as well, which no march is needed to say.
+///
 /// Feed `coord` to every downstream lookup and the result to
 /// `silhouette_opacity()`.
 @(macro)
@@ -810,21 +880,18 @@ export parallax_result parallax_trace(
   const float jitter = 0.0 [[anno::unused()]],
   const int refine_steps = 2 [[anno::unused()]],
 ) {
+  const float3 view(view_vector(space));
+  const float3 curvature(texture_curvature(space, uv_scale));
+  return parallax_result(coord, true, float2(0.0), curvature) if (!(view.z > 0.0) & ($state.direction.z < 0.0) & (rayCurve(curvature, view.xy, 1.0) > 0.0));
   return parallax_trace_max(
-           height_tex,
-           coord,
-           view_vector(space),
-           scale,
-           texture_curvature(space, uv_scale),
-           wrap_u,
-           wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
+           height_tex, coord, view, scale, curvature, wrap_u, wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
   return parallax_trace_with(
            \(const float2 coord) =
              tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
            coord,
-           view_vector(space),
+           view,
            scale,
-           texture_curvature(space, uv_scale),
+           curvature,
            min_steps,
            max_steps,
            jitter,
@@ -855,6 +922,11 @@ export float silhouette_opacity(const parallax_result hit) {
 /// precision (fast-math lowers `normalize` through an approximate
 /// reciprocal square root, so not bit-exactly); a non-positive `delta`
 /// (the division guard) returns it exactly, untouched.
+///
+/// On a curved surface pass the `tilt` of the march that found `coord`
+/// (see `parallax_result`): the relief there stands on the base normal at
+/// `coord`, which the march left the entry point's normal to reach, and
+/// the bump is turned with it.
 @(macro)
 // See the note on 'parallax_trace_with': the annotations quiet the
 // guarded-off comptime instantiation.
@@ -864,21 +936,25 @@ export float3 perturbed_normal_with(
   const float scale [[anno::unused()]],
   const float2 delta,
   const int space = 0 [[anno::unused()]],
+  const float2 tilt = float2(0.0) [[anno::unused()]],
 ) {
   return state::normal() if (!(delta.x > 0.0) | !(delta.y > 0.0));
   const float dhdu(
     (height_at(coord + float2(delta.x, 0.0)) - height_at(coord - float2(delta.x, 0.0))) / (2.0 * delta.x));
   const float dhdv(
     (height_at(coord + float2(0.0, delta.y)) - height_at(coord - float2(0.0, delta.y))) / (2.0 * delta.y));
-  const float3 nt(math::normalize(float3(-scale * dhdu, -scale * dhdv, 1.0)));
+  const float3 nt(fromTilted(
+    math::normalize(float3(-scale * dhdu, -scale * dhdv, 1.0)), tilt));
   return math::normalize(
            nt.x * state::texture_tangent_u(space) + nt.y * state::texture_tangent_v(space) + nt.z * state::normal());
 }
 
 /// The bump-perturbed shading normal for the height texture `height_tex`
 /// at `coord` (pass the UV from `parallax_uv()` so the normal matches
-/// the relief) with the difference spacing `delta_texels` texels. Returns
-/// `state::normal()` unchanged for invalid textures.
+/// the relief) with the difference spacing `delta_texels` texels, turned
+/// by the `tilt` of a march on a curved surface as
+/// `perturbed_normal_with()` turns it. Returns `state::normal()` unchanged
+/// for invalid textures.
 @(macro)
 export float3 perturbed_normal(
   const texture_2d height_tex,
@@ -888,6 +964,7 @@ export float3 perturbed_normal(
   const float delta_texels = 1.0,
   const tex::wrap_mode wrap_u = tex::wrap_repeat,
   const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const float2 tilt = float2(0.0),
 ) {
   const int2 extent(tex::extent(height_tex));
   return state::normal() if (#any(extent <= 0));
@@ -898,5 +975,6 @@ export float3 perturbed_normal(
            scale,
            float2(delta_texels) / float2(extent),
            space,
+           tilt,
          );
 }

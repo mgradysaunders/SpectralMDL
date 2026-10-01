@@ -5782,6 +5782,15 @@ export struct relief_shadow_factor: bsdf {
   /// where the light grazes it.
   float bias = 0.02;
 
+  /// The curvature of the surface the relief is on, from the
+  /// `::extras::parallax::parallax_result` of the march that found
+  /// `coord`. Zero is a flat surface.
+  float3 curvature = float3(0.0);
+
+  /// The tilt of the base normal at `coord`, from the same result, which
+  /// is the frame the light is tested in.
+  float2 tilt = float2(0.0);
+
   /// The base BSDF.
   bsdf base = bsdf();
 
@@ -5801,7 +5810,9 @@ float reliefShadowTerm(const &relief_shadow_factor this, const float3 wi) {
            this.scale,
            this.wrap_u,
            this.wrap_v,
-           this.bias)
+           this.bias,
+           curvature: this.curvature,
+           tilt: this.tilt)
          ? 1.0
          : 0.0;
 }

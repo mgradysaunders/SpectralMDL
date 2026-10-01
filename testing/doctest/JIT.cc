@@ -70,9 +70,11 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   // and '.vdfEvaluate' bodies read nothing point-varying of the state
   // and both prove point-independent), the displacement bit (every
   // material here has a constant, in fact default, displacement, so
-  // the '.displacementProbe' body folds to the zero vector), and the
+  // the '.displacementProbe' body folds to the zero vector), the
   // normal-remap bit (every material here keeps the state normal, so
-  // the '.normalProbe' body folds to the zero vector too).
+  // the '.normalProbe' body folds to the zero vector too), and the
+  // curvature bit (no entry point of a material here reads the state's
+  // curvature).
   constexpr int structuralBits{
       smdl::MATERIAL_HAS_SURFACE | smdl::MATERIAL_HAS_BACKFACE |
       smdl::MATERIAL_HAS_SURFACE_EMISSION |
@@ -82,7 +84,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
       structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
       smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS |
       smdl::MATERIAL_HAS_HETEROGENEOUS_VDF | smdl::MATERIAL_HAS_DISPLACEMENT |
-      smdl::MATERIAL_REMAPS_NORMAL};
+      smdl::MATERIAL_REMAPS_NORMAL | smdl::MATERIAL_READS_CURVATURE};
   SUBCASE("Structural and constant-foldable bits are known") {
     const smdl::JIT::MaterialDef *matDefault{
         requireMaterial(compiler, "mat_default")};
@@ -94,6 +96,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     CHECK(matPlastic->staticFlagsKnown == allBits);
     CHECK(matPlastic->staticFlags == smdl::MATERIAL_HAS_SURFACE);
     CHECK(matPlastic->isAlwaysOpaque());
+    CHECK(!matPlastic->canReadCurvature());
     const smdl::JIT::MaterialDef *matCutoutConst{
         requireMaterial(compiler, "mat_cutout_const")};
     CHECK((matCutoutConst->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) != 0);
@@ -131,9 +134,13 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   SUBCASE("Runtime-dependent bits degrade to unknown") {
     const smdl::JIT::MaterialDef *matCutoutRuntime{
         requireMaterial(compiler, "mat_cutout_runtime")};
+    // A scene-data lookup is handed the whole state, so what it reads of
+    // it is unproven, the curvature with the rest.
     CHECK(matCutoutRuntime->staticFlagsKnown ==
-          (allBits & ~smdl::MATERIAL_HAS_CUTOUT));
+          (allBits & ~smdl::MATERIAL_HAS_CUTOUT &
+           ~smdl::MATERIAL_READS_CURVATURE));
     CHECK(!matCutoutRuntime->isAlwaysOpaque());
+    CHECK(matCutoutRuntime->canReadCurvature());
     const smdl::JIT::MaterialDef *matThinRuntime{
         requireMaterial(compiler, "mat_thin_runtime")};
     CHECK(matThinRuntime->staticFlagsKnown ==
@@ -202,6 +209,9 @@ TEST_CASE("MaterialDef: a cutout that follows the ray and the curvature") {
       requireMaterial(compiler, "mat_silhouette")};
   CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) == 0);
   CHECK(!materialDef->isAlwaysOpaque());
+  // And it reads the curvature, which a host that derives the curvature
+  // only where it is read has to be told.
+  CHECK(materialDef->canReadCurvature());
   StateStorage storage{compiler};
   // The opacity of the full evaluation, which the entry point that
   // evaluates the opacity alone, with no allocator, must agree with.

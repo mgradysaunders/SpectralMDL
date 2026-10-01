@@ -154,6 +154,15 @@ unit_test "The perturbed normal follows the height field" {
   #assert(math::abs(got.x - expected.x) < 1e-6);
   #assert(math::abs(got.y - expected.y) < 1e-6);
   #assert(math::abs(got.z - expected.z) < 1e-6);
+  // Under a tilt a constant height gives the base normal where the march
+  // landed, whose slope the tilt is.
+  const float3 tilted = parallax::perturbed_normal_with(\(const float2 c [[anno::unused()]]) = 0.25, uv, 0.5, float2(0.01), 0, float2(0.3, -0.4));
+  #assert(#all(math::abs(tilted - math::normalize(float3(0.3, -0.4, 1.0))) < float3(1e-6)));
+  // And the bump turns with it: a ramp along U under a tilt along U is
+  // two turns about one axis, whose angles add.
+  const float3 both = parallax::perturbed_normal_with(\(const float2 c) = a * c.x, uv, scale, float2(0.01), 0, float2(0.6, 0.0));
+  const float angle = math::atan(0.6) - math::atan(scale * a);
+  #assert(#all(math::abs(both - float3(math::sin(angle), 0.0, math::cos(angle))) < float3(1e-6)));
 }
 
 unit_test "Refinement kills the residual and jitter changes nothing where the secant is exact" {
@@ -583,6 +592,35 @@ unit_test "parallax_trace reads the surface as the state gives it" {
   #assert(parallax::silhouette_opacity(curved) == 0.0);
 }
 
+unit_test "parallax_trace misses past the outline the shading normals describe" {
+  // The front of a face, by the geometric normal, whose shading normal
+  // has turned away from the ray: on a mesh, a face at the outline that
+  // reaches past the smooth surface its normals stand for.
+  preserve $state.direction, $state.normal, $state.curvature, $state.textureDensity;
+  $state.direction = math::normalize(float3(0.3, 0.0, -1.0));
+  $state.normal = math::normalize(float3(1.0, 0.0, 0.1));
+  #assert($state.direction.z < 0.0);
+  #assert(parallax::view_vector().z < 0.0);
+  const float2 uv = float2(0.25, 0.5);
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // On a flat surface it is the identity it always was.
+  const auto flat = parallax::parallax_trace(ridge, 0.1, uv);
+  #assert(!flat.is_miss);
+  #assert(#all(flat.coord == uv));
+  // Convex along the ray, it is a miss, at the coordinate it came in at.
+  $state.textureDensity[0] = 1.0;
+  $state.curvature = float3(10.0, 0.0, 0.0);
+  const auto past = parallax::parallax_trace(ridge, 0.1, uv);
+  #assert(past.is_miss);
+  #assert(#all(past.coord == uv));
+  #assert(parallax::silhouette_opacity(past) == 0.0);
+  // Convex only across the ray, or concave along it, it is not.
+  $state.curvature = float3(0.0, 0.0, 10.0);
+  #assert(!parallax::parallax_trace(ridge, 0.1, uv).is_miss);
+  $state.curvature = float3(-10.0, 0.0, 0.0);
+  #assert(!parallax::parallax_trace(ridge, 0.1, uv).is_miss);
+}
+
 // The light-side march: `relief_visible()` runs the same traversal upward
 // from the surface point, so a light direction is either clear of the
 // relief or not. On the ridge, from the flat at texel 4 toward the wall,
@@ -628,6 +666,37 @@ unit_test "Relief visibility is exact on the ridge" {
   #assert(parallax::relief_visible(texture_2d(), uv, toward(0.5), scale));
   #assert(parallax::relief_visible(texture_2d("ridge_16.png", tex::gamma_linear), uv, toward(0.5), scale));
   #assert(parallax::relief_visible(ridge, float2(8.5 / 16.0, 0.5), toward(0.5), scale));
+}
+
+unit_test "Relief visibility follows the surface as it curves" {
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const float2 uv = float2(0.25, 0.5);
+  const float scale = 0.5;
+  // At an elevation slope of 1 the flat ray reaches the top of the wall,
+  // at t = 4.5 / 8, at height 0.7825: blocked.
+  const float3 wi = math::normalize(float3(1.0, 0.0, 1.0));
+  #assert(!parallax::relief_visible(ridge, uv, wi, scale));
+  // Curvature K along the ray lifts it by c t^2 with c = K scale / 2,
+  // which clears the top where c t^2 > 0.2175, above K = 2.75.
+  #assert(!parallax::relief_visible(ridge, uv, wi, scale, curvature: float3(2.0, 0.0, 0.0)));
+  #assert(parallax::relief_visible(ridge, uv, wi, scale, curvature: float3(4.0, 0.0, 0.0)));
+  // Curvature across the ray lifts nothing, and a concave surface is
+  // taken as flat.
+  #assert(!parallax::relief_visible(ridge, uv, wi, scale, curvature: float3(0.0, 0.0, 4.0)));
+  #assert(!parallax::relief_visible(ridge, uv, wi, scale, curvature: float3(-4.0, 0.0, 0.0)));
+  // The light is taken in the frame of the surface where the march
+  // landed. A base normal leaning toward the light by a slope of 1/2
+  // sees it at an elevation slope of 3, over the wall.
+  #assert(parallax::relief_visible(ridge, uv, wi, scale, tilt: float2(0.5, 0.0)));
+  // Leaning away, a light that was over the wall no longer is.
+  const float3 high = math::normalize(float3(1.0, 0.0, 1.5));
+  #assert(parallax::relief_visible(ridge, uv, high, scale));
+  #assert(!parallax::relief_visible(ridge, uv, high, scale, tilt: float2(-0.5, 0.0)));
+  // And a light the surface has leaned past is occluded by the surface
+  // itself, with no relief in the way at all.
+  const float3 low = math::normalize(float3(0.0, 1.0, 0.3));
+  #assert(parallax::relief_visible(ridge, uv, low, scale));
+  #assert(!parallax::relief_visible(ridge, uv, low, scale, tilt: float2(0.0, -1.0)));
 }
 
 unit_test "Relief visibility agrees with dense sampling" {
