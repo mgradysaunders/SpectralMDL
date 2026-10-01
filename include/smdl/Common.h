@@ -624,6 +624,21 @@ public:
   /// \note This is non-standard!
   float textureDensity[TEXTURE_SPACE_MAX]{};
 
+  /// The second fundamental form of the surface at the shading point, as
+  /// `(II_xx, II_xy, II_yy)` against the geometric tangents of texture
+  /// space 0 (the X and Y axes of internal space), in inverse scene
+  /// units: the normal curvature along a unit tangent direction `(a, b)`
+  /// is `II_xx a^2 + 2 II_xy a b + II_yy b^2`. Positive where the surface
+  /// curves away from the geometric normal, as the outside of a sphere of
+  /// radius `r` does at `1 / r`. Zero means flat or "not provided", which
+  /// are the same to everything that reads it.
+  ///
+  /// These are components against the frame's own axes, so `finalize()`
+  /// leaves them as the renderer gave them.
+  ///
+  /// \note This is non-standard!
+  float3 curvature{};
+
   /// The max supported number of vertex color sets.
   ///
   /// \note

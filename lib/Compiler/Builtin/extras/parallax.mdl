@@ -36,6 +36,20 @@
 /// feeds every downstream lookup, with the matching bump normal from
 /// `perturbed_normal()` and a level-of-detail fade from `::extras::lod`.
 ///
+/// Those marches lay the height field flat in the tangent plane of the
+/// hit. On a surface that curves away under the ray that is wrong where it
+/// shows most: a grazing ray travels a finite chord through the relief and
+/// can leave it again without meeting it. `parallax_trace()` marches that
+/// ray. With the second fundamental form from `state::surface_curvature()`
+/// the height of the ray above the relief floor is a parabola in the march
+/// parameter rather than a line, `1 - t + c t^2` (see `viewRay()`), and a
+/// ray that leaves the relief is reported as a miss, which
+/// `silhouette_opacity()` turns into a cutout so that the relief shows in
+/// the outline. The relief lies inside the base surface, so an outline
+/// only ever shrinks. The model is second order: it holds where the relief
+/// is shallow against the radius of curvature, and it errs toward no
+/// rejection as the two approach. With no curvature it is the flat march.
+///
 /// Self-shadowing runs inside the BSDF, where next-event estimation and
 /// BSDF sampling see it consistently, since light directions are unknown
 /// at material evaluation time. `relief_visible()` marches the light
@@ -46,8 +60,9 @@
 /// occlusion into four slopes at the offset UV for
 /// `df::horizon_shadow_factor`, for height lambdas without a chain.
 ///
-/// Limitations, by construction: silhouettes do not change, and backfaces
-/// are not offset.
+/// Limitations, by construction: backfaces are not offset, and an outline
+/// changes only where the renderer provides curvature. A crease has none of
+/// its own, so the outline along one stays the base surface's.
 ///
 /// References:
 ///   Tatarchuk (2006): Practical Parallax Occlusion Mapping
@@ -56,6 +71,9 @@
 ///                                   and Scalable Dynamic Height Field
 ///                                   Rendering
 ///   Drobot (2009): Quadtree Displacement Mapping with Height Blending
+///   Oliveira and Policarpo (2005): An Efficient Representation for
+///                                  Surface Details
+///   Wang et al. (2003): View-Dependent Displacement Mapping
 #smdl
 
 import ::math::*;
@@ -68,11 +86,14 @@ import ::tex::*;
 /// `PARALLAX_MAX_SLOPE` cap binds first) rather than cutting out at a
 /// threshold. Only `view.z <= 0` (the exact zero of an unpopulated
 /// `state::direction()`, the transport guard, and backface hits) is
-/// the identity.
+/// the identity. On a curved surface it is also the most grazing angle
+/// the ray's curvature is computed at.
 export const float PARALLAX_MIN_VIEW_Z = 0.05;
 
 /// The cap on the parallax slope `|view.xy| / view.z`, bounding the total
 /// UV offset by `PARALLAX_MAX_SLOPE * scale` no matter how oblique the view.
+/// A ray that curves by more than its own slope is bounded by its chord
+/// instead, and the cap rises with its curvature; see `viewRay()`.
 export const float PARALLAX_MAX_SLOPE = 8.0;
 
 /// The cap on the cell steps of `parallax_offset_max()`. The traversal
@@ -98,10 +119,76 @@ export float3 view_vector(const int space = 0) {
   return -$state.direction * state::tangent_space(space);
 }
 
-/// The parallax-adjusted UV coordinate for the height lambda `height_at`
-/// (`float2 -> float`, heights clamped to `[0, 1]`, 1 = un-displaced
-/// surface), viewed along the tangent-frame `view` as produced by
-/// `view_vector()`, with the relief depth `scale` in UV units.
+/// What a march that can miss returns; see `parallax_trace()`.
+export struct parallax_result {
+  /// The lookup coordinate where the view ray meets the relief, or, on a
+  /// miss, the one over which it left.
+  float2 coord;
+
+  /// Did the ray leave the relief without meeting it? Only ever on a
+  /// surface that curves away under the ray.
+  bool is_miss = false;
+
+  /// The slope of the base surface's normal at `coord` against the normal
+  /// at the entry point, in the tangent frame the march ran in: the
+  /// curvature times the offset. Zero on a flat surface.
+  float2 tilt = float2(0.0);
+};
+
+/// The view ray of a march. Its lookup coordinate is `coord - slope * t`
+/// and its height above the relief floor is `1 - t + curve * t^2`, for `t`
+/// in `[0, t_end]`: where it reaches the floor, or, if it `leaves`, where
+/// it is back at the un-displaced surface.
+struct ViewRay {
+  float2 slope = float2(0.0);
+  float curve = 0.0;
+  float t_end = 1.0;
+  bool leaves = false;
+};
+
+/// The view ray for the tangent-frame `view`, the relief depth `scale`,
+/// and the `curvature` of the surface as `texture_curvature()` gives it.
+///
+/// A surface of normal curvature `k` along the ray falls away from the
+/// tangent plane as `k s^2 / 2` over a distance `s`, which takes
+/// `curve = k scale tan^2(theta) / 2` off the depth the flat ray reaches.
+/// Up to 1/4 the ray still reaches the floor. Past it the ray bottoms out
+/// at height `1 - 1 / (4 curve)` and leaves at `t = 1 / curve`.
+///
+/// The slope cap is `PARALLAX_MAX_SLOPE` up to a curve of 1 and that many
+/// times the curve past it, which bounds the offset at the cap times the
+/// scale either way: a ray whose chord is shorter than the cap is traced
+/// along the chord it has.
+@(pure)
+ViewRay viewRay(const float3 view, const float scale, const float3 curvature) {
+  // Clamping the divisor (rather than culling grazing views) keeps the
+  // offset continuous at the grazing band: it saturates at the slope cap
+  // instead of snapping back to the identity, and the slope stays finite
+  // for arbitrarily small positive view.z.
+  auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
+  const float curve(
+    0.5 * scale * (curvature.x * slope.x * slope.x + 2.0 * curvature.y * slope.x * slope.y + curvature.z * slope.y * slope.y));
+  const auto slope_len(math::length(slope));
+  const float cap(PARALLAX_MAX_SLOPE * #max(1.0, curve));
+  slope *= cap / slope_len if (slope_len > cap);
+  slope *= scale; // Always multiplies t, so fold into slope
+  return ViewRay(slope, curve, 1.0 / curve, true) if (curve > 0.25);
+  return ViewRay(slope, curve, 2.0 / (1.0 + #sqrt(1.0 - 4.0 * curve)), false);
+}
+
+/// The slope of the base normal the tangent-plane `offset` away, by the
+/// `curvature` of the surface in the same frame and units.
+@(pure macro)
+float2 baseTilt(const float3 curvature, const float2 offset) = float2(
+  curvature.x * offset.x + curvature.y * offset.y,
+  curvature.y * offset.x + curvature.z * offset.y);
+
+/// The layer march of the height lambda `height_at` (`float2 -> float`,
+/// heights clamped to `[0, 1]`, 1 = un-displaced surface), viewed along
+/// the tangent-frame `view` as produced by `view_vector()`, with the
+/// relief depth `scale` in UV units and the `curvature` of the surface as
+/// `texture_curvature()` gives it. With no curvature this is the flat
+/// march and never a miss.
 ///
 /// The march samples between `min_steps` (normal incidence) and
 /// `max_steps` (grazing) depth layers, then refines the crossing with
@@ -113,9 +200,13 @@ export float3 view_vector(const int space = 0) {
 /// divide by `#max(view.z, PARALLAX_MIN_VIEW_Z)` and so saturate at the
 /// slope cap instead of cutting out.
 ///
+/// A ray that leaves the relief is a miss when no layer finds it below
+/// the field, so relief thinner than a layer that the hierarchical march
+/// would have met is a hole in the outline here.
+///
 /// `jitter` in `[0, 1)` shifts the interior sampling layers down by that
-/// fraction of one layer (the entry at 0 and the final layer at 1 stay
-/// anchored, so the crossing is always bracketed). It is exactly zero
+/// fraction of one layer (the entry at 0 and the final layer stay
+/// anchored, so a ray that reaches the floor is always bracketed). It is exactly zero
 /// cost and a no-op on fields where the secant is already exact; fed
 /// per-sample randomness in a Monte Carlo renderer, it decorrelates the
 /// layer grid across samples, turning any residual banding into noise
@@ -125,30 +216,25 @@ export float3 view_vector(const int space = 0) {
 // switch, and that comptime instantiation folds the body away, leaving every
 // parameter past the guard unused there. The `[[anno::unused()]]` markers
 // quiet that warning; all of these parameters are used on the live path.
-export float2 parallax_offset_with(
+export parallax_result parallax_trace_with(
   const auto height_at [[anno::unused()]],
   const float2 coord,
   const float3 view,
   const float scale,
+  const float3 curvature = float3(0.0) [[anno::unused()]],
   const int min_steps = 8 [[anno::unused()]],
   const int max_steps = 32 [[anno::unused()]],
   const float jitter = 0.0 [[anno::unused()]],
   const int refine_steps = 2 [[anno::unused()]],
 ) {
-  return coord if (!(view.z > 0.0) | !(scale > 0.0));
-  // Clamping the divisor (rather than culling grazing views) keeps the
-  // offset continuous at the grazing band: it saturates at the slope cap
-  // instead of snapping back to the identity, and the slope stays finite
-  // for arbitrarily small positive view.z.
-  auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
-  const auto slope_len(math::length(slope));
-  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
-  slope *= scale; // Always multiplies l, so fold into slope
-  // The signed clearance `f = layer - depth` is negative strictly above
-  // the surface. At the entry layer 0, a non-negative clearance means the
-  // surface is at its reference level and there is nothing to march.
+  return parallax_result(coord) if (!(view.z > 0.0) | !(scale > 0.0));
+  const auto ray(viewRay(view, scale, curvature));
+  // The signed clearance `f = depth of the ray - depth of the field` is
+  // negative strictly above the surface. At the entry, a non-negative
+  // clearance means the surface is at its reference level and there is
+  // nothing to march.
   float f0(-(1.0 - math::saturate(height_at(coord))));
-  return coord if (f0 >= 0.0);
+  return parallax_result(coord) if (f0 >= 0.0);
   const int n(#max(
     1,
     int(math::lerp(float(max_steps), float(min_steps), math::saturate(view.z)))));
@@ -156,22 +242,26 @@ export float2 parallax_offset_with(
   float l1(0.0);
   float f1(f0);
   // March until the ray dips below the surface. Because heights clamp to
-  // [0, 1], the clearance at the last layer `l = 1` is never negative, so
-  // the crossing is always bracketed.
+  // [0, 1], the clearance where a ray reaches the floor is never negative,
+  // so its crossing is always bracketed. A ray that leaves ends at depth
+  // zero instead, and is a miss if no layer brackets it.
   const float xi(math::saturate(jitter));
   for (int i = 1; i <= n; i++) {
     l0 = l1;
     f0 = f1;
-    l1 = i == n ? 1.0 : (float(i) - xi) / n;
-    f1 = l1 - (1.0 - math::saturate(height_at(coord - slope * l1)));
+    l1 = i == n ? ray.t_end : ray.t_end * (float(i) - xi) / n;
+    f1 = (1.0 - ray.curve * l1) * l1 - (1.0 - math::saturate(height_at(coord - ray.slope * l1)));
     break if (f1 >= 0.0);
   }
+  return parallax_result(
+           coord - ray.slope * l1, true, baseTilt(curvature, -ray.slope * l1)) if (ray.leaves & (f1 < 0.0));
   // False-position refinement over the bracket `f0 < 0 <= f1`: the secant
   // estimate, then `refine_steps` passes that evaluate the clearance there
   // and shrink whichever side of the bracket it falls on.
   float l(math::lerp(l0, l1, #min(-f0 / #max(f1 - f0, $FLOAT_MIN), 1.0)));
   for (int r = 0; r < refine_steps; r++) {
-    const float f(l - (1.0 - math::saturate(height_at(coord - slope * l))));
+    const float f(
+      (1.0 - ray.curve * l) * l - (1.0 - math::saturate(height_at(coord - ray.slope * l))));
     if (f >= 0.0) {
       l1 = l;
       f1 = f;
@@ -181,8 +271,33 @@ export float2 parallax_offset_with(
     }
     l = math::lerp(l0, l1, #min(-f0 / #max(f1 - f0, $FLOAT_MIN), 1.0));
   }
-  return coord - slope * l;
+  return parallax_result(
+           coord - ray.slope * l, false, baseTilt(curvature, -ray.slope * l));
 }
+
+/// The parallax-adjusted UV coordinate for the height lambda `height_at`:
+/// `parallax_trace_with()` on a flat surface, where the ray always meets
+/// the relief.
+@(pure macro)
+export float2 parallax_offset_with(
+  const auto height_at,
+  const float2 coord,
+  const float3 view,
+  const float scale,
+  const int min_steps = 8,
+  const int max_steps = 32,
+  const float jitter = 0.0,
+  const int refine_steps = 2,
+) = parallax_trace_with(
+      height_at,
+      coord,
+      view,
+      scale,
+      float3(0.0),
+      min_steps,
+      max_steps,
+      jitter,
+      refine_steps).coord;
 
 /// The four horizon slopes of the height lambda at `coord` (pass the
 /// *offset* UV from `parallax_offset_with()`) toward +U, -U, +V, -V,
@@ -206,7 +321,7 @@ export float2 parallax_offset_with(
 /// typical relief scales. Cost: 4 x `steps` height samples on top of
 /// the view march.
 @(pure macro)
-// See the note on 'parallax_offset_with': the annotations quiet the
+// See the note on 'parallax_trace_with': the annotations quiet the
 // guarded-off comptime instantiation.
 export float4 horizon_slopes_with(
   const auto height_at [[anno::unused()]],
@@ -271,14 +386,14 @@ float firstRoot(const float q0, const float q1, const float q2, const float ub) 
 }
 
 /// The crossing of the ray `p0 + d * t` (level-0 texel coordinates, ray
-/// height `h_start + h_rate * t`) with the one bilinear patch the segment
-/// `[sa, sb]` lies in, as the ray parameter, or -1 if the segment stays
-/// above it. The patch is the one under the segment's midpoint: its
-/// corners are the four texel centers around it, fetched through the
-/// wrap modes and clamped to `[0, 1]` like every sampled height. Along
-/// the segment the bilinear height is quadratic in the parameter, so the
-/// crossing is a root of a quadratic, solved from the segment start for
-/// conditioning.
+/// height `h_start + (h_rate + h_curve * t) * t`) with the one bilinear
+/// patch the segment `[sa, sb]` lies in, as the ray parameter, or -1 if
+/// the segment stays above it. The patch is the one under the segment's
+/// midpoint: its corners are the four texel centers around it, fetched
+/// through the wrap modes and clamped to `[0, 1]` like every sampled
+/// height. Along the segment the bilinear height is quadratic in the
+/// parameter and so is the ray's, so the crossing is a root of a
+/// quadratic, solved from the segment start for conditioning.
 @(pure)
 float patchHit(
   const texture_2d height_tex,
@@ -288,6 +403,7 @@ float patchHit(
   const float2 d,
   const float h_start,
   const float h_rate,
+  const float h_curve,
   const float sa,
   const float sb,
 ) {
@@ -308,27 +424,34 @@ float patchHit(
   const float h0(t00 + bx * xs.x + by * xs.y + bxy * xs.x * xs.y);
   const float h1(bx * d.x + by * d.y + bxy * (xs.x * d.y + xs.y * d.x));
   const float h2(bxy * d.x * d.y);
-  // The clearance h(u) - (h_start + h_rate (sa + u)) over u in
-  // [0, sb - sa], negative above the surface.
-  const float u(
-    firstRoot(h0 - (h_start + h_rate * sa), h1 - h_rate, h2, sb - sa));
+  // The clearance of the field under the ray over u in [0, sb - sa],
+  // negative above the surface: the patch along the segment less the ray
+  // expanded about `sa`.
+  const float u(firstRoot(
+    h0 - (h_start + (h_rate + h_curve * sa) * sa),
+    h1 - (h_rate + 2.0 * h_curve * sa),
+    h2 - h_curve,
+    sb - sa));
   return u < 0.0 ? -1.0 : sa + u;
 }
 
 /// The result of `reliefMarch()`: whether the ray met the field, and the
 /// ray parameter of the crossing, or of how far the march got when it
-/// did not (the end of the ray, or the step cap).
+/// did not: the end of the ray, or, when `is_capped`, the step cap.
 struct ReliefHit {
   bool hit = false;
   float t = 0.0;
+  bool is_capped = false;
 };
 
 /// The quadtree traversal of the maximum mip chain of `height_tex` by
 /// the ray `p0 + d * t` in level-0 texel coordinates at height
-/// `h_start + h_rate * t`, for `t` in `[0, t_end]`: descending rays
-/// (`h_rate < 0`, the view march) and ascending rays (`h_rate > 0`, the
-/// shadow march) alike. From the coarsest level, at each cell either the
-/// ray's lowest height in the cell clears the cell's bound, so the cell
+/// `h_start + (h_rate + h_curve * t) * t`, for `t` in `[0, t_end]`:
+/// descending rays (`h_rate < 0`, the view march) and ascending rays
+/// (`h_rate > 0`, the shadow march) alike, and a descending ray that
+/// `h_curve > 0` turns back up before the end. From the coarsest level,
+/// at each cell either the ray's lowest height in the cell (at one end of
+/// it, or at the turn between them) clears the cell's bound, so the cell
 /// is skipped (coarsening by one level only when the exit leaves the
 /// parent cell, which spares a re-fetch of a parent bound that would only
 /// send the traversal back down), or the traversal refines by one level,
@@ -348,6 +471,7 @@ ReliefHit reliefMarch(
   const float2 d,
   const float h_start,
   const float h_rate,
+  const float h_curve,
   const float t_end,
   const int max_steps,
 ) {
@@ -359,6 +483,9 @@ ReliefHit reliefMarch(
   const float2 nudge(
     #select(d >= 0.0, PARALLAX_CELL_NUDGE, -PARALLAX_CELL_NUDGE));
   const int top(height_tex.num_levels - 1);
+  // Where a ray that turns back up is lowest. A ray that does not is
+  // lowest at one end of whatever interval it is asked over.
+  const float tTurn(h_curve > 0.0 ? -h_rate / (2.0 * h_curve) : 0.0);
   int level(top);
   float t(0.0);
   for (int step = 0; step < max_steps; step++) {
@@ -398,13 +525,21 @@ ReliefHit reliefMarch(
       const float bound(tex::level_texel_float(
         height_tex, level, cell, wrap_u, wrap_v));
       // The ray's lowest height in the cell: at the exit descending, at
-      // the entry ascending.
-      const float hMin(h_start + h_rate * (h_rate < 0.0 ? tExit : t));
+      // the entry ascending, and at the turn where there is one inside.
+      const float tLow(
+        h_curve > 0.0 ? #max(t, #min(tTurn, tExit)) : (h_rate < 0.0 ? tExit : t));
+      const float hMin(h_start + (h_rate + h_curve * tLow) * tLow);
       if (hMin > bound) {
         t = tExit;
         level = levelAfterSkip;
       } else {
-        t = #max(t, (bound - h_start) / h_rate) if (h_rate < 0.0);
+        // The first root of the ray's height at the bound, in the form
+        // that stays finite as the curve goes to zero.
+        if (h_rate < 0.0) {
+          const float above(h_start - bound);
+          const float disc(#max(h_rate * h_rate - 4.0 * h_curve * above, 0.0));
+          t = #min(#max(t, 2.0 * above / (#sqrt(disc) - h_rate)), tExit);
+        }
         level -= 1;
       }
     } else {
@@ -417,28 +552,29 @@ ReliefHit reliefMarch(
       const float tA(#min(tc.x, tc.y));
       const float tB(#max(tc.x, tc.y));
       float hit(patchHit(
-        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, t, #min(tA, tExit)));
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, h_curve, t, #min(tA, tExit)));
       hit = patchHit(
-        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tA, #min(tB, tExit)) if ((hit < 0.0) & (tA < tExit));
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, h_curve, tA, #min(tB, tExit)) if ((hit < 0.0) & (tA < tExit));
       hit = patchHit(
-        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tB, tExit) if ((hit < 0.0) & (tB < tExit));
+        height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, h_curve, tB, tExit) if ((hit < 0.0) & (tB < tExit));
       return ReliefHit(true, hit) if (hit >= 0.0);
       t = tExit;
       level = levelAfterSkip;
     }
     return ReliefHit(false, t_end) if (t >= t_end);
   }
-  return ReliefHit(false, t);
+  return ReliefHit(false, t, true);
 }
 
-/// The parallax-adjusted UV coordinate for the height texture
-/// `height_tex`, which must carry a maximum mip chain (constructed with
-/// `max_mipmap: true`), viewed along the tangent-frame `view` as produced
-/// by `view_vector()`, with the relief depth `scale` in UV units. The
-/// identity under the same guards as `parallax_offset_with()`, when the
-/// texture is invalid, and when it carries no maximum chain, so a
-/// forgotten `max_mipmap: true` reads as no relief rather than as wrong
-/// relief.
+/// The hierarchical march of the height texture `height_tex`, which must
+/// carry a maximum mip chain (constructed with `max_mipmap: true`), viewed
+/// along the tangent-frame `view` as produced by `view_vector()`, with the
+/// relief depth `scale` in UV units and the `curvature` of the surface as
+/// `texture_curvature()` gives it. With no curvature this is the flat
+/// march and never a miss. The identity under the same guards as
+/// `parallax_trace_with()`, when the texture is invalid, and when it
+/// carries no maximum chain, so a forgotten `max_mipmap: true` reads as no
+/// relief rather than as wrong relief.
 ///
 /// The march is the quadtree traversal of Tevs et al. and Drobot over
 /// the chain (see `reliefMarch()`), descending from the un-displaced
@@ -449,45 +585,73 @@ ReliefHit reliefMarch(
 /// under `tex::wrap_clamp` (see `marches_wrap()`); pass only those. It
 /// runs over the first tile of a uv-tileset.
 ///
+/// A ray that leaves the relief is a miss when the traversal reaches its
+/// end without a crossing, and without a traversal at all when its lowest
+/// height clears the highest texel of the image.
+///
 /// Cost: one bound fetch per step plus four texel fetches per patch
 /// tested at the leaf, for a step count that grows with the chain depth
 /// and the relief's roughness along the ray, and is capped by
-/// `max_steps`; a capped ray stops above the surface.
+/// `max_steps`; a capped ray stops above the surface, and is never a miss.
 @(pure)
-// See the note on 'parallax_offset_with': the annotations quiet the
+// See the note on 'parallax_trace_with': the annotations quiet the
 // guarded-off instantiation, here the one for an invalid texture.
-export float2 parallax_offset_max(
+export parallax_result parallax_trace_max(
   const texture_2d height_tex,
   const float2 coord,
   const float3 view,
   const float scale,
+  const float3 curvature = float3(0.0) [[anno::unused()]],
   const tex::wrap_mode wrap_u = tex::wrap_repeat [[anno::unused()]],
   const tex::wrap_mode wrap_v = tex::wrap_repeat [[anno::unused()]],
   const int max_steps = PARALLAX_MAX_CELL_STEPS [[anno::unused()]],
 ) {
-  return coord if (!(view.z > 0.0) | !(scale > 0.0) | !height_tex.max_mipmap);
+  return parallax_result(coord) if (!(view.z > 0.0) | !(scale > 0.0) | !height_tex.max_mipmap);
   const int2 extent(tex::extent(height_tex));
-  return coord if (#any(extent <= 0));
-  auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
-  const auto slope_len(math::length(slope));
-  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
-  slope *= scale; // Always multiplies l, so fold into slope
-  return coord if (math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) >= 1.0);
+  return parallax_result(coord) if (#any(extent <= 0));
+  const auto ray(viewRay(view, scale, curvature));
+  return parallax_result(coord) if (math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) >= 1.0);
+  if (ray.leaves) {
+    const float2 offset(-ray.slope * ray.t_end);
+    const float highest(tex::level_texel_float(
+      height_tex, height_tex.num_levels - 1, int2(0), wrap_u, wrap_v));
+    return parallax_result(coord + offset, true, baseTilt(curvature, offset)) if (1.0 - 0.25 / ray.curve > highest);
+  }
   // The ray in level-0 texel coordinates, from the un-displaced surface
-  // (height 1) down one relief depth per unit parameter.
+  // (height 1) down one relief depth per unit parameter at first.
   const float2 extentF(extent);
   const auto hit(reliefMarch(
     height_tex,
     wrap_u,
     wrap_v,
     coord * extentF,
-    -slope * extentF,
+    -ray.slope * extentF,
     1.0,
     -1.0,
-    1.0,
+    ray.curve,
+    ray.t_end,
     max_steps));
-  return coord - slope * hit.t;
+  const float2 offset(-ray.slope * hit.t);
+  return parallax_result(
+           coord + offset,
+           ray.leaves & !hit.hit & !hit.is_capped,
+           baseTilt(curvature, offset));
 }
+
+/// The parallax-adjusted UV coordinate for the height texture
+/// `height_tex`: `parallax_trace_max()` on a flat surface, where the ray
+/// always meets the relief.
+@(pure)
+export float2 parallax_offset_max(
+  const texture_2d height_tex,
+  const float2 coord,
+  const float3 view,
+  const float scale,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const int max_steps = PARALLAX_MAX_CELL_STEPS,
+) = parallax_trace_max(
+      height_tex, coord, view, scale, float3(0.0), wrap_u, wrap_v, max_steps).coord;
 
 /// Is the light direction `wi` (in the tangent frame of the height
 /// field, z up, as the BSDFs see it) unoccluded by the relief of
@@ -514,7 +678,7 @@ export float2 parallax_offset_max(
 /// Exact under `tex::wrap_repeat` and `tex::wrap_clamp`; the other modes
 /// hold the edge texel outside the image.
 @(pure)
-// See the note on 'parallax_offset_with': the annotations quiet the
+// See the note on 'parallax_trace_with': the annotations quiet the
 // guarded-off instantiation, here the one for an invalid texture.
 export bool relief_visible(
   const texture_2d height_tex,
@@ -547,6 +711,7 @@ export bool relief_visible(
            slope * extentF,
            start,
            1.0,
+           0.0,
            1.0 - start,
            max_steps).hit;
 }
@@ -591,6 +756,97 @@ export float2 parallax_uv(
          );
 }
 
+/// The curvature of the surface as a march takes it: the second
+/// fundamental form of `state::surface_curvature()` against the shading
+/// tangents of texture space `space`, as `(K_uu, K_uv, K_vv)`, per unit
+/// of the coordinates the caller looks up at rather than per scene unit.
+/// `uv_scale` is the scale of those coordinates relative to
+/// `state::texture_coordinate(space)`, as `::extras::lod` takes it: a
+/// material that tiles at `coord * m` passes `uv_scale: m`.
+///
+/// The conversion takes a unit of the lookup coordinate to be as long
+/// along U as along V on the surface, which the marches take as well:
+/// its length is one over the square root of `state::texture_density()`
+/// times the scale. Zero, which is a flat surface to every march,
+/// whenever the renderer provides no curvature or no density, and under
+/// importance transport as `view_vector()` is.
+@(macro)
+export float3 texture_curvature(const int space = 0, const auto uv_scale = 1.0) {
+  return float3(0.0) if ($state.transport != 0);
+  const float2 s(float2(uv_scale));
+  const float density($state.textureDensity[space] * #abs(s.x * s.y));
+  return float3(0.0) if (!(density > 0.0));
+  const float3 k($state.curvature / #sqrt(density));
+  const float2 tu($state.textureTangentU[space].xy);
+  const float2 tv($state.textureTangentV[space].xy);
+  const float2 ku(k.x * tu.x + k.y * tu.y, k.y * tu.x + k.z * tu.y);
+  const float2 kv(k.x * tv.x + k.y * tv.y, k.y * tv.x + k.z * tv.y);
+  return float3(#sum(ku * tu), #sum(ku * tv), #sum(kv * tv));
+}
+
+/// The march of the height texture `height_tex` on the surface as it
+/// curves, from `state::direction()` via `view_vector(space)` and
+/// `state::surface_curvature()` via `texture_curvature(space, uv_scale)`:
+/// `parallax_uv()` with a ray that bends, which can therefore miss. The
+/// two agree wherever the renderer provides no curvature. The march is
+/// chosen as `parallax_uv()` chooses it, between `parallax_trace_max()`
+/// and `parallax_trace_with()`.
+///
+/// Feed `coord` to every downstream lookup and the result to
+/// `silhouette_opacity()`.
+@(macro)
+// The annotations quiet the instantiation that folds to the
+// hierarchical march, where the layer parameters go unused.
+export parallax_result parallax_trace(
+  const texture_2d height_tex,
+  const float scale,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const auto uv_scale = 1.0,
+  const int min_steps = 8 [[anno::unused()]],
+  const int max_steps = 32 [[anno::unused()]],
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const float jitter = 0.0 [[anno::unused()]],
+  const int refine_steps = 2 [[anno::unused()]],
+) {
+  return parallax_trace_max(
+           height_tex,
+           coord,
+           view_vector(space),
+           scale,
+           texture_curvature(space, uv_scale),
+           wrap_u,
+           wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
+  return parallax_trace_with(
+           \(const float2 coord) =
+             tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+           coord,
+           view_vector(space),
+           scale,
+           texture_curvature(space, uv_scale),
+           min_steps,
+           max_steps,
+           jitter,
+           refine_steps,
+         );
+}
+
+/// The cutout opacity that carries the relief into the outline: 0 where
+/// the march missed, so that the ray goes on past the surface, and 1
+/// elsewhere.
+///
+/// A ray that goes on meets the far side of the same surface from inside,
+/// so an arrival from inside is 0 as well. That is only right for a
+/// surface that is closed and does not transmit, where nothing has any
+/// business being inside: use this on nothing else. Under importance
+/// transport, and wherever the renderer provides no direction, it is 1.
+@(macro)
+export float silhouette_opacity(const parallax_result hit) {
+  return 1.0 if ($state.transport != 0);
+  return (hit.is_miss | ($state.direction.z > 0.0)) ? 0.0 : 1.0;
+}
+
 /// The bump-perturbed shading normal matching the relief: central
 /// differences of the height lambda at `coord` (pass the *offset* UV so
 /// the normal matches what the viewer sees) with spacing `delta` in UV
@@ -600,7 +856,7 @@ export float2 parallax_uv(
 /// reciprocal square root, so not bit-exactly); a non-positive `delta`
 /// (the division guard) returns it exactly, untouched.
 @(macro)
-// See the note on 'parallax_offset_with': the annotations quiet the
+// See the note on 'parallax_trace_with': the annotations quiet the
 // guarded-off comptime instantiation.
 export float3 perturbed_normal_with(
   const auto height_at [[anno::unused()]],

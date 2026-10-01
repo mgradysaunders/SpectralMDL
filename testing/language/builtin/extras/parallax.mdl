@@ -372,6 +372,217 @@ unit_test "parallax_uv selects the march by the chain" {
   #assert(#all(parallax::parallax_uv(ridgeMax, scale, uv, wrap_u: tex::wrap_mirrored_repeat, wrap_v: tex::wrap_mirrored_repeat) == parallax::parallax_offset_with(fieldMirror, uv, v, scale)));
 }
 
+// The curved march. On a surface of normal curvature K along the ray,
+// the ray's height above the relief floor is 1 - t + c t^2 with
+// c = K scale tan^2(theta) / 2. Over a constant height h it crosses at
+// t = (1 - sqrt(1 - 4 c (1 - h))) / (2 c), and once c passes 1/4 it turns
+// back at height 1 - 1 / (4 c) and leaves at t = 1 / c: a miss wherever
+// 4 c (1 - h) > 1. The views in the closed-form tests are at 45 degrees,
+// so tan(theta) = 1 and c = K scale / 2.
+
+unit_test "The curved layer march follows the parabola over constant heights" {
+  const float2 uv = float2(0.6, 0.4);
+  const float3 v = math::normalize(float3(1.0, 0.0, 1.0));
+  const float scale = 0.1;
+  const auto low = \(const float2 c [[anno::unused()]]) = 0.25;
+  const auto high = \(const float2 c [[anno::unused()]]) = 0.75;
+  // No curvature is the flat march, and never a miss.
+  const auto flat = parallax::parallax_trace_with(low, uv, v, scale);
+  #assert(#all(flat.coord == parallax::parallax_offset_with(low, uv, v, scale)));
+  #assert(!flat.is_miss);
+  #assert(#all(flat.tilt == float2(0.0)));
+  // c = 0.2 bends, and still reaches the floor.
+  const auto bent = parallax::parallax_trace_with(low, uv, v, scale, float3(4.0, 0.0, 0.0), 64, 64, 0.0, 6);
+  #assert(!bent.is_miss);
+  #assert(math::abs((uv.x - bent.coord.x) - scale * 0.918861) < 1e-5);
+  #assert(bent.coord.y == uv.y);
+  // c = 0.5 turns back at height 0.5. Over the low field it leaves, at
+  // t = 2.
+  const auto left = parallax::parallax_trace_with(low, uv, v, scale, float3(10.0, 0.0, 0.0));
+  #assert(left.is_miss);
+  #assert(math::abs((uv.x - left.coord.x) - scale * 2.0) < 1e-6);
+  // And it meets the high one at t = 1 - sqrt(1 / 2), where the base
+  // normal has tilted by the curvature times the offset.
+  const auto met = parallax::parallax_trace_with(high, uv, v, scale, float3(10.0, 0.0, 0.0), 64, 64, 0.0, 6);
+  #assert(!met.is_miss);
+  #assert(math::abs((uv.x - met.coord.x) - scale * 0.292893) < 1e-5);
+  #assert(math::abs(met.tilt.x - 10.0 * (met.coord.x - uv.x)) < 1e-6);
+  #assert(met.tilt.y == 0.0);
+  // A concave surface (c = -0.5) brings the floor up to the ray, at
+  // t = sqrt(5 / 2) - 1, and is never a miss.
+  const auto cupped = parallax::parallax_trace_with(low, uv, v, scale, float3(-10.0, 0.0, 0.0), 64, 64, 0.0, 6);
+  #assert(!cupped.is_miss);
+  #assert(math::abs((uv.x - cupped.coord.x) - scale * 0.581139) < 1e-5);
+  // Curvature across the ray does not bend it.
+  const auto across = parallax::parallax_trace_with(low, uv, v, scale, float3(0.0, 0.0, 10.0));
+  #assert(#all(across.coord == flat.coord));
+  #assert(!across.is_miss);
+}
+
+unit_test "The slope cap rises with the curve" {
+  // Past a curve of 1 the cap is that multiple of PARALLAX_MAX_SLOPE, so
+  // a grazing ray on a curved surface is traced along the chord it has,
+  // 2 / (K tan(theta)) in UV, rather than along a capped one.
+  const float2 uv = float2(0.5, 0.5);
+  const auto flat = \(const float2 c [[anno::unused()]]) = 0.5;
+  const float3 oblique = math::normalize(float3(1.0, 0.0, 0.06));
+  const float scale = 0.01;
+  const auto steep = parallax::parallax_trace_with(flat, uv, oblique, scale, float3(10.0, 0.0, 0.0));
+  #assert(steep.is_miss);
+  #assert(math::abs((uv.x - steep.coord.x) - 2.0 * 0.06 / 10.0) < 1e-6);
+  // Under a curve of 1 the cap is where it was: the ray leaves at
+  // t = 1 / c along the capped slope.
+  const float c = 0.5 * scale * 0.5 / (0.06 * 0.06);
+  #assert(c > 0.25);
+  #assert(c < 1.0);
+  const auto shallow = parallax::parallax_trace_with(flat, uv, oblique, scale, float3(0.5, 0.0, 0.0));
+  #assert(shallow.is_miss);
+  #assert(math::abs((uv.x - shallow.coord.x) - parallax::PARALLAX_MAX_SLOPE * scale / c) < 1e-6);
+}
+
+unit_test "The curved hierarchical march follows the parabola over the ridge" {
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // Along V the ridge field is the constant 0.2, so from the flat at
+  // texel 4 a view at 45 degrees along V sees the closed forms with
+  // 1 - h = 0.8.
+  const float2 uv = float2(0.25, 0.5);
+  const float3 along = math::normalize(float3(0.0, 1.0, 1.0));
+  const float scale = 0.1;
+  const auto flat = parallax::parallax_trace_max(ridge, uv, along, scale);
+  #assert(#all(flat.coord == parallax::parallax_offset_max(ridge, uv, along, scale)));
+  #assert(!flat.is_miss);
+  #assert(#all(flat.tilt == float2(0.0)));
+  // c = 0.2 crosses at t = 1.
+  const auto bent = parallax::parallax_trace_max(ridge, uv, along, scale, float3(0.0, 0.0, 4.0));
+  #assert(!bent.is_miss);
+  #assert(math::abs((uv.y - bent.coord.y) - scale * 1.0) < 1e-4);
+  #assert(bent.coord.x == uv.x);
+  // c = 0.3 is past 1/4, so it would leave, but it turns back at height
+  // 1/6 and meets the flat first, at t = 4/3.
+  const auto turned = parallax::parallax_trace_max(ridge, uv, along, scale, float3(0.0, 0.0, 6.0));
+  #assert(!turned.is_miss);
+  #assert(math::abs((uv.y - turned.coord.y) - scale * 1.333333) < 1e-4);
+  #assert(math::abs(turned.tilt.y - 6.0 * (turned.coord.y - uv.y)) < 1e-6);
+  #assert(turned.tilt.x == 0.0);
+  // c = 0.5 turns back at height 0.5, above the flat: a miss, at t = 2.
+  const auto left = parallax::parallax_trace_max(ridge, uv, along, scale, float3(0.0, 0.0, 10.0));
+  #assert(left.is_miss);
+  #assert(math::abs((uv.y - left.coord.y) - scale * 2.0) < 1e-5);
+  // Toward the wall at scale 0.5 the ray covers 8 texels per unit t from
+  // texel 4, and the wall's near face is the ramp 6.4 t - 2.6. c = 0.5
+  // clears the flat and meets the face on its way down, at the root of
+  // t^2 / 2 - 7.4 t + 3.6.
+  const float3 toward = math::normalize(float3(-1.0, 0.0, 1.0));
+  const auto faced = parallax::parallax_trace_max(ridge, uv, toward, 0.5, float3(2.0, 0.0, 0.0));
+  #assert(!faced.is_miss);
+  #assert(math::abs((faced.coord.x - uv.x) - 0.5 * 0.503624) < 1e-4);
+  // c = 1 turns back at t = 1/2, under the face, and meets it on its way
+  // up, at the root of t^2 - 7.4 t + 3.6.
+  const auto rising = parallax::parallax_trace_max(ridge, uv, toward, 0.5, float3(4.0, 0.0, 0.0));
+  #assert(!rising.is_miss);
+  #assert(math::abs((rising.coord.x - uv.x) - 0.5 * 0.523524) < 1e-4);
+  // c = 4 leaves at t = 1/4, two texels on and short of the wall.
+  const auto short = parallax::parallax_trace_max(ridge, uv, toward, 0.5, float3(16.0, 0.0, 0.0));
+  #assert(short.is_miss);
+  #assert(math::abs((short.coord.x - uv.x) - 0.5 * 0.25) < 1e-5);
+  // A capped traversal stops above the surface and is not a miss.
+  const auto capped = parallax::parallax_trace_max(ridge, uv, toward, 0.5, float3(2.0, 0.0, 0.0), max_steps: 2);
+  #assert(!capped.is_miss);
+}
+
+unit_test "The curved hierarchical march finds the first crossing or leaves without one" {
+  // On a rough field the march must return a point on the surface that no
+  // earlier point of the ray is below, or, where it reports a miss, the
+  // ray must stay above the field all the way to where it leaves. Both
+  // are checked by dense sampling. The views are inside the slope cap,
+  // and the curvature is the same in every direction, set for the curve
+  // each case names.
+  const auto bumps = texture_2d("bumps_32.png", tex::gamma_linear, max_mipmap: true);
+  const auto field = \(const float2 c) = math::saturate(tex::lookup_float(bumps, c));
+  // smdl format off
+  const auto views = auto[](
+    math::normalize(float3(-4.0, 1.0, 1.0)), math::normalize(float3(0.3, -0.7, 0.8)),
+    math::normalize(float3(2.0, 2.0, 1.0)), math::normalize(float3(0.0, 1.0, 0.5)));
+  const auto coords = auto[](float2(0.1, 0.2), float2(0.53, 0.91), float2(0.99, 0.5), float2(0.37, 0.005));
+  const auto curves = auto[](0.15, 0.6, 1.5, 4.0);
+  // smdl format on
+  const float scale = 0.3;
+  int hits = 0;
+  int misses = 0;
+  for (int k = 0; k < 4; k++) {
+    for (int j = 0; j < 4; j++) {
+      for (int m = 0; m < 4; m++) {
+        const float3 v = views[k];
+        const float2 uv = coords[j];
+        const float c = curves[m];
+        const float2 tangent = v.xy / v.z;
+        const float2 slope = tangent * scale;
+        const float kappa = 2.0 * c / (scale * math::dot(tangent, tangent));
+        const auto got = parallax::parallax_trace_max(bumps, uv, v, scale, float3(kappa, 0.0, kappa));
+        if (got.is_miss) {
+          #assert(c > 0.25);
+          for (int i = 0; i < 800; i++) {
+            const float t = (float(i) + 0.5) / (800.0 * c);
+            #assert(field(uv - slope * t) < 1.0 - t + c * t * t + 2e-3);
+          }
+          misses += 1;
+        } else {
+          const float tStar = math::length(uv - got.coord) / math::length(slope);
+          // On the surface: the field at the hit equals the ray height
+          // there, within the patch solve's tolerance.
+          #assert(math::abs(field(got.coord) - (1.0 - tStar + c * tStar * tStar)) < 2e-3);
+          // And above it everywhere before.
+          for (int i = 0; i < 400; i++) {
+            const float t = tStar * (float(i) + 0.5) / 400.0;
+            #assert(field(uv - slope * t) < 1.0 - t + c * t * t + 2e-3);
+          }
+          hits += 1;
+        }
+      }
+    }
+  }
+  #assert(hits > 30);
+  #assert(misses > 10);
+}
+
+unit_test "parallax_trace reads the surface as the state gives it" {
+  // The identity tangent frame of the test state, viewed at 45 degrees
+  // along V over the flat of the ridge.
+  const float3 v = math::normalize(float3(0.0, 1.0, 1.0));
+  preserve $state.direction, $state.curvature, $state.textureDensity;
+  $state.direction = -v;
+  const float2 uv = float2(0.25, 0.5);
+  const float scale = 0.1;
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // A bare state is a flat surface: the march is parallax_uv, and opaque.
+  #assert(#all(parallax::texture_curvature() == float3(0.0)));
+  const auto flat = parallax::parallax_trace(ridge, scale, uv);
+  #assert(#all(flat.coord == parallax::parallax_uv(ridge, scale, uv)));
+  #assert(!flat.is_miss);
+  #assert(parallax::silhouette_opacity(flat) == 1.0);
+  // Curvature with no density to convert it by reads as flat too.
+  $state.curvature = float3(1.0, 0.5, 20.0);
+  #assert(#all(parallax::texture_curvature() == float3(0.0)));
+  // A density of 4 is 2 lookup units per scene unit, so half the
+  // curvature per lookup unit, and the lookup scale divides it again.
+  $state.textureDensity[0] = 4.0;
+  #assert(#all(parallax::texture_curvature() ~== |1e-6| float3(0.5, 0.25, 10.0)));
+  #assert(#all(parallax::texture_curvature(uv_scale: 2.0) ~== |1e-6| float3(0.25, 0.125, 5.0)));
+  #assert(#all(parallax::texture_curvature(uv_scale: float2(1.0, 0.25)) ~== |1e-6| float3(1.0, 0.5, 20.0)));
+  // 10 along the ray is c = 0.5, which leaves over the flat.
+  const auto curved = parallax::parallax_trace(ridge, scale, uv);
+  #assert(curved.is_miss);
+  #assert(#all(curved.coord == parallax::parallax_trace_max(ridge, uv, v, scale, float3(0.5, 0.25, 10.0)).coord));
+  #assert(parallax::silhouette_opacity(curved) == 0.0);
+  // An arrival from inside is cut whatever the march found, and no
+  // direction at all cuts nothing.
+  $state.direction = v;
+  #assert(parallax::silhouette_opacity(flat) == 0.0);
+  $state.direction = float3(0.0);
+  #assert(parallax::silhouette_opacity(flat) == 1.0);
+  #assert(parallax::silhouette_opacity(curved) == 0.0);
+}
+
 // The light-side march: `relief_visible()` runs the same traversal upward
 // from the surface point, so a light direction is either clear of the
 // relief or not. On the ridge, from the flat at texel 4 toward the wall,

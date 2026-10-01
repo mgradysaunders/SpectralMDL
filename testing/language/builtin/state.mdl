@@ -17,6 +17,10 @@ unit_test "A bare state reports one opaque white vertex color" {
   #assert(#all(state::vertex_color(0) == float4(1.0, 1.0, 1.0, 1.0)));
 }
 
+unit_test "A bare state reports a flat surface" {
+  #assert(#all(state::surface_curvature() == float3(0.0)));
+}
+
 unit_test "The state draws match the C++ golden values" {
   // The '_random*' primitives in the api module are the one
   // implementation of the state draw, with no C++ twin in the library:

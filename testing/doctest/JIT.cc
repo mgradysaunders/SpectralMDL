@@ -170,6 +170,82 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   }
 }
 
+TEST_CASE("MaterialDef: a cutout that follows the ray and the curvature") {
+  TempDir tmpDir{"silhouette-cutout"};
+  // A relief over a constant height of 0.25, cut out where the curved
+  // march misses and where the ray arrives from inside. Nothing about
+  // that opacity is constant, so it must not fold to "always opaque",
+  // which would take a shadow ray past the material without asking.
+  tmpDir.write("root/mats.mdl",
+               "#smdl\n"
+               "import ::df::*;\n"
+               "import ::state::*;\n"
+               "using parallax = ::extras::parallax;\n"
+               "import parallax::*;\n"
+               "export material mat_silhouette() = let {\n"
+               "  const auto hit = parallax::parallax_trace_with(\n"
+               "    \\(const float2 c [[anno::unused()]]) = 0.25,\n"
+               "    state::texture_coordinate(0).xy,\n"
+               "    parallax::view_vector(),\n"
+               "    0.1,\n"
+               "    parallax::texture_curvature());\n"
+               "} in material(\n"
+               "  surface: material_surface(\n"
+               "    scattering: df::diffuse_reflection_bsdf(tint: 0.8)),\n"
+               "  geometry: material_geometry(\n"
+               "    cutout_opacity: parallax::silhouette_opacity(hit)));\n");
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const smdl::JIT::MaterialDef *materialDef{
+      requireMaterial(compiler, "mat_silhouette")};
+  CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) == 0);
+  CHECK(!materialDef->isAlwaysOpaque());
+  StateStorage storage{compiler};
+  // The opacity of the full evaluation, which the entry point that
+  // evaluates the opacity alone, with no allocator, must agree with.
+  auto opacityOf{[&](const smdl::State &state) {
+    smdl::State stateNoAlloc{state};
+    stateNoAlloc.allocator = nullptr;
+    smdl::State stateEval{state};
+    smdl::JIT::Material material{stateEval, materialDef};
+    CHECK(materialDef->opacityEvaluate(stateNoAlloc) ==
+          material.getCutoutOpacity());
+    return material.getCutoutOpacity();
+  }};
+  // The view at 45 degrees along U, in the identity frame of a bare
+  // state, which is already internal space.
+  smdl::State state{storage.makeState()};
+  state.direction = smdl::normalize(smdl::float3(-1.0f, 0.0f, -1.0f));
+  state.textureDensity[0] = 1.0f;
+  SUBCASE("A flat surface is opaque") { CHECK(opacityOf(state) == 1.0f); }
+  SUBCASE("A ray that leaves the relief of a convex surface passes") {
+    // A curve of 5: the ray turns back at height 0.95, above the field.
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("A ray the curvature leaves on the floor does not") {
+    // A curve of 0.2, under the 1/4 it takes to leave.
+    state.curvature = smdl::float3(4.0f, 0.0f, 0.0f);
+    CHECK(opacityOf(state) == 1.0f);
+  }
+  SUBCASE("Curvature with no texture density is no curvature") {
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    state.textureDensity[0] = 0.0f;
+    CHECK(opacityOf(state) == 1.0f);
+  }
+  SUBCASE("An arrival from inside passes") {
+    state.direction = smdl::normalize(smdl::float3(-1.0f, 0.0f, 1.0f));
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("No direction rejects nothing") {
+    state.direction = {};
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    CHECK(opacityOf(state) == 1.0f);
+  }
+}
+
 TEST_CASE("volumeEvaluate and vdfEvaluate: the volume along a position") {
   TempDir tmpDir{"volume-evaluate"};
   // A 32x8x4 Mitsuba volume holding the linear field
