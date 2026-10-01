@@ -109,9 +109,8 @@ using EXRReaderPtr = std::unique_ptr<exr_reader, EXRReaderDeleter>;
 // file in memory until it closes.
 [[nodiscard]] EXRReaderPtr openEXR(const std::string &fileName) {
   exr_reader *ptr{};
-  throwIfEXRFailed(
-      exr_reader_open_file(fileName.c_str(), &EXRAllocator, &ptr),
-      "Cannot open EXR");
+  throwIfEXRFailed(exr_reader_open_file(fileName.c_str(), &EXRAllocator, &ptr),
+                   "Cannot open EXR");
   EXRReaderPtr reader{ptr};
   throwIfEXRFailed(exr_reader_parse_header(reader.get()),
                    "Cannot parse EXR header");
@@ -184,6 +183,7 @@ struct EXRChannels final {
     throw Error("Uint EXR is not supported");
   return result;
 }
+
 } // namespace
 
 float unpackHalf(const void *ptr) noexcept {
@@ -212,13 +212,13 @@ float unpackHalf(const void *ptr) noexcept {
 #endif // #if __clang__
 }
 
-Image::image_malloc_t Image::image_malloc = &std::malloc;
+void *(*Image::image_malloc)(size_t) = &std::malloc;
 
-Image::image_calloc_t Image::image_calloc = &std::calloc;
+void *(*Image::image_calloc)(size_t, size_t) = &std::calloc;
 
-Image::image_realloc_t Image::image_realloc = &std::realloc;
+void *(*Image::image_realloc)(void *, size_t) = &std::realloc;
 
-Image::image_free_t Image::image_free = &std::free;
+void (*Image::image_free)(void *) = &std::free;
 
 std::string_view Image::getFormatName(Format format) noexcept {
   switch (format) {
@@ -348,8 +348,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         const size_t numTexels{size_t(mNumTexelsX) * size_t(mNumTexelsY)};
         for (int iC = 0; iC < mNumChannels; iC++) {
           if (channels.indices[iC] < 0) continue;
-          const std::byte *src{
-              static_cast<const std::byte *>(part.images[channels.indices[iC]])};
+          const std::byte *src{static_cast<const std::byte *>(
+              part.images[channels.indices[iC]])};
           std::byte *dst{mTexels.get() + channelSize * size_t(iC)};
           for (size_t i = 0; i < numTexels; i++)
             std::memcpy(dst + size_t(mTexelSize) * i, src + channelSize * i,
@@ -438,15 +438,6 @@ void Image::finishLoad() {
   }
 }
 
-void Image::abandonLoad() noexcept { mFinishLoad = nullptr; }
-
-void Image::generateMipLevels() noexcept {
-  if (mMipFilter == MIP_MAX)
-    generateMaxMipLevels();
-  else
-    generateMeanMipLevels();
-}
-
 void Image::generateMeanMipLevels() noexcept {
   const stbir_datatype dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
                                 : mFormat == UINT16  ? STBIR_TYPE_UINT16
@@ -478,7 +469,7 @@ void Image::generateMaxMipLevels() noexcept {
   const int channelSize{mTexelSize / mNumChannels};
   // Compare in single precision and copy the winning channel's stored
   // bytes, so every format reduces without a pack step.
-  auto valueOf{[&](const void *ptr) -> float {
+  const auto valueOf{[&](const void *ptr) -> float {
     switch (mFormat) {
     case UINT8:
       return *static_cast<const uint8_t *>(ptr);
@@ -490,7 +481,7 @@ void Image::generateMaxMipLevels() noexcept {
       return *static_cast<const float *>(ptr);
     }
   }};
-  auto wrap{[](int i, int n) { return ((i % n) + n) % n; }};
+  const auto wrap{[](int i, int n) { return ((i % n) + n) % n; }};
   for (int level = 1; level < mNumLevels; level++) {
     const int prevX{getNumTexelsX(level - 1)};
     const int prevY{getNumTexelsY(level - 1)};
@@ -575,11 +566,12 @@ float4 Image::fetchUnsafe(int x, int y, int level) const noexcept {
   for (int i = 0; i < mNumChannels; i++) {
     switch (mFormat) {
     case UINT8:
-      texel[i] = *reinterpret_cast<const uint8_t *>(texelPtr) / 255.0f;
+      texel[i] = float(*reinterpret_cast<const uint8_t *>(texelPtr)) / 255.0f;
       texelPtr += 1;
       break;
     case UINT16:
-      texel[i] = *reinterpret_cast<const uint16_t *>(texelPtr) / 65535.0f;
+      texel[i] =
+          float(*reinterpret_cast<const uint16_t *>(texelPtr)) / 65535.0f;
       texelPtr += 2;
       break;
     case FLOAT16:
@@ -653,6 +645,12 @@ std::optional<Error> write8bitImage(const std::string &fileName, int numTexelsX,
   return std::nullopt;
 }
 
+Span<const std::string_view> write8bitImageExtensions() noexcept {
+  static constexpr std::array<std::string_view, 7> EXTENSIONS{
+      ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".pgm", ".ppm"};
+  return EXTENSIONS;
+}
+
 std::optional<Error> writeFloatImage(const std::string &fileName,
                                      int numTexelsX, int numTexelsY,
                                      int numChannels, const float *ptr) {
@@ -685,12 +683,6 @@ std::optional<Error> writeFloatImage(const std::string &fileName,
     return Error(concat("Cannot write ", SpellFilePath(fileName),
                         ": unrecognized extension"));
   }
-}
-
-Span<const std::string_view> write8bitImageExtensions() noexcept {
-  static constexpr std::array<std::string_view, 7> EXTENSIONS{
-      ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".pgm", ".ppm"};
-  return EXTENSIONS;
 }
 
 Span<const std::string_view> writeFloatImageExtensions() noexcept {

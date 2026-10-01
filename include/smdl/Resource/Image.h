@@ -50,30 +50,22 @@ namespace smdl {
 ///
 class SMDL_EXPORT Image final {
 public:
-  typedef void *(*image_malloc_t)(size_t);
-
-  typedef void *(*image_calloc_t)(size_t, size_t);
-
-  typedef void *(*image_realloc_t)(void *, size_t);
-
-  typedef void (*image_free_t)(void *);
-
   /// The alignment of the texel memory. The compiler declares this on
   /// the symbol that names an image's texels, so an emitted access may
   /// assume it and the two must agree.
   static constexpr size_t TEXEL_ALIGNMENT{64};
 
   /// The function to use to mimic `std::malloc`.
-  static image_malloc_t image_malloc;
+  static void *(*image_malloc)(size_t);
 
   /// The function to use to mimic `std::calloc`.
-  static image_calloc_t image_calloc;
+  static void *(*image_calloc)(size_t, size_t);
 
   /// The function to use to mimic `std::realloc`.
-  static image_realloc_t image_realloc;
+  static void *(*image_realloc)(void *, size_t);
 
   /// The function to use to mimic `std::free`.
-  static image_free_t image_free;
+  static void (*image_free)(void *);
 
   /// The underlying format.
   enum Format : int {
@@ -88,22 +80,22 @@ public:
 
   /// The reduction that builds each mip level from the level below it.
   enum MipFilter : int {
-    /// The box filter: each texel is the mean of the texels it covers,
-    /// so the chain is what prefiltered lookups want.
+    /// The mean as a box filter.
     MIP_MEAN = 0,
-    /// The maximum: each texel bounds the bilinearly interpolated image
-    /// over its footprint, so the chain is what a hierarchical march
-    /// through a height field wants. Level 1 texel `(I, J)` is the
-    /// maximum over level 0 texels `x` in `[2I - 1, 2I + 2]` and `y` in
-    /// `[2J - 1, 2J + 2]`, that is, over the pair it covers plus the
-    /// one-texel border whose bilinear patches straddle the pair's
-    /// edges, wrapping at the image edges (an over-bound under the
-    /// clamp and mirror wrap modes, never an under-bound); the last
-    /// texel of an odd extent widens to cover the remainder; every
-    /// further level is the plain maximum over the level below it. So
-    /// the texel `(I, J)` of level `l` bounds the image over level 0
-    /// texels `[I << l, (I + 1) << l)` per axis, the last texel of a
-    /// level bounding through to the image edge. The maximum is taken
+    /// The maximum so that each texel is an upper bound for the
+    /// image over its footprint and the chain is what a hierarchical
+    /// march through a height field wants. 
+    ///
+    /// Level 1 texel `(I, J)` is the maximum over level 0 texels `x` 
+    /// in `[2I - 1, 2I + 2]` and `y` in `[2J - 1, 2J + 2]`, that is, 
+    /// over the pair it covers plus the one-texel border whose bilinear
+    /// patches straddle the pair's edges, wrapping at the image edges (an
+    /// over-bound under the clamp and mirror wrap modes, never an 
+    /// under-bound); the last texel of an odd extent widens to cover 
+    /// the remainder; every further level is the plain maximum over the 
+    /// level below it. So the texel `(I, J)` of level `l` bounds the image
+    /// over level 0 texels `[I << l, (I + 1) << l)` per axis, the last texel
+    /// of a level bounding through to the image edge. The maximum is taken
     /// per channel, each channel keeping a value that occurs in
     /// level 0.
     MIP_MAX = 1,
@@ -237,7 +229,7 @@ public:
   /// --------|----------------------
   /// UINT8   | `value / 255.0f`
   /// UINT16  | `value / 65535.0f`
-  /// FLOAT16 | `unpack_half(value)`
+  /// FLOAT16 | `unpackHalf(value)`
   /// FLOAT32 | `value`
   ///
   /// The implementation copies post-conversion channel values to
@@ -296,7 +288,7 @@ private:
   /// metadata (extent, format, level count). For the compiler's use once
   /// it has proven that nothing in the optimized module names the
   /// texels; `finishLoad()` then allocates nothing and decodes nothing.
-  void abandonLoad() noexcept;
+  void abandonLoad() noexcept { mFinishLoad = nullptr; }
 
   /// Obtain the texel memory for as many levels as were requested, and
   /// zero level 0 so that a failed decode still reads as zero texels.
@@ -306,7 +298,12 @@ private:
 
   /// Generate mip levels 1 and up from level 0 by the requested
   /// `MipFilter`. Called at the end of `finishLoad()`.
-  void generateMipLevels() noexcept;
+  void generateMipLevels() noexcept {
+    if (mMipFilter == MIP_MAX)
+      generateMaxMipLevels();
+    else
+      generateMeanMipLevels();
+  }
 
   /// The `MIP_MEAN` reduction: successive box-filtered halvings.
   void generateMeanMipLevels() noexcept;
@@ -410,6 +407,12 @@ SMDL_EXPORT std::optional<Error>
 write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,
                int numChannels, const void *texels);
 
+/// The extensions `write8bitImage()` recognizes, each with its dot and
+/// in lower case, so that a program can refuse an output name before
+/// the work the write would follow.
+[[nodiscard]] SMDL_EXPORT Span<const std::string_view>
+write8bitImageExtensions() noexcept;
+
 /// Write a single-precision floating point image to the given file name.
 ///
 /// Unlike `write8bitImage()`, this preserves the full range of the values
@@ -458,12 +461,6 @@ write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,
 SMDL_EXPORT std::optional<Error>
 writeFloatImage(const std::string &fileName, int numTexelsX, int numTexelsY,
                 int numChannels, const float *texels);
-
-/// The extensions `write8bitImage()` recognizes, each with its dot and
-/// in lower case, so that a program can refuse an output name before
-/// the work the write would follow.
-[[nodiscard]] SMDL_EXPORT Span<const std::string_view>
-write8bitImageExtensions() noexcept;
 
 /// The extensions `writeFloatImage()` recognizes; see
 /// `write8bitImageExtensions()`.
