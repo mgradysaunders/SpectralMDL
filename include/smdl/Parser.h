@@ -27,7 +27,7 @@ public:
   Parser(const Parser &) = delete;
 
   /// Parse everything.
-  [[nodiscard]] BumpPtr<AST::File> parse() { return parseFile(); }
+  [[nodiscard]] BumpPtr<ast::File> parse() { return parseFile(); }
 
 private:
   //--{ Basics
@@ -266,95 +266,95 @@ private:
 
 private:
   //--{ Parse: Expr
-  [[nodiscard]] auto parseSimpleName() -> std::optional<AST::Name>;
+  [[nodiscard]] auto parseSimpleName() -> std::optional<ast::Name>;
 
-  [[nodiscard]] auto parseIdentifier() -> BumpPtr<AST::Identifier>;
+  [[nodiscard]] auto parseIdentifier() -> BumpPtr<ast::Identifier>;
 
-  [[nodiscard]] auto parseType() -> BumpPtr<AST::Type>;
+  [[nodiscard]] auto parseType() -> BumpPtr<ast::Type>;
 
-  [[nodiscard]] auto parseParameter() -> std::optional<AST::Parameter>;
+  [[nodiscard]] auto parseParameter() -> std::optional<ast::Parameter>;
 
-  [[nodiscard]] auto parseParameterList() -> std::optional<AST::ParameterList>;
+  [[nodiscard]] auto parseParameterList() -> std::optional<ast::ParameterList>;
 
-  [[nodiscard]] auto parseArgument() -> std::optional<AST::Argument>;
+  [[nodiscard]] auto parseArgument() -> std::optional<ast::Argument>;
 
-  [[nodiscard]] auto parseArgumentList() -> std::optional<AST::ArgumentList>;
+  [[nodiscard]] auto parseArgumentList() -> std::optional<ast::ArgumentList>;
 
-  [[nodiscard]] auto parseAnnotation() -> std::optional<AST::Annotation>;
+  [[nodiscard]] auto parseAnnotation() -> std::optional<ast::Annotation>;
 
-  [[nodiscard]] auto parseAnnotationBlock() -> BumpPtr<AST::AnnotationBlock>;
+  [[nodiscard]] auto parseAnnotationBlock() -> BumpPtr<ast::AnnotationBlock>;
 
-  [[nodiscard]] auto parseExpressionInParentheses() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseExpressionInParentheses() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAssignmentExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseAssignmentExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseElseExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseElseExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseConditionalExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseConditionalExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLogicalOrExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLogicalOrExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLogicalAndExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLogicalAndExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseInclusiveOrExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseInclusiveOrExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseExclusiveOrExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseExclusiveOrExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAndExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseAndExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseEqualityExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseEqualityExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseRelationalExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseRelationalExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseShiftExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseShiftExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAdditiveExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseAdditiveExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseMultiplicativeExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseMultiplicativeExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseUnaryExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseUnaryExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parsePostfixExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parsePostfixExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLambdaExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLambdaExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLetExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLetExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseReturnFromExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseReturnFromExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parsePrimaryExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parsePrimaryExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLiteralExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLiteralExpression() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLiteralBoolExpression() -> BumpPtr<AST::LiteralBool>;
+  [[nodiscard]] auto parseLiteralBoolExpression() -> BumpPtr<ast::LiteralBool>;
 
   [[nodiscard]] auto parseLiteralStringExpression()
-      -> BumpPtr<AST::LiteralString>;
+      -> BumpPtr<ast::LiteralString>;
 
-  [[nodiscard]] auto parseLiteralNumberExpression() -> BumpPtr<AST::Expr>;
+  [[nodiscard]] auto parseLiteralNumberExpression() -> BumpPtr<ast::Expr>;
 
   struct ParsedUnaryOp final {
     std::string_view srcOp{};
-    AST::UnaryOp op{};
+    ast::UnaryOp op{};
   };
 
   [[nodiscard]] auto parseUnaryOp() -> std::optional<ParsedUnaryOp>;
 
   struct ParsedBinaryOp final {
     std::string_view srcOp{};
-    AST::BinaryOp op{};
+    ast::BinaryOp op{};
   };
 
-  [[nodiscard]] auto parseBinaryOp(Span<const AST::BinaryOp> ops)
+  [[nodiscard]] auto parseBinaryOp(Span<const ast::BinaryOp> ops)
       -> std::optional<ParsedBinaryOp>;
 
   template <typename Func>
-  [[nodiscard]] auto parseBinaryLeftAssociative(Span<const AST::BinaryOp> ops,
+  [[nodiscard]] auto parseBinaryLeftAssociative(Span<const ast::BinaryOp> ops,
                                                 const Func &parseInner)
-      -> BumpPtr<AST::Expr> {
-    BumpPtr<AST::Expr> exprLHS{parseInner()};
+      -> BumpPtr<ast::Expr> {
+    BumpPtr<ast::Expr> exprLHS{parseInner()};
     if (!exprLHS) {
       return nullptr;
     }
@@ -374,7 +374,7 @@ private:
       if (op->op == BINOP_APPROX_CMP_EQ || //
           op->op == BINOP_APPROX_CMP_NE) {
         std::optional<std::string_view> srcDelimL{nextDelimiter("|")};
-        BumpPtr<AST::Expr> exprEps{};
+        BumpPtr<ast::Expr> exprEps{};
         std::optional<std::string_view> srcDelimR{};
         if (srcDelimL) {
           exprEps = parseUnaryExpression();
@@ -394,25 +394,25 @@ private:
         if (!srcDelimL || !exprEps || !srcDelimR)
           srcLoc0.throwError("expected '|EPSILON|' or '(EPSILON)' after ",
                              SpellQuoted(op->srcOp));
-        BumpPtr<AST::Expr> exprRHS{parseInner()};
+        BumpPtr<ast::Expr> exprRHS{parseInner()};
         if (!exprRHS)
           srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
                              SpellQuoted(op->srcOp));
         accept();
-        exprLHS = allocate<AST::Binary>(
+        exprLHS = allocate<ast::Binary>(
             srcLoc0, std::in_place, std::move(exprLHS), op->srcOp, op->op,
             *srcDelimL, std::move(exprEps), *srcDelimR, std::move(exprRHS));
         continue;
       }
 
-      BumpPtr<AST::Expr> exprRHS{parseInner()};
+      BumpPtr<ast::Expr> exprRHS{parseInner()};
       if (!exprRHS) {
         reject();
         break;
       } else {
         accept();
         exprLHS =
-            allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+            allocate<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
                                   op->srcOp, op->op, std::move(exprRHS));
       }
     }
@@ -420,10 +420,10 @@ private:
   }
 
   template <typename Func>
-  [[nodiscard]] auto parseBinaryRightAssociative(Span<const AST::BinaryOp> ops,
+  [[nodiscard]] auto parseBinaryRightAssociative(Span<const ast::BinaryOp> ops,
                                                  const Func &parseInner)
-      -> BumpPtr<AST::Expr> {
-    BumpPtr<AST::Expr> exprLHS{parseInner()};
+      -> BumpPtr<ast::Expr> {
+    BumpPtr<ast::Expr> exprLHS{parseInner()};
     if (!exprLHS) return nullptr;
     SourceLocation srcLoc0{checkpoint()};
     std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
@@ -432,13 +432,13 @@ private:
       return exprLHS;
     }
     skip();
-    BumpPtr<AST::Expr> exprRHS{parseBinaryRightAssociative(ops, parseInner)};
+    BumpPtr<ast::Expr> exprRHS{parseBinaryRightAssociative(ops, parseInner)};
     if (!exprRHS) {
       reject();
       return exprLHS;
     } else {
       accept();
-      return allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+      return allocate<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
                                    op->srcOp, op->op, std::move(exprRHS));
     }
   }
@@ -446,76 +446,76 @@ private:
 
 private:
   //--{ Parse: Decls
-  [[nodiscard]] auto parseFile() -> BumpPtr<AST::File>;
+  [[nodiscard]] auto parseFile() -> BumpPtr<ast::File>;
 
-  [[nodiscard]] auto parseFileSearchDirs() -> std::vector<AST::File::SearchDir>;
+  [[nodiscard]] auto parseFileSearchDirs() -> std::vector<ast::File::SearchDir>;
 
-  [[nodiscard]] auto parseFileVersion() -> std::optional<AST::File::Version>;
+  [[nodiscard]] auto parseFileVersion() -> std::optional<ast::File::Version>;
 
-  [[nodiscard]] auto parseImportPath() -> std::optional<AST::ImportPath>;
+  [[nodiscard]] auto parseImportPath() -> std::optional<ast::ImportPath>;
 
-  [[nodiscard]] auto parseUsingAlias() -> BumpPtr<AST::UsingAlias>;
+  [[nodiscard]] auto parseUsingAlias() -> BumpPtr<ast::UsingAlias>;
 
-  [[nodiscard]] auto parseUsingImport() -> BumpPtr<AST::UsingImport>;
+  [[nodiscard]] auto parseUsingImport() -> BumpPtr<ast::UsingImport>;
 
-  [[nodiscard]] auto parseImport() -> BumpPtr<AST::Import>;
+  [[nodiscard]] auto parseImport() -> BumpPtr<ast::Import>;
 
-  [[nodiscard]] auto parseAttributes() -> std::optional<AST::Decl::Attributes>;
+  [[nodiscard]] auto parseAttributes() -> std::optional<ast::Decl::Attributes>;
 
-  [[nodiscard]] auto parseGlobalDeclaration() -> BumpPtr<AST::Decl>;
+  [[nodiscard]] auto parseGlobalDeclaration() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseAnnotationDeclaration() -> BumpPtr<AST::Decl>;
+  [[nodiscard]] auto parseAnnotationDeclaration() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseTypeDeclaration() -> BumpPtr<AST::Decl>;
+  [[nodiscard]] auto parseTypeDeclaration() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseAliasTypeDeclaration() -> BumpPtr<AST::Typedef>;
+  [[nodiscard]] auto parseAliasTypeDeclaration() -> BumpPtr<ast::Typedef>;
 
-  [[nodiscard]] auto parseStructTypeDeclaration() -> BumpPtr<AST::Struct>;
+  [[nodiscard]] auto parseStructTypeDeclaration() -> BumpPtr<ast::Struct>;
 
   [[nodiscard]] auto parseStructConstructor()
-      -> std::optional<AST::Struct::Constructor>;
+      -> std::optional<ast::Struct::Constructor>;
 
   [[nodiscard]] auto parseStructFieldDeclarator()
-      -> std::optional<AST::Struct::Field>;
+      -> std::optional<ast::Struct::Field>;
 
-  [[nodiscard]] auto parseEnumTypeDeclaration() -> BumpPtr<AST::Enum>;
+  [[nodiscard]] auto parseEnumTypeDeclaration() -> BumpPtr<ast::Enum>;
 
   [[nodiscard]] auto parseEnumValueDeclarator()
-      -> std::optional<AST::Enum::Declarator>;
+      -> std::optional<ast::Enum::Declarator>;
 
-  [[nodiscard]] auto parseVariableDeclaration() -> BumpPtr<AST::Variable>;
+  [[nodiscard]] auto parseVariableDeclaration() -> BumpPtr<ast::Variable>;
 
   [[nodiscard]] auto parseVariableDeclarator()
-      -> std::optional<AST::Variable::Declarator>;
+      -> std::optional<ast::Variable::Declarator>;
 
-  [[nodiscard]] auto parseFunctionDeclaration() -> BumpPtr<AST::Function>;
+  [[nodiscard]] auto parseFunctionDeclaration() -> BumpPtr<ast::Function>;
 
-  [[nodiscard]] auto parseTagDeclaration() -> BumpPtr<AST::Tag>;
+  [[nodiscard]] auto parseTagDeclaration() -> BumpPtr<ast::Tag>;
 
-  [[nodiscard]] auto parseExecDeclaration() -> BumpPtr<AST::Exec>;
+  [[nodiscard]] auto parseExecDeclaration() -> BumpPtr<ast::Exec>;
 
-  [[nodiscard]] auto parseUnitTestDeclaration() -> BumpPtr<AST::UnitTest>;
+  [[nodiscard]] auto parseUnitTestDeclaration() -> BumpPtr<ast::UnitTest>;
 
-  [[nodiscard]] auto parseNamespaceDeclaration() -> BumpPtr<AST::Namespace>;
+  [[nodiscard]] auto parseNamespaceDeclaration() -> BumpPtr<ast::Namespace>;
   //--}
 
 private:
   //--{ Parse: Stmt
-  [[nodiscard]] auto parseStatement() -> BumpPtr<AST::Stmt>;
+  [[nodiscard]] auto parseStatement() -> BumpPtr<ast::Stmt>;
 
-  [[nodiscard]] auto parseCompoundStatement() -> BumpPtr<AST::Compound>;
+  [[nodiscard]] auto parseCompoundStatement() -> BumpPtr<ast::Compound>;
 
-  [[nodiscard]] auto parseIfStatement() -> BumpPtr<AST::If>;
+  [[nodiscard]] auto parseIfStatement() -> BumpPtr<ast::If>;
 
-  [[nodiscard]] auto parseSwitchStatement() -> BumpPtr<AST::Switch>;
+  [[nodiscard]] auto parseSwitchStatement() -> BumpPtr<ast::Switch>;
 
-  [[nodiscard]] auto parseSwitchCase() -> std::optional<AST::Switch::Case>;
+  [[nodiscard]] auto parseSwitchCase() -> std::optional<ast::Switch::Case>;
 
-  [[nodiscard]] auto parseWhileStatement() -> BumpPtr<AST::While>;
+  [[nodiscard]] auto parseWhileStatement() -> BumpPtr<ast::While>;
 
-  [[nodiscard]] auto parseDoStatement() -> BumpPtr<AST::DoWhile>;
+  [[nodiscard]] auto parseDoStatement() -> BumpPtr<ast::DoWhile>;
 
-  [[nodiscard]] auto parseForStatement() -> BumpPtr<AST::For>;
+  [[nodiscard]] auto parseForStatement() -> BumpPtr<ast::For>;
 
   /// Parse a `break` or `continue` statement, which are identical except
   /// for the keyword and the AST node type.
@@ -523,7 +523,7 @@ private:
   [[nodiscard]] BumpPtr<Node> parseJumpStatement(std::string_view keyword) {
     std::optional<Parser::ParsedToken> kw{nextKeywordAndLocation(keyword)};
     if (!kw) return nullptr;
-    std::optional<AST::LateIf> lateIf{parseLateIf()};
+    std::optional<ast::LateIf> lateIf{parseLateIf()};
     std::optional<std::string_view> srcSemicolon{nextDelimiter(";")};
     if (!srcSemicolon)
       kw->srcLoc.throwError("expected ';' after ", SpellQuoted(keyword));
@@ -531,21 +531,21 @@ private:
                           *srcSemicolon);
   }
 
-  [[nodiscard]] auto parseBreakStatement() -> BumpPtr<AST::Break>;
+  [[nodiscard]] auto parseBreakStatement() -> BumpPtr<ast::Break>;
 
-  [[nodiscard]] auto parseContinueStatement() -> BumpPtr<AST::Continue>;
+  [[nodiscard]] auto parseContinueStatement() -> BumpPtr<ast::Continue>;
 
-  [[nodiscard]] auto parseReturnStatement() -> BumpPtr<AST::Return>;
+  [[nodiscard]] auto parseReturnStatement() -> BumpPtr<ast::Return>;
 
-  [[nodiscard]] auto parseUnreachableStatement() -> BumpPtr<AST::Unreachable>;
+  [[nodiscard]] auto parseUnreachableStatement() -> BumpPtr<ast::Unreachable>;
 
-  [[nodiscard]] auto parsePreserveStatement() -> BumpPtr<AST::Preserve>;
+  [[nodiscard]] auto parsePreserveStatement() -> BumpPtr<ast::Preserve>;
 
-  [[nodiscard]] auto parseDeferStatement() -> BumpPtr<AST::Defer>;
+  [[nodiscard]] auto parseDeferStatement() -> BumpPtr<ast::Defer>;
 
-  [[nodiscard]] auto parseVisitStatement() -> BumpPtr<AST::Visit>;
+  [[nodiscard]] auto parseVisitStatement() -> BumpPtr<ast::Visit>;
 
-  [[nodiscard]] auto parseLateIf() -> std::optional<AST::LateIf>;
+  [[nodiscard]] auto parseLateIf() -> std::optional<ast::LateIf>;
   //--}
 
 private:

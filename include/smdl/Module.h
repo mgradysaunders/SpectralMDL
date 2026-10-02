@@ -5,11 +5,11 @@
 
 namespace smdl {
 
-namespace AST {
+namespace ast {
 
 class File;
 
-} // namespace AST
+} // namespace ast
 
 #if !SMDL_DOXYGEN
 class Context;
@@ -268,7 +268,7 @@ public:
   [[nodiscard]] bool isParsed() const noexcept { return mRoot; }
 
   /// Get the AST root node. This is null until `parse()` succeeds!
-  [[nodiscard]] const AST::File *getRoot() const noexcept {
+  [[nodiscard]] const ast::File *getRoot() const noexcept {
     return mRoot.get();
   }
 
@@ -323,7 +323,7 @@ private:
   std::string mSourceCode{};
 
   /// The AST root node parsed from the source code.
-  BumpPtr<AST::File> mRoot{};
+  BumpPtr<ast::File> mRoot{};
 
   /// The compile status.
   CompileStatus mCompileStatus{COMPILE_STATUS_NOT_STARTED};

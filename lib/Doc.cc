@@ -132,14 +132,14 @@ namespace {
 // Get the string in the `description(...)` or `anno::description(...)`
 // annotation if present. This may be empty!
 [[nodiscard]] std::string
-descriptionOf(const AST::AnnotationBlock *annotations) {
+descriptionOf(const ast::AnnotationBlock *annotations) {
   if (!annotations) return {};
   for (const auto &anno : *annotations) {
     if (anno.hasIdentifier({"description"}) ||
         anno.hasIdentifier({"anno", "description"})) {
       for (const auto &arg : anno.args) {
-        if (arg.expr && arg.expr->exprKind == AST::ExprKind::LiteralString)
-          return static_cast<const AST::LiteralString *>(arg.expr.get())->value;
+        if (arg.expr && arg.expr->exprKind == ast::ExprKind::LiteralString)
+          return static_cast<const ast::LiteralString *>(arg.expr.get())->value;
       }
     }
   }
@@ -151,9 +151,9 @@ descriptionOf(const AST::AnnotationBlock *annotations) {
 // `description(...)` annotation. This may be empty!
 [[nodiscard]] std::string docTextOf(std::string_view srcDocComment,
                                     std::string_view srcTrailing,
-                                    const AST::AnnotationBlock *annotations) {
-  std::string text{AST::getDocCommentText(srcDocComment)};
-  if (text.empty()) text = AST::getDocCommentText(srcTrailing);
+                                    const ast::AnnotationBlock *annotations) {
+  std::string text{ast::getDocCommentText(srcDocComment)};
+  if (text.empty()) text = ast::getDocCommentText(srcTrailing);
   if (text.empty()) text = descriptionOf(annotations);
   return text;
 }
@@ -172,9 +172,9 @@ public:
                             : std::string(mModule.getQualifiedName());
     mod.fileName = std::string(mModule.getFileName());
     mQualifiedNamePrefix = mod.qualifiedName;
-    const AST::File *root{mModule.getRoot()};
+    const ast::File *root{mModule.getRoot()};
     if (!root) return mod;
-    mod.docText = AST::getDocCommentText(root->srcDocComment);
+    mod.docText = ast::getDocCommentText(root->srcDocComment);
     if (mod.docText.empty())
       mod.docText = descriptionOf(root->moduleAnnotations.get());
     for (const auto &decl : root->globalDecls) extractDecl(*decl, mod.entries);
@@ -207,7 +207,7 @@ private:
 
   // The signature prefix from the attributes and the `export` keyword,
   // which precede the declaration's own source location.
-  [[nodiscard]] static std::string declPrefix(const AST::Decl &decl) {
+  [[nodiscard]] static std::string declPrefix(const ast::Decl &decl) {
     std::string prefix{};
     if (decl.attributes) {
       prefix += "@(";
@@ -236,7 +236,7 @@ private:
       entry.nameOffset = uint32_t(prefix.size()) + offset;
   }
 
-  [[nodiscard]] DocEntry makeEntry(const AST::Decl &decl, const char *kind,
+  [[nodiscard]] DocEntry makeEntry(const ast::Decl &decl, const char *kind,
                                    std::string_view name) const {
     DocEntry entry{};
     entry.kind = kind;
@@ -248,10 +248,10 @@ private:
   }
 
   // Make an entry for a member of an enum or a struct. Members are not
-  // `AST::Decl`s, so they carry no `export` of their own and their
+  // `ast::Decl`s, so they carry no `export` of their own and their
   // qualified names are formed differently, but everything else about
-  // them is the same: `node` is an `AST::Enum::Declarator` or an
-  // `AST::Struct::Field`, and `srcEnd` is where its signature stops.
+  // them is the same: `node` is an `ast::Enum::Declarator` or an
+  // `ast::Struct::Field`, and `srcEnd` is where its signature stops.
   template <typename Node>
   [[nodiscard]] DocEntry makeMember(const DocEntry &parent, const char *kind,
                                     std::string qualifiedName, const Node &node,
@@ -270,10 +270,10 @@ private:
   }
 
   // Extract a declaration whose entire signature runs from its own
-  // source location to its semicolon, i.e., `AST::Tag` and
-  // `AST::Typedef`.
+  // source location to its semicolon, i.e., `ast::Tag` and
+  // `ast::Typedef`.
   template <typename Decl>
-  void extractSimpleDecl(const AST::Decl &decl, const char *kind,
+  void extractSimpleDecl(const ast::Decl &decl, const char *kind,
                          std::vector<DocEntry> &out) {
     const auto &d{static_cast<const Decl &>(decl)};
     DocEntry entry{makeEntry(decl, kind, d.name.srcName)};
@@ -283,32 +283,32 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractDecl(const AST::Decl &decl, std::vector<DocEntry> &out) {
+  void extractDecl(const ast::Decl &decl, std::vector<DocEntry> &out) {
     switch (decl.declKind) {
-    case AST::DeclKind::AnnotationDecl:
-      extractAnnotationDecl(static_cast<const AST::AnnotationDecl &>(decl),
+    case ast::DeclKind::AnnotationDecl:
+      extractAnnotationDecl(static_cast<const ast::AnnotationDecl &>(decl),
                             out);
       break;
-    case AST::DeclKind::Enum:
-      extractEnum(static_cast<const AST::Enum &>(decl), out);
+    case ast::DeclKind::Enum:
+      extractEnum(static_cast<const ast::Enum &>(decl), out);
       break;
-    case AST::DeclKind::Function:
-      extractFunction(static_cast<const AST::Function &>(decl), out);
+    case ast::DeclKind::Function:
+      extractFunction(static_cast<const ast::Function &>(decl), out);
       break;
-    case AST::DeclKind::Namespace:
-      extractNamespace(static_cast<const AST::Namespace &>(decl), out);
+    case ast::DeclKind::Namespace:
+      extractNamespace(static_cast<const ast::Namespace &>(decl), out);
       break;
-    case AST::DeclKind::Struct:
-      extractStruct(static_cast<const AST::Struct &>(decl), out);
+    case ast::DeclKind::Struct:
+      extractStruct(static_cast<const ast::Struct &>(decl), out);
       break;
-    case AST::DeclKind::Tag:
-      extractSimpleDecl<AST::Tag>(decl, "tag", out);
+    case ast::DeclKind::Tag:
+      extractSimpleDecl<ast::Tag>(decl, "tag", out);
       break;
-    case AST::DeclKind::Typedef:
-      extractSimpleDecl<AST::Typedef>(decl, "typedef", out);
+    case ast::DeclKind::Typedef:
+      extractSimpleDecl<ast::Typedef>(decl, "typedef", out);
       break;
-    case AST::DeclKind::Variable:
-      extractVariable(static_cast<const AST::Variable &>(decl), out);
+    case ast::DeclKind::Variable:
+      extractVariable(static_cast<const ast::Variable &>(decl), out);
       break;
     default:
       // Skip declarations that are not documentable API surface:
@@ -317,7 +317,7 @@ private:
     }
   }
 
-  void extractAnnotationDecl(const AST::AnnotationDecl &decl,
+  void extractAnnotationDecl(const ast::AnnotationDecl &decl,
                              std::vector<DocEntry> &out) {
     DocEntry entry{makeEntry(decl, "annotation", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
@@ -328,7 +328,7 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractEnum(const AST::Enum &decl, std::vector<DocEntry> &out) {
+  void extractEnum(const ast::Enum &decl, std::vector<DocEntry> &out) {
     DocEntry entry{makeEntry(decl, "enum", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, endOf(decl.name.srcName)),
@@ -344,7 +344,7 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractFunction(const AST::Function &decl, std::vector<DocEntry> &out) {
+  void extractFunction(const ast::Function &decl, std::vector<DocEntry> &out) {
     DocEntry entry{makeEntry(decl, "function", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, !decl.srcFrequency.empty()
@@ -359,7 +359,7 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractNamespace(const AST::Namespace &decl,
+  void extractNamespace(const ast::Namespace &decl,
                         std::vector<DocEntry> &out) {
     std::string name{};
     for (auto elemName : Span<const std::string_view>(*decl.identifier)) {
@@ -377,7 +377,7 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractStruct(const AST::Struct &decl, std::vector<DocEntry> &out) {
+  void extractStruct(const ast::Struct &decl, std::vector<DocEntry> &out) {
     DocEntry entry{makeEntry(decl, "struct", decl.name.srcName)};
     setSignature(entry, declPrefix(decl),
                  slice(decl.srcLoc.i, endOf(decl.name.srcName)),
@@ -392,7 +392,7 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractVariable(const AST::Variable &decl, std::vector<DocEntry> &out) {
+  void extractVariable(const ast::Variable &decl, std::vector<DocEntry> &out) {
     if (decl.declarators.empty()) return;
     std::string_view typeSrc{
         slice(decl.srcLoc.i, decl.declarators[0].srcLoc.i)};
@@ -430,12 +430,12 @@ private:
           docTextOf(declarator.srcDocComment, declarator.srcDocCommentTrailing,
                     declarator.annotations.get());
       if (entry.docText.empty())
-        entry.docText = AST::getDocCommentText(decl.srcDocComment);
+        entry.docText = ast::getDocCommentText(decl.srcDocComment);
       out.push_back(std::move(entry));
     }
   }
 
-  void extractParams(const AST::ParameterList &params,
+  void extractParams(const ast::ParameterList &params,
                      std::vector<DocParam> &out) {
     for (const auto &param : params) {
       DocParam docParam{};

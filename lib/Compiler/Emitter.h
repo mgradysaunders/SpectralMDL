@@ -35,7 +35,7 @@ public:
   Value valueToPreserve{};
 
   /// The AST statement for `Defer`.
-  AST::Defer *astDefer{};
+  ast::Defer *astDefer{};
 
   /// The declaration sequence number for `Defer`: the defer body must not
   /// see declarations made after the defer statement.
@@ -285,7 +285,7 @@ public:
   /// that the call it is preparing consumes *after* the binding scope ends,
   /// and the storage may be the caller's own variable rather than a
   /// temporary.
-  auto declare(Span<const std::string_view> name, AST::Node *node, Value value,
+  auto declare(Span<const std::string_view> name, ast::Node *node, Value value,
                bool ownsStorage = true) {
     Declaration *declaration{context.allocator.allocate<Declaration>(
         context.internName(name), node, value)};
@@ -333,7 +333,7 @@ public:
 
   /// Declare import.
   void declareImport(Span<const std::string_view> importPath, bool isAbs,
-                     AST::Decl &decl);
+                     ast::Decl &decl);
 
   /// Spill an rvalue to memory so that it can be addressed, reusing one slot
   /// per value instead of copying per access.
@@ -629,41 +629,41 @@ public:
   /// \{
 
   /// Emit node.
-  Value emit(AST::Node &node);
+  Value emit(ast::Node &node);
 
   /// Emit file.
-  Value emit(AST::File &file) {
+  Value emit(ast::File &file) {
     for (auto &decl : file.importDecls) emit(decl);
     for (auto &decl : file.globalDecls) emit(decl);
     return Value();
   }
 
   /// Emit declaration.
-  Value emit(AST::Decl &decl);
+  Value emit(ast::Decl &decl);
 
   /// Emit annotation declaration.
-  Value emit(AST::AnnotationDecl & /*decl*/) {
+  Value emit(ast::AnnotationDecl & /*decl*/) {
     // TODO
     return Value();
   }
 
   /// Emit enum declaration.
-  Value emit(AST::Enum &decl) {
+  Value emit(ast::Enum &decl) {
     context.getEnumType(&decl)->initialize(*this);
     return Value();
   }
 
   /// Emit exec declaration.
-  Value emit(AST::Exec &decl);
+  Value emit(ast::Exec &decl);
 
   /// Emit function declaration.
-  Value emit(AST::Function &decl) {
+  Value emit(ast::Function &decl) {
     context.getFunctionType(&decl)->initialize(*this);
     return Value();
   }
 
   /// Emit import declaration.
-  Value emit(AST::Import &decl) {
+  Value emit(ast::Import &decl) {
     if (decl.isExported())
       decl.srcLoc.throwError("Cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
@@ -672,7 +672,7 @@ public:
   }
 
   /// Emit namespace declaration.
-  Value emit(AST::Namespace &decl) {
+  Value emit(ast::Namespace &decl) {
     declare(*decl.identifier, &decl, context.getComptimeMetaNamespace(&decl));
     // The interior declarations go out of the enclosing lookup on exit,
     // but the namespace is not a shadow boundary (members conflict with
@@ -688,13 +688,13 @@ public:
   }
 
   /// Emit struct declaration.
-  Value emit(AST::Struct &decl) {
+  Value emit(ast::Struct &decl) {
     context.getStructType(&decl)->initialize(*this);
     return Value();
   }
 
   /// Emit tag declaration.
-  Value emit(AST::Tag &decl) {
+  Value emit(ast::Tag &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);
     declare(decl.name, &decl,
             context.getComptimeMetaType(context.getTagType(&decl)));
@@ -702,43 +702,43 @@ public:
   }
 
   /// Emit typedef declaration.
-  Value emit(AST::Typedef &decl) {
+  Value emit(ast::Typedef &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);
     declare(decl.name, &decl, emit(decl.type));
     return Value();
   }
 
   /// Emit unit-test declaration.
-  Value emit(AST::UnitTest &decl);
+  Value emit(ast::UnitTest &decl);
 
   /// Emit using alias declaration.
-  Value emit(AST::UsingAlias &decl) {
+  Value emit(ast::UsingAlias &decl) {
     scope->usingAliases.push_back({&decl, context.nextDeclSeq()});
     return Value();
   }
 
   /// Emit using import declaration.
-  Value emit(AST::UsingImport &decl);
+  Value emit(ast::UsingImport &decl);
 
   /// Emit variable declaration.
-  Value emit(AST::Variable &decl);
+  Value emit(ast::Variable &decl);
 
   /// Emit expression.
-  Value emit(AST::Expr &expr);
+  Value emit(ast::Expr &expr);
 
   /// Emit access-field expression.
-  Value emit(AST::AccessField &expr) {
+  Value emit(ast::AccessField &expr) {
     return accessField(emit(expr.expr), expr.name.srcName, expr.srcLoc);
   }
 
   /// Emit access-index expression.
-  Value emit(AST::AccessIndex &expr);
+  Value emit(ast::AccessIndex &expr);
 
   /// Emit binary expression.
-  Value emit(AST::Binary &expr);
+  Value emit(ast::Binary &expr);
 
   /// Emit call expression.
-  Value emit(AST::Call &expr) {
+  Value emit(ast::Call &expr) {
     // Evaluate the callee before the arguments: C++ makes no ordering
     // guarantee between function arguments, and the emission order here
     // defines side-effect order in the generated code.
@@ -748,12 +748,12 @@ public:
   }
 
   /// Emit identifier expression.
-  Value emit(AST::Identifier &expr) {
+  Value emit(ast::Identifier &expr) {
     return resolveIdentifier(expr, expr.srcLoc);
   }
 
   /// Emit intrinsic expression.
-  Value emit(AST::Intrinsic &expr) {
+  Value emit(ast::Intrinsic &expr) {
     // Resolve here and discard the result, so that a misspelled name is
     // rejected at the reference. Waiting for the call site would let an
     // intrinsic that is named but never called pass silently.
@@ -768,14 +768,14 @@ public:
   /// re-emitted at every expansion of that macro, and the resolution anchor
   /// captured by `initializeLambda()` must be re-captured against the scope
   /// of the current expansion.
-  Value emit(AST::Lambda &expr) {
+  Value emit(ast::Lambda &expr) {
     FunctionType *funcType{context.getLambdaFunctionType(expr.func.get())};
     funcType->initializeLambda(*this);
     return context.getComptimeMetaType(funcType);
   }
 
   /// Emit let expression.
-  Value emit(AST::Let &expr) {
+  Value emit(ast::Let &expr) {
     // The declarations open their own scope, so they may shadow names in
     // the enclosing scope.
     SMDL_PRESERVE(scope);
@@ -789,12 +789,12 @@ public:
   }
 
   /// Emit literal bool expression.
-  Value emit(AST::LiteralBool &expr) {
+  Value emit(ast::LiteralBool &expr) {
     return context.getComptimeBool(expr.value);
   }
 
   /// Emit literal float expression.
-  Value emit(AST::LiteralFloat &expr) {
+  Value emit(ast::LiteralFloat &expr) {
     llvm::StringRef src{expr.srcValue};
     if (src.ends_with_insensitive("jd")) {
       return invoke("complex",
@@ -815,7 +815,7 @@ public:
   }
 
   /// Emit literal int expression.
-  Value emit(AST::LiteralInt &expr) {
+  Value emit(ast::LiteralInt &expr) {
     // If the literal value is greater than the maximum `int` promote
     // it to `int64`.
     if (expr.value > uint64_t(std::numeric_limits<int>::max())) {
@@ -828,21 +828,21 @@ public:
   }
 
   /// Emit literal string expression.
-  Value emit(AST::LiteralString &expr) {
+  Value emit(ast::LiteralString &expr) {
     return context.getComptimeString(expr.value);
   }
 
   /// Emit parenthesized expression.
-  Value emit(AST::Parens &expr);
+  Value emit(ast::Parens &expr);
 
   /// Emit return-from expression.
-  Value emit(AST::ReturnFrom &expr);
+  Value emit(ast::ReturnFrom &expr);
 
   /// Emit select expression.
-  Value emit(AST::Select &expr);
+  Value emit(ast::Select &expr);
 
   /// Emit type expression.
-  Value emit(AST::Type &expr) {
+  Value emit(ast::Type &expr) {
     Value value{emit(expr.expr)};
     if (value.type != context.getMetaTypeType())
       expr.srcLoc.throwError("Expected expression to resolve to a type");
@@ -851,20 +851,20 @@ public:
   }
 
   /// Emit type-cast expression.
-  Value emit(AST::TypeCast &expr) {
+  Value emit(ast::TypeCast &expr) {
     Type *type{emit(expr.type).getComptimeMetaType(context, expr.srcLoc)};
     Value value{emit(expr.expr)};
     return invoke(type, value, expr.srcLoc);
   }
 
   /// Emit unary expression.
-  Value emit(AST::Unary &expr) {
+  Value emit(ast::Unary &expr) {
     return emitOp(expr.op, emit(expr.expr), expr.srcLoc);
   }
 
   /// Emit late-if helper.
   template <typename Func>
-  void emitLateIf(std::optional<AST::LateIf> &lateIf, Func &&func) {
+  void emitLateIf(std::optional<ast::LateIf> &lateIf, Func &&func) {
     if (!lateIf) {
       std::invoke(std::forward<Func>(func));
       return;
@@ -872,7 +872,7 @@ public:
     Value cond{invoke(context.getBoolType(), emit(lateIf->expr),
                       lateIf->expr->srcLoc)};
     if (cond.isComptimeInt()) {
-      // Fold like `emit(AST::If &)`, so statements following a
+      // Fold like `emit(ast::If &)`, so statements following a
       // comptime-taken `return`/`break`/`continue` are never emitted.
       if (cond.getComptimeInt())
         handleScope(nullptr, nullptr, std::forward<Func>(func));
@@ -886,10 +886,10 @@ public:
   }
 
   /// Emit statement.
-  Value emit(AST::Stmt &stmt);
+  Value emit(ast::Stmt &stmt);
 
   /// Emit break statement.
-  Value emit(AST::Break &stmt) {
+  Value emit(ast::Break &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelBreak)
       stmt.srcLoc.throwError(isInDefer ? "cannot 'break' from 'defer'"
@@ -902,10 +902,10 @@ public:
   }
 
   /// Emit compound statement.
-  Value emit(AST::Compound &stmt);
+  Value emit(ast::Compound &stmt);
 
   /// Emit continue statement.
-  Value emit(AST::Continue &stmt) {
+  Value emit(ast::Continue &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelContinue)
       stmt.srcLoc.throwError(isInDefer ? "cannot 'continue' from 'defer'"
@@ -918,10 +918,10 @@ public:
   }
 
   /// Emit declaration statement.
-  Value emit(AST::DeclStmt &stmt) { return emit(stmt.decl); }
+  Value emit(ast::DeclStmt &stmt) { return emit(stmt.decl); }
 
   /// Emit defer statement.
-  Value emit(AST::Defer &stmt) {
+  Value emit(ast::Defer &stmt) {
     // The sequence number bounds what the defer body may resolve: nothing
     // declared after the defer statement (see `unwind`).
     unwindStack.push_back({UnwindAction::Kind::Defer, /*value=*/{},
@@ -931,22 +931,22 @@ public:
   }
 
   /// Emit do-while statement.
-  Value emit(AST::DoWhile &stmt);
+  Value emit(ast::DoWhile &stmt);
 
   /// Emit expression statement.
-  Value emit(AST::ExprStmt &stmt) {
+  Value emit(ast::ExprStmt &stmt) {
     if (stmt.expr) emitLateIf(stmt.lateIf, [&] { emit(stmt.expr); });
     return Value();
   }
 
   /// Emit for statement.
-  Value emit(AST::For &stmt);
+  Value emit(ast::For &stmt);
 
   /// Emit if statement.
-  Value emit(AST::If &stmt);
+  Value emit(ast::If &stmt);
 
   /// Emit preserve statement.
-  Value emit(AST::Preserve &stmt) {
+  Value emit(ast::Preserve &stmt) {
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
       Value value{emit(expr)};
       if (!value.isLValue()) stmt.srcLoc.throwError("Cannot 'preserve' rvalue");
@@ -957,7 +957,7 @@ public:
   }
 
   /// Emit return statement.
-  Value emit(AST::Return &stmt) {
+  Value emit(ast::Return &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelReturn)
       stmt.srcLoc.throwError(isInDefer ? "cannot 'return' from 'defer'"
@@ -971,10 +971,10 @@ public:
   }
 
   /// Emit switch statement.
-  Value emit(AST::Switch &stmt);
+  Value emit(ast::Switch &stmt);
 
   /// Emit unreachable statement.
-  Value emit(AST::Unreachable &stmt) {
+  Value emit(ast::Unreachable &stmt) {
     if (!getLLVMFunction())
       stmt.srcLoc.throwError(
           "An 'unreachable' must be within function definition");
@@ -983,7 +983,7 @@ public:
   }
 
   /// Emit visit statement.
-  Value emit(AST::Visit &stmt) {
+  Value emit(ast::Visit &stmt) {
     return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
       // The binding is a view of the visited expression's storage, never
       // the owner: in the non-union case `value` passes through verbatim
@@ -997,10 +997,10 @@ public:
   }
 
   /// Emit while statement.
-  Value emit(AST::While &stmt);
+  Value emit(ast::While &stmt);
 
   /// Emit argument list.
-  ArgumentList emit(AST::ArgumentList &astArgs) {
+  ArgumentList emit(ast::ArgumentList &astArgs) {
     ArgumentList args{};
     for (auto &astArg : astArgs) {
       if (astArg.isInlined()) {
@@ -1021,19 +1021,19 @@ public:
   /// argument per field for structs. The expression is emitted exactly
   /// once. `validateNames()` afterwards catches name collisions and
   /// positional-after-named ordering introduced by the expansion.
-  void expandInlineArgument(ArgumentList &args, AST::Argument &astArg);
+  void expandInlineArgument(ArgumentList &args, ast::Argument &astArg);
 
   /// Reject an assignment whose target is a name that is not a variable.
   /// A `const` declaration binds an rvalue, so the assignment otherwise
   /// fails deep in `emitOp` with only the word "rvalue" to go on, long
   /// after the name and its declaration are out of reach.
-  void rejectAssignmentToNonVariable(AST::Binary &expr);
+  void rejectAssignmentToNonVariable(ast::Binary &expr);
 
   /// Reject `name = value` in an argument list when `name` resolves to
   /// nothing, which is the `=` typed where `:` was meant. Left alone, it
   /// reports only that the name does not resolve, which describes the
   /// symptom and not the mistake.
-  void rejectAssignmentAsNamedArgument(AST::Argument &astArg);
+  void rejectAssignmentAsNamedArgument(ast::Argument &astArg);
 
   /// Emit pointer if non-null.
   template <typename T> Value emit(T *ptr) {
@@ -1064,10 +1064,10 @@ public:
   /// \{
 
   /// Emit unary operation.
-  Value emitOp(AST::UnaryOp op, Value value, const SourceLocation &srcLoc);
+  Value emitOp(ast::UnaryOp op, Value value, const SourceLocation &srcLoc);
 
   /// Emit binary operation.
-  Value emitOp(AST::BinaryOp op, Value lhs, Value rhs,
+  Value emitOp(ast::BinaryOp op, Value lhs, Value rhs,
                const SourceLocation &srcLoc);
 
   /// Helper to emit unary or binary operation columnwise, assuming
@@ -1154,13 +1154,13 @@ public:
     recordReturn(value, srcLoc);
   }
 
-  [[nodiscard]] Parameter emitParameter(AST::Parameter &astParam) {
+  [[nodiscard]] Parameter emitParameter(ast::Parameter &astParam) {
     return Parameter{
         emit(astParam.type).getComptimeMetaType(context, astParam.name.srcLoc),
         astParam.name, &astParam};
   }
 
-  [[nodiscard]] ParameterList emitParameterList(AST::ParameterList &astParams) {
+  [[nodiscard]] ParameterList emitParameterList(ast::ParameterList &astParams) {
     ParameterList params{};
     for (auto &astParam : astParams)
       params.emplace_back(emitParameter(astParam));

@@ -9,8 +9,8 @@
 
 namespace smdl {
 
-using namespace AST::unary_ops;
-using namespace AST::binary_ops;
-using AST::to_string;
+using namespace ast::unary_ops;
+using namespace ast::binary_ops;
+using ast::to_string;
 
 } // namespace smdl

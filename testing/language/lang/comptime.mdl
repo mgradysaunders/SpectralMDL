@@ -165,7 +165,7 @@ unit_test "The build configuration is a compile-time constant" {
 
 // The third time: an `exec` block runs once when the host loads the
 // module, which is neither compile time nor a material evaluation. It is
-// emitted pure, matching the C++ `JIT::Function<void()>` the host calls it
+// emitted pure, matching the C++ `jit::Function<void()>` the host calls it
 // through, so it can take no state.
 exec {
   #assert(1 + 1 == 2);

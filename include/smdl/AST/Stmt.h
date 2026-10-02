@@ -3,7 +3,7 @@
 
 #include "smdl/AST/Decl.h"
 
-namespace smdl::AST {
+namespace smdl::ast {
 
 /// \addtogroup ast_stmt
 /// \{
@@ -360,4 +360,4 @@ public:
 
 /// \}
 
-} // namespace smdl::AST
+} // namespace smdl::ast

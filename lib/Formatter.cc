@@ -304,11 +304,11 @@ namespace {
 }
 } // namespace
 
-void Formatter::writeMinifiedFloat(const AST::LiteralFloat &expr) {
+void Formatter::writeMinifiedFloat(const ast::LiteralFloat &expr) {
   writeToken(expr.srcValue, minifyFloatSpelling(expr.srcValue, expr.value));
 }
 
-void Formatter::write(const AST::File &file) {
+void Formatter::write(const ast::File &file) {
   write(DELIM_NONE);
   if (file.isSMDLSyntax()) {
     write(file.srcKwSMDLSyntax, DELIM_NEWLINE);
@@ -317,7 +317,7 @@ void Formatter::write(const AST::File &file) {
     write(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path, DELIM_NEWLINE);
   }
   if (file.version) {
-    const AST::File::Version &version{*file.version};
+    const ast::File::Version &version{*file.version};
     write(version.srcKwMDL, DELIM_SPACE, version.srcVersion,
           version.srcSemicolon, DELIM_NEWLINE);
   }
@@ -339,14 +339,14 @@ void Formatter::write(const AST::File &file) {
 }
 
 //--{ Write: Decls
-void Formatter::write(const AST::Decl &decl) {
-  writeTypeSwitch<AST::AnnotationDecl, AST::Enum, AST::Exec, AST::Function,
-                  AST::Import, AST::Namespace, AST::Struct, AST::Tag,
-                  AST::Typedef, AST::UnitTest, AST::UsingAlias,
-                  AST::UsingImport, AST::Variable>(decl);
+void Formatter::write(const ast::Decl &decl) {
+  writeTypeSwitch<ast::AnnotationDecl, ast::Enum, ast::Exec, ast::Function,
+                  ast::Import, ast::Namespace, ast::Struct, ast::Tag,
+                  ast::Typedef, ast::UnitTest, ast::UsingAlias,
+                  ast::UsingImport, ast::Variable>(decl);
 }
 
-void Formatter::write(const AST::Enum &decl) {
+void Formatter::write(const ast::Enum &decl) {
   write(decl.srcKwEnum, DELIM_SPACE, decl.name, decl.annotations,
         DELIM_UNNECESSARY_SPACE, decl.srcBraceL, DELIM_UNNECESSARY_SPACE,
         PUSH_INDENT);
@@ -372,7 +372,7 @@ void Formatter::write(const AST::Enum &decl) {
   write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
 
-void Formatter::write(const AST::Function &decl) {
+void Formatter::write(const ast::Function &decl) {
 
   write(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
         decl.params);
@@ -389,7 +389,7 @@ void Formatter::write(const AST::Function &decl) {
   }
 }
 
-void Formatter::write(const AST::Struct &decl) {
+void Formatter::write(const ast::Struct &decl) {
   write(decl.srcKwStruct, DELIM_SPACE, decl.name);
   if (!decl.srcColonBeforeTags.empty()) {
     write(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
@@ -429,7 +429,7 @@ void Formatter::write(const AST::Struct &decl) {
   write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
 
-void Formatter::write(const AST::Variable &decl) {
+void Formatter::write(const ast::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
   bool moreThanOne{decl.declarators.size() > 1};
   writeList(decl.declarators.size(), decl.hasTrailingComma(),
@@ -463,19 +463,19 @@ void Formatter::write(const AST::Variable &decl) {
 //--}
 
 //--{ Write: Exprs
-void Formatter::write(const AST::Expr &expr) {
-  writeTypeSwitch<AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
-                  AST::Identifier, AST::Intrinsic, AST::Lambda, AST::Let,
-                  AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,
-                  AST::LiteralString, AST::Parens, AST::ReturnFrom, AST::Select,
-                  AST::SizeName, AST::Type, AST::TypeCast, AST::Unary>(expr);
+void Formatter::write(const ast::Expr &expr) {
+  writeTypeSwitch<ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
+                  ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let,
+                  ast::LiteralBool, ast::LiteralFloat, ast::LiteralInt,
+                  ast::LiteralString, ast::Parens, ast::ReturnFrom, ast::Select,
+                  ast::SizeName, ast::Type, ast::TypeCast, ast::Unary>(expr);
 }
 
-void Formatter::write(const AST::Lambda &expr) {
-  // This mirrors `write(const AST::Function &)` minus the name,
+void Formatter::write(const ast::Lambda &expr) {
+  // This mirrors `write(const ast::Function &)` minus the name,
   // annotations, frequency qualifier, semicolon, and return type, which
   // is implicitly `auto`.
-  const AST::Function &decl{*expr.func};
+  const ast::Function &decl{*expr.func};
   write(expr.srcBackslash, decl.params);
   if (!decl.srcEqual.empty()) {
     write(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
@@ -485,7 +485,7 @@ void Formatter::write(const AST::Lambda &expr) {
   }
 }
 
-void Formatter::write(const AST::Let &expr) {
+void Formatter::write(const ast::Let &expr) {
   write(expr.srcKwLet, DELIM_SPACE);
   if (!expr.srcBraceL.empty()) {
     // The block, and the `in` expression after it, indent from the line the
@@ -505,19 +505,19 @@ void Formatter::write(const AST::Let &expr) {
 //--}
 
 //--{ Write: Stmts
-void Formatter::write(const AST::Stmt &stmt) {
-  writeTypeSwitch<AST::Break, AST::Compound, AST::Continue, AST::DeclStmt,
-                  AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For, AST::If,
-                  AST::Preserve, AST::Return, AST::Switch, AST::Unreachable,
-                  AST::Visit, AST::While>(stmt);
+void Formatter::write(const ast::Stmt &stmt) {
+  writeTypeSwitch<ast::Break, ast::Compound, ast::Continue, ast::DeclStmt,
+                  ast::Defer, ast::DoWhile, ast::ExprStmt, ast::For, ast::If,
+                  ast::Preserve, ast::Return, ast::Switch, ast::Unreachable,
+                  ast::Visit, ast::While>(stmt);
 }
 
-void Formatter::write(const AST::For &stmt) {
+void Formatter::write(const ast::For &stmt) {
   write(stmt.srcKwFor, DELIM_UNNECESSARY_SPACE, stmt.srcParenL, PUSH_INDENT,
         ALIGN_INDENT, stmt.stmtInit, DELIM_UNNECESSARY_SPACE, stmt.exprCond,
         stmt.srcSemicolonAfterCond, DELIM_UNNECESSARY_SPACE, stmt.exprNext,
         POP_INDENT, stmt.srcParenR);
-  if (llvm::isa<AST::Compound>(stmt.stmtLoop)) {
+  if (llvm::isa<ast::Compound>(stmt.stmtLoop)) {
     write(DELIM_UNNECESSARY_SPACE, stmt.stmtLoop);
   } else {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtLoop,
@@ -525,19 +525,19 @@ void Formatter::write(const AST::For &stmt) {
   }
 }
 
-void Formatter::write(const AST::If &stmt) {
+void Formatter::write(const ast::If &stmt) {
   write(stmt.srcKwIf, DELIM_UNNECESSARY_SPACE, stmt.expr);
-  if (llvm::isa<AST::Compound>(stmt.stmtThen)) {
+  if (llvm::isa<ast::Compound>(stmt.stmtThen)) {
     write(DELIM_UNNECESSARY_SPACE, stmt.stmtThen);
   } else {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtThen,
           POP_INDENT, DELIM_NEWLINE);
   }
   if (stmt.stmtElse) {
-    write(llvm::isa<AST::Compound>(stmt.stmtThen) ? DELIM_SPACE : DELIM_NEWLINE,
+    write(llvm::isa<ast::Compound>(stmt.stmtThen) ? DELIM_SPACE : DELIM_NEWLINE,
           stmt.srcKwElse);
-    if (llvm::isa<AST::Compound>(stmt.stmtElse) ||
-        llvm::isa<AST::If>(stmt.stmtElse)) {
+    if (llvm::isa<ast::Compound>(stmt.stmtElse) ||
+        llvm::isa<ast::If>(stmt.stmtElse)) {
       write(DELIM_SPACE, stmt.stmtElse);
     } else {
       write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtElse,
@@ -546,7 +546,7 @@ void Formatter::write(const AST::If &stmt) {
   }
 }
 
-void Formatter::write(const AST::Switch &stmt) {
+void Formatter::write(const ast::Switch &stmt) {
   write(stmt.srcKwSwitch, DELIM_UNNECESSARY_SPACE, stmt.expr,
         DELIM_UNNECESSARY_SPACE, stmt.srcBraceL, DELIM_NEWLINE);
   for (const auto &each : stmt.cases) {
@@ -565,7 +565,7 @@ void Formatter::write(const AST::Switch &stmt) {
 }
 //--}
 
-void Formatter::write(const AST::AnnotationBlock &annos) {
+void Formatter::write(const ast::AnnotationBlock &annos) {
   if (!mOptions.shouldDropAnnotations) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
           annos.srcDoubleBrackL, PUSH_INDENT);
@@ -581,25 +581,25 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
 
 namespace {
 // Is the expression a literal constant, possibly signed?
-[[nodiscard]] bool isLiteral(const AST::Expr &expr) {
-  if (const AST::Unary *unary{llvm::dyn_cast<AST::Unary>(&expr)};
-      unary && (unary->op == AST::UNOP_POS || unary->op == AST::UNOP_NEG))
+[[nodiscard]] bool isLiteral(const ast::Expr &expr) {
+  if (const ast::Unary *unary{llvm::dyn_cast<ast::Unary>(&expr)};
+      unary && (unary->op == ast::UNOP_POS || unary->op == ast::UNOP_NEG))
     return isLiteral(*unary->expr);
-  return llvm::isa<AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,
-                   AST::LiteralString>(expr);
+  return llvm::isa<ast::LiteralBool, ast::LiteralFloat, ast::LiteralInt,
+                   ast::LiteralString>(expr);
 }
 
 // Is the argument list nothing but literal constants? Such a list is data,
 // and how data is laid out belongs to whoever wrote it, so the formatter
 // never breaks one to fit. A table of rows stays a table of rows.
-[[nodiscard]] bool isDataList(const AST::ArgumentList &args) {
-  return args.size() > 0 && llvm::all_of(args, [](const AST::Argument &arg) {
+[[nodiscard]] bool isDataList(const ast::ArgumentList &args) {
+  return args.size() > 0 && llvm::all_of(args, [](const ast::Argument &arg) {
            return arg.isPositional() && arg.expr && isLiteral(*arg.expr);
          });
 }
 } // namespace
 
-void Formatter::write(const AST::ArgumentList &args) {
+void Formatter::write(const ast::ArgumentList &args) {
   write(args.srcParenL, PUSH_INDENT);
   writeList(args.size(), args.hasTrailingComma(),
             /*canBreak=*/!isDataList(args), [&](Delim delim) {
@@ -615,7 +615,7 @@ void Formatter::write(const AST::ArgumentList &args) {
   write(POP_INDENT, args.srcParenR);
 }
 
-void Formatter::write(const AST::ParameterList &params) {
+void Formatter::write(const ast::ParameterList &params) {
   write(params.srcParenL, PUSH_INDENT);
   if (params.isVariant()) {
     write(params.srcStar);

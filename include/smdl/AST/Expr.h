@@ -3,7 +3,7 @@
 
 #include "smdl/AST/Node.h"
 
-namespace smdl::AST {
+namespace smdl::ast {
 
 /// \addtogroup ast_expr
 /// \{
@@ -737,4 +737,4 @@ public:
 
 /// \}
 
-} // namespace smdl::AST
+} // namespace smdl::ast

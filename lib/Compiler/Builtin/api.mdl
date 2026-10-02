@@ -869,7 +869,7 @@ export void _volumeEvaluate(
   }
 }
 
-/// An instance of a material corresponding to `smdl::JIT::MaterialDef::Eval`
+/// An instance of a material corresponding to `smdl::jit::MaterialDef::Eval`
 /// in the C++ API.
 export struct _MaterialEval {
   /// The material deep copied with `#bump()`.

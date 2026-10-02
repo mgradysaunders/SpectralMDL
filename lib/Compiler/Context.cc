@@ -243,19 +243,19 @@ PointerType *Context::getPointerType(Type *pointeeType) {
   return type.get();
 }
 
-EnumType *Context::getEnumType(AST::Enum *decl) {
+EnumType *Context::getEnumType(ast::Enum *decl) {
   BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<EnumType>(*decl);
   return static_cast<EnumType *>(type.get());
 }
 
-FunctionType *Context::getFunctionType(AST::Function *decl) {
+FunctionType *Context::getFunctionType(ast::Function *decl) {
   BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<FunctionType>(*decl);
   return static_cast<FunctionType *>(type.get());
 }
 
-FunctionType *Context::getLambdaFunctionType(AST::Function *decl) {
+FunctionType *Context::getLambdaFunctionType(ast::Function *decl) {
   BumpPtr<FunctionType> type{
       allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
   FunctionType *result{type.get()};
@@ -263,13 +263,13 @@ FunctionType *Context::getLambdaFunctionType(AST::Function *decl) {
   return result;
 }
 
-StructType *Context::getStructType(AST::Struct *decl) {
+StructType *Context::getStructType(ast::Struct *decl) {
   BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<StructType>(*decl);
   return static_cast<StructType *>(type.get());
 }
 
-TagType *Context::getTagType(AST::Tag *decl) {
+TagType *Context::getTagType(ast::Tag *decl) {
   BumpPtr<Type> &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<TagType>(std::string(decl->name.srcName));

@@ -129,7 +129,7 @@ export NormalSampleResult normalSample(
   const bool thin_walled = false,
   const float ior = 1.4,
   const float exterior_ior = 1.0,
-  const int lobeMask = df::DF_GLOSSY,
+  const int lobeMask = df::DF_GLOSS,
 ) {
   auto mat = material(
     thin_walled: thin_walled,
@@ -155,7 +155,7 @@ export float normalEvaluate(
   const bool thin_walled = false,
   const float ior = 1.4,
   const float exterior_ior = 1.0,
-  const int lobeMask = df::DF_GLOSSY,
+  const int lobeMask = df::DF_GLOSS,
 ) {
   auto mat = material(
     thin_walled: thin_walled,

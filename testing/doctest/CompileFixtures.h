@@ -77,9 +77,9 @@ buildAll(smdl::Compiler &compiler,
 }
 
 /// The material named `name`, requiring that there is one.
-[[nodiscard]] inline const smdl::JIT::MaterialDef *
+[[nodiscard]] inline const smdl::jit::MaterialDef *
 requireMaterial(smdl::Compiler &compiler, std::string_view name) {
-  const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
+  const smdl::jit::MaterialDef *materialDef{compiler.findMaterial(name)};
   REQUIRE_MESSAGE(materialDef != nullptr, compiler.explainMaterialLookup(name));
   return materialDef;
 }

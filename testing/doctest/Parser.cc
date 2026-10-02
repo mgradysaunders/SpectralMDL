@@ -16,9 +16,9 @@ public:
     REQUIRE(!error);
   }
 
-  [[nodiscard]] const AST::File &root() const { return *mModule.getRoot(); }
+  [[nodiscard]] const ast::File &root() const { return *mModule.getRoot(); }
 
-  [[nodiscard]] const AST::Decl &decl(size_t i) const {
+  [[nodiscard]] const ast::Decl &decl(size_t i) const {
     REQUIRE(i < root().globalDecls.size());
     return *root().globalDecls[i];
   }
@@ -36,7 +36,7 @@ private:
 };
 
 [[nodiscard]] std::string docText(std::string_view srcDocComment) {
-  return AST::getDocCommentText(srcDocComment);
+  return ast::getDocCommentText(srcDocComment);
 }
 
 // Parse source code that is expected to fail and return the error message,
@@ -114,7 +114,7 @@ struct S {
   int field2 = 0;
 };
 )")};
-    const AST::Struct &decl{parsed.declAs<AST::Struct>(0)};
+    const ast::Struct &decl{parsed.declAs<ast::Struct>(0)};
     REQUIRE(decl.fields.size() == 2);
     CHECK(docText(decl.fields[0].srcDocComment) ==
           "The first field,\non two lines.");
@@ -128,7 +128,7 @@ enum E {
   E_SECOND,
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocComment) == "The first.");
     CHECK(decl.declarators[1].srcDocComment.empty());
@@ -140,7 +140,7 @@ enum E {
   E_SECOND = 0x1, ///< The second.
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) == "The first.");
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The second.");
@@ -154,7 +154,7 @@ enum E {
   E_SECOND ///< The second.
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The second.");
@@ -167,7 +167,7 @@ enum E {
   E_SECOND,
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
@@ -180,7 +180,7 @@ enum E { ///< Stray, trails the brace, not a declarator.
   E_FIRST,
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 1);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(decl.declarators[0].srcDocCommentTrailing.empty());
@@ -193,7 +193,7 @@ enum E {
   E_SECOND,
 };
 )")};
-    const AST::Enum &decl{parsed.declAs<AST::Enum>(0)};
+    const ast::Enum &decl{parsed.declAs<ast::Enum>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocComment) == "The leading doc.");
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) ==
@@ -208,7 +208,7 @@ struct S {
   int field2 = 0; ///< The second.
 };
 )")};
-    const AST::Struct &decl{parsed.declAs<AST::Struct>(0)};
+    const ast::Struct &decl{parsed.declAs<ast::Struct>(0)};
     REQUIRE(decl.fields.size() == 2);
     CHECK(docText(decl.fields[0].srcDocCommentTrailing) == "The first.");
     CHECK(docText(decl.fields[1].srcDocCommentTrailing) == "The second.");
@@ -219,7 +219,7 @@ int f(
   int a, ///< The a.
   int b) = a + b;
 )")};
-    const AST::Function &decl{parsed.declAs<AST::Function>(0)};
+    const ast::Function &decl{parsed.declAs<ast::Function>(0)};
     REQUIRE(decl.params.size() == 2);
     CHECK(docText(decl.params[0].srcDocCommentTrailing) == "The a.");
     CHECK(decl.params[1].srcDocCommentTrailing.empty());
@@ -229,7 +229,7 @@ int f(
 const int c0 = 0, ///< The c0.
   c1 = 1; ///< The c1.
 )")};
-    const AST::Variable &decl{parsed.declAs<AST::Variable>(0)};
+    const ast::Variable &decl{parsed.declAs<ast::Variable>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(docText(decl.declarators[0].srcDocCommentTrailing) == "The c0.");
     CHECK(docText(decl.declarators[1].srcDocCommentTrailing) == "The c1.");
@@ -241,7 +241,7 @@ int f(
   int a,
   int b) = a + b;
 )")};
-    const AST::Function &decl{parsed.declAs<AST::Function>(0)};
+    const ast::Function &decl{parsed.declAs<ast::Function>(0)};
     REQUIRE(decl.params.size() == 2);
     CHECK(docText(decl.params[0].srcDocComment) == "The parameter.");
     CHECK(decl.params[1].srcDocComment.empty());
@@ -252,7 +252,7 @@ const int c0 = 0,
   /// The second declarator.
   c1 = 1;
 )")};
-    const AST::Variable &decl{parsed.declAs<AST::Variable>(0)};
+    const ast::Variable &decl{parsed.declAs<ast::Variable>(0)};
     REQUIRE(decl.declarators.size() == 2);
     CHECK(decl.declarators[0].srcDocComment.empty());
     CHECK(docText(decl.declarators[1].srcDocComment) ==
@@ -265,7 +265,7 @@ namespace ns {
 int g() = 0;
 }
 )")};
-    const AST::Namespace &decl{parsed.declAs<AST::Namespace>(0)};
+    const ast::Namespace &decl{parsed.declAs<ast::Namespace>(0)};
     REQUIRE(decl.decls.size() == 1);
     CHECK(docText(decl.decls[0]->srcDocComment) == "The nested function.");
   }

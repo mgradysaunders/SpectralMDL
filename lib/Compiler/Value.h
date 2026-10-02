@@ -104,10 +104,10 @@ public:
   /// Is compile-time meta `Type`?
   [[nodiscard]] bool isComptimeMetaType(Context &context) const;
 
-  /// Is compile-time meta `AST::Intrinsic`?
+  /// Is compile-time meta `ast::Intrinsic`?
   [[nodiscard]] bool isComptimeMetaIntrinsic(Context &context) const;
 
-  /// Is compile-time meta `AST::Namespace`?
+  /// Is compile-time meta `ast::Namespace`?
   [[nodiscard]] bool isComptimeMetaNamespace(Context &context) const;
 
   /// Get the compile-time `Module` or throw an error.
@@ -126,22 +126,22 @@ public:
     return llvmConstantIntAsPtr<Type>(llvmValue);
   }
 
-  /// Get the compile-time `AST::Intrinsic` or throw an error.
-  [[nodiscard]] AST::Intrinsic *
+  /// Get the compile-time `ast::Intrinsic` or throw an error.
+  [[nodiscard]] ast::Intrinsic *
   getComptimeMetaIntrinsic(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaIntrinsic(context))
       srcLoc.throwError("Expected compile-time intrinsic");
-    return llvmConstantIntAsPtr<AST::Intrinsic>(llvmValue);
+    return llvmConstantIntAsPtr<ast::Intrinsic>(llvmValue);
   }
 
-  /// Get the compile-time `AST::Namespace` or throw an error.
-  [[nodiscard]] AST::Namespace *
+  /// Get the compile-time `ast::Namespace` or throw an error.
+  [[nodiscard]] ast::Namespace *
   getComptimeMetaNamespace(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaNamespace(context))
       srcLoc.throwError("Expected compile-time intrinsic");
-    return llvmConstantIntAsPtr<AST::Namespace>(llvmValue);
+    return llvmConstantIntAsPtr<ast::Namespace>(llvmValue);
   }
 
   /// Get the name of the LLVM value.
@@ -225,13 +225,13 @@ public:
 
   /// Is exported?
   [[nodiscard]] bool isExported() const {
-    if (AST::Decl * decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
+    if (ast::Decl * decl{llvm::dyn_cast_if_present<ast::Decl>(node)})
       return decl->isExported();
-    if (AST::Enum::Declarator *
-        declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
+    if (ast::Enum::Declarator *
+        declarator{llvm::dyn_cast_if_present<ast::Enum::Declarator>(node)})
       return declarator->decl->isExported();
-    if (AST::Variable::Declarator *
-        declarator{llvm::dyn_cast_if_present<AST::Variable::Declarator>(node)})
+    if (ast::Variable::Declarator *
+        declarator{llvm::dyn_cast_if_present<ast::Variable::Declarator>(node)})
       return declarator->decl->isExported();
     return false;
   }
@@ -247,12 +247,12 @@ public:
 
   /// Is this an AST import declaration?
   [[nodiscard]] bool isASTImport() const {
-    return llvm::isa_and_present<AST::Import>(node);
+    return llvm::isa_and_present<ast::Import>(node);
   }
 
   /// Is this an AST using import declaration?
   [[nodiscard]] bool isASTUsingImport() const {
-    return llvm::isa_and_present<AST::UsingImport>(node);
+    return llvm::isa_and_present<ast::UsingImport>(node);
   }
 
   /// Is exempt from same-scope shadow rejection? Imports bring in foreign
@@ -260,7 +260,7 @@ public:
   /// allowed, and namespaces may be re-opened.
   [[nodiscard]] bool isSameScopeShadowExempt() const {
     return isASTImport() || isASTUsingImport() ||
-           llvm::isa_and_present<AST::Namespace>(node);
+           llvm::isa_and_present<ast::Namespace>(node);
   }
 
   /// Maybe issue warning about an unused value.
@@ -272,8 +272,8 @@ public:
     const Module *module_{getSourceLocation().module_};
     if (module_ && module_->isBuiltin()) return;
     if (isUsed == 0 && name.size() == 1) {
-      if (llvm::isa_and_present<AST::Parameter>(node)) {
-        AST::Parameter *astParam{static_cast<AST::Parameter *>(node)};
+      if (llvm::isa_and_present<ast::Parameter>(node)) {
+        ast::Parameter *astParam{static_cast<ast::Parameter *>(node)};
         if (!astParam->wasWarningIssued &&
             !astParam->type->hasQualifier("inline") &&
             !(astParam->annotations &&
@@ -283,9 +283,9 @@ public:
               concat("Unused parameter ", SpellQuoted(name[0])));
         }
       }
-      if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
-        AST::Variable::Declarator *declarator{
-            static_cast<AST::Variable::Declarator *>(node)};
+      if (llvm::isa_and_present<ast::Variable::Declarator>(node)) {
+        ast::Variable::Declarator *declarator{
+            static_cast<ast::Variable::Declarator *>(node)};
         if (!declarator->wasWarningIssued &&
             !(declarator->annotations &&
               declarator->annotations->isMarkedUnused())) {
@@ -305,7 +305,7 @@ public:
   Span<const std::string_view> name{};
 
   /// The AST node if applicable.
-  AST::Node *node{};
+  ast::Node *node{};
 
   /// The value.
   Value value{};
@@ -356,7 +356,7 @@ public:
   /// with their sequence numbers. Aliases participate only in import-path
   /// substitution (see `Emitter::resolveImportUsingAliases`), never in
   /// name resolution.
-  llvm::SmallVector<std::pair<AST::UsingAlias *, uint64_t>, 2> usingAliases{};
+  llvm::SmallVector<std::pair<ast::UsingAlias *, uint64_t>, 2> usingAliases{};
 };
 
 /// A parameter.
@@ -377,7 +377,7 @@ public:
   [[nodiscard]] bool isASTField() const { return astField != nullptr; }
 
   /// Get the AST type. This may be null!
-  [[nodiscard]] AST::Type *getASTType() const {
+  [[nodiscard]] ast::Type *getASTType() const {
     if (astParam) return astParam->type.get();
     if (astField) return astField->type.get();
     return nullptr;
@@ -385,7 +385,7 @@ public:
 
   /// Is marked with the keyword `const`?
   [[nodiscard]] bool isConst() const {
-    if (AST::Type * astType{getASTType()})
+    if (ast::Type * astType{getASTType()})
       return astType->hasQualifier("const") || isBuiltinConst;
     return isBuiltinConst;
   }
@@ -398,13 +398,13 @@ public:
 
   /// Is marked with the keyword `inline`?
   [[nodiscard]] bool isInline() const {
-    if (AST::Type * astType{getASTType()})
+    if (ast::Type * astType{getASTType()})
       return astType->hasQualifier("inline");
     return false;
   }
 
   /// Get the default AST initializer expression. This may be null!
-  [[nodiscard]] AST::Expr *getASTInitializer() const {
+  [[nodiscard]] ast::Expr *getASTInitializer() const {
     if (astParam) return astParam->exprInit.get();
     if (astField) return astField->exprInit.get();
     return nullptr;
@@ -418,10 +418,10 @@ public:
   std::string_view name{};
 
   /// The AST parameter if applicable.
-  AST::Parameter *astParam{};
+  ast::Parameter *astParam{};
 
   /// The AST field if applicable.
-  AST::Struct::Field *astField{};
+  ast::Struct::Field *astField{};
 
   /// The default value if not an AST parameter or AST field.
   std::optional<Value> builtinDefaultValue{};
@@ -512,7 +512,7 @@ public:
   Argument() = default;
 
   Argument(std::string_view name, Value value = {},
-           AST::Argument *astArg = nullptr)
+           ast::Argument *astArg = nullptr)
       : name(name), value(value), astArg(astArg) {}
 
   Argument(Value value) : value(value) {}
@@ -549,7 +549,7 @@ public:
   Value value{};
 
   /// The associated AST argument if applicable. This may be null!
-  AST::Argument *astArg{};
+  ast::Argument *astArg{};
 
   /// Is implied visit? This is determined by `Emitter::ResolvedArguments`.
   bool hasImpliedVisit{};
@@ -658,7 +658,7 @@ public:
 
 public:
   /// The associated AST args if applicable. This may be null!
-  AST::ArgumentList *astArgs{};
+  ast::ArgumentList *astArgs{};
 };
 
 /// \}

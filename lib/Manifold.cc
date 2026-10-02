@@ -447,7 +447,7 @@ void ManifoldWalkScratch::grow(int depth) {
   rhs.resize(dim);
 }
 
-ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
+ManifoldClaim manifoldClaim(const jit::Material &material, bool isBackface,
                             bool isMarked) {
   ManifoldClaim claim{};
   if (material.hasEmission()) return claim;
@@ -468,12 +468,12 @@ ManifoldClaim manifoldClaim(const JIT::Material &material, bool isBackface,
                        1e-4f};
   if (bends)
     claim.refractLobes =
-        dfLobes & (DF_DIRAC_BTDF | (isMarked ? DF_GLOSSY_BTDF : 0));
-  if (isMarked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSSY_BRDF);
+        dfLobes & (DF_DIRAC_BTDF | (isMarked ? DF_GLOSS_BTDF : 0));
+  if (isMarked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSS_BRDF);
   return claim;
 }
 
-ManifoldClaim manifoldClaim(const JIT::Material &material, bool isMarked) {
+ManifoldClaim manifoldClaim(const jit::Material &material, bool isMarked) {
   ManifoldClaim claim{manifoldClaim(material, /*isBackface=*/false, isMarked)};
   const ManifoldClaim back{
       manifoldClaim(material, /*isBackface=*/true, isMarked)};

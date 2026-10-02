@@ -460,8 +460,8 @@ void Emitter::declareParameter(const Parameter &param, Value value) {
   value = param.isConst() || value.isVoid() ? value : lvalue(value);
   Declaration *declaration{
       declare(param.name,
-              param.astParam   ? static_cast<AST::Node *>(param.astParam)
-              : param.astField ? static_cast<AST::Node *>(param.astField)
+              param.astParam   ? static_cast<ast::Node *>(param.astParam)
+              : param.astField ? static_cast<ast::Node *>(param.astField)
                                : nullptr,
               value)};
   declarationsToWarnAbout.push_back(declaration);
@@ -525,7 +525,7 @@ Declaration *Emitter::probeName(Span<const std::string_view> name,
 }
 
 void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
-                            AST::Decl &decl) {
+                            ast::Decl &decl) {
   if (importPath.size() < 2)
     decl.srcLoc.throwError("Invalid import path (missing '::*'?)");
   auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
@@ -665,23 +665,23 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
   return isAllIdenticalLValues ? LValue(type, phiInst) : RValue(type, phiInst);
 }
 
-Value Emitter::emit(AST::Node &node) {
-  return emitTypeSwitch<AST::File, AST::Decl, AST::Expr, AST::Stmt>(node);
+Value Emitter::emit(ast::Node &node) {
+  return emitTypeSwitch<ast::File, ast::Decl, ast::Expr, ast::Stmt>(node);
 }
 
 //--{ Emit: Decl
-Value Emitter::emit(AST::Decl &decl) {
-  return emitTypeSwitch<AST::AnnotationDecl, AST::Enum, AST::Exec,
-                        AST::Function, AST::Import, AST::Namespace, AST::Struct,
-                        AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
-                        AST::UsingImport, AST::Variable>(decl);
+Value Emitter::emit(ast::Decl &decl) {
+  return emitTypeSwitch<ast::AnnotationDecl, ast::Enum, ast::Exec,
+                        ast::Function, ast::Import, ast::Namespace, ast::Struct,
+                        ast::Tag, ast::Typedef, ast::UnitTest, ast::UsingAlias,
+                        ast::UsingImport, ast::Variable>(decl);
 }
 
-Value Emitter::emit(AST::Exec &decl) {
+Value Emitter::emit(ast::Exec &decl) {
   // Emitting an empty 'exec' would JIT a void function that does nothing
   // and then call it, so drop it and say why.
-  if (AST::Compound *compound{
-          llvm::dyn_cast_if_present<AST::Compound>(decl.stmt.get())};
+  if (ast::Compound *compound{
+          llvm::dyn_cast_if_present<ast::Compound>(decl.stmt.get())};
       compound && compound->stmts.empty()) {
     decl.srcLoc.logWarn(
         "An 'exec' with an empty body does nothing; ignoring it");
@@ -689,7 +689,7 @@ Value Emitter::emit(AST::Exec &decl) {
   }
   Type *returnType{context.getVoidType()};
   // Execs must be pure: the C++ side invokes them as 'void()' (see
-  // 'JIT::Function<void()>' in Compiler.h), so a non-pure exec would read
+  // 'jit::Function<void()>' in Compiler.h), so a non-pure exec would read
   // a garbage '$state' pointer from a register that was never passed.
   llvm::Function *llvmFunc{createFunction(".exec", /*isPure=*/true, returnType,
                                           ParameterList(), decl.srcLoc,
@@ -699,7 +699,7 @@ Value Emitter::emit(AST::Exec &decl) {
   return Value();
 }
 
-Value Emitter::emit(AST::UnitTest &decl) {
+Value Emitter::emit(ast::UnitTest &decl) {
   if (context.compiler.shouldEmitUnitTests) {
     Type *returnType{context.getVoidType()};
     llvm::Function *llvmFunc{
@@ -722,7 +722,7 @@ Value Emitter::emit(AST::UnitTest &decl) {
   return Value();
 }
 
-Value Emitter::emit(AST::UsingImport &decl) {
+Value Emitter::emit(ast::UsingImport &decl) {
   // The local path buffer is safe here: 'declare' interns the name it
   // ultimately stores.
   std::vector<std::string_view> importPath{decl.importPath.elementViews};
@@ -736,7 +736,7 @@ Value Emitter::emit(AST::UsingImport &decl) {
   return Value();
 }
 
-Value Emitter::emit(AST::Variable &decl) {
+Value Emitter::emit(ast::Variable &decl) {
   Type *type{emit(decl.type).getComptimeMetaType(context, decl.srcLoc)};
   if (type->isFunction())
     decl.srcLoc.throwError("Variable must not have function type ",
@@ -792,7 +792,7 @@ Value Emitter::emit(AST::Variable &decl) {
           value = LValue(value.type, valueAlloca);
         }
         for (size_t i = 0; i < structType->params.size(); i++) {
-          const AST::Name &name{declarator.names[i].name};
+          const ast::Name &name{declarator.names[i].name};
           rejectSameScopeShadow(name, name.srcLoc);
           declare(name, &declarator,
                   accessField(value, structType->params[i].name,
@@ -804,7 +804,7 @@ Value Emitter::emit(AST::Variable &decl) {
     } else {
       // NOTE: This must be a reference for `declare` below
       SMDL_SANITY_CHECK(declarator.names.size() == 1);
-      const AST::Name &name{declarator.names[0].name};
+      const ast::Name &name{declarator.names[0].name};
       rejectSameScopeShadow(name, name.srcLoc);
       // A function value is a compile-time constant handle. Storing it in
       // memory (a 'static' global or a mutable alloca) loses the
@@ -851,15 +851,15 @@ Value Emitter::emit(AST::Variable &decl) {
 //--}
 
 //--{ Emit: Expr
-Value Emitter::emit(AST::Expr &expr) {
+Value Emitter::emit(ast::Expr &expr) {
   return emitTypeSwitch<
-      AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
-      AST::Identifier, AST::Intrinsic, AST::Lambda, AST::Let, AST::LiteralBool,
-      AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens,
-      AST::ReturnFrom, AST::Select, AST::Type, AST::TypeCast, AST::Unary>(expr);
+      ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
+      ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let, ast::LiteralBool,
+      ast::LiteralFloat, ast::LiteralInt, ast::LiteralString, ast::Parens,
+      ast::ReturnFrom, ast::Select, ast::Type, ast::TypeCast, ast::Unary>(expr);
 }
 
-Value Emitter::emit(AST::AccessIndex &expr) {
+Value Emitter::emit(ast::AccessIndex &expr) {
   Value value{emit(expr.expr)};
   if (!value.isComptimeMetaType(context)) {
     for (auto &index : expr.indexes) {
@@ -872,11 +872,11 @@ Value Emitter::emit(AST::AccessIndex &expr) {
   } else {
     Type *type{value.getComptimeMetaType(context, expr.srcLoc)};
     for (auto itr{expr.indexes.rbegin()}; itr != expr.indexes.rend(); ++itr) {
-      AST::AccessIndex::Index &index{*itr};
+      ast::AccessIndex::Index &index{*itr};
       if (!index.expr) {
         type = context.getInferredSizeArrayType(type); // Empty
-      } else if (AST::SizeName *
-                 sizeName{llvm::dyn_cast<AST::SizeName>(index.expr.get())}) {
+      } else if (ast::SizeName *
+                 sizeName{llvm::dyn_cast<ast::SizeName>(index.expr.get())}) {
         type = context.getInferredSizeArrayType(
             type, std::string(sizeName->name.srcName));
       } else {
@@ -892,10 +892,10 @@ Value Emitter::emit(AST::AccessIndex &expr) {
   }
 }
 
-void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
+void Emitter::rejectAssignmentToNonVariable(ast::Binary &expr) {
   if ((expr.op & BINOP_EQ) != BINOP_EQ) return;
-  AST::Identifier *identifier{
-      llvm::dyn_cast_if_present<AST::Identifier>(expr.exprLHS.get())};
+  ast::Identifier *identifier{
+      llvm::dyn_cast_if_present<ast::Identifier>(expr.exprLHS.get())};
   if (!identifier || !identifier->isSimpleName()) return;
   Span<const std::string_view> names{context.internName(*identifier)};
   Declaration *unusableMatch{};
@@ -905,8 +905,8 @@ void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
   // other things are bound as rvalues: enumerators, comptime constants, the
   // names of functions and types.
   bool isConst{false};
-  if (AST::Variable::Declarator *declarator{
-          llvm::dyn_cast_if_present<AST::Variable::Declarator>(
+  if (ast::Variable::Declarator *declarator{
+          llvm::dyn_cast_if_present<ast::Variable::Declarator>(
               declaration->node)};
       declarator && declarator->decl && declarator->decl->type)
     isConst = declarator->decl->type->hasQualifier("const");
@@ -918,11 +918,11 @@ void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
   expr.srcLoc.throwError(std::move(message));
 }
 
-Value Emitter::emit(AST::Binary &expr) {
+Value Emitter::emit(ast::Binary &expr) {
   rejectAssignmentToNonVariable(expr);
   // Temporary let.
   if (expr.op == BINOP_LET) {
-    AST::Identifier *ident{llvm::dyn_cast<AST::Identifier>(&*expr.exprLHS)};
+    ast::Identifier *ident{llvm::dyn_cast<ast::Identifier>(&*expr.exprLHS)};
     if (!ident) // || !ident->is_simple_name())
       expr.srcLoc.throwError(
           "Expected lhs of operator ':=' to be an identifier");
@@ -1008,7 +1008,7 @@ Value Emitter::emit(AST::Binary &expr) {
   return emitOp(expr.op, lhs, rhs, expr.srcLoc);
 }
 
-Value Emitter::emit(AST::Parens &expr) {
+Value Emitter::emit(ast::Parens &expr) {
   if (!expr.isComptime()) return emit(expr.expr);
   Value value{emit(expr.expr)};
   if (!value.isComptime())
@@ -1022,7 +1022,7 @@ Value Emitter::emit(AST::Parens &expr) {
   return value;
 }
 
-Value Emitter::emit(AST::ReturnFrom &expr) {
+Value Emitter::emit(ast::ReturnFrom &expr) {
   auto [blockBegin, blockEnd] =
       createBlocks<2>("return_from", {".begin", ".end"});
   SMDL_PRESERVE(returns);
@@ -1050,7 +1050,7 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   return createResult(context.getAutoType(), returns, expr.srcLoc);
 }
 
-Value Emitter::emit(AST::Select &expr) {
+Value Emitter::emit(ast::Select &expr) {
   Value cond{invoke(context.getBoolType(), emit(expr.exprCond), expr.srcLoc)};
   if (cond.isComptimeInt()) {
     // Contain arm declarations, matching the runtime two-arm merge. (A ':='
@@ -1125,14 +1125,14 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
 //--}
 
 //--{ Emit: Stmt
-Value Emitter::emit(AST::Stmt &stmt) {
-  return emitTypeSwitch<AST::Break, AST::Compound, AST::Continue, AST::DeclStmt,
-                        AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For,
-                        AST::If, AST::Preserve, AST::Return, AST::Switch,
-                        AST::Unreachable, AST::Visit, AST::While>(stmt);
+Value Emitter::emit(ast::Stmt &stmt) {
+  return emitTypeSwitch<ast::Break, ast::Compound, ast::Continue, ast::DeclStmt,
+                        ast::Defer, ast::DoWhile, ast::ExprStmt, ast::For,
+                        ast::If, ast::Preserve, ast::Return, ast::Switch,
+                        ast::Unreachable, ast::Visit, ast::While>(stmt);
 }
 
-Value Emitter::emit(AST::Compound &stmt) {
+Value Emitter::emit(ast::Compound &stmt) {
   handleScope(nullptr, nullptr, [&] {
     for (auto &subStmt : stmt.stmts)
       if (emit(subStmt); hasTerminator()) break;
@@ -1140,7 +1140,7 @@ Value Emitter::emit(AST::Compound &stmt) {
   return Value();
 }
 
-Value Emitter::emit(AST::DoWhile &stmt) {
+Value Emitter::emit(ast::DoWhile &stmt) {
   auto [blockLoop, blockCond, blockEnd] =
       createBlocks<3>("do_while", {".loop", ".cond", ".end"});
   builder.CreateBr(blockLoop);
@@ -1154,7 +1154,7 @@ Value Emitter::emit(AST::DoWhile &stmt) {
   return Value();
 }
 
-Value Emitter::emit(AST::For &stmt) {
+Value Emitter::emit(ast::For &stmt) {
   // The init statement opens its own scope, so 'for (int i = ...' may
   // shadow an 'i' in the enclosing scope.
   SMDL_PRESERVE(scope);
@@ -1184,7 +1184,7 @@ Value Emitter::emit(AST::For &stmt) {
   return Value();
 }
 
-Value Emitter::emit(AST::If &stmt) {
+Value Emitter::emit(ast::If &stmt) {
   Value cond{invoke(context.getBoolType(), emit(stmt.expr), stmt.srcLoc)};
   if (cond.isComptimeInt()) {
     handleScope(nullptr, nullptr, [&] {
@@ -1207,13 +1207,13 @@ Value Emitter::emit(AST::If &stmt) {
   return Value();
 }
 
-Value Emitter::emit(AST::Switch &stmt) {
+Value Emitter::emit(ast::Switch &stmt) {
   std::string switchName{context.getUniqueName("switch", getLLVMFunction())};
   llvm::StringRef switchNameRef{switchName};
   llvm::BasicBlock *blockEnd{createBlock(switchNameRef + ".end")};
   llvm::BasicBlock *blockDefault{};
   struct SwitchCase final {
-    AST::Switch::Case *astCase{};
+    ast::Switch::Case *astCase{};
     llvm::ConstantInt *llvmConst{};
     llvm::BasicBlock *block{};
   };
@@ -1272,7 +1272,7 @@ Value Emitter::emit(AST::Switch &stmt) {
   return Value();
 }
 
-Value Emitter::emit(AST::While &stmt) {
+Value Emitter::emit(ast::While &stmt) {
   auto [blockCond, blockLoop, blockEnd] =
       createBlocks<3>("while", {".cond", ".loop", ".end"});
   builder.CreateBr(blockCond);
@@ -1287,8 +1287,8 @@ Value Emitter::emit(AST::While &stmt) {
 }
 //--}
 
-//--{ emitOp (AST::UnaryOp)
-Value Emitter::emitOp(AST::UnaryOp op, Value value,
+//--{ emitOp (ast::UnaryOp)
+Value Emitter::emitOp(ast::UnaryOp op, Value value,
                       const SourceLocation &srcLoc) {
   if (value.isComptimeMetaType(context)) {
     Type *type{value.getComptimeMetaType(context, srcLoc)};
@@ -1407,7 +1407,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
 //--{ Helper: llvmArithOp
 namespace {
 [[nodiscard]] std::optional<llvm::Instruction::BinaryOps>
-llvmArithOp(Scalar::Intent intent, AST::BinaryOp op) {
+llvmArithOp(Scalar::Intent intent, ast::BinaryOp op) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
     case BINOP_ADD:
@@ -1461,7 +1461,7 @@ namespace {
 // LLVM makes integer division and remainder by zero poison, which silently
 // corrupts the program instead of failing it. A constant divisor is the case
 // the compiler can see for itself, so refuse it here.
-void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
+void throwIfDividingByZero(ast::BinaryOp op, llvm::Value *rhs,
                            const SourceLocation &srcLoc) {
   if (op != BINOP_DIV && op != BINOP_REM) return;
   llvm::Constant *constant{llvm::dyn_cast_if_present<llvm::Constant>(rhs)};
@@ -1489,7 +1489,7 @@ void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
 //--{ Helper: llvmCmpOp
 namespace {
 [[nodiscard]] std::optional<llvm::CmpInst::Predicate>
-llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
+llvmCmpOp(Scalar::Intent intent, ast::BinaryOp op, bool isSigned = true) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
     case BINOP_CMP_EQ:
@@ -1530,8 +1530,8 @@ llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
 } // namespace
 //--}
 
-//--{ emitOp (AST::BinaryOp)
-Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
+//--{ emitOp (ast::BinaryOp)
+Value Emitter::emitOp(ast::BinaryOp op, Value lhs, Value rhs,
                       const SourceLocation &srcLoc) {
   if (op == BINOP_COMMA) return rhs;
   if ((op & BINOP_EQ) == BINOP_EQ) {
@@ -3411,7 +3411,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
 }
 //--}
 
-void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
+void Emitter::expandInlineArgument(ArgumentList &args, ast::Argument &astArg) {
   const SourceLocation &srcLoc{astArg.srcLoc};
   if (astArg.isNamed())
     srcLoc.throwError("Argument marked 'inline' must not be named");
@@ -3440,13 +3440,13 @@ void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
   }
 }
 
-void Emitter::rejectAssignmentAsNamedArgument(AST::Argument &astArg) {
+void Emitter::rejectAssignmentAsNamedArgument(ast::Argument &astArg) {
   if (!astArg.isPositional()) return;
-  AST::Binary *binary{
-      llvm::dyn_cast_if_present<AST::Binary>(astArg.expr.get())};
+  ast::Binary *binary{
+      llvm::dyn_cast_if_present<ast::Binary>(astArg.expr.get())};
   if (!binary || binary->op != BINOP_EQ) return;
-  AST::Identifier *identifier{
-      llvm::dyn_cast_if_present<AST::Identifier>(binary->exprLHS.get())};
+  ast::Identifier *identifier{
+      llvm::dyn_cast_if_present<ast::Identifier>(binary->exprLHS.get())};
   if (!identifier || !identifier->isSimpleName()) return;
   // An assignment to something that exists is a real assignment, however
   // odd it looks in an argument list.
@@ -4048,7 +4048,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         const Parameter &param{params[iParam]};
         Value &value{resolvedArgs.values[iParam]};
         if (!value) {
-          if (AST::Expr * expr{param.getASTInitializer()}) {
+          if (ast::Expr * expr{param.getASTInitializer()}) {
             setCurrentModule(expr->srcLoc);
             value = emit(expr);
           } else {
@@ -4273,7 +4273,7 @@ void Emitter::resolveImportUsingAliases(
     uint64_t seqLimit, Span<const std::string_view> importPath,
     llvm::SmallVector<std::string_view> &resolvedImportPath) {
   for (const auto &importPathElem : importPath) {
-    AST::UsingAlias *foundAlias{};
+    ast::UsingAlias *foundAlias{};
     uint64_t foundAliasSeq{};
     for (auto s{scope}; s && !foundAlias; s = s->parent) {
       for (auto itr{s->usingAliases.rbegin()}; itr != s->usingAliases.rend();

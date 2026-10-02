@@ -187,12 +187,12 @@ public:
   /// Get meta `Type` type.
   [[nodiscard]] Type *getMetaTypeType() { return mMetaTypeType.get(); }
 
-  /// Get meta `AST::Intrinsic` type.
+  /// Get meta `ast::Intrinsic` type.
   [[nodiscard]] Type *getMetaIntrinsicType() {
     return mMetaIntrinsicType.get();
   }
 
-  /// Get meta `AST::Namespace` type.
+  /// Get meta `ast::Namespace` type.
   [[nodiscard]] Type *getMetaNamespaceType() {
     return mMetaNamespaceType.get();
   }
@@ -215,25 +215,25 @@ public:
   }
 
   /// Get enum type.
-  [[nodiscard]] EnumType *getEnumType(AST::Enum *decl);
+  [[nodiscard]] EnumType *getEnumType(ast::Enum *decl);
 
   /// Get function type.
-  [[nodiscard]] FunctionType *getFunctionType(AST::Function *decl);
+  [[nodiscard]] FunctionType *getFunctionType(ast::Function *decl);
 
   /// Get a fresh lambda function type. Unlike `getFunctionType()`, this is
   /// deliberately NOT interned by declaration: a lambda inside a macro body
   /// is re-emitted at every expansion, and each evaluation must re-capture
-  /// its resolution anchor. See `Emitter::emit(AST::Lambda &)`.
-  [[nodiscard]] FunctionType *getLambdaFunctionType(AST::Function *decl);
+  /// its resolution anchor. See `Emitter::emit(ast::Lambda &)`.
+  [[nodiscard]] FunctionType *getLambdaFunctionType(ast::Function *decl);
 
   /// Get state type.
   [[nodiscard]] StateType *getStateType() { return mStateType.get(); }
 
   /// Get struct type.
-  [[nodiscard]] StructType *getStructType(AST::Struct *decl);
+  [[nodiscard]] StructType *getStructType(ast::Struct *decl);
 
   /// Get tag type.
-  [[nodiscard]] TagType *getTagType(AST::Tag *decl);
+  [[nodiscard]] TagType *getTagType(ast::Tag *decl);
 
   /// Get the `texture_2d` type.
   [[nodiscard]] StructType *getTexture2DType() { return mTexture2DType; }
@@ -390,14 +390,14 @@ public:
     return RValue(getMetaTypeType(), llvmPtrAsConstantInt(llvmContext, value));
   }
 
-  /// Get compile-time meta `AST::Intrinsic` constant.
-  [[nodiscard]] Value getComptimeMetaIntrinsic(AST::Intrinsic *value) {
+  /// Get compile-time meta `ast::Intrinsic` constant.
+  [[nodiscard]] Value getComptimeMetaIntrinsic(ast::Intrinsic *value) {
     return RValue(getMetaIntrinsicType(),
                   llvmPtrAsConstantInt(llvmContext, value));
   }
 
-  /// Get compile-time meta `AST::Namespace` constant.
-  [[nodiscard]] Value getComptimeMetaNamespace(AST::Namespace *value) {
+  /// Get compile-time meta `ast::Namespace` constant.
+  [[nodiscard]] Value getComptimeMetaNamespace(ast::Namespace *value) {
     return RValue(getMetaNamespaceType(),
                   llvmPtrAsConstantInt(llvmContext, value));
   }
@@ -495,7 +495,7 @@ public:
   Module *currentModule{};
 
   /// The enclosing `namespace` names at the current point of declaration
-  /// emission, maintained by `Emitter::emit(AST::Namespace &)` and reset
+  /// emission, maintained by `Emitter::emit(ast::Namespace &)` and reset
   /// per module by `Module::compile()`. Used to form qualified material
   /// names.
   llvm::SmallVector<std::string_view, 4> currentNamespacePath{};
@@ -561,11 +561,11 @@ private:
   const BumpPtr<MetaType> mMetaTypeType{
       allocator.allocate<MetaType>(*this, "type")};
 
-  /// The meta `AST::Intrinsic` type.
+  /// The meta `ast::Intrinsic` type.
   const BumpPtr<MetaType> mMetaIntrinsicType{
       allocator.allocate<MetaType>(*this, "intrinsic")};
 
-  /// The meta `AST::Namespace` type.
+  /// The meta `ast::Namespace` type.
   const BumpPtr<MetaType> mMetaNamespaceType{
       allocator.allocate<MetaType>(*this, "namespace")};
 
@@ -582,7 +582,7 @@ private:
   const BumpPtr<StateType> mStateType{allocator.allocate<StateType>(*this)};
 
   /// The AST associated types.
-  llvm::DenseMap<AST::Decl *, BumpPtr<Type>> mASTTypes;
+  llvm::DenseMap<ast::Decl *, BumpPtr<Type>> mASTTypes;
 
   /// The lambda function types, one per evaluation of each lambda
   /// expression. This is a flat keep-alive list rather than a map keyed on

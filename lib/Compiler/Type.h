@@ -731,7 +731,7 @@ public:
 /// An enum type.
 class EnumType final : public TypeSubclass<TypeKind::Enum> {
 public:
-  explicit EnumType(AST::Enum &decl) : decl(decl) {
+  explicit EnumType(ast::Enum &decl) : decl(decl) {
     displayName = std::string(decl.name.srcName);
   }
 
@@ -749,7 +749,7 @@ public:
 
 public:
   /// The AST declaration.
-  AST::Enum &decl;
+  ast::Enum &decl;
 
   /// The LLVM function to convert enums to readable strings.
   llvm::Function *llvmFuncToString{};
@@ -757,7 +757,7 @@ public:
 
 /// A function type.
 ///
-/// This is one-to-one correspondence with an `AST::Function` declaration, and
+/// This is one-to-one correspondence with an `ast::Function` declaration, and
 /// is used to implement function overload resolution and function calls
 /// through the `invoke()` method.
 ///
@@ -766,7 +766,7 @@ public:
 ///
 class FunctionType final : public TypeSubclass<TypeKind::Function> {
 public:
-  explicit FunctionType(AST::Function &decl, bool isLambda = false)
+  explicit FunctionType(ast::Function &decl, bool isLambda = false)
       : decl(decl), declName(isLambda ? std::string_view("(lambda)")
                                       : std::string_view(decl.name.srcName)),
         isLambda(isLambda) {
@@ -879,7 +879,7 @@ public:
 
 public:
   /// The AST declaration.
-  AST::Function &decl;
+  ast::Function &decl;
 
   /// The AST declaration name, or `"(lambda)"` if this is a lambda.
   const std::string_view declName;
@@ -1079,7 +1079,7 @@ public:
 /// A struct type.
 class StructType final : public TypeSubclass<TypeKind::Struct> {
 public:
-  explicit StructType(AST::Struct &decl) : decl(decl) {
+  explicit StructType(ast::Struct &decl) : decl(decl) {
     displayName = std::string(decl.name.srcName);
   }
 
@@ -1174,7 +1174,7 @@ public:
   StructType *instanceOf{};
 
   /// The AST declaration.
-  AST::Struct &decl;
+  ast::Struct &decl;
 
   /// The tags.
   llvm::SmallVector<TagType *> tags{};
@@ -1183,7 +1183,7 @@ public:
   class Constructor final {
   public:
     /// The AST constructor.
-    AST::Struct::Constructor *astConstructor{};
+    ast::Struct::Constructor *astConstructor{};
 
     /// The parameters.
     ParameterList params{};

@@ -13,7 +13,7 @@
 /// through `ManifoldSurfaces`. The transport-side work (Fresnel, medium
 /// attenuation, MIS and reciprocal-probability bookkeeping) stays with
 /// the renderer; this is the geometry, the measures, the trial counting,
-/// and the eligibility questions that are answerable from `JIT` material
+/// and the eligibility questions that are answerable from `jit` material
 /// instances alone.
 #pragma once
 
@@ -138,7 +138,7 @@ class ManifoldGeometry final {
 public:
   /// The shading normal: the field the material's lobes actually
   /// scatter about, which for a material that remaps `geometry.normal`
-  /// is the remapped field (see `JIT::MaterialDef::geometryNormalEvaluate`).
+  /// is the remapped field (see `jit::MaterialDef::geometryNormalEvaluate`).
   float3 normal;
 
   /// The position partials over the face parameterization
@@ -166,7 +166,7 @@ public:
 /// the field the material's lobes actually scatter about, differentiated
 /// consistently with the position partials; a renderer whose material
 /// remaps the shading normal reads the remapped field back through
-/// `JIT::MaterialDef::geometryNormalEvaluate` and differences it.
+/// `jit::MaterialDef::geometryNormalEvaluate` and differences it.
 class SMDL_EXPORT ManifoldSurfaces {
 public:
   ManifoldSurfaces() = default;
@@ -285,7 +285,7 @@ public:
   bool isGlossy{};
 
   /// The transmission lobes the interface claims, `DF_DIRAC_BTDF` and or
-  /// `DF_GLOSSY_BTDF`, as the renderer's seeding found them. An estimate
+  /// `DF_GLOSS_BTDF`, as the renderer's seeding found them. An estimate
   /// runs once per lobe the whole chain offers, setting `isGlossy` from
   /// the lobe it is on.
   int claimedLobes{};
@@ -767,11 +767,11 @@ template <typename Retry>
 /// query at the converged geometry.
 class ManifoldClaim final {
 public:
-  /// `DF_DIRAC_BRDF` and or `DF_GLOSSY_BRDF`, estimated by a
+  /// `DF_DIRAC_BRDF` and or `DF_GLOSS_BRDF`, estimated by a
   /// reflective gather.
   int reflectLobes{};
 
-  /// `DF_DIRAC_BTDF` and or `DF_GLOSSY_BTDF`, estimated by
+  /// `DF_DIRAC_BTDF` and or `DF_GLOSS_BTDF`, estimated by
   /// refractive chains.
   int refractLobes{};
 
@@ -792,7 +792,7 @@ public:
 /// The claim at an instance whose evaluated material is `material`, with its
 /// exterior IOR already resolved (for the index contrast), on the side
 /// `backface` names, which is the side the scattering functions
-/// dispatch on and a caller spells `JIT::Material::isInterior(wo)`,
+/// dispatch on and a caller spells `jit::Material::isInterior(wo)`,
 /// `isMarked` being the renderer's caster mark on the instance.
 ///
 /// The side is asked because a two-sided material scatters by a
@@ -802,7 +802,7 @@ public:
 /// two.
 ///
 /// A material that remaps `geometry.normal` (statically, see
-/// `JIT::MaterialDef::canRemapNormal()`) claims only when the walk can
+/// `jit::MaterialDef::canRemapNormal()`) claims only when the walk can
 /// solve against the remapped field, which needs the geometry-normal
 /// hook compiled and a tree whose lobes all follow that field: a df
 /// node given its own live normal (`DF_SETS_NORMAL`) detaches its lobes
@@ -816,12 +816,12 @@ public:
 ///
 /// The width of a glossy lobe is never read here: it is part of the
 /// kind. A microfacet lobe wider than the builtin cutoff labels itself
-/// `DF_SMOOTH_BRDF` (see `DF_GLOSSY_BRDF`), so a layered material's word
-/// carries its narrow lobe as glossy and its wide one as smooth, the
+/// `DF_MATTE_BRDF` (see `DF_GLOSS_BRDF`), so a layered material's word
+/// carries its narrow lobe as glossy and its wide one as matte, the
 /// claim takes the one and leaves the other to ordinary sampling, and
 /// both halves of the estimator read the same word.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
-manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
+manifoldClaim(const jit::Material &material, bool isBackface, bool isMarked);
 
 /// The claim on either side, the union of the two: what a caller with no
 /// one side in hand asks, a load-time enumeration of marked instances
@@ -829,7 +829,7 @@ manifoldClaim(const JIT::Material &material, bool isBackface, bool isMarked);
 /// instance and the masked query at the converged crossing settles which
 /// one actually scatters.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim
-manifoldClaim(const JIT::Material &material, bool isMarked);
+manifoldClaim(const jit::Material &material, bool isMarked);
 
 /// The narrowest width of the glossy lobes of `material` on the side
 /// `isBackface`, read from the normal hook, which reports it whichever
@@ -843,11 +843,11 @@ manifoldClaim(const JIT::Material &material, bool isMarked);
 /// `Compiler::shouldEmitScatterNormal`), so that every finite lobe
 /// receives, as the Dirac estimator always has.
 template <typename DrawXi>
-[[nodiscard]] inline float manifoldGlossyWidth(const JIT::Material &material,
+[[nodiscard]] inline float manifoldGlossyWidth(const jit::Material &material,
                                                bool isBackface,
                                                DrawXi &&drawXi) {
   const int dfLobes{material.getLobes(isBackface)};
-  const int glossy{dfLobes & DF_GLOSSY};
+  const int glossy{dfLobes & DF_GLOSS};
   if (glossy == 0) return INFINITY;
   if (!material.def->scatterNormalSample) return 0.0f;
   // One glossy kind, per the hook's contract: the reflection kind when
@@ -855,8 +855,7 @@ template <typename DrawXi>
   // single reflect-transmit leaf reports the same lobe either way and a
   // layering that differs by domain answers for its reflection side,
   // which is the side the receiver's own gather evaluates.
-  const int kind{(glossy & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
-                                                : DF_GLOSSY_BTDF};
+  const int kind{(glossy & DF_GLOSS_BRDF) != 0 ? DF_GLOSS_BRDF : DF_GLOSS_BTDF};
   float3 wm{};
   float pdf{};
   float2 alpha{};
@@ -873,8 +872,8 @@ template <typename DrawXi>
 /// angular extent from the receiver, so a lobe narrower than that
 /// extent makes an estimator that is zero almost always and enormous
 /// otherwise, while ordinary sampling handles a narrow lobe well. So the
-/// smooth (diffuse-like) lobes receive, a microfacet lobe above the
-/// glossy cutoff among them (see `DF_GLOSSY_BRDF`), and the glossy
+/// matte (diffuse-like) lobes receive, a microfacet lobe above the
+/// glossy cutoff among them (see `DF_GLOSS_BRDF`), and the glossy
 /// lobes receive when `glossyWidth` (see `manifoldGlossyWidth()`)
 /// reaches `minWidth`, which a renderer sets from the light's angular
 /// radius. Zero means the vertex is no receiver of that light.
@@ -886,8 +885,8 @@ template <typename DrawXi>
 /// other lobes carried, the same partition the casters' claims make.
 [[nodiscard]] inline int manifoldReceiverLobes(int dfLobes, float glossyWidth,
                                                float minWidth) noexcept {
-  return (dfLobes & DF_SMOOTH) |
-         (glossyWidth >= minWidth ? dfLobes & DF_GLOSSY : 0);
+  return (dfLobes & DF_MATTE) |
+         (glossyWidth >= minWidth ? dfLobes & DF_GLOSS : 0);
 }
 
 /// \}

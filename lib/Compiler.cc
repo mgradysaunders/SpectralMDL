@@ -768,7 +768,7 @@ readsOnlyStateBytes(const llvm::DataLayout &layout, const llvm::Argument *arg,
 // known here; a body that stays runtime (or an unoptimized module) just
 // leaves the bit unknown, which hosts must treat conservatively.
 void deriveStaticMaterialFlags(llvm::Module &llvmModule,
-                               std::vector<JIT::MaterialDef> &materials) {
+                               std::vector<jit::MaterialDef> &materials) {
   // If every 'ret' in the named function returns one identical constant,
   // return it, else null.
   auto foldedReturnValue{[&](std::string_view name) -> const llvm::Constant * {
@@ -816,7 +816,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // not the zero vector (-0.0 counts as zero).
     // A body that did not fold leaves the bit unknown, which hosts
     // treat as possibly displacing. See
-    // 'JIT::MaterialDef::hasZeroDisplacement()'.
+    // 'jit::MaterialDef::hasZeroDisplacement()'.
     std::string displacementProbeName{concat(symbolBase, ".displacementProbe")};
     if (const llvm::Constant *displacement{
             foldedReturnValue(displacementProbeName)}) {
@@ -828,7 +828,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // folds to the constant zero vector exactly when the material
     // leaves the shading normal alone, settling
     // 'MATERIAL_REMAPS_NORMAL' the way the displacement probe settles
-    // its flag. See 'JIT::MaterialDef::canRemapNormal()'.
+    // its flag. See 'jit::MaterialDef::canRemapNormal()'.
     std::string normalProbeName{concat(symbolBase, ".normalProbe")};
     if (const llvm::Constant *normalDelta{foldedReturnValue(normalProbeName)}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_REMAPS_NORMAL;
@@ -845,7 +845,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // or an un-removable side-effecting call such as a scene-data
     // lookup anywhere in the material body); hosts treat unknown as
     // heterogeneous, which is the conservative direction. See
-    // 'JIT::MaterialDef::hasHomogeneousCoefficients()'.
+    // 'jit::MaterialDef::hasHomogeneousCoefficients()'.
     llvm::Function *volumeEvaluateFunc{
         llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
@@ -860,7 +860,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // exactly what the VDF reads plus the allocator the copy needs. It
     // is emitted only for a material with a volume; every other material
     // has the default 'vdf()' and is settled structurally. See
-    // 'JIT::MaterialDef::hasHomogeneousVDF()'.
+    // 'jit::MaterialDef::hasHomogeneousVDF()'.
     llvm::Function *vdfEvaluateFunc{
         jitMaterial.vdfEvaluate.name.empty()
             ? nullptr
@@ -878,7 +878,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // 'MATERIAL_READS_CURVATURE' known and unset; otherwise the bit
     // stays unknown, for the reasons the heterogeneity bits do, and hosts
     // treat unknown as reading. See
-    // 'JIT::MaterialDef::canReadCurvature()'.
+    // 'jit::MaterialDef::canReadCurvature()'.
     auto leavesCurvatureAlone{[&](const std::string &name) {
       if (name.empty()) return true;
       const llvm::Function *func{llvmModule.getFunction(name)};
@@ -1497,9 +1497,9 @@ void *Compiler::jitLookup(std::string_view name) {
   return symbol->toPtr<void *>();
 }
 
-const JIT::MaterialDef *
+const jit::MaterialDef *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
-  std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
+  std::vector<const jit::MaterialDef *> results{findMaterials(materialName)};
   return results.size() == 1 ? results.front() : nullptr;
 } catch (...) {
   return nullptr;
@@ -1507,7 +1507,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 
 std::string
 Compiler::explainMaterialLookup(std::string_view materialName) const {
-  std::vector<const JIT::MaterialDef *> results{findMaterials(materialName)};
+  std::vector<const jit::MaterialDef *> results{findMaterials(materialName)};
   if (results.size() == 1) return {};
   if (results.size() > 1) {
     std::string message{concat("Material name ", SpellQuoted(materialName),
@@ -1536,9 +1536,9 @@ Compiler::explainMaterialLookup(std::string_view materialName) const {
   return message;
 }
 
-std::vector<const JIT::MaterialDef *>
+std::vector<const jit::MaterialDef *>
 Compiler::findMaterials(std::string_view materialName) const {
-  std::vector<const JIT::MaterialDef *> results{};
+  std::vector<const jit::MaterialDef *> results{};
   for (const auto &jitMaterial : mMaterialDefs) {
     if (!jitMaterial.moduleIsShadowed &&
         matchesMaterialName(materialName, jitMaterial.qualifiedName))
@@ -1657,7 +1657,7 @@ std::string Compiler::printMaterialSummary() const {
   // Summarize the statically known, shadow-relevant flags: the cutout
   // opacity status ('opaque' proven, 'cutout' proven, 'cutout?' only
   // knowable at runtime), plus 'volume' and 'emissive' when present.
-  auto printStaticFlags{[](const JIT::MaterialDef &jitMaterial) {
+  auto printStaticFlags{[](const jit::MaterialDef &jitMaterial) {
     std::string flags{};
     if ((jitMaterial.staticFlagsKnown & MATERIAL_HAS_CUTOUT) == 0)
       flags += " [cutout?";

@@ -964,7 +964,7 @@ void EnumType::initialize(Emitter &emitter) {
   emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
   Value lastValue{};
   for (auto &declarator : decl.declarators) {
-    AST::Name &name{declarator.name};
+    ast::Name &name{declarator.name};
     Value value{[&]() {
       if (declarator.exprInit)
         return emitter.invoke(context.getIntType(),
@@ -1462,7 +1462,7 @@ FunctionType::getInstance(Emitter &emitter,
 }
 
 namespace {
-// Verify that the C++ `JIT::MaterialDef::Eval` layout matches the api
+// Verify that the C++ `jit::MaterialDef::Eval` layout matches the api
 // `_MaterialEval` struct emitted by the compiler. The JIT boundary
 // reinterprets one as the other, so any drift is silent undefined
 // behavior at render time; fail the compile loudly instead.
@@ -1472,7 +1472,7 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
       llvm::dyn_cast_if_present<llvm::StructType>(type->llvmType)};
   if (!llvmStructType)
     srcLoc.throwError("The builtin '_MaterialEval' is not a struct type");
-  using Eval = JIT::MaterialDef::Eval;
+  using Eval = jit::MaterialDef::Eval;
   const std::pair<std::string_view, uint64_t> fields[]{
       {"ptr", offsetof(Eval, ptr)},
       {"geometry", offsetof(Eval, geometry)},
@@ -1502,13 +1502,13 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
       context.llvmLayout.getStructLayout(llvmStructType)};
   if (llvmStructType->getNumElements() != std::size(fields) ||
       uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Eval))
-    srcLoc.throwError("Mismatch between C++ 'JIT::MaterialDef::Eval' and "
+    srcLoc.throwError("Mismatch between C++ 'jit::MaterialDef::Eval' and "
                       "SMDL '_MaterialEval' structures");
   for (size_t i = 0; i < std::size(fields); i++) {
     const auto &[fieldName, fieldOffset] = fields[i];
     if (uint64_t(llvmLayout->getElementOffset(i)) != fieldOffset)
       srcLoc.throwError(
-          concat("Mismatch between C++ 'JIT::MaterialDef::Eval' and SMDL "
+          concat("Mismatch between C++ 'jit::MaterialDef::Eval' and SMDL "
                  "'_MaterialEval' structures (field ",
                  SpellQuoted(fieldName), " is misaligned)"));
   }
@@ -1592,7 +1592,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     return Parameter{type, name, {}, {}, {}, /*isBuiltinConst=*/true};
   }};
   // The '@(visible)' entry points are called by the renderer through the
-  // C++ 'JIT::MaterialDef' API, which passes distinct, sufficiently aligned,
+  // C++ 'jit::MaterialDef' API, which passes distinct, sufficiently aligned,
   // dereferenceable pointers (see 'include/smdl/JIT.h'). LLVM cannot infer
   // caller-side contracts for externally visible functions, so state them
   // explicitly.
@@ -1912,7 +1912,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // coefficients is dead-code eliminated. Unlike instance
     // evaluation, renderers call this at arbitrary points inside a
     // heterogeneous medium with a partial object-space state (see
-    // 'JIT::MaterialDef::volumeEvaluate'). After optimization,
+    // 'jit::MaterialDef::volumeEvaluate'). After optimization,
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects which
     // 'State' fields the body still reads to derive the static
     // 'MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS' flag.
@@ -1955,7 +1955,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // phase function reads to be computed. Renderers call this at a
     // collision inside a medium whose VDF varies from point to point,
     // with the partial object-space state of 'volumeEvaluate' plus an
-    // allocator (see 'JIT::MaterialDef::vdfEvaluate'). After
+    // allocator (see 'jit::MaterialDef::vdfEvaluate'). After
     // optimization, 'deriveStaticMaterialFlags' in 'Compiler.cc'
     // inspects which 'State' fields the body still reads to derive the
     // static 'MATERIAL_HAS_HETEROGENEOUS_VDF' flag; the '#bump' reads
@@ -2178,7 +2178,7 @@ Value MetaType::accessField(Emitter &emitter, Value value,
   } else if (value.isComptimeMetaNamespace(context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
-    AST::Namespace *namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
+    ast::Namespace *namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
     if (Declaration *
         declaration{Declaration::resolveInScope(
             context, name, emitter.getLLVMFunction(), namespace_->scope,

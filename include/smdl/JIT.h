@@ -42,7 +42,7 @@ inline constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
 /// \note
 /// The back side only actually emits if the material is also thin-walled,
 /// which may only be knowable at runtime. See
-/// `JIT::MaterialDef::emissionEvaluate`.
+/// `jit::MaterialDef::emissionEvaluate`.
 ///
 inline constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
 
@@ -59,11 +59,11 @@ inline constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 /// point inside a medium instance.
 ///
 /// \note
-/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the body of
-/// `JIT::MaterialDef::volumeEvaluate` still reads, so it degrades to unknown
-/// at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets it.
-/// See `JIT::MaterialDef::hasHomogeneousCoefficients()` for the
+/// `jit::MaterialDef::volumeEvaluate` still reads, so it degrades to unknown
+/// at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags` never sets it.
+/// See `jit::MaterialDef::hasHomogeneousCoefficients()` for the
 /// conservative reading and the contract.
 ///
 inline constexpr int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
@@ -71,11 +71,11 @@ inline constexpr int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
 /// Indicates that the material has a non-zero `geometry.displacement`.
 ///
 /// \note
-/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from whether `geometry.displacement` folds to a
 /// constant, so it degrades to unknown at `OPT_LEVEL_NONE` and
-/// `JIT::MaterialDef::Eval::flags` never sets it. See
-/// `JIT::MaterialDef::hasZeroDisplacement()` for the conservative reading.
+/// `jit::MaterialDef::Eval::flags` never sets it. See
+/// `jit::MaterialDef::hasZeroDisplacement()` for the conservative reading.
 ///
 inline constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
@@ -90,11 +90,11 @@ inline constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 /// state's shading normal.
 ///
 /// \note
-/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from whether `geometry.normal - $state.normal`
 /// folds to the constant zero vector, so it degrades to unknown at
-/// `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets it. See
-/// `JIT::MaterialDef::canRemapNormal()` for the conservative reading.
+/// `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags` never sets it. See
+/// `jit::MaterialDef::canRemapNormal()` for the conservative reading.
 ///
 inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 
@@ -102,11 +102,11 @@ inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// from point to point inside a medium instance.
 ///
 /// \note
-/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the body of
-/// `JIT::MaterialDef::vdfEvaluate` still reads, so it degrades to unknown
-/// at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags` never sets it.
-/// See `JIT::MaterialDef::hasHomogeneousVDF()` for the conservative
+/// `jit::MaterialDef::vdfEvaluate` still reads, so it degrades to unknown
+/// at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags` never sets it.
+/// See `jit::MaterialDef::hasHomogeneousVDF()` for the conservative
 /// reading and the contract.
 ///
 inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
@@ -115,12 +115,12 @@ inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 /// point.
 ///
 /// \note
-/// This bit only ever appears in `JIT::MaterialDef::staticFlags`: it is
+/// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the bodies of
-/// `JIT::MaterialDef::evaluate`, `JIT::MaterialDef::opacityEvaluate`, and
-/// `JIT::MaterialDef::geometryNormalEvaluate` still read, so it degrades
-/// to unknown at `OPT_LEVEL_NONE` and `JIT::MaterialDef::Eval::flags`
-/// never sets it. See `JIT::MaterialDef::canReadCurvature()` for the
+/// `jit::MaterialDef::evaluate`, `jit::MaterialDef::opacityEvaluate`, and
+/// `jit::MaterialDef::geometryNormalEvaluate` still read, so it degrades
+/// to unknown at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags`
+/// never sets it. See `jit::MaterialDef::canReadCurvature()` for the
 /// conservative reading.
 ///
 inline constexpr int MATERIAL_READS_CURVATURE = (1 << 14);
@@ -142,7 +142,7 @@ inline constexpr int MATERIAL_READS_CURVATURE = (1 << 14);
 /// one word.
 ///
 /// The pairs rather than the two axes separately are what a material
-/// reports, because `JIT::MaterialDef::Eval::surfaceLobes` unions over a
+/// reports, because `jit::MaterialDef::Eval::surfaceLobes` unions over a
 /// whole BSDF tree. Two axes OR'd together lose which domain went with which
 /// kind: a Dirac reflection over a diffuse transmission and a Dirac
 /// transmission over a diffuse reflection would report identical words,
@@ -157,14 +157,14 @@ inline constexpr int MATERIAL_READS_CURVATURE = (1 << 14);
 ///
 /// The energy-compensation lobe of a rough BSDF is one of these, so a
 /// glossy BSDF that carries one reports both kinds and a mask cuts
-/// between them. See `DF_GLOSSY_BRDF`.
-inline constexpr int DF_SMOOTH_BRDF = (1 << 0);
+/// between them. See `DF_GLOSS_BRDF`.
+inline constexpr int DF_MATTE_BRDF = (1 << 0);
 
-/// The transmissive counterpart of `DF_SMOOTH_BRDF`.
-inline constexpr int DF_SMOOTH_BTDF = (1 << 3);
+/// The transmissive counterpart of `DF_MATTE_BRDF`.
+inline constexpr int DF_MATTE_BTDF = (1 << 3);
 
-/// Every smooth lobe of either domain.
-inline constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
+/// Every matte lobe of either domain.
+inline constexpr int DF_MATTE = DF_MATTE_BRDF | DF_MATTE_BTDF;
 
 /// A reflective lobe with a sampleable normal distribution, so a half
 /// vector is a meaningful quantity of it and a manifold constraint can be
@@ -172,29 +172,29 @@ inline constexpr int DF_SMOOTH = DF_SMOOTH_BRDF | DF_SMOOTH_BTDF;
 ///
 /// This holds of the whole lobe and not merely of most of it, which is
 /// why the Kulla-Conty style compensation lobe that a rough BSDF adds to
-/// make up its energy deficit is `DF_SMOOTH_BRDF` rather than part of
+/// make up its energy deficit is `DF_MATTE_BRDF` rather than part of
 /// this: it is a cosine hemisphere with no normal distribution behind it,
 /// and a caller that asks for a half vector must not be handed a lobe
 /// that has none.
 ///
 /// Having a normal distribution is necessary and not sufficient. A lobe
 /// that mixes one with something else, or whose half vector nothing would
-/// ever want to constrain, belongs in `DF_SMOOTH_BRDF`; the micrograin
+/// ever want to constrain, belongs in `DF_MATTE_BRDF`; the micrograin
 /// layer is both and is classified there. Width is part of the kind on
 /// the same ground: a microfacet lobe wider than the builtin cutoff
-/// (`MAX_GLOSSY_ALPHA` in `df.mdl`, squared roughness 0.25, the measured
-/// equal-time break-even under a lamp) labels itself `DF_SMOOTH_BRDF`,
+/// (`MAX_GLOSS_ALPHA` in `df.mdl`, squared roughness 0.25, the measured
+/// equal-time break-even under a lamp) labels itself `DF_MATTE_BRDF`,
 /// since a walk toward a light has nothing left to win against ordinary
 /// sampling of a lobe that wide. So a manifold claim never reads a width,
 /// and a layered material's word carries its narrow lobe as glossy and
-/// its wide one as smooth.
-inline constexpr int DF_GLOSSY_BRDF = (1 << 1);
+/// its wide one as matte.
+inline constexpr int DF_GLOSS_BRDF = (1 << 1);
 
-/// The transmissive counterpart of `DF_GLOSSY_BRDF`.
-inline constexpr int DF_GLOSSY_BTDF = (1 << 4);
+/// The transmissive counterpart of `DF_GLOSS_BRDF`.
+inline constexpr int DF_GLOSS_BTDF = (1 << 4);
 
 /// Every normal-distribution lobe of either domain.
-inline constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
+inline constexpr int DF_GLOSS = DF_GLOSS_BRDF | DF_GLOSS_BTDF;
 
 /// A reflective Dirac delta lobe, which has no density and whose half
 /// vector is fixed by the geometry.
@@ -209,13 +209,13 @@ inline constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 /// Every lobe with a density, which is every lobe but the Dirac ones.
 /// This is the question a caller asks to find out whether a vertex can
 /// scatter a direction that another strategy could also have produced.
-inline constexpr int DF_FINITE = DF_SMOOTH | DF_GLOSSY;
+inline constexpr int DF_FINITE = DF_MATTE | DF_GLOSS;
 
 /// Every reflective lobe.
-inline constexpr int DF_BRDF = DF_SMOOTH_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
+inline constexpr int DF_BRDF = DF_MATTE_BRDF | DF_GLOSS_BRDF | DF_DIRAC_BRDF;
 
 /// Every transmissive lobe.
-inline constexpr int DF_BTDF = DF_SMOOTH_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
+inline constexpr int DF_BTDF = DF_MATTE_BTDF | DF_GLOSS_BTDF | DF_DIRAC_BTDF;
 
 /// Every lobe, which is the lobe mask of a caller that wants the whole
 /// distribution.
@@ -249,7 +249,7 @@ inline constexpr int DF_CAN_SET_NORMAL = (1 << 7);
 /// \}
 
 /// Just-in-time interfaces.
-namespace JIT {
+namespace jit {
 
 template <typename> struct Function;
 
@@ -603,8 +603,8 @@ public:
     /// a manifold walk can refract through.
     ///
     /// One distribution can contribute more than one bit: a rough BSDF
-    /// with an energy-compensation lobe is `DF_GLOSSY_BRDF` and
-    /// `DF_SMOOTH_BRDF` together, since the two parts are different kinds
+    /// with an energy-compensation lobe is `DF_GLOSS_BRDF` and
+    /// `DF_MATTE_BRDF` together, since the two parts are different kinds
     /// on the same domain.
     ///
     /// The word also carries the normal property bits `DF_SETS_NORMAL`
@@ -776,7 +776,7 @@ public:
   /// \param[in]  isBackface  Whether to ask on the backface side.
   /// \param[in]  wm          The microfacet normal in world space.
   /// \param[out] pdf         The solid-angle PDF of sampling `wm`.
-  /// \param[in]  lobeMask    The lobes to consider, `DF_GLOSSY` is every lobe.
+  /// \param[in]  lobeMask    The lobes to consider, `DF_GLOSS` is every lobe.
   ///
   /// \return `true` if the PDF is non-zero.
   ///
@@ -800,12 +800,12 @@ public:
   /// \param[out] pdf         The solid-angle PDF of sampling `wm`.
   /// \param[out] alpha       The squared roughness of the narrowest lobe
   ///                         the mask keeps, whichever lobe the draw took.
-  /// \param[in]  lobeMask    The lobes to consider, `DF_GLOSSY` is every lobe.
+  /// \param[in]  lobeMask    The lobes to consider, `DF_GLOSS` is every lobe.
   ///
   /// \return `true` if a lobe with a normal distribution was reached.
   ///
   /// Draws a microfacet normal from the normal distribution behind one
-  /// GLOSSY lobe, which is what `DF_GLOSSY_BRDF` promises exists and this
+  /// GLOSS lobe, which is what `DF_GLOSS_BRDF` promises exists and this
   /// is how a caller reaches. A host solving a manifold constraint through
   /// a rough interface needs a half vector it can draw and weigh; this and
   /// `scatterNormalEvaluate` are that, and nothing more. What such an
@@ -815,12 +815,12 @@ public:
   /// A normal query carries no outgoing direction, so the side is an
   /// input: the caller asks about one side of one crossing and already
   /// knows which, and `wm` comes back on that side. `lobeMask` is
-  /// intersected with `DF_GLOSSY`, since nothing else has a normal
+  /// intersected with `DF_GLOSS`, since nothing else has a normal
   /// distribution to report, and selection chances are renormalized over
   /// the lobes that survive, so a mask naming one interface's transmissive
   /// lobe draws that lobe's own distribution however the tree layers it. A
-  /// manifold estimator wants exactly one kind, `DF_GLOSSY_BRDF` or
-  /// `DF_GLOSSY_BTDF`: a two-domain mask reports the mixture of the
+  /// manifold estimator wants exactly one kind, `DF_GLOSS_BRDF` or
+  /// `DF_GLOSS_BTDF`: a two-domain mask reports the mixture of the
   /// distributions on both sides of the interface, which is not a
   /// distribution any single crossing scatters by, and the `Material`
   /// wrapper refuses it.
@@ -1323,7 +1323,7 @@ public:
   /// \param[in]  wm          The microfacet normal in world space.
   /// \param[out] pdf         The solid-angle PDF of sampling `wm`.
   /// \param[in]  lobeMask    The lobes to consider, which must be exactly
-  ///                         `DF_GLOSSY_BRDF` or `DF_GLOSSY_BTDF`.
+  ///                         `DF_GLOSS_BRDF` or `DF_GLOSS_BTDF`.
   ///
   /// \return `true` if the PDF is non-zero.
   ///
@@ -1344,8 +1344,7 @@ public:
     // domains is not a distribution any single crossing scatters by, so
     // a manifold estimator must never use it. The raw entry point still
     // reports the mixture for a caller that wants it.
-    if (SMDL_UNLIKELY(lobeMask != DF_GLOSSY_BRDF &&
-                      lobeMask != DF_GLOSSY_BTDF)) {
+    if (SMDL_UNLIKELY(lobeMask != DF_GLOSS_BRDF && lobeMask != DF_GLOSS_BTDF)) {
       pdf = 0.0f;
       return false;
     } else {
@@ -1363,7 +1362,7 @@ public:
   /// \param[out] alpha       The squared roughness of the narrowest lobe
   ///                         the mask keeps, whichever lobe the draw took.
   /// \param[in]  lobeMask    The lobes to consider, which must be exactly
-  ///                         `DF_GLOSSY_BRDF` or `DF_GLOSSY_BTDF`.
+  ///                         `DF_GLOSS_BRDF` or `DF_GLOSS_BTDF`.
   ///
   /// \return `true` if a lobe with a normal distribution was reached.
   ///
@@ -1381,8 +1380,7 @@ public:
                           "'compile()' to emit the normal distribution "
                           "entry points");
     // As in `scatterNormalEvaluate`: exactly one glossy kind.
-    if (SMDL_UNLIKELY(lobeMask != DF_GLOSSY_BRDF &&
-                      lobeMask != DF_GLOSSY_BTDF)) {
+    if (SMDL_UNLIKELY(lobeMask != DF_GLOSS_BRDF && lobeMask != DF_GLOSS_BTDF)) {
       pdf = 0.0f;
       alpha = {};
       return false;
@@ -1545,7 +1543,7 @@ public:
   Function<void(State &state)> test{};
 };
 
-} // namespace JIT
+} // namespace jit
 
 /// \}
 

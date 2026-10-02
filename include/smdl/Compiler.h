@@ -402,8 +402,8 @@ private:
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
-  template <typename T> void jitLookup(JIT::Function<T> &func) {
-    func.func = reinterpret_cast<typename JIT::Function<T>::FunctionPointer>(
+  template <typename T> void jitLookup(jit::Function<T> &func) {
+    func.func = reinterpret_cast<typename jit::Function<T>::FunctionPointer>(
         jitLookup(func.name));
     if (!func.func)
       throw Error(
@@ -431,7 +431,7 @@ public:
   /// to say why asks `explainMaterialLookup()`. Use a longer suffix to
   /// disambiguate, or use `findMaterials()` to get all candidates.
   ///
-  [[nodiscard]] const JIT::MaterialDef *
+  [[nodiscard]] const jit::MaterialDef *
   findMaterial(std::string_view materialName) const noexcept;
 
   /// Explain why `findMaterial()` returns `nullptr` for `materialName`,
@@ -452,7 +452,7 @@ public:
   /// same matching rules as `findMaterial()`. This is useful for
   /// tooling, and for disambiguating the candidates when
   /// `findMaterial()` finds more than one.
-  [[nodiscard]] std::vector<const JIT::MaterialDef *>
+  [[nodiscard]] std::vector<const jit::MaterialDef *>
   findMaterials(std::string_view materialName) const;
 
   /// Match `materialName` against a material's qualified name by the
@@ -475,7 +475,7 @@ public:
 
   /// Get all JIT-compiled materials, including materials in shadowed
   /// modules.
-  [[nodiscard]] Span<const JIT::MaterialDef> getMaterials() const noexcept {
+  [[nodiscard]] Span<const jit::MaterialDef> getMaterials() const noexcept {
     return mMaterialDefs;
   }
 
@@ -543,14 +543,14 @@ public:
   /// Enable the `scatterNormalEvaluate`, `scatterNormalSample`, and
   /// `geometryNormalEvaluate` entry points?
   ///
-  /// The first two answer for the normal distribution behind a GLOSSY
+  /// The first two answer for the normal distribution behind a GLOSS
   /// lobe, and the third reads the `geometry.normal` field itself; a
   /// host needs them only to solve a manifold constraint through a rough
   /// or normal-remapped interface or to do something else with a half
   /// vector. When false they are never emitted, so they cost no codegen,
   /// no optimizer time and no JIT compilation, and
-  /// `JIT::MaterialDef::scatterNormalSample` stays null;
-  /// `JIT::Material` aborts with a message naming this flag if
+  /// `jit::MaterialDef::scatterNormalSample` stays null;
+  /// `jit::Material` aborts with a message naming this flag if
   /// called anyway.
   ///
   /// This is read while `compile()` lowers each material, so set it
@@ -726,11 +726,11 @@ private:
   std::vector<Error> mJITSessionErrors;
 
   /// The JIT-compiled color-to-RGB conversion function.
-  JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>
+  jit::Function<void(const State &state, const float *cptr, float3 &rgb)>
       mColorToRGB{"smdlColorToRGB"};
 
   /// The JIT-compiled RGB-to-color conversion function.
-  JIT::Function<void(const State &state, const float3 &rgb, float *cptr)>
+  jit::Function<void(const State &state, const float3 &rgb, float *cptr)>
       mRGBToColor{"smdlRGBToColor"};
 
   /// The desired material names (see `setDesiredMaterials()`). When
@@ -743,13 +743,13 @@ private:
   std::vector<std::string> mSkippedMaterialNames;
 
   /// The JIT-compiled materials.
-  std::vector<JIT::MaterialDef> mMaterialDefs;
+  std::vector<jit::MaterialDef> mMaterialDefs;
 
   /// The JIT-compiled unit tests.
-  std::vector<JIT::UnitTest> mUnitTests;
+  std::vector<jit::UnitTest> mUnitTests;
 
   /// The JIT-compiled execs.
-  std::vector<JIT::Function<void()>> mExecs;
+  std::vector<jit::Function<void()>> mExecs;
 
   friend class Context;
 

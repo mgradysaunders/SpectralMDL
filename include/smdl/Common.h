@@ -54,12 +54,12 @@ namespace smdl {
 ///
 /// Everything involved in turning MDL source code into executable native
 /// code: the `Compiler` front end, the `Module` and `Parser` layers beneath
-/// it, the `JIT` interface that the resulting materials are called through,
+/// it, the `jit` interface that the resulting materials are called through,
 /// and the documentation extractor.
 ///
 /// The usual entry point is `Compiler`. Add search paths and modules to it,
 /// compile, then look up materials and invoke them through the types in
-/// the `smdl::JIT` namespace.
+/// the `smdl::jit` namespace.
 ///
 /// \{
 /// \}
@@ -79,7 +79,7 @@ namespace smdl {
 /// The renderer-agnostic core of manifold next-event estimation and
 /// specular manifold sampling: the Newton solver over renderer-supplied
 /// surfaces, the connection measures, the reciprocal trial loop, and the
-/// eligibility questions answerable from `JIT` material instances.
+/// eligibility questions answerable from `jit` material instances.
 ///
 /// \{
 /// \}

@@ -172,7 +172,7 @@ TEST_CASE("Compiler: a relative import loads the file it names") {
                            minimalMaterial("helper_mat")};
   // The material the build defines, found by its full qualified name.
   auto moduleOf{[](const smdl::Compiler &compiler, std::string_view name) {
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial(name)};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial(name)};
     return materialDef ? materialDef->moduleQualifiedName : std::string();
   }};
   SUBCASE("A file added alone brings the sibling it imports") {
@@ -325,7 +325,7 @@ TEST_CASE("Compiler: an MDR archive") {
                                             "::vendor::metals::steel"});
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     CHECK(compiler.findMaterial("main_ok") != nullptr);
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("brushed")};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial("brushed")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::vendor::metals::steel::brushed");
     CHECK_CONTAINS(materialDef->moduleFileName, "vendor.metals.mdr");
@@ -392,7 +392,7 @@ TEST_CASE("Compiler: an MDR archive") {
              {{"vendor/metals.mdl", archiveEntry}});
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
-    const smdl::JIT::MaterialDef *materialDef{
+    const smdl::jit::MaterialDef *materialDef{
         compiler.findMaterial("shared_arch")};
     REQUIRE(materialDef != nullptr);
     CHECK_CONTAINS(materialDef->moduleFileName, "root1");
@@ -422,7 +422,7 @@ TEST_CASE("Compiler: an MDLE container") {
     std::vector<std::string> names{};
     REQUIRE(buildAll(compiler, {tmpDir / "CoolSteel.mdle"}, &names) == "");
     REQUIRE(names == std::vector<std::string>{expectedName});
-    const smdl::JIT::MaterialDef *materialDef{
+    const smdl::jit::MaterialDef *materialDef{
         compiler.findMaterial(expectedName + "::main")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == expectedName + "::main");
@@ -525,7 +525,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
     // Unique bare name resolves and carries the qualified identity.
-    const smdl::JIT::MaterialDef *materialDef{
+    const smdl::jit::MaterialDef *materialDef{
         compiler.findMaterial("unique_mat")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->moduleName == "alpha");
@@ -567,8 +567,8 @@ TEST_CASE("findMaterial: looking a material up by name") {
           "No material matches \"no_such_material\"");
     CHECK(compiler.explainMaterialLookup("") == "No material matches \"\"");
     // Module-qualified suffixes disambiguate.
-    const smdl::JIT::MaterialDef *dupAlpha{compiler.findMaterial("alpha::dup")};
-    const smdl::JIT::MaterialDef *dupBeta{compiler.findMaterial("beta::dup")};
+    const smdl::jit::MaterialDef *dupAlpha{compiler.findMaterial("alpha::dup")};
+    const smdl::jit::MaterialDef *dupBeta{compiler.findMaterial("beta::dup")};
     REQUIRE(dupAlpha != nullptr);
     REQUIRE(dupBeta != nullptr);
     CHECK(dupAlpha != dupBeta);
@@ -590,7 +590,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
                  "#smdl\nimport ::df::*;\n" + minimalMaterial("brushed"));
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("brushed")};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial("brushed")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::vendor::metals::steel::brushed");
     CHECK(materialDef->evaluate.name == "vendor.metals.steel.brushed.evaluate");
@@ -614,7 +614,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
                                        "}\n");
     smdl::Compiler compiler{};
     REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("nested")};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial("nested")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::nsmod::outer::inner::nested");
     CHECK(materialDef->moduleQualifiedName == "::nsmod");
@@ -637,7 +637,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
     // 'root2/mat.mdl' is shadowed by 'root1/mat.mdl', so its materials
     // are unreachable by name, mirroring the unreachability of the
     // module itself by qualified name.
-    const smdl::JIT::MaterialDef *materialDef{
+    const smdl::jit::MaterialDef *materialDef{
         compiler.findMaterial("mat::shared_name")};
     REQUIRE(materialDef != nullptr);
     CHECK_CONTAINS(materialDef->moduleFileName, "root1");
@@ -646,7 +646,7 @@ TEST_CASE("findMaterial: looking a material up by name") {
     CHECK(compiler.findMaterial("mat::only_r2") == nullptr);
     CHECK(compiler.findMaterial("only_r2") == nullptr);
     // Enumeration still exposes the shadowed materials, flagged.
-    smdl::Span<const smdl::JIT::MaterialDef> materials{compiler.getMaterials()};
+    smdl::Span<const smdl::jit::MaterialDef> materials{compiler.getMaterials()};
     REQUIRE(materials.size() == 4);
     size_t numShadowed{0};
     for (const auto &each : materials)
@@ -907,7 +907,7 @@ TEST_CASE("addCode: a module the host supplies as source") {
                                                     minimalMaterial("mat_ok")));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("mat_ok")};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial("mat_ok")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::host::mats::mat_ok");
     CHECK(materialDef->moduleName == "mats");
@@ -1086,9 +1086,9 @@ TEST_CASE("addFile: a module file under a package the host chooses") {
     REQUIRE_OK(compiler.addFile(red, "::scene_a"));
     REQUIRE_OK(compiler.addFile(blue, "scene_b"));
     REQUIRE(compileAll(compiler) == "");
-    const smdl::JIT::MaterialDef *redDef{
+    const smdl::jit::MaterialDef *redDef{
         compiler.findMaterial("scene_a::mats::plastic")};
-    const smdl::JIT::MaterialDef *blueDef{
+    const smdl::jit::MaterialDef *blueDef{
         compiler.findMaterial("scene_b::mats::plastic")};
     REQUIRE(redDef != nullptr);
     REQUIRE(blueDef != nullptr);
@@ -1105,7 +1105,7 @@ TEST_CASE("addFile: a module file under a package the host chooses") {
     smdl::Compiler compiler{};
     REQUIRE_OK(compiler.addFile(red));
     REQUIRE(compileAll(compiler) == "");
-    const smdl::JIT::MaterialDef *materialDef{compiler.findMaterial("plastic")};
+    const smdl::jit::MaterialDef *materialDef{compiler.findMaterial("plastic")};
     REQUIRE(materialDef != nullptr);
     CHECK(materialDef->qualifiedName == "::mats::plastic");
   }

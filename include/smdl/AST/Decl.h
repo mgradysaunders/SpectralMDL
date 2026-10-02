@@ -10,7 +10,7 @@ class Scope;
 
 } // namespace smdl
 
-namespace smdl::AST {
+namespace smdl::ast {
 
 /// \addtogroup ast_decl
 /// \{
@@ -864,4 +864,4 @@ public:
 
 /// \}
 
-} // namespace smdl::AST
+} // namespace smdl::ast

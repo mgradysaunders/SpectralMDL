@@ -4,7 +4,7 @@
 #include "smdl/Common.h"
 
 /// Abstract-syntax-tree interfaces.
-namespace smdl::AST {
+namespace smdl::ast {
 
 /// \defgroup ast_decl Declarations
 /// \ingroup ast
@@ -288,4 +288,4 @@ getDocCommentText(std::string_view srcDocComment);
 
 /// \}
 
-} // namespace smdl::AST
+} // namespace smdl::ast

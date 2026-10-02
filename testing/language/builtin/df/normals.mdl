@@ -13,7 +13,7 @@ import sampling::*;
 using scatter = ::support::scatter;
 import scatter::*;
 
-// `DF_GLOSSY` promises a normal distribution behind the lobe, and these two
+// `DF_GLOSS` promises a normal distribution behind the lobe, and these two
 // queries are how a caller reaches it. What their correctness rests on is one
 // property// A unit normal tilted about 64 degrees off the geometric normal, which is
 // strong but well within what a normal map can encode. Spelled out rather
@@ -220,7 +220,7 @@ unit_test "The bend recovers sampling below the shading horizon" {
   #assert(s.pdf[0] > 0.0);
 }
 
-// `DF_GLOSSY` promises a normal distribution behind the lobe, and these two
+// `DF_GLOSS` promises a normal distribution behind the lobe, and these two
 // queries are how a caller reaches it. What their correctness rests on is one
 // property and only one: the density the evaluate reports is the density the
 // sample draws with. Everything a manifold estimator does with them is built
@@ -322,9 +322,9 @@ unit_test "Only a lobe with a distribution behind it answers" {
     df::microfacet_ggx_smith_bsdf(roughness_u: 0.25, tint: 0.9);
   #assert(scatter::normalSample(glossyReflect, xi).success);
   #assert(
-    !scatter::normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSSY_BTDF).success);
+    !scatter::normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSS_BTDF).success);
   // Neither does a Dirac lobe, nor a diffuse one, at any mask: the promise is
-  // attached to `DF_GLOSSY` and nothing else makes it.
+  // attached to `DF_GLOSS` and nothing else makes it.
   #assert(!scatter::normalSample(
     df::specular_bsdf(mode: df::scatter_reflect_transmit),
     xi,
@@ -333,7 +333,7 @@ unit_test "Only a lobe with a distribution behind it answers" {
     df::diffuse_reflection_bsdf(tint: 0.7), xi, lobeMask: df::DF_ALL).success);
   #assert(!scatter::normalSample(
     df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, lobeMask: df::DF_ALL).success);
-  // Nor the micrograin layer, which declares SMOOTH precisely so that it
+  // Nor the micrograin layer, which declares MATTE precisely so that it
   // does not: its base is what answers here.
   const auto dusted = df::micrograin_layer(
     filling_factor: 0.4, grain_diffuse_albedo: color(0.5), base: glossyReflect);

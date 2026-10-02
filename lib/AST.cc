@@ -3,7 +3,7 @@
 
 #include "llvm/Support/Casting.h"
 
-namespace smdl::AST {
+namespace smdl::ast {
 
 std::string_view to_string(NodeKind nodeKind) {
   switch (nodeKind) {
@@ -155,7 +155,7 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
     srcLoc.throwError(concat("Function variant ", SpellQuoted(name.srcName),
                              " has invalid declaration"));
   LetAndCall letAndCall{};
-  AST::Expr *expr{static_cast<Return *>(definition.get())->expr.get()};
+  ast::Expr *expr{static_cast<Return *>(definition.get())->expr.get()};
   if (llvm::isa<Call>(expr)) {
     letAndCall.call = static_cast<Call *>(expr);
   } else if (llvm::isa<Let>(expr)) {
@@ -203,4 +203,4 @@ std::string getDocCommentText(std::string_view srcDocComment) {
   return text;
 }
 
-} // namespace smdl::AST
+} // namespace smdl::ast

@@ -15,7 +15,7 @@ public:
   Formatter(const FormatOptions &options) : mOptions(options) {}
 
   [[nodiscard]] std::string format(llvm::StringRef inSrc,
-                                   const AST::Node &node) {
+                                   const ast::Node &node) {
     mOutputSrc.clear();
     mInputSrc = inSrc;
     mIndent = 0;
@@ -165,7 +165,7 @@ private:
   // it verbatim.
   void writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc);
 
-  void writeMinifiedFloat(const AST::LiteralFloat &expr);
+  void writeMinifiedFloat(const ast::LiteralFloat &expr);
 
   /// Write a comma-separated list, given `writeItems(delim)` which writes
   /// every item and follows each comma it writes with `delim`. The list
@@ -349,29 +349,29 @@ private:
     }
   }
 
-  void write(const AST::Node &node) {
-    writeTypeSwitch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node);
+  void write(const ast::Node &node) {
+    writeTypeSwitch<ast::Decl, ast::Expr, ast::File, ast::Stmt>(node);
   }
 
-  void write(const AST::File &file);
+  void write(const ast::File &file);
 
   //--{ Write: Decls
-  void write(const AST::Decl &decl);
+  void write(const ast::Decl &decl);
 
-  void write(const AST::AnnotationDecl &decl) {
+  void write(const ast::AnnotationDecl &decl) {
     write(decl.srcKwAnnotation, DELIM_SPACE, decl.name, decl.params,
           decl.annotations, decl.srcSemicolon);
   }
 
-  void write(const AST::Enum &decl);
+  void write(const ast::Enum &decl);
 
-  void write(const AST::Exec &decl) {
+  void write(const ast::Exec &decl) {
     write(decl.srcKwExec, DELIM_UNNECESSARY_SPACE, decl.stmt);
   }
 
-  void write(const AST::Function &decl);
+  void write(const ast::Function &decl);
 
-  void write(const AST::Import &decl) {
+  void write(const ast::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
     writeList(
         decl.importPathWrappers.size(), decl.hasTrailingComma(),
@@ -382,7 +382,7 @@ private:
     write(decl.srcSemicolon, POP_INDENT);
   }
 
-  void write(const AST::Namespace &decl) {
+  void write(const ast::Namespace &decl) {
     write(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
           decl.srcBraceL, DELIM_NEWLINE);
     for (const auto &subDecl : decl.decls)
@@ -391,27 +391,27 @@ private:
     write(decl.srcBraceR, DELIM_NEWLINE);
   }
 
-  void write(const AST::Struct &decl);
+  void write(const ast::Struct &decl);
 
-  void write(const AST::Tag &decl) {
+  void write(const ast::Tag &decl) {
     write(decl.srcKwTag, DELIM_SPACE, decl.name, decl.srcSemicolon);
   }
 
-  void write(const AST::Typedef &decl) {
+  void write(const ast::Typedef &decl) {
     write(decl.srcKwTypedef, DELIM_SPACE, decl.type, DELIM_SPACE, decl.name,
           decl.srcSemicolon);
   }
 
-  void write(const AST::UnitTest &decl) {
+  void write(const ast::UnitTest &decl) {
     write(decl.srcKwUnitTest, DELIM_SPACE, decl.name, DELIM_SPACE, decl.stmt);
   }
 
-  void write(const AST::UsingAlias &decl) {
+  void write(const ast::UsingAlias &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.name, DELIM_SPACE, decl.srcEqual,
           DELIM_SPACE, decl.importPath, decl.srcSemicolon);
   }
 
-  void write(const AST::UsingImport &decl) {
+  void write(const ast::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
     writeList(decl.names.size(), decl.hasTrailingComma(),
@@ -423,17 +423,17 @@ private:
     write(decl.srcSemicolon, POP_INDENT);
   }
 
-  void write(const AST::Variable &decl);
+  void write(const ast::Variable &decl);
   //--}
 
   //--{ Write: Exprs
-  void write(const AST::Expr &expr);
+  void write(const ast::Expr &expr);
 
-  void write(const AST::AccessField &expr) {
+  void write(const ast::AccessField &expr) {
     write(expr.expr, expr.srcDot, expr.name);
   }
 
-  void write(const AST::AccessIndex &expr) {
+  void write(const ast::AccessIndex &expr) {
     write(expr.expr);
     for (const auto &index : expr.indexes) {
       write(index.srcBrackL, PUSH_INDENT, ALIGN_INDENT, index.expr, POP_INDENT,
@@ -441,9 +441,9 @@ private:
     }
   }
 
-  void write(const AST::Binary &expr) {
-    if (expr.op == AST::BINOP_APPROX_CMP_EQ ||
-        expr.op == AST::BINOP_APPROX_CMP_NE) {
+  void write(const ast::Binary &expr) {
+    if (expr.op == ast::BINOP_APPROX_CMP_EQ ||
+        expr.op == ast::BINOP_APPROX_CMP_NE) {
       // Format approximate comparison syntax
       // `lhs ~== |eps| rhs`, `lhs ~== (eps) rhs`
       // `lhs ~!= |eps| rhs`, `lhs ~!= (eps) rhs`
@@ -452,39 +452,39 @@ private:
                           DELIM_UNNECESSARY_SPACE, expr.srcDelimL, expr.exprEps,
                           expr.srcDelimR);
       write(DELIM_UNNECESSARY_SPACE, expr.exprRHS);
-    } else if (expr.op == AST::BINOP_ELSE) {
+    } else if (expr.op == ast::BINOP_ELSE) {
       writeWithMoreOnLine(expr.exprLHS, DELIM_SPACE, expr.srcOp);
       write(DELIM_SPACE, expr.exprRHS);
     } else {
       writeWithMoreOnLine(expr.exprLHS);
       // Avoid `+++` and `---` when the left operand ends with `++` or `--`
       bool needsSpaceBefore{
-          (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
-          (expr.op == AST::BINOP_SUB && lastOutput() == '-')};
-      write(expr.op == AST::BINOP_COMMA ? DELIM_NONE
+          (expr.op == ast::BINOP_ADD && lastOutput() == '+') ||
+          (expr.op == ast::BINOP_SUB && lastOutput() == '-')};
+      write(expr.op == ast::BINOP_COMMA ? DELIM_NONE
             : needsSpaceBefore          ? DELIM_SPACE
                                         : DELIM_UNNECESSARY_SPACE,
             expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRHS);
     }
   }
 
-  void write(const AST::Call &expr) { write(expr.expr, expr.args); }
+  void write(const ast::Call &expr) { write(expr.expr, expr.args); }
 
-  void write(const AST::Identifier &expr) {
+  void write(const ast::Identifier &expr) {
     for (const auto &[srcDoubleColon, name] : expr.elements) {
       write(srcDoubleColon, name);
     }
   }
 
-  void write(const AST::Intrinsic &expr) { write(expr.srcName); }
+  void write(const ast::Intrinsic &expr) { write(expr.srcName); }
 
-  void write(const AST::Lambda &expr);
+  void write(const ast::Lambda &expr);
 
-  void write(const AST::Let &expr);
+  void write(const ast::Let &expr);
 
-  void write(const AST::LiteralBool &expr) { write(expr.srcValue); }
+  void write(const ast::LiteralBool &expr) { write(expr.srcValue); }
 
-  void write(const AST::LiteralFloat &expr) {
+  void write(const ast::LiteralFloat &expr) {
     // Only minify the spelling in compact mode! Otherwise preserve
     // however the author wrote it.
     if (mOptions.isCompact) {
@@ -494,26 +494,26 @@ private:
     }
   }
 
-  void write(const AST::LiteralInt &expr) { write(expr.srcValue); }
+  void write(const ast::LiteralInt &expr) { write(expr.srcValue); }
 
-  void write(const AST::LiteralString &expr) {
+  void write(const ast::LiteralString &expr) {
     for (size_t i = 0; i < expr.srcValues.size(); i++) {
       if (i > 0) write(DELIM_UNNECESSARY_SPACE);
       write(expr.srcValues[i]);
     }
   }
 
-  void write(const AST::Parens &expr) {
+  void write(const ast::Parens &expr) {
     write(expr.srcDollar, PUSH_INDENT, ALIGN_INDENT, expr.srcParenL,
           PUSH_INDENT, ALIGN_INDENT, expr.expr, POP_INDENT, expr.srcParenR,
           POP_INDENT);
   }
 
-  void write(const AST::ReturnFrom &expr) {
+  void write(const ast::ReturnFrom &expr) {
     write(expr.srcKwReturnFrom, DELIM_UNNECESSARY_SPACE, expr.stmt);
   }
 
-  void write(const AST::Select &expr) {
+  void write(const ast::Select &expr) {
     auto writeOnOneLine{[&] {
       writeWithMoreOnLine(expr.exprCond, DELIM_UNNECESSARY_SPACE,    //
                           expr.srcQuestion, DELIM_UNNECESSARY_SPACE, //
@@ -547,37 +547,37 @@ private:
     write(POP_INDENT);
   }
 
-  void write(const AST::SizeName &expr) {
+  void write(const ast::SizeName &expr) {
     write(expr.srcAngleL, PUSH_INDENT, ALIGN_INDENT, expr.name, POP_INDENT,
           expr.srcAngleR);
   }
 
-  void write(const AST::Type &expr) {
+  void write(const ast::Type &expr) {
     for (const auto &srcQual : expr.srcQuals) write(srcQual, DELIM_SPACE);
     write(expr.expr);
   }
 
-  void write(const AST::TypeCast &expr) {
+  void write(const ast::TypeCast &expr) {
     write(expr.srcKwCast, expr.srcAngleL, PUSH_INDENT, ALIGN_INDENT, expr.type,
           POP_INDENT, expr.srcAngleR, expr.expr);
   }
 
-  void write(const AST::Unary &expr) {
+  void write(const ast::Unary &expr) {
     if (expr.isPostfix()) {
       write(expr.expr, expr.srcOp);
     } else {
       // Don't write unnecessary plus in compact mode
-      if (expr.op == AST::UNOP_POS && mOptions.isCompact) {
+      if (expr.op == ast::UNOP_POS && mOptions.isCompact) {
         write(DELIM_NONE);
         consumeInput(expr.srcOp.size());
         write(expr.expr);
       } else {
         // Avoid `+++`, `---`, and `/*`
-        if (((expr.op == AST::UNOP_INC || expr.op == AST::UNOP_POS) &&
+        if (((expr.op == ast::UNOP_INC || expr.op == ast::UNOP_POS) &&
              lastOutput() == '+') ||
-            ((expr.op == AST::UNOP_DEC || expr.op == AST::UNOP_NEG) &&
+            ((expr.op == ast::UNOP_DEC || expr.op == ast::UNOP_NEG) &&
              lastOutput() == '-') ||
-            ((expr.op == AST::UNOP_DEREF) && lastOutput() == '/'))
+            ((expr.op == ast::UNOP_DEREF) && lastOutput() == '/'))
           write(DELIM_SPACE);
         write(expr.srcOp, expr.expr);
       }
@@ -586,13 +586,13 @@ private:
   //--}
 
   //--{ Write: Stmts
-  void write(const AST::Stmt &stmt);
+  void write(const ast::Stmt &stmt);
 
-  void write(const AST::Break &stmt) {
+  void write(const ast::Break &stmt) {
     write(stmt.srcKwBreak, stmt.lateIf, stmt.srcSemicolon);
   }
 
-  void write(const AST::Compound &stmt) {
+  void write(const ast::Compound &stmt) {
     write(stmt.srcBraceL, PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
     for (const auto &subStmt : stmt.stmts) {
       write(subStmt, DELIM_NEWLINE);
@@ -600,31 +600,31 @@ private:
     write(POP_INDENT, stmt.srcBraceR);
   }
 
-  void write(const AST::Continue &stmt) {
+  void write(const ast::Continue &stmt) {
     write(stmt.srcKwContinue, stmt.lateIf, stmt.srcSemicolon);
   }
 
-  void write(const AST::DeclStmt &stmt) { write(stmt.decl); }
+  void write(const ast::DeclStmt &stmt) { write(stmt.decl); }
 
-  void write(const AST::Defer &stmt) {
+  void write(const ast::Defer &stmt) {
     write(stmt.srcKwDefer, DELIM_SPACE, stmt.stmt);
   }
 
-  void write(const AST::DoWhile &stmt) {
+  void write(const ast::DoWhile &stmt) {
     write(stmt.srcKwDo, DELIM_SPACE, stmt.stmt, DELIM_UNNECESSARY_SPACE, //
           stmt.srcKwWhile, DELIM_UNNECESSARY_SPACE, stmt.expr,
           stmt.srcSemicolon);
   }
 
-  void write(const AST::ExprStmt &stmt) {
+  void write(const ast::ExprStmt &stmt) {
     write(stmt.expr, stmt.lateIf, stmt.srcSemicolon);
   }
 
-  void write(const AST::For &stmt);
+  void write(const ast::For &stmt);
 
-  void write(const AST::If &stmt);
+  void write(const ast::If &stmt);
 
-  void write(const AST::Preserve &stmt) {
+  void write(const ast::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
     writeList(stmt.exprWrappers.size(), stmt.hasTrailingComma(),
               /*canBreak=*/false, [&](Delim delim) {
@@ -634,7 +634,7 @@ private:
     write(stmt.srcSemicolon, POP_INDENT);
   }
 
-  void write(const AST::Return &stmt) {
+  void write(const ast::Return &stmt) {
     // The keyword may be empty in abbreviated function definitions, where
     // there is nothing to align under and the indent belongs to whatever
     // wrote the `=`.
@@ -651,27 +651,27 @@ private:
     write(POP_INDENT);
   }
 
-  void write(const AST::Switch &stmt);
+  void write(const ast::Switch &stmt);
 
-  void write(const AST::Unreachable &stmt) {
+  void write(const ast::Unreachable &stmt) {
     write(stmt.srcKwUnreachable, stmt.srcSemicolon);
   }
 
-  void write(const AST::Visit &stmt) {
+  void write(const ast::Visit &stmt) {
     write(stmt.srcKwVisit, DELIM_SPACE, stmt.name, DELIM_SPACE, //
           stmt.srcKwIn, DELIM_SPACE, stmt.expr, DELIM_UNNECESSARY_SPACE,
           stmt.stmt);
   }
 
-  void write(const AST::While &stmt) {
+  void write(const ast::While &stmt) {
     write(stmt.srcKwWhile, DELIM_UNNECESSARY_SPACE, stmt.expr,
           DELIM_UNNECESSARY_SPACE, stmt.stmt);
   }
   //--}
 
-  void write(const AST::Name &name) { write(name.srcName); }
+  void write(const ast::Name &name) { write(name.srcName); }
 
-  void write(const AST::Decl::Attributes &attributes) {
+  void write(const ast::Decl::Attributes &attributes) {
     write(attributes.srcAt, attributes.srcParenL, PUSH_INDENT, ALIGN_INDENT);
     for (size_t i = 0; i < attributes.attrs.size(); i++) {
       write(attributes.attrs[i]);
@@ -680,19 +680,19 @@ private:
     write(attributes.srcParenR, POP_INDENT, DELIM_NEWLINE);
   }
 
-  void write(const AST::AnnotationBlock &annos);
+  void write(const ast::AnnotationBlock &annos);
 
-  void write(const AST::ArgumentList &args);
+  void write(const ast::ArgumentList &args);
 
-  void write(const AST::ParameterList &params);
+  void write(const ast::ParameterList &params);
 
-  void write(const AST::ImportPath &importPath) {
+  void write(const ast::ImportPath &importPath) {
     for (const auto &[srcDoubleColon, srcName, literalString] :
          importPath.elements)
       write(srcDoubleColon, srcName, literalString);
   }
 
-  void write(const AST::LateIf &lateIf) {
+  void write(const ast::LateIf &lateIf) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_SPACE, lateIf.srcKwIf,
           DELIM_UNNECESSARY_SPACE, lateIf.expr, POP_INDENT);
   }

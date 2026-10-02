@@ -134,7 +134,7 @@ Declaration *Declaration::resolveInScope(Context &context,
     // Descend into namespaces for proper prefixes, propagating the export
     // filter: 'export' gates access across module boundaries only.
     if (c->value.isComptimeMetaNamespace(context)) {
-      AST::Namespace *astNamespace{
+      ast::Namespace *astNamespace{
           c->value.getComptimeMetaNamespace(context, c->getSourceLocation())};
       if (astNamespace->scope)
         if (Declaration * found{resolveInScope(
