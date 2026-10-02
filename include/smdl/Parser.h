@@ -354,8 +354,8 @@ private:
   [[nodiscard]] auto parseBinaryLeftAssociative(Span<const AST::BinaryOp> ops,
                                                 const Func &parseInner)
       -> BumpPtr<AST::Expr> {
-    BumpPtr<AST::Expr> exprLhs{parseInner()};
-    if (!exprLhs) {
+    BumpPtr<AST::Expr> exprLHS{parseInner()};
+    if (!exprLHS) {
       return nullptr;
     }
     while (true) {
@@ -394,52 +394,52 @@ private:
         if (!srcDelimL || !exprEps || !srcDelimR)
           srcLoc0.throwError("expected '|EPSILON|' or '(EPSILON)' after ",
                              SpellQuoted(op->srcOp));
-        BumpPtr<AST::Expr> exprRhs{parseInner()};
-        if (!exprRhs)
+        BumpPtr<AST::Expr> exprRHS{parseInner()};
+        if (!exprRHS)
           srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
                              SpellQuoted(op->srcOp));
         accept();
-        exprLhs = allocate<AST::Binary>(
-            srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,
-            *srcDelimL, std::move(exprEps), *srcDelimR, std::move(exprRhs));
+        exprLHS = allocate<AST::Binary>(
+            srcLoc0, std::in_place, std::move(exprLHS), op->srcOp, op->op,
+            *srcDelimL, std::move(exprEps), *srcDelimR, std::move(exprRHS));
         continue;
       }
 
-      BumpPtr<AST::Expr> exprRhs{parseInner()};
-      if (!exprRhs) {
+      BumpPtr<AST::Expr> exprRHS{parseInner()};
+      if (!exprRHS) {
         reject();
         break;
       } else {
         accept();
-        exprLhs =
-            allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLhs),
-                                  op->srcOp, op->op, std::move(exprRhs));
+        exprLHS =
+            allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+                                  op->srcOp, op->op, std::move(exprRHS));
       }
     }
-    return exprLhs;
+    return exprLHS;
   }
 
   template <typename Func>
   [[nodiscard]] auto parseBinaryRightAssociative(Span<const AST::BinaryOp> ops,
                                                  const Func &parseInner)
       -> BumpPtr<AST::Expr> {
-    BumpPtr<AST::Expr> exprLhs{parseInner()};
-    if (!exprLhs) return nullptr;
+    BumpPtr<AST::Expr> exprLHS{parseInner()};
+    if (!exprLHS) return nullptr;
     SourceLocation srcLoc0{checkpoint()};
     std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
     if (!op) {
       reject();
-      return exprLhs;
+      return exprLHS;
     }
     skip();
-    BumpPtr<AST::Expr> exprRhs{parseBinaryRightAssociative(ops, parseInner)};
-    if (!exprRhs) {
+    BumpPtr<AST::Expr> exprRHS{parseBinaryRightAssociative(ops, parseInner)};
+    if (!exprRHS) {
       reject();
-      return exprLhs;
+      return exprLHS;
     } else {
       accept();
-      return allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLhs),
-                                   op->srcOp, op->op, std::move(exprRhs));
+      return allocate<AST::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+                                   op->srcOp, op->op, std::move(exprRHS));
     }
   }
   //--}

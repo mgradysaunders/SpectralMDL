@@ -15,7 +15,7 @@ public:
   class Version final {
   public:
     /// The keyword `mdl`.
-    std::string_view srcKwMdl;
+    std::string_view srcKwMDL;
 
     /// The version string, e.g., `1.7`.
     std::string_view srcVersion;
@@ -44,7 +44,7 @@ public:
     BumpPtr<LiteralString> path;
   };
 
-  explicit File(std::string_view srcKwSmdlSyntax,
+  explicit File(std::string_view srcKwSMDLSyntax,
                 std::vector<SearchDir> searchDirs,
                 std::optional<Version> version,
                 std::vector<BumpPtr<Decl>> importDecls,
@@ -52,17 +52,17 @@ public:
                 BumpPtr<AnnotationBlock> moduleAnnotations,
                 std::string_view srcSemicolonAfterModule,
                 std::vector<BumpPtr<Decl>> globalDecls)
-      : srcKwSmdlSyntax(srcKwSmdlSyntax), searchDirs(std::move(searchDirs)),
+      : srcKwSMDLSyntax(srcKwSMDLSyntax), searchDirs(std::move(searchDirs)),
         version(version), importDecls(std::move(importDecls)),
         srcKwModule(srcKwModule),
         moduleAnnotations(std::move(moduleAnnotations)),
         srcSemicolonAfterModule(srcSemicolonAfterModule),
         globalDecls(std::move(globalDecls)) {}
 
-  [[nodiscard]] bool isSMDLSyntax() const { return !srcKwSmdlSyntax.empty(); }
+  [[nodiscard]] bool isSMDLSyntax() const { return !srcKwSMDLSyntax.empty(); }
 
   /// The source keyword `#smdl`. This may be empty!
-  std::string_view srcKwSmdlSyntax;
+  std::string_view srcKwSMDLSyntax;
 
   /// The `#search_dir` declarations after `#smdl`. This may be empty!
   std::vector<SearchDir> searchDirs;

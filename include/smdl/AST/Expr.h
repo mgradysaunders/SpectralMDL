@@ -288,17 +288,17 @@ enum BinaryOp : uint32_t {
 /// A binary expression.
 class SMDL_EXPORT Binary final : public ExprSubclass<ExprKind::Binary> {
 public:
-  explicit Binary(BumpPtr<Expr> exprLhs, std::string_view srcOp, BinaryOp op,
-                  BumpPtr<Expr> exprRhs)
-      : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op),
-        exprRhs(std::move(exprRhs)) {}
+  explicit Binary(BumpPtr<Expr> exprLHS, std::string_view srcOp, BinaryOp op,
+                  BumpPtr<Expr> exprRHS)
+      : exprLHS(std::move(exprLHS)), srcOp(srcOp), op(op),
+        exprRHS(std::move(exprRHS)) {}
 
-  explicit Binary(BumpPtr<Expr> exprLhs, std::string_view srcOp, BinaryOp op,
+  explicit Binary(BumpPtr<Expr> exprLHS, std::string_view srcOp, BinaryOp op,
                   std::string_view srcDelimL, BumpPtr<Expr> exprEps,
-                  std::string_view srcDelimR, BumpPtr<Expr> exprRhs)
-      : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op), srcDelimL(srcDelimL),
+                  std::string_view srcDelimR, BumpPtr<Expr> exprRHS)
+      : exprLHS(std::move(exprLHS)), srcOp(srcOp), op(op), srcDelimL(srcDelimL),
         exprEps(std::move(exprEps)), srcDelimR(srcDelimR),
-        exprRhs(std::move(exprRhs)) {}
+        exprRHS(std::move(exprRHS)) {}
 
   /// Is the epsilon of an approximate comparison a relative tolerance?
   /// Absolute tolerance is delimited by bars `|eps|`, relative tolerance
@@ -306,7 +306,7 @@ public:
   [[nodiscard]] bool isRelativeEps() const { return srcDelimL == "("; }
 
   /// The left-hand side expression.
-  BumpPtr<Expr> exprLhs;
+  BumpPtr<Expr> exprLHS;
 
   /// The source operator.
   std::string_view srcOp;
@@ -324,7 +324,7 @@ public:
   std::string_view srcDelimR;
 
   /// The right-hand side expression.
-  BumpPtr<Expr> exprRhs;
+  BumpPtr<Expr> exprRHS;
 };
 
 /// A call expression.

@@ -314,7 +314,7 @@ TEST_CASE("Compiler: where a color and a float3 may convert") {
                                   "'@(pure)' context");
     // Naming the internal function the conversion reaches is what this
     // replaced.
-    CHECK_NOT_CONTAINS(error.message, "_colorToRgb");
+    CHECK_NOT_CONTAINS(error.message, "_colorToRGB");
   }
   SUBCASE("'float3' to 'color' is refused in a pure context") {
     smdl::Error error{

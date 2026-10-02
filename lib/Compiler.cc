@@ -982,7 +982,7 @@ describeJITSessionError(llvm::Error error, char globalPrefix,
 void Compiler::resetForRecompile() {
   // Free the previous JIT first: this invalidates every function pointer
   // previously handed out, per the lifetime contract on the class.
-  mLLVMJit.reset();
+  mLLVMJIT.reset();
   mForeignFunctionSourceLocations.clear();
   mJITSessionErrors.clear();
   mWarnedResourceKeys.clear();
@@ -1010,11 +1010,11 @@ void Compiler::resetForRecompile() {
   // Be explicit that the JIT links against the host process's own symbols:
   // '@(foreign)' declarations and emitted libcalls (e.g. 'strncmp')
   // resolve via 'dlsym' on the current process.
-  mLLVMJit = llvmThrowIfError(
+  mLLVMJIT = llvmThrowIfError(
       llvm::orc::LLJITBuilder().setLinkProcessSymbolsByDefault(true).create());
-  mLLVMJit->getExecutionSession().setErrorReporter([this](llvm::Error error) {
+  mLLVMJIT->getExecutionSession().setErrorReporter([this](llvm::Error error) {
     for (auto &sessionError : describeJITSessionError(
-             std::move(error), mLLVMJit->getDataLayout().getGlobalPrefix(),
+             std::move(error), mLLVMJIT->getDataLayout().getGlobalPrefix(),
              mForeignFunctionSourceLocations)) {
       if (mIsJITCompiling) {
         mJITSessionErrors.push_back(std::move(sessionError));
@@ -1410,7 +1410,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
   mIsJITCompiling = true;
   std::optional<Error> error{catchAndReturnError([&] {
-    if (!mLLVMJit || !mLLVMModule || !mLLVMContext)
+    if (!mLLVMJIT || !mLLVMModule || !mLLVMContext)
       throw Error("Nothing to JIT-compile: 'compile()' must be called first");
     // Define the builtin runtime callees ('smdlPanic', 'smdlBumpAllocate',
     // ...) as absolute symbols so they resolve even when the host process
@@ -1419,8 +1419,8 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     // code names those by symbol rather than by address, so this is where
     // their addresses are finally committed.
     if (!mBuiltinCalleeAddresses.empty() || !mImageSymbolNames.empty()) {
-      llvm::orc::MangleAndInterner mangle{mLLVMJit->getExecutionSession(),
-                                          mLLVMJit->getDataLayout()};
+      llvm::orc::MangleAndInterner mangle{mLLVMJIT->getExecutionSession(),
+                                          mLLVMJIT->getDataLayout()};
       llvm::orc::SymbolMap symbolMap{};
       for (const auto &[calleeName, calleeAddr] : mBuiltinCalleeAddresses)
         symbolMap[mangle(calleeName)] = llvm::orc::ExecutorSymbolDef(
@@ -1430,15 +1430,15 @@ std::optional<Error> Compiler::jitCompile() noexcept {
         symbolMap[mangle(symbolName)] = llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(image->getTexels()),
             llvm::JITSymbolFlags::Exported);
-      llvmThrowIfError(mLLVMJit->getMainJITDylib().define(
+      llvmThrowIfError(mLLVMJIT->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbolMap))));
     }
     // Hand the module to the JIT, dropping our handles up front: a failed
     // call must not leave moved-from state behind for 'dump()' or
     // 'getLLVMModule()' to trip over.
-    llvm::orc::ThreadSafeModule llvmJitModule{std::move(mLLVMModule),
+    llvm::orc::ThreadSafeModule llvmJITModule{std::move(mLLVMModule),
                                               std::move(mLLVMContext)};
-    llvmThrowIfError(mLLVMJit->addIRModule(std::move(llvmJitModule)));
+    llvmThrowIfError(mLLVMJIT->addIRModule(std::move(llvmJITModule)));
     jitLookup(mColorToRGB);
     jitLookup(mRGBToColor);
     for (auto &jitMaterial : mMaterialDefs) {
@@ -1490,7 +1490,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
 }
 
 void *Compiler::jitLookup(std::string_view name) {
-  llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJit->lookup(name)};
+  llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJIT->lookup(name)};
   if (!symbol)
     throw Error(concat("Cannot resolve JIT symbol ", SpellQuoted(name), ": ",
                        llvm::toString(symbol.takeError())));

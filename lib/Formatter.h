@@ -447,16 +447,16 @@ private:
       // Format approximate comparison syntax
       // `lhs ~== |eps| rhs`, `lhs ~== (eps) rhs`
       // `lhs ~!= |eps| rhs`, `lhs ~!= (eps) rhs`
-      writeWithMoreOnLine(expr.exprLhs,                        //
+      writeWithMoreOnLine(expr.exprLHS,                        //
                           DELIM_UNNECESSARY_SPACE, expr.srcOp, //
                           DELIM_UNNECESSARY_SPACE, expr.srcDelimL, expr.exprEps,
                           expr.srcDelimR);
-      write(DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+      write(DELIM_UNNECESSARY_SPACE, expr.exprRHS);
     } else if (expr.op == AST::BINOP_ELSE) {
-      writeWithMoreOnLine(expr.exprLhs, DELIM_SPACE, expr.srcOp);
-      write(DELIM_SPACE, expr.exprRhs);
+      writeWithMoreOnLine(expr.exprLHS, DELIM_SPACE, expr.srcOp);
+      write(DELIM_SPACE, expr.exprRHS);
     } else {
-      writeWithMoreOnLine(expr.exprLhs);
+      writeWithMoreOnLine(expr.exprLHS);
       // Avoid `+++` and `---` when the left operand ends with `++` or `--`
       bool needsSpaceBefore{
           (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
@@ -464,7 +464,7 @@ private:
       write(expr.op == AST::BINOP_COMMA ? DELIM_NONE
             : needsSpaceBefore          ? DELIM_SPACE
                                         : DELIM_UNNECESSARY_SPACE,
-            expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+            expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRHS);
     }
   }
 

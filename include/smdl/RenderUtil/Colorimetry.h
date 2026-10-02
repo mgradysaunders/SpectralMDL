@@ -73,7 +73,7 @@ namespace smdl {
 }
 
 /// The matrix from XYZ to linear sRGB that the JIT's color to RGB applies
-/// (the builtin `_colorToRgb`), so that a host's own develop ends in the
+/// (the builtin `_colorToRGB`), so that a host's own develop ends in the
 /// same space.
 [[nodiscard]] SMDL_EXPORT double3x3 xyzToLinearSRGB() noexcept;
 

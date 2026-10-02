@@ -266,7 +266,7 @@ export float _wymanY(const float w) {
 
 /// Convert color to RGB, used by `float3` constructor!
 @(hot noinline)
-export float3 _colorToRgb(const color c) {
+export float3 _colorToRGB(const color c) {
   float3 result = float3(0.0);
   if (bool($state.wavelengthWeight)) {
     // Per-band quadrature weights in nanometers, for grids whose bands
@@ -307,7 +307,7 @@ void smdlRGBToColor(const &float3 rgb, const &float cptr) {
 /// for convenience.
 @(visible noinline)
 void smdlColorToRGB(const &float cptr, const &float3 rgb) {
-  *rgb = _colorToRgb(color(cptr));
+  *rgb = _colorToRGB(color(cptr));
 }
 
 /// The intensity mode enum.

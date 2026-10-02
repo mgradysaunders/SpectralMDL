@@ -129,7 +129,7 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - `struct material`
   // - Function `_wymanXYZ`
   // - Function `_wymanY`
-  // - Function `_colorToRgb`
+  // - Function `_colorToRGB`
   // - Function `_rgbToColor`
   Scope *apiRootScope{getBuiltinModule("api")->mRootScope};
   auto seedKeyword{[&](Declaration *declaration) {

@@ -340,6 +340,14 @@ SMDL_EXPORT void printToString(std::string &str, const char *fmt, ...)
 /// `printToString()` does, with the arguments as a `va_list`.
 SMDL_EXPORT void vprintToString(std::string &str, const char *fmt,
                                 std::va_list args) SMDL_PRINTF_FORMAT(2, 0);
+                                
+/// The edits a typo of a name `nameSize` characters long may be away
+/// from what it meant: one, and one more for every four characters, up
+/// to four, because one edit in `abs` is a much bigger relative error
+/// than one edit in `loadBSDFMeasurement`.
+[[nodiscard]] constexpr size_t suggestionTolerance(size_t nameSize) noexcept {
+  return nameSize < 12 ? 1 + nameSize / 4 : 4;
+}
 
 /// The did-you-mean helper: the nearest candidate to `name` within
 /// `maxDistance` edits (Levenshtein), or empty if none is close enough.
@@ -354,14 +362,6 @@ SMDL_EXPORT void vprintToString(std::string &str, const char *fmt,
 [[nodiscard]] SMDL_EXPORT std::string_view
 suggestNearest(std::string_view name, Span<const std::string_view> candidates,
                size_t maxDistance = 2, char (*fold)(char) = nullptr);
-
-/// The edits a typo of a name `nameSize` characters long may be away
-/// from what it meant: one, and one more for every four characters, up
-/// to four, because one edit in `abs` is a much bigger relative error
-/// than one edit in `loadBSDFMeasurement`.
-[[nodiscard]] constexpr size_t suggestionTolerance(size_t nameSize) noexcept {
-  return nameSize < 12 ? 1 + nameSize / 4 : 4;
-}
 
 /// The did-you-mean helper with the compiler's own policy applied: the
 /// tolerance is `suggestionTolerance()` of what was typed; and a

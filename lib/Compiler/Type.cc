@@ -303,7 +303,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
               emitter, this, getScalarType(context), value)})
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
-      // delegate to the `_colorToRgb` function in the `api` module.
+      // delegate to the `_colorToRGB` function in the `api` module.
       if (value.type == context.getColorType() && dim == 3) {
         // That function integrates the spectrum against the CIE observer,
         // so it needs the wavelengths in '$state'. Say so here: letting the
@@ -316,7 +316,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                             "wavelengths in '$state'");
         return invoke(
             emitter,
-            emitter.emitCall(context.getKeyword("_colorToRgb"), value, srcLoc),
+            emitter.emitCall(context.getKeyword("_colorToRGB"), value, srcLoc),
             srcLoc);
       }
     }
@@ -1739,7 +1739,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     }
     jitFunc.name = func->getName().str();
   }};
-  auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
+  auto makeDFWrapper{[&](auto &jitFunc, std::string_view suffix,
                          Type *funcReturnType,
                          std::initializer_list<WrapperParam> wrapperParams) {
     makeWrapper(jitFunc, suffix, funcReturnType, materialEvalType, "eval"sv,
@@ -1751,14 +1751,14 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   Type *float4Type{context.getFloatType(4)};
   Type *intType{context.getIntType()};
   const size_t colorSize{uint64_t(context.getColorType()->wavelengthBaseMax)};
-  makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
+  makeDFWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize},
                  {"lobeMask", intType, 1, /*isByValue=*/true}});
-  makeDfWrapper(jitMaterial.scatterSample, "scatterSample", intType,
+  makeDFWrapper(jitMaterial.scatterSample, "scatterSample", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},
@@ -1773,13 +1773,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // whole-tree descents per material. See 'Compiler::shouldEmitScatterNormal',
   // and the matching skip in 'Compiler::jitCompile()'.
   if (compiler.shouldEmitScatterNormal) {
-    makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
+    makeDFWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
                   intType,
                   {{"isBackface", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
                    {"pdf", floatType},
                    {"lobeMask", intType, 1, /*isByValue=*/true}});
-    makeDfWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
+    makeDFWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
                   intType,
                   {{"xi", float4Type},
                    {"isBackface", intType, 1, /*isByValue=*/true},
@@ -1788,10 +1788,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                    {"alpha", float2Type},
                    {"lobeMask", intType, 1, /*isByValue=*/true}});
   }
-  makeDfWrapper(
+  makeDFWrapper(
       jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
       {{"we", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
-  makeDfWrapper(jitMaterial.emissionSample, "emissionSample", intType,
+  makeDFWrapper(jitMaterial.emissionSample, "emissionSample", intType,
                 {{"xi", float4Type},
                  {"we", float3Type},
                  {"pdf", floatType},
@@ -1802,13 +1802,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   makeWrapper(jitMaterial.volumeScatterSample, "volumeScatterSample", floatType,
               vdfType, "vdf"sv,
               {{"xi", float4Type}, {"wo", float3Type}, {"wi", float3Type}});
-  makeDfWrapper(jitMaterial.hairScatterEvaluate, "hairScatterEvaluate", intType,
+  makeDFWrapper(jitMaterial.hairScatterEvaluate, "hairScatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize}});
-  makeDfWrapper(jitMaterial.hairScatterSample, "hairScatterSample", intType,
+  makeDFWrapper(jitMaterial.hairScatterSample, "hairScatterSample", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},

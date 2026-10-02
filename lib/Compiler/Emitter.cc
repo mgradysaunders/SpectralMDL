@@ -895,7 +895,7 @@ Value Emitter::emit(AST::AccessIndex &expr) {
 void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
   if ((expr.op & BINOP_EQ) != BINOP_EQ) return;
   AST::Identifier *identifier{
-      llvm::dyn_cast_if_present<AST::Identifier>(expr.exprLhs.get())};
+      llvm::dyn_cast_if_present<AST::Identifier>(expr.exprLHS.get())};
   if (!identifier || !identifier->isSimpleName()) return;
   Span<const std::string_view> names{context.internName(*identifier)};
   Declaration *unusableMatch{};
@@ -922,68 +922,68 @@ Value Emitter::emit(AST::Binary &expr) {
   rejectAssignmentToNonVariable(expr);
   // Temporary let.
   if (expr.op == BINOP_LET) {
-    AST::Identifier *ident{llvm::dyn_cast<AST::Identifier>(&*expr.exprLhs)};
+    AST::Identifier *ident{llvm::dyn_cast<AST::Identifier>(&*expr.exprLHS)};
     if (!ident) // || !ident->is_simple_name())
       expr.srcLoc.throwError(
           "Expected lhs of operator ':=' to be an identifier");
-    Value rv{rvalue(emit(expr.exprRhs))};
+    Value rv{rvalue(emit(expr.exprRHS))};
     declare(*ident, ident, rv);
     return rv;
   }
   // Short-circuit logic conditions.
   if (expr.op == BINOP_LOGIC_AND || expr.op == BINOP_LOGIC_OR) {
     Type *boolType{context.getBoolType()};
-    Value valueLhs{invoke(boolType, emit(expr.exprLhs), expr.srcLoc)};
-    if (valueLhs.isComptimeInt()) {
-      unsigned valueLhsNow{valueLhs.getComptimeInt()};
-      if ((valueLhsNow != 0 && expr.op == BINOP_LOGIC_AND) ||
-          (valueLhsNow == 0 && expr.op == BINOP_LOGIC_OR)) {
+    Value valueLHS{invoke(boolType, emit(expr.exprLHS), expr.srcLoc)};
+    if (valueLHS.isComptimeInt()) {
+      unsigned valueLHSNow{valueLHS.getComptimeInt()};
+      if ((valueLHSNow != 0 && expr.op == BINOP_LOGIC_AND) ||
+          (valueLHSNow == 0 && expr.op == BINOP_LOGIC_OR)) {
         // Contain rhs declarations, matching the runtime two-arm merge:
         // whether ':=' in the rhs is visible afterward must not depend on
         // whether the lhs constant-folded.
         SMDL_PRESERVE(scope);
         scope = pushScope(/*isTransparent=*/true);
-        return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
+        return invoke(boolType, emit(expr.exprRHS), expr.srcLoc);
       }
-      return valueLhs;
+      return valueLHS;
     } else {
       // One arm evaluates the right-hand side (converted to bool inside
       // its own block, so the PHI type stays bool); the other arm is the
       // short-circuit constant.
-      auto emitRhs{[&]() -> Value {
-        return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
+      auto emitRHS{[&]() -> Value {
+        return invoke(boolType, emit(expr.exprRHS), expr.srcLoc);
       }};
       auto emitConstant{[&]() -> Value {
         return context.getComptimeBool(expr.op == BINOP_LOGIC_OR);
       }};
       return expr.op == BINOP_LOGIC_AND
-                 ? emitTwoArmMerge(valueLhs, "and", emitRhs,
-                                   expr.exprRhs->srcLoc, emitConstant,
+                 ? emitTwoArmMerge(valueLHS, "and", emitRHS,
+                                   expr.exprRHS->srcLoc, emitConstant,
                                    expr.srcLoc, expr.srcLoc)
-                 : emitTwoArmMerge(valueLhs, "or", emitConstant, expr.srcLoc,
-                                   emitRhs, expr.exprRhs->srcLoc, expr.srcLoc);
+                 : emitTwoArmMerge(valueLHS, "or", emitConstant, expr.srcLoc,
+                                   emitRHS, expr.exprRHS->srcLoc, expr.srcLoc);
     }
   }
   // Short-circuit else.
   if (expr.op == BINOP_ELSE) {
-    Value valueLhs{emit(expr.exprLhs)};
-    Value valueLhsCond{invoke(context.getBoolType(), valueLhs, expr.srcLoc)};
-    if (valueLhsCond.isComptimeInt()) {
-      if (valueLhsCond.getComptimeInt()) return valueLhs;
+    Value valueLHS{emit(expr.exprLHS)};
+    Value valueLHSCond{invoke(context.getBoolType(), valueLHS, expr.srcLoc)};
+    if (valueLHSCond.isComptimeInt()) {
+      if (valueLHSCond.getComptimeInt()) return valueLHS;
       // Contain rhs declarations, matching the runtime two-arm merge.
       SMDL_PRESERVE(scope);
       scope = pushScope(/*isTransparent=*/true);
-      return emit(expr.exprRhs);
+      return emit(expr.exprRHS);
     } else {
       return emitTwoArmMerge(
-          valueLhsCond, "else", [&] { return valueLhs; }, expr.exprLhs->srcLoc,
-          [&] { return emit(expr.exprRhs); }, expr.exprRhs->srcLoc,
+          valueLHSCond, "else", [&] { return valueLHS; }, expr.exprLHS->srcLoc,
+          [&] { return emit(expr.exprRHS); }, expr.exprRHS->srcLoc,
           expr.srcLoc);
     }
   }
   // Default.
-  Value lhs{emit(expr.exprLhs)};
-  Value rhs{emit(expr.exprRhs)};
+  Value lhs{emit(expr.exprLHS)};
+  Value rhs{emit(expr.exprRHS)};
   if (expr.op == BINOP_APPROX_CMP_EQ || //
       expr.op == BINOP_APPROX_CMP_NE) {
     // Approximate comparison operators
@@ -2155,8 +2155,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
         srcLoc.throwError("Assertion failed: ", args[0].getSource());
       srcLoc.throwError("Assertion failed");
     }
-    auto [blockPanic, blockOk] = createBlocks<2>("assert", {".panic", ".ok"});
-    builder.CreateCondBr(cond, blockOk, blockPanic);
+    auto [blockPanic, blockOK] = createBlocks<2>("assert", {".panic", ".ok"});
+    builder.CreateCondBr(cond, blockOK, blockPanic);
     builder.SetInsertPoint(blockPanic);
     handleScope(nullptr, nullptr, [&] {
       if (args.size() == 1) {
@@ -2170,8 +2170,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
         emitPanic(rvalue(args[1].value), srcLoc);
       }
     });
-    builder.CreateBr(blockOk);
-    builder.SetInsertPoint(blockOk);
+    builder.CreateBr(blockOK);
+    builder.SetInsertPoint(blockOK);
     return Value();
   }
   case IntrinsicID::Atan2: {
@@ -3446,7 +3446,7 @@ void Emitter::rejectAssignmentAsNamedArgument(AST::Argument &astArg) {
       llvm::dyn_cast_if_present<AST::Binary>(astArg.expr.get())};
   if (!binary || binary->op != BINOP_EQ) return;
   AST::Identifier *identifier{
-      llvm::dyn_cast_if_present<AST::Identifier>(binary->exprLhs.get())};
+      llvm::dyn_cast_if_present<AST::Identifier>(binary->exprLHS.get())};
   if (!identifier || !identifier->isSimpleName()) return;
   // An assignment to something that exists is a real assignment, however
   // odd it looks in an argument list.

@@ -239,15 +239,15 @@ unit_test "The sampler's histogram matches the density's mass" {
     diffuse_reflection_weight: 0.25);
   const auto wo = hairDirection(0.4, 2.2);
   const int n = 128;
-  double bandPdf = 0;
-  double totalPdf = 0;
+  double bandPDF = 0;
+  double totalPDF = 0;
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       const auto wi =
         sampling::uniform_sphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
       const double pdf = evaluate(h, wo, wi).pdf[0];
-      totalPdf += pdf;
-      bandPdf += wi.x > 0.25 ? pdf : 0.0;
+      totalPDF += pdf;
+      bandPDF += wi.x > 0.25 ? pdf : 0.0;
     }
   }
   auto xi = float4(0.19, 0.53, 0.83, 0.44);
@@ -260,7 +260,7 @@ unit_test "The sampler's histogram matches the density's mass" {
       band += r.wi.x > 0.25 ? 1 : 0;
     }
   }
-  #assert(band / double(total) ~== |2e-2d| bandPdf / totalPdf);
+  #assert(band / double(total) ~== |2e-2d| bandPDF / totalPDF);
 }
 
 unit_test "The cuticle tilt shifts the peak and absorption kills the TT lobe" {

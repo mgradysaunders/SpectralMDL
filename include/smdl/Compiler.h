@@ -709,7 +709,7 @@ private:
   std::unordered_map<std::string, const void *> mBuiltinCalleeAddresses;
 
   /// The LLVM JIT.
-  std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
+  std::unique_ptr<llvm::orc::LLJIT> mLLVMJIT;
 
   /// Where each `@(foreign)` function was declared, so that one the host
   /// process does not define is reported at its declaration. Cleared by

@@ -1332,7 +1332,7 @@ float2 azimuthFrame(const float3 w) {
 /// The density over `wi` of CLTC sampling for the EON model. Both
 /// directions are in the local shading frame with `wo.z > 0`.
 @(pure)
-float eonCLTCPdf(const float3 wo, const float3 wi, const float r) {
+float eonCLTCPDF(const float3 wo, const float3 wi, const float r) {
   const float4 co(eonLTCCoeffs(wo.z, r));
   const float2 e(azimuthFrame(wo));
   const float3 wiStd(e.x * wi.x + e.y * wi.y, -e.y * wi.x + e.x * wi.y, wi.z);
@@ -1449,7 +1449,7 @@ auto scatterEvaluate(
         eonUniformLobeChance(cosTheta[1], r),
         eonUniformLobeChance(cosTheta[0], r)));
       const float2 pdf(chanceU / $TWO_PI + (1 - chanceU) * float2(
-        eonCLTCPdf(wo, wi, r), eonCLTCPdf(wi, wo, r)));
+        eonCLTCPDF(wo, wi, r), eonCLTCPDF(wi, wo, r)));
       if (!#hasField(this, "multiscatter_tint")) {
         auto result(ScatterEvaluateResult(
           f: rho * fSS + rhoMS * msShape, pdf: pdf));
@@ -2320,10 +2320,10 @@ auto scatterEvaluate(
       // division needs no floor.
       const auto msF(
         cosThetai / $PI * #max(1 - coO.z, 0.0) * #max(1 - coI.z, 0.0) / (1 - avgR));
-      const auto msPdf(float2(cosThetai, cosThetao) / $PI);
+      const auto msPDF(float2(cosThetai, cosThetao) / $PI);
       auto result(ScatterEvaluateResult(
         f: this.tint * (f + this.multiscatter_tint * msF),
-        pdf: lerp(pdf, msPdf, MULTISCATTER_DIFFUSE_CHANCE)));
+        pdf: lerp(pdf, msPDF, MULTISCATTER_DIFFUSE_CHANCE)));
       result.f *= shadingNormalCorrection if (isImportance);
       return result;
     }
@@ -3229,7 +3229,7 @@ float3 microfacetNormalSample(
 // form rather than the visible one, which is the property that would
 // silently regress.
 @(pure macro)
-float microfacetNormalPdf(const auto this, const float3 wm) {
+float microfacetNormalPDF(const auto this, const float3 wm) {
   return 0.0 if (!(wm.z > 0.0));
   if $(this.distribution <: microfacet::blinn) {
     const auto e(#min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
@@ -3262,7 +3262,7 @@ float normalEvaluate(
   preserve tangent_u;
   tangent_u = this.tangent_u if (isAnisotropic(this));
   return 0.0 if (!recalculateTangentSpace(params));
-  return microfacetNormalPdf(this, normalize(wm));
+  return microfacetNormalPDF(this, normalize(wm));
 }
 
 @(pure macro)
@@ -6849,24 +6849,24 @@ export struct fog_vdf: vdf {
 /// The Henyey-Greenstein phase function of the deflection cosine `u`,
 /// measured from the direction of propagation.
 @(pure macro)
-float fogHgPhase(const float g, const float u) = (1.0 - g * g) / (4.0 * $PI * (denom := 1.0 + g * g - 2.0 * g * u) * #sqrt(denom));
+float fogHGPhase(const float g, const float u) = (1.0 - g * g) / (4.0 * $PI * (denom := 1.0 + g * g - 2.0 * g * u) * #sqrt(denom));
 
 /// The Draine phase function of the deflection cosine `u`.
 @(pure macro)
 float fogDrainePhase(const float g, const float a, const float u) =
-  fogHgPhase(g, u) * (1.0 + a * u * u) / (1.0 + a * (1.0 + 2.0 * g * g) / 3.0);
+  fogHGPhase(g, u) * (1.0 + a * u * u) / (1.0 + a * (1.0 + 2.0 * g * g) / 3.0);
 
 /// The fog phase function of the deflection cosine `u`, which is also
 /// its own sampling density. NOTE: This is non-standard, exported for
 /// the unit tests!
 @(pure macro)
-export float _fogPhase(const fog_vdf fog, const float u) = (1.0 - fog.fit_w_d) * fogHgPhase(fog.fit_g_hg, u) + fog.fit_w_d * fogDrainePhase(fog.fit_g_d, fog.fit_alpha, u);
+export float _fogPhase(const fog_vdf fog, const float u) = (1.0 - fog.fit_w_d) * fogHGPhase(fog.fit_g_hg, u) + fog.fit_w_d * fogDrainePhase(fog.fit_g_d, fog.fit_alpha, u);
 
 /// Sample the deflection cosine of the Henyey-Greenstein phase
 /// function by analytic CDF inversion. NOTE: This is non-standard,
 /// exported for the unit tests!
 @(pure macro)
-export float _fogHgSample(const float g, const float xi0) {
+export float _fogHGSample(const float g, const float xi0) {
   return 1.0 - 2.0 * xi0 if (#abs(g) < 0.001);
   const auto t = (1.0 - g * g) / (1.0 - g + 2.0 * g * xi0);
   return (1.0 + g * g - t * t) / (2.0 * g);
@@ -6881,7 +6881,7 @@ export float _fogHgSample(const float g, const float xi0) {
 export float _fogDraineSample(const float g, const float a, const float xi0) {
   // Degenerates to Henyey-Greenstein as `alpha` vanishes, where the
   // quartic terms divide by zero.
-  return _fogHgSample(g, xi0) if (a < 0.001);
+  return _fogHGSample(g, xi0) if (a < 0.001);
   if (#abs(g) < 0.01) {
     // Near-isotropic: the `g` of 0 CDF is a depressed cubic with one
     // real root by Cardano. Using it below this threshold costs a CDF
@@ -6935,7 +6935,7 @@ auto scatterSample(
   // value.
   const auto u = xi.z < this.fit_w_d //
                  ? _fogDraineSample(this.fit_g_d, this.fit_alpha, xi.x)
-                 : _fogHgSample(this.fit_g_hg, xi.x);
+                 : _fogHGSample(this.fit_g_hg, xi.x);
   const auto sinTheta = #sqrt(#max(0.0, 1.0 - u * u));
   const auto phi = 2.0 * $PI * xi.y;
   return ScatterSampleResult(

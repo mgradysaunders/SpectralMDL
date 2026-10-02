@@ -311,14 +311,14 @@ void Formatter::writeMinifiedFloat(const AST::LiteralFloat &expr) {
 void Formatter::write(const AST::File &file) {
   write(DELIM_NONE);
   if (file.isSMDLSyntax()) {
-    write(file.srcKwSmdlSyntax, DELIM_NEWLINE);
+    write(file.srcKwSMDLSyntax, DELIM_NEWLINE);
   }
   for (const auto &searchDir : file.searchDirs) {
     write(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path, DELIM_NEWLINE);
   }
   if (file.version) {
     const AST::File::Version &version{*file.version};
-    write(version.srcKwMdl, DELIM_SPACE, version.srcVersion,
+    write(version.srcKwMDL, DELIM_SPACE, version.srcVersion,
           version.srcSemicolon, DELIM_NEWLINE);
   }
   for (const auto &decl : file.importDecls) {

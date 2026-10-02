@@ -282,14 +282,14 @@ auto Parser::parseSimpleName() -> std::optional<AST::Name> {
         "struct",  "switch", "true", "typedef", "uniform",  "using",
         "varying", "while",
     };
-    static constexpr std::string_view keywordsSmdlSyntax[]{
+    static constexpr std::string_view keywordsSMDLSyntax[]{
         "defer",  "inline", "namespace",   "return_from",
         "static", "tag",    "unreachable", "visit",
     };
     bool isKeyword{
         std::binary_search(std::begin(keywords), std::end(keywords), *name) ||
-        (mIsSMDL && std::binary_search(std::begin(keywordsSmdlSyntax),
-                                       std::end(keywordsSmdlSyntax), *name))};
+        (mIsSMDL && std::binary_search(std::begin(keywordsSMDLSyntax),
+                                       std::end(keywordsSMDLSyntax), *name))};
     if (!isKeyword) {
       accept();
       return AST::Name{srcLoc0, *name};
@@ -1117,8 +1117,8 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
   // `mdl X.Y` version is module-level documentation.
   std::string_view srcDocComment{getPendingDocComment()};
   SourceLocation srcLoc0{mSrcLoc};
-  std::optional<std::string_view> srcKwSmdlSyntax{nextKeyword("#smdl")};
-  if (srcKwSmdlSyntax) mIsSMDL = true;
+  std::optional<std::string_view> srcKwSMDLSyntax{nextKeyword("#smdl")};
+  if (srcKwSMDLSyntax) mIsSMDL = true;
   std::vector<AST::File::SearchDir> searchDirs{parseFileSearchDirs()};
   std::optional<AST::File::Version> version{parseFileVersion()};
   if (!version && !mIsSMDL) srcLoc0.throwError("Expected MDL version");
@@ -1160,7 +1160,7 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
     throwUnexpectedToken(mSrcLoc, "expected a declaration");
   }
   BumpPtr<AST::File> file{allocate<AST::File>(
-      srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax), std::move(searchDirs),
+      srcLoc0, std::in_place, orEmpty(srcKwSMDLSyntax), std::move(searchDirs),
       std::move(version), std::move(importDecls), orEmpty(srcKwModule),
       std::move(moduleAnnotations), orEmpty(srcSemicolonAfterModule),
       std::move(globalDecls))};
@@ -1188,9 +1188,9 @@ auto Parser::parseFileSearchDirs() -> std::vector<AST::File::SearchDir> {
 }
 
 auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
-  std::optional<Parser::ParsedToken> kwMdl{nextKeywordAndLocation("mdl")};
-  if (!kwMdl) return std::nullopt;
-  SourceLocation srcLoc0{kwMdl->srcLoc};
+  std::optional<Parser::ParsedToken> kwMDL{nextKeywordAndLocation("mdl")};
+  if (!kwMDL) return std::nullopt;
+  SourceLocation srcLoc0{kwMDL->srcLoc};
   skip();
   SourceLocation srcLoc1{mSrcLoc};
   std::optional<std::string_view> srcMajor{nextInteger()};
@@ -1208,7 +1208,7 @@ auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
     return number;
   }};
   AST::File::Version version{};
-  version.srcKwMdl = kwMdl->src;
+  version.srcKwMDL = kwMDL->src;
   version.srcVersion = getSourceCode().substr(srcLoc1.i, mSrcLoc.i - srcLoc1.i);
   version.major = parseVersionNumber(*srcMajor);
   version.minor = parseVersionNumber(*srcMinor);

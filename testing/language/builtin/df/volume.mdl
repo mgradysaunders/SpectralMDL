@@ -78,10 +78,10 @@ unit_test "Sampling matches the reference implementation" {
   // The near-isotropic Cardano branch.
   #assert(df::_fogDraineSample(0.0025661182, 250.0, 0.5) ~== |1e-5| 0.0);
   // Henyey-Greenstein.
-  #assert(df::_fogHgSample(0.98446929, 0.1) ~== |1e-5| 0.98943122);
-  #assert(df::_fogHgSample(0.98446929, 0.5) ~== |1e-5| 0.99964007);
-  #assert(df::_fogHgSample(0.85487959, 0.7) ~== |1e-5| 0.98878436);
-  #assert(df::_fogHgSample(0.0345, 0.5) ~== |1e-5| 0.051729468);
+  #assert(df::_fogHGSample(0.98446929, 0.1) ~== |1e-5| 0.98943122);
+  #assert(df::_fogHGSample(0.98446929, 0.5) ~== |1e-5| 0.99964007);
+  #assert(df::_fogHGSample(0.85487959, 0.7) ~== |1e-5| 0.98878436);
+  #assert(df::_fogHGSample(0.0345, 0.5) ~== |1e-5| 0.051729468);
 }
 
 unit_test "The phase function integrates to one" {
