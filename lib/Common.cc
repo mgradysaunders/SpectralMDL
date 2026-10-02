@@ -34,6 +34,7 @@ BuildInfo BuildInfo::get() noexcept {
   info.withSTBImage = SMDL_STB_IMAGE_VERSION;
   info.withSTBImageWrite = SMDL_STB_IMAGE_WRITE_VERSION;
   info.withSTBImageResize = SMDL_STB_IMAGE_RESIZE_VERSION;
+  info.withSTBSprintf = SMDL_STB_SPRINTF_VERSION;
   info.withTinyEXR = SMDL_TINYEXR_VERSION;
 #ifdef SMDL_PTEX_VERSION
   info.withPtex = SMDL_PTEX_VERSION;
@@ -47,6 +48,7 @@ BuildInfo BuildInfo::get() noexcept {
       {"stb_image", info.withSTBImage},
       {"stb_image_write", info.withSTBImageWrite},
       {"stb_image_resize2", info.withSTBImageResize},
+      {"stb_sprintf", info.withSTBSprintf},
       {"tinyexr", info.withTinyEXR},
       {"Ptex", info.withPtex ? info.withPtex : "off"},
       {"NanoVDB", info.withNanoVDB ? info.withNanoVDB : "off"},

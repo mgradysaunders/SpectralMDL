@@ -3,6 +3,8 @@
 #include "smdl/Support/Strings.h"
 
 #include <array>
+#include <cmath>
+#include <cstdarg>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -150,15 +152,110 @@ TEST_CASE("Spelling: the numbers") {
                                smdl::concat(smdl::SpellFixed(nan)),
                                smdl::concat(smdl::SpellExact(nan))})
       CHECK(spelled == "nan");
+    // However few digits were asked for: the precision does not reach
+    // into the word.
+    CHECK(smdl::concat(smdl::SpellFloat(inf, 1)) == "inf");
+    CHECK(smdl::concat(smdl::SpellFixed(-inf, 1)) == "-inf");
+    CHECK(smdl::concat(smdl::SpellExact(-inf)) == "-inf");
+    CHECK(smdl::concat(smdl::SpellPercent(nan, 0)) == "nan%");
+    // The sign of a NaN says nothing, and is left off.
+    CHECK(smdl::concat(smdl::SpellFloat(std::copysign(nan, -1.0))) == "nan");
     // Negative zero is a sign the arithmetic put there, and is kept.
     CHECK(smdl::concat(smdl::SpellFloat(-0.0)) == "-0");
     CHECK(smdl::concat(smdl::SpellExact(-0.0)) == "-0");
+  }
+  SUBCASE("A tie rounds away from zero") {
+    // Each of these sits exactly halfway between the two spellings it
+    // could take, which only a number with a short binary fraction does.
+    CHECK(smdl::concat(smdl::SpellFloat(2.5, 1)) == "3");
+    CHECK(smdl::concat(smdl::SpellFloat(-2.5, 1)) == "-3");
+    CHECK(smdl::concat(smdl::SpellFloat(0.125, 2)) == "0.13");
+    CHECK(smdl::concat(smdl::SpellFixed(0.375, 2)) == "0.38");
+    CHECK(smdl::concat(smdl::SpellPercent(0.03125, 2)) == "3.13%");
+    CHECK(smdl::concat(smdl::SpellByteSize(1152)) == "1.13 KiB");
+  }
+  SUBCASE("A magnitude past any buffer is written whole") {
+    const std::string big{smdl::concat(smdl::SpellFixed(1e300, 3))};
+    CHECK(big.size() == 301);
+    CHECK(std::stod(big) == 1e300);
+    const std::string small{smdl::concat(smdl::SpellFixed(1.5e-300, 2))};
+    CHECK(small.size() == 303);
+    CHECK(std::stod(small) == 1.5e-300);
+    const std::string percent{smdl::concat(smdl::SpellPercent(1e60, 0))};
+    CHECK(percent.size() > 60);
+    CHECK(percent.back() == '%');
+    CHECK(std::stod(percent) == 100 * 1e60);
   }
   SUBCASE("Every number spelling keeps the sign") {
     CHECK(smdl::concat(smdl::SpellFloat(-1.0 / 3.0, 3)) == "-0.333");
     CHECK(smdl::concat(smdl::SpellFixed(-1.0 / 3.0, 3)) == "-0.333");
     CHECK(smdl::concat(smdl::SpellExact(-0.25f)) == "-0.25");
     CHECK(smdl::concat(-0.5f) == "-0.5");
+  }
+}
+
+TEST_CASE("printToString: formatted text onto the end of a string") {
+  SUBCASE("It appends, and leaves what was there alone") {
+    std::string str{"z = "};
+    smdl::printToString(str, "%.3f", 0.5);
+    CHECK(str == "z = 0.500");
+    smdl::printToString(str, " over %d", 3);
+    CHECK(str == "z = 0.500 over 3");
+    smdl::printToString(str, "%s", "");
+    CHECK(str == "z = 0.500 over 3");
+  }
+  SUBCASE("The conversions are the ones printf has") {
+    auto print{[](const char *fmt, auto... args) {
+      std::string str{};
+      // NOLINTNEXTLINE
+      smdl::printToString(str, fmt, args...);
+      return str;
+    }};
+    CHECK(print("%d|%5d|%-5d|%05d|%+d", 42, 42, 42, 42, 42) ==
+          "42|   42|42   |00042|+42");
+    CHECK(print("%zu", std::numeric_limits<size_t>::max()) ==
+          std::to_string(std::numeric_limits<size_t>::max()));
+    CHECK(print("%lld", std::numeric_limits<long long>::min()) ==
+          std::to_string(std::numeric_limits<long long>::min()));
+    CHECK(print("\\u%04X", 0x1Fu) == "\\u001F");
+    CHECK(print("%.*s|%6s|%-6s|%c|%%", 3, "abcdef", "hi", "hi", 'x') ==
+          "abc|    hi|hi    |x|%");
+    CHECK(print("%g|%.3g|%.2f|%.3e", 0.5, 1234.5678, 1.0 / 3.0, 1234.5678) ==
+          "0.5|1.23e+03|0.33|1.235e+03");
+    // One of the conversions printf does not have.
+    CHECK(print("%'d", 1234567) == "1,234,567");
+  }
+  SUBCASE("Text longer than the formatting buffer arrives whole") {
+    // The formatting goes through a buffer of 512 characters, handed
+    // over each time it fills.
+    const std::string big(2000, 'q');
+    std::string str{"["};
+    smdl::printToString(str, "%s] %d", big.c_str(), 42);
+    CHECK(str == "[" + big + "] 42");
+    // The same, when it is many small conversions that fill it.
+    std::string expect{};
+    for (int i = 0; i < 200; i++) expect += std::to_string(i) + ", ";
+    const char *fmt{"%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, "};
+    std::string many{};
+    for (int i = 0; i < 200; i += 10)
+      smdl::printToString(many, fmt, i, i + 1, i + 2, i + 3, i + 4, i + 5,
+                          i + 6, i + 7, i + 8, i + 9);
+    CHECK(many == expect);
+    std::string wide{};
+    smdl::printToString(wide, "%600d|%-600d|", 7, 7);
+    CHECK(wide == std::string(599, ' ') + "7|7" + std::string(599, ' ') + "|");
+  }
+  SUBCASE("The arguments may arrive as a va_list") {
+    // NOLINTNEXTLINE
+    auto print{[](std::string &str, const char *fmt, ...) {
+      std::va_list args;
+      va_start(args, fmt);
+      smdl::vprintToString(str, fmt, args);
+      va_end(args);
+    }};
+    std::string str{"n = "};
+    print(str, "%d %s", 7, "things");
+    CHECK(str == "n = 7 things");
   }
 }
 

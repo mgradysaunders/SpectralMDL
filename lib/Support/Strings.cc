@@ -3,13 +3,59 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <vector>
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STB_SPRINTF_STATIC 1
+#define STB_SPRINTF_IMPLEMENTATION 1
+#include "thirdparty/stb/stb_sprintf.h"
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 namespace smdl {
+
+namespace {
+
+// What `stbsp_vsprintfcb` calls each time its buffer fills, and once
+// more at the end: the text so far goes onto the string, and the same
+// buffer goes back to be filled again.
+char *appendChunk(const char *buf, void *user, int len) {
+  static_cast<std::string *>(user)->append(buf, size_t(len));
+  return const_cast<char *>(buf);
+}
+
+// Write a number that is not one, and say whether that is what it was.
+// `stb_sprintf` writes these `Inf` and `NaN` and lets the precision cut
+// them short, so no spelling hands it one. A NaN is written without its
+// sign, which says nothing about how it came to be.
+bool appendNonFinite(std::string &result, double value) {
+  if (std::isfinite(value)) return false;
+  result += std::isnan(value) ? "nan" : value < 0 ? "-inf" : "inf";
+  return true;
+}
+
+} // namespace
+
+// NOLINTNEXTLINE
+void printToString(std::string &str, const char *fmt, ...) {
+  std::va_list args;
+  va_start(args, fmt);
+  vprintToString(str, fmt, args);
+  va_end(args);
+}
+
+void vprintToString(std::string &str, const char *fmt, std::va_list args) {
+  // NOLINTNEXTLINE
+  char buffer[STB_SPRINTF_MIN];
+  stbsp_vsprintfcb(appendChunk, &str, buffer, fmt, args);
+}
 
 void SpellQuoted::appendTo(std::string &result) const {
   result += '"';
@@ -39,36 +85,34 @@ void SpellLocation::appendTo(std::string &result) const {
   result += ']';
 }
 
-// The numbers below go through `snprintf` rather than the `<charconv>`
-// floating point overloads, which libstdc++ only grew in GCC 11 and
-// which this build's floor does not assume.
+// The numbers below go through `stb_sprintf` rather than `snprintf`,
+// which writes the decimal point of whatever locale the host has set,
+// or the `<charconv>` floating point overloads, which libstdc++ only
+// grew in GCC 11 and which this build's floor does not assume.
 void SpellFloat::appendTo(std::string &result) const {
-  // NOLINTNEXTLINE
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.*g", std::clamp(mDigits, 1, 17),
-                mValue);
-  result += buffer;
+  if (appendNonFinite(result, mValue)) return;
+  printToString(result, "%.*g", std::clamp(mDigits, 1, 17), mValue);
 }
 
 void SpellFixed::appendTo(std::string &result) const {
+  if (appendNonFinite(result, mValue)) return;
   // The decimal places that give the significant digits asked for: one
   // for every digit past the leading one, plus however many the leading
   // digit sits below the decimal point. A value of zero has no magnitude
   // to ask, and takes the digits as places.
   const int digits{std::clamp(mDigits, 1, 17)};
   int places{digits - 1};
-  if (std::isfinite(mValue) && mValue != 0)
+  if (mValue != 0)
     places =
         std::max(places - int(std::floor(std::log10(std::abs(mValue)))), 0);
   // The places stay as the digits asked for, trailing zeros and all: a
   // value that happens to end in one is the reason a column lines up.
-  // NOLINTNEXTLINE
-  char buffer[512]{};
-  std::snprintf(buffer, sizeof(buffer), "%.*f", std::min(places, 350), mValue);
-  result += buffer;
+  printToString(result, "%.*f", std::min(places, 350), mValue);
 }
 
 void SpellExact::appendTo(std::string &result) const {
+  // An infinity or a NaN has no decimal spelling to be exact about.
+  if (appendNonFinite(result, mValue)) return;
   // The shortest spelling that reads back as the same number. Shortest
   // by the string rather than by the digits, since `%g` turns
   // exponential once the exponent reaches the precision and `6e+02` is
@@ -79,26 +123,25 @@ void SpellExact::appendTo(std::string &result) const {
   for (int digits = 1; digits <= maxDigits; digits++) {
     // NOLINTNEXTLINE
     char buffer[64]{};
-    std::snprintf(buffer, sizeof(buffer), "%.*g", digits, mValue);
+    stbsp_snprintf(buffer, int(sizeof(buffer)), "%.*g", digits, mValue);
     if (mIsFloat ? std::strtof(buffer, nullptr) != float(mValue)
                  : std::strtod(buffer, nullptr) != mValue)
       continue;
     if (!shortest[0] || std::strlen(buffer) < std::strlen(shortest))
-      std::snprintf(shortest, sizeof(shortest), "%s", buffer);
+      std::memcpy(shortest, buffer, sizeof(shortest));
   }
-  // Nothing reads back for an infinity or a NaN, which have no decimal
-  // spelling to be exact about; they are written as they are written.
+  // Every digit there is, should nothing have read back. The reading is
+  // the C runtime's and goes by the locale, so under one whose decimal
+  // point is a comma it stops at the `.` written here.
   if (!shortest[0])
-    std::snprintf(shortest, sizeof(shortest), "%.*g", maxDigits, mValue);
+    stbsp_snprintf(shortest, int(sizeof(shortest)), "%.*g", maxDigits, mValue);
   result += shortest;
 }
 
 void SpellPercent::appendTo(std::string &result) const {
-  // NOLINTNEXTLINE
-  char buffer[64]{};
-  std::snprintf(buffer, sizeof(buffer), "%.*f", std::clamp(mDecimals, 0, 9),
-                100 * mValue);
-  result += buffer;
+  const double percent{100 * mValue};
+  if (!appendNonFinite(result, percent))
+    printToString(result, "%.*f", std::clamp(mDecimals, 0, 9), percent);
   result += '%';
 }
 
@@ -106,8 +149,7 @@ void SpellByteSize::appendTo(std::string &result) const {
   // NOLINTNEXTLINE
   constexpr const char *UNITS[]{"KiB", "MiB", "GiB", "TiB"};
   if (mCount < 1024) {
-    result += std::to_string(mCount);
-    result += " B";
+    printToString(result, "%zu B", mCount);
     return;
   }
   double value{double(mCount) / 1024.0};
@@ -116,12 +158,8 @@ void SpellByteSize::appendTo(std::string &result) const {
     value /= 1024.0;
   // Three significant digits, except that a value that rounds to 1000 or
   // more is written whole rather than going exponential.
-  // NOLINTNEXTLINE
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), value < 999.5 ? "%.3g" : "%.0f", value);
-  result += buffer;
-  result += ' ';
-  result += UNITS[unit];
+  printToString(result, value < 999.5 ? "%.3g %s" : "%.0f %s", value,
+                UNITS[unit]);
 }
 
 void SpellCounted::appendTo(std::string &result) const {

@@ -95,6 +95,20 @@ namespace smdl {
 #define SMDL_UNLIKELY(cond) (!!(cond))
 #endif
 
+/// Declare that a function takes a `printf`-style format string, so that
+/// the compiler checks the arguments of every call against it.
+///
+/// The two numbers count the parameters from one: where the format
+/// string is, and where the arguments it formats begin, the latter zero
+/// for a function that takes them as a `va_list`. A non-static member
+/// function counts `this` as its first parameter.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMDL_PRINTF_FORMAT(fmtIndex, argIndex) \
+  __attribute__((format(printf, fmtIndex, argIndex)))
+#else
+#define SMDL_PRINTF_FORMAT(fmtIndex, argIndex)
+#endif
+
 template <typename To, typename From>
 [[nodiscard]]
 SMDL_ALWAYS_INLINE To bitCast(const From &from) noexcept {

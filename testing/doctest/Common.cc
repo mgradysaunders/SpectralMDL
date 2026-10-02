@@ -16,6 +16,7 @@ TEST_CASE("BuildInfo: what the banner reports about this build") {
     CHECK(info.withSTBImage != nullptr);
     CHECK(info.withSTBImageWrite != nullptr);
     CHECK(info.withSTBImageResize != nullptr);
+    CHECK(info.withSTBSprintf != nullptr);
     CHECK(info.withTinyEXR != nullptr);
   }
   SUBCASE("RTTI report agrees with this test binary") {

@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <cstdarg>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -8,6 +9,7 @@
 #include <utility>
 
 #include "smdl/Export.h"
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/Span.h"
 
 namespace smdl {
@@ -309,6 +311,35 @@ template <typename T, typename... Ts>
   }
   return str;
 }
+
+/// Append `printf`-formatted text to the end of `str`, however long the
+/// text turns out to be.
+///
+/// The formatting is the vendored `stb_sprintf` rather than the C
+/// runtime's, so the text is the same on every platform and under every
+/// locale, the decimal point always being `.`, and so a few things are
+/// not as `printf` has them:
+///
+/// * A tie rounds away from zero, where the C runtime rounds it to even:
+///   `%.0f` of `2.5` is `3`.
+/// * Past fifteen or so significant digits the last one may be one off
+///   from the nearest, though the text still reads back as the same
+///   number, and `%f` writes zeros past the nineteenth.
+/// * An infinity is `Inf` and a NaN is `NaN`, and a precision cuts them
+///   short. The number spellings write `inf` and `nan` instead, and are
+///   what to reach for where a number may not be one.
+/// * There is no `long double`: `%Lf` is not a conversion.
+/// * `%'d` writes the thousands with commas and `%b` writes binary.
+///
+/// Neither `fmt` nor a string among the arguments may point into `str`,
+/// which reallocates as it grows.
+SMDL_EXPORT void printToString(std::string &str, const char *fmt, ...)
+    SMDL_PRINTF_FORMAT(2, 3);
+
+/// Append `printf`-formatted text to the end of `str`, as
+/// `printToString()` does, with the arguments as a `va_list`.
+SMDL_EXPORT void vprintToString(std::string &str, const char *fmt,
+                                std::va_list args) SMDL_PRINTF_FORMAT(2, 0);
 
 /// The did-you-mean helper: the nearest candidate to `name` within
 /// `maxDistance` edits (Levenshtein), or empty if none is close enough.

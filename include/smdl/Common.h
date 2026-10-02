@@ -180,6 +180,9 @@ public:
   /// The version of the vendored stb_image_resize2. Never null.
   const char *withSTBImageResize{};
 
+  /// The version of the vendored stb_sprintf. Never null.
+  const char *withSTBSprintf{};
+
   /// The version of the vendored tinyexr. Never null.
   const char *withTinyEXR{};
 
