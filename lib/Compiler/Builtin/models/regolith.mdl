@@ -1,31 +1,24 @@
-/// The regolith albedo model: a single parametric reflectance spectrum fitted
-/// to a broad corpus of soils, rocks, and weathered minerals, broad enough to
-/// also cover made ground like asphalt, concrete, and brick. Tabulated
-/// logit-space component curves are combined linearly per wavelength with
-/// weights derived from eleven normalized [0, 1] parameters, and the logistic
-/// link maps the result back to a reflectance, so every output is strictly
-/// inside (0, 1) by construction. Every parameter is saturated to [0, 1] at
-/// entry.
+/// The regolith albedo model: a parametric reflectance spectrum fitted to a
+/// broad corpus of soils, rocks, and weathered minerals, which also covers
+/// made ground like asphalt, concrete, and brick. Tabulated logit-space
+/// component curves are combined linearly per wavelength, with weights from
+/// eleven parameters saturated to [0, 1], and the logistic link maps the
+/// result to a reflectance strictly inside (0, 1).
 ///
-/// Starting points for 58 familiar materials ship as the `REGOLITH_PRESET_*`
-/// constants at the end of this module: soils named by their WRB/FAO soil
-/// group, rocks by lithology, and made ground. Each is an 11-component vector
-/// in the parameter order below, to be expanded with call-site `inline`.
-///
-/// Every preset is one real measured spectrum at its own fitted coordinates,
-/// and reconstructs that measurement within 1.5 dE. Note the nonzero
-/// `moisture` in nominally dry presets: air-dried laboratory spectra carry
-/// residual hygroscopic moisture, which this model keeps on its `moisture`
-/// axis instead of baking it into the material.
+/// The `REGOLITH_PRESET_*` constants at the end of this module are starting
+/// points for 58 materials: soils by WRB/FAO soil group, rocks by lithology,
+/// and made ground. Each is an 11-component vector in parameter order, to be
+/// expanded with call-site `inline`, and reconstructs one measured spectrum
+/// within 1.5 dE. Nominally dry presets have nonzero `moisture`, since
+/// air-dried laboratory spectra carry residual hygroscopic moisture.
 #smdl
 
 using ::math import *;
 
-// The logistic link, mapping a logit-space value back to (0, 1). The rails
-// are float32 housekeeping, not a modeling choice: past |z| ~ 17 the true
-// value would round to exactly 1.0, handing an infinity to any caller that
-// takes -log(1 - R). The extrapolated corners of the parameter box do get
-// there, so the rails are what keep the strict (0, 1) guarantee.
+// The logistic link from logit space to (0, 1). The rails keep float32 from
+// rounding to exactly 1.0 past |z| ~ 17, which the extrapolated corners of
+// the parameter box reach, so that a caller taking -log(1 - R) never gets an
+// infinity.
 @(pure macro)
 auto link(const auto z) = #min(#max(1.0 / (1.0 + #exp(-z)), 1.0e-7), 0.9999999);
 
@@ -37,9 +30,9 @@ export const float REGOLITH_MAX_WAVELENGTH = 2500.0;
 export const int REGOLITH_TABLE_SIZE = 138;
 
 // smdl format off
-/// The 12 spectral component curves in logit space at each of the 138 entries:
-/// constant, base, fineness, organic, pigment-a, pigment-b, phyllo, hydrous,
-/// ferrous, unstained, moisture, and moisture-sensitivity terms.
+/// The 12 logit-space component curves at each entry: constant, base,
+/// fineness, organic, pigment-a, pigment-b, phyllo, hydrous, ferrous,
+/// unstained, moisture, and moisture-sensitivity.
 export static const auto REGOLITH_TABLE_CURVES = auto[138](
   auto(-1.77228143, 0.796490391, 1.31651311, -1.07535384, 0.0204812899, -0.0433547679, 0.0, 0.0373611727, -0.0353360186, 0.234744583, -0.847533591, -0.62804797),
   auto(-1.74029311, 0.800924836, 1.34218729, -1.07135621, 0.0143938334, -0.0386439239, 0.0, 0.0836538136, -0.135070472, 0.130830796, -0.858363511, -0.629510412),
@@ -182,42 +175,31 @@ export static const auto REGOLITH_TABLE_CURVES = auto[138](
 );
 // smdl format on
 
-/// Evaluate the regolith albedo model, mapping eleven normalized parameters
-/// to a reflectance spectrum.
+/// Evaluate the regolith albedo model: a reflectance spectrum from eleven
+/// normalized parameters. RMSE ~1e-3 against the full-resolution fit. Valid
+/// from 400nm to 2500nm; wavelengths outside clamp to the nearest end.
 ///
-/// The 12 component curves in `REGOLITH_TABLE_CURVES` are interpolated onto
-/// `$state.wavelengthBase` and combined with weights derived from the
-/// parameters: iron and aridity are polar coordinates onto the two pigment
-/// curves, and moisture sensitivity acts only through its product with
-/// moisture. The logistic link keeps every output strictly in (0, 1),
-/// including at the extrapolated corners of the parameter box. RMSE ~1e-3
-/// against the full-resolution fit.
-///
-/// Valid from 400nm to 2500nm; wavelengths outside clamp to the nearest end.
-///
-/// The parameters may also be kept in an 11-component vector in the order
-/// below and expanded into the call with the call-site `inline` keyword,
-/// which is the idiom for barycentric preset mixing.
-///
+/// The parameters may be kept in an 11-component vector in the order below
+/// and expanded with call-site `inline`, the idiom for barycentric preset
+/// mixing.
 @(noinline)
 export color regolith_albedo(
-  const float base = 0.5,                 ///< The overall reflectance level of the parent material. 0 = darkest, 1 = brightest.
-  const float fineness = 0.5,             ///< The particle-size axis. Finer material brightens the VIS/NIR and lowers the SWIR, pivoting near 1.2um.
-  const float organic = 0.5,              ///< The organic-matter load. Darkens at every wavelength, strongest in the visible.
-  const float iron = 0.5,                 ///< The iron-oxide pigment load. 0 = neutral gray, 1 = maximally pigmented.
-  const float aridity = 0.5,              ///< The hematite:goethite balance of the pigment. 0 = cool/moist goethite-yellow, 1 = hot/dry hematite-red.
-  const float phyllo = 0.5,               ///< The phyllosilicate (clay mineral) content, carving the 2.2um Al-OH absorption.
-  const float hydrous = 0.5,              ///< The bound-water (hydration) band depth, most visible at 1.4um and 1.9um.
-  const float ferrous = 0.5,              ///< The ferrous-iron (Fe2+) absorption near 1um, typical of unoxidized mafic minerals.
-  const float unstained = 0.5,            ///< The stain-free vs. stained/coated surface axis: lifts the blue end and lowers the red edge, inert past ~700nm.
-  const float moisture = 0.0,             ///< The moisture darkening. 0 = bone dry, 1 = the darkest saturated state in the corpus.
-  const float moisture_sensitivity = 0.5, ///< How strongly moisture darkens this material; acts only through the product with `moisture`.
+  const float base = 0.5,                 ///< The overall reflectance level: 0 = darkest, 1 = brightest.
+  const float fineness = 0.5,             ///< Particle size: finer brightens the VIS/NIR and lowers the SWIR, pivoting near 1.2um.
+  const float organic = 0.5,              ///< Organic matter: darkens everywhere, most in the visible.
+  const float iron = 0.5,                 ///< Iron-oxide pigment load: 0 = neutral gray, 1 = maximally pigmented.
+  const float aridity = 0.5,              ///< Pigment hue: 0 = goethite-yellow (cool/moist), 1 = hematite-red (hot/dry).
+  const float phyllo = 0.5,               ///< Clay mineral content: the 2.2um Al-OH absorption.
+  const float hydrous = 0.5,              ///< Bound-water band depth, at 1.4um and 1.9um.
+  const float ferrous = 0.5,              ///< Fe2+ absorption near 1um, typical of unoxidized mafic minerals.
+  const float unstained = 0.5,            ///< Stain-free surface: lifts the blue end and lowers the red edge; inert past ~700nm.
+  const float moisture = 0.0,             ///< Moisture darkening: 0 = bone dry, 1 = the darkest saturated state in the corpus.
+  const float moisture_sensitivity = 0.5, ///< How strongly `moisture` darkens this material.
 ) {
-  // Parameter to logit-space weights, each affine on its clamped [0, 1] axis
-  // except the pigment pair: iron is the radius and aridity the angle of a
-  // polar parameterization, so the pigment load and its hematite:goethite hue
-  // vary independently. Assembly is linear, so combining the component curves
-  // at the entries and interpolating equals interpolating then combining.
+  // Parameters to logit-space weights, each affine on its clamped axis except
+  // the pigment pair: iron is the radius and aridity the angle, so pigment
+  // load and hue vary independently. Assembly is linear, so combining the
+  // curves at the entries commutes with interpolating.
   const float wBase = -1.9334647 + saturate(base) * 3.82128093;
   const float wFineness = -0.771195433 + saturate(fineness) * 1.47958768;
   const float wOrganic = -1.52287876 + saturate(organic) * 2.45108859;

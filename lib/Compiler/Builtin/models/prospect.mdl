@@ -1,31 +1,24 @@
-/// PROSPECT: a physically based way to turn a leaf's biochemistry into its
-/// optics. Given the pigment, water, and dry-matter contents per unit leaf
-/// area, it predicts the hemispherical reflectance and transmittance of a
-/// single leaf over 400..2500 nm. Built like the water-film model in
-/// `marmit.mdl`: interpolate tabulated optical constants per wavelength, then
-/// evaluate a closed-form radiative-transfer expression using analytic fits in
-/// place of the special functions the reference model calls. Inputs are clamped
-/// at entry, so out-of-range values cannot corrupt the fits.
+/// PROSPECT: the hemispherical reflectance and transmittance of a single leaf
+/// over 400..2500 nm, from its pigment, water, and dry-matter contents per
+/// unit leaf area. Like the water-film model in `marmit.mdl`, it interpolates
+/// tabulated optical constants per wavelength and evaluates a closed-form
+/// radiative-transfer expression, with analytic fits in place of the
+/// reference model's special functions. Inputs are clamped at entry.
 ///
-/// The leaf is idealized as a stack of `num_layers` identical absorbing plates.
-/// Every constituent enters through a single absorption coefficient
-/// k = sum_j K_j(lambda) C_j, which fixes the layer transmittance tau; the
-/// tabulated refractive index fixes the interface reflectances; and the stack
-/// is summed in closed form rather than iterated. `num_layers` need not be an
-/// integer: it is the model's structure parameter, standing in for internal
-/// air-cell scattering, and the closed form interpolates smoothly through
-/// fractional values. Light arrives within a cone of half-angle
-/// `incident_cone_angle`; every interior surface instead sees diffuse light and
-/// uses the hemispherical average.
+/// The leaf is a stack of `num_layers` identical absorbing plates. The
+/// absorption coefficient k = sum_j K_j(lambda) C_j fixes the layer
+/// transmittance, the tabulated refractive index fixes the interface
+/// reflectances, and the stack is summed in closed form. `num_layers` is the
+/// structure parameter, standing in for internal air-cell scattering, and
+/// need not be an integer. Light arrives within a cone of half-angle
+/// `incident_cone_angle`; interior surfaces see diffuse light.
 ///
-/// The constituent set spans the PROSPECT lineage: chlorophylls, water, and dry
-/// matter from the classic model, carotenoids and brown pigment from
-/// PROSPECT-5, anthocyanins from PROSPECT-D, and the split of dry matter into
-/// proteins and carbon-based constituents from PROSPECT-PRO. That last split is
-/// an alternative to the lumped `dry_matter`, not an addition to it: pass one or
-/// the other, or the dry matter is counted twice. The `xanthophyll_cycle`
-/// parameter is the Fluspect-CX extension, which reshapes but does not resize
-/// the carotenoid pool.
+/// The constituents span the PROSPECT lineage: chlorophylls, water, and dry
+/// matter (classic), carotenoids and brown pigment (PROSPECT-5), anthocyanins
+/// (PROSPECT-D), and proteins and carbon-based constituents (PROSPECT-PRO).
+/// The last two split the lumped `dry_matter`: pass one or the other, or the
+/// dry matter is counted twice. `xanthophyll_cycle` is the Fluspect-CX
+/// extension, which reshapes but does not resize the carotenoid pool.
 ///
 /// References:
 ///   Allen et al. (1969, 1970): compact and generalized plate models
@@ -39,8 +32,7 @@
 
 using ::math import *;
 
-/// The result of the PROSPECT model, being the hemispherical reflectance
-/// and transmittance of a single leaf.
+/// The result of `prospect()`.
 export struct prospect_result {
   color reflectance = color(0); ///< The hemispherical reflectance.
 
@@ -53,10 +45,8 @@ export const float PROSPECT_MIN_WAVELENGTH = 400.0;
 /// The maximum wavelength of the PROSPECT tables in nanometers.
 export const float PROSPECT_MAX_WAVELENGTH = 2500.0;
 
-// The tables span 400..2500 nm on a 4 nm grid, decimated 2x from the 2 nm
-// PROSPECT reference parameter files (every other sample kept verbatim,
-// endpoints included). The curves are smooth at this scale, costing at most
-// 4.1e-3 absolute reflectance in the assembled model.
+// The tables span 400..2500 nm on a 4 nm grid, every other sample of the 2 nm
+// PROSPECT reference, costing at most 4.1e-3 absolute reflectance.
 /// The number of entries in the PROSPECT tables.
 export const int PROSPECT_TABLE_SIZE = 526;
 
@@ -131,9 +121,9 @@ export static const auto PROSPECT_TABLE_IOR = float[526](
   1.2710000e+00, 1.2713000e+00, 1.2717000e+00, 1.2722000e+00, 1.2728000e+00, 1.2736000e+00);
 // smdl format on
 
-/// The tabulated specific absorption coefficients, one column per
-/// constituent in the order chlorophylls, carotenoids, anthocyanins, brown
-/// pigment, water, dry matter, proteins, and carbon constituents.
+/// The tabulated specific absorption coefficients, by column: chlorophylls,
+/// carotenoids, anthocyanins, brown pigment, water, dry matter, proteins, and
+/// carbon constituents.
 export static const auto PROSPECT_TABLE_K = auto[526](
   auto(6.4881500e-02, 1.6734000e-01, 6.6674700e-02, 5.2720000e-01, 5.8000000e-05, 1.0970000e+02, 0.0000000e+00, 1.2793000e+02),
   auto(7.0900000e-02, 1.6761300e-01, 5.8277000e-02, 5.2320000e-01, 6.1000000e-05, 8.7130000e+01, 0.0000000e+00, 1.0160900e+02),
@@ -663,16 +653,12 @@ export static const auto PROSPECT_TABLE_K = auto[526](
   auto(0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 9.5300000e+01, 3.8710000e+01, 9.4077800e+00, 4.2636600e+01),
 );
 
-// The xanthophyll cycle (Fluspect-CX, Vilfan et al. 2018) swaps the carotenoid
-// specific absorption between a violaxanthin and a zeaxanthin end member. The
-// two are identical outside 504..560 nm, so this table stores only their
-// difference over a 500..564 nm window, on a 1 nm grid that keeps the narrow
-// band exact.
-//
-// The carotenoid column of PROSPECT_TABLE_K is bit-for-bit the zeaxanthin end
-// member, so this difference is SUBTRACTED to relax toward violaxanthin. The
-// window is padded with zeros at both ends, which lets the clamp in the lookup
-// extend the table with zeros for free.
+// The xanthophyll cycle (Fluspect-CX) swaps the carotenoid specific absorption
+// between a violaxanthin and a zeaxanthin end member, which differ only within
+// 504..560 nm. This table stores their difference over 500..564 nm on a 1 nm
+// grid, zero-padded so that the lookup's clamp extends it with zeros. The
+// carotenoid column of PROSPECT_TABLE_K is the zeaxanthin end member, so the
+// difference is subtracted to relax toward violaxanthin.
 /// The minimum wavelength of the xanthophyll cycle table in nanometers.
 export const float PROSPECT_CX_MIN_WAVELENGTH = 500.0;
 
@@ -683,8 +669,7 @@ export const float PROSPECT_CX_MAX_WAVELENGTH = 564.0;
 export const int PROSPECT_CX_TABLE_SIZE = 65;
 
 // smdl format off
-/// The tabulated xanthophyll cycle difference, being the zeaxanthin minus
-/// violaxanthin specific absorption.
+/// The tabulated zeaxanthin minus violaxanthin specific absorption.
 export static const auto PROSPECT_CX_TABLE = float[65](
   0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 2.3666667e-06, 1.4111905e-05, 1.5753175e-05, 1.6109579e-04,
   4.3772785e-04, 5.7373789e-04, 7.1124793e-04, 7.5958535e-04, 8.1272277e-04, 1.0946743e-03, 1.3850259e-03, 1.5193361e-03,
@@ -697,29 +682,26 @@ export static const auto PROSPECT_CX_TABLE = float[65](
   0.0000000e+00);
 // smdl format on
 
-/// Evaluate the PROSPECT model for the given leaf biochemistry, returning
-/// the hemispherical reflectance and transmittance of a single leaf.
+/// Evaluate the PROSPECT model: the hemispherical reflectance and
+/// transmittance of a single leaf of the given biochemistry.
 @(noinline)
 export prospect_result prospect(
   float num_layers = 1.5,          ///< The number of layers.
-  float incident_cone_angle = 0.7, ///< The incident cone angle in radians; the classic PROSPECT value is 40 degrees.
-  float dry_matter = 5.0,          ///< The dry matter content in milligrams per square centimeter.
-  float water_thickness = 0.01,    ///< The water content in centimeters equivalent thickness.
-  float chlorophylls = 30.0,       ///< The chlorophyll content in micrograms per square centimeter.
-  float anthocyanins = 1.0,        ///< The anthocyanin content in micrograms per square centimeter.
-  float carotenoids = 1.5,         ///< The carotenoid content in micrograms per square centimeter.
-  float xanthophyll_cycle = 0.0,   ///< The xanthophyll de-epoxidation state, 0 for violaxanthin and 1 for zeaxanthin.
-  float proteins = 0.0,            ///< The protein content in milligrams per square centimeter.
-  float carbons = 0.0,             ///< The carbon constituent content in milligrams per square centimeter.
-  float browns = 0.0,              ///< The brown pigment content in arbitrary units.
+  float incident_cone_angle = 0.7, ///< In radians; the classic PROSPECT value is 40 degrees.
+  float dry_matter = 5.0,          ///< In mg/cm^2.
+  float water_thickness = 0.01,    ///< The equivalent water thickness in cm.
+  float chlorophylls = 30.0,       ///< In ug/cm^2.
+  float anthocyanins = 1.0,        ///< In ug/cm^2.
+  float carotenoids = 1.5,         ///< In ug/cm^2.
+  float xanthophyll_cycle = 0.0,   ///< The de-epoxidation state: 0 = violaxanthin, 1 = zeaxanthin.
+  float proteins = 0.0,            ///< In mg/cm^2.
+  float carbons = 0.0,             ///< The carbon constituents in mg/cm^2.
+  float browns = 0.0,              ///< In arbitrary units.
 ) {
-  // The plate model stacks `num_layers` copies of one absorbing layer, so the
-  // whole-leaf contents are spread over the layers for the stack to absorb what
-  // the caller asked for. Fewer than one layer is meaningless, and zero would
-  // divide by zero.
+  // The whole-leaf contents are spread over the layers. Fewer than one layer
+  // is meaningless, and zero would divide by zero.
   num_layers = #max(num_layers, 1.0);
-  // Contents are areal densities, physically nonnegative with no upper bound; a
-  // negative content would flip the absorption exponentials into unbounded gain.
+  // A negative content would turn absorption into unbounded gain.
   dry_matter = #max(dry_matter, 0.0);
   water_thickness = #max(water_thickness, 0.0);
   chlorophylls = #max(chlorophylls, 0.0);
@@ -729,9 +711,9 @@ export prospect_result prospect(
   carbons = #max(carbons, 0.0);
   browns = #max(browns, 0.0);
   const auto contents = auto(chlorophylls, carotenoids, anthocyanins, browns, water_thickness, 1e-3 * dry_matter, 1e-3 * proteins, 1e-3 * carbons) / num_layers;
-  // How much violaxanthin to relax back out of the tabulated zeaxanthin. The
-  // upper bound of 1.5 is the extrapolation range Vilfan et al. calibrate over;
-  // the lower bound of 0 keeps the carotenoid absorption non-negative.
+  // The violaxanthin to relax back out of the tabulated zeaxanthin. 1.5 is the
+  // extrapolation range Vilfan et al. calibrate over; 0 keeps the carotenoid
+  // absorption non-negative.
   const auto xanthophylls =
     carotenoids * (1.0 - clamp(xanthophyll_cycle, 0.0, 1.5)) / num_layers;
   const color ior = _spectralLerpInit(
@@ -742,9 +724,7 @@ export prospect_result prospect(
       wavelength),
     \(const int w0, const float w) =
       lerp(PROSPECT_TABLE_IOR[w0], PROSPECT_TABLE_IOR[w0 + 1], w));
-  // The two tables are on different grids, so each is its own lookup; `color`
-  // arithmetic combines them wavelength by wavelength exactly as one fused
-  // lambda did.
+  // The two tables are on different grids, so each is its own lookup.
   const color k = _spectralLerpInit(\(const float wavelength) = _uniformLerpIndexAndFraction(PROSPECT_TABLE_SIZE, PROSPECT_MIN_WAVELENGTH, PROSPECT_MAX_WAVELENGTH, wavelength), \(const int w0, const float w) = dot(lerp(PROSPECT_TABLE_K[w0], PROSPECT_TABLE_K[w0 + 1], w), contents)) - xanthophylls * _spectralLerpInit(
     \(const float wavelength) = _uniformLerpIndexAndFraction(
       PROSPECT_CX_TABLE_SIZE,
@@ -753,10 +733,9 @@ export prospect_result prospect(
       wavelength),
     \(const int x0, const float x) =
       lerp(PROSPECT_CX_TABLE[x0], PROSPECT_CX_TABLE[x0 + 1], x));
-  // tau = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
-  // absorbing water/dry-matter layer, fit as tau = exp(-k) P/Q to avoid the
-  // exponential integral. Reproduces tau(0) = 1 and the exact 2 exp(-k)/k tail.
-  // Max abs error 3.89e-04 at k = 0.0255.
+  // The layer transmittance tau = (1 - k) exp(-k) + k^2 E1(k), fit as
+  // exp(-k) P/Q. Reproduces tau(0) = 1 and the 2 exp(-k) / k tail. Max abs
+  // error 3.89e-4 at k = 0.0255.
   const auto tau = return_from {
     const auto num = (1.236150246012 * k + 3.672877420834) * k + 1.0;
     const auto den =
@@ -764,7 +743,7 @@ export prospect_result prospect(
     return clamp(#exp(-k) * num / den, 0.0, 0.999);
   };
   const auto t12 = return_from {
-    // Average transmittance at a cone angle of 90 degrees, as a fifth-order
+    // The average transmittance at a cone angle of 90 degrees: a fifth-order
     // polynomial in the refractive index over 1.2 to 1.6. RMSE ~1e-7.
     auto tmp(-0.17369388 * ior + 1.31899730);
     tmp = tmp * ior - 4.02936997;
@@ -777,8 +756,8 @@ export prospect_result prospect(
   const auto t21 = t12 / (ior * ior);
   const auto r21 = 1 - t21;
   const auto tAlpha = return_from {
-    // Average transmittance over the incident cone, valid for a refractive
-    // index of 1.2 to 1.6 and a cone angle of 10 to 90 degrees. RMSE 8.8e-05.
+    // The average transmittance over the incident cone, for a refractive index
+    // of 1.2 to 1.6 and a cone angle of 10 to 90 degrees. RMSE 8.8e-5.
     auto tmp(+5.9796905e-01, -1.9041080e+00, +1.6576156e+00);
     tmp = tmp * incident_cone_angle + auto(-4.1001221e+00, +1.2956352e+01, -1.1049849e+01);
     tmp = tmp * incident_cone_angle + auto(+1.1477769e+01, -3.6044872e+01, +3.0242981e+01);

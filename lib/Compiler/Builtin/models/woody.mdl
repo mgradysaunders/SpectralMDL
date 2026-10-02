@@ -1,42 +1,33 @@
-/// The woody albedo model: a single parametric reflectance spectrum fitted to
-/// bark, branches, stems, and sawn timber. The corpus is small (34 spectra
-/// over 18 taxa) and the five parameters below are what that much data
-/// honestly supports. Tabulated logit-space component curves are combined
-/// linearly per wavelength with weights derived from five normalized [0, 1]
-/// parameters, and the logistic link maps the result back to a reflectance, so
-/// every output is strictly inside (0, 1) by construction. Every parameter is
-/// saturated to [0, 1] at entry, by the fit warp.
+/// The woody albedo model: a parametric reflectance spectrum fitted to bark,
+/// branches, stems, and sawn timber. The corpus is small (34 spectra over 18
+/// taxa), and five parameters are what it supports. Tabulated logit-space
+/// component curves are combined linearly per wavelength, with weights from
+/// five parameters saturated to [0, 1], and the logistic link maps the result
+/// to a reflectance strictly inside (0, 1).
 ///
-/// Starting points for 13 familiar surfaces ship as the `WOODY_PRESET_*`
-/// constants at the end of this module: barks named by their tree, the
-/// chaparral by its community, the timber by its product. Each is a
-/// 5-component vector in the parameter order below, to be expanded with
-/// call-site `inline`.
+/// The `WOODY_PRESET_*` constants at the end of this module are starting
+/// points for 13 surfaces, each a 5-component vector in parameter order, to
+/// be expanded with call-site `inline`.
 ///
-/// Eleven of the thirteen are one real measured spectrum at its own fitted
-/// coordinates, reconstructing that measurement within 4.90 dE. That bound is
-/// not this model's accuracy but the material's own: two pieces of bark off
-/// the same trunk disagree by 4.90 dE. Where taxa sit closer together than
-/// that floor, as the dark conifer barks do, one preset stands for the group
-/// at its medoid and says so.
+/// Eleven reconstruct one measured spectrum within 4.90 dE, which is the
+/// material's own replicate floor: two pieces of bark off the same trunk
+/// disagree by as much. Where taxa sit closer than that, as the dark conifer
+/// barks do, one preset stands for the group at its medoid.
 ///
-/// The last two are marked `DERIVED`: a named preset with a single axis moved,
-/// reaching where an air-dry, uniformly tinted corpus cannot.
-/// `WEATHERED_GREY` is the sawn beam with `tannin` at 0, which is silvered
-/// barn board; since the pigment curve is confined to the visible, it is the
-/// measured timber unchanged across the whole SWIR. `RAIN_SOAKED` drives
-/// `water`, whose curve is borrowed from the regolith model's wetting series,
-/// past anything a bark corpus ever measured.
+/// Two are `DERIVED`: a named preset with one axis moved, reaching where an
+/// air-dry, uniformly tinted corpus cannot. `WEATHERED_GREY` is the sawn beam
+/// with `tannin` at 0, silvered barn board, unchanged across the SWIR since
+/// the pigment curve is confined to the visible. `RAIN_SOAKED` drives `water`,
+/// whose curve is borrowed from the regolith model's wetting series, past
+/// anything the corpus measured.
 #smdl
 
 using ::math import *;
 
-// The logistic link, mapping a logit-space value back to (0, 1). The rails
-// are float32 housekeeping, not a modeling choice: past |z| ~ 17 the true
-// value would round to exactly 1.0, handing an infinity to any caller that
-// takes -log(1 - R). The wood parameter box only reaches |z| ~ 9, so the
-// rails are dormant here; they are kept so the strict (0, 1) guarantee is
-// structural rather than an accident of the current tables.
+// The logistic link from logit space to (0, 1). The rails keep float32 from
+// rounding to exactly 1.0 past |z| ~ 17, where -log(1 - R) would be infinite.
+// The parameter box only reaches |z| ~ 9, so they are dormant here, kept to
+// make the (0, 1) guarantee structural.
 @(pure macro)
 auto link(const auto z) = #min(#max(1.0 / (1.0 + #exp(-z)), 1.0e-7), 0.9999999);
 
@@ -48,8 +39,8 @@ export const float WOODY_MAX_WAVELENGTH = 2500.0;
 export const int WOODY_TABLE_SIZE = 124;
 
 // smdl format off
-/// The 6 spectral component curves in logit space at each of the 124 entries:
-/// constant, lightness, chroma, fibre, green, and water terms.
+/// The 6 logit-space component curves at each entry: constant, lightness,
+/// chroma, fibre, green, and water.
 export static const auto WOODY_TABLE_CURVES = auto[124](
   auto(-4.0439451, 0.0532888234, -0.0466647219, 0.524729874, 0.215547582, -0.847533591),
   auto(-4.12716775, 0.0548831251, -0.0366788264, 0.347177337, 0.095079385, -0.860042003),
@@ -178,53 +169,40 @@ export static const auto WOODY_TABLE_CURVES = auto[124](
 );
 // smdl format on
 
-// The five monotone parameter warps, endpoint-constrained cubic fits to the
-// 65-entry warp tables of the C++ reference: u(0) = 0 and u(1) = 1 exactly,
-// strictly increasing on [0, 1], within 9.4e-4 of the tables everywhere,
-// which is inside the fit's own downsampling noise.
+// The monotone parameter warps: endpoint-constrained cubic fits to the
+// 65-entry warp tables of the C++ reference, strictly increasing on [0, 1]
+// and within 9.4e-4 of the tables.
 static const auto WARP_BASE = float2(0.09271134, -0.4264215);
 static const auto WARP_TANNIN = float2(-0.10436588, -0.04969672);
 static const auto WARP_FIBRE = float2(0.063141525, -0.085354604);
 static const auto WARP_EPIPHYTE = float2(-0.008220836, -0.0137877185);
 static const auto WARP_WATER = float2(-0.09495192, -0.22414328);
 
-// Warp a parameter onto its fit coordinate. The saturate is what implements
-// the parameter box: the endpoint-constrained polynomial extrapolates
-// instead of clamping on its own.
+// Warp a parameter onto its fit coordinate. The saturate implements the
+// parameter box, since the polynomial would extrapolate on its own.
 @(pure macro)
 float warp(const float p, const float2 c) {
   const float x = saturate(p);
   return x + x * (1.0 - x) * (c[0] + c[1] * x);
 }
 
-/// Evaluate the woody albedo model, mapping five normalized parameters to a
-/// reflectance spectrum.
+/// Evaluate the woody albedo model: a reflectance spectrum from five
+/// normalized parameters. RMSE ~1e-3 against the full-resolution fit. Valid
+/// from 400nm to 2500nm; wavelengths outside clamp to the nearest end.
 ///
-/// The 6 component curves in `WOODY_TABLE_CURVES` are interpolated onto
-/// `$state.wavelengthBase` and combined with weights derived from the
-/// parameters, each passing through a monotone cubic warp and an affine map
-/// onto its fit coordinate. The logistic link keeps every output strictly in
-/// (0, 1) at every point of the parameter box. RMSE ~1e-3 against the
-/// full-resolution fit.
-///
-/// Valid from 400nm to 2500nm; wavelengths outside clamp to the nearest end.
-///
-/// The parameters may also be kept in a 5-component vector in the order below
-/// and expanded into the call with the call-site `inline` keyword, which is
-/// the idiom for barycentric preset mixing.
-///
+/// The parameters may be kept in a 5-component vector in the order below and
+/// expanded with call-site `inline`, the idiom for barycentric preset mixing.
 @(noinline)
 export color woody_albedo(
-  const float base = 0.5,     ///< The overall lightness of the wood. 0 = darkest, 1 = brightest.
-  const float tannin = 0.5,   ///< The tannin pigmentation. 0 = neutral gray, 1 = the most saturated warm brown. Inert past ~1.3um.
-  const float fibre = 0.5,    ///< The exposed-fibre axis. Brightens at every wavelength.
-  const float epiphyte = 0.5, ///< The green epiphytic cover (algae, moss, lichen).
-  const float water = 0.0,    ///< The moisture darkening. 0 = bone dry, 1 = the darkest saturated state in the corpus.
+  const float base = 0.5,     ///< The overall lightness: 0 = darkest, 1 = brightest.
+  const float tannin = 0.5,   ///< Tannin pigmentation: 0 = neutral gray, 1 = the most saturated warm brown; inert past ~1.3um.
+  const float fibre = 0.5,    ///< Exposed fibre: brightens at every wavelength.
+  const float epiphyte = 0.5, ///< Green epiphytic cover (algae, moss, lichen).
+  const float water = 0.0,    ///< Moisture darkening: 0 = bone dry, 1 = the darkest saturated state in the corpus.
 ) {
-  // Parameter to logit-space weights: each parameter passes through its
-  // monotone warp (which saturates to the box) and an affine map. Assembly is
-  // linear, so combining the component curves at the entries and interpolating
-  // equals interpolating then combining.
+  // Parameters to logit-space weights, each through its warp (which saturates
+  // to the box) and an affine map. Assembly is linear, so combining the
+  // curves at the entries commutes with interpolating.
   const float wLightness = 31.3152562 + warp(base, WARP_BASE) * 44.9022237;
   const float wChroma = warp(tannin, WARP_TANNIN) * 24.5823726;
   const float wFibre = -0.307246553 + warp(fibre, WARP_FIBRE) * 0.540344935;
