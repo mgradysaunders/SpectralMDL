@@ -428,6 +428,112 @@ unit_test "The curved layer march follows the parabola over constant heights" {
   #assert(!across.is_miss);
 }
 
+// The chord. Where the renderer says how far on the ray leaves the
+// object, that is t = chord v.z / scale in relief depths under the
+// entry's tangent plane. The curvature still bends the ray. A chord that
+// ends before the parabola is back at the surface, or before the floor,
+// ends the ray there. One that ends more than PARALLAX_CHORD_SLACK past
+// where the parabola is back holds the ray in: it lands where the
+// parabola ends if it met nothing.
+
+unit_test "The layer march ends the ray at the chord" {
+  const float2 uv = float2(0.6, 0.4);
+  const float3 v = math::normalize(float3(1.0, 0.0, 1.0));
+  const float scale = 0.1;
+  const auto low = \(const float2 c [[anno::unused()]]) = 0.25;
+  const auto high = \(const float2 c [[anno::unused()]]) = 0.75;
+  const auto flat = parallax::parallax_trace_with(low, uv, v, scale);
+  // On a flat surface a ray out after half a depth is at height 0.5:
+  // over the low field it leaves there, and it meets the high one first.
+  const float half = 0.5 * scale / v.z;
+  const auto left = parallax::parallax_trace_with(low, uv, v, scale, chord: half);
+  #assert(left.is_miss);
+  #assert(math::abs((uv.x - left.coord.x) - scale * 0.5) < 1e-6);
+  const auto met = parallax::parallax_trace_with(high, uv, v, scale, float3(0.0), 64, 64, 0.0, 6, half);
+  #assert(!met.is_miss);
+  #assert(math::abs((uv.x - met.coord.x) - scale * 0.25) < 1e-5);
+  // A chord that ends under the floor changes nothing.
+  const auto deep = parallax::parallax_trace_with(low, uv, v, scale, chord: 2.0 * scale / v.z);
+  #assert(!deep.is_miss);
+  #assert(#all(deep.coord == flat.coord));
+  // c = 0.5 alone leaves at t = 2. Out at t = 1 it leaves there, at the
+  // turn, still over the low field.
+  const auto early = parallax::parallax_trace_with(low, uv, v, scale, float3(10.0, 0.0, 0.0), chord: 1.0 * scale / v.z);
+  #assert(early.is_miss);
+  #assert(math::abs((uv.x - early.coord.x) - scale * 1.0) < 1e-6);
+  // Out at t = 2.5, within the slack of the parabola's t = 2, it leaves
+  // as the parabola does.
+  const auto slack = parallax::parallax_trace_with(low, uv, v, scale, float3(10.0, 0.0, 0.0), chord: 2.5 * scale / v.z);
+  #assert(slack.is_miss);
+  #assert(math::abs((uv.x - slack.coord.x) - scale * 2.0) < 1e-6);
+  // Out at t = 4, or never, the ray is held in: it lands where the
+  // parabola is back at the surface, having met nothing over the low
+  // field, and it still meets the high one where it did.
+  const auto late = parallax::parallax_trace_with(low, uv, v, scale, float3(10.0, 0.0, 0.0), 64, 64, 0.0, 6, 4.0 * scale / v.z);
+  #assert(!late.is_miss);
+  #assert(math::abs((uv.x - late.coord.x) - scale * 2.0) < 1e-4);
+  const auto never = parallax::parallax_trace_with(low, uv, v, scale, float3(10.0, 0.0, 0.0), 64, 64, 0.0, 6, $FLOAT_MAX);
+  #assert(!never.is_miss);
+  #assert(math::abs((uv.x - never.coord.x) - scale * 2.0) < 1e-4);
+  const auto held = parallax::parallax_trace_with(high, uv, v, scale, float3(10.0, 0.0, 0.0), 64, 64, 0.0, 6, $FLOAT_MAX);
+  #assert(!held.is_miss);
+  #assert(math::abs((uv.x - held.coord.x) - scale * 0.292893) < 1e-5);
+  // A concave surface keeps its curve under any chord that ends past
+  // where the floor comes up to the ray.
+  const auto cupped = parallax::parallax_trace_with(low, uv, v, scale, float3(-10.0, 0.0, 0.0), 64, 64, 0.0, 6);
+  const auto cuppedLong = parallax::parallax_trace_with(low, uv, v, scale, float3(-10.0, 0.0, 0.0), 64, 64, 0.0, 6, 4.0 * scale / v.z);
+  #assert(#all(cuppedLong.coord == cupped.coord));
+}
+
+unit_test "The hierarchical march ends the ray at the chord" {
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // Along V over the flat of the ridge, where the field is 0.2.
+  const float2 uv = float2(0.25, 0.5);
+  const float3 along = math::normalize(float3(0.0, 1.0, 1.0));
+  const float scale = 0.1;
+  const auto flat = parallax::parallax_trace_max(ridge, uv, along, scale);
+  // Out at height 0.5 it leaves, and out at height 0.1 it has landed.
+  const auto left = parallax::parallax_trace_max(ridge, uv, along, scale, chord: 0.5 * scale / along.z);
+  #assert(left.is_miss);
+  #assert(math::abs((uv.y - left.coord.y) - scale * 0.5) < 1e-5);
+  const auto landed = parallax::parallax_trace_max(ridge, uv, along, scale, chord: 0.9 * scale / along.z);
+  #assert(!landed.is_miss);
+  #assert(#all(landed.coord ~== |1e-6| flat.coord));
+  // c = 0.5 leaves over the flat at t = 2, and never out it lands there.
+  const auto never = parallax::parallax_trace_max(ridge, uv, along, scale, float3(0.0, 0.0, 10.0), chord: $FLOAT_MAX);
+  #assert(!never.is_miss);
+  #assert(math::abs((uv.y - never.coord.y) - scale * 2.0) < 1e-5);
+  // c = 0.3 alone turns back and meets the flat at t = 4/3. Out at t = 1
+  // it has only come down to height 0.3.
+  const auto early = parallax::parallax_trace_max(ridge, uv, along, scale, float3(0.0, 0.0, 6.0), chord: 1.0 * scale / along.z);
+  #assert(early.is_miss);
+  #assert(math::abs((uv.y - early.coord.y) - scale * 1.0) < 1e-5);
+}
+
+unit_test "parallax_trace reads the chord as the state gives it" {
+  const float3 v = math::normalize(float3(0.0, 1.0, 1.0));
+  preserve $state.direction, $state.chordLength, $state.textureDensity;
+  $state.direction = -v;
+  const float2 uv = float2(0.25, 0.5);
+  const float scale = 0.1;
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // A chord with no density to convert it by is no chord.
+  $state.chordLength = 3.0;
+  #assert(parallax::texture_chord() == 0.0);
+  // A density of 4 is 2 lookup units per scene unit, and the lookup
+  // scale multiplies it again.
+  $state.textureDensity[0] = 4.0;
+  #assert(parallax::texture_chord() ~== |1e-6| 6.0);
+  #assert(parallax::texture_chord(uv_scale: 2.0) ~== |1e-6| 12.0);
+  // Out after half a depth, over the flat of the ridge: a miss, and the
+  // march the chord was handed to by hand.
+  $state.chordLength = 0.25 * scale / v.z;
+  const auto left = parallax::parallax_trace(ridge, scale, uv);
+  #assert(left.is_miss);
+  #assert(#all(left.coord == parallax::parallax_trace_max(ridge, uv, v, scale, chord: 0.5 * scale / v.z).coord));
+  #assert(parallax::silhouette_opacity(left) == 0.0);
+}
+
 unit_test "The slope cap rises with the curve" {
   // Past a curve of 1 the cap is that multiple of PARALLAX_MAX_SLOPE, so
   // a grazing ray on a curved surface is traced along the chord it has,

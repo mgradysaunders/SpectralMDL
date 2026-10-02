@@ -642,6 +642,15 @@ public:
   /// \note This is non-standard!
   float3 curvature{};
 
+  /// How far along `direction` from the shading point the ray next leaves
+  /// the closed surface it has just entered, in scene units, and infinity
+  /// where it never does. Zero means "not provided". It is the length of
+  /// the ray's chord through the object as the object really is, which the
+  /// curvature at the one point can only estimate.
+  ///
+  /// \note This is non-standard!
+  float chordLength{};
+
   /// The max supported number of vertex color sets.
   ///
   /// \note

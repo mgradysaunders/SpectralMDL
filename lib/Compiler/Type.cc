@@ -2306,6 +2306,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(coneWidth);
   ADD_FIELD(textureDensity);
   ADD_FIELD(curvature);
+  ADD_FIELD(chordLength);
   ADD_FIELD(vertexColorCount);
   ADD_FIELD(vertexColor);
 #undef ADD_FIELD

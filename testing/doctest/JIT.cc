@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -73,8 +74,8 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
   // the '.displacementProbe' body folds to the zero vector), the
   // normal-remap bit (every material here keeps the state normal, so
   // the '.normalProbe' body folds to the zero vector too), and the
-  // curvature bit (no entry point of a material here reads the state's
-  // curvature).
+  // curvature and chord length bits (no entry point of a material here
+  // reads either of the state).
   constexpr int structuralBits{
       smdl::MATERIAL_HAS_SURFACE | smdl::MATERIAL_HAS_BACKFACE |
       smdl::MATERIAL_HAS_SURFACE_EMISSION |
@@ -84,7 +85,8 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
       structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
       smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS |
       smdl::MATERIAL_HAS_HETEROGENEOUS_VDF | smdl::MATERIAL_HAS_DISPLACEMENT |
-      smdl::MATERIAL_REMAPS_NORMAL | smdl::MATERIAL_READS_CURVATURE};
+      smdl::MATERIAL_REMAPS_NORMAL | smdl::MATERIAL_READS_CURVATURE |
+      smdl::MATERIAL_READS_CHORD_LENGTH};
   SUBCASE("Structural and constant-foldable bits are known") {
     const smdl::jit::MaterialDef *matDefault{
         requireMaterial(compiler, "mat_default")};
@@ -97,6 +99,7 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     CHECK(matPlastic->staticFlags == smdl::MATERIAL_HAS_SURFACE);
     CHECK(matPlastic->isAlwaysOpaque());
     CHECK(!matPlastic->canReadCurvature());
+    CHECK(!matPlastic->canReadChordLength());
     const smdl::jit::MaterialDef *matCutoutConst{
         requireMaterial(compiler, "mat_cutout_const")};
     CHECK((matCutoutConst->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) != 0);
@@ -135,12 +138,14 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     const smdl::jit::MaterialDef *matCutoutRuntime{
         requireMaterial(compiler, "mat_cutout_runtime")};
     // A scene-data lookup is handed the whole state, so what it reads of
-    // it is unproven, the curvature with the rest.
+    // it is unproven, the curvature and the chord length with the rest.
     CHECK(matCutoutRuntime->staticFlagsKnown ==
           (allBits & ~smdl::MATERIAL_HAS_CUTOUT &
-           ~smdl::MATERIAL_READS_CURVATURE));
+           ~smdl::MATERIAL_READS_CURVATURE &
+           ~smdl::MATERIAL_READS_CHORD_LENGTH));
     CHECK(!matCutoutRuntime->isAlwaysOpaque());
     CHECK(matCutoutRuntime->canReadCurvature());
+    CHECK(matCutoutRuntime->canReadChordLength());
     const smdl::jit::MaterialDef *matThinRuntime{
         requireMaterial(compiler, "mat_thin_runtime")};
     CHECK(matThinRuntime->staticFlagsKnown ==
@@ -210,8 +215,9 @@ TEST_CASE("MaterialDef: a cutout that follows the ray and the curvature") {
   CHECK((materialDef->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) == 0);
   CHECK(!materialDef->isAlwaysOpaque());
   // And it reads the curvature, which a host that derives the curvature
-  // only where it is read has to be told.
+  // only where it is read has to be told. It does not read the chord.
   CHECK(materialDef->canReadCurvature());
+  CHECK(!materialDef->canReadChordLength());
   StateStorage storage{compiler};
   // The opacity of the full evaluation, which the entry point that
   // evaluates the opacity alone, with no allocator, must agree with.
@@ -252,6 +258,96 @@ TEST_CASE("MaterialDef: a cutout that follows the ray and the curvature") {
   SUBCASE("No direction rejects nothing") {
     state.direction = {};
     state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    CHECK(opacityOf(state) == 1.0f);
+  }
+}
+
+TEST_CASE("MaterialDef: a cutout that follows the chord") {
+  TempDir tmpDir{"chord-cutout"};
+  // The relief of the case above, over a constant height of 0.25, with
+  // the march told how far on the ray leaves the object.
+  tmpDir.write("root/mats.mdl",
+               "#smdl\n"
+               "import ::df::*;\n"
+               "import ::state::*;\n"
+               "using parallax = ::extras::parallax;\n"
+               "import parallax::*;\n"
+               "export material mat_chord() = let {\n"
+               "  const auto hit = parallax::parallax_trace_with(\n"
+               "    \\(const float2 c [[anno::unused()]]) = 0.25,\n"
+               "    state::texture_coordinate(0).xy,\n"
+               "    parallax::view_vector(),\n"
+               "    0.1,\n"
+               "    parallax::texture_curvature(),\n"
+               "    chord: parallax::texture_chord());\n"
+               "} in material(\n"
+               "  surface: material_surface(\n"
+               "    scattering: df::diffuse_reflection_bsdf(tint: 0.8)),\n"
+               "  geometry: material_geometry(\n"
+               "    cutout_opacity: parallax::silhouette_opacity(hit)));\n");
+  smdl::Compiler compiler{};
+  REQUIRE_OK(compiler.add((tmpDir / "root").string()));
+  REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE_OK(compiler.jitCompile());
+  const smdl::jit::MaterialDef *materialDef{
+      requireMaterial(compiler, "mat_chord")};
+  CHECK(materialDef->canReadCurvature());
+  CHECK(materialDef->canReadChordLength());
+  StateStorage storage{compiler};
+  auto opacityOf{[&](const smdl::State &state) {
+    smdl::State stateNoAlloc{state};
+    stateNoAlloc.allocator = nullptr;
+    return materialDef->opacityEvaluate(stateNoAlloc);
+  }};
+  // The view at 45 degrees along U, where a chord of `t` relief depths
+  // under the entry's tangent plane is `t * 0.1 * sqrt(2)` long.
+  smdl::State state{storage.makeState()};
+  state.direction = smdl::normalize(smdl::float3(-1.0f, 0.0f, -1.0f));
+  state.textureDensity[0] = 1.0f;
+  auto chordTo{[](float t) { return t * 0.1f * std::sqrt(2.0f); }};
+  SUBCASE("No chord is the march by the curvature alone") {
+    CHECK(opacityOf(state) == 1.0f);
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("A flat surface the ray is out of above the relief passes") {
+    // Out at height 0.5, over a field of 0.25.
+    state.chordLength = chordTo(0.5f);
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("A flat surface the ray is out of under the relief does not") {
+    // Out at height 0.1, having met the field at 0.25 on the way.
+    state.chordLength = chordTo(0.9f);
+    CHECK(opacityOf(state) == 1.0f);
+  }
+  SUBCASE("A convex surface the ray never leaves is opaque") {
+    // A curve of 5 alone would leave at height 0.95.
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    state.chordLength = std::numeric_limits<float>::infinity();
+    CHECK(opacityOf(state) == 1.0f);
+  }
+  SUBCASE("A convex surface the ray leaves much later than promised is "
+          "opaque") {
+    // A curve of 5 promises the ray out after a fifth of a depth.
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    state.chordLength = chordTo(5.0f);
+    CHECK(opacityOf(state) == 1.0f);
+  }
+  SUBCASE("A convex surface the ray leaves about when promised passes") {
+    state.curvature = smdl::float3(100.0f, 0.0f, 0.0f);
+    state.chordLength = chordTo(0.25f);
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("A convex surface the ray leaves early is left early") {
+    // A curve of 0.2 alone reaches the floor. Out after half a depth,
+    // the ray is at height 0.55.
+    state.curvature = smdl::float3(4.0f, 0.0f, 0.0f);
+    state.chordLength = chordTo(0.5f);
+    CHECK(opacityOf(state) == 0.0f);
+  }
+  SUBCASE("A chord with no texture density is no chord") {
+    state.chordLength = chordTo(0.5f);
+    state.textureDensity[0] = 0.0f;
     CHECK(opacityOf(state) == 1.0f);
   }
 }

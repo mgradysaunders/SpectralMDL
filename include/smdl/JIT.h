@@ -125,6 +125,16 @@ inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 ///
 inline constexpr int MATERIAL_READS_CURVATURE = (1 << 14);
 
+/// Indicates that the material reads `State::chordLength` at a surface
+/// point.
+///
+/// \note
+/// Derived as `MATERIAL_READS_CURVATURE` is, from the same entry points,
+/// and with the same limits. See `jit::MaterialDef::canReadChordLength()`
+/// for the conservative reading.
+///
+inline constexpr int MATERIAL_READS_CHORD_LENGTH = (1 << 15);
+
 /// \}
 
 /// \name Distribution Function (DF) Lobes
@@ -460,6 +470,15 @@ public:
   [[nodiscard]] bool canReadCurvature() const noexcept {
     return (staticFlagsKnown & MATERIAL_READS_CURVATURE) == 0 ||
            (staticFlags & MATERIAL_READS_CURVATURE) != 0;
+  }
+
+  /// Possibly reads `State::chordLength`, under the rule of
+  /// `canReadCurvature()`. The chord costs a host a cast through the
+  /// object, so it may leave the field at zero wherever this returns
+  /// false, and must fill it wherever this returns true.
+  [[nodiscard]] bool canReadChordLength() const noexcept {
+    return (staticFlagsKnown & MATERIAL_READS_CHORD_LENGTH) == 0 ||
+           (staticFlags & MATERIAL_READS_CHORD_LENGTH) != 0;
   }
 
   /// The definition evaluated at one shading point: the record the JIT

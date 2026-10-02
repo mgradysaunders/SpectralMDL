@@ -665,6 +665,18 @@ const std::bitset<sizeof(State)> &stateBytesExceptCurvature() {
   return bytes;
 }
 
+// The bytes of a 'State' that are not its chord length.
+const std::bitset<sizeof(State)> &stateBytesExceptChordLength() {
+  static const std::bitset<sizeof(State)> bytes{[] {
+    std::bitset<sizeof(State)> bits{};
+    bits.set();
+    for (size_t i = 0; i < sizeof(State::chordLength); i++)
+      bits.reset(offsetof(State, chordLength) + i);
+    return bits;
+  }()};
+  return bytes;
+}
+
 // Does every byte of the 'State' that a function reads through its pointer
 // argument 'arg' lie in the 'allowed' bytes? This walks the uses of
 // the argument after optimization: a constant GEP is followed at its
@@ -879,18 +891,26 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // stays unknown, for the reasons the heterogeneity bits do, and hosts
     // treat unknown as reading. See
     // 'jit::MaterialDef::canReadCurvature()'.
-    auto leavesCurvatureAlone{[&](const std::string &name) {
-      if (name.empty()) return true;
-      const llvm::Function *func{llvmModule.getFunction(name)};
-      return func && !func->isDeclaration() && func->arg_size() >= 1 &&
-             readsOnlyStateBytes(llvmModule.getDataLayout(), func->getArg(0),
-                                 stateBytesExceptCurvature());
-    }};
-    if (leavesCurvatureAlone(jitMaterial.evaluate.name) &&
-        leavesCurvatureAlone(jitMaterial.opacityEvaluate.name) &&
-        leavesCurvatureAlone(jitMaterial.geometryNormalEvaluate.name)) {
+    // The chord length is proven unread the same way; see
+    // 'jit::MaterialDef::canReadChordLength()'.
+    auto leavesAlone{
+        [&](const std::string &name, const std::bitset<sizeof(State)> &others) {
+          if (name.empty()) return true;
+          const llvm::Function *func{llvmModule.getFunction(name)};
+          return func && !func->isDeclaration() && func->arg_size() >= 1 &&
+                 readsOnlyStateBytes(llvmModule.getDataLayout(),
+                                     func->getArg(0), others);
+        }};
+    auto everySurfaceEntryLeavesAlone{
+        [&](const std::bitset<sizeof(State)> &others) {
+          return leavesAlone(jitMaterial.evaluate.name, others) &&
+                 leavesAlone(jitMaterial.opacityEvaluate.name, others) &&
+                 leavesAlone(jitMaterial.geometryNormalEvaluate.name, others);
+        }};
+    if (everySurfaceEntryLeavesAlone(stateBytesExceptCurvature()))
       jitMaterial.staticFlagsKnown |= MATERIAL_READS_CURVATURE;
-    }
+    if (everySurfaceEntryLeavesAlone(stateBytesExceptChordLength()))
+      jitMaterial.staticFlagsKnown |= MATERIAL_READS_CHORD_LENGTH;
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.
     if (llvm::Function * probeFunc{llvmModule.getFunction(thinWalledProbeName)})

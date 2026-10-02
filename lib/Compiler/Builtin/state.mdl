@@ -173,6 +173,14 @@ export float texture_density(const int i) = $state.textureDensity[i];
 @(macro)
 export float3 surface_curvature() = $state.curvature;
 
+/// How far along `direction()` from the shading point the ray next leaves
+/// the closed surface it has just entered, in scene units, and infinity
+/// where it never does. Zero means "not provided".
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float chord_length() = $state.chordLength;
+
 /// The number of vertex color sets the geometry carries, zero when it
 /// carries none.
 ///
