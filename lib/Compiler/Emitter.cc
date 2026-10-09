@@ -1,0 +1,4301 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+#include "Emitter.h"
+
+#include "BuiltinAccess.h"
+#include "smdl/Resource/BSDFMeasurement.h"
+#include "smdl/Support/Filesystem.h"
+#include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
+#include "smdl/Support/QualifiedName.h"
+#include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Support/Format.h"
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <mutex>
+
+#if defined(_WIN32)
+#include <malloc.h> // for '_aligned_malloc' and '_aligned_free'
+#endif              // #if defined(_WIN32)
+
+#if SMDL_HAS_PTEX
+#include "Ptexture.h"
+#endif // #if SMDL_HAS_PTEX
+
+namespace smdl {
+
+namespace {
+// Fold the result PHI of an inline expansion whose incoming values are all
+// the same constant.
+//
+// `createResult` always merges through a PHI, even for a lone `return`, and
+// leaves collapsing it to the optimizer. That is fine inside a function, but
+// an expansion at module scope has to come out as a constant here and now,
+// with no optimizer to run and no function to keep the PHI in.
+llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
+  llvm::PHINode *phiInst{llvm::dyn_cast_if_present<llvm::PHINode>(llvmValue)};
+  if (!phiInst || phiInst->getNumIncomingValues() == 0) return llvmValue;
+  llvm::Constant *llvmConst{
+      llvm::dyn_cast<llvm::Constant>(phiInst->getIncomingValue(0))};
+  if (!llvmConst) return llvmValue;
+  for (unsigned i = 1; i < phiInst->getNumIncomingValues(); i++)
+    if (phiInst->getIncomingValue(i) != llvmConst) return llvmValue;
+  return llvmConst;
+}
+} // namespace
+
+Value Emitter::createFunctionImplementation(
+    std::string_view name, bool isPure, Type *returnType,
+    const ParameterList &params, llvm::ArrayRef<Value> paramValues,
+    const SourceLocation &srcLoc, const std::function<void()> &callback) {
+  SMDL_SANITY_CHECK(params.size() == paramValues.size());
+  SMDL_SANITY_CHECK(callback != nullptr);
+  // Inline expansion needs an LLVM function to hold its blocks, but module
+  // scope has none: an initializer there is emitted with no insert point at
+  // all, on the understanding that it folds away entirely. So expand into a
+  // scratch function and discard it below, once the result has been checked
+  // to be a compile-time constant and therefore not to refer into it.
+  llvm::Function *scratchFunc{};
+  if (!getLLVMFunction()) {
+    scratchFunc = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                /*isVarArg=*/false),
+        llvm::Function::PrivateLinkage, ".module_scope_call",
+        &context.llvmModule);
+    builder.SetInsertPoint(
+        llvm::BasicBlock::Create(context.llvmContext, "entry", scratchFunc));
+  }
+  SMDL_DEFER([&] {
+    if (scratchFunc) {
+      builder.ClearInsertionPoint();
+      scratchFunc->eraseFromParent();
+      // Any slot allocated in the scratch function dies with it, and a
+      // later function could be allocated at the same address.
+      spillSlots.clear();
+    }
+  });
+  llvm::FastMathFlags fmf{builder.getFastMathFlags()};
+  SMDL_DEFER([&] { builder.setFastMathFlags(fmf); });
+  SMDL_PRESERVE(labelReturn, returns, scope, anchors);
+  if (params.lastScope) restoreResolutionAnchor(params);
+  labelReturn.depth = unwindStack.size();
+  labelReturn.block = createBlock(llvm::StringRef(name) + ".return");
+  returns.clear();
+  size_t declarationsToWarnAboutSize{declarationsToWarnAbout.size()};
+  handleScope(nullptr, nullptr, [&] {
+    labelBreak = labelContinue = {}; // Invalidate
+    isInDefer = false;
+    for (size_t i = 0; i < params.size(); ++i)
+      declareParameter(params[i], paramValues[i]);
+    callback();
+    if (!hasTerminator()) {
+      recordReturn(RValue(context.getVoidType(), nullptr), srcLoc);
+    }
+  });
+  llvmMoveBlockToEnd(labelReturn.block);
+  builder.SetInsertPoint(labelReturn.block);
+  Value result{createResult(returnType, returns, srcLoc, "return value")};
+  // If the result is a lambda, its body has not been emitted yet and may
+  // still legitimately use this expansion's parameters and locals when it
+  // is called later. Leave the unused-value warnings in the list for the
+  // enclosing expansion to flush: by then the lambda has either been
+  // called, marking its captures as used, or is itself unused.
+  const bool resultIsLambda{[&]() {
+    if (!result.isComptimeMetaType(context)) return false;
+    FunctionType *type{llvm::dyn_cast<FunctionType>(
+        result.getComptimeMetaType(context, srcLoc))};
+    return type && type->isLambda;
+  }()};
+  if (!resultIsLambda) {
+    for (size_t i = declarationsToWarnAboutSize;
+         i < declarationsToWarnAbout.size(); i++)
+      declarationsToWarnAbout[i]->maybeWarnAboutUnusedValue();
+    declarationsToWarnAbout.resize(declarationsToWarnAboutSize);
+  }
+  if (scratchFunc && result) {
+    if (result.isRValue())
+      result = RValue(result.type, foldConstantPHI(result.llvmValue));
+    if (!result.isComptime())
+      srcLoc.throwError("Call to ", SpellQuoted(name),
+                        " does not resolve to a compile-time constant and "
+                        "cannot be used at module scope");
+  }
+  return result;
+}
+
+// Is this an aggregate large enough to move through memory rather than as a
+// first-class LLVM value? Shared by the indirect return ('sret') and
+// indirect parameter ('byval') conventions so the two cannot drift apart.
+//
+// NOTE: The threshold is 'greater than', not 'at least'. At
+// '$WAVELENGTH_BASE_MAX' of 16 a 'color' and a 'float[16]' are both exactly
+// 64 bytes, and the spectral inner loops are full of them: moving those to
+// memory would cost far more than the aggregate traffic it saves.
+bool Emitter::isIndirectAggregate(Type *type) {
+  return type && (type->isStruct() || type->isUnion() || type->isArray()) &&
+         context.getSizeOf(type) > 64;
+}
+
+void Emitter::addIndirectParamAttrs(Type *paramType, unsigned i,
+                                    llvm::Function *llvmFunc,
+                                    llvm::CallBase *callInst) {
+  // 'byval' is what makes the convention safe: it states that the pointer is
+  // transport and the callee's copy is private, which is exactly SMDL's
+  // by-value parameter semantics. Without it a callee that writes to a
+  // mutable parameter would write through to the caller's memory, because
+  // the parameter binds directly to the incoming pointer (see
+  // 'createFunction') and 'lvalue()' returns an existing lvalue untouched.
+  llvm::AttrBuilder attrs{context.llvmContext};
+  attrs.addByValAttr(paramType->llvmType);
+  attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(paramType)));
+  if (llvmFunc) llvmFunc->addParamAttrs(i, attrs);
+  if (callInst)
+    callInst->setAttributes(callInst->getAttributes().addParamAttributes(
+        context.llvmContext, i, attrs));
+}
+
+void Emitter::addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
+                                     llvm::CallBase *callInst) {
+  llvm::AttrBuilder attrs{context.llvmContext};
+  attrs.addStructRetAttr(returnType->llvmType);
+  attrs.addAttribute(llvm::Attribute::NoAlias);
+  attrs.addAttribute(llvm::Attribute::NoUndef);
+  attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(returnType)));
+  if (llvmFunc) llvmFunc->addParamAttrs(0, attrs);
+  if (callInst)
+    callInst->setAttributes(callInst->getAttributes().addParamAttributes(
+        context.llvmContext, 0, attrs));
+}
+
+void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
+                             bool isPure, Type *&returnType,
+                             llvm::ArrayRef<Type *> paramTypes,
+                             const ParameterList &params,
+                             const SourceLocation &srcLoc,
+                             const std::function<void()> &callback,
+                             bool useIndirectParams) {
+  SMDL_SANITY_CHECK(returnType && params.size() == paramTypes.size());
+  SMDL_SANITY_CHECK_MSG(!useIndirectParams || callback,
+                        "'@(foreign)' must not use the indirect parameter "
+                        "convention: it has to match the C ABI exactly");
+  std::vector<llvm::Type *> llvmParamTys{};
+  if (!isPure) llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+  // The parameters that travel as 'byval' pointers, as (LLVM parameter
+  // index, type) pairs. Recorded once so that the signature built here, the
+  // parameter binding below, and the 'sret' rebuild all agree: the rebuild
+  // creates a fresh function and does not inherit parameter attributes.
+  llvm::SmallVector<std::pair<unsigned, Type *>, 4> indirectParams{};
+  for (auto paramType : paramTypes) {
+    SMDL_SANITY_CHECK(paramType);
+    SMDL_SANITY_CHECK(paramType->llvmType);
+    // A voided parameter carries no data, so it is absent from the
+    // signature entirely, exactly as a voided field is absent from a
+    // struct layout. The call site drops it the same way (see
+    // 'FunctionType::invoke'), and both sides derive it from the same
+    // type vector, so the two cannot disagree.
+    if (paramType->isVoid()) continue;
+    if (useIndirectParams && passesIndirectly(paramType)) {
+      indirectParams.push_back({unsigned(llvmParamTys.size()), paramType});
+      llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+    } else {
+      llvmParamTys.push_back(paramType->llvmType);
+    }
+  }
+  // Interpret null callback as foreign.
+  if (!callback) {
+    SMDL_SANITY_CHECK(!returnType->isAbstract());
+    llvm::FunctionType *llvmFuncTy{llvm::FunctionType::get(
+        returnType->llvmType, llvmParamTys, params.isVariadic)};
+    llvm::FunctionCallee llvmCallee{context.getBuiltinCallee(name, llvmFuncTy)};
+    if (llvmFuncTy != llvmCallee.getFunctionType()) {
+      srcLoc.throwError("Conflicting definitions of '@(foreign)' function ",
+                        SpellQuoted(name));
+    }
+    context.compiler.mForeignFunctionSourceLocations.try_emplace(
+        std::string(name), srcLoc);
+    llvmFunc = static_cast<llvm::Function *>(llvmCallee.getCallee());
+    return;
+  }
+  // Initialize LLVM function with a placeholder. If we have a return type
+  // with a well-defined LLVM type, then use that as the placeholder return
+  // type in order to permit recursion. Otherwise use
+  // `Context::llvmIncompleteReturnTy`.
+  llvmFunc = llvm::Function::Create(
+      llvm::FunctionType::get(returnType->llvmType
+                                  ? returnType->llvmType
+                                  : context.llvmIncompleteReturnTy,
+                              llvmParamTys, params.isVariadic),
+      llvm::Function::InternalLinkage, "", context.llvmModule);
+  // Every loop in emitted code either makes progress or has side effects,
+  // which is the same promise a C++ frontend makes and the one LLVM needs
+  // before it will infer 'willreturn'. Without it, a function holding any
+  // loop at all is a call the optimizer may never delete however plainly
+  // its result goes unused, and since a material body is emitted once per
+  // entry point, that is a color conversion or a relief march kept by
+  // every one of them for the sake of the one that reads it.
+  llvmFunc->addFnAttr(llvm::Attribute::MustProgress);
+  for (auto [i, paramType] : indirectParams)
+    addIndirectParamAttrs(paramType, i, llvmFunc, nullptr);
+
+  llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
+  {
+    // Spill slots belong to the function being emitted. Emitting this body
+    // may recurse into another function's body (an instantiation triggered
+    // from inside it), so the map is saved and restored rather than merely
+    // cleared, and no slot can outlive the function it was allocated in.
+    SMDL_PRESERVE(state, spillSlots);
+    spillSlots.clear();
+    state = {}; // Invalidate
+    builder.SetInsertPoint(
+        llvm::BasicBlock::Create(context, "entry", llvmFunc));
+    llvm::Argument *llvmArg{llvmFunc->arg_begin()};
+    if (!isPure) {
+      llvmArg->setName("state");
+      state =
+          RValue(context.getPointerType(context.getStateType()), &*llvmArg++);
+    }
+    llvm::SmallVector<Value> paramValues{};
+    std::pair<unsigned, Type *> *indirectItr{indirectParams.begin()};
+    for (size_t i = 0; i < params.size(); i++) {
+      // A voided parameter has no LLVM argument to consume, so do not
+      // advance past one. It still binds, as the void value, so that the
+      // name resolves in the body like any other parameter.
+      if (paramTypes[i]->isVoid()) {
+        paramValues.push_back(RValue(paramTypes[i], nullptr));
+        continue;
+      }
+      llvmArg->setName(params[i].name);
+      llvm::Argument *llvmParam{&*llvmArg++};
+      // An indirect parameter arrives as a 'byval' pointer to storage the
+      // callee owns privately, which is exactly what an lvalue is. Binding
+      // it directly is the whole point of the convention: the parameter's
+      // storage *is* the incoming pointer, so the re-spill that a by-value
+      // aggregate needs before it can be indexed at runtime disappears
+      // rather than being replaced by a different copy.
+      if (indirectItr != indirectParams.end() &&
+          indirectItr->first == llvmParam->getArgNo()) {
+        paramValues.push_back(LValue(paramTypes[i], llvmParam));
+        ++indirectItr;
+      } else {
+        paramValues.push_back(RValue(paramTypes[i], llvmParam));
+      }
+    }
+    Value result{createFunctionImplementation(name, isPure, returnType, params,
+                                              paramValues, srcLoc, callback)};
+    returnType = result.type;
+    SMDL_SANITY_CHECK(returnType);
+    SMDL_SANITY_CHECK(!returnType->isAbstract());
+    if (!result || result.type->isVoid()) {
+      builder.CreateRetVoid();
+    } else if (!returnsIndirectly(returnType)) {
+      builder.CreateRet(result);
+    }
+    // Move the body and every parameter's name and uses from the old
+    // function onto the rebuilt one, whose argument list starts at 'toArg'
+    // (past the leading 'sret' slot when there is one).
+    auto migrateBodyAndArgs{[](llvm::Function *fromFunc, llvm::Function *toFunc,
+                               llvm::Function::arg_iterator toArg) {
+      toFunc->splice(toFunc->begin(), fromFunc);
+      for (auto &fromArg : fromFunc->args()) {
+        toArg->setName(fromArg.getName());
+        fromArg.replaceAllUsesWith(&*toArg);
+        ++toArg;
+      }
+    }};
+    if (result && !result.type->isVoid() && returnsIndirectly(returnType)) {
+      // Rebuild the function to return indirectly: 'void' return with a
+      // leading 'sret' pointer parameter that the caller provides (see
+      // 'FunctionType::invoke'). The result value stays in memory on both
+      // sides instead of materializing as a large SSA aggregate.
+      llvm::Function *llvmFunc0{llvmFunc};
+      std::vector<llvm::Type *> llvmSretParamTys{};
+      llvmSretParamTys.push_back(llvm::PointerType::get(context, 0));
+      llvmSretParamTys.insert(llvmSretParamTys.end(), llvmParamTys.begin(),
+                              llvmParamTys.end());
+      llvmFunc = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                  llvmSretParamTys, params.isVariadic),
+          llvm::Function::InternalLinkage, "", context.llvmModule);
+      llvm::Argument *sretArg{&*llvmFunc->arg_begin()};
+      sretArg->setName("sret");
+      migrateBodyAndArgs(llvmFunc0, llvmFunc, llvmFunc->arg_begin() + 1);
+      addIndirectReturnAttrs(returnType, llvmFunc, nullptr);
+      // The rebuilt function does not inherit parameter attributes, and
+      // every index shifts by one for the leading 'sret' slot.
+      for (auto [i, paramType] : indirectParams)
+        addIndirectParamAttrs(paramType, i + 1, llvmFunc, nullptr);
+      builder.CreateStore(rvalue(result), sretArg);
+      builder.CreateRetVoid();
+      // Rewrite recursive calls emitted against the by-value placeholder,
+      // giving each call site its own result slot in its entry block.
+      for (auto user : llvm::make_early_inc_range(llvmFunc0->users())) {
+        llvm::CallInst *callInst{llvm::dyn_cast<llvm::CallInst>(user)};
+        SMDL_SANITY_CHECK_MSG(
+            callInst && callInst->getCalledOperand() == llvmFunc0,
+            "unexpected use of function during 'sret' rebuild");
+        llvm::BasicBlock *blockEntry{&callInst->getFunction()->getEntryBlock()};
+        builder.SetInsertPoint(blockEntry,
+                               blockEntry->getFirstNonPHIOrDbgOrAlloca());
+        llvm::AllocaInst *slot{builder.CreateAlloca(returnType->llvmType)};
+        builder.SetInsertPoint(callInst);
+        llvm::SmallVector<llvm::Value *> llvmArgs{};
+        llvmArgs.push_back(slot);
+        for (auto &arg : callInst->args()) llvmArgs.push_back(arg.get());
+        llvm::CallInst *newCall{builder.CreateCall(llvmFunc->getFunctionType(),
+                                                   llvmFunc, llvmArgs)};
+        addIndirectReturnAttrs(returnType, nullptr, newCall);
+        for (auto [i, paramType] : indirectParams)
+          addIndirectParamAttrs(paramType, i + 1, nullptr, newCall);
+        callInst->replaceAllUsesWith(
+            builder.CreateLoad(returnType->llvmType, slot));
+        callInst->eraseFromParent();
+      }
+      llvmFunc0->eraseFromParent();
+    } else if (returnType->llvmType !=
+               llvmFunc->getFunctionType()->getReturnType()) {
+      llvm::Function *llvmFunc0{llvmFunc};
+      llvmFunc = llvm::Function::Create(
+          llvm::FunctionType::get(returnType->llvmType,
+                                  llvmFunc->getFunctionType()->params(),
+                                  params.isVariadic),
+          llvm::Function::InternalLinkage, "", context.llvmModule);
+      migrateBodyAndArgs(llvmFunc0, llvmFunc, llvmFunc->arg_begin());
+      llvmFunc0->replaceAllUsesWith(llvmFunc);
+      llvmFunc0->eraseFromParent();
+    }
+    llvmFunc->setName(llvm::StringRef(name));
+    // Verify.
+    llvm::EliminateUnreachableBlocks(*llvmFunc);
+    std::string message{};
+    if (llvm::raw_string_ostream os{message};
+        llvm::verifyFunction(*llvmFunc, &os))
+      srcLoc.throwError("Function ", SpellQuoted(name),
+                        " LLVM-IR verification failed: ", message);
+  }
+}
+
+Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
+  llvm::Function *llvmFunc{getLLVMFunction()};
+  SMDL_SANITY_CHECK_MSG(llvmFunc, "tried to alloca outside of LLVM function");
+  llvm::BasicBlock *blockEntry{&llvmFunc->getEntryBlock()};
+  llvm::IRBuilderBase::InsertPoint ip{builder.saveIP()};
+  builder.SetInsertPoint(blockEntry, blockEntry->getFirstNonPHIOrDbgOrAlloca());
+  SMDL_SANITY_CHECK(type);
+  SMDL_SANITY_CHECK(type->llvmType);
+  Value value{
+      LValue(type, builder.CreateAlloca(type->llvmType, nullptr, name))};
+  builder.restoreIP(ip);
+  return value;
+}
+
+Value Emitter::spillToMemory(Value value) {
+  if (!value || value.isLValue() || value.isVoid()) return value;
+  llvm::Function *llvmFunc{getLLVMFunction()};
+  // With no function there is nowhere to put the slot. This is module scope,
+  // where the initializer has to fold to a constant anyway.
+  if (!llvmFunc) return lvalue(value);
+  const std::pair<llvm::Value *, Type *> key{
+      std::pair(value.llvmValue, value.type)};
+  if (llvm::DenseMapIterator<std::pair<llvm::Value *, Type *>, Value> itr{
+          spillSlots.find(key)};
+      itr != spillSlots.end())
+    return itr->second;
+  Value slot{
+      createAlloca(value.type, value.llvmValue->hasName()
+                                   ? value.llvmValue->getName() + ".spill"
+                                   : "spill")};
+  // Emit the copy immediately after the definition of the value, not here at
+  // the point of access. The alloca is already in the entry block, so it
+  // dominates everything; placing the store at the definition makes the slot
+  // valid wherever the value itself is, which is what lets a later access --
+  // in another block, or on a later iteration of a loop -- reuse it.
+  {
+    llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
+    if (llvm::Instruction *
+        inst{llvm::dyn_cast<llvm::Instruction>(value.llvmValue)}) {
+      // A PHI must keep every PHI in its block contiguous at the top, so
+      // insert past them rather than directly after the node.
+      if (llvm::isa<llvm::PHINode>(inst)) {
+        builder.SetInsertPoint(inst->getParent(),
+                               inst->getParent()->getFirstInsertionPt());
+      } else {
+        SMDL_SANITY_CHECK_MSG(!inst->isTerminator(),
+                              "cannot spill the result of a terminator");
+        // The value is very often the last instruction emitted so far, in a
+        // block that has no terminator yet, in which case there is no 'next'
+        // to insert before and the store simply appends.
+        if (llvm::Instruction * llvmNext{inst->getNextNode()}) {
+          builder.SetInsertPoint(llvmNext);
+        } else {
+          builder.SetInsertPoint(inst->getParent());
+        }
+      }
+    } else {
+      // An argument or a constant is available from the top of the function.
+      llvm::BasicBlock *blockEntry{&llvmFunc->getEntryBlock()};
+      builder.SetInsertPoint(blockEntry,
+                             blockEntry->getFirstNonPHIOrDbgOrAlloca());
+    }
+    builder.CreateStore(value, slot);
+  }
+  spillSlots[key] = slot;
+  return slot;
+}
+
+void Emitter::declareParameter(const Parameter &param, Value value) {
+  // Skip the conversion when the type already matches exactly. It is an
+  // identity that nonetheless loads a memory-resident value back into SSA
+  // (see 'ArrayType::invoke'), which would undo the indirect parameter
+  // binding in 'createFunction' one line after it was established.
+  if (value.type != param.type)
+    value = invoke(param.type, value, param.getSourceLocation());
+  // NOTE: 'lvalue()' returns an existing lvalue untouched, so a mutable
+  // indirect parameter does NOT get a fresh copy here. That is correct
+  // only because 'byval' guarantees the incoming pointer already denotes
+  // the callee's private copy. If that attribute ever stops being applied
+  // to every indirect parameter, mutable parameters silently start writing
+  // through to the caller.
+  value = param.isConst() || value.isVoid() ? value : lvalue(value);
+  Declaration *declaration{
+      declare(param.name,
+              param.astParam   ? static_cast<ast::Node *>(param.astParam)
+              : param.astField ? static_cast<ast::Node *>(param.astField)
+                               : nullptr,
+              value)};
+  declarationsToWarnAbout.push_back(declaration);
+  if (param.isInline()) declareParameterInline(declaration->value);
+}
+
+void Emitter::declareParameterInline(Value value) {
+  if (StructType * structType{llvm::dyn_cast<StructType>(
+                       value.type->getFirstNonPointerType())}) {
+    for (auto &param : structType->params) {
+      SourceLocation srcLoc{param.getSourceLocation()};
+      Declaration *declaration{declare(param.name, /*node=*/{},
+                                       accessField(value, param.name, srcLoc))};
+      if (param.isInline()) declareParameterInline(declaration->value);
+    }
+  }
+}
+
+Declaration *
+Emitter::findSameScopeDeclaration(Span<const std::string_view> name) {
+  const Span<const std::string_view> internedName{context.internName(name)};
+  // Probe the scope index: nearest non-exempt target in the current scope,
+  // continuing through transparent scopes into the first real boundary.
+  for (auto s{scope}; s; s = s->parent) {
+    if (llvm::DenseMapIterator<const void *, Declaration *> itr{
+            s->decls.find(internedName.data())};
+        itr != s->decls.end())
+      for (auto c{itr->second}; c; c = c->prevSameNameInScope)
+        if (!c->isSameScopeShadowExempt()) return c;
+    if (!s->isTransparent) break;
+  }
+  return nullptr;
+}
+
+void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
+                                    const SourceLocation &srcLoc) {
+  if (Declaration * c{findSameScopeDeclaration(name)}) {
+    if (SourceLocation prevSrcLoc{c->getSourceLocation()})
+      srcLoc.throwError("Redeclaration of ", SpellQuoted(join(name, "::")),
+                        " in the same scope, previously declared at ",
+                        std::string(prevSrcLoc));
+    srcLoc.throwError("Redeclaration of ", SpellQuoted(join(name, "::")),
+                      " in the same scope");
+  }
+}
+
+Declaration *Emitter::probeName(Span<const std::string_view> name,
+                                llvm::Function *llvmFunc,
+                                Declaration **unusableMatch) {
+  size_t seqLimit{std::numeric_limits<uint64_t>::max()};
+  for (auto s{scope}; s; s = s->parent) {
+    for (const auto &[anchorScope, anchorSeq] : anchors)
+      if (s == anchorScope) seqLimit = std::min(seqLimit, anchorSeq);
+    if (Declaration *
+        found{Declaration::resolveInScope(context, name, llvmFunc, s,
+                                          /*shouldIgnoreIfNotExported=*/false,
+                                          seqLimit, unusableMatch)})
+      return found;
+  }
+  return nullptr;
+}
+
+void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
+                            ast::Decl &decl) {
+  if (importPath.size() < 2)
+    decl.srcLoc.throwError("Invalid import path (missing '::*'?)");
+  auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
+  Module *importedModule{
+      resolveModule(importPath.dropBack(), isAbs, decl.srcLoc)};
+  if (!importedModule)
+    decl.srcLoc.throwError("Cannot resolve import identifier ",
+                           SpellQuoted(join(importPath, "::")),
+                           suggestForFailedImport(importPath.dropBack()));
+  if (importPath.back() == "*") {
+    importPath = importPath.dropBack();
+    importPath = importPath.dropFrontWhile(isDots);
+    declare(importPath, &decl, context.getComptimeMetaModule(importedModule));
+  } else {
+    Declaration *importedDeclaration{Declaration::findInModule(
+        context, importPath.back(), getLLVMFunction(), importedModule)};
+    if (!importedDeclaration) {
+      std::string suggestion{};
+      if (std::string_view similar{suggestNearestName(
+              importPath.back(), exportedNamesOf(importedModule))};
+          !similar.empty())
+        suggestion = concat("; did you mean ", SpellQuoted(similar), "?");
+      decl.srcLoc.throwError("Cannot resolve import identifier ",
+                             SpellQuoted(join(importPath, "::")), suggestion);
+    }
+    declare(importPath.dropFrontWhile(isDots), &decl,
+            importedDeclaration->value);
+  }
+}
+
+void Emitter::unwind(size_t depth) {
+  SMDL_SANITY_CHECK_MSG(!hasTerminator(), "tried to unwind after terminator");
+  SMDL_SANITY_CHECK_MSG(depth <= unwindStack.size(), "inconsistent unwind");
+  for (auto i{unwindStack.size()}; i-- > depth;) {
+    // Copy the action: a defer body may push actions of its own, which can
+    // reallocate the stack (its `handleScope` truncates them again, so the
+    // indices below `i` stay meaningful).
+    const UnwindAction action{unwindStack[i]};
+    switch (action.kind) {
+    case UnwindAction::Kind::Defer:
+      handleScope(nullptr, nullptr, [&] {
+        labelReturn = {};   // Invalidate!
+        labelBreak = {};    // Invalidate!
+        labelContinue = {}; // Invalidate!
+        isInDefer = true;   // More specific error messages
+        // The body must not see declarations made after the defer
+        // statement, so push an anchor at the innermost live scope
+        // ('scope->parent': 'scope' itself is the defer body's own
+        // scope, just pushed by 'handleScope', and stays unfiltered).
+        // Pushing (not replacing) preserves any outer definition-site
+        // anchor, e.g. a defer inside a macro expansion.
+        anchors.push_back({scope->parent, action.seq});
+        emit(action.astDefer->stmt);
+      });
+      break;
+    case UnwindAction::Kind::Preserve:
+      builder.CreateStore(action.valueToPreserve, action.value);
+      break;
+    case UnwindAction::Kind::LifetimeEnd:
+      createLifetimeEnd(action.value);
+      break;
+    }
+  }
+}
+
+Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
+                            const SourceLocation &srcLoc,
+                            std::string_view resultKind) {
+  SMDL_SANITY_CHECK(type);
+  if (type->isAbstract()) {
+    llvm::SmallVector<Type *> resultTypes{};
+    for (auto &result : results)
+      resultTypes.push_back(result.value.type ? result.value.type
+                                              : context.getVoidType());
+    Type *resultType{context.getCommonType(
+        resultTypes, /*shouldDefaultToUnion=*/true, srcLoc)};
+    if (context.getConversionRule(resultType, type) ==
+        CONVERSION_RULE_NOT_ALLOWED)
+      srcLoc.throwError(
+          "Inferred result type ", SpellQuoted(resultType->displayName),
+          " is not convertible to ", SpellQuoted(type->displayName));
+    type = resultType;
+    SMDL_SANITY_CHECK(!type->isAbstract());
+  }
+  if (type->isVoid()) return RValue(type, nullptr);
+  // A single compile-time constant result passes through unchanged: the
+  // PHI below would needlessly demote it to a run-time value, and
+  // compile-time-only values like function handles must survive being
+  // returned from macros and 'return_from' blocks.
+  if (results.size() == 1 && results[0].value.isComptime() &&
+      results[0].value.type == type)
+    return results[0].value;
+  const bool isAllIdenticalLValues{llvm::all_of(results, [&](auto &result) {
+    return result.value.isLValue() &&
+           result.value.type == results[0].value.type;
+  })};
+  llvm::PHINode *phiInst{builder.CreatePHI(
+      isAllIdenticalLValues ? context.getPointerType(type)->llvmType
+                            : type->llvmType,
+      results.size())};
+  llvm::IRBuilderBase::InsertPoint ip{builder.saveIP()};
+  for (auto &result : results) {
+    Value value{result.value};
+    llvm::BasicBlock *block{result.block};
+    SMDL_SANITY_CHECK(llvmHasTerminator(block));
+    if (!isAllIdenticalLValues) {
+      // Blame the 'return' that produced this value rather than the merge:
+      // the conversion below is what rejects a return of the wrong type,
+      // and 'srcLoc' here is typically the function declaration. Results
+      // with no statement behind them (see 'emitVisit') fall back to it.
+      const SourceLocation &valueSrcLoc{result.srcLoc ? result.srcLoc : srcLoc};
+      // The conversion may emit control flow (e.g. union narrowing), so
+      // detach the terminator, convert with the block open, then re-attach
+      // the terminator to whichever block emission ends in.
+      llvm::Instruction *terminator{block->getTerminator()};
+      terminator->removeFromParent();
+      builder.SetInsertPoint(block);
+      // Say what the value was for before letting the conversion fail: a
+      // returned value of the wrong type otherwise reports only that the
+      // return type could not be constructed from it, which reads as a
+      // constructor call the user never wrote.
+      if (!resultKind.empty() && value.type &&
+          context.getConversionRule(value.type, type) ==
+              CONVERSION_RULE_NOT_ALLOWED)
+        valueSrcLoc.throwError("Cannot convert ", resultKind, " of type ",
+                               SpellQuoted(value.type->displayName), " to ",
+                               SpellQuoted(type->displayName));
+      // The 'rvalue' matters: conversions may come back memory-resident
+      // (see e.g. 'UnionType::invoke'), and the PHI merges values here.
+      value = rvalue(invoke(type, value, valueSrcLoc));
+      block = getInsertBlock();
+      terminator->insertInto(block, block->end());
+    }
+    phiInst->addIncoming(value, block);
+  }
+  builder.restoreIP(ip);
+  return isAllIdenticalLValues ? LValue(type, phiInst) : RValue(type, phiInst);
+}
+
+Value Emitter::emit(ast::Node &node) {
+  return emitTypeSwitch<ast::File, ast::Decl, ast::Expr, ast::Stmt>(node);
+}
+
+//--{ Emit: Decl
+Value Emitter::emit(ast::Decl &decl) {
+  return emitTypeSwitch<ast::AnnotationDecl, ast::Enum, ast::Exec,
+                        ast::Function, ast::Import, ast::Namespace, ast::Struct,
+                        ast::Tag, ast::Typedef, ast::UnitTest, ast::UsingAlias,
+                        ast::UsingImport, ast::Variable>(decl);
+}
+
+Value Emitter::emit(ast::Exec &decl) {
+  // Emitting an empty 'exec' would JIT a void function that does nothing
+  // and then call it, so drop it and say why.
+  if (ast::Compound *compound{
+          llvm::dyn_cast_if_present<ast::Compound>(decl.stmt.get())};
+      compound && compound->stmts.empty()) {
+    decl.srcLoc.logWarn(
+        "An 'exec' with an empty body does nothing; ignoring it");
+    return Value();
+  }
+  Type *returnType{context.getVoidType()};
+  // Execs must be pure: the C++ side invokes them as 'void()' (see
+  // 'jit::Function<void()>' in Compiler.h), so a non-pure exec would read
+  // a garbage '$state' pointer from a register that was never passed.
+  llvm::Function *llvmFunc{createFunction(".exec", /*isPure=*/true, returnType,
+                                          ParameterList(), decl.srcLoc,
+                                          [&] { emit(decl.stmt); })};
+  llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+  context.compiler.mExecs.emplace_back(llvmFunc->getName().str());
+  return Value();
+}
+
+Value Emitter::emit(ast::UnitTest &decl) {
+  if (context.compiler.shouldEmitUnitTests) {
+    Type *returnType{context.getVoidType()};
+    llvm::Function *llvmFunc{
+        createFunction(".unit_test", /*isPure=*/false, returnType,
+                       ParameterList(), decl.srcLoc, [&] {
+                         emitSampleDimensionReset(decl.srcLoc);
+                         emit(decl.stmt);
+                       })};
+    llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+    auto &unitTest{context.compiler.mUnitTests.emplace_back()};
+    unitTest.moduleName = std::string(decl.srcLoc.getModuleName());
+    unitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
+    unitTest.moduleDisplayName =
+        std::string(decl.srcLoc.getModuleDisplayName());
+    unitTest.lineNo = decl.srcLoc.lineNo;
+    unitTest.testName = decl.name->value;
+    unitTest.test.name = llvmFunc->getName().str();
+    unitTest.test.func = nullptr; // Lookup later
+  }
+  return Value();
+}
+
+Value Emitter::emit(ast::UsingImport &decl) {
+  // The local path buffer is safe here: 'declare' interns the name it
+  // ultimately stores.
+  std::vector<std::string_view> importPath{decl.importPath.elementViews};
+  for (auto &name : decl.names) {
+    importPath.push_back(name.srcName);
+    declareImport(
+        Span<const std::string_view>(importPath.data(), importPath.size()),
+        decl.importPath.isAbsolute(), decl);
+    importPath.pop_back();
+  }
+  return Value();
+}
+
+Value Emitter::emit(ast::Variable &decl) {
+  Type *type{emit(decl.type).getComptimeMetaType(context, decl.srcLoc)};
+  if (type->isFunction())
+    decl.srcLoc.throwError("Variable must not have function type ",
+                           SpellQuoted(type->displayName));
+  const bool isConst{decl.type->hasQualifier("const")};
+  const bool isStatic{decl.type->hasQualifier("static")};
+  const bool isInline{decl.type->hasQualifier("inline")};
+  if (!getLLVMFunction() && !isConst)
+    decl.srcLoc.throwError(
+        "Variables declared at module scope must be 'const'");
+  if (isStatic && !isConst)
+    decl.srcLoc.throwError(
+        "Variables declared 'static' must be 'const' (at least for now)");
+  if (isInline)
+    decl.srcLoc.throwError("Variables must not be declared 'inline'");
+  for (auto &declarator : decl.declarators) {
+    if (declarator.isDestructure() && type != context.getAutoType())
+      declarator.srcLoc.throwError(
+          "Destructure declarator must have 'auto' type");
+    const size_t depth0{unwindStack.size()};
+    Scope *scope0{scope};
+    // The initializer's bindings (e.g. ':=') go out of scope below, before
+    // the declared variable itself enters the enclosing scope, hence a
+    // transparent scope whose entries pop with the initializer region.
+    scope = pushScope(/*isTransparent=*/true);
+    ArgumentList args{[&]() -> ArgumentList {
+      if (declarator.exprInit) {
+        return emit(*declarator.exprInit);
+      } else if (declarator.argsInit) {
+        return emit(*declarator.argsInit);
+      } else {
+        return ArgumentList();
+      }
+    }()};
+    unwind(depth0);
+    unwindStack.resize(depth0);
+    scope = scope0;
+    Value value{invoke(type, args, declarator.srcLoc)};
+    if (declarator.isDestructure()) {
+      if (isStatic)
+        declarator.srcLoc.throwError(
+            "Cannot destructure 'static' variables (yet)");
+      SMDL_SANITY_CHECK(declarator.names.size() >= 1);
+      if (StructType * structType{llvm::dyn_cast<StructType>(value.type)}) {
+        if (structType->params.size() != declarator.names.size())
+          declarator.srcLoc.throwError(
+              "Cannot destructure ", SpellQuoted(structType->displayName),
+              ", expected ", SpellCounted(structType->params.size(), "name"));
+        if (!isConst) {
+          Value valueAlloca{createAlloca(value.type)};
+          createLifetimeStart(valueAlloca);
+          createStore(value, valueAlloca);
+          value = LValue(value.type, valueAlloca);
+        }
+        for (size_t i = 0; i < structType->params.size(); i++) {
+          const ast::Name &name{declarator.names[i].name};
+          rejectSameScopeShadow(name, name.srcLoc);
+          declare(name, &declarator,
+                  accessField(value, structType->params[i].name,
+                              declarator.srcLoc));
+        }
+      } else {
+        declarator.srcLoc.throwError("Unsupported destructure");
+      }
+    } else {
+      // NOTE: This must be a reference for `declare` below
+      SMDL_SANITY_CHECK(declarator.names.size() == 1);
+      const ast::Name &name{declarator.names[0].name};
+      rejectSameScopeShadow(name, name.srcLoc);
+      // A function value is a compile-time constant handle. Storing it in
+      // memory (a 'static' global or a mutable alloca) loses the
+      // compile-time-ness that calling it requires, so fail here at the
+      // declaration instead of confusingly at the call.
+      if (value.isComptimeMetaType(context) &&
+          value.getComptimeMetaType(context, declarator.srcLoc)->isFunction() &&
+          (isStatic || !isConst))
+        declarator.srcLoc.throwError(
+            "Variable ", SpellQuoted(name.srcName),
+            " holding a function must be declared 'const'",
+            isStatic ? " without 'static'" : "");
+      if (!value.isVoid()) {
+        if (isStatic) {
+          if (!value.isComptime())
+            declarator.srcLoc.throwError(
+                "Variable ", SpellQuoted(name.srcName),
+                " declared 'static' requires compile-time initializer");
+          llvm::GlobalVariable *llvmGlobal{new llvm::GlobalVariable(
+              context.llvmModule, value.type->llvmType, /*isConstant=*/true,
+              llvm::GlobalValue::PrivateLinkage,
+              static_cast<llvm::Constant *>(value.llvmValue))};
+          llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+          llvmGlobal->setName(name.srcName);
+          value = LValue(value.type, llvmGlobal);
+        } else if (isConst) {
+          // Never an LLVM global: its name is the linker symbol, and one
+          // global is shared by every reference to it (e.g. the texel
+          // base of an image), so a local binding must not rename it.
+          if (!value.isLLVMGlobal()) value.llvmValue->setName(name.srcName);
+        } else {
+          Value valueAlloca{createAlloca(value.type, name.srcName)};
+          createLifetimeStart(valueAlloca);
+          createStore(value, valueAlloca);
+          value = LValue(value.type, valueAlloca);
+        }
+      }
+      Declaration *declaration{declare(name, &declarator, value)};
+      if (getLLVMFunction()) declarationsToWarnAbout.push_back(declaration);
+    }
+  }
+  return Value();
+}
+//--}
+
+//--{ Emit: Expr
+Value Emitter::emit(ast::Expr &expr) {
+  return emitTypeSwitch<
+      ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
+      ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let, ast::LiteralBool,
+      ast::LiteralFloat, ast::LiteralInt, ast::LiteralString, ast::Parens,
+      ast::ReturnFrom, ast::Select, ast::Type, ast::TypeCast, ast::Unary>(expr);
+}
+
+Value Emitter::emit(ast::AccessIndex &expr) {
+  Value value{emit(expr.expr)};
+  if (!value.isComptimeMetaType(context)) {
+    for (auto &index : expr.indexes) {
+      if (!index.expr) expr.srcLoc.throwError("Expected non-empty '[]'");
+      value = accessIndex(
+          value, invoke(context.getIntType(), emit(index.expr), expr.srcLoc),
+          expr.srcLoc);
+    }
+    return value;
+  } else {
+    Type *type{value.getComptimeMetaType(context, expr.srcLoc)};
+    for (auto itr{expr.indexes.rbegin()}; itr != expr.indexes.rend(); ++itr) {
+      ast::AccessIndex::Index &index{*itr};
+      if (!index.expr) {
+        type = context.getInferredSizeArrayType(type); // Empty
+      } else if (ast::SizeName *
+                 sizeName{llvm::dyn_cast<ast::SizeName>(index.expr.get())}) {
+        type = context.getInferredSizeArrayType(
+            type, std::string(sizeName->name.srcName));
+      } else {
+        Value size{invoke(context.getIntType(), emit(index.expr), expr.srcLoc)};
+        std::optional<int64_t> sizeNow{size.getComptimeSignedInt()};
+        if (!sizeNow || *sizeNow < 0)
+          expr.srcLoc.throwError("Expected array size expression to resolve "
+                                 "to non-negative compile-time int");
+        type = context.getArrayType(type, uint32_t(*sizeNow));
+      }
+    }
+    return context.getComptimeMetaType(type);
+  }
+}
+
+void Emitter::rejectAssignmentToNonVariable(ast::Binary &expr) {
+  if ((expr.op & BINOP_EQ) != BINOP_EQ) return;
+  ast::Identifier *identifier{
+      llvm::dyn_cast_if_present<ast::Identifier>(expr.exprLHS.get())};
+  if (!identifier || !identifier->isSimpleName()) return;
+  Span<const std::string_view> names{context.internName(*identifier)};
+  Declaration *unusableMatch{};
+  Declaration *declaration{probeName(names, getLLVMFunction(), &unusableMatch)};
+  if (!declaration || declaration->value.isLValue()) return;
+  // Say 'const' only when the declaration really says it, because plenty of
+  // other things are bound as rvalues: enumerators, comptime constants, the
+  // names of functions and types.
+  bool isConst{false};
+  if (ast::Variable::Declarator *declarator{
+          llvm::dyn_cast_if_present<ast::Variable::Declarator>(
+              declaration->node)};
+      declarator && declarator->decl && declarator->decl->type)
+    isConst = declarator->decl->type->hasQualifier("const");
+  std::string message{concat("Cannot assign to ", SpellQuoted(names[0]),
+                             isConst ? " because it is declared 'const'"
+                                     : " because it is not a variable")};
+  if (SourceLocation declSrcLoc{declaration->getSourceLocation()})
+    message += concat(", declared at ", std::string(declSrcLoc));
+  expr.srcLoc.throwError(std::move(message));
+}
+
+Value Emitter::emit(ast::Binary &expr) {
+  rejectAssignmentToNonVariable(expr);
+  // Temporary let.
+  if (expr.op == BINOP_LET) {
+    ast::Identifier *ident{llvm::dyn_cast<ast::Identifier>(&*expr.exprLHS)};
+    if (!ident) // || !ident->is_simple_name())
+      expr.srcLoc.throwError(
+          "Expected lhs of operator ':=' to be an identifier");
+    Value rv{rvalue(emit(expr.exprRHS))};
+    declare(*ident, ident, rv);
+    return rv;
+  }
+  // Short-circuit logic conditions.
+  if (expr.op == BINOP_LOGIC_AND || expr.op == BINOP_LOGIC_OR) {
+    Type *boolType{context.getBoolType()};
+    Value valueLHS{invoke(boolType, emit(expr.exprLHS), expr.srcLoc)};
+    if (valueLHS.isComptimeInt()) {
+      unsigned valueLHSNow{valueLHS.getComptimeInt()};
+      if ((valueLHSNow != 0 && expr.op == BINOP_LOGIC_AND) ||
+          (valueLHSNow == 0 && expr.op == BINOP_LOGIC_OR)) {
+        // Contain rhs declarations, matching the runtime two-arm merge:
+        // whether ':=' in the rhs is visible afterward must not depend on
+        // whether the lhs constant-folded.
+        SMDL_PRESERVE(scope);
+        scope = pushScope(/*isTransparent=*/true);
+        return invoke(boolType, emit(expr.exprRHS), expr.srcLoc);
+      }
+      return valueLHS;
+    } else {
+      // One arm evaluates the right-hand side (converted to bool inside
+      // its own block, so the PHI type stays bool); the other arm is the
+      // short-circuit constant.
+      auto emitRHS{[&]() -> Value {
+        return invoke(boolType, emit(expr.exprRHS), expr.srcLoc);
+      }};
+      auto emitConstant{[&]() -> Value {
+        return context.getComptimeBool(expr.op == BINOP_LOGIC_OR);
+      }};
+      return expr.op == BINOP_LOGIC_AND
+                 ? emitTwoArmMerge(valueLHS, "and", emitRHS,
+                                   expr.exprRHS->srcLoc, emitConstant,
+                                   expr.srcLoc, expr.srcLoc)
+                 : emitTwoArmMerge(valueLHS, "or", emitConstant, expr.srcLoc,
+                                   emitRHS, expr.exprRHS->srcLoc, expr.srcLoc);
+    }
+  }
+  // Short-circuit else.
+  if (expr.op == BINOP_ELSE) {
+    Value valueLHS{emit(expr.exprLHS)};
+    Value valueLHSCond{invoke(context.getBoolType(), valueLHS, expr.srcLoc)};
+    if (valueLHSCond.isComptimeInt()) {
+      if (valueLHSCond.getComptimeInt()) return valueLHS;
+      // Contain rhs declarations, matching the runtime two-arm merge.
+      SMDL_PRESERVE(scope);
+      scope = pushScope(/*isTransparent=*/true);
+      return emit(expr.exprRHS);
+    } else {
+      return emitTwoArmMerge(
+          valueLHSCond, "else", [&] { return valueLHS; }, expr.exprLHS->srcLoc,
+          [&] { return emit(expr.exprRHS); }, expr.exprRHS->srcLoc,
+          expr.srcLoc);
+    }
+  }
+  // Default.
+  Value lhs{emit(expr.exprLHS)};
+  Value rhs{emit(expr.exprRHS)};
+  if (expr.op == BINOP_APPROX_CMP_EQ || //
+      expr.op == BINOP_APPROX_CMP_NE) {
+    // Approximate comparison operators
+    // lhs ~== |eps| rhs: #abs(lhs - rhs) <= eps
+    // lhs ~== (eps) rhs: #abs(lhs - rhs) <= eps * #max(#abs(lhs), #abs(rhs))
+    // and ~!= is the logical negation of ~==.
+    Value res{emitOp(BINOP_SUB, lhs, rhs, expr.srcLoc)};
+    res = emitIntrinsic("abs", res, expr.srcLoc);
+    Value eps{emit(expr.exprEps)};
+    if (expr.isRelativeEps()) {
+      Value scale{emitIntrinsic("max",
+                                {emitIntrinsic("abs", lhs, expr.srcLoc),
+                                 emitIntrinsic("abs", rhs, expr.srcLoc)},
+                                expr.srcLoc)};
+      eps = emitOp(BINOP_MUL, eps, scale, expr.srcLoc);
+    }
+    res = emitOp(BINOP_CMP_LE, res, eps, expr.srcLoc);
+    if (expr.op == BINOP_APPROX_CMP_NE)
+      res = emitOp(UNOP_LOGIC_NOT, res, expr.srcLoc);
+    return res;
+  }
+  return emitOp(expr.op, lhs, rhs, expr.srcLoc);
+}
+
+Value Emitter::emit(ast::Parens &expr) {
+  if (!expr.isComptime()) return emit(expr.expr);
+  Value value{emit(expr.expr)};
+  if (!value.isComptime())
+    expr.srcLoc.throwError("Expected compile-time constant");
+  if (value.isComptimeMetaType(context)) {
+    Type *type{value.getComptimeMetaType(context, expr.srcLoc)};
+    if (UnionType * unionType{llvm::dyn_cast<UnionType>(type)})
+      return context.getComptimeMetaType(
+          context.getComptimeUnionType(unionType));
+  }
+  return value;
+}
+
+Value Emitter::emit(ast::ReturnFrom &expr) {
+  auto [blockBegin, blockEnd] =
+      createBlocks<2>("return_from", {".begin", ".end"});
+  SMDL_PRESERVE(returns);
+  returns.clear();
+  builder.CreateBr(blockBegin);
+  builder.SetInsertPoint(blockBegin);
+  handleScope(blockBegin, blockEnd, [&, blockEnd = blockEnd] {
+    labelReturn = {unwindStack.size(), blockEnd};
+    labelBreak = {};
+    labelContinue = {};
+    emit(expr.stmt);
+    // With no recorded results the expression would silently evaluate to
+    // 'none', which is more likely a mistake than an intent.
+    if (returns.empty())
+      expr.srcLoc.throwError("A 'return_from' must contain at least one "
+                             "reachable 'return' statement");
+    // A fallthrough path would reach 'blockEnd' without a recorded result
+    // and leave the PHI in 'createResult' short one incoming edge.
+    if (!hasTerminator())
+      expr.srcLoc.throwError("A 'return_from' must 'return' on all control "
+                             "paths");
+  });
+  llvmMoveBlockToEnd(blockEnd);
+  builder.SetInsertPoint(blockEnd);
+  return createResult(context.getAutoType(), returns, expr.srcLoc);
+}
+
+Value Emitter::emit(ast::Select &expr) {
+  Value cond{invoke(context.getBoolType(), emit(expr.exprCond), expr.srcLoc)};
+  if (cond.isComptimeInt()) {
+    // Contain arm declarations, matching the runtime two-arm merge. (A ':='
+    // in the condition still leaks, in both paths; it dominates the merge.)
+    SMDL_PRESERVE(scope);
+    scope = pushScope(/*isTransparent=*/true);
+    return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
+  }
+  return emitTwoArmMerge(
+      cond, "select", [&] { return emit(expr.exprThen); },
+      expr.exprThen->srcLoc, [&] { return emit(expr.exprElse); },
+      expr.exprElse->srcLoc, expr.srcLoc);
+}
+
+Value Emitter::emitTwoArmMerge(Value cond, const char *name,
+                               const std::function<Value()> &emitArm0,
+                               const SourceLocation &srcLoc0,
+                               const std::function<Value()> &emitArm1,
+                               const SourceLocation &srcLoc1,
+                               const SourceLocation &srcLoc) {
+  // Contain declarations emitted inside either arm (e.g. the ':=' operator):
+  // an arm executes only on its own control path, so a binding introduced
+  // there must not be visible to the other arm or after the merge: its
+  // value would not dominate those uses. Each arm gets its own transparent
+  // scope: resolution inside arm 1 must not see arm 0's bindings.
+  SMDL_PRESERVE(scope);
+  Scope *const scope0{scope};
+  auto [blockArm0, blockArm1, blockEnd] =
+      createBlocks<3>(name, {".then", ".else", ".end"});
+  builder.CreateCondBr(cond, blockArm0, blockArm1);
+  builder.SetInsertPoint(blockArm0);
+  scope = pushScope(/*isTransparent=*/true);
+  Value value0{emitArm0()};
+  llvm::IRBuilderBase::InsertPoint value0IP{builder.saveIP()};
+  scope = scope0;
+  llvmMoveBlockToEnd(blockArm1);
+  builder.SetInsertPoint(blockArm1);
+  scope = pushScope(/*isTransparent=*/true);
+  Value value1{emitArm1()};
+  llvm::IRBuilderBase::InsertPoint value1IP{builder.saveIP()};
+  Type *commonType{context.getCommonType({value0.type, value1.type},
+                                         /*shouldDefaultToUnion=*/true,
+                                         srcLoc)};
+  // If both arms are already lvalues of the common type, merge the
+  // pointers and stay an lvalue (mirroring 'createResult') so large
+  // values (unions, structs) are not loaded into SSA just to be merged.
+  const bool shouldMergeAsLValues{value0.isLValue() && value1.isLValue() &&
+                                  value0.type == commonType &&
+                                  value1.type == commonType};
+  builder.restoreIP(value0IP);
+  if (!shouldMergeAsLValues)
+    value0 = rvalue(invoke(commonType, value0, srcLoc0));
+  blockArm0 = getInsertBlock();
+  builder.CreateBr(blockEnd);
+  builder.restoreIP(value1IP);
+  if (!shouldMergeAsLValues)
+    value1 = rvalue(invoke(commonType, value1, srcLoc1));
+  blockArm1 = getInsertBlock();
+  builder.CreateBr(blockEnd);
+  // Create PHI instruction.
+  llvmMoveBlockToEnd(blockEnd);
+  builder.SetInsertPoint(blockEnd);
+  llvm::PHINode *phiInst{builder.CreatePHI(
+      shouldMergeAsLValues ? context.getPointerType(commonType)->llvmType
+                           : commonType->llvmType,
+      2)};
+  phiInst->addIncoming(value0, blockArm0);
+  phiInst->addIncoming(value1, blockArm1);
+  return shouldMergeAsLValues ? LValue(commonType, phiInst)
+                              : RValue(commonType, phiInst);
+}
+//--}
+
+//--{ Emit: Stmt
+Value Emitter::emit(ast::Stmt &stmt) {
+  return emitTypeSwitch<ast::Break, ast::Compound, ast::Continue, ast::DeclStmt,
+                        ast::Defer, ast::DoWhile, ast::ExprStmt, ast::For,
+                        ast::If, ast::Preserve, ast::Return, ast::Switch,
+                        ast::Unreachable, ast::Visit, ast::While>(stmt);
+}
+
+Value Emitter::emit(ast::Compound &stmt) {
+  handleScope(nullptr, nullptr, [&] {
+    for (auto &subStmt : stmt.stmts)
+      if (emit(subStmt); hasTerminator()) break;
+  });
+  return Value();
+}
+
+Value Emitter::emit(ast::DoWhile &stmt) {
+  auto [blockLoop, blockCond, blockEnd] =
+      createBlocks<3>("do_while", {".loop", ".cond", ".end"});
+  builder.CreateBr(blockLoop);
+  handleLoopScope(blockLoop, blockCond, blockEnd, blockCond,
+                  [&] { emit(stmt.stmt); });
+  builder.SetInsertPoint(blockCond);
+  builder.CreateCondBr(
+      invoke(context.getBoolType(), emit(stmt.expr), stmt.expr->srcLoc),
+      blockLoop, blockEnd);
+  handleBlockEnd(blockEnd);
+  return Value();
+}
+
+Value Emitter::emit(ast::For &stmt) {
+  // The init statement opens its own scope, so 'for (int i = ...' may
+  // shadow an 'i' in the enclosing scope.
+  SMDL_PRESERVE(scope);
+  const size_t depth0{unwindStack.size()};
+  scope = pushScope(/*isTransparent=*/false);
+  auto [blockCond, blockLoop, blockNext, blockEnd] =
+      createBlocks<4>("for", {".cond", ".loop", ".next", ".end"});
+  if (stmt.stmtInit) emit(stmt.stmtInit);
+  builder.CreateBr(blockCond);
+  llvmMoveBlockToEnd(blockCond);
+  builder.SetInsertPoint(blockCond);
+  if (stmt.exprCond)
+    builder.CreateCondBr(invoke(context.getBoolType(), emit(stmt.exprCond),
+                                stmt.exprCond->srcLoc),
+                         blockLoop, blockEnd);
+  else
+    builder.CreateBr(blockLoop); // Empty condition is always true
+  handleLoopScope(blockLoop, blockNext, blockEnd, blockNext, [&] {
+    if (stmt.stmtLoop) emit(stmt.stmtLoop);
+  });
+  builder.SetInsertPoint(blockNext);
+  if (stmt.exprNext) emit(stmt.exprNext);
+  builder.CreateBr(blockCond);
+  handleBlockEnd(blockEnd);
+  if (!hasTerminator()) unwind(depth0);
+  unwindStack.resize(depth0);
+  return Value();
+}
+
+Value Emitter::emit(ast::If &stmt) {
+  Value cond{invoke(context.getBoolType(), emit(stmt.expr), stmt.srcLoc)};
+  if (cond.isComptimeInt()) {
+    handleScope(nullptr, nullptr, [&] {
+      if (cond.getComptimeInt())
+        emit(stmt.stmtThen);
+      else if (stmt.stmtElse)
+        emit(stmt.stmtElse);
+    });
+    return Value();
+  }
+  auto [blockThen, blockElse, blockEnd] =
+      createBlocks<3>("if", {".then", ".else", ".end"});
+  if (!stmt.stmtElse) blockElse->eraseFromParent();
+  builder.CreateCondBr(cond, blockThen, stmt.stmtElse ? blockElse : blockEnd);
+  if (stmt.stmtThen)
+    handleScope(blockThen, blockEnd, [&] { emit(stmt.stmtThen); });
+  if (stmt.stmtElse)
+    handleScope(blockElse, blockEnd, [&] { emit(stmt.stmtElse); });
+  handleBlockEnd(blockEnd);
+  return Value();
+}
+
+Value Emitter::emit(ast::Switch &stmt) {
+  std::string switchName{context.getUniqueName("switch", getLLVMFunction())};
+  llvm::StringRef switchNameRef{switchName};
+  llvm::BasicBlock *blockEnd{createBlock(switchNameRef + ".end")};
+  llvm::BasicBlock *blockDefault{};
+  struct SwitchCase final {
+    ast::Switch::Case *astCase{};
+    llvm::ConstantInt *llvmConst{};
+    llvm::BasicBlock *block{};
+  };
+  llvm::SmallVector<SwitchCase> switchCases{};
+  llvm::SmallDenseSet<int64_t> seenCaseValues{};
+  for (auto &astCase : stmt.cases) {
+    if (astCase.isDefault()) {
+      if (blockDefault)
+        stmt.srcLoc.throwError("Expected at most 1 'default' case in 'switch'");
+      switchCases.push_back(SwitchCase{
+          &astCase, nullptr, createBlock(switchNameRef + ".default")});
+      blockDefault = switchCases.back().block;
+    } else {
+      Value value{rvalue(emit(astCase.expr))};
+      // Convert bool/int-typed constants to 'int' so every case value has
+      // the switch condition's type, which the LLVM switch requires.
+      if (value.type->isArithmeticScalarInt())
+        value = invoke(context.getIntType(), value, astCase.expr->srcLoc);
+      llvm::ConstantInt *llvmConst{
+          llvm::dyn_cast_if_present<llvm::ConstantInt>(value.llvmValue)};
+      if (!llvmConst)
+        astCase.expr->srcLoc.throwError(
+            "Expected 'case' expression to resolve to compile-time int");
+      if (!seenCaseValues.insert(llvmConst->getValue().getSExtValue()).second)
+        astCase.expr->srcLoc.throwError("Duplicate 'case' value in 'switch'");
+      switchCases.push_back(SwitchCase{
+          &astCase, llvmConst,
+          createBlock(concat(switchName, ".case.", switchCases.size()))});
+    }
+  }
+  if (!blockDefault) blockDefault = blockEnd;
+  llvm::SwitchInst *switchInst{builder.CreateSwitch(
+      invoke(context.getIntType(), emit(stmt.expr), stmt.srcLoc),
+      blockDefault)};
+  handleScope(nullptr, blockEnd, [&] {
+    labelBreak = {unwindStack.size(), blockEnd};
+    for (size_t i = 0; i < switchCases.size(); i++) {
+      SwitchCase &switchCase{switchCases[i]};
+      if (switchCase.llvmConst)
+        switchInst->addCase(switchCase.llvmConst, switchCase.block);
+      builder.SetInsertPoint(switchCase.block);
+      // Each case is its own scope: the dispatch may jump directly to any
+      // case, past the declarations of the cases before it, so a
+      // declaration must not be visible beyond its own case, not even on
+      // fallthrough. Falling through unwinds the case scope like any other
+      // scope exit (and `handleScope` emits the fallthrough branch).
+      llvm::BasicBlock *blockNext{
+          i + 1 < switchCases.size() ? switchCases[i + 1].block : blockEnd};
+      handleScope(nullptr, blockNext, [&] {
+        for (auto &subStmt : switchCase.astCase->stmts)
+          if (emit(subStmt); hasTerminator()) break;
+      });
+    }
+  });
+  handleBlockEnd(blockEnd);
+  return Value();
+}
+
+Value Emitter::emit(ast::While &stmt) {
+  auto [blockCond, blockLoop, blockEnd] =
+      createBlocks<3>("while", {".cond", ".loop", ".end"});
+  builder.CreateBr(blockCond);
+  builder.SetInsertPoint(blockCond);
+  builder.CreateCondBr(
+      invoke(context.getBoolType(), emit(stmt.expr), stmt.expr->srcLoc),
+      blockLoop, blockEnd);
+  handleLoopScope(blockLoop, blockCond, blockEnd, blockCond,
+                  [&] { emit(stmt.stmt); });
+  handleBlockEnd(blockEnd);
+  return Value();
+}
+//--}
+
+//--{ emitOp (ast::UnaryOp)
+Value Emitter::emitOp(ast::UnaryOp op, Value value,
+                      const SourceLocation &srcLoc) {
+  if (value.isComptimeMetaType(context)) {
+    Type *type{value.getComptimeMetaType(context, srcLoc)};
+    switch (op) {
+    // Add pointer type, e.g., `&int`
+    case UNOP_ADDR:
+      return context.getComptimeMetaType(context.getPointerType(type));
+    // Remove pointer type, e.g., `*(&int)`
+    case UNOP_DEREF:
+      if (type->isPointer())
+        return context.getComptimeMetaType(type->getPointeeType());
+      srcLoc.throwError("Cannot dereference ", SpellQuoted(type->displayName));
+      break;
+    // Union with `void`, e.g., `?int`
+    case UNOP_MAYBE:
+      if (type->isVoid()) srcLoc.throwError("Cannot optionalize 'void'");
+      if (type->isAbstract())
+        srcLoc.throwError("Cannot optionalize abstract type ",
+                          SpellQuoted(type->displayName));
+      return context.getComptimeMetaType(
+          context.getUnionType({context.getVoidType(), type}));
+    default:
+      break;
+    }
+  } else {
+    // If the operator is a postfix increment or decrement,
+    // follow the C convention of returning the value before the
+    // operation is applied.
+    if ((op & UNOP_POSTFIX) == UNOP_POSTFIX) {
+      Value result{rvalue(value)}; // Save
+      emitOp(op & ~UNOP_POSTFIX, value, srcLoc);
+      return result;
+    }
+    // Unary increment or decrement, e.g., `++value` or `--value`
+    if (op == UNOP_INC || op == UNOP_DEC) {
+      // We can increment or decrement if the value is an arithmetic scalar,
+      // arithmetic vector, color, or pointer.
+      if (value.type->isArithmeticScalar() ||
+          value.type->isArithmeticVector() || value.type->isColor() ||
+          value.type->isPointer())
+        return emitOp(op == UNOP_INC ? BINOP_EQ_ADD : BINOP_EQ_SUB, value,
+                      context.getComptimeInt(1), srcLoc);
+      srcLoc.throwError("Cannot increment or decrement ",
+                        SpellQuoted(value.type->displayName));
+    }
+    // Unary positive, e.g., `+value`
+    if (op == UNOP_POS) {
+      return rvalue(value);
+    }
+    // Unary negative, e.g., `-value`
+    if (op == UNOP_NEG) {
+      if (value.type->isVectorized() && value.type->isArithmeticIntegral()) {
+        return RValue(value.type, builder.CreateNeg(rvalue(value)));
+      } else if (value.type->isVectorized()) {
+        return RValue(value.type, builder.CreateFNeg(rvalue(value)));
+      } else if (value.type->isArithmeticMatrix()) {
+        return emitOpColumnwise(value.type, [&](unsigned j) {
+          return emitOp(op, accessIndex(value, j, srcLoc), srcLoc);
+        });
+      } else if (value.type->isComplex(context)) {
+        return invoke("_complexNeg", value, srcLoc);
+      }
+    }
+    // Unary not, e.g., `~value`
+    if (op == UNOP_NOT) {
+      if ((value.type->isArithmeticScalar() ||
+           value.type->isArithmeticVector()) &&
+          value.type->isArithmeticIntegral()) {
+        return RValue(value.type, builder.CreateNot(rvalue(value)));
+      }
+    }
+    // Unary logic not, e.g., `!value`
+    if (op == UNOP_LOGIC_NOT) {
+      if (value.isVoid()) return context.getComptimeBool(true);
+      if (value.type->isArithmetic() || value.type->isColor() ||
+          value.type->isPointer() || value.type->isEnum())
+        return emitOp(BINOP_CMP_EQ, value, Value::zero(value.type), srcLoc);
+      if (value.type->isOptionalUnion())
+        return emitOp(UNOP_LOGIC_NOT,
+                      invoke(context.getBoolType(), value, srcLoc), srcLoc);
+    }
+    // Unary address, e.g., `&value`
+    if (op == UNOP_ADDR) {
+      // This must come first: after it, the value is an rvalue anyway, and
+      // the rvalue message below says nothing about why.
+      if (value.isVoid())
+        srcLoc.throwError("Cannot take address of 'void'; a voided field "
+                          "occupies no storage");
+      if (!value.isLValue()) srcLoc.throwError("Cannot take address of rvalue");
+      return RValue(context.getPointerType(value.type), value);
+    }
+    // Unary dereference, e.g., `*value`
+    if (op == UNOP_DEREF) {
+      if (value.type->isPointer())
+        return LValue(value.type->getPointeeType(), rvalue(value));
+      if (value.type->isOptionalUnion()) {
+        if (value.isRValue()) {
+          Value lv{lvalue(value)};
+          Value rv{rvalue(emitOp(op, lv, srcLoc))};
+          createLifetimeEnd(lv);
+          return rv;
+        }
+        return LValue(
+            context.getUnionType(llvm::ArrayRef(
+                static_cast<UnionType *>(value.type)->caseTypes.data(),
+                static_cast<UnionType *>(value.type)->caseTypes.size() - 1)),
+            value.llvmValue);
+      }
+    }
+  }
+  srcLoc.throwError("No unary operator ", SpellQuoted(to_string(op)),
+                    " for type ", SpellQuoted(value.type->displayName));
+}
+//--}
+
+//--{ Helper: llvmArithOp
+namespace {
+[[nodiscard]] std::optional<llvm::Instruction::BinaryOps>
+llvmArithOp(Scalar::Intent intent, ast::BinaryOp op) {
+  if (intent == Scalar::Intent::Int) {
+    switch (op) {
+    case BINOP_ADD:
+      return llvm::Instruction::Add;
+    case BINOP_SUB:
+      return llvm::Instruction::Sub;
+    case BINOP_MUL:
+      return llvm::Instruction::Mul;
+    case BINOP_DIV:
+      return llvm::Instruction::SDiv;
+    case BINOP_REM:
+      return llvm::Instruction::SRem;
+    case BINOP_AND:
+      return llvm::Instruction::And;
+    case BINOP_OR:
+      return llvm::Instruction::Or;
+    case BINOP_XOR:
+      return llvm::Instruction::Xor;
+    case BINOP_SHL:
+      return llvm::Instruction::Shl;
+    case BINOP_ASHR:
+      return llvm::Instruction::AShr;
+    case BINOP_LSHR:
+      return llvm::Instruction::LShr;
+    default:
+      break;
+    }
+  } else if (intent == Scalar::Intent::FP) {
+    switch (op) {
+    case BINOP_ADD:
+      return llvm::Instruction::FAdd;
+    case BINOP_SUB:
+      return llvm::Instruction::FSub;
+    case BINOP_MUL:
+      return llvm::Instruction::FMul;
+    case BINOP_DIV:
+      return llvm::Instruction::FDiv;
+    case BINOP_REM:
+      return llvm::Instruction::FRem;
+    default:
+      break;
+    }
+  }
+  return std::nullopt;
+}
+} // namespace
+//--}
+
+//--{ Helper: throwIfDividingByZero
+namespace {
+// LLVM makes integer division and remainder by zero poison, which silently
+// corrupts the program instead of failing it. A constant divisor is the case
+// the compiler can see for itself, so refuse it here.
+void throwIfDividingByZero(ast::BinaryOp op, llvm::Value *rhs,
+                           const SourceLocation &srcLoc) {
+  if (op != BINOP_DIV && op != BINOP_REM) return;
+  llvm::Constant *constant{llvm::dyn_cast_if_present<llvm::Constant>(rhs)};
+  if (!constant) return;
+  bool isZero{[&]() {
+    if (constant->isNullValue()) return true;
+    // A vector divisor is poison if any lane is zero, not only if all are.
+    if (llvm::FixedVectorType *
+        vectorType{
+            llvm::dyn_cast<llvm::FixedVectorType>(constant->getType())}) {
+      for (unsigned i{}; i < vectorType->getNumElements(); i++)
+        if (llvm::Constant *element{constant->getAggregateElement(i)};
+            element && element->isNullValue())
+          return true;
+    }
+    return false;
+  }()};
+  if (isZero)
+    srcLoc.throwError(op == BINOP_DIV ? "integer division by zero"
+                                      : "integer remainder by zero");
+}
+} // namespace
+//--}
+
+//--{ Helper: llvmCmpOp
+namespace {
+[[nodiscard]] std::optional<llvm::CmpInst::Predicate>
+llvmCmpOp(Scalar::Intent intent, ast::BinaryOp op, bool isSigned = true) {
+  if (intent == Scalar::Intent::Int) {
+    switch (op) {
+    case BINOP_CMP_EQ:
+      return llvm::CmpInst::ICMP_EQ;
+    case BINOP_CMP_NE:
+      return llvm::CmpInst::ICMP_NE;
+    case BINOP_CMP_LT:
+      return !isSigned ? llvm::CmpInst::ICMP_ULT : llvm::CmpInst::ICMP_SLT;
+    case BINOP_CMP_LE:
+      return !isSigned ? llvm::CmpInst::ICMP_ULE : llvm::CmpInst::ICMP_SLE;
+    case BINOP_CMP_GT:
+      return !isSigned ? llvm::CmpInst::ICMP_UGT : llvm::CmpInst::ICMP_SGT;
+    case BINOP_CMP_GE:
+      return !isSigned ? llvm::CmpInst::ICMP_UGE : llvm::CmpInst::ICMP_SGE;
+    default:
+      break;
+    }
+  } else if (intent == Scalar::Intent::FP) {
+    switch (op) {
+    case BINOP_CMP_EQ:
+      return llvm::CmpInst::FCMP_OEQ;
+    case BINOP_CMP_NE:
+      return llvm::CmpInst::FCMP_ONE;
+    case BINOP_CMP_LT:
+      return llvm::CmpInst::FCMP_OLT;
+    case BINOP_CMP_LE:
+      return llvm::CmpInst::FCMP_OLE;
+    case BINOP_CMP_GT:
+      return llvm::CmpInst::FCMP_OGT;
+    case BINOP_CMP_GE:
+      return llvm::CmpInst::FCMP_OGE;
+    default:
+      break;
+    }
+  }
+  return std::nullopt;
+}
+} // namespace
+//--}
+
+//--{ emitOp (ast::BinaryOp)
+Value Emitter::emitOp(ast::BinaryOp op, Value lhs, Value rhs,
+                      const SourceLocation &srcLoc) {
+  if (op == BINOP_COMMA) return rhs;
+  if ((op & BINOP_EQ) == BINOP_EQ) {
+    if (!lhs.isLValue())
+      srcLoc.throwError("Cannot apply ", SpellQuoted(to_string(op)),
+                        " to rvalue");
+    if (op != BINOP_EQ) rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
+    createStore(invoke(lhs.type, rhs, srcLoc), lhs);
+    return lhs;
+  }
+  lhs = rvalue(lhs);
+  rhs = rvalue(rhs);
+  // Numbers
+  if (lhs.type->isArithmetic() && rhs.type->isArithmetic()) {
+    ArithmeticType *lhsType{static_cast<ArithmeticType *>(lhs.type)};
+    ArithmeticType *rhsType{static_cast<ArithmeticType *>(rhs.type)};
+    // Scalar and vector operations
+    if ((lhsType->extent.isScalar() && rhsType->extent.isScalar()) ||
+        (lhsType->extent.isScalar() && rhsType->extent.isVector()) ||
+        (lhsType->extent.isVector() && rhsType->extent.isScalar()) ||
+        (lhsType->extent.isVector() && lhsType->extent == rhsType->extent)) {
+      ArithmeticType *commonType{lhsType->getCommonType(context, rhsType)};
+      lhs = invoke(commonType, lhs, srcLoc);
+      rhs = invoke(commonType, rhs, srcLoc);
+      if (std::optional<llvm::Instruction::BinaryOps> llvmOp{
+              llvmArithOp(commonType->scalar.intent, op)}) {
+        if (commonType->scalar.intent == Scalar::Intent::Int)
+          throwIfDividingByZero(op, rhs, srcLoc);
+        return RValue(commonType, builder.CreateBinOp(*llvmOp, lhs, rhs));
+      }
+      if (std::optional<llvm::CmpInst::Predicate> llvmOp{
+              llvmCmpOp(commonType->scalar.intent, op)})
+        return RValue(
+            commonType->getWithDifferentScalar(context, Scalar::getBool()),
+            builder.CreateCmp(*llvmOp, lhs, rhs));
+    }
+    // Matrix-Matrix (ADD, SUB)
+    if ((op == BINOP_ADD || op == BINOP_SUB) && //
+        lhsType->extent.isMatrix() &&           //
+        lhsType->extent == rhsType->extent) {
+      return emitOpColumnwise(lhsType->getCommonType(context, rhsType),
+                              [&](unsigned j) {
+                                Value lhsColumn{accessIndex(lhs, j, srcLoc)};
+                                Value rhsColumn{accessIndex(rhs, j, srcLoc)};
+                                return emitOp(op, lhsColumn, rhsColumn, srcLoc);
+                              });
+    }
+    // Matrix-Scalar (MUL, DIV, REM)
+    if ((op == BINOP_MUL || op == BINOP_DIV || op == BINOP_REM) && //
+        lhsType->extent.isMatrix() &&                              //
+        rhsType->extent.isScalar()) {
+      ArithmeticType *commonType{lhsType->getCommonType(context, rhsType)};
+      Value scalarAsColumn{
+          invoke(commonType->getColumnType(context), rhs, srcLoc)};
+      return emitOpColumnwise(commonType, [&](unsigned j) {
+        return emitOp(op, accessIndex(lhs, j, srcLoc), scalarAsColumn, srcLoc);
+      });
+    }
+    // Matrix-Matrix or Matrix-Vector (MUL)
+    if ((op == BINOP_MUL) && lhsType->extent.isMatrix() &&
+        (rhsType->extent.isMatrix() || rhsType->extent.isVector()) &&
+        (lhsType->extent.numCols == rhsType->extent.numRows)) {
+      Scalar scalar{lhsType->scalar.getCommon(rhsType->scalar)};
+      lhs =
+          invoke(lhsType->getWithDifferentScalar(context, scalar), lhs, srcLoc);
+      rhs =
+          invoke(rhsType->getWithDifferentScalar(context, scalar), rhs, srcLoc);
+      uint16_t extentM{lhsType->extent.numRows};
+      uint16_t extentN{lhsType->extent.numCols};
+      uint16_t extentP{rhsType->extent.numCols};
+      Value result{Value::zero(
+          context.getArithmeticType(scalar, Extent(extentP, extentM)))};
+      llvm::SmallVector<Value> lhsColumns{
+          llvm::SmallVector<Value>(size_t(extentN))};
+      for (unsigned k = 0; k < extentN; k++)
+        lhsColumns[k] = accessIndex(lhs, k, srcLoc);
+      for (unsigned j = 0; j < extentP; j++) {
+        Value rhsColumn{extentP == 1 ? rhs : accessIndex(rhs, j, srcLoc)};
+        auto resColumnTerm{[&](unsigned k) {
+          return emitOp(BINOP_MUL, lhsColumns[k],
+                        accessIndex(rhsColumn, k, srcLoc), srcLoc);
+        }};
+        Value resColumn{resColumnTerm(0)};
+        for (unsigned k = 1; k < extentN; k++)
+          resColumn = emitOp(BINOP_ADD, resColumn, resColumnTerm(k), srcLoc);
+        result = extentP == 1 //
+                     ? resColumn
+                     : insert(result, resColumn, j, srcLoc);
+      }
+      return result;
+    }
+    // Vector-Matrix (MUL)
+    if ((op == BINOP_MUL) && lhsType->extent.isVector() &&
+        rhsType->extent.isMatrix() &&
+        lhsType->extent.numRows == rhsType->extent.numRows) {
+      // Row-vector times matrix is 'transpose(matrix) * vector'. Emitting
+      // the transpose (a few shuffles, CSE'd across transforms by the same
+      // matrix) lets the multiply lower to vertical splat-multiply-adds
+      // like Matrix-Vector above, instead of one horizontal '#sum'
+      // reduction per output component.
+      return emitOp(op, emitIntrinsic("transpose", rhs, srcLoc), lhs, srcLoc);
+    }
+  }
+  // Enums
+  if (lhs.type->isEnum() && rhs.type->isEnum()) {
+    if (std::optional<llvm::Instruction::BinaryOps> llvmOp{
+            llvmArithOp(Scalar::Intent::Int, op)};
+        llvmOp && lhs.type == rhs.type) {
+      throwIfDividingByZero(op, rhs, srcLoc);
+      // NOTE: The result stays enum-typed even though it need not be a
+      // declared enumerator; flag-mask idioms like '(mode & m) == flag'
+      // depend on this.
+      return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
+    }
+    if (std::optional<llvm::CmpInst::Predicate> llvmOp{
+            llvmCmpOp(Scalar::Intent::Int, op)}) {
+      if (lhs.type != rhs.type)
+        srcLoc.throwError("Cannot compare different enum types ",
+                          SpellQuoted(lhs.type->displayName), " and ",
+                          SpellQuoted(rhs.type->displayName));
+      return RValue(context.getBoolType(),
+                    builder.CreateCmp(*llvmOp, lhs, rhs));
+    }
+  }
+  // Colors
+  if ((lhs.type->isColor() &&
+       (rhs.type->isColor() || rhs.type->isArithmeticScalar())) ||
+      (lhs.type->isArithmeticScalar() && rhs.type->isColor())) {
+    if (std::optional<llvm::Instruction::BinaryOps> llvmOp{
+            llvmArithOp(Scalar::Intent::FP, op)}) {
+      lhs = invoke(context.getColorType(), lhs, srcLoc);
+      rhs = invoke(context.getColorType(), rhs, srcLoc);
+      return RValue(context.getColorType(),
+                    builder.CreateBinOp(*llvmOp, lhs, rhs));
+    }
+    if (std::optional<llvm::CmpInst::Predicate> llvmCmpOpResult{
+            llvmCmpOp(Scalar::Intent::FP, op)}) {
+      lhs = invoke(context.getColorType(), lhs, srcLoc);
+      rhs = invoke(context.getColorType(), rhs, srcLoc);
+      ArithmeticType *resultType{
+          context.getColorType()
+              ->getArithmeticVectorType(context)
+              ->getWithDifferentScalar(context, Scalar::getBool())};
+      llvm::Value *llvmResult{builder.CreateCmp(*llvmCmpOpResult, lhs, rhs)};
+      // A 1-wide 'color' still lowers to '<1 x float>', but the type
+      // system has no 1-wide arithmetic vector, so the result type here
+      // is scalar 'bool' and the '<1 x i1>' must be reduced to match.
+      if (resultType->extent.isScalar())
+        llvmResult = builder.CreateExtractElement(llvmResult, uint64_t(0));
+      return RValue(resultType, llvmResult);
+    }
+  }
+  // Complex numbers
+  if (lhs.type->isComplex(context) || rhs.type->isComplex(context)) {
+    // Promote both to `complex`
+    lhs = invoke(context.getComplexType(), lhs, srcLoc);
+    rhs = invoke(context.getComplexType(), rhs, srcLoc);
+    const char *funcName{op == BINOP_ADD   ? "_complexAdd"
+                         : op == BINOP_SUB ? "_complexSub"
+                         : op == BINOP_MUL ? "_complexMul"
+                         : op == BINOP_DIV ? "_complexDiv"
+                                           : nullptr};
+    if (funcName) return invoke(funcName, {lhs, rhs}, srcLoc);
+  }
+  // Strings
+  if (lhs.type->isString() && rhs.type->isString() &&
+      (op == BINOP_CMP_EQ || op == BINOP_CMP_NE)) {
+    // Compare size+1 bytes so the NUL terminator participates; otherwise
+    // a prefix would compare equal to a longer string.
+    llvm::Value *result{llvm::emitStrNCmp(
+        lhs, rhs,
+        builder.CreateAdd(llvmEmitCast(builder,
+                                       accessField(lhs, "size", srcLoc),
+                                       builder.getInt64Ty()),
+                          builder.getInt64(1)),
+        builder, context.llvmLayout, &context.llvmTargetLibraryInfo)};
+    return RValue(context.getBoolType(), op == BINOP_CMP_EQ
+                                             ? builder.CreateIsNull(result)
+                                             : builder.CreateIsNotNull(result));
+  }
+  // Pointers
+  if ((op == BINOP_ADD || op == BINOP_SUB) && lhs.type->isPointer() &&
+      rhs.type->isArithmeticScalarInt()) {
+    if (op == BINOP_SUB) rhs = emitOp(UNOP_NEG, rhs, srcLoc);
+    return RValue(lhs.type,
+                  builder.CreateGEP(lhs.type->getPointeeType()->llvmType, lhs,
+                                    {rhs.llvmValue}));
+  }
+  if (lhs.type->isPointer() && rhs.type->isPointer()) {
+    if (op == BINOP_SUB) {
+      if (lhs.type != rhs.type)
+        srcLoc.throwError(
+            "Pointer subtraction requires both pointers to be the same type");
+      return RValue(context.getIntType(),
+                    builder.CreateIntCast(
+                        builder.CreatePtrDiff(
+                            lhs.type->getPointeeType()->llvmType, lhs, rhs),
+                        context.getIntType()->llvmType, /*isSigned=*/true));
+    }
+    if (std::optional<llvm::CmpInst::Predicate> llvmOp{
+            llvmCmpOp(Scalar::Intent::Int, op, /*isSigned=*/false)}) {
+      llvm::IntegerType *intPtrTy{builder.getIntNTy(sizeof(void *) * 8)};
+      return RValue(context.getBoolType(),
+                    builder.CreateCmp(*llvmOp,                               //
+                                      builder.CreatePtrToInt(lhs, intPtrTy), //
+                                      builder.CreatePtrToInt(rhs, intPtrTy)));
+    }
+  }
+  // Types
+  if (lhs.type == context.getMetaTypeType() && //
+      rhs.type == context.getMetaTypeType()) {
+    if (std::optional<llvm::CmpInst::Predicate> llvmOp{
+            llvmCmpOp(Scalar::Intent::Int, op)})
+      return RValue(context.getBoolType(),
+                    builder.CreateCmp(*llvmOp, lhs, rhs));
+    if (lhs.isComptime() && rhs.isComptime()) {
+      Type *lhsTy{lhs.getComptimeMetaType(context, srcLoc)};
+      Type *rhsTy{rhs.getComptimeMetaType(context, srcLoc)};
+      if (op == BINOP_OR)
+        return context.getComptimeMetaType(
+            context.getUnionType({lhsTy, rhsTy}));
+      if (op == BINOP_SUBSET)
+        return context.getComptimeBool(
+            context.isPerfectlyConvertible(lhsTy, rhsTy));
+    }
+  }
+  // Type-checking
+  if (lhs.type != context.getMetaTypeType() && //
+      rhs.type == context.getMetaTypeType() && op == BINOP_SUBSET) {
+    if (rhs.isComptime()) {
+      Type *lhsTy{lhs.type};
+      Type *rhsTy{rhs.getComptimeMetaType(context, srcLoc)};
+      return context.getComptimeBool(
+          context.isPerfectlyConvertible(lhsTy, rhsTy));
+    }
+  }
+  // Two matrices that do not compose are the common case here, and saying
+  // only that there is no operator reads as a missing feature rather than
+  // as the shape mismatch it is.
+  std::string note{};
+  if (op == BINOP_MUL && lhs.type->isArithmeticMatrix() &&
+      rhs.type->isArithmeticMatrix()) {
+    const Extent &lhsExtent{static_cast<ArithmeticType *>(lhs.type)->extent};
+    const Extent &rhsExtent{static_cast<ArithmeticType *>(rhs.type)->extent};
+    note = concat("; matrix multiplication needs the columns of the left (",
+                  lhsExtent.numCols, ") to match the rows of the right (",
+                  rhsExtent.numRows, ")");
+  }
+  srcLoc.throwError("No binary operator ", SpellQuoted(to_string(op)),
+                    " for argument types ", SpellQuoted(lhs.type->displayName),
+                    " and ", SpellQuoted(rhs.type->displayName), note);
+}
+//--}
+
+namespace {
+// Round an alignment request up to something every aligned allocator
+// accepts: a power of two that is at least 'sizeof(void *)'. Over-aligning
+// is always safe for the caller, who asked for *at least* this alignment,
+// and '#alloc(size, align)' takes both arguments straight from user source,
+// so neither is guaranteed to be sane on the way in.
+[[nodiscard]] size_t normalizeAlignment(size_t align) noexcept {
+  size_t result{sizeof(void *)};
+  while (result < align) result <<= 1;
+  return result;
+}
+
+// NOTE: Deliberately not 'std::aligned_alloc'. The Microsoft STL does not
+// provide it at all (their 'free()' cannot release an aligned allocation),
+// Apple only declares it for deployment targets of macOS 10.15 or later,
+// and C11 additionally requires the size to be an integral multiple of the
+// alignment, which nothing here guarantees.
+[[nodiscard]] void *alignedAllocate(size_t size, size_t align) noexcept {
+#if defined(_WIN32)
+  return _aligned_malloc(size, align);
+#else
+  void *ptr{};
+  return ::posix_memalign(&ptr, align, size) == 0 ? ptr : nullptr;
+#endif // #if defined(_WIN32)
+}
+
+void alignedFree(void *ptr) noexcept {
+#if defined(_WIN32)
+  _aligned_free(ptr);
+#else
+  std::free(ptr);
+#endif // #if defined(_WIN32)
+}
+} // namespace
+
+extern "C" {
+
+SMDL_EXPORT void *smdlAllocate(int size, int align) {
+  SMDL_SANITY_CHECK(align > 0);
+  if (!(size > 0)) return nullptr;
+  void *ptr{alignedAllocate(size_t(size), normalizeAlignment(size_t(align)))};
+  if (!ptr) throw std::bad_alloc();
+  std::memset(ptr, 0x0, size);
+  return ptr;
+}
+
+// NOTE: Must pair with 'alignedAllocate' above. On Windows in particular,
+// 'std::free' cannot release memory from '_aligned_malloc'.
+SMDL_EXPORT void smdlFree(void *ptr) { alignedFree(ptr); }
+
+// Takes the allocator rather than the state it was read from, so that the
+// IR of a '#bump' says exactly what it reads of the state (see
+// 'readsOnlyPathConstantState' in 'Compiler.cc'). Never null: the wrappers
+// mark every pointer that crosses the JIT boundary 'nonnull', and a
+// '#bump' of an empty struct (a default 'vdf()') must satisfy that too.
+SMDL_EXPORT void *smdlBumpAllocate(void *allocator, int size, int align) {
+  SMDL_SANITY_CHECK_MSG(allocator != nullptr, "allocator cannot be null!");
+  SMDL_SANITY_CHECK(align > 0);
+  return static_cast<BumpPtrAllocator *>(allocator)->allocate(
+      size_t(std::max(size, 1)), size_t(align));
+}
+
+// TODO This is a specific solution to a specific problem of calculating
+// tabulated albedos conveniently and efficiently. There might be a more
+// general way of addressing this in the future.
+SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int numCosTheta,
+                                    int numRoughness, const void *func) {
+  SMDL_SANITY_CHECK(numCosTheta > 1);
+  SMDL_SANITY_CHECK(numRoughness > 1);
+  SMDL_SANITY_CHECK(func);
+  size_t numCalculationsTodo{size_t(numCosTheta) * size_t(numRoughness)};
+  std::atomic<int> numCalculationsDone{std::atomic_int(0)};
+  std::vector<float> directionalAlbedo{
+      std::vector<float>(numCalculationsTodo, 0.0f)};
+  // The JIT'd function may throw (e.g. '#panic'), and an exception must
+  // not unwind out of 'parallelFor'. Capture the first one and rethrow
+  // it on the calling thread.
+  std::__exception_ptr::exception_ptr firstException{std::exception_ptr{}};
+  std::mutex firstExceptionMutex{};
+  parallelFor(0, numCosTheta, [&](size_t i) {
+    try {
+      float cosTheta{float(i) / float(numCosTheta - 1)};
+      for (int j = 0; j < numRoughness; j++) {
+        float roughness{float(j) / float(numRoughness - 1)};
+        directionalAlbedo[i * size_t(numRoughness) + size_t(j)] =
+            reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
+                cosTheta, roughness);
+        llvm::errs() << llvm::format(
+            "\rTabulating '%s': %2.1f%%", name,
+            float(double(++numCalculationsDone) * 100.0 /
+                  double(numCalculationsTodo)));
+      }
+    } catch (...) {
+      std::lock_guard<std::mutex> lock{
+          std::lock_guard<std::mutex>(firstExceptionMutex)};
+      if (!firstException) firstException = std::current_exception();
+    }
+  });
+  if (firstException) std::rethrow_exception(firstException);
+  llvm::errs() << '\n';
+  {
+    std::error_code ec{};
+    std::string outputFileName{std::string(name) + ".inl"};
+    llvm::raw_fd_stream outputFile{outputFileName, ec};
+    if (ec) {
+      llvm::errs() << "cannot open '" << outputFileName
+                   << "' for writing: " << ec.message() << '\n';
+      return;
+    }
+    outputFile << llvm::format(
+        "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
+        numCosTheta, numRoughness, name);
+    for (int i = 0; i < numCosTheta; i++) {
+      for (int j = 0; j < numRoughness; j++) {
+        outputFile << llvm::format("%1.7ef, ",
+                                   directionalAlbedo[i * numRoughness + j]);
+      }
+      outputFile << '\n';
+    }
+    outputFile << "};\n";
+    outputFile << llvm::format(
+        "static const std::array<float, %d> %s_average_albedo = {\n",
+        numRoughness, name);
+    for (int j = 0; j < numRoughness; j++) {
+      double numer = 0.0;
+      double denom = 0.0;
+      for (int i = 0; i < numCosTheta; i++) {
+        float cosTheta{float(i) / float(numCosTheta - 1)};
+        numer += 2 * cosTheta * directionalAlbedo[i * numRoughness + j];
+        denom += 1;
+      }
+      outputFile << llvm::format("%1.7ef, ", numer / denom);
+    }
+    outputFile << "};\n";
+    outputFile << llvm::format(
+        "static const AlbedoLUT %s = {%d, %d, %s_directional_albedo.data(), "
+        "%s_average_albedo.data()};\n",
+        name, numCosTheta, numRoughness, name, name);
+  }
+  {
+    std::error_code ec{};
+    std::string outputFileName{std::string(name) + ".txt"};
+    llvm::raw_fd_stream outputFile{outputFileName, ec};
+    for (int i = 0; i < numCosTheta; i++) {
+      for (int j = 0; j < numRoughness; j++) {
+        outputFile << llvm::format("%1.7e ",
+                                   directionalAlbedo[i * numRoughness + j]);
+      }
+      outputFile << '\n';
+    }
+  }
+}
+
+} // extern "C"
+
+//--{ emitIntrinsic
+IntrinsicID Emitter::resolveIntrinsic(std::string_view name,
+                                      const SourceLocation &srcLoc) {
+  // The parser accepts any '#word', so this is where a misspelling is caught.
+  // The registry makes it cheap to guess what was meant.
+  IntrinsicID intrinsicID{getIntrinsicByName(name)};
+  if (intrinsicID == IntrinsicID::Invalid) {
+    std::string_view similar{getSimilarIntrinsicName(name)};
+    // The name is quoted with its '#' because that is how it is written.
+    if (!similar.empty())
+      srcLoc.throwError("No intrinsic ", SpellQuoted(concat("#", name)),
+                        "; did you mean ", SpellQuoted(concat("#", similar)),
+                        "?");
+    srcLoc.throwError("No intrinsic ", SpellQuoted(concat("#", name)));
+  }
+  return intrinsicID;
+}
+
+llvm::Value *Emitter::tryConstantFold(llvm::Value *llvmValue) {
+  llvm::Instruction *inst{
+      llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
+  if (!inst || !inst->use_empty()) return llvmValue;
+  for (auto &operand : inst->operands())
+    if (!llvm::isa<llvm::Constant>(operand)) return llvmValue;
+  if (llvm::Constant *
+      folded{llvm::ConstantFoldInstruction(inst, context.llvmLayout)}) {
+    // With no insert point, the builder constructs instructions without
+    // inserting them anywhere, so there may be no parent to erase from.
+    if (inst->getParent())
+      inst->eraseFromParent();
+    else
+      inst->deleteValue();
+    return folded;
+  }
+  return llvmValue;
+}
+
+Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+  return emitIntrinsic(resolveIntrinsic(name, srcLoc), args, srcLoc);
+}
+
+Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+  const std::string_view name{getIntrinsicName(intrinsicID)};
+  if (args.isAnyNamed())
+    srcLoc.throwError("Intrinsics expect only unnamed arguments");
+  if (!getLLVMFunction()) {
+    // At module scope there is no function to emit instructions into. Run
+    // the intrinsic in a scratch function so the IRBuilder cannot crash,
+    // then require that everything constant-folded away.
+    llvm::Function *scratchFunc{llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                /*isVarArg=*/false),
+        llvm::Function::PrivateLinkage, ".module_scope_intrinsic",
+        &context.llvmModule)};
+    llvm::BasicBlock *blockEntry{
+        llvm::BasicBlock::Create(context.llvmContext, "entry", scratchFunc)};
+    llvm::IRBuilderBase::InsertPoint ip{builder.saveIP()};
+    SMDL_DEFER([&] {
+      builder.restoreIP(ip);
+      scratchFunc->eraseFromParent();
+    });
+    builder.SetInsertPoint(blockEntry);
+    Value value{emitIntrinsic(intrinsicID, args, srcLoc)};
+    if (scratchFunc->size() > 1 || !blockEntry->empty())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " does not resolve to a compile-time constant and "
+                        "cannot be used at module scope");
+    return value;
+  }
+  auto expectOne{[&]() {
+    if (args.size() != 1)
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name), " expects 1 argument");
+    return args[0].value;
+  }};
+  auto expectOneVectorized{[&]() {
+    if (args.size() != 1 || !args[0].value.type->isVectorized())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 vectorized argument");
+    return args[0].value;
+  }};
+  auto expectOneIntOrIntVector{[&]() {
+    if (args.size() != 1 ||                    //
+        !args[0].value.type->isVectorized() || //
+        !args[0].value.type->isArithmeticIntegral())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 int or int vector argument");
+    return args[0].value;
+  }};
+  auto expectOneType{[&]() {
+    Value value{rvalue(expectOne())};
+    return value.isComptimeMetaType(context)
+               ? value.getComptimeMetaType(context, srcLoc)
+               : value.type;
+  }};
+  auto scalarTypeOf{[&](Type *type) -> ArithmeticType * {
+    if (type->isColor())
+      return static_cast<ColorType *>(type)->getArithmeticScalarType(context);
+    if (type->isArithmetic())
+      return static_cast<ArithmeticType *>(type)->getScalarType(context);
+    SMDL_SANITY_CHECK(false);
+    return nullptr;
+  }};
+  // '#heapAllocate' and '#bumpAllocate' expect '(size)' or '(size, align)'
+  // int arguments.
+  auto expectSizeAndAlign{[&]() {
+    Value arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
+    Value arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
+    if (!(args.size() == 1 || args.size() == 2) ||
+        !arg0.type->isArithmeticScalarInt() ||
+        !arg1.type->isArithmeticScalarInt())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 or 2 int arguments");
+    Type *intType{context.getIntType()};
+    return std::pair{invoke(intType, rvalue(arg0), srcLoc),
+                     invoke(intType, rvalue(arg1), srcLoc)};
+  }};
+  auto emitAllocateCall{[&](llvm::FunctionCallee callee) {
+    if (llvm::Function *
+        func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+      func->setReturnDoesNotAlias();
+    auto [size, align] = expectSizeAndAlign();
+    return RValue(
+        context.getVoidPointerType(),
+        builder.CreateCall(callee, {size.llvmValue, align.llvmValue}));
+  }};
+  // Shared by '#bump' and '#bumpAllocate'.
+  auto emitBumpAllocate{[&](Value size, Value align) {
+    if (!state)
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " requires '$state' and cannot be used in '@(pure)' "
+                        "context");
+    llvm::FunctionCallee callee{
+        context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
+    if (llvm::Function *
+        func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+      func->setReturnDoesNotAlias();
+    // The allocator is loaded here and passed on its own, so that the
+    // call reads nothing else of the state as far as the IR can tell.
+    Value allocator{rvalue(accessField(state, "allocator", srcLoc))};
+    return RValue(
+        context.getVoidPointerType(),
+        builder.CreateCall(
+            callee, {allocator.llvmValue, size.llvmValue, align.llvmValue}));
+  }};
+  switch (intrinsicID) {
+  case IntrinsicID::Invalid:
+    break;
+  case IntrinsicID::AlignOf: {
+    return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
+  }
+  case IntrinsicID::Abs: {
+    // Intercept instances of `complex` and forward appropriately.
+    if (args.size() == 1 && args[0].value.type->isComplex(context)) {
+      return invoke("_complexAbs", args, srcLoc);
+    }
+    Value value{rvalue(expectOneVectorized())};
+    return RValue(
+        value.type,
+        tryConstantFold(
+            value.type->isArithmeticIntegral()
+                ? builder.CreateBinaryIntrinsic(llvm::Intrinsic::abs, value,
+                                                context.getComptimeBool(false))
+                : builder.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, value)));
+  }
+  case IntrinsicID::Any:
+  case IntrinsicID::All: {
+    Value value{expectOne()};
+    if (!value.type->isArithmeticScalar() && !value.type->isArithmeticVector())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 scalar or vector argument");
+    value = invoke(static_cast<ArithmeticType *>(value.type)
+                       ->getWithDifferentScalar(context, Scalar::getBool()),
+                   value, srcLoc);
+    if (value.type->isArithmeticScalar()) return value;
+    return RValue(context.getBoolType(),
+                  tryConstantFold(builder.CreateUnaryIntrinsic(
+                      intrinsicID == IntrinsicID::Any
+                          ? llvm::Intrinsic::vector_reduce_or
+                          : llvm::Intrinsic::vector_reduce_and,
+                      value)));
+  }
+  case IntrinsicID::Assert: {
+    if (!((args.size() == 1 && args[0].value.type == context.getBoolType()) ||
+          (args.size() == 2 && args[0].value.type == context.getBoolType() &&
+           args[1].value.type == context.getStringType())))
+      srcLoc.throwError("Intrinsic 'assert' expects 1 bool argument and 1 "
+                        "optional string argument");
+    Value cond{rvalue(args[0].value)};
+    // A condition that folds is decided here and now: a true assertion
+    // emits nothing at all, and a false one is a compile-time error
+    // naming the offending source location.
+    //
+    // Deciding it here is what makes the false case reportable. Left to
+    // the runtime path below, the panic is only as good as the program's
+    // reaching it: it loses the source location, and in a compile-time
+    // context (a macro expanded into a module-scope initializer, say)
+    // the whole branch folds away and the assertion says nothing at all.
+    //
+    // This only fires for code that is actually emitted, so an assertion
+    // in the untaken branch of an 'if $(...)' still costs nothing and
+    // says nothing.
+    if (cond.isComptimeInt()) {
+      if (cond.getComptimeInt()) return Value();
+      // The message is only usable here if it is itself compile-time.
+      // A runtime string falls back to the source of the condition,
+      // the same text the runtime panic below would report.
+      if (args.size() == 2 && args[1].value.isComptimeString())
+        srcLoc.throwError(std::string(args[1].value.getComptimeString()));
+      if (!args[0].getSource().empty())
+        srcLoc.throwError("Assertion failed: ", args[0].getSource());
+      srcLoc.throwError("Assertion failed");
+    }
+    auto [blockPanic, blockOK] = createBlocks<2>("assert", {".panic", ".ok"});
+    builder.CreateCondBr(cond, blockOK, blockPanic);
+    builder.SetInsertPoint(blockPanic);
+    handleScope(nullptr, nullptr, [&] {
+      if (args.size() == 1) {
+        std::string message{"Assertion failed"};
+        if (!args[0].getSource().empty()) {
+          message += ": ";
+          message += args[0].getSource();
+        }
+        emitPanic(context.getComptimeString(message), srcLoc);
+      } else {
+        emitPanic(rvalue(args[1].value), srcLoc);
+      }
+    });
+    builder.CreateBr(blockOK);
+    builder.SetInsertPoint(blockOK);
+    return Value();
+  }
+  case IntrinsicID::Atan2: {
+    if (!(args.size() == 2 &&                   //
+          args[0].value.type->isVectorized() && //
+          args[1].value.type->isVectorized()))
+      srcLoc.throwError("Intrinsic 'atan2' expects 2 vectorized arguments");
+    Type *commonType{context.getCommonType(
+        {args[0].value.type, args[1].value.type, context.getFloatType()},
+        /*shouldDefaultToUnion=*/false, srcLoc)};
+    SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint() ||
+                      commonType->isColor());
+    Value value0{invoke(commonType, args[0].value, srcLoc)};
+    Value value1{invoke(commonType, args[1].value, srcLoc)};
+    return RValue(commonType, tryConstantFold(builder.CreateBinaryIntrinsic(
+                                  llvm::Intrinsic::atan2, value0, value1)));
+  }
+  case IntrinsicID::AlbedoLUT: {
+    if (!(args.size() == 1 && args[0].value.isComptimeString()))
+      srcLoc.throwError(
+          "Intrinsic 'albedoLUT' expects 1 compile-time string argument");
+    std::string_view lutName{args[0].value.getComptimeString()};
+    Type *lutType{
+        context.getKeyword("_AlbedoLUT").getComptimeMetaType(context, srcLoc)};
+    const AlbedoLUT *lut{context.getBuiltinAlbedo(lutName)};
+    if (!lut)
+      srcLoc.throwError(
+          "Intrinsic 'albedoLUT' passed invalid name ", SpellQuoted(lutName),
+          " that does not identify any known look-up table at compile time");
+    PointerType *floatPtrType{context.getPointerType(context.getFloatType())};
+    ArgumentList lutArgs{};
+    lutArgs.emplace_back("numCosTheta",
+                         context.getComptimeInt(lut->numCosTheta));
+    lutArgs.emplace_back("numRoughness",
+                         context.getComptimeInt(lut->numRoughness));
+    lutArgs.emplace_back(
+        "directionalAlbedo",
+        context.getComptimePtr(floatPtrType, lut->directionalAlbedo));
+    lutArgs.emplace_back(
+        "averageAlbedo",
+        context.getComptimePtr(floatPtrType, lut->averageAlbedo));
+    return invoke(lutType, lutArgs, srcLoc);
+  }
+  case IntrinsicID::BitCast: {
+    if (!(args.size() == 2 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.llvmValue != nullptr))
+      srcLoc.throwError("Intrinsic 'bitCast' expects 1 type argument and 1 "
+                        "value argument");
+    Type *targetType{args[0].value.getComptimeMetaType(context, srcLoc)};
+    if (targetType->isAbstract())
+      srcLoc.throwError("Intrinsic 'bitCast' expects concrete type argument");
+    Value value{args[1].value};
+    if (context.getSizeOf(targetType) != context.getSizeOf(value.type))
+      srcLoc.throwError("Intrinsic 'bitCast' expects source and target type "
+                        "with identical size");
+    // If the alignment is compatible and the value is already an lvalue,
+    // we can just load it into an rvalue after transparently changing the
+    // type.
+    if (context.getAlignOf(targetType) <= context.getAlignOf(value.type) &&
+        value.isLValue())
+      return rvalue(LValue(targetType, value.llvmValue));
+    // Otherwise, we guarantee the value is an lvalue and then create a
+    // temporary alloca to perform the cast. We memcpy the bytes from the
+    // lvalue
+    Value lv{lvalue(value)};
+    Value lvResult{createAlloca(targetType, value.getName() + ".bitcast")};
+    createLifetimeStart(lvResult);
+    builder.CreateMemCpyInline(lvResult, //
+                               llvm::Align(context.getAlignOf(targetType)), lv,
+                               llvm::Align(context.getAlignOf(value.type)),
+                               builder.getInt64(context.getSizeOf(targetType)));
+    Value rvResult{rvalue(lvResult)};
+    createLifetimeEnd(lvResult);
+    if (value.isRValue()) createLifetimeEnd(lv);
+    return rvResult;
+  }
+  case IntrinsicID::Breakpoint: {
+    if (!args.empty())
+      srcLoc.throwError("Intrinsic 'breakpoint' expects no arguments");
+    builder.CreateIntrinsic(context.getVoidType()->llvmType,
+                            llvm::Intrinsic::debugtrap, {});
+    return RValue(context.getVoidType(), nullptr);
+  }
+  case IntrinsicID::BumpAllocate: {
+    auto [size, align] = expectSizeAndAlign();
+    return emitBumpAllocate(size, align);
+  }
+  case IntrinsicID::Bump: {
+    Value value{expectOne()};
+    Value ptr{emitBumpAllocate(
+        context.getComptimeInt(int(context.getSizeOf(value.type))),
+        context.getComptimeInt(int(context.getAlignOf(value.type))))};
+    if (value.isLValue()) {
+      // Copy directly out of memory (e.g. an 'sret' result slot)
+      // instead of round-tripping the value through an SSA aggregate.
+      builder.CreateMemCpy(ptr, llvm::Align(context.getAlignOf(value.type)),
+                           value, llvm::Align(context.getAlignOf(value.type)),
+                           context.getSizeOf(value.type));
+    } else {
+      builder.CreateStore(rvalue(value), ptr);
+    }
+    return RValue(context.getPointerType(value.type), ptr.llvmValue);
+  }
+  case IntrinsicID::Clock: {
+    if (!args.empty())
+      srcLoc.throwError("Intrinsic 'clock' expects no arguments");
+    // Lowers to the CPU cycle counter (RDTSC on x86-64, CNTVCT_EL0 on
+    // AArch64). Units are reference cycles, only meaningful as deltas;
+    // targets without a cycle counter lower this to constant 0.
+    Type *int64Type{context.getArithmeticType(Scalar::getInt(64))};
+    return RValue(int64Type, builder.CreateIntrinsic(
+                                 int64Type->llvmType,
+                                 llvm::Intrinsic::readcyclecounter, {}));
+  }
+  case IntrinsicID::Fprint:
+  case IntrinsicID::Fprintln: {
+    if (args.size() < 2)
+      srcLoc.throwError("Intrinsic 'fprint' expects 1 file argument and 1 or "
+                        "more printable arguments");
+    Value file{rvalue(args[0].value)};
+    for (size_t i = 1; i < args.size(); i++)
+      emitPrint(file, args[i].value, srcLoc);
+    if (intrinsicID == IntrinsicID::Fprintln)
+      emitPrint(file, context.getComptimeString("\n"), srcLoc);
+    return RValue(context.getVoidType(), nullptr);
+  }
+  case IntrinsicID::GetIntType: {
+    Value value{rvalue(expectOne())};
+    std::optional<int64_t> numBits{value.getComptimeSignedInt()};
+    if (!numBits || *numBits < 1 || *numBits > 255)
+      srcLoc.throwError("Intrinsic 'getIntType' expects 1 compile-time int "
+                        "between 1 and 255");
+    return context.getComptimeMetaType(context.getArithmeticType(
+        Scalar::getInt(uint8_t(*numBits)), Extent(1)));
+  }
+  case IntrinsicID::GetFloatType: {
+    Value value{rvalue(expectOne())};
+    std::optional<int64_t> numBits{value.getComptimeSignedInt()};
+    if (!numBits || !(*numBits == 16 || *numBits == 32 || *numBits == 64 ||
+                      *numBits == 80 || *numBits == 128))
+      srcLoc.throwError("Intrinsic 'getFloatType' expects 1 compile-time int "
+                        "in {16, 32, 64, 80, 128}");
+    return context.getComptimeMetaType(
+        context.getArithmeticType(Scalar::getFP(uint8_t(*numBits)), Extent(1)));
+  }
+  case IntrinsicID::GetVectorType: {
+    auto reportError{[&] {
+      srcLoc.throwError("Intrinsic 'getVectorType' expects 1 compile-time "
+                        "scalar type and 1 compile-time positive int");
+    }};
+    if (!(args.size() == 2 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.isComptimeInt()))
+      reportError();
+    Type *type{args[0].value.getComptimeMetaType(context, srcLoc)};
+    std::optional<int64_t> size{args[1].value.getComptimeSignedInt()};
+    if (!type->isArithmeticScalar() || !size || *size < 1 || *size > 65535)
+      reportError();
+    return context.getComptimeMetaType(context.getArithmeticType(
+        static_cast<ArithmeticType *>(type)->scalar, Extent(uint16_t(*size))));
+  }
+  case IntrinsicID::GetMatrixType: {
+    auto reportError{[&] {
+      srcLoc.throwError("Intrinsic 'getMatrixType' expects 1 compile-time "
+                        "scalar type and 2 compile-time positive ints");
+    }};
+    if (!(args.size() == 3 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.isComptimeInt() &&             //
+          args[2].value.isComptimeInt()))
+      reportError();
+    Type *type{args[0].value.getComptimeMetaType(context, srcLoc)};
+    std::optional<int64_t> numCols{args[1].value.getComptimeSignedInt()};
+    std::optional<int64_t> numRows{args[2].value.getComptimeSignedInt()};
+    if (!type->isArithmeticScalar() ||                  //
+        !numCols || *numCols < 1 || *numCols > 65535 || //
+        !numRows || *numRows < 1 || *numRows > 65535)
+      reportError();
+    return context.getComptimeMetaType(context.getArithmeticType(
+        static_cast<ArithmeticType *>(type)->scalar,
+        Extent(uint16_t(*numCols), uint16_t(*numRows))));
+  }
+  case IntrinsicID::HasField: {
+    if (!(args.size() == 2 && args[1].value.isComptimeString()))
+      srcLoc.throwError("Intrinsic 'hasField' expects 1 argument and 1 "
+                        "compile-time string argument");
+    std::string_view fieldName{args[1].value.getComptimeString()};
+    Value value{args[0].value};
+    if (value.isVoid()) return context.getComptimeBool(false);
+    // A compile-time type asks about instances of that type, so that
+    // '#hasField(value, ...)' and '#hasField(#typeOf(value), ...)' agree.
+    // Only meta-*types* unwrap: a module or namespace stays a value,
+    // because 'MetaType::accessField()' resolves its fields from it.
+    if (value.isComptimeMetaType(context)) {
+      Type *type{value.getComptimeMetaType(context, srcLoc)};
+      if (type->isAbstract())
+        srcLoc.throwError("Intrinsic 'hasField' cannot query abstract type ",
+                          SpellQuoted(type->displayName));
+      return context.getComptimeBool(
+          type->hasNonVoidField(*this, Value(), fieldName, srcLoc));
+    }
+    // NOTE: The value is deliberately not 'rvalue()'d. Only its type
+    // matters, and forcing the load would leave dead IR behind.
+    return context.getComptimeBool(
+        value.type->hasNonVoidField(*this, value, fieldName, srcLoc));
+  }
+  case IntrinsicID::HeapAllocate: {
+    return emitAllocateCall(
+        context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
+  }
+  case IntrinsicID::HeapFree: {
+    Value value{expectOne()};
+    if (!value.type->isPointer())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 pointer argument");
+    llvm::FunctionCallee callee{
+        context.getBuiltinCallee("smdlFree", &smdlFree)};
+    return RValue(context.getVoidType(),
+                  builder.CreateCall(callee, {rvalue(value).llvmValue}));
+  }
+  case IntrinsicID::TestFPClass: {
+    if (!(args.size() == 2 &&                                 //
+          (args[0].value.type->isArithmeticFloatingPoint() || //
+           args[0].value.type->isColor()) &&                  //
+          args[1].value.isComptimeInt()))
+      srcLoc.throwError(
+          "Intrinsic 'testFPClass' expects 1 vectorized floating point "
+          "argument and 1 compile-time int argument");
+    Value value{rvalue(args[0].value)};
+    ArithmeticType *arithType{value.type->isColor()
+                                  ? static_cast<ColorType *>(value.type)
+                                        ->getArithmeticVectorType(context)
+                                  : static_cast<ArithmeticType *>(value.type)};
+    llvm::Value *llvmResult{
+        builder.createIsFPClass(value, args[1].value.getComptimeInt())};
+    // As with color comparison: a 1-wide 'color' is '<1 x float>' but
+    // its arithmetic type is scalar, so reduce the '<1 x i1>' to match.
+    if (value.type->isColor() && arithType->extent.isScalar())
+      llvmResult = builder.CreateExtractElement(llvmResult, uint64_t(0));
+    return RValue(arithType->getWithDifferentScalar(context, Scalar::getBool()),
+                  llvmResult);
+  }
+  case IntrinsicID::IsArray:
+  case IntrinsicID::IsArithmetic:
+  case IntrinsicID::IsArithmeticIntegral:
+  case IntrinsicID::IsArithmeticFloatingPoint:
+  case IntrinsicID::IsArithmeticScalar:
+  case IntrinsicID::IsArithmeticVector:
+  case IntrinsicID::IsArithmeticMatrix:
+  case IntrinsicID::IsEnum:
+  case IntrinsicID::IsOptionalUnion:
+  case IntrinsicID::IsPointer:
+  case IntrinsicID::IsStruct:
+  case IntrinsicID::IsTag:
+  case IntrinsicID::IsUnion:
+  case IntrinsicID::IsVoid:
+  case IntrinsicID::IsDefault: {
+    // Every type predicate is a compile-time query of the 'Type' member
+    // function it is named for, so the table is the whole implementation.
+    static constexpr struct {
+      IntrinsicID intrinsicID;
+      bool (Type::*predicate)() const;
+    } typePredicates[]{
+        {IntrinsicID::IsArray, &Type::isArray},
+        {IntrinsicID::IsArithmetic, &Type::isArithmetic},
+        {IntrinsicID::IsArithmeticIntegral, &Type::isArithmeticIntegral},
+        {IntrinsicID::IsArithmeticFloatingPoint,
+         &Type::isArithmeticFloatingPoint},
+        {IntrinsicID::IsArithmeticScalar, &Type::isArithmeticScalar},
+        {IntrinsicID::IsArithmeticVector, &Type::isArithmeticVector},
+        {IntrinsicID::IsArithmeticMatrix, &Type::isArithmeticMatrix},
+        {IntrinsicID::IsEnum, &Type::isEnum},
+        {IntrinsicID::IsOptionalUnion, &Type::isOptionalUnion},
+        {IntrinsicID::IsPointer, &Type::isPointer},
+        {IntrinsicID::IsStruct, &Type::isStruct},
+        {IntrinsicID::IsTag, &Type::isTag},
+        {IntrinsicID::IsUnion, &Type::isUnion},
+        {IntrinsicID::IsVoid, &Type::isVoid},
+        {IntrinsicID::IsDefault, &Type::isDefault},
+    };
+    Type *type{expectOneType()};
+    for (auto [predicateID, predicate] : typePredicates)
+      if (predicateID == intrinsicID)
+        return context.getComptimeBool((type->*predicate)());
+    break;
+  }
+  case IntrinsicID::LoadTexture2D:
+  case IntrinsicID::LoadTexture3D:
+  case IntrinsicID::LoadTextureCube:
+  case IntrinsicID::LoadTexturePtex:
+  case IntrinsicID::LoadBSDFMeasurement:
+  case IntrinsicID::LoadLightProfile:
+  case IntrinsicID::LoadSpectralCurve:
+    return emitIntrinsicLoad(intrinsicID, args, srcLoc);
+  case IntrinsicID::Memset: {
+    if (!(args.size() == 3 &&                            //
+          args[0].value.type->isPointer() &&             //
+          args[1].value.type->isArithmeticScalarInt() && //
+          args[2].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError("Intrinsic 'memset' expects 1 pointer argument "
+                        "and 2 int arguments");
+    Value ptr{rvalue(args[0].value)};
+    llvm::Value *val{
+        llvmEmitCast(builder, rvalue(args[1].value), builder.getInt8Ty())};
+    llvm::Value *count{
+        llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
+    return RValue(context.getVoidType(),
+                  builder.CreateMemSet(ptr, val, count, std::nullopt));
+  }
+  case IntrinsicID::Memcpy: {
+    if (!(args.size() == 3 &&                //
+          args[0].value.type->isPointer() && //
+          args[1].value.type->isPointer() && //
+          args[2].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError("Intrinsic 'memcpy' expects 2 pointer arguments "
+                        "and 1 int argument");
+    Value dst{rvalue(args[0].value)};
+    Value src{rvalue(args[1].value)};
+    llvm::Value *count{
+        llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
+    return RValue(
+        context.getVoidType(),
+        builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt, count));
+  }
+  case IntrinsicID::Max:
+  case IntrinsicID::Min: {
+    if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
+          return arg.value.type->isVectorized();
+        }))
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 2 vectorized arguments");
+    Value value0{args[0].value};
+    Value value1{args[1].value};
+    Type *type{context.getCommonType({value0.type, value1.type},
+                                     /*shouldDefaultToUnion=*/false, srcLoc)};
+    value0 = invoke(type, value0, srcLoc);
+    value1 = invoke(type, value1, srcLoc);
+    auto intrID{intrinsicID == IntrinsicID::Max
+                    ? (type->isArithmeticBoolean()    ? llvm::Intrinsic::umax
+                       : type->isArithmeticIntegral() ? llvm::Intrinsic::smax
+                                                      : llvm::Intrinsic::maxnum)
+                    : (type->isArithmeticBoolean() ? llvm::Intrinsic::umin
+                       : type->isArithmeticIntegral()
+                           ? llvm::Intrinsic::smin
+                           : llvm::Intrinsic::minnum)};
+    return RValue(type, tryConstantFold(builder.CreateBinaryIntrinsic(
+                            intrID, value0, value1)));
+  }
+  case IntrinsicID::Num: {
+    Type *type{expectOneType()};
+    int size{[&]() -> int {
+      if (type->isArithmeticVector()) {
+        return static_cast<ArithmeticType *>(type)->extent.numRows;
+      } else if (type->isArithmeticMatrix()) {
+        return static_cast<ArithmeticType *>(type)->extent.numCols;
+      } else if (type->isColor()) {
+        return int(static_cast<ColorType *>(type)->wavelengthBaseMax);
+      } else if (type->isArray()) {
+        return int(static_cast<ArrayType *>(type)->size);
+      } else {
+        return 1;
+      }
+    }()};
+    return context.getComptimeInt(size);
+  }
+  case IntrinsicID::NumRows:
+  case IntrinsicID::NumCols: {
+    Type *type{expectOneType()};
+    if (!type->isArithmeticMatrix())
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 matrix argument");
+    return context.getComptimeInt(
+        intrinsicID == IntrinsicID::NumRows
+            ? int(static_cast<ArithmeticType *>(type)->extent.numRows)
+            : int(static_cast<ArithmeticType *>(type)->extent.numCols));
+  }
+  case IntrinsicID::Panic: {
+    if (args.size() != 1 || args[0].value.type != context.getStringType())
+      srcLoc.throwError("Intrinsic 'panic' expects 1 string argument");
+    emitPanic(args[0].value, srcLoc);
+    return Value();
+  }
+  case IntrinsicID::Pow: {
+    if (args.size() != 2 ||                    //
+        !args[0].value.type->isVectorized() || //
+        !args[1].value.type->isVectorized())
+      srcLoc.throwError("Intrinsic 'pow' expects 2 vectorized arguments");
+    Value value0{rvalue(args[0].value)};
+    Value value1{rvalue(args[1].value)};
+    if (value1.isComptimeInt()) {
+      unsigned power{value1.getComptimeInt()};
+      if (power == 1) return value0;
+      if (power == 2) return emitOp(BINOP_MUL, value0, value0, srcLoc);
+    }
+    Type *resultType{context.getCommonType(
+        {value0.type, value1.type, context.getFloatType()},
+        /*shouldDefaultToUnion=*/false, srcLoc)};
+    value0 = invoke(resultType, value0, srcLoc);
+    return RValue(
+        resultType,
+        tryConstantFold(value1.type->isArithmeticScalarInt()
+                            ? llvmEmitPowi(builder, value0, value1)
+                            : builder.CreateBinaryIntrinsic(
+                                  llvm::Intrinsic::pow, value0,
+                                  invoke(resultType, value1, srcLoc))));
+  }
+  case IntrinsicID::Print:
+  case IntrinsicID::Println: {
+    Value os{context.getComptimePtr(context.getVoidPointerType(), stderr)};
+    for (auto &arg : args) emitPrint(os, arg.value, srcLoc);
+    if (intrinsicID == IntrinsicID::Println)
+      emitPrint(os, context.getComptimeString("\n"), srcLoc);
+    return Value();
+  }
+  case IntrinsicID::Rotl:
+  case IntrinsicID::Rotr: {
+    if (!(args.size() == 2 && //
+          args[0].value.type->isArithmeticIntegral() &&
+          args[1].value.type->isArithmeticIntegral())) {
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 2 integer or vectorized integer arguments");
+    }
+    Type *intType{
+        context.getCommonType({args[0].value.type, args[1].value.type},
+                              /*shouldDefaultToUnion=*/false, srcLoc)};
+    Value value0{invoke(intType, args[0].value, srcLoc)};
+    Value value1{invoke(intType, args[1].value, srcLoc)};
+    auto llvmIntrID{intrinsicID == IntrinsicID::Rotl ? llvm::Intrinsic::fshl
+                                                     : llvm::Intrinsic::fshr};
+    return RValue(intType,
+                  tryConstantFold(builder.CreateIntrinsic(
+                      intType->llvmType, llvmIntrID,
+                      {value0.llvmValue, value0.llvmValue, value1.llvmValue})));
+  }
+  case IntrinsicID::SizeOf: {
+    return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
+  }
+  case IntrinsicID::Sign: {
+    Value value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticIntegral()) {
+      return RValue(
+          value.type,
+          builder.CreateSelect(
+              emitOp(BINOP_CMP_LT, value, context.getComptimeInt(0), srcLoc),
+              invoke(value.type, context.getComptimeInt(-1), srcLoc),
+              invoke(value.type, context.getComptimeInt(+1), srcLoc)));
+    } else {
+      return RValue(
+          value.type,
+          tryConstantFold(builder.CreateBinaryIntrinsic(
+              llvm::Intrinsic::copysign,
+              invoke(value.type, context.getComptimeFloat(1), srcLoc), value)));
+    }
+  }
+  case IntrinsicID::Select: {
+    if (args.size() != 3 || !args[0].value.type->isArithmeticBoolean() ||
+        !args.isAllTrue(
+            [](auto arg) { return arg.value.type->isVectorized(); }))
+      srcLoc.throwError("Intrinsic 'select' expects 1 vectorized boolean "
+                        "argument and 2 vectorized selection arguments");
+    Value valueCond{rvalue(args[0].value)};
+    Value valueThen{args[1].value};
+    Value valueElse{args[2].value};
+    // The number of components a vectorized type selects over.
+    auto numComponents{[](Type *type) -> uint32_t {
+      if (type->isArithmeticVector())
+        return static_cast<ArithmeticType *>(type)->extent.numRows;
+      if (type->isColor())
+        return static_cast<ColorType *>(type)->wavelengthBaseMax;
+      return 1;
+    }};
+    // The condition fixes the number of components of the result, but takes
+    // no part in its value type, so it joins the common type only when both
+    // selection arguments are scalars and neither can supply that number
+    // itself. Folding it in unconditionally fails on 'color', which has no
+    // common type with the boolean vector that comparing two colors yields.
+    Type *type{
+        context.getCommonType({valueThen.type, valueElse.type,
+                               valueThen.type->isArithmeticScalar() &&
+                                       valueElse.type->isArithmeticScalar() &&
+                                       valueCond.type->isArithmeticVector()
+                                   ? valueCond.type
+                                   : nullptr},
+                              /*shouldDefaultToUnion=*/false, srcLoc)};
+    // The common type no longer sees the condition in every case, so the
+    // component counts must be reconciled here instead of falling out of it.
+    if (valueCond.type->isArithmeticVector() &&
+        numComponents(valueCond.type) != numComponents(type))
+      srcLoc.throwError("Intrinsic 'select' expects the condition ",
+                        SpellQuoted(valueCond.type->displayName),
+                        " to have the same number of components as the "
+                        "selection arguments ",
+                        SpellQuoted(type->displayName));
+    valueThen = invoke(type, valueThen, srcLoc);
+    valueElse = invoke(type, valueElse, srcLoc);
+    return RValue(type, builder.CreateSelect(valueCond, valueThen, valueElse));
+  }
+    // TODO This is a specific solution to a specific problem of calculating
+    // tabulated albedos conveniently and efficiently. There might be a more
+    // general way of addressing this in the future.
+  case IntrinsicID::TabulateAlbedo: {
+    if (!(args.size() == 4 && args[0].value.type == context.getStringType() &&
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.type->isArithmeticScalarInt() &&
+          args[3].value.isComptimeMetaType(context)))
+      srcLoc.throwError("Intrinsic 'tabulateAlbedo' expects 1 compile-time "
+                        "string argument, 2 compile-time integer arguments, "
+                        "and 1 function argument");
+    FunctionType *funcType{llvm::dyn_cast<FunctionType>(
+        args[3].value.getComptimeMetaType(context, srcLoc))};
+    // Named functions must be declared '@(pure) float(float, float)'.
+    // Lambdas declare neither purity nor a return type, so accept two
+    // 'float' parameters and let materialization validate the rest: the
+    // instance is compiled pure (see 'FunctionType::getInstance') and
+    // the inferred return type is checked below.
+    if (!(funcType && !funcType->isVariant() && funcType->hasNoOverloads() &&
+          funcType->params.size() == 2 &&
+          funcType->params[0].type == context.getFloatType() &&
+          funcType->params[1].type == context.getFloatType() &&
+          (funcType->isLambda ||
+           (funcType->isPure() && !funcType->isMacro() &&
+            funcType->returnType == context.getFloatType())))) {
+      srcLoc.throwError("Intrinsic 'tabulateAlbedo' function argument must "
+                        "have signature '@(pure) float(float, float)' or be "
+                        "a lambda with two 'float' parameters");
+    }
+    FunctionType::Instance &funcInst{funcType->getInstance(
+        *this, {context.getFloatType(), context.getFloatType()})};
+    if (funcInst.returnType != context.getFloatType())
+      srcLoc.throwError("Intrinsic 'tabulateAlbedo' function argument must "
+                        "return 'float'");
+    llvm::FunctionCallee callee{
+        context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
+    llvm::CallInst *callInst{
+        builder.CreateCall(callee, {rvalue(args[0].value).llvmValue, //
+                                    rvalue(args[1].value).llvmValue, //
+                                    rvalue(args[2].value).llvmValue, //
+                                    funcInst.llvmFunc})};
+    return RValue(context.getVoidType(), callInst);
+  }
+  case IntrinsicID::TypeOf: {
+    return context.getComptimeMetaType(expectOne().type);
+  }
+  case IntrinsicID::TypeName: {
+    return context.getComptimeString(expectOneType()->displayName);
+  }
+  case IntrinsicID::Transpose: {
+    if (!(args.size() == 1 && args[0].value.type->isArithmeticMatrix()))
+      srcLoc.throwError("Intrinsic 'transpose' expects 1 matrix argument");
+    Value value{args[0].value};
+    llvm::SmallVector<Value> valueCols{};
+    for (unsigned j = 0;
+         j < static_cast<ArithmeticType *>(value.type)->extent.numCols; j++)
+      valueCols.push_back(rvalue(accessIndex(value, j, srcLoc)));
+    ArithmeticType *resultType{
+        static_cast<ArithmeticType *>(value.type)->getTransposeType(context)};
+    Value result{Value::zero(resultType)};
+    for (unsigned j = 0; j < resultType->extent.numCols; j++) {
+      Value resultCol{Value::zero(resultType->getColumnType(context))};
+      for (unsigned i = 0; i < resultType->extent.numRows; i++)
+        resultCol =
+            insert(resultCol, accessIndex(valueCols[i], j, srcLoc), i, srcLoc);
+      result = insert(result, resultCol, j, srcLoc);
+    }
+    return result;
+  }
+  case IntrinsicID::Uitofp: {
+    if (!(args.size() == 2 &&                           //
+          args[0].value.type->isArithmeticIntegral() && //
+          args[1].value.isComptimeMetaType(context))) {
+      srcLoc.throwError("Intrinsic 'uitofp' expects 1 int argument and "
+                        "1 type argument");
+    }
+    Type *floatType{args[1].value.getComptimeMetaType(context, srcLoc)};
+    if (!floatType->isArithmeticFloatingPoint())
+      srcLoc.throwError("Intrinsic 'uitofp' expects 1 int argument and "
+                        "1 floating point type argument");
+    return RValue(floatType, builder.CreateUIToFP(rvalue(args[0].value),
+                                                  floatType->llvmType));
+  }
+  case IntrinsicID::UnpackFloat4: {
+    Value value{rvalue(expectOne())};
+    if (!value.type->isArithmeticScalar() && !value.type->isArithmeticVector())
+      srcLoc.throwError(
+          "Intrinsic 'unpackFloat4' expects 1 scalar or vector argument");
+    ArithmeticType *texelType{static_cast<ArithmeticType *>(value.type)};
+    value.type = texelType->getWithDifferentScalar(context, Scalar::getFloat());
+    value.llvmValue =
+        texelType->isArithmeticIntegral()
+            ? builder.CreateUIToFP(value.llvmValue, value.type->llvmType)
+            : builder.CreateFPCast(value.llvmValue, value.type->llvmType);
+    if (texelType->isArithmeticIntegral())
+      value =
+          emitOp(BINOP_MUL, value,
+                 // Compute in double via ldexp: '1ULL << numBits' is
+                 // undefined for 64-bit texel types.
+                 context.getComptimeFloat(float(
+                     1.0 / (std::ldexp(1.0, texelType->scalar.numBits) - 1.0))),
+                 srcLoc);
+    if (value.type == context.getFloatType(Extent(4))) // Early out?
+      return value;
+    Value result{Value::zero(context.getFloatType(Extent(4)))};
+    if (value.type->isArithmeticScalar()) {
+      result.llvmValue = builder.CreateVectorSplat(4, value.llvmValue);
+    } else {
+      for (uint64_t i = 0; i < texelType->extent.numRows; i++)
+        result.llvmValue = builder.CreateInsertElement(
+            result.llvmValue, builder.CreateExtractElement(value.llvmValue, i),
+            i);
+    }
+    result.llvmValue = builder.CreateInsertElement(
+        result.llvmValue, context.getComptimeFloat(1).llvmValue, uint64_t(3));
+    return result;
+  }
+  // '#bitReverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
+  // intrinsic and whether it takes the trailing is-zero-poison flag.
+  case IntrinsicID::BitReverse:
+  case IntrinsicID::Ctlz:
+  case IntrinsicID::Cttz:
+  case IntrinsicID::Ctpop: {
+    bool hasIsZeroPoisonFlag{intrinsicID == IntrinsicID::Ctlz ||
+                             intrinsicID == IntrinsicID::Cttz};
+    auto llvmIntrID{
+        intrinsicID == IntrinsicID::BitReverse ? llvm::Intrinsic::bitreverse
+        : intrinsicID == IntrinsicID::Ctlz     ? llvm::Intrinsic::ctlz
+        : intrinsicID == IntrinsicID::Cttz     ? llvm::Intrinsic::cttz
+                                               : llvm::Intrinsic::ctpop};
+    Value value{rvalue(expectOneIntOrIntVector())};
+    return RValue(
+        value.type,
+        tryConstantFold(
+            hasIsZeroPoisonFlag
+                ? builder.CreateBinaryIntrinsic(llvmIntrID, value,
+                                                context.getComptimeBool(false))
+                : builder.CreateUnaryIntrinsic(llvmIntrID, value)));
+  }
+  // '#sum', '#prod', '#maxValue', and '#minValue' share one vector
+  // reduction implementation.
+  case IntrinsicID::Sum:
+  case IntrinsicID::Prod:
+  case IntrinsicID::MaxValue:
+  case IntrinsicID::MinValue: {
+    Value value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticScalar()) return value;
+    // Widen bool vectors before '#sum': add-reducing '<N x i1>' computes
+    // the parity of the lanes, not the count of true lanes.
+    if (intrinsicID == IntrinsicID::Sum && value.type->isArithmeticBoolean())
+      value = invoke(static_cast<ArithmeticType *>(value.type)
+                         ->getWithDifferentScalar(context, Scalar::getInt(32)),
+                     value, srcLoc);
+    ArithmeticType *scalarType{scalarTypeOf(value.type)};
+    // LLVM constant-folds the integer reduction intrinsics but not the
+    // floating-point ones, so reduce a constant operand element-wise here
+    // instead, replicating the intrinsic semantics exactly: sum and product
+    // reduce sequentially from the start value, and '#maxValue'/'#minValue'
+    // reduce with 'maxnum'/'minnum'. Compile-time-ness must survive
+    // reductions, which appear in 'const' field defaults like
+    // '#sqrt(#prod(roughness))'.
+    if (!scalarType->isArithmeticIntegral()) {
+      if (llvm::Constant *
+          llvmConst{llvm::dyn_cast<llvm::Constant>(value.llvmValue)}) {
+        const unsigned numElems{
+            llvm::cast<llvm::FixedVectorType>(llvmConst->getType())
+                ->getNumElements()};
+        llvm::SmallVector<llvm::Constant *> elems{};
+        for (unsigned i{}; i < numElems; i++)
+          if (llvm::Constant * elem{llvmConst->getAggregateElement(i)})
+            elems.push_back(elem);
+        if (elems.size() == numElems) {
+          llvm::Value *result{};
+          if (intrinsicID == IntrinsicID::Sum) {
+            result = llvm::Constant::getNullValue(scalarType->llvmType);
+            for (auto elem : elems) result = builder.CreateFAdd(result, elem);
+          } else if (intrinsicID == IntrinsicID::Prod) {
+            result = llvm::ConstantFP::get(scalarType->llvmType, 1.0);
+            for (auto elem : elems) result = builder.CreateFMul(result, elem);
+          } else {
+            const auto llvmIntrID{intrinsicID == IntrinsicID::MaxValue
+                                      ? llvm::Intrinsic::maxnum
+                                      : llvm::Intrinsic::minnum};
+            result = elems[0];
+            for (unsigned i{1}; i < numElems; i++)
+              result = tryConstantFold(
+                  builder.CreateBinaryIntrinsic(llvmIntrID, result, elems[i]));
+          }
+          return RValue(scalarType, result);
+        }
+      }
+    }
+    if (intrinsicID == IntrinsicID::MaxValue ||
+        intrinsicID == IntrinsicID::MinValue) {
+      auto llvmIntrID{intrinsicID == IntrinsicID::MaxValue
+                          ? (value.type->isArithmeticBoolean()
+                                 ? llvm::Intrinsic::vector_reduce_umax
+                             : value.type->isArithmeticIntegral()
+                                 ? llvm::Intrinsic::vector_reduce_smax
+                                 : llvm::Intrinsic::vector_reduce_fmax)
+                          : (value.type->isArithmeticBoolean()
+                                 ? llvm::Intrinsic::vector_reduce_umin
+                             : value.type->isArithmeticIntegral()
+                                 ? llvm::Intrinsic::vector_reduce_smin
+                                 : llvm::Intrinsic::vector_reduce_fmin)};
+      return RValue(scalarType, tryConstantFold(builder.CreateUnaryIntrinsic(
+                                    llvmIntrID, value)));
+    }
+    if (scalarType->isArithmeticIntegral())
+      return RValue(scalarType,
+                    tryConstantFold(intrinsicID == IntrinsicID::Sum
+                                        ? builder.CreateAddReduce(value)
+                                        : builder.CreateMulReduce(value)));
+    return RValue(
+        scalarType,
+        intrinsicID == IntrinsicID::Sum
+            ? builder.CreateFAddReduce(Value::zero(scalarType), value)
+            : builder.CreateFMulReduce(
+                  invoke(scalarType, context.getComptimeFloat(1), srcLoc),
+                  value));
+  }
+  // The complex accessors are defined on real numbers too, where they
+  // degenerate to identity, zero, or a square.
+  case IntrinsicID::Conj: {
+    Value value{expectOne()};
+    // NOTE: Conjugate of real number is no-op
+    return value.type->isComplex(context)
+               ? invoke("_complexConj", value, srcLoc)
+               : rvalue(value);
+  }
+  case IntrinsicID::Real: {
+    Value value{expectOne()};
+    // NOTE: Real part of real number is identity
+    return value.type->isComplex(context) ? accessField(value, "a", srcLoc)
+                                          : value;
+  }
+  case IntrinsicID::Imag: {
+    Value value{expectOne()};
+    // NOTE: Imag part of real number is zero
+    return value.type->isComplex(context) ? accessField(value, "b", srcLoc)
+                                          : invoke(value.type, {}, srcLoc);
+  }
+  case IntrinsicID::Norm: {
+    Value value{expectOne()};
+    // NOTE: Norm of real number is square
+    return value.type->isComplex(context)
+               ? invoke("_complexNorm", value, srcLoc)
+               : emitOp(BINOP_MUL, value, value, srcLoc);
+  }
+  // Unary floating-point math intrinsics. '#exp', '#log', and '#sqrt' accept
+  // 'complex' as well and forward to the corresponding implementation.
+  case IntrinsicID::Exp:
+  case IntrinsicID::Log:
+  case IntrinsicID::Sqrt:
+    if (expectOne().type->isComplex(context))
+      return invoke(intrinsicID == IntrinsicID::Exp   ? "_complexExp"
+                    : intrinsicID == IntrinsicID::Log ? "_complexLog"
+                                                      : "_complexSqrt",
+                    args[0].value, srcLoc);
+    [[fallthrough]];
+  case IntrinsicID::Floor:
+  case IntrinsicID::Ceil:
+  case IntrinsicID::Trunc:
+  case IntrinsicID::Round:
+  case IntrinsicID::Sin:
+  case IntrinsicID::Cos:
+  case IntrinsicID::Tan:
+  case IntrinsicID::Asin:
+  case IntrinsicID::Acos:
+  case IntrinsicID::Atan:
+  case IntrinsicID::Sinh:
+  case IntrinsicID::Cosh:
+  case IntrinsicID::Tanh:
+  case IntrinsicID::Exp2:
+  case IntrinsicID::Exp10:
+  case IntrinsicID::Log2:
+  case IntrinsicID::Log10: {
+    static const std::pair<IntrinsicID, llvm::Intrinsic::ID>
+        unaryFPIntrinsics[]{
+            {IntrinsicID::Floor, llvm::Intrinsic::floor},
+            {IntrinsicID::Ceil, llvm::Intrinsic::ceil},
+            {IntrinsicID::Trunc, llvm::Intrinsic::trunc},
+            {IntrinsicID::Round, llvm::Intrinsic::round},
+            {IntrinsicID::Sqrt, llvm::Intrinsic::sqrt},
+            {IntrinsicID::Sin, llvm::Intrinsic::sin},
+            {IntrinsicID::Cos, llvm::Intrinsic::cos},
+            {IntrinsicID::Tan, llvm::Intrinsic::tan},
+            {IntrinsicID::Asin, llvm::Intrinsic::asin},
+            {IntrinsicID::Acos, llvm::Intrinsic::acos},
+            {IntrinsicID::Atan, llvm::Intrinsic::atan},
+            {IntrinsicID::Sinh, llvm::Intrinsic::sinh},
+            {IntrinsicID::Cosh, llvm::Intrinsic::cosh},
+            {IntrinsicID::Tanh, llvm::Intrinsic::tanh},
+            {IntrinsicID::Exp, llvm::Intrinsic::exp},
+            {IntrinsicID::Exp2, llvm::Intrinsic::exp2},
+            {IntrinsicID::Exp10, llvm::Intrinsic::exp10},
+            {IntrinsicID::Log, llvm::Intrinsic::log},
+            {IntrinsicID::Log2, llvm::Intrinsic::log2},
+            {IntrinsicID::Log10, llvm::Intrinsic::log10},
+        };
+    Value value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticIntegral())
+      value = invoke(static_cast<ArithmeticType *>(value.type)
+                         ->getWithDifferentScalar(context, Scalar::getFloat()),
+                     value, srcLoc);
+    for (auto [mathID, llvmIntrID] : unaryFPIntrinsics)
+      if (mathID == intrinsicID)
+        return RValue(value.type, tryConstantFold(builder.CreateUnaryIntrinsic(
+                                      llvmIntrID, value)));
+    break;
+  }
+  }
+  srcLoc.throwError("Intrinsic ", SpellQuoted(concat("#", name)),
+                    " is recognized but not implemented");
+}
+
+// Emit one of the `#load...` intrinsics.
+//
+// These are separated out from `emitIntrinsic()` because they are a third of
+// it by volume and because they share the argument checking below; splitting
+// them keeps the main dispatch flat enough to read.
+Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
+                                 const ArgumentList &args,
+                                 const SourceLocation &srcLoc) {
+  const std::string_view name{getIntrinsicName(intrinsicID)};
+  auto expectOneComptimeString{[&]() {
+    if (!(args.size() == 1 && args[0].value.isComptimeString()))
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 compile-time string argument");
+    return std::string(args[0].value.getComptimeString());
+  }};
+  auto expectOneComptimeStringAndOneInt{[&]() {
+    if (!(args.size() == 2 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError(
+          "Intrinsic ", SpellQuoted(name),
+          " expects 1 compile-time string argument and 1 int argument");
+    return std::make_pair(std::string(args[0].value.getComptimeString()),
+                          rvalue(args[1].value));
+  }};
+  // The mip requests must be compile-time, unlike the gamma: they are
+  // baked into the texture as its level count and chain kind at
+  // emission time, which no runtime value can influence.
+  auto expectOneComptimeStringOneIntAndTwoComptimeBools{[&]() {
+    if (!(args.size() == 4 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.isComptimeInt() && //
+          args[3].value.isComptimeInt()))
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 compile-time string argument, 1 int "
+                        "argument, and 2 compile-time bool arguments");
+    return std::make_tuple(std::string(args[0].value.getComptimeString()),
+                           rvalue(args[1].value),
+                           args[2].value.getComptimeInt() != 0,
+                           args[3].value.getComptimeInt() != 0);
+  }};
+  // The '#load_*' resource intrinsics share one locate-or-warn
+  // prologue: a file that cannot be found is a warning, and the
+  // resource type is default-constructed.
+  //
+  // The warning goes through 'logResourceWarningOnce' rather than
+  // 'srcLoc.logWarn' because this runs at emission time, and a material
+  // body is emitted once for each function 'Type.cc' generates from it.
+  // Resources that are found but fail to load already report once,
+  // memoized by file hash in 'loadResource'.
+  //
+  // At debug level the warning is followed by where the file was looked
+  // for, the question it raises. An absolute name is never searched for.
+  auto logSearchedDirs{[&](const std::string &fileName) {
+    if (!Logger::get().isEnabled(LOG_LEVEL_DEBUG) ||
+        std::filesystem::path(fileName).is_absolute())
+      return;
+    constexpr size_t MAX_LISTED{10};
+    const std::vector<std::string> searchDirs{context.getSearchDirs()};
+    std::string message{
+        concat("Searched ",
+               SpellCounted(searchDirs.size(), "directory", "directories"),
+               " for ", SpellQuoted(fileName))};
+    for (size_t i = 0; i < std::min(searchDirs.size(), MAX_LISTED); i++)
+      message +=
+          concat(i == 0 ? ":\n  " : "\n  ", SpellFilePath(searchDirs[i]));
+    if (searchDirs.size() > MAX_LISTED)
+      message += concat("\n  and ", searchDirs.size() - MAX_LISTED, " more");
+    resourceSourceLocation(srcLoc).logDebug(message);
+  }};
+  auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
+                           auto &&buildFromFile) -> Value {
+    std::optional<std::string> resolvedFileName{context.locate(fileName)};
+    if (!resolvedFileName) {
+      if (context.compiler.logResourceWarningOnce(
+              resourceSourceLocation(srcLoc), fileName,
+              concat("Cannot load ", SpellQuoted(fileName),
+                     ": file not found")))
+        logSearchedDirs(fileName);
+      return invoke(resultType, {}, srcLoc);
+    }
+    return buildFromFile(*resolvedFileName);
+  }};
+  // The pointer type through which an image's texels bake: the scalar
+  // matches the storage format and the extent matches the channel count.
+  auto texelPtrTypeOf{[&](const Image &image) {
+    return context.getPointerType(context.getArithmeticType(
+        image.getFormat() == Image::UINT8     ? Scalar::getInt(8)
+        : image.getFormat() == Image::UINT16  ? Scalar::getInt(16)
+        : image.getFormat() == Image::FLOAT16 ? Scalar::getHalf()
+                                              : Scalar::getFloat(),
+        Extent(image.getNumChannels())));
+  }};
+  switch (intrinsicID) {
+  case IntrinsicID::LoadTexture2D: {
+    StructType *texture2DType{context.getTexture2DType()};
+    auto [fileName, valueGammaAsInt, useMipmap, maxMipmap] =
+        expectOneComptimeStringOneIntAndTwoComptimeBools();
+    const bool useMipLevels{useMipmap || maxMipmap};
+    const Image::MipFilter mipFilter{maxMipmap ? Image::MIP_MAX
+                                               : Image::MIP_MEAN};
+    std::vector<FileLocator::ImagePath> resolvedImagePaths{
+        context.locateImages(fileName)};
+    if (resolvedImagePaths.empty()) {
+      if (context.compiler.logResourceWarningOnce(
+              resourceSourceLocation(srcLoc), fileName,
+              concat("Cannot load ", SpellQuoted(fileName),
+                     ": file not found")))
+        logSearchedDirs(fileName);
+      return invoke(texture2DType, {}, srcLoc);
+    }
+    unsigned tileCountU{uint32_t(1)};
+    unsigned tileCountV{uint32_t(1)};
+    // A file that is found and does not load was warned about by the
+    // load, and is left with no extent and no texels. Its tile is absent,
+    // exactly as if no file had resolved to it: the address of its texels
+    // must never be baked, because the optimizer takes the address of a
+    // symbol to be non-null and the texture would read as valid.
+    const auto hasTexels{[](const Image &image) {
+      return image.getNumTexelsX() > 0 && image.getNumTexelsY() > 0;
+    }};
+    llvm::SmallVector<const Image *> images{};
+    // The first tile that loaded, which the rest must agree with.
+    std::optional<size_t> firstLoaded{};
+    for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
+      tileCountU = std::max(tileCountU, tileIndexU + 1);
+      tileCountV = std::max(tileCountV, tileIndexV + 1);
+      // The user's call site, not the builtin constructor's: the load
+      // errors and the mip chain requests are reported against it.
+      images.push_back(&context.compiler.loadImage(
+          filePath, resourceSourceLocation(srcLoc), useMipLevels, mipFilter));
+      if (!hasTexels(*images.back())) continue;
+      if (!firstLoaded) firstLoaded = images.size() - 1;
+      if (images.back()->getFormat() != images[*firstLoaded]->getFormat() ||
+          images.back()->getNumChannels() !=
+              images[*firstLoaded]->getNumChannels()) {
+        // The tiles all come from one directory, so the file name is
+        // enough to tell them apart.
+        const auto describeTile{[&](size_t i) {
+          return concat(
+              SpellQuoted(std::filesystem::path(resolvedImagePaths[i].path)
+                              .filename()
+                              .string()),
+              " is ", images[i]->getNumChannels(), "-channel ",
+              Image::getFormatName(images[i]->getFormat()));
+        }};
+        context.compiler.logResourceWarningOnce(
+            resourceSourceLocation(srcLoc), fileName,
+            concat("Inconsistent image formats for ", SpellQuoted(fileName),
+                   ": ", describeTile(*firstLoaded), ", but ",
+                   describeTile(images.size() - 1)));
+        return invoke(texture2DType, {}, srcLoc);
+      }
+    }
+    if (!firstLoaded) return invoke(texture2DType, {}, srcLoc);
+    PointerType *texelPtrType{texelPtrTypeOf(*images[*firstLoaded])};
+    // Only the level 0 texels of each tile are named; the higher
+    // levels live contiguously behind them, at the offsets the tile
+    // table below carries (see the layout note on 'texture_2d' in
+    // 'api.mdl').
+    //
+    // The level count is per texture, not per image: the images are
+    // shared with every other reference to the same files, so a texture
+    // that opted out of mip levels bakes 1 here and never reads past
+    // level 0, whatever the images behind it happen to hold.
+    int numLevels{1};
+    if (useMipLevels)
+      for (auto &image : images)
+        numLevels = std::max(numLevels, image->getNumLevels());
+    Value valueTileBuffers{Value::zero(
+        context.getArrayType(texelPtrType, tileCountU * tileCountV))};
+    // The tile table, laid out as 'texture_2d' documents: the level 0
+    // extent, then one texel offset per level. A tile no image resolved
+    // to keeps its zeros, which reads as the zero extent marking it
+    // absent.
+    const size_t tileStride{size_t(numLevels) + 2};
+    std::vector<int> tileTable{
+        std::vector<int>(size_t(tileCountU) * tileCountV * tileStride)};
+    for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
+      auto &imagePath{resolvedImagePaths[i]};
+      const Image *&image{images[i]};
+      if (!hasTexels(*image)) continue;
+      unsigned insertPos{imagePath.tileIndexV * tileCountU +
+                         imagePath.tileIndexU};
+      valueTileBuffers = insert(valueTileBuffers,
+                                context.getImageTexelBase(texelPtrType, *image),
+                                insertPos, srcLoc);
+      size_t entry{size_t(insertPos) * tileStride};
+      int2 extent{
+          int2(int(image->getNumTexelsX()), int(image->getNumTexelsY()))};
+      tileTable[entry] = extent.x;
+      tileTable[entry + 1] = extent.y;
+      // Each level is the one before it halved and saturated at 1x1, so
+      // the offset of level 'l' is the texel count of every level under
+      // it, and a chain that reaches 1x1 before the texture's level
+      // count stops growing there.
+      int offset{0};
+      for (int level = 0; level < numLevels; level++) {
+        tileTable[entry + 2 + size_t(level)] = offset;
+        if (extent.x <= 1 && extent.y <= 1) continue;
+        offset += extent.x * extent.y;
+        extent = int2(std::max(extent.x / 2, 1), std::max(extent.y / 2, 1));
+      }
+    }
+    return invoke(
+        texture2DType,
+        {Argument{"tile_count", context.getComptimeVector(
+                                    int2(int(tileCountU), int(tileCountV)))},
+         Argument{"num_levels", context.getComptimeInt(numLevels)},
+         Argument{"max_mipmap",
+                  context.getComptimeBool(maxMipmap && numLevels > 1)},
+         Argument{"tile_buffers", valueTileBuffers},
+         Argument{"tile_table",
+                  context.getComptimeIntArray(tileTable, ".tile_table")},
+         Argument{"gamma", valueGammaAsInt}},
+        srcLoc);
+  }
+  case IntrinsicID::LoadTexture3D: {
+    StructType *texture3DType{context.getTexture3DType()};
+    // The selector must be compile-time like the file name: together
+    // they identify the resource, whose pointers are baked into the
+    // compiled code at emission time.
+    if (!(args.size() == 3 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.isComptimeString()))
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 compile-time string argument, 1 int "
+                        "argument, and 1 compile-time string argument");
+    std::string fileName{args[0].value.getComptimeString()};
+    Value valueGammaAsInt{rvalue(args[1].value)};
+    std::string gridName{args[2].value.getComptimeString()};
+    return withLocatedFile(
+        fileName, texture3DType, [&](const std::string &resolvedFileName) {
+          const VoxelGrid &voxelGrid{context.compiler.loadVoxelGrid(
+              resolvedFileName, gridName, resourceSourceLocation(srcLoc))};
+          // A load failure was already reported as a warning by
+          // 'loadVoxelGrid', so quietly return the default (invalid)
+          // texture, matching the missing-file behavior.
+          if (!voxelGrid.isValid()) return invoke(texture3DType, {}, srcLoc);
+          const int3 extent{voxelGrid.getExtent()};
+          const int3 brickCount{voxelGrid.getBrickCount()};
+          return invoke(
+              texture3DType,
+              {Argument{"extent", context.getComptimeVector(extent)},
+               Argument{"brick_count", context.getComptimeVector(brickCount)},
+               Argument{"brick_table",
+                        context.getComptimePtr(
+                            context.getPointerType(context.getIntType()),
+                            voxelGrid.getBrickTable())},
+               Argument{"brick_buffer",
+                        context.getComptimePtr(
+                            context.getPointerType(context.getFloatType()),
+                            voxelGrid.getBrickData())},
+               Argument{"background",
+                        context.getComptimeFloat(voxelGrid.getBackground())},
+               Argument{"min_value",
+                        context.getComptimeFloat(voxelGrid.getMinValue())},
+               Argument{"max_value",
+                        context.getComptimeFloat(voxelGrid.getMaxValue())},
+               Argument{"gamma", valueGammaAsInt},
+               Argument{"resource",
+                        context.getComptimePtr(context.getVoidPointerType(),
+                                               &voxelGrid)}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadTextureCube: {
+    StructType *textureCubeType{context.getTextureCubeType()};
+    auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+    // TODO Actually load the texture
+    context.compiler.logResourceWarningOnce(
+        resourceSourceLocation(srcLoc), fileName,
+        "Intrinsic 'loadTextureCube' is not implemented yet; returning "
+        "default texture");
+    return invoke(textureCubeType, {}, srcLoc);
+  }
+  case IntrinsicID::LoadTexturePtex: {
+    StructType *texturePtexType{context.getTexturePtexType()};
+    std::pair<std::string, Value> fileNameAndGamma{
+        expectOneComptimeStringAndOneInt()};
+    return withLocatedFile(
+        fileNameAndGamma.first, texturePtexType,
+        [&](const std::string &resolvedFileName) {
+          const Ptexture &ptexture{context.compiler.loadPtexture(
+              resolvedFileName, resourceSourceLocation(srcLoc))};
+          Value valuePtr{
+              context.getComptimePtr(context.getVoidPointerType(),
+                                     ptexture.texture ? &ptexture : nullptr)};
+          return invoke(texturePtexType,
+                        {Argument{"ptr", valuePtr},
+                         Argument{"gamma", fileNameAndGamma.second}},
+                        srcLoc);
+        });
+  }
+  case IntrinsicID::LoadBSDFMeasurement: {
+    StructType *bsdfMeasurementType{context.getBSDFMeasurementType()};
+    std::string fileName{expectOneComptimeString()};
+    return withLocatedFile(
+        fileName, bsdfMeasurementType,
+        [&](const std::string &resolvedFileName) {
+          const BSDFMeasurement &bsdfMeasurement{
+              context.compiler.loadBSDFMeasurement(
+                  resolvedFileName, resourceSourceLocation(srcLoc))};
+          PointerType *bufferPtrType{
+              context.getPointerType(context.getFloatType(
+                  bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1
+                                                                      : 3))};
+          return invoke(
+              bsdfMeasurementType,
+              {Argument{"ptr", context.getComptimePtr(
+                                   context.getVoidPointerType(),
+                                   bsdfMeasurement.buffer ? &bsdfMeasurement
+                                                          : nullptr)},
+               Argument{"mode", context.getComptimeInt(
+                                    bsdfMeasurement.kind ==
+                                            BSDFMeasurement::KIND_REFLECTION
+                                        ? /* scatter_reflect  */ 1
+                                        : /* scatter_transmit */ 2)},
+               Argument{"num_theta",
+                        context.getComptimeInt(int(bsdfMeasurement.numTheta))},
+               Argument{"num_phi",
+                        context.getComptimeInt(int(bsdfMeasurement.numPhi))},
+               Argument{"buffer", context.getComptimePtr(
+                                      bufferPtrType, bsdfMeasurement.buffer)}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadLightProfile: {
+    StructType *lightProfileType{context.getLightProfileType()};
+    std::string fileName{expectOneComptimeString()};
+    // Register the light profile runtime callees backing the
+    // '@(pure foreign)' declarations in 'df.mdl' (which implement
+    // 'df::measured_edf'), so they resolve as absolute JIT symbols
+    // even when the host process does not export its own dynamic
+    // symbols. Any 'measured_edf' necessarily loads a light profile
+    // first, so this registration is a safe superset.
+    (void)context.getBuiltinCallee("smdlLightProfileInterpolate",
+                                   &smdlLightProfileInterpolate);
+    (void)context.getBuiltinCallee("smdlLightProfileDirectionPDF",
+                                   &smdlLightProfileDirectionPDF);
+    (void)context.getBuiltinCallee("smdlLightProfileDirectionSample",
+                                   &smdlLightProfileDirectionSample);
+    return withLocatedFile(
+        fileName, lightProfileType, [&](const std::string &resolvedFileName) {
+          const LightProfile &lightProfile{context.compiler.loadLightProfile(
+              resolvedFileName, resourceSourceLocation(srcLoc))};
+          return invoke(
+              lightProfileType,
+              {Argument{"ptr",
+                        context.getComptimePtr(
+                            context.getVoidPointerType(),
+                            lightProfile.isValid() ? &lightProfile : nullptr)},
+               Argument{"max_intensity",
+                        context.getComptimeFloat(lightProfile.maxIntensity())},
+               Argument{"power",
+                        context.getComptimeFloat(lightProfile.power())}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadSpectralCurve: {
+    StructType *spectralCurveType{context.getSpectralCurveType()};
+    if (args.size() == 1) {
+      if (!args[0].value.isComptimeString()) {
+        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                          " expects 1 compile-time string argument");
+      }
+    } else if (args.size() == 2) {
+      if (!(args[0].value.isComptimeString() &&
+            (args[1].value.isComptimeString() ||
+             args[1].value.isComptimeInt()))) {
+        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                          " expects 1 compile-time string argument and 1 "
+                          "compile-time string or int argument");
+      }
+    } else {
+      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
+                        " expects 1 or 2 arguments");
+    }
+    std::string fileName{args[0].value.getComptimeString()};
+    return withLocatedFile(
+        fileName, spectralCurveType,
+        [&](const std::string &resolvedFileName) -> Value {
+          SpectrumView spectrumView{};
+          const SourceLocation userSrcLoc{resourceSourceLocation(srcLoc)};
+          if (args.size() == 1) {
+            spectrumView =
+                context.compiler.loadSpectrum(resolvedFileName, userSrcLoc);
+          } else if (args[1].value.isComptimeString()) {
+            spectrumView = context.compiler.loadSpectrum(
+                resolvedFileName,
+                std::string(args[1].value.getComptimeString()), userSrcLoc);
+          } else if (args[1].value.isComptimeInt()) {
+            spectrumView = context.compiler.loadSpectrum(
+                resolvedFileName, int(args[1].value.getComptimeInt()),
+                userSrcLoc);
+          }
+          if (spectrumView.curveValues.empty()) {
+            return invoke(spectralCurveType, {}, srcLoc);
+          }
+          PointerType *floatPtrType{
+              context.getPointerType(context.getFloatType())};
+          return invoke(
+              spectralCurveType,
+              {Argument{"count", context.getComptimeInt(
+                                     int(spectrumView.wavelengths.size()))},
+               Argument{"wavelengths",
+                        context.getComptimePtr(
+                            floatPtrType, spectrumView.wavelengths.data())},
+               Argument{"amplitudes",
+                        context.getComptimePtr(
+                            floatPtrType, spectrumView.curveValues.data())}},
+              srcLoc);
+        });
+  }
+  default:
+    break;
+  }
+  // Unreachable: 'emitIntrinsic()' only routes the '#load...' identifiers here.
+  SMDL_SANITY_CHECK(false);
+  return Value();
+}
+//--}
+
+void Emitter::expandInlineArgument(ArgumentList &args, ast::Argument &astArg) {
+  const SourceLocation &srcLoc{astArg.srcLoc};
+  if (astArg.isNamed())
+    srcLoc.throwError("Argument marked 'inline' must not be named");
+  Value value{emit(astArg.expr)};
+  Type *type{value.type};
+  if (type->isArithmeticVector()) {
+    const unsigned count{
+        unsigned(static_cast<ArithmeticType *>(type)->extent.getVectorSize())};
+    for (unsigned i = 0; i < count; i++)
+      args.push_back(Argument{{}, accessIndex(value, i, srcLoc), &astArg});
+  } else if (type->isArray() && !type->isAbstract()) {
+    const unsigned count{static_cast<ArrayType *>(type)->size};
+    for (unsigned i = 0; i < count; i++)
+      args.push_back(Argument{{}, accessIndex(value, i, srcLoc), &astArg});
+  } else if (type->isStruct() && !type->isAbstract()) {
+    for (auto &param : static_cast<StructType *>(type)->params)
+      args.push_back(Argument{param.name,
+                              accessField(value, param.name, srcLoc), &astArg});
+  } else if (type->isPointer()) {
+    srcLoc.throwError("Cannot expand 'inline' argument of pointer type ",
+                      SpellQuoted(type->displayName), "; dereference it first");
+  } else {
+    srcLoc.throwError("Cannot expand 'inline' argument of type ",
+                      SpellQuoted(type->displayName),
+                      "; expected a vector, array, or concrete struct");
+  }
+}
+
+void Emitter::rejectAssignmentAsNamedArgument(ast::Argument &astArg) {
+  if (!astArg.isPositional()) return;
+  ast::Binary *binary{
+      llvm::dyn_cast_if_present<ast::Binary>(astArg.expr.get())};
+  if (!binary || binary->op != BINOP_EQ) return;
+  ast::Identifier *identifier{
+      llvm::dyn_cast_if_present<ast::Identifier>(binary->exprLHS.get())};
+  if (!identifier || !identifier->isSimpleName()) return;
+  // An assignment to something that exists is a real assignment, however
+  // odd it looks in an argument list.
+  Span<const std::string_view> names{context.internName(*identifier)};
+  Declaration *unusableMatch{};
+  if (probeName(names, getLLVMFunction(), &unusableMatch)) return;
+  const std::string_view name{names[0]};
+  identifier->srcLoc.throwError("Cannot resolve identifier ", SpellQuoted(name),
+                                "; a named argument is written ",
+                                SpellQuoted(concat(name, ": ...")), ", not ",
+                                SpellQuoted(concat(name, " = ...")));
+}
+
+Value Emitter::emitCall(Value callee, const ArgumentList &args,
+                        const SourceLocation &srcLoc) {
+  // Anything emitted inside this call can blame the user's line for a
+  // resource it cannot find, however deep into the builtins it goes.
+  SMDL_PRESERVE(srcLocUserCall);
+  if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) srcLocUserCall = srcLoc;
+  if (args.isAnyVisited()) {
+    size_t visitedIndex{args.indexOfFirstVisited()};
+    return emitVisit(args[visitedIndex].value, srcLoc, [&](Value value) {
+      ArgumentList visitedArgs{args};
+      visitedArgs[visitedIndex].value = value;
+      return emitCall(callee, visitedArgs, srcLoc);
+    });
+  } else {
+    if (callee.isComptimeMetaType(context)) {
+      return invoke(callee.getComptimeMetaType(context, srcLoc), args, srcLoc);
+    }
+    if (callee.isComptimeMetaIntrinsic(context)) {
+      return emitIntrinsic(
+          callee.getComptimeMetaIntrinsic(context, srcLoc)->srcName.substr(1),
+          args, srcLoc);
+    }
+    // A meta-type value that is not a compile-time constant: a function or
+    // type handle that was smuggled through a parameter of a non-macro
+    // function or loaded back out of a mutable variable.
+    if (callee.type == context.getMetaTypeType())
+      srcLoc.throwError(
+          "Function and type values are compile-time only; they can only be "
+          "called through 'const' bindings and parameters of '@(macro)' "
+          "functions");
+  }
+  srcLoc.throwError("Unimplemented or invalid call");
+}
+
+Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
+                         const std::function<Value(Value)> &visitor) {
+  if (!value.type->isUnionOrPointerToUnion()) {
+    Value result{};
+    handleScope(nullptr, nullptr, [&]() { result = visitor(value); });
+    return result;
+  } else {
+    llvm::SmallVector<Emitter::Result> results{llvm::SmallVector<Result>{}};
+    UnionType *unionType{
+        static_cast<UnionType *>(value.type->getFirstNonPointerType())};
+    Value ptr{value.type->isUnion() ? rvalue(accessField(value, "#ptr", {}))
+                                    : Value()};
+    std::string visitName{context.getUniqueName("visit", getLLVMFunction())};
+    llvm::StringRef visitNameRef{visitName};
+    llvm::BasicBlock *blockUnreachable{
+        createBlock(visitNameRef + ".unreachable")};
+    llvm::BasicBlock *blockEnd{createBlock(visitNameRef + ".end")};
+    llvm::SwitchInst *switchInst{builder.CreateSwitch(
+        rvalue(accessField(value, "#idx", {})), blockUnreachable)};
+    for (size_t i = 0; i < unionType->caseTypes.size(); i++) {
+      llvm::BasicBlock *blockCase{createBlock(concat(visitName, ".case.", i))};
+      switchInst->addCase(builder.getInt32(i), blockCase);
+      handleScope(blockCase, blockEnd, [&] {
+        Type *caseType{unionType->caseTypes[i]};
+        Value caseValue{};
+        if (value.type->isUnion()) {
+          caseValue = LValue(caseType, ptr);
+          caseValue = value.isRValue() ? rvalue(caseValue) : caseValue;
+        } else {
+          caseValue = value;
+          caseValue.type = context.getPointerType(
+              caseType, value.type->getFirstNonPointerTypeDepth());
+        }
+        caseValue = visitor(caseValue);
+        results.push_back({caseValue, getInsertBlock(), {}});
+      });
+    }
+    llvmMoveBlockToEnd(blockUnreachable);
+    builder.SetInsertPoint(blockUnreachable);
+    builder.CreateUnreachable();
+    handleBlockEnd(blockEnd);
+    return createResult(context.getAutoType(), results, srcLoc);
+  }
+}
+
+extern "C" {
+
+SMDL_EXPORT void smdlPanic(const char *location, const char *message,
+                           const char *snippet) {
+  std::string str{location};
+  if (!str.empty()) str += ' ';
+  str += message;
+  throw Error(std::move(str), std::string(snippet));
+}
+
+} // extern "C"
+
+void Emitter::emitPanic(Value message, const SourceLocation &srcLoc) {
+  SMDL_SANITY_CHECK(message);
+  SMDL_SANITY_CHECK(message.type == context.getStringType());
+  message = rvalue(message);
+  // The location travels as its own argument because the message may be a
+  // run-time string, which there is no way to concatenate to here.
+  Value location{context.getComptimeString(std::string(srcLoc))};
+  Value snippet{context.getComptimeString(srcLoc.getSourceSnippet())};
+  llvm::CallInst *callInst{builder.CreateCall(
+      context.getBuiltinCallee("smdlPanic", &smdlPanic),
+      {location.llvmValue, message.llvmValue, snippet.llvmValue})};
+  callInst->setIsNoInline();
+  callInst->setDoesNotReturn();
+}
+
+extern "C" {
+
+SMDL_EXPORT void smdlPrintString(void *ptr, const char *value) {
+  std::fputs(value, static_cast<std::FILE *>(ptr));
+}
+
+SMDL_EXPORT void smdlPrintQuotedString(void *ptr, const char *value) {
+  std::FILE *file{static_cast<std::FILE *>(ptr)};
+  std::fputc('"', file);
+  for (char ch : std::string_view(value)) {
+    switch (ch) {
+    case '\\':
+      std::fputs("\\", file);
+      break;
+    case '\a':
+      std::fputs("\\a", file);
+      break;
+    case '\b':
+      std::fputs("\\b", file);
+      break;
+    case '\f':
+      std::fputs("\\f", file);
+      break;
+    case '\n':
+      std::fputs("\\n", file);
+      break;
+    case '\r':
+      std::fputs("\\r", file);
+      break;
+    case '\t':
+      std::fputs("\\t", file);
+      break;
+    case '\v':
+      std::fputs("\\v", file);
+      break;
+    case '"':
+      std::fputs("\\\"", file);
+      break;
+    default: {
+      if (std::isgraph(static_cast<uint8_t>(ch))) {
+        std::fputc(ch, file);
+      } else {
+        std::fputs("\\x", file);
+        std::fputc("0123456789abcdef"[static_cast<uint8_t>(ch) / 16], file);
+        std::fputc("0123456789abcdef"[static_cast<uint8_t>(ch) % 16], file);
+      }
+      break;
+    }
+    }
+  }
+  std::fputc('"', file);
+}
+
+SMDL_EXPORT void smdlPrintBool(void *ptr, int value) {
+  std::fputs(value != 0 ? "true" : "false", static_cast<std::FILE *>(ptr));
+}
+
+SMDL_EXPORT void smdlPrintInt(void *ptr, int64_t value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%lld",
+               static_cast<long long>(value));
+}
+
+SMDL_EXPORT void smdlPrintFloat(void *ptr, float value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%f", value);
+}
+
+SMDL_EXPORT void smdlPrintDouble(void *ptr, double value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%g", value);
+}
+
+SMDL_EXPORT void smdlPrintPointer(void *ptr, const void *value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%p", value);
+}
+
+} // extern "C"
+
+void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
+                        bool shouldQuoteStrings) {
+  SMDL_SANITY_CHECK(file.type->isPointer());
+  file = rvalue(file);
+  if (value.isComptimeMetaType(context)) {
+    emitPrint(file, value.getComptimeMetaType(context, srcLoc)->displayName,
+              srcLoc);
+  } else if (value.isVoid()) {
+    emitPrint(file, "none", srcLoc);
+  } else if (value.type->isPointer()) {
+    builder.CreateCall(
+        context.getBuiltinCallee("smdlPrintPointer", &smdlPrintPointer),
+        {file.llvmValue, rvalue(value).llvmValue});
+  } else if (value.type->isString()) {
+    llvm::FunctionCallee call{
+        shouldQuoteStrings
+            ? context.getBuiltinCallee("smdlPrintQuotedString",
+                                       &smdlPrintQuotedString)
+            : context.getBuiltinCallee("smdlPrintString", &smdlPrintString)};
+    builder.CreateCall(call, {file.llvmValue, rvalue(value).llvmValue});
+  } else if (value.type->isEnum()) {
+    emitPrint(file, invoke(context.getStringType(), value, srcLoc), srcLoc);
+  } else if (ArithmeticType *
+             arithType{llvm::dyn_cast<ArithmeticType>(value.type)}) {
+    if (arithType->extent.isScalar()) {
+      Type *type{};
+      llvm::FunctionCallee call{};
+      if (arithType->scalar.isBoolean()) {
+        type = context.getIntType();
+        call = context.getBuiltinCallee("smdlPrintBool", &smdlPrintBool);
+      } else if (arithType->scalar.isIntegral()) {
+        type = context.getArithmeticType(Scalar::getInt(64), Extent(1));
+        call = context.getBuiltinCallee("smdlPrintInt", &smdlPrintInt);
+      } else {
+        type = arithType->scalar.numBits < 64
+                   ? context.getArithmeticType(Scalar::getFP(32), Extent(1))
+                   : context.getArithmeticType(Scalar::getFP(64), Extent(1));
+        call =
+            arithType->scalar.numBits < 64
+                ? context.getBuiltinCallee("smdlPrintFloat", &smdlPrintFloat)
+                : context.getBuiltinCallee("smdlPrintDouble", &smdlPrintDouble);
+      }
+      builder.CreateCall(
+          call, {file.llvmValue, invoke(type, value, srcLoc).llvmValue});
+    } else if (arithType->extent.isVector()) {
+      emitPrint(file, "<", srcLoc);
+      for (uint32_t i = 0; i < arithType->extent.numRows; i++) {
+        emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
+        if (i + 1 < arithType->extent.numRows) emitPrint(file, ", ", srcLoc);
+      }
+      emitPrint(file, ">", srcLoc);
+    } else if (arithType->extent.isMatrix()) {
+      emitPrint(file, "[", srcLoc);
+      for (uint32_t i = 0; i < arithType->extent.numCols; i++) {
+        emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
+        if (i + 1 < arithType->extent.numCols) emitPrint(file, ", ", srcLoc);
+      }
+      emitPrint(file, "]", srcLoc);
+    }
+  } else if (ArrayType * arrayType{llvm::dyn_cast<ArrayType>(value.type)}) {
+    emitPrint(file, "[", srcLoc);
+    for (uint32_t i = 0; i < arrayType->size; i++) {
+      emitPrint(file, accessIndex(value, i, srcLoc), srcLoc,
+                /*shouldQuoteStrings=*/true);
+      if (i + 1 < arrayType->size) emitPrint(file, ", ", srcLoc);
+    }
+    emitPrint(file, "]", srcLoc);
+  } else if (ColorType * colorType{llvm::dyn_cast<ColorType>(value.type)}) {
+    emitPrint(file, "<", srcLoc);
+    for (uint32_t i = 0; i < colorType->wavelengthBaseMax; i++) {
+      emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
+      if (i + 1 < colorType->wavelengthBaseMax) emitPrint(file, ", ", srcLoc);
+    }
+    emitPrint(file, ">", srcLoc);
+  } else if (StructType * structType{llvm::dyn_cast<StructType>(value.type)}) {
+    emitPrint(file, value.type->displayName + "(", srcLoc);
+    for (uint32_t i = 0; i < structType->params.size(); i++) {
+      std::string paramName{structType->params[i].name};
+      emitPrint(file, paramName + ": ", srcLoc);
+      emitPrint(file, accessField(value, paramName, srcLoc), srcLoc,
+                /*shouldQuoteStrings=*/true);
+      if (i + 1 < structType->params.size()) emitPrint(file, ", ", srcLoc);
+    }
+    emitPrint(file, ")", srcLoc);
+  } else if (value.type->isUnion()) {
+    emitVisit(value, srcLoc, [&](Value value) {
+      emitPrint(file, value, srcLoc, shouldQuoteStrings);
+      return Value();
+    });
+  }
+}
+
+std::vector<std::string_view> Emitter::exportedNamesOf(Module *module_) {
+  std::vector<std::string_view> exportedNames{};
+  if (module_ && module_->mRootScope)
+    for (const auto &[key, declaration] : module_->mRootScope->decls)
+      if (declaration && declaration->name.size() == 1 &&
+          declaration->isExported())
+        exportedNames.push_back(declaration->name[0]);
+  return exportedNames;
+}
+
+std::string
+Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
+  const std::string typed{join(modulePath, "::")};
+  std::vector<std::string_view> candidates{};
+  for (auto builtinName : builtin::getAllNames())
+    candidates.push_back(builtinName);
+  // The qualified names carry the leading '::' that an import path spells
+  // separately, so drop it before comparing.
+  for (const auto &[qualifiedName, module_] :
+       context.compiler.mModulesByQualifiedName)
+    candidates.push_back(std::string_view(qualifiedName).substr(2));
+  if (std::string_view similar{suggestNearestName(typed, candidates)};
+      !similar.empty())
+    return concat("; did you mean ", SpellQuoted(concat("::", similar)), "?");
+  // Nothing is close, so answer the question the user actually has, which
+  // for a failed import is where the compiler looked.
+  const std::vector<std::string> &searchPaths{
+      context.compiler.mModuleDirSearchPaths};
+  if (searchPaths.empty())
+    return "; there are no module search paths to look in";
+  std::string str{"; searched "};
+  for (size_t i{}; i < searchPaths.size(); i++) {
+    if (i > 0) str += ", ";
+    str += concat(SpellFilePath(searchPaths[i]));
+  }
+  return str;
+}
+
+std::string
+Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
+                                  const SourceLocation &srcLoc) {
+  auto suggest{[](std::string_view name) {
+    return concat("; did you mean ", SpellQuoted(name), "?");
+  }};
+  const bool isSMDL{currentModule == nullptr || currentModule->isSMDLSyntax()};
+  if (names.size() > 1) {
+    // A qualified name whose prefix names a module: look for the last
+    // element among that module's exports.
+    Span<const std::string_view> prefix{names.dropBack()};
+    Declaration *unusableMatch{};
+    Declaration *declaration{
+        probeName(prefix, getLLVMFunction(), &unusableMatch)};
+    if (!declaration || !declaration->value.isComptimeMetaModule(context))
+      return {};
+    std::vector<std::string_view> exportedNames{exportedNamesOf(
+        declaration->value.getComptimeMetaModule(context, srcLoc))};
+    if (std::string_view similar{
+            suggestNearestName(names.back(), exportedNames)};
+        !similar.empty())
+      return suggest(concat(join(prefix, "::"), "::", similar));
+    return {};
+  }
+  const std::string_view name{names[0]};
+  // The strongest signal there is: a module the file already imports really
+  // does export this name, and only the qualification is missing. Imports
+  // live apart from the other declarations, so both lists are walked.
+  std::vector<std::string_view> declaredNames{};
+  auto hintIfModuleExports{[&](Declaration *declaration) {
+    std::string hint{};
+    if (!declaration || declaration->name.size() != 1 ||
+        !declaration->value.isComptimeMetaModule(context))
+      return hint;
+    Module *module_{declaration->value.getComptimeMetaModule(context, srcLoc)};
+    if (!module_ ||
+        !Declaration::findInModule(context, name, getLLVMFunction(), module_))
+      return hint;
+    const std::string_view moduleName{declaration->name[0]};
+    hint = concat("; ", SpellQuoted(moduleName),
+                  " is imported but not opened, did you mean ",
+                  SpellQuoted(concat(moduleName, "::", name)),
+                  ", or 'using ::", moduleName, " import ", name, ";'?");
+    return hint;
+  }};
+  for (auto s{scope}; s; s = s->parent) {
+    for (const auto &[key, declaration] : s->decls) {
+      if (declaration && declaration->name.size() == 1)
+        declaredNames.push_back(declaration->name[0]);
+      if (std::string hint{hintIfModuleExports(declaration)}; !hint.empty())
+        return hint;
+    }
+    for (auto declaration : s->imports)
+      if (std::string hint{hintIfModuleExports(declaration)}; !hint.empty())
+        return hint;
+  }
+  if (isSMDL) {
+    if (name == "state") return suggest("$state");
+    // The C spelling of an intrinsic is a stronger signal than any
+    // near-miss, because the word is exactly right and only the '#' is
+    // missing.
+    if (getIntrinsicByName(name) != IntrinsicID::Invalid)
+      return suggest(concat("#", name));
+  }
+  // Everything else that could have been meant, weighed together so that
+  // the nearest one wins outright instead of whichever list is consulted
+  // first. The literals read as words but never reach name resolution, so
+  // they have to be added by hand.
+  static constexpr std::string_view literalNames[]{"true", "false", "none"};
+  std::vector<std::string_view> candidates{std::move(declaredNames)};
+  std::vector<std::string> displayNames{};
+  for (auto keyword : context.getKeywordNames()) candidates.push_back(keyword);
+  for (auto literal : literalNames) candidates.push_back(literal);
+  for (auto candidate : candidates) displayNames.emplace_back(candidate);
+  if (isSMDL)
+    for (auto intrinsicName : getAllIntrinsicNames()) {
+      candidates.push_back(intrinsicName);
+      displayNames.push_back(concat("#", intrinsicName));
+    }
+  if (std::string_view similar{suggestNearestName(name, candidates)};
+      !similar.empty())
+    // The plain spellings come first, so an intrinsic whose bare name is
+    // also a real name in scope is suggested without the '#'.
+    for (size_t i{}; i < candidates.size(); i++)
+      if (candidates[i] == similar) return suggest(displayNames[i]);
+  return {};
+}
+
+Value Emitter::resolveIdentifier(Span<const std::string_view> names,
+                                 const SourceLocation &srcLoc,
+                                 bool shouldDefaultToVoid) {
+  SMDL_SANITY_CHECK(!names.empty());
+  // Interning the lookup makes the full-name comparisons in the scope
+  // index pointer comparisons against interned declaration names.
+  names = context.internName(names);
+  Declaration *unusableMatch{};
+  Declaration *declaration{probeName(names, getLLVMFunction(), &unusableMatch)};
+  if (unusableMatch) {
+    if (SourceLocation prevSrcLoc{unusableMatch->getSourceLocation()})
+      srcLoc.throwError("Cannot reference run-time value of ",
+                        SpellQuoted(join(names, "::")), " declared at ",
+                        std::string(prevSrcLoc), " from a different function");
+    srcLoc.throwError("Cannot reference run-time value of ",
+                      SpellQuoted(join(names, "::")),
+                      " from a different function");
+  }
+  if (declaration) {
+    return declaration->value;
+  }
+  if (names.size() == 1) {
+    if (currentModule == nullptr || currentModule->isSMDLSyntax()) {
+      if (names[0] == "$state") {
+        if (state == nullptr)
+          srcLoc.throwError("Cannot resolve '$state' in pure context");
+        return state;
+      }
+      if (names[0] == "none") {
+        return RValue(context.getVoidType(), nullptr);
+      }
+    }
+    if (Value value{context.getKeyword(names[0])}) {
+      return value;
+    }
+  }
+  if (shouldDefaultToVoid) {
+    return RValue(context.getVoidType(), nullptr);
+  }
+  srcLoc.throwError("Cannot resolve identifier ",
+                    SpellQuoted(join(names, "::")),
+                    suggestForUnresolvedName(names, srcLoc));
+  return Value();
+}
+
+Emitter::ResolvedArguments
+Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
+                          const SourceLocation &srcLoc, bool shouldSkipEmit,
+                          bool shouldPassAggregatesIndirectly) {
+  // Obvious case: If there are more arguments than parameters, resolution
+  // fails.
+  if (args.size() > params.size() && !params.isVariadic) {
+    srcLoc.throwError("Too many arguments: expected at most ", params.size(),
+                      ", got ", args.size());
+  }
+  // Obvious case: If there are argument names that do not correspond to any
+  // parameter names, resolution fails.
+  // Held by value: a 'Span' over the temporary would dangle.
+  std::vector<std::string_view> paramNames{params.getNames()};
+  if (!args.isOnlyTheseNames(paramNames)) {
+    llvm::SmallVector<std::string_view, 2> invalidNames{};
+    for (const auto &arg : args)
+      if (!arg.name.empty() &&
+          !Span<const std::string_view>(paramNames).contains(arg.name))
+        invalidNames.push_back(arg.name);
+    std::string message{std::string(invalidNames.size() == 1
+                                        ? "No parameter named "
+                                        : "No parameters named ")};
+    for (size_t i{}; i < invalidNames.size(); i++) {
+      if (i > 0) message += ", ";
+      message += concat(SpellQuoted(invalidNames[i]));
+    }
+    // Only the first offender gets a suggestion. Past that the user is not
+    // making a typo, they are calling something else entirely.
+    if (std::string_view similar{suggestNearest(invalidNames[0], paramNames)};
+        !similar.empty())
+      message += concat("; did you mean ", SpellQuoted(similar), "?");
+    srcLoc.throwError(std::move(message));
+  }
+  // The primary resolution logic.
+  ResolvedArguments resolvedArgs{params, args};
+  // The named array sizes deduced so far across the argument list, so that
+  // `(const float[<N>] a, const auto[<N>] b)` rejects arguments of
+  // different sizes instead of silently rebinding `N` (see
+  // `InferredSizeArrayType::invoke`). This runs during overload probing,
+  // so a size-inconsistent candidate is rejected like any other
+  // conversion failure.
+  llvm::SmallVector<std::pair<std::string_view, unsigned>, 2> deducedSizes{
+      llvm::SmallVector<std::pair<std::string_view, uint32_t>, 2>{}};
+  for (size_t iParam{}; iParam < params.size(); iParam++) {
+    const Parameter &param{params[iParam]};
+    const Argument *arg{[&]() -> const Argument * {
+      // 1. Look for an explicitly named argument.
+      for (size_t iArg{}; iArg < args.size(); iArg++) {
+        if (const Argument &arg{args[iArg]}; arg.name == param.name) {
+          // If this has already been resolved by a positional argument,
+          // resolution fails.
+          if (resolvedArgs.isResolved(iArg))
+            srcLoc.throwError("Named argument ", SpellQuoted(arg.name),
+                              " already resolved by positional argument");
+          resolvedArgs.argParams[iArg] = &param;
+          return &arg;
+        }
+      }
+      // 2. If no named argument, default to the next positional argument.
+      for (size_t iArg{}; iArg < args.size(); iArg++) {
+        if (const Argument &arg{args[iArg]};
+            arg.isPositional() && !resolvedArgs.isResolved(iArg)) {
+          resolvedArgs.argParams[iArg] = &param;
+          return &arg;
+        }
+      }
+      return nullptr;
+    }()};
+    if (arg) {
+      resolvedArgs.values[iParam] = arg->value;
+      if (!context.isImplicitlyConvertible(arg->value.type, param.type))
+        srcLoc.throwError("Argument type ",
+                          SpellQuoted(arg->value.type->displayName),
+                          " is not implicitly convertible to type ",
+                          SpellQuoted(param.type->displayName),
+                          " of parameter ", SpellQuoted(param.name));
+      // Deduce named array sizes, descending through nested arrays.
+      Type *paramType{param.type};
+      Type *argType{arg->value.type};
+      while (true) {
+        InferredSizeArrayType *inferredType{
+            llvm::dyn_cast<InferredSizeArrayType>(paramType)};
+        ArrayType *arrayType{llvm::dyn_cast<ArrayType>(argType)};
+        if (!inferredType || !arrayType) break;
+        if (!inferredType->sizeName.empty()) {
+          std::pair<std::string_view, unsigned> *deduced{
+              llvm::find_if(deducedSizes, [&](auto &entry) {
+                return entry.first == inferredType->sizeName;
+              })};
+          if (deduced == deducedSizes.end()) {
+            deducedSizes.push_back({inferredType->sizeName, arrayType->size});
+          } else if (deduced->second != arrayType->size) {
+            srcLoc.throwError(
+                "Argument type ", SpellQuoted(arg->value.type->displayName),
+                " of parameter ", SpellQuoted(param.name),
+                " deduces array size ", SpellQuoted(inferredType->sizeName),
+                " = ", std::to_string(arrayType->size),
+                " but an earlier argument deduced ",
+                SpellQuoted(inferredType->sizeName), " = ",
+                std::to_string(deduced->second));
+          }
+        }
+        paramType = inferredType->elemType;
+        argType = arrayType->elemType;
+      }
+    } else if (!param.getASTInitializer() && !param.builtinDefaultValue) {
+      srcLoc.throwError("Missing argument for parameter ",
+                        SpellQuoted(param.name),
+                        " without default initializer");
+    }
+  }
+  // At this point, every parameter should either have a resolved argument
+  // or a default initializer.
+  size_t resolvedArgsCount{0};
+  for (size_t iArg{}; iArg < args.size(); iArg++) {
+    if (resolvedArgs.isResolved(iArg)) {
+      resolvedArgsCount++;
+    } else {
+      // An argument that did not resolve is appended to the end
+      // as variadic. After this for loop finishes, it should be
+      // true that the number of values is equal to whichever is
+      // greater between the number of arguments and the number
+      // of parameters.
+      resolvedArgs.values.emplace_back(args[iArg]);
+    }
+  }
+  SMDL_SANITY_CHECK(resolvedArgs.values.size() ==
+                    std::max(args.size(), params.size()));
+  // If there are more arguments than parameters, i.e., the parameter list is
+  // variadic, the number of resolved arguments should equal the number of
+  // parameters. If there are fewer arguments than parameters, the number
+  // of resolved arguments should equal the number of arguments.
+  SMDL_SANITY_CHECK(resolvedArgsCount == std::min(args.size(), params.size()));
+
+  if (!shouldSkipEmit) {
+    SMDL_PRESERVE(scope, anchors);
+    restoreResolutionAnchor(params);
+    handleScope(nullptr, nullptr, [&] {
+      for (size_t iParam{}; iParam < params.size(); iParam++) {
+        const Parameter &param{params[iParam]};
+        Value &value{resolvedArgs.values[iParam]};
+        if (!value) {
+          if (ast::Expr * expr{param.getASTInitializer()}) {
+            setCurrentModule(expr->srcLoc);
+            value = emit(expr);
+          } else {
+            SMDL_SANITY_CHECK(param.builtinDefaultValue);
+            value = *param.builtinDefaultValue;
+          }
+        }
+        // Skip a same-type conversion, which is an identity that would
+        // nonetheless load a memory-resident value into SSA (see
+        // 'ArrayType::invoke'): exactly the traffic the indirect
+        // convention exists to avoid. The 'rvalue'/'lvalue' below supplies
+        // whichever form is actually wanted either way.
+        if (value.type != param.type)
+          value = invoke(param.type, value, param.getSourceLocation());
+        // An indirect parameter is passed as a pointer, so its value must
+        // reach the call memory-resident. Everything else must reach it as
+        // an rvalue: conversions may come back memory-resident (see e.g.
+        // 'UnionType::invoke'), and these values are passed directly as
+        // LLVM call arguments by 'FunctionType::invoke'.
+        //
+        // NOTE: The predicate is applied to the *converted value's* type,
+        // not to 'param.type'. A declared parameter type may be abstract
+        // ('auto', 'float[<N>]'), and it is the concrete resolved type that
+        // the callee is instantiated with (see 'getNonVariadicTypes'), so
+        // testing the declared type would disagree with the callee for
+        // exactly the generic functions that pass big arrays around.
+        //
+        // The 'getLLVMFunction()' guard is for module scope, where there is
+        // no function to allocate the argument slot in. A call cannot be
+        // emitted there either (it needs an insert point), so the compile
+        // fails regardless and both sides agree to skip the convention;
+        // this only keeps the failure the one module scope already
+        // produces rather than an alloca sanity check from here.
+        const bool indirect{shouldPassAggregatesIndirectly &&
+                            getLLVMFunction() && passesIndirectly(value.type)};
+        // 'lvalue()' passes an existing lvalue through, so an argument that
+        // is already memory-resident is passed without a copy; 'byval'
+        // makes that safe by giving the callee its own copy regardless.
+        value = indirect ? lvalue(value) : rvalue(value);
+        // NOT this scope's storage to end: the call these values feed is
+        // emitted after this scope closes, and an indirect argument may be
+        // the caller's own variable passed through without a copy.
+        declare(param.name, /*node=*/nullptr, value, /*ownsStorage=*/false);
+      }
+      if (params.isVariadic) {
+        for (size_t iArg{}; iArg < args.size(); iArg++) {
+          if (!resolvedArgs.argParams[iArg]) {
+            Value &value{resolvedArgs.values[iArg]};
+            value = rvalue(resolvedArgs.values[iArg]);
+            // The C-ABI always promotes to double?
+            if (value.type == context.getFloatType())
+              value = invoke(context.getDoubleType(), value, srcLoc);
+          }
+        }
+      }
+    });
+  }
+  return resolvedArgs;
+}
+
+Module *Emitter::resolveModule(Span<const std::string_view> importPath,
+                               bool isAbs, const SourceLocation &srcLoc) {
+  Module *thisModule{srcLoc.module_};
+  llvm::SmallVector<std::string_view> resolvedImportPath{};
+  resolveImportUsingAliases(std::numeric_limits<uint64_t>::max(), importPath,
+                            resolvedImportPath);
+  SMDL_SANITY_CHECK(!resolvedImportPath.empty());
+  // A module still in progress is one that imports this one, directly or
+  // not, so importing it back closes a cycle.
+  auto compileImportedModule{[&](Module &otherModule) {
+    const llvm::SmallVector<const Module *, 8> &inProgress{
+        context.modulesInProgress};
+    if (const Module *const *itr{
+            std::find(inProgress.begin(), inProgress.end(), &otherModule)};
+        itr != inProgress.end()) {
+      std::string message{concat("cyclic import: ",
+                                 SpellQuoted(otherModule.getQualifiedName()))};
+      for (auto next{itr + 1}; next != inProgress.end(); ++next)
+        message += concat(next == itr + 1 ? " imports " : ", which imports ",
+                          SpellQuoted((*next)->getQualifiedName()));
+      message += concat(", which imports ",
+                        SpellQuoted(otherModule.getQualifiedName()));
+      srcLoc.throwError(std::move(message));
+    }
+    if (std::optional<Error> error{otherModule.compile(context)})
+      throw std::move(*error);
+  }};
+
+  auto findModuleInDirectory{[&](std::string dirPath) -> Module * {
+    for (auto resolvedImportDirPath :
+         Span<const std::string_view>(resolvedImportPath.data(), //
+                                      resolvedImportPath.size() - 1)) {
+      dirPath = joinPaths(dirPath, resolvedImportDirPath);
+    }
+    // NOTE: The lexical comparison is a fallback for modules extracted
+    // from archives: their pseudo file paths route through the '.mdr'
+    // file, so the filesystem-level equivalence check cannot
+    // canonicalize away '.' and '..' components. Trailing separators
+    // are stripped because 'lexically_normal()' of a path ending in
+    // '..' keeps one.
+    auto normalizePath{[](std::string somePath) {
+      std::string normal{std::filesystem::path(std::move(somePath))
+                             .lexically_normal()
+                             .string()};
+      while (normal.size() > 1 &&
+             (normal.back() == '/' || normal.back() == '\\')) {
+        normal.pop_back();
+      }
+      return normal;
+    }};
+    std::string lexicalDirPath{normalizePath(dirPath)};
+    for (auto &otherModule : context.compiler.mModules) {
+      // A module with no directory of its own (builtin, or supplied as
+      // source code without an anchor) is not reachable this way: its
+      // empty directory must not match the empty path this search walks
+      // when the current module has no directory either.
+      std::string otherDirPath{otherModule->getDirectory()};
+      if (otherModule.get() != thisModule && !otherDirPath.empty() &&
+          otherModule->getName() == resolvedImportPath.back() &&
+          (isPathEquivalent(dirPath, otherDirPath) ||
+           lexicalDirPath == normalizePath(otherDirPath))) {
+        // Held by pointer, because compiling it may load another module
+        // and reallocate the vector this loop walks.
+        Module *foundModule{otherModule.get()};
+        compileImportedModule(*foundModule);
+        return foundModule;
+      }
+    }
+    return nullptr;
+  }};
+  auto searchRelativeToCurrentModule{[&]() -> Module * {
+    if (std::string dirPath{thisModule->getDirectory()}; !dirPath.empty())
+      if (Module * mod{findModuleInDirectory(std::move(dirPath))}) return mod;
+    return nullptr;
+  }};
+  // The file a relative import names, loaded from disk when no added
+  // module is it (see `Compiler::add()`), under the importing module's
+  // package. Only a loose file imports this way, and never with '..'.
+  auto loadRelativeToCurrentModule{[&]() -> Module * {
+    if (thisModule->getOrigin() != Module::ORIGIN_FILE) return nullptr;
+    std::string filePath{thisModule->getDirectory()};
+    std::vector<std::string_view> components{
+        splitQualifiedName(thisModule->getQualifiedName())};
+    if (!components.empty()) components.pop_back();
+    for (auto element : resolvedImportPath) {
+      if (element == ".") continue;
+      if (element == "..") return nullptr;
+      filePath = joinPaths(filePath, element);
+      components.push_back(element);
+    }
+    const std::string mdlPath{filePath + ".mdl"};
+    if (!isFile(mdlPath)) return nullptr;
+    Module *loadedModule{context.compiler.loadImportedFile(
+        makePathCanonical(mdlPath), joinQualifiedName(components),
+        std::string(thisModule->getSearchRoot()))};
+    compileImportedModule(*loadedModule);
+    return loadedModule;
+  }};
+  auto searchCompilerDirPaths{[&]() -> Module * {
+    if (thisModule->isBuiltin()) return nullptr;
+    // Look up by qualified name, so modules extracted from archives
+    // resolve as if the archive were extracted at the top level of its
+    // search root, and so first-root-wins shadowing applies exactly as
+    // it does in the public lookup API. Note the index is populated in
+    // add-order, which makes this equivalent to searching the roots in
+    // the order they were added.
+    std::string qualifiedName{};
+    for (const auto &element : resolvedImportPath) {
+      qualifiedName += "::";
+      qualifiedName += element;
+    }
+    std::unordered_map<std::string, Module *> &modules{
+        context.compiler.mModulesByQualifiedName};
+    if (auto itr{modules.find(qualifiedName)};
+        itr != modules.end() && itr->second != thisModule) {
+      Module *otherModule{itr->second};
+      compileImportedModule(*otherModule);
+      return otherModule;
+    }
+    return nullptr;
+  }};
+  auto searchCompilerBuiltins{[&]() -> Module * {
+    // Builtin modules may be nested under builtin packages, e.g.,
+    // `::models::prospect`, so the whole path joined with `::` forms
+    // the builtin lookup key.
+    std::string key{};
+    for (const auto &element : resolvedImportPath) {
+      if (!key.empty()) key += "::";
+      key += element;
+    }
+    if (Module * mod{context.getBuiltinModule(key)}) return mod;
+    return nullptr;
+  }};
+
+  if (isAbs) {
+    // If the import path is absolute, meaning it starts with `::`,
+    // prioritize compiler builtins first and compiler dir paths
+    // second. This guarantees that `::df` always gets the builtin
+    // df module for example.
+    if (Module * mod{searchCompilerBuiltins()}) return mod;
+    if (Module * mod{searchCompilerDirPaths()}) return mod;
+  } else {
+    // If the import path is relative, meaning it does NOT starts with `::`,
+    // prioritize modules relative to the current module first, added or
+    // on disk.
+    if (Module * mod{searchRelativeToCurrentModule()}) return mod;
+    if (Module * mod{loadRelativeToCurrentModule()}) return mod;
+    // If the import path is not explicitly relative, meaning it does
+    // not start with `.` or `..`, also search the compiler dir paths
+    // first and then lastly default to compiler builtins.
+    if (bool isExplicitlyRelative{importPath[0] == "." ||
+                                  importPath[0] == ".."};
+        !isExplicitlyRelative) {
+      if (Module * mod{searchCompilerDirPaths()}) return mod;
+      if (Module * mod{searchCompilerBuiltins()}) return mod;
+    }
+  }
+  return nullptr;
+}
+
+void Emitter::resolveImportUsingAliases(
+    uint64_t seqLimit, Span<const std::string_view> importPath,
+    llvm::SmallVector<std::string_view> &resolvedImportPath) {
+  for (const auto &importPathElem : importPath) {
+    ast::UsingAlias *foundAlias{};
+    uint64_t foundAliasSeq{};
+    for (auto s{scope}; s && !foundAlias; s = s->parent) {
+      for (auto itr{s->usingAliases.rbegin()}; itr != s->usingAliases.rend();
+           ++itr) {
+        if (itr->second < seqLimit &&
+            itr->first->name.srcName == importPathElem) {
+          foundAlias = itr->first;
+          foundAliasSeq = itr->second;
+          break;
+        }
+      }
+    }
+    if (foundAlias) {
+      // Resolve the alias's own path against the aliases declared before
+      // it, including the alias itself would recurse forever on
+      // `using foo = foo::bar;`.
+      resolveImportUsingAliases(foundAliasSeq, foundAlias->importPath,
+                                resolvedImportPath);
+    } else {
+      resolvedImportPath.push_back(importPathElem);
+    }
+  }
+}
+
+} // namespace smdl

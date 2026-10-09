@@ -1,0 +1,8 @@
+CompileFlags:
+  CompilationDatabase: build
+
+Diagnostics:
+  ClangTidy:
+    Add: [bugprone*, modernize*]
+    Remove: [modernize-use-trailing-return-type, modernize-avoid-c-style-cast, bugprone-easily-swappable-parameters]
+  UnusedIncludes: Strict

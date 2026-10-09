@@ -1,0 +1,4 @@
+/// The other module exporting `shadowed`. See `one.mdl`.
+#smdl
+
+export const int shadowed = 2;

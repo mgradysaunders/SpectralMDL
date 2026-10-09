@@ -1,0 +1,570 @@
+#include "Context.h"
+#include "Builtin.h"
+#include "BuiltinAccess.h"
+#include "llvm/Support/xxhash.h"
+
+#include "smdl/Support/Compress.h"
+
+// The optional dependencies define these on the library target only when
+// they are actually linked, so give them a value either way and hand it
+// to SMDL source as '$HAS_NANOVDB' and '$HAS_PTEX'.
+#ifndef SMDL_HAS_NANOVDB
+#define SMDL_HAS_NANOVDB 0
+#endif // #ifndef SMDL_HAS_NANOVDB
+#ifndef SMDL_HAS_PTEX
+#define SMDL_HAS_PTEX 0
+#endif // #ifndef SMDL_HAS_PTEX
+
+namespace smdl {
+
+namespace {
+[[nodiscard]] std::string
+decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) try {
+  std::string result(sourceCode.uncompressedSize, '\0');
+  decompressBytesInto(
+      Span<std::byte>(reinterpret_cast<std::byte *>(result.data()),
+                      result.size()),
+      Span<const std::byte>(
+          reinterpret_cast<const std::byte *>(sourceCode.compressed),
+          sourceCode.compressedSize));
+  return result;
+} catch (const Error &error) {
+  throw Error(
+      concat("Cannot decompress builtin module source code: ", error.message));
+}
+} // namespace
+
+Context::Context(Compiler &compiler) : compiler(compiler) {
+  // Initialize keywords.
+  mKeywords = {
+      {"auto", getComptimeMetaType(getAutoType())},
+      {"bool", getComptimeMetaType(getBoolType())},
+      {"bool2", getComptimeMetaType(getBoolType(Extent(2)))},
+      {"bool3", getComptimeMetaType(getBoolType(Extent(3)))},
+      {"bool4", getComptimeMetaType(getBoolType(Extent(4)))},
+      {"color", getComptimeMetaType(getColorType())},
+      {"double", getComptimeMetaType(getDoubleType())},
+      {"double2", getComptimeMetaType(getDoubleType(Extent(2)))},
+      {"double3", getComptimeMetaType(getDoubleType(Extent(3)))},
+      {"double4", getComptimeMetaType(getDoubleType(Extent(4)))},
+      {"double2x2", getComptimeMetaType(getDoubleType(Extent(2, 2)))},
+      {"double2x3", getComptimeMetaType(getDoubleType(Extent(2, 3)))},
+      {"double2x4", getComptimeMetaType(getDoubleType(Extent(2, 4)))},
+      {"double3x2", getComptimeMetaType(getDoubleType(Extent(3, 2)))},
+      {"double3x3", getComptimeMetaType(getDoubleType(Extent(3, 3)))},
+      {"double3x4", getComptimeMetaType(getDoubleType(Extent(3, 4)))},
+      {"double4x2", getComptimeMetaType(getDoubleType(Extent(4, 2)))},
+      {"double4x3", getComptimeMetaType(getDoubleType(Extent(4, 3)))},
+      {"double4x4", getComptimeMetaType(getDoubleType(Extent(4, 4)))},
+      {"float", getComptimeMetaType(getFloatType())},
+      {"float2", getComptimeMetaType(getFloatType(Extent(2)))},
+      {"float3", getComptimeMetaType(getFloatType(Extent(3)))},
+      {"float4", getComptimeMetaType(getFloatType(Extent(4)))},
+      {"float2x2", getComptimeMetaType(getFloatType(Extent(2, 2)))},
+      {"float2x3", getComptimeMetaType(getFloatType(Extent(2, 3)))},
+      {"float2x4", getComptimeMetaType(getFloatType(Extent(2, 4)))},
+      {"float3x2", getComptimeMetaType(getFloatType(Extent(3, 2)))},
+      {"float3x3", getComptimeMetaType(getFloatType(Extent(3, 3)))},
+      {"float3x4", getComptimeMetaType(getFloatType(Extent(3, 4)))},
+      {"float4x2", getComptimeMetaType(getFloatType(Extent(4, 2)))},
+      {"float4x3", getComptimeMetaType(getFloatType(Extent(4, 3)))},
+      {"float4x4", getComptimeMetaType(getFloatType(Extent(4, 4)))},
+      {"int", getComptimeMetaType(getIntType())},
+      {"int2", getComptimeMetaType(getIntType(Extent(2)))},
+      {"int3", getComptimeMetaType(getIntType(Extent(3)))},
+      {"int4", getComptimeMetaType(getIntType(Extent(4)))},
+      {"string", getComptimeMetaType(getStringType())},
+      {"void", getComptimeMetaType(getVoidType())},
+      {"$DEBUG", getComptimeBool(compiler.isDebugEnabled)},
+      {"$HAS_NANOVDB", getComptimeBool(bool(SMDL_HAS_NANOVDB))},
+      {"$HAS_PTEX", getComptimeBool(bool(SMDL_HAS_PTEX))},
+      {"$DOUBLE_EPS",
+       getComptimeDouble(std::numeric_limits<double>::epsilon())},
+      {"$DOUBLE_MAX", getComptimeDouble(std::numeric_limits<double>::max())},
+      {"$DOUBLE_MIN", getComptimeDouble(std::numeric_limits<double>::min())},
+      {"$FLOAT_EPS", getComptimeFloat(std::numeric_limits<float>::epsilon())},
+      {"$FLOAT_MAX", getComptimeFloat(std::numeric_limits<float>::max())},
+      {"$FLOAT_MIN", getComptimeFloat(std::numeric_limits<float>::min())},
+      {"$INT_MIN", getComptimeInt(std::numeric_limits<int>::min())},
+      {"$INT_MAX", getComptimeInt(std::numeric_limits<int>::max())},
+      {"$INF", getComptimeFloat(std::numeric_limits<float>::infinity())},
+      {"$NAN", getComptimeFloat(std::numeric_limits<float>::quiet_NaN())},
+      {"$PI", getComptimeFloat(PI)},
+      {"$HALF_PI", getComptimeFloat(0.5f * PI)},
+      {"$TWO_PI", getComptimeFloat(TWO_PI)},
+      {"$SCENE_DATA",
+       getComptimePtr(getVoidPointerType(), &compiler.sceneData)},
+      {"$WAVELENGTH_BASE_MAX",
+       getComptimeInt(static_cast<int>(compiler.wavelengthBaseMax))},
+      {"char", getComptimeMetaType(getType<char>())},
+      {"int8_t", getComptimeMetaType(getType<int8_t>())},
+      {"int16_t", getComptimeMetaType(getType<int16_t>())},
+      {"int32_t", getComptimeMetaType(getType<int32_t>())},
+      {"int64_t", getComptimeMetaType(getType<int64_t>())},
+      {"intptr_t", getComptimeMetaType(getType<intptr_t>())},
+      {"intmax_t", getComptimeMetaType(getType<intmax_t>())},
+      {"long", getComptimeMetaType(getType<long>())},
+      {"ptrdiff_t", getComptimeMetaType(getType<ptrdiff_t>())},
+      {"size_t", getComptimeMetaType(getType<size_t>())},
+      {"$SEEK_SET", getComptimeInt(int(SEEK_SET))},
+      {"$SEEK_CUR", getComptimeInt(int(SEEK_CUR))},
+      {"$SEEK_END", getComptimeInt(int(SEEK_END))},
+      {"$stdin", getComptimePtr(getVoidPointerType(), stdin)},
+      {"$stdout", getComptimePtr(getVoidPointerType(), stdout)},
+      {"$stderr", getComptimePtr(getVoidPointerType(), stderr)},
+  };
+
+  // Compile builtin `API` module and use all exports as keywords!
+  // - `enum intensity_mode`
+  //   - `intensity_radiant_exitance`
+  //   - `intensity_power`
+  // - `tag bsdf` and `struct _default_bsdf`
+  // - `tag vdf` and `struct _default_vdf`
+  // - `tag edf` and `struct _default_edf`
+  // - `tag hair_bsdf` and `struct  _default_hair_bsdf`
+  // - `struct material_emission`
+  // - `struct material_surface`
+  // - `struct material_volume`
+  // - `struct material_geometry`
+  // - `struct material`
+  // - Function `_wymanXYZ`
+  // - Function `_wymanY`
+  // - Function `_colorToRGB`
+  // - Function `_rgbToColor`
+  Scope *apiRootScope{getBuiltinModule("api")->mRootScope};
+  auto seedKeyword{[&](Declaration *declaration) {
+    if (declaration->isExported() && declaration->hasSimpleName()) {
+      llvm::StringRef simpleName{declaration->name[0]};
+      SMDL_SANITY_CHECK_MSG(!mKeywords.contains(simpleName),
+                            "keyword collision in builtin 'api' module");
+      mKeywords[simpleName] = declaration->value;
+    }
+  }};
+  for (const auto &entry : apiRootScope->decls)
+    for (auto declaration{entry.second}; declaration;
+         declaration = declaration->prevSameNameInScope)
+      seedKeyword(declaration);
+  for (auto declaration : apiRootScope->imports) seedKeyword(declaration);
+  mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
+  mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
+  mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
+  mTextureCubeType =
+      static_cast<StructType *>(getKeywordAsType("texture_cube"));
+  mTexturePtexType =
+      static_cast<StructType *>(getKeywordAsType("texture_ptex"));
+  mBSDFMeasurementType =
+      static_cast<StructType *>(getKeywordAsType("bsdf_measurement"));
+  mLightProfileType =
+      static_cast<StructType *>(getKeywordAsType("light_profile"));
+  mSpectralCurveType =
+      static_cast<StructType *>(getKeywordAsType("spectral_curve"));
+  mComplexType = static_cast<StructType *>(getKeywordAsType("complex"));
+}
+
+Span<const std::string_view>
+Context::internName(Span<const std::string_view> name) {
+  if (name.empty()) return {};
+  llvm::SmallString<64> key{};
+  for (size_t i = 0; i < name.size(); i++) {
+    key += name[i];
+    if (i + 1 < name.size()) key += '\0';
+  }
+  auto [itr, inserted] = mInternedNames.try_emplace(key);
+  if (inserted) {
+    llvm::SmallVector<std::string_view, 4> views{};
+    llvm::StringRef keyChars{itr->getKey()};
+    size_t pos{};
+    for (const auto &elem : name) {
+      views.push_back(std::string_view(keyChars.data() + pos, elem.size()));
+      pos += elem.size() + 1;
+    }
+    std::string_view *elems{static_cast<std::string_view *>(allocator.allocate(
+        sizeof(std::string_view) * views.size(), alignof(std::string_view)))};
+    std::uninitialized_copy(views.begin(), views.end(), elems);
+    itr->second = Span<const std::string_view>(elems, views.size());
+  }
+  return itr->second;
+}
+
+Module *Context::getBuiltinModule(llvm::StringRef name) {
+  const builtin::CompressedSourceCode *sourceCode{
+      builtin::get_source_code(name)};
+  if (!sourceCode) {
+    return nullptr;
+  }
+  BumpPtr<Module> &mod{mBuiltinModules[name]};
+  if (!mod) {
+    mod = allocator.allocate<Module>(name.str(),
+                                     decompressSourceCode(*sourceCode));
+    if (std::optional<Error> error{mod->parse(allocator)}) {
+      throw std::move(*error);
+    }
+  }
+  if (std::optional<Error> error{mod->compile(*this)}) {
+    throw std::move(*error);
+  }
+  return mod.get();
+}
+
+const AlbedoLUT *Context::getBuiltinAlbedo(llvm::StringRef name) {
+  return builtin::get_albedo(name);
+}
+
+Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
+  uint64_t key{};
+  key |= uint64_t(scalar.intent) << 48;
+  key |= uint64_t(scalar.numBits) << 32;
+  key |= uint64_t(extent.numCols) << 16;
+  key |= uint64_t(extent.numRows);
+  BumpPtr<ArithmeticType> &type{mArithmeticTypes[key]};
+  if (!type) type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
+  return type.get();
+}
+
+ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
+  BumpPtr<ArrayType> &type{mArrayTypes[std::pair(elemType, size)]};
+  if (!type) type = allocator.allocate<ArrayType>(*this, elemType, size);
+  return type.get();
+}
+
+InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
+                                                         std::string sizeName) {
+  BumpPtr<InferredSizeArrayType> &type{
+      mInferredSizeArrayTypes[std::pair(elemType, sizeName)]};
+  if (!type)
+    type = allocator.allocate<InferredSizeArrayType>(elemType,
+                                                     std::move(sizeName));
+  return type.get();
+}
+
+PointerType *Context::getPointerType(Type *pointeeType) {
+  BumpPtr<PointerType> &type{mPointerTypes[pointeeType]};
+  if (!type) type = allocator.allocate<PointerType>(*this, pointeeType);
+  return type.get();
+}
+
+EnumType *Context::getEnumType(ast::Enum *decl) {
+  BumpPtr<Type> &type{mASTTypes[decl]};
+  if (!type) type = allocator.allocate<EnumType>(*decl);
+  return static_cast<EnumType *>(type.get());
+}
+
+FunctionType *Context::getFunctionType(ast::Function *decl) {
+  BumpPtr<Type> &type{mASTTypes[decl]};
+  if (!type) type = allocator.allocate<FunctionType>(*decl);
+  return static_cast<FunctionType *>(type.get());
+}
+
+FunctionType *Context::getLambdaFunctionType(ast::Function *decl) {
+  BumpPtr<FunctionType> type{
+      allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
+  FunctionType *result{type.get()};
+  mLambdaTypes.push_back(std::move(type));
+  return result;
+}
+
+StructType *Context::getStructType(ast::Struct *decl) {
+  BumpPtr<Type> &type{mASTTypes[decl]};
+  if (!type) type = allocator.allocate<StructType>(*decl);
+  return static_cast<StructType *>(type.get());
+}
+
+TagType *Context::getTagType(ast::Tag *decl) {
+  BumpPtr<Type> &type{mASTTypes[decl]};
+  if (!type)
+    type = allocator.allocate<TagType>(std::string(decl->name.srcName));
+  return static_cast<TagType *>(type.get());
+}
+
+Type *Context::getUnionType(llvm::ArrayRef<Type *> types) {
+  llvm::SmallVector<Type *> caseTypes{UnionType::canonicalizeTypes(types)};
+  if (caseTypes.size() == 1) return caseTypes[0];
+  BumpPtr<UnionType> &type{mUnionTypes[caseTypes]};
+  if (!type) type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
+  return type.get();
+}
+
+ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
+  BumpPtr<ComptimeUnionType> &type{mComptimeUnionTypes[unionType]};
+  if (!type) type = allocator.allocate<ComptimeUnionType>(unionType);
+  return type.get();
+}
+
+Type *Context::getCommonType(llvm::ArrayRef<Type *> types,
+                             bool shouldDefaultToUnion,
+                             const SourceLocation &srcLoc) {
+  if (types.empty()) return getVoidType();
+  if (types.size() == 1) return types[0];
+  auto getCommonTypeOfPair{[&](Type *typeA, Type *typeB) -> Type * {
+    if (typeA == getAutoType() || !typeA) return typeB;
+    if (typeB == getAutoType() || !typeB || typeA == typeB) return typeA;
+    // Sibling struct instances differing only in baked constants merge to
+    // the sibling keeping the constants they agree on, so they stay one
+    // struct type instead of becoming a union.
+    if (StructType *
+        merged{StructType::getCommonSiblingInstance(*this, typeA, typeB)})
+      return merged;
+    if (typeA->isArithmetic() && typeB->isArithmetic()) {
+      ArithmeticType *arithTypeA{static_cast<ArithmeticType *>(typeA)};
+      ArithmeticType *arithTypeB{static_cast<ArithmeticType *>(typeB)};
+      if (arithTypeA->extent == arithTypeB->extent ||
+          arithTypeA->extent.isScalar() || arithTypeB->extent.isScalar())
+        return arithTypeA->getCommonType(*this, arithTypeB);
+    }
+    if ((typeA->isArithmeticScalar() && typeB->isColor()) ||
+        (typeB->isArithmeticScalar() && typeA->isColor()))
+      return getColorType();
+    if (!shouldDefaultToUnion || typeA->isAbstract() || typeB->isAbstract())
+      srcLoc.throwError("No common type between ",
+                        SpellQuoted(typeA->displayName), " and ",
+                        SpellQuoted(typeB->displayName));
+    return getUnionType({typeA, typeB});
+  }};
+  Type *commonType{types[0]};
+  for (uint32_t i = 1; i < types.size(); i++)
+    commonType = getCommonTypeOfPair(commonType, types[i]);
+  return commonType;
+}
+
+ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
+  // If the source type is equivalent to the destination type OR the destination
+  // type is pure `auto`, conversion is perfect!
+  if (typeA == typeB || typeB == getAutoType()) {
+    return CONVERSION_RULE_PERFECT;
+  }
+  if (typeA->isAbstract()) return CONVERSION_RULE_EXPLICIT;
+  if (typeA->isVoid()) return CONVERSION_RULE_IMPLICIT;
+  // If the source and destination types are both arithmetic ...
+  if (typeA->isArithmetic() && typeB->isArithmetic()) {
+    // If the source and destination extents are equivalent, conversion is
+    // implicit.
+    if (static_cast<ArithmeticType *>(typeA)->extent ==
+        static_cast<ArithmeticType *>(typeB)->extent)
+      return CONVERSION_RULE_IMPLICIT;
+    // If the source type is a scalar and the destination type is a vector or
+    // matrix, conversion is explicit.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // auto vecOf1s = float4(1.0);
+    // auto matOf1s = float4x4(1.0); // 1s on diagonal
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (typeA->isArithmeticScalar() &&
+        (typeB->isArithmeticVector() || typeB->isArithmeticMatrix()))
+      return CONVERSION_RULE_EXPLICIT;
+  }
+  // If the source and destination types are different enum and/or int-like
+  // types, conversion is explicit.
+  if ((typeA->isEnum() && typeB->isEnum()) ||
+      (typeA->isEnum() && typeB->isArithmeticScalar() &&
+       typeB->isArithmeticIntegral()) ||
+      (typeB->isEnum() && typeA->isArithmeticScalar() &&
+       typeA->isArithmeticIntegral())) {
+    return CONVERSION_RULE_EXPLICIT;
+  }
+  // If the source type is a pointer ...
+  if (typeA->isPointer()) {
+    // If the destination type is also a pointer, conversion is explicit. NOTE:
+    // At this point, we know the source type is not equivalent to the
+    // destination type, so the pointer types are distinct.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // auto ptrToInt = cast<&int>(ptr);
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (typeB->isPointer()) {
+      // ... unless the destination type is `&void`
+      if (typeB == getVoidPointerType()) return CONVERSION_RULE_IMPLICIT;
+      // ... unless the destination type is a pointer to `auto`, in which case
+      // conversion is perfect as long as the underlying pointee type conversion
+      // is perfect.
+      if (typeB->isAbstract())
+        return getConversionRule(typeA->getPointeeType(),
+                                 typeB->getPointeeType());
+      return CONVERSION_RULE_EXPLICIT;
+    }
+    // If the destination type is a boolean, conversion is implicit. This is a
+    // non-NULL test.
+    // ~~~~~~~~~~~~~~~~~~~~~
+    // bool isNonNull = ptr;
+    // ~~~~~~~~~~~~~~~~~~~~~
+    if (typeB == getBoolType()) {
+      return CONVERSION_RULE_IMPLICIT;
+    }
+    // If the destination type is a vector with equivalent scalar type,
+    // conversion is explicit (Load from the pointer!).
+    if (ArithmeticType *arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
+        arithTypeB->extent.isVector() &&
+        arithTypeB->getScalarType(*this) == typeA->getPointeeType()) {
+      return CONVERSION_RULE_EXPLICIT;
+    }
+  }
+  // If the source type is a struct that is an instance of the
+  // destination type, conversion is perfect.
+  if (StructType *structTypeA{llvm::dyn_cast<StructType>(typeA)};
+      structTypeA && structTypeA->isInstanceOf(typeB)) {
+    return CONVERSION_RULE_PERFECT;
+  }
+  // If the source type is a union that is always an instance of the
+  // destination type, conversion is perfect.
+  if (UnionType *unionTypeA{llvm::dyn_cast<UnionType>(typeA)};
+      unionTypeA && unionTypeA->isAlwaysInstanceOf(typeB)) {
+    return CONVERSION_RULE_PERFECT;
+  }
+  // If the destination type is a union ...
+  if (UnionType * unionTypeB{llvm::dyn_cast<UnionType>(typeB)}) {
+    // If the source type is a union and the destination type has all
+    // of the source case types, conversion is implicit.
+    if (UnionType * unionTypeA{llvm::dyn_cast<UnionType>(typeA)}) {
+      return unionTypeB->hasAllCaseTypes(unionTypeA) ? CONVERSION_RULE_IMPLICIT
+                                                     : CONVERSION_RULE_EXPLICIT;
+    } else {
+      // If the source type is not a union and the destination type has the
+      // source as a case type, conversion is implicit.
+      if (unionTypeB->hasCaseType(typeA)) return CONVERSION_RULE_IMPLICIT;
+    }
+  }
+  // If the destination type is a compile-time union and the source type
+  // is one of the case types, conversion is perfect.
+  if (ComptimeUnionType *unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
+      unionTypeB && unionTypeB->unionType->hasCaseType(typeA)) {
+    return CONVERSION_RULE_PERFECT;
+  }
+  // If the destination type is a color ...
+  if (typeB->isColor()) {
+    // If the source type is float or float3, conversion is implicit.
+    if (typeA == getFloatType() || typeA == getFloatType(Extent(3)))
+      return CONVERSION_RULE_IMPLICIT;
+    // If the source type is a pointer to a float, conversion is explicit.
+    // (Loads from the pointer)
+    if (typeA == getPointerType(getFloatType()))
+      return CONVERSION_RULE_EXPLICIT;
+  }
+  // If the source type is an array ...
+  if (ArrayType * arrayTypeA{llvm::dyn_cast<ArrayType>(typeA)}) {
+    // If the destination type is an inferred-size array, conversion is whatever
+    // the element conversion is.
+    if (InferredSizeArrayType *
+        inferredSizeArrayTypeB{llvm::dyn_cast<InferredSizeArrayType>(typeB)}) {
+      return getConversionRule(arrayTypeA->elemType,
+                               inferredSizeArrayTypeB->elemType);
+    }
+    // If the destination type is a pointer with the same element type,
+    // conversion is implicit.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // auto someArray = float[4](/* ... */);
+    // &float somePtr = someArray;
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (PointerType *pointerTypeB{llvm::dyn_cast<PointerType>(typeB)};
+        pointerTypeB && arrayTypeA->elemType == pointerTypeB->pointeeType) {
+      return CONVERSION_RULE_IMPLICIT;
+    }
+    // If the destination type is an array with the same size, conversion is
+    // explicit. NOTE: At this point, we know the source type is not equivalent
+    // to the destination type, so we know the element types are different.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // auto someArray = float[4](/* ... */);
+    // auto someArray2 = cast<double[4]>(someArray);
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (ArrayType *arrayTypeB{llvm::dyn_cast<ArrayType>(typeB)};
+        arrayTypeB && arrayTypeA->size == arrayTypeB->size &&
+        getConversionRule(arrayTypeA->elemType, arrayTypeB->elemType) !=
+            CONVERSION_RULE_NOT_ALLOWED) {
+      return CONVERSION_RULE_EXPLICIT;
+    }
+  }
+  return CONVERSION_RULE_NOT_ALLOWED;
+}
+
+Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
+                                        UnionType *unionTypeB) {
+  Value &indexMap{mUnionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
+  if (!indexMap) {
+    indexMap =
+        Value::zero(getArrayType(getIntType(), unionTypeA->caseTypes.size()));
+    llvm::IRBuilder<> builder{llvmContext};
+    for (unsigned i = 0; i < unionTypeA->caseTypes.size(); i++)
+      indexMap.llvmValue =
+          builder.CreateInsertValue(indexMap.llvmValue,
+                                    getComptimeInt(unionTypeB->getCaseTypeIndex(
+                                        unionTypeA->caseTypes[i])),
+                                    {i});
+    indexMap = LValue(
+        indexMap.type,
+        new llvm::GlobalVariable(
+            llvmModule, indexMap.type->llvmType, /*isConstant=*/true,
+            llvm::GlobalValue::PrivateLinkage,
+            static_cast<llvm::Constant *>(indexMap.llvmValue), ".union_map"));
+  }
+  return indexMap;
+}
+
+Value Context::getImageTexelBase(Type *type, const Image &image) {
+  SMDL_SANITY_CHECK(type && type->llvmType);
+  auto itr{compiler.mImageSymbolNames.find(&image)};
+  SMDL_SANITY_CHECK(itr != compiler.mImageSymbolNames.end());
+  llvm::GlobalVariable *llvmGlobal{llvmModule.getNamedGlobal(itr->second)};
+  if (!llvmGlobal) {
+    // A declaration, so the address stays open until the JIT links it.
+    // Deliberately not 'dso_local': that lets the backend address the
+    // texels PC-relative, which holds only if they land within 2GB of
+    // the JIT-compiled code, and a heap allocation promises no such
+    // thing.
+    llvmGlobal = new llvm::GlobalVariable(
+        llvmModule, llvm::Type::getInt8Ty(llvmContext), /*isConstant=*/true,
+        llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr,
+        itr->second);
+    // Exactly what 'Image::allocate()' guarantees: over-promising here
+    // lets the backend emit aligned accesses that fault.
+    llvmGlobal->setAlignment(llvm::Align(Image::TEXEL_ALIGNMENT));
+  }
+  return RValue(type, llvmGlobal);
+}
+
+Value Context::getComptimeIntArray(Span<const int> values,
+                                   llvm::StringRef name) {
+  llvm::Type *llvmIntType{getIntType()->llvmType};
+  llvm::SmallVector<llvm::Constant *> llvmValues{};
+  for (auto value : values)
+    llvmValues.push_back(llvm::ConstantInt::get(
+        llvmIntType, llvm::APInt(sizeof(int) * 8, value, /*isSigned=*/true)));
+  llvm::ArrayType *llvmArrayType{
+      llvm::ArrayType::get(llvmIntType, llvmValues.size())};
+  llvm::Constant *llvmInit{llvm::ConstantArray::get(llvmArrayType, llvmValues)};
+  // Named by content and reused, the way 'getImageTexelBase()' reuses
+  // the texel symbol. A material body is emitted once per entry point,
+  // so the same table is asked for many times over, and a fresh global
+  // each time would put a distinct value in every 'texture_2d' that
+  // carries it: instantiations keyed on that value stop coinciding, and
+  // one shared function becomes one per entry point.
+  // 'xxh3_64bits' rather than 'llvm::hash_value', which is seeded per
+  // process and would name the same table differently on every run,
+  // leaving a dumped object file irreproducible.
+  std::string uniqueName{
+      concat(std::string_view(name.data(), name.size()), ".",
+             llvm::utohexstr(llvm::xxh3_64bits(llvm::ArrayRef<uint8_t>(
+                 reinterpret_cast<const uint8_t *>(values.begin()),
+                 values.size() * sizeof(int)))))};
+  if (llvm::GlobalVariable *llvmGlobal{llvmModule.getNamedGlobal(uniqueName)};
+      llvmGlobal && llvmGlobal->hasInitializer() &&
+      llvmGlobal->getInitializer() == llvmInit)
+    return RValue(getPointerType(getIntType()), llvmGlobal);
+  llvm::GlobalVariable *llvmGlobal{new llvm::GlobalVariable(
+      llvmModule, llvmArrayType, /*isConstant=*/true,
+      llvm::GlobalValue::PrivateLinkage, llvmInit, uniqueName)};
+  // Nothing compares the address, so two tables that hash apart but
+  // hold the same thing are still free to become one.
+  llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  return RValue(getPointerType(getIntType()), llvmGlobal);
+}
+
+namespace builtin {
+
+Span<const std::string_view> getAllNames() {
+  return {all_names, std::size(all_names)};
+}
+
+std::string getSourceCode(std::string_view name) {
+  const CompressedSourceCode *sourceCode{get_source_code(name)};
+  return sourceCode ? decompressSourceCode(*sourceCode) : std::string();
+}
+
+} // namespace builtin
+
+} // namespace smdl

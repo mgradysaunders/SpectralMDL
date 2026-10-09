@@ -1,0 +1,201 @@
+/// \file
+#pragma once
+
+#include <unordered_map>
+
+#include "smdl/Common.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
+
+namespace smdl {
+
+/// \addtogroup resource
+/// \{
+
+/// An IES light profile.
+class SMDL_EXPORT LightProfile final {
+public:
+  /// Load from file memory.
+  [[nodiscard]] std::optional<Error>
+  loadFromFileMemory(std::string file) noexcept;
+
+  /// Load from file.
+  [[nodiscard]] std::optional<Error>
+  loadFromFile(const std::string &fileName) noexcept;
+
+  /// Clear.
+  void clear() noexcept;
+
+  /// Is valid?
+  [[nodiscard]] bool isValid() const noexcept {
+    return !intensityValues.empty();
+  }
+
+  /// Calculate the radiometric max intensity.
+  [[nodiscard]] float maxIntensity() const noexcept {
+    float result{};
+    for (float intensityValue : intensityValues)
+      result = std::max(result, intensityValue);
+    return result;
+  }
+
+  /// Calculate the radiometric power.
+  [[nodiscard]] float power() const noexcept;
+
+  /// Interpolate.
+  [[nodiscard]] float interpolate(float3 wo) const noexcept;
+
+  /// Interpolate directly.
+  ///
+  /// This does not account for angle wrapping or anything fancy, it
+  /// simply interpolates the intensity values by looking up the given
+  /// vertical and horizontal angles in the angle arrays. Out-of-range
+  /// angles return zero.
+  [[nodiscard]] float interpolate(float vertAngle,
+                                  float horzAngle) const noexcept;
+
+  /// The direction Probability Density Function (PDF), with respect to
+  /// solid angle over the sphere.
+  ///
+  /// This is the exact density of `directionSample()`, which importance
+  /// samples a piecewise-constant tabulation of `interpolate()`, so it is
+  /// approximately proportional to the interpolated intensity.
+  ///
+  [[nodiscard]] float directionPDF(float3 wi) const noexcept;
+
+  /// The direction sampling routine, importance sampling the tabulated
+  /// intensity distribution.
+  ///
+  /// \param[in] xi
+  /// The random sample \f$ \xi \in (0,1)^2 \f$.
+  ///
+  /// \param[out] pdf
+  /// If non-null, receives the associated PDF.
+  ///
+  [[nodiscard]] float3 directionSample(float2 xi,
+                                       float *pdf = {}) const noexcept;
+
+public:
+  /// The version string.
+  std::string version;
+
+  /// The properties.
+  std::unordered_map<std::string, std::string> properties;
+
+  class Tilt final {
+  public:
+    int lampToLuminaireGeometry{};
+
+    /// The angles in degrees.
+    std::vector<float> angles;
+
+    /// The multiplying factors.
+    std::vector<float> multiplyingFactors;
+  };
+
+  /// The tilt.
+  std::optional<Tilt> tilt{};
+
+  /// The number of lamps.
+  int numLamps{};
+
+  /// The lumens per lamp.
+  float lumensPerLamp{};
+
+  /// The photometry type.
+  ///
+  /// - `photometryType==1`: Type C
+  /// - `photometryType==2`: Type B
+  /// - `photometryType==3`: Type A
+  ///
+  int photometryType{};
+
+  /// The length in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _major axis_, which we
+  /// understand to be the X axis.
+  ///
+  float length{};
+
+  /// The width in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _minor axis_, which we
+  /// understand to be the Y axis.
+  ///
+  float width{};
+
+  /// The height in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _vertical axis_, which we
+  /// understand to be the Z axis.
+  ///
+  float height{};
+
+  /// The input watts.
+  float inputWatts{};
+
+  /// The vertical angles in degrees.
+  std::vector<float> vertAngles;
+
+  /// The horizontal angles in degrees.
+  std::vector<float> horzAngles;
+
+  /// The intensity values in Watts per steradian.
+  ///
+  /// \note
+  /// The implementation pre-multiplies all candela values by
+  /// the `multiplier` and `ballastFactor` in the IES file.
+  ///
+  std::vector<float> intensityValues;
+
+  /// The sampling distribution.
+  ///
+  /// This is built on load by rasterizing `interpolate()` onto an
+  /// equirectangular grid weighted by the sine of the zenith angle, and
+  /// backs `directionPDF()` and `directionSample()`.
+  ///
+  Distribution2D distribution;
+};
+
+/// \}
+
+} // namespace smdl
+
+/// \addtogroup resource
+/// \{
+
+extern "C" {
+
+/// \name Light Profile JIT callees
+///
+/// These wrap `LightProfile` for the `@(pure foreign)` declarations in the
+/// builtin `df` module, which back `df::measured_edf`. The compiler
+/// registers their addresses as absolute JIT symbols when a light profile
+/// is loaded (see `#loadLightProfile` in `Emitter.cc`), so they resolve
+/// even when the host process does not export its own dynamic symbols.
+///
+/// \{
+
+/// Interpolate the intensity of the given `smdl::LightProfile` in the
+/// given direction, or return 0 if the profile is null.
+SMDL_EXPORT float smdlLightProfileInterpolate(const void *profile,
+                                              const smdl::float3 &wo);
+
+/// The solid-angle PDF over the sphere of `smdlLightProfileDirectionSample`
+/// sampling the given direction, or 0 if the profile is null.
+SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
+                                               const smdl::float3 &wi);
+
+/// Importance sample the direction distribution of the given
+/// `smdl::LightProfile`.
+SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
+                                                 const smdl::float2 &xi,
+                                                 smdl::float3 *wi, float *pdf);
+
+/// \}
+
+} // extern "C"
+
+/// \}

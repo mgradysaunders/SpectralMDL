@@ -1,0 +1,1097 @@
+/// The API module, which implements the types and functions the MDL
+/// specification treats as intrinsic: the resource types, the material
+/// model structures, and the spectral color conversions, plus internal
+/// helpers shared by the other builtin modules.
+#smdl
+
+/// The index of the table entry a lookup lands in and the fraction of the
+/// way from it to the next.
+export struct _UniformLerp {
+  int i = 0;
+  float t = 0.0;
+};
+
+@(pure macro)
+export auto _uniformLerpIndexAndFraction(
+  const int count, const float xmin, const float xmax, const float x) {
+  // The scale onto `[0, count - 1]` rides along in the multiply the
+  // normalization already needs, so the whole mapping is one fused
+  // multiply-add against constants followed by the clamp.
+  const float t =
+    #max(0.0, #min((count - 1) * (x - xmin) / (xmax - xmin), float(count - 1)));
+  // No `#floor` before the truncation: the clamp above leaves `t` at or above
+  // zero (a NaN `x` clamps to the top of the range), and truncation toward
+  // zero is the floor of anything non-negative.
+  const int i = #min(int(t), count - 2);
+  return _UniformLerp(i, t - i);
+}
+
+@(pure macro)
+export int _lowerBound(int count, const &float xs, const float x) {
+  int first = 0;
+  while (count > 0) {
+    const int step = count / 2;
+    const int i = first + step;
+    if (xs[i] < x) {
+      first = i + 1;
+      count = count - step - 1;
+    } else {
+      count = step;
+    }
+  }
+  return first;
+}
+
+@(pure)
+export float _polylineLerp(
+  const int count, const &float xs, const &float ys, const float x) {
+  if (count <= 0) {
+    return 0.0;
+  } else if (count == 1) {
+    return ys[0];
+  } else {
+    int i = _lowerBound(count, xs, x) - 1;
+    i = #min(i, count - 2);
+    i = #max(i, 0);
+    const auto x0 = xs[i];
+    const auto x1 = xs[i + 1];
+    float t = (x - x0) / (x1 - x0);
+    t = #max(t, 0.0);
+    t = #min(t, 1.0);
+    return (1 - t) * ys[i] + t * ys[i + 1];
+  }
+}
+
+/// Construct a `color` by evaluating `f` at each wavelength of the active
+/// spectral basis `$state.wavelengthBase`.
+@(macro)
+export color _spectralInit(const auto f) {
+  color c(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    c[i] = f($state.wavelengthBase[i]);
+  }
+  return c;
+}
+
+/// Construct a `color` by looking up each wavelength of the active spectral
+/// basis in a table, locating every wavelength before fetching any of them.
+///
+/// `locate` maps a wavelength to the index and fraction of the entry pair
+/// bracketing it, and `fetch` turns that pair into the value at that
+/// wavelength. They run as separate passes because locating is arithmetic
+/// that ends in an address and fetching is the loads waiting on it, so
+/// interleaved every wavelength's loads stall behind its own index. The
+/// arithmetic is the one `_spectralInit` performs, in the same order per
+/// wavelength, so the result is identical.
+@(macro)
+export color _spectralLerpInit(const auto locate, const auto fetch) {
+  // The index and the fraction go to separate arrays rather than one array
+  // of pairs. The locate pass is the same arithmetic on every wavelength
+  // independently, so it vectorizes either way, but an interleaved
+  // 'int, float' layout has to be taken apart again before the fetch pass
+  // can index with it, which is two shuffles and a pair of full-width
+  // integer operations that flat arrays do not need.
+  int[$WAVELENGTH_BASE_MAX] keyIndex;
+  float[$WAVELENGTH_BASE_MAX] keyFraction;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const auto key = locate($state.wavelengthBase[i]);
+    keyIndex[i] = key.i;
+    keyFraction[i] = key.t;
+  }
+  color c(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    c[i] = fetch(keyIndex[i], keyFraction[i]);
+  }
+  return c;
+}
+
+/// Fold `f` over the components of `a` paired with the wavelengths of the
+/// active spectral basis, accumulating from `init`.
+@(macro)
+export auto _spectralFold(const auto init, const color a, const auto f) {
+  auto result(init);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    result = f(result, $state.wavelengthBase[i], a[i]);
+  }
+  return result;
+}
+
+/// The number of wavelengths in the sRGB spectral primaries.
+const int SRGB_PRIMARIES_NUM_WAVELENGTHS = 81;
+
+/// The minimum wavelength of the sRGB spectral primaries in nanometers.
+const float SRGB_PRIMARIES_MIN_WAVELENGTH = 380.0;
+
+/// The maximum wavelength of the sRGB spectral primaries in nanometers.
+const float SRGB_PRIMARIES_MAX_WAVELENGTH = 780.0;
+
+// smdl format off
+/// The sRGB spectral primaries of Mallett and Yuksel, "Spectral Primary
+/// Decomposition for Rendering with sRGB Reflectance" (EGSR 2019), in 5 nm
+/// steps from 380 nm to 780 nm, tabulated from the authors' reference
+/// implementation (github.com/geometrian/simple-spectral, MIT license,
+/// `data/cie1931-basis-bt709-380+5+780.csv`) with each row renormalized to
+/// sum to 1 within float precision. The three curves partition unity and
+/// lie in [0, 1] at every wavelength, so `r * R + g * G + b * B` is linear
+/// in RGB, bounded in [0, 1] over the sRGB unit cube, exactly flat for gray,
+/// and reproduces the sRGB triple under D65.
+const static auto SRGB_PRIMARIES = auto[](
+  auto[]( // Red
+     0.3274574,  0.3237506,  0.3134395,  0.2888794,  0.2392057,  0.1897020,
+     0.1217461,  0.0745783,  0.0444332,  0.0289286,  0.0223167,  0.0169113,
+     0.0141811,  0.0130531,  0.0119862,  0.0112887,  0.0109061,  0.0104007,
+     0.0106374,  0.0109077,  0.0110327,  0.0113107,  0.0111546,  0.0101488,
+     0.0089186,  0.0076856,  0.0067057,  0.0059958,  0.0055373,  0.0051938,
+     0.0050254,  0.0051364,  0.0054332,  0.0058200,  0.0064006,  0.0074495,
+     0.0085836,  0.0103958,  0.0135654,  0.0193845,  0.0320841,  0.0743560,
+     0.6243937,  0.9183100,  0.9492530,  0.9581878,  0.9581878,  0.9581876,
+     0.9556791,  0.9580062,  0.9541016,  0.9476076,  0.9386813,  0.9244667,
+     0.9046060,  0.8804122,  0.8477879,  0.8057791,  0.7525319,  0.6864394,
+     0.6186946,  0.5402644,  0.4729644,  0.4327016,  0.4053581,  0.3854919,
+     0.3709836,  0.3576087,  0.3487129,  0.3448802,  0.3419180,  0.3395312,
+     0.3371697,  0.3361723,  0.3351679,  0.3344223,  0.3340099,  0.3339171,
+     0.3338200,  0.3336751,  0.3335728),
+  auto[]( // Green
+     0.3318617,  0.3296882,  0.3278600,  0.3191736,  0.2943226,  0.2586971,
+     0.1888943,  0.1253884,  0.0786871,  0.0531433,  0.0422881,  0.0333183,
+     0.0297559,  0.0303313,  0.0309886,  0.0316864,  0.0346700,  0.0345520,
+     0.0406848,  0.0544600,  0.0809053,  0.1463483,  0.3796796,  0.7667443,
+     0.8762147,  0.9184917,  0.9406556,  0.9537319,  0.9616433,  0.9672000,
+     0.9709897,  0.9728523,  0.9731166,  0.9733511,  0.9733511,  0.9722611,
+     0.9733510,  0.9731485,  0.9710613,  0.9663713,  0.9549420,  0.9135790,
+     0.3643488,  0.0715072,  0.0412304,  0.0324239,  0.0319246,  0.0312760,
+     0.0326304,  0.0295309,  0.0315618,  0.0356742,  0.0414030,  0.0506043,
+     0.0634343,  0.0789182,  0.0995427,  0.1255958,  0.1575909,  0.1953982,
+     0.2314745,  0.2688521,  0.2960292,  0.3097550,  0.3178159,  0.3229904,
+     0.3263539,  0.3291439,  0.3308088,  0.3314828,  0.3319846,  0.3323413,
+     0.3329122,  0.3329195,  0.3330281,  0.3331804,  0.3332482,  0.3332607,
+     0.3332766,  0.3332966,  0.3333128),
+  auto[]( // Blue
+     0.3406808,  0.3465612,  0.3587005,  0.3919470,  0.4664717,  0.5516009,
+     0.6893596,  0.8000333,  0.8768798,  0.9179281,  0.9353952,  0.9497703,
+     0.9560629,  0.9566156,  0.9570253,  0.9570249,  0.9544240,  0.9550473,
+     0.9486778,  0.9346323,  0.9080620,  0.8423410,  0.6091657,  0.2231070,
+     0.1148667,  0.0738228,  0.0526387,  0.0402723,  0.0328195,  0.0276062,
+     0.0239849,  0.0220113,  0.0214502,  0.0208289,  0.0202483,  0.0202894,
+     0.0180653,  0.0164557,  0.0153733,  0.0142442,  0.0129740,  0.0120650,
+     0.0112575,  0.0101827,  0.0095165,  0.0093883,  0.0098876,  0.0105363,
+     0.0116906,  0.0124630,  0.0143367,  0.0167182,  0.0199157,  0.0249291,
+     0.0319597,  0.0406696,  0.0526694,  0.0686251,  0.0898772,  0.1181624,
+     0.1498309,  0.1908834,  0.2310064,  0.2575434,  0.2768260,  0.2915178,
+     0.3026625,  0.3132473,  0.3204784,  0.3236371,  0.3260974,  0.3281275,
+     0.3299181,  0.3309082,  0.3318040,  0.3323973,  0.3327419,  0.3328222,
+     0.3329033,  0.3330283,  0.3331144));
+// smdl format on
+
+/// The nontrivial RGB-to-color implementation.
+///
+/// This is factored into an internal function because, despite the fact
+/// that the `color` type is not necessarily RGB, every MDL codebase on
+/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)`
+/// to mean white instead of `color(1.0)`.
+///
+/// Beyond the tabulated range the lookup holds the nearest end value. An
+/// RGB triple says nothing about the spectrum outside the visible, and a
+/// flat extension is the convention DIRSIG applies to reflectance data
+/// outside its range; a zero tail would make every RGB-authored color a
+/// perfect absorber in the SWIR and LWIR.
+@(hot noinline)
+color nontrivialRGBToColor(const float3 rgb) {
+  // Debug-gated on purpose. An '#assert' calls 'smdlPanic', which is
+  // opaque to LLVM, and one opaque call denies this whole function its
+  // memory effects; without them the optimizer can neither share two
+  // conversions of the same RGB nor delete one whose result goes unused.
+  // A material body is emitted once per entry point, so an undeletable
+  // conversion is one 'opacityEvaluate' and its siblings each keep.
+  #assert(bool($state.wavelengthBase)) if ($DEBUG);
+  return _spectralLerpInit(
+    \(const float wavelength) = _uniformLerpIndexAndFraction(
+      SRGB_PRIMARIES_NUM_WAVELENGTHS,
+      SRGB_PRIMARIES_MIN_WAVELENGTH,
+      SRGB_PRIMARIES_MAX_WAVELENGTH,
+      wavelength),
+    \(const int i, const float t) = #sum(
+      float2(1 - t, t) * (rgb.x * float2(&SRGB_PRIMARIES[0][i]) + rgb.y * float2(&SRGB_PRIMARIES[1][i]) + rgb.z * float2(&SRGB_PRIMARIES[2][i]))));
+}
+
+/// Convert RGB to color, used by `color` constructor!
+@(macro)
+export color _rgbToColor(const float3 rgb) {
+  if (#all(rgb.xx == rgb.yz)) {
+    return color(rgb.x);
+  } else {
+    return nontrivialRGBToColor(rgb);
+  }
+}
+
+@(noinline)
+export color _samplesToColor(
+  const int count, const &float wavelengths, const &float amplitudes) {
+  auto c = color(0.0);
+  if (count > 0) {
+    if (count == 1) {
+      c = color(amplitudes[0]);
+    } else {
+      c = _spectralInit(\(const float w) =
+        _polylineLerp(count, wavelengths, amplitudes, w));
+    }
+  }
+  return c;
+}
+
+/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers,
+/// the seven piecewise Gaussian lobes evaluated in parallel.
+@(pure)
+export float3 _wymanXYZ(const float w) {
+  auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
+  x *= #select(
+    x < 0,
+    auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
+    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725),
+  );
+  const auto y(
+    auto(0.362, 1.056, -0.065, 0.821, 0.286, 1.217, 0.681) * 0.01 *
+    #exp(-0.5 * x * x));
+  return float3(y[0] + y[1] + y[2], y[3] + y[4], y[5] + y[6]);
+}
+
+/// The fit of CIE 1931 Y alone by Wyman et al for wavelength in
+/// nanometers.
+@(pure)
+export float _wymanY(const float w) {
+  auto x(w - auto(568.8, 530.9));
+  x *= #select(x < 0, auto(0.0213, 0.0613), auto(0.0247, 0.0322));
+  return #sum(auto(0.821, 0.286) * 0.01 * #exp(-0.5 * x * x));
+}
+
+/// Convert color to RGB, used by `float3` constructor!
+@(hot noinline)
+export float3 _colorToRGB(const color c) {
+  float3 result = float3(0.0);
+  if (bool($state.wavelengthWeight)) {
+    // Per-band quadrature weights in nanometers, for grids whose bands
+    // are not uniformly spaced.
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      result += $state.wavelengthWeight[i] * _wymanXYZ($state.wavelengthBase[i]) * c[i];
+    }
+  } else {
+    // The uniform quadrature: every band weighs
+    // `(wavelength_max - wavelength_min) / WAVELENGTH_BASE_MAX`.
+    // TODO: That fits samples centered in equal bands between the two
+    // ends, not a grid whose end samples clamp to them, whose end bands
+    // are half width; such a host passes trapezoid weights for now.
+    result = _spectralFold(
+      float3(0.0),
+      c,
+      \(const float3 acc, const float w, const float amp) =
+        acc + _wymanXYZ(w) * amp);
+    result /= $WAVELENGTH_BASE_MAX;
+    result *= $state.wavelengthMax - $state.wavelengthMin;
+  }
+  return float3x3(
+           float3(+3.240450, -0.969266, 0.0556434),
+           float3(-1.537140, 1.876010, -0.2040260),
+           float3(-0.498532, 0.041556, 1.0572300),
+         ) * result;
+}
+
+/// The JIT-visible RGB-to-color function advertised by the `Compiler`
+/// for convenience.
+@(visible noinline)
+void smdlRGBToColor(const &float3 rgb, const &float cptr) {
+  color c(_rgbToColor(*rgb));
+  #memcpy(cptr, &c, #sizeOf(color));
+}
+
+/// The JIT-visible color-to-RGB function advertised by the `Compiler`
+/// for convenience.
+@(visible noinline)
+void smdlColorToRGB(const &float cptr, const &float3 rgb) {
+  *rgb = _colorToRGB(color(cptr));
+}
+
+/// The intensity mode enum.
+export enum intensity_mode {
+  intensity_radiant_exitance, ///< Power (watts) per unit area (meters squared).
+  intensity_power,            ///< Power (watts).
+};
+
+/// The Bidirectional Scattering Distribution Function (BSDF) tag.
+export tag bsdf;
+
+/// The Volume Distribution Function (VDF) tag.
+export tag vdf;
+
+/// The Emission Distribution Function (EDF) tag.
+export tag edf;
+
+/// The hair Bidirectional Scattering Distribution Function (BSDF) tag.
+export tag hair_bsdf;
+
+/// The default BSDF is just an empty struct!
+export struct _default_bsdf: default bsdf {
+  /// The flags.
+  static const int _lobes = 0;
+};
+
+/// The default VDF is just an empty struct!
+export struct _default_vdf: default vdf {
+  /// The flags.
+  static const int _lobes = 0;
+};
+
+/// The default EDF is just an empty struct!
+export struct _default_edf: default edf {
+  /// The flags.
+  static const int _lobes = 0;
+};
+
+/// The default hair BSDF is just an empty struct!
+export struct _default_hair_bsdf: default hair_bsdf {
+  /// The flags.
+  static const int _lobes = 0;
+};
+
+/// The texture 2D structure.
+export struct texture_2d {
+  /// Construct by loading the image file(s) named by `name`, which
+  /// must be a compile-time string.
+  ///
+  /// `use_mipmap` must also be compile-time. Mip filtering is opt in:
+  /// by default `num_levels` is 1, so every lod-aware lookup samples
+  /// level 0 for the lifetime of the program. Pass `use_mipmap: true`
+  /// to get the chain, which is what prefiltering needs under a
+  /// renderer that populates the ray-cone LOD state. Without that
+  /// state, `::extras::lod::mip_level()` is 0 everywhere and the chain
+  /// is pure overhead, and data textures whose values must never be
+  /// box-filtered (index maps, packed encodings) must stay opted out
+  /// even with it.
+  ///
+  /// This is a property of the texture and not of the image behind it,
+  /// exactly like `gamma`: the image is decoded once per file and
+  /// carries a mip chain if anything anywhere asks for one, so opting
+  /// out saves the chain memory only when nothing else wants it, and
+  /// two textures over one file never decode it twice.
+  ///
+  /// `max_mipmap`, also compile-time, asks for the chain too, but
+  /// reduced by the maximum instead of the mean (see
+  /// `smdl::Image::MIP_MAX`): each level bounds the bilinearly
+  /// interpolated image over its footprint, which is what the
+  /// hierarchical relief march in `::extras::parallax` traverses, and
+  /// what a prefiltered lookup must not sample. An image holds one
+  /// chain, so every texture over one file must ask for the same kind;
+  /// asking for both is a compile error naming both requests.
+  texture_2d(
+    const string name,
+    const auto gamma = 0,
+    const bool use_mipmap = false,
+    const bool max_mipmap = false) =
+    #loadTexture2D(name, int(gamma), use_mipmap, max_mipmap);
+
+  /// The tile count.
+  const int2 tile_count = int2(1, 1);
+
+  /// The number of mip levels this texture reads, i.e., the maximum
+  /// over the tiles of `1 + floor(log2(max_extent))` when it asked for
+  /// mip filtering, and 1 when it did not. The extent of a tile at
+  /// level `l` is its level 0 extent shifted right by `l`, saturating
+  /// at 1x1.
+  ///
+  /// Each tile buffer holds its entire mip chain contiguously, level 0
+  /// first, with each level tightly packed in row-major order, so
+  /// level `l` starts at the texel offset given by summing the texel
+  /// counts of levels `0` through `l - 1`. Those sums are in
+  /// `tile_table`. The layout is produced by `smdl::Image` on the C++
+  /// side; the two must agree.
+  ///
+  /// Within a level, the rows run in file order, top row first, while
+  /// texel coordinates are v-up per the MDL convention. `tex.mdl`
+  /// mirrors the row on every fetch and is the only component that
+  /// knows this, so nothing built on top of it sees the storage order.
+  ///
+  /// This is 1 unless the texture was constructed with
+  /// `use_mipmap: true` or `max_mipmap: true`.
+  const int num_levels = 1;
+
+  /// Is the chain this texture reads reduced by the maximum? True when
+  /// the texture was constructed with `max_mipmap: true`, in which case
+  /// `num_levels` is greater than 1.
+  const bool max_mipmap = false;
+
+  /// The tile buffers, pointing at the level 0 texels of each tile.
+  const auto tile_buffers = auto[](cast<&float4>(none));
+
+  /// Everything about the tiles that is not a pointer, as one table of
+  /// `num_levels + 2` entries per tile in tile order. For tile `i`,
+  /// with `e` its first entry `i * (num_levels + 2)`:
+  ///
+  /// | entry        | meaning                                      |
+  /// |--------------|----------------------------------------------|
+  /// | `e`, `e + 1` | the level 0 extent in x and y                |
+  /// | `e + 2 + l`  | level `l` texel offset in `tile_buffers[i]`  |
+  ///
+  /// The offsets are tabulated rather than summed per fetch, because
+  /// the sum is serial in the level and the hierarchical relief march
+  /// in `::extras::parallax` pays it once per step at a level it only
+  /// knows at run time. The extents ride along so that this costs one
+  /// pointer rather than two: a table entry the tile index reaches at
+  /// compile time, which is every non-tileset lookup, folds back to
+  /// the constant it holds.
+  ///
+  /// Null exactly when the texture is backed by no image at all, in
+  /// which case every tile buffer is null too, so a lookup that has
+  /// checked its tile buffer may read this without checking. Anything
+  /// that reads it first, as the extent accessors do, checks.
+  const auto tile_table = cast<&int>(none);
+
+  /// The gamma mode.
+  const int gamma = 0;
+};
+
+/// The texture 3D structure.
+export struct texture_3d {
+  /// Construct by loading the volume file named by `name`, which must
+  /// be a compile-time string. The recognized formats are NanoVDB
+  /// (`.nvdb`) and single-channel `float32` Mitsuba volumes (`.vol`).
+  ///
+  /// `selector` must also be compile-time. For NanoVDB files holding
+  /// several named grids (`density`, `temperature`, ...) it selects
+  /// which one to load; empty selects the first grid in the file.
+  texture_3d(const string name, const auto gamma = 0, const string selector = "") =
+    #loadTexture3D(name, int(gamma), selector);
+
+  /// The extent in voxels.
+  const int3 extent = int3(0);
+
+  /// The number of bricks per axis, i.e., the extent divided by the
+  /// brick extent of 16 voxels per axis, rounded up.
+  const int3 brick_count = int3(0);
+
+  /// The brick table, holding one entry per brick in x-fastest order:
+  /// the index of the brick's block in `brick_buffer`, or -1 if the
+  /// brick is empty, in which case every voxel in it has the uniform
+  /// `background` value.
+  ///
+  /// Unlike 2D texture space, 3D texture space needs no v-flip, so
+  /// nothing here or in `tex.mdl` mirrors any axis: `w` of 0 is `z`
+  /// of 0. The layout is produced by `smdl::VoxelGrid` on the C++
+  /// side; the two must agree.
+  const auto brick_table = cast<&int>(none);
+
+  /// The brick data, holding one dense x-fastest 16x16x16 block of
+  /// values per non-empty brick, in the order the brick table assigned
+  /// the indices.
+  const auto brick_buffer = cast<&float>(none);
+
+  /// The background value, which fills empty bricks and everything
+  /// outside the extent.
+  const float background = 0.0;
+
+  /// The minimum value over the whole field, without gamma applied.
+  const float min_value = 0.0;
+
+  /// The maximum value over the whole field, without gamma applied.
+  /// This is what makes author-declared volume majorants exact for
+  /// grid-backed media, see `tex::max_value()`.
+  const float max_value = 0.0;
+
+  /// The gamma mode.
+  const int gamma = 0;
+
+  /// The opaque pointer to the `smdl::VoxelGrid` resource behind this
+  /// texture. Nothing in the builtin modules reads this: it exists so
+  /// that renderers receiving a `texture_3d` through the material
+  /// instance ABI (see `material_volume.density`) can recover the
+  /// C++-side resource, whose per-brick value bounds power spatial
+  /// majorant traversal.
+  const auto resource = cast<&void>(none);
+};
+
+/// The texture cube structure.
+export struct texture_cube {
+  texture_cube(const string name, const auto gamma = 0) =
+    #loadTextureCube(name, int(gamma));
+
+  // TODO
+  /// The gamma mode.
+  const int gamma = 0;
+};
+
+/// The texture ptex structure.
+export struct texture_ptex {
+  texture_ptex(const string name, const auto gamma = 0) =
+    #loadTexturePtex(name, int(gamma));
+
+  /// The pointer to the `smdl::Ptexture`
+  const &void ptr = none;
+
+  /// The gamma mode.
+  const int gamma = 0;
+};
+
+/// The BSDF measurement structure.
+export struct bsdf_measurement {
+  bsdf_measurement(const string name) = #loadBSDFMeasurement(name);
+
+  /// The pointer to the `smdl::BSDFMeasurement`.
+  const &void ptr = none;
+
+  /// The scatter mode, either `scatter_reflect` or `scatter_transmit`.
+  const int mode = 0;
+
+  /// The number of samples in zenith.
+  const int num_theta = 0;
+
+  /// The number of samples in azimuth.
+  const int num_phi = 0;
+
+  /// The buffer `smdl::BSDFMeasurement::buffer` which points to a
+  /// table of `num_theta * num_theta * num_phi` values of type `float`
+  /// or `float3`.
+  const auto buffer = cast<&float>(none);
+};
+
+/// The light profile structure.
+export struct light_profile {
+  light_profile(const string name) = #loadLightProfile(name);
+
+  /// The pointer to the `smdl::LightProfile`
+  const &void ptr = none;
+
+  /// The maximum intensity.
+  const float max_intensity = 0;
+
+  /// The power.
+  const float power = 0;
+};
+
+/// The spectral curve structure.
+export struct spectral_curve {
+  spectral_curve(const string name) = #loadSpectralCurve(name);
+
+  spectral_curve(const string name, const int curve_index) =
+    #loadSpectralCurve(name, curve_index);
+
+  spectral_curve(const string name, const string curve_name) =
+    #loadSpectralCurve(name, curve_name);
+
+  /// The number of wavelengths and values.
+  const int count = 0;
+
+  /// The wavelengths in nanometers.
+  const &float wavelengths = none;
+
+  /// The amplitudes.
+  const &float amplitudes = none;
+};
+
+@(macro)
+export color _spectralCurveToColor(const spectral_curve curve) {
+  return _samplesToColor(curve.count, curve.wavelengths, curve.amplitudes);
+}
+
+/// The material emission description.
+export struct material_emission {
+  /// The Emission Distribution Function (EDF).
+  edf emission = edf();
+
+  /// The intensity multiplier.
+  $(color | float) intensity = 1.0;
+
+  /// The intensity mode.
+  intensity_mode mode = intensity_radiant_exitance;
+};
+
+/// The material surface description.
+export struct material_surface {
+  /// The Bidirectional Scattering Distribution Function (BSDF).
+  bsdf scattering = bsdf();
+
+  /// The material emission description.
+  material_emission emission = material_emission();
+};
+
+/// The material volume description.
+export struct material_volume {
+  /// The Volume Distribution Function (VDF).
+  vdf scattering = vdf();
+
+  /// The absorption coefficient in units of inverse meters.
+  $(?color) absorption_coefficient = none;
+
+  /// The scattering coefficient in units of inverse meters.
+  $(?color) scattering_coefficient = none;
+
+  /// The volumetric emission coefficient: the radiance the medium adds
+  /// per unit length, in units of `W/(m^2 sr nm)` per meter. This was
+  /// introduced by MDL 1.8 and sits here, before the SMDL extension
+  /// fields, so positional construction of `material_volume` stays
+  /// conformant. Emission is decoupled from absorption on purpose: for
+  /// blackbody-style fire, write something like
+  /// `emission_intensity: sigma_a_expr * math::blackbody(T_expr)`,
+  /// which recovers the emission-in-thermal-equilibrium convention.
+  $(?color) emission_intensity = none;
+
+  /// If applicable, an upper bound of `absorption_coefficient` over the
+  /// whole interior, which must be position-independent. NOTE: This is
+  /// non-standard!
+  ///
+  /// Heterogeneous volumes make the coefficients vary with
+  /// `state::position()`, and unbiased renderers then need majorants,
+  /// i.e., known bounds of the coefficients, to run null-collision
+  /// (delta/ratio) tracking against. The author declares them here; for
+  /// grid-backed media `tex::max_value()` makes the bound exact, e.g.,
+  /// `max_scattering_coefficient: sigma * tex::max_value(density)` to
+  /// bound `scattering_coefficient: sigma * tex::lookup_float(density,
+  /// ...)`.
+  $(?color) max_absorption_coefficient = none;
+
+  /// If applicable, an upper bound of `scattering_coefficient` over the
+  /// whole interior, which must be position-independent. See
+  /// `max_absorption_coefficient`. NOTE: This is non-standard!
+  $(?color) max_scattering_coefficient = none;
+
+  /// If applicable, a spatial acceleration hint: the grid that shapes
+  /// the coefficients. NOTE: This is non-standard!
+  ///
+  /// Declaring `density` together with `density_bound_min` and
+  /// `density_bound_max` promises that the volume coefficients at any
+  /// interior point `x` are bounded by their declared majorants scaled
+  /// by `d(x) / tex::max_value(density)`, where `d` is the trilinear
+  /// lookup of this texture with texture space `[0,1]^3` spanning the
+  /// object-space box `[density_bound_min, density_bound_max]`, i.e.,
+  /// the same mapping as the canonical coefficient expression
+  /// `sigma * tex::lookup_float(density, (state::position() - lo) / (hi - lo))`.
+  ///
+  /// Renderers may then run null-collision tracking against per-region
+  /// majorants derived from the grid's per-brick value bounds, skipping
+  /// empty regions outright, instead of the global majorant. This is a
+  /// hint only: coefficient values still come from the coefficient
+  /// expressions, and where an expression exceeds the implied local
+  /// bound the renderer clamps it, so a lying hint renders a clamped
+  /// medium rather than accumulating negative-weight bias.
+  ///
+  /// The default is the invalid texture, whose null `resource` pointer
+  /// is how the ABI reports "no hint".
+  texture_3d density = texture_3d();
+
+  /// The object-space corner of the box that `density` texture space
+  /// spans, see `density`. Must be position-independent. NOTE: This is
+  /// non-standard!
+  $(?float3) density_bound_min = none;
+
+  /// The opposite object-space corner, see `density`. Must be
+  /// position-independent. NOTE: This is non-standard!
+  $(?float3) density_bound_max = none;
+
+  /// If true, this volume overlaps rather than displaces the medium
+  /// that encloses it: over the shared interior, renderers should add
+  /// its coefficients to the enclosing medium's, e.g., a cloud overlaid
+  /// on fog. The default is the nested-dielectric convention, where the
+  /// innermost boundary's medium replaces the enclosing one. NOTE: This
+  /// is non-standard!
+  bool additive = false;
+};
+
+/// The material geometry description.
+export struct material_geometry {
+  /// The displacement.
+  float3 displacement = float3();
+
+  /// The cutout opacity between 0 (transparent) and 1 (opaque).
+  float cutout_opacity = 1.0;
+
+  /// The normal.
+  float3 normal = $state.normal;
+};
+
+/// The material description.
+export struct material {
+  /// Thin walled?
+  bool thin_walled = false;
+
+  /// The material surface description.
+  material_surface surface = material_surface();
+
+  /// If non-default, the backface surface description.
+  material_surface backface = material_surface();
+
+  /// The index of refraction.
+  ///
+  /// NOTE: In the MDL specification, IOR is type `color` but for
+  /// implementation simplicity this is restricted to being type `float`.
+  /// A material that disperses says so by evaluating its index at
+  /// `state::wavelength_hero()`, the wavelength the path is committed to,
+  /// rather than by carrying one index per band. See `models::glass_ior`.
+  ///
+  float ior = 1.4;
+
+  /// The material volume description.
+  material_volume volume = material_volume();
+
+  /// The material geometry description.
+  material_geometry geometry = material_geometry();
+
+  /// The hair Bidirectional Scattering Distribution Function (BSDF).
+  hair_bsdf hair = hair_bsdf();
+
+  /// The temperature in kelvin for renderers that support blackbody
+  /// emission, where a negative value means unset. NOTE: This is
+  /// non-standard!
+  float temperature = -1;
+};
+
+const int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);
+
+const int MATERIAL_THIN_WALLED = (1 << 1);
+
+const int MATERIAL_HAS_SURFACE = (1 << 2);
+
+const int MATERIAL_HAS_BACKFACE = (1 << 3);
+
+const int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
+
+const int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
+
+const int MATERIAL_HAS_VOLUME = (1 << 6);
+
+const int MATERIAL_HAS_HAIR = (1 << 7);
+
+const int MATERIAL_HAS_CUTOUT = (1 << 8);
+
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS`, which
+/// only ever appears in the compile-time `staticFlags` derived by the
+/// C++ compiler from the per-material `volumeEvaluate` entry point.
+/// Position dependence is not observable at instance evaluation time,
+/// so the instance `flags` below never set this bit.
+const int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
+
+/// Reserved for `smdl::MATERIAL_HAS_DISPLACEMENT`, which only
+/// ever appears in the compile-time `staticFlags` derived by the C++
+/// compiler from the per-material `displacementProbe`. Whether the
+/// displacement is non-zero is not a flag the instance reports, so
+/// the instance `flags` below never set this bit.
+const int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
+
+const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
+
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VDF`, which only ever
+/// appears in the compile-time `staticFlags` derived by the C++ compiler
+/// from the per-material `vdfEvaluate` entry point, the way bit 9 is
+/// derived from `volumeEvaluate`. The instance `flags` below never set
+/// this bit.
+const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
+
+/// The murmur3 finalizer, spreading every input bit over the whole word.
+/// (The sampler primitives are spelled out here rather than imported,
+/// because this module cannot import anything: its exports become global
+/// keywords.)
+@(pure)
+int mixBits(int x) {
+  x ^= x >>> 16;
+  x *= -2048144789; // 0x85EBCA6B as unsigned
+  x ^= x >>> 13;
+  x *= -1028477387; // 0xC2B2AE35 as unsigned
+  x ^= x >>> 16;
+  return x;
+}
+
+/// The hash-based Owen scramble of Burley (JCGT 2020): reverse so the
+/// most significant bits sit low, run the Laine-Karras permutation, which
+/// only lets each bit affect bits above it, and reverse back.
+@(pure)
+int owenScramble(int x, const int seed) {
+  x = #bitReverse(x) + seed;
+  x ^= x * 1817228412;  // 0x6C50B47C
+  x ^= x * -1204871598; // 0xB82F1E52 as unsigned
+  x ^= x * -944773576;  // 0xC7AFE638 as unsigned
+  x ^= x * -1927088410; // 0x8D22F6E6 as unsigned
+  return #bitReverse(x);
+}
+
+/// Draws the next uniform 32-bit integer from the sequence
+/// `$state.sampleSeed` selects, at `$state.sampleIndex`, spending the
+/// dimension `$state.sampleDimension`: the draw is the bit-reversed index,
+/// shuffled under the dimension's seed before the reversal and
+/// Owen-scrambled under a component key of it after (Burley, JCGT 2020).
+/// This is the one implementation of the draw, with no C++ twin in the
+/// library; the unit tests in `state.mdl` pin it to golden words, which a
+/// host sampler of the same construction pins its own draw to. NOTE:
+/// This is non-standard!
+@(macro)
+export int _randomInt() = return_from {
+  const auto dimensionSeed(mixBits(
+    $state.sampleSeed ^ (-1640531527 * $state.sampleDimension))); // 0x9E3779B9 as unsigned
+  $state.sampleDimension = $state.sampleDimension + 1;
+  return owenScramble(
+           #bitReverse(owenScramble($state.sampleIndex, dimensionSeed)),
+           mixBits(dimensionSeed ^ 1431655765)); // 0x55555555
+};
+
+/// Draws the next uniform `float` in `(0, 1)` from the `$state` sampler,
+/// spending one dimension of it: the word as a fraction of 2^32, held
+/// strictly inside the interval as `smdl::canonicalize()` in the C++ API
+/// holds any sample. NOTE: This is non-standard!
+@(macro)
+export float _randomFloat() = #max(
+  #min(
+    float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2),
+  $FLOAT_MIN);
+
+/// The helper behind the generated per-material `volumeEvaluate` entry
+/// point: write the volume coefficients of `mat` to the caller
+/// buffers, each holding `$WAVELENGTH_BASE_MAX` floats, resolving an
+/// absent coefficient to zero. The material is evaluated at whatever
+/// `$state` the entry point was called with, so coefficients that read
+/// `state::position()` make this a per-point query; everything in the
+/// material that does not feed the coefficients is dead-code
+/// eliminated, the way `opacityEvaluate` evaluates only the cutout
+/// opacity. NOTE: This is non-standard!
+@(macro)
+export void _volumeEvaluate(
+  const auto mat,
+  const &float sigma_a,
+  const &float sigma_s,
+  const &float emission) {
+  const color sigmaA = #hasField(mat.volume, "absorption_coefficient")
+                       ? mat.volume.absorption_coefficient
+                       : color(0.0);
+  const color sigmaS = #hasField(mat.volume, "scattering_coefficient")
+                       ? mat.volume.scattering_coefficient
+                       : color(0.0);
+  const color emitted = #hasField(mat.volume, "emission_intensity")
+                        ? mat.volume.emission_intensity
+                        : color(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    sigma_a[i] = sigmaA[i];
+    sigma_s[i] = sigmaS[i];
+    emission[i] = emitted[i];
+  }
+}
+
+/// An instance of a material corresponding to `smdl::jit::MaterialDef::Eval`
+/// in the C++ API.
+export struct _MaterialEval {
+  /// The material deep copied with `#bump()`.
+  &material ptr;
+
+  /// The geometry displacement.
+  &material_geometry geometry = &ptr.geometry;
+
+  /// The index of refraction.
+  float ior = ptr.ior;
+
+  /// The exterior index of refraction, being the absolute index of the
+  /// medium on the front side of the geometry. This defaults to 1 and is
+  /// meant to be overwritten between instance evaluation and scattering
+  /// by renderers that track nested dielectrics. The relative ratio the
+  /// scattering calculations refract with is `exteriorIOR / ior`.
+  float exteriorIOR = 1.0;
+
+  /// The temperature.
+  float temperature = ptr.temperature;
+
+  /// The volume absorption coefficient.
+  &color absorptionCoefficient =
+    #hasField(ptr.volume, "absorption_coefficient")
+    ? &ptr.volume.absorption_coefficient
+    : none;
+
+  /// The volume scattering coefficient.
+  &color scatteringCoefficient =
+    #hasField(ptr.volume, "scattering_coefficient")
+    ? &ptr.volume.scattering_coefficient
+    : none;
+
+  /// The volume absorption coefficient majorant.
+  &color maxAbsorptionCoefficient =
+    #hasField(ptr.volume, "max_absorption_coefficient")
+    ? &ptr.volume.max_absorption_coefficient
+    : none;
+
+  /// The volume scattering coefficient majorant.
+  &color maxScatteringCoefficient =
+    #hasField(ptr.volume, "max_scattering_coefficient")
+    ? &ptr.volume.max_scattering_coefficient
+    : none;
+
+  /// The `smdl::VoxelGrid` behind the volume density acceleration
+  /// hint, null when the `density` field was left defaulted.
+  &void volumeDensityResource = ptr.volume.density.resource;
+
+  /// The lower corner of the volume density hint box.
+  &float3 volumeDensityBoundMin = #hasField(ptr.volume, "density_bound_min")
+                                     ? &ptr.volume.density_bound_min
+                                     : none;
+
+  /// The upper corner of the volume density hint box.
+  &float3 volumeDensityBoundMax = #hasField(ptr.volume, "density_bound_max")
+                                     ? &ptr.volume.density_bound_max
+                                     : none;
+
+  /// The volumetric emission coefficient, evaluated at the surface hit;
+  /// heterogeneous interiors re-query through `volumeEvaluate`.
+  &color volumeEmissionIntensity = #hasField(ptr.volume, "emission_intensity")
+                                     ? &ptr.volume.emission_intensity
+                                     : none;
+
+  /// The VDF, which the volume scattering entry points take in place of
+  /// the instance (see `df::_volumeScatterEvaluate()`), so that a host
+  /// may hand them the VDF evaluated at a collision instead of this one.
+  &void volumeScattering = &ptr.volume.scattering;
+
+  /// The `surface` emission intensity, or `none` if the `surface` has no
+  /// non-default emission EDF. See `df::_emissionEvaluate()` for how the
+  /// `intensity_mode` units are resolved.
+  &color surfaceEmissionIntensity =
+    #isDefault(ptr.surface.emission.emission) ? none : #bump(color(
+      ptr.surface.emission.intensity));
+
+  /// The `backface` emission intensity, or `none` if the `backface` has no
+  /// non-default emission EDF.
+  &color backfaceEmissionIntensity =
+    #isDefault(ptr.backface.emission.emission) ? none : #bump(color(
+      ptr.backface.emission.intensity));
+
+  /// The wavelength count.
+  int wavelengthCount = $WAVELENGTH_BASE_MAX;
+
+  /// The flags.
+  int flags = $state.transport                                                         //
+  | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)                                       //
+  | (!#isDefault(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)                              //
+  | (!#isDefault(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0)                            //
+  | (!#isDefault(ptr.surface.emission.emission) ? MATERIAL_HAS_SURFACE_EMISSION : 0)   //
+  | (!#isDefault(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
+  | (!#isDefault(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                                //
+  | (!#isDefault(ptr.hair) ? MATERIAL_HAS_HAIR : 0)                                    //
+  | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0)                      //
+  | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
+
+  /// The df flags for the `surface` component.
+  int surfaceLobes = ptr.surface.scattering._lobes;
+
+  /// The df flags for the `backface` component.
+  int backfaceLobes = ptr.backface.scattering._lobes;
+
+  /// The emission intensity modes: bit 0 is set if the `surface` emission
+  /// intensity is `intensity_power` (as opposed to the default
+  /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
+  int emissionModes =
+    (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
+    | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
+
+  /// `$state.sampleSeed` and `$state.sampleIndex`, packed high and low,
+  /// which stochastically evaluated BSDFs hash their draws from, together
+  /// with the direction pair. The scattering entry points are pure and
+  /// take no `State`, so the key must be captured here at instance
+  /// evaluation time. A copy rather than a draw, so that instances
+  /// constructed from identical states evaluate identically whatever the
+  /// material drew before, which keeps stochastic BSDFs exactly consistent
+  /// across radiance and importance transport at the same shading point.
+  int64_t seed = (int64_t($state.sampleSeed) << 32) | (int64_t($state.sampleIndex) & 4294967295);
+
+  /// The tangent-to-world matrix held by the `State` during construction.
+  float3x3 tangentToWorld = let {
+    const auto tangentToWorldMatrix =
+      $state.objectToWorld * $state.tangentToObject;
+  } in float3x3(
+    tangentToWorldMatrix[0].xyz,
+    tangentToWorldMatrix[1].xyz,
+    tangentToWorldMatrix[2].xyz,
+  );
+};
+
+/// Albedo look-up table (LUT) for energy correction.
+export struct _AlbedoLUT {
+  /// The number of samples of view angle cosine.
+  const int numCosTheta = 0;
+
+  /// The number of samples of roughness.
+  const int numRoughness = 0;
+
+  /// The directional albedo.
+  ///
+  /// NOTE: This must point to `numCosTheta` rows by `numRoughness`
+  /// values.
+  ///
+  const &float directionalAlbedo = none;
+
+  /// The average albedo.
+  ///
+  /// NOTE: This must point to `numRoughness` values.
+  ///
+  const &float averageAlbedo = none;
+};
+
+/// A complex value.
+export struct complex {
+  /// The real coefficient.
+  auto a = 0.0;
+
+  /// The imaginary coefficient.
+  auto b = 0.0;
+};
+
+/// Complex negative.
+@(pure macro)
+export auto _complexNeg(const complex z) = complex(-z.a, -z.b);
+
+/// Complex conjugate.
+@(pure macro)
+export auto _complexConj(const complex z) = complex(z.a, -z.b);
+
+/// Complex norm.
+@(pure macro)
+export auto _complexNorm(const complex z) = z.a * z.a + z.b * z.b;
+
+/// Complex absolute value.
+@(pure macro)
+export auto _complexAbs(const complex z) = #sqrt(_complexNorm(z));
+
+/// Complex inverse.
+@(pure macro)
+export auto _complexInv(const complex z) = let {
+  const auto denom = 1.0 / _complexNorm(z);
+} in complex(z.a * denom, -z.b * denom);
+
+/// Complex addition.
+@(pure macro)
+export auto _complexAdd(const complex z, const complex w) =
+  complex(z.a + w.a, z.b + w.b);
+
+/// Complex subtraction.
+@(pure macro)
+export auto _complexSub(const complex z, const complex w) =
+  complex(z.a - w.a, z.b - w.b);
+
+/// Complex multiplication.
+@(pure macro)
+export auto _complexMul(const complex z, const complex w) =
+  complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
+
+/// Complex division.
+@(pure macro)
+export auto _complexDiv(const complex z, const complex w) =
+  _complexMul(z, _complexInv(w));
+
+/// Complex exponential.
+@(pure macro)
+export auto _complexExp(const complex z) = let {
+  const auto a = #exp(z.a);
+} in complex(a * #cos(z.b), a * #sin(z.b));
+
+/// Complex logarithm.
+@(pure macro)
+export auto _complexLog(const complex z) =
+  complex(#log(_complexAbs(z)), #atan2(z.b, z.a));
+
+/// Complex square root.
+@(pure macro)
+export auto _complexSqrt(const complex z) = let {
+  const auto absz = _complexAbs(z);
+} in complex(
+  #sqrt(0.5 * (absz + z.a)),
+  #sqrt(0.5 * (absz - z.a)) * #sign(z.b),
+);
+

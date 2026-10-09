@@ -1,0 +1,146 @@
+/// \file
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "smdl/Export.h"
+
+namespace smdl {
+
+/// \addtogroup support
+/// \{
+
+/// A 128-bit MD5 hash.
+class SMDL_EXPORT MD5Hash final {
+public:
+  /// Hash file on disk. Returns zero if there is an error.
+  [[nodiscard]] static MD5Hash hashFile(const std::string &fileName) noexcept;
+
+  /// Hash memory.
+  [[nodiscard]] static MD5Hash hashMemory(const void *mem,
+                                          size_t memSize) noexcept;
+
+  /// Hash memory.
+  [[nodiscard]] static MD5Hash hashMemory(std::string_view mem) noexcept {
+    return hashMemory(mem.data(), mem.size());
+  }
+
+public:
+  /// Construct zero.
+  constexpr MD5Hash() = default;
+
+  /// Construct from hash code.
+  constexpr MD5Hash(std::pair<uint64_t, uint64_t> hash) : hash(hash) {}
+
+  /// Get the upper or most significant bits.
+  [[nodiscard]] constexpr uint64_t getUpperBits() const noexcept {
+    return hash.first;
+  }
+
+  /// Get the lower or least significant bits.
+  [[nodiscard]] constexpr uint64_t getLowerBits() const noexcept {
+    return hash.second;
+  }
+
+  /// Wrap `operator==`.
+  [[nodiscard]] constexpr bool operator==(const MD5Hash &other) const noexcept {
+    return hash == other.hash;
+  }
+
+  /// Wrap `operator!=`.
+  [[nodiscard]] constexpr bool operator!=(const MD5Hash &other) const noexcept {
+    return hash != other.hash;
+  }
+
+  /// Wrap `operator<`.
+  [[nodiscard]] constexpr bool operator<(const MD5Hash &other) const noexcept {
+    return hash < other.hash;
+  }
+
+  /// Wrap `operator>`.
+  [[nodiscard]] constexpr bool operator>(const MD5Hash &other) const noexcept {
+    return hash > other.hash;
+  }
+
+  /// Wrap `operator<=`.
+  [[nodiscard]] constexpr bool operator<=(const MD5Hash &other) const noexcept {
+    return hash <= other.hash;
+  }
+
+  /// Wrap `operator>=`.
+  [[nodiscard]] constexpr bool operator>=(const MD5Hash &other) const noexcept {
+    return hash >= other.hash;
+  }
+
+  /// Wrap `operator!`.
+  [[nodiscard]] constexpr bool operator!() const noexcept {
+    return hash == std::pair<uint64_t, uint64_t>();
+  }
+
+  /// Stringify for display.
+  [[nodiscard]] operator std::string() const;
+
+public:
+  /// The hash code.
+  std::pair<uint64_t, uint64_t> hash{};
+};
+
+/// An MD5 file hash.
+class SMDL_EXPORT MD5FileHash final {
+public:
+  /// The hash code.
+  MD5Hash hash{};
+
+  /// The file names that produced this hash code (presumably all duplicates of
+  /// the same file).
+  std::vector<std::string> canonicalFileNames{};
+};
+
+/// An MD5 file hasher.
+///
+/// This caches the `MD5FileHash` for every file that is hashed, so that we
+/// do not have to calculate hashes redundantly.
+///
+class SMDL_EXPORT MD5FileHasher final {
+public:
+  MD5FileHasher() = default;
+
+  MD5FileHasher(const MD5FileHasher &) = delete;
+
+  /// Hash.
+  [[nodiscard]] const MD5FileHash *operator[](const std::string &fileName);
+
+private:
+  /// The hasher for the file hash key.
+  struct FileHashKeyHash final {
+    [[nodiscard]] size_t
+    operator()(const std::pair<MD5Hash, std::string> &key) const noexcept {
+      size_t hash{std::hash<std::string>()(key.second)};
+      hash ^= size_t(key.first.getLowerBits()) + 0x9E3779B97F4A7C15ULL +
+              (hash << 6) + (hash >> 2);
+      hash ^= size_t(key.first.getUpperBits()) + 0x9E3779B97F4A7C15ULL +
+              (hash << 6) + (hash >> 2);
+      return hash;
+    }
+  };
+
+  /// The file hashes, keyed by hash code so identical files at different
+  /// paths deduplicate to one entry. Unreadable files hash to zero and are
+  /// keyed by canonical file name instead (the second pair element, empty
+  /// otherwise).
+  std::unordered_map<std::pair<MD5Hash, std::string>,
+                     std::unique_ptr<MD5FileHash>, FileHashKeyHash>
+      mFileHashes{};
+
+  /// Canonical file name to entry in `mFileHashes`.
+  std::unordered_map<std::string, const MD5FileHash *> mFileHashesByName{};
+};
+
+/// \}
+
+} // namespace smdl

@@ -1,0 +1,151 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+/// The offline generator of the directional albedo tables in this
+/// directory, which the multiscatter compensation in `df.mdl` looks up
+/// through `#albedoLUT`. Each BSDF is numerically integrated over a 64 by
+/// 64 grid of view angle cosine and roughness, and the `exec` block at the
+/// bottom writes the results out as the `.inl` files.
+///
+/// NOTE: This module is not embedded in the compiler and is not built
+/// with the others. Run it by hand with `smdl` when a BSDF changes in a
+/// way that invalidates its table.
+#smdl
+
+import ::df::*;
+import ::math::*;
+using sampling = ::extras::sampling;
+import sampling::*;
+
+const float EPSILON = 1e-6;
+
+//--{ Integration skeleton
+/// The average of `sample(xi)` over `numSamples` points of a
+/// low-discrepancy sequence, returned as a `double` so the caller controls
+/// the final rounding of any scaling applied on top.
+@(pure macro)
+double integrateAlbedo(const int numSamples, const auto sample) {
+  float2 xi = float2(0.713, 0.489);
+  double fSum = 0;
+  for (int i = 0; i < numSamples; i++, sampling::next_low_discrepancy(&xi)) {
+    fSum += sample(xi);
+  }
+  return fSum / numSamples;
+}
+//--}
+
+//--{ diffuse_reflection_bsdf
+/*
+@(pure) float integrateDiffuseReflectionBSDF(float cosTheta, float roughness) {
+  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+  const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
+    const float3 wi = math::normalize(sampling::cosine_hemisphere_sample(xi));
+    return #max(#sum(wo.xy * wi.xy), 0) / (#max(wo.z, wi.z) + EPSILON);
+  });
+  const float sigma2 = 2.0 * roughness * roughness;
+  const float A = 1.00 - sigma2 / (2.0 * sigma2 + 0.66);
+  const float B = 0.45 * sigma2 / (sigma2 + 0.09);
+  return A + mean * B;
+}
+*/
+//--}
+
+//--{ sheen_bsdf
+/*
+@(pure) float sheenLambdaL(const auto fit, const float mu) {
+  return fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
+}
+
+@(pure) float sheenLambda(const auto fit, const float mu) {
+  return #exp(mu < 0.5 ? sheenLambdaL(fit, mu) : 2 * sheenLambdaL(fit, 0.5) - sheenLambdaL(fit, #max(1 - mu, 0)));
+}
+
+@(pure) float integrateSheenBSDF(float cosTheta, float roughness) {
+  cosTheta = #max(cosTheta, 0.00001);
+  cosTheta = #min(cosTheta, 1);
+  const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
+  const float3 wo = float3(sinTheta, 0, cosTheta);
+  const float alpha = math::lerp(0.1, 1.0, roughness * roughness);
+  const auto fit = math::lerp(
+    auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
+    auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967),
+    #pow(1 - #pow(roughness, 2), 2),
+  );
+  const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
+    const float3 wi(sampling::uniform_hemisphere_sample(xi));
+    const float3 wm(math::normalize(wo + wi));
+    const float cosThetam(wm.z);
+    const float sinThetam(#sqrt(1 - cosThetam * cosThetam));
+    return #pow(sinThetam, 1 / alpha) / (1 + sheenLambda(fit, wo.z) + sheenLambda(fit, wi.z));
+  });
+  return (2 + 1 / alpha) * mean / (4 * wo.z);
+}
+*/
+//--}
+
+//--{ simple_glossy_bsdf
+@(pure) float integrateSimpleGlossyBSDF(float cosTheta, float roughness) {
+  cosTheta = #max(cosTheta, 0.0001);
+  cosTheta = #min(cosTheta, 0.9999);
+  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+  const float alpha(roughness * roughness);
+  const float e(2 / (alpha * alpha + EPSILON));
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
+    const float3 wm = math::normalize(df::microfacet::blinn_normal_sample(xi.x, xi.y, float2(e)));
+    const float3 wi = math::normalize(df::specular::reflect(wo, wm));
+    const float dotWoWm = math::dot(wo, wm);
+    return wi.z > 0 && dotWoWm > 0 ? (2 + e) / (1 + e) * #min(1, 2 * wm.z * #min(wo.z, wi.z) / dotWoWm) * dotWoWm : 0.0;
+  }) / wo.z;
+}
+//--}
+
+//--{ microfacet_ggx_smith_bsdf, microfacet_beckmann_smith_bsdf
+@(pure) float integrateMicrofacetSmith(const df::microfacet::distribution distribution, float cosTheta, float roughness) {
+  cosTheta = #max(cosTheta, 0.0001);
+  cosTheta = #min(cosTheta, 0.9999);
+  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+  const float2 alpha = float2(#max(roughness * roughness, 1e-6));
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
+    const float3 wm = math::normalize(df::microfacet::smith_visible_normal_sample(distribution, xi.x, xi.y, alpha, wo));
+    const float3 wi = math::normalize(df::specular::reflect(wo, wm));
+    if (wi.z > 0) {
+      // `1 + Lambda(w)` through the projected area, which avoids the
+      // ratio `cos(theta) / |alpha w.xy|` that is singular for a
+      // direction exactly on the macro normal.
+      const float onePlusLambdao = df::microfacet::smith_projected_area(distribution, alpha, wo) / #abs(wo.z);
+      const float onePlusLambdai = df::microfacet::smith_projected_area(distribution, alpha, wi) / #abs(wi.z);
+      return onePlusLambdao / (onePlusLambdao + onePlusLambdai - 1);
+    }
+    return 0.0;
+  });
+}
+//--}
+
+//--{ ward_geisler_moroder_bsdf
+@(pure) float integrateWardGeislerMoroderBSDF(float cosTheta, float roughness) {
+  cosTheta = #max(cosTheta, 0.0001);
+  cosTheta = #min(cosTheta, 0.9999);
+  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+  const float alpha(#max(0.001, roughness * roughness));
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
+    const auto phi(#atan2(alpha * #sin(t := $TWO_PI * xi.x), alpha * #cos(t)));
+    const auto cosPhi(#cos(phi));
+    const auto sinPhi(#sin(phi));
+    const auto theta(#atan(#sqrt(-#log(1 - xi.y) / (#pow(cosPhi / alpha, 2) + #pow(sinPhi / alpha, 2)))));
+    const auto wm(float3(#sin(theta) * float2(cosPhi, sinPhi), #cos(theta)));
+    const auto wi(math::normalize(df::specular::reflect(wo, wm)));
+    return wi.z > 0 ? 2 * wi.z / (wo.z + wi.z) : 0.0;
+  });
+}
+//--}
+
+exec {
+  /* #tabulateAlbedo("diffuse_reflection_bsdf", 64, 64, integrateDiffuseReflectionBSDF); */
+  /* #tabulateAlbedo("sheen_bsdf", 64, 64, integrateSheenBSDF); */
+  #tabulateAlbedo("simple_glossy_bsdf", 64, 64, integrateSimpleGlossyBSDF);
+  #tabulateAlbedo(
+    "microfacet_ggx_smith_bsdf", 64, 64,
+    \(const float cosTheta, const float roughness) = integrateMicrofacetSmith(df::microfacet::ggx(), cosTheta, roughness));
+  #tabulateAlbedo(
+    "microfacet_beckmann_smith_bsdf", 64, 64,
+    \(const float cosTheta, const float roughness) = integrateMicrofacetSmith(df::microfacet::beckmann(), cosTheta, roughness));
+  #tabulateAlbedo("ward_geisler_moroder_bsdf", 64, 64, integrateWardGeislerMoroderBSDF);
+}

@@ -1,0 +1,48 @@
+/// `::extras::sampling`: the low-discrepancy sequence, the warps onto the
+/// hemisphere and the sphere, and the inverse error function.
+#smdl
+
+using sampling = ::extras::sampling;
+import sampling::*;
+
+@(pure foreign)
+double erf(double x);
+
+@(pure)
+auto runLowDiscrepancyTests(auto xi) {
+  auto xiAverage(xi);
+  for (int i = 0; i < 5000; i++) {
+    xiAverage += sampling::next_low_discrepancy(&xi);
+  }
+  xiAverage /= 5000;
+  #assert(#all(xiAverage ~== |1e-3| 0.5));
+}
+
+unit_test "The inverse error function inverts erf" {
+  #assert(sampling::erf_inverse(erf(-1.1d)) ~== |1e-5d| -1.1d);
+  #assert(sampling::erf_inverse(erf(-0.3d)) ~== |1e-5d| -0.3d);
+  #assert(sampling::erf_inverse(erf(+1.2d)) ~== |1e-5d| +1.2d);
+  #assert(sampling::erf_inverse(erf(+2.7d)) ~== |1e-5d| +2.7d);
+}
+
+unit_test "The 2D sequence has mean one half" {
+  runLowDiscrepancyTests(float2(0.1, 0.2));
+}
+
+unit_test "The 3D sequence has mean one half" {
+  runLowDiscrepancyTests(float3(0.1, 0.2, 0.3));
+}
+
+unit_test "The 4D sequence has mean one half" {
+  runLowDiscrepancyTests(float4(0.1, 0.2, 0.3, 0.4));
+}
+
+unit_test "The cosine hemisphere warp has the right mean" {
+  auto xi(float2(0.5, 0.7));
+  auto wiAverage(float3(0.0));
+  for (int i = 0; i < 5000; i++, sampling::next_low_discrepancy(&xi)) {
+    wiAverage += sampling::cosine_hemisphere_sample(xi);
+  }
+  wiAverage /= 5000;
+  #assert(#all(wiAverage ~== |1e-3| float3(0.0, 0.0, 0.666)));
+}

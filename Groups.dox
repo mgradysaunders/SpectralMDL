@@ -1,0 +1,47 @@
+/// \defgroup compiler Compiler
+///
+/// Everything involved in turning MDL source code into executable native
+/// code: the `Compiler` front end, the `Module` and `Parser` layers beneath
+/// it, the `jit` interface that the resulting materials are called through,
+/// and the documentation extractor.
+///
+/// The usual entry point is `Compiler`. Add search paths and modules to it,
+/// compile, then look up materials and invoke them through the types in
+/// the `smdl::jit` namespace.
+
+/// \defgroup resource Resources
+///
+/// The resource and runtime types a renderer hands to, or receives from,
+/// compiled MDL materials: images and textures, spectra, measured BSDFs and
+/// light profiles, scene data lookups, and the shading `State` that
+/// material functions read from.
+
+/// \defgroup manifold Manifold
+///
+/// The renderer-agnostic core of manifold next-event estimation and
+/// specular manifold sampling: the Newton solver over renderer-supplied
+/// surfaces, the connection measures, the reciprocal trial loop, and the
+/// eligibility questions answerable from `jit` material instances.
+
+/// \defgroup ast Abstract Syntax Tree
+///
+/// The parsed representation of an MDL module, produced by `Parser` and
+/// consumed by the compiler.
+///
+/// Nodes derive from `Node` and are discriminated by a kind enum, so they
+/// are traversed with `llvm::isa`, `llvm::dyn_cast`, and `llvm::cast`.
+/// The three node categories each have their own subgroup.
+
+/// \defgroup renderutil Render Utilities
+///
+/// Algorithmic rendering utilities layered on the support types and usable
+/// by any renderer: color and spectral containers, Monte Carlo sampling,
+/// illuminants and metal IORs, the sun-sky model, and
+/// spectral render images.
+
+/// \defgroup support Support
+///
+/// Standalone mechanical utility types and functions used throughout the
+/// library and usable independently of it: vector and matrix math, string
+/// and filesystem helpers, logging, hashing, random number generation, and
+/// allocation.

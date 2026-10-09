@@ -1,0 +1,96 @@
+/// \file
+#pragma once
+
+#include "smdl/AST/Stmt.h"
+
+namespace smdl::ast {
+
+/// \addtogroup ast
+/// \{
+
+/// A fully parsed file.
+class SMDL_EXPORT File final : public NodeSubclass<NodeKind::File> {
+public:
+  /// The MDL version at the top of the file, e.g., `mdl 1.7;`
+  class Version final {
+  public:
+    /// The keyword `mdl`.
+    std::string_view srcKwMDL;
+
+    /// The version string, e.g., `1.7`.
+    std::string_view srcVersion;
+
+    /// The major version number.
+    uint32_t major{};
+
+    /// The minor version number.
+    uint32_t minor{};
+
+    /// The semicolon `;`.
+    std::string_view srcSemicolon;
+  };
+
+  /// A `#search_dir "..."` declaration, e.g., `#search_dir "../textures/"`.
+  ///
+  /// This is only allowed in SMDL syntax immediately after `#smdl`, and
+  /// adds a resource search directory that takes priority over the search
+  /// directories of the `FileLocator` for this file only.
+  class SearchDir final {
+  public:
+    /// The keyword `#search_dir`.
+    std::string_view srcKwSearchDir;
+
+    /// The literal string directory path.
+    BumpPtr<LiteralString> path;
+  };
+
+  explicit File(std::string_view srcKwSMDLSyntax,
+                std::vector<SearchDir> searchDirs,
+                std::optional<Version> version,
+                std::vector<BumpPtr<Decl>> importDecls,
+                std::string_view srcKwModule,
+                BumpPtr<AnnotationBlock> moduleAnnotations,
+                std::string_view srcSemicolonAfterModule,
+                std::vector<BumpPtr<Decl>> globalDecls)
+      : srcKwSMDLSyntax(srcKwSMDLSyntax), searchDirs(std::move(searchDirs)),
+        version(version), importDecls(std::move(importDecls)),
+        srcKwModule(srcKwModule),
+        moduleAnnotations(std::move(moduleAnnotations)),
+        srcSemicolonAfterModule(srcSemicolonAfterModule),
+        globalDecls(std::move(globalDecls)) {}
+
+  [[nodiscard]] bool isSMDLSyntax() const { return !srcKwSMDLSyntax.empty(); }
+
+  /// The source keyword `#smdl`. This may be empty!
+  std::string_view srcKwSMDLSyntax;
+
+  /// The `#search_dir` declarations after `#smdl`. This may be empty!
+  std::vector<SearchDir> searchDirs;
+
+  /// The version. This may be nullopt!
+  std::optional<Version> version;
+
+  /// The import declarations.
+  std::vector<BumpPtr<Decl>> importDecls;
+
+  /// The keyword `module`. This may be empty!
+  std::string_view srcKwModule;
+
+  /// The module annotations. This may be null!
+  BumpPtr<AnnotationBlock> moduleAnnotations;
+
+  /// The semicolon `;` after the `module` keyword. This may be empty!
+  std::string_view srcSemicolonAfterModule;
+
+  /// The global declarations.
+  std::vector<BumpPtr<Decl>> globalDecls;
+
+  /// The module-level documentation comment: a `///` block appearing
+  /// before the `#smdl` marker or the `mdl X.Y` version. This may be
+  /// empty!
+  std::string_view srcDocComment{};
+};
+
+/// \}
+
+} // namespace smdl::ast

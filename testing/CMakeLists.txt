@@ -1,0 +1,17 @@
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
+  add_subdirectory(doctest)
+  # The SMDL-language suite: 'smdl test' treats the directory as a
+  # search root, which is required for the relative package imports in
+  # the suite (per-file invocation would break them), and exits nonzero
+  # on any failing 'unit_test'.
+  add_test(
+    NAME "smdl-language"
+    COMMAND $<TARGET_FILE:smdl> test "${CMAKE_CURRENT_SOURCE_DIR}/language"
+    )
+  # As for the doctest suites, the default search directories are cleared.
+  set_tests_properties(
+    "smdl-language"
+    PROPERTIES
+      ENVIRONMENT "SMDL_DEFAULT_SEARCH_DIRS="
+    )
+endif()

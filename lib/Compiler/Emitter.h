@@ -1,0 +1,1410 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+/// \file
+#pragma once
+
+#include "Context.h"
+#include "Intrinsics.h"
+
+namespace smdl {
+
+/// \addtogroup Compiler
+/// \{
+
+/// A pending scope-exit action on the `Emitter::unwindStack`. Actions are
+/// replayed newest-first (without popping) on every control path that
+/// leaves their scope (see `Emitter::unwind`), and popped when the scope
+/// itself ends.
+class UnwindAction final {
+public:
+  enum class Kind {
+    /// End the lifetime of an alloca-backed lvalue.
+    LifetimeEnd,
+    /// Emit the body of a `defer` statement.
+    Defer,
+    /// Store `valueToPreserve` back to `value` (a `preserve` statement).
+    Preserve,
+  };
+
+  /// The kind.
+  Kind kind{};
+
+  /// The value: the lvalue to end or to store back to.
+  Value value{};
+
+  /// The saved rvalue for `Preserve`.
+  Value valueToPreserve{};
+
+  /// The AST statement for `Defer`.
+  ast::Defer *astDefer{};
+
+  /// The declaration sequence number for `Defer`: the defer body must not
+  /// see declarations made after the defer statement.
+  uint64_t seq{};
+};
+
+/// An emitter, responsible for the most important code generation!
+class Emitter final {
+public:
+  /// A pending result value.
+  class Result final {
+  public:
+    /// The value.
+    Value value{};
+
+    /// The block.
+    llvm::BasicBlock *block{};
+
+    /// The source location of the `return` statement.
+    SourceLocation srcLoc{};
+  };
+
+  /// A label representing where to branch to eventually.
+  class Label final {
+  public:
+    /// The unwind-stack depth to unwind to.
+    size_t depth{};
+
+    /// The block to branch to.
+    llvm::BasicBlock *block{};
+
+    /// Implicit conversion to bool.
+    [[nodiscard]] operator bool() const { return block != nullptr; }
+  };
+
+  explicit Emitter(Context &context) : context(context), builder(context) {
+    llvm::FastMathFlags fmf{llvm::FastMathFlags::getFast()};
+    fmf.setNoNaNs(false); // Don't assume no NaNs!
+    fmf.setNoInfs(false); // Don't assume no Infs!
+    builder.setFastMathFlags(fmf);
+    scope = pushScope(/*isTransparent=*/false); // The module root scope
+  }
+
+  /// Push a new scope whose parent is the current scope. The caller is
+  /// responsible for restoring `scope` (typically via `SMDL_PRESERVE`).
+  [[nodiscard]] Scope *pushScope(bool isTransparent) {
+    Scope *newScope{context.makeScope()};
+    newScope->parent = scope;
+    newScope->isTransparent = isTransparent;
+    return newScope;
+  }
+
+  /// Capture the current resolution position into the given parameter
+  /// list, for lazily emitted bodies to re-anchor to (see
+  /// `restoreResolutionAnchor`). The current declaration sequence number
+  /// bounds visibility to what is declared so far.
+  void captureResolutionAnchor(ParameterList &params) {
+    params.lastScope = scope;
+    params.lastSeq = context.currentDeclSeq();
+  }
+
+  /// Restore resolution to a definition-site environment. Declarations in
+  /// the anchor scope and its ancestors are visible only up to the anchor
+  /// sequence number; scopes pushed after re-anchoring are unaffected.
+  /// Replaces any active anchors: resolution switches entirely to the
+  /// definition-site environment, so prior limits are irrelevant. The
+  /// caller is responsible for preserving `scope` and `anchors`.
+  void restoreResolutionAnchor(const ParameterList &params) {
+    scope = params.lastScope;
+    anchors.clear();
+    if (params.lastScope) anchors.push_back({params.lastScope, params.lastSeq});
+  }
+
+public:
+  /// Get the active insert block.
+  [[nodiscard]] llvm::BasicBlock *getInsertBlock() {
+    return builder.GetInsertBlock();
+  }
+
+  /// Get the LLVM function of the active insert block.
+  [[nodiscard]] llvm::Function *getLLVMFunction() {
+    return getInsertBlock() ? getInsertBlock()->getParent() : nullptr;
+  }
+
+  /// Does the insert block have a terminator instruction? (e.g.,
+  /// unconditional branch, unreachable, no-return function call)
+  [[nodiscard]] bool hasTerminator() {
+    return getInsertBlock() && llvmHasTerminator(getInsertBlock());
+  }
+
+  /// Set the current module from the given source location.
+  void setCurrentModule(const SourceLocation &srcLoc) {
+    currentModule = srcLoc.module_;
+  }
+
+public:
+  /// \name Fundamental operations
+  /// \{
+
+  /// Create function implementation.
+  ///
+  /// \param[in] name
+  /// The function name.
+  ///
+  /// \param[in] isPure
+  /// Is pure? If false, `state` must be available.
+  ///
+  /// \param[in] returnType
+  /// The return type. Must be non-null! Used to construct
+  /// the result with `create_result()`.
+  ///
+  /// \param[in] params
+  /// The parameters.
+  ///
+  /// \param[in] paramValues
+  /// The values to use for the parameters. Must be the same size as `params`.
+  ///
+  /// \param[in] srcLoc
+  /// The source location if applicable.
+  ///
+  /// \param[in] callback
+  /// The callback to populate the LLVM function body.
+  ///
+  Value createFunctionImplementation(std::string_view name, bool isPure,
+                                     Type *returnType,
+                                     const ParameterList &params,
+                                     llvm::ArrayRef<Value> paramValues,
+                                     const SourceLocation &srcLoc,
+                                     const std::function<void()> &callback);
+
+  /// Create function.
+  ///
+  /// \param[out] llvmFunc
+  /// The LLVM function. This is a reference in order to support concrete
+  /// recursion, such that the pointer is initialized with a placeholder LLVM
+  /// function before invoking the callback.
+  ///
+  /// \param[in] name
+  /// The function name. This is the name ultimately given to the returned
+  /// LLVM function with `llvm::Function::setName()`.
+  ///
+  /// \param[in] isPure
+  /// Is pure? If false, the LLVM function is initialized with an extra `State`
+  /// pointer at the beginning of the parameter list.
+  ///
+  /// \param[inout] returnType
+  /// The return type. This may be an abstract type like `auto`, in
+  /// which case it is overwritten with the inferred concrete type.
+  ///
+  /// \param[in] paramTypes
+  /// The parameter types, must be resolved to concrete types compatible with
+  /// the types implied by the `params`!
+  ///
+  /// \param[in] params
+  /// The parameters.
+  ///
+  /// \param[in] srcLoc
+  /// The source location if applicable.
+  ///
+  /// \param[in] callback
+  /// The callback to populate the LLVM function body.
+  ///
+  /// \param[in] useIndirectParams
+  /// Use the indirect ('byval' pointer) convention for parameters selected
+  /// by `passesIndirectly()`? Defaults to off, which keeps every caller
+  /// that does not opt in (notably the '@(visible)' material entry points
+  /// and '@(foreign)' declarations) on the by-value convention.
+  ///
+  void createFunction(llvm::Function *&llvmFunc, std::string_view name,
+                      bool isPure, Type *&returnType,
+                      llvm::ArrayRef<Type *> paramTypes,
+                      const ParameterList &params, const SourceLocation &srcLoc,
+                      const std::function<void()> &callback,
+                      bool useIndirectParams = false);
+
+  [[nodiscard]]
+  llvm::Function *createFunction(std::string_view name, bool isPure,
+                                 Type *&returnType, const ParameterList &params,
+                                 const SourceLocation &srcLoc,
+                                 const std::function<void()> &callback) {
+    llvm::Function *llvmFunc{};
+    createFunction(llvmFunc, name, isPure, returnType, params.getTypes(),
+                   params, srcLoc, callback);
+    return llvmFunc;
+  }
+
+  /// Create block with the given name.
+  [[nodiscard]] llvm::BasicBlock *createBlock(const llvm::Twine &name = {}) {
+    return llvm::BasicBlock::Create(context, name, getLLVMFunction());
+  }
+
+  /// Create 1 or more blocks at once with a `baseName + extension` naming
+  /// convention.
+  ///
+  /// The intended usage is like this:
+  /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  /// auto [blockCond, blockThen, blockElse] =
+  ///     create_blocks<3>("select", {".cond", ".then", ".else"});
+  /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///
+  /// \note
+  /// The `baseName` is uniqued by `Context::get_unique_name()` with respect
+  /// to the current LLVM function before being concatenated with the
+  /// extensions. This makes for most readable LLVM IR.
+  ///
+  template <size_t N>
+  [[nodiscard]] std::array<llvm::BasicBlock *, N>
+  createBlocks(llvm::StringRef baseName,
+               std::array<llvm::StringRef, N> extensions) {
+    std::string name{context.getUniqueName(baseName, getLLVMFunction())};
+    auto blocks{std::array<llvm::BasicBlock *, N>{}};
+    for (size_t i = 0; i < N; i++)
+      blocks[i] = createBlock(name + extensions[i]);
+    return blocks;
+  }
+
+  /// Create an alloca as an uninitialized lvalue.
+  ///
+  /// \note
+  /// Each alloca is created in the LLVM function entry block. If there is
+  /// no LLVM function (i.e., `create_function()` was never called), an
+  /// `SMDL_SANITY_CHECK` crashes the program!
+  ///
+  [[nodiscard]] Value createAlloca(Type *type, const llvm::Twine &name = {});
+
+  /// Create lifetime start intrinsic for optimizing alloca usage.
+  void createLifetimeStart(Value value) {
+    if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
+      builder.CreateLifetimeStart(value);
+    }
+  }
+
+  /// Create lifetime end intrinsic for optimizing alloca usage.
+  void createLifetimeEnd(Value value) {
+    if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
+      builder.CreateLifetimeEnd(value);
+    }
+  }
+
+  /// Declare a name. The name is interned by `Context::internName`, so
+  /// callers may pass views of any lifetime, including temporaries.
+  ///
+  /// `ownsStorage` says whether this declaration is what keeps an
+  /// alloca-backed value alive, and so should end its lifetime when the
+  /// scope exits. Pass false when the value's storage outlives the scope or
+  /// belongs to someone else: `resolveArguments()` binds argument values
+  /// that the call it is preparing consumes *after* the binding scope ends,
+  /// and the storage may be the caller's own variable rather than a
+  /// temporary.
+  auto declare(Span<const std::string_view> name, ast::Node *node, Value value,
+               bool ownsStorage = true) {
+    Declaration *declaration{context.allocator.allocate<Declaration>(
+        context.internName(name), node, value)};
+    declaration->seq = context.nextDeclSeq();
+    // Record the declaration in the scope index. Imports resolve by
+    // see-through searches and always precede the other declarations in
+    // their scope, so they are kept in a separate ordered list.
+    if (declaration->isNamed()) {
+      if (declaration->isASTImport() || declaration->isASTUsingImport()) {
+        scope->imports.push_back(declaration);
+      } else {
+        Declaration *&slot{scope->decls[declaration->name.data()]};
+        declaration->prevSameNameInScope = slot;
+        slot = declaration;
+      }
+    }
+    // Alloca-backed lvalues have their lifetimes ended at scope exit.
+    if (ownsStorage && value.isLValue() &&
+        llvm::isa_and_present<llvm::AllocaInst>(value.llvmValue))
+      unwindStack.push_back({UnwindAction::Kind::LifetimeEnd, value});
+    return declaration;
+  }
+
+  /// Find the nearest non-exempt declaration of the given name within the
+  /// current same-scope region: the current scope and, through transparent
+  /// scopes, the first boundary scope. Returns null if there is none. This
+  /// is the probe behind `rejectSameScopeShadow()`, also used to keep
+  /// inferred array size names consistent (see
+  /// `InferredSizeArrayType::invoke()`).
+  [[nodiscard]] Declaration *
+  findSameScopeDeclaration(Span<const std::string_view> name);
+
+  /// Throw an error if the given name is already declared in the current
+  /// scope (probing the scope index through transparent scopes into the
+  /// first boundary scope). Shadowing is legal only across scope
+  /// boundaries.
+  void rejectSameScopeShadow(Span<const std::string_view> name,
+                             const SourceLocation &srcLoc);
+
+  /// Declare parameter.
+  void declareParameter(const Parameter &param, Value value);
+
+  /// Declare parameter as inline.
+  void declareParameterInline(Value value);
+
+  /// Declare import.
+  void declareImport(Span<const std::string_view> importPath, bool isAbs,
+                     ast::Decl &decl);
+
+  /// Spill an rvalue to memory so that it can be addressed, reusing one slot
+  /// per value instead of copying per access.
+  ///
+  /// Indexing an aggregate at a run-time index has to go through memory:
+  /// there is no dynamic `extractvalue` (the indices are instruction syntax,
+  /// not operands), and while `extractelement` does take a dynamic index, the
+  /// backend expands it to a whole-vector spill plus an indexed load *after*
+  /// the loop analyses run, so it re-spills every iteration. A pointer plus
+  /// `getelementptr` is the representation that actually lowers well.
+  ///
+  /// The copy is emitted immediately after the definition of `value` rather
+  /// than at the point of access, so the slot dominates every point at which
+  /// `value` itself is available and can be reused by every later access,
+  /// including from inside a loop whose aggregate is loop-invariant. Slots
+  /// deliberately carry no lifetime markers: the `llvm.lifetime.end` that a
+  /// per-access temporary needs is exactly what stops LLVM from merging the
+  /// redundant copies, so the slot simply lives as long as the function.
+  ///
+  /// Returns `value` unchanged if it is already an lvalue.
+  [[nodiscard]] Value spillToMemory(Value value);
+
+  /// Guarantee that the given value is an lvalue.
+  ///
+  /// - If the value is already an lvalue, return it.
+  /// - If the value is an rvalue, copy it into an alloca and return the lvalue.
+  ///
+  [[nodiscard]] Value lvalue(Value value) {
+    if (value.isRValue() && !value.isVoid()) {
+      Value lv{createAlloca(value.type, value.llvmValue->hasName()
+                                            ? value.llvmValue->getName() + ".lv"
+                                            : "")};
+      createLifetimeStart(lv);
+      builder.CreateStore(value, lv);
+      return lv;
+    }
+    return value;
+  }
+
+  /// Guarantee that the given value is an rvalue.
+  ///
+  /// - If the value is already an rvalue, return it.
+  /// - If the value is an lvalue, load it into a register and return the
+  ///   rvalue.
+  ///
+  [[nodiscard]] Value rvalue(Value value) {
+    if (value.isLValue())
+      return RValue(
+          value.type,
+          value.type->isVoid()
+              ? nullptr
+              : builder.CreateLoad(value.type->llvmType, value,
+                                   value.llvmValue->hasName()
+                                       ? value.llvmValue->getName() + ".rv"
+                                       : ""));
+    return value;
+  }
+
+  /// Is this an aggregate large enough to move through memory rather than
+  /// as a first-class LLVM value? Large aggregates otherwise travel as SSA
+  /// values, which both the mid-level optimizer and the backend handle
+  /// poorly (stack round trips, wide shuffles). This backs both the
+  /// indirect return and indirect parameter conventions.
+  ///
+  /// This must remain a pure function of the type: callers and callees
+  /// compute it independently and must always agree.
+  [[nodiscard]] bool isIndirectAggregate(Type *type);
+
+  /// Should function instances return values of this type indirectly,
+  /// through a leading 'sret' pointer parameter? See 'createFunction' for
+  /// the callee side and 'FunctionType::invoke' for the call side, which
+  /// must agree on this predicate.
+  [[nodiscard]] bool returnsIndirectly(Type *type) {
+    return isIndirectAggregate(type);
+  }
+
+  /// Should function instances receive parameters of this type indirectly,
+  /// as a 'byval' pointer? See 'createFunction' for the callee side and
+  /// 'FunctionType::invoke' for the call side, which must agree on this
+  /// predicate.
+  ///
+  /// \note
+  /// This applies only to real functions with internal linkage. Macros
+  /// inline and have no ABI at all; '@(foreign)' must match the C ABI
+  /// exactly; '@(visible)' is called across the JIT boundary.
+  [[nodiscard]] bool passesIndirectly(Type *type) {
+    return isIndirectAggregate(type);
+  }
+
+  /// Add the 'sret' attributes for an indirect return of the given type
+  /// to parameter 0 of the given function and/or call. Both sides of the
+  /// convention must carry the attributes for the backend to lower the
+  /// call consistently.
+  void addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
+                              llvm::CallBase *callInst);
+
+  /// Add the 'byval' attributes for an indirect parameter of the given type
+  /// to parameter `i` of the given function and/or call. Both sides of the
+  /// convention must carry the attributes for the backend to lower the call
+  /// consistently, and 'byval' is what preserves by-value semantics for
+  /// mutable parameters (see the definition).
+  void addIndirectParamAttrs(Type *paramType, unsigned i,
+                             llvm::Function *llvmFunc,
+                             llvm::CallBase *callInst);
+
+  /// Store the given value into the given pointer destination, copying
+  /// memory-resident (lvalue) values with 'memcpy' instead of loading
+  /// them into SSA registers first. Every store of a `Value` whose kind
+  /// is not locally guaranteed to be an rvalue must go through this:
+  /// `builder.CreateStore(value, ...)` on an lvalue silently stores the
+  /// *pointer*.
+  void createStore(Value value, Value dest) {
+    SMDL_SANITY_CHECK(value && dest);
+    if (value.isLValue()) {
+      builder.CreateMemCpy(dest, llvm::Align(context.getAlignOf(value.type)),
+                           value, llvm::Align(context.getAlignOf(value.type)),
+                           context.getSizeOf(value.type));
+    } else {
+      builder.CreateStore(value, dest);
+    }
+  }
+
+  /// Zero `$state.sampleDimension`, which every entry point that takes a
+  /// `State` does before anything else, so that the draws an evaluation
+  /// makes depend on the seed and index the host sets and nothing else.
+  void emitSampleDimensionReset(const SourceLocation &srcLoc) {
+    createStore(context.getComptimeInt(0),
+                accessField(state, "sampleDimension", srcLoc));
+  }
+
+  /// Emit the pending unwind actions above the given stack depth,
+  /// newest-first, without popping them: every control path that leaves a
+  /// scope re-emits its actions. The stack itself is truncated when the
+  /// scope ends (see `handleScope`).
+  void unwind(size_t depth);
+
+  /// This is the primary mechanism for handling scope.
+  ///
+  /// \param[in] blockStart
+  /// The basic block to start the scope. This is optional! If present, the
+  /// implementation assumes that it is empty, moves it to the end of the LLVM
+  /// function for readability, then sets it as the insert point of the
+  /// IR builder.
+  ///
+  /// \param[in] blockEnd
+  /// The basic block to end the scope. This is optional! If present, it
+  /// represents where the IR builder should branch to at the end of the
+  /// scope.
+  ///
+  /// \param[in] func
+  /// The function to emit code inside the scope.
+  ///
+  /// \note
+  /// - The implementation _does not_ implicitly branch to `blockStart` before
+  ///   setting the insert point. It assumes the branch or conditional branch
+  ///   has already been emitted.
+  /// - The implementation _does_ implicitly branch to `blockEnd`, but only if
+  ///   the intermediate code generation does not add an explicit terminator
+  ///   (i.e., `return`, `break`, or `continue`).
+  /// - The implementation also preserves the declaration, `$state` value, and
+  ///   all labels. These may be modified by `func` with the expectation that
+  ///   they will be restored at the end of the scope.
+  ///
+  template <typename Func>
+  void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
+                   Func &&func) {
+    SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak, labelContinue,
+                  isInDefer, currentModule);
+    const size_t depth0{unwindStack.size()};
+    scope = pushScope(/*isTransparent=*/false);
+    if (blockStart) {
+      llvmMoveBlockToEnd(blockStart);
+      builder.SetInsertPoint(blockStart);
+    }
+    std::invoke(std::forward<Func>(func));
+    if (!hasTerminator()) {
+      unwind(depth0);
+      if (blockEnd) builder.CreateBr(blockEnd);
+    }
+    unwindStack.resize(depth0);
+    if (blockEnd && !llvmHasTerminator(blockEnd)) llvmMoveBlockToEnd(blockEnd);
+  }
+
+  /// Emit a loop-body scope: run `func` in a scope entered from
+  /// `blockStart`, with `break` and `continue` pointed at the given blocks.
+  ///
+  /// \note
+  /// `handleScope` does not emit the entry branch itself, so the caller
+  /// must have already terminated the current block by branching into the
+  /// loop structure; otherwise invalid IR is left behind.
+  template <typename Func>
+  void handleLoopScope(llvm::BasicBlock *blockStart,
+                       llvm::BasicBlock *blockAfterBody,
+                       llvm::BasicBlock *blockBreak,
+                       llvm::BasicBlock *blockContinue, Func &&func) {
+    SMDL_SANITY_CHECK(hasTerminator());
+    handleScope(blockStart, blockAfterBody, [&] {
+      labelBreak = {unwindStack.size(), blockBreak};
+      labelContinue = {unwindStack.size(), blockContinue};
+      isInDefer = false;
+      std::invoke(std::forward<Func>(func));
+    });
+  }
+
+  /// Move the insert point to the beginning of the given block if it has been
+  /// branched to. If the block has no predecessors, erase it.
+  void handleBlockEnd(llvm::BasicBlock *block) {
+    if (block->hasNPredecessors(0)) {
+      block->eraseFromParent();
+    } else {
+      llvmMoveBlockToEnd(block);
+      builder.SetInsertPoint(block);
+    }
+  }
+
+  /// Create result PHI instruction.
+  /// Merge results into one value of `resultType`. `resultKind`, when
+  /// given, names what the results are for so that a value of the wrong
+  /// type says so in those terms instead of reporting the failed
+  /// conversion as if it were a constructor call.
+  Value createResult(Type *resultType, llvm::ArrayRef<Result> results,
+                     const SourceLocation &srcLoc,
+                     std::string_view resultKind = {});
+
+  /// Emit a two-arm conditional merge: branch on `cond`, emit each arm,
+  /// convert both to their common type in their own blocks, and join with
+  /// a PHI. This is the shared implementation of `?:` and binary `else`.
+  Value emitTwoArmMerge(Value cond, const char *name,
+                        const std::function<Value()> &emitArm0,
+                        const SourceLocation &srcLoc0,
+                        const std::function<Value()> &emitArm1,
+                        const SourceLocation &srcLoc1,
+                        const SourceLocation &srcLoc);
+
+  /// \}
+
+public:
+  /// \name Type operations
+  /// \{
+
+  /// Wraps `Type::invoke()`
+  [[nodiscard]] Value invoke(Type *type, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+    return type->invoke(*this, args, srcLoc);
+  }
+
+  /// Wraps `Type::invoke()` after looking up `keyword` in the context.
+  [[nodiscard]] Value invoke(const char *keyword, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+    return invoke(context.getKeywordAsType(keyword, srcLoc), args, srcLoc);
+  }
+
+  /// Wraps `Type::accessField()`
+  [[nodiscard]] Value accessField(Value value, std::string_view key,
+                                  const SourceLocation &srcLoc) {
+    return value.type->accessField(*this, value, key, srcLoc);
+  }
+
+  /// Wraps `Type::accessIndex()`
+  [[nodiscard]] Value accessIndex(Value value, Value i,
+                                  const SourceLocation &srcLoc) {
+    return value.type->accessIndex(*this, value, i, srcLoc);
+  }
+
+  /// Wraps `Type::accessIndex()`
+  [[nodiscard]] Value accessIndex(Value value, unsigned i,
+                                  const SourceLocation &srcLoc = {}) {
+    return accessIndex(value, context.getComptimeInt(int(i)), srcLoc);
+  }
+
+  /// Wraps `Type::accessIndex()` for every index.
+  [[nodiscard]] std::vector<Value>
+  accessEveryIndex(Value value, unsigned n, const SourceLocation &srcLoc,
+                   const std::function<Value(unsigned, Value)> &pred = {}) {
+    std::vector<Value> elems{};
+    for (unsigned i = 0; i < n; i++) {
+      auto &elem{elems.emplace_back(accessIndex(value, i, srcLoc))};
+      if (pred) elem = pred(i, elem);
+    }
+    return elems;
+  }
+
+  /// Wraps `Type::insert()`
+  [[nodiscard]] Value insert(Value value, Value elem, unsigned i,
+                             const SourceLocation &srcLoc = {}) {
+    return value.type->insert(*this, value, elem, i, srcLoc);
+  }
+
+  /// \}
+
+public:
+  /// \name AST Emit
+  /// \{
+
+  /// Emit node.
+  Value emit(ast::Node &node);
+
+  /// Emit file.
+  Value emit(ast::File &file) {
+    for (auto &decl : file.importDecls) emit(decl);
+    for (auto &decl : file.globalDecls) emit(decl);
+    return Value();
+  }
+
+  /// Emit declaration.
+  Value emit(ast::Decl &decl);
+
+  /// Emit annotation declaration.
+  Value emit(ast::AnnotationDecl & /*decl*/) {
+    // TODO
+    return Value();
+  }
+
+  /// Emit enum declaration.
+  Value emit(ast::Enum &decl) {
+    context.getEnumType(&decl)->initialize(*this);
+    return Value();
+  }
+
+  /// Emit exec declaration.
+  Value emit(ast::Exec &decl);
+
+  /// Emit function declaration.
+  Value emit(ast::Function &decl) {
+    context.getFunctionType(&decl)->initialize(*this);
+    return Value();
+  }
+
+  /// Emit import declaration.
+  Value emit(ast::Import &decl) {
+    if (decl.isExported())
+      decl.srcLoc.throwError("Cannot re-export qualified 'import'");
+    for (auto &[importPath, srcComma] : decl.importPathWrappers)
+      declareImport(importPath, importPath.isAbsolute(), decl);
+    return Value();
+  }
+
+  /// Emit namespace declaration.
+  Value emit(ast::Namespace &decl) {
+    declare(*decl.identifier, &decl, context.getComptimeMetaNamespace(&decl));
+    // The interior declarations go out of the enclosing lookup on exit,
+    // but the namespace is not a shadow boundary (members conflict with
+    // same-scope names declared before it), hence a transparent scope.
+    // The scope is recorded on the AST node for qualified-name descent.
+    SMDL_PRESERVE(scope, context.currentNamespacePath);
+    for (auto &element : decl.identifier->elements)
+      context.currentNamespacePath.push_back(element.name.srcName);
+    scope = pushScope(/*isTransparent=*/true);
+    decl.scope = scope;
+    for (auto &each : decl.decls) emit(each);
+    return Value();
+  }
+
+  /// Emit struct declaration.
+  Value emit(ast::Struct &decl) {
+    context.getStructType(&decl)->initialize(*this);
+    return Value();
+  }
+
+  /// Emit tag declaration.
+  Value emit(ast::Tag &decl) {
+    rejectSameScopeShadow(decl.name, decl.srcLoc);
+    declare(decl.name, &decl,
+            context.getComptimeMetaType(context.getTagType(&decl)));
+    return Value();
+  }
+
+  /// Emit typedef declaration.
+  Value emit(ast::Typedef &decl) {
+    rejectSameScopeShadow(decl.name, decl.srcLoc);
+    declare(decl.name, &decl, emit(decl.type));
+    return Value();
+  }
+
+  /// Emit unit-test declaration.
+  Value emit(ast::UnitTest &decl);
+
+  /// Emit using alias declaration.
+  Value emit(ast::UsingAlias &decl) {
+    scope->usingAliases.push_back({&decl, context.nextDeclSeq()});
+    return Value();
+  }
+
+  /// Emit using import declaration.
+  Value emit(ast::UsingImport &decl);
+
+  /// Emit variable declaration.
+  Value emit(ast::Variable &decl);
+
+  /// Emit expression.
+  Value emit(ast::Expr &expr);
+
+  /// Emit access-field expression.
+  Value emit(ast::AccessField &expr) {
+    return accessField(emit(expr.expr), expr.name.srcName, expr.srcLoc);
+  }
+
+  /// Emit access-index expression.
+  Value emit(ast::AccessIndex &expr);
+
+  /// Emit binary expression.
+  Value emit(ast::Binary &expr);
+
+  /// Emit call expression.
+  Value emit(ast::Call &expr) {
+    // Evaluate the callee before the arguments: C++ makes no ordering
+    // guarantee between function arguments, and the emission order here
+    // defines side-effect order in the generated code.
+    Value callee{emit(expr.expr)};
+    ArgumentList args{emit(expr.args)};
+    return emitCall(callee, args, expr.srcLoc);
+  }
+
+  /// Emit identifier expression.
+  Value emit(ast::Identifier &expr) {
+    return resolveIdentifier(expr, expr.srcLoc);
+  }
+
+  /// Emit intrinsic expression.
+  Value emit(ast::Intrinsic &expr) {
+    // Resolve here and discard the result, so that a misspelled name is
+    // rejected at the reference. Waiting for the call site would let an
+    // intrinsic that is named but never called pass silently.
+    resolveIntrinsic(expr.srcName.substr(1), expr.srcLoc);
+    return context.getComptimeMetaIntrinsic(&expr);
+  }
+
+  /// Emit lambda expression.
+  ///
+  /// Each evaluation allocates a fresh `FunctionType` rather than interning
+  /// through `Context::getFunctionType()`: a lambda inside a macro body is
+  /// re-emitted at every expansion of that macro, and the resolution anchor
+  /// captured by `initializeLambda()` must be re-captured against the scope
+  /// of the current expansion.
+  Value emit(ast::Lambda &expr) {
+    FunctionType *funcType{context.getLambdaFunctionType(expr.func.get())};
+    funcType->initializeLambda(*this);
+    return context.getComptimeMetaType(funcType);
+  }
+
+  /// Emit let expression.
+  Value emit(ast::Let &expr) {
+    // The declarations open their own scope, so they may shadow names in
+    // the enclosing scope.
+    SMDL_PRESERVE(scope);
+    const size_t depth0{unwindStack.size()};
+    scope = pushScope(/*isTransparent=*/false);
+    for (auto &decl : expr.decls) emit(decl);
+    Value value{rvalue(emit(expr.expr))};
+    unwind(depth0);
+    unwindStack.resize(depth0);
+    return value;
+  }
+
+  /// Emit literal bool expression.
+  Value emit(ast::LiteralBool &expr) {
+    return context.getComptimeBool(expr.value);
+  }
+
+  /// Emit literal float expression.
+  Value emit(ast::LiteralFloat &expr) {
+    llvm::StringRef src{expr.srcValue};
+    if (src.ends_with_insensitive("jd")) {
+      return invoke("complex",
+                    {context.getComptimeDouble(0.0),
+                     context.getComptimeDouble(expr.value)},
+                    expr.srcLoc);
+    } else if (src.ends_with_insensitive("jf") ||
+               src.ends_with_insensitive("j")) {
+      return invoke("complex",
+                    {context.getComptimeFloat(0.0f),
+                     context.getComptimeFloat(float(expr.value))},
+                    expr.srcLoc);
+    } else if (src.ends_with_insensitive("d")) {
+      return context.getComptimeDouble(expr.value);
+    } else {
+      return context.getComptimeFloat(float(expr.value));
+    }
+  }
+
+  /// Emit literal int expression.
+  Value emit(ast::LiteralInt &expr) {
+    // If the literal value is greater than the maximum `int` promote
+    // it to `int64`.
+    if (expr.value > uint64_t(std::numeric_limits<int>::max())) {
+      Type *intType{context.getArithmeticType(Scalar::getInt(64), Extent(1))};
+      return RValue(intType,
+                    llvm::ConstantInt::get(intType->llvmType,
+                                           llvm::APInt(64, expr.value)));
+    }
+    return context.getComptimeInt(int(expr.value));
+  }
+
+  /// Emit literal string expression.
+  Value emit(ast::LiteralString &expr) {
+    return context.getComptimeString(expr.value);
+  }
+
+  /// Emit parenthesized expression.
+  Value emit(ast::Parens &expr);
+
+  /// Emit return-from expression.
+  Value emit(ast::ReturnFrom &expr);
+
+  /// Emit select expression.
+  Value emit(ast::Select &expr);
+
+  /// Emit type expression.
+  Value emit(ast::Type &expr) {
+    Value value{emit(expr.expr)};
+    if (value.type != context.getMetaTypeType())
+      expr.srcLoc.throwError("Expected expression to resolve to a type");
+    expr.type = value.getComptimeMetaType(context, expr.srcLoc);
+    return value;
+  }
+
+  /// Emit type-cast expression.
+  Value emit(ast::TypeCast &expr) {
+    Type *type{emit(expr.type).getComptimeMetaType(context, expr.srcLoc)};
+    Value value{emit(expr.expr)};
+    return invoke(type, value, expr.srcLoc);
+  }
+
+  /// Emit unary expression.
+  Value emit(ast::Unary &expr) {
+    return emitOp(expr.op, emit(expr.expr), expr.srcLoc);
+  }
+
+  /// Emit late-if helper.
+  template <typename Func>
+  void emitLateIf(std::optional<ast::LateIf> &lateIf, Func &&func) {
+    if (!lateIf) {
+      std::invoke(std::forward<Func>(func));
+      return;
+    }
+    Value cond{invoke(context.getBoolType(), emit(lateIf->expr),
+                      lateIf->expr->srcLoc)};
+    if (cond.isComptimeInt()) {
+      // Fold like `emit(ast::If &)`, so statements following a
+      // comptime-taken `return`/`break`/`continue` are never emitted.
+      if (cond.getComptimeInt())
+        handleScope(nullptr, nullptr, std::forward<Func>(func));
+      return;
+    }
+    auto [blockThen, blockElse] =
+        createBlocks<2>("late_if", {".then", ".else"});
+    builder.CreateCondBr(cond, blockThen, blockElse);
+    handleScope(blockThen, blockElse, std::forward<Func>(func));
+    builder.SetInsertPoint(blockElse);
+  }
+
+  /// Emit statement.
+  Value emit(ast::Stmt &stmt);
+
+  /// Emit break statement.
+  Value emit(ast::Break &stmt) {
+    SMDL_SANITY_CHECK(!hasTerminator());
+    if (!labelBreak)
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'break' from 'defer'"
+                                       : "nowhere to 'break'");
+    emitLateIf(stmt.lateIf, [&] {
+      unwind(labelBreak.depth);
+      builder.CreateBr(labelBreak.block);
+    });
+    return Value();
+  }
+
+  /// Emit compound statement.
+  Value emit(ast::Compound &stmt);
+
+  /// Emit continue statement.
+  Value emit(ast::Continue &stmt) {
+    SMDL_SANITY_CHECK(!hasTerminator());
+    if (!labelContinue)
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'continue' from 'defer'"
+                                       : "nowhere to 'continue'");
+    emitLateIf(stmt.lateIf, [&] {
+      unwind(labelContinue.depth);
+      builder.CreateBr(labelContinue.block);
+    });
+    return Value();
+  }
+
+  /// Emit declaration statement.
+  Value emit(ast::DeclStmt &stmt) { return emit(stmt.decl); }
+
+  /// Emit defer statement.
+  Value emit(ast::Defer &stmt) {
+    // The sequence number bounds what the defer body may resolve: nothing
+    // declared after the defer statement (see `unwind`).
+    unwindStack.push_back({UnwindAction::Kind::Defer, /*value=*/{},
+                           /*valueToPreserve=*/{}, &stmt,
+                           context.nextDeclSeq()});
+    return Value();
+  }
+
+  /// Emit do-while statement.
+  Value emit(ast::DoWhile &stmt);
+
+  /// Emit expression statement.
+  Value emit(ast::ExprStmt &stmt) {
+    if (stmt.expr) emitLateIf(stmt.lateIf, [&] { emit(stmt.expr); });
+    return Value();
+  }
+
+  /// Emit for statement.
+  Value emit(ast::For &stmt);
+
+  /// Emit if statement.
+  Value emit(ast::If &stmt);
+
+  /// Emit preserve statement.
+  Value emit(ast::Preserve &stmt) {
+    for (auto &[expr, srcComma] : stmt.exprWrappers) {
+      Value value{emit(expr)};
+      if (!value.isLValue()) stmt.srcLoc.throwError("Cannot 'preserve' rvalue");
+      unwindStack.push_back(
+          {UnwindAction::Kind::Preserve, value, rvalue(value)});
+    }
+    return Value();
+  }
+
+  /// Emit return statement.
+  Value emit(ast::Return &stmt) {
+    SMDL_SANITY_CHECK(!hasTerminator());
+    if (!labelReturn)
+      stmt.srcLoc.throwError(isInDefer ? "cannot 'return' from 'defer'"
+                                       : "nowhere to 'return'");
+    emitLateIf(stmt.lateIf, [&] {
+      Value value{};
+      if (stmt.expr) value = rvalue(emit(stmt.expr));
+      recordReturn(value, stmt.srcLoc);
+    });
+    return Value();
+  }
+
+  /// Emit switch statement.
+  Value emit(ast::Switch &stmt);
+
+  /// Emit unreachable statement.
+  Value emit(ast::Unreachable &stmt) {
+    if (!getLLVMFunction())
+      stmt.srcLoc.throwError(
+          "An 'unreachable' must be within function definition");
+    builder.CreateUnreachable();
+    return Value();
+  }
+
+  /// Emit visit statement.
+  Value emit(ast::Visit &stmt) {
+    return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
+      // The binding is a view of the visited expression's storage, never
+      // the owner: in the non-union case `value` passes through verbatim
+      // and can be the visited variable's own alloca, and owning it here
+      // would end that variable's lifetime at the end of the case scope,
+      // poisoning every later use.
+      declare(stmt.name, &stmt, value, /*ownsStorage=*/false);
+      if (!value.type->isVoid()) emit(stmt.stmt);
+      return Value();
+    });
+  }
+
+  /// Emit while statement.
+  Value emit(ast::While &stmt);
+
+  /// Emit argument list.
+  ArgumentList emit(ast::ArgumentList &astArgs) {
+    ArgumentList args{};
+    for (auto &astArg : astArgs) {
+      if (astArg.isInlined()) {
+        expandInlineArgument(args, astArg);
+      } else {
+        rejectAssignmentAsNamedArgument(astArg);
+        args.push_back(
+            Argument{astArg.name.srcName, emit(astArg.expr), &astArg});
+      }
+    }
+    args.astArgs = &astArgs;
+    args.validateNames();
+    return args;
+  }
+
+  /// Emit an argument marked `inline` and expand it into `args`: one
+  /// positional argument per element for vectors and arrays, one named
+  /// argument per field for structs. The expression is emitted exactly
+  /// once. `validateNames()` afterwards catches name collisions and
+  /// positional-after-named ordering introduced by the expansion.
+  void expandInlineArgument(ArgumentList &args, ast::Argument &astArg);
+
+  /// Reject an assignment whose target is a name that is not a variable.
+  /// A `const` declaration binds an rvalue, so the assignment otherwise
+  /// fails deep in `emitOp` with only the word "rvalue" to go on, long
+  /// after the name and its declaration are out of reach.
+  void rejectAssignmentToNonVariable(ast::Binary &expr);
+
+  /// Reject `name = value` in an argument list when `name` resolves to
+  /// nothing, which is the `=` typed where `:` was meant. Left alone, it
+  /// reports only that the name does not resolve, which describes the
+  /// symptom and not the mistake.
+  void rejectAssignmentAsNamedArgument(ast::Argument &astArg);
+
+  /// Emit pointer if non-null.
+  template <typename T> Value emit(T *ptr) {
+    return ptr ? emit(*ptr) : Value();
+  }
+
+  /// Emit pointer if non-null.
+  template <typename T> Value emit(const BumpPtr<T> &ptr) {
+    return emit(ptr.get());
+  }
+
+  /// Emit optional if non-null.
+  template <typename T> Value emit(std::optional<T> &opt) {
+    return opt ? emit(*opt) : Value();
+  }
+
+  /// Emit type switch, useful to implement `Node`, `Decl`, `Expr`, and `Stmt`
+  /// sub-class dispatch.
+  template <typename... Ts, typename T> Value emitTypeSwitch(T &node) {
+    return llvm::TypeSwitch<T *, Value>(&node).template Case<Ts...>(
+        [&](auto each) { return emit(*each); });
+  }
+
+  /// \}
+
+public:
+  /// \name Other Emit
+  /// \{
+
+  /// Emit unary operation.
+  Value emitOp(ast::UnaryOp op, Value value, const SourceLocation &srcLoc);
+
+  /// Emit binary operation.
+  Value emitOp(ast::BinaryOp op, Value lhs, Value rhs,
+               const SourceLocation &srcLoc);
+
+  /// Helper to emit unary or binary operation columnwise, assuming
+  /// `Type` is an arithmetic matrix type.
+  template <typename Func>
+  [[nodiscard]] Value emitOpColumnwise(Type *type, Func &&func) {
+    SMDL_SANITY_CHECK(type);
+    SMDL_SANITY_CHECK(type->isArithmeticMatrix());
+    Value result{Value::zero(type)};
+    for (unsigned j = 0;
+         j < static_cast<ArithmeticType *>(type)->extent.numCols; j++)
+      result = insert(result, std::invoke(func, j), j, /*srcLoc=*/{});
+    return result;
+  }
+
+  /// Look up the intrinsic named `name`, which must not include the leading
+  /// `#`. Throws if there is no such intrinsic, suggesting a similar name
+  /// when there is one.
+  ///
+  /// \note
+  /// Not `[[nodiscard]]`: emitting a `#name` expression calls this purely to
+  /// reject a misspelling and has no use for the identifier itself.
+  IntrinsicID resolveIntrinsic(std::string_view name,
+                               const SourceLocation &srcLoc);
+
+  /// Emit intrinsic, resolving `name` through the registry in
+  /// `Intrinsics.def`. Throws if there is no such intrinsic.
+  Value emitIntrinsic(std::string_view name, const ArgumentList &args,
+                      const SourceLocation &srcLoc);
+
+  /// Emit intrinsic.
+  Value emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
+                      const SourceLocation &srcLoc);
+
+  /// Emit one of the `#load...` intrinsics. Only called by `emitIntrinsic()`.
+  Value emitIntrinsicLoad(IntrinsicID intrinsicID, const ArgumentList &args,
+                          const SourceLocation &srcLoc);
+
+  /// If the given value is a just-created instruction with no uses, all
+  /// operands constant, and a fold LLVM knows, erase it and return the
+  /// folded constant; otherwise return the value unchanged. The IRBuilder
+  /// folder handles core IR operations but never calls, so without this
+  /// the math intrinsics (`llvm.sqrt`, `llvm.maxnum`, ...) block
+  /// compile-time-ness even on constant operands.
+  [[nodiscard]] llvm::Value *tryConstantFold(llvm::Value *llvmValue);
+
+  /// Emit call.
+  Value emitCall(Value callee, const ArgumentList &args,
+                 const SourceLocation &srcLoc);
+
+  /// Emit visit.
+  Value emitVisit(Value value, const SourceLocation &srcLoc,
+                  const std::function<Value(Value)> &visitor);
+
+  /// Emit panic.
+  void emitPanic(Value message, const SourceLocation &srcLoc);
+
+  /// Emit print.
+  void emitPrint(Value file, Value value, const SourceLocation &srcLoc,
+                 bool shouldQuoteStrings = false);
+
+  void emitPrint(Value file, std::string_view value,
+                 const SourceLocation &srcLoc) {
+    emitPrint(file, context.getComptimeString(value), srcLoc);
+  }
+
+  /// Record a `return` of the given value: unwind active `defer`s, then
+  /// register the pending `Result` and branch to the return block.
+  ///
+  /// \note
+  /// The unwind must happen before the insert block is captured! The
+  /// `defer` bodies may emit control flow, and the PHI wiring in
+  /// `createResult` must see the block that actually branches to
+  /// `labelReturn.block`.
+  void recordReturn(Value value, const SourceLocation &srcLoc) {
+    unwind(labelReturn.depth);
+    returns.push_back(Result{value, getInsertBlock(), srcLoc});
+    builder.CreateBr(labelReturn.block);
+  }
+
+  void emitReturn(Value value, const SourceLocation &srcLoc) {
+    SMDL_SANITY_CHECK(!hasTerminator());
+    SMDL_SANITY_CHECK(labelReturn.block);
+    recordReturn(value, srcLoc);
+  }
+
+  [[nodiscard]] Parameter emitParameter(ast::Parameter &astParam) {
+    return Parameter{
+        emit(astParam.type).getComptimeMetaType(context, astParam.name.srcLoc),
+        astParam.name, &astParam};
+  }
+
+  [[nodiscard]] ParameterList emitParameterList(ast::ParameterList &astParams) {
+    ParameterList params{};
+    for (auto &astParam : astParams)
+      params.emplace_back(emitParameter(astParam));
+    params.isVariadic = astParams.hasTrailingEllipsis();
+    captureResolutionAnchor(params);
+    return params;
+  }
+
+  /// \}
+
+public:
+  /// \name Resolve
+  /// \{
+
+  /// Resolve identifier to value.
+  [[nodiscard]] Value resolveIdentifier(Span<const std::string_view> names,
+                                        const SourceLocation &srcLoc,
+                                        bool shouldDefaultToVoid = false);
+
+  /// The return structure of `resolveArguments()`.
+  struct ResolvedArguments final {
+  public:
+    ResolvedArguments(const ParameterList &params, const ArgumentList &args)
+        : params(params), args(args) {
+      argParams.resize(args.size());
+      values.resize(params.size());
+    }
+
+    [[nodiscard]] bool isResolved(size_t iArg) const {
+      return iArg < argParams.size() && argParams[iArg] != nullptr;
+    }
+
+    [[nodiscard]] llvm::SmallVector<Type *> getNonVariadicTypes() const {
+      llvm::SmallVector<Type *> valueTypes{
+          llvm::SmallVector<Type *>(values.size())};
+      for (size_t i = 0; i < values.size(); i++) valueTypes[i] = values[i].type;
+      // For crappy support of C-style variadic functions, if the
+      // parameters have an ellipsis, then the resolveArguments() routine
+      // allows for more arguments than parameters, but we use this function
+      // for initializing the LLVM function type, which should only depend on
+      // the non-variadic value types
+      if (params.isVariadic) valueTypes.resize(params.size());
+      return valueTypes;
+    }
+
+    [[nodiscard]] std::optional<ArgumentList> getImpliedVisitArguments() const {
+      bool hasImpliedVisit{false};
+      ArgumentList impliedVisitArgs{args};
+      for (size_t i = 0; i < args.size(); i++) {
+        if (argParams[i] != nullptr && //
+            argParams[i]->type->isAbstract() &&
+            args[i].value.type->isUnionOrPointerToUnion()) {
+          impliedVisitArgs[i].hasImpliedVisit = hasImpliedVisit = true;
+        }
+      }
+      if (!hasImpliedVisit) return std::nullopt;
+      return std::move(impliedVisitArgs);
+    }
+
+  public:
+    /// The parameters passed to `resolveArguments()`.
+    const ParameterList &params;
+
+    /// The arguments passed to `resolveArguments()`.
+    const ArgumentList &args;
+
+    /// The parameters matched to the arguments, in correspondence with `args`.
+    llvm::SmallVector<const Parameter *> argParams;
+
+    /// The values, in correspondence with `params`.
+    llvm::SmallVector<Value> values;
+  };
+
+  /// Resolve the given arguments or throw an error on failure.
+  ///
+  /// \param[in] params
+  /// The parameters.
+  ///
+  /// \param[in] args
+  /// The arguments to resolve against the parameters.
+  ///
+  /// \param[in] srcLoc
+  /// The source location if applicable.
+  ///
+  /// \param[in] shouldSkipEmit
+  /// Do not emit anything? If true and resolution is successful,
+  /// do not actually emit the code for converting the arguments
+  /// into the types and order of the parameters.
+  ///
+  /// \param[in] shouldPassAggregatesIndirectly
+  /// Leave resolved values for parameters selected by `passesIndirectly()`
+  /// memory-resident (lvalues) instead of loading them into SSA registers?
+  /// Set by `FunctionType::invoke()` when emitting a real call that uses
+  /// the indirect parameter convention, so that the pointer reaches the
+  /// call rather than the loaded aggregate. Macros and struct construction
+  /// leave this off: they want plain values.
+  ///
+  [[nodiscard]] ResolvedArguments
+  resolveArguments(const ParameterList &params, const ArgumentList &args,
+                   const SourceLocation &srcLoc, bool shouldSkipEmit = false,
+                   bool shouldPassAggregatesIndirectly = false);
+
+  /// Can resolve arguments?
+  ///
+  /// This simply wraps `resolveArguments()` with a `try` block and returns
+  /// false if an error is thrown.
+  ///
+  /// If `whyNot` is non-null, it receives the message of the rejecting
+  /// error, so that a caller trying several candidates can report why each
+  /// one failed instead of only that they all did (see
+  /// `StructType::invoke`). It is left untouched on success.
+  ///
+  [[nodiscard]] bool canResolveArguments(const ParameterList &params,
+                                         const ArgumentList &args,
+                                         const SourceLocation &srcLoc,
+                                         std::string *whyNot = nullptr) try {
+    ResolvedArguments res{
+        resolveArguments(params, args, srcLoc, /*shouldSkipEmit=*/true)};
+    return true;
+  } catch (const Error &error) {
+    // Only resolution failures mean "no"; anything else propagates.
+    if (whyNot) *whyNot = error.message;
+    return false;
+  }
+
+  /// Resolve the module `importPath` names, compiling it first if it is not
+  /// compiled yet. The import is at `srcLoc`, which is where a cyclic
+  /// import is reported.
+  [[nodiscard]] Module *resolveModule(Span<const std::string_view> importPath,
+                                      bool isAbs, const SourceLocation &srcLoc);
+
+  /// Resolve import using aliases in the import path. Aliases with a
+  /// declaration sequence number at or above `seqLimit` are ignored: an
+  /// alias's own path resolves against the aliases declared before it, so
+  /// `using foo = foo::bar;` cannot recurse.
+  void resolveImportUsingAliases(
+      uint64_t seqLimit, Span<const std::string_view> importPath,
+      llvm::SmallVector<std::string_view> &finalImportPath);
+
+  /// \}
+
+public:
+  /// The context.
+  Context &context;
+
+  /// The pending scope-exit actions. See `unwind()` and `UnwindAction`.
+  llvm::SmallVector<UnwindAction, 8> unwindStack{};
+
+  /// The current scope. See `pushScope()` and the `Scope` class comment.
+  Scope *scope{};
+
+  /// The active resolution anchors: `(scope, seq)` pairs. During a
+  /// scope-index probe, once the walk reaches an anchor's scope, entries
+  /// from there upward are visible only up to the anchor's sequence number
+  /// (the minimum over all reached anchors). Re-anchoring to a definition
+  /// site replaces the list (`restoreResolutionAnchor`); emitting a defer
+  /// body pushes onto it (the chain is rewound within the same
+  /// environment, so limits stack). Empty when resolution is unrestricted.
+  llvm::SmallVector<std::pair<Scope *, uint64_t>, 2> anchors{};
+
+  /// Probe the scope index for a (possibly qualified) name, walking scopes
+  /// innermost to outermost and resolving each via
+  /// `Declaration::resolveInScope` with the active anchor limits. Includes
+  /// the `unusableMatch` recording (see `Declaration::resolveInScope`).
+  [[nodiscard]] Declaration *probeName(Span<const std::string_view> name,
+                                       llvm::Function *llvmFunc,
+                                       Declaration **unusableMatch);
+
+  /// Every top-level name the given module exports, for did-you-mean
+  /// suggestions against a module's contents.
+  [[nodiscard]] static std::vector<std::string_view>
+  exportedNamesOf(Module *module_);
+
+  /// The did-you-mean clause for an import that failed to resolve: the
+  /// nearest module name, or, when nothing is near enough, the search
+  /// roots that were actually consulted.
+  [[nodiscard]] std::string
+  suggestForFailedImport(Span<const std::string_view> modulePath);
+
+  /// The did-you-mean clause for a name that failed to resolve, gathered
+  /// from the intrinsics, the keywords, the enclosing scopes, and the
+  /// modules visible where the lookup failed. Returns the empty string
+  /// when nothing is close enough to be worth suggesting.
+  [[nodiscard]] std::string
+  suggestForUnresolvedName(Span<const std::string_view> names,
+                           const SourceLocation &srcLoc);
+
+  /// The innermost call site that lives in a real source file. A builtin
+  /// body is inlined into the caller, so a diagnostic raised inside one
+  /// carries the builtin's location, which the user cannot act on. This
+  /// remembers where they actually wrote the call.
+  SourceLocation srcLocUserCall{};
+
+  /// The best location to blame for a resource diagnostic: `srcLoc` when it
+  /// is already in the user's own source, and otherwise the innermost call
+  /// site that is, so that a missing texture names the user's line instead
+  /// of the builtin constructor that happened to load it.
+  [[nodiscard]] const SourceLocation &
+  resourceSourceLocation(const SourceLocation &srcLoc) const {
+    if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) return srcLoc;
+    return srcLocUserCall ? srcLocUserCall : srcLoc;
+  }
+
+  /// The `$state` value.
+  Value state{};
+
+  /// The label to branch to after `return` statement.
+  Label labelReturn{};
+
+  /// The label to branch to after `break` statement.
+  Label labelBreak{};
+
+  /// The label to branch to after `continue` statement.
+  Label labelContinue{};
+
+  /// Is currently in defer statement? This allows for more specific error
+  /// messages if the user tries to defer a `break`, `continue`, or `return`
+  /// statement.
+  bool isInDefer{};
+
+  /// The pending results.
+  llvm::SmallVector<Result> returns{};
+
+  /// The explicit `#inline(...)` requests.
+
+  /// The LLVM-IR builder.
+  llvm::IRBuilder<> builder;
+
+  /// The intermediate declarations to potentially warn about later.
+  llvm::SmallVector<Declaration *> declarationsToWarnAbout{};
+
+  /// The memory slots holding spilled rvalues, keyed by the LLVM value and
+  /// the SMDL type (the same LLVM constant may stand for more than one).
+  /// See `spillToMemory()`.
+  ///
+  /// The map is cleared whenever emission of an LLVM function finishes (see
+  /// `createFunction`), which both bounds its size and, more importantly,
+  /// keeps an erased function's address from being matched by a later
+  /// function allocated at the same address.
+  llvm::DenseMap<std::pair<llvm::Value *, Type *>, Value> spillSlots{};
+
+  Module *currentModule{context.currentModule};
+};
+
+/// \}
+
+} // namespace smdl

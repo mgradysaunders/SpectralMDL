@@ -1,0 +1,8 @@
+IESNA:LM-63-1995
+[TEST] Synthetic axially symmetric
+TILT=NONE
+1 1000 1 5 1 1 2 0.1 0.1 0.1
+1.0 1.0 100
+0 45 90 135 180
+0
+683 546.4 409.8 273.2 136.6

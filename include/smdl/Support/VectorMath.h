@@ -1,0 +1,876 @@
+/// \file
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+
+#include "smdl/Support/Macros.h"
+#include "smdl/Support/SIMD.h"
+
+namespace smdl {
+
+/// \addtogroup support
+/// \{
+
+/// The constant `PI`.
+constexpr float PI = 3.141592653589793f;
+
+/// The constant `2 PI`.
+constexpr float TWO_PI = 6.283185307179586f;
+
+/// The constant `1 / PI`, for the hot paths that would otherwise divide:
+/// neither this nor `INV_TWO_PI` is exact, so the compiler will not fold
+/// the division into a multiply on its own.
+constexpr float INV_PI = 0.3183098861837907f;
+
+/// The constant `1 / (2 PI)`. See `INV_PI`.
+constexpr float INV_TWO_PI = 0.15915494309189535f;
+
+/// Positive infinity, the canonical unbounded ray parameter.
+constexpr float INF = std::numeric_limits<float>::infinity();
+
+constexpr float FLOAT_MIN = std::numeric_limits<float>::min();
+
+constexpr float FLOAT_MAX = std::numeric_limits<float>::max();
+
+/// The largest `float` strictly less than 1, which is what a canonical
+/// random sample in `[0, 1)` and a texture or quadtree coordinate that
+/// must not land on the far edge clamp to.
+constexpr float ALMOST_ONE =
+    1.0f - std::numeric_limits<float>::epsilon() / 2;
+
+/// \name Functions (scalar math)
+/// \{
+
+/// Convert degrees to radians.
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr float radians(float degrees) noexcept {
+  return degrees * (PI / 180.0f);
+}
+
+/// Convert radians to degrees.
+[[nodiscard]]
+SMDL_ALWAYS_INLINE constexpr float degrees(float radians) noexcept {
+  return radians * (180.0f * INV_PI);
+}
+
+[[nodiscard]] SMDL_ALWAYS_INLINE float finiteOrZero(float x) noexcept {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+[[nodiscard]] SMDL_ALWAYS_INLINE float incrementFloat(float x) noexcept {
+  return std::nextafter(x, +INF);
+}
+
+[[nodiscard]] SMDL_ALWAYS_INLINE float decrementFloat(float x) noexcept {
+  return std::nextafter(x, -INF);
+}
+
+template <typename T>
+[[nodiscard]] constexpr T lerp(const T &a, const T &b, float t) noexcept {
+  return (1 - t) * a + t * b;
+}
+
+template <typename T> [[nodiscard]] constexpr T clamp01(const T &x) noexcept {
+  return std::clamp(x, T(0), T(1));
+}
+
+/// \}
+
+/// The vector template.
+///
+/// Default construction leaves the components indeterminate, as it
+/// does a scalar's; `float3 v{}` zero-initializes. The default
+/// constructor is trivial so that an array of vectors declared as
+/// scratch costs nothing until it is written, which the manifold solver
+/// relies on, and it is not `constexpr` because a defaulted constructor
+/// that leaves members uninitialized cannot be before C++20; the
+/// component constructors are, which is what a constant needs.
+template <typename T, size_t M> class Vector;
+
+/// The vector template for `N = 2`.
+template <typename T> class alignas(2 * sizeof(T)) Vector<T, 2> {
+public:
+  Vector() = default;
+
+  constexpr Vector(T x) : Vector(x, x) {}
+
+  // NOLINTNEXTLINE
+  constexpr Vector(T x, T y) : x(x), y(y) {}
+
+  template <typename U>
+  explicit constexpr Vector(const U *v) : Vector(v[0], v[1]) {}
+
+  /// The access operator.
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
+
+  /// The access operator, const variant.
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
+    return (&x)[i];
+  }
+
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(2, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
+  }
+
+  T x, y;
+};
+
+/// The vector template for `N = 3`.
+template <typename T> class alignas(4 * sizeof(T)) Vector<T, 3> {
+public:
+  Vector() = default;
+
+  constexpr Vector(T x) : Vector(x, x, x) {}
+
+  // NOLINTNEXTLINE
+  constexpr Vector(T x, T y, T z) : x(x), y(y), z(z), padding() {}
+
+  template <typename U>
+  explicit constexpr Vector(const U *v) : Vector(v[0], v[1], v[2]) {}
+
+  /// The access operator.
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
+
+  /// The access operator, const variant.
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
+    return (&x)[i];
+  }
+
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(3, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
+  }
+
+  /// The fourth lane that `alignas` already sizes the vector to, declared
+  /// so that it is storage rather than padding, which is what lets the
+  /// packed operators load and store the whole vector at once. It holds no
+  /// component and is indeterminate unless a component constructor ran, so
+  /// nothing that reduces across components may look at it.
+  T x, y, z, padding;
+};
+
+/// The vector template for `N = 4`.
+template <typename T> class alignas(4 * sizeof(T)) Vector<T, 4> {
+public:
+  Vector() = default;
+
+  constexpr Vector(T x) : Vector(x, x, x, x) {}
+
+  // NOLINTNEXTLINE
+  constexpr Vector(T x, T y, T z, T w) : x(x), y(y), z(z), w(w) {}
+
+  constexpr Vector(Vector<T, 3> v, T w) : Vector(v.x, v.y, v.z, w) {}
+
+  template <typename U>
+  explicit constexpr Vector(const U *v) : Vector(v[0], v[1], v[2], v[3]) {}
+
+  /// The access operator.
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
+
+  /// The access operator, const variant.
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
+    return (&x)[i];
+  }
+
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(4, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
+  }
+
+  T x, y, z, w;
+};
+
+inline namespace vector_types {
+
+/// The equivalent of the MDL `int2` vector type.
+using int2 = Vector<int, 2>;
+
+/// The equivalent of the MDL `int3` vector type.
+using int3 = Vector<int, 3>;
+
+/// The equivalent of the MDL `int4` vector type.
+using int4 = Vector<int, 4>;
+
+/// The equivalent of the MDL `float2` vector type.
+using float2 = Vector<float, 2>;
+
+/// The equivalent of the MDL `float3` vector type.
+using float3 = Vector<float, 3>;
+
+/// The equivalent of the MDL `float4` vector type.
+using float4 = Vector<float, 4>;
+
+/// The equivalent of the MDL `double2` vector type.
+using double2 = Vector<double, 2>;
+
+/// The equivalent of the MDL `double3` vector type.
+using double3 = Vector<double, 3>;
+
+/// The equivalent of the MDL `double4` vector type.
+using double4 = Vector<double, 4>;
+
+static_assert(sizeof(float2) == 2 * sizeof(float));
+static_assert(sizeof(float3) == 4 * sizeof(float));
+static_assert(sizeof(float4) == 4 * sizeof(float));
+
+} // namespace vector_types
+
+/// \name Functions (vector math)
+/// \{
+
+/// Is any element true?
+template <size_t N>
+[[nodiscard]] inline bool isAnyTrue(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (v[i]) return true;
+  return false;
+}
+
+/// Is every element true?
+template <size_t N>
+[[nodiscard]] inline bool isAllTrue(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (!v[i]) return false;
+  return true;
+}
+
+/// Is every element finite?
+template <typename T, size_t N>
+[[nodiscard]] inline bool isAllFinite(const Vector<T, N> &v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (!std::isfinite(v[i])) return false;
+  return true;
+}
+
+/// Vector unary `operator+`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator+(Vector<T, N> v) noexcept {
+  return v;
+}
+
+/// Vector unary `operator-`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator-(Vector<T, N> v) noexcept {
+  for (size_t i = 0; i < N; i++) v[i] = -v[i];
+  return v;
+}
+
+/// Vector-vector `operator+`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator+(const Vector<T, N> &v0,
+                                          const Vector<T, N> &v1) noexcept {
+  Vector<T, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] + v1[i];
+  return v;
+}
+
+/// Vector-vector `operator-`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator-(const Vector<T, N> &v0,
+                                          const Vector<T, N> &v1) noexcept {
+  Vector<T, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] - v1[i];
+  return v;
+}
+
+/// Vector-vector `operator+=`.
+template <typename T, size_t N>
+SMDL_ALWAYS_INLINE Vector<T, N> &operator+=(Vector<T, N> &v0,
+                                            const Vector<T, N> &v1) noexcept {
+  return v0 = v0 + v1;
+}
+
+/// Vector-vector `operator-=`.
+template <typename T, size_t N>
+SMDL_ALWAYS_INLINE Vector<T, N> &operator-=(Vector<T, N> &v0,
+                                            const Vector<T, N> &v1) noexcept {
+  return v0 = v0 - v1;
+}
+
+/// Scalar-vector `operator*`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator*(const T &s0,
+                                          const Vector<T, N> &v1) noexcept {
+  Vector<T, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = s0 * v1[i];
+  return v;
+}
+
+/// Vector-scalar `operator*`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator*(const Vector<T, N> &v0,
+                                          const T &s1) noexcept {
+  Vector<T, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] * s1;
+  return v;
+}
+
+/// Vector-scalar `operator/`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> operator/(const Vector<T, N> &v0,
+                                          const T &s1) noexcept {
+  Vector<T, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] / s1;
+  return v;
+}
+
+/// Vector-scalar `operator*=`.
+template <typename T, size_t N>
+SMDL_ALWAYS_INLINE Vector<T, N> &operator*=(Vector<T, N> &v0,
+                                            const T &s1) noexcept {
+  return v0 = v0 * s1;
+}
+
+/// Vector-scalar `operator/=`.
+template <typename T, size_t N>
+SMDL_ALWAYS_INLINE Vector<T, N> &operator/=(Vector<T, N> &v0,
+                                            const T &s1) noexcept {
+  return v0 = v0 / s1;
+}
+
+/// Vector-vector `operator==`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<bool, N> operator==(const Vector<T, N> &v0,
+                                              const Vector<T, N> &v1) noexcept {
+  Vector<bool, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] == v1[i];
+  return v;
+}
+
+/// Vector-vector `operator!=`.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<bool, N> operator!=(const Vector<T, N> &v0,
+                                              const Vector<T, N> &v1) noexcept {
+  Vector<bool, N> v{};
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] != v1[i];
+  return v;
+}
+
+/// \name Functions (packed vector math)
+///
+/// The generic operators above walk one component at a time, which the
+/// vectorizer reassembles into two lanes plus a remainder rather than one
+/// whole register. These overloads say the same thing as one pack, and
+/// overload resolution prefers them for the two types that fill a pack
+/// exactly. The pack covers all four lanes, `Vector<float, 3>` included,
+/// so whatever sits in `padding` is carried along and never read back;
+/// every operation here is element-wise, and the ones that reduce across
+/// components (`dot`, `cross`, `operator==`) stay component-wise above.
+/// \{
+
+namespace detail {
+
+/// Load all four lanes of a vector as one pack.
+template <size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE simd::Pack<float, 4>
+packOf(const Vector<float, N> &v) noexcept {
+  static_assert(N == 3 || N == 4, "The pack covers the whole vector");
+  return simd::Pack<float, 4>::load(&v.x);
+}
+
+/// Store all four lanes of a pack as a vector.
+template <size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE Vector<float, N>
+vectorOf(const simd::Pack<float, 4> &pack) noexcept {
+  static_assert(N == 3 || N == 4, "The pack covers the whole vector");
+  Vector<float, N> v;
+  pack.store(&v.x);
+  return v;
+}
+
+} // namespace detail
+
+#if SMDL_SIMD_VECTOR_EXTENSION
+
+/// Vector unary `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v) noexcept {
+  return detail::vectorOf<3>(-detail::packOf(v));
+}
+
+/// Vector-vector `operator+`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator+(const float3 &v0,
+                                                  const float3 &v1) noexcept {
+  return detail::vectorOf<3>(detail::packOf(v0) + detail::packOf(v1));
+}
+
+/// Vector-vector `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator-(const float3 &v0,
+                                                  const float3 &v1) noexcept {
+  return detail::vectorOf<3>(detail::packOf(v0) - detail::packOf(v1));
+}
+
+/// Scalar-vector `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float &s0,
+                                                  const float3 &v1) noexcept {
+  return detail::vectorOf<3>(simd::Pack<float, 4>(s0) * detail::packOf(v1));
+}
+
+/// Vector-scalar `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator*(const float3 &v0,
+                                                  const float &s1) noexcept {
+  return detail::vectorOf<3>(detail::packOf(v0) * simd::Pack<float, 4>(s1));
+}
+
+/// Vector-scalar `operator/`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float3 operator/(const float3 &v0,
+                                                  const float &s1) noexcept {
+  return detail::vectorOf<3>(detail::packOf(v0) / simd::Pack<float, 4>(s1));
+}
+
+/// Vector unary `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v) noexcept {
+  return detail::vectorOf<4>(-detail::packOf(v));
+}
+
+/// Vector-vector `operator+`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator+(const float4 &v0,
+                                                  const float4 &v1) noexcept {
+  return detail::vectorOf<4>(detail::packOf(v0) + detail::packOf(v1));
+}
+
+/// Vector-vector `operator-`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator-(const float4 &v0,
+                                                  const float4 &v1) noexcept {
+  return detail::vectorOf<4>(detail::packOf(v0) - detail::packOf(v1));
+}
+
+/// Scalar-vector `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float &s0,
+                                                  const float4 &v1) noexcept {
+  return detail::vectorOf<4>(simd::Pack<float, 4>(s0) * detail::packOf(v1));
+}
+
+/// Vector-scalar `operator*`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator*(const float4 &v0,
+                                                  const float &s1) noexcept {
+  return detail::vectorOf<4>(detail::packOf(v0) * simd::Pack<float, 4>(s1));
+}
+
+/// Vector-scalar `operator/`.
+[[nodiscard]] SMDL_ALWAYS_INLINE float4 operator/(const float4 &v0,
+                                                  const float &s1) noexcept {
+  return detail::vectorOf<4>(detail::packOf(v0) / simd::Pack<float, 4>(s1));
+}
+
+#endif // #if SMDL_SIMD_VECTOR_EXTENSION
+
+/// \}
+
+/// Vector dot product in 2 dimensions.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 2> u,
+                                       Vector<T, 2> v) noexcept {
+  return u.x * v.x + u.y * v.y;
+}
+
+/// Vector dot product in 3 dimensions.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 3> u,
+                                       Vector<T, 3> v) noexcept {
+  return u.x * v.x + u.y * v.y + u.z * v.z;
+}
+
+/// Vector dot product in 4 dimensions.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T dot(Vector<T, 4> u,
+                                       Vector<T, 4> v) noexcept {
+  return (u.x * v.x + u.y * v.y) + (u.z * v.z + u.w * v.w);
+}
+
+/// Absolute value of dot product.
+template <typename T, size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE T absDot(Vector<T, N> u,
+                                          Vector<T, N> v) noexcept {
+  return std::abs(dot(u, v));
+}
+
+/// Vector length squared.
+template <typename T, size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE T lengthSquared(Vector<T, N> v) noexcept {
+  return dot(v, v);
+}
+
+/// Vector length.
+template <typename T, size_t N>
+[[nodiscard]] SMDL_ALWAYS_INLINE T length(Vector<T, N> v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  return std::sqrt(dot(v, v));
+}
+
+/// Normalize.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, N> normalize(Vector<T, N> v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  T len{length(v)};
+  T invLen{len > 0 ? 1 / len : 0};
+  return v * invLen;
+}
+
+// TODO Implement version with `T eps` tolerance to reject anything with length less-than or equal to `eps`?
+/// Try to normalize, return true if successful.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (T len{length(v)}; len > T(0)) {
+    v = v * (T(1) / len);
+    return true;
+  } else {
+    return false;
+  }
+}
+
+/// Vector cross product in 3 dimensions.
+template <typename T>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE Vector<T, 3> cross(Vector<T, 3> u, Vector<T, 3> v) noexcept {
+  return {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+}
+
+/// Calculate vector perpendicular to the given vector.
+template <typename T>
+[[nodiscard]] inline Vector<T, 3> perpendicularTo(Vector<T, 3> w) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(w)) return {1, 0, 0};
+  Vector<T, 3> u{0, -1, 0};
+  if (w.z > T(-0.9999)) {
+    u.x = -w.x / (w.z + 1) + 1;
+    u.y = -w.y / (w.z + 1);
+    u.z = -1;
+  }
+  return normalize(u - dot(u, w) * w);
+}
+
+/// Gram-Schmidt orthonormalize `u` and `v` against `w`, which must already
+/// be normalized. Handedness is preserved: `v` is projected from the other
+/// axes rather than being replaced by the cross product, so a left-handed
+/// frame stays left-handed. The cross product is the fallback when `v` is
+/// degenerate and so carries no handedness to preserve.
+///
+/// This is the orthonormalization that `State::finalize()` applies, so a host
+/// that needs to predict what the state will do to a frame should call this
+/// rather than reimplement it.
+///
+template <typename T>
+inline void gramSchmidtOrthonormalize(const Vector<T, 3> &w, //
+                                      Vector<T, 3> &u,
+                                      Vector<T, 3> &v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  u = u - dot(u, w) * w;
+  if (!tryNormalize(u)) u = perpendicularTo(w); // NOTE: Already normalized
+  v = v - dot(v, w) * w - dot(v, u) * u;
+  if (!tryNormalize(v)) v = normalize(cross(w, u));
+}
+
+/// The area of the triangle on the given corners, in whatever space
+/// they are given in. Zero for a degenerate triangle, never negative.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T
+triangleArea(const Vector<T, 3> &point0, const Vector<T, 3> &point1,
+             const Vector<T, 3> &point2) noexcept {
+  return T(0.5) * length(cross(point1 - point0, point2 - point0));
+}
+
+/// \}
+
+/// The matrix template.
+///
+/// \tparam T  The value type.
+/// \tparam N  The number of columns.
+/// \tparam M  The number of rows.
+///
+template <typename T, size_t N, size_t M> class Matrix final {
+public:
+  /// The zero constructor.
+  constexpr Matrix() = default;
+
+  /// The diagonal element constructor.
+  constexpr Matrix(T x) {
+    for (size_t i{}; i < std::min(N, M); i++) v[i][i] = x;
+  }
+
+  /// The column constructor.
+  constexpr Matrix(const std::array<Vector<T, M>, N> &v) : v(v) {}
+
+  template <typename... Args>
+  constexpr Matrix(const Vector<T, M> &v0, const Args &...vs) : v{v0, vs...} {
+    static_assert(1 + sizeof...(Args) == N);
+  }
+
+  /// The column access operator.
+  [[nodiscard]] constexpr auto operator[](size_t j) noexcept -> Vector<T, M> & {
+    return v[j];
+  }
+
+  /// The column access operator, const variant.
+  [[nodiscard]] constexpr auto operator[](size_t j) const noexcept
+      -> const Vector<T, M> & {
+    return v[j];
+  }
+
+  /// Get column vector.
+  [[nodiscard]] constexpr Vector<T, M> col(size_t j) const noexcept {
+    return v[j];
+  }
+
+  /// Get row vector.
+  [[nodiscard]] constexpr Vector<T, N> row(size_t i) const noexcept {
+    Vector<T, N> u{};
+    for (size_t j = 0; j < N; j++) u[j] = v[j][i];
+    return u;
+  }
+
+  template <typename OtherT, size_t OtherN, size_t OtherM>
+  [[nodiscard]] constexpr
+  operator Matrix<OtherT, OtherN, OtherM>() const noexcept {
+    Matrix<OtherT, OtherN, OtherM> matrix{};
+    for (size_t j = 0; j < std::min(N, OtherN); ++j)
+      for (size_t i = 0; i < std::min(M, OtherM); ++i) matrix.v[j][i] = v[j][i];
+    return matrix;
+  }
+
+  /// The column vectors.
+  std::array<Vector<T, M>, N> v{};
+};
+
+inline namespace matrix_types {
+
+/// The equivalent of the MDL `float2x2` matrix type.
+using float2x2 = Matrix<float, 2, 2>;
+
+/// The equivalent of the MDL `float3x2` matrix type.
+using float3x2 = Matrix<float, 3, 2>;
+
+/// The equivalent of the MDL `float4x2` matrix type.
+using float4x2 = Matrix<float, 4, 2>;
+
+/// The equivalent of the MDL `float2x3` matrix type.
+using float2x3 = Matrix<float, 2, 3>;
+
+/// The equivalent of the MDL `float3x3` matrix type.
+using float3x3 = Matrix<float, 3, 3>;
+
+/// The equivalent of the MDL `float4x3` matrix type.
+using float4x3 = Matrix<float, 4, 3>;
+
+/// The equivalent of the MDL `float2x4` matrix type.
+using float2x4 = Matrix<float, 2, 4>;
+
+/// The equivalent of the MDL `float3x4` matrix type.
+using float3x4 = Matrix<float, 3, 4>;
+
+/// The equivalent of the MDL `float4x4` matrix type.
+using float4x4 = Matrix<float, 4, 4>;
+
+/// The equivalent of the MDL `double2x2` matrix type.
+using double2x2 = Matrix<double, 2, 2>;
+
+/// The equivalent of the MDL `double3x2` matrix type.
+using double3x2 = Matrix<double, 3, 2>;
+
+/// The equivalent of the MDL `double4x2` matrix type.
+using double4x2 = Matrix<double, 4, 2>;
+
+/// The equivalent of the MDL `double2x3` matrix type.
+using double2x3 = Matrix<double, 2, 3>;
+
+/// The equivalent of the MDL `double3x3` matrix type.
+using double3x3 = Matrix<double, 3, 3>;
+
+/// The equivalent of the MDL `double4x3` matrix type.
+using double4x3 = Matrix<double, 4, 3>;
+
+/// The equivalent of the MDL `double2x4` matrix type.
+using double2x4 = Matrix<double, 2, 4>;
+
+/// The equivalent of the MDL `double3x4` matrix type.
+using double3x4 = Matrix<double, 3, 4>;
+
+/// The equivalent of the MDL `double4x4` matrix type.
+using double4x4 = Matrix<double, 4, 4>;
+
+} // namespace matrix_types
+
+/// \name Functions (matrix math)
+/// \{
+
+/// Matrix-Matrix `operator*`.
+template <typename T, size_t P, size_t N, size_t M>
+[[nodiscard]]
+inline Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
+                                 const Matrix<T, P, N> &m1) noexcept {
+  Matrix<T, P, M> m{};
+  for (size_t i = 0; i < M; i++)
+    for (size_t j = 0; j < P; j++)
+      for (size_t k = 0; k < N; k++) m[j][i] += m0[k][i] * m1[j][k];
+  return m;
+}
+
+/// Matrix-Vector `operator*`.
+template <typename T, size_t N, size_t M>
+[[nodiscard]]
+inline Vector<T, M> operator*(const Matrix<T, N, M> &m0,
+                              const Vector<T, N> &v1) noexcept {
+  Vector<T, M> v{};
+  for (size_t i = 0; i < M; i++)
+    for (size_t k = 0; k < N; k++) v[i] += m0[k][i] * v1[k];
+  return v;
+}
+
+/// Apply an affine transform to a point, i.e., with the translation.
+///
+/// This is the whole of what `m * Vector<T, 4>(p, 1)` narrowed back to 3
+/// dimensions means, said once: the homogeneous coordinate is the entire
+/// difference between transforming a point and transforming a direction,
+/// and it is the easiest part of the spelling to mistype.
+///
+/// \note
+/// The products accumulate one statement at a time rather than summing in
+/// a single expression. Under `-ffp-contract=on` a multiply fuses into the
+/// add that follows it in the same statement, so this spelling pins the
+/// association instead of leaving it to the compiler, and the association
+/// is part of the result.
+template <typename T>
+[[nodiscard]]
+inline Vector<T, 3> transformPoint(const Matrix<T, 4, 4> &m,
+                                   const Vector<T, 3> &p) noexcept {
+  Vector<T, 3> v{};
+  for (size_t i = 0; i < 3; i++) {
+    v[i] += m[0][i] * p.x;
+    v[i] += m[1][i] * p.y;
+    v[i] += m[2][i] * p.z;
+    v[i] += m[3][i];
+  }
+  return v;
+}
+
+/// Apply an affine transform to a direction, i.e., without the
+/// translation.
+///
+/// \note
+/// A direction is not a normal. Under a shear or a non-uniform scale the
+/// two transform differently, and a normal needs the cofactor matrix
+/// (`cof(A) = det(A) A^-T`) rather than `A` itself.
+template <typename T>
+[[nodiscard]]
+inline Vector<T, 3> transformDirection(const Matrix<T, 4, 4> &m,
+                                       const Vector<T, 3> &v) noexcept {
+  Vector<T, 3> r{};
+  for (size_t i = 0; i < 3; i++) {
+    r[i] += m[0][i] * v.x;
+    r[i] += m[1][i] * v.y;
+    r[i] += m[2][i] * v.z;
+  }
+  return r;
+}
+
+/// Matrix transpose.
+template <typename T, size_t N, size_t M>
+[[nodiscard]]
+inline Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
+  Matrix<T, M, N> mT{};
+  for (size_t i = 0; i < N; i++)
+    for (size_t j = 0; j < M; j++) mT[j][i] = m[i][j];
+  return mT;
+}
+
+/// Calculate affine inverse.
+template <typename T>
+[[nodiscard]]
+inline Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
+  Matrix<T, 4, 4> mI{};
+  mI[0] = {m[0].x, m[1].x, m[2].x, T(0)};
+  mI[1] = {m[0].y, m[1].y, m[2].y, T(0)};
+  mI[2] = {m[0].z, m[1].z, m[2].z, T(0)};
+  mI[3] = {-dot(m[0], m[3]), -dot(m[1], m[3]), -dot(m[2], m[3]), T(1)};
+  return mI;
+}
+
+/// Invert the three by three matrix `m` in place, unless its determinant
+/// is within 1e-12 of zero against the cube of its largest entry, where it
+/// is left alone.
+template <typename T>
+[[nodiscard]] inline bool tryInvert(Matrix<T, 3, 3> &m) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  // The inverse's rows are the cross products of the columns over the
+  // determinant.
+  const Vector<T, 3> row0{cross(m[1], m[2])};
+  const Vector<T, 3> row1{cross(m[2], m[0])};
+  const Vector<T, 3> row2{cross(m[0], m[1])};
+  const T determinant{dot(m[0], row0)};
+  T largest{};
+  for (size_t j = 0; j < 3; j++)
+    for (size_t i = 0; i < 3; i++)
+      largest = std::max(largest, std::abs(m[j][i]));
+  if (!(std::abs(determinant) > T(1e-12) * largest * largest * largest))
+    return false;
+  m = transpose(Matrix<T, 3, 3>(row0 / determinant, row1 / determinant,
+                                row2 / determinant));
+  return true;
+}
+
+/// Calculate orthonormal coordinate system with the given vector as the Z axis.
+template <typename T = float>
+[[nodiscard]] inline Matrix<T, 3, 3> coordinateSystem(Vector<T, 3> w) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(w)) return Matrix<T, 3, 3>(1);
+  Vector<T, 3> u{perpendicularTo(w)};
+  Vector<T, 3> v{normalize(cross(w, u))};
+  return {u, v, w};
+}
+
+/// Calculate orthonormal coordinate system with Gram-Schmidt process,
+/// anchored on the third column and preserving handedness. See
+/// `gramSchmidtOrthonormalize()`.
+template <typename T = float>
+[[nodiscard]]
+inline Matrix<T, 3, 3> orthonormalize(Matrix<T, 3, 3> m) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(m[2])) m[2] = Vector<T, 3>(0, 0, 1);
+  gramSchmidtOrthonormalize(m[2], m[0], m[1]);
+  return m;
+}
+
+/// Calculate look-at transform.
+template <typename T = float>
+[[nodiscard]]
+inline Matrix<T, 4, 4> lookAt(const Vector<T, 3> &from, const Vector<T, 3> &to,
+                              const Vector<T, 3> &up = {0, 0, 1}) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  Vector<T, 3> w{normalize(from - to)};
+  Vector<T, 3> u{normalize(cross(up, w))};
+  Vector<T, 3> v{cross(w, u)};
+  return {Vector<T, 4>{u.x, u.y, u.z, 0}, //
+          Vector<T, 4>{v.x, v.y, v.z, 0}, //
+          Vector<T, 4>{w.x, w.y, w.z, 0}, //
+          Vector<T, 4>{from.x, from.y, from.z, 1}};
+}
+
+/// \}
+
+/// \}
+
+} // namespace smdl

@@ -1,0 +1,12 @@
+/// The catch-all standard module, re-exporting the entire public API of
+/// the other standard modules for convenience.
+#smdl
+
+export using ::anno import *;
+export using ::debug import *;
+export using ::df import *;
+export using ::limits import *;
+export using ::math import *;
+export using ::scene import *;
+export using ::state import *;
+export using ::tex import *;

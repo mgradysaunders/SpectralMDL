@@ -1,0 +1,97 @@
+/// Tests for the non-standard `state::` extensions a renderer fills per
+/// hit. `smdl test` runs with a bare state, so these pin the defaults a
+/// material sees when the geometry carries nothing.
+#smdl
+
+import ::state::*;
+
+unit_test "A bare state reports the d line as the hero wavelength" {
+  #assert(#abs(state::wavelength_hero() - 587.5618) < 1e-3);
+  #assert(state::wavelength_hero() > state::wavelength_min());
+  #assert(state::wavelength_hero() < state::wavelength_max());
+}
+
+unit_test "A bare state reports one opaque white vertex color" {
+  #assert(state::vertex_color_max() == 0);
+  #assert(#all(state::vertex_color() == float4(1.0, 1.0, 1.0, 1.0)));
+  #assert(#all(state::vertex_color(0) == float4(1.0, 1.0, 1.0, 1.0)));
+}
+
+unit_test "A bare state reports a flat surface" {
+  #assert(#all(state::surface_curvature() == float3(0.0)));
+}
+
+unit_test "The state draws match the C++ golden values" {
+  // The '_random*' primitives in the api module are the one
+  // implementation of the state draw, with no C++ twin in the library:
+  // these words are Burley's hash-based Owen scramble of the bit-reversed
+  // index at the seed, index, and dimensions below, and a host sampler of
+  // the same construction pins its own draw to them, which is what makes
+  // the stream a host hands the state draw what the host would.
+  preserve $state.sampleSeed, $state.sampleIndex, $state.sampleDimension;
+  $state.sampleSeed = 42;
+  $state.sampleIndex = 7;
+  $state.sampleDimension = 0;
+  #assert(state::random_int() == 1257564220);  // 0x4AF4E83C
+  #assert(state::random_int() == -1159852870); // 0xBADE0CBA
+  #assert(state::random_int() == -386757519);  // 0xE8F28C71
+  #assert(state::random_int() == -391587231);  // 0xE8A8DA61
+  #assert($state.sampleDimension == 4);
+  // The float is the word as a fraction of 2^32, in (0, 1).
+  $state.sampleDimension = 0;
+  #assert(state::random_float() == float(1257564220.0d / 4294967296.0d));
+  // A seed and an index with the top bit set, which the mirror holds as
+  // negative integers, hash exactly as the unsigned words do.
+  $state.sampleSeed = -559038737;  // 0xDEADBEEF
+  $state.sampleIndex = -2147483647; // 0x80000001
+  $state.sampleDimension = 0;
+  #assert(state::random_int() == -1613289854); // 0x9FD72682
+}
+
+unit_test "A draw spends one dimension and is deterministic in the state" {
+  preserve $state.sampleSeed, $state.sampleIndex, $state.sampleDimension;
+  $state.sampleSeed = 5;
+  $state.sampleIndex = 9;
+  $state.sampleDimension = 0;
+  const auto a = state::random_float();
+  const auto b = state::random_float();
+  #assert(a != b);
+  #assert((0.0 < a) & (a < 1.0));
+  #assert((0.0 < b) & (b < 1.0));
+  #assert($state.sampleDimension == 2);
+  $state.sampleDimension = 0;
+  #assert(state::random_float() == a); // Same position, same draw.
+  $state.sampleDimension = 1;
+  #assert(state::random_float() == b);
+  // The vector draws spend dimensions in component order.
+  $state.sampleDimension = 0;
+  const auto v = state::random_float2();
+  #assert(v.x == a);
+  #assert(v.y == b);
+  // The bounded draw spends exactly one whatever the bound, and stays
+  // in range.
+  for (int bound = -1; bound <= 12; bound++) {
+    $state.sampleDimension = 0;
+    const auto k = state::random_int(bound);
+    #assert((0 <= k) & (k < #max(bound, 1)));
+    #assert($state.sampleDimension == 1);
+  }
+}
+
+unit_test "A dimension is stratified across the samples of a sequence" {
+  // Thirty-two consecutive indices at one dimension land one in each
+  // thirty-second of the interval, which is what a renderer that hands
+  // the state its own sample index buys for the choices a material makes
+  // on the draw.
+  preserve $state.sampleSeed, $state.sampleIndex, $state.sampleDimension;
+  for (int dimension = 0; dimension < 4; dimension++) {
+    int mask = 0;
+    for (int index = 0; index < 32; index++) {
+      $state.sampleSeed = 42;
+      $state.sampleIndex = index;
+      $state.sampleDimension = dimension;
+      mask |= 1 << int(state::random_float() * 32);
+    }
+    #assert(mask == -1); // All thirty-two strata, once each.
+  }
+}

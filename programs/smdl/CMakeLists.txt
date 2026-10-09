@@ -1,0 +1,10 @@
+smdl_add_program(
+  "smdl"
+  SOURCES
+    "Doc.cc"
+    "Execs.cc"
+    "Options.cc"
+    "Session.cc"
+    "Volume.cc"
+    "main.cc"
+  )
