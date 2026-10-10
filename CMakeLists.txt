@@ -1,8 +1,8 @@
 # The floor is 3.21, for 'PROJECT_IS_TOP_LEVEL'. Fetching the optional
 # dependencies needs 3.28, enforced in 'Dependencies.cmake'.
 cmake_minimum_required(VERSION 3.21...3.28)
-set(SMDL_VERSION_MAJOR 1 CACHE INTERNAL "")
-set(SMDL_VERSION_MINOR 0 CACHE INTERNAL "")
+set(SMDL_VERSION_MAJOR 0 CACHE INTERNAL "")
+set(SMDL_VERSION_MINOR 1 CACHE INTERNAL "")
 set(SMDL_VERSION_PATCH 0 CACHE INTERNAL "")
 set(SMDL_VERSION ${SMDL_VERSION_MAJOR}.${SMDL_VERSION_MINOR}.${SMDL_VERSION_PATCH} CACHE INTERNAL "")
 project(
