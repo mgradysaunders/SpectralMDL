@@ -1,9 +1,15 @@
 #include "llvm.h"
 
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+
+#include "smdl/Support/Logger.h"
+
+#include "Support/Environment.h"
 
 namespace smdl {
 
@@ -19,6 +25,42 @@ void llvmThrowIfError(llvm::Error error) {
   if (numErrors > 0) throw Error(std::move(message));
 }
 
+namespace {
+// Give LLVM the options in 'SMDL_LLVM_ARGS', as if they were the command
+// line of a program built on it. LLVM keeps its options for the whole
+// process, so this runs once, before anything reads them: the target
+// machine reads its code generation options as it is made, and each
+// 'LLVMOptimizer' reads the rest as it is set up.
+//
+// NOTE: The parse makes the top-level command the active one, so a host
+// that parses its own command line through LLVM must ask which of its
+// subcommands is active before the first compile, not after.
+void parseLLVMArgs() {
+  const std::string &args{Environment::get().llvmArgs};
+  if (args.empty()) return;
+  SMDL_LOG_WARN("Passing LLVM its own options, because SMDL_LLVM_ARGS is ",
+                SpellQuoted(args));
+  llvm::BumpPtrAllocator allocator{};
+  llvm::StringSaver saver{allocator};
+  // LLVM's messages name the program after the first argument.
+  llvm::SmallVector<const char *> argv{"SMDL_LLVM_ARGS"};
+  llvm::cl::TokenizeGNUCommandLine(args, saver, argv);
+  // Given a stream to write them to, the parser reports errors there
+  // rather than exiting the process. It still applies every option it
+  // understood. Each line it writes begins with the program name, so it
+  // stands as a warning on its own.
+  std::string errors{};
+  llvm::raw_string_ostream os{errors};
+  if (!llvm::cl::ParseCommandLineOptions(int(argv.size()), argv.data(),
+                                         /*Overview=*/"", &os)) {
+    llvm::SmallVector<llvm::StringRef> lines{};
+    llvm::StringRef(errors).split(lines, '\n', /*MaxSplit=*/-1,
+                                  /*KeepEmpty=*/false);
+    for (llvm::StringRef line : lines) SMDL_LOG_WARN(std::string_view(line));
+  }
+}
+} // namespace
+
 const NativeTarget &NativeTarget::get() noexcept {
   // Lazy magic static: initializing LLVM at static-initialization time
   // would run before 'main' in every process linking the library and be
@@ -31,6 +73,7 @@ const NativeTarget &NativeTarget::get() noexcept {
     if (llvm::InitializeNativeTarget() ||
         llvm::InitializeNativeTargetAsmPrinter())
       llvm::report_fatal_error("LLVM has no code generator for this machine");
+    parseLLVMArgs();
     std::string name{llvm::sys::getHostCPUName()};
     std::string triple{llvm::sys::getDefaultTargetTriple()};
     std::string targetError{};

@@ -148,6 +148,7 @@ set(
   SMDL_LLVM_TARGETS
   "LLVMTarget"
   "LLVMOrcJIT"
+  "LLVMOrcDebugging"
   "LLVM${SMDL_ARCH}CodeGen"
   )
 foreach(SMDL_LLVM_TARGET ${SMDL_LLVM_TARGETS})

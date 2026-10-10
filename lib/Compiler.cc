@@ -27,6 +27,7 @@
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupport.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
@@ -1111,6 +1112,28 @@ public:
                                "-", ++count, "-"));
 }
 
+// Register the code the JIT links with GDB's JIT interface, for
+// 'SMDL_GDB_JIT', so that GDB, or LLDB, names the frames in it. The
+// object files carry no debug information, so it names functions but not
+// source lines. Like the perf map, the interface has no way to say that
+// code was unloaded, so a recompile leaves the earlier code registered
+// at addresses the next JIT may reuse.
+//
+// This says once per process whether it worked, rather than once per
+// compile.
+void registerWithGDB(llvm::orc::LLJIT &jit) {
+  static std::atomic<bool> isReported{};
+  llvm::Error error{llvm::orc::enableDebuggerSupport(jit)};
+  if (isReported.exchange(true)) {
+    llvm::consumeError(std::move(error));
+  } else if (error) {
+    SMDL_LOG_WARN("Cannot register the JIT's code with GDB: ",
+                  llvm::toString(std::move(error)));
+  } else {
+    SMDL_LOG_INFO("Registering the JIT's code with GDB");
+  }
+}
+
 // Write the module to 'fileName' as LLVM-IR, for 'SMDL_DUMP_IR'. Failing
 // to is a warning, since a debugging aid is never worth failing the
 // compile over.
@@ -1188,6 +1211,7 @@ void Compiler::resetForRecompile() {
             &mLLVMJIT->getObjLinkingLayer())})
       layer->addPlugin(std::make_shared<PerfMapPlugin>());
 #endif // #if SMDL_HAS_UNISTD
+  if (Environment::get().shouldRegisterWithGDB) registerWithGDB(*mLLVMJIT);
 }
 
 std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
@@ -1245,7 +1269,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     }
     if (optLevel != OPT_LEVEL_NONE) {
       SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
-      LLVMOptimizer llvmOptimizer{};
+      LLVMOptimizer llvmOptimizer{*mLLVMContext};
       llvmOptimizer.run(*mLLVMModule, optLevel == OPT_LEVEL_O1
                                           ? llvm::OptimizationLevel::O1
                                       : optLevel == OPT_LEVEL_O2

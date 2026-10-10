@@ -22,6 +22,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
@@ -76,7 +77,16 @@ public:
 
 class LLVMOptimizer final {
 public:
-  LLVMOptimizer() : passBuilder(NativeTarget::get().machine) {
+  // The standard instrumentation is what carries out LLVM's own options
+  // for watching the optimizer, such as '-print-changed', '-time-passes',
+  // and '-opt-bisect-limit', which 'SMDL_LLVM_ARGS' may give. Given none
+  // of them, it does next to nothing.
+  explicit LLVMOptimizer(llvm::LLVMContext &context)
+      : instrumentations(context, /*DebugLogging=*/false),
+        passBuilder(NativeTarget::get().machine, llvm::PipelineTuningOptions(),
+                    std::nullopt, &instrumentationCallbacks) {
+    instrumentations.registerCallbacks(instrumentationCallbacks,
+                                       &moduleAnalysis);
     passBuilder.registerModuleAnalyses(moduleAnalysis);
     passBuilder.registerCGSCCAnalyses(cgsccAnalysis);
     passBuilder.registerFunctionAnalyses(funcAnalysis);
@@ -97,6 +107,8 @@ public:
     pipeline.run(function, funcAnalysis);
   }
 
+  llvm::PassInstrumentationCallbacks instrumentationCallbacks;
+  llvm::StandardInstrumentations instrumentations;
   llvm::PassBuilder passBuilder;
   llvm::LoopAnalysisManager loopAnalysis;
   llvm::FunctionAnalysisManager funcAnalysis;

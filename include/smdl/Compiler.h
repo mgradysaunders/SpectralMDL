@@ -271,9 +271,9 @@ public:
 
   /// Compile to LLVM-IR.
   ///
-  /// The environment variable `SMDL_OPT_LEVEL` overrides `optLevel`, and
-  /// `SMDL_DUMP_IR` writes the LLVM-IR to files. `README.md` lists the
-  /// environment variables.
+  /// The environment variable `SMDL_OPT_LEVEL` overrides `optLevel`,
+  /// `SMDL_DUMP_IR` writes the LLVM-IR to files, and `SMDL_LLVM_ARGS` gives
+  /// LLVM its own options. `README.md` lists the environment variables.
   [[nodiscard]] std::optional<Error>
   compile(OptLevel optLevel = OPT_LEVEL_O2) noexcept;
 
@@ -399,7 +399,8 @@ public:
   /// JIT-compile to machine code.
   ///
   /// The environment variable `SMDL_PERF_MAP` writes a perf map for the
-  /// code this links. `README.md` lists the environment variables.
+  /// code this links, and `SMDL_GDB_JIT` registers it with GDB.
+  /// `README.md` lists the environment variables.
   [[nodiscard]] std::optional<Error> jitCompile() noexcept;
 
 private:

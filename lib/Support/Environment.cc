@@ -16,6 +16,12 @@ namespace {
 // not given at all, so a caller asks only of nonempty text.
 [[nodiscard]] bool parseFlag(std::string_view text) { return text != "0"; }
 
+// Is the flag 'name' given, and set to anything but '0'?
+[[nodiscard]] bool readFlag(const char *name) {
+  const std::string text{readEnv(name)};
+  return !text.empty() && parseFlag(text);
+}
+
 // How an override parses and spells a value of each type. 'accepted'
 // lists the texts that parse, for the warning about one that does not.
 template <typename T> struct ValueSyntax;
@@ -84,9 +90,9 @@ const Environment &Environment::get() {
   return environment;
 }
 
-Environment::Environment() : dumpIRDir(readEnv("SMDL_DUMP_IR")) {
-  if (std::string text{readEnv("SMDL_PERF_MAP")}; !text.empty())
-    shouldWritePerfMap = parseFlag(text);
-}
+Environment::Environment()
+    : llvmArgs(readEnv("SMDL_LLVM_ARGS")), dumpIRDir(readEnv("SMDL_DUMP_IR")),
+      shouldWritePerfMap(readFlag("SMDL_PERF_MAP")),
+      shouldRegisterWithGDB(readFlag("SMDL_GDB_JIT")) {}
 
 } // namespace smdl

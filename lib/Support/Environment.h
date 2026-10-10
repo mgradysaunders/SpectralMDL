@@ -98,12 +98,20 @@ public:
   /// `SMDL_LOG_LEVEL` overrides `Logger::setMinLevel()`.
   EnvOverride<LogLevel> logLevel{"SMDL_LOG_LEVEL", "the log level"};
 
+  /// `SMDL_LLVM_ARGS`, options for LLVM itself as a command line would
+  /// give them, or empty for none.
+  std::string llvmArgs;
+
   /// `SMDL_DUMP_IR`, the directory `Compiler::compile()` writes LLVM-IR
   /// to, or empty for none.
   std::string dumpIRDir;
 
   /// `SMDL_PERF_MAP`: does `Compiler::jitCompile()` write a perf map?
   bool shouldWritePerfMap{};
+
+  /// `SMDL_GDB_JIT`: does the JIT register the code it links with GDB's
+  /// JIT interface?
+  bool shouldRegisterWithGDB{};
 };
 
 } // namespace smdl
