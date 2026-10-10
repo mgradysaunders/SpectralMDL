@@ -393,6 +393,10 @@ public:
                                           std::string &out) noexcept;
 
   /// JIT-compile to machine code.
+  ///
+  /// With the environment variable `SMDL_PERF_MAP` set to anything but
+  /// empty or `0`, the functions it links keep their frame pointers and
+  /// are named in `/tmp/perf-<pid>.map`, for `perf`.
   [[nodiscard]] std::optional<Error> jitCompile() noexcept;
 
 private:

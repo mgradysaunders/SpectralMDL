@@ -8,7 +8,10 @@
 #include <bitset>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <mutex>
 
 // NOTE: Test for the header directly. Do not gate this on an OS list:
 // Darwin defines neither '__linux__' nor '__unix__', and '_POSIX_VERSION'
@@ -21,10 +24,12 @@
 #endif // #if __has_include(<unistd.h>)
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ExecutionEngine/JITLink/JITLink.h"
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/WithColor.h"
@@ -1004,6 +1009,94 @@ describeJITSessionError(llvm::Error error, char globalPrefix,
 }
 } // namespace
 
+namespace {
+// Does the environment variable 'SMDL_PERF_MAP' ask for a perf map? Set
+// to anything but empty or '0', the JIT writes the functions it links to
+// '/tmp/perf-<pid>.map', which 'perf report' reads to name samples in
+// code that has no file, and keeps their frame pointers, so that the call
+// stacks 'perf record --call-graph fp' walks pass through them.
+[[nodiscard]] bool shouldWritePerfMap() {
+#if SMDL_HAS_UNISTD
+  const char *value{std::getenv("SMDL_PERF_MAP")};
+  return value && *value != '\0' && std::string_view(value) != "0";
+#else
+  return false;
+#endif // #if SMDL_HAS_UNISTD
+}
+
+#if SMDL_HAS_UNISTD
+// Append lines to the perf map, emptying a stale one left by an earlier
+// process of the same id the first time. The map has no way to say that
+// code was unloaded, so a process that compiles twice may have a sample
+// in the second JIT's code named after the first's.
+void appendToPerfMap(std::string_view lines) {
+  static std::mutex mutex{};
+  static bool isStarted{false};
+  std::scoped_lock lock{mutex};
+  const std::string fileName{concat("/tmp/perf-", getpid(), ".map")};
+  std::FILE *file{std::fopen(fileName.c_str(), isStarted ? "a" : "w")};
+  if (!file) {
+    SMDL_LOG_WARN("Cannot write the perf map ", SpellFilePath(fileName));
+    return;
+  }
+  SMDL_DEFER([&] { std::fclose(file); });
+  if (!isStarted)
+    SMDL_LOG_INFO("Writing the JIT's symbols to ", SpellFilePath(fileName));
+  isStarted = true;
+  std::fwrite(lines.data(), 1, lines.size(), file);
+}
+
+// Writes a line 'START SIZE NAME' to the perf map for every function a
+// link defines, once its addresses are final.
+class PerfMapPlugin final : public llvm::orc::ObjectLinkingLayer::Plugin {
+public:
+  void modifyPassConfig(llvm::orc::MaterializationResponsibility &,
+                        llvm::jitlink::LinkGraph &,
+                        llvm::jitlink::PassConfiguration &config) override {
+    // The assembler resolves a call to an internal function with no
+    // relocation against its symbol, so nothing marks the symbol live, and
+    // pruning would drop its name and keep its code in the section's one
+    // block. Marking it live keeps the name. It keeps code only where a
+    // section holds nothing but dead internal functions.
+    config.PrePrunePasses.emplace_back([](llvm::jitlink::LinkGraph &graph) {
+      for (llvm::jitlink::Symbol *symbol : graph.defined_symbols())
+        if (symbol->hasName() && symbol->isCallable()) symbol->setLive(true);
+      return llvm::Error::success();
+    });
+    config.PostFixupPasses.emplace_back([](llvm::jitlink::LinkGraph &graph) {
+      std::string lines{};
+      llvm::raw_string_ostream os{lines};
+      for (const llvm::jitlink::Symbol *symbol : graph.defined_symbols()) {
+        if (!symbol->hasName() || !symbol->isCallable() ||
+            symbol->getSize() == 0)
+          continue;
+        os.write_hex(symbol->getAddress().getValue());
+        os << ' ';
+        os.write_hex(symbol->getSize());
+        os << ' ' << *symbol->getName() << '\n';
+      }
+      appendToPerfMap(lines);
+      return llvm::Error::success();
+    });
+  }
+
+  llvm::Error
+  notifyFailed(llvm::orc::MaterializationResponsibility &) override {
+    return llvm::Error::success();
+  }
+
+  llvm::Error notifyRemovingResources(llvm::orc::JITDylib &,
+                                      llvm::orc::ResourceKey) override {
+    return llvm::Error::success();
+  }
+
+  void notifyTransferringResources(llvm::orc::JITDylib &,
+                                   llvm::orc::ResourceKey,
+                                   llvm::orc::ResourceKey) override {}
+};
+#endif // #if SMDL_HAS_UNISTD
+} // namespace
+
 void Compiler::resetForRecompile() {
   // Free the previous JIT first: this invalidates every function pointer
   // previously handed out, per the lifetime contract on the class.
@@ -1048,6 +1141,14 @@ void Compiler::resetForRecompile() {
       }
     }
   });
+#if SMDL_HAS_UNISTD
+  // Only a JITLink layer takes plugins; the default on x86-64 and AArch64
+  // ELF is one.
+  if (shouldWritePerfMap())
+    if (auto *layer{llvm::dyn_cast<llvm::orc::ObjectLinkingLayer>(
+            &mLLVMJIT->getObjLinkingLayer())})
+      layer->addPlugin(std::make_shared<PerfMapPlugin>());
+#endif // #if SMDL_HAS_UNISTD
 }
 
 std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
@@ -1458,6 +1559,9 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       llvmThrowIfError(mLLVMJIT->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbolMap))));
     }
+    if (shouldWritePerfMap())
+      for (llvm::Function &func : *mLLVMModule)
+        if (!func.isDeclaration()) func.addFnAttr("frame-pointer", "all");
     // Hand the module to the JIT, dropping our handles up front: a failed
     // call must not leave moved-from state behind for 'dump()' or
     // 'getLLVMModule()' to trip over.
