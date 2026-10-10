@@ -59,6 +59,22 @@ TEST_CASE("Logger: level labels") {
   }
 }
 
+TEST_CASE("Logger: level names") {
+  SUBCASE("Every name parses back to its level") {
+    for (const auto level : LEVELS)
+      CHECK(smdl::parseLogLevel(smdl::logLevelName(level)) == level);
+  }
+  SUBCASE("A label is its name, bracketed") {
+    for (const auto level : LEVELS)
+      CHECK(smdl::logLevelLabel(level) ==
+            "[" + std::string(smdl::logLevelName(level)) + "] ");
+  }
+  SUBCASE("Nothing else names a level") {
+    for (const std::string_view name : {"", "verbose", "Debug", "[debug] "})
+      CHECK_FALSE(smdl::parseLogLevel(name));
+  }
+}
+
 TEST_CASE("Logger: a message below the minimum level is never built") {
   const CollectedLog logged{"built"};
   REQUIRE_FALSE(smdl::Logger::get().isEnabled(smdl::LOG_LEVEL_DEBUG));

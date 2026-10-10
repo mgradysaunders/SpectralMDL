@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -41,7 +42,7 @@ public:
 /// The logger.
 class SMDL_EXPORT Logger final {
 private:
-  Logger() = default;
+  Logger();
 
   ~Logger() { reset(); }
 
@@ -54,7 +55,11 @@ public:
   /// Set the minimum level. This is not mutex protected and is understood to be
   /// set once at program startup and rarely if ever changed. The default level
   /// is `LOG_LEVEL_INFO`.
-  void setMinLevel(LogLevel minLevel) { mMinLevel = minLevel; }
+  ///
+  /// The environment variable `SMDL_LOG_LEVEL`, if set, overrides this and
+  /// the default alike, and says so once there is a sink to hear it.
+  /// `README.md` lists the environment variables.
+  void setMinLevel(LogLevel minLevel);
 
   /// Would a message at `level` reach the sinks?
   [[nodiscard]] bool isEnabled(LogLevel level) const noexcept {
@@ -80,13 +85,22 @@ public:
   void reset();
 
 private:
+  /// Say whether `SMDL_LOG_LEVEL` is malformed or overrides the host's
+  /// level, if there is a sink to hear it yet.
+  void reportMinLevelOverride();
+
   /// The mutex just to be safe.
   std::mutex mMtx{};
 
   /// The sinks.
   std::vector<std::unique_ptr<LogSink>> mSinks{};
 
-  /// The minimum level, such that every message below this is ignored.
+  /// The minimum level the host asked for, which `SMDL_LOG_LEVEL` may
+  /// override.
+  LogLevel mHostMinLevel{LOG_LEVEL_INFO};
+
+  /// The minimum level in effect, such that every message below this is
+  /// ignored.
   LogLevel mMinLevel{LOG_LEVEL_INFO};
 };
 
@@ -131,6 +145,17 @@ private:
 /// labels rather than restate them.
 [[nodiscard]] SMDL_EXPORT std::string_view
 logLevelLabel(LogLevel level) noexcept;
+
+/// The name of the given log level, as `parseLogLevel()` parses it:
+/// `debug`, `info`, `warn`, or `error`.
+[[nodiscard]] SMDL_EXPORT std::string_view
+logLevelName(LogLevel level) noexcept;
+
+/// The log level `name` names, as `logLevelName()` spells it, or none if
+/// it names no level. This is public so that a host's own option for the
+/// level can spell it as `SMDL_LOG_LEVEL` does.
+[[nodiscard]] SMDL_EXPORT std::optional<LogLevel>
+parseLogLevel(std::string_view name) noexcept;
 
 /// The default log sinks, for convenience. Each prints
 /// `logLevelLabel()` and then the message, in plain ASCII with no

@@ -239,10 +239,8 @@ struct WavelengthRange final {
 /// \throws smdl::Error  If the name is not recognized.
 ///
 [[nodiscard]] inline smdl::LogLevel parseLogLevel(const std::string &flagStr) {
-  if (flagStr == "debug") return smdl::LOG_LEVEL_DEBUG;
-  if (flagStr == "info") return smdl::LOG_LEVEL_INFO;
-  if (flagStr == "warn") return smdl::LOG_LEVEL_WARN;
-  if (flagStr == "error") return smdl::LOG_LEVEL_ERROR;
+  if (std::optional<smdl::LogLevel> level{smdl::parseLogLevel(flagStr)})
+    return *level;
   throw smdl::Error(smdl::concat("Expected -log-level to be 'debug', 'info', "
                                  "'warn', or 'error', got ",
                                  smdl::SpellQuoted(flagStr)));

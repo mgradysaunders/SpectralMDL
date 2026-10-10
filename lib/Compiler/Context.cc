@@ -5,6 +5,8 @@
 
 #include "smdl/Support/Compress.h"
 
+#include "Support/Environment.h"
+
 // The optional dependencies define these on the library target only when
 // they are actually linked, so give them a value either way and hand it
 // to SMDL source as '$HAS_NANOVDB' and '$HAS_PTEX'.
@@ -75,7 +77,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"int4", getComptimeMetaType(getIntType(Extent(4)))},
       {"string", getComptimeMetaType(getStringType())},
       {"void", getComptimeMetaType(getVoidType())},
-      {"$DEBUG", getComptimeBool(compiler.isDebugEnabled)},
+      {"$DEBUG", getComptimeBool(Environment::get().debug.resolve(
+                     compiler.isDebugEnabled))},
       {"$HAS_NANOVDB", getComptimeBool(bool(SMDL_HAS_NANOVDB))},
       {"$HAS_PTEX", getComptimeBool(bool(SMDL_HAS_PTEX))},
       {"$DOUBLE_EPS",

@@ -270,6 +270,10 @@ public:
   }
 
   /// Compile to LLVM-IR.
+  ///
+  /// The environment variable `SMDL_OPT_LEVEL` overrides `optLevel`, and
+  /// `SMDL_DUMP_IR` writes the LLVM-IR to files. `README.md` lists the
+  /// environment variables.
   [[nodiscard]] std::optional<Error>
   compile(OptLevel optLevel = OPT_LEVEL_O2) noexcept;
 
@@ -394,9 +398,8 @@ public:
 
   /// JIT-compile to machine code.
   ///
-  /// With the environment variable `SMDL_PERF_MAP` set to anything but
-  /// empty or `0`, the functions it links keep their frame pointers and
-  /// are named in `/tmp/perf-<pid>.map`, for `perf`.
+  /// The environment variable `SMDL_PERF_MAP` writes a perf map for the
+  /// code this links. `README.md` lists the environment variables.
   [[nodiscard]] std::optional<Error> jitCompile() noexcept;
 
 private:
@@ -532,7 +535,11 @@ public:
   /// The file locator.
   FileLocator fileLocator{};
 
-  /// Enable debugging?
+  /// Enable debugging? This is `$DEBUG`, which turns on `debug::assert()`,
+  /// `debug::breakpoint()`, and `debug::print()`.
+  ///
+  /// The environment variable `SMDL_DEBUG` overrides this, without
+  /// changing it. `README.md` lists the environment variables.
   bool isDebugEnabled{false};
 
   /// Enable unit tests?

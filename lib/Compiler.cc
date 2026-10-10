@@ -5,11 +5,11 @@
 #include "smdl/Support/QualifiedName.h"
 
 #include <algorithm>
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 
@@ -32,12 +32,16 @@
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "Archive.h"
 #include "Compiler/BuiltinAccess.h"
 #include "Compiler/Context.h"
+#include "Support/Environment.h"
 
 #if SMDL_HAS_PTEX
 #include "Ptexture.h"
@@ -1010,15 +1014,14 @@ describeJITSessionError(llvm::Error error, char globalPrefix,
 } // namespace
 
 namespace {
-// Does the environment variable 'SMDL_PERF_MAP' ask for a perf map? Set
-// to anything but empty or '0', the JIT writes the functions it links to
-// '/tmp/perf-<pid>.map', which 'perf report' reads to name samples in
-// code that has no file, and keeps their frame pointers, so that the call
-// stacks 'perf record --call-graph fp' walks pass through them.
+// Does 'SMDL_PERF_MAP' ask for a perf map, on a platform that has one? If
+// so, the JIT writes the functions it links to '/tmp/perf-<pid>.map',
+// which 'perf report' reads to name samples in code that has no file,
+// and keeps their frame pointers, so that the call stacks
+// 'perf record --call-graph fp' walks pass through them.
 [[nodiscard]] bool shouldWritePerfMap() {
 #if SMDL_HAS_UNISTD
-  const char *value{std::getenv("SMDL_PERF_MAP")};
-  return value && *value != '\0' && std::string_view(value) != "0";
+  return Environment::get().shouldWritePerfMap;
 #else
   return false;
 #endif // #if SMDL_HAS_UNISTD
@@ -1095,6 +1098,42 @@ public:
                                    llvm::orc::ResourceKey) override {}
 };
 #endif // #if SMDL_HAS_UNISTD
+
+// The prefix of the files 'SMDL_DUMP_IR' asks one compile to write, or
+// empty if it asks for none: 'smdl-<pid>-<n>-' in the directory it names,
+// where 'n' counts the compiles of every 'Compiler' in the process, since
+// a host may recompile and may have more than one.
+[[nodiscard]] std::string nextDumpIRPrefix() {
+  const std::string &dir{Environment::get().dumpIRDir};
+  if (dir.empty()) return {};
+  static std::atomic<unsigned> count{};
+  return joinPaths(dir, concat("smdl-", llvm::sys::Process::getProcessId(),
+                               "-", ++count, "-"));
+}
+
+// Write the module to 'fileName' as LLVM-IR, for 'SMDL_DUMP_IR'. Failing
+// to is a warning, since a debugging aid is never worth failing the
+// compile over.
+void dumpIR(const llvm::Module &llvmModule, const std::string &fileName) {
+  std::error_code ec{
+      llvm::sys::fs::create_directories(llvm::sys::path::parent_path(fileName))};
+  if (!ec) {
+    llvm::raw_fd_ostream os{fileName, ec, llvm::sys::fs::OF_Text};
+    if (!ec) {
+      os << llvmModule;
+      os.close();
+      ec = os.error();
+      // Or the destructor aborts the process over it.
+      os.clear_error();
+    }
+  }
+  if (ec) {
+    SMDL_LOG_WARN("Cannot write LLVM-IR to ", SpellFilePath(fileName), ": ",
+                  ec.message());
+    return;
+  }
+  SMDL_LOG_INFO("Wrote LLVM-IR to ", SpellFilePath(fileName));
+}
 } // namespace
 
 void Compiler::resetForRecompile() {
@@ -1157,6 +1196,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
   // everything so the 'optional<Error>' contract holds instead of exiting
   // or terminating the host process.
   return catchAndReturnError([&] {
+    optLevel = Environment::get().optLevel.resolve(optLevel);
+    const std::string dumpIRPrefix{nextDumpIRPrefix()};
     resetForRecompile();
     ProfilerEntry *initializeEntry{profilerEntryBegin("Initialize")};
     Context context{*this};
@@ -1176,6 +1217,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
         if (std::optional<Error> error{mModules[i]->compile(context)})
           throw std::move(*error);
     }
+    // Ahead of the optimizer, so the emitted module is on disk even when
+    // the optimizer is what crashes.
+    if (!dumpIRPrefix.empty())
+      dumpIR(*mLLVMModule, dumpIRPrefix + "emitted.ll");
     // Sort JIT materials and unit tests by module and line number in
     // case we want to print them later.
     sortByModuleAndLine(mMaterialDefs);
@@ -1214,6 +1259,9 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     // erased the probe scaffolding whose references must not keep an
     // image alive.
     const size_t numDropped{dropUnusedImages()};
+    // The module as 'jitCompile()' gets it, and as 'dump()' shows it.
+    if (!dumpIRPrefix.empty())
+      dumpIR(*mLLVMModule, dumpIRPrefix + "optimized.ll");
     // Finish loading the images that still have a decode pending, i.e.,
     // neither failed 'startLoad()' nor were dropped above.
     std::vector<std::pair<const MD5FileHash *, Image *>> imageEntries{

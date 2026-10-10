@@ -99,6 +99,7 @@ add_library(
     "State.cc"
     "Support/BumpPtrAllocator.cc"
     "Support/Compress.cc"
+    "Support/Environment.cc"
     "Support/Error.cc"
     "Support/FileLocator.cc"
     "Support/Filesystem.cc"
