@@ -93,11 +93,11 @@ inline namespace spelling {
 /// not vary with who wrote the message.
 class SMDL_EXPORT SpellQuoted final {
 public:
-  constexpr SpellQuoted(std::string_view str) : mStr(str) {}
+  constexpr SpellQuoted(std::string_view str) : str_(str) {}
   void appendTo(std::string &result) const;
 
 private:
-  std::string_view mStr{};
+  std::string_view str_{};
 };
 
 /// A quoted path string for use with `concat`. This quotes like
@@ -105,11 +105,11 @@ private:
 /// `bestPathForPrinting()` shortens it.
 class SMDL_EXPORT SpellFilePath final {
 public:
-  constexpr SpellFilePath(std::string_view str) : mStr(str) {}
+  constexpr SpellFilePath(std::string_view str) : str_(str) {}
   void appendTo(std::string &result) const;
 
 private:
-  std::string_view mStr{};
+  std::string_view str_{};
 };
 
 /// A location in a source for use with `concat`, written the one way every
@@ -121,14 +121,14 @@ class SMDL_EXPORT SpellLocation final {
 public:
   constexpr SpellLocation(std::string_view name, uint32_t lineNo,
                           uint32_t charNo = 0, bool isPath = true)
-      : mName(name), mLineNo(lineNo), mCharNo(charNo), mIsPath(isPath) {}
+      : name_(name), lineNo_(lineNo), charNo_(charNo), isPath_(isPath) {}
   void appendTo(std::string &result) const;
 
 private:
-  std::string_view mName{};
-  uint32_t mLineNo{};
-  uint32_t mCharNo{};
-  bool mIsPath{true};
+  std::string_view name_{};
+  uint32_t lineNo_{};
+  uint32_t charNo_{};
+  bool isPath_{true};
 };
 
 /// A number written to a few significant digits, for use with `concat`:
@@ -143,12 +143,12 @@ private:
 class SMDL_EXPORT SpellFloat final {
 public:
   constexpr SpellFloat(double value, int digits = 6)
-      : mValue(value), mDigits(digits) {}
+      : value_(value), digits_(digits) {}
   void appendTo(std::string &result) const;
 
 private:
-  double mValue{};
-  int mDigits{6}; ///< The significant digits, clamped to `[1, 17]`.
+  double value_{};
+  int digits_{6}; ///< The significant digits, clamped to `[1, 17]`.
 };
 
 /// A number written to a few significant digits and never as an
@@ -164,12 +164,12 @@ private:
 class SMDL_EXPORT SpellFixed final {
 public:
   constexpr SpellFixed(double value, int digits = 9)
-      : mValue(value), mDigits(digits) {}
+      : value_(value), digits_(digits) {}
   void appendTo(std::string &result) const;
 
 private:
-  double mValue{};
-  int mDigits{9}; ///< The significant digits, clamped to `[1, 17]`.
+  double value_{};
+  int digits_{9}; ///< The significant digits, clamped to `[1, 17]`.
 };
 
 /// A number written so that it reads back as itself, for use with
@@ -184,13 +184,13 @@ private:
 /// are separate.
 class SMDL_EXPORT SpellExact final {
 public:
-  constexpr SpellExact(float value) : mValue(value), mIsFloat(true) {}
-  constexpr SpellExact(double value) : mValue(value) {}
+  constexpr SpellExact(float value) : value_(value), isFloat_(true) {}
+  constexpr SpellExact(double value) : value_(value) {}
   void appendTo(std::string &result) const;
 
 private:
-  double mValue{};
-  bool mIsFloat{};
+  double value_{};
+  bool isFloat_{};
 };
 
 /// A fraction written as a percent for use with `concat`, as in `12.3%`:
@@ -200,12 +200,12 @@ private:
 class SMDL_EXPORT SpellPercent final {
 public:
   constexpr SpellPercent(double value, int decimals = 1)
-      : mValue(value), mDecimals(decimals) {}
+      : value_(value), decimals_(decimals) {}
   void appendTo(std::string &result) const;
 
 private:
-  double mValue{};
-  int mDecimals{1}; ///< The decimal places, clamped to `[0, 9]`.
+  double value_{};
+  int decimals_{1}; ///< The decimal places, clamped to `[0, 9]`.
 };
 
 /// A size in bytes, for use with `concat`: whole bytes below a KiB, and
@@ -213,11 +213,11 @@ private:
 /// to three significant digits, as in `2.67 MiB`.
 class SMDL_EXPORT SpellByteSize final {
 public:
-  constexpr SpellByteSize(size_t count) : mCount(count) {}
+  constexpr SpellByteSize(size_t count) : count_(count) {}
   void appendTo(std::string &result) const;
 
 private:
-  size_t mCount{};
+  size_t count_{};
 };
 
 /// A count and the noun it counts, for use with `concat`: the noun is
@@ -227,13 +227,13 @@ class SMDL_EXPORT SpellCounted final {
 public:
   constexpr SpellCounted(size_t count, std::string_view singular,
                          std::string_view plural = {})
-      : mCount(count), mSingular(singular), mPlural(plural) {}
+      : count_(count), singular_(singular), plural_(plural) {}
   void appendTo(std::string &result) const;
 
 private:
-  size_t mCount{};
-  std::string_view mSingular{};
-  std::string_view mPlural{};
+  size_t count_{};
+  std::string_view singular_{};
+  std::string_view plural_{};
 };
 
 } // namespace spelling

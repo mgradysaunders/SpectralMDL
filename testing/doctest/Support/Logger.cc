@@ -18,22 +18,22 @@ constexpr smdl::LogLevel LEVELS[]{smdl::LOG_LEVEL_DEBUG, smdl::LOG_LEVEL_INFO,
 class CapturedStream final {
 public:
   explicit CapturedStream(std::ostream &stream)
-      : mStream(stream), mPrevious(stream.rdbuf(mBuffer.rdbuf())) {}
+      : stream_(stream), previous_(stream.rdbuf(buffer_.rdbuf())) {}
 
   CapturedStream(const CapturedStream &) = delete;
 
   CapturedStream &operator=(const CapturedStream &) = delete;
 
-  ~CapturedStream() { mStream.rdbuf(mPrevious); }
+  ~CapturedStream() { stream_.rdbuf(previous_); }
 
-  [[nodiscard]] std::string str() const { return mBuffer.str(); }
+  [[nodiscard]] std::string str() const { return buffer_.str(); }
 
 private:
-  std::ostream &mStream;
+  std::ostream &stream_;
 
-  std::ostringstream mBuffer;
+  std::ostringstream buffer_;
 
-  std::streambuf *mPrevious{};
+  std::streambuf *previous_{};
 };
 
 } // namespace

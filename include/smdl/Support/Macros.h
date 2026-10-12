@@ -190,25 +190,25 @@ namespace detail {
 
 template <typename T> class Defer final {
 public:
-  explicit constexpr Defer(T func) : mFunc(std::move(func)) {}
+  explicit constexpr Defer(T func) : func_(std::move(func)) {}
   Defer(const Defer &) = delete;
   Defer(Defer &&) = delete;
-  ~Defer() { std::invoke(mFunc); }
+  ~Defer() { std::invoke(func_); }
 
 private:
-  T mFunc;
+  T func_;
 };
 
 template <typename... Ts> class Preserve final {
 public:
-  explicit constexpr Preserve(Ts &...refs) : mRefs(refs...), mTmps(refs...) {}
+  explicit constexpr Preserve(Ts &...refs) : refs_(refs...), tmps_(refs...) {}
   Preserve(const Preserve &) = delete;
   Preserve(Preserve &&) = delete;
-  ~Preserve() { mRefs = mTmps; }
+  ~Preserve() { refs_ = tmps_; }
 
 private:
-  std::tuple<Ts &...> mRefs;
-  std::tuple<Ts...> mTmps;
+  std::tuple<Ts &...> refs_;
+  std::tuple<Ts...> tmps_;
 };
 
 } // namespace detail

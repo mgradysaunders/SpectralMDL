@@ -63,13 +63,13 @@ public:
 
   /// Would a message at `level` reach the sinks?
   [[nodiscard]] bool isEnabled(LogLevel level) const noexcept {
-    return level >= mMinLevel;
+    return level >= minLevel_;
   }
 
   /// Add a new sink.
   template <typename T, typename... Args> T &addSink(Args &&...args) {
     return static_cast<T &>(
-        *mSinks.emplace_back(std::make_unique<T>(std::forward<Args>(args)...)));
+        *sinks_.emplace_back(std::make_unique<T>(std::forward<Args>(args)...)));
   }
 
   /// Flush all sinks.
@@ -87,21 +87,21 @@ public:
 private:
   /// Say whether `SMDL_LOG_LEVEL` is malformed or overrides the host's
   /// level, if there is a sink to hear it yet.
-  void reportMinLevelOverride();
+  void reportMinLevelOverride_();
 
   /// The mutex just to be safe.
-  std::mutex mMtx{};
+  std::mutex mtx_{};
 
   /// The sinks.
-  std::vector<std::unique_ptr<LogSink>> mSinks{};
+  std::vector<std::unique_ptr<LogSink>> sinks_{};
 
   /// The minimum level the host asked for, which `SMDL_LOG_LEVEL` may
   /// override.
-  LogLevel mHostMinLevel{LOG_LEVEL_INFO};
+  LogLevel hostMinLevel_{LOG_LEVEL_INFO};
 
   /// The minimum level in effect, such that every message below this is
   /// ignored.
-  LogLevel mMinLevel{LOG_LEVEL_INFO};
+  LogLevel minLevel_{LOG_LEVEL_INFO};
 };
 
 /// Log a message with `level`, which `concat` builds from the remaining

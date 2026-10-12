@@ -140,7 +140,7 @@ public:
 
 /// Extract documentation from the given module, which must already be
 /// parsed.
-[[nodiscard]] SMDL_EXPORT DocModule extractDocModule(const Module &module_);
+[[nodiscard]] SMDL_EXPORT DocModule extractDocModule(const Module &module);
 
 /// Get the names of the builtin modules, e.g., `df` and `models::prospect`.
 [[nodiscard]] SMDL_EXPORT std::vector<std::string_view> getBuiltinModuleNames();

@@ -145,45 +145,45 @@ public:
 public:
   /// Is valid, i.e., backed by loaded data with a positive extent?
   [[nodiscard]] bool isValid() const noexcept {
-    return mExtent.x > 0 && mExtent.y > 0 && mExtent.z > 0;
+    return extent_.x > 0 && extent_.y > 0 && extent_.z > 0;
   }
 
   /// Get the extent in voxels.
-  [[nodiscard]] int3 getExtent() const noexcept { return mExtent; }
+  [[nodiscard]] int3 getExtent() const noexcept { return extent_; }
 
   /// Get the memory the grid holds in bytes: the brick table, the brick
   /// data, and the majorant table.
   [[nodiscard]] size_t getSizeInBytes() const noexcept {
-    return mBrickTable.size() * sizeof(int32_t) +
-           mBrickData.size() * sizeof(float) +
-           mMajorantBounds.size() * sizeof(float2);
+    return brickTable_.size() * sizeof(int32_t) +
+           brickData_.size() * sizeof(float) +
+           majorantBounds_.size() * sizeof(float2);
   }
 
   /// Get the number of bricks per axis, i.e., the extent divided by
   /// `BRICK_EXTENT` rounded up.
-  [[nodiscard]] int3 getBrickCount() const noexcept { return mBrickCount; }
+  [[nodiscard]] int3 getBrickCount() const noexcept { return brickCount_; }
 
   /// Get the number of voxels per axis in a majorant cell, which
   /// `majorantExtentFor()` chose from the extent at load.
   [[nodiscard]] int getMajorantExtent() const noexcept {
-    return mMajorantExtent;
+    return majorantExtent_;
   }
 
   /// Get the number of majorant cells per axis, i.e., the extent
   /// divided by `getMajorantExtent()` rounded up.
   [[nodiscard]] int3 getMajorantCount() const noexcept {
-    return mMajorantCount;
+    return majorantCount_;
   }
 
   /// Get the background value, which fills empty bricks and everything
   /// outside the extent.
-  [[nodiscard]] float getBackground() const noexcept { return mBackground; }
+  [[nodiscard]] float getBackground() const noexcept { return background_; }
 
   /// Get the global minimum value.
-  [[nodiscard]] float getMinValue() const noexcept { return mMinValue; }
+  [[nodiscard]] float getMinValue() const noexcept { return minValue_; }
 
   /// Get the global maximum value.
-  [[nodiscard]] float getMaxValue() const noexcept { return mMaxValue; }
+  [[nodiscard]] float getMaxValue() const noexcept { return maxValue_; }
 
   /// Get the minimum and maximum value, in that order, of the majorant
   /// cell at the given cell coordinate, taken over the cell voxels
@@ -199,8 +199,8 @@ public:
   /// bounds check, the index arithmetic, and the cache miss twice.
   [[nodiscard]] float2 getMajorantBounds(int cx, int cy,
                                          int cz) const noexcept {
-    if (!isMajorantCellInside(cx, cy, cz)) return float2(mBackground);
-    return mMajorantBounds[majorantIndex(cx, cy, cz)];
+    if (!isMajorantCellInside_(cx, cy, cz)) return float2(background_);
+    return majorantBounds_[majorantIndex_(cx, cy, cz)];
   }
 
   /// Get the whole majorant cell table, `getMajorantCount()` cells with
@@ -208,19 +208,19 @@ public:
   /// cells it crosses instead of re-deriving it per cell. Empty until
   /// a grid is loaded.
   [[nodiscard]] Span<const float2> getMajorantTable() const noexcept {
-    return {mMajorantBounds.data(), mMajorantBounds.size()};
+    return {majorantBounds_.data(), majorantBounds_.size()};
   }
 
   /// Get the world-space bounding box minimum, from the file's
   /// index-to-world transform. Purely metadata: texture space `[0,1]^3`
   /// always spans the extent, and nothing here applies the transform.
   [[nodiscard]] float3 getWorldBoundMin() const noexcept {
-    return mWorldBoundMin;
+    return worldBoundMin_;
   }
 
   /// Get the world-space bounding box maximum, see `getWorldBoundMin()`.
   [[nodiscard]] float3 getWorldBoundMax() const noexcept {
-    return mWorldBoundMax;
+    return worldBoundMax_;
   }
 
   /// Fetch the value at the given voxel coordinate, or the background
@@ -241,81 +241,81 @@ private:
   friend class Emitter;
 
   /// Get the brick table, holding one entry per brick in x-fastest
-  /// order: the index of the brick's block in `getBrickData()`, or -1
+  /// order: the index of the brick's block in `getBrickData_()`, or -1
   /// if the brick is empty. Internal-only: the layout is unspecified.
-  [[nodiscard]] const int32_t *getBrickTable() const noexcept {
-    return mBrickTable.data();
+  [[nodiscard]] const int32_t *getBrickTable_() const noexcept {
+    return brickTable_.data();
   }
 
   /// Get the brick data, holding one dense x-fastest block of
   /// `BRICK_EXTENT^3` values per non-empty brick, in the order the
   /// brick table assigned the indices. Internal-only: the layout is
   /// unspecified.
-  [[nodiscard]] const float *getBrickData() const noexcept {
-    return mBrickData.data();
+  [[nodiscard]] const float *getBrickData_() const noexcept {
+    return brickData_.data();
   }
 
   /// The extent in voxels.
-  int3 mExtent{};
+  int3 extent_{};
 
   /// The number of bricks per axis.
-  int3 mBrickCount{};
+  int3 brickCount_{};
 
   /// The number of voxels per axis in a majorant cell.
-  int mMajorantExtent{1};
+  int majorantExtent_{1};
 
   /// The number of majorant cells per axis.
-  int3 mMajorantCount{};
+  int3 majorantCount_{};
 
-  [[nodiscard]] bool isBrickInside(int bx, int by, int bz) const noexcept {
-    return 0 <= bx && bx < mBrickCount.x && //
-           0 <= by && by < mBrickCount.y && //
-           0 <= bz && bz < mBrickCount.z;
+  [[nodiscard]] bool isBrickInside_(int bx, int by, int bz) const noexcept {
+    return 0 <= bx && bx < brickCount_.x && //
+           0 <= by && by < brickCount_.y && //
+           0 <= bz && bz < brickCount_.z;
   }
 
-  [[nodiscard]] size_t brickIndex(int bx, int by, int bz) const noexcept {
-    return size_t(bx + mBrickCount.x * (by + int64_t(mBrickCount.y) * bz));
+  [[nodiscard]] size_t brickIndex_(int bx, int by, int bz) const noexcept {
+    return size_t(bx + brickCount_.x * (by + int64_t(brickCount_.y) * bz));
   }
 
-  [[nodiscard]] bool isMajorantCellInside(int cx, int cy,
-                                          int cz) const noexcept {
-    return 0 <= cx && cx < mMajorantCount.x && //
-           0 <= cy && cy < mMajorantCount.y && //
-           0 <= cz && cz < mMajorantCount.z;
+  [[nodiscard]] bool isMajorantCellInside_(int cx, int cy,
+                                           int cz) const noexcept {
+    return 0 <= cx && cx < majorantCount_.x && //
+           0 <= cy && cy < majorantCount_.y && //
+           0 <= cz && cz < majorantCount_.z;
   }
 
-  [[nodiscard]] size_t majorantIndex(int cx, int cy, int cz) const noexcept {
+  [[nodiscard]] size_t majorantIndex_(int cx, int cy, int cz) const noexcept {
     return size_t(cx +
-                  mMajorantCount.x * (cy + int64_t(mMajorantCount.y) * cz));
+                  majorantCount_.x * (cy + int64_t(majorantCount_.y) * cz));
   }
 
   /// The background value.
-  float mBackground{0.0f};
+  float background_{0.0f};
 
   /// The global minimum value.
-  float mMinValue{0.0f};
+  float minValue_{0.0f};
 
   /// The global maximum value.
-  float mMaxValue{0.0f};
+  float maxValue_{0.0f};
 
   /// The world-space bounding box minimum.
-  float3 mWorldBoundMin{};
+  float3 worldBoundMin_{};
 
   /// The world-space bounding box maximum.
-  float3 mWorldBoundMax{};
+  float3 worldBoundMax_{};
 
-  /// The brick table, see `getBrickTable()`. Immutable after load, so
+  /// The brick table, see `getBrickTable_()`. Immutable after load, so
   /// the data pointer is stable and may be baked into JIT-compiled
   /// code.
-  std::vector<int32_t> mBrickTable{};
+  std::vector<int32_t> brickTable_{};
 
-  /// The brick data, see `getBrickData()`. Immutable after load, like
+  /// The brick data, see `getBrickData_()`. Immutable after load, like
   /// the brick table.
-  std::vector<float> mBrickData{};
+  std::vector<float> brickData_{};
 
   /// The per-cell dilated minimum and maximum, in that order, see
   /// `getMajorantBounds()`.
-  std::vector<float2> mMajorantBounds{};
+  std::vector<float2> majorantBounds_{};
 };
 
 /// \}

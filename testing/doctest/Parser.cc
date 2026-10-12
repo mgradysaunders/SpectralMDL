@@ -11,12 +11,12 @@ namespace {
 class ParsedModule final {
 public:
   explicit ParsedModule(std::string sourceCode)
-      : mModule("test", std::move(sourceCode)) {
-    std::optional<Error> error{mModule.parse(mAllocator)};
+      : module_("test", std::move(sourceCode)) {
+    std::optional<Error> error{module_.parse(allocator_)};
     REQUIRE(!error);
   }
 
-  [[nodiscard]] const ast::File &root() const { return *mModule.getRoot(); }
+  [[nodiscard]] const ast::File &root() const { return *module_.getRoot(); }
 
   [[nodiscard]] const ast::Decl &decl(size_t i) const {
     REQUIRE(i < root().globalDecls.size());
@@ -30,9 +30,9 @@ public:
   }
 
 private:
-  BumpPtrAllocator mAllocator{};
+  BumpPtrAllocator allocator_{};
 
-  Module mModule;
+  Module module_;
 };
 
 [[nodiscard]] std::string docText(std::string_view srcDocComment) {

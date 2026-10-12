@@ -26,8 +26,8 @@ public:
 class SMDL_EXPORT Spectrum final {
 public:
   void clear() noexcept {
-    mWavelengths.clear();
-    mCurveValues.clear();
+    wavelengths_.clear();
+    curveValues_.clear();
   }
 
   /// Load from file.
@@ -62,15 +62,15 @@ public:
 
   [[nodiscard]]
   operator SpectrumView() const noexcept {
-    return {mWavelengths, mCurveValues};
+    return {wavelengths_, curveValues_};
   }
 
 private:
   /// The wavelengths in nanometers.
-  std::vector<float> mWavelengths;
+  std::vector<float> wavelengths_;
 
   /// The values.
-  std::vector<float> mCurveValues;
+  std::vector<float> curveValues_;
 };
 
 /// \}

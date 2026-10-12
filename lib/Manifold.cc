@@ -466,17 +466,17 @@ void buildTangentAims(const ManifoldSurfaces &surfaces,
 
 } // namespace
 
-void ManifoldSolver::grow(int depth) {
-  mMaxDepth = depth;
+void ManifoldSolver::grow_(int depth) {
+  maxDepth_ = depth;
   const size_t n{static_cast<size_t>(depth)};
   const size_t dim{2 * n};
-  mVertices.resize(2 * n);
-  mVectors.resize(2 * n);
-  mIterates.resize(2 * n);
-  mFrameLengths.resize(n);
-  mConstraints.resize(2 * dim);
-  mJacobians.resize(3 * dim * BAND_STRIDE);
-  mRhs.resize(dim);
+  vertices_.resize(2 * n);
+  vectors_.resize(2 * n);
+  iterates_.resize(2 * n);
+  frameLengths_.resize(n);
+  constraints_.resize(2 * dim);
+  jacobians_.resize(3 * dim * BAND_STRIDE);
+  rhs_.resize(dim);
 }
 
 ManifoldClaim manifoldClaim(const jit::Material &material, bool isBackface,
@@ -533,12 +533,12 @@ enum class ManifoldSolver::Walk {
 // too little where an interface is weak, the half vector there being as
 // long as the indices differ, and enough where the seed is all but the
 // solution.
-bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
-                               const double3 &receiver,
-                               const ManifoldTarget &target,
-                               const ManifoldProblem &problem,
-                               ManifoldSolution &solution,
-                               ManifoldWalkReport &report) {
+bool ManifoldSolver::walkChain_(Walk walk, const ManifoldSurfaces &surfaces,
+                                const double3 &receiver,
+                                const ManifoldTarget &target,
+                                const ManifoldProblem &problem,
+                                ManifoldSolution &solution,
+                                ManifoldWalkReport &report) {
   using Outcome = ManifoldWalkReport::Outcome;
   using Failure = ManifoldWalkReport::Failure;
   int iterationsDone{0};
@@ -561,17 +561,17 @@ bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
   // touched, so whatever the last walk left behind never matters.
   reserve(count);
   const int dim{2 * count};
-  const int maxDim{2 * mMaxDepth};
+  const int maxDim{2 * maxDepth_};
   // One band matrix of the workspace, which holds three of them.
   const size_t bandSize{static_cast<size_t>(maxDim) * BAND_STRIDE};
-  ManifoldVertex *const vertices{mVertices.data()};
-  ManifoldVertex *const stepVertices{vertices + mMaxDepth};
-  double3 *const tangentAims{mVectors.data()};
-  double3 *const steps{tangentAims + mMaxDepth};
-  double *const rhs{mRhs.data()};
+  ManifoldVertex *const vertices{vertices_.data()};
+  ManifoldVertex *const stepVertices{vertices + maxDepth_};
+  double3 *const tangentAims{vectors_.data()};
+  double3 *const steps{tangentAims + maxDepth_};
+  double *const rhs{rhs_.data()};
   // The elimination matrix, which the Newton step destroys every
   // iteration.
-  const BandView A{mJacobians.data() + 2 * bandSize};
+  const BandView A{jacobians_.data() + 2 * bandSize};
   for (int i = 0; i < count; i++) vertices[i] = problem[i].vertex;
   buildTangentAims(surfaces, problem, tangentAims);
   // Move the starting iterate off the straight-line crossing, if asked. The
@@ -605,11 +605,11 @@ bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
   // rebuilds a state per halving nor copies one back on acceptance.
   // `evaluateChain()` writes every field of a state that anything reads,
   // so a trial that fails leaves nothing behind to matter.
-  ChainState stateBuffers[2]{{mIterates.data(), mConstraints.data(),
-                              BandView{mJacobians.data()}, count},
-                             {mIterates.data() + mMaxDepth,
-                              mConstraints.data() + maxDim,
-                              BandView{mJacobians.data() + bandSize}, count}};
+  ChainState stateBuffers[2]{{iterates_.data(), constraints_.data(),
+                              BandView{jacobians_.data()}, count},
+                             {iterates_.data() + maxDepth_,
+                              constraints_.data() + maxDim,
+                              BandView{jacobians_.data() + bandSize}, count}};
   ChainState *state{&stateBuffers[0]};
   ChainState *trial{&stateBuffers[1]};
   const bool isTraced{walk != Walk::STEPPED};
@@ -621,7 +621,7 @@ bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
     for (int i = 1; i < count; i++) vertices[i] = stepVertices[i];
   }
   if (!evaluateChain(surfaces, receiver, target, problem, tangentAims, vertices,
-                     mFrameLengths.data(), *state, walk == Walk::RETRACED))
+                     frameLengths_.data(), *state, walk == Walk::RETRACED))
     return finish(Outcome::DIVERGED, Failure::START);
   const float residualTolerance{
       problem.residualTolerance > 0.0f
@@ -722,7 +722,7 @@ bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
       if (!isProjected) continue;
       anyProjected = true;
       if (!evaluateChain(surfaces, receiver, target, problem, tangentAims,
-                         stepVertices, mFrameLengths.data(), *trial, isTraced))
+                         stepVertices, frameLengths_.data(), *trial, isTraced))
         continue;
       if (trial->residual() < residual) {
         for (int i = 0; i < count; i++) vertices[i] = stepVertices[i];
@@ -741,7 +741,7 @@ bool ManifoldSolver::walkChain(Walk walk, const ManifoldSurfaces &surfaces,
       if (traceChain(surfaces, receiver, problem, tangentAims, vertices,
                      stepVertices, *trial) &&
           evaluateChain(surfaces, receiver, target, problem, tangentAims,
-                        stepVertices, mFrameLengths.data(), *trial,
+                        stepVertices, frameLengths_.data(), *trial,
                         /*isTraced=*/true)) {
         for (int i = 0; i < count; i++) vertices[i] = stepVertices[i];
         std::swap(state, trial);
@@ -817,7 +817,7 @@ bool ManifoldSolver::solve(const ManifoldSurfaces &surfaces,
   for (const Walk walk : WALKS) {
     if (!isThorough && walk != Walk::TRACED) continue;
     isSolved =
-        walkChain(walk, surfaces, receiver, target, problem, solution, last);
+        walkChain_(walk, surfaces, receiver, target, problem, solution, last);
     iterations += last.iterations;
     if (isSolved) break;
   }

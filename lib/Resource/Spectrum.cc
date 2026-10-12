@@ -53,10 +53,10 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
                            ": expected ",
                            isFirstRow ? "wavelength units or " : "",
                            "'wavelength value' on line ", lineNo));
-      mWavelengths.push_back(toNanometers(units, wavelength));
-      mCurveValues.push_back(curveValue);
+      wavelengths_.push_back(toNanometers(units, wavelength));
+      curveValues_.push_back(curveValue);
     }
-    sortByWavelength(mWavelengths, mCurveValues, 1);
+    sortByWavelength(wavelengths_, curveValues_, 1);
   })};
   if (error) {
     clear();

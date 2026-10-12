@@ -235,43 +235,43 @@ std::string_view Image::getFormatName(Format format) noexcept {
 }
 
 void Image::clear() {
-  mFormat = UINT8;
-  mNumTexelsX = 0;
-  mNumTexelsY = 0;
-  mNumChannels = 1;
-  mTexelSize = 1;
-  mNumLevels = 1;
-  mHasRequestedMipLevels = false;
-  mHasGeneratedMipLevels = false;
-  mMipFilter = MIP_MEAN;
-  mLevelOffsets.assign(1, 0);
-  mSizeInBytes = 0;
-  mTexels.reset();
-  mFinishLoad = nullptr;
+  format_ = UINT8;
+  numTexelsX_ = 0;
+  numTexelsY_ = 0;
+  numChannels_ = 1;
+  texelSize_ = 1;
+  numLevels_ = 1;
+  hasRequestedMipLevels_ = false;
+  hasGeneratedMipLevels_ = false;
+  mipFilter_ = MIP_MEAN;
+  levelOffsets_.assign(1, 0);
+  sizeInBytes_ = 0;
+  texels_.reset();
+  finishLoad_ = nullptr;
 }
 
 std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   clear();
   std::optional<Error> error{catchAndReturnError([&] {
-    if (stbi_info(fileName.c_str(), &mNumTexelsX, &mNumTexelsY,
-                  &mNumChannels)) {
+    if (stbi_info(fileName.c_str(), &numTexelsX_, &numTexelsY_,
+                  &numChannels_)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
       // so all of our alignment assumptions work.
-      if (mNumChannels == 3) mNumChannels = 4;
+      if (numChannels_ == 3) numChannels_ = 4;
       // Determine whether we should load 32-bit float, 16-bit unsigned int, or
       // 8-bit unsigned int.
       if (stbi_is_hdr(fileName.c_str())) {
-        mFormat = FLOAT32;
-        mTexelSize = 4 * mNumChannels;
+        format_ = FLOAT32;
+        texelSize_ = 4 * numChannels_;
       } else if (stbi_is_16_bit(fileName.c_str())) {
-        mFormat = UINT16;
-        mTexelSize = 2 * mNumChannels;
+        format_ = UINT16;
+        texelSize_ = 2 * numChannels_;
       } else {
-        mFormat = UINT8;
-        mTexelSize = 1 * mNumChannels;
+        format_ = UINT8;
+        texelSize_ = 1 * numChannels_;
       }
       // Defer the actual load until later!
-      mFinishLoad = [this, fileName]() {
+      finishLoad_ = [this, fileName]() {
         // NOTE: The thread-local variant because 'finishLoad()' may be
         // called from many threads at once.
         stbi_set_flip_vertically_on_load_thread(0);
@@ -279,31 +279,31 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         int nY{};
         int nChannels{};
         void *ptr{};
-        switch (mFormat) {
+        switch (format_) {
         default:
         case Format::UINT8:
           // Load 8-bit unsigned int.
-          ptr = stbi_load(fileName.c_str(), &nX, &nY, &nChannels, mNumChannels);
+          ptr = stbi_load(fileName.c_str(), &nX, &nY, &nChannels, numChannels_);
           break;
         case Format::UINT16:
           // Load 16-bit unsigned int.
           ptr = stbi_load_16(fileName.c_str(), &nX, &nY, &nChannels,
-                             mNumChannels);
+                             numChannels_);
           break;
         case Format::FLOAT32:
           // Load 32-bit float.
           ptr =
-              stbi_loadf(fileName.c_str(), &nX, &nY, &nChannels, mNumChannels);
+              stbi_loadf(fileName.c_str(), &nX, &nY, &nChannels, numChannels_);
           break;
         }
         if (!ptr) throw Error(stbFailureReason());
         // Copy into the pre-allocated texel buffer, then free the pointer.
-        SMDL_SANITY_CHECK(mTexels != nullptr);
-        SMDL_SANITY_CHECK(mNumTexelsX == nX);
-        SMDL_SANITY_CHECK(mNumTexelsY == nY);
-        std::memcpy(mTexels.get(), ptr,
-                    size_t(mNumTexelsX) * size_t(mNumTexelsY) *
-                        size_t(mTexelSize));
+        SMDL_SANITY_CHECK(texels_ != nullptr);
+        SMDL_SANITY_CHECK(numTexelsX_ == nX);
+        SMDL_SANITY_CHECK(numTexelsY_ == nY);
+        std::memcpy(texels_.get(), ptr,
+                    size_t(numTexelsX_) * size_t(numTexelsY_) *
+                        size_t(texelSize_));
         stbi_image_free(ptr);
       };
     } else if (isEXRFile(fileName)) {
@@ -319,16 +319,16 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
       if (nX < 0 || nY < 0)
         throw Error("Cannot parse EXR header: invalid data window");
       const EXRChannels channels{selectEXRChannels(header)};
-      mNumChannels = channels.numChannels;
+      numChannels_ = channels.numChannels;
       if (channels.pixelType == EXR_PIXEL_HALF)
-        mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
+        format_ = FLOAT16, texelSize_ = 2 * numChannels_;
       else
-        mFormat = FLOAT32, mTexelSize = 4 * mNumChannels;
-      mNumTexelsX = nX;
-      mNumTexelsY = nY;
+        format_ = FLOAT32, texelSize_ = 4 * numChannels_;
+      numTexelsX_ = nX;
+      numTexelsY_ = nY;
       // NOTE: The reader closes here and the finish function below opens
       // another, rather than holding the whole file in memory until then.
-      mFinishLoad = [this, fileName]() {
+      finishLoad_ = [this, fileName]() {
         warmUpEXR();
         EXRReaderPtr reader{openEXR(fileName)};
         // NOTE: A tiled EXR decodes to the same planar channels as a
@@ -340,36 +340,36 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         // Select again from the decoded header rather than trusting what
         // 'startLoad()' saw, which a file rewritten in between invalidates.
         const EXRChannels channels{selectEXRChannels(part.header)};
-        if (channels.numChannels != mNumChannels ||
-            (channels.pixelType == EXR_PIXEL_HALF) != (mFormat == FLOAT16) ||
-            part.width != mNumTexelsX || part.height != mNumTexelsY)
+        if (channels.numChannels != numChannels_ ||
+            (channels.pixelType == EXR_PIXEL_HALF) != (format_ == FLOAT16) ||
+            part.width != numTexelsX_ || part.height != numTexelsY_)
           throw Error("EXR changed since its header was parsed");
-        const size_t channelSize{size_t(mTexelSize / mNumChannels)};
-        const size_t numTexels{size_t(mNumTexelsX) * size_t(mNumTexelsY)};
-        for (int iC = 0; iC < mNumChannels; iC++) {
+        const size_t channelSize{size_t(texelSize_ / numChannels_)};
+        const size_t numTexels{size_t(numTexelsX_) * size_t(numTexelsY_)};
+        for (int iC = 0; iC < numChannels_; iC++) {
           if (channels.indices[iC] < 0) continue;
           const std::byte *src{static_cast<const std::byte *>(
               part.images[channels.indices[iC]])};
-          std::byte *dst{mTexels.get() + channelSize * size_t(iC)};
+          std::byte *dst{texels_.get() + channelSize * size_t(iC)};
           for (size_t i = 0; i < numTexels; i++)
-            std::memcpy(dst + size_t(mTexelSize) * i, src + channelSize * i,
+            std::memcpy(dst + size_t(texelSize_) * i, src + channelSize * i,
                         channelSize);
         }
         // If the alpha channel is missing, fill with 1.
-        if (mNumChannels == 4 && channels.indices[3] < 0) {
-          if (mFormat == FLOAT16) {
+        if (numChannels_ == 4 && channels.indices[3] < 0) {
+          if (format_ == FLOAT16) {
             uint16_t one{0x3C00};
-            std::byte *itr{mTexels.get() + 6};
+            std::byte *itr{texels_.get() + 6};
             for (size_t i = 0; i < numTexels; i++) {
               std::memcpy(itr, &one, 2);
-              itr += mTexelSize;
+              itr += texelSize_;
             }
           } else {
             float one{1.0f};
-            std::byte *itr{mTexels.get() + 12};
+            std::byte *itr{texels_.get() + 12};
             for (size_t i = 0; i < numTexels; i++) {
               std::memcpy(itr, &one, 4);
-              itr += mTexelSize;
+              itr += texelSize_;
             }
           }
         }
@@ -384,9 +384,9 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
     // that can be settled here: whether anything wants them is not known
     // until every reference has been seen, so 'finishLoad()' does the
     // rest once the answer is in.
-    mNumLevels = 1;
-    while ((std::max(mNumTexelsX, mNumTexelsY) >> (mNumLevels - 1)) > 1)
-      mNumLevels++;
+    numLevels_ = 1;
+    while ((std::max(numTexelsX_, numTexelsY_) >> (numLevels_ - 1)) > 1)
+      numLevels_++;
   })};
   if (error) {
     clear();
@@ -396,81 +396,81 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   return error;
 }
 
-void Image::allocate() {
+void Image::allocate_() {
   const int numLevels{getNumLevels()};
-  mLevelOffsets.assign(size_t(numLevels), 0);
+  levelOffsets_.assign(size_t(numLevels), 0);
   size_t offset{0};
   for (int level = 0; level < numLevels; level++) {
-    mLevelOffsets[size_t(level)] = offset;
+    levelOffsets_[size_t(level)] = offset;
     offset += size_t(getNumTexelsX(level)) * size_t(getNumTexelsY(level)) *
-              size_t(mTexelSize);
+              size_t(texelSize_);
   }
-  mSizeInBytes = offset;
-  mTexels.reset(static_cast<std::byte *>(
-      ::operator new(mSizeInBytes, std::align_val_t(TEXEL_ALIGNMENT))));
-  // Level 0 only: the rest is written by 'generateMipLevels()' before
+  sizeInBytes_ = offset;
+  texels_.reset(static_cast<std::byte *>(
+      ::operator new(sizeInBytes_, std::align_val_t(TEXEL_ALIGNMENT))));
+  // Level 0 only: the rest is written by 'generateMipLevels_()' before
   // anything can read it, and zeroing here is so that a decode failure
   // leaves well-defined zero texels.
-  std::memset(mTexels.get(), 0,
-              size_t(mNumTexelsX) * size_t(mNumTexelsY) * size_t(mTexelSize));
+  std::memset(texels_.get(), 0,
+              size_t(numTexelsX_) * size_t(numTexelsY_) * size_t(texelSize_));
 }
 
 void Image::finishLoad() {
-  if (!mFinishLoad) return;
-  allocate();
+  if (!finishLoad_) return;
+  allocate_();
   // NOTE: Move into a local and null the member before invoking, so
   // that a throw cannot leave a stale finish function behind to be
   // invoked again.
-  std::function<void()> finishLoad{std::move(mFinishLoad)};
-  mFinishLoad = nullptr;
+  std::function<void()> finishLoad{std::move(finishLoad_)};
+  finishLoad_ = nullptr;
   try {
     finishLoad();
   } catch (...) {
-    // Only level 0 was zeroed by 'allocate()', so zero all of it here: a
+    // Only level 0 was zeroed by 'allocate_()', so zero all of it here: a
     // partially decoded image and an ungenerated chain must still read
     // as well-defined zero texels.
-    std::memset(mTexels.get(), 0, mSizeInBytes);
+    std::memset(texels_.get(), 0, sizeInBytes_);
     throw;
   }
-  if (mHasRequestedMipLevels) {
-    generateMipLevels();
-    mHasGeneratedMipLevels = true;
+  if (hasRequestedMipLevels_) {
+    generateMipLevels_();
+    hasGeneratedMipLevels_ = true;
   }
 }
 
-void Image::generateMeanMipLevels() noexcept {
-  const stbir_datatype dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
-                                : mFormat == UINT16  ? STBIR_TYPE_UINT16
-                                : mFormat == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
+void Image::generateMeanMipLevels_() noexcept {
+  const stbir_datatype dataType{format_ == UINT8     ? STBIR_TYPE_UINT8
+                                : format_ == UINT16  ? STBIR_TYPE_UINT16
+                                : format_ == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
                                                      : STBIR_TYPE_FLOAT};
   // The plain N-channel layouts, so no channel gets alpha semantics:
   // the chain averages stored values as-is (see the class doc comment
   // for why filtering is gamma-agnostic).
-  const stbir_pixel_layout layout{mNumChannels == 1   ? STBIR_1CHANNEL
-                                  : mNumChannels == 2 ? STBIR_2CHANNEL
+  const stbir_pixel_layout layout{numChannels_ == 1   ? STBIR_1CHANNEL
+                                  : numChannels_ == 2 ? STBIR_2CHANNEL
                                                       : STBIR_4CHANNEL};
-  for (int level = 1; level < mNumLevels; level++) {
+  for (int level = 1; level < numLevels_; level++) {
     // Each level halves the previous one, so the box filter is an
     // area average whenever the parent extent is even, and blends the
     // straddling texels with the correct fractional weights when it
     // is odd. Averaging level to level keeps the whole chain
     // mean-preserving.
-    stbir_resize(mTexels.get() + mLevelOffsets[size_t(level - 1)],
+    stbir_resize(texels_.get() + levelOffsets_[size_t(level - 1)],
                  getNumTexelsX(level - 1), getNumTexelsY(level - 1),
-                 getNumTexelsX(level - 1) * mTexelSize,
-                 mTexels.get() + mLevelOffsets[size_t(level)],
+                 getNumTexelsX(level - 1) * texelSize_,
+                 texels_.get() + levelOffsets_[size_t(level)],
                  getNumTexelsX(level), getNumTexelsY(level),
-                 getNumTexelsX(level) * mTexelSize, layout, dataType,
+                 getNumTexelsX(level) * texelSize_, layout, dataType,
                  STBIR_EDGE_CLAMP, STBIR_FILTER_BOX);
   }
 }
 
-void Image::generateMaxMipLevels() noexcept {
-  const int channelSize{mTexelSize / mNumChannels};
+void Image::generateMaxMipLevels_() noexcept {
+  const int channelSize{texelSize_ / numChannels_};
   // Compare in single precision and copy the winning channel's stored
   // bytes, so every format reduces without a pack step.
   const auto valueOf{[&](const void *ptr) -> float {
-    switch (mFormat) {
+    switch (format_) {
     case UINT8:
       return *static_cast<const uint8_t *>(ptr);
     case UINT16:
@@ -482,13 +482,13 @@ void Image::generateMaxMipLevels() noexcept {
     }
   }};
   const auto wrap{[](int i, int n) { return ((i % n) + n) % n; }};
-  for (int level = 1; level < mNumLevels; level++) {
+  for (int level = 1; level < numLevels_; level++) {
     const int prevX{getNumTexelsX(level - 1)};
     const int prevY{getNumTexelsY(level - 1)};
     const int numX{getNumTexelsX(level)};
     const int numY{getNumTexelsY(level)};
-    std::byte *prevTexels{mTexels.get() + mLevelOffsets[size_t(level - 1)]};
-    std::byte *texels{mTexels.get() + mLevelOffsets[size_t(level)]};
+    std::byte *prevTexels{texels_.get() + levelOffsets_[size_t(level - 1)]};
+    std::byte *texels{texels_.get() + levelOffsets_[size_t(level)]};
     // Level 1 alone adds the one-texel border around the pair it
     // covers; the higher levels inherit it from their children. The
     // last texel of an odd extent widens to cover the remainder.
@@ -506,10 +506,10 @@ void Image::generateMaxMipLevels() noexcept {
         for (int y = y0; y < y1; y++) {
           for (int x = x0; x < x1; x++) {
             std::byte *src{prevTexels +
-                           size_t(mTexelSize) *
+                           size_t(texelSize_) *
                                (size_t(wrap(x, prevX)) +
                                 size_t(prevX) * size_t(wrap(y, prevY)))};
-            for (int c = 0; c < mNumChannels; c++) {
+            for (int c = 0; c < numChannels_; c++) {
               const uint8_t *ptr{reinterpret_cast<const uint8_t *>(src) +
                                  size_t(c) * size_t(channelSize)};
               const float value{valueOf(ptr)};
@@ -522,8 +522,8 @@ void Image::generateMaxMipLevels() noexcept {
         }
         uint8_t *dst{reinterpret_cast<uint8_t *>(
             texels +
-            size_t(mTexelSize) * (size_t(i) + size_t(numX) * size_t(j)))};
-        for (int c = 0; c < mNumChannels; c++)
+            size_t(texelSize_) * (size_t(i) + size_t(numX) * size_t(j)))};
+        for (int c = 0; c < numChannels_; c++)
           std::memcpy(dst + size_t(c) * size_t(channelSize), best[c],
                       size_t(channelSize));
       }
@@ -534,10 +534,10 @@ void Image::generateMaxMipLevels() noexcept {
 void Image::flipVertically() noexcept {
   // The levels in memory, not the levels the extent implies: a chain
   // that was never requested was never allocated either.
-  for (int level = 0; level < getNumLevelsInMemory(); level++) {
-    std::byte *levelTexels{mTexels.get() + mLevelOffsets[size_t(level)]};
+  for (int level = 0; level < getNumLevelsInMemory_(); level++) {
+    std::byte *levelTexels{texels_.get() + levelOffsets_[size_t(level)]};
     int numTexelsY{getNumTexelsY(level)};
-    size_t rowSize{size_t(mTexelSize) * size_t(getNumTexelsX(level))};
+    size_t rowSize{size_t(texelSize_) * size_t(getNumTexelsX(level))};
     for (int iY = 0; iY < numTexelsY / 2; iY++) {
       std::swap_ranges(levelTexels + rowSize * size_t(iY),
                        levelTexels + rowSize * size_t(iY + 1),
@@ -547,7 +547,7 @@ void Image::flipVertically() noexcept {
 }
 
 float4 Image::fetch(int x, int y, int level) const noexcept {
-  SMDL_SANITY_CHECK(mTexels != nullptr);
+  SMDL_SANITY_CHECK(texels_ != nullptr);
   SMDL_SANITY_CHECK(0 <= level && level < getNumLevels());
   SMDL_SANITY_CHECK(0 <= x && x < getNumTexelsX(level));
   SMDL_SANITY_CHECK(0 <= y && y < getNumTexelsY(level));
@@ -560,11 +560,11 @@ float4 Image::fetchUnsafe(int x, int y, int level) const noexcept {
                std::numeric_limits<float>::quiet_NaN(),
                std::numeric_limits<float>::quiet_NaN()};
   std::byte *texelPtr{
-      mTexels.get() + mLevelOffsets[size_t(level)] +
-      size_t(mTexelSize) *
+      texels_.get() + levelOffsets_[size_t(level)] +
+      size_t(texelSize_) *
           (size_t(x) + size_t(getNumTexelsX(level)) * size_t(y))};
-  for (int i = 0; i < mNumChannels; i++) {
-    switch (mFormat) {
+  for (int i = 0; i < numChannels_; i++) {
+    switch (format_) {
     case UINT8:
       texel[i] = float(*reinterpret_cast<const uint8_t *>(texelPtr)) / 255.0f;
       texelPtr += 1;

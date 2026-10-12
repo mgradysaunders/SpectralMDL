@@ -212,10 +212,10 @@ public:
                  Declaration **unusableMatch);
 
   /// Resolve the given name against a module's root scope (see
-  /// `Module::mRootScope`).
+  /// `Module::rootScope_`).
   [[nodiscard]] static Declaration *
   findInModule(Context &context, Span<const std::string_view> name,
-               llvm::Function *llvmFunc, Module *module_,
+               llvm::Function *llvmFunc, Module *module,
                bool shouldIgnoreIfNotExported = true);
 
   /// Get the source location if applicable.
@@ -269,8 +269,8 @@ public:
   /// compile-time condition routinely folds away a builtin's only use of a
   /// value, as the null pointer of a resource that failed to load does.
   void maybeWarnAboutUnusedValue() const {
-    const Module *module_{getSourceLocation().module_};
-    if (module_ && module_->isBuiltin()) return;
+    const Module *module{getSourceLocation().module};
+    if (module && module->isBuiltin()) return;
     if (isUsed == 0 && name.size() == 1) {
       if (llvm::isa_and_present<ast::Parameter>(node)) {
         ast::Parameter *astParam{static_cast<ast::Parameter *>(node)};

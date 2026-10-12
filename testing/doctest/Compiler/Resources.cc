@@ -25,7 +25,7 @@ TEST_CASE("Compiler: how often a missing resource is reported") {
   // black -- so the interesting question is how many times it is reported.
   // A material body is emitted once for each function 'Type.cc' generates
   // from it, and the not-found path cannot be memoized by file hash the way
-  // an actual load failure is, so without 'Compiler::logResourceWarningOnce'
+  // an actual load failure is, so without 'Compiler::logResourceWarningOnce_'
   // it would be reported once per emission.
   auto materialUsing{[](std::string_view fileName) {
     std::string text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"

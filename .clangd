@@ -3,6 +3,11 @@ CompileFlags:
 
 Diagnostics:
   ClangTidy:
-    Add: [bugprone*, modernize*]
+    Add: [bugprone*, modernize*, readability-identifier-naming]
     Remove: [modernize-use-trailing-return-type, modernize-avoid-c-style-cast, bugprone-easily-swappable-parameters]
+    CheckOptions:
+      readability-identifier-naming.PrivateMemberSuffix: _
+      readability-identifier-naming.ProtectedMemberSuffix: _
+      readability-identifier-naming.PrivateMethodSuffix: _
+      readability-identifier-naming.ProtectedMethodSuffix: _
   UnusedIncludes: Strict

@@ -23,55 +23,55 @@ public:
   constexpr Span() = default;
 
   /// Construct from single element.
-  constexpr Span(T &elem) : mFirst(&elem), mCount(1) {}
+  constexpr Span(T &elem) : first_(&elem), count_(1) {}
 
   /// Construct from pointer to first element and element count.
   constexpr Span(T *first, size_t count)
-      : mFirst(first), mCount(first == nullptr ? 0 : count) {}
+      : first_(first), count_(first == nullptr ? 0 : count) {}
 
   /// Construct from `std::initializer_list`.
   constexpr Span(std::initializer_list<std::decay_t<T>> elems)
-      : mFirst(elems.begin()), mCount(elems.size()) {}
+      : first_(elems.begin()), count_(elems.size()) {}
 
   /// Construct from `std::array`.
   template <size_t N>
   constexpr Span(const std::array<std::decay_t<T>, N> &elems)
-      : mFirst(const_cast<T *>(elems.data())), mCount(elems.size()) {}
+      : first_(const_cast<T *>(elems.data())), count_(elems.size()) {}
 
   /// Construct from `std::vector`.
   template <typename Allocator>
   Span(const std::vector<std::decay_t<T>, Allocator> &elems)
-      : mFirst(const_cast<T *>(elems.data())), mCount(elems.size()) {}
+      : first_(const_cast<T *>(elems.data())), count_(elems.size()) {}
 
   /// Is empty?
-  [[nodiscard]] constexpr bool empty() const noexcept { return mCount == 0; }
+  [[nodiscard]] constexpr bool empty() const noexcept { return count_ == 0; }
 
   /// Get the size.
-  [[nodiscard]] constexpr size_t size() const noexcept { return mCount; }
+  [[nodiscard]] constexpr size_t size() const noexcept { return count_; }
 
   /// Get the data pointer.
-  [[nodiscard]] constexpr T *data() const noexcept { return mFirst; }
+  [[nodiscard]] constexpr T *data() const noexcept { return first_; }
 
   /// Get the begin iterator.
-  [[nodiscard]] constexpr T *begin() const noexcept { return mFirst; }
+  [[nodiscard]] constexpr T *begin() const noexcept { return first_; }
 
   /// Get the end iterator.
-  [[nodiscard]] constexpr T *end() const noexcept { return mFirst + mCount; }
+  [[nodiscard]] constexpr T *end() const noexcept { return first_ + count_; }
 
   /// Get the front element.
-  [[nodiscard]] constexpr const T &front() const noexcept { return mFirst[0]; }
+  [[nodiscard]] constexpr const T &front() const noexcept { return first_[0]; }
 
   /// Get the back element.
   [[nodiscard]] constexpr const T &back() const noexcept {
-    return mFirst[mCount - 1];
+    return first_[count_ - 1];
   }
 
   /// Drop the front element while the given predicate is true.
   template <typename Pred>
   [[nodiscard]] constexpr Span dropFrontWhile(Pred &&pred) const {
     size_t i{};
-    size_t n{mCount};
-    while (i < mCount && pred(mFirst[i])) {
+    size_t n{count_};
+    while (i < count_ && pred(first_[i])) {
       i++;
       n--;
     }
@@ -80,12 +80,12 @@ public:
 
   /// Drop the front element.
   [[nodiscard]] constexpr Span dropFront() const noexcept {
-    return subspan(1, mCount - 1);
+    return subspan(1, count_ - 1);
   }
 
   /// Drop the back element.
   [[nodiscard]] constexpr Span dropBack() const noexcept {
-    return subspan(0, mCount - 1);
+    return subspan(0, count_ - 1);
   }
 
   /// Get subspan. The start index `i` is clamped to `size()`, so an
@@ -93,8 +93,8 @@ public:
   /// `count - i` into an enormous out-of-bounds span.
   [[nodiscard]] constexpr Span subspan(size_t i,
                                        size_t n = size_t(-1)) const noexcept {
-    i = std::min(i, mCount);
-    return Span(mFirst + i, std::min(mCount - i, n));
+    i = std::min(i, count_);
+    return Span(first_ + i, std::min(count_ - i, n));
   }
 
   /// Contains the given value?
@@ -104,22 +104,22 @@ public:
 
   /// Starts with the given sequence of values?
   [[nodiscard]] constexpr bool startsWith(Span other) const {
-    if (mCount < other.mCount) return false;
-    for (size_t i = 0; i < other.mCount; i++)
+    if (count_ < other.count_) return false;
+    for (size_t i = 0; i < other.count_; i++)
       if (operator[](i) != other[i]) return false;
     return true;
   }
 
   /// Get element by index.
   [[nodiscard]] constexpr T &operator[](size_t i) const noexcept {
-    return mFirst[i];
+    return first_[i];
   }
 
   /// All equal?
   [[nodiscard]] constexpr bool operator==(const Span &other) const {
-    if (mCount != other.mCount) return false;
-    for (size_t i = 0; i < mCount; i++)
-      if (mFirst[i] != other.mFirst[i]) return false;
+    if (count_ != other.count_) return false;
+    for (size_t i = 0; i < count_; i++)
+      if (first_[i] != other.first_[i]) return false;
     return true;
   }
 
@@ -133,15 +133,15 @@ public:
             typename = std::enable_if_t<
                 std::is_same_v<ConstT, const T> && !std::is_const_v<T>, void>>
   [[nodiscard]] constexpr operator Span<ConstT>() const noexcept {
-    return Span<ConstT>(mFirst, mCount);
+    return Span<ConstT>(first_, count_);
   }
 
 private:
   /// The pointer to the first element.
-  T *mFirst{};
+  T *first_{};
 
   /// The element count.
-  size_t mCount{};
+  size_t count_{};
 };
 
 /// \}

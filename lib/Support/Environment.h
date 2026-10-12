@@ -40,14 +40,14 @@ public:
 
   /// The value, or none if the variable is unset, empty, or malformed.
   [[nodiscard]] const std::optional<T> &value() const noexcept {
-    return mValue;
+    return value_;
   }
 
   /// The setting in effect: the variable's value if it has one, else
   /// `hostValue`. Reports as `report()` does.
   [[nodiscard]] T resolve(T hostValue) const {
     report(hostValue);
-    return mValue.value_or(hostValue);
+    return value_.value_or(hostValue);
   }
 
   /// Say at warning level that the variable is malformed, or that it
@@ -57,19 +57,19 @@ public:
 
 private:
   /// The name, e.g., `SMDL_OPT_LEVEL`.
-  const char *mName{};
+  const char *name_{};
 
   /// What the variable overrides, for the report.
-  const char *mWhat{};
+  const char *what_{};
 
   /// The text the variable is set to, or empty if unset.
-  std::string mText{};
+  std::string text_{};
 
   /// See `value()`.
-  std::optional<T> mValue{};
+  std::optional<T> value_{};
 
   /// Has `report()` said anything?
-  mutable std::atomic<bool> mIsReported{};
+  mutable std::atomic<bool> isReported_{};
 };
 
 extern template class EnvOverride<bool>;

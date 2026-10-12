@@ -468,8 +468,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
 
 bool ArithmeticType::hasField(std::string_view name) {
   if (!extent.isScalar()) {
-    if (name.size() == 1) return toIndex(name[0]).has_value();
-    if (extent.isVector()) return toIndexSwizzle(name).has_value();
+    if (name.size() == 1) return toIndex_(name[0]).has_value();
+    if (extent.isVector()) return toIndexSwizzle_(name).has_value();
   }
   return false;
 }
@@ -489,12 +489,12 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     return result;
   }};
   if (name.size() == 1) {
-    if (std::optional<unsigned> i{toIndex(name[0])})
+    if (std::optional<unsigned> i{toIndex_(name[0])})
       return named(accessIndex(
           emitter, value, emitter.context.getComptimeInt(int(*i)), srcLoc));
   }
   if (extent.isVector()) {
-    if (std::optional<llvm::SmallVector<int>> iMask{toIndexSwizzle(name)})
+    if (std::optional<llvm::SmallVector<int>> iMask{toIndexSwizzle_(name)})
       return named(RValue(
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
           emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask)));
@@ -504,7 +504,7 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
   std::string components{};
   std::string colorComponents{};
   for (uint32_t i{}; i < 4; i++) {
-    if (!toIndex("xyzw"[i])) break;
+    if (!toIndex_("xyzw"[i])) break;
     if (!components.empty()) {
       components += ", ";
       colorComponents += ", ";
@@ -1065,7 +1065,7 @@ void FunctionType::initialize(Emitter &emitter) {
     // non-exported) function into every other importer's overload
     // resolution.
     FunctionType *prevFunc{static_cast<FunctionType *>(prevType)};
-    if (prevFunc->decl.srcLoc.module_ == decl.srcLoc.module_) {
+    if (prevFunc->decl.srcLoc.module == decl.srcLoc.module) {
       if (prevFunc->isVariant())
         decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                                " must not overload function variant");
@@ -1131,7 +1131,7 @@ void FunctionType::initialize(Emitter &emitter) {
   }
   // If this is a function with no parameters that returns `material`,
   // it is a material definition!
-  if (returnType == context.mMaterialType &&
+  if (returnType == context.materialType_ &&
       (params.empty() || params.hasAllDefaultInitializers())) {
     if (decl.hasAttribute("pure"))
       decl.srcLoc.throwError("Material ", SpellQuoted(declName),
@@ -1140,7 +1140,7 @@ void FunctionType::initialize(Emitter &emitter) {
       decl.srcLoc.throwError("Material ", SpellQuoted(declName),
                              " must not be declared '@(macro)'");
     isMaterial = true;
-    initializeMaterialFunctions(emitter);
+    initializeMaterialFunctions_(emitter);
   }
 }
 
@@ -1515,19 +1515,19 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
 }
 } // namespace
 
-void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
+void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
   Context &context{emitter.context};
   Compiler &compiler{context.compiler};
   // Build the qualified material name from the module identity, the
   // enclosing namespace names, and the material name.
-  Module *module_{decl.srcLoc.module_};
-  SMDL_SANITY_CHECK(module_);
-  std::string moduleQualifiedName{module_->getQualifiedName()};
+  Module *module{decl.srcLoc.module};
+  SMDL_SANITY_CHECK(module);
+  std::string moduleQualifiedName{module->getQualifiedName()};
   if (moduleQualifiedName.empty()) {
     // Builtin modules have no search root; use the bare name.
     moduleQualifiedName += "::";
-    moduleQualifiedName += module_->getName();
+    moduleQualifiedName += module->getName();
   }
   std::string qualifiedName{moduleQualifiedName};
   for (const auto &namespaceName : context.currentNamespacePath) {
@@ -1541,20 +1541,20 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // entry points are emitted, so nothing this material alone references
   // is instantiated or loaded. The function itself still exists, so
   // other materials may instantiate it.
-  if (!compiler.mDesiredMaterialNames.empty() &&
+  if (!compiler.desiredMaterialNames_.empty() &&
       std::none_of(
-          compiler.mDesiredMaterialNames.begin(),
-          compiler.mDesiredMaterialNames.end(), [&](const auto &desiredName) {
+          compiler.desiredMaterialNames_.begin(),
+          compiler.desiredMaterialNames_.end(), [&](const auto &desiredName) {
             return Compiler::matchesMaterialName(desiredName, qualifiedName);
           })) {
     decl.srcLoc.logDebug(concat("Skipping material ",
                                 SpellQuoted(qualifiedName),
                                 ": not a desired material"));
-    compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
+    compiler.skippedMaterialNames_.push_back(std::move(qualifiedName));
     return;
   }
   decl.srcLoc.logDebug(concat("New material ", SpellQuoted(qualifiedName)));
-  auto &jitMaterial{compiler.mMaterialDefs.emplace_back()};
+  auto &jitMaterial{compiler.materialDefs_.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleQualifiedName = std::move(moduleQualifiedName);
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
@@ -1563,7 +1563,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
   jitMaterial.qualifiedName = std::move(qualifiedName);
-  jitMaterial.moduleIsShadowed = module_->isShadowed();
+  jitMaterial.moduleIsShadowed = module->isShadowed();
   // The JIT symbol base name is the dotted qualified name, plus a
   // disambiguating ordinal for duplicates, which only arise when the
   // module is shadowed by an equally named module under an earlier
@@ -1575,7 +1575,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     symbolBase += component;
   }
   if (int64_t numDuplicates{std::count_if(
-          compiler.mMaterialDefs.begin(), compiler.mMaterialDefs.end(),
+          compiler.materialDefs_.begin(), compiler.materialDefs_.end(),
           [&](const auto &other) {
             return &other != &jitMaterial &&
                    other.qualifiedName == jitMaterial.qualifiedName;
@@ -2171,20 +2171,19 @@ Value MetaType::accessField(Emitter &emitter, Value value,
     }
   } else if (value.isComptimeMetaModule(context)) {
     // Make exported declarations available
-    Module *module_{value.getComptimeMetaModule(context, srcLoc)};
+    Module *module{value.getComptimeMetaModule(context, srcLoc)};
     if (Declaration * declaration{Declaration::findInModule(
-                          context, name, emitter.getLLVMFunction(), module_)})
+                          context, name, emitter.getLLVMFunction(), module)})
       return declaration->value;
   } else if (value.isComptimeMetaNamespace(context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
-    ast::Namespace *namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
-    if (Declaration *
-        declaration{Declaration::resolveInScope(
-            context, name, emitter.getLLVMFunction(), namespace_->scope,
-            /*shouldIgnoreIfNotExported=*/
-            namespace_->srcLoc.module_ != emitter.currentModule,
-            std::numeric_limits<uint64_t>::max(), nullptr)})
+    ast::Namespace *ns{value.getComptimeMetaNamespace(context, srcLoc)};
+    if (Declaration * declaration{Declaration::resolveInScope(
+                          context, name, emitter.getLLVMFunction(), ns->scope,
+                          /*shouldIgnoreIfNotExported=*/
+                          ns->srcLoc.module != emitter.currentModule,
+                          std::numeric_limits<uint64_t>::max(), nullptr)})
       return declaration->value;
   }
   return RValue(context.getVoidType(), nullptr);
@@ -2269,7 +2268,7 @@ Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
 StateType::StateType(Context &context) {
   displayName = "state";
 #define ADD_FIELD(name) \
-  mFields.push_back(    \
+  fields_.push_back(    \
       {context.getType(&State::name), #name, uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
   ADD_FIELD(userData);
@@ -2312,7 +2311,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(vertexColor);
 #undef ADD_FIELD
   llvm::SmallVector<llvm::Type *> llvmTypes{};
-  for (auto &field : mFields) {
+  for (auto &field : fields_) {
     SMDL_SANITY_CHECK(field.type);
     SMDL_SANITY_CHECK(field.type->llvmType);
     llvmTypes.push_back(field.type->llvmType);
@@ -2320,19 +2319,19 @@ StateType::StateType(Context &context) {
   llvmType = llvm::StructType::create(context, llvmTypes, displayName);
   const llvm::StructLayout *llvmLayout{context.llvmLayout.getStructLayout(
       static_cast<llvm::StructType *>(llvmType))};
-  for (unsigned i = 0; i < mFields.size(); i++)
-    if (mFields[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
+  for (unsigned i = 0; i < fields_.size(); i++)
+    if (fields_[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
       throw Error(
           concat("Mismatch between C++ and SMDL 'state' structures (field ",
-                 SpellQuoted(mFields[i].name), " is misaligned)"));
+                 SpellQuoted(fields_[i].name), " is misaligned)"));
 }
 
 Value StateType::accessField(Emitter &emitter, Value value,
                              std::string_view name,
                              const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(value.isLValue());
-  for (unsigned i = 0; i < mFields.size(); i++) {
-    const auto &field{mFields[i]};
+  for (unsigned i = 0; i < fields_.size(); i++) {
+    const auto &field{fields_[i]};
     if (field.name == name) {
       llvm::Value *llvmValue{
           emitter.builder.CreateStructGEP(value.type->llvmType, value, i)};

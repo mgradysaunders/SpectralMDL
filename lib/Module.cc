@@ -12,20 +12,20 @@
 namespace smdl {
 
 Module::Module(std::string name, std::string sourceCode)
-    : mSourceCode(std::move(sourceCode)) {
-  mOrigin = ORIGIN_BUILTIN;
+    : sourceCode_(std::move(sourceCode)) {
+  origin_ = ORIGIN_BUILTIN;
   // The name is the builtin lookup key, e.g., `models::prospect`: the
   // last component is the module name and the components together form
   // the qualified name.
   std::vector<std::string_view> components{splitQualifiedName(name)};
   if (components.empty()) {
-    mName = std::move(name);
+    name_ = std::move(name);
   } else {
-    mQualifiedName = joinQualifiedName(components);
-    mName = std::string(components.back());
+    qualifiedName_ = joinQualifiedName(components);
+    name_ = std::string(components.back());
   }
-  mDisplayName =
-      concat("<builtin ", mQualifiedName.empty() ? mName : mQualifiedName, ">");
+  displayName_ =
+      concat("<builtin ", qualifiedName_.empty() ? name_ : qualifiedName_, ">");
 }
 
 Module::~Module() {}
@@ -54,85 +54,84 @@ namespace {
 std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
                                              const std::string &searchRoot,
                                              const std::string &qualifiedName) {
-  std::unique_ptr<Module> module_{std::make_unique<Module>()};
-  module_->mOrigin = ORIGIN_FILE;
-  module_->mFileName = fileName;
-  module_->mDisplayName = fileName;
-  module_->mName = std::filesystem::path(fileName).stem().string();
-  module_->mSearchRoot =
+  std::unique_ptr<Module> module{std::make_unique<Module>()};
+  module->origin_ = ORIGIN_FILE;
+  module->fileName_ = fileName;
+  module->displayName_ = fileName;
+  module->name_ = std::filesystem::path(fileName).stem().string();
+  module->searchRoot_ =
       searchRoot.empty() ? parentPathOf(fileName) : searchRoot;
-  module_->mQualifiedName =
-      qualifiedName.empty()
-          ? deriveQualifiedName(fileName, module_->mSearchRoot)
-          : qualifiedName;
-  module_->mSourceCode = readOrThrow(fileName);
-  return module_;
+  module->qualifiedName_ =
+      qualifiedName.empty() ? deriveQualifiedName(fileName, module->searchRoot_)
+                            : qualifiedName;
+  module->sourceCode_ = readOrThrow(fileName);
+  return module;
 }
 
 std::unique_ptr<Module> Module::loadFromFileExtractedFromArchive(
     const std::string &archiveFileName, const std::string &entryName,
     const std::string &file, const std::string &searchRoot) {
-  std::unique_ptr<Module> module_{std::make_unique<Module>()};
-  module_->mOrigin = ORIGIN_ARCHIVE;
-  module_->mFileName = joinPaths(archiveFileName, entryName);
-  module_->mDisplayName = module_->mFileName;
-  module_->mName = std::filesystem::path(entryName).stem().string();
-  module_->mSearchRoot =
+  std::unique_ptr<Module> module{std::make_unique<Module>()};
+  module->origin_ = ORIGIN_ARCHIVE;
+  module->fileName_ = joinPaths(archiveFileName, entryName);
+  module->displayName_ = module->fileName_;
+  module->name_ = std::filesystem::path(entryName).stem().string();
+  module->searchRoot_ =
       searchRoot.empty() ? parentPathOf(archiveFileName) : searchRoot;
   // The entry path encodes the package structure, so derive the
   // qualified name as if the archive were extracted in place at the
   // top level of the search root.
-  module_->mQualifiedName =
-      deriveQualifiedName(module_->mFileName, archiveFileName);
-  module_->mSourceCode = file;
-  return module_;
+  module->qualifiedName_ =
+      deriveQualifiedName(module->fileName_, archiveFileName);
+  module->sourceCode_ = file;
+  return module;
 }
 
 std::unique_ptr<Module>
 Module::loadFromMDLE(const std::string &mdleFileName, const std::string &file,
                      const std::string &qualifiedName,
                      const std::string &resourceDirectory) {
-  std::unique_ptr<Module> module_{std::make_unique<Module>()};
-  module_->mOrigin = ORIGIN_ARCHIVE;
-  module_->mFileName = joinPaths(mdleFileName, "main.mdl");
-  module_->mDisplayName = module_->mFileName;
-  module_->mName = std::filesystem::path(mdleFileName).stem().string();
-  module_->mSearchRoot = parentPathOf(mdleFileName);
-  module_->mQualifiedName = qualifiedName;
-  module_->mAnchorDirectory = resourceDirectory;
-  module_->mSourceCode = file;
-  return module_;
+  std::unique_ptr<Module> module{std::make_unique<Module>()};
+  module->origin_ = ORIGIN_ARCHIVE;
+  module->fileName_ = joinPaths(mdleFileName, "main.mdl");
+  module->displayName_ = module->fileName_;
+  module->name_ = std::filesystem::path(mdleFileName).stem().string();
+  module->searchRoot_ = parentPathOf(mdleFileName);
+  module->qualifiedName_ = qualifiedName;
+  module->anchorDirectory_ = resourceDirectory;
+  module->sourceCode_ = file;
+  return module;
 }
 
 std::unique_ptr<Module>
 Module::loadFromSourceCode(const std::string &qualifiedName,
                            std::string sourceCode,
                            const std::string &anchorDirectory) {
-  std::unique_ptr<Module> module_{std::make_unique<Module>()};
+  std::unique_ptr<Module> module{std::make_unique<Module>()};
   std::vector<std::string_view> components{splitQualifiedName(qualifiedName)};
-  module_->mOrigin = ORIGIN_SOURCE_CODE;
-  module_->mDisplayName = concat("<string ", qualifiedName, ">");
-  module_->mName =
+  module->origin_ = ORIGIN_SOURCE_CODE;
+  module->displayName_ = concat("<string ", qualifiedName, ">");
+  module->name_ =
       components.empty() ? qualifiedName : std::string(components.back());
-  module_->mQualifiedName = qualifiedName;
-  module_->mAnchorDirectory = anchorDirectory;
-  module_->mSourceCode = std::move(sourceCode);
-  return module_;
+  module->qualifiedName_ = qualifiedName;
+  module->anchorDirectory_ = anchorDirectory;
+  module->sourceCode_ = std::move(sourceCode);
+  return module;
 }
 
 std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
   return catchAndReturnError([&] {
-    if (!mRoot) {
-      SMDL_PROFILER_ENTRY("Module::parse()", mDisplayName.c_str());
-      mRoot = Parser(allocator, *this).parse();
-      computeSearchDirs();
+    if (!root_) {
+      SMDL_PROFILER_ENTRY("Module::parse()", displayName_.c_str());
+      root_ = Parser(allocator, *this).parse();
+      computeSearchDirs_();
     }
   });
 }
 
-void Module::computeSearchDirs() {
-  mSearchDirs.clear();
-  for (const auto &searchDir : mRoot->searchDirs) {
+void Module::computeSearchDirs_() {
+  searchDirs_.clear();
+  for (const auto &searchDir : root_->searchDirs) {
     const SourceLocation &srcLoc{searchDir.path->srcLoc};
     if (searchDir.path->value.empty())
       srcLoc.throwError("The '#search_dir' path must not be empty");
@@ -150,7 +149,7 @@ void Module::computeSearchDirs() {
     if (!isDirectory(dir))
       srcLoc.logWarn(concat("The '#search_dir' path ", SpellFilePath(dir),
                             " is not an existing directory"));
-    mSearchDirs.push_back(std::move(dir));
+    searchDirs_.push_back(std::move(dir));
   }
 }
 
@@ -159,19 +158,19 @@ std::optional<Error> Module::compile(Context &context) noexcept {
     return Error("Module not yet parsed");
   }
   return catchAndReturnError([&] {
-    if (mCompileStatus == COMPILE_STATUS_IN_PROGRESS)
+    if (compileStatus_ == COMPILE_STATUS_IN_PROGRESS)
       throw Error(
-          concat("Detected cyclic import of module ", SpellQuoted(mName)));
-    if (mCompileStatus == COMPILE_STATUS_FAILED)
-      throw Error(mCompileErrorMessage);
-    if (mCompileStatus == COMPILE_STATUS_NOT_STARTED) {
+          concat("Detected cyclic import of module ", SpellQuoted(name_)));
+    if (compileStatus_ == COMPILE_STATUS_FAILED)
+      throw Error(compileErrorMessage_);
+    if (compileStatus_ == COMPILE_STATUS_NOT_STARTED) {
       // On failure, mark FAILED and remember the original error: the
       // module must not be re-emitted (that would duplicate symbols), and
       // a later reference must reproduce the original diagnostic instead
       // of misreporting a cyclic import.
-      mCompileStatus = COMPILE_STATUS_IN_PROGRESS;
+      compileStatus_ = COMPILE_STATUS_IN_PROGRESS;
       try {
-        SMDL_PROFILER_ENTRY("Module::compile()", mDisplayName.c_str());
+        SMDL_PROFILER_ENTRY("Module::compile()", displayName_.c_str());
         SMDL_PRESERVE(context.currentModule, context.currentNamespacePath);
         context.currentModule = this;
         context.modulesInProgress.push_back(this);
@@ -181,16 +180,16 @@ std::optional<Error> Module::compile(Context &context) noexcept {
         // namespace, which must not leak into our material names.
         context.currentNamespacePath.clear();
         Emitter emitter{context};
-        emitter.emit(mRoot);
-        mRootScope = emitter.scope;
-        mCompileStatus = COMPILE_STATUS_FINISHED;
+        emitter.emit(root_);
+        rootScope_ = emitter.scope;
+        compileStatus_ = COMPILE_STATUS_FINISHED;
       } catch (const Error &error) {
-        mCompileStatus = COMPILE_STATUS_FAILED;
-        mCompileErrorMessage = error.message;
+        compileStatus_ = COMPILE_STATUS_FAILED;
+        compileErrorMessage_ = error.message;
         throw;
       } catch (...) {
-        mCompileStatus = COMPILE_STATUS_FAILED;
-        mCompileErrorMessage = concat("module ", SpellQuoted(mName),
+        compileStatus_ = COMPILE_STATUS_FAILED;
+        compileErrorMessage_ = concat("module ", SpellQuoted(name_),
                                       " previously failed to compile");
         throw;
       }
@@ -201,27 +200,27 @@ std::optional<Error> Module::compile(Context &context) noexcept {
 std::optional<Error>
 Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
   if (!isFileBacked()) {
-    return Error(concat("Cannot format ", SpellQuoted(mDisplayName),
+    return Error(concat("Cannot format ", SpellQuoted(displayName_),
                         " because the module has no file"));
   }
   if (!isParsed()) {
     BumpPtrAllocator allocator{};
     if (std::optional<Error> error{parse(allocator)}) return error;
     std::optional<Error> error{formatSourceFiles(formatOptions)};
-    mRoot = {};
+    root_ = {};
     return error;
   }
   return catchAndReturnError([&] {
-    SMDL_PROFILER_ENTRY("Module::formatSourceFiles()", mDisplayName.c_str());
+    SMDL_PROFILER_ENTRY("Module::formatSourceFiles()", displayName_.c_str());
     Formatter formatter{formatOptions};
-    std::string formatted{formatter.format(mSourceCode, *mRoot)};
+    std::string formatted{formatter.format(sourceCode_, *root_)};
     if (formatOptions.isInPlace) {
       if (isExtractedFromArchive()) {
         throw Error(
             concat("Cannot format module extracted from archive in-place ",
-                   SpellFilePath(mFileName)));
+                   SpellFilePath(fileName_)));
       }
-      std::basic_fstream<char> stream{openOrThrow(mFileName, std::ios::out)};
+      std::basic_fstream<char> stream{openOrThrow(fileName_, std::ios::out)};
       stream << formatted;
     } else {
       std::cout << formatted;
@@ -231,15 +230,15 @@ Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
 }
 
 bool Module::isSMDLSyntax() const noexcept {
-  return mRoot && mRoot->isSMDLSyntax();
+  return root_ && root_->isSMDLSyntax();
 }
 
 void Module::reset() noexcept {
-  mRoot.reset();
-  mSearchDirs.clear();
-  mCompileStatus = COMPILE_STATUS_NOT_STARTED;
-  mCompileErrorMessage.clear();
-  mRootScope = nullptr;
+  root_.reset();
+  searchDirs_.clear();
+  compileStatus_ = COMPILE_STATUS_NOT_STARTED;
+  compileErrorMessage_.clear();
+  rootScope_ = nullptr;
 }
 
 } // namespace smdl

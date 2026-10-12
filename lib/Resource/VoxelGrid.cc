@@ -531,18 +531,18 @@ void saveMitsubaVol(const std::string &fileName, const VoxelGrid &voxelGrid) {
 //--}
 
 void VoxelGrid::clear() noexcept {
-  mExtent = int3();
-  mBrickCount = int3();
-  mBackground = 0.0f;
-  mMinValue = 0.0f;
-  mMaxValue = 0.0f;
-  mWorldBoundMin = float3();
-  mWorldBoundMax = float3();
-  mMajorantExtent = 1;
-  mMajorantCount = int3();
-  mBrickTable.clear();
-  mBrickData.clear();
-  mMajorantBounds.clear();
+  extent_ = int3();
+  brickCount_ = int3();
+  background_ = 0.0f;
+  minValue_ = 0.0f;
+  maxValue_ = 0.0f;
+  worldBoundMin_ = float3();
+  worldBoundMax_ = float3();
+  majorantExtent_ = 1;
+  majorantCount_ = int3();
+  brickTable_.clear();
+  brickData_.clear();
+  majorantBounds_.clear();
 }
 
 std::optional<Error>
@@ -563,30 +563,30 @@ VoxelGrid::loadFromFile(const std::string &fileName,
     } else {
       throw Error("Unrecognized volume file extension");
     }
-    mExtent = flat.extent;
-    mBrickCount = flat.brickCount;
-    mBackground = flat.background;
-    mMinValue = flat.minValue;
-    mMaxValue = flat.maxValue;
-    mWorldBoundMin = flat.worldBoundMin;
-    mWorldBoundMax = flat.worldBoundMax;
-    mBrickTable = std::move(flat.brickTable);
-    mBrickData = std::move(flat.brickData);
+    extent_ = flat.extent;
+    brickCount_ = flat.brickCount;
+    background_ = flat.background;
+    minValue_ = flat.minValue;
+    maxValue_ = flat.maxValue;
+    worldBoundMin_ = flat.worldBoundMin;
+    worldBoundMax_ = flat.worldBoundMax;
+    brickTable_ = std::move(flat.brickTable);
+    brickData_ = std::move(flat.brickData);
     // Compute the majorant grid over the cell voxels dilated by one on
     // every side, so that a cell's maximum bounds every trilinear
     // interpolation whose support touches it. This goes through
     // 'fetch()', which already resolves empty bricks and out-of-extent
     // coordinates to the background.
-    const int M{majorantExtentFor(mExtent)};
-    mMajorantExtent = M;
-    mMajorantCount = int3((mExtent.x + M - 1) / M, (mExtent.y + M - 1) / M,
-                          (mExtent.z + M - 1) / M);
-    mMajorantBounds.assign(size_t(mMajorantCount.x) * size_t(mMajorantCount.y) *
-                               size_t(mMajorantCount.z),
-                           float2(mBackground));
-    for (int cz = 0; cz < mMajorantCount.z; cz++)
-      for (int cy = 0; cy < mMajorantCount.y; cy++)
-        for (int cx = 0; cx < mMajorantCount.x; cx++) {
+    const int M{majorantExtentFor(extent_)};
+    majorantExtent_ = M;
+    majorantCount_ = int3((extent_.x + M - 1) / M, (extent_.y + M - 1) / M,
+                          (extent_.z + M - 1) / M);
+    majorantBounds_.assign(size_t(majorantCount_.x) * size_t(majorantCount_.y) *
+                               size_t(majorantCount_.z),
+                           float2(background_));
+    for (int cz = 0; cz < majorantCount_.z; cz++)
+      for (int cy = 0; cy < majorantCount_.y; cy++)
+        for (int cx = 0; cx < majorantCount_.x; cx++) {
           float cellMin{fetch(cx * M - 1, cy * M - 1, cz * M - 1)};
           float cellMax{cellMin};
           for (int z = cz * M - 1; z <= cz * M + M; z++)
@@ -596,7 +596,8 @@ VoxelGrid::loadFromFile(const std::string &fileName,
                 cellMin = std::min(cellMin, value);
                 cellMax = std::max(cellMax, value);
               }
-          mMajorantBounds[majorantIndex(cx, cy, cz)] = float2(cellMin, cellMax);
+          majorantBounds_[majorantIndex_(cx, cy, cz)] =
+              float2(cellMin, cellMax);
         }
   })};
   if (error) {
@@ -661,28 +662,28 @@ VoxelGrid::saveToFile(const std::string &fileName,
 }
 
 float VoxelGrid::fetch(int x, int y, int z) const noexcept {
-  if (x < 0 || x >= mExtent.x || //
-      y < 0 || y >= mExtent.y || //
-      z < 0 || z >= mExtent.z)
-    return mBackground;
-  const int32_t brickIndex{mBrickTable[size_t(
-      (x / B) + mBrickCount.x * ((y / B) + int64_t(mBrickCount.y) * (z / B)))]};
-  if (brickIndex < 0) return mBackground;
-  return mBrickData[size_t(brickIndex) * BRICK_VOLUME + (x % B) +
+  if (x < 0 || x >= extent_.x || //
+      y < 0 || y >= extent_.y || //
+      z < 0 || z >= extent_.z)
+    return background_;
+  const int32_t brickIndex{brickTable_[size_t(
+      (x / B) + brickCount_.x * ((y / B) + int64_t(brickCount_.y) * (z / B)))]};
+  if (brickIndex < 0) return background_;
+  return brickData_[size_t(brickIndex) * BRICK_VOLUME + (x % B) +
                     B * ((y % B) + int64_t(B) * (z % B))];
 }
 
 float VoxelGrid::sample(float3 coord) const noexcept {
-  if (!isValid()) return mBackground;
+  if (!isValid()) return background_;
   // Texture space [0,1]^3 spans the extent with values at voxel
   // centers, so the continuous voxel-space position is offset by half:
   // this matches the 2D convention in 'tex.mdl', and the clamped
   // corner fetches below match 'wrap_clamp'. Clamping the coordinate
   // here is redundant with the corner clamping except that it keeps the
   // 'int' casts below in range for arbitrarily wild inputs.
-  const float px{std::clamp(coord.x, 0.0f, 1.0f) * float(mExtent.x) - 0.5f};
-  const float py{std::clamp(coord.y, 0.0f, 1.0f) * float(mExtent.y) - 0.5f};
-  const float pz{std::clamp(coord.z, 0.0f, 1.0f) * float(mExtent.z) - 0.5f};
+  const float px{std::clamp(coord.x, 0.0f, 1.0f) * float(extent_.x) - 0.5f};
+  const float py{std::clamp(coord.y, 0.0f, 1.0f) * float(extent_.y) - 0.5f};
+  const float pz{std::clamp(coord.z, 0.0f, 1.0f) * float(extent_.z) - 0.5f};
   const int ix{int(std::floor(px))};
   const int iy{int(std::floor(py))};
   const int iz{int(std::floor(pz))};
@@ -690,9 +691,9 @@ float VoxelGrid::sample(float3 coord) const noexcept {
   const float fy{py - float(iy)};
   const float fz{pz - float(iz)};
   const auto clampedFetch{[&](int x, int y, int z) {
-    return fetch(std::clamp(x, 0, mExtent.x - 1),
-                 std::clamp(y, 0, mExtent.y - 1),
-                 std::clamp(z, 0, mExtent.z - 1));
+    return fetch(std::clamp(x, 0, extent_.x - 1),
+                 std::clamp(y, 0, extent_.y - 1),
+                 std::clamp(z, 0, extent_.z - 1));
   }};
   const auto lerp{[](float a, float b, float t) { return a + t * (b - a); }};
   return lerp(

@@ -100,7 +100,7 @@ public:
   [[nodiscard]] bool exists(std::string_view name, const State *state) const;
 
 private:
-  void *mPtr{};
+  void *ptr_{};
 };
 
 /// \}

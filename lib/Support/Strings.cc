@@ -59,28 +59,28 @@ void vprintToString(std::string &str, const char *fmt, std::va_list args) {
 
 void SpellQuoted::appendTo(std::string &result) const {
   result += '"';
-  result += mStr;
+  result += str_;
   result += '"';
 }
 
 void SpellFilePath::appendTo(std::string &result) const {
   result += '"';
-  result += bestPathForPrinting(std::string(mStr));
+  result += bestPathForPrinting(std::string(str_));
   result += '"';
 }
 
 void SpellLocation::appendTo(std::string &result) const {
   result += '[';
-  if (mIsPath) {
-    result += bestPathForPrinting(std::string(mName));
+  if (isPath_) {
+    result += bestPathForPrinting(std::string(name_));
   } else {
-    result += mName;
+    result += name_;
   }
   result += ':';
-  result += std::to_string(mLineNo);
-  if (mCharNo > 0) {
+  result += std::to_string(lineNo_);
+  if (charNo_ > 0) {
     result += ':';
-    result += std::to_string(mCharNo);
+    result += std::to_string(charNo_);
   }
   result += ']';
 }
@@ -90,42 +90,42 @@ void SpellLocation::appendTo(std::string &result) const {
 // or the `<charconv>` floating point overloads, which libstdc++ only
 // grew in GCC 11 and which this build's floor does not assume.
 void SpellFloat::appendTo(std::string &result) const {
-  if (appendNonFinite(result, mValue)) return;
-  printToString(result, "%.*g", std::clamp(mDigits, 1, 17), mValue);
+  if (appendNonFinite(result, value_)) return;
+  printToString(result, "%.*g", std::clamp(digits_, 1, 17), value_);
 }
 
 void SpellFixed::appendTo(std::string &result) const {
-  if (appendNonFinite(result, mValue)) return;
+  if (appendNonFinite(result, value_)) return;
   // The decimal places that give the significant digits asked for: one
   // for every digit past the leading one, plus however many the leading
   // digit sits below the decimal point. A value of zero has no magnitude
   // to ask, and takes the digits as places.
-  const int digits{std::clamp(mDigits, 1, 17)};
+  const int digits{std::clamp(digits_, 1, 17)};
   int places{digits - 1};
-  if (mValue != 0)
+  if (value_ != 0)
     places =
-        std::max(places - int(std::floor(std::log10(std::abs(mValue)))), 0);
+        std::max(places - int(std::floor(std::log10(std::abs(value_)))), 0);
   // The places stay as the digits asked for, trailing zeros and all: a
   // value that happens to end in one is the reason a column lines up.
-  printToString(result, "%.*f", std::min(places, 350), mValue);
+  printToString(result, "%.*f", std::min(places, 350), value_);
 }
 
 void SpellExact::appendTo(std::string &result) const {
   // An infinity or a NaN has no decimal spelling to be exact about.
-  if (appendNonFinite(result, mValue)) return;
+  if (appendNonFinite(result, value_)) return;
   // The shortest spelling that reads back as the same number. Shortest
   // by the string rather than by the digits, since `%g` turns
   // exponential once the exponent reaches the precision and `6e+02` is
   // no improvement on `600`.
-  const int maxDigits{mIsFloat ? 9 : 17};
+  const int maxDigits{isFloat_ ? 9 : 17};
   // NOLINTNEXTLINE
   char shortest[64]{};
   for (int digits = 1; digits <= maxDigits; digits++) {
     // NOLINTNEXTLINE
     char buffer[64]{};
-    stbsp_snprintf(buffer, int(sizeof(buffer)), "%.*g", digits, mValue);
-    if (mIsFloat ? std::strtof(buffer, nullptr) != float(mValue)
-                 : std::strtod(buffer, nullptr) != mValue)
+    stbsp_snprintf(buffer, int(sizeof(buffer)), "%.*g", digits, value_);
+    if (isFloat_ ? std::strtof(buffer, nullptr) != float(value_)
+                 : std::strtod(buffer, nullptr) != value_)
       continue;
     if (!shortest[0] || std::strlen(buffer) < std::strlen(shortest))
       std::memcpy(shortest, buffer, sizeof(shortest));
@@ -134,25 +134,25 @@ void SpellExact::appendTo(std::string &result) const {
   // the C runtime's and goes by the locale, so under one whose decimal
   // point is a comma it stops at the `.` written here.
   if (!shortest[0])
-    stbsp_snprintf(shortest, int(sizeof(shortest)), "%.*g", maxDigits, mValue);
+    stbsp_snprintf(shortest, int(sizeof(shortest)), "%.*g", maxDigits, value_);
   result += shortest;
 }
 
 void SpellPercent::appendTo(std::string &result) const {
-  const double percent{100 * mValue};
+  const double percent{100 * value_};
   if (!appendNonFinite(result, percent))
-    printToString(result, "%.*f", std::clamp(mDecimals, 0, 9), percent);
+    printToString(result, "%.*f", std::clamp(decimals_, 0, 9), percent);
   result += '%';
 }
 
 void SpellByteSize::appendTo(std::string &result) const {
   // NOLINTNEXTLINE
   constexpr const char *UNITS[]{"KiB", "MiB", "GiB", "TiB"};
-  if (mCount < 1024) {
-    printToString(result, "%zu B", mCount);
+  if (count_ < 1024) {
+    printToString(result, "%zu B", count_);
     return;
   }
-  double value{double(mCount) / 1024.0};
+  double value{double(count_) / 1024.0};
   size_t unit{0};
   for (; value >= 1024.0 && unit + 1 < std::size(UNITS); unit++)
     value /= 1024.0;
@@ -163,15 +163,15 @@ void SpellByteSize::appendTo(std::string &result) const {
 }
 
 void SpellCounted::appendTo(std::string &result) const {
-  result += std::to_string(mCount);
+  result += std::to_string(count_);
   result += ' ';
-  if (mCount == 1) {
-    result += mSingular;
-  } else if (mPlural.empty()) {
-    result += mSingular;
+  if (count_ == 1) {
+    result += singular_;
+  } else if (plural_.empty()) {
+    result += singular_;
     result += 's';
   } else {
-    result += mPlural;
+    result += plural_;
   }
 }
 

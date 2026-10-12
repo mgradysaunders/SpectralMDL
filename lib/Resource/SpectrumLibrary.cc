@@ -124,7 +124,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
                             SpellQuoted(value), onLine(keyLine)));
         }
       } else if (key.equals_insensitive("wavelength")) {
-        mWavelengths.clear();
+        wavelengths_.clear();
         llvm::SmallVector<llvm::StringRef> splits{};
         value.split(splits, ',');
         for (auto &split : splits) {
@@ -132,26 +132,26 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
           if (split.trim().getAsDouble(wavelength)) {
             throwKeyError("invalid 'wavelength'");
           }
-          mWavelengths.push_back(wavelength);
+          wavelengths_.push_back(wavelength);
         }
       } else if (key.equals_insensitive("spectra names")) {
-        mCurveNames.clear();
+        curveNames_.clear();
         llvm::SmallVector<llvm::StringRef> splits{};
         value.split(splits, ',');
         for (auto &split : splits) {
-          mCurveNames.push_back(split.trim().str());
+          curveNames_.push_back(split.trim().str());
         }
       }
     }
-    if (mWavelengths.size() != size_t(samples)) {
+    if (wavelengths_.size() != size_t(samples)) {
       throwError(concat("'samples'", onLine(samplesLine), " is ", samples,
                         ", but 'wavelength' lists ",
-                        SpellCounted(mWavelengths.size(), "wavelength")));
+                        SpellCounted(wavelengths_.size(), "wavelength")));
     }
-    if (mCurveNames.size() != size_t(lines) && !mCurveNames.empty()) {
+    if (curveNames_.size() != size_t(lines) && !curveNames_.empty()) {
       throwError(concat("'lines'", onLine(linesLine), " is ", lines,
                         ", but 'spectra names' lists ",
-                        SpellCounted(mCurveNames.size(), "name")));
+                        SpellCounted(curveNames_.size(), "name")));
     }
     // Of the ENVI data types, only 4 (32-bit float) and 5 (64-bit float)
     // make sense for a spectral library.
@@ -159,7 +159,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       throwError(concat("Unsupported 'data type' ", dataType,
                         onLine(dataTypeLine), ", expected 4 or 5"));
     }
-    for (auto &wavelength : mWavelengths) {
+    for (auto &wavelength : wavelengths_) {
       wavelength = toNanometers(units, wavelength);
     }
     std::string binFile{readOrThrow(fileName)};
@@ -174,9 +174,9 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       throwError(concat("The data holds ", bin.size() / valueSize, " of the ",
                         numCurveValues, " values its header describes"));
     }
-    mNumCurves = size_t(lines);
-    mCurveValues.clear();
-    mCurveValues.reserve(numCurveValues);
+    numCurves_ = size_t(lines);
+    curveValues_.clear();
+    curveValues_.reserve(numCurveValues);
     for (size_t i = 0; i < numCurveValues; i++) {
       switch (dataType) {
       case 4: {
@@ -185,7 +185,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
             llvm::support::endian::read32(bin.data(), endianness)};
         bin = bin.drop_front(4);
         std::memcpy(&value, &valueData, 4);
-        mCurveValues.push_back(value);
+        curveValues_.push_back(value);
         break;
       }
       case 5: {
@@ -194,7 +194,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
             llvm::support::endian::read64(bin.data(), endianness)};
         bin = bin.drop_front(8);
         std::memcpy(&value, &valueData, 8);
-        mCurveValues.push_back(value);
+        curveValues_.push_back(value);
         break;
       }
       default:
@@ -202,7 +202,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
         break;
       }
     }
-    sortByWavelength(mWavelengths, mCurveValues, mNumCurves);
+    sortByWavelength(wavelengths_, curveValues_, numCurves_);
   })};
   if (error) {
     clear();
@@ -213,8 +213,8 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
 
 SpectrumView
 SpectrumLibrary::getCurveByName(std::string_view name) const noexcept {
-  for (size_t i = 0; i < mCurveNames.size(); i++) {
-    if (llvm::StringRef(mCurveNames[i])
+  for (size_t i = 0; i < curveNames_.size(); i++) {
+    if (llvm::StringRef(curveNames_[i])
             .equals_insensitive(llvm::StringRef(name)))
       return getCurveByIndex(i);
   }

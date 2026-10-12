@@ -93,24 +93,24 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
     return *this;
   }
 
-  [[nodiscard]] bool hasValue() const { return mIsValid; }
+  [[nodiscard]] bool hasValue() const { return isValid_; }
 
   [[nodiscard]] const smdl::Vector<T, N> &getValue() const {
-    assert(mIsValid && "invalid option value");
-    return mValue;
+    assert(isValid_ && "invalid option value");
+    return value_;
   }
 
   void setValue(const smdl::Vector<T, N> &value) {
-    mValue = value;
-    mIsValid = true;
+    value_ = value;
+    isValid_ = true;
   }
 
   /// Does this hold `value`? Compared component by component, since the
   /// vector `operator==` returns a vector of results.
   [[nodiscard]] bool compare(const smdl::Vector<T, N> &value) const {
-    if (!mIsValid) return false;
+    if (!isValid_) return false;
     for (size_t i{}; i < N; i++)
-      if (!(mValue[i] == value[i])) return false;
+      if (!(value_[i] == value[i])) return false;
     return true;
   }
 
@@ -120,8 +120,8 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
   }
 
 private:
-  smdl::Vector<T, N> mValue{};
-  bool mIsValid{};
+  smdl::Vector<T, N> value_{};
+  bool isValid_{};
 };
 
 /// A vector in the comma-separated syntax an option is typed in, so that

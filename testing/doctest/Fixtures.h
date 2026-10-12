@@ -119,10 +119,10 @@
 class TempDir final {
 public:
   explicit TempDir(std::string_view stem)
-      : mPath(std::filesystem::temp_directory_path() /
+      : path_(std::filesystem::temp_directory_path() /
               ("smdl-test-" + std::string(stem))) {
-    std::filesystem::remove_all(mPath);
-    std::filesystem::create_directories(mPath);
+    std::filesystem::remove_all(path_);
+    std::filesystem::create_directories(path_);
   }
 
   TempDir(const TempDir &) = delete;
@@ -131,17 +131,17 @@ public:
 
   ~TempDir() {
     std::error_code ignored{};
-    std::filesystem::remove_all(mPath, ignored);
+    std::filesystem::remove_all(path_, ignored);
   }
 
   /// The directory itself.
   [[nodiscard]] const std::filesystem::path &path() const noexcept {
-    return mPath;
+    return path_;
   }
 
   /// The path of `name` within the directory, which need not exist.
   [[nodiscard]] std::filesystem::path operator/(std::string_view name) const {
-    return mPath / std::filesystem::path(name);
+    return path_ / std::filesystem::path(name);
   }
 
   /// Write `text` to `name`, creating any intervening directories, and
@@ -166,7 +166,7 @@ public:
   }
 
 private:
-  std::filesystem::path mPath{};
+  std::filesystem::path path_{};
 };
 
 //--}
@@ -179,9 +179,9 @@ private:
 /// changed would change what a later test resolves.
 class ScopedEnv final {
 public:
-  ScopedEnv(const char *name, const std::string &value) : mName(name) {
-    if (const char *previous{std::getenv(name)}) mPrevious = previous;
-    set(value.c_str());
+  ScopedEnv(const char *name, const std::string &value) : name_(name) {
+    if (const char *previous{std::getenv(name)}) previous_ = previous;
+    set_(value.c_str());
   }
 
   ScopedEnv(const ScopedEnv &) = delete;
@@ -189,33 +189,33 @@ public:
   ScopedEnv &operator=(const ScopedEnv &) = delete;
 
   ~ScopedEnv() {
-    if (mPrevious) {
-      set(mPrevious->c_str());
+    if (previous_) {
+      set_(previous_->c_str());
     } else {
-      unset();
+      unset_();
     }
   }
 
 private:
-  void set(const char *value) {
+  void set_(const char *value) {
 #if defined(_WIN32)
-    _putenv_s(mName, value);
+    _putenv_s(name_, value);
 #else
-    setenv(mName, value, 1);
+    setenv(name_, value, 1);
 #endif
   }
 
-  void unset() {
+  void unset_() {
 #if defined(_WIN32)
-    _putenv_s(mName, "");
+    _putenv_s(name_, "");
 #else
-    unsetenv(mName);
+    unsetenv(name_);
 #endif
   }
 
-  const char *mName{};
+  const char *name_{};
 
-  std::optional<std::string> mPrevious{};
+  std::optional<std::string> previous_{};
 };
 
 //--}

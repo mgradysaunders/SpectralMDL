@@ -48,13 +48,13 @@ public:
   /// Set whether or not the locator should search the present working
   /// directory.
   void setSearchPwd(bool shouldSearchPwd) {
-    mShouldSearchPwd = shouldSearchPwd;
+    shouldSearchPwd_ = shouldSearchPwd;
   }
 
   /// Set whether or not the locator should search the default search
   /// directories named by `SMDL_DEFAULT_SEARCH_DIRS`.
   void setSearchDefaultDirs(bool shouldSearchDefaultDirs) {
-    mShouldSearchDefaultDirs = shouldSearchDefaultDirs;
+    shouldSearchDefaultDirs_ = shouldSearchDefaultDirs;
   }
 
   /// Add search directory.
@@ -71,7 +71,7 @@ public:
   ///
   bool addSearchDir(const std::string &dir, bool isRecursive = false) {
     if (isDirectory(dir)) {
-      mSearchDirs.emplace_back(SearchDir{makePathCanonical(dir), isRecursive});
+      searchDirs_.emplace_back(SearchDir{makePathCanonical(dir), isRecursive});
       return true;
     }
     return false;
@@ -226,10 +226,10 @@ public:
 
 private:
   /// Always search the present working directory?
-  bool mShouldSearchPwd{true};
+  bool shouldSearchPwd_{true};
 
   /// Search the directories named by `SMDL_DEFAULT_SEARCH_DIRS`?
-  bool mShouldSearchDefaultDirs{true};
+  bool shouldSearchDefaultDirs_{true};
 
   /// A search directory.
   class SearchDir final {
@@ -242,7 +242,7 @@ private:
   };
 
   /// The search directories.
-  std::vector<SearchDir> mSearchDirs;
+  std::vector<SearchDir> searchDirs_;
 };
 
 /// \}

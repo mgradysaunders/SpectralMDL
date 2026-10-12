@@ -50,7 +50,7 @@ Declaration *Declaration::findThroughImport(Context &context,
                                             Declaration *declaration) {
   // If the declaration value is a `Module` ...
   if (declaration->value.isComptimeMetaModule(context)) {
-    Module *module_{declaration->value.getComptimeMetaModule(
+    Module *module{declaration->value.getComptimeMetaModule(
         context, declaration->getSourceLocation())};
     // Look inside the module if it is either
     // 1. A universal import in unqualified form `using foo::bar import *`
@@ -63,7 +63,7 @@ Declaration *Declaration::findThroughImport(Context &context,
           name.startsWith(declaration->name)) {
         if (Declaration * subDeclaration{findInModule(
                               context, name.subspan(declaration->name.size()),
-                              llvmFunc, module_)}) {
+                              llvmFunc, module)}) {
           return subDeclaration;
         }
       }
@@ -71,7 +71,7 @@ Declaration *Declaration::findThroughImport(Context &context,
       // import `using foo::bar import *`
       if (declaration->isASTUsingImport())
         if (Declaration *
-            subDeclaration{findInModule(context, name, llvmFunc, module_)}) {
+            subDeclaration{findInModule(context, name, llvmFunc, module)}) {
           return subDeclaration;
         }
     }
@@ -160,10 +160,9 @@ Declaration *Declaration::resolveInScope(Context &context,
 
 Declaration *Declaration::findInModule(Context &context,
                                        Span<const std::string_view> name,
-                                       llvm::Function *llvmFunc,
-                                       Module *module_,
+                                       llvm::Function *llvmFunc, Module *module,
                                        bool shouldIgnoreIfNotExported) {
-  return resolveInScope(context, name, llvmFunc, module_->mRootScope,
+  return resolveInScope(context, name, llvmFunc, module->rootScope_,
                         shouldIgnoreIfNotExported,
                         std::numeric_limits<uint64_t>::max(), nullptr);
 }

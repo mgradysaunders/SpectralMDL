@@ -16,10 +16,10 @@ namespace smdl {
 class SMDL_EXPORT SpectrumLibrary final {
 public:
   void clear() noexcept {
-    mNumCurves = 0;
-    mWavelengths.clear();
-    mCurveValues.clear();
-    mCurveNames.clear();
+    numCurves_ = 0;
+    wavelengths_.clear();
+    curveValues_.clear();
+    curveNames_.clear();
   }
 
   /// Load from file.
@@ -46,11 +46,11 @@ public:
   std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
   /// Get the number of curves.
-  [[nodiscard]] size_t getNumCurves() const noexcept { return mNumCurves; }
+  [[nodiscard]] size_t getNumCurves() const noexcept { return numCurves_; }
 
   /// Get the curve names, which are empty if the header names none.
   [[nodiscard]] Span<const std::string> getCurveNames() const noexcept {
-    return mCurveNames;
+    return curveNames_;
   }
 
   /// Get curve by name, or return empty view on failure.
@@ -60,26 +60,26 @@ public:
   /// Get curve by index, or return empty view on failure.
   [[nodiscard]]
   SpectrumView getCurveByIndex(int i) const noexcept {
-    if (0 <= i && i < int(mNumCurves)) {
-      return {Span<const float>(mWavelengths),
-              Span<const float>(mCurveValues.data() + mWavelengths.size() * i,
-                                mWavelengths.size())};
+    if (0 <= i && i < int(numCurves_)) {
+      return {Span<const float>(wavelengths_),
+              Span<const float>(curveValues_.data() + wavelengths_.size() * i,
+                                wavelengths_.size())};
     }
     return {};
   }
 
 private:
   /// The number of curves.
-  size_t mNumCurves{};
+  size_t numCurves_{};
 
   /// The wavelengths in nanometers.
-  std::vector<float> mWavelengths;
+  std::vector<float> wavelengths_;
 
   /// The curve values.
-  std::vector<float> mCurveValues;
+  std::vector<float> curveValues_;
 
   /// The curve names. Optional!
-  std::vector<std::string> mCurveNames;
+  std::vector<std::string> curveNames_;
 };
 
 /// \}

@@ -63,21 +63,21 @@ template <> struct ValueSyntax<LogLevel> final {
 
 template <typename T>
 EnvOverride<T>::EnvOverride(const char *name, const char *what)
-    : mName(name), mWhat(what), mText(readEnv(name)) {
-  if (!mText.empty()) mValue = ValueSyntax<T>::parse(mText);
+    : name_(name), what_(what), text_(readEnv(name)) {
+  if (!text_.empty()) value_ = ValueSyntax<T>::parse(text_);
 }
 
 template <typename T> void EnvOverride<T>::report(T hostValue) const {
-  const bool isMalformed{!mText.empty() && !mValue};
-  const bool isOverriding{mValue && *mValue != hostValue};
-  if (!(isMalformed || isOverriding) || mIsReported.exchange(true)) return;
+  const bool isMalformed{!text_.empty() && !value_};
+  const bool isOverriding{value_ && *value_ != hostValue};
+  if (!(isMalformed || isOverriding) || isReported_.exchange(true)) return;
   if (isMalformed) {
-    SMDL_LOG_WARN("Ignoring ", mName, ", which is ", SpellQuoted(mText),
+    SMDL_LOG_WARN("Ignoring ", name_, ", which is ", SpellQuoted(text_),
                   " rather than ", ValueSyntax<T>::accepted);
   } else {
-    SMDL_LOG_WARN("Setting ", mWhat, " to ", ValueSyntax<T>::spell(*mValue),
+    SMDL_LOG_WARN("Setting ", what_, " to ", ValueSyntax<T>::spell(*value_),
                   ", not the host's ", ValueSyntax<T>::spell(hostValue),
-                  ", because ", mName, " is ", SpellQuoted(mText));
+                  ", because ", name_, " is ", SpellQuoted(text_));
   }
 }
 

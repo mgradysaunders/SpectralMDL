@@ -187,10 +187,10 @@ public:
   }
 
   /// Is not-valid?
-  [[nodiscard]] bool operator!() const { return !module_; }
+  [[nodiscard]] bool operator!() const { return !module; }
 
   /// Is valid?
-  [[nodiscard]] operator bool() const { return module_; }
+  [[nodiscard]] operator bool() const { return module; }
 
   /// Convert to the markup `SpellLocation` writes, or to the empty string
   /// if there is no module.
@@ -198,7 +198,7 @@ public:
 
 public:
   /// The associated MDL module, which contains the filename and source code.
-  Module *module_{};
+  Module *module{};
 
   /// The line number.
   uint32_t lineNo{1};

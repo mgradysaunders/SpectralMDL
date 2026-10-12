@@ -153,12 +153,12 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
 class StateStorage final {
 public:
   explicit StateStorage(const smdl::Compiler &compiler)
-      : mWavelengths(compiler.wavelengthBaseMax) {
-    const size_t numBands{mWavelengths.size()};
+      : wavelengths_(compiler.wavelengthBaseMax) {
+    const size_t numBands{wavelengths_.size()};
     for (size_t i = 0; i < numBands; i++) {
       // The midpoint at one band, rather than a division by zero.
       const float fac{numBands > 1 ? float(i) / float(numBands - 1) : 0.5f};
-      mWavelengths[i] = (1 - fac) * WAVELENGTH_MIN + fac * WAVELENGTH_MAX;
+      wavelengths_[i] = (1 - fac) * WAVELENGTH_MIN + fac * WAVELENGTH_MAX;
     }
   }
 
@@ -171,24 +171,24 @@ public:
   /// point being tested reads the space conventions.
   [[nodiscard]] smdl::State makeState() noexcept {
     smdl::State state{};
-    state.allocator = &mAllocator;
+    state.allocator = &allocator_;
     state.wavelengthMin = WAVELENGTH_MIN;
     state.wavelengthMax = WAVELENGTH_MAX;
-    state.wavelengthBase = mWavelengths.data();
+    state.wavelengthBase = wavelengths_.data();
     return state;
   }
 
   /// The wavelengths the state points at, in nanometers.
   [[nodiscard]] const std::vector<float> &wavelengths() const noexcept {
-    return mWavelengths;
+    return wavelengths_;
   }
 
   static constexpr float WAVELENGTH_MIN{380.0f};
   static constexpr float WAVELENGTH_MAX{720.0f};
 
 private:
-  smdl::BumpPtrAllocator mAllocator{};
-  std::vector<float> mWavelengths{};
+  smdl::BumpPtrAllocator allocator_{};
+  std::vector<float> wavelengths_{};
 };
 
 //--}
@@ -205,7 +205,7 @@ private:
 class CollectedLog final {
 public:
   explicit CollectedLog(std::string needle, bool shouldCollectDebug = false)
-      : mSink(smdl::Logger::get().addSink<Sink>(std::move(needle))) {
+      : sink_(smdl::Logger::get().addSink<Sink>(std::move(needle))) {
     if (shouldCollectDebug)
       smdl::Logger::get().setMinLevel(smdl::LOG_LEVEL_DEBUG);
   }
@@ -221,17 +221,17 @@ public:
 
   /// The messages collected so far, in the order they were logged.
   [[nodiscard]] const std::vector<std::string> &messages() const noexcept {
-    return mSink.messages;
+    return sink_.messages;
   }
 
   /// How many of them were logged as warnings.
-  [[nodiscard]] int warningCount() const noexcept { return mSink.warningCount; }
+  [[nodiscard]] int warningCount() const noexcept { return sink_.warningCount; }
 
   /// How many of them mention `needle`, for telling apart the messages a
   /// broader needle collected together.
   [[nodiscard]] int count(std::string_view needle) const {
     int n{0};
-    for (const auto &message : mSink.messages)
+    for (const auto &message : sink_.messages)
       if (message.find(needle) != std::string::npos) n++;
     return n;
   }
@@ -251,7 +251,7 @@ private:
     int warningCount{};
   };
 
-  Sink &mSink;
+  Sink &sink_;
 };
 
 //--}

@@ -213,7 +213,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       srcLoc.throwError("Conflicting definitions of '@(foreign)' function ",
                         SpellQuoted(name));
     }
-    context.compiler.mForeignFunctionSourceLocations.try_emplace(
+    context.compiler.foreignFunctionSourceLocations_.try_emplace(
         std::string(name), srcLoc);
     llvmFunc = static_cast<llvm::Function *>(llvmCallee.getCallee());
     return;
@@ -695,7 +695,7 @@ Value Emitter::emit(ast::Exec &decl) {
                                           ParameterList(), decl.srcLoc,
                                           [&] { emit(decl.stmt); })};
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-  context.compiler.mExecs.emplace_back(llvmFunc->getName().str());
+  context.compiler.execs_.emplace_back(llvmFunc->getName().str());
   return Value();
 }
 
@@ -709,7 +709,7 @@ Value Emitter::emit(ast::UnitTest &decl) {
                          emit(decl.stmt);
                        })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-    auto &unitTest{context.compiler.mUnitTests.emplace_back()};
+    auto &unitTest{context.compiler.unitTests_.emplace_back()};
     unitTest.moduleName = std::string(decl.srcLoc.getModuleName());
     unitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
     unitTest.moduleDisplayName =
@@ -3032,7 +3032,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   // prologue: a file that cannot be found is a warning, and the
   // resource type is default-constructed.
   //
-  // The warning goes through 'logResourceWarningOnce' rather than
+  // The warning goes through 'logResourceWarningOnce_' rather than
   // 'srcLoc.logWarn' because this runs at emission time, and a material
   // body is emitted once for each function 'Type.cc' generates from it.
   // Resources that are found but fail to load already report once,
@@ -3061,7 +3061,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                            auto &&buildFromFile) -> Value {
     std::optional<std::string> resolvedFileName{context.locate(fileName)};
     if (!resolvedFileName) {
-      if (context.compiler.logResourceWarningOnce(
+      if (context.compiler.logResourceWarningOnce_(
               resourceSourceLocation(srcLoc), fileName,
               concat("Cannot load ", SpellQuoted(fileName),
                      ": file not found")))
@@ -3091,7 +3091,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     std::vector<FileLocator::ImagePath> resolvedImagePaths{
         context.locateImages(fileName)};
     if (resolvedImagePaths.empty()) {
-      if (context.compiler.logResourceWarningOnce(
+      if (context.compiler.logResourceWarningOnce_(
               resourceSourceLocation(srcLoc), fileName,
               concat("Cannot load ", SpellQuoted(fileName),
                      ": file not found")))
@@ -3116,7 +3116,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       tileCountV = std::max(tileCountV, tileIndexV + 1);
       // The user's call site, not the builtin constructor's: the load
       // errors and the mip chain requests are reported against it.
-      images.push_back(&context.compiler.loadImage(
+      images.push_back(&context.compiler.loadImage_(
           filePath, resourceSourceLocation(srcLoc), useMipLevels, mipFilter));
       if (!hasTexels(*images.back())) continue;
       if (!firstLoaded) firstLoaded = images.size() - 1;
@@ -3133,7 +3133,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
               " is ", images[i]->getNumChannels(), "-channel ",
               Image::getFormatName(images[i]->getFormat()));
         }};
-        context.compiler.logResourceWarningOnce(
+        context.compiler.logResourceWarningOnce_(
             resourceSourceLocation(srcLoc), fileName,
             concat("Inconsistent image formats for ", SpellQuoted(fileName),
                    ": ", describeTile(*firstLoaded), ", but ",
@@ -3221,10 +3221,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     std::string gridName{args[2].value.getComptimeString()};
     return withLocatedFile(
         fileName, texture3DType, [&](const std::string &resolvedFileName) {
-          const VoxelGrid &voxelGrid{context.compiler.loadVoxelGrid(
+          const VoxelGrid &voxelGrid{context.compiler.loadVoxelGrid_(
               resolvedFileName, gridName, resourceSourceLocation(srcLoc))};
           // A load failure was already reported as a warning by
-          // 'loadVoxelGrid', so quietly return the default (invalid)
+          // 'loadVoxelGrid_', so quietly return the default (invalid)
           // texture, matching the missing-file behavior.
           if (!voxelGrid.isValid()) return invoke(texture3DType, {}, srcLoc);
           const int3 extent{voxelGrid.getExtent()};
@@ -3236,11 +3236,11 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                Argument{"brick_table",
                         context.getComptimePtr(
                             context.getPointerType(context.getIntType()),
-                            voxelGrid.getBrickTable())},
+                            voxelGrid.getBrickTable_())},
                Argument{"brick_buffer",
                         context.getComptimePtr(
                             context.getPointerType(context.getFloatType()),
-                            voxelGrid.getBrickData())},
+                            voxelGrid.getBrickData_())},
                Argument{"background",
                         context.getComptimeFloat(voxelGrid.getBackground())},
                Argument{"min_value",
@@ -3258,7 +3258,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     StructType *textureCubeType{context.getTextureCubeType()};
     auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
     // TODO Actually load the texture
-    context.compiler.logResourceWarningOnce(
+    context.compiler.logResourceWarningOnce_(
         resourceSourceLocation(srcLoc), fileName,
         "Intrinsic 'loadTextureCube' is not implemented yet; returning "
         "default texture");
@@ -3271,7 +3271,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     return withLocatedFile(
         fileNameAndGamma.first, texturePtexType,
         [&](const std::string &resolvedFileName) {
-          const Ptexture &ptexture{context.compiler.loadPtexture(
+          const Ptexture &ptexture{context.compiler.loadPtexture_(
               resolvedFileName, resourceSourceLocation(srcLoc))};
           Value valuePtr{
               context.getComptimePtr(context.getVoidPointerType(),
@@ -3289,7 +3289,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         fileName, bsdfMeasurementType,
         [&](const std::string &resolvedFileName) {
           const BSDFMeasurement &bsdfMeasurement{
-              context.compiler.loadBSDFMeasurement(
+              context.compiler.loadBSDFMeasurement_(
                   resolvedFileName, resourceSourceLocation(srcLoc))};
           PointerType *bufferPtrType{
               context.getPointerType(context.getFloatType(
@@ -3332,7 +3332,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                    &smdlLightProfileDirectionSample);
     return withLocatedFile(
         fileName, lightProfileType, [&](const std::string &resolvedFileName) {
-          const LightProfile &lightProfile{context.compiler.loadLightProfile(
+          const LightProfile &lightProfile{context.compiler.loadLightProfile_(
               resolvedFileName, resourceSourceLocation(srcLoc))};
           return invoke(
               lightProfileType,
@@ -3374,13 +3374,13 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           const SourceLocation userSrcLoc{resourceSourceLocation(srcLoc)};
           if (args.size() == 1) {
             spectrumView =
-                context.compiler.loadSpectrum(resolvedFileName, userSrcLoc);
+                context.compiler.loadSpectrum_(resolvedFileName, userSrcLoc);
           } else if (args[1].value.isComptimeString()) {
-            spectrumView = context.compiler.loadSpectrum(
+            spectrumView = context.compiler.loadSpectrum_(
                 resolvedFileName,
                 std::string(args[1].value.getComptimeString()), userSrcLoc);
           } else if (args[1].value.isComptimeInt()) {
-            spectrumView = context.compiler.loadSpectrum(
+            spectrumView = context.compiler.loadSpectrum_(
                 resolvedFileName, int(args[1].value.getComptimeInt()),
                 userSrcLoc);
           }
@@ -3465,7 +3465,7 @@ Value Emitter::emitCall(Value callee, const ArgumentList &args,
   // Anything emitted inside this call can blame the user's line for a
   // resource it cannot find, however deep into the builtins it goes.
   SMDL_PRESERVE(srcLocUserCall);
-  if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) srcLocUserCall = srcLoc;
+  if (srcLoc.module && !srcLoc.module->isBuiltin()) srcLocUserCall = srcLoc;
   if (args.isAnyVisited()) {
     size_t visitedIndex{args.indexOfFirstVisited()};
     return emitVisit(args[visitedIndex].value, srcLoc, [&](Value value) {
@@ -3734,10 +3734,10 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
   }
 }
 
-std::vector<std::string_view> Emitter::exportedNamesOf(Module *module_) {
+std::vector<std::string_view> Emitter::exportedNamesOf(Module *module) {
   std::vector<std::string_view> exportedNames{};
-  if (module_ && module_->mRootScope)
-    for (const auto &[key, declaration] : module_->mRootScope->decls)
+  if (module && module->rootScope_)
+    for (const auto &[key, declaration] : module->rootScope_->decls)
       if (declaration && declaration->name.size() == 1 &&
           declaration->isExported())
         exportedNames.push_back(declaration->name[0]);
@@ -3752,8 +3752,8 @@ Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
     candidates.push_back(builtinName);
   // The qualified names carry the leading '::' that an import path spells
   // separately, so drop it before comparing.
-  for (const auto &[qualifiedName, module_] :
-       context.compiler.mModulesByQualifiedName)
+  for (const auto &[qualifiedName, module] :
+       context.compiler.modulesByQualifiedName_)
     candidates.push_back(std::string_view(qualifiedName).substr(2));
   if (std::string_view similar{suggestNearestName(typed, candidates)};
       !similar.empty())
@@ -3761,7 +3761,7 @@ Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
   // Nothing is close, so answer the question the user actually has, which
   // for a failed import is where the compiler looked.
   const std::vector<std::string> &searchPaths{
-      context.compiler.mModuleDirSearchPaths};
+      context.compiler.moduleDirSearchPaths_};
   if (searchPaths.empty())
     return "; there are no module search paths to look in";
   std::string str{"; searched "};
@@ -3806,9 +3806,9 @@ Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
     if (!declaration || declaration->name.size() != 1 ||
         !declaration->value.isComptimeMetaModule(context))
       return hint;
-    Module *module_{declaration->value.getComptimeMetaModule(context, srcLoc)};
-    if (!module_ ||
-        !Declaration::findInModule(context, name, getLLVMFunction(), module_))
+    Module *module{declaration->value.getComptimeMetaModule(context, srcLoc)};
+    if (!module ||
+        !Declaration::findInModule(context, name, getLLVMFunction(), module))
       return hint;
     const std::string_view moduleName{declaration->name[0]};
     hint = concat("; ", SpellQuoted(moduleName),
@@ -4111,7 +4111,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
 
 Module *Emitter::resolveModule(Span<const std::string_view> importPath,
                                bool isAbs, const SourceLocation &srcLoc) {
-  Module *thisModule{srcLoc.module_};
+  Module *thisModule{srcLoc.module};
   llvm::SmallVector<std::string_view> resolvedImportPath{};
   resolveImportUsingAliases(std::numeric_limits<uint64_t>::max(), importPath,
                             resolvedImportPath);
@@ -4160,7 +4160,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
       return normal;
     }};
     std::string lexicalDirPath{normalizePath(dirPath)};
-    for (auto &otherModule : context.compiler.mModules) {
+    for (auto &otherModule : context.compiler.modules_) {
       // A module with no directory of its own (builtin, or supplied as
       // source code without an anchor) is not reachable this way: its
       // empty directory must not match the empty path this search walks
@@ -4201,7 +4201,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     }
     const std::string mdlPath{filePath + ".mdl"};
     if (!isFile(mdlPath)) return nullptr;
-    Module *loadedModule{context.compiler.loadImportedFile(
+    Module *loadedModule{context.compiler.loadImportedFile_(
         makePathCanonical(mdlPath), joinQualifiedName(components),
         std::string(thisModule->getSearchRoot()))};
     compileImportedModule(*loadedModule);
@@ -4221,7 +4221,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
       qualifiedName += element;
     }
     std::unordered_map<std::string, Module *> &modules{
-        context.compiler.mModulesByQualifiedName};
+        context.compiler.modulesByQualifiedName_};
     if (auto itr{modules.find(qualifiedName)};
         itr != modules.end() && itr->second != thisModule) {
       Module *otherModule{itr->second};

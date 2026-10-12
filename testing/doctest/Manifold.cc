@@ -28,18 +28,18 @@ class PlaneSurfaces final : public smdl::ManifoldSurfaces {
 public:
   PlaneSurfaces() = default;
 
-  explicit PlaneSurfaces(float scale) : mScale{scale} {}
+  explicit PlaneSurfaces(float scale) : scale_{scale} {}
 
   PlaneSurfaces(float scale, const float3 &normal)
-      : mScale{scale}, mNormal{normal} {}
+      : scale_{scale}, normal_{normal} {}
 
   [[nodiscard]] bool
   evaluateGeometry(const smdl::ManifoldVertex &,
                    smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
-    geometry.normal = mNormal;
-    geometry.dPdu = float3(mScale, 0.0f, 0.0f);
-    geometry.dPdv = float3(0.0f, mScale, 0.0f);
+    geometry.normal = normal_;
+    geometry.dPdu = float3(scale_, 0.0f, 0.0f);
+    geometry.dPdv = float3(0.0f, scale_, 0.0f);
     geometry.Ng = float3(0.0f, 0.0f, 1.0f);
     return true;
   }
@@ -56,13 +56,13 @@ public:
     moved.point = origin + t * dir;
     moved.point.z = z;
     moved.surface = pin.surface;
-    moved.coords = float3(moved.point) / mScale;
+    moved.coords = float3(moved.point) / scale_;
     return true;
   }
 
 private:
-  float mScale{1.0f};
-  float3 mNormal{0.0f, 0.0f, 1.0f};
+  float scale_{1.0f};
+  float3 normal_{0.0f, 0.0f, 1.0f};
 };
 
 class SphereSurfaces final : public smdl::ManifoldSurfaces {
@@ -544,21 +544,21 @@ public:
                double radius, double gap) {
     for (int i = 0; i < numElements; i++) {
       const double z{distance + double(i) * (thickness + gap)};
-      mFaces.push_back(
+      faces_.push_back(
           {double3(0.0, 0.0, z + radius), radius, double3(0.0, 0.0, z)});
-      mFaces.push_back({double3(0.0, 0.0, z + thickness - radius), radius,
+      faces_.push_back({double3(0.0, 0.0, z + thickness - radius), radius,
                         double3(0.0, 0.0, z + thickness)});
     }
   }
 
   [[nodiscard]] int faceCount() const noexcept {
-    return static_cast<int>(mFaces.size());
+    return static_cast<int>(faces_.size());
   }
 
   [[nodiscard]] bool
   evaluateGeometry(const smdl::ManifoldVertex &vertex,
                    smdl::ManifoldGeometry &geometry) const override {
-    const Face &face{mFaces[vertex.surface]};
+    const Face &face{faces_[vertex.surface]};
     geometry = {};
     geometry.normal = normalize(float3(vertex.point - face.center));
     geometry.dPdu = smdl::perpendicularTo(geometry.normal);
@@ -582,7 +582,7 @@ public:
   // Where the line from `origin` along the unit `dir` meets a face.
   [[nodiscard]] bool meet(int index, const double3 &origin, const double3 &dir,
                           double3 &point) const {
-    const Face &face{mFaces[index]};
+    const Face &face{faces_[index]};
     const double3 offset{origin - face.center};
     const double b{dot(offset, dir)};
     const double disc{b * b - lengthSquared(offset) +
@@ -603,10 +603,10 @@ public:
   [[nodiscard]] bool trace(double3 origin, double3 dir, double ior,
                            std::vector<double3> &points,
                            double3 &leaving) const {
-    points.resize(mFaces.size());
+    points.resize(faces_.size());
     for (int i = 0; i < faceCount(); i++) {
       if (!meet(i, origin, dir, points[i])) return false;
-      double3 normal{normalize(points[i] - mFaces[i].center)};
+      double3 normal{normalize(points[i] - faces_[i].center)};
       double cosFrom{-dot(dir, normal)};
       if (cosFrom < 0.0) normal = -normal, cosFrom = -cosFrom;
       const double ratio{i % 2 == 0 ? 1.0 / ior : ior};
@@ -643,7 +643,7 @@ public:
   }
 
 private:
-  std::vector<Face> mFaces{};
+  std::vector<Face> faces_{};
 };
 
 } // namespace
@@ -750,12 +750,12 @@ public:
     double etaNext{};
   };
 
-  explicit BallSurfaces(std::vector<Ball> balls) : mBalls{std::move(balls)} {}
+  explicit BallSurfaces(std::vector<Ball> balls) : balls_{std::move(balls)} {}
 
   [[nodiscard]] bool
   evaluateGeometry(const smdl::ManifoldVertex &vertex,
                    smdl::ManifoldGeometry &geometry) const override {
-    const double radius{mBalls[vertex.surface].radius};
+    const double radius{balls_[vertex.surface].radius};
     geometry = {};
     geometry.normal = normalize(float3(vertex.point));
     geometry.dPdu = smdl::perpendicularTo(geometry.normal);
@@ -788,16 +788,16 @@ public:
   [[nodiscard]] bool cast(const double3 &origin, const double3 &dir,
                           double margin, int &ball, double3 &point) const {
     double nearest{INFINITY};
-    for (int i = 0; i < int(mBalls.size()); i++) {
+    for (int i = 0; i < int(balls_.size()); i++) {
       const double b{dot(origin, dir)};
       const double disc{b * b - lengthSquared(origin) +
-                        mBalls[i].radius * mBalls[i].radius};
+                        balls_[i].radius * balls_[i].radius};
       if (!(disc > 0.0)) continue;
       for (const double t : {-b - std::sqrt(disc), -b + std::sqrt(disc)})
         if (t > margin && t < nearest) nearest = t, ball = i;
     }
     if (!(nearest < INFINITY)) return false;
-    point = mBalls[ball].radius * normalize(origin + nearest * dir);
+    point = balls_[ball].radius * normalize(origin + nearest * dir);
     return true;
   }
 
@@ -811,12 +811,12 @@ public:
     crossings.clear();
     int ball{};
     double3 point{};
-    while (crossings.size() < 2 * mBalls.size() &&
+    while (crossings.size() < 2 * balls_.size() &&
            cast(origin, dir, 1e-9, ball, point)) {
       const double3 outward{normalize(point)};
       const bool isEntering{dot(dir, outward) < 0.0};
-      const double etaOutside{ball == 0 ? 1.0 : mBalls[ball - 1].ior};
-      const double etaInside{mBalls[ball].ior};
+      const double etaOutside{ball == 0 ? 1.0 : balls_[ball - 1].ior};
+      const double etaInside{balls_[ball].ior};
       const Crossing crossing{ball, point, isEntering ? etaOutside : etaInside,
                               isEntering ? etaInside : etaOutside};
       crossings.push_back(crossing);
@@ -838,7 +838,7 @@ public:
   }
 
 private:
-  std::vector<Ball> mBalls{};
+  std::vector<Ball> balls_{};
 };
 
 // How many problems through some balls a walk solves, seeded where the
@@ -1365,25 +1365,25 @@ class RecordingSurfaces final : public smdl::ManifoldSurfaces {
 public:
   RecordingSurfaces() = default;
 
-  explicit RecordingSurfaces(const float3 &normal) : mPlanes{1.0f, normal} {}
+  explicit RecordingSurfaces(const float3 &normal) : planes_{1.0f, normal} {}
 
   [[nodiscard]] bool
   evaluateGeometry(const smdl::ManifoldVertex &vertex,
                    smdl::ManifoldGeometry &geometry) const override {
-    return mPlanes.evaluateGeometry(vertex, geometry);
+    return planes_.evaluateGeometry(vertex, geometry);
   }
 
   [[nodiscard]] bool project(const smdl::ManifoldVertex &pin,
                              const double3 &origin, const double3 &target,
                              smdl::ManifoldVertex &moved) const override {
     targets.push_back(target);
-    return mPlanes.project(pin, origin, target, moved);
+    return planes_.project(pin, origin, target, moved);
   }
 
   mutable std::vector<double3> targets{};
 
 private:
-  PlaneSurfaces mPlanes{};
+  PlaneSurfaces planes_{};
 };
 
 } // namespace

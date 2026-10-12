@@ -663,7 +663,7 @@ public:
   /// render's depth up front is buying the allocation at a moment of
   /// its choosing rather than avoiding one.
   void reserve(int depth) {
-    if (depth > mMaxDepth) grow(depth);
+    if (depth > maxDepth_) grow_(depth);
   }
 
   /// Solve `problem` into `solution`: the connection from `receiver` to
@@ -708,47 +708,47 @@ private:
 
   /// One damped Newton walk of the chain, started and stepped the way
   /// `walk` names.
-  [[nodiscard]] bool walkChain(Walk walk, const ManifoldSurfaces &surfaces,
-                               const double3 &receiver,
-                               const ManifoldTarget &target,
-                               const ManifoldProblem &problem,
-                               ManifoldSolution &solution,
-                               ManifoldWalkReport &report);
+  [[nodiscard]] bool walkChain_(Walk walk, const ManifoldSurfaces &surfaces,
+                                const double3 &receiver,
+                                const ManifoldTarget &target,
+                                const ManifoldProblem &problem,
+                                ManifoldSolution &solution,
+                                ManifoldWalkReport &report);
 
   /// The out-of-line half of `reserve()`, so that the common call is a
   /// branch rather than a call across a shared library boundary.
-  void grow(int depth);
+  void grow_(int depth);
 
 private:
   /// The deepest problem the buffers below are sized for, 0 until
   /// `reserve()`.
-  int mMaxDepth{};
+  int maxDepth_{};
 
-  /// The walk's own iterate, then the trial step's: `mMaxDepth` apiece.
-  std::vector<ManifoldVertex> mVertices;
+  /// The walk's own iterate, then the trial step's: `maxDepth_` apiece.
+  std::vector<ManifoldVertex> vertices_;
 
   /// The fixed frame seeds, then the world-space Newton steps:
-  /// `mMaxDepth` apiece.
-  std::vector<double3> mVectors;
+  /// `maxDepth_` apiece.
+  std::vector<double3> vectors_;
 
-  /// The two chain states the iteration swaps between: `mMaxDepth`
+  /// The two chain states the iteration swaps between: `maxDepth_`
   /// apiece.
-  std::vector<ManifoldSolverVertex> mIterates;
+  std::vector<ManifoldSolverVertex> iterates_;
 
-  /// The tangent-frame lengths of one iterate, `mMaxDepth`.
-  std::vector<double> mFrameLengths;
+  /// The tangent-frame lengths of one iterate, `maxDepth_`.
+  std::vector<double> frameLengths_;
 
-  /// The two states' constraint residuals, `2 * mMaxDepth` apiece.
-  std::vector<double> mConstraints;
+  /// The two states' constraint residuals, `2 * maxDepth_` apiece.
+  std::vector<double> constraints_;
 
   /// The two states' constraint Jacobians and the copy the solve
-  /// eliminates in place, `2 * mMaxDepth` rows of a fixed band width
+  /// eliminates in place, `2 * maxDepth_` rows of a fixed band width
   /// apiece. The constraints couple neighbours only, so the system is
   /// banded and nothing here grows faster than the depth.
-  std::vector<double> mJacobians;
+  std::vector<double> jacobians_;
 
-  /// The solve's right-hand side, `2 * mMaxDepth`.
-  std::vector<double> mRhs;
+  /// The solve's right-hand side, `2 * maxDepth_`.
+  std::vector<double> rhs_;
 };
 
 /// What manifold estimators claim at an instance: the Dirac lobes of its

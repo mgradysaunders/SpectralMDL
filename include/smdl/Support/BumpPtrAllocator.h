@@ -133,14 +133,14 @@ public:
   ///
   [[nodiscard]] void *allocate(size_t size, size_t align) noexcept {
     if (SMDL_UNLIKELY(size == 0)) return nullptr;
-    // Neither comparison can overflow: `mCur` is never past `mEnd`, and
+    // Neither comparison can overflow: `cur_` is never past `end_`, and
     // the padding is only weighed against what is left once `size` is
     // known to fit.
-    const uintptr_t avail{mEnd - mCur};
-    const uintptr_t ptr{(mCur + (align - 1)) & ~uintptr_t(align - 1)};
-    if (SMDL_UNLIKELY(size > avail || ptr - mCur > avail - size))
-      return allocateSlow(size, align);
-    mCur = ptr + size;
+    const uintptr_t avail{end_ - cur_};
+    const uintptr_t ptr{(cur_ + (align - 1)) & ~uintptr_t(align - 1)};
+    if (SMDL_UNLIKELY(size > avail || ptr - cur_ > avail - size))
+      return allocateSlow_(size, align);
+    cur_ = ptr + size;
     return reinterpret_cast<void *>(ptr);
   }
 
@@ -163,10 +163,10 @@ public:
   /// that follow, so a cache keyed on the identity of an allocation must
   /// not outlive the reset that invalidates it.
   void reset() noexcept {
-    if (SMDL_UNLIKELY(mSlab != mFirstSlab)) freeSlabsAfterFirst();
-    if (SMDL_LIKELY(mFirstSlab != nullptr)) {
-      mCur = reinterpret_cast<uintptr_t>(mFirstSlab) + SLAB_HEADER_SIZE;
-      mEnd = reinterpret_cast<uintptr_t>(mFirstSlab) + mFirstSlab->size;
+    if (SMDL_UNLIKELY(slab_ != firstSlab_)) freeSlabsAfterFirst_();
+    if (SMDL_LIKELY(firstSlab_ != nullptr)) {
+      cur_ = reinterpret_cast<uintptr_t>(firstSlab_) + SLAB_HEADER_SIZE;
+      end_ = reinterpret_cast<uintptr_t>(firstSlab_) + firstSlab_->size;
     }
   }
 
@@ -189,24 +189,24 @@ private:
       ~(alignof(std::max_align_t) - 1)};
 
   /// Allocate from a fresh slab, the current one having no room.
-  [[nodiscard]] SMDL_NO_INLINE void *allocateSlow(size_t size,
-                                                  size_t align) noexcept;
+  [[nodiscard]] SMDL_NO_INLINE void *allocateSlow_(size_t size,
+                                                   size_t align) noexcept;
 
   /// Free every slab but the first, which `reset()` keeps.
-  SMDL_NO_INLINE void freeSlabsAfterFirst() noexcept;
+  SMDL_NO_INLINE void freeSlabsAfterFirst_() noexcept;
 
   /// The bump pointer, and the end of the slab it points into.
-  uintptr_t mCur{};
+  uintptr_t cur_{};
 
-  /// See `mCur`.
-  uintptr_t mEnd{};
+  /// See `cur_`.
+  uintptr_t end_{};
 
-  /// The newest slab, which is the one `mCur` points into and the head of
-  /// the chain running back to `mFirstSlab`.
-  Slab *mSlab{};
+  /// The newest slab, which is the one `cur_` points into and the head of
+  /// the chain running back to `firstSlab_`.
+  Slab *slab_{};
 
   /// The oldest slab, which `reset()` keeps and rewinds into.
-  Slab *mFirstSlab{};
+  Slab *firstSlab_{};
 };
 
 /// \}

@@ -29,37 +29,37 @@ MiePhase::MiePhase(float dropletSize) {
   // themselves. Kept identical to `df::fog_vdf`.
   const float d{std::clamp(dropletSize, 0.0f, 50.0f)};
   if (d <= 0.1f) {
-    mGHG = 13.8f * d * d;
-    mGD = 1.1456f * d * std::sin(9.29044f * d);
-    mAlpha = 250.0f;
-    mWD = 0.252977f - 312.983f * std::pow(d, 4.3f);
+    ghg_ = 13.8f * d * d;
+    gd_ = 1.1456f * d * std::sin(9.29044f * d);
+    alpha_ = 250.0f;
+    wd_ = 0.252977f - 312.983f * std::pow(d, 4.3f);
   } else if (d < 1.5f) {
     const float logD{std::log(d)};
-    mGHG = 0.862f - 0.143f * logD * logD;
-    mGD = 0.379685f *
+    ghg_ = 0.862f - 0.143f * logD * logD;
+    gd_ = 0.379685f *
               std::cos(1.19692f *
                            std::cos((logD - 0.238604f) * (logD + 1.00667f) /
                                     (0.507522f - 0.15677f * logD)) +
                        1.37932f * logD + 0.0625835f) +
           0.344213f;
-    mAlpha = 250.0f;
-    mWD = 0.146209f * std::cos(3.38707f * logD + 2.11193f) + 0.316072f +
+    alpha_ = 250.0f;
+    wd_ = 0.146209f * std::cos(3.38707f * logD + 2.11193f) + 0.316072f +
           0.0778917f * logD;
   } else if (d < 5.0f) {
     const float logD{std::log(d)};
-    mGHG = 0.0604931f * std::log(logD) + 0.940256f;
-    mGD = 0.500411f - 0.081287f / (-2.0f * logD + std::tan(logD) + 1.27551f);
-    mAlpha = 7.30354f * logD + 6.31675f;
-    mWD = 0.026914f *
+    ghg_ = 0.0604931f * std::log(logD) + 0.940256f;
+    gd_ = 0.500411f - 0.081287f / (-2.0f * logD + std::tan(logD) + 1.27551f);
+    alpha_ = 7.30354f * logD + 6.31675f;
+    wd_ = 0.026914f *
               (logD - std::cos(5.68947f * (std::log(logD) - 0.0292149f))) +
           0.376475f;
   } else {
-    mGHG = std::exp(-0.0990567f / (d - 1.67154f));
-    mGD = std::exp(-2.20679f / (d + 3.91029f) - 0.428934f);
-    mAlpha = std::exp(3.62489f - 8.29288f / (d + 5.52825f));
-    mWD = std::exp(-0.599085f / (d - 0.641583f) - 0.665888f);
+    ghg_ = std::exp(-0.0990567f / (d - 1.67154f));
+    gd_ = std::exp(-2.20679f / (d + 3.91029f) - 0.428934f);
+    alpha_ = std::exp(3.62489f - 8.29288f / (d + 5.52825f));
+    wd_ = std::exp(-0.599085f / (d - 0.641583f) - 0.665888f);
   }
-  mWD = std::clamp(mWD, 0.0f, 1.0f);
+  wd_ = std::clamp(wd_, 0.0f, 1.0f);
 }
 
 namespace {
@@ -137,14 +137,14 @@ namespace {
 } // namespace
 
 float MiePhase::evaluate(float u) const noexcept {
-  return (1.0f - mWD) * hgPhase(mGHG, u) + mWD * drainePhase(mGD, mAlpha, u);
+  return (1.0f - wd_) * hgPhase(ghg_, u) + wd_ * drainePhase(gd_, alpha_, u);
 }
 
 float MiePhase::sample(float3 xi, const float3 &wo, float3 &wi) const noexcept {
   // Pick the lobe by the mixture weight and sample it exactly, so the
   // mixture density of the sampled direction is the phase value itself.
-  const float u{xi.z < mWD ? draineSample(mGD, mAlpha, xi.x)
-                           : hgSample(mGHG, xi.x)};
+  const float u{xi.z < wd_ ? draineSample(gd_, alpha_, xi.x)
+                           : hgSample(ghg_, xi.x)};
   const float sinTheta{std::sqrt(std::max(0.0f, 1.0f - u * u))};
   const float phi{TWO_PI * xi.y};
   wi = coordinateSystem(wo) *
@@ -183,9 +183,9 @@ lookup(const float *table, const ChannelLerp &lerp) noexcept {
 
 Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
            float metersPerSceneUnit)
-    : mInvScaleHeight(metersPerSceneUnit /
+    : invScaleHeight_(metersPerSceneUnit /
                       std::max(options.scaleHeight, 1e-3f)),
-      mBaseHeight(options.baseHeight), mPhase(MiePhase(options.dropletSize)) {
+      baseHeight_(options.baseHeight), phase_(MiePhase(options.dropletSize)) {
   // Koschmieder fixes the total extinction at the reference wavelength,
   // and MODTRAN's visibility relation makes the aerosol whatever is left
   // of it after Rayleigh scattering, so a visibility clear enough to
@@ -199,15 +199,15 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
   const float sigmaRayleigh{std::min(hazeRural::RAYLEIGH_550, sigmaTotal) *
                             metersPerSceneUnit};
   const float sigmaAerosol{sigmaTotal * metersPerSceneUnit - sigmaRayleigh};
-  mSigmaRef.assign(wavelens.size(), 0.0f);
-  mSigmaScaRef.assign(wavelens.size(), 0.0f);
-  for (size_t i = 0; i < mSigmaRef.size(); i++) {
+  sigmaRef_.assign(wavelens.size(), 0.0f);
+  sigmaScaRef_.assign(wavelens.size(), 0.0f);
+  for (size_t i = 0; i < sigmaRef_.size(); i++) {
     const ChannelLerp lerp{channelOf(wavelens[i])};
     const float rayleigh{sigmaRayleigh *
                          lookup(hazeRural::RAYLEIGH_EXTINCTION, lerp)};
-    mSigmaRef[i] =
+    sigmaRef_[i] =
         sigmaAerosol * lookup(hazeRural::AEROSOL_EXTINCTION, lerp) + rayleigh;
-    mSigmaScaRef[i] =
+    sigmaScaRef_[i] =
         sigmaAerosol * lookup(hazeRural::AEROSOL_SCATTERING, lerp) + rayleigh;
   }
 }
@@ -215,7 +215,7 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
 void Haze::albedo(Span<float> albedo) const noexcept {
   SMDL_SANITY_CHECK(albedo.size() == size());
   for (size_t i = 0; i < albedo.size(); i++)
-    albedo[i] = mSigmaRef[i] > 0.0f ? mSigmaScaRef[i] / mSigmaRef[i] : 0.0f;
+    albedo[i] = sigmaRef_[i] > 0.0f ? sigmaScaRef_[i] / sigmaRef_[i] : 0.0f;
 }
 
 void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {
@@ -223,8 +223,8 @@ void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {
   // The inline exponential: two ulp is nothing against the fit the
   // extinction spectrum came out of, and this runs once per ray segment.
   const float scale{fastExp(
-      std::min((mBaseHeight - height) * mInvScaleHeight, MAX_EXPONENT))};
-  for (size_t i = 0; i < sigma.size(); i++) sigma[i] = mSigmaRef[i] * scale;
+      std::min((baseHeight_ - height) * invScaleHeight_, MAX_EXPONENT))};
+  for (size_t i = 0; i < sigma.size(); i++) sigma[i] = sigmaRef_[i] * scale;
 }
 
 } // namespace smdl

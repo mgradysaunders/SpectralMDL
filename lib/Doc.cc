@@ -161,53 +161,53 @@ descriptionOf(const ast::AnnotationBlock *annotations) {
 // The AST-to-`DocModule` extractor.
 class Extractor final {
 public:
-  explicit Extractor(const Module &module_)
-      : mModule(module_), mSource(module_.getSourceCode()) {}
+  explicit Extractor(const Module &module)
+      : module_(module), source_(module.getSourceCode()) {}
 
   [[nodiscard]] DocModule extract() {
     DocModule mod{};
-    mod.name = std::string(mModule.getName());
-    mod.qualifiedName = mModule.getQualifiedName().empty()
+    mod.name = std::string(module_.getName());
+    mod.qualifiedName = module_.getQualifiedName().empty()
                             ? "::" + mod.name
-                            : std::string(mModule.getQualifiedName());
-    mod.fileName = std::string(mModule.getFileName());
-    mQualifiedNamePrefix = mod.qualifiedName;
-    const ast::File *root{mModule.getRoot()};
+                            : std::string(module_.getQualifiedName());
+    mod.fileName = std::string(module_.getFileName());
+    qualifiedNamePrefix_ = mod.qualifiedName;
+    const ast::File *root{module_.getRoot()};
     if (!root) return mod;
     mod.docText = ast::getDocCommentText(root->srcDocComment);
     if (mod.docText.empty())
       mod.docText = descriptionOf(root->moduleAnnotations.get());
-    for (const auto &decl : root->globalDecls) extractDecl(*decl, mod.entries);
+    for (const auto &decl : root->globalDecls) extractDecl_(*decl, mod.entries);
     return mod;
   }
 
 private:
   // Get the begin index of a non-empty span into the module source.
-  [[nodiscard]] size_t beginOf(std::string_view span) const {
-    return size_t(span.data() - mSource.data());
+  [[nodiscard]] size_t beginOf_(std::string_view span) const {
+    return size_t(span.data() - source_.data());
   }
 
   // Get the end index of a non-empty span into the module source.
-  [[nodiscard]] size_t endOf(std::string_view span) const {
-    return beginOf(span) + span.size();
+  [[nodiscard]] size_t endOf_(std::string_view span) const {
+    return beginOf_(span) + span.size();
   }
 
-  [[nodiscard]] std::string_view slice(size_t i0, size_t i1) const {
-    return mSource.substr(i0, i1 - i0);
+  [[nodiscard]] std::string_view slice_(size_t i0, size_t i1) const {
+    return source_.substr(i0, i1 - i0);
   }
 
   // Slice from `i0` up to the separating comma if there is one, else up
   // to the token that terminates the enclosing declaration. This is the
   // shape of every comma-separated declarator and parameter.
-  [[nodiscard]] std::string_view sliceUntil(size_t i0,
-                                            std::string_view srcComma,
-                                            std::string_view srcEnd) const {
-    return slice(i0, beginOf(!srcComma.empty() ? srcComma : srcEnd));
+  [[nodiscard]] std::string_view sliceUntil_(size_t i0,
+                                             std::string_view srcComma,
+                                             std::string_view srcEnd) const {
+    return slice_(i0, beginOf_(!srcComma.empty() ? srcComma : srcEnd));
   }
 
   // The signature prefix from the attributes and the `export` keyword,
   // which precede the declaration's own source location.
-  [[nodiscard]] static std::string declPrefix(const ast::Decl &decl) {
+  [[nodiscard]] static std::string declPrefix_(const ast::Decl &decl) {
     std::string prefix{};
     if (decl.attributes) {
       prefix += "@(";
@@ -221,14 +221,14 @@ private:
     return prefix;
   }
 
-  [[nodiscard]] std::string qualify(std::string_view name) const {
-    return mQualifiedNamePrefix + "::" + std::string(name);
+  [[nodiscard]] std::string qualify_(std::string_view name) const {
+    return qualifiedNamePrefix_ + "::" + std::string(name);
   }
 
   // Set `entry.signature` from the given prefix and source slice, and
   // record where the declared name landed in it.
-  static void setSignature(DocEntry &entry, std::string_view prefix,
-                           std::string_view src, std::string_view srcName) {
+  static void setSignature_(DocEntry &entry, std::string_view prefix,
+                            std::string_view src, std::string_view srcName) {
     unsigned offset{DocEntry::NO_NAME_OFFSET};
     entry.signature =
         std::string(prefix) + normalizeSignature(src, srcName, &offset);
@@ -236,12 +236,12 @@ private:
       entry.nameOffset = uint32_t(prefix.size()) + offset;
   }
 
-  [[nodiscard]] DocEntry makeEntry(const ast::Decl &decl, const char *kind,
-                                   std::string_view name) const {
+  [[nodiscard]] DocEntry makeEntry_(const ast::Decl &decl, const char *kind,
+                                    std::string_view name) const {
     DocEntry entry{};
     entry.kind = kind;
     entry.name = std::string(name);
-    entry.qualifiedName = qualify(name);
+    entry.qualifiedName = qualify_(name);
     entry.isExported = decl.isExported();
     entry.lineNo = decl.srcLoc.lineNo;
     return entry;
@@ -253,17 +253,18 @@ private:
   // them is the same: `node` is an `ast::Enum::Declarator` or an
   // `ast::Struct::Field`, and `srcEnd` is where its signature stops.
   template <typename Node>
-  [[nodiscard]] DocEntry makeMember(const DocEntry &parent, const char *kind,
-                                    std::string qualifiedName, const Node &node,
-                                    std::string_view srcEnd) const {
+  [[nodiscard]] DocEntry makeMember_(const DocEntry &parent, const char *kind,
+                                     std::string qualifiedName,
+                                     const Node &node,
+                                     std::string_view srcEnd) const {
     DocEntry member{};
     member.kind = kind;
     member.name = std::string(node.name.srcName);
     member.qualifiedName = std::move(qualifiedName);
     member.isExported = parent.isExported;
     member.lineNo = node.srcLoc.lineNo;
-    setSignature(member, {}, slice(node.srcLoc.i, beginOf(srcEnd)),
-                 node.name.srcName);
+    setSignature_(member, {}, slice_(node.srcLoc.i, beginOf_(srcEnd)),
+                  node.name.srcName);
     member.docText = docTextOf(node.srcDocComment, node.srcDocCommentTrailing,
                                node.annotations.get());
     return member;
@@ -273,42 +274,43 @@ private:
   // source location to its semicolon, i.e., `ast::Tag` and
   // `ast::Typedef`.
   template <typename Decl>
-  void extractSimpleDecl(const ast::Decl &decl, const char *kind,
-                         std::vector<DocEntry> &out) {
+  void extractSimpleDecl_(const ast::Decl &decl, const char *kind,
+                          std::vector<DocEntry> &out) {
     const auto &d{static_cast<const Decl &>(decl)};
-    DocEntry entry{makeEntry(decl, kind, d.name.srcName)};
-    setSignature(entry, declPrefix(decl),
-                 slice(decl.srcLoc.i, beginOf(d.srcSemicolon)), d.name.srcName);
+    DocEntry entry{makeEntry_(decl, kind, d.name.srcName)};
+    setSignature_(entry, declPrefix_(decl),
+                  slice_(decl.srcLoc.i, beginOf_(d.srcSemicolon)),
+                  d.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
     out.push_back(std::move(entry));
   }
 
-  void extractDecl(const ast::Decl &decl, std::vector<DocEntry> &out) {
+  void extractDecl_(const ast::Decl &decl, std::vector<DocEntry> &out) {
     switch (decl.declKind) {
     case ast::DeclKind::AnnotationDecl:
-      extractAnnotationDecl(static_cast<const ast::AnnotationDecl &>(decl),
-                            out);
+      extractAnnotationDecl_(static_cast<const ast::AnnotationDecl &>(decl),
+                             out);
       break;
     case ast::DeclKind::Enum:
-      extractEnum(static_cast<const ast::Enum &>(decl), out);
+      extractEnum_(static_cast<const ast::Enum &>(decl), out);
       break;
     case ast::DeclKind::Function:
-      extractFunction(static_cast<const ast::Function &>(decl), out);
+      extractFunction_(static_cast<const ast::Function &>(decl), out);
       break;
     case ast::DeclKind::Namespace:
-      extractNamespace(static_cast<const ast::Namespace &>(decl), out);
+      extractNamespace_(static_cast<const ast::Namespace &>(decl), out);
       break;
     case ast::DeclKind::Struct:
-      extractStruct(static_cast<const ast::Struct &>(decl), out);
+      extractStruct_(static_cast<const ast::Struct &>(decl), out);
       break;
     case ast::DeclKind::Tag:
-      extractSimpleDecl<ast::Tag>(decl, "tag", out);
+      extractSimpleDecl_<ast::Tag>(decl, "tag", out);
       break;
     case ast::DeclKind::Typedef:
-      extractSimpleDecl<ast::Typedef>(decl, "typedef", out);
+      extractSimpleDecl_<ast::Typedef>(decl, "typedef", out);
       break;
     case ast::DeclKind::Variable:
-      extractVariable(static_cast<const ast::Variable &>(decl), out);
+      extractVariable_(static_cast<const ast::Variable &>(decl), out);
       break;
     default:
       // Skip declarations that are not documentable API surface:
@@ -317,74 +319,74 @@ private:
     }
   }
 
-  void extractAnnotationDecl(const ast::AnnotationDecl &decl,
-                             std::vector<DocEntry> &out) {
-    DocEntry entry{makeEntry(decl, "annotation", decl.name.srcName)};
-    setSignature(entry, declPrefix(decl),
-                 slice(decl.srcLoc.i, endOf(decl.params.srcParenR)),
-                 decl.name.srcName);
+  void extractAnnotationDecl_(const ast::AnnotationDecl &decl,
+                              std::vector<DocEntry> &out) {
+    DocEntry entry{makeEntry_(decl, "annotation", decl.name.srcName)};
+    setSignature_(entry, declPrefix_(decl),
+                  slice_(decl.srcLoc.i, endOf_(decl.params.srcParenR)),
+                  decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
-    extractParams(decl.params, entry.params);
+    extractParams_(decl.params, entry.params);
     out.push_back(std::move(entry));
   }
 
-  void extractEnum(const ast::Enum &decl, std::vector<DocEntry> &out) {
-    DocEntry entry{makeEntry(decl, "enum", decl.name.srcName)};
-    setSignature(entry, declPrefix(decl),
-                 slice(decl.srcLoc.i, endOf(decl.name.srcName)),
-                 decl.name.srcName);
+  void extractEnum_(const ast::Enum &decl, std::vector<DocEntry> &out) {
+    DocEntry entry{makeEntry_(decl, "enum", decl.name.srcName)};
+    setSignature_(entry, declPrefix_(decl),
+                  slice_(decl.srcLoc.i, endOf_(decl.name.srcName)),
+                  decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &declarator : decl.declarators) {
       // NOTE: Enum values are injected into the enclosing scope, so the
       // qualified name does not include the enum name.
-      entry.members.push_back(makeMember(
-          entry, "enumerator", qualify(declarator.name.srcName), declarator,
+      entry.members.push_back(makeMember_(
+          entry, "enumerator", qualify_(declarator.name.srcName), declarator,
           !declarator.srcComma.empty() ? declarator.srcComma : decl.srcBraceR));
     }
     out.push_back(std::move(entry));
   }
 
-  void extractFunction(const ast::Function &decl, std::vector<DocEntry> &out) {
-    DocEntry entry{makeEntry(decl, "function", decl.name.srcName)};
-    setSignature(entry, declPrefix(decl),
-                 slice(decl.srcLoc.i, !decl.srcFrequency.empty()
-                                          ? endOf(decl.srcFrequency)
-                                          : endOf(decl.params.srcParenR)),
-                 decl.name.srcName);
+  void extractFunction_(const ast::Function &decl, std::vector<DocEntry> &out) {
+    DocEntry entry{makeEntry_(decl, "function", decl.name.srcName)};
+    setSignature_(entry, declPrefix_(decl),
+                  slice_(decl.srcLoc.i, !decl.srcFrequency.empty()
+                                            ? endOf_(decl.srcFrequency)
+                                            : endOf_(decl.params.srcParenR)),
+                  decl.name.srcName);
     entry.docText =
         docTextOf(decl.srcDocComment, {},
                   decl.lateAnnotations ? decl.lateAnnotations.get()
                                        : decl.earlyAnnotations.get());
-    extractParams(decl.params, entry.params);
+    extractParams_(decl.params, entry.params);
     out.push_back(std::move(entry));
   }
 
-  void extractNamespace(const ast::Namespace &decl,
-                        std::vector<DocEntry> &out) {
+  void extractNamespace_(const ast::Namespace &decl,
+                         std::vector<DocEntry> &out) {
     std::string name{};
     for (auto elemName : Span<const std::string_view>(*decl.identifier)) {
       if (!name.empty()) name += "::";
       name += elemName;
     }
-    DocEntry entry{makeEntry(decl, "namespace", name)};
+    DocEntry entry{makeEntry_(decl, "namespace", name)};
     entry.signature = "namespace " + name;
     entry.nameOffset = uint32_t(entry.signature.size() - name.size());
     entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
-    std::string prevPrefix{mQualifiedNamePrefix};
-    mQualifiedNamePrefix = entry.qualifiedName;
-    for (const auto &inner : decl.decls) extractDecl(*inner, entry.members);
-    mQualifiedNamePrefix = std::move(prevPrefix);
+    std::string prevPrefix{qualifiedNamePrefix_};
+    qualifiedNamePrefix_ = entry.qualifiedName;
+    for (const auto &inner : decl.decls) extractDecl_(*inner, entry.members);
+    qualifiedNamePrefix_ = std::move(prevPrefix);
     out.push_back(std::move(entry));
   }
 
-  void extractStruct(const ast::Struct &decl, std::vector<DocEntry> &out) {
-    DocEntry entry{makeEntry(decl, "struct", decl.name.srcName)};
-    setSignature(entry, declPrefix(decl),
-                 slice(decl.srcLoc.i, endOf(decl.name.srcName)),
-                 decl.name.srcName);
+  void extractStruct_(const ast::Struct &decl, std::vector<DocEntry> &out) {
+    DocEntry entry{makeEntry_(decl, "struct", decl.name.srcName)};
+    setSignature_(entry, declPrefix_(decl),
+                  slice_(decl.srcLoc.i, endOf_(decl.name.srcName)),
+                  decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &field : decl.fields) {
-      entry.members.push_back(makeMember(
+      entry.members.push_back(makeMember_(
           entry, "field",
           entry.qualifiedName + "::" + std::string(field.name.srcName), field,
           field.srcSemicolon));
@@ -392,10 +394,10 @@ private:
     out.push_back(std::move(entry));
   }
 
-  void extractVariable(const ast::Variable &decl, std::vector<DocEntry> &out) {
+  void extractVariable_(const ast::Variable &decl, std::vector<DocEntry> &out) {
     if (decl.declarators.empty()) return;
     std::string_view typeSrc{
-        slice(decl.srcLoc.i, decl.declarators[0].srcLoc.i)};
+        slice_(decl.srcLoc.i, decl.declarators[0].srcLoc.i)};
     for (const auto &declarator : decl.declarators) {
       std::string name{};
       if (declarator.isDestructure()) {
@@ -408,9 +410,9 @@ private:
       } else if (!declarator.names.empty()) {
         name = std::string(declarator.names[0].name.srcName);
       }
-      DocEntry entry{makeEntry(decl, "variable", name)};
+      DocEntry entry{makeEntry_(decl, "variable", name)};
       entry.lineNo = declarator.srcLoc.lineNo;
-      std::string_view declaratorSrc{sliceUntil(
+      std::string_view declaratorSrc{sliceUntil_(
           declarator.srcLoc.i, declarator.srcComma, decl.srcSemicolon)};
       // NOTE: The type and the declarator are not contiguous in the
       // source, so this is the one signature built by concatenation.
@@ -425,7 +427,7 @@ private:
                        declaratorSrc.data()),
             declarator.names[0].name.srcName.size());
       }
-      setSignature(entry, declPrefix(decl), signatureSrc, srcName);
+      setSignature_(entry, declPrefix_(decl), signatureSrc, srcName);
       entry.docText =
           docTextOf(declarator.srcDocComment, declarator.srcDocCommentTrailing,
                     declarator.annotations.get());
@@ -435,15 +437,15 @@ private:
     }
   }
 
-  void extractParams(const ast::ParameterList &params,
-                     std::vector<DocParam> &out) {
+  void extractParams_(const ast::ParameterList &params,
+                      std::vector<DocParam> &out) {
     for (const auto &param : params) {
       DocParam docParam{};
       docParam.name = std::string(param.name.srcName);
       // NOTE: `Parameter::src` is never populated, so slice from the
       // parameter start to its comma or the closing parenthesis.
       docParam.signature = normalizeSignature(
-          sliceUntil(param.srcLoc.i, param.srcComma, params.srcParenR));
+          sliceUntil_(param.srcLoc.i, param.srcComma, params.srcParenR));
       docParam.docText =
           docTextOf(param.srcDocComment, param.srcDocCommentTrailing,
                     param.annotations.get());
@@ -452,19 +454,19 @@ private:
   }
 
 private:
-  const Module &mModule;
+  const Module &module_;
 
-  std::string_view mSource;
+  std::string_view source_;
 
   // The qualified name prefix, i.e., the qualified module name plus
   // the namespaces currently being descended into.
-  std::string mQualifiedNamePrefix{};
+  std::string qualifiedNamePrefix_{};
 };
 
 } // namespace
 
-DocModule extractDocModule(const Module &module_) {
-  return Extractor(module_).extract();
+DocModule extractDocModule(const Module &module) {
+  return Extractor(module).extract();
 }
 
 std::vector<std::string_view> getBuiltinModuleNames() {
@@ -476,9 +478,9 @@ std::optional<DocModule> extractBuiltinDocModule(std::string_view name) {
   std::string sourceCode{builtin::getSourceCode(name)};
   if (sourceCode.empty()) return std::nullopt;
   BumpPtrAllocator allocator{};
-  Module module_{std::string(name), std::move(sourceCode)};
-  if (std::optional<Error> error{module_.parse(allocator)}) return std::nullopt;
-  return extractDocModule(module_);
+  Module module{std::string(name), std::move(sourceCode)};
+  if (std::optional<Error> error{module.parse(allocator)}) return std::nullopt;
+  return extractDocModule(module);
 }
 //--}
 
@@ -519,130 +521,131 @@ namespace {
 // instead of spelled out at every field.
 class JSONWriter final {
 public:
-  explicit JSONWriter(std::string &out) : mOut(out) {}
+  explicit JSONWriter(std::string &out) : out_(out) {}
 
   void writeEntry(const DocEntry &entry, int depth) {
-    mOut += "{\n";
-    writeField(depth + 1, "kind", entry.kind);
-    writeField(depth + 1, "name", entry.name);
-    writeField(depth + 1, "qualifiedName", entry.qualifiedName);
-    writeRawField(depth + 1, "isExported", entry.isExported ? "true" : "false");
-    writeRawField(depth + 1, "lineNo", std::to_string(entry.lineNo));
-    writeField(depth + 1, "signature", entry.signature);
-    writeRawField(depth + 1, "nameOffset",
-                  entry.nameOffset == DocEntry::NO_NAME_OFFSET
-                      ? std::string("null")
-                      : std::to_string(entry.nameOffset));
-    writeField(depth + 1, "docText", entry.docText);
+    out_ += "{\n";
+    writeField_(depth + 1, "kind", entry.kind);
+    writeField_(depth + 1, "name", entry.name);
+    writeField_(depth + 1, "qualifiedName", entry.qualifiedName);
+    writeRawField_(depth + 1, "isExported",
+                   entry.isExported ? "true" : "false");
+    writeRawField_(depth + 1, "lineNo", std::to_string(entry.lineNo));
+    writeField_(depth + 1, "signature", entry.signature);
+    writeRawField_(depth + 1, "nameOffset",
+                   entry.nameOffset == DocEntry::NO_NAME_OFFSET
+                       ? std::string("null")
+                       : std::to_string(entry.nameOffset));
+    writeField_(depth + 1, "docText", entry.docText);
     // Parameters are small enough to stay on one line each.
-    writeKey(depth + 1, "params");
-    mOut += '[';
+    writeKey_(depth + 1, "params");
+    out_ += '[';
     for (size_t i = 0; i < entry.params.size(); i++) {
       const DocParam &param{entry.params[i]};
-      mOut += i > 0 ? ", {" : "{";
-      writeInlineField("name", param.name), mOut += ", ";
-      writeInlineField("signature", param.signature), mOut += ", ";
-      writeInlineField("docText", param.docText);
-      mOut += '}';
+      out_ += i > 0 ? ", {" : "{";
+      writeInlineField_("name", param.name), out_ += ", ";
+      writeInlineField_("signature", param.signature), out_ += ", ";
+      writeInlineField_("docText", param.docText);
+      out_ += '}';
     }
-    mOut += "],\n";
-    writeKey(depth + 1, "members");
-    mOut += '[';
+    out_ += "],\n";
+    writeKey_(depth + 1, "members");
+    out_ += '[';
     for (size_t i = 0; i < entry.members.size(); i++) {
-      if (i > 0) mOut += ", ";
+      if (i > 0) out_ += ", ";
       writeEntry(entry.members[i], depth + 1);
     }
-    mOut += "]\n";
-    writeIndent(depth);
-    mOut += '}';
+    out_ += "]\n";
+    writeIndent_(depth);
+    out_ += '}';
   }
 
   void writeModule(const DocModule &mod) {
-    writeIndent(2);
-    mOut += "{\n";
-    writeField(3, "name", mod.name);
-    writeField(3, "qualifiedName", mod.qualifiedName);
-    writeField(3, "fileName", mod.fileName);
-    writeField(3, "docText", mod.docText);
-    writeKey(3, "entries");
-    mOut += "[\n";
+    writeIndent_(2);
+    out_ += "{\n";
+    writeField_(3, "name", mod.name);
+    writeField_(3, "qualifiedName", mod.qualifiedName);
+    writeField_(3, "fileName", mod.fileName);
+    writeField_(3, "docText", mod.docText);
+    writeKey_(3, "entries");
+    out_ += "[\n";
     for (size_t i = 0; i < mod.entries.size(); i++) {
-      writeIndent(4);
+      writeIndent_(4);
       writeEntry(mod.entries[i], 4);
-      if (i + 1 < mod.entries.size()) mOut += ',';
-      mOut += '\n';
+      if (i + 1 < mod.entries.size()) out_ += ',';
+      out_ += '\n';
     }
-    writeIndent(3);
-    mOut += "]\n";
-    writeIndent(2);
-    mOut += '}';
+    writeIndent_(3);
+    out_ += "]\n";
+    writeIndent_(2);
+    out_ += '}';
   }
 
 private:
-  void writeIndent(int depth) { mOut.append(size_t(2 * depth), ' '); }
+  void writeIndent_(int depth) { out_.append(size_t(2 * depth), ' '); }
 
   // Write the indented `"key": ` that opens a field, leaving the value
   // to the caller.
-  void writeKey(int depth, const char *key) {
-    writeIndent(depth);
-    mOut += '"', mOut += key, mOut += "\": ";
+  void writeKey_(int depth, const char *key) {
+    writeIndent_(depth);
+    out_ += '"', out_ += key, out_ += "\": ";
   }
 
   // Write `"key": "value",` on a line of its own.
-  void writeField(int depth, const char *key, std::string_view value) {
-    writeKey(depth, key);
-    writeString(value);
-    mOut += ",\n";
+  void writeField_(int depth, const char *key, std::string_view value) {
+    writeKey_(depth, key);
+    writeString_(value);
+    out_ += ",\n";
   }
 
   // Write `"key": value,` on a line of its own, where the value is
   // already JSON: a number, a boolean, or `null`.
-  void writeRawField(int depth, const char *key, std::string_view value) {
-    writeKey(depth, key);
-    mOut += value;
-    mOut += ",\n";
+  void writeRawField_(int depth, const char *key, std::string_view value) {
+    writeKey_(depth, key);
+    out_ += value;
+    out_ += ",\n";
   }
 
   // Write `"key": "value"` with no indentation and no newline.
-  void writeInlineField(const char *key, std::string_view value) {
-    mOut += '"', mOut += key, mOut += "\": ";
-    writeString(value);
+  void writeInlineField_(const char *key, std::string_view value) {
+    out_ += '"', out_ += key, out_ += "\": ";
+    writeString_(value);
   }
 
-  void writeString(std::string_view str) {
-    mOut += '"';
+  void writeString_(std::string_view str) {
+    out_ += '"';
     for (char ch : str) {
       switch (ch) {
       case '"':
-        mOut += "\\\"";
+        out_ += "\\\"";
         break;
       case '\\':
-        mOut += "\\\\";
+        out_ += "\\\\";
         break;
       case '\n':
-        mOut += "\\n";
+        out_ += "\\n";
         break;
       case '\t':
-        mOut += "\\t";
+        out_ += "\\t";
         break;
       case '\r':
-        mOut += "\\r";
+        out_ += "\\r";
         break;
       default:
         if (uint8_t(ch) < 0x20) {
           char buf[8]{};
           std::snprintf(buf, sizeof(buf), "\\u%04X", unsigned(uint8_t(ch)));
-          mOut += buf;
+          out_ += buf;
         } else {
-          mOut += ch;
+          out_ += ch;
         }
         break;
       }
     }
-    mOut += '"';
+    out_ += '"';
   }
 
-  std::string &mOut;
+  std::string &out_;
 };
 
 } // namespace

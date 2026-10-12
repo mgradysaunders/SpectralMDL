@@ -12,10 +12,10 @@ namespace {
 
 [[nodiscard]] DocModule extractFromSource(std::string sourceCode) {
   BumpPtrAllocator allocator{};
-  Module module_{"test", std::move(sourceCode)};
-  std::optional<Error> error{module_.parse(allocator)};
+  Module module{"test", std::move(sourceCode)};
+  std::optional<Error> error{module.parse(allocator)};
   REQUIRE(!error);
-  return extractDocModule(module_);
+  return extractDocModule(module);
 }
 
 [[nodiscard]] const DocEntry &entryNamed(const DocModule &mod,

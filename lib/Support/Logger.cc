@@ -13,53 +13,52 @@ Logger &Logger::get() {
 }
 
 // NOTE: This must not log, since it runs inside the first 'get()'. That
-// is why the override is reported later, by 'reportMinLevelOverride()'.
+// is why the override is reported later, by 'reportMinLevelOverride_()'.
 Logger::Logger()
-    : mMinLevel(
-          Environment::get().logLevel.value().value_or(LOG_LEVEL_INFO)) {}
+    : minLevel_(Environment::get().logLevel.value().value_or(LOG_LEVEL_INFO)) {}
 
 void Logger::setMinLevel(LogLevel minLevel) {
-  mHostMinLevel = minLevel;
-  mMinLevel = Environment::get().logLevel.value().value_or(minLevel);
-  reportMinLevelOverride();
+  hostMinLevel_ = minLevel;
+  minLevel_ = Environment::get().logLevel.value().value_or(minLevel);
+  reportMinLevelOverride_();
 }
 
 // The report is made as soon as the host sets its level, or else ahead of
 // the first message, whichever comes first with a sink to hear it. It
 // logs through 'logMessage()', so the lock has to be released by then.
-void Logger::reportMinLevelOverride() {
+void Logger::reportMinLevelOverride_() {
   bool hasSinks{};
   {
-    std::scoped_lock guard{mMtx};
-    hasSinks = !mSinks.empty();
+    std::scoped_lock guard{mtx_};
+    hasSinks = !sinks_.empty();
   }
-  if (hasSinks) Environment::get().logLevel.report(mHostMinLevel);
+  if (hasSinks) Environment::get().logLevel.report(hostMinLevel_);
 }
 
 void Logger::reset() {
-  std::scoped_lock guard{mMtx};
-  for (auto &sink : mSinks) {
+  std::scoped_lock guard{mtx_};
+  for (auto &sink : sinks_) {
     sink->flush();
     sink->close();
   }
-  mSinks.clear();
+  sinks_.clear();
 }
 
 void Logger::flush() {
-  std::scoped_lock guard{mMtx};
-  for (auto &sink : mSinks) sink->flush();
+  std::scoped_lock guard{mtx_};
+  for (auto &sink : sinks_) sink->flush();
 }
 
 void Logger::close() {
-  std::scoped_lock guard{mMtx};
-  for (auto &sink : mSinks) sink->close();
+  std::scoped_lock guard{mtx_};
+  for (auto &sink : sinks_) sink->close();
 }
 
 void Logger::logMessage(LogLevel level, std::string_view message) {
   if (isEnabled(level)) {
-    reportMinLevelOverride();
-    std::scoped_lock guard{mMtx};
-    for (auto &sink : mSinks) sink->logMessage(level, message);
+    reportMinLevelOverride_();
+    std::scoped_lock guard{mtx_};
+    for (auto &sink : sinks_) sink->logMessage(level, message);
   }
 }
 

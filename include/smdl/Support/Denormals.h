@@ -47,14 +47,14 @@ public:
     // denormal operands. Both bits are architectural on x86-64.
     constexpr unsigned FLUSH_TO_ZERO{1u << 15};
     constexpr unsigned DENORMALS_ARE_ZERO{1u << 6};
-    mSaved = _mm_getcsr();
-    _mm_setcsr(mSaved | FLUSH_TO_ZERO | DENORMALS_ARE_ZERO);
+    saved_ = _mm_getcsr();
+    _mm_setcsr(saved_ | FLUSH_TO_ZERO | DENORMALS_ARE_ZERO);
 #endif
   }
 
   ~ScopedFlushDenormals() {
 #if SMDL_HAS_MXCSR
-    _mm_setcsr(mSaved);
+    _mm_setcsr(saved_);
 #endif
   }
 
@@ -65,7 +65,7 @@ public:
 #if SMDL_HAS_MXCSR
 private:
   /// The mode to restore.
-  unsigned mSaved{};
+  unsigned saved_{};
 #endif
 };
 

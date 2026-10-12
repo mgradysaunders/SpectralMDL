@@ -42,34 +42,34 @@ Distribution1D::Distribution1D(Span<const float> values) {
     // Deliberately `fmax`: the values come from files (image texels, IES
     // profiles, BSDF tables), and this is the one place a NaN among them
     // is dropped rather than left to poison the whole table.
-    mTotalSum += std::fmax(static_cast<double>(value), 0.0);
-    sums.emplace_back(mTotalSum);
+    totalSum_ += std::fmax(static_cast<double>(value), 0.0);
+    sums.emplace_back(totalSum_);
   }
-  mCMFs.resize(sums.size());
+  cmfs_.resize(sums.size());
   // An all-zero distribution stays all-zero, so every PMF is zero rather
   // than NaN. This arises legitimately, e.g., as a conditional row of a
   // `Distribution2D` over a region with no density.
-  if (mTotalSum > 0) {
+  if (totalSum_ > 0) {
     for (size_t i = 0; i < sums.size(); i++)
-      mCMFs[i] = quantizeCMF(sums[i] / mTotalSum);
+      cmfs_[i] = quantizeCMF(sums[i] / totalSum_);
   }
 }
 
 int Distribution1D::indexSample(float xi, float *xiRemap,
                                 float *pmf) const noexcept {
-  if (mCMFs.size() < 2) {
+  if (cmfs_.size() < 2) {
     if (pmf) *pmf = 1;
     return 0;
   }
   const uint32_t key{quantizeCMF(std::clamp(double(xi), 0.0, 1.0))};
-  auto itr{std::lower_bound(mCMFs.begin(), mCMFs.end(), key)};
-  if (itr == mCMFs.begin()) ++itr;
-  if (itr == mCMFs.end()) --itr;
+  auto itr{std::lower_bound(cmfs_.begin(), cmfs_.end(), key)};
+  if (itr == cmfs_.begin()) ++itr;
+  if (itr == cmfs_.end()) --itr;
   --itr;
   // A key of zero stops the search at the first entry whatever its mass,
   // so step past the indexes with none.
-  while (itr + 2 < mCMFs.end() && itr[0] == itr[1]) ++itr;
-  int i{int(itr - mCMFs.begin())};
+  while (itr + 2 < cmfs_.end() && itr[0] == itr[1]) ++itr;
+  int i{int(itr - cmfs_.begin())};
   uint32_t cmf0{*itr++};
   uint32_t cmf1{*itr};
   // Nondecreasing entries, so this cannot wrap.
@@ -115,13 +115,13 @@ AliasTable::AliasTable(Span<const float> weights) {
     (shares[i] < 1.0 ? under : over).push_back(uint32_t(i));
   // An entry no pass ever pays keeps the whole of itself, which is the
   // threshold the default gives it.
-  mEntries.resize(numEntries);
+  entries_.resize(numEntries);
   while (!under.empty() && !over.empty()) {
     const uint32_t shortOf{under.back()};
     const uint32_t donor{over.back()};
     under.pop_back();
-    mEntries[shortOf].threshold = float(shares[shortOf]);
-    mEntries[shortOf].alias = donor;
+    entries_[shortOf].threshold = float(shares[shortOf]);
+    entries_[shortOf].alias = donor;
     shares[donor] -= 1.0 - shares[shortOf];
     if (shares[donor] < 1.0) {
       over.pop_back();
@@ -147,32 +147,32 @@ float erfInverse(float y) noexcept {
 
 Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
                                Span<const float> values)
-    : mNumTexelsX(numTexelsX), mNumTexelsY(numTexelsY) {
+    : numTexelsX_(numTexelsX), numTexelsY_(numTexelsY) {
   SMDL_SANITY_CHECK(numTexelsX >= 0);
   SMDL_SANITY_CHECK(numTexelsY >= 0);
   SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
-  mConditionals.reserve(numTexelsY);
+  conditionals_.reserve(numTexelsY);
   std::vector<float> margins(static_cast<size_t>(numTexelsY));
   for (int iY = 0; iY < numTexelsY; iY++) {
-    mConditionals.emplace_back(
+    conditionals_.emplace_back(
         values.subspan(size_t(numTexelsX) * size_t(iY), numTexelsX));
-    margins[iY] = mConditionals.back().unnormalizedSum();
+    margins[iY] = conditionals_.back().unnormalizedSum();
   }
-  mMarginal = Distribution1D(margins);
+  marginal_ = Distribution1D(margins);
 }
 
 int2 Distribution2D::pixelSample(float2 xi, float2 *xiRemap,
                                  float *pmf) const noexcept {
-  if (mNumTexelsX == 0 || mNumTexelsY == 0) {
+  if (numTexelsX_ == 0 || numTexelsY_ == 0) {
     if (pmf) *pmf = 1.0f;
     return {};
   } else {
     float pmfX{};
     float pmfY{};
-    int iY{mMarginal.indexSample(xi.y, &xi.y, &pmfY)};
+    int iY{marginal_.indexSample(xi.y, &xi.y, &pmfY)};
     SMDL_SANITY_CHECK(iY >= 0);
-    SMDL_SANITY_CHECK(iY < int(mConditionals.size()));
-    int iX{mConditionals[iY].indexSample(xi.x, &xi.x, &pmfX)};
+    SMDL_SANITY_CHECK(iY < int(conditionals_.size()));
+    int iX{conditionals_[iY].indexSample(xi.x, &xi.x, &pmfX)};
     if (xiRemap) *xiRemap = xi;
     if (pmf) *pmf = pmfX * pmfY;
     return {iX, iY};
@@ -193,13 +193,13 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
   float phi{fastAtan2(wi.y, wi.x)};
   if (phi < 0.0f) phi += TWO_PI;
   phi = std::clamp(phi, 0.0f, TWO_PI);
-  const int nX{mNumTexelsX};
-  const int nY{mNumTexelsY};
+  const int nX{numTexelsX_};
+  const int nY{numTexelsY_};
   const int iX{std::clamp(int(float(nX) * (phi * INV_TWO_PI)), 0, nX - 1)};
   const int iY{std::clamp(int(float(nY) * (theta * INV_PI)), 0, nY - 1)};
   if (iPixel) *iPixel = {iX, iY};
   return pixelPMF(int2(iX, iY)) *
-         (float(mNumTexelsX * mNumTexelsY) / (TWO_PI * PI * sinTheta));
+         (float(numTexelsX_ * numTexelsY_) / (TWO_PI * PI * sinTheta));
 }
 
 float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
@@ -207,8 +207,8 @@ float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
   if (iPixel) *iPixel = int2(-1, -1);
   if (pdf) *pdf = 0.0f;
   const int2 i{pixelSample(xi, &xi)};
-  const float phi{(float(i.x) + xi.x) * (TWO_PI / float(mNumTexelsX))};
-  const float theta{(float(i.y) + xi.y) * (PI / float(mNumTexelsY))};
+  const float phi{(float(i.x) + xi.x) * (TWO_PI / float(numTexelsX_))};
+  const float theta{(float(i.y) + xi.y) * (PI / float(numTexelsY_))};
   const float cosTheta{std::cos(theta)};
   const float sinTheta{std::sin(theta)};
   if (sinTheta == 0.0f) return {};

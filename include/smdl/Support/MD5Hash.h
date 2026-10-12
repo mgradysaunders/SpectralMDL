@@ -135,10 +135,10 @@ private:
   /// otherwise).
   std::unordered_map<std::pair<MD5Hash, std::string>,
                      std::unique_ptr<MD5FileHash>, FileHashKeyHash>
-      mFileHashes{};
+      fileHashes_{};
 
-  /// Canonical file name to entry in `mFileHashes`.
-  std::unordered_map<std::string, const MD5FileHash *> mFileHashesByName{};
+  /// Canonical file name to entry in `fileHashes_`.
+  std::unordered_map<std::string, const MD5FileHash *> fileHashesByName_{};
 };
 
 /// \}

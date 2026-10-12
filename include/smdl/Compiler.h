@@ -266,7 +266,7 @@ public:
   /// undiagnosed. Passing an empty vector restores the default of
   /// compiling every material.
   void setDesiredMaterials(std::vector<std::string> materialNames) noexcept {
-    mDesiredMaterialNames = std::move(materialNames);
+    desiredMaterialNames_ = std::move(materialNames);
   }
 
   /// Compile to LLVM-IR.
@@ -288,11 +288,11 @@ public:
 private:
   /// Get the LLVM context, or throw an `Error` if there is none (i.e., if
   /// `compile()` has not run yet or `jitCompile()` already consumed it).
-  [[nodiscard]] llvm::LLVMContext &getLLVMContext();
+  [[nodiscard]] llvm::LLVMContext &getLLVMContext_();
 
   /// Get the LLVM module, or throw an `Error` if there is none (i.e., if
   /// `compile()` has not run yet or `jitCompile()` already consumed it).
-  [[nodiscard]] llvm::Module &getLLVMModule();
+  [[nodiscard]] llvm::Module &getLLVMModule_();
 
   /// Warn about a resource at most once per distinct `key` per `compile()`.
   /// The key is the file name, or the file name and what was looked up
@@ -316,8 +316,9 @@ private:
   /// Returns whether this call logged the warning, so that anything said
   /// alongside it is said once too.
   ///
-  bool logResourceWarningOnce(const SourceLocation &srcLoc,
-                              const std::string &key, std::string_view message);
+  bool logResourceWarningOnce_(const SourceLocation &srcLoc,
+                               const std::string &key,
+                               std::string_view message);
 
   /// Load image.
   ///
@@ -340,22 +341,22 @@ private:
   /// and decodes the images it kept once emission is over, sizing each
   /// allocation to the levels asked for by then.
   [[nodiscard]] const Image &
-  loadImage(const std::string &fileName, const SourceLocation &srcLoc,
-            bool useMipLevels = false,
-            Image::MipFilter filter = Image::MIP_MEAN);
+  loadImage_(const std::string &fileName, const SourceLocation &srcLoc,
+             bool useMipLevels = false,
+             Image::MipFilter filter = Image::MIP_MEAN);
 
   /// Load ptex texture.
-  [[nodiscard]] const Ptexture &loadPtexture(const std::string &fileName,
-                                             const SourceLocation &srcLoc);
+  [[nodiscard]] const Ptexture &loadPtexture_(const std::string &fileName,
+                                              const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
   [[nodiscard]] const BSDFMeasurement &
-  loadBSDFMeasurement(const std::string &fileName,
-                      const SourceLocation &srcLoc);
+  loadBSDFMeasurement_(const std::string &fileName,
+                       const SourceLocation &srcLoc);
 
   /// Load light profile.
   [[nodiscard]] const LightProfile &
-  loadLightProfile(const std::string &fileName, const SourceLocation &srcLoc);
+  loadLightProfile_(const std::string &fileName, const SourceLocation &srcLoc);
 
   /// Load voxel grid.
   ///
@@ -363,28 +364,28 @@ private:
   /// `VoxelGrid::loadFromFile()`). The cache is keyed by content hash
   /// *and* the grid name, so two references to different grids of the
   /// same file are two separate `VoxelGrid`s.
-  [[nodiscard]] const VoxelGrid &loadVoxelGrid(const std::string &fileName,
-                                               const std::string &gridName,
-                                               const SourceLocation &srcLoc);
+  [[nodiscard]] const VoxelGrid &loadVoxelGrid_(const std::string &fileName,
+                                                const std::string &gridName,
+                                                const SourceLocation &srcLoc);
 
   /// Load spectrum from TXT file.
-  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
-                                          const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum_(const std::string &fileName,
+                                           const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
-  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
-                                          int curveIndex,
-                                          const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum_(const std::string &fileName,
+                                           int curveIndex,
+                                           const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
-  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
-                                          const std::string &curveName,
-                                          const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum_(const std::string &fileName,
+                                           const std::string &curveName,
+                                           const SourceLocation &srcLoc);
 
   /// Load ENVI Spectral Library file.
   [[nodiscard]] const SpectrumLibrary &
-  loadSpectrumLibrary(const std::string &fileName,
-                      const SourceLocation &srcLoc);
+  loadSpectrumLibrary_(const std::string &fileName,
+                       const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
@@ -406,13 +407,13 @@ public:
 private:
   /// After JIT-compiling, lookup symbol with the given name, or throw an
   /// `Error` carrying the underlying ORC failure message.
-  [[nodiscard]] void *jitLookup(std::string_view name);
+  [[nodiscard]] void *jitLookup_(std::string_view name);
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
-  template <typename T> void jitLookup(jit::Function<T> &func) {
+  template <typename T> void jitLookup_(jit::Function<T> &func) {
     func.func = reinterpret_cast<typename jit::Function<T>::FunctionPointer>(
-        jitLookup(func.name));
+        jitLookup_(func.name));
     if (!func.func)
       throw Error(
           concat("cannot resolve JIT function ", SpellQuoted(func.name)));
@@ -478,13 +479,13 @@ public:
   /// unless `setDesiredMaterials()` is active.
   [[nodiscard]] Span<const std::string>
   getSkippedMaterialNames() const noexcept {
-    return mSkippedMaterialNames;
+    return skippedMaterialNames_;
   }
 
   /// Get all JIT-compiled materials, including materials in shadowed
   /// modules.
   [[nodiscard]] Span<const jit::MaterialDef> getMaterials() const noexcept {
-    return mMaterialDefs;
+    return materialDefs_;
   }
 
   /// Run the JIT-compiled color-to-RGB function.
@@ -585,7 +586,7 @@ private:
   /// intermediate representations are dropped and the allocator is
   /// reset.
   ///
-  BumpPtrAllocator mAllocator{};
+  BumpPtrAllocator allocator_{};
 
   /// The MD5 file hasher.
   ///
@@ -596,39 +597,39 @@ private:
   /// bakes absolute pointers into resource internals, so resource addresses
   /// must be stable for the lifetime of the compile.
   ///
-  MD5FileHasher mFileHasher{};
+  MD5FileHasher fileHasher_{};
 
-  /// The keys already reported by `logResourceWarningOnce()`. Not keyed on
+  /// The keys already reported by `logResourceWarningOnce_()`. Not keyed on
   /// `MD5FileHash` like the resource tables below, because the usual reason
   /// to warn is that the file does not exist, and a file that does not
   /// exist has nothing to hash.
-  std::unordered_set<std::string> mWarnedResourceKeys;
+  std::unordered_set<std::string> warnedResourceKeys_;
 
   /// The images used by textures, keyed by content hash alone: one
   /// decoded image per file, however its references differ in gamma or
   /// in whether they read mip levels.
-  std::unordered_map<const MD5FileHash *, std::unique_ptr<Image>> mImages;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Image>> images_;
 
   /// The first reference to request a mip chain of each image, which a
   /// later request for the other kind of chain is reported against.
-  std::unordered_map<const Image *, SourceLocation> mImageMipRequesters;
+  std::unordered_map<const Image *, SourceLocation> imageMipRequesters_;
 
   /// The JIT symbol naming each image's level 0 texels. Emitted code
   /// refers to an image by symbol rather than by address (see
   /// `Context::getImageTexelBase()`), and `jitCompile()` defines every
   /// symbol here as an absolute symbol once the images are loaded.
-  std::unordered_map<const Image *, std::string> mImageSymbolNames;
+  std::unordered_map<const Image *, std::string> imageSymbolNames_;
 
   /// The ptex textures.
-  std::unordered_map<const MD5FileHash *, std::unique_ptr<Ptexture>> mPtextures;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Ptexture>> ptextures_;
 
   /// The BSDF measurements.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<BSDFMeasurement>>
-      mBSDFMeasurements;
+      bsdfMeasurements_;
 
   /// The light profiles.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<LightProfile>>
-      mLightProfiles;
+      lightProfiles_;
 
   /// The hasher for the voxel grid key.
   struct VoxelGridKeyHash final {
@@ -642,29 +643,29 @@ private:
   };
 
   /// The voxel grids used by 3D textures, keyed by content hash and the
-  /// grid name of `loadVoxelGrid()`.
+  /// grid name of `loadVoxelGrid_()`.
   std::unordered_map<std::pair<const MD5FileHash *, std::string>,
                      std::unique_ptr<VoxelGrid>, VoxelGridKeyHash>
-      mVoxelGrids;
+      voxelGrids_;
 
   /// The spectrums.
-  std::unordered_map<const MD5FileHash *, std::unique_ptr<Spectrum>> mSpectrums;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Spectrum>> spectrums_;
 
   /// The spectrum libraries.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<SpectrumLibrary>>
-      mSpectrumLibraries;
+      spectrumLibraries_;
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.
-  std::unordered_map<std::string, Module *> mModuleFileNames;
+  std::unordered_map<std::string, Module *> moduleFileNames_;
 
   /// The MDL modules by qualified name, e.g., `::vendor::metals::steel`.
   /// On collisions across search roots, the module under the earliest
   /// added root wins and later modules are marked shadowed.
-  std::unordered_map<std::string, Module *> mModulesByQualifiedName;
+  std::unordered_map<std::string, Module *> modulesByQualifiedName_;
 
   /// The MDL module directory names.
-  std::unordered_set<std::string> mModuleDirNames;
+  std::unordered_set<std::string> moduleDirNames_;
 
   /// The MDL module directory search paths.
   ///
@@ -673,20 +674,20 @@ private:
   /// contain all of the same paths. This is necessary to preserve the
   /// order in which the paths were added.
   ///
-  std::vector<std::string> mModuleDirSearchPaths;
+  std::vector<std::string> moduleDirSearchPaths_;
 
   /// The MDL modules.
-  std::vector<std::unique_ptr<Module>> mModules;
+  std::vector<std::unique_ptr<Module>> modules_;
 
   /// Reset all JIT-derived state for a (re)compile: frees the previous
   /// JIT, clears all resource maps and JIT handle tables, and creates a
   /// fresh LLVM context, module, and JIT.
-  void resetForRecompile();
+  void resetForRecompile_();
 
   /// Drop every image the optimized module provably never reads, so
   /// `compile()` never allocates or decodes its texels at all. Returns
   /// the number of images dropped.
-  size_t dropUnusedImages();
+  size_t dropUnusedImages_();
 
   /// Take ownership of a successfully loaded module: index it by file
   /// name and by qualified name, mark it shadowed if the qualified name
@@ -695,73 +696,73 @@ private:
   ///
   /// This runs only after the load succeeds, so a file that failed can
   /// be retried instead of being silently skipped.
-  void registerModule(std::unique_ptr<Module> loadedModule,
-                      std::vector<std::string> *addedModuleNames);
+  void registerModule_(std::unique_ptr<Module> loadedModule,
+                       std::vector<std::string> *addedModuleNames);
 
   /// Load the loose file a relative import names as `qualifiedName`,
   /// register it, and parse it. Called by the `Emitter` while it
-  /// resolves the import, so the module joins `mModules` in the middle
+  /// resolves the import, so the module joins `modules_` in the middle
   /// of `compile()`.
-  [[nodiscard]] Module *loadImportedFile(const std::string &fileName,
-                                         const std::string &qualifiedName,
-                                         const std::string &searchRoot);
+  [[nodiscard]] Module *loadImportedFile_(const std::string &fileName,
+                                          const std::string &qualifiedName,
+                                          const std::string &searchRoot);
 
   /// The LLVM context for the module being compiled. Consumed (moved into
   /// the JIT) by `jitCompile()`.
-  std::unique_ptr<llvm::LLVMContext> mLLVMContext;
+  std::unique_ptr<llvm::LLVMContext> llvmContext_;
 
   /// The LLVM module being compiled. Consumed by `jitCompile()`.
-  std::unique_ptr<llvm::Module> mLLVMModule;
+  std::unique_ptr<llvm::Module> llvmModule_;
 
   /// The names and host addresses of the builtin runtime callees
   /// registered during emission (see `Context::getBuiltinCallee`). These
   /// are defined as absolute symbols in the JIT so resolution does not
   /// depend on the host process exporting them (e.g. a statically linked
   /// host without `--export-dynamic`).
-  std::unordered_map<std::string, const void *> mBuiltinCalleeAddresses;
+  std::unordered_map<std::string, const void *> builtinCalleeAddresses_;
 
   /// The LLVM JIT.
-  std::unique_ptr<llvm::orc::LLJIT> mLLVMJIT;
+  std::unique_ptr<llvm::orc::LLJIT> llvmJIT_;
 
   /// Where each `@(foreign)` function was declared, so that one the host
   /// process does not define is reported at its declaration. Cleared by
   /// `jitCompile()`, which frees the builtin modules these may point into.
   std::unordered_map<std::string, SourceLocation>
-      mForeignFunctionSourceLocations;
+      foreignFunctionSourceLocations_;
 
   /// Is `jitCompile()` running? While it is, the errors the JIT execution
-  /// session reports collect in `mJITSessionErrors`, and lead the `Error`
+  /// session reports collect in `jitSessionErrors_`, and lead the `Error`
   /// it returns; at any other time they are logged as they arrive.
-  bool mIsJITCompiling{};
+  bool isJITCompiling_{};
 
-  /// See `mIsJITCompiling`.
-  std::vector<Error> mJITSessionErrors;
+  /// See `isJITCompiling_`.
+  std::vector<Error> jitSessionErrors_;
 
   /// The JIT-compiled color-to-RGB conversion function.
   jit::Function<void(const State &state, const float *cptr, float3 &rgb)>
-      mColorToRGB{"smdlColorToRGB"};
+      colorToRGB_{"smdlColorToRGB"};
 
   /// The JIT-compiled RGB-to-color conversion function.
   jit::Function<void(const State &state, const float3 &rgb, float *cptr)>
-      mRGBToColor{"smdlRGBToColor"};
+      rgbToColor_{"smdlRGBToColor"};
 
   /// The desired material names (see `setDesiredMaterials()`). When
   /// non-empty, `compile()` skips every material whose qualified name
   /// matches none of these.
-  std::vector<std::string> mDesiredMaterialNames;
+  std::vector<std::string> desiredMaterialNames_;
 
   /// The qualified names of the materials skipped by the last
   /// `compile()` because they matched no desired material name.
-  std::vector<std::string> mSkippedMaterialNames;
+  std::vector<std::string> skippedMaterialNames_;
 
   /// The JIT-compiled materials.
-  std::vector<jit::MaterialDef> mMaterialDefs;
+  std::vector<jit::MaterialDef> materialDefs_;
 
   /// The JIT-compiled unit tests.
-  std::vector<jit::UnitTest> mUnitTests;
+  std::vector<jit::UnitTest> unitTests_;
 
   /// The JIT-compiled execs.
-  std::vector<jit::Function<void()>> mExecs;
+  std::vector<jit::Function<void()>> execs_;
 
   friend class Context;
 

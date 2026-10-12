@@ -204,7 +204,7 @@ public:
   /// a struct type that is either the default type for its first tag or
   /// the default instantiation of an abstract struct. This is the single
   /// definition shared by the intrinsic and the static material flags
-  /// (see `FunctionType::initializeMaterialFunctions`).
+  /// (see `FunctionType::initializeMaterialFunctions_`).
   [[nodiscard]] bool isDefault() const;
 
   /// Is instance of `UnionType` or multi-level `PointerType`
@@ -549,7 +549,7 @@ private:
   /// - 'z' is 2
   /// - 'w' is 3
   ///
-  [[nodiscard]] std::optional<uint32_t> toIndex(char c) const {
+  [[nodiscard]] std::optional<uint32_t> toIndex_(char c) const {
     if (!extent.isScalar()) {
       // Only the first 4 components are nameable: larger vectors would
       // read past the "xyzw"/"rgba" literals.
@@ -566,11 +566,11 @@ private:
 
   /// Convert the given string to an index sequence for swizzling.
   [[nodiscard]] std::optional<llvm::SmallVector<int>>
-  toIndexSwizzle(llvm::StringRef name) const {
+  toIndexSwizzle_(llvm::StringRef name) const {
     if (extent.isVector()) {
       llvm::SmallVector<int> swizzle{};
       for (char c : name) {
-        std::optional<unsigned> i{toIndex(c)};
+        std::optional<unsigned> i{toIndex_(c)};
         if (!i) return std::nullopt;
         swizzle.push_back(static_cast<int>(*i));
       }
@@ -910,7 +910,7 @@ public:
   const bool isLambda{};
 
 private:
-  void initializeMaterialFunctions(Emitter &emitter);
+  void initializeMaterialFunctions_(Emitter &emitter);
 };
 
 /// An inferred-size array type.
@@ -1030,7 +1030,7 @@ public:
   /// \{
 
   [[nodiscard]] bool hasField(std::string_view name) final {
-    for (auto &field : mFields)
+    for (auto &field : fields_)
       if (field.name == name) return true;
     return false;
   }
@@ -1050,7 +1050,7 @@ private:
     uint64_t offset{};
   };
 
-  std::vector<Field> mFields{};
+  std::vector<Field> fields_{};
 };
 
 /// The string type, essentially a pointer to a null-terminated string literal.

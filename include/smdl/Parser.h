@@ -17,68 +17,69 @@ namespace smdl {
 /// The parser.
 class SMDL_EXPORT Parser final {
 public:
-  explicit Parser(BumpPtrAllocator &allocator, Module &module_,
+  explicit Parser(BumpPtrAllocator &allocator, Module &module,
                   bool isSMDL = false)
-      : mAllocator(allocator), mModule(module_), mIsSMDL(isSMDL) {
-    mSrcLoc.module_ = &module_;
+      : allocator_(allocator), module_(module), isSMDL_(isSMDL) {
+    srcLoc_.module = &module;
   }
 
   /// Non-copyable and non-movable.
   Parser(const Parser &) = delete;
 
   /// Parse everything.
-  [[nodiscard]] BumpPtr<ast::File> parse() { return parseFile(); }
+  [[nodiscard]] BumpPtr<ast::File> parse() { return parseFile_(); }
 
 private:
   //--{ Basics
-  [[nodiscard]] bool isEOF() const {
-    return mSrcLoc.i >= getSourceCode().size();
+  [[nodiscard]] bool isEOF_() const {
+    return srcLoc_.i >= getSourceCode_().size();
   }
 
-  [[nodiscard]] std::string_view getSourceCode() const {
-    return mModule.getSourceCode();
+  [[nodiscard]] std::string_view getSourceCode_() const {
+    return module_.getSourceCode();
   }
 
   [[nodiscard]] std::string_view
-  getSourceCodeBetween(const SourceLocation &srcLoc0,
-                       const SourceLocation &srcLoc1) const {
-    return getSourceCode().substr(srcLoc0.i, srcLoc1.i - srcLoc0.i);
+  getSourceCodeBetween_(const SourceLocation &srcLoc0,
+                        const SourceLocation &srcLoc1) const {
+    return getSourceCode_().substr(srcLoc0.i, srcLoc1.i - srcLoc0.i);
   }
 
-  [[nodiscard]] std::string_view getRemainingSourceCode() const {
-    return getSourceCode().substr(mSrcLoc.i);
+  [[nodiscard]] std::string_view getRemainingSourceCode_() const {
+    return getSourceCode_().substr(srcLoc_.i);
   }
 
-  [[nodiscard]] char peek() const {
-    if (isEOF()) return '\0';
-    return getSourceCode()[mSrcLoc.i];
+  [[nodiscard]] char peek_() const {
+    if (isEOF_()) return '\0';
+    return getSourceCode_()[srcLoc_.i];
   }
 
-  char next();
+  char next_();
 
-  std::string_view next(size_t n);
+  std::string_view next_(size_t n);
 
-  [[nodiscard]] std::optional<std::string_view> next(std::string_view str);
+  [[nodiscard]] std::optional<std::string_view> next_(std::string_view str);
 
   [[nodiscard]] std::optional<std::string_view>
-  nextDelimiter(std::string_view str) {
-    skip();
-    return next(str);
+  nextDelimiter_(std::string_view str) {
+    skip_();
+    return next_(str);
   }
 
   [[nodiscard]] std::optional<std::string_view>
-  nextKeyword(std::string_view str);
+  nextKeyword_(std::string_view str);
 
   [[nodiscard]] std::optional<std::string_view>
-  nextKeyword(std::initializer_list<std::string_view> strs) {
+  nextKeyword_(std::initializer_list<std::string_view> strs) {
     for (auto str : strs)
-      if (std::optional<std::string_view> result{nextKeyword(str)})
+      if (std::optional<std::string_view> result{nextKeyword_(str)})
         return result;
     return std::nullopt;
   }
 
-  /// The result of `nextKeywordAndLocation()` or `nextDelimiterAndLocation()`:
-  /// the parsed source code and the source location where it begins.
+  /// The result of `nextKeywordAndLocation_()` or
+  /// `nextDelimiterAndLocation_()`: the parsed source code and the source
+  /// location where it begins.
   struct ParsedToken final {
     /// The source location.
     SourceLocation srcLoc{};
@@ -91,51 +92,51 @@ private:
   /// capturing the source location at the start of the keyword. This is the
   /// common prologue of most declaration and statement parse functions.
   [[nodiscard]] std::optional<ParsedToken>
-  nextKeywordAndLocation(std::string_view str) {
-    skip();
-    SourceLocation srcLoc{mSrcLoc};
-    if (std::optional<std::string_view> srcKw{nextKeyword(str)})
+  nextKeywordAndLocation_(std::string_view str) {
+    skip_();
+    SourceLocation srcLoc{srcLoc_};
+    if (std::optional<std::string_view> srcKw{nextKeyword_(str)})
       return ParsedToken{srcLoc, *srcKw};
     return std::nullopt;
   }
 
-  /// Same as `nextKeywordAndLocation()`, but for delimiters.
+  /// Same as `nextKeywordAndLocation_()`, but for delimiters.
   [[nodiscard]] std::optional<ParsedToken>
-  nextDelimiterAndLocation(std::string_view str) {
-    skip();
-    SourceLocation srcLoc{mSrcLoc};
-    if (std::optional<std::string_view> src{next(str)})
+  nextDelimiterAndLocation_(std::string_view str) {
+    skip_();
+    SourceLocation srcLoc{srcLoc_};
+    if (std::optional<std::string_view> src{next_(str)})
       return ParsedToken{srcLoc, *src};
     return std::nullopt;
   }
 
   /// Unwrap an optional source string, defaulting to the empty string.
   [[nodiscard]] static std::string_view
-  orEmpty(const std::optional<std::string_view> &src) {
+  orEmpty_(const std::optional<std::string_view> &src) {
     return src ? *src : std::string_view();
   }
 
-  [[nodiscard]] std::optional<std::string_view> nextWord();
+  [[nodiscard]] std::optional<std::string_view> nextWord_();
 
-  [[nodiscard]] std::optional<std::string_view> nextInteger();
+  [[nodiscard]] std::optional<std::string_view> nextInteger_();
 
-  void skip();
+  void skip_();
 
   /// The token beginning at the given index in the source code, without
   /// moving the parser. Returns the empty view past the end.
-  [[nodiscard]] std::string_view tokenAt(uint64_t i) const;
+  [[nodiscard]] std::string_view tokenAt_(uint64_t i) const;
 
   /// The next token as source text, for naming what the parser choked on.
   /// Skips whitespace and comments first, so this must only be used where
   /// the parser is about to throw. Returns the empty view at end of file.
-  [[nodiscard]] std::string_view peekToken();
+  [[nodiscard]] std::string_view peekToken_();
 
   /// The explanation for a token the parser cannot use here, either
   /// because it belongs to another language or because it is a
   /// SpectralMDL extension in a file that did not opt in. Returns a clause
   /// ready to append to a message, or the empty string when there is
   /// nothing useful to say.
-  [[nodiscard]] std::string explainToken(std::string_view token) const;
+  [[nodiscard]] std::string explainToken_(std::string_view token) const;
 
   /// Throw `message`, naming the token that stopped the parser and
   /// explaining it when there is anything to explain. `srcLocStart`, when
@@ -143,26 +144,26 @@ private:
   /// is usually consumed as a name long before the parse gives up, so
   /// `class Foo {` stops at the brace while `class` is the real mistake.
   [[noreturn]] void
-  throwUnexpectedToken(const SourceLocation &srcLoc, std::string_view message,
-                       const SourceLocation *srcLocStart = nullptr);
+  throwUnexpectedToken_(const SourceLocation &srcLoc, std::string_view message,
+                        const SourceLocation *srcLocStart = nullptr);
 
   /// Get the pending documentation comment block most recently scanned
-  /// by `skip()`. This may be empty!
-  [[nodiscard]] std::string_view getPendingDocComment() const {
-    return getSourceCode().substr(mPendingDocCommentBegin,
-                                  mPendingDocCommentEnd -
-                                      mPendingDocCommentBegin);
+  /// by `skip_()`. This may be empty!
+  [[nodiscard]] std::string_view getPendingDocComment_() const {
+    return getSourceCode_().substr(pendingDocCommentBegin_,
+                                   pendingDocCommentEnd_ -
+                                       pendingDocCommentBegin_);
   }
 
   /// Get the pending documentation comment block if it attaches to the
   /// given source index, meaning it is separated from it by whitespace
   /// containing at most one newline. This may be empty!
-  [[nodiscard]] std::string_view getDocCommentBefore(size_t srcIndex) const;
+  [[nodiscard]] std::string_view getDocCommentBefore_(size_t srcIndex) const;
 
   /// Does the pending trailing documentation comment (`///<`) trail
   /// source code on its line? If not, it is a stray `///<` on a line of
   /// its own, which attaches to nothing.
-  [[nodiscard]] bool pendingTrailingDocCommentTrailsCode() const;
+  [[nodiscard]] bool pendingTrailingDocCommentTrailsCode_() const;
 
   /// The trait to detect item types that can hold a trailing
   /// documentation comment.
@@ -182,52 +183,54 @@ private:
   /// backtracking because a rewind that re-scans the comment also
   /// re-records it.
   template <typename Item>
-  void attachPendingTrailingDocComment(std::vector<Item> &items) {
-    if (mPendingTrailingDocCommentBegin == mPendingTrailingDocCommentEnd ||
+  void attachPendingTrailingDocComment_(std::vector<Item> &items) {
+    if (pendingTrailingDocCommentBegin_ == pendingTrailingDocCommentEnd_ ||
         items.empty())
       return;
-    if (!(items.back().srcLoc.i < mPendingTrailingDocCommentBegin &&
-          mPendingTrailingDocCommentEnd <= mSrcLoc.i) ||
-        !pendingTrailingDocCommentTrailsCode())
+    if (!(items.back().srcLoc.i < pendingTrailingDocCommentBegin_ &&
+          pendingTrailingDocCommentEnd_ <= srcLoc_.i) ||
+        !pendingTrailingDocCommentTrailsCode_())
       return;
-    items.back().srcDocCommentTrailing = getSourceCode().substr(
-        mPendingTrailingDocCommentBegin,
-        mPendingTrailingDocCommentEnd - mPendingTrailingDocCommentBegin);
-    mPendingTrailingDocCommentBegin = mPendingTrailingDocCommentEnd = 0;
+    items.back().srcDocCommentTrailing = getSourceCode_().substr(
+        pendingTrailingDocCommentBegin_,
+        pendingTrailingDocCommentEnd_ - pendingTrailingDocCommentBegin_);
+    pendingTrailingDocCommentBegin_ = pendingTrailingDocCommentEnd_ = 0;
   }
 
-  SourceLocation checkpoint() {
-    skip();
-    mSrcLocStack.push_back(mSrcLoc);
-    return mSrcLoc;
+  SourceLocation checkpoint_() {
+    skip_();
+    srcLocStack_.push_back(srcLoc_);
+    return srcLoc_;
   }
 
-  void accept() {
-    SMDL_SANITY_CHECK(mSrcLocStack.size() >= 1);
-    mSrcLocStack.pop_back();
+  void accept_() {
+    SMDL_SANITY_CHECK(srcLocStack_.size() >= 1);
+    srcLocStack_.pop_back();
   }
 
-  void reject() {
-    SMDL_SANITY_CHECK(mSrcLocStack.size() >= 1);
-    mSrcLoc = mSrcLocStack.back(), mSrcLocStack.pop_back();
+  void reject_() {
+    SMDL_SANITY_CHECK(srcLocStack_.size() >= 1);
+    srcLoc_ = srcLocStack_.back(), srcLocStack_.pop_back();
   }
 
-  /// The maximum recursion depth of `parseUnaryExpression()` and
-  /// `parseStatement()`, so pathologically nested inputs fail with a parse
+  /// The maximum recursion depth of `parseUnaryExpression_()` and
+  /// `parseStatement_()`, so pathologically nested inputs fail with a parse
   /// error instead of overflowing the native stack.
   static constexpr int MAX_PARSE_DEPTH = 256;
 
   /// The RAII guard that enforces `MAX_PARSE_DEPTH`.
-  struct ParseDepthGuard final {
-    explicit ParseDepthGuard(Parser &parser) : mParser(parser) {
-      if (mParser.mParseDepth >= MAX_PARSE_DEPTH)
-        mParser.mSrcLoc.throwError("nesting exceeds maximum parse depth");
-      ++mParser.mParseDepth;
+  class ParseDepthGuard final {
+  public:
+    explicit ParseDepthGuard(Parser &parser) : parser_(parser) {
+      if (parser_.parseDepth_ >= MAX_PARSE_DEPTH)
+        parser_.srcLoc_.throwError("nesting exceeds maximum parse depth");
+      ++parser_.parseDepth_;
     }
 
-    ~ParseDepthGuard() { --mParser.mParseDepth; }
+    ~ParseDepthGuard() { --parser_.parseDepth_; }
 
-    Parser &mParser;
+  private:
+    Parser &parser_;
   };
 
   /// Parse a comma-separated list of items into `items`.
@@ -240,132 +243,133 @@ private:
   /// terminates if it appears after a comma, e.g., to allow a trailing
   /// comma before the `]]` that closes an annotation block.
   template <typename Item, typename ParseItem>
-  void parseCommaSeparated(std::vector<Item> &items, const ParseItem &parseItem,
-                           std::string_view srcCloser = {}) {
+  void parseCommaSeparated_(std::vector<Item> &items,
+                            const ParseItem &parseItem,
+                            std::string_view srcCloser = {}) {
     while (true) {
-      skip();
+      skip_();
       if constexpr (HasTrailingDocComment<Item>::value)
-        attachPendingTrailingDocComment(items);
+        attachPendingTrailingDocComment_(items);
       auto item{parseItem()};
       if (!item) break;
       items.push_back(std::move(*item));
-      std::optional<std::string_view> srcComma{nextDelimiter(",")};
+      std::optional<std::string_view> srcComma{nextDelimiter_(",")};
       if (!srcComma) break;
       items.back().srcComma = *srcComma;
       if (!srcCloser.empty()) {
-        skip();
-        if (startsWith(getRemainingSourceCode(), srcCloser)) break;
+        skip_();
+        if (startsWith(getRemainingSourceCode_(), srcCloser)) break;
       }
     }
-    // Every loop exit is preceded by a `skip()`, so a trailing comment
+    // Every loop exit is preceded by a `skip_()`, so a trailing comment
     // after the last item has already been scanned.
     if constexpr (HasTrailingDocComment<Item>::value)
-      attachPendingTrailingDocComment(items);
+      attachPendingTrailingDocComment_(items);
   }
   //--}
 
 private:
   //--{ Parse: Expr
-  [[nodiscard]] auto parseSimpleName() -> std::optional<ast::Name>;
+  [[nodiscard]] auto parseSimpleName_() -> std::optional<ast::Name>;
 
-  [[nodiscard]] auto parseIdentifier() -> BumpPtr<ast::Identifier>;
+  [[nodiscard]] auto parseIdentifier_() -> BumpPtr<ast::Identifier>;
 
-  [[nodiscard]] auto parseType() -> BumpPtr<ast::Type>;
+  [[nodiscard]] auto parseType_() -> BumpPtr<ast::Type>;
 
-  [[nodiscard]] auto parseParameter() -> std::optional<ast::Parameter>;
+  [[nodiscard]] auto parseParameter_() -> std::optional<ast::Parameter>;
 
-  [[nodiscard]] auto parseParameterList() -> std::optional<ast::ParameterList>;
+  [[nodiscard]] auto parseParameterList_() -> std::optional<ast::ParameterList>;
 
-  [[nodiscard]] auto parseArgument() -> std::optional<ast::Argument>;
+  [[nodiscard]] auto parseArgument_() -> std::optional<ast::Argument>;
 
-  [[nodiscard]] auto parseArgumentList() -> std::optional<ast::ArgumentList>;
+  [[nodiscard]] auto parseArgumentList_() -> std::optional<ast::ArgumentList>;
 
-  [[nodiscard]] auto parseAnnotation() -> std::optional<ast::Annotation>;
+  [[nodiscard]] auto parseAnnotation_() -> std::optional<ast::Annotation>;
 
-  [[nodiscard]] auto parseAnnotationBlock() -> BumpPtr<ast::AnnotationBlock>;
+  [[nodiscard]] auto parseAnnotationBlock_() -> BumpPtr<ast::AnnotationBlock>;
 
-  [[nodiscard]] auto parseExpressionInParentheses() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseExpressionInParentheses_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAssignmentExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseAssignmentExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseElseExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseElseExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseConditionalExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseConditionalExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLogicalOrExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLogicalOrExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLogicalAndExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLogicalAndExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseInclusiveOrExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseInclusiveOrExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseExclusiveOrExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseExclusiveOrExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAndExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseAndExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseEqualityExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseEqualityExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseRelationalExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseRelationalExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseShiftExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseShiftExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseAdditiveExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseAdditiveExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseMultiplicativeExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseMultiplicativeExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseUnaryExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseUnaryExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parsePostfixExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parsePostfixExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLambdaExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLambdaExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLetExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLetExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseReturnFromExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseReturnFromExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parsePrimaryExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parsePrimaryExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLiteralExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLiteralExpression_() -> BumpPtr<ast::Expr>;
 
-  [[nodiscard]] auto parseLiteralBoolExpression() -> BumpPtr<ast::LiteralBool>;
+  [[nodiscard]] auto parseLiteralBoolExpression_() -> BumpPtr<ast::LiteralBool>;
 
-  [[nodiscard]] auto parseLiteralStringExpression()
+  [[nodiscard]] auto parseLiteralStringExpression_()
       -> BumpPtr<ast::LiteralString>;
 
-  [[nodiscard]] auto parseLiteralNumberExpression() -> BumpPtr<ast::Expr>;
+  [[nodiscard]] auto parseLiteralNumberExpression_() -> BumpPtr<ast::Expr>;
 
   struct ParsedUnaryOp final {
     std::string_view srcOp{};
     ast::UnaryOp op{};
   };
 
-  [[nodiscard]] auto parseUnaryOp() -> std::optional<ParsedUnaryOp>;
+  [[nodiscard]] auto parseUnaryOp_() -> std::optional<ParsedUnaryOp>;
 
   struct ParsedBinaryOp final {
     std::string_view srcOp{};
     ast::BinaryOp op{};
   };
 
-  [[nodiscard]] auto parseBinaryOp(Span<const ast::BinaryOp> ops)
+  [[nodiscard]] auto parseBinaryOp_(Span<const ast::BinaryOp> ops)
       -> std::optional<ParsedBinaryOp>;
 
   template <typename Func>
-  [[nodiscard]] auto parseBinaryLeftAssociative(Span<const ast::BinaryOp> ops,
-                                                const Func &parseInner)
+  [[nodiscard]] auto parseBinaryLeftAssociative_(Span<const ast::BinaryOp> ops,
+                                                 const Func &parseInner)
       -> BumpPtr<ast::Expr> {
     BumpPtr<ast::Expr> exprLHS{parseInner()};
     if (!exprLHS) {
       return nullptr;
     }
     while (true) {
-      SourceLocation srcLoc0{checkpoint()};
-      std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
+      SourceLocation srcLoc0{checkpoint_()};
+      std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp_(ops)};
       if (!op) {
-        reject();
+        reject_();
         break;
       }
-      skip();
+      skip_();
 
       // If parsing an approximate comparison operator `~==` or `~!=`, then
       // also parse the epsilon after the operator and before the right-hand
@@ -373,18 +377,18 @@ private:
       // is a relative tolerance. This is extended syntax!
       if (op->op == BINOP_APPROX_CMP_EQ || //
           op->op == BINOP_APPROX_CMP_NE) {
-        std::optional<std::string_view> srcDelimL{nextDelimiter("|")};
+        std::optional<std::string_view> srcDelimL{nextDelimiter_("|")};
         BumpPtr<ast::Expr> exprEps{};
         std::optional<std::string_view> srcDelimR{};
         if (srcDelimL) {
-          exprEps = parseUnaryExpression();
-          srcDelimR = nextDelimiter("|");
+          exprEps = parseUnaryExpression_();
+          srcDelimR = nextDelimiter_("|");
         } else {
-          srcDelimL = nextDelimiter("(");
+          srcDelimL = nextDelimiter_("(");
           if (srcDelimL) {
-            exprEps = parseExpression();
-            srcDelimR = nextDelimiter(")");
-          } else if (nextDelimiter("[")) {
+            exprEps = parseExpression_();
+            srcDelimR = nextDelimiter_(")");
+          } else if (nextDelimiter_("[")) {
             srcLoc0.throwError(
                 "'[EPSILON]' syntax was replaced: use '|EPSILON|' for "
                 "absolute or '(EPSILON)' for relative tolerance after ",
@@ -398,8 +402,8 @@ private:
         if (!exprRHS)
           srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
                              SpellQuoted(op->srcOp));
-        accept();
-        exprLHS = allocate<ast::Binary>(
+        accept_();
+        exprLHS = allocate_<ast::Binary>(
             srcLoc0, std::in_place, std::move(exprLHS), op->srcOp, op->op,
             *srcDelimL, std::move(exprEps), *srcDelimR, std::move(exprRHS));
         continue;
@@ -407,196 +411,197 @@ private:
 
       BumpPtr<ast::Expr> exprRHS{parseInner()};
       if (!exprRHS) {
-        reject();
+        reject_();
         break;
       } else {
-        accept();
+        accept_();
         exprLHS =
-            allocate<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
-                                  op->srcOp, op->op, std::move(exprRHS));
+            allocate_<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+                                   op->srcOp, op->op, std::move(exprRHS));
       }
     }
     return exprLHS;
   }
 
   template <typename Func>
-  [[nodiscard]] auto parseBinaryRightAssociative(Span<const ast::BinaryOp> ops,
-                                                 const Func &parseInner)
+  [[nodiscard]] auto parseBinaryRightAssociative_(Span<const ast::BinaryOp> ops,
+                                                  const Func &parseInner)
       -> BumpPtr<ast::Expr> {
     BumpPtr<ast::Expr> exprLHS{parseInner()};
     if (!exprLHS) return nullptr;
-    SourceLocation srcLoc0{checkpoint()};
-    std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp(ops)};
+    SourceLocation srcLoc0{checkpoint_()};
+    std::optional<Parser::ParsedBinaryOp> op{parseBinaryOp_(ops)};
     if (!op) {
-      reject();
+      reject_();
       return exprLHS;
     }
-    skip();
-    BumpPtr<ast::Expr> exprRHS{parseBinaryRightAssociative(ops, parseInner)};
+    skip_();
+    BumpPtr<ast::Expr> exprRHS{parseBinaryRightAssociative_(ops, parseInner)};
     if (!exprRHS) {
-      reject();
+      reject_();
       return exprLHS;
     } else {
-      accept();
-      return allocate<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
-                                   op->srcOp, op->op, std::move(exprRHS));
+      accept_();
+      return allocate_<ast::Binary>(srcLoc0, std::in_place, std::move(exprLHS),
+                                    op->srcOp, op->op, std::move(exprRHS));
     }
   }
   //--}
 
 private:
   //--{ Parse: Decls
-  [[nodiscard]] auto parseFile() -> BumpPtr<ast::File>;
+  [[nodiscard]] auto parseFile_() -> BumpPtr<ast::File>;
 
-  [[nodiscard]] auto parseFileSearchDirs() -> std::vector<ast::File::SearchDir>;
+  [[nodiscard]] auto parseFileSearchDirs_()
+      -> std::vector<ast::File::SearchDir>;
 
-  [[nodiscard]] auto parseFileVersion() -> std::optional<ast::File::Version>;
+  [[nodiscard]] auto parseFileVersion_() -> std::optional<ast::File::Version>;
 
-  [[nodiscard]] auto parseImportPath() -> std::optional<ast::ImportPath>;
+  [[nodiscard]] auto parseImportPath_() -> std::optional<ast::ImportPath>;
 
-  [[nodiscard]] auto parseUsingAlias() -> BumpPtr<ast::UsingAlias>;
+  [[nodiscard]] auto parseUsingAlias_() -> BumpPtr<ast::UsingAlias>;
 
-  [[nodiscard]] auto parseUsingImport() -> BumpPtr<ast::UsingImport>;
+  [[nodiscard]] auto parseUsingImport_() -> BumpPtr<ast::UsingImport>;
 
-  [[nodiscard]] auto parseImport() -> BumpPtr<ast::Import>;
+  [[nodiscard]] auto parseImport_() -> BumpPtr<ast::Import>;
 
-  [[nodiscard]] auto parseAttributes() -> std::optional<ast::Decl::Attributes>;
+  [[nodiscard]] auto parseAttributes_() -> std::optional<ast::Decl::Attributes>;
 
-  [[nodiscard]] auto parseGlobalDeclaration() -> BumpPtr<ast::Decl>;
+  [[nodiscard]] auto parseGlobalDeclaration_() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseAnnotationDeclaration() -> BumpPtr<ast::Decl>;
+  [[nodiscard]] auto parseAnnotationDeclaration_() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseTypeDeclaration() -> BumpPtr<ast::Decl>;
+  [[nodiscard]] auto parseTypeDeclaration_() -> BumpPtr<ast::Decl>;
 
-  [[nodiscard]] auto parseAliasTypeDeclaration() -> BumpPtr<ast::Typedef>;
+  [[nodiscard]] auto parseAliasTypeDeclaration_() -> BumpPtr<ast::Typedef>;
 
-  [[nodiscard]] auto parseStructTypeDeclaration() -> BumpPtr<ast::Struct>;
+  [[nodiscard]] auto parseStructTypeDeclaration_() -> BumpPtr<ast::Struct>;
 
-  [[nodiscard]] auto parseStructConstructor()
+  [[nodiscard]] auto parseStructConstructor_()
       -> std::optional<ast::Struct::Constructor>;
 
-  [[nodiscard]] auto parseStructFieldDeclarator()
+  [[nodiscard]] auto parseStructFieldDeclarator_()
       -> std::optional<ast::Struct::Field>;
 
-  [[nodiscard]] auto parseEnumTypeDeclaration() -> BumpPtr<ast::Enum>;
+  [[nodiscard]] auto parseEnumTypeDeclaration_() -> BumpPtr<ast::Enum>;
 
-  [[nodiscard]] auto parseEnumValueDeclarator()
+  [[nodiscard]] auto parseEnumValueDeclarator_()
       -> std::optional<ast::Enum::Declarator>;
 
-  [[nodiscard]] auto parseVariableDeclaration() -> BumpPtr<ast::Variable>;
+  [[nodiscard]] auto parseVariableDeclaration_() -> BumpPtr<ast::Variable>;
 
-  [[nodiscard]] auto parseVariableDeclarator()
+  [[nodiscard]] auto parseVariableDeclarator_()
       -> std::optional<ast::Variable::Declarator>;
 
-  [[nodiscard]] auto parseFunctionDeclaration() -> BumpPtr<ast::Function>;
+  [[nodiscard]] auto parseFunctionDeclaration_() -> BumpPtr<ast::Function>;
 
-  [[nodiscard]] auto parseTagDeclaration() -> BumpPtr<ast::Tag>;
+  [[nodiscard]] auto parseTagDeclaration_() -> BumpPtr<ast::Tag>;
 
-  [[nodiscard]] auto parseExecDeclaration() -> BumpPtr<ast::Exec>;
+  [[nodiscard]] auto parseExecDeclaration_() -> BumpPtr<ast::Exec>;
 
-  [[nodiscard]] auto parseUnitTestDeclaration() -> BumpPtr<ast::UnitTest>;
+  [[nodiscard]] auto parseUnitTestDeclaration_() -> BumpPtr<ast::UnitTest>;
 
-  [[nodiscard]] auto parseNamespaceDeclaration() -> BumpPtr<ast::Namespace>;
+  [[nodiscard]] auto parseNamespaceDeclaration_() -> BumpPtr<ast::Namespace>;
   //--}
 
 private:
   //--{ Parse: Stmt
-  [[nodiscard]] auto parseStatement() -> BumpPtr<ast::Stmt>;
+  [[nodiscard]] auto parseStatement_() -> BumpPtr<ast::Stmt>;
 
-  [[nodiscard]] auto parseCompoundStatement() -> BumpPtr<ast::Compound>;
+  [[nodiscard]] auto parseCompoundStatement_() -> BumpPtr<ast::Compound>;
 
-  [[nodiscard]] auto parseIfStatement() -> BumpPtr<ast::If>;
+  [[nodiscard]] auto parseIfStatement_() -> BumpPtr<ast::If>;
 
-  [[nodiscard]] auto parseSwitchStatement() -> BumpPtr<ast::Switch>;
+  [[nodiscard]] auto parseSwitchStatement_() -> BumpPtr<ast::Switch>;
 
-  [[nodiscard]] auto parseSwitchCase() -> std::optional<ast::Switch::Case>;
+  [[nodiscard]] auto parseSwitchCase_() -> std::optional<ast::Switch::Case>;
 
-  [[nodiscard]] auto parseWhileStatement() -> BumpPtr<ast::While>;
+  [[nodiscard]] auto parseWhileStatement_() -> BumpPtr<ast::While>;
 
-  [[nodiscard]] auto parseDoStatement() -> BumpPtr<ast::DoWhile>;
+  [[nodiscard]] auto parseDoStatement_() -> BumpPtr<ast::DoWhile>;
 
-  [[nodiscard]] auto parseForStatement() -> BumpPtr<ast::For>;
+  [[nodiscard]] auto parseForStatement_() -> BumpPtr<ast::For>;
 
   /// Parse a `break` or `continue` statement, which are identical except
   /// for the keyword and the AST node type.
   template <typename Node>
-  [[nodiscard]] BumpPtr<Node> parseJumpStatement(std::string_view keyword) {
-    std::optional<Parser::ParsedToken> kw{nextKeywordAndLocation(keyword)};
+  [[nodiscard]] BumpPtr<Node> parseJumpStatement_(std::string_view keyword) {
+    std::optional<Parser::ParsedToken> kw{nextKeywordAndLocation_(keyword)};
     if (!kw) return nullptr;
-    std::optional<ast::LateIf> lateIf{parseLateIf()};
-    std::optional<std::string_view> srcSemicolon{nextDelimiter(";")};
+    std::optional<ast::LateIf> lateIf{parseLateIf_()};
+    std::optional<std::string_view> srcSemicolon{nextDelimiter_(";")};
     if (!srcSemicolon)
       kw->srcLoc.throwError("expected ';' after ", SpellQuoted(keyword));
-    return allocate<Node>(kw->srcLoc, std::in_place, kw->src, std::move(lateIf),
-                          *srcSemicolon);
+    return allocate_<Node>(kw->srcLoc, std::in_place, kw->src,
+                           std::move(lateIf), *srcSemicolon);
   }
 
-  [[nodiscard]] auto parseBreakStatement() -> BumpPtr<ast::Break>;
+  [[nodiscard]] auto parseBreakStatement_() -> BumpPtr<ast::Break>;
 
-  [[nodiscard]] auto parseContinueStatement() -> BumpPtr<ast::Continue>;
+  [[nodiscard]] auto parseContinueStatement_() -> BumpPtr<ast::Continue>;
 
-  [[nodiscard]] auto parseReturnStatement() -> BumpPtr<ast::Return>;
+  [[nodiscard]] auto parseReturnStatement_() -> BumpPtr<ast::Return>;
 
-  [[nodiscard]] auto parseUnreachableStatement() -> BumpPtr<ast::Unreachable>;
+  [[nodiscard]] auto parseUnreachableStatement_() -> BumpPtr<ast::Unreachable>;
 
-  [[nodiscard]] auto parsePreserveStatement() -> BumpPtr<ast::Preserve>;
+  [[nodiscard]] auto parsePreserveStatement_() -> BumpPtr<ast::Preserve>;
 
-  [[nodiscard]] auto parseDeferStatement() -> BumpPtr<ast::Defer>;
+  [[nodiscard]] auto parseDeferStatement_() -> BumpPtr<ast::Defer>;
 
-  [[nodiscard]] auto parseVisitStatement() -> BumpPtr<ast::Visit>;
+  [[nodiscard]] auto parseVisitStatement_() -> BumpPtr<ast::Visit>;
 
-  [[nodiscard]] auto parseLateIf() -> std::optional<ast::LateIf>;
+  [[nodiscard]] auto parseLateIf_() -> std::optional<ast::LateIf>;
   //--}
 
 private:
-  BumpPtrAllocator &mAllocator;
+  BumpPtrAllocator &allocator_;
 
-  Module &mModule;
+  Module &module_;
 
-  SourceLocation mSrcLoc{};
+  SourceLocation srcLoc_{};
 
   /// The checkpoint stack for backtracking. NOTE: A thrown parse error may
   /// leave entries behind. This is fine because each `Parser` is discarded
   /// after a single call to `parse()`, but do not reuse a `Parser` after
   /// catching a parse error!
-  std::vector<SourceLocation> mSrcLocStack;
+  std::vector<SourceLocation> srcLocStack_;
 
   /// The begin index of the pending documentation comment block
-  /// (consecutive `///` lines) most recently scanned by `skip()`. Equal
-  /// to `mPendingDocCommentEnd` if there is none.
+  /// (consecutive `///` lines) most recently scanned by `skip_()`. Equal
+  /// to `pendingDocCommentEnd_` if there is none.
   ///
-  /// NOTE: This is a pure function of how far `skip()` has scanned, so
-  /// the backtracking in `checkpoint()`/`reject()` needs no save and
-  /// restore logic: after a rewind, the next `skip()` over the same
+  /// NOTE: This is a pure function of how far `skip_()` has scanned, so
+  /// the backtracking in `checkpoint_()`/`reject_()` needs no save and
+  /// restore logic: after a rewind, the next `skip_()` over the same
   /// region recomputes identical state, and a stale block from an
   /// earlier region fails the whitespace adjacency test in
-  /// `getDocCommentBefore()`.
-  size_t mPendingDocCommentBegin{};
+  /// `getDocCommentBefore_()`.
+  size_t pendingDocCommentBegin_{};
 
   /// The end index of the pending documentation comment block, see
-  /// `mPendingDocCommentBegin`.
-  size_t mPendingDocCommentEnd{};
+  /// `pendingDocCommentBegin_`.
+  size_t pendingDocCommentEnd_{};
 
   /// The begin index of the pending trailing documentation comment
-  /// (`///<`) most recently scanned by `skip()`. Equal to
-  /// `mPendingTrailingDocCommentEnd` if there is none. The same
-  /// backtracking reasoning as `mPendingDocCommentBegin` applies, plus
-  /// the position guards in `attachPendingTrailingDocComment()`.
-  size_t mPendingTrailingDocCommentBegin{};
+  /// (`///<`) most recently scanned by `skip_()`. Equal to
+  /// `pendingTrailingDocCommentEnd_` if there is none. The same
+  /// backtracking reasoning as `pendingDocCommentBegin_` applies, plus
+  /// the position guards in `attachPendingTrailingDocComment_()`.
+  size_t pendingTrailingDocCommentBegin_{};
 
   /// The end index of the pending trailing documentation comment, see
-  /// `mPendingTrailingDocCommentBegin`.
-  size_t mPendingTrailingDocCommentEnd{};
+  /// `pendingTrailingDocCommentBegin_`.
+  size_t pendingTrailingDocCommentEnd_{};
 
   /// The current recursion depth, see `ParseDepthGuard`.
-  int mParseDepth{};
+  int parseDepth_{};
 
-  bool mIsSMDL{};
+  bool isSMDL_{};
 
   template <typename T, typename... Args>
-  [[nodiscard]] BumpPtr<T> allocate(SourceLocation srcLoc, std::in_place_t,
-                                    Args &&...args) {
-    auto result{mAllocator.allocate<T>(std::forward<Args>(args)...)};
+  [[nodiscard]] BumpPtr<T> allocate_(SourceLocation srcLoc, std::in_place_t,
+                                     Args &&...args) {
+    auto result{allocator_.allocate<T>(std::forward<Args>(args)...)};
     result->srcLoc = srcLoc;
     return result;
   }

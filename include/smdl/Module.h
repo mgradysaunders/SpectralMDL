@@ -156,41 +156,41 @@ public:
 
 public:
   /// Get the origin.
-  [[nodiscard]] Origin getOrigin() const noexcept { return mOrigin; }
+  [[nodiscard]] Origin getOrigin() const noexcept { return origin_; }
 
   /// Is a builtin module?
   [[nodiscard]] bool isBuiltin() const noexcept {
-    return mOrigin == ORIGIN_BUILTIN;
+    return origin_ == ORIGIN_BUILTIN;
   }
 
   /// Is extracted from an archive?
   [[nodiscard]] bool isExtractedFromArchive() const noexcept {
-    return mOrigin == ORIGIN_ARCHIVE;
+    return origin_ == ORIGIN_ARCHIVE;
   }
 
   /// Is supplied by the host as source code? See
   /// `Compiler::addCode()`.
   [[nodiscard]] bool isFromSourceCode() const noexcept {
-    return mOrigin == ORIGIN_SOURCE_CODE;
+    return origin_ == ORIGIN_SOURCE_CODE;
   }
 
   /// Is backed by a file on disk? This is true for ordinary files and
   /// for the entries of archives and MDLE containers, and false for
   /// builtin modules and modules supplied as source code.
   [[nodiscard]] bool isFileBacked() const noexcept {
-    return mOrigin == ORIGIN_FILE || mOrigin == ORIGIN_ARCHIVE;
+    return origin_ == ORIGIN_FILE || origin_ == ORIGIN_ARCHIVE;
   }
 
   /// Get the file name. This is empty unless the module is file backed.
   [[nodiscard]] std::string_view getFileName() const noexcept {
-    return mFileName;
+    return fileName_;
   }
 
   /// Get the name to print in diagnostics: the file name if the module
   /// is file backed, else markup naming the origin and the qualified
   /// name, e.g., `<builtin ::df>` or `<string ::my_materials>`.
   [[nodiscard]] std::string_view getDisplayName() const noexcept {
-    return mDisplayName;
+    return displayName_;
   }
 
   /// Get the directory the module resolves relative paths against. This
@@ -198,16 +198,16 @@ public:
   /// backed, else the anchor directory if there is one (see
   /// `Compiler::addCode()`), else empty.
   [[nodiscard]] std::string getDirectory() const {
-    return mFileName.empty() ? mAnchorDirectory : parentPathOf(mFileName);
+    return fileName_.empty() ? anchorDirectory_ : parentPathOf(fileName_);
   }
 
   /// Get the name.
-  [[nodiscard]] std::string_view getName() const noexcept { return mName; }
+  [[nodiscard]] std::string_view getName() const noexcept { return name_; }
 
   /// Get the canonical search root directory this module was found under.
   /// This is empty unless the module is file backed.
   [[nodiscard]] std::string_view getSearchRoot() const noexcept {
-    return mSearchRoot;
+    return searchRoot_;
   }
 
   /// Get the qualified name derived from the path relative to the search
@@ -216,7 +216,7 @@ public:
   /// `Compiler::addFile()`). For builtin modules this is derived from the
   /// builtin lookup key instead, e.g., `::models::prospect`.
   [[nodiscard]] std::string_view getQualifiedName() const noexcept {
-    return mQualifiedName;
+    return qualifiedName_;
   }
 
   /// Is shadowed?
@@ -225,7 +225,7 @@ public:
   /// added under an earlier search root, which makes this module
   /// unreachable by qualified name. It still compiles, and relative
   /// imports within its own directory tree still resolve to it.
-  [[nodiscard]] bool isShadowed() const noexcept { return mIsShadowed; }
+  [[nodiscard]] bool isShadowed() const noexcept { return isShadowed_; }
 
   /// Get the path used as the anchor when locating resources referenced
   /// by this module (textures, spectra, measurements, ...).
@@ -236,8 +236,8 @@ public:
   /// extracted to, and for modules supplied as source code it is the
   /// anchor directory if there is one.
   [[nodiscard]] std::string_view getResourceAnchor() const noexcept {
-    return mAnchorDirectory.empty() ? std::string_view(mFileName)
-                                    : std::string_view(mAnchorDirectory);
+    return anchorDirectory_.empty() ? std::string_view(fileName_)
+                                    : std::string_view(anchorDirectory_);
   }
 
   /// Get the search directories declared by `#search_dir` at the top of
@@ -245,12 +245,12 @@ public:
   /// take priority over the search directories of the `FileLocator` when
   /// locating resources referenced by this module.
   [[nodiscard]] const std::vector<std::string> &getSearchDirs() const noexcept {
-    return mSearchDirs;
+    return searchDirs_;
   }
 
   /// Get the source code.
   [[nodiscard]] std::string_view getSourceCode() const noexcept {
-    return mSourceCode;
+    return sourceCode_;
   }
 
   /// Parse the source code.
@@ -265,11 +265,11 @@ public:
   formatSourceFiles(const FormatOptions &formatOptions) noexcept;
 
   /// Is parsed yet?
-  [[nodiscard]] bool isParsed() const noexcept { return mRoot; }
+  [[nodiscard]] bool isParsed() const noexcept { return root_; }
 
   /// Get the AST root node. This is null until `parse()` succeeds!
   [[nodiscard]] const ast::File *getRoot() const noexcept {
-    return mRoot.get();
+    return root_.get();
   }
 
   /// Is SMDL syntax? Only known after the module is parsed.
@@ -282,60 +282,60 @@ public:
   void reset() noexcept;
 
 private:
-  /// Compute `mSearchDirs` from the `#search_dir` declarations in the
+  /// Compute `searchDirs_` from the `#search_dir` declarations in the
   /// parsed AST. Called by `parse()`.
-  void computeSearchDirs();
+  void computeSearchDirs_();
 
   /// Where the module came from.
-  Origin mOrigin{ORIGIN_FILE};
+  Origin origin_{ORIGIN_FILE};
 
   /// The file name if applicable. This is empty unless the module is
   /// file backed.
-  std::string mFileName{};
+  std::string fileName_{};
 
   /// The name to print in diagnostics. See `getDisplayName()`.
-  std::string mDisplayName{};
+  std::string displayName_{};
 
   /// The name of the module.
-  std::string mName{};
+  std::string name_{};
 
   /// The canonical search root directory. This is empty unless the
   /// module is file backed.
-  std::string mSearchRoot{};
+  std::string searchRoot_{};
 
   /// The qualified name, e.g., `::vendor::metals::steel`.
-  std::string mQualifiedName{};
+  std::string qualifiedName_{};
 
   /// Is shadowed by an equally named module under an earlier search
   /// root? Maintained by `Compiler::add()`.
-  bool mIsShadowed{};
+  bool isShadowed_{};
 
   /// The directory relative paths resolve against when it is not the
-  /// directory of `mFileName`. See `getDirectory()` and
+  /// directory of `fileName_`. See `getDirectory()` and
   /// `getResourceAnchor()`.
-  std::string mAnchorDirectory{};
+  std::string anchorDirectory_{};
 
   /// The expanded canonical `#search_dir` directories, populated by
   /// `parse()`. See `getSearchDirs()`.
-  std::vector<std::string> mSearchDirs{};
+  std::vector<std::string> searchDirs_{};
 
   /// The source code.
-  std::string mSourceCode{};
+  std::string sourceCode_{};
 
   /// The AST root node parsed from the source code.
-  BumpPtr<ast::File> mRoot{};
+  BumpPtr<ast::File> root_{};
 
   /// The compile status.
-  CompileStatus mCompileStatus{COMPILE_STATUS_NOT_STARTED};
+  CompileStatus compileStatus_{COMPILE_STATUS_NOT_STARTED};
 
-  /// If `mCompileStatus` is `COMPILE_STATUS_FAILED`, the original error
+  /// If `compileStatus_` is `COMPILE_STATUS_FAILED`, the original error
   /// message, rethrown on later references so the failure is not
   /// misreported as a cyclic import.
-  std::string mCompileErrorMessage{};
+  std::string compileErrorMessage_{};
 
   /// The root scope: the starting point for searches of this module's
   /// top-level declarations (see `Declaration::findInModule`).
-  Scope *mRootScope{};
+  Scope *rootScope_{};
 
   friend class Compiler;
 

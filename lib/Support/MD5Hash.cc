@@ -37,13 +37,13 @@ MD5Hash::operator std::string() const {
 const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
   std::string canonicalFileName{makePathCanonical(fileName)};
   auto [nameItr, nameInserted] =
-      mFileHashesByName.try_emplace(canonicalFileName);
+      fileHashesByName_.try_emplace(canonicalFileName);
   if (nameInserted) {
     MD5Hash hash{MD5Hash::hashFile(canonicalFileName)};
     // Identical files at different paths share one entry. The zero hash
     // means the file was unreadable; keep those per-path so distinct
     // broken files are not conflated.
-    std::unique_ptr<MD5FileHash> &fileHash{mFileHashes[std::pair(
+    std::unique_ptr<MD5FileHash> &fileHash{fileHashes_[std::pair(
         hash, !hash ? canonicalFileName : std::string())]};
     if (!fileHash) fileHash = std::make_unique<MD5FileHash>();
     fileHash->hash = hash;

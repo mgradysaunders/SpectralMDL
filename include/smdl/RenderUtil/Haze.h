@@ -48,17 +48,17 @@ public:
   /// \{
 
   /// The Henyey-Greenstein lobe anisotropy.
-  [[nodiscard]] float asymmetryHG() const noexcept { return mGHG; }
+  [[nodiscard]] float asymmetryHG() const noexcept { return ghg_; }
 
   /// The Draine lobe anisotropy.
-  [[nodiscard]] float asymmetryDraine() const noexcept { return mGD; }
+  [[nodiscard]] float asymmetryDraine() const noexcept { return gd_; }
 
   /// The Draine lobe shape parameter.
-  [[nodiscard]] float alphaDraine() const noexcept { return mAlpha; }
+  [[nodiscard]] float alphaDraine() const noexcept { return alpha_; }
 
   /// The Draine lobe's weight in the mixture, which is also the
   /// probability `sample()` picks it.
-  [[nodiscard]] float weightDraine() const noexcept { return mWD; }
+  [[nodiscard]] float weightDraine() const noexcept { return wd_; }
 
   /// \}
 
@@ -79,13 +79,13 @@ public:
                              float3 &wi) const noexcept;
 
 private:
-  float mGHG{};
+  float ghg_{};
 
-  float mGD{};
+  float gd_{};
 
-  float mAlpha{};
+  float alpha_{};
 
-  float mWD{};
+  float wd_{};
 };
 
 /// The parameters of a `Haze`, whose extinction falls off exponentially
@@ -171,7 +171,7 @@ public:
 
   /// The band count of the wavelength grid, which sizes every spectral
   /// output.
-  [[nodiscard]] size_t size() const noexcept { return mSigmaRef.size(); }
+  [[nodiscard]] size_t size() const noexcept { return sigmaRef_.size(); }
 
   /// The single-scattering albedo spectrum, written into `albedo`,
   /// which must have `size()` elements. Independent of height, because
@@ -179,7 +179,7 @@ public:
   void albedo(Span<float> albedo) const noexcept;
 
   /// The phase function.
-  [[nodiscard]] const MiePhase &phase() const noexcept { return mPhase; }
+  [[nodiscard]] const MiePhase &phase() const noexcept { return phase_; }
 
   /// The extinction spectrum at `height` in scene units, in inverse
   /// scene units, written into `sigma`, which must have `size()`
@@ -189,7 +189,7 @@ public:
   /// The shape exponent `k` of a segment traveling with vertical
   /// direction component `dirZ`, in inverse scene units.
   [[nodiscard]] float shapeExponent(float dirZ) const noexcept {
-    return dirZ * mInvScaleHeight;
+    return dirZ * invScaleHeight_;
   }
 
   /// The shared distance shape of the optical depth over `[0, t]`, which
@@ -222,20 +222,20 @@ public:
   }
 
 private:
-  /// The extinction spectrum at `mBaseHeight`, in inverse scene units.
-  std::vector<float> mSigmaRef{};
+  /// The extinction spectrum at `baseHeight_`, in inverse scene units.
+  std::vector<float> sigmaRef_{};
 
-  /// The scattering spectrum at `mBaseHeight`, in inverse scene units.
-  std::vector<float> mSigmaScaRef{};
+  /// The scattering spectrum at `baseHeight_`, in inverse scene units.
+  std::vector<float> sigmaScaRef_{};
 
   /// One over the scale height, in inverse scene units.
-  float mInvScaleHeight{};
+  float invScaleHeight_{};
 
   /// The reference height in scene units.
-  float mBaseHeight{};
+  float baseHeight_{};
 
   /// See `phase()`.
-  MiePhase mPhase{};
+  MiePhase phase_{};
 };
 
 /// \}

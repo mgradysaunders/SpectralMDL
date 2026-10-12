@@ -38,7 +38,7 @@ decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) try {
 
 Context::Context(Compiler &compiler) : compiler(compiler) {
   // Initialize keywords.
-  mKeywords = {
+  keywords_ = {
       {"auto", getComptimeMetaType(getAutoType())},
       {"bool", getComptimeMetaType(getBoolType())},
       {"bool2", getComptimeMetaType(getBoolType(Extent(2)))},
@@ -134,13 +134,13 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `_wymanY`
   // - Function `_colorToRGB`
   // - Function `_rgbToColor`
-  Scope *apiRootScope{getBuiltinModule("api")->mRootScope};
+  Scope *apiRootScope{getBuiltinModule("api")->rootScope_};
   auto seedKeyword{[&](Declaration *declaration) {
     if (declaration->isExported() && declaration->hasSimpleName()) {
       llvm::StringRef simpleName{declaration->name[0]};
-      SMDL_SANITY_CHECK_MSG(!mKeywords.contains(simpleName),
+      SMDL_SANITY_CHECK_MSG(!keywords_.contains(simpleName),
                             "keyword collision in builtin 'api' module");
-      mKeywords[simpleName] = declaration->value;
+      keywords_[simpleName] = declaration->value;
     }
   }};
   for (const auto &entry : apiRootScope->decls)
@@ -148,20 +148,20 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
          declaration = declaration->prevSameNameInScope)
       seedKeyword(declaration);
   for (auto declaration : apiRootScope->imports) seedKeyword(declaration);
-  mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
-  mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
-  mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
-  mTextureCubeType =
+  materialType_ = static_cast<StructType *>(getKeywordAsType("material"));
+  texture2DType_ = static_cast<StructType *>(getKeywordAsType("texture_2d"));
+  texture3DType_ = static_cast<StructType *>(getKeywordAsType("texture_3d"));
+  textureCubeType_ =
       static_cast<StructType *>(getKeywordAsType("texture_cube"));
-  mTexturePtexType =
+  texturePtexType_ =
       static_cast<StructType *>(getKeywordAsType("texture_ptex"));
-  mBSDFMeasurementType =
+  bsdfMeasurementType_ =
       static_cast<StructType *>(getKeywordAsType("bsdf_measurement"));
-  mLightProfileType =
+  lightProfileType_ =
       static_cast<StructType *>(getKeywordAsType("light_profile"));
-  mSpectralCurveType =
+  spectralCurveType_ =
       static_cast<StructType *>(getKeywordAsType("spectral_curve"));
-  mComplexType = static_cast<StructType *>(getKeywordAsType("complex"));
+  complexType_ = static_cast<StructType *>(getKeywordAsType("complex"));
 }
 
 Span<const std::string_view>
@@ -172,7 +172,7 @@ Context::internName(Span<const std::string_view> name) {
     key += name[i];
     if (i + 1 < name.size()) key += '\0';
   }
-  auto [itr, inserted] = mInternedNames.try_emplace(key);
+  auto [itr, inserted] = internedNames_.try_emplace(key);
   if (inserted) {
     llvm::SmallVector<std::string_view, 4> views{};
     llvm::StringRef keyChars{itr->getKey()};
@@ -195,7 +195,7 @@ Module *Context::getBuiltinModule(llvm::StringRef name) {
   if (!sourceCode) {
     return nullptr;
   }
-  BumpPtr<Module> &mod{mBuiltinModules[name]};
+  BumpPtr<Module> &mod{builtinModules_[name]};
   if (!mod) {
     mod = allocator.allocate<Module>(name.str(),
                                      decompressSourceCode(*sourceCode));
@@ -219,13 +219,13 @@ Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
   key |= uint64_t(scalar.numBits) << 32;
   key |= uint64_t(extent.numCols) << 16;
   key |= uint64_t(extent.numRows);
-  BumpPtr<ArithmeticType> &type{mArithmeticTypes[key]};
+  BumpPtr<ArithmeticType> &type{arithmeticTypes_[key]};
   if (!type) type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
   return type.get();
 }
 
 ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
-  BumpPtr<ArrayType> &type{mArrayTypes[std::pair(elemType, size)]};
+  BumpPtr<ArrayType> &type{arrayTypes_[std::pair(elemType, size)]};
   if (!type) type = allocator.allocate<ArrayType>(*this, elemType, size);
   return type.get();
 }
@@ -233,7 +233,7 @@ ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
 InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
                                                          std::string sizeName) {
   BumpPtr<InferredSizeArrayType> &type{
-      mInferredSizeArrayTypes[std::pair(elemType, sizeName)]};
+      inferredSizeArrayTypes_[std::pair(elemType, sizeName)]};
   if (!type)
     type = allocator.allocate<InferredSizeArrayType>(elemType,
                                                      std::move(sizeName));
@@ -241,19 +241,19 @@ InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
 }
 
 PointerType *Context::getPointerType(Type *pointeeType) {
-  BumpPtr<PointerType> &type{mPointerTypes[pointeeType]};
+  BumpPtr<PointerType> &type{pointerTypes_[pointeeType]};
   if (!type) type = allocator.allocate<PointerType>(*this, pointeeType);
   return type.get();
 }
 
 EnumType *Context::getEnumType(ast::Enum *decl) {
-  BumpPtr<Type> &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{astTypes_[decl]};
   if (!type) type = allocator.allocate<EnumType>(*decl);
   return static_cast<EnumType *>(type.get());
 }
 
 FunctionType *Context::getFunctionType(ast::Function *decl) {
-  BumpPtr<Type> &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{astTypes_[decl]};
   if (!type) type = allocator.allocate<FunctionType>(*decl);
   return static_cast<FunctionType *>(type.get());
 }
@@ -262,18 +262,18 @@ FunctionType *Context::getLambdaFunctionType(ast::Function *decl) {
   BumpPtr<FunctionType> type{
       allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
   FunctionType *result{type.get()};
-  mLambdaTypes.push_back(std::move(type));
+  lambdaTypes_.push_back(std::move(type));
   return result;
 }
 
 StructType *Context::getStructType(ast::Struct *decl) {
-  BumpPtr<Type> &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{astTypes_[decl]};
   if (!type) type = allocator.allocate<StructType>(*decl);
   return static_cast<StructType *>(type.get());
 }
 
 TagType *Context::getTagType(ast::Tag *decl) {
-  BumpPtr<Type> &type{mASTTypes[decl]};
+  BumpPtr<Type> &type{astTypes_[decl]};
   if (!type)
     type = allocator.allocate<TagType>(std::string(decl->name.srcName));
   return static_cast<TagType *>(type.get());
@@ -282,13 +282,13 @@ TagType *Context::getTagType(ast::Tag *decl) {
 Type *Context::getUnionType(llvm::ArrayRef<Type *> types) {
   llvm::SmallVector<Type *> caseTypes{UnionType::canonicalizeTypes(types)};
   if (caseTypes.size() == 1) return caseTypes[0];
-  BumpPtr<UnionType> &type{mUnionTypes[caseTypes]};
+  BumpPtr<UnionType> &type{unionTypes_[caseTypes]};
   if (!type) type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
   return type.get();
 }
 
 ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
-  BumpPtr<ComptimeUnionType> &type{mComptimeUnionTypes[unionType]};
+  BumpPtr<ComptimeUnionType> &type{comptimeUnionTypes_[unionType]};
   if (!type) type = allocator.allocate<ComptimeUnionType>(unionType);
   return type.get();
 }
@@ -477,7 +477,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
 
 Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
                                         UnionType *unionTypeB) {
-  Value &indexMap{mUnionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
+  Value &indexMap{unionIndexMaps_[std::pair(unionTypeA, unionTypeB)]};
   if (!indexMap) {
     indexMap =
         Value::zero(getArrayType(getIntType(), unionTypeA->caseTypes.size()));
@@ -500,8 +500,8 @@ Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
 
 Value Context::getImageTexelBase(Type *type, const Image &image) {
   SMDL_SANITY_CHECK(type && type->llvmType);
-  auto itr{compiler.mImageSymbolNames.find(&image)};
-  SMDL_SANITY_CHECK(itr != compiler.mImageSymbolNames.end());
+  auto itr{compiler.imageSymbolNames_.find(&image)};
+  SMDL_SANITY_CHECK(itr != compiler.imageSymbolNames_.end());
   llvm::GlobalVariable *llvmGlobal{llvmModule.getNamedGlobal(itr->second)};
   if (!llvmGlobal) {
     // A declaration, so the address stays open until the JIT links it.

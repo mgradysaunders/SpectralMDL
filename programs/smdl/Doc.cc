@@ -33,116 +33,116 @@ class DocTextPrinter final {
 public:
   DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
                  bool shouldIncludeHidden)
-      : mOS(os), mColorMode(colorMode),
-        mShouldIncludeHidden(shouldIncludeHidden) {}
+      : os_(os), colorMode_(colorMode),
+        shouldIncludeHidden_(shouldIncludeHidden) {}
 
   // Print a module as its documentation text plus a listing of the
   // declarations in it.
   void printModule(const smdl::DocModule &mod) {
-    mOS << "module ";
-    emit(mod.qualifiedName, docColorName);
-    mOS << '\n';
+    os_ << "module ";
+    emit_(mod.qualifiedName, docColorName);
+    os_ << '\n';
     if (!mod.docText.empty()) {
-      mOS << '\n';
-      emitIndented(mod.docText, 2, std::nullopt);
+      os_ << '\n';
+      emitIndented_(mod.docText, 2, std::nullopt);
     }
-    mOS << '\n';
+    os_ << '\n';
     for (const auto &entry : mod.entries) {
-      if (isHidden(entry)) continue;
-      mOS.indent(2);
-      emit(entry.qualifiedName, docColorName);
-      emit(" (" + entry.kind + ")", docColorMetadata);
-      mOS << '\n';
+      if (isHidden_(entry)) continue;
+      os_.indent(2);
+      emit_(entry.qualifiedName, docColorName);
+      emit_(" (" + entry.kind + ")", docColorMetadata);
+      os_ << '\n';
     }
-    mOS << '\n';
+    os_ << '\n';
   }
 
   // Print one declaration in full: signature, documentation text,
   // documented parameters, and visible members.
   void printEntry(const smdl::DocEntry &entry) {
-    emit(entry.qualifiedName, docColorName);
-    emit(" (" + entry.kind + ", line " + std::to_string(entry.lineNo) + ")",
-         docColorMetadata);
-    mOS << '\n';
-    emitSignature(entry, 2);
+    emit_(entry.qualifiedName, docColorName);
+    emit_(" (" + entry.kind + ", line " + std::to_string(entry.lineNo) + ")",
+          docColorMetadata);
+    os_ << '\n';
+    emitSignature_(entry, 2);
     if (!entry.docText.empty()) {
-      mOS << '\n';
-      emitIndented(entry.docText, 2, std::nullopt);
+      os_ << '\n';
+      emitIndented_(entry.docText, 2, std::nullopt);
     }
-    printParams(entry);
-    printMembers(entry);
-    mOS << '\n';
+    printParams_(entry);
+    printMembers_(entry);
+    os_ << '\n';
   }
 
 private:
-  [[nodiscard]] bool isHidden(const smdl::DocEntry &entry) const {
-    return entry.isHidden() && !mShouldIncludeHidden;
+  [[nodiscard]] bool isHidden_(const smdl::DocEntry &entry) const {
+    return entry.isHidden() && !shouldIncludeHidden_;
   }
 
-  void emit(std::string_view text, std::optional<llvm::HighlightColor> color) {
+  void emit_(std::string_view text, std::optional<llvm::HighlightColor> color) {
     if (text.empty()) return; // Do not wrap nothing in escape codes
     llvm::StringRef str{text.data(), text.size()};
     if (color) {
-      llvm::WithColor(mOS, *color, mColorMode) << str;
+      llvm::WithColor(os_, *color, colorMode_) << str;
     } else {
-      mOS << str;
+      os_ << str;
     }
   }
 
   // Emit indented text line by line. The indentation and the newlines
   // stay outside the colored span so that no escape code lands on a
   // blank line or stretches across the width of the terminal.
-  void emitIndented(std::string_view text, size_t indent,
-                    std::optional<llvm::HighlightColor> color) {
+  void emitIndented_(std::string_view text, size_t indent,
+                     std::optional<llvm::HighlightColor> color) {
     size_t i{0};
     while (i < text.size()) {
       size_t j{text.find('\n', i)};
       if (j == std::string_view::npos) j = text.size();
       // Leave blank lines truly blank instead of indenting them.
       if (j > i) {
-        mOS.indent(indent);
-        emit(text.substr(i, j - i), color);
+        os_.indent(indent);
+        emit_(text.substr(i, j - i), color);
       }
-      mOS << '\n';
+      os_ << '\n';
       i = j + 1;
     }
   }
 
   // Signatures are always a single line, so the declared name inside one
   // can be split out and colored to give the eye something to land on.
-  void emitSignature(const smdl::DocEntry &item, size_t indent) {
-    mOS.indent(indent);
+  void emitSignature_(const smdl::DocEntry &item, size_t indent) {
+    os_.indent(indent);
     // NOTE: `nameOffset` is `NO_NAME_OFFSET` when the name does not
     // appear in the signature, which fails the bounds test below and
     // falls through to the unsplit signature.
     const size_t begin{size_t(item.nameOffset)};
     const size_t end{begin + item.name.size()};
     if (end <= item.signature.size()) {
-      emit(std::string_view(item.signature).substr(0, begin),
-           docColorSignature);
-      emit(std::string_view(item.signature).substr(begin, item.name.size()),
-           docColorName);
-      emit(std::string_view(item.signature).substr(end), docColorSignature);
+      emit_(std::string_view(item.signature).substr(0, begin),
+            docColorSignature);
+      emit_(std::string_view(item.signature).substr(begin, item.name.size()),
+            docColorName);
+      emit_(std::string_view(item.signature).substr(end), docColorSignature);
     } else {
-      emit(item.signature, docColorSignature);
+      emit_(item.signature, docColorSignature);
     }
-    mOS << '\n';
+    os_ << '\n';
   }
 
   // Print the documented parameters, skipping the undocumented ones,
   // which the signature already shows.
-  void printParams(const smdl::DocEntry &entry) {
+  void printParams_(const smdl::DocEntry &entry) {
     bool anyParamDocs{false};
     for (const auto &param : entry.params)
       anyParamDocs |= !param.docText.empty();
     if (!anyParamDocs) return;
-    mOS << '\n';
+    os_ << '\n';
     bool isAfterDocText{false};
     for (const auto &param : entry.params) {
       if (param.docText.empty()) continue;
-      if (isAfterDocText) mOS << '\n';
-      emitIndented(param.name + ":", 2, docColorName);
-      emitIndented(param.docText, 4, std::nullopt);
+      if (isAfterDocText) os_ << '\n';
+      emitIndented_(param.name + ":", 2, docColorName);
+      emitIndented_(param.docText, 4, std::nullopt);
       isAfterDocText = true;
     }
   }
@@ -150,29 +150,29 @@ private:
   // Print the visible members. NOTE: A member whose documentation text
   // ends the previous member is separated from it by a blank line, so
   // that multi-line texts do not run into the next signature.
-  void printMembers(const smdl::DocEntry &entry) {
+  void printMembers_(const smdl::DocEntry &entry) {
     bool anyMembers{false};
     bool isAfterDocText{false};
     for (const auto &member : entry.members) {
-      if (isHidden(member)) continue;
+      if (isHidden_(member)) continue;
       if (!anyMembers) {
-        mOS << '\n';
+        os_ << '\n';
         anyMembers = true;
       } else if (isAfterDocText) {
-        mOS << '\n';
+        os_ << '\n';
       }
-      emitSignature(member, 2);
+      emitSignature_(member, 2);
       if (!member.docText.empty())
-        emitIndented(member.docText, 4, std::nullopt);
+        emitIndented_(member.docText, 4, std::nullopt);
       isAfterDocText = !member.docText.empty();
     }
   }
 
-  llvm::raw_ostream &mOS;
+  llvm::raw_ostream &os_;
 
-  llvm::ColorMode mColorMode;
+  llvm::ColorMode colorMode_;
 
-  bool mShouldIncludeHidden;
+  bool shouldIncludeHidden_;
 };
 
 // Add the builtin modules named by the queries, or all of them, to the

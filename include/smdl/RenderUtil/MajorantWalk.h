@@ -56,8 +56,8 @@ public:
   MajorantSpanWalk(const VoxelGrid *grid, const float3 &cellOrg,
                    const float3 &cellDir, float invMaxValue, float tEnd,
                    bool shouldSkipEmptyCells) noexcept
-      : mInvMaxValue(invMaxValue), mTEnd(tEnd),
-        mShouldSkipEmptyCells(shouldSkipEmptyCells) {
+      : invMaxValue_(invMaxValue), tEnd_(tEnd),
+        shouldSkipEmptyCells_(shouldSkipEmptyCells) {
     if (!grid) return;
     // One reciprocal per axis, which both the slab test and the walk
     // setup below multiply by.
@@ -89,33 +89,33 @@ public:
     // A segment that never enters the grid box leaves the empty cell
     // interval the walk starts on, which yields the one global span.
     if (!(tEnter < tLeave)) return;
-    mTable = grid->getMajorantTable().data();
-    mBackground = grid->getBackground();
-    mSize = grid->getMajorantCount();
-    mTEnter = tEnter;
-    mTLeave = tLeave;
+    table_ = grid->getMajorantTable().data();
+    background_ = grid->getBackground();
+    size_ = grid->getMajorantCount();
+    tEnter_ = tEnter;
+    tLeave_ = tLeave;
     const float3 pEnter{cellOrg + tEnter * cellDir};
     for (int j = 0; j < 3; j++) {
       // Truncation, not floor: the entry point is on or inside the box
       // up to rounding, and the clamp catches a hair below zero either
       // way.
-      mCell[j] = std::clamp(int(pEnter[j]), 0, mSize[j] - 1);
+      cell_[j] = std::clamp(int(pEnter[j]), 0, size_[j] - 1);
       if (cellDir[j] > 0.0f) {
-        mStep[j] = 1;
-        mTNext[j] = (float(mCell[j] + 1) - cellOrg[j]) * invDir[j];
-        mTStep[j] = invDir[j];
+        step_[j] = 1;
+        tNext_[j] = (float(cell_[j] + 1) - cellOrg[j]) * invDir[j];
+        tStep_[j] = invDir[j];
       } else if (cellDir[j] < 0.0f) {
-        mStep[j] = -1;
-        mTNext[j] = (float(mCell[j]) - cellOrg[j]) * invDir[j];
-        mTStep[j] = -invDir[j];
+        step_[j] = -1;
+        tNext_[j] = (float(cell_[j]) - cellOrg[j]) * invDir[j];
+        tStep_[j] = -invDir[j];
       } else {
-        mStep[j] = 0;
-        mTNext[j] = INF;
-        mTStep[j] = INF;
+        step_[j] = 0;
+        tNext_[j] = INF;
+        tStep_[j] = INF;
       }
     }
-    mIndex = mCell.x + mSize.x * (mCell.y + mSize.y * mCell.z);
-    mStride = int3(mStep.x, mStep.y * mSize.x, mStep.z * mSize.x * mSize.y);
+    index_ = cell_.x + size_.x * (cell_.y + size_.y * cell_.z);
+    stride_ = int3(step_.x, step_.y * size_.x, step_.z * size_.x * size_.y);
   }
 
   /// The next span, or false when the segment is exhausted.
@@ -123,41 +123,41 @@ public:
     // The stretch before the grid box, at the global scale. With no grid
     // this interval is empty and the whole segment falls to the last
     // test below.
-    if (SMDL_UNLIKELY(mTCurr < mTEnter)) {
-      span = {mTCurr, mTEnter, 1.0f, 0.0f};
-      mTCurr = mTEnter;
+    if (SMDL_UNLIKELY(tCurr_ < tEnter_)) {
+      span = {tCurr_, tEnter_, 1.0f, 0.0f};
+      tCurr_ = tEnter_;
       return true;
     }
     // One span per majorant cell.
-    while (mTCurr < mTLeave) {
-      const int j{mTNext[0] < mTNext[1] ? (mTNext[0] < mTNext[2] ? 0 : 2)
-                                        : (mTNext[1] < mTNext[2] ? 1 : 2)};
-      const float2 bounds{SMDL_LIKELY(!mIsOutside) ? mTable[mIndex]
-                                                   : float2(mBackground)};
-      const float tCurr{mTCurr};
-      const float tNext{std::min(mTNext[j], mTLeave)};
-      mTCurr = tNext, mTNext[j] += mTStep[j];
-      mIndex += mStride[j];
-      mCell[j] += mStep[j];
+    while (tCurr_ < tLeave_) {
+      const int j{tNext_[0] < tNext_[1] ? (tNext_[0] < tNext_[2] ? 0 : 2)
+                                        : (tNext_[1] < tNext_[2] ? 1 : 2)};
+      const float2 bounds{SMDL_LIKELY(!isOutside_) ? table_[index_]
+                                                   : float2(background_)};
+      const float tCurr{tCurr_};
+      const float tNext{std::min(tNext_[j], tLeave_)};
+      tCurr_ = tNext, tNext_[j] += tStep_[j];
+      index_ += stride_[j];
+      cell_[j] += step_[j];
       // Steps are monotone per axis, so a cell that leaves the box never
       // comes back: one unsigned compare on the stepped axis is the whole
       // inside test.
-      mIsOutside |= unsigned(mCell[j]) >= unsigned(mSize[j]);
-      if (mShouldSkipEmptyCells && !(bounds.y > 0.0f)) continue;
+      isOutside_ |= unsigned(cell_[j]) >= unsigned(size_[j]);
+      if (shouldSkipEmptyCells_ && !(bounds.y > 0.0f)) continue;
       // Both bounds of the cell come from the one load: the dilated
       // minimum lower-bounds every trilinear value in the cell the same
       // way the dilated maximum upper-bounds it. The lower bound is
       // clamped into `[0, scale]` defensively, since a grid holding
       // negative values must not produce a negative control.
-      const float scale{std::min(bounds.y * mInvMaxValue, 1.0f)};
-      const float scaleMin{std::clamp(bounds.x * mInvMaxValue, 0.0f, scale)};
+      const float scale{std::min(bounds.y * invMaxValue_, 1.0f)};
+      const float scaleMin{std::clamp(bounds.x * invMaxValue_, 0.0f, scale)};
       span = {tCurr, tNext, scale, scaleMin};
       return true;
     }
     // The stretch after the grid box, at the global scale.
-    if (SMDL_UNLIKELY(mTCurr < mTEnd)) {
-      span = {mTCurr, mTEnd, 1.0f, 0.0f};
-      mTCurr = mTEnd;
+    if (SMDL_UNLIKELY(tCurr_ < tEnd_)) {
+      span = {tCurr_, tEnd_, 1.0f, 0.0f};
+      tCurr_ = tEnd_;
       return true;
     }
     return false;
@@ -166,31 +166,31 @@ public:
 private:
   /// The grid's cell table, `x` fastest, null when there is no walk to
   /// make: either no grid, or a segment that misses the grid box. The
-  /// empty `[mTEnter, mTLeave)` those leave keeps `next()` out of the
+  /// empty `[tEnter_, tLeave_)` those leave keeps `next()` out of the
   /// cell loop, so this is only ever read inside it.
-  const float2 *mTable{};
+  const float2 *table_{};
 
   /// What the table answers outside the cell count.
-  float mBackground{};
+  float background_{};
 
-  float mInvMaxValue{};
-  float mTEnd{};
-  float mTEnter{};
-  float mTLeave{};
-  float mTCurr{};
+  float invMaxValue_{};
+  float tEnd_{};
+  float tEnter_{};
+  float tLeave_{};
+  float tCurr_{};
 
   /// The flat index of the current cell, and its change per step along
   /// each axis.
-  int mIndex{};
-  int3 mStride{};
+  int index_{};
+  int3 stride_{};
 
-  int3 mCell{};
-  int3 mSize{};
-  int3 mStep{};
-  float3 mTNext{};
-  float3 mTStep{};
-  bool mShouldSkipEmptyCells{};
-  bool mIsOutside{};
+  int3 cell_{};
+  int3 size_{};
+  int3 step_{};
+  float3 tNext_{};
+  float3 tStep_{};
+  bool shouldSkipEmptyCells_{};
+  bool isOutside_{};
 };
 
 /// \}

@@ -13,12 +13,12 @@ using smdl::ANSIColorMode;
 class ScopedColorEnv final {
 public:
   ScopedColorEnv(const std::string &term, const std::string &noColor)
-      : mTerm("TERM", term), mNoColor("NO_COLOR", noColor) {}
+      : term_("TERM", term), noColor_("NO_COLOR", noColor) {}
 
 private:
-  ScopedEnv mTerm;
+  ScopedEnv term_;
 
-  ScopedEnv mNoColor;
+  ScopedEnv noColor_;
 };
 
 } // namespace

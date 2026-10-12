@@ -120,13 +120,13 @@ public:
                                               const std::array<float, 3> &c);
 
   /// How the glass was stated.
-  [[nodiscard]] Kind kind() const noexcept { return mKind; }
+  [[nodiscard]] Kind kind() const noexcept { return kind_; }
 
   /// Does the index vary with wavelength? Every glass but a constant one
   /// does, since the factories refuse one that is stated with dispersion
   /// and has none.
   [[nodiscard]] bool isDispersive() const noexcept {
-    return mKind != Kind::CONSTANT;
+    return kind_ != Kind::CONSTANT;
   }
 
   /// The index at `wavelength` nanometers.
@@ -135,9 +135,9 @@ public:
   /// metal's table clamps (`smdlEvalMetalIOR()`), and one that is not a
   /// number reads as the short end.
   [[nodiscard]] float indexAt(float wavelength) const noexcept {
-    return evaluate(wavelength > OPTICAL_GLASS_WAVELENGTH_MIN
-                        ? std::min(wavelength, OPTICAL_GLASS_WAVELENGTH_MAX)
-                        : OPTICAL_GLASS_WAVELENGTH_MIN);
+    return evaluate_(wavelength > OPTICAL_GLASS_WAVELENGTH_MIN
+                         ? std::min(wavelength, OPTICAL_GLASS_WAVELENGTH_MAX)
+                         : OPTICAL_GLASS_WAVELENGTH_MIN);
   }
 
   /// The index at the d line, `nd`.
@@ -157,11 +157,11 @@ private:
   /// very coefficients the float evaluation uses: at the long end of the
   /// domain, indices a nanometer apart differ by only a few units in the
   /// last place of a float.
-  template <typename T> [[nodiscard]] T evaluate(T wavelength) const noexcept {
+  template <typename T> [[nodiscard]] T evaluate_(T wavelength) const noexcept {
     const T l{T(1e-3) * wavelength};
     const T l2{l * l};
-    const std::array<float, 6> &k{mCoefficients};
-    switch (mKind) {
+    const std::array<float, 6> &k{coefficients_};
+    switch (kind_) {
     case Kind::CONSTANT:
       break;
     case Kind::ABBE: {
@@ -181,13 +181,13 @@ private:
   ///
   /// \throws Error  If it does.
   ///
-  void validate() const;
+  void validate_() const;
 
-  Kind mKind{Kind::CONSTANT};
+  Kind kind_{Kind::CONSTANT};
 
   /// The index, for a constant glass; `A`, `B`, and `C`, for an Abbe fit;
   /// `B_1` to `B_3` and then `C_1` to `C_3`, for a Sellmeier.
-  std::array<float, 6> mCoefficients{1, 0, 0, 0, 0, 0};
+  std::array<float, 6> coefficients_{1, 0, 0, 0, 0, 0};
 };
 
 /// One glass of the built-in catalog.

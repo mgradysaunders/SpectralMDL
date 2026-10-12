@@ -61,7 +61,7 @@ public:
   [[nodiscard]]
   llvm::FunctionCallee getBuiltinCallee(llvm::StringRef name,
                                         llvm::FunctionType *llvmFuncTy) {
-    llvm::FunctionCallee &callee{mBuiltinCallees[name]};
+    llvm::FunctionCallee &callee{builtinCallees_[name]};
     if (!callee) {
       llvm::Function *llvmFunc{llvm::Function::Create(
           llvmFuncTy, llvm::Function::ExternalLinkage, name, llvmModule)};
@@ -79,11 +79,11 @@ public:
 
   /// Get builtin callee, and record its host address so the compiler can
   /// define it as an absolute symbol in the JIT (see
-  /// `Compiler::mBuiltinCalleeAddresses`).
+  /// `Compiler::builtinCalleeAddresses_`).
   template <typename T, typename... U>
   [[nodiscard]] llvm::FunctionCallee getBuiltinCallee(const char *name,
                                                       T (*value)(U...)) {
-    compiler.mBuiltinCalleeAddresses[name] =
+    compiler.builtinCalleeAddresses_[name] =
         reinterpret_cast<const void *>(value);
     return getBuiltinCallee<T, U...>(name);
   }
@@ -92,7 +92,7 @@ public:
   /// generating more readable names for LLVM basic blocks.
   [[nodiscard]] std::string getUniqueName(llvm::StringRef name,
                                           llvm::Function *llvmFunc = {}) {
-    return name.str() + std::to_string(mUniqueNames[name][llvmFunc]++);
+    return name.str() + std::to_string(uniqueNames_[name][llvmFunc]++);
   }
 
   /// Intern the given name. The returned span and the characters it views
@@ -108,21 +108,21 @@ public:
   /// `ParameterList::lastScope` are used when other modules lazily emit
   /// macro expansions, function instances, and default initializers.
   [[nodiscard]] Scope *makeScope() {
-    mScopes.push_back(std::make_unique<Scope>());
-    return mScopes.back().get();
+    scopes_.push_back(std::make_unique<Scope>());
+    return scopes_.back().get();
   }
 
   /// Get the next globally monotonic declaration sequence number. See
   /// `Declaration::seq`.
-  [[nodiscard]] uint64_t nextDeclSeq() { return ++mDeclSeq; }
+  [[nodiscard]] uint64_t nextDeclSeq() { return ++declSeq_; }
 
   /// Get the current (most recently issued) declaration sequence number.
-  [[nodiscard]] uint64_t currentDeclSeq() const { return mDeclSeq; }
+  [[nodiscard]] uint64_t currentDeclSeq() const { return declSeq_; }
 
   /// Get keyword value. Return `Value()` if undefined.
   [[nodiscard]] Value getKeyword(llvm::StringRef name) {
-    if (llvm::StringMapIterBase<Value, false> itr{mKeywords.find(name)};
-        itr != mKeywords.end())
+    if (llvm::StringMapIterBase<Value, false> itr{keywords_.find(name)};
+        itr != keywords_.end())
       return itr->second;
     return Value();
   }
@@ -135,15 +135,15 @@ public:
 
   /// Has keyword value?
   [[nodiscard]] bool hasKeywordValue(llvm::StringRef name) {
-    return mKeywords.contains(name);
+    return keywords_.contains(name);
   }
 
   /// Get every keyword name, for did-you-mean suggestions. The views are
   /// borrowed from the keyword table and live as long as the `Context`.
   [[nodiscard]] std::vector<std::string_view> getKeywordNames() const {
     std::vector<std::string_view> names{};
-    names.reserve(mKeywords.size());
-    for (const auto &entry : mKeywords)
+    names.reserve(keywords_.size());
+    for (const auto &entry : keywords_)
       names.push_back(std::string_view(entry.getKey()));
     return names;
   }
@@ -151,14 +151,14 @@ public:
 public:
   /// Get the alignment of the given type in bytes. Return 0 if undefined.
   [[nodiscard]] uint64_t getAlignOf(Type *type) {
-    return type && type->llvmType && type != mVoidType.get()
+    return type && type->llvmType && type != voidType_.get()
                ? uint64_t(llvmLayout.getABITypeAlign(type->llvmType).value())
                : uint64_t(0);
   }
 
   /// Get the size of the given type in bytes. Return 0 if undefined.
   [[nodiscard]] uint64_t getSizeOf(Type *type) {
-    return type && type->llvmType && type != mVoidType.get()
+    return type && type->llvmType && type != voidType_.get()
                ? uint64_t(llvmLayout.getTypeAllocSize(type->llvmType))
                : uint64_t(0);
   }
@@ -189,36 +189,36 @@ public:
   }
 
   /// Get `auto` type.
-  [[nodiscard]] Type *getAutoType() { return mAutoType.get(); }
+  [[nodiscard]] Type *getAutoType() { return autoType_.get(); }
 
   /// Get `color` type.
-  [[nodiscard]] ColorType *getColorType() { return mColorType.get(); }
+  [[nodiscard]] ColorType *getColorType() { return colorType_.get(); }
 
   /// Get `string` type.
-  [[nodiscard]] Type *getStringType() { return mStringType.get(); }
+  [[nodiscard]] Type *getStringType() { return stringType_.get(); }
 
   /// Get `void` type.
-  [[nodiscard]] Type *getVoidType() { return mVoidType.get(); }
+  [[nodiscard]] Type *getVoidType() { return voidType_.get(); }
 
   /// Get `&void` type.
   [[nodiscard]] Type *getVoidPointerType() {
-    return getPointerType(mVoidType.get());
+    return getPointerType(voidType_.get());
   }
 
   /// Get meta `Module` type.
-  [[nodiscard]] Type *getMetaModuleType() { return mMetaModuleType.get(); }
+  [[nodiscard]] Type *getMetaModuleType() { return metaModuleType_.get(); }
 
   /// Get meta `Type` type.
-  [[nodiscard]] Type *getMetaTypeType() { return mMetaTypeType.get(); }
+  [[nodiscard]] Type *getMetaTypeType() { return metaTypeType_.get(); }
 
   /// Get meta `ast::Intrinsic` type.
   [[nodiscard]] Type *getMetaIntrinsicType() {
-    return mMetaIntrinsicType.get();
+    return metaIntrinsicType_.get();
   }
 
   /// Get meta `ast::Namespace` type.
   [[nodiscard]] Type *getMetaNamespaceType() {
-    return mMetaNamespaceType.get();
+    return metaNamespaceType_.get();
   }
 
   /// Get array type.
@@ -251,7 +251,7 @@ public:
   [[nodiscard]] FunctionType *getLambdaFunctionType(ast::Function *decl);
 
   /// Get state type.
-  [[nodiscard]] StateType *getStateType() { return mStateType.get(); }
+  [[nodiscard]] StateType *getStateType() { return stateType_.get(); }
 
   /// Get struct type.
   [[nodiscard]] StructType *getStructType(ast::Struct *decl);
@@ -260,32 +260,32 @@ public:
   [[nodiscard]] TagType *getTagType(ast::Tag *decl);
 
   /// Get the `texture_2d` type.
-  [[nodiscard]] StructType *getTexture2DType() { return mTexture2DType; }
+  [[nodiscard]] StructType *getTexture2DType() { return texture2DType_; }
 
   /// Get the `texture_3d` type.
-  [[nodiscard]] StructType *getTexture3DType() { return mTexture3DType; }
+  [[nodiscard]] StructType *getTexture3DType() { return texture3DType_; }
 
   /// Get the `texture_cube` type.
-  [[nodiscard]] StructType *getTextureCubeType() { return mTextureCubeType; }
+  [[nodiscard]] StructType *getTextureCubeType() { return textureCubeType_; }
 
   /// Get the `texture_ptex` type.
-  [[nodiscard]] StructType *getTexturePtexType() { return mTexturePtexType; }
+  [[nodiscard]] StructType *getTexturePtexType() { return texturePtexType_; }
 
   /// Get the `bsdf_measurement` type.
   [[nodiscard]] StructType *getBSDFMeasurementType() {
-    return mBSDFMeasurementType;
+    return bsdfMeasurementType_;
   }
 
   /// Get the `light_profile` type.
-  [[nodiscard]] StructType *getLightProfileType() { return mLightProfileType; }
+  [[nodiscard]] StructType *getLightProfileType() { return lightProfileType_; }
 
   /// Get the `spectral_curve` type.
   [[nodiscard]] StructType *getSpectralCurveType() {
-    return mSpectralCurveType;
+    return spectralCurveType_;
   }
 
   /// Get the `complex` type.
-  [[nodiscard]] StructType *getComplexType() { return mComplexType; }
+  [[nodiscard]] StructType *getComplexType() { return complexType_; }
 
   /// Get union type.
   [[nodiscard]] Type *getUnionType(llvm::ArrayRef<Type *> types);
@@ -391,14 +391,14 @@ public:
 
   /// Get compile-time `string` constant.
   [[nodiscard]] Value getComptimeString(std::string_view value) {
-    Value &result{mStrings[value]};
+    Value &result{strings_[value]};
     if (!result) {
       llvm::IRBuilder<> builder{llvmContext};
       llvm::GlobalVariable *str{
           builder.CreateGlobalString(value, "str", 0, &llvmModule)};
       llvm::Value *ptr{
           builder.CreateConstInBoundsGEP2_32(str->getValueType(), str, 0, 0)};
-      result = RValue(mStringType.get(), ptr);
+      result = RValue(stringType_.get(), ptr);
     }
     return result;
   }
@@ -445,7 +445,7 @@ public:
   /// Unlike every other resource, an image is named rather than baked as
   /// an address, because its size is not settled until emission ends: a
   /// texture constructed later may ask for a mip chain that an earlier
-  /// one did not. Naming it also makes `Compiler::dropUnusedImages()`
+  /// one did not. Naming it also makes `Compiler::dropUnusedImages_()`
   /// exact, since a symbol has a use list and an address does not.
   [[nodiscard]] Value getImageTexelBase(Type *type, const Image &image);
 
@@ -489,13 +489,13 @@ public:
   Compiler &compiler;
 
   /// The bump allocator.
-  BumpPtrAllocator &allocator{compiler.mAllocator};
+  BumpPtrAllocator &allocator{compiler.allocator_};
 
   /// The LLVM context.
-  llvm::LLVMContext &llvmContext{compiler.getLLVMContext()};
+  llvm::LLVMContext &llvmContext{compiler.getLLVMContext_()};
 
   /// The LLVM module.
-  llvm::Module &llvmModule{compiler.getLLVMModule()};
+  llvm::Module &llvmModule{compiler.getLLVMModule_()};
 
   /// The LLVM data layout.
   const llvm::DataLayout &llvmLayout{llvmModule.getDataLayout()};
@@ -531,127 +531,127 @@ public:
 
 private:
   /// The builtin modules. See `get_builtin_module()`
-  llvm::StringMap<BumpPtr<Module>> mBuiltinModules;
+  llvm::StringMap<BumpPtr<Module>> builtinModules_;
 
   /// The LLVM callees for builtin foreign functions. See `get_builtin_callee()`
-  llvm::StringMap<llvm::FunctionCallee> mBuiltinCallees;
+  llvm::StringMap<llvm::FunctionCallee> builtinCallees_;
 
   /// The unique name counters. See `get_unique_name()`
-  llvm::StringMap<llvm::DenseMap<llvm::Function *, uint64_t>> mUniqueNames;
+  llvm::StringMap<llvm::DenseMap<llvm::Function *, uint64_t>> uniqueNames_;
 
   /// The interned names. Keyed by the name components joined with `'\0'`
   /// (identifiers cannot contain `'\0'`, so the encoding is unambiguous);
   /// the interned views point into the map entry's own key bytes. See
   /// `internName()`.
-  llvm::StringMap<Span<const std::string_view>> mInternedNames;
+  llvm::StringMap<Span<const std::string_view>> internedNames_;
 
   /// The scopes. See `makeScope()`.
-  std::vector<std::unique_ptr<Scope>> mScopes;
+  std::vector<std::unique_ptr<Scope>> scopes_;
 
   /// The declaration sequence counter. See `nextDeclSeq()`.
-  uint64_t mDeclSeq{};
+  uint64_t declSeq_{};
 
   /// The arithmetic types, e.g., `bool3`, `int`, `float4`, `double2x3`.
-  llvm::DenseMap<uint64_t, BumpPtr<ArithmeticType>> mArithmeticTypes;
+  llvm::DenseMap<uint64_t, BumpPtr<ArithmeticType>> arithmeticTypes_;
 
   /// The array types.
-  std::map<std::pair<Type *, uint32_t>, BumpPtr<ArrayType>> mArrayTypes;
+  std::map<std::pair<Type *, uint32_t>, BumpPtr<ArrayType>> arrayTypes_;
 
   /// The inferred-size array types.
   std::map<std::pair<Type *, std::string>, BumpPtr<InferredSizeArrayType>>
-      mInferredSizeArrayTypes;
+      inferredSizeArrayTypes_;
 
   /// The pointer types.
-  llvm::DenseMap<Type *, BumpPtr<PointerType>> mPointerTypes;
+  llvm::DenseMap<Type *, BumpPtr<PointerType>> pointerTypes_;
 
   /// The union types.
   ///
   /// Each `UnionType` is keyed by its canonical case types. See
   /// `UnionType::canonicalizeTypes()`.
-  std::map<llvm::SmallVector<Type *>, BumpPtr<UnionType>> mUnionTypes;
+  std::map<llvm::SmallVector<Type *>, BumpPtr<UnionType>> unionTypes_;
 
   /// The union index maps for remapping the union index when
   /// converting different union types.
-  std::map<std::pair<UnionType *, UnionType *>, Value> mUnionIndexMaps;
+  std::map<std::pair<UnionType *, UnionType *>, Value> unionIndexMaps_;
 
   /// The `auto` type.
-  const BumpPtr<AutoType> mAutoType{allocator.allocate<AutoType>()};
+  const BumpPtr<AutoType> autoType_{allocator.allocate<AutoType>()};
 
   /// The meta `Module` type.
-  const BumpPtr<MetaType> mMetaModuleType{
+  const BumpPtr<MetaType> metaModuleType_{
       allocator.allocate<MetaType>(*this, "module")};
 
   /// The meta `Type` type.
-  const BumpPtr<MetaType> mMetaTypeType{
+  const BumpPtr<MetaType> metaTypeType_{
       allocator.allocate<MetaType>(*this, "type")};
 
   /// The meta `ast::Intrinsic` type.
-  const BumpPtr<MetaType> mMetaIntrinsicType{
+  const BumpPtr<MetaType> metaIntrinsicType_{
       allocator.allocate<MetaType>(*this, "intrinsic")};
 
   /// The meta `ast::Namespace` type.
-  const BumpPtr<MetaType> mMetaNamespaceType{
+  const BumpPtr<MetaType> metaNamespaceType_{
       allocator.allocate<MetaType>(*this, "namespace")};
 
   /// The `void` type.
-  const BumpPtr<VoidType> mVoidType{allocator.allocate<VoidType>(*this)};
+  const BumpPtr<VoidType> voidType_{allocator.allocate<VoidType>(*this)};
 
   /// The `string` type.
-  const BumpPtr<StringType> mStringType{allocator.allocate<StringType>(*this)};
+  const BumpPtr<StringType> stringType_{allocator.allocate<StringType>(*this)};
 
   /// The `color` type.
-  const BumpPtr<ColorType> mColorType{allocator.allocate<ColorType>(*this)};
+  const BumpPtr<ColorType> colorType_{allocator.allocate<ColorType>(*this)};
 
   /// The `State` type.
-  const BumpPtr<StateType> mStateType{allocator.allocate<StateType>(*this)};
+  const BumpPtr<StateType> stateType_{allocator.allocate<StateType>(*this)};
 
   /// The AST associated types.
-  llvm::DenseMap<ast::Decl *, BumpPtr<Type>> mASTTypes;
+  llvm::DenseMap<ast::Decl *, BumpPtr<Type>> astTypes_;
 
   /// The lambda function types, one per evaluation of each lambda
   /// expression. This is a flat keep-alive list rather than a map keyed on
   /// the declaration, see `getLambdaFunctionType()`.
-  std::vector<BumpPtr<Type>> mLambdaTypes;
+  std::vector<BumpPtr<Type>> lambdaTypes_;
 
   /// The compile-time union types.
-  llvm::DenseMap<UnionType *, BumpPtr<ComptimeUnionType>> mComptimeUnionTypes;
+  llvm::DenseMap<UnionType *, BumpPtr<ComptimeUnionType>> comptimeUnionTypes_;
 
   /// The keyword values.
-  llvm::StringMap<Value> mKeywords;
+  llvm::StringMap<Value> keywords_;
 
   /// The string constants.
   ///
   /// This is a string map such that identical string literals in the source
   /// code, such as a file name that may appear many times, end up referencing
   /// the same global string constant.
-  llvm::StringMap<Value> mStrings;
+  llvm::StringMap<Value> strings_;
 
   /// The `material` type defined by the builtin `API` module.
-  StructType *mMaterialType{};
+  StructType *materialType_{};
 
   /// The `texture_2d` type defined by the builtin `API` module.
-  StructType *mTexture2DType{};
+  StructType *texture2DType_{};
 
   /// The `texture_3d` type defined by the builtin `API` module.
-  StructType *mTexture3DType{};
+  StructType *texture3DType_{};
 
   /// The `texture_cube` type defined by the builtin `API` module.
-  StructType *mTextureCubeType{};
+  StructType *textureCubeType_{};
 
   /// The `texture_ptex` type defined by the builtin `API` module.
-  StructType *mTexturePtexType{};
+  StructType *texturePtexType_{};
 
   /// The `bsdf_measurement` type defined by the builtin `API` module.
-  StructType *mBSDFMeasurementType{};
+  StructType *bsdfMeasurementType_{};
 
   /// The `light_profile` type defined by the builtin `API` module.
-  StructType *mLightProfileType{};
+  StructType *lightProfileType_{};
 
   /// The `spectral_curve` type defined by the builtin `API` module.
-  StructType *mSpectralCurveType{};
+  StructType *spectralCurveType_{};
 
   /// The `complex` type defined by the builtin `API` module.
-  StructType *mComplexType{};
+  StructType *complexType_{};
 
   friend class FunctionType;
 };

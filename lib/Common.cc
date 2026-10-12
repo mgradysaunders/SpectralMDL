@@ -84,20 +84,20 @@ std::string BuildInfo::toString() const {
 }
 
 std::string_view SourceLocation::getModuleName() const {
-  return module_ ? module_->getName() : std::string_view();
+  return module ? module->getName() : std::string_view();
 }
 
 std::string_view SourceLocation::getModuleFileName() const {
-  return module_ ? module_->getFileName() : std::string_view();
+  return module ? module->getFileName() : std::string_view();
 }
 
 std::string_view SourceLocation::getModuleDisplayName() const {
-  return module_ ? module_->getDisplayName() : std::string_view();
+  return module ? module->getDisplayName() : std::string_view();
 }
 
 std::string SourceLocation::getSourceSnippet() const {
-  std::string_view sourceCode{module_ ? module_->getSourceCode()
-                                      : std::string_view()};
+  std::string_view sourceCode{module ? module->getSourceCode()
+                                     : std::string_view()};
   if (sourceCode.empty()) return {};
   // An error raised at EOF has no character to point at, so clamp and let
   // the caret land one past the end of the last line.
@@ -156,9 +156,9 @@ void SourceLocation::throwError(std::string message) const {
 }
 
 SourceLocation::operator std::string() const {
-  if (!module_) return {};
-  return concat(SpellLocation(module_->getDisplayName(), lineNo, charNo,
-                              module_->isFileBacked()));
+  if (!module) return {};
+  return concat(SpellLocation(module->getDisplayName(), lineNo, charNo,
+                              module->isFileBacked()));
 }
 
 } // namespace smdl

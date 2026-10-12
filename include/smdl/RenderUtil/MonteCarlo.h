@@ -32,24 +32,24 @@ public:
 public:
   /// Clear.
   void clear() noexcept {
-    mTotalSum = 0;
-    mCMFs.clear();
+    totalSum_ = 0;
+    cmfs_.clear();
   }
 
   /// The number of indexes.
-  [[nodiscard]] int size() const noexcept { return int(mCMFs.size()) - 1; }
+  [[nodiscard]] int size() const noexcept { return int(cmfs_.size()) - 1; }
 
   /// The index probability mass function (PMF). Inline, because a
   /// light sampler asks for it per sample.
   [[nodiscard]] float indexPMF(int i) const noexcept {
     if (0 <= i && i < size())
-      return float(INV_CMF_SCALE * double(mCMFs[i + 1] - mCMFs[i]));
+      return float(INV_CMF_SCALE * double(cmfs_[i + 1] - cmfs_[i]));
     return 0.0f;
   }
 
   /// The index cumulative mass function (CMF).
   [[nodiscard]] float indexCMF(int i) const noexcept {
-    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(mCMFs[i]));
+    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs_[i]));
     return i < 0 ? 0.0f : 1.0f;
   }
 
@@ -65,19 +65,19 @@ public:
 
   /// The unnormalized sum.
   [[nodiscard]] float unnormalizedSum() const noexcept {
-    return static_cast<float>(mTotalSum);
+    return static_cast<float>(totalSum_);
   }
 
 private:
-  double mTotalSum{};
+  double totalSum_{};
 
   /// The cumulative mass function over the unit interval, as 32-bit
   /// fixed point: half the size of a table of `double`, and unlike a
   /// table of `float` the difference of two entries stays exact, which
   /// is what `indexPMF()` reads.
-  std::vector<std::uint32_t> mCMFs{};
+  std::vector<std::uint32_t> cmfs_{};
 
-  /// The unit of `mCMFs`, `2^-32`.
+  /// The unit of `cmfs_`, `2^-32`.
   static constexpr double INV_CMF_SCALE = 1.0 / 4294967296.0;
 };
 
@@ -103,10 +103,10 @@ public:
   /// leaves the table empty.
   explicit AliasTable(Span<const float> weights);
 
-  [[nodiscard]] bool empty() const noexcept { return mEntries.empty(); }
+  [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
 
   /// The number of indexes.
-  [[nodiscard]] int size() const noexcept { return int(mEntries.size()); }
+  [[nodiscard]] int size() const noexcept { return int(entries_.size()); }
 
   /// Draw an index in `[0, size())` from the sample `xi` in `(0,1)`.
   ///
@@ -118,7 +118,7 @@ public:
     SMDL_SANITY_CHECK(!empty());
     const float scaled{float(size()) * std::clamp(xi, 0.0f, ALMOST_ONE)};
     const int entry{std::clamp(int(scaled), 0, size() - 1)};
-    const Entry &e{mEntries[entry]};
+    const Entry &e{entries_[entry]};
     return scaled - float(entry) < e.threshold ? entry : int(e.alias);
   }
 
@@ -130,7 +130,7 @@ private:
     std::uint32_t alias{};
   };
 
-  std::vector<Entry> mEntries{};
+  std::vector<Entry> entries_{};
 };
 
 /// \name Functions (sampling)
@@ -428,27 +428,27 @@ public:
 public:
   /// Clear.
   void clear() noexcept {
-    mNumTexelsX = 0;
-    mNumTexelsY = 0;
-    mConditionals.clear();
-    mMarginal.clear();
+    numTexelsX_ = 0;
+    numTexelsY_ = 0;
+    conditionals_.clear();
+    marginal_.clear();
   }
 
   /// The number of pixels in X.
-  [[nodiscard]] int getNumTexelsX() const noexcept { return mNumTexelsX; }
+  [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX_; }
 
   /// The number of pixels in Y.
-  [[nodiscard]] int getNumTexelsY() const noexcept { return mNumTexelsY; }
+  [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY_; }
 
   /// The unnormalized sum over all values.
   [[nodiscard]] float unnormalizedSum() const noexcept {
-    return mMarginal.unnormalizedSum();
+    return marginal_.unnormalizedSum();
   }
 
   /// The pixel probability mass function (PMF).
   [[nodiscard]] float pixelPMF(int2 i) const noexcept {
-    if (0 <= i.y && i.y < mNumTexelsY)
-      return mMarginal.indexPMF(i.y) * mConditionals[i.y].indexPMF(i.x);
+    if (0 <= i.y && i.y < numTexelsY_)
+      return marginal_.indexPMF(i.y) * conditionals_[i.y].indexPMF(i.x);
     return 0.0f;
   }
 
@@ -492,10 +492,10 @@ public:
                                        float *pdf = {}) const noexcept;
 
 private:
-  int mNumTexelsX{};
-  int mNumTexelsY{};
-  std::vector<Distribution1D> mConditionals{};
-  Distribution1D mMarginal{};
+  int numTexelsX_{};
+  int numTexelsY_{};
+  std::vector<Distribution1D> conditionals_{};
+  Distribution1D marginal_{};
 };
 
 /// \}

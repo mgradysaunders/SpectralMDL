@@ -212,7 +212,7 @@ OpticalGlass OpticalGlass::constant(float index) {
     throw Error(
         concat("Expected an index of at least 1, got ", SpellFloat(index)));
   OpticalGlass glass{};
-  glass.mCoefficients[0] = index;
+  glass.coefficients_[0] = index;
   return glass;
 }
 
@@ -233,9 +233,9 @@ OpticalGlass OpticalGlass::abbe(float nd, float abbeNumber,
   const std::array<double, 3> k{
       cauchyThroughAbbe(double(nd), double(abbeNumber), pgF)};
   OpticalGlass glass{};
-  glass.mKind = Kind::ABBE;
-  glass.mCoefficients = {float(k[0]), float(k[1]), float(k[2]), 0, 0, 0};
-  glass.validate();
+  glass.kind_ = Kind::ABBE;
+  glass.coefficients_ = {float(k[0]), float(k[1]), float(k[2]), 0, 0, 0};
+  glass.validate_();
   return glass;
 }
 
@@ -253,24 +253,24 @@ OpticalGlass OpticalGlass::sellmeier(const std::array<float, 3> &b,
                          " nm a glass is evaluated over"));
   }
   OpticalGlass glass{};
-  glass.mKind = Kind::SELLMEIER;
-  glass.mCoefficients = {b[0], b[1], b[2], c[0], c[1], c[2]};
-  glass.validate();
-  if (!(glass.evaluate(double(FRAUNHOFER_F_LINE)) >
-        glass.evaluate(double(FRAUNHOFER_C_LINE))))
+  glass.kind_ = Kind::SELLMEIER;
+  glass.coefficients_ = {b[0], b[1], b[2], c[0], c[1], c[2]};
+  glass.validate_();
+  if (!(glass.evaluate_(double(FRAUNHOFER_F_LINE)) >
+        glass.evaluate_(double(FRAUNHOFER_C_LINE))))
     throw Error("The Sellmeier coefficients describe a glass that does not "
                 "disperse, which is stated by its index alone");
   return glass;
 }
 
-void OpticalGlass::validate() const {
+void OpticalGlass::validate_() const {
   // Every nanometer, in double. That is fine enough that nothing smooth
   // hides between the samples; what is not smooth is a pole, which
   // `sellmeier()` finds exactly before this runs.
   double previous{std::numeric_limits<double>::infinity()};
   for (int wavelength = int(OPTICAL_GLASS_WAVELENGTH_MIN);
        wavelength <= int(OPTICAL_GLASS_WAVELENGTH_MAX); wavelength++) {
-    const double index{evaluate(double(wavelength))};
+    const double index{evaluate_(double(wavelength))};
     if (!std::isfinite(index))
       throw Error(
           concat("The index is not a finite number at ", wavelength, " nm"));
@@ -286,22 +286,22 @@ void OpticalGlass::validate() const {
 }
 
 float OpticalGlass::nd() const noexcept {
-  return float(evaluate(double(FRAUNHOFER_D_LINE)));
+  return float(evaluate_(double(FRAUNHOFER_D_LINE)));
 }
 
 float OpticalGlass::abbeNumber() const noexcept {
   if (!isDispersive()) return INF;
-  const double nd{evaluate(double(FRAUNHOFER_D_LINE))};
-  const double nF{evaluate(double(FRAUNHOFER_F_LINE))};
-  const double nC{evaluate(double(FRAUNHOFER_C_LINE))};
+  const double nd{evaluate_(double(FRAUNHOFER_D_LINE))};
+  const double nF{evaluate_(double(FRAUNHOFER_F_LINE))};
+  const double nC{evaluate_(double(FRAUNHOFER_C_LINE))};
   return float((nd - 1) / (nF - nC));
 }
 
 float OpticalGlass::partialDispersion() const noexcept {
   if (!isDispersive()) return 0;
-  const double nF{evaluate(double(FRAUNHOFER_F_LINE))};
-  const double nC{evaluate(double(FRAUNHOFER_C_LINE))};
-  const double ng{evaluate(double(FRAUNHOFER_G_LINE))};
+  const double nF{evaluate_(double(FRAUNHOFER_F_LINE))};
+  const double nC{evaluate_(double(FRAUNHOFER_C_LINE))};
+  const double ng{evaluate_(double(FRAUNHOFER_G_LINE))};
   return float((ng - nF) / (nF - nC));
 }
 

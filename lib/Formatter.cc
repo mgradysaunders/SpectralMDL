@@ -8,27 +8,27 @@
 
 namespace smdl {
 
-void Formatter::alignLineComments() {
+void Formatter::alignLineComments_() {
   auto insertSpacesBeforeComment{[&](auto &comment, size_t numSpaces) {
-    mOutputSrc.insert(comment.i, numSpaces, ' ');
+    outputSrc_.insert(comment.i, numSpaces, ' ');
     for (auto itr{&comment};
-         itr < mLineCommentsToAlign.data() + mLineCommentsToAlign.size();
+         itr < lineCommentsToAlign_.data() + lineCommentsToAlign_.size();
          ++itr) {
       itr->i += numSpaces;
       itr->column += numSpaces;
     }
   }};
-  for (auto itr{mLineCommentsToAlign.rbegin()};
-       itr != mLineCommentsToAlign.rend();) {
+  for (auto itr{lineCommentsToAlign_.rbegin()};
+       itr != lineCommentsToAlign_.rend();) {
     size_t maxColumn{itr->column};
     auto itrPrev{itr};
     auto itrNext{itr};
     itrNext++;
-    while (itrNext != mLineCommentsToAlign.rend()) {
+    while (itrNext != lineCommentsToAlign_.rend()) {
       const size_t &iPrev{itrPrev->i};
       const size_t &iNext{itrNext->i};
       if (llvm::StringRef src{
-              llvm::StringRef(mOutputSrc.data() + iNext, iPrev - iNext)};
+              llvm::StringRef(outputSrc_.data() + iNext, iPrev - iNext)};
           src.count('\n') > 1) {
         break;
       }
@@ -42,14 +42,14 @@ void Formatter::alignLineComments() {
   }
 }
 
-bool Formatter::nextCommentForcesNewLine() const {
-  llvm::StringRef inSrc{mInputSrc};
+bool Formatter::nextCommentForcesNewLine_() const {
+  llvm::StringRef inSrc{inputSrc_};
   while (!inSrc.empty()) {
     llvm::StringRef ws{inSrc.take_while(isSpace)};
     inSrc = inSrc.drop_front(ws.size());
     if (inSrc.starts_with("//")) {
       size_t pos{inSrc.find('\n')};
-      if (keepComment(pos == inSrc.npos ? inSrc : inSrc.take_front(pos))) {
+      if (keepComment_(pos == inSrc.npos ? inSrc : inSrc.take_front(pos))) {
         return true;
       }
       // Step over the dropped line comment.
@@ -58,7 +58,7 @@ bool Formatter::nextCommentForcesNewLine() const {
     } else if (inSrc.starts_with("/*")) {
       size_t pos{inSrc.find("*/", 2)};
       if (pos == inSrc.npos) break; // Shouldn't happen?
-      if (keepComment(inSrc.take_front(pos + 2))) {
+      if (keepComment_(inSrc.take_front(pos + 2))) {
         if (ws.count('\n') > 0) {
           return true;
         }
@@ -77,74 +77,75 @@ bool Formatter::nextCommentForcesNewLine() const {
   return false;
 }
 
-void Formatter::writeDelimNone() {
-  size_t numNewLines{consumeInputSpace().count('\n')};
-  if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
+void Formatter::writeDelimNone_() {
+  size_t numNewLines{consumeInputSpace_().count('\n')};
+  if (llvm::StringRef comment{consumeInputComment_()}; !comment.empty()) {
     // Preserve up to 1 extra newline
-    if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
-      mOutputSrc += '\n';
+    if (keepComment_(comment) && numNewLines == 1 && lastOutput_() != '\n') {
+      outputSrc_ += '\n';
     }
-    writeComment(comment), writeMoreComments();
+    writeComment_(comment), writeMoreComments_();
   }
 }
 
-void Formatter::writeDelimSpace() {
-  writeDelimNone();
-  if (!mOutputSrc.empty() && lastOutput() != ' ' && lastOutput() != '\n') {
-    mOutputSrc += ' ';
+void Formatter::writeDelimSpace_() {
+  writeDelimNone_();
+  if (!outputSrc_.empty() && lastOutput_() != ' ' && lastOutput_() != '\n') {
+    outputSrc_ += ' ';
   }
 }
 
-void Formatter::writeDelimNewLine() {
-  while (lastOutput() == ' ') // Remove spaces
-    mOutputSrc.pop_back();
-  if (size_t numNewLines{consumeInputSpace().count('\n')}; numNewLines <= 1) {
-    if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
+void Formatter::writeDelimNewLine_() {
+  while (lastOutput_() == ' ') // Remove spaces
+    outputSrc_.pop_back();
+  if (size_t numNewLines{consumeInputSpace_().count('\n')}; numNewLines <= 1) {
+    if (llvm::StringRef comment{consumeInputComment_()}; !comment.empty()) {
       // Preserve up to 1 extra newline
-      if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
-        mOutputSrc += '\n';
+      if (keepComment_(comment) && numNewLines == 1 && lastOutput_() != '\n') {
+        outputSrc_ += '\n';
       }
-      writeComment(comment), writeMoreComments();
+      writeComment_(comment), writeMoreComments_();
     }
-    if (!mOutputSrc.empty() && lastOutput() != '\n') {
-      mOutputSrc += '\n';
+    if (!outputSrc_.empty() && lastOutput_() != '\n') {
+      outputSrc_ += '\n';
     }
   } else {
     // Preserve 1 extra newline
-    while (lastOutput(-1) != '\n' || lastOutput(-2) != '\n') {
-      mOutputSrc += '\n';
+    while (lastOutput_(-1) != '\n' || lastOutput_(-2) != '\n') {
+      outputSrc_ += '\n';
     }
-    if (llvm::StringRef comment{consumeInputComment()}; !comment.empty()) {
-      writeComment(comment), writeMoreComments();
+    if (llvm::StringRef comment{consumeInputComment_()}; !comment.empty()) {
+      writeComment_(comment), writeMoreComments_();
     }
   }
-  if (mOptions.isCompact && lastOutput(-1) == '\n' && lastOutput(-2) == '\n') {
-    mOutputSrc.pop_back();
+  if (options_.isCompact && lastOutput_(-1) == '\n' &&
+      lastOutput_(-2) == '\n') {
+    outputSrc_.pop_back();
   }
 }
 
-void Formatter::writeComment(llvm::StringRef inSrc) {
-  if (!inSrc.empty() && !keepComment(inSrc)) {
-    // Still consume the trailing space, or else `writeMoreComments()`
+void Formatter::writeComment_(llvm::StringRef inSrc) {
+  if (!inSrc.empty() && !keepComment_(inSrc)) {
+    // Still consume the trailing space, or else `writeMoreComments_()`
     // cannot see past the dropped comment to a doc comment that
-    // follows it in the same gap, and the next `writeToken()` would
+    // follows it in the same gap, and the next `writeToken_()` would
     // silently discard it!
-    (void)consumeInputSpace();
+    (void)consumeInputSpace_();
     return;
   }
   if (!inSrc.empty()) {
     // This better be a line comment or a multiline comment! A line comment
     // only lacks the terminating newline if it ends the file.
     SMDL_SANITY_CHECK((inSrc.starts_with("//") &&
-                       (inSrc.ends_with("\n") || mInputSrc.empty())) ||
+                       (inSrc.ends_with("\n") || inputSrc_.empty())) ||
                       (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
-    if (!mOutputSrc.empty() && lastOutput() != ' ' && lastOutput() != '\n') {
-      mOutputSrc += ' ';
+    if (!outputSrc_.empty() && lastOutput_() != ' ' && lastOutput_() != '\n') {
+      outputSrc_ += ' ';
     }
-    bool isNewLine{mOutputSrc.empty() || lastOutput() == '\n'};
-    writeIndentIfNewLine();
+    bool isNewLine{outputSrc_.empty() || lastOutput_() == '\n'};
+    writeIndentIfNewLine_();
     // Parse format on/off directives. This must happen after
-    // `writeIndentIfNewLine()` so that `FormatOff::outputSrcPos` includes
+    // `writeIndentIfNewLine_()` so that `FormatOff::outputSrcPos` includes
     // the indentation of the `// smdl format off` comment itself.
     if (inSrc.starts_with("//") || !inSrc.contains('\n')) {
       llvm::StringRef text{inSrc.starts_with("//")
@@ -161,42 +162,42 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
         }
       }
       if (tokens.size() == 3 && tokens[0] == "smdl" && tokens[1] == "format") {
-        if (tokens[2] == "off" && !mFormatOff)
-          mFormatOff = FormatOff{inSrc.data(), mOutputSrc.size()};
-        if (tokens[2] == "on" && mFormatOff) applyFormatOff(inSrc.data());
+        if (tokens[2] == "off" && !formatOff_)
+          formatOff_ = FormatOff{inSrc.data(), outputSrc_.size()};
+        if (tokens[2] == "on" && formatOff_) applyFormatOff_(inSrc.data());
       }
     }
     // Remember line comments to align later, but only remember if not
     // disabled by `// smdl format off`!
-    if (inSrc.starts_with("//") && !isNewLine && !mFormatOff) {
-      mLineCommentsToAlign.push_back(
-          {mOutputSrc.size(), static_cast<size_t>(currentColumn())});
+    if (inSrc.starts_with("//") && !isNewLine && !formatOff_) {
+      lineCommentsToAlign_.push_back(
+          {outputSrc_.size(), static_cast<size_t>(currentColumn_())});
     }
-    mOutputSrc += inSrc;
-    // Always consume the trailing space, or else `writeMoreComments()`
-    // cannot see past it and the next `writeToken()` silently discards
+    outputSrc_ += inSrc;
+    // Always consume the trailing space, or else `writeMoreComments_()`
+    // cannot see past it and the next `writeToken_()` silently discards
     // whatever comments remain in the gap!
-    size_t numNewLines{consumeInputSpace().count('\n')};
-    if (!mOptions.isCompact && numNewLines > 0) {
+    size_t numNewLines{consumeInputSpace_().count('\n')};
+    if (!options_.isCompact && numNewLines > 0) {
       // Preserve up to 1 extra newline
-      mOutputSrc += '\n';
+      outputSrc_ += '\n';
     } else if (inSrc.starts_with("/*")) {
       // Guarantee a space after multi-line comment
-      mOutputSrc += ' ';
+      outputSrc_ += ' ';
     }
   }
 }
 
-void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
+void Formatter::writeToken_(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   if (!inSrc.empty()) {
-    SMDL_SANITY_CHECK(mInputSrc.begin() <= inSrc.begin() &&
-                      inSrc.end() <= mInputSrc.end());
+    SMDL_SANITY_CHECK(inputSrc_.begin() <= inSrc.begin() &&
+                      inSrc.end() <= inputSrc_.end());
     SMDL_SANITY_CHECK(inSrc.count('\n') == 0);
     SMDL_SANITY_CHECK(outSrc.count('\n') == 0);
-    writeDelimNone();
-    writeIndentIfNewLine();
-    consumeInput(inSrc.begin() + inSrc.size() - mInputSrc.begin());
-    mOutputSrc += outSrc;
+    writeDelimNone_();
+    writeIndentIfNewLine_();
+    consumeInput_(inSrc.begin() + inSrc.size() - inputSrc_.begin());
+    outputSrc_ += outSrc;
   }
 }
 
@@ -304,278 +305,281 @@ namespace {
 }
 } // namespace
 
-void Formatter::writeMinifiedFloat(const ast::LiteralFloat &expr) {
-  writeToken(expr.srcValue, minifyFloatSpelling(expr.srcValue, expr.value));
+void Formatter::writeMinifiedFloat_(const ast::LiteralFloat &expr) {
+  writeToken_(expr.srcValue, minifyFloatSpelling(expr.srcValue, expr.value));
 }
 
-void Formatter::write(const ast::File &file) {
-  write(DELIM_NONE);
+void Formatter::write_(const ast::File &file) {
+  write_(DELIM_NONE);
   if (file.isSMDLSyntax()) {
-    write(file.srcKwSMDLSyntax, DELIM_NEWLINE);
+    write_(file.srcKwSMDLSyntax, DELIM_NEWLINE);
   }
   for (const auto &searchDir : file.searchDirs) {
-    write(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path, DELIM_NEWLINE);
+    write_(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path,
+           DELIM_NEWLINE);
   }
   if (file.version) {
     const ast::File::Version &version{*file.version};
-    write(version.srcKwMDL, DELIM_SPACE, version.srcVersion,
-          version.srcSemicolon, DELIM_NEWLINE);
+    write_(version.srcKwMDL, DELIM_SPACE, version.srcVersion,
+           version.srcSemicolon, DELIM_NEWLINE);
   }
   for (const auto &decl : file.importDecls) {
-    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
-          DELIM_NEWLINE);
+    write_(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
+           DELIM_NEWLINE);
   }
-  if (!file.srcKwModule.empty() && !mOptions.shouldDropAnnotations) {
+  if (!file.srcKwModule.empty() && !options_.shouldDropAnnotations) {
     // If removing annotations, skip the entire `module [[ ... ]];` because
     // the parser rejects `module;` without an annotation block!
-    write(file.srcKwModule, file.moduleAnnotations,
-          file.srcSemicolonAfterModule, DELIM_NEWLINE);
+    write_(file.srcKwModule, file.moduleAnnotations,
+           file.srcSemicolonAfterModule, DELIM_NEWLINE);
   }
   for (const auto &decl : file.globalDecls) {
-    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
-          DELIM_NEWLINE);
+    write_(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
+           DELIM_NEWLINE);
   }
-  write(DELIM_NEWLINE);
+  write_(DELIM_NEWLINE);
 }
 
 //--{ Write: Decls
-void Formatter::write(const ast::Decl &decl) {
-  writeTypeSwitch<ast::AnnotationDecl, ast::Enum, ast::Exec, ast::Function,
-                  ast::Import, ast::Namespace, ast::Struct, ast::Tag,
-                  ast::Typedef, ast::UnitTest, ast::UsingAlias,
-                  ast::UsingImport, ast::Variable>(decl);
+void Formatter::write_(const ast::Decl &decl) {
+  writeTypeSwitch_<ast::AnnotationDecl, ast::Enum, ast::Exec, ast::Function,
+                   ast::Import, ast::Namespace, ast::Struct, ast::Tag,
+                   ast::Typedef, ast::UnitTest, ast::UsingAlias,
+                   ast::UsingImport, ast::Variable>(decl);
 }
 
-void Formatter::write(const ast::Enum &decl) {
-  write(decl.srcKwEnum, DELIM_SPACE, decl.name, decl.annotations,
-        DELIM_UNNECESSARY_SPACE, decl.srcBraceL, DELIM_UNNECESSARY_SPACE,
-        PUSH_INDENT);
-  writeList(decl.declarators.size(), decl.hasTrailingComma(), /*canBreak=*/true,
-            [&](Delim delim) {
-              for (const auto &each : decl.declarators) {
-                if (!mOptions.shouldDropAnnotations && each.annotations)
-                  write(DELIM_NEWLINE);
-                write(each.name);
-                if (each.exprInit) {
-                  write(DELIM_UNNECESSARY_SPACE, each.srcEqual,
-                        DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
-                  if (delim == DELIM_NEWLINE) write(ALIGN_INDENT);
-                  write(each.exprInit, POP_INDENT);
-                }
-                write(each.annotations, each.srcComma,
-                      each.srcComma.empty() ? DELIM_NONE : delim);
-                if (!mOptions.shouldDropAnnotations && each.annotations)
-                  write(DELIM_NEWLINE);
-              }
-              write(delim);
-            });
-  write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
+void Formatter::write_(const ast::Enum &decl) {
+  write_(decl.srcKwEnum, DELIM_SPACE, decl.name, decl.annotations,
+         DELIM_UNNECESSARY_SPACE, decl.srcBraceL, DELIM_UNNECESSARY_SPACE,
+         PUSH_INDENT);
+  writeList_(decl.declarators.size(), decl.hasTrailingComma(),
+             /*canBreak=*/true, [&](Delim delim) {
+               for (const auto &each : decl.declarators) {
+                 if (!options_.shouldDropAnnotations && each.annotations)
+                   write_(DELIM_NEWLINE);
+                 write_(each.name);
+                 if (each.exprInit) {
+                   write_(DELIM_UNNECESSARY_SPACE, each.srcEqual,
+                          DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
+                   if (delim == DELIM_NEWLINE) write_(ALIGN_INDENT);
+                   write_(each.exprInit, POP_INDENT);
+                 }
+                 write_(each.annotations, each.srcComma,
+                        each.srcComma.empty() ? DELIM_NONE : delim);
+                 if (!options_.shouldDropAnnotations && each.annotations)
+                   write_(DELIM_NEWLINE);
+               }
+               write_(delim);
+             });
+  write_(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
 
-void Formatter::write(const ast::Function &decl) {
+void Formatter::write_(const ast::Function &decl) {
 
-  write(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
-        decl.params);
+  write_(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
+         decl.params);
   if (!decl.srcFrequency.empty())
-    write(DELIM_UNNECESSARY_SPACE, decl.srcFrequency);
-  if (decl.lateAnnotations) write(decl.lateAnnotations);
+    write_(DELIM_UNNECESSARY_SPACE, decl.srcFrequency);
+  if (decl.lateAnnotations) write_(decl.lateAnnotations);
   if (!decl.srcEqual.empty()) {
-    write(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
-    writeAfterEqual(decl.definition, decl.srcSemicolon);
+    write_(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
+    writeAfterEqual_(decl.definition, decl.srcSemicolon);
   } else if (decl.definition) {
-    write(DELIM_UNNECESSARY_SPACE, decl.definition);
+    write_(DELIM_UNNECESSARY_SPACE, decl.definition);
   } else {
-    write(decl.srcSemicolon);
+    write_(decl.srcSemicolon);
   }
 }
 
-void Formatter::write(const ast::Struct &decl) {
-  write(decl.srcKwStruct, DELIM_SPACE, decl.name);
+void Formatter::write_(const ast::Struct &decl) {
+  write_(decl.srcKwStruct, DELIM_SPACE, decl.name);
   if (!decl.srcColonBeforeTags.empty()) {
-    write(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
-    writeList(decl.tags.size(), decl.hasTrailingCommaOnTags(),
-              /*canBreak=*/false, [&](Delim delim) {
-                for (const auto &tag : decl.tags)
-                  write(tag.srcKwDefault,
-                        tag.srcKwDefault.empty() ? DELIM_UNNECESSARY_SPACE
-                                                 : DELIM_SPACE,
-                        tag.type, tag.srcComma,
-                        tag.srcComma.empty() ? DELIM_NONE : delim);
-              });
-    write(POP_INDENT);
+    write_(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
+    writeList_(decl.tags.size(), decl.hasTrailingCommaOnTags(),
+               /*canBreak=*/false, [&](Delim delim) {
+                 for (const auto &tag : decl.tags)
+                   write_(tag.srcKwDefault,
+                          tag.srcKwDefault.empty() ? DELIM_UNNECESSARY_SPACE
+                                                   : DELIM_SPACE,
+                          tag.type, tag.srcComma,
+                          tag.srcComma.empty() ? DELIM_NONE : delim);
+               });
+    write_(POP_INDENT);
   }
-  write(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
-        INCREMENT_INDENT,
-        decl.constructors.empty() && decl.fields.empty() ? DELIM_NONE
-                                                         : DELIM_NEWLINE);
+  write_(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
+         INCREMENT_INDENT,
+         decl.constructors.empty() && decl.fields.empty() ? DELIM_NONE
+                                                          : DELIM_NEWLINE);
   for (const auto &constructor : decl.constructors) {
-    write(constructor.name.srcName, constructor.params, DELIM_UNNECESSARY_SPACE,
-          constructor.srcEqual);
-    writeAfterEqual(constructor.expr, constructor.srcSemicolon);
-    write(DELIM_NEWLINE);
+    write_(constructor.name.srcName, constructor.params,
+           DELIM_UNNECESSARY_SPACE, constructor.srcEqual);
+    writeAfterEqual_(constructor.expr, constructor.srcSemicolon);
+    write_(DELIM_NEWLINE);
   }
   for (const auto &field : decl.fields) {
-    write(field.type, DELIM_SPACE, field.name);
+    write_(field.type, DELIM_SPACE, field.name);
     if (field.exprInit) {
-      write(DELIM_UNNECESSARY_SPACE, field.srcEqual);
-      writeAfterEqual(field.exprInit);
+      write_(DELIM_UNNECESSARY_SPACE, field.srcEqual);
+      writeAfterEqual_(field.exprInit);
     }
-    write(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
+    write_(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
   }
   if (decl.stmtFinalize) {
-    write(DELIM_NEWLINE, decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize,
-          DELIM_NEWLINE);
+    write_(DELIM_NEWLINE, decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize,
+           DELIM_NEWLINE);
   }
-  write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
+  write_(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
 
-void Formatter::write(const ast::Variable &decl) {
-  write(decl.type, DELIM_SPACE, PUSH_INDENT);
+void Formatter::write_(const ast::Variable &decl) {
+  write_(decl.type, DELIM_SPACE, PUSH_INDENT);
   bool moreThanOne{decl.declarators.size() > 1};
-  writeList(decl.declarators.size(), decl.hasTrailingComma(),
-            /*canBreak=*/false, [&](Delim delim) {
-              for (const auto &each : decl.declarators) {
-                if (!mOptions.shouldDropAnnotations && each.annotations &&
-                    moreThanOne)
-                  write(DELIM_NEWLINE);
-                if (!each.srcBraceL.empty()) write(DELIM_UNNECESSARY_SPACE);
-                write(each.srcBraceL);
-                for (const auto &[name, srcComma] : each.names) {
-                  write(name, srcComma);
-                  if (!srcComma.empty()) write(DELIM_UNNECESSARY_SPACE);
-                }
-                write(each.srcBraceR);
-                if (each.exprInit) {
-                  write(DELIM_UNNECESSARY_SPACE, each.srcEqual);
-                  writeAfterEqual(each.exprInit);
-                } else if (each.argsInit) {
-                  write(each.argsInit);
-                }
-                write(each.annotations, each.srcComma,
-                      each.srcComma.empty() ? DELIM_NONE : delim);
-                if (!mOptions.shouldDropAnnotations && each.annotations &&
-                    moreThanOne)
-                  write(DELIM_NEWLINE);
-              }
-            });
-  write(decl.srcSemicolon, POP_INDENT);
+  writeList_(decl.declarators.size(), decl.hasTrailingComma(),
+             /*canBreak=*/false, [&](Delim delim) {
+               for (const auto &each : decl.declarators) {
+                 if (!options_.shouldDropAnnotations && each.annotations &&
+                     moreThanOne)
+                   write_(DELIM_NEWLINE);
+                 if (!each.srcBraceL.empty()) write_(DELIM_UNNECESSARY_SPACE);
+                 write_(each.srcBraceL);
+                 for (const auto &[name, srcComma] : each.names) {
+                   write_(name, srcComma);
+                   if (!srcComma.empty()) write_(DELIM_UNNECESSARY_SPACE);
+                 }
+                 write_(each.srcBraceR);
+                 if (each.exprInit) {
+                   write_(DELIM_UNNECESSARY_SPACE, each.srcEqual);
+                   writeAfterEqual_(each.exprInit);
+                 } else if (each.argsInit) {
+                   write_(each.argsInit);
+                 }
+                 write_(each.annotations, each.srcComma,
+                        each.srcComma.empty() ? DELIM_NONE : delim);
+                 if (!options_.shouldDropAnnotations && each.annotations &&
+                     moreThanOne)
+                   write_(DELIM_NEWLINE);
+               }
+             });
+  write_(decl.srcSemicolon, POP_INDENT);
 }
 //--}
 
 //--{ Write: Exprs
-void Formatter::write(const ast::Expr &expr) {
-  writeTypeSwitch<ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
-                  ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let,
-                  ast::LiteralBool, ast::LiteralFloat, ast::LiteralInt,
-                  ast::LiteralString, ast::Parens, ast::ReturnFrom, ast::Select,
-                  ast::SizeName, ast::Type, ast::TypeCast, ast::Unary>(expr);
+void Formatter::write_(const ast::Expr &expr) {
+  writeTypeSwitch_<ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
+                   ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let,
+                   ast::LiteralBool, ast::LiteralFloat, ast::LiteralInt,
+                   ast::LiteralString, ast::Parens, ast::ReturnFrom,
+                   ast::Select, ast::SizeName, ast::Type, ast::TypeCast,
+                   ast::Unary>(expr);
 }
 
-void Formatter::write(const ast::Lambda &expr) {
-  // This mirrors `write(const ast::Function &)` minus the name,
+void Formatter::write_(const ast::Lambda &expr) {
+  // This mirrors `write_(const ast::Function &)` minus the name,
   // annotations, frequency qualifier, semicolon, and return type, which
   // is implicitly `auto`.
   const ast::Function &decl{*expr.func};
-  write(expr.srcBackslash, decl.params);
+  write_(expr.srcBackslash, decl.params);
   if (!decl.srcEqual.empty()) {
-    write(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
-    writeAfterEqual(decl.definition);
+    write_(DELIM_UNNECESSARY_SPACE, decl.srcEqual);
+    writeAfterEqual_(decl.definition);
   } else {
-    write(DELIM_UNNECESSARY_SPACE, decl.definition);
+    write_(DELIM_UNNECESSARY_SPACE, decl.definition);
   }
 }
 
-void Formatter::write(const ast::Let &expr) {
-  write(expr.srcKwLet, DELIM_SPACE);
+void Formatter::write_(const ast::Let &expr) {
+  write_(expr.srcKwLet, DELIM_SPACE);
   if (!expr.srcBraceL.empty()) {
     // The block, and the `in` expression after it, indent from the line the
     // `let` starts on, exactly like a function body, instead of trailing off
     // to the right of whatever the `let` follows.
-    write(PUSH_INDENT);
-    mIndent = currentLineIndent();
-    write(expr.srcBraceL, PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
-    for (const auto &decl : expr.decls) write(decl, DELIM_NEWLINE);
-    write(POP_INDENT, expr.srcBraceR, DELIM_SPACE, expr.srcKwIn, DELIM_SPACE,
-          expr.expr, POP_INDENT);
+    write_(PUSH_INDENT);
+    indent_ = currentLineIndent_();
+    write_(expr.srcBraceL, PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
+    for (const auto &decl : expr.decls) write_(decl, DELIM_NEWLINE);
+    write_(POP_INDENT, expr.srcBraceR, DELIM_SPACE, expr.srcKwIn, DELIM_SPACE,
+           expr.expr, POP_INDENT);
   } else {
     SMDL_SANITY_CHECK(expr.decls.size() == 1);
-    write(expr.decls[0], DELIM_SPACE, expr.srcKwIn, DELIM_SPACE, expr.expr);
+    write_(expr.decls[0], DELIM_SPACE, expr.srcKwIn, DELIM_SPACE, expr.expr);
   }
 }
 //--}
 
 //--{ Write: Stmts
-void Formatter::write(const ast::Stmt &stmt) {
-  writeTypeSwitch<ast::Break, ast::Compound, ast::Continue, ast::DeclStmt,
-                  ast::Defer, ast::DoWhile, ast::ExprStmt, ast::For, ast::If,
-                  ast::Preserve, ast::Return, ast::Switch, ast::Unreachable,
-                  ast::Visit, ast::While>(stmt);
+void Formatter::write_(const ast::Stmt &stmt) {
+  writeTypeSwitch_<ast::Break, ast::Compound, ast::Continue, ast::DeclStmt,
+                   ast::Defer, ast::DoWhile, ast::ExprStmt, ast::For, ast::If,
+                   ast::Preserve, ast::Return, ast::Switch, ast::Unreachable,
+                   ast::Visit, ast::While>(stmt);
 }
 
-void Formatter::write(const ast::For &stmt) {
-  write(stmt.srcKwFor, DELIM_UNNECESSARY_SPACE, stmt.srcParenL, PUSH_INDENT,
-        ALIGN_INDENT, stmt.stmtInit, DELIM_UNNECESSARY_SPACE, stmt.exprCond,
-        stmt.srcSemicolonAfterCond, DELIM_UNNECESSARY_SPACE, stmt.exprNext,
-        POP_INDENT, stmt.srcParenR);
+void Formatter::write_(const ast::For &stmt) {
+  write_(stmt.srcKwFor, DELIM_UNNECESSARY_SPACE, stmt.srcParenL, PUSH_INDENT,
+         ALIGN_INDENT, stmt.stmtInit, DELIM_UNNECESSARY_SPACE, stmt.exprCond,
+         stmt.srcSemicolonAfterCond, DELIM_UNNECESSARY_SPACE, stmt.exprNext,
+         POP_INDENT, stmt.srcParenR);
   if (llvm::isa<ast::Compound>(stmt.stmtLoop)) {
-    write(DELIM_UNNECESSARY_SPACE, stmt.stmtLoop);
+    write_(DELIM_UNNECESSARY_SPACE, stmt.stmtLoop);
   } else {
-    write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtLoop,
-          POP_INDENT, DELIM_NEWLINE);
+    write_(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtLoop,
+           POP_INDENT, DELIM_NEWLINE);
   }
 }
 
-void Formatter::write(const ast::If &stmt) {
-  write(stmt.srcKwIf, DELIM_UNNECESSARY_SPACE, stmt.expr);
+void Formatter::write_(const ast::If &stmt) {
+  write_(stmt.srcKwIf, DELIM_UNNECESSARY_SPACE, stmt.expr);
   if (llvm::isa<ast::Compound>(stmt.stmtThen)) {
-    write(DELIM_UNNECESSARY_SPACE, stmt.stmtThen);
+    write_(DELIM_UNNECESSARY_SPACE, stmt.stmtThen);
   } else {
-    write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtThen,
-          POP_INDENT, DELIM_NEWLINE);
+    write_(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtThen,
+           POP_INDENT, DELIM_NEWLINE);
   }
   if (stmt.stmtElse) {
-    write(llvm::isa<ast::Compound>(stmt.stmtThen) ? DELIM_SPACE : DELIM_NEWLINE,
-          stmt.srcKwElse);
+    write_(llvm::isa<ast::Compound>(stmt.stmtThen) ? DELIM_SPACE
+                                                   : DELIM_NEWLINE,
+           stmt.srcKwElse);
     if (llvm::isa<ast::Compound>(stmt.stmtElse) ||
         llvm::isa<ast::If>(stmt.stmtElse)) {
-      write(DELIM_SPACE, stmt.stmtElse);
+      write_(DELIM_SPACE, stmt.stmtElse);
     } else {
-      write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtElse,
-            POP_INDENT, DELIM_NEWLINE);
+      write_(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE, stmt.stmtElse,
+             POP_INDENT, DELIM_NEWLINE);
     }
   }
 }
 
-void Formatter::write(const ast::Switch &stmt) {
-  write(stmt.srcKwSwitch, DELIM_UNNECESSARY_SPACE, stmt.expr,
-        DELIM_UNNECESSARY_SPACE, stmt.srcBraceL, DELIM_NEWLINE);
+void Formatter::write_(const ast::Switch &stmt) {
+  write_(stmt.srcKwSwitch, DELIM_UNNECESSARY_SPACE, stmt.expr,
+         DELIM_UNNECESSARY_SPACE, stmt.srcBraceL, DELIM_NEWLINE);
   for (const auto &each : stmt.cases) {
-    write(each.srcKwCaseOrDefault);
-    if (!each.isDefault()) write(DELIM_SPACE, each.expr);
-    write(each.srcColon);
-    if (each.stmts.size() == 1 && !nextCommentForcesNewLine()) {
-      write(DELIM_SPACE, each.stmts.front(), DELIM_NEWLINE);
+    write_(each.srcKwCaseOrDefault);
+    if (!each.isDefault()) write_(DELIM_SPACE, each.expr);
+    write_(each.srcColon);
+    if (each.stmts.size() == 1 && !nextCommentForcesNewLine_()) {
+      write_(DELIM_SPACE, each.stmts.front(), DELIM_NEWLINE);
     } else {
-      write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
-      for (const auto &subStmt : each.stmts) write(subStmt, DELIM_NEWLINE);
-      write(POP_INDENT);
+      write_(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
+      for (const auto &subStmt : each.stmts) write_(subStmt, DELIM_NEWLINE);
+      write_(POP_INDENT);
     }
   }
-  write(stmt.srcBraceR);
+  write_(stmt.srcBraceR);
 }
 //--}
 
-void Formatter::write(const ast::AnnotationBlock &annos) {
-  if (!mOptions.shouldDropAnnotations) {
-    write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
-          annos.srcDoubleBrackL, PUSH_INDENT);
-    writeList(annos.size(), annos.hasTrailingComma(), /*canBreak=*/true,
-              [&](Delim delim) {
-                for (const auto &[identifier, args, srcComma] : annos)
-                  write(identifier, args, srcComma,
-                        srcComma.empty() ? DELIM_NONE : delim);
-              });
-    write(POP_INDENT, annos.srcDoubleBrackR, POP_INDENT);
+void Formatter::write_(const ast::AnnotationBlock &annos) {
+  if (!options_.shouldDropAnnotations) {
+    write_(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
+           annos.srcDoubleBrackL, PUSH_INDENT);
+    writeList_(annos.size(), annos.hasTrailingComma(), /*canBreak=*/true,
+               [&](Delim delim) {
+                 for (const auto &[identifier, args, srcComma] : annos)
+                   write_(identifier, args, srcComma,
+                          srcComma.empty() ? DELIM_NONE : delim);
+               });
+    write_(POP_INDENT, annos.srcDoubleBrackR, POP_INDENT);
   }
 }
 
@@ -599,46 +603,46 @@ namespace {
 }
 } // namespace
 
-void Formatter::write(const ast::ArgumentList &args) {
-  write(args.srcParenL, PUSH_INDENT);
-  writeList(args.size(), args.hasTrailingComma(),
-            /*canBreak=*/!isDataList(args), [&](Delim delim) {
-              for (const auto &arg : args) {
-                if (arg.isVisited()) write(arg.srcKwVisit, DELIM_SPACE);
-                if (arg.isInlined()) write(arg.srcKwInline, DELIM_SPACE);
-                if (arg.isNamed())
-                  write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
-                write(arg.expr, arg.srcComma,
-                      arg.srcComma.empty() ? DELIM_NONE : delim);
-              }
-            });
-  write(POP_INDENT, args.srcParenR);
+void Formatter::write_(const ast::ArgumentList &args) {
+  write_(args.srcParenL, PUSH_INDENT);
+  writeList_(args.size(), args.hasTrailingComma(),
+             /*canBreak=*/!isDataList(args), [&](Delim delim) {
+               for (const auto &arg : args) {
+                 if (arg.isVisited()) write_(arg.srcKwVisit, DELIM_SPACE);
+                 if (arg.isInlined()) write_(arg.srcKwInline, DELIM_SPACE);
+                 if (arg.isNamed())
+                   write_(arg.name, arg.srcColonAfterName, DELIM_SPACE);
+                 write_(arg.expr, arg.srcComma,
+                        arg.srcComma.empty() ? DELIM_NONE : delim);
+               }
+             });
+  write_(POP_INDENT, args.srcParenR);
 }
 
-void Formatter::write(const ast::ParameterList &params) {
-  write(params.srcParenL, PUSH_INDENT);
+void Formatter::write_(const ast::ParameterList &params) {
+  write_(params.srcParenL, PUSH_INDENT);
   if (params.isVariant()) {
-    write(params.srcStar);
+    write_(params.srcStar);
   } else {
-    writeList(params.size(), params.hasTrailingComma(), /*canBreak=*/true,
-              [&](Delim delim) {
-                for (const auto &param : params) {
-                  write(param.type, DELIM_SPACE, param.name);
-                  // A default is never worth a line break of its own: it
-                  // would leave the parameter it belongs to dangling.
-                  if (param.exprInit) {
-                    write(DELIM_UNNECESSARY_SPACE, param.srcEqual,
-                          DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
-                    if (delim == DELIM_NEWLINE) write(ALIGN_INDENT);
-                    write(param.exprInit, POP_INDENT);
-                  }
-                  write(param.annotations, param.srcComma,
-                        param.srcComma.empty() ? DELIM_NONE : delim);
-                }
-                write(params.srcEllipsis);
-              });
+    writeList_(params.size(), params.hasTrailingComma(), /*canBreak=*/true,
+               [&](Delim delim) {
+                 for (const auto &param : params) {
+                   write_(param.type, DELIM_SPACE, param.name);
+                   // A default is never worth a line break of its own: it
+                   // would leave the parameter it belongs to dangling.
+                   if (param.exprInit) {
+                     write_(DELIM_UNNECESSARY_SPACE, param.srcEqual,
+                            DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
+                     if (delim == DELIM_NEWLINE) write_(ALIGN_INDENT);
+                     write_(param.exprInit, POP_INDENT);
+                   }
+                   write_(param.annotations, param.srcComma,
+                          param.srcComma.empty() ? DELIM_NONE : delim);
+                 }
+                 write_(params.srcEllipsis);
+               });
   }
-  write(POP_INDENT, params.srcParenR);
+  write_(POP_INDENT, params.srcParenR);
 }
 
 } // namespace smdl

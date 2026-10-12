@@ -150,17 +150,17 @@ public:
   /// \return True unless a chain with the other filter was already
   /// requested, in which case nothing changes.
   bool requestMipLevels(MipFilter filter = MIP_MEAN) noexcept {
-    SMDL_SANITY_CHECK_MSG(!mTexels,
+    SMDL_SANITY_CHECK_MSG(!texels_,
                           "mip levels must be requested before 'finishLoad()'");
-    if (mHasRequestedMipLevels && mMipFilter != filter) return false;
-    mHasRequestedMipLevels = true;
-    mMipFilter = filter;
+    if (hasRequestedMipLevels_ && mipFilter_ != filter) return false;
+    hasRequestedMipLevels_ = true;
+    mipFilter_ = filter;
     return true;
   }
 
   /// The filter of the mip chain, meaningful once `requestMipLevels()`
   /// has asked for one.
-  [[nodiscard]] MipFilter getMipFilter() const noexcept { return mMipFilter; }
+  [[nodiscard]] MipFilter getMipFilter() const noexcept { return mipFilter_; }
 
   /// If `startLoad()` was successful, allocate the texels for as many
   /// levels as `requestMipLevels()` has asked for, decode into level 0,
@@ -181,19 +181,19 @@ public:
 
 public:
   /// Get the format.
-  [[nodiscard]] Format getFormat() const noexcept { return mFormat; }
+  [[nodiscard]] Format getFormat() const noexcept { return format_; }
 
   /// Get the number of channels, must be 1, 2, or 4.
-  [[nodiscard]] int getNumChannels() const noexcept { return mNumChannels; }
+  [[nodiscard]] int getNumChannels() const noexcept { return numChannels_; }
 
   /// Get the number of texels in X at the given mip level.
   [[nodiscard]] int getNumTexelsX(int level = 0) const noexcept {
-    return level > 0 ? std::max(mNumTexelsX >> level, 1) : mNumTexelsX;
+    return level > 0 ? std::max(numTexelsX_ >> level, 1) : numTexelsX_;
   }
 
   /// Get the number of texels in Y at the given mip level.
   [[nodiscard]] int getNumTexelsY(int level = 0) const noexcept {
-    return level > 0 ? std::max(mNumTexelsY >> level, 1) : mNumTexelsY;
+    return level > 0 ? std::max(numTexelsY_ >> level, 1) : numTexelsY_;
   }
 
   /// Get the number of mip levels the image holds, or will hold once
@@ -202,7 +202,7 @@ public:
   /// 1 for each doubling of the maximum extent, so the last level is
   /// always 1x1.
   [[nodiscard]] int getNumLevels() const noexcept {
-    return mHasRequestedMipLevels ? mNumLevels : 1;
+    return hasRequestedMipLevels_ ? numLevels_ : 1;
   }
 
   /// Get the texel size in bytes.
@@ -211,12 +211,12 @@ public:
   /// This is necessarily the number of channels times the
   /// implied size of the format.
   ///
-  [[nodiscard]] int getTexelSizeInBytes() const noexcept { return mTexelSize; }
+  [[nodiscard]] int getTexelSizeInBytes() const noexcept { return texelSize_; }
 
   /// Get the total size of the texel memory in bytes, which is zero
   /// until `finishLoad()` allocates it, then the level 0 texels alone,
   /// or about one third more than that when the chain was requested.
-  [[nodiscard]] size_t getSizeInBytes() const noexcept { return mSizeInBytes; }
+  [[nodiscard]] size_t getSizeInBytes() const noexcept { return sizeInBytes_; }
 
   /// Fetch texel at the given mip level.
   ///
@@ -261,10 +261,10 @@ public:
 private:
   /// The `Compiler` drops images the optimized module provably never
   /// reads, and defines the texel address as a JIT symbol, which needs
-  /// the private `abandonLoad()`, `hasPendingLoad()` and `getTexels()`.
+  /// the private `abandonLoad_()`, `hasPendingLoad_()` and `getTexels_()`.
   friend class Compiler;
 
-  /// Frees the over-aligned texel memory obtained by `allocate()`.
+  /// Frees the over-aligned texel memory obtained by `allocate_()`.
   struct TexelDeleter final {
     void operator()(std::byte *texels) const noexcept {
       ::operator delete(texels, std::align_val_t(TEXEL_ALIGNMENT));
@@ -273,91 +273,91 @@ private:
 
   /// Get texels of the given mip level. Internal-only: the layout is
   /// unspecified.
-  [[nodiscard]] auto getTexels(int level = 0) const noexcept
+  [[nodiscard]] auto getTexels_(int level = 0) const noexcept
       -> const std::byte * {
-    return mTexels ? mTexels.get() + mLevelOffsets[size_t(level)] : nullptr;
+    return texels_ ? texels_.get() + levelOffsets_[size_t(level)] : nullptr;
   }
 
   /// Is there a decode still to run, i.e., did `startLoad()` succeed
-  /// without `finishLoad()` or `abandonLoad()` having followed it?
-  [[nodiscard]] bool hasPendingLoad() const noexcept {
-    return bool(mFinishLoad);
+  /// without `finishLoad()` or `abandonLoad_()` having followed it?
+  [[nodiscard]] bool hasPendingLoad_() const noexcept {
+    return bool(finishLoad_);
   }
 
   /// Abandon the load: forget the pending decode, keeping the probed
   /// metadata (extent, format, level count). For the compiler's use once
   /// it has proven that nothing in the optimized module names the
   /// texels; `finishLoad()` then allocates nothing and decodes nothing.
-  void abandonLoad() noexcept { mFinishLoad = nullptr; }
+  void abandonLoad_() noexcept { finishLoad_ = nullptr; }
 
   /// Obtain the texel memory for as many levels as were requested, and
   /// zero level 0 so that a failed decode still reads as zero texels.
   /// Called by `finishLoad()`, which is the first point at which the
   /// level count is settled.
-  void allocate();
+  void allocate_();
 
   /// Generate mip levels 1 and up from level 0 by the requested
   /// `MipFilter`. Called at the end of `finishLoad()`.
-  void generateMipLevels() noexcept {
-    if (mMipFilter == MIP_MAX)
-      generateMaxMipLevels();
+  void generateMipLevels_() noexcept {
+    if (mipFilter_ == MIP_MAX)
+      generateMaxMipLevels_();
     else
-      generateMeanMipLevels();
+      generateMeanMipLevels_();
   }
 
   /// The `MIP_MEAN` reduction: successive box-filtered halvings.
-  void generateMeanMipLevels() noexcept;
+  void generateMeanMipLevels_() noexcept;
 
   /// The `MIP_MAX` reduction, see `MipFilter`.
-  void generateMaxMipLevels() noexcept;
+  void generateMaxMipLevels_() noexcept;
 
   /// The number of mip levels actually written, i.e., holding texels.
   /// Unlike `getNumLevels()`, this waits for the generation itself, so
   /// it is what the routines that walk the storage must ask.
-  [[nodiscard]] int getNumLevelsInMemory() const noexcept {
-    return mHasGeneratedMipLevels ? mNumLevels : 1;
+  [[nodiscard]] int getNumLevelsInMemory_() const noexcept {
+    return hasGeneratedMipLevels_ ? numLevels_ : 1;
   }
 
   /// The format.
-  Format mFormat{UINT8};
+  Format format_{UINT8};
 
   /// The number of channels, must be 1, 2, or 4 for proper alignment.
-  int mNumChannels{1};
+  int numChannels_{1};
 
   /// The number of texels in X.
-  int mNumTexelsX{0};
+  int numTexelsX_{0};
 
   /// The number of texels in Y.
-  int mNumTexelsY{0};
+  int numTexelsY_{0};
 
   /// The texel size in bytes.
-  int mTexelSize{1};
+  int texelSize_{1};
 
   /// The number of mip levels the extent implies, whether or not they
   /// are asked for, allocated or generated.
-  int mNumLevels{1};
+  int numLevels_{1};
 
   /// Are mip levels requested? Sticky, see `requestMipLevels()`.
-  bool mHasRequestedMipLevels{false};
+  bool hasRequestedMipLevels_{false};
 
   /// The filter of the requested chain, see `requestMipLevels()`.
-  MipFilter mMipFilter{MIP_MEAN};
+  MipFilter mipFilter_{MIP_MEAN};
 
   /// Are mip levels generated? I.e., do levels 1 and up hold texels?
-  bool mHasGeneratedMipLevels{false};
+  bool hasGeneratedMipLevels_{false};
 
-  /// The byte offset of each mip level in `mTexels`. Has one entry per
+  /// The byte offset of each mip level in `texels_`. Has one entry per
   /// allocated level, and entry 0 is always 0.
-  std::vector<size_t> mLevelOffsets{0};
+  std::vector<size_t> levelOffsets_{0};
 
-  /// The size of `mTexels` in bytes.
-  size_t mSizeInBytes{0};
+  /// The size of `texels_` in bytes.
+  size_t sizeInBytes_{0};
 
   /// The texel memory, holding every allocated mip level back to back.
-  std::unique_ptr<std::byte[], TexelDeleter> mTexels{};
+  std::unique_ptr<std::byte[], TexelDeleter> texels_{};
 
   /// The function to finish loading the image.
-  std::function<void()> mFinishLoad{};
+  std::function<void()> finishLoad_{};
 };
 
 /// Write an 8-bit-per-channel image to the given file name.

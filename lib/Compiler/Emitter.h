@@ -128,7 +128,7 @@ public:
 
   /// Set the current module from the given source location.
   void setCurrentModule(const SourceLocation &srcLoc) {
-    currentModule = srcLoc.module_;
+    currentModule = srcLoc.module;
   }
 
 public:
@@ -1332,7 +1332,7 @@ public:
   /// Every top-level name the given module exports, for did-you-mean
   /// suggestions against a module's contents.
   [[nodiscard]] static std::vector<std::string_view>
-  exportedNamesOf(Module *module_);
+  exportedNamesOf(Module *module);
 
   /// The did-you-mean clause for an import that failed to resolve: the
   /// nearest module name, or, when nothing is near enough, the search
@@ -1360,7 +1360,7 @@ public:
   /// of the builtin constructor that happened to load it.
   [[nodiscard]] const SourceLocation &
   resourceSourceLocation(const SourceLocation &srcLoc) const {
-    if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) return srcLoc;
+    if (srcLoc.module && !srcLoc.module->isBuiltin()) return srcLoc;
     return srcLocUserCall ? srcLocUserCall : srcLoc;
   }
 

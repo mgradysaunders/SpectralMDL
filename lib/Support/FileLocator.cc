@@ -47,13 +47,13 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
       add(parentPathOf(fileOrDir));
     }
   }
-  if (mShouldSearchPwd) {
+  if (shouldSearchPwd_) {
     std::error_code ec{};
     if (std::filesystem::path pwd{std::filesystem::current_path(ec)}; !ec) {
       add(pwd.string());
     }
   }
-  for (const auto &[dir, isRecursive] : mSearchDirs) {
+  for (const auto &[dir, isRecursive] : searchDirs_) {
     add(dir);
     if (isRecursive) {
       std::error_code ec{};
@@ -67,7 +67,7 @@ FileLocator::getSearchDirs(std::string_view relativeTo,
       }
     }
   }
-  if (mShouldSearchDefaultDirs) {
+  if (shouldSearchDefaultDirs_) {
     if (const char *value{std::getenv("SMDL_DEFAULT_SEARCH_DIRS")}) {
       llvm::SmallVector<llvm::StringRef> entries{};
       llvm::StringRef(value).split(entries, llvm::sys::EnvPathSeparator,

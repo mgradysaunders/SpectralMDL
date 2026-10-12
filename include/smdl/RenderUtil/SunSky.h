@@ -96,22 +96,22 @@ public:
   SkyBasis() = default;
 
   /// The number of bands resolved, zero until `SunSky::resolve()`.
-  [[nodiscard]] int numBands() const noexcept { return mNumBands; }
+  [[nodiscard]] int numBands() const noexcept { return numBands_; }
 
 private:
   friend class SunSky;
 
   /// The number of bands, which is the row length below.
-  int mNumBands{};
+  int numBands_{};
 
   /// The spectral shape band-major: row 0 is the mean shape and row
   /// `1 + m` is spectral mode `m`, each interpolated onto the grid with
   /// the per-channel scale folded in.
-  std::vector<float> mRows{};
+  std::vector<float> rows_{};
 
   /// The direct solar irradiance interpolated onto the grid, in the same
-  /// units as `SunSky::mSunIrradiance`.
-  std::vector<float> mSunIrradiance{};
+  /// units as `SunSky::sunIrradiance_`.
+  std::vector<float> sunIrradiance_{};
 };
 
 /// An empirical clear-sky sun and sky model fitted to MODTRAN
@@ -241,10 +241,10 @@ public:
 
   /// The unit direction toward the sun-disk center after the zenith
   /// clamp, which is the direction the model actually uses.
-  [[nodiscard]] float3 sunDirection() const noexcept { return mSunDir; }
+  [[nodiscard]] float3 sunDirection() const noexcept { return sunDir_; }
 
   /// Is the sun disk enabled?
-  [[nodiscard]] bool hasSun() const noexcept { return mIsSunEnabled; }
+  [[nodiscard]] bool hasSun() const noexcept { return isSunEnabled_; }
 
   /// The cosine of the solar angular radius.
   [[nodiscard]] static constexpr float cosSunAngularRadius() noexcept {
@@ -276,7 +276,7 @@ public:
   /// including the sun, for weighing against other lights in light
   /// selection. Broadband means the average over the model's spectral
   /// channels, times the `scaleFactor` option.
-  [[nodiscard]] float averageRadiance() const noexcept { return mMeanRadiance; }
+  [[nodiscard]] float averageRadiance() const noexcept { return meanRadiance_; }
 
   /// The dimensionless ROLO lunar-to-solar irradiance multiplier
   /// m(wavelength, phase) with E_moon = m * E_sun, from the
@@ -300,22 +300,22 @@ private:
   /// The scale factor applied to every radiance output, which is
   /// `SunSkyOptions::scaleFactor`: the fit tables are already in
   /// W/(m^2 sr nm), so nothing else rides along.
-  float mScaleFactor{1.0f};
+  float scaleFactor_{1.0f};
 
   /// The scale factor applied to the sun disk, which is `scaleFactor`
   /// over the disk solid angle, so that turning the direct irradiance
   /// into the disk's uniform radiance is a multiply.
-  float mSunDiskScale{};
+  float sunDiskScale_{};
 
   /// Is the sun disk enabled?
-  bool mIsSunEnabled{false};
+  bool isSunEnabled_{false};
 
   /// The effective unit direction toward the sun, zenith clamped.
-  float3 mSunDir{0.0f, 0.0f, 1.0f};
+  float3 sunDir_{0.0f, 0.0f, 1.0f};
 
   /// The unit horizontal projection of `sunDir`, for relative-azimuth
   /// calculations.
-  float2 mSunDirHorz{1.0f, 0.0f};
+  float2 sunDirHorz_{1.0f, 0.0f};
 
   /// The number of sky fit outputs: the log broadband brightness and one
   /// coefficient per spectral mode. Mirrors `SKY_OUTPUT_COUNT` in the fit
@@ -328,7 +328,7 @@ private:
   /// The implementation derives the same number from the fit tables and
   /// static asserts that the two agree, so a refit that changes the
   /// degree or the feature split changes this number too; see
-  /// `mSkyMatrix`.
+  /// `skyMatrix_`.
   static constexpr int SKY_FIT_TERM_COUNT = 24;
 
   /// The number of output lanes the kernel carries, which is the output
@@ -337,8 +337,8 @@ private:
 
   /// The cosine and sine of the clamped sun zenith angle, which every
   /// evaluation needs to form the scattering angle.
-  float mCosSunZenith{1.0f};
-  float mSinSunZenith{};
+  float cosSunZenith_{1.0f};
+  float sinSunZenith_{};
 
   /// Evaluate the sky fit for one view direction, writing the log
   /// broadband brightness and the spectral mode coefficients.
@@ -347,8 +347,8 @@ private:
   /// cosine, already clamped to the trained range, because the caller
   /// has both and recovering either from the other costs a transcendental.
   ///
-  void evalSkyFit(float cosView, float viewZenithDeg, float cosRelativeAzimuth,
-                  float (&outputs)[SKY_FIT_OUTPUT_COUNT]) const noexcept;
+  void evalSkyFit_(float cosView, float viewZenithDeg, float cosRelativeAzimuth,
+                   float (&outputs)[SKY_FIT_OUTPUT_COUNT]) const noexcept;
 
   /// The sky polynomial specialized to these options: the fit is a
   /// polynomial in nine standardized features, four of which no view
@@ -361,31 +361,31 @@ private:
   /// Row `t` holds the weight of term `t` in every output, so the
   /// contraction is one vertical multiply-accumulate per term with the
   /// outputs falling out as the lanes of the accumulator.
-  alignas(32) float mSkyMatrix[SKY_FIT_TERM_COUNT][SKY_FIT_OUTPUT_STRIDE]{};
+  alignas(32) float skyMatrix_[SKY_FIT_TERM_COUNT][SKY_FIT_OUTPUT_STRIDE]{};
 
   /// The direct solar spectral irradiance on the model grid in
   /// W/(m^2 nm), evaluated once at construction (it does not depend on
   /// the view direction) and unscaled by `scaleFactor`. In moonlight
   /// mode this is the direct lunar irradiance, i.e., already multiplied
-  /// by `mChannelScale`.
-  std::vector<float> mSunIrradiance{};
+  /// by `channelScale_`.
+  std::vector<float> sunIrradiance_{};
 
   /// The per-channel spectral scale on the model grid: empty in sun
   /// mode, the ROLO lunar multiplier in moonlight mode. Applies to the
-  /// sky-dome evaluation and the sampling weights; `mSunIrradiance` has
+  /// sky-dome evaluation and the sampling weights; `sunIrradiance_` has
   /// it baked in already.
-  std::vector<float> mChannelScale{};
+  std::vector<float> channelScale_{};
 
   /// The probability of `sample()` picking the sun disk.
-  float mSunSelectionChance{};
+  float sunSelectionChance_{};
 
   /// The sampling distribution over the sky dome, possibly
   /// MIS-compensated, see `SunSkyOptions::isMISCompensationEnabled`.
-  Distribution2D mSkyDistr{};
+  Distribution2D skyDistr_{};
 
   /// The broadband mean radiance over the sphere, sun included, times
   /// `scaleFactor`.
-  float mMeanRadiance{};
+  float meanRadiance_{};
 };
 
 /// \}
