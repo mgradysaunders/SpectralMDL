@@ -28,7 +28,7 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
       float2 xi = float2(0.228, 0.712);
       for (int i = 0; i < n; i++, sampling::next_low_discrepancy(&xi)) {
         fSum += df::micrograin::normal_pdf(
-          tau0, beta, sampling::cosine_hemisphere_sample(xi));
+          tau0, beta, sampling::cosine_hemisphere_draw(xi));
       }
       #assert($PI * fSum / n ~== |1e-2| 1.0);
     }
@@ -39,7 +39,7 @@ unit_test "The normal distribution integrates to one and the shadowing matches t
     const auto tau0 = 0.6;
     for (int k = 1; k < 8; k++) {
       const auto wm =
-        df::micrograin::normal_sample(tau0, float2(2.0), k / 8.0, 0.37);
+        df::micrograin::normal_draw(tau0, float2(2.0), k / 8.0, 0.37);
       #assert(wm.z > 0.0);
       #assert(math::length(wm) ~== |1e-5| 1.0);
     }

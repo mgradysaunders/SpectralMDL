@@ -37,7 +37,7 @@ double integrateAlbedo(const int numSamples, const auto sample) {
 @(pure) float integrateDiffuseReflectionBSDF(float cosTheta, float roughness) {
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
   const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
-    const float3 wi = math::normalize(sampling::cosine_hemisphere_sample(xi));
+    const float3 wi = math::normalize(sampling::cosine_hemisphere_draw(xi));
     return #max(#sum(wo.xy * wi.xy), 0) / (#max(wo.z, wi.z) + EPSILON);
   });
   const float sigma2 = 2.0 * roughness * roughness;
@@ -70,7 +70,7 @@ double integrateAlbedo(const int numSamples, const auto sample) {
     #pow(1 - #pow(roughness, 2), 2),
   );
   const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
-    const float3 wi(sampling::uniform_hemisphere_sample(xi));
+    const float3 wi(sampling::uniform_hemisphere_draw(xi));
     const float3 wm(math::normalize(wo + wi));
     const float cosThetam(wm.z);
     const float sinThetam(#sqrt(1 - cosThetam * cosThetam));
@@ -89,7 +89,7 @@ double integrateAlbedo(const int numSamples, const auto sample) {
   const float alpha(roughness * roughness);
   const float e(2 / (alpha * alpha + EPSILON));
   return integrateAlbedo(1024 * 512, \(const float2 xi) {
-    const float3 wm = math::normalize(df::microfacet::blinn_normal_sample(xi.x, xi.y, float2(e)));
+    const float3 wm = math::normalize(df::microfacet::blinn_normal_draw(xi.x, xi.y, float2(e)));
     const float3 wi = math::normalize(df::specular::reflect(wo, wm));
     const float dotWoWm = math::dot(wo, wm);
     return wi.z > 0 && dotWoWm > 0 ? (2 + e) / (1 + e) * #min(1, 2 * wm.z * #min(wo.z, wi.z) / dotWoWm) * dotWoWm : 0.0;
@@ -104,7 +104,7 @@ double integrateAlbedo(const int numSamples, const auto sample) {
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
   const float2 alpha = float2(#max(roughness * roughness, 1e-6));
   return integrateAlbedo(1024 * 512, \(const float2 xi) {
-    const float3 wm = math::normalize(df::microfacet::smith_visible_normal_sample(distribution, xi.x, xi.y, alpha, wo));
+    const float3 wm = math::normalize(df::microfacet::smith_visible_normal_draw(distribution, xi.x, xi.y, alpha, wo));
     const float3 wi = math::normalize(df::specular::reflect(wo, wm));
     if (wi.z > 0) {
       // `1 + Lambda(w)` through the projected area, which avoids the

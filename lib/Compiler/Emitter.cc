@@ -3328,8 +3328,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                    &smdlLightProfileInterpolate);
     (void)context.getBuiltinCallee("smdlLightProfileDirectionPDF",
                                    &smdlLightProfileDirectionPDF);
-    (void)context.getBuiltinCallee("smdlLightProfileDirectionSample",
-                                   &smdlLightProfileDirectionSample);
+    (void)context.getBuiltinCallee("smdlLightProfileDirectionDraw",
+                                   &smdlLightProfileDirectionDraw);
     return withLocatedFile(
         fileName, lightProfileType, [&](const std::string &resolvedFileName) {
           const LightProfile &lightProfile{context.compiler.loadLightProfile_(

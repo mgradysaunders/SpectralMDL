@@ -263,7 +263,7 @@ syn region mdlAnnotationBlock matchgroup=mdlAnnotationDelim
 " is a hard error in the parser.
 syn keyword smdlAttribute contained
       \ alwaysinline cold fastmath foreign hot macro
-      \ noinline optnone optsize pure visible
+      \ noinline open optnone optsize pure visible
 syn match smdlAttributeError contained display "\h\w*"
 syn region smdlAttributeBlock matchgroup=smdlAttributeDelim
       \ start="@\s*(" end=")" extend keepend oneline

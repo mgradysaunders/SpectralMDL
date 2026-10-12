@@ -224,6 +224,247 @@ TEST_CASE("Compiler: the overloads a rejected call names") {
   }
 }
 
+TEST_CASE("Compiler: what an open function refuses") {
+  SUBCASE("An open function has a parameter to dispatch on") {
+    CHECK_CONTAINS(compileError("#smdl\n@(open) int f();\n").message,
+                   "Function \"f\" declared '@(open)' must have a parameter "
+                   "to dispatch on");
+  }
+  SUBCASE("An open function is neither foreign nor visible") {
+    CHECK_CONTAINS(
+        compileError("#smdl\n@(pure open foreign) int f(int x);\n").message,
+        "declared '@(open)' must not be '@(foreign)'");
+    CHECK_CONTAINS(
+        compileError("#smdl\n@(open visible) int f(int x) = x;\n").message,
+        "declared '@(open)' must not be '@(visible)'");
+  }
+  SUBCASE("A type that implements nothing is named with its declaration") {
+    smdl::Error error{
+        compileError("#smdl\ntag shape;\n"
+                     "@(pure open) float area(const &shape this);\n"
+                     "struct Triangle: shape { float base; };\n"
+                     "exec { auto t = Triangle(base: 1.0); #print(area(&t)); "
+                     "}\n")};
+    CHECK_CONTAINS(error.message,
+                   "Open function \"area\" has no implementation for "
+                   "\"Triangle\" declared at [<string ::diag>:4:");
+  }
+  SUBCASE("Only the candidates beside the type are named") {
+    // The library's own overloads are rejected for the same arguments, but
+    // the type's author can do nothing about them, so they are noise.
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.addCode(
+        "::lib", "#smdl\nexport tag shape;\n"
+                 "@(pure open) export float area(const &shape this);\n"
+                 "export struct Square: shape { float side; };\n"
+                 "@(pure) float area(const &Square this) = this.side;\n"
+                 "@(pure macro) export float areaOf(const auto ptr) = "
+                 "area(ptr);\n"));
+    REQUIRE_OK(compiler.addCode(
+        "::user", "#smdl\nimport ::lib::*;\n"
+                  "export struct Triangle: lib::shape { float base; };\n"
+                  "@(pure) float area(const &Triangle this, int scale) = "
+                  "this.base * float(scale);\n"
+                  "exec { auto t = Triangle(base: 1.0); "
+                  "#print(lib::areaOf(&t)); }\n"));
+    const std::optional<smdl::Error> error{
+        compiler.compile(smdl::OPT_LEVEL_NONE)};
+    REQUIRE_MESSAGE(error.has_value(), "compiled without error");
+    CHECK_CONTAINS(error->message,
+                   "Open function \"area\" has no implementation for "
+                   "\"Triangle\"");
+    CHECK_CONTAINS(error->message,
+                   "candidate rejected: area(&Triangle this, int scale) "
+                   "declared at [<string ::user>:4:");
+    CHECK_NOT_CONTAINS(error->message, "Square");
+  }
+}
+
+TEST_CASE("Compiler: what the author of a distribution is told") {
+  // Every source starts with the same imports and a BSDF struct, followed by
+  // whatever the subcase is about.
+  auto withBSDF{[](std::string_view lobes, std::string_view rest) {
+    return smdl::concat("#smdl\nimport ::df::*;\nexport struct MyBSDF: bsdf { "
+                        "static const int _lobes = ",
+                        lobes, "; };\n", rest);
+  }};
+  const std::string_view eval{
+      "@(pure) auto scatterEval(const &MyBSDF this [[anno::unused()]], const "
+      "&df::ScatterEvalParams params [[anno::unused()]]) = "
+      "df::ScatterEvalResult(isBlack: true);\n"};
+  const std::string_view draw{
+      "@(pure) auto scatterDraw(const &MyBSDF this [[anno::unused()]], const "
+      "&df::ScatterDrawParams params [[anno::unused()]]) = "
+      "df::ScatterDrawResult();\n"};
+  const std::string_view material{"export material mine() = material(surface: "
+                                  "material_surface(scattering: MyBSDF()));\n"};
+  SUBCASE("A missing implementation says what to declare") {
+    smdl::Error error{compileError(withBSDF(
+        "df::DF_MATTE_BRDF",
+        smdl::concat(eval,
+                     "@(pure) auto scatterSample(const &MyBSDF this "
+                     "[[anno::unused()]], const &df::ScatterDrawParams params "
+                     "[[anno::unused()]]) = df::ScatterDrawResult();\n",
+                     "@(pure) auto scatterDraw(const &MyBSDF this "
+                     "[[anno::unused()]], const df::ScatterDrawParams params "
+                     "[[anno::unused()]]) = df::ScatterDrawResult();\n")))};
+    CHECK_CONTAINS(error.message, "[<string ::diag>:3:8] Struct \"MyBSDF\" has "
+                                  "no implementation of \"scatterDraw\", which "
+                                  "its tag \"bsdf\" requires");
+    CHECK_CONTAINS(error.message,
+                   "to implement it: @(pure) auto scatterDraw(const &MyBSDF "
+                   "this, inline const &df::ScatterDrawParams params)");
+    // The one with the right name and the wrong signature, and the one with
+    // the right signature and the wrong name.
+    CHECK_CONTAINS(error.message,
+                   "candidate rejected: scatterDraw(&MyBSDF this, "
+                   "ScatterDrawParams params)");
+    CHECK_CONTAINS(error.message,
+                   "similar: scatterSample(&MyBSDF this, &ScatterDrawParams "
+                   "params) declared at [<string ::diag>:5:");
+  }
+  SUBCASE("A distribution that declares no lobes is told how") {
+    CHECK_CONTAINS(
+        compileError("#smdl\nimport ::df::*;\nstruct MyBSDF: bsdf {};\n")
+            .message,
+        "Struct \"MyBSDF\" with tag \"bsdf\" declares no \"_lobes\"");
+    CHECK_CONTAINS(
+        compileError("#smdl\nimport ::df::*;\nstruct MyEDF: edf {};\n").message,
+        "to declare it: static const int _lobes = 0;");
+  }
+  SUBCASE("An implementation of a pure open function must be pure") {
+    smdl::Error error{compileError(withBSDF(
+        "df::DF_MATTE_BRDF",
+        smdl::concat(eval,
+                     "auto scatterDraw(const &MyBSDF this [[anno::unused()]], "
+                     "const &df::ScatterDrawParams params [[anno::unused()]]) "
+                     "= df::ScatterDrawResult();\n")))};
+    CHECK_CONTAINS(error.message,
+                   "[<string ::diag>:5:1] Function \"scatterDraw\" implements "
+                   "the '@(pure)' open function \"scatterDraw\" for "
+                   "\"MyBSDF\", so it must be declared '@(pure)' or "
+                   "'@(macro)'");
+  }
+  SUBCASE("A wrong return type is reported at the implementation") {
+    smdl::Error error{compileError(withBSDF(
+        "df::DF_MATTE_BRDF",
+        smdl::concat("@(pure) int scatterEval(const &MyBSDF this "
+                     "[[anno::unused()]], const &df::ScatterEvalParams params "
+                     "[[anno::unused()]]) = 0;\n",
+                     draw, material)))};
+    CHECK_CONTAINS(error.message,
+                   "[<string ::diag>:4:9] Function \"scatterEval\" returns "
+                   "\"int\", where the open function it implements returns "
+                   "\"ScatterEvalResult\"");
+    CHECK_CONTAINS(error.message,
+                   "while generating the \"scatterEval\" entry point of "
+                   "material \"::diag::mine\" declared at [<string ::diag>:6:");
+  }
+  SUBCASE("A material before the implementations it needs names them") {
+    smdl::Error error{compileError(
+        withBSDF("df::DF_MATTE_BRDF", smdl::concat(material, eval)))};
+    CHECK_CONTAINS(error.message, "[<string ::diag>:3:8] Open function "
+                                  "\"scatterEval\" has no implementation for "
+                                  "\"MyBSDF\"");
+    CHECK_CONTAINS(error.message, "declared after the code that needs it: "
+                                  "\"scatterEval\" at [<string ::diag>:5:");
+    // A struct carrying several tags reaches the open declarations of all of
+    // them, which together are no more an implementation than one is.
+    smdl::Error errorTwoTags{compileError(smdl::concat(
+        "#smdl\nimport ::df::*;\nexport struct MyBSDF: bsdf, vdf { "
+        "static const int _lobes = df::DF_MATTE_BRDF; };\n",
+        material, eval))};
+    CHECK_CONTAINS(errorTwoTags.message, "has no implementation for");
+    CHECK_NOT_CONTAINS(errorTwoTags.message, "ambiguous");
+  }
+  SUBCASE("An error inside an implementation names its material") {
+    smdl::Error error{compileError(withBSDF(
+        "df::DF_MATTE_BRDF",
+        smdl::concat(
+            "@(pure) auto scatterEval(const &MyBSDF this "
+            "[[anno::unused()]], inline const &df::ScatterEvalParams "
+            "params) = df::ScatterEvalResult(f: wo.q, pdf: float2(0));\n",
+            draw, material)))};
+    CHECK_CONTAINS(error.message, "[<string ::diag>:4:");
+    CHECK_CONTAINS(error.message, "No field \"q\"");
+    CHECK_CONTAINS(error.message,
+                   "while generating the \"scatterEval\" entry point of "
+                   "material \"::diag::mine\"");
+  }
+  SUBCASE("A promise the struct does not keep is warned about") {
+    const CollectedLog warned{"Struct \"MyBSDF\""};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(
+        compiler.addCode("::zero", withBSDF("0", smdl::concat(eval, draw))));
+    REQUIRE_OK(compiler.addCode(
+        "::gloss", withBSDF("df::DF_GLOSS_BRDF", smdl::concat(eval, draw))));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    CHECK(warned.count("declares \"_lobes\" as 0") == 1);
+    CHECK(warned.count("declares a GLOSS lobe but implements no "
+                       "\"normalDraw\"") == 1);
+  }
+  SUBCASE("An implementation no dispatch reaches is warned about") {
+    const CollectedLog warned{"Function \"scatterEval\" takes"};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.addCode(
+        "::untagged",
+        smdl::concat("#smdl\nimport ::df::*;\nexport struct MyBSDF {};\n",
+                     eval)));
+    REQUIRE_OK(compiler.addCode(
+        "::elsewhere",
+        smdl::concat("#smdl\nimport ::df::*;\nimport ::untagged::*;\n",
+                     "@(pure) auto scatterEval(const &untagged::MyBSDF this "
+                     "[[anno::unused()]], const &df::ScatterEvalParams params "
+                     "[[anno::unused()]]) = df::ScatterEvalResult(isBlack: "
+                     "true);\n")));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    CHECK(warned.count("which does not carry the tag \"bsdf\"") == 1);
+    CHECK(warned.count("did you mean \"struct MyBSDF: bsdf\"?") == 1);
+    CHECK(warned.count("which is declared in another module") == 1);
+  }
+  SUBCASE("Under debug, a draw outside the declared lobes is caught") {
+    // A reflection BSDF that draws a transmission, which the host would
+    // otherwise be told came from no lobe at all.
+    smdl::Compiler compiler{};
+    compiler.isDebugEnabled = true;
+    compiler.shouldEmitUnitTests = true;
+    REQUIRE_OK(compiler.addCode(
+        "::diag",
+        withBSDF(
+            "df::DF_MATTE_BRDF",
+            smdl::concat(eval,
+                         "@(pure) auto scatterDraw(const &MyBSDF this "
+                         "[[anno::unused()]], const &df::ScatterDrawParams "
+                         "params [[anno::unused()]]) = df::ScatterDrawResult("
+                         "wi: float3(0, 0, -1), mode: df::scatter_transmit);\n",
+                         "unit_test \"t\" {\n"
+                         "  auto mat = material(surface: "
+                         "material_surface(scattering: MyBSDF()));\n"
+                         "  auto eval = _MaterialEval(&mat);\n"
+                         "  float4 xi = float4(0.5);\n"
+                         "  float3 wo = float3(0, 0, 1);\n"
+                         "  float3 wi = float3(0);\n"
+                         "  float pdfFwd = 0;\n"
+                         "  float pdfRev = 0;\n"
+                         "  color f = color(0);\n"
+                         "  int lobe = 0;\n"
+                         "  float lobeChance = 1;\n"
+                         "  #print(df::_scatterDraw(&eval, &xi, &wo, &wi, "
+                         "&pdfFwd, &pdfRev, cast<&float>(&f), &lobe, "
+                         "df::DF_ALL, &lobeChance));\n"
+                         "}\n"))));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE_OK(compiler.jitCompile());
+    StateStorage storage{compiler};
+    smdl::State state{storage.makeState()};
+    const std::optional<smdl::Error> error{compiler.runUnitTests(state)};
+    REQUIRE(error.has_value());
+    CHECK_CONTAINS(error->message, "'scatterDraw' drew in a domain the "
+                                   "'_lobes' of what it drew from does not "
+                                   "declare");
+  }
+}
+
 TEST_CASE("Compiler: how a refusal is phrased") {
   SUBCASE("An ill-formed operator is not called unimplemented") {
     smdl::Error error{

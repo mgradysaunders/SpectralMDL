@@ -1045,7 +1045,116 @@ void rejectDuplicateParameterNames(const ParameterList &params,
       param.getSourceLocation().throwError(
           "Duplicate parameter name ", SpellQuoted(param.name), " in ", owner);
 }
+
+// The newest overload in the overload set of 'func'.
+[[nodiscard]] FunctionType *lastOverload(FunctionType *func) {
+  while (func->nextOverload) func = func->nextOverload;
+  return func;
+}
+
+// Spell a type as code in the module 'from' would name it, qualifying a
+// struct declared in another module by that module's name.
+[[nodiscard]] std::string spellType(Type *type, const Module *from) {
+  if (type->isPointer())
+    return concat("&", spellType(type->getPointeeType(), from));
+  if (StructType * structType{llvm::dyn_cast<StructType>(type)}) {
+    StructType &abstractType{structType->getInstanceOf()};
+    if (const Module *module{abstractType.decl.srcLoc.module};
+        module && module != from)
+      return concat(module->getName(), "::", abstractType.displayName);
+    return abstractType.displayName;
+  }
+  return type->displayName;
+}
+
+// Why 'func' cannot implement the open declaration 'contract' for
+// 'structType', or the empty string if it can: it must take every parameter
+// the contract passes, the first with the contract's tag replaced by the
+// struct, and have a default for any parameter beyond them.
+[[nodiscard]] std::string whyNotImplementation(Context &context,
+                                               FunctionType &func,
+                                               FunctionType &contract,
+                                               StructType &structType) {
+  if (func.params.size() < contract.params.size() && !func.params.isVariadic)
+    return concat("Takes ", func.params.size(), " parameters, where ",
+                  SpellQuoted(contract.declName), " passes ",
+                  contract.params.size());
+  for (size_t i{}; i < contract.params.size() && i < func.params.size(); i++) {
+    Type *expected{contract.params[i].type};
+    if (i == 0)
+      expected = expected->isPointer()
+                     ? static_cast<Type *>(context.getPointerType(&structType))
+                     : &structType;
+    if (!FunctionType::paramAccepts(context, func.params[i].type, expected))
+      return concat("Parameter ", SpellQuoted(func.params[i].name), " of type ",
+                    SpellQuoted(func.params[i].type->displayName),
+                    " does not accept ", SpellQuoted(expected->displayName));
+  }
+  for (size_t i{contract.params.size()}; i < func.params.size(); i++)
+    if (!func.params[i].getASTInitializer())
+      return concat("Parameter ", SpellQuoted(func.params[i].name),
+                    " has no default, and ", SpellQuoted(contract.declName),
+                    " does not pass it");
+  return {};
+}
+
+// The declaration an implementation of 'contract' for 'structType' would
+// have, spelled as the struct's own module would write it.
+[[nodiscard]] std::string spellImplementation(FunctionType &contract,
+                                              StructType &structType) {
+  const Module *from{structType.decl.srcLoc.module};
+  std::string text{contract.isPure()    ? "@(pure) "
+                   : contract.isMacro() ? "@(macro) "
+                                        : ""};
+  text += concat("auto ", contract.declName, "(");
+  for (size_t i{}; i < contract.params.size(); i++) {
+    const Parameter &param{contract.params[i]};
+    if (i > 0) text += ", ";
+    if (ast::Type * astType{param.getASTType()})
+      for (std::string_view qualifier : astType->srcQuals)
+        text += concat(qualifier, " ");
+    text += i == 0 ? concat(param.type->isPointer() ? "&" : "",
+                            structType.displayName)
+                   : spellType(param.type, from);
+    text += concat(" ", param.name);
+  }
+  text += ")";
+  return text;
+}
 } // namespace
+
+bool FunctionType::paramAccepts(Context &context, Type *typeA, Type *typeB) {
+  if (context.isImplicitlyConvertible(typeB, typeA)) return true;
+  if (typeA->isPointer() && typeB->isPointer())
+    return paramAccepts(context, typeA->getPointeeType(),
+                        typeB->getPointeeType());
+  StructType *structTypeB{llvm::dyn_cast<StructType>(typeB)};
+  return structTypeB && structTypeB->isInstanceOf(typeA);
+}
+
+void FunctionType::appendImplementations(
+    Emitter &emitter, StructType &structType, std::string_view name,
+    llvm::SmallVectorImpl<FunctionType *> &funcs) {
+  StructType &abstractType{structType.getInstanceOf()};
+  for (Scope *scope{abstractType.declScope}; scope; scope = scope->parent) {
+    Declaration *declaration{Declaration::resolveInScope(
+        emitter.context, name, emitter.getLLVMFunction(), scope,
+        /*shouldIgnoreIfNotExported=*/false,
+        std::numeric_limits<uint64_t>::max(), nullptr)};
+    if (!declaration) continue;
+    Type *type{declaration->value.isComptimeMetaType(emitter.context)
+                   ? declaration->value.getComptimeMetaType(
+                         emitter.context, abstractType.decl.srcLoc)
+                   : nullptr};
+    if (type && type->isFunction() &&
+        static_cast<FunctionType *>(type)->decl.srcLoc.module ==
+            abstractType.decl.srcLoc.module)
+      for (auto func{lastOverload(static_cast<FunctionType *>(type))}; func;
+           func = func->prevOverload)
+        if (!llvm::is_contained(funcs, func)) funcs.push_back(func);
+    break;
+  }
+}
 
 void FunctionType::initialize(Emitter &emitter) {
   Context &context{emitter.context};
@@ -1102,6 +1211,60 @@ void FunctionType::initialize(Emitter &emitter) {
     decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                            " declared '@(macro)' must not be variadic");
   }
+  // An open function dispatches on its first parameter through ordinary
+  // overload resolution, which foreign functions, visible functions, and
+  // function variants all bypass.
+  if (isOpen()) {
+    const char *reasonForError{
+        params.empty()                 ? "must have a parameter to dispatch on"
+        : decl.hasAttribute("foreign") ? "must not be '@(foreign)'"
+        : decl.hasAttribute("visible") ? "must not be '@(visible)'"
+        : decl.isVariant()             ? "must not be a function variant"
+                                       : nullptr};
+    if (reasonForError)
+      decl.srcLoc.throwError("Function ", SpellQuoted(declName),
+                             " declared '@(open)' ", reasonForError);
+    if (TagType * tagType{llvm::dyn_cast<TagType>(
+                      params[0].type->getFirstNonPointerType())}) {
+      tagType->openFunctions.push_back(this);
+      if (auto &tagTypes{context.openFunctionTags[declName]};
+          !llvm::is_contained(tagTypes, tagType))
+        tagTypes.push_back(tagType);
+    }
+  } else if (!params.empty() && decl.srcLoc.module &&
+             !decl.srcLoc.module->isBuiltin()) {
+    // A function named like an open function on a tag, taking a struct, is
+    // presumably meant to implement it, which it can only do for a struct
+    // that carries the tag, from the module that declares the struct.
+    StructType *structType{
+        llvm::dyn_cast<StructType>(params[0].type->getFirstNonPointerType())};
+    if (auto itr{context.openFunctionTags.find(declName)};
+        structType && itr != context.openFunctionTags.end()) {
+      StructType &abstractType{structType->getInstanceOf()};
+      TagType *tagType{itr->second.front()};
+      if (abstractType.decl.srcLoc.module != decl.srcLoc.module)
+        decl.srcLoc.logWarn(concat(
+            "Function ", SpellQuoted(declName), " takes ",
+            SpellQuoted(abstractType.displayName),
+            ", which is declared in another module, so a call to the open "
+            "function ",
+            SpellQuoted(declName),
+            " never reaches it: an implementation is declared in the module "
+            "that declares its type"));
+      else if (llvm::none_of(itr->second, [&](TagType *eachTagType) {
+                 return abstractType.isInstanceOf(eachTagType);
+               }))
+        decl.srcLoc.logWarn(
+            concat("Function ", SpellQuoted(declName), " takes ",
+                   SpellQuoted(abstractType.displayName),
+                   ", which does not carry the tag ",
+                   SpellQuoted(tagType->displayName), " the open function ",
+                   SpellQuoted(declName), " is declared on; did you mean ",
+                   SpellQuoted(concat("struct ", abstractType.displayName, ": ",
+                                      tagType->displayName)),
+                   "?"));
+    }
+  }
   auto compileNow{[&] {
     std::vector<Type *> paramTypes{params.getTypes()};
     getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
@@ -1139,6 +1302,9 @@ void FunctionType::initialize(Emitter &emitter) {
     if (decl.hasAttribute("macro"))
       decl.srcLoc.throwError("Material ", SpellQuoted(declName),
                              " must not be declared '@(macro)'");
+    if (isOpen())
+      decl.srcLoc.throwError("Material ", SpellQuoted(declName),
+                             " must not be declared '@(open)'");
     isMaterial = true;
     initializeMaterialFunctions_(emitter);
   }
@@ -1168,7 +1334,22 @@ void FunctionType::initializeLambda(Emitter &emitter) {
 
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                            const SourceLocation &srcLoc) {
-  FunctionType *func{resolveOverload(emitter, args, srcLoc)};
+  FunctionType *contract{};
+  FunctionType *func{resolveOverload(emitter, args, srcLoc, &contract)};
+  // An implementation of an open function from another module is held to
+  // the declaration it implements, and told so at its own declaration,
+  // which is where its author can do something about it.
+  auto checkImplementationReturns{[&](Type *type) {
+    if (contract &&
+        !emitter.context.isImplicitlyConvertible(type, contract->returnType))
+      func->decl.srcLoc.throwError(
+          "Function ", SpellQuoted(func->declName), " returns ",
+          SpellQuoted(type->displayName),
+          ", where the open function it implements returns ",
+          SpellQuoted(contract->returnType->displayName), "\n  open function: ",
+          toSignatureString(contract->declName, contract->params),
+          " declared at ", std::string(contract->decl.srcLoc));
+  }};
   if (func->isVariant()) {
     Value result{};
     SMDL_PRESERVE(emitter.scope, emitter.anchors);
@@ -1234,13 +1415,21 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
           emitter.emit(func->decl.definition);
         })};
     --macroRecursionDepth;
+    checkImplementationReturns(result.type);
     return result;
   } else {
-    if (!func->isPure() && !emitter.state)
+    if (!func->isPure() && !emitter.state) {
+      if (contract)
+        func->decl.srcLoc.throwError(
+            "Function ", SpellQuoted(func->declName),
+            " implements an open function called from '@(pure)' context, so "
+            "it must be declared '@(pure)' or '@(macro)'");
       srcLoc.throwError("Cannot call ", SpellQuoted(func->declName),
                         " from '@(pure)' context");
+    }
     Instance &instance{
         func->getInstance(emitter, resolvedArgs.getNonVariadicTypes())};
+    checkImplementationReturns(instance.returnType);
     llvm::SmallVector<llvm::Value *> llvmArgs{};
     // Indirect ('sret') returns receive a caller-provided result slot as
     // the leading argument (see 'Emitter::createFunction'), and the call
@@ -1291,7 +1480,9 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
 
 FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                             const ArgumentList &args,
-                                            const SourceLocation &srcLoc) {
+                                            const SourceLocation &srcLoc,
+                                            FunctionType **contract) {
+  if (contract) *contract = nullptr;
   if (isVariant() || isForeign()) {
     // We should have already verified the function variant does not
     // illegally overload another function by now!
@@ -1302,13 +1493,39 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     llvm::SmallVector<const Parameter *> params{};
   };
   std::vector<Overload> overloads{};
-  auto getLastOverload{[&]() {
-    FunctionType *func{this};
-    while (func->nextOverload) func = func->nextOverload;
-    return func;
-  }};
+  // The candidates are this overload set and, if any of it is '@(open)',
+  // the same-named one declared beside the struct type of the dispatch
+  // argument: the argument bound to the open declaration's first parameter,
+  // by name if it is named and otherwise the first positional one. That is
+  // C++ argument-dependent lookup confined to one argument, which keeps an
+  // implementation with its type and the lookup independent of what the
+  // caller imports.
+  llvm::SmallVector<FunctionType *> candidates{};
+  FunctionType *openFunc{};
+  for (auto func{lastOverload(this)}; func; func = func->prevOverload) {
+    candidates.push_back(func);
+    if (!openFunc && func->isOpen()) openFunc = func;
+  }
+  const size_t numOwnCandidates{candidates.size()};
+  const Argument *dispatchArg{};
+  if (openFunc) {
+    for (const auto &arg : args)
+      if (arg.name == openFunc->params[0].name) dispatchArg = &arg;
+    for (const auto &arg : args) {
+      if (dispatchArg) break;
+      if (arg.isPositional()) dispatchArg = &arg;
+    }
+  }
+  StructType *dispatchStruct{
+      dispatchArg ? llvm::dyn_cast<StructType>(
+                        dispatchArg->value.type->getFirstNonPointerType())
+                  : nullptr};
+  if (dispatchStruct)
+    appendImplementations(emitter, *dispatchStruct, declName, candidates);
   std::string overloadErrors{};
-  for (auto func{getLastOverload()}; func; func = func->prevOverload) {
+  std::string implementationErrors{};
+  for (size_t i{}; i < candidates.size(); i++) {
+    FunctionType *func{candidates[i]};
     try {
       SMDL_SANITY_CHECK(!func->isVariant());
       Emitter::ResolvedArguments resolvedArgs{
@@ -1316,9 +1533,12 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                    /*shouldSkipEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
+      const std::string reason{dropSourceLocation(error.message, srcLoc)};
       appendCandidateNote(overloadErrors, {}, func->declName, func->params,
-                          func->decl.srcLoc,
-                          dropSourceLocation(error.message, srcLoc));
+                          func->decl.srcLoc, reason);
+      if (i >= numOwnCandidates)
+        appendCandidateNote(implementationErrors, {}, func->declName,
+                            func->params, func->decl.srcLoc, reason);
     }
   }
   // If no matching declarations, fail, including the reason each
@@ -1348,17 +1568,17 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
         return anyBetter;
       }};
   // The tiebreaker: the LHS set of parameter types is less specific than the
-  // RHS set if each and every RHS parameter type is implicitly convertible
-  // to the corresponding LHS parameter type. This is what makes a concrete
-  // declaration win over an 'auto' template whose conversion ranks tie.
+  // RHS set if each and every LHS parameter accepts what the corresponding
+  // RHS parameter does. This is what makes a concrete declaration win over
+  // an 'auto' template, and a struct win over its tag, whose conversion
+  // ranks tie.
   auto isLessSpecific{[&](llvm::ArrayRef<const Parameter *> paramsA,
                           llvm::ArrayRef<const Parameter *> paramsB) {
     SMDL_SANITY_CHECK(paramsA.size() == paramsB.size());
     for (size_t i = 0; i < paramsA.size(); i++) {
       if (!paramsA[i] || !paramsB[i])
         continue; // Unresolved variadic arguments do not participate
-      if (!emitter.context.isImplicitlyConvertible(paramsB[i]->type,
-                                                   paramsA[i]->type))
+      if (!paramAccepts(emitter.context, paramsA[i]->type, paramsB[i]->type))
         return false;
     }
     return true;
@@ -1388,9 +1608,30 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     }
     overloads.resize(keep);
   }};
+  // The open declaration the call dispatched through, where exactly one of
+  // those in this overload set accepts the arguments.
+  FunctionType *viableContract{};
+  for (const auto &overload : overloads) {
+    if (!overload.func->isOpen() ||
+        overload.func->decl.srcLoc.module != decl.srcLoc.module)
+      continue;
+    if (viableContract) {
+      viableContract = nullptr;
+      break;
+    }
+    viableContract = overload.func;
+  }
   filterBeaten(beatsByConversion);
   filterBeaten(beatsBySpecificity);
-  if (overloads.size() > 1) {
+  auto isContractAlone{[](FunctionType *func) {
+    return func->isOpen() && !func->decl.definition;
+  }};
+  // Several open declarations with no definition can survive together for
+  // a struct carrying several tags, which is the same as none of them.
+  if (overloads.size() > 1 &&
+      !llvm::all_of(overloads, [&](const Overload &overload) {
+        return isContractAlone(overload.func);
+      })) {
     std::string candidateNotes{};
     for (auto &overload : overloads) {
       candidateNotes += "\n  ambiguous candidate: ";
@@ -1403,7 +1644,117 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                       " is ambiguous for arguments ",
                       SpellQuoted(std::string(args)), candidateNotes);
   }
-  return overloads[0].func;
+  // An open declaration with no definition wins only where nothing
+  // implements it for the dispatch argument. A union argument is the
+  // exception: the call visits it and dispatches each case anew.
+  FunctionType *func{overloads[0].func};
+  if (isContractAlone(func) &&
+      !(dispatchArg && dispatchArg->value.type->isUnionOrPointerToUnion())) {
+    if (!dispatchArg)
+      srcLoc.throwError("Open function ", SpellQuoted(declName),
+                        " has no implementation for arguments ",
+                        SpellQuoted(std::string(args)));
+    const std::string typeName{
+        dispatchArg->value.type->getFirstNonPointerType()->displayName};
+    if (!dispatchStruct)
+      srcLoc.throwError("Open function ", SpellQuoted(declName),
+                        " has no implementation for ", SpellQuoted(typeName),
+                        implementationErrors);
+    StructType &structType{dispatchStruct->getInstanceOf()};
+    const Module *module{structType.decl.srcLoc.module};
+    // A call made while the struct's module is still compiling sees only the
+    // implementations declared before the code being compiled, so name any
+    // declared after it.
+    std::string lateNotes{};
+    if (module && module->getRoot() &&
+        llvm::is_contained(emitter.context.modulesInProgress, module)) {
+      auto findLate{[&](auto &&self, const auto &decls) -> void {
+        for (const auto &each : decls) {
+          if (auto *astFunc{llvm::dyn_cast<ast::Function>(each.get())};
+              astFunc && astFunc->name.srcName == declName &&
+              llvm::none_of(candidates, [&](FunctionType *candidate) {
+                return &candidate->decl == astFunc;
+              }))
+            lateNotes += concat("\n  declared after the code that needs it: ",
+                                SpellQuoted(declName), " at ",
+                                std::string(astFunc->srcLoc));
+          else if (auto *astNamespace{
+                       llvm::dyn_cast<ast::Namespace>(each.get())})
+            self(self, astNamespace->decls);
+        }
+      }};
+      findLate(findLate, module->getRoot()->globalDecls);
+    }
+    // The call site means little to the author of the struct when it is in
+    // a builtin module, so the error points at the struct instead.
+    const bool isAtStruct{srcLoc.module && srcLoc.module->isBuiltin() &&
+                          module && !module->isBuiltin()};
+    (isAtStruct ? structType.decl.srcLoc : srcLoc)
+        .throwError("Open function ", SpellQuoted(declName),
+                    " has no implementation for ", SpellQuoted(typeName),
+                    isAtStruct ? std::string()
+                               : concat(" declared at ",
+                                        std::string(structType.decl.srcLoc)),
+                    lateNotes.empty() ? implementationErrors : lateNotes);
+  }
+  if (contract && viableContract && viableContract != func &&
+      func->decl.srcLoc.module != viableContract->decl.srcLoc.module)
+    *contract = viableContract;
+  return func;
+}
+
+void FunctionType::checkImplementation(Emitter &emitter,
+                                       StructType &structType) {
+  Context &context{emitter.context};
+  // The same question a call dispatching on the struct asks.
+  llvm::SmallVector<FunctionType *> funcs{};
+  for (auto func{lastOverload(this)}; func; func = func->prevOverload)
+    funcs.push_back(func);
+  appendImplementations(emitter, structType, declName, funcs);
+  const Module *module{structType.decl.srcLoc.module};
+  std::string notes{};
+  for (FunctionType *func : funcs) {
+    if (func->isOpen() && !func->decl.definition) continue;
+    if (std::string reason{
+            whyNotImplementation(context, *func, *this, structType)};
+        !reason.empty()) {
+      if (func->decl.srcLoc.module == module)
+        appendCandidateNote(notes, {}, func->declName, func->params,
+                            func->decl.srcLoc, reason);
+      continue;
+    }
+    if (isPure() && !func->isPure() && !func->isMacro())
+      func->decl.srcLoc.throwError(
+          "Function ", SpellQuoted(func->declName),
+          " implements the '@(pure)' open function ", SpellQuoted(declName),
+          " for ", SpellQuoted(structType.displayName),
+          ", so it must be declared '@(pure)' or '@(macro)'");
+    return;
+  }
+  // A function beside the struct that would implement this under its name,
+  // which is the likeliest misspelling there is.
+  for (Scope *scope{structType.declScope}; scope; scope = scope->parent)
+    for (const auto &[key, head] : scope->decls)
+      for (Declaration *declaration{head}; declaration;
+           declaration = declaration->prevSameNameInScope) {
+        if (!declaration->value.isComptimeMetaType(context)) continue;
+        Type *type{declaration->value.getComptimeMetaType(
+            context, structType.decl.srcLoc)};
+        if (!type || !type->isFunction()) continue;
+        FunctionType *func{static_cast<FunctionType *>(type)};
+        if (func->declName != declName && func->decl.srcLoc.module == module &&
+            whyNotImplementation(context, *func, *this, structType).empty())
+          notes += concat(
+              "\n  similar: ", toSignatureString(func->declName, func->params),
+              " declared at ", std::string(func->decl.srcLoc),
+              " would implement it if it were named ", SpellQuoted(declName));
+      }
+  structType.decl.srcLoc.throwError(
+      "Struct ", SpellQuoted(structType.displayName),
+      " has no implementation of ", SpellQuoted(declName), ", which its tag ",
+      SpellQuoted(params[0].type->getFirstNonPointerType()->displayName),
+      " requires\n  to implement it: ", spellImplementation(*this, structType),
+      notes);
 }
 
 FunctionType::Instance &
@@ -1668,7 +2019,7 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   // pointer and its remaining parameters to the like-named function in
   // the 'df' module:
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // @(pure visible) int "material_name.scatterEvaluate"(
+  // @(pure visible) int "material_name.scatterEval"(
   //     &_MaterialEval eval,
   //     &float3 wo,
   //     &float3 wi,
@@ -1676,7 +2027,7 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   //     &float pdfRev,
   //     &float f,
   //     int lobeMask) {
-  //   return ::df::_scatterEvaluate(
+  //   return ::df::_scatterEval(
   //     eval, wo, wi, pdfFwd, pdfRev, f, lobeMask);
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1684,7 +2035,7 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   // the two volume scattering ones, which take the material's own VDF
   // type ('volume.scattering') instead: an instance hands over its
   // '_MaterialEval.volumeScattering', and a host inside a medium whose
-  // VDF varies from point to point hands over what 'vdfEvaluate'
+  // VDF varies from point to point hands over what 'vdfEval'
   // returned at the collision. The C++ side sees 'const void *' either
   // way; the wrapper's parameter type is what lets the 'df' macro visit
   // the VDF as its concrete type.
@@ -1724,10 +2075,21 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
           for (const auto &param : params)
             callArgs.push_back(
                 emitter.resolveIdentifier(param.name, decl.srcLoc));
-          emitter.emitReturn(emitter.emitCall(dfFunc->value,
-                                              llvm::ArrayRef<Value>(callArgs),
-                                              decl.srcLoc),
-                             decl.srcLoc);
+          // Whatever fails in here fails inside '::df', on behalf of the
+          // material, so the error says which material and entry point.
+          try {
+            emitter.emitReturn(emitter.emitCall(dfFunc->value,
+                                                llvm::ArrayRef<Value>(callArgs),
+                                                decl.srcLoc),
+                               decl.srcLoc);
+          } catch (Error &error) {
+            error.message +=
+                concat("\n  while generating the ", SpellQuoted(suffix),
+                       " entry point of material ",
+                       SpellQuoted(jitMaterial.qualifiedName), " declared at ",
+                       std::string(decl.srcLoc));
+            throw;
+          }
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, selfType);
@@ -1751,14 +2113,14 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   Type *float4Type{context.getFloatType(4)};
   Type *intType{context.getIntType()};
   const size_t colorSize{uint64_t(context.getColorType()->wavelengthBaseMax)};
-  makeDFWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
+  makeDFWrapper(jitMaterial.scatterEval, "scatterEval", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize},
                  {"lobeMask", intType, 1, /*isByValue=*/true}});
-  makeDFWrapper(jitMaterial.scatterSample, "scatterSample", intType,
+  makeDFWrapper(jitMaterial.scatterDraw, "scatterDraw", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},
@@ -1773,14 +2135,12 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   // whole-tree descents per material. See 'Compiler::shouldEmitScatterNormal',
   // and the matching skip in 'Compiler::jitCompile()'.
   if (compiler.shouldEmitScatterNormal) {
-    makeDFWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
-                  intType,
+    makeDFWrapper(jitMaterial.scatterNormalEval, "scatterNormalEval", intType,
                   {{"isBackface", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
                    {"pdf", floatType},
                    {"lobeMask", intType, 1, /*isByValue=*/true}});
-    makeDFWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
-                  intType,
+    makeDFWrapper(jitMaterial.scatterNormalDraw, "scatterNormalDraw", intType,
                   {{"xi", float4Type},
                    {"isBackface", intType, 1, /*isByValue=*/true},
                    {"wm", float3Type},
@@ -1789,26 +2149,25 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
                    {"lobeMask", intType, 1, /*isByValue=*/true}});
   }
   makeDFWrapper(
-      jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
+      jitMaterial.emissionEval, "emissionEval", intType,
       {{"we", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
-  makeDFWrapper(jitMaterial.emissionSample, "emissionSample", intType,
+  makeDFWrapper(jitMaterial.emissionDraw, "emissionDraw", intType,
                 {{"xi", float4Type},
                  {"we", float3Type},
                  {"pdf", floatType},
                  {"Le", floatType, colorSize}});
-  makeWrapper(jitMaterial.volumeScatterEvaluate, "volumeScatterEvaluate",
-              floatType, vdfType, "vdf"sv,
-              {{"wo", float3Type}, {"wi", float3Type}});
-  makeWrapper(jitMaterial.volumeScatterSample, "volumeScatterSample", floatType,
+  makeWrapper(jitMaterial.volumeScatterEval, "volumeScatterEval", floatType,
+              vdfType, "vdf"sv, {{"wo", float3Type}, {"wi", float3Type}});
+  makeWrapper(jitMaterial.volumeScatterDraw, "volumeScatterDraw", floatType,
               vdfType, "vdf"sv,
               {{"xi", float4Type}, {"wo", float3Type}, {"wi", float3Type}});
-  makeDFWrapper(jitMaterial.hairScatterEvaluate, "hairScatterEvaluate", intType,
+  makeDFWrapper(jitMaterial.hairScatterEval, "hairScatterEval", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize}});
-  makeDFWrapper(jitMaterial.hairScatterSample, "hairScatterSample", intType,
+  makeDFWrapper(jitMaterial.hairScatterDraw, "hairScatterDraw", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},
@@ -1818,7 +2177,7 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   {
     // Generate the opacity evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) float "material_name.opacityEvaluate"() {
+    // @(visible) float "material_name.opacityEval"() {
     //   return material_name().geometry.cutout_opacity;
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1830,8 +2189,8 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
     // 'MATERIAL_HAS_CUTOUT' flag.
     Type *funcReturnType{context.getFloatType()};
     llvm::Function *func{emitter.createFunction(
-        concat(symbolBase, ".opacityEvaluate"), /*isPure=*/false,
-        funcReturnType, {}, decl.srcLoc, [&] {
+        concat(symbolBase, ".opacityEval"), /*isPure=*/false, funcReturnType,
+        {}, decl.srcLoc, [&] {
           emitter.emitReturn(emitter.accessField(
                                  emitter.accessField(invokeFromEntry(),
                                                      "geometry"sv, decl.srcLoc),
@@ -1840,24 +2199,24 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
-    jitMaterial.opacityEvaluate.name = func->getName().str();
+    jitMaterial.opacityEval.name = func->getName().str();
   }
   {
     // Generate the displacement evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) void "material_name.displacementEvaluate"(
+    // @(visible) void "material_name.displacementEval"(
     //     &float3 displacement) {
     //   *displacement = material_name().geometry.displacement;
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // Like 'opacityEvaluate', this evaluates only the displacement: no
+    // Like 'opacityEval', this evaluates only the displacement: no
     // '_MaterialEval' and no '#bump', so 'state.allocator' may be
     // null and everything not feeding 'geometry.displacement' is
     // dead-code eliminated. This is the per-vertex query for hosts
     // that apply displacement to geometry at load time.
     Type *funcReturnType{context.getVoidType()};
     llvm::Function *func{emitter.createFunction(
-        concat(symbolBase, ".displacementEvaluate"), /*isPure=*/false,
+        concat(symbolBase, ".displacementEval"), /*isPure=*/false,
         funcReturnType, {constParameter(float3PtrType, "displacement")},
         decl.srcLoc, [&] {
           Value value{emitter.accessField(
@@ -1870,18 +2229,18 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
     markPointerParam(func, 1, context.getFloatType(3)); // displacement
-    jitMaterial.displacementEvaluate.name = func->getName().str();
+    jitMaterial.displacementEval.name = func->getName().str();
   }
   if (compiler.shouldEmitScatterNormal) {
     // Generate the geometry normal evaluate function, in the mold of
-    // 'displacementEvaluate': it evaluates only 'geometry.normal', so
+    // 'displacementEval': it evaluates only 'geometry.normal', so
     // 'state.allocator' may be null and everything not feeding the
     // normal is dead-code eliminated. Opt-in with the normal
     // distribution entry points, since only a host solving manifold
     // constraints through a remapped shading normal has a use for it.
     Type *funcReturnType{context.getVoidType()};
     llvm::Function *func{emitter.createFunction(
-        concat(symbolBase, ".geometryNormalEvaluate"), /*isPure=*/false,
+        concat(symbolBase, ".geometryNormalEval"), /*isPure=*/false,
         funcReturnType, {constParameter(float3PtrType, "normal")}, decl.srcLoc,
         [&] {
           Value value{emitter.accessField(
@@ -1894,37 +2253,37 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
     markPointerParam(func, 1, context.getFloatType(3)); // normal
-    jitMaterial.geometryNormalEvaluate.name = func->getName().str();
+    jitMaterial.geometryNormalEval.name = func->getName().str();
   }
   {
     // Generate the volume evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) void "material_name.volumeEvaluate"(
+    // @(visible) void "material_name.volumeEval"(
     //     &float sigmaA,
     //     &float sigmaS,
     //     &float emission) {
-    //   _volumeEvaluate(material_name(), sigmaA, sigmaS, emission);
+    //   _volumeEval(material_name(), sigmaA, sigmaS, emission);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // Like 'opacityEvaluate', this evaluates only the volume
+    // Like 'opacityEval', this evaluates only the volume
     // coefficient expressions: no '_MaterialEval' and no '#bump',
     // so 'state.allocator' may be null and everything not feeding the
     // coefficients is dead-code eliminated. Unlike instance
     // evaluation, renderers call this at arbitrary points inside a
     // heterogeneous medium with a partial object-space state (see
-    // 'jit::MaterialDef::volumeEvaluate'). After optimization,
+    // 'jit::MaterialDef::volumeEval'). After optimization,
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects which
     // 'State' fields the body still reads to derive the static
     // 'MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS' flag.
     Type *funcReturnType{context.getVoidType()};
     llvm::Function *func{emitter.createFunction(
-        concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,
+        concat(symbolBase, ".volumeEval"), /*isPure=*/false, funcReturnType,
         {constParameter(floatPtrType, "sigmaA"),
          constParameter(floatPtrType, "sigmaS"),
          constParameter(floatPtrType, "emission")},
         decl.srcLoc, [&] {
           emitter.emitCall(
-              context.getKeyword("_volumeEvaluate"),
+              context.getKeyword("_volumeEval"),
               llvm::ArrayRef<Value>{
                   invokeFromEntry(),
                   emitter.resolveIdentifier("sigmaA"sv, decl.srcLoc),
@@ -1940,22 +2299,22 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
                      context.getColorType()->wavelengthBaseMax);
     markPointerParam(func, 3, context.getFloatType(), // emission
                      context.getColorType()->wavelengthBaseMax);
-    jitMaterial.volumeEvaluate.name = func->getName().str();
+    jitMaterial.volumeEval.name = func->getName().str();
   }
   if (!fieldTypeAtPath({"volume"})->isDefault()) {
     // Generate the VDF evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) &vdf_type "material_name.vdfEvaluate"() {
+    // @(visible) &vdf_type "material_name.vdfEval"() {
     //   return #bump(material_name().volume.scattering);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // The phase-function counterpart of 'volumeEvaluate': it copies
+    // The phase-function counterpart of 'volumeEval': it copies
     // only the VDF, so everything not feeding 'volume.scattering' is
     // dead-code eliminated, and the copy is what forces every field the
     // phase function reads to be computed. Renderers call this at a
     // collision inside a medium whose VDF varies from point to point,
-    // with the partial object-space state of 'volumeEvaluate' plus an
-    // allocator (see 'jit::MaterialDef::vdfEvaluate'). After
+    // with the partial object-space state of 'volumeEval' plus an
+    // allocator (see 'jit::MaterialDef::vdfEval'). After
     // optimization, 'deriveStaticMaterialFlags' in 'Compiler.cc'
     // inspects which 'State' fields the body still reads to derive the
     // static 'MATERIAL_HAS_HETEROGENEOUS_VDF' flag; the '#bump' reads
@@ -1964,8 +2323,8 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
     // 'vdf()', an empty struct, and the flag is settled structurally.
     Type *funcReturnType{context.getPointerType(vdfType)};
     llvm::Function *func{emitter.createFunction(
-        concat(symbolBase, ".vdfEvaluate"), /*isPure=*/false, funcReturnType,
-        {}, decl.srcLoc, [&] {
+        concat(symbolBase, ".vdfEval"), /*isPure=*/false, funcReturnType, {},
+        decl.srcLoc, [&] {
           emitter.emitReturn(
               emitter.emitIntrinsic(
                   "bump",
@@ -1978,7 +2337,7 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
-    jitMaterial.vdfEvaluate.name = func->getName().str();
+    jitMaterial.vdfEval.name = func->getName().str();
   }
   {
     // Generate the thin-walled probe, compile-time scaffolding that
@@ -2398,6 +2757,7 @@ void StructType::initialize(Emitter &emitter) {
   emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
   emitter.declare(decl.name, &decl, emitter.context.getComptimeMetaType(this));
   emitter.captureResolutionAnchor(params);
+  declScope = emitter.scope;
   // The interior declarations (static fields, inferred sizes in field
   // types) are popped from the chain on exit; the transparent scope pops
   // their map entries with them.
@@ -2458,6 +2818,70 @@ void StructType::initialize(Emitter &emitter) {
           [](auto &param) { return param.type->llvmType != nullptr; }))
     llvmType = llvm::StructType::create(
         emitter.context, params.getLLVMFieldTypes(), displayName);
+  // A distribution reports its lobes through '_lobes', which the
+  // dispatchers prune by and the host reads, so it has to declare it.
+  for (TagType *tagType : tags) {
+    auto isTag{[&](llvm::StringRef name) {
+      Value value{emitter.context.getKeyword(name)};
+      return value.isComptimeMetaType(emitter.context) &&
+             value.getComptimeMetaType(emitter.context, decl.srcLoc) == tagType;
+    }};
+    const bool isBSDF{isTag("bsdf")};
+    const bool isHairBSDF{isTag("hair_bsdf")};
+    if (!isBSDF && !isHairBSDF && !isTag("edf") && !isTag("vdf")) continue;
+    if (staticFields.contains("_lobes") ||
+        params.isAnyTrue([](auto &param) { return param.name == "_lobes"; })) {
+      if (Value lobes{staticFields.lookup("_lobes")};
+          isBSDF && tagType->defaultType != this && lobes.isComptimeInt() &&
+          lobes.getComptimeInt() == 0)
+        decl.srcLoc.logWarn(concat(
+            "Struct ", SpellQuoted(displayName), " with tag ",
+            SpellQuoted(tagType->displayName),
+            " declares \"_lobes\" as 0, so the host is told it scatters into "
+            "no lobe; declare the 'DF_' lobes it can scatter into"));
+    } else {
+      decl.srcLoc.throwError(
+          "Struct ", SpellQuoted(displayName), " with tag ",
+          SpellQuoted(tagType->displayName),
+          " declares no \"_lobes\", the 'DF_' lobes it can scatter into, "
+          "which the dispatchers prune by and the host reads\n  to declare "
+          "it: static const int _lobes = ",
+          isBSDF       ? "df::DF_MATTE_BRDF"
+          : isHairBSDF ? "df::DF_MATTE"
+                       : "0",
+          ";");
+    }
+    break;
+  }
+}
+
+void StructType::checkOpenImplementations(Emitter &emitter) {
+  for (TagType *tagType : tags)
+    for (FunctionType *func : tagType->openFunctions)
+      if (!func->decl.definition) func->checkImplementation(emitter, *this);
+  // A GLOSS lobe promises a normal distribution, which only the normal
+  // queries can expose: left to their defaults, a manifold walk finds none.
+  Value bsdf{emitter.context.getKeyword("bsdf")};
+  Value lobes{staticFields.lookup("_lobes")};
+  if (decl.srcLoc.module && !decl.srcLoc.module->isBuiltin() &&
+      bsdf.isComptimeMetaType(emitter.context) &&
+      isInstanceOf(bsdf.getComptimeMetaType(emitter.context, decl.srcLoc)) &&
+      lobes.isComptimeInt() && (lobes.getComptimeInt() & DF_GLOSS) != 0) {
+    llvm::SmallVector<FunctionType *> funcs{};
+    FunctionType::appendImplementations(emitter, *this, "normalDraw", funcs);
+    Type *selfType{emitter.context.getPointerType(this)};
+    if (llvm::none_of(funcs, [&](FunctionType *func) {
+          return !func->params.empty() &&
+                 FunctionType::paramAccepts(emitter.context,
+                                            func->params[0].type, selfType);
+        }))
+      decl.srcLoc.logWarn(concat(
+          "Struct ", SpellQuoted(displayName),
+          " declares a GLOSS lobe but implements no \"normalDraw\", so the "
+          "normal queries report no distribution for it; implement "
+          "\"normalDraw\", \"normalEval\", and \"normalAlpha\" to expose "
+          "it"));
+  }
 }
 
 StructType *

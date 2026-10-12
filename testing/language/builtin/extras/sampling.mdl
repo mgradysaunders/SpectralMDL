@@ -41,7 +41,7 @@ unit_test "The cosine hemisphere warp has the right mean" {
   auto xi(float2(0.5, 0.7));
   auto wiAverage(float3(0.0));
   for (int i = 0; i < 5000; i++, sampling::next_low_discrepancy(&xi)) {
-    wiAverage += sampling::cosine_hemisphere_sample(xi);
+    wiAverage += sampling::cosine_hemisphere_draw(xi);
   }
   wiAverage /= 5000;
   #assert(#all(wiAverage ~== |1e-3| float3(0.0, 0.0, 0.666)));

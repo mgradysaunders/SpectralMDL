@@ -1,0 +1,45 @@
+/// Shapes the `shapes` library does not know about, for
+/// `open_functions.mdl`, each implementing its contract in the module that
+/// declares it.
+#smdl
+
+import .::shapes::*;
+
+export struct Circle: shapes::shape {
+  float radius;
+};
+
+@(pure)
+export float area(const &Circle this) = 3.0 * this.radius * this.radius;
+
+// An implementation that is not exported.
+export struct Ellipse: shapes::shape {
+  float a;
+  float b;
+};
+
+@(pure)
+float area(const &Ellipse this) = 3.0 * this.a * this.b;
+
+// A struct template, whose instances find the template's implementation.
+export struct Ring: shapes::shape {
+  auto inner;
+  auto outer;
+};
+
+@(pure)
+export float area(const &Ring this) =
+  3.0 * (this.outer * this.outer - this.inner * this.inner);
+
+// Implementations in a namespace, one of them overriding the default.
+export namespace polygons {
+export struct Hexagon: shapes::shape {
+  float side;
+};
+
+@(pure)
+export float area(const &Hexagon this) = 2.5 * this.side * this.side;
+
+@(pure)
+export int sides(const &Hexagon this [[anno::unused()]]) = 6;
+}

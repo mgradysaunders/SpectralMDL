@@ -689,8 +689,18 @@ public:
 
   /// Emit struct declaration.
   Value emit(ast::Struct &decl) {
-    context.getStructType(&decl)->initialize(*this);
+    StructType *structType{context.getStructType(&decl)};
+    structType->initialize(*this);
+    declaredStructs.push_back(structType);
     return Value();
+  }
+
+  /// Check every struct this emitter declared against the open functions
+  /// its tags require, which is only possible once the module is compiled,
+  /// since an implementation may follow its struct anywhere in it.
+  void checkOpenImplementations() {
+    for (StructType *structType : declaredStructs)
+      structType->checkOpenImplementations(*this);
   }
 
   /// Emit tag declaration.
@@ -1391,6 +1401,9 @@ public:
 
   /// The intermediate declarations to potentially warn about later.
   llvm::SmallVector<Declaration *> declarationsToWarnAbout{};
+
+  /// The structs declared so far, for `checkOpenImplementations()`.
+  llvm::SmallVector<StructType *> declaredStructs{};
 
   /// The memory slots holding spilled rvalues, keyed by the LLVM value and
   /// the SMDL type (the same LLVM constant may stand for more than one).

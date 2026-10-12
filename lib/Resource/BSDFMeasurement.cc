@@ -222,8 +222,8 @@ float BSDFMeasurement::directionPDF(float3 wo, float3 wi) const noexcept {
   return pmf / (2.0f * dTheta * dPhi * sinThetai);
 }
 
-float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
-                                        float *pdf) const noexcept {
+float3 BSDFMeasurement::directionDraw(float2 xi, float3 wo,
+                                      float *pdf) const noexcept {
   if (pdf) *pdf = 0;
   if (distributions.empty()) return {};
   wo = normalize(wo);
@@ -234,7 +234,7 @@ float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
   const int iThetao{
       std::clamp(int(thetao * (2.0f / PI) * float(nTheta)), 0, nTheta - 1)};
   float pmf{};
-  const int2 i{distributions[iThetao].pixelSample(xi, &xi, &pmf)};
+  const int2 i{distributions[iThetao].pixelDraw(xi, &xi, &pmf)};
   if (!(pmf > 0)) return {};
   // Split the remapped azimuth sample into a mirror sign and a within-cell
   // offset, because the table only spans azimuth differences in `[0, pi]`.
@@ -286,10 +286,10 @@ void BSDFMeasurement::clear() noexcept {
 
 extern "C" {
 
-SMDL_EXPORT void smdBSDFMeasurementInterpolate(const void *measurement,
-                                               const smdl::float3 &wo,
-                                               const smdl::float3 &wi,
-                                               smdl::float3 *result) {
+SMDL_EXPORT void smdlBSDFMeasurementInterpolate(const void *measurement,
+                                                const smdl::float3 &wo,
+                                                const smdl::float3 &wi,
+                                                smdl::float3 *result) {
   if (result)
     *result = measurement
                   ? static_cast<const smdl::BSDFMeasurement *>(measurement)
@@ -297,26 +297,26 @@ SMDL_EXPORT void smdBSDFMeasurementInterpolate(const void *measurement,
                   : smdl::float3();
 }
 
-SMDL_EXPORT float smdBSDFMeasurementDirectionPDF(const void *measurement,
-                                                 const smdl::float3 &wo,
-                                                 const smdl::float3 &wi) {
+SMDL_EXPORT float smdlBSDFMeasurementDirectionPDF(const void *measurement,
+                                                  const smdl::float3 &wo,
+                                                  const smdl::float3 &wi) {
   return measurement ? static_cast<const smdl::BSDFMeasurement *>(measurement)
                            ->directionPDF(wo, wi)
                      : 0.0f;
 }
 
-SMDL_EXPORT void smdBSDFMeasurementDirectionSample(const void *measurement,
-                                                   const smdl::float2 &xi,
-                                                   const smdl::float3 &wo,
-                                                   smdl::float3 *wi,
-                                                   float *pdf) {
+SMDL_EXPORT void smdlBSDFMeasurementDirectionDraw(const void *measurement,
+                                                  const smdl::float2 &xi,
+                                                  const smdl::float3 &wo,
+                                                  smdl::float3 *wi,
+                                                  float *pdf) {
   if (!measurement) {
     if (wi) *wi = {};
     if (pdf) *pdf = 0.0f;
     return;
   }
   smdl::float3 w{static_cast<const smdl::BSDFMeasurement *>(measurement)
-                     ->directionSample(xi, wo, pdf)};
+                     ->directionDraw(xi, wo, pdf)};
   if (wi) *wi = w;
 }
 

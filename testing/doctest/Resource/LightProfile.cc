@@ -32,7 +32,7 @@ const char *quadrantIES = //
     "546.4 409.8 273.2\n"
     "409.8 273.2 136.6\n";
 
-// Check that `directionPDF` and `directionSample` are consistent with
+// Check that `directionPDF` and `directionDraw` are consistent with
 // each other and with `interpolate`:
 // 1. The PDF must integrate to one over the sphere.
 // 2. The PDF returned by sampling must agree with `directionPDF` at the
@@ -64,8 +64,7 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
   std::mt19937 prng{};
   for (int iter = 0; iter < 100; iter++) {
     float pdf{};
-    smdl::float3 w{
-        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    smdl::float3 w{profile.directionDraw(smdl::generateCanonical2(prng), &pdf)};
     REQUIRE(pdf > 0);
     CHECK(profile.directionPDF(w) == doctest::Approx(pdf).epsilon(1e-3));
   }
@@ -74,8 +73,7 @@ void checkDistributionConsistency(const smdl::LightProfile &profile) {
   const int n{100'000};
   for (int iter = 0; iter < n; iter++) {
     float pdf{};
-    smdl::float3 w{
-        profile.directionSample(smdl::generateCanonical2(prng), &pdf)};
+    smdl::float3 w{profile.directionDraw(smdl::generateCanonical2(prng), &pdf)};
     if (!(pdf > 0)) {
       numInvalid++;
       continue;
@@ -93,7 +91,7 @@ TEST_CASE("LightProfile: the IES symmetries and the sampling") {
     CHECK(!profile.isValid());
     CHECK(profile.directionPDF(smdl::float3(0, 0, 1)) == 0.0f);
     float pdf{1.0f};
-    smdl::float3 w{profile.directionSample(smdl::float2(0.5f, 0.5f), &pdf)};
+    smdl::float3 w{profile.directionDraw(smdl::float2(0.5f, 0.5f), &pdf)};
     CHECK(pdf == 0.0f);
     CHECK(w.x == 0.0f);
     CHECK(w.y == 0.0f);

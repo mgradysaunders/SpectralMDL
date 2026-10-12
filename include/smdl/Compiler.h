@@ -301,7 +301,7 @@ private:
   /// This is for diagnostics raised while emitting a `#load_*` intrinsic,
   /// which is not once per mention in the source: a material body is
   /// emitted once for each function `Type.cc` generates from it (the
-  /// `evaluate` and `opacityEvaluate` entry points and the probes), so a
+  /// `evaluate` and `opacityEval` entry points and the probes), so a
   /// `texture_2d("missing.png")` in a material would otherwise report the
   /// same warning several times over.
   ///
@@ -553,8 +553,8 @@ public:
   /// The scene data.
   SceneData sceneData{};
 
-  /// Enable the `scatterNormalEvaluate`, `scatterNormalSample`, and
-  /// `geometryNormalEvaluate` entry points?
+  /// Enable the `scatterNormalEval`, `scatterNormalDraw`, and
+  /// `geometryNormalEval` entry points?
   ///
   /// The first two answer for the normal distribution behind a GLOSS
   /// lobe, and the third reads the `geometry.normal` field itself; a
@@ -562,7 +562,7 @@ public:
   /// or normal-remapped interface or to do something else with a half
   /// vector. When false they are never emitted, so they cost no codegen,
   /// no optimizer time and no JIT compilation, and
-  /// `jit::MaterialDef::scatterNormalSample` stays null;
+  /// `jit::MaterialDef::scatterNormalDraw` stays null;
   /// `jit::Material` aborts with a message naming this flag if
   /// called anyway.
   ///

@@ -24,7 +24,7 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     std::mt19937 prng{};
     std::array<int, 4> histogram{};
     for (int iter = 0; iter < 100'000; iter++) {
-      int i = distr.indexSample(smdl::generateCanonical(prng));
+      int i = distr.indexDraw(smdl::generateCanonical(prng));
       histogram[i]++;
     }
     CHECK(histogram[0] * 1e-5 ==
@@ -41,11 +41,11 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     smdl::Distribution1D distr =
         smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 1.0f, 2.0f});
     float xiRemap{-1.0f};
-    CHECK(distr.indexSample(0.0f, &xiRemap) == 2);
+    CHECK(distr.indexDraw(0.0f, &xiRemap) == 2);
     CHECK(xiRemap >= 0.0f);
-    CHECK(distr.indexSample(1e-30f) == 2);
-    CHECK(distr.indexSample(0.5f) == 3);
-    CHECK(distr.indexSample(1.0f) == 3);
+    CHECK(distr.indexDraw(1e-30f) == 2);
+    CHECK(distr.indexDraw(0.5f) == 3);
+    CHECK(distr.indexDraw(1.0f) == 3);
   }
   SUBCASE("Distribution1D with all-zero values draws uniformly") {
     smdl::Distribution1D distr =
@@ -71,7 +71,7 @@ TEST_CASE("MonteCarlo: the piecewise-constant distributions") {
     std::mt19937 prng{};
     std::array<std::array<int, 4>, 2> histogram{};
     for (int iter = 0; iter < 1'000'000; iter++) {
-      smdl::int2 i = distr.pixelSample(smdl::generateCanonical2(prng));
+      smdl::int2 i = distr.pixelDraw(smdl::generateCanonical2(prng));
       histogram[i.y][i.x]++;
     }
     for (int iY = 0; iY < 2; iY++) {
@@ -100,14 +100,14 @@ TEST_CASE("MonteCarlo: the canonical sample helpers") {
       CHECK(std::isfinite(std::log1p(-xi)));
     }
   }
-  SUBCASE("uniformTriangleSample stays in the triangle") {
+  SUBCASE("uniformTriangleDraw stays in the triangle") {
     std::mt19937 prng{};
     bool isInside{true};
     smdl::float3 mean{};
     constexpr int NUM_SAMPLES{100'000};
     for (int iter = 0; iter < NUM_SAMPLES; iter++) {
       const smdl::float3 bary{
-          smdl::uniformTriangleSample(smdl::generateCanonical2(prng))};
+          smdl::uniformTriangleDraw(smdl::generateCanonical2(prng))};
       isInside &= bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f;
       isInside &= std::abs(bary.x + bary.y + bary.z - 1.0f) < 1e-5f;
       mean = mean + bary * (1.0f / float(NUM_SAMPLES));
@@ -184,10 +184,10 @@ TEST_CASE("MonteCarlo: the inverse error function") {
     }
     for (size_t i = 0; i < xis.size(); i += 8) {
       std::array<float, 8> samples{};
-      smdl::simd::standardNormalSample(float8::load(&xis[i]))
+      smdl::simd::standardNormalDraw(float8::load(&xis[i]))
           .store(samples.data());
       for (size_t j = 0; j < 8; j++)
-        isSame = isSame && samples[j] == smdl::standardNormalSample(xis[i + j]);
+        isSame = isSame && samples[j] == smdl::standardNormalDraw(xis[i + j]);
     }
     CHECK(isSame);
   }
@@ -239,12 +239,12 @@ TEST_CASE("MonteCarlo: the inverse error function") {
     CHECK(smdl::erfInverse(1.0f) < 4.0f);
     CHECK(smdl::erfInverse(-1.0f) == -smdl::erfInverse(1.0f));
     // Every canonical sample below 2^-25 rounds `2 xi - 1` to -1.
-    CHECK(smdl::standardNormalSample(0x1p-32f) < -5.0f);
+    CHECK(smdl::standardNormalDraw(0x1p-32f) < -5.0f);
   }
   SUBCASE("A standard normal sample from the tail of the unit interval is "
           "past three sigma") {
-    CHECK(smdl::standardNormalSample(0.9999f) > 3.7f);
-    CHECK(smdl::standardNormalSample(0.0001f) < -3.7f);
+    CHECK(smdl::standardNormalDraw(0.9999f) > 3.7f);
+    CHECK(smdl::standardNormalDraw(0.0001f) < -3.7f);
   }
 }
 
@@ -259,8 +259,7 @@ TEST_CASE("MonteCarlo: the cone by its versine") {
       CAPTURE(versine);
       for (const float xiX : {0.0f, 0.125f, 0.5f, 1.0f}) {
         for (const float xiY : {0.0f, 0.3f, 0.9f}) {
-          const smdl::float3 w{
-              smdl::uniformConeSampleVersine(versine, xiX, xiY)};
+          const smdl::float3 w{smdl::uniformConeDrawVersine(versine, xiX, xiY)};
           const double lengthSq{double(w.x) * double(w.x) +
                                 double(w.y) * double(w.y) +
                                 double(w.z) * double(w.z)};
@@ -269,7 +268,7 @@ TEST_CASE("MonteCarlo: the cone by its versine") {
         }
       }
     }
-    CHECK(smdl::uniformConeSampleVersine(0.25, 0.0, 0.7).z == 1.0);
+    CHECK(smdl::uniformConeDrawVersine(0.25, 0.0, 0.7).z == 1.0);
   }
   SUBCASE("The transverse components carry the angle of a cone the size "
           "of the sun's disk") {
@@ -279,7 +278,7 @@ TEST_CASE("MonteCarlo: the cone by its versine") {
     const float versine{1.0826e-5f};
     for (const float xiX : {1.0f / 3.0f, 0.5f, 0.999f}) {
       CAPTURE(xiX);
-      const smdl::float3 w{smdl::uniformConeSampleVersine(versine, xiX, 0.0f)};
+      const smdl::float3 w{smdl::uniformConeDrawVersine(versine, xiX, 0.0f)};
       const double drawn{double(xiX) * double(versine)};
       const double sinThetaSq{drawn * (2.0 - drawn)};
       CHECK(double(w.x) * double(w.x) ==
@@ -290,23 +289,23 @@ TEST_CASE("MonteCarlo: the cone by its versine") {
 
 TEST_CASE("MonteCarlo: the standard normal pair in double") {
   SUBCASE("The radius and the angle are the two samples'") {
-    const auto [x, y]{smdl::standardNormalSamplePair(std::exp(-0.5), 0.0)};
+    const auto [x, y]{smdl::standardNormalDrawPair(std::exp(-0.5), 0.0)};
     CHECK(x == doctest::Approx(1.0));
     CHECK(y == 0.0);
-    const auto [u, v]{smdl::standardNormalSamplePair(std::exp(-2.0), 0.25)};
+    const auto [u, v]{smdl::standardNormalDrawPair(std::exp(-2.0), 0.25)};
     CHECK(std::abs(u) < 1e-15);
     CHECK(v == doctest::Approx(2.0));
-    CHECK(smdl::standardNormalSamplePair(1.0, 0.4).first == 0.0);
+    CHECK(smdl::standardNormalDrawPair(1.0, 0.4).first == 0.0);
   }
   SUBCASE("The tail reaches where the single-precision sample cannot") {
-    CHECK(smdl::standardNormalSamplePair(1e-300, 0.0).first > 37.0);
+    CHECK(smdl::standardNormalDrawPair(1e-300, 0.0).first > 37.0);
   }
   SUBCASE("The moments are the standard normal's") {
     const int count{256};
     double sum{}, sumSq{}, sumCross{};
     for (int i = 0; i < count; i++) {
       for (int j = 0; j < count; j++) {
-        const auto [x, y]{smdl::standardNormalSamplePair(
+        const auto [x, y]{smdl::standardNormalDrawPair(
             (double(i) + 0.5) / count, (double(j) + 0.5) / count)};
         sum += x + y;
         sumSq += x * x + y * y;
@@ -348,7 +347,7 @@ namespace {
   std::vector<double> shares(size_t(table.size()), 0.0);
   for (int i = 0; i < count; i++) {
     const float xi{(float(i) + 0.5f) / float(count)};
-    const int index{table.indexSample(xi)};
+    const int index{table.indexDraw(xi)};
     REQUIRE(index >= 0);
     REQUIRE(index < table.size());
     shares[size_t(index)] += 1.0 / double(count);
@@ -437,5 +436,5 @@ TEST_CASE("MonteCarlo: degenerate alias tables are empty") {
   const smdl::AliasTable table{mixed};
   REQUIRE(table.size() == 3);
   for (int i = 0; i < (1 << 12); i++)
-    CHECK(table.indexSample((float(i) + 0.5f) / float(1 << 12)) == 1);
+    CHECK(table.indexDraw((float(i) + 0.5f) / float(1 << 12)) == 1);
 }

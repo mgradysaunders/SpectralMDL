@@ -181,6 +181,7 @@ std::optional<Error> Module::compile(Context &context) noexcept {
         context.currentNamespacePath.clear();
         Emitter emitter{context};
         emitter.emit(root_);
+        emitter.checkOpenImplementations();
         rootScope_ = emitter.scope;
         compileStatus_ = COMPILE_STATUS_FINISHED;
       } catch (const Error &error) {

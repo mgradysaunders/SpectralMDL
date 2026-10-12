@@ -42,7 +42,7 @@ export EvaluateResult evaluate(
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  if (df::_scatterEvaluate(
+  if (df::_scatterEval(
         &eval, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), lobeMask))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   return EvaluateResult();
@@ -90,7 +90,7 @@ export SampleResult sample(
   color f = color(0);
   int sampledLobe = 0;
   float lobeChanceOut = 1.0;
-  const auto success = df::_scatterSample(
+  const auto success = df::_scatterDraw(
     &eval,
     &xi1,
     &wo,
@@ -142,7 +142,7 @@ export NormalSampleResult normalSample(
   float3 wm = float3(0);
   float pdf = 0;
   float2 alpha = float2(0);
-  const auto success = df::_scatterNormalSample(
+  const auto success = df::_scatterNormalDraw(
     &eval, &xi1, int(backface), &wm, &pdf, &alpha, lobeMask);
   return NormalSampleResult(wm, pdf, alpha, bool(success));
 }
@@ -165,7 +165,7 @@ export float normalEvaluate(
   auto eval = _MaterialEval(&mat);
   eval.exteriorIOR = exterior_ior;
   float pdf = 0;
-  df::_scatterNormalEvaluate(&eval, int(backface), &wm, &pdf, lobeMask);
+  df::_scatterNormalEval(&eval, int(backface), &wm, &pdf, lobeMask);
   return pdf;
 }
 

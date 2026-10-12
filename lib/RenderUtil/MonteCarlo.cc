@@ -55,8 +55,8 @@ Distribution1D::Distribution1D(Span<const float> values) {
   }
 }
 
-int Distribution1D::indexSample(float xi, float *xiRemap,
-                                float *pmf) const noexcept {
+int Distribution1D::indexDraw(float xi, float *xiRemap,
+                              float *pmf) const noexcept {
   if (cmfs_.size() < 2) {
     if (pmf) *pmf = 1;
     return 0;
@@ -130,7 +130,7 @@ AliasTable::AliasTable(Span<const float> weights) {
   }
 }
 
-float2 uniformDiskSample(float2 xi) noexcept {
+float2 uniformDiskDraw(float2 xi) noexcept {
   xi = xi * 2.0f - float2(1.0f);
   xi.x = (xi.x == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.x;
   xi.y = (xi.y == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.y;
@@ -161,18 +161,18 @@ Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
   marginal_ = Distribution1D(margins);
 }
 
-int2 Distribution2D::pixelSample(float2 xi, float2 *xiRemap,
-                                 float *pmf) const noexcept {
+int2 Distribution2D::pixelDraw(float2 xi, float2 *xiRemap,
+                               float *pmf) const noexcept {
   if (numTexelsX_ == 0 || numTexelsY_ == 0) {
     if (pmf) *pmf = 1.0f;
     return {};
   } else {
     float pmfX{};
     float pmfY{};
-    int iY{marginal_.indexSample(xi.y, &xi.y, &pmfY)};
+    int iY{marginal_.indexDraw(xi.y, &xi.y, &pmfY)};
     SMDL_SANITY_CHECK(iY >= 0);
     SMDL_SANITY_CHECK(iY < int(conditionals_.size()));
-    int iX{conditionals_[iY].indexSample(xi.x, &xi.x, &pmfX)};
+    int iX{conditionals_[iY].indexDraw(xi.x, &xi.x, &pmfX)};
     if (xiRemap) *xiRemap = xi;
     if (pmf) *pmf = pmfX * pmfY;
     return {iX, iY};
@@ -202,11 +202,11 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
          (float(numTexelsX_ * numTexelsY_) / (TWO_PI * PI * sinTheta));
 }
 
-float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
-                                       float *pdf) const noexcept {
+float3 Distribution2D::directionDraw(float2 xi, int2 *iPixel,
+                                     float *pdf) const noexcept {
   if (iPixel) *iPixel = int2(-1, -1);
   if (pdf) *pdf = 0.0f;
-  const int2 i{pixelSample(xi, &xi)};
+  const int2 i{pixelDraw(xi, &xi)};
   const float phi{(float(i.x) + xi.x) * (TWO_PI / float(numTexelsX_))};
   const float theta{(float(i.y) + xi.y) * (PI / float(numTexelsY_))};
   const float cosTheta{std::cos(theta)};

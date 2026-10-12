@@ -124,7 +124,7 @@ class ManifoldGeometry final {
 public:
   /// The shading normal: the field the material's lobes actually
   /// scatter about, which for a material that remaps `geometry.normal`
-  /// is the remapped field (see `jit::MaterialDef::geometryNormalEvaluate`).
+  /// is the remapped field (see `jit::MaterialDef::geometryNormalEval`).
   float3 normal;
 
   /// The position partials over the face parameterization
@@ -152,7 +152,7 @@ public:
 /// the field the material's lobes actually scatter about, differentiated
 /// consistently with the position partials; a renderer whose material
 /// remaps the shading normal reads the remapped field back through
-/// `jit::MaterialDef::geometryNormalEvaluate` and differences it.
+/// `jit::MaterialDef::geometryNormalEval` and differences it.
 class SMDL_EXPORT ManifoldSurfaces {
 public:
   ManifoldSurfaces() = default;
@@ -831,7 +831,7 @@ template <typename DrawXi>
                                                DrawXi &&drawXi) {
   const int gloss{material.getLobes(isBackface) & DF_GLOSS};
   if (gloss == 0) return INFINITY;
-  if (!material.def->scatterNormalSample) return 0.0f;
+  if (!material.def->scatterNormalDraw) return 0.0f;
   // One glossy kind, per the hook's contract: the reflection kind when
   // the material has it and the transmission kind otherwise, since a
   // single reflect-transmit leaf reports the same lobe either way and a
@@ -841,7 +841,7 @@ template <typename DrawXi>
   float3 wm{};
   float pdf{};
   float2 alpha{};
-  if (!material.scatterNormalSample(drawXi(), isBackface, wm, pdf, alpha, kind))
+  if (!material.scatterNormalDraw(drawXi(), isBackface, wm, pdf, alpha, kind))
     return 0.0f;
   return std::sqrt(alpha.x * alpha.y);
 }

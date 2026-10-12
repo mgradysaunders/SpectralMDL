@@ -131,11 +131,11 @@ unit_test "A direction exactly on the macro normal is finite" {
   // undefined, so it must still spread over the distribution instead of
   // collapsing onto the macro normal itself.
   const float2 alpha = float2(0.09);
-  const auto wmBeckmann = df::microfacet::smith_visible_normal_sample(
+  const auto wmBeckmann = df::microfacet::smith_visible_normal_draw(
     df::microfacet::beckmann(), 0.7, 0.41, alpha, wz);
   #assert(math::length(wmBeckmann.xy) > 1.0e-3);
   const auto wmGGX =
-    df::microfacet::ggx_bounded_visible_normal_sample(0.7, 0.41, alpha, wz);
+    df::microfacet::ggx_bounded_visible_normal_draw(0.7, 0.41, alpha, wz);
   #assert(math::length(wmGGX.xy) > 1.0e-3);
 }
 
@@ -349,20 +349,20 @@ unit_test "A sampler at the pole returns the pole exactly" {
   // an epsilon inside the square root tilts every sample by up to a
   // milliradian, which is wider than the lobe itself at low roughness.
   const auto wmBlinn =
-    df::microfacet::blinn_normal_sample(0.3, 1.0, float2(2.0e6));
+    df::microfacet::blinn_normal_draw(0.3, 1.0, float2(2.0e6));
   #assert(math::length(wmBlinn.xy) < 1e-4);
   #assert(#all(math::isfinite(wmBlinn)));
   // Micrograin normal sampling: `xi0 = 0` maps exactly to the pole...
   const auto wmGrain0 =
-    df::micrograin::normal_sample(0.5, float2(1.0), 0.0, 0.3);
+    df::micrograin::normal_draw(0.5, float2(1.0), 0.0, 0.3);
   #assert(wmGrain0.z ~== |1e-6| 1.0);
   // ...and the `xi0 -> 1` tail runs gracefully onto the horizon instead
   // of being bent inward by an epsilon that the density reported by
   // `normal_pdf` knows nothing about.
   const auto wmGrain1 =
-    df::micrograin::normal_sample(0.5, float2(1.0), 0.99999994, 0.3);
+    df::micrograin::normal_draw(0.5, float2(1.0), 0.99999994, 0.3);
   #assert(#all(math::isfinite(wmGrain1)) & (wmGrain1.z >= 0.0));
   const auto wmGrain2 =
-    df::micrograin::normal_sample(0.5, float2(1.0), 1.0, 0.3);
+    df::micrograin::normal_draw(0.5, float2(1.0), 1.0, 0.3);
   #assert(#all(math::isfinite(wmGrain2)));
 }

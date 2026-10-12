@@ -100,7 +100,7 @@ unit_test "A Fresnel layer's density is its chance times its layer's" {
   auto xi2 = float2(0.3, 0.7);
   for (int k = 0; k < 16; k++, sampling::next_low_discrepancy(&xi2)) {
     const auto wi =
-      sampling::uniform_hemisphere_sample(xi2) * float3(1, 1, -1.0);
+      sampling::uniform_hemisphere_draw(xi2) * float3(1, 1, -1.0);
     const auto rBare =
       scatter::evaluate(layerB, wo, wi, false, float3(0, 0, 1), false, 1.8);
     const auto rLayered =

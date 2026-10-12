@@ -56,7 +56,7 @@ public:
   /// The direction Probability Density Function (PDF), with respect to
   /// solid angle over the sphere.
   ///
-  /// This is the exact density of `directionSample()`, which importance
+  /// This is the exact density of `directionDraw()`, which importance
   /// samples a piecewise-constant tabulation of `interpolate()`, so it is
   /// approximately proportional to the interpolated intensity.
   ///
@@ -71,8 +71,7 @@ public:
   /// \param[out] pdf
   /// If non-null, receives the associated PDF.
   ///
-  [[nodiscard]] float3 directionSample(float2 xi,
-                                       float *pdf = {}) const noexcept;
+  [[nodiscard]] float3 directionDraw(float2 xi, float *pdf = {}) const noexcept;
 
 public:
   /// The version string.
@@ -154,7 +153,7 @@ public:
   ///
   /// This is built on load by rasterizing `interpolate()` onto an
   /// equirectangular grid weighted by the sine of the zenith angle, and
-  /// backs `directionPDF()` and `directionSample()`.
+  /// backs `directionPDF()` and `directionDraw()`.
   ///
   Distribution2D distribution;
 };
@@ -183,16 +182,16 @@ extern "C" {
 SMDL_EXPORT float smdlLightProfileInterpolate(const void *profile,
                                               const smdl::float3 &wo);
 
-/// The solid-angle PDF over the sphere of `smdlLightProfileDirectionSample`
+/// The solid-angle PDF over the sphere of `smdlLightProfileDirectionDraw`
 /// sampling the given direction, or 0 if the profile is null.
 SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
                                                const smdl::float3 &wi);
 
 /// Importance sample the direction distribution of the given
 /// `smdl::LightProfile`.
-SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
-                                                 const smdl::float2 &xi,
-                                                 smdl::float3 *wi, float *pdf);
+SMDL_EXPORT void smdlLightProfileDirectionDraw(const void *profile,
+                                               const smdl::float2 &xi,
+                                               smdl::float3 *wi, float *pdf);
 
 /// \}
 

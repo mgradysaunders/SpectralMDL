@@ -34,7 +34,7 @@ struct SunSkyOptions final {
   /// 0.1 to recover the MODTRAN-native W/(cm^2 sr um).
   float scaleFactor{1.0f};
 
-  /// Include the direct sun disk in `radiance()`, `sample()`, `pdf()`,
+  /// Include the direct sun disk in `radiance()`, `draw()`, `pdf()`,
   /// and `averageRadiance()`? The sky dome is unaffected either way.
   bool isSunEnabled{true};
 
@@ -42,7 +42,7 @@ struct SunSkyOptions final {
   /// sky radiance is subtracted from the tabulated density (clamped at
   /// zero), so light sampling stops spending samples where BSDF
   /// sampling already covers well (Karlík et al., SIGGRAPH Asia 2019).
-  /// The pdf reported by `sample()` and `pdf()` is the true density
+  /// The pdf reported by `draw()` and `pdf()` is the true density
   /// actually sampled from, so the estimator stays unbiased.
   bool isMISCompensationEnabled{true};
 
@@ -266,9 +266,9 @@ public:
   ///                  in solid angle, i.e., exactly `pdf()` of the
   ///                  returned direction.
   ///
-  [[nodiscard]] float3 sample(float2 xi, float *pdf = {}) const noexcept;
+  [[nodiscard]] float3 draw(float2 xi, float *pdf = {}) const noexcept;
 
-  /// The solid-angle density `sample()` realizes in `direction`, for
+  /// The solid-angle density `draw()` realizes in `direction`, for
   /// multiple importance sampling. The direction must be normalized.
   [[nodiscard]] float pdf(const float3 &direction) const noexcept;
 
@@ -297,9 +297,7 @@ public:
                                              double distanceScale = 1.0);
 
 private:
-  /// The scale factor applied to every radiance output, which is
-  /// `SunSkyOptions::scaleFactor`: the fit tables are already in
-  /// W/(m^2 sr nm), so nothing else rides along.
+  /// The scale factor applied to every radiance output.
   float scaleFactor_{1.0f};
 
   /// The scale factor applied to the sun disk, which is `scaleFactor`
@@ -376,7 +374,7 @@ private:
   /// it baked in already.
   std::vector<float> channelScale_{};
 
-  /// The probability of `sample()` picking the sun disk.
+  /// The probability of `draw()` picking the sun disk.
   float sunSelectionChance_{};
 
   /// The sampling distribution over the sky dome, possibly

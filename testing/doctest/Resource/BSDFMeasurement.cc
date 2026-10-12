@@ -69,7 +69,7 @@ float thetaCenter(int i) {
 // The azimuth-difference cell-center angle for the given index.
 float phiCenter(int i) { return smdl::PI * (float(i) + 0.5f) / float(N_PHI); }
 
-// Check that `directionPDF` and `directionSample` are consistent with each
+// Check that `directionPDF` and `directionDraw` are consistent with each
 // other and with `interpolate` for the given outgoing direction:
 // 1. The PDF must integrate to one over the upper hemisphere.
 // 2. The PDF returned by sampling must agree with `directionPDF` at the
@@ -102,7 +102,7 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
   for (int iter = 0; iter < 100; iter++) {
     float pdf{};
     smdl::float3 wi{
-        measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
+        measured.directionDraw(smdl::generateCanonical2(prng), wo, &pdf)};
     REQUIRE(pdf > 0);
     CHECK(measured.directionPDF(wo, wi) == doctest::Approx(pdf).epsilon(1e-3));
   }
@@ -112,7 +112,7 @@ void checkDistributionConsistency(const smdl::BSDFMeasurement &measured,
   for (int iter = 0; iter < n; iter++) {
     float pdf{};
     smdl::float3 wi{
-        measured.directionSample(smdl::generateCanonical2(prng), wo, &pdf)};
+        measured.directionDraw(smdl::generateCanonical2(prng), wo, &pdf)};
     if (!(pdf > 0)) {
       numInvalid++;
       continue;
@@ -131,8 +131,8 @@ TEST_CASE("BSDFMeasurement: the two formats and the sampling they agree on") {
     CHECK(measured.directionPDF(smdl::float3(0, 0, 1), smdl::float3(0, 0, 1)) ==
           0.0f);
     float pdf{1.0f};
-    smdl::float3 wi{measured.directionSample(smdl::float2(0.5f, 0.5f),
-                                             smdl::float3(0, 0, 1), &pdf)};
+    smdl::float3 wi{measured.directionDraw(smdl::float2(0.5f, 0.5f),
+                                           smdl::float3(0, 0, 1), &pdf)};
     CHECK(pdf == 0.0f);
     CHECK(wi.z == 0.0f);
   }

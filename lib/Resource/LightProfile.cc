@@ -484,12 +484,12 @@ float LightProfile::directionPDF(float3 wi) const noexcept {
   return distribution.directionPDF(wi);
 }
 
-float3 LightProfile::directionSample(float2 xi, float *pdf) const noexcept {
+float3 LightProfile::directionDraw(float2 xi, float *pdf) const noexcept {
   if (distribution.getNumTexelsX() == 0) {
     if (pdf) *pdf = 0;
     return {};
   }
-  return distribution.directionSample(xi, /*iPixel=*/nullptr, pdf);
+  return distribution.directionDraw(xi, /*iPixel=*/nullptr, pdf);
 }
 
 } // namespace smdl
@@ -508,17 +508,16 @@ SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
   return static_cast<const smdl::LightProfile *>(profile)->directionPDF(wi);
 }
 
-SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
-                                                 const smdl::float2 &xi,
-                                                 smdl::float3 *wi, float *pdf) {
+SMDL_EXPORT void smdlLightProfileDirectionDraw(const void *profile,
+                                               const smdl::float2 &xi,
+                                               smdl::float3 *wi, float *pdf) {
   if (!profile) {
     if (wi) *wi = {};
     if (pdf) *pdf = 0.0f;
     return;
   }
   smdl::float3 w{
-      static_cast<const smdl::LightProfile *>(profile)->directionSample(xi,
-                                                                        pdf)};
+      static_cast<const smdl::LightProfile *>(profile)->directionDraw(xi, pdf)};
   if (wi) *wi = w;
 }
 

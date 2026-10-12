@@ -309,8 +309,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     }
     // Sampling machinery stays functional under the tiny radiances.
     float samplePDF{};
-    const smdl::float3 wi{
-        moonSky.sample(smdl::float2(0.37f, 0.61f), &samplePDF)};
+    const smdl::float3 wi{moonSky.draw(smdl::float2(0.37f, 0.61f), &samplePDF)};
     CHECK(smdl::lengthSquared(wi) == doctest::Approx(1.0f));
     CHECK(samplePDF > 0.0f);
     CHECK(moonSky.averageRadiance() > 0.0f);
@@ -325,7 +324,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
     CHECK(newMoon.averageRadiance() == 0.0f);
   }
   SUBCASE("Sampling agrees with the reported density") {
-    // For each compensation setting, `sample()` must agree with
+    // For each compensation setting, `draw()` must agree with
     // `pdf()`, and the Monte Carlo estimate of the radiance integral
     // must match quadrature over the support of the pdf: the smooth
     // sky part by Riemann sum, the sun disk analytically (it is far
@@ -380,7 +379,7 @@ TEST_CASE("SunSky: the fitted radiances against their generator") {
       for (int s = 0; s < numSamples; s++) {
         float samplePDF{};
         const smdl::float3 wi{
-            sunSky.sample(smdl::generateCanonical2(prng), &samplePDF)};
+            sunSky.draw(smdl::generateCanonical2(prng), &samplePDF)};
         REQUIRE(samplePDF > 0.0f);
         CHECK(smdl::lengthSquared(wi) == doctest::Approx(1.0f));
         const float checkPDF{sunSky.pdf(wi)};

@@ -11,6 +11,8 @@ namespace smdl {
 
 class ArithmeticType;
 
+class StructType;
+
 class TagType;
 
 enum class TypeKind : uint32_t {
@@ -831,6 +833,13 @@ public:
   /// Is marked with the attribute `@(foreign)`?
   [[nodiscard]] bool isForeign() const { return decl.hasAttribute("foreign"); }
 
+  /// Is marked with the attribute `@(open)`? A call to an overload set
+  /// holding an open declaration also considers the same-named functions
+  /// declared beside the struct type of its dispatch argument (see
+  /// `resolveOverload`). An open declaration with no definition is the
+  /// contract alone, which an implementation must take the place of.
+  [[nodiscard]] bool isOpen() const { return decl.hasAttribute("open"); }
+
   /// Does this function use the indirect ('byval' pointer) convention for
   /// large aggregate parameters? Both the callee signature
   /// (`FunctionType::getInstance`) and every call site
@@ -856,9 +865,39 @@ public:
   }
 
   /// Resolve overload.
+  ///
+  /// \param[out] contract
+  /// If non-null, receives the open declaration the call dispatched
+  /// through when the overload resolved to is an implementation of it from
+  /// another module, so that the caller can hold the implementation to it.
   [[nodiscard]] FunctionType *resolveOverload(Emitter &emitter,
                                               const ArgumentList &args,
-                                              const SourceLocation &srcLoc);
+                                              const SourceLocation &srcLoc,
+                                              FunctionType **contract = {});
+
+  /// Check that `structType`, which carries the tag this open declaration
+  /// with no definition takes, has an implementation of it, throwing an
+  /// error that says what to declare if not.
+  void checkImplementation(Emitter &emitter, StructType &structType);
+
+  /// Does a parameter of type `typeA` accept every argument that one of
+  /// type `typeB` does? Implicit convertibility answers this for a concrete
+  /// `typeB`, but an abstract type converts to nothing, so a struct
+  /// template is compared to the tags it carries directly, through any
+  /// depth of pointers.
+  [[nodiscard]] static bool paramAccepts(Context &context, Type *typeA,
+                                         Type *typeB);
+
+  /// Append the overload set named `name` declared beside `structType`:
+  /// the nearest declaration of the name, searching outward from where the
+  /// struct is declared, provided it is a function declared in the
+  /// struct's own module. Anything else, an import included, ends the
+  /// search. This is where a call to an open function looks for the
+  /// implementations for a type.
+  static void
+  appendImplementations(Emitter &emitter, StructType &structType,
+                        std::string_view name,
+                        llvm::SmallVectorImpl<FunctionType *> &funcs);
 
   /// An instance with concrete types and a concrete LLVM function.
   struct Instance final {
@@ -1131,6 +1170,12 @@ public:
   static StructType *getCommonSiblingInstance(Context &context, Type *typeA,
                                               Type *typeB);
 
+  /// Check that this struct, which `Emitter::checkOpenImplementations()`
+  /// visits once its module is compiled, implements every open function
+  /// its tags require, and warn where it promises what it does not
+  /// implement.
+  void checkOpenImplementations(Emitter &emitter);
+
   /// Is instantiation of the given type?
   ///
   /// \returns
@@ -1178,6 +1223,11 @@ public:
 
   /// The tags.
   llvm::SmallVector<TagType *> tags{};
+
+  /// The scope the struct is declared in, where a call to an open function
+  /// looks for the implementations for it. Set on the abstract struct only,
+  /// so read it through `getInstanceOf()`.
+  Scope *declScope{};
 
   /// A constructor.
   class Constructor final {
@@ -1247,6 +1297,12 @@ public:
 public:
   /// The default type. This may be null!
   Type *defaultType{};
+
+  /// The open functions declared on this tag, whose first parameter is the
+  /// tag or a pointer to it, in declaration order. A struct carrying the
+  /// tag is held to those with no definition (see
+  /// `FunctionType::checkImplementation()`).
+  llvm::SmallVector<FunctionType *> openFunctions{};
 };
 
 /// A union type.

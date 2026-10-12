@@ -43,7 +43,7 @@ inline constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
 /// \note
 /// The back side only actually emits if the material is also thin-walled,
 /// which may only be knowable at runtime. See
-/// `jit::MaterialDef::emissionEvaluate`.
+/// `jit::MaterialDef::emissionEval`.
 ///
 inline constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
 
@@ -62,7 +62,7 @@ inline constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 /// \note
 /// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the body of
-/// `jit::MaterialDef::volumeEvaluate` still reads, so it degrades to unknown
+/// `jit::MaterialDef::volumeEval` still reads, so it degrades to unknown
 /// at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags` never sets it.
 /// See `jit::MaterialDef::hasHomogeneousCoefficients()` for the
 /// conservative reading and the contract.
@@ -105,7 +105,7 @@ inline constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// \note
 /// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the body of
-/// `jit::MaterialDef::vdfEvaluate` still reads, so it degrades to unknown
+/// `jit::MaterialDef::vdfEval` still reads, so it degrades to unknown
 /// at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags` never sets it.
 /// See `jit::MaterialDef::hasHomogeneousVDF()` for the conservative
 /// reading and the contract.
@@ -118,8 +118,8 @@ inline constexpr int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 /// \note
 /// This bit only ever appears in `jit::MaterialDef::staticFlags`: it is
 /// derived after optimization from which `State` fields the bodies of
-/// `jit::MaterialDef::evaluate`, `jit::MaterialDef::opacityEvaluate`, and
-/// `jit::MaterialDef::geometryNormalEvaluate` still read, so it degrades
+/// `jit::MaterialDef::evaluate`, `jit::MaterialDef::opacityEval`, and
+/// `jit::MaterialDef::geometryNormalEval` still read, so it degrades
 /// to unknown at `OPT_LEVEL_NONE` and `jit::MaterialDef::Eval::flags`
 /// never sets it. See `jit::MaterialDef::canReadCurvature()` for the
 /// conservative reading.
@@ -366,7 +366,7 @@ public:
   /// Provably opaque: the cutout opacity is the compile-time constant 1
   /// and the material is not a null interface, so a hit on it blocks a
   /// shadow query outright, with no material work. Nothing to sample,
-  /// nothing to pass through: neither `opacityEvaluate` nor an evaluation
+  /// nothing to pass through: neither `opacityEval` nor an evaluation
   /// is ever needed at it. This is a statement about hits, not
   /// interiors: a shadow segment that STARTS inside this material's
   /// volume still integrates that medium, and `hasVolume()` is that
@@ -397,10 +397,10 @@ public:
   /// read nothing of the `State` that varies from point to point inside a
   /// medium instance, so the coefficient spectra captured by the `Eval`
   /// at the boundary are exact everywhere in the interior and
-  /// `volumeEvaluate` never needs to be called. When this returns false
+  /// `volumeEval` never needs to be called. When this returns false
   /// the coefficients are heterogeneous *or unproven*, and hosts must
   /// treat them as heterogeneous: sample the interior through
-  /// `volumeEvaluate` against the majorants (see
+  /// `volumeEval` against the majorants (see
   /// `Eval::maxScatteringCoefficient`).
   ///
   /// Point-independent is not state-independent. The coefficients may
@@ -421,10 +421,10 @@ public:
   /// the `State` that varies from point to point inside a medium
   /// instance, so the VDF the `Eval` captured at the boundary
   /// (`Eval::volumeScattering`, wrapped by `Material::getVDF()`) is exact
-  /// at every collision in the interior and `vdfEvaluate` never needs to
+  /// at every collision in the interior and `vdfEval` never needs to
   /// be called. When this returns false the VDF is heterogeneous *or
   /// unproven*, and hosts must treat it as heterogeneous: evaluate it at
-  /// the collision through `vdfEvaluate` and scatter with the `VDF` that
+  /// the collision through `vdfEval` and scatter with the `VDF` that
   /// comes back.
   ///
   /// Point-independent is not state-independent, exactly as for
@@ -447,7 +447,7 @@ public:
   /// constant zero vector, so hosts that apply displacement to geometry
   /// at load time may skip this material without evaluating anything.
   /// When this returns false the displacement is non-zero *or unproven*,
-  /// and hosts must query it per point through `displacementEvaluate`.
+  /// and hosts must query it per point through `displacementEval`.
   [[nodiscard]] bool hasZeroDisplacement() const noexcept {
     return (staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0 &&
            (staticFlags & MATERIAL_HAS_DISPLACEMENT) == 0;
@@ -457,7 +457,7 @@ public:
   /// not provably the state's own. When this returns true the remap is
   /// real *or unproven*, and a host that differentiates the shading
   /// normal field must read the field itself through
-  /// `geometryNormalEvaluate`; reading it for a material that turns out
+  /// `geometryNormalEval`; reading it for a material that turns out
   /// not to remap returns the state normal and costs only the query.
   [[nodiscard]] bool canRemapNormal() const noexcept {
     return (staticFlagsKnown & MATERIAL_REMAPS_NORMAL) == 0 ||
@@ -543,7 +543,7 @@ public:
     /// This is the coefficient expression at the surface hit. For
     /// heterogeneous coefficients (see
     /// `MaterialDef::hasHomogeneousCoefficients()`), interior sampling
-    /// must go through `MaterialDef::volumeEvaluate` instead.
+    /// must go through `MaterialDef::volumeEval` instead.
     ///
     const float *absorptionCoefficient{};
 
@@ -588,7 +588,7 @@ public:
     /// adds per unit length, in `W/(m^2 sr nm)` per meter, converted
     /// with `State::metersPerSceneUnit` like the scattering
     /// coefficients. Evaluated at the surface hit; heterogeneous
-    /// interiors re-query per point through `MaterialDef::volumeEvaluate`.
+    /// interiors re-query per point through `MaterialDef::volumeEval`.
     const float *volumeEmissionIntensity{};
 
     /// The VDF (`material_volume.scattering`) of the instance, opaque to
@@ -597,7 +597,7 @@ public:
     /// empty struct whose phase function reports zero. This is the VDF at
     /// the surface hit, which for a point-dependent VDF (see
     /// `MaterialDef::hasHomogeneousVDF()`) a collision in the interior
-    /// replaces with its own through `MaterialDef::vdfEvaluate`.
+    /// replaces with its own through `MaterialDef::vdfEval`.
     const void *volumeScattering{};
 
     /// The `surface` emission intensity, or null if the `surface` has no
@@ -676,7 +676,7 @@ public:
   /// (a null interface needs no opacity either, it passes through
   /// unconditionally).
   ///
-  Function<float(State &state)> opacityEvaluate{};
+  Function<float(State &state)> opacityEval{};
 
   /// The displacement evaluate function.
   ///
@@ -690,7 +690,7 @@ public:
   /// `hasZeroDisplacement()` for skipping materials that provably never
   /// displace.
   ///
-  Function<void(State &state, float3 &displacement)> displacementEvaluate{};
+  Function<void(State &state, float3 &displacement)> displacementEval{};
 
   /// The volume evaluate function.
   ///
@@ -719,7 +719,7 @@ public:
   /// `state::position()`.
   ///
   Function<void(State &state, float *sigmaA, float *sigmaS, float *emission)>
-      volumeEvaluate{};
+      volumeEval{};
 
   /// The VDF evaluate function.
   ///
@@ -734,7 +734,7 @@ public:
   /// so `state.allocator` must be set. This is the per-collision query a
   /// host makes inside a medium whose VDF is not provably
   /// point-independent (`hasHomogeneousVDF()`); the state contract is that
-  /// of `volumeEvaluate`, the query point in `position` in the object
+  /// of `volumeEval`, the query point in `position` in the object
   /// space of the instance plus the render-wide fields.
   ///
   /// \note
@@ -742,7 +742,7 @@ public:
   /// material has the default `vdf()`, whose phase function is zero and
   /// which its `Eval::volumeScattering` already points at.
   ///
-  Function<const void *(State &state)> vdfEvaluate{};
+  Function<const void *(State &state)> vdfEval{};
 
   /// The scatter evaluate function.
   ///
@@ -758,7 +758,7 @@ public:
   ///
   Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
                float &pdfFwd, float &pdfRev, float *f, int lobeMask)>
-      scatterEvaluate{};
+      scatterEval{};
 
   /// The scatter sample function.
   ///
@@ -783,13 +783,13 @@ public:
   /// keeps, so `lobeChance` is the only way back to what the whole BSDF
   /// would have done. A caller weighing a masked result against a strategy
   /// that samples the whole BSDF needs it, and for a Dirac lobe there is
-  /// no other source, since `scatterEvaluate` reports zero there at
+  /// no other source, since `scatterEval` reports zero there at
   /// every mask. Exactly 1 when nothing chose.
   ///
   Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
                float &pdfFwd, float &pdfRev, float *f, int &lobe, int lobeMask,
                float &lobeChance)>
-      scatterSample{};
+      scatterDraw{};
 
   /// The scatter normal evaluate function.
   ///
@@ -801,7 +801,7 @@ public:
   ///
   /// \return `true` if the PDF is non-zero.
   ///
-  /// The density with which `scatterNormalSample` draws `wm` on the same
+  /// The density with which `scatterNormalDraw` draws `wm` on the same
   /// side. See it for the contract.
   ///
   /// \note
@@ -810,7 +810,7 @@ public:
   ///
   Function<int(const Eval &eval, int isBackface, const float3 &wm, float &pdf,
                int lobeMask)>
-      scatterNormalEvaluate{};
+      scatterNormalEval{};
 
   /// The scatter normal sample function.
   ///
@@ -829,8 +829,8 @@ public:
   /// GLOSS lobe, which is what `DF_GLOSS_BRDF` promises exists and this
   /// is how a caller reaches. A host solving a manifold constraint through
   /// a rough interface needs a half vector it can draw and weigh; this and
-  /// `scatterNormalEvaluate` are that, and nothing more. What such an
-  /// estimator is worth is `scatterEvaluate` at the directions the
+  /// `scatterNormalEval` are that, and nothing more. What such an
+  /// estimator is worth is `scatterEval` at the directions the
   /// constraint resolves to.
   ///
   /// A normal query carries no outgoing direction, so the side is an
@@ -853,10 +853,10 @@ public:
   /// solve then changes.
   ///
   /// `pdf` is mixed over every lobe the mask keeps that could have
-  /// produced `wm`, and is exactly what `scatterNormalEvaluate` reports at
+  /// produced `wm`, and is exactly what `scatterNormalEval` reports at
   /// the same directions. That identity is the one property a caller's
   /// correctness may rest on: it is what makes the pair a usable proposal.
-  /// It is NOT in general the density `scatterEvaluate` divides out,
+  /// It is NOT in general the density `scatterEval` divides out,
   /// though the microfacet lobes match that too. `alpha` lets a host
   /// decide whether an interface is smooth enough to be worth constraining
   /// without a second query.
@@ -867,7 +867,7 @@ public:
   ///
   Function<int(const Eval &eval, const float4 &xi, int isBackface, float3 &wm,
                float &pdf, float2 &alpha, int lobeMask)>
-      scatterNormalSample{};
+      scatterNormalDraw{};
 
   /// The geometry normal evaluate function.
   ///
@@ -887,7 +887,7 @@ public:
   /// Null unless `Compiler::shouldEmitScatterNormal` was set before
   /// `compile()`, like the two normal distribution hooks above.
   ///
-  Function<void(State &state, float3 &normal)> geometryNormalEvaluate{};
+  Function<void(State &state, float3 &normal)> geometryNormalEval{};
 
   /// The emission evaluate function.
   ///
@@ -912,7 +912,7 @@ public:
   /// side, else `surface.emission` mirrored.
   ///
   Function<int(const Eval &eval, const float3 &we, float &pdf, float *Le)>
-      emissionEvaluate{};
+      emissionEval{};
 
   /// The emission sample function.
   ///
@@ -926,18 +926,18 @@ public:
   ///
   Function<int(const Eval &eval, const float4 &xi, float3 &we, float &pdf,
                float *Le)>
-      emissionSample{};
+      emissionDraw{};
 
   /// The volume scatter evaluate function.
   ///
   /// \param[in] vdf   The VDF: `Eval::volumeScattering`, or what
-  ///                  `vdfEvaluate` returned at a collision.
+  ///                  `vdfEval` returned at a collision.
   /// \param[in] wo    The outgoing direction in world space.
   /// \param[in] wi    The incoming direction in world space.
   ///
   /// \return The phase function, or zero if the material has no volume
   /// scattering. It is normalized over the sphere and so is also the
-  /// solid-angle PDF of `volumeScatterSample`.
+  /// solid-angle PDF of `volumeScatterDraw`.
   ///
   /// The VDF rather than the `Eval`, unlike every other scattering entry
   /// point, so that a host inside a medium whose VDF varies from point to
@@ -945,11 +945,11 @@ public:
   /// `VDF`, which binds the pointer.
   ///
   Function<float(const void *vdf, const float3 &wo, const float3 &wi)>
-      volumeScatterEvaluate{};
+      volumeScatterEval{};
 
   /// The volume scatter sample function.
   ///
-  /// \param[in]  vdf   The VDF, see `volumeScatterEvaluate`.
+  /// \param[in]  vdf   The VDF, see `volumeScatterEval`.
   /// \param[in]  xi    The canonical random sample.
   /// \param[in]  wo    The outgoing direction in world space.
   /// \param[out] wi    The incoming direction in world space.
@@ -960,7 +960,7 @@ public:
   ///
   Function<float(const void *vdf, const float4 &xi, const float3 &wo,
                  float3 &wi)>
-      volumeScatterSample{};
+      volumeScatterDraw{};
 
   /// The hair scatter evaluate function.
   ///
@@ -990,7 +990,7 @@ public:
   ///
   Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
                float &pdfFwd, float &pdfRev, float *f)>
-      hairScatterEvaluate{};
+      hairScatterEval{};
 
   /// The hair scatter sample function.
   ///
@@ -1005,20 +1005,20 @@ public:
   /// \return `true` if the result is non-zero.
   ///
   /// \note
-  /// See `hairScatterEvaluate` for the state contract at a hair hit. There
+  /// See `hairScatterEval` for the state contract at a hair hit. There
   /// are no Dirac hair distributions and no lobe taxonomy for hair, so this
   /// reports neither a sampled lobe nor a Dirac flag.
   ///
   Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
                float &pdfFwd, float &pdfRev, float *f)>
-      hairScatterSample{};
+      hairScatterDraw{};
 };
 
 /// A material definition together with one VDF of it, which is what a host
 /// scatters with at a volume vertex: the VDF the instance captured at the
 /// boundary (`Material::getVDF()`) when the definition proves it
 /// point-independent (`MaterialDef::hasHomogeneousVDF()`), else the VDF
-/// evaluated at the collision through `MaterialDef::vdfEvaluate`.
+/// evaluated at the collision through `MaterialDef::vdfEval`.
 ///
 /// Each function wraps the like-named phase entry point of the definition
 /// with `ptr` bound, the way `Material` wraps its own.
@@ -1027,20 +1027,20 @@ public:
   VDF() = default;
 
   /// Wrap the VDF `ptr` of the given definition, which is an
-  /// `Eval::volumeScattering` or a result of `MaterialDef::vdfEvaluate`.
+  /// `Eval::volumeScattering` or a result of `MaterialDef::vdfEval`.
   VDF(const MaterialDef *def, const void *ptr) noexcept : def(def), ptr(ptr) {}
 
   /// Evaluate the VDF at the given state through
-  /// `MaterialDef::vdfEvaluate`, allocating from `state.allocator`. The
+  /// `MaterialDef::vdfEval`, allocating from `state.allocator`. The
   /// definition must have a volume (`MaterialDef::hasVolume()`), the entry
   /// point being null otherwise.
   explicit VDF(State &state, const MaterialDef *def) : def(def) {
     SMDL_SANITY_CHECK(def);
-    SMDL_SANITY_CHECK_MSG(bool(def->vdfEvaluate),
-                          "'vdfEvaluate' is emitted only for a material "
+    SMDL_SANITY_CHECK_MSG(bool(def->vdfEval),
+                          "'vdfEval' is emitted only for a material "
                           "with a volume; see 'hasVolume()'");
     SMDL_DEBUG_CHECK(state.allocator);
-    ptr = def->vdfEvaluate(state);
+    ptr = def->vdfEval(state);
     SMDL_SANITY_CHECK(ptr);
   }
 
@@ -1051,12 +1051,12 @@ public:
   ///
   /// \return The phase function, or zero if the material has no volume
   /// scattering. It is normalized over the sphere and so is also the
-  /// solid-angle PDF of `sample()`.
+  /// solid-angle PDF of `draw()`.
   ///
-  [[nodiscard]] SMDL_ALWAYS_INLINE float evaluate(const float3 &wo,
-                                                  const float3 &wi) const {
+  [[nodiscard]] SMDL_ALWAYS_INLINE float eval(const float3 &wo,
+                                              const float3 &wi) const {
     SMDL_DEBUG_CHECK(def && ptr);
-    return def->volumeScatterEvaluate(ptr, wo, wi);
+    return def->volumeScatterEval(ptr, wo, wi);
   }
 
   /// Sample the phase function.
@@ -1070,9 +1070,9 @@ public:
   /// `wi`, so the implied throughput weight is always 1.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE float
-  sample(const float4 &xi, const float3 &wo, float3 &wi) const {
+  draw(const float4 &xi, const float3 &wo, float3 &wi) const {
     SMDL_DEBUG_CHECK(def && ptr);
-    return def->volumeScatterSample(ptr, xi, wo, wi);
+    return def->volumeScatterDraw(ptr, xi, wo, wi);
   }
 
 public:
@@ -1300,12 +1300,11 @@ public:
   /// \return `true` if the result is non-zero.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterEvaluate(const float3 &wo, const float3 &wi, float &pdfFwd,
-                  float &pdfRev, Span<float> f, int lobeMask = DF_ALL) const {
+  scatterEval(const float3 &wo, const float3 &wi, float &pdfFwd, float &pdfRev,
+              Span<float> f, int lobeMask = DF_ALL) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->scatterEvaluate(eval, wo, wi, pdfFwd, pdfRev, f.data(),
-                                lobeMask);
+    return def->scatterEval(eval, wo, wi, pdfFwd, pdfRev, f.data(), lobeMask);
   }
 
   /// The scatter sample function.
@@ -1323,19 +1322,19 @@ public:
   ///
   /// \return `true` if the result is non-zero.
   ///
-  /// See `MaterialDef::scatterSample` for the Dirac PDFs and for what
+  /// See `MaterialDef::scatterDraw` for the Dirac PDFs and for what
   /// `lobeChance` is for.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterSample(const float4 &xi, const float3 &wo, float3 &wi, float &pdfFwd,
-                float &pdfRev, Span<float> f, int &lobe, int lobeMask = DF_ALL,
-                float *lobeChance = nullptr) const {
+  scatterDraw(const float4 &xi, const float3 &wo, float3 &wi, float &pdfFwd,
+              float &pdfRev, Span<float> f, int &lobe, int lobeMask = DF_ALL,
+              float *lobeChance = nullptr) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
     float lobeChanceLocal{1};
-    return def->scatterSample(eval, xi, wo, wi, pdfFwd, pdfRev, f.data(), lobe,
-                              lobeMask,
-                              lobeChance ? *lobeChance : lobeChanceLocal);
+    return def->scatterDraw(eval, xi, wo, wi, pdfFwd, pdfRev, f.data(), lobe,
+                            lobeMask,
+                            lobeChance ? *lobeChance : lobeChanceLocal);
   }
 
   /// The scatter normal evaluate function.
@@ -1348,16 +1347,17 @@ public:
   ///
   /// \return `true` if the PDF is non-zero.
   ///
-  /// See `MaterialDef::scatterNormalSample` for the contract. Any other
+  /// See `MaterialDef::scatterNormalDraw` for the contract. Any other
   /// `lobeMask` reports zero, and a call aborts if the entry point was not
   /// emitted, which is the case unless `Compiler::shouldEmitScatterNormal`
   /// was set before `compile()`.
   ///
-  [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterNormalEvaluate(bool isBackface, const float3 &wm, float &pdf,
-                        int lobeMask) const {
+  [[nodiscard]] SMDL_ALWAYS_INLINE bool scatterNormalEval(bool isBackface,
+                                                          const float3 &wm,
+                                                          float &pdf,
+                                                          int lobeMask) const {
     SMDL_DEBUG_CHECK(def && eval);
-    SMDL_SANITY_CHECK_MSG(bool(def->scatterNormalEvaluate),
+    SMDL_SANITY_CHECK_MSG(bool(def->scatterNormalEval),
                           "set 'Compiler::shouldEmitScatterNormal' before "
                           "'compile()' to emit the normal distribution "
                           "entry points");
@@ -1369,8 +1369,7 @@ public:
       pdf = 0.0f;
       return false;
     } else {
-      return def->scatterNormalEvaluate(eval, int(isBackface), wm, pdf,
-                                        lobeMask);
+      return def->scatterNormalEval(eval, int(isBackface), wm, pdf, lobeMask);
     }
   }
 
@@ -1387,27 +1386,27 @@ public:
   ///
   /// \return `true` if a lobe with a normal distribution was reached.
   ///
-  /// See `MaterialDef::scatterNormalSample` for the contract. Any other
+  /// See `MaterialDef::scatterNormalDraw` for the contract. Any other
   /// `lobeMask` reports zero, and a call aborts if the entry point was not
   /// emitted, which is the case unless `Compiler::shouldEmitScatterNormal`
   /// was set before `compile()`.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterNormalSample(const float4 &xi, bool isBackface, float3 &wm, float &pdf,
-                      float2 &alpha, int lobeMask) const {
+  scatterNormalDraw(const float4 &xi, bool isBackface, float3 &wm, float &pdf,
+                    float2 &alpha, int lobeMask) const {
     SMDL_DEBUG_CHECK(def && eval);
-    SMDL_SANITY_CHECK_MSG(bool(def->scatterNormalSample),
+    SMDL_SANITY_CHECK_MSG(bool(def->scatterNormalDraw),
                           "set 'Compiler::shouldEmitScatterNormal' before "
                           "'compile()' to emit the normal distribution "
                           "entry points");
-    // As in `scatterNormalEvaluate`: exactly one glossy kind.
+    // As in `scatterNormalEval`: exactly one glossy kind.
     if (SMDL_UNLIKELY(lobeMask != DF_GLOSS_BRDF && lobeMask != DF_GLOSS_BTDF)) {
       pdf = 0.0f;
       alpha = {};
       return false;
     } else {
-      return def->scatterNormalSample(eval, xi, int(isBackface), wm, pdf, alpha,
-                                      lobeMask);
+      return def->scatterNormalDraw(eval, xi, int(isBackface), wm, pdf, alpha,
+                                    lobeMask);
     }
   }
 
@@ -1419,14 +1418,14 @@ public:
   ///
   /// \return `true` if the result is non-zero.
   ///
-  /// See `MaterialDef::emissionEvaluate` for the unit conventions and for
+  /// See `MaterialDef::emissionEval` for the unit conventions and for
   /// which side of the geometry emits.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  emissionEvaluate(const float3 &we, float &pdf, Span<float> Le) const {
+  emissionEval(const float3 &we, float &pdf, Span<float> Le) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(Le.size() == size_t(eval.wavelengthCount));
-    return def->emissionEvaluate(eval, we, pdf, Le.data());
+    return def->emissionEval(eval, we, pdf, Le.data());
   }
 
   /// The emission sample function.
@@ -1438,12 +1437,11 @@ public:
   ///
   /// \return `true` if the result is non-zero.
   ///
-  [[nodiscard]] SMDL_ALWAYS_INLINE bool emissionSample(const float4 &xi,
-                                                       float3 &we, float &pdf,
-                                                       Span<float> Le) const {
+  [[nodiscard]] SMDL_ALWAYS_INLINE bool
+  emissionDraw(const float4 &xi, float3 &we, float &pdf, Span<float> Le) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(Le.size() == size_t(eval.wavelengthCount));
-    return def->emissionSample(eval, xi, we, pdf, Le.data());
+    return def->emissionDraw(eval, xi, we, pdf, Le.data());
   }
 
   /// The VDF the instance captured at the shading point, which is what a
@@ -1453,22 +1451,22 @@ public:
     return VDF(def, eval.volumeScattering);
   }
 
-  /// The volume scatter evaluate function, which is `getVDF().evaluate()`.
+  /// The volume scatter evaluate function, which is `getVDF().eval()`.
   ///
   /// \param[in] wo  The outgoing direction in world space.
   /// \param[in] wi  The incoming direction in world space.
   ///
   /// \return The phase function, or zero if the material has no volume
   /// scattering. It is normalized over the sphere and so is also the
-  /// solid-angle PDF of `volumeScatterSample`.
+  /// solid-angle PDF of `volumeScatterDraw`.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE float
-  volumeScatterEvaluate(const float3 &wo, const float3 &wi) const {
+  volumeScatterEval(const float3 &wo, const float3 &wi) const {
     SMDL_DEBUG_CHECK(def && eval);
-    return getVDF().evaluate(wo, wi);
+    return getVDF().eval(wo, wi);
   }
 
-  /// The volume scatter sample function, which is `getVDF().sample()`.
+  /// The volume scatter sample function, which is `getVDF().draw()`.
   ///
   /// \param[in]  xi  The canonical random sample.
   /// \param[in]  wo  The outgoing direction in world space.
@@ -1479,9 +1477,9 @@ public:
   /// `wi`, so the implied throughput weight is always 1.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE float
-  volumeScatterSample(const float4 &xi, const float3 &wo, float3 &wi) const {
+  volumeScatterDraw(const float4 &xi, const float3 &wo, float3 &wi) const {
     SMDL_DEBUG_CHECK(def && eval);
-    return getVDF().sample(xi, wo, wi);
+    return getVDF().draw(xi, wo, wi);
   }
 
   /// The hair scatter evaluate function.
@@ -1494,15 +1492,15 @@ public:
   ///
   /// \return `true` if the result is non-zero.
   ///
-  /// See `MaterialDef::hairScatterEvaluate` for the state contract at a
+  /// See `MaterialDef::hairScatterEval` for the state contract at a
   /// hair hit.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  hairScatterEvaluate(const float3 &wo, const float3 &wi, float &pdfFwd,
-                      float &pdfRev, Span<float> f) const {
+  hairScatterEval(const float3 &wo, const float3 &wi, float &pdfFwd,
+                  float &pdfRev, Span<float> f) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->hairScatterEvaluate(eval, wo, wi, pdfFwd, pdfRev, f.data());
+    return def->hairScatterEval(eval, wo, wi, pdfFwd, pdfRev, f.data());
   }
 
   /// The hair scatter sample function.
@@ -1517,15 +1515,15 @@ public:
   /// \return `true` if the result is non-zero.
   ///
   /// There are no Dirac hair distributions, so there is no `lobe` output.
-  /// See `MaterialDef::hairScatterEvaluate` for the state contract at a
+  /// See `MaterialDef::hairScatterEval` for the state contract at a
   /// hair hit.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  hairScatterSample(const float4 &xi, const float3 &wo, float3 &wi,
-                    float &pdfFwd, float &pdfRev, Span<float> f) const {
+  hairScatterDraw(const float4 &xi, const float3 &wo, float3 &wi, float &pdfFwd,
+                  float &pdfRev, Span<float> f) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->hairScatterSample(eval, xi, wo, wi, pdfFwd, pdfRev, f.data());
+    return def->hairScatterDraw(eval, xi, wo, wi, pdfFwd, pdfRev, f.data());
   }
 
 public:

@@ -20,7 +20,7 @@ EvaluateResult evaluate(const hair_bsdf scattering, float3 wo, float3 wi) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  if (df::_hairScatterEvaluate(
+  if (df::_hairScatterEval(
         &eval, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   return EvaluateResult();
@@ -41,7 +41,7 @@ SampleResult sample(const hair_bsdf scattering, const float4 xi, float3 wo) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  const auto success = df::_hairScatterSample(
+  const auto success = df::_hairScatterDraw(
     &eval, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
   return SampleResult(wi, f, pdfFwd, bool(success));
 }
@@ -123,7 +123,7 @@ unit_test "The trimmed logistic normalizes and its sampler inverts the CDF" {
     // The sampler inverts the CDF exactly
     for (int i = 0; i < 5; i++) {
       const float xi = (i + 0.5) / 5.0;
-      const float x = df::hair::trimmed_logistic_sample(xi, s, -$PI, $PI);
+      const float x = df::hair::trimmed_logistic_draw(xi, s, -$PI, $PI);
       const float cdf =
         (df::hair::logistic_cdf(x, s) - df::hair::logistic_cdf(-$PI, s)) / //
         (df::hair::logistic_cdf($PI, s) - df::hair::logistic_cdf(-$PI, s));
@@ -244,7 +244,7 @@ unit_test "The sampler's histogram matches the density's mass" {
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       const auto wi =
-        sampling::uniform_sphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+        sampling::uniform_sphere_draw(float2((i + 0.5) / n, (j + 0.5) / n));
       const double pdf = evaluate(h, wo, wi).pdf[0];
       totalPDF += pdf;
       bandPDF += wi.x > 0.25 ? pdf : 0.0;

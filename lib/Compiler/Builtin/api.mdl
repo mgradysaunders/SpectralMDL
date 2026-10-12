@@ -202,7 +202,7 @@ color nontrivialRGBToColor(const float3 rgb) {
   // memory effects; without them the optimizer can neither share two
   // conversions of the same RGB nor delete one whose result goes unused.
   // A material body is emitted once per entry point, so an undeletable
-  // conversion is one 'opacityEvaluate' and its siblings each keep.
+  // conversion is one 'opacityEval' and its siblings each keep.
   #assert(bool($state.wavelengthBase)) if ($DEBUG);
   return _spectralLerpInit(
     \(const float wavelength) = _uniformLerpIndexAndFraction(
@@ -761,7 +761,7 @@ const int MATERIAL_HAS_CUTOUT = (1 << 8);
 
 /// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS`, which
 /// only ever appears in the compile-time `staticFlags` derived by the
-/// C++ compiler from the per-material `volumeEvaluate` entry point.
+/// C++ compiler from the per-material `volumeEval` entry point.
 /// Position dependence is not observable at instance evaluation time,
 /// so the instance `flags` below never set this bit.
 const int MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS = (1 << 9);
@@ -777,8 +777,8 @@ const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
 /// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VDF`, which only ever
 /// appears in the compile-time `staticFlags` derived by the C++ compiler
-/// from the per-material `vdfEvaluate` entry point, the way bit 9 is
-/// derived from `volumeEvaluate`. The instance `flags` below never set
+/// from the per-material `vdfEval` entry point, the way bit 9 is
+/// derived from `volumeEval`. The instance `flags` below never set
 /// this bit.
 const int MATERIAL_HAS_HETEROGENEOUS_VDF = (1 << 13);
 
@@ -838,17 +838,17 @@ export float _randomFloat() = #max(
     float(#uitofp(_randomInt(), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2),
   $FLOAT_MIN);
 
-/// The helper behind the generated per-material `volumeEvaluate` entry
+/// The helper behind the generated per-material `volumeEval` entry
 /// point: write the volume coefficients of `mat` to the caller
 /// buffers, each holding `$WAVELENGTH_BASE_MAX` floats, resolving an
 /// absent coefficient to zero. The material is evaluated at whatever
 /// `$state` the entry point was called with, so coefficients that read
 /// `state::position()` make this a per-point query; everything in the
 /// material that does not feed the coefficients is dead-code
-/// eliminated, the way `opacityEvaluate` evaluates only the cutout
+/// eliminated, the way `opacityEval` evaluates only the cutout
 /// opacity. NOTE: This is non-standard!
 @(macro)
-export void _volumeEvaluate(
+export void _volumeEval(
   const auto mat,
   const &float sigma_a,
   const &float sigma_s,
@@ -930,18 +930,18 @@ export struct _MaterialEval {
                                      : none;
 
   /// The volumetric emission coefficient, evaluated at the surface hit;
-  /// heterogeneous interiors re-query through `volumeEvaluate`.
+  /// heterogeneous interiors re-query through `volumeEval`.
   &color volumeEmissionIntensity = #hasField(ptr.volume, "emission_intensity")
                                      ? &ptr.volume.emission_intensity
                                      : none;
 
   /// The VDF, which the volume scattering entry points take in place of
-  /// the instance (see `df::_volumeScatterEvaluate()`), so that a host
+  /// the instance (see `df::_volumeScatterEval()`), so that a host
   /// may hand them the VDF evaluated at a collision instead of this one.
   &void volumeScattering = &ptr.volume.scattering;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
-  /// non-default emission EDF. See `df::_emissionEvaluate()` for how the
+  /// non-default emission EDF. See `df::_emissionEval()` for how the
   /// `intensity_mode` units are resolved.
   &color surfaceEmissionIntensity =
     #isDefault(ptr.surface.emission.emission) ? none : #bump(color(

@@ -32,13 +32,13 @@ smdl::float3 makeDirection(float dz) {
   return {std::sqrt(std::max(0.0f, 1.0f - dz * dz)), 0.0f, dz};
 }
 
-// The deflection cosine `MiePhase::sample` produced, with the lobe
+// The deflection cosine `MiePhase::draw` produced, with the lobe
 // forced: a third component of 0 always picks the Draine lobe and 1
 // always picks the Henyey-Greenstein one.
 float sampleDeflection(const smdl::MiePhase &phase, float xi, bool useDraine) {
   const smdl::float3 wo{0.0f, 0.0f, 1.0f};
   smdl::float3 wi{};
-  (void)phase.sample({xi, 0.25f, useDraine ? 0.0f : 1.0f}, wo, wi);
+  (void)phase.draw({xi, 0.25f, useDraine ? 0.0f : 1.0f}, wo, wi);
   return -dot(wo, wi);
 }
 
@@ -111,15 +111,15 @@ TEST_CASE("MiePhase: the fit against its generator") {
     for (const auto &c : cases) {
       CAPTURE(c.diameter);
       CAPTURE(c.u);
-      CHECK(std::abs(smdl::MiePhase(c.diameter).evaluate(c.u) - c.expected) <
+      CHECK(std::abs(smdl::MiePhase(c.diameter).eval(c.u) - c.expected) <
             c.tolerance);
     }
     // The direction-pair overload is the same function of the
     // deflection cosine, which is the negated dot product.
     const smdl::MiePhase phase{8.0f};
     const smdl::float3 wo{0.0f, 0.0f, 1.0f};
-    CHECK(phase.evaluate(wo, smdl::float3{0.6f, 0.0f, -0.8f}) ==
-          doctest::Approx(phase.evaluate(0.8f)));
+    CHECK(phase.eval(wo, smdl::float3{0.6f, 0.0f, -0.8f}) ==
+          doctest::Approx(phase.eval(0.8f)));
   }
   SUBCASE("The cumulative inversion matches the generator") {
     // The lobes are addressed through their fitted diameters, which is
@@ -167,8 +167,7 @@ TEST_CASE("MiePhase: the fit against its generator") {
       std::vector<double> cdf(STEPS + 1, 0.0);
       bool isNegative{false};
       for (int i = 0; i < STEPS; i++) {
-        const double p{
-            phase.evaluate(-1.0f + 2.0f * (float(i) + 0.5f) / STEPS)};
+        const double p{phase.eval(-1.0f + 2.0f * (float(i) + 0.5f) / STEPS)};
         if (p < 0.0) isNegative = true;
         cdf[size_t(i) + 1] = cdf[size_t(i)] + p * (2.0 * smdl::TWO_PI / STEPS);
       }
@@ -189,9 +188,9 @@ TEST_CASE("MiePhase: the fit against its generator") {
           const float xiY{float(i) * 0.618034f -
                           std::floor(float(i) * 0.618034f)};
           smdl::float3 wi{};
-          const float sampled{phase.sample(
+          const float sampled{phase.draw(
               {(float(i) + 0.5f) / NX, xiY, lobe == 0 ? 0.0f : 1.0f}, wo, wi)};
-          const float evaluated{phase.evaluate(wo, wi)};
+          const float evaluated{phase.eval(wo, wi)};
           worstSample = std::max(worstSample, std::abs(sampled - evaluated) /
                                                   std::max(evaluated, 1e-9f));
           CHECK(std::abs(length(wi) - 1.0f) < 1e-4f);

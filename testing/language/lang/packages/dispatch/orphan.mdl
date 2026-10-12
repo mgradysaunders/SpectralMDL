@@ -1,0 +1,10 @@
+/// An implementation of `shapes::sides` for `circles::Ellipse` declared
+/// outside the module that declares `Ellipse`, which `open_functions.mdl`
+/// proves dispatch never finds. It would win if it were found, since the
+/// only other candidate for an ellipse is the default.
+#smdl
+
+import .::circles::*;
+
+@(pure)
+export int sides(const &circles::Ellipse this [[anno::unused()]]) = 99;

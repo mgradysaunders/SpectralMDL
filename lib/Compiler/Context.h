@@ -529,6 +529,10 @@ public:
   /// `Emitter::resolveModule()` to report a cyclic import.
   llvm::SmallVector<const Module *, 8> modulesInProgress{};
 
+  /// The tags the open functions of each name are declared on, so that a
+  /// function named like one can be checked against them.
+  llvm::StringMap<llvm::SmallVector<TagType *, 1>> openFunctionTags{};
+
 private:
   /// The builtin modules. See `get_builtin_module()`
   llvm::StringMap<BumpPtr<Module>> builtinModules_;

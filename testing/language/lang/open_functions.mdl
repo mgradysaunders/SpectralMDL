@@ -1,0 +1,130 @@
+/// Open functions: a function declared `@(open)` is implemented for a type
+/// by the module that declares the type, and a call to it finds that
+/// implementation wherever the call is written.
+///
+/// Overloading never crosses modules (see `modules.mdl`), so a call made
+/// inside a library sees only the library's own overloads. That is exactly
+/// wrong for a library that dispatches on types its users declare, the way
+/// `::df` calls `scatterEval` on whatever BSDF a material holds. A call to
+/// an overload set holding an `@(open)` declaration also considers the
+/// same-named functions declared beside the struct type of its first
+/// argument, searching outward from where the struct is declared to the
+/// root of the struct's module.
+///
+/// The C++ analogue is argument-dependent lookup, confined to one argument
+/// and to the module that declares its type. The confinement is the point:
+/// a type's implementations live with the type, so a call never resolves
+/// differently for what the calling module happens to import, and no other
+/// module can supply an implementation for a type it does not declare.
+///
+/// An open declaration with no definition is the contract alone, and a
+/// call for a type that implements nothing fails to compile. One with a
+/// definition is a default. Either way an implementation wins, because a
+/// struct is more specific than a tag it carries. An implementation need
+/// not be exported, since it is found through its type and not by name.
+#smdl
+
+using shapes = .::packages::dispatch::shapes;
+using circles = .::packages::dispatch::circles;
+
+import shapes::*;
+import circles::*;
+// Importing `orphan` guarantees it compiles before the tests below are
+// emitted, so that its implementation for `Ellipse` exists to be found.
+import .::packages::dispatch::orphan::*;
+
+// The ranking an implementation wins by, shown within one module: a struct
+// beats a tag it carries, whether the struct is concrete or a template,
+// and through a pointer as well. A template is abstract, and an abstract
+// type converts to nothing, so this is a relation of its own and not an
+// implicit conversion.
+tag Ranked;
+
+struct RankedPlain: Ranked {
+  int value;
+};
+
+struct RankedTemplate: Ranked {
+  auto value;
+};
+
+@(pure macro)
+int tagRank(const Ranked x [[anno::unused()]]) = 1;
+
+@(pure macro)
+int tagRank(const RankedTemplate x [[anno::unused()]]) = 2;
+
+@(pure macro)
+int tagRank(const RankedPlain x [[anno::unused()]]) = 3;
+
+@(pure macro)
+int tagRankThrough(const &Ranked x [[anno::unused()]]) = 1;
+
+@(pure macro)
+int tagRankThrough(const &RankedTemplate x [[anno::unused()]]) = 2;
+
+unit_test "A struct beats a tag it carries" {
+  #assert(tagRank(RankedPlain(value: 1)) == 3);
+  #assert(tagRank(RankedTemplate(value: 1.0)) == 2);
+  auto value = RankedTemplate(value: 1);
+  #assert(tagRankThrough(&value) == 2);
+}
+
+unit_test "An implementation beside its type is found from inside the library" {
+  // `areaOf` calls `area` inside `shapes`, where only the contract and the
+  // implementation for `Square` are in lexical scope.
+  auto square = shapes::Square(side: 2.0);
+  auto circle = circles::Circle(radius: 1.0);
+  #assert(shapes::areaOf(&square) == 4.0);
+  #assert(shapes::areaOf(&circle) == 3.0);
+}
+
+unit_test "An implementation need not be exported" {
+  auto ellipse = circles::Ellipse(a: 1.0, b: 2.0);
+  #assert(shapes::areaOf(&ellipse) == 6.0);
+}
+
+unit_test "An instance of a struct template finds the template's implementation" {
+  auto ring = circles::Ring(inner: 1.0, outer: 2.0);
+  #assert(shapes::areaOf(&ring) == 9.0);
+}
+
+unit_test "An implementation in a namespace is found" {
+  auto hexagon = circles::polygons::Hexagon(side: 2.0);
+  #assert(shapes::areaOf(&hexagon) == 10.0);
+}
+
+unit_test "A default answers for a type that implements nothing" {
+  auto circle = circles::Circle(radius: 1.0);
+  #assert(shapes::sidesOf(&circle) == 0);
+}
+
+unit_test "An implementation beats the default" {
+  auto square = shapes::Square(side: 1.0);
+  auto hexagon = circles::polygons::Hexagon(side: 1.0);
+  #assert(shapes::sidesOf(&square) == 4);
+  #assert(shapes::sidesOf(&hexagon) == 6);
+}
+
+unit_test "An implementation outside its type's module is never found" {
+  // `orphan.mdl` declares `sides` for `Ellipse` with a value no other
+  // candidate gives, and it is compiled by now.
+  auto ellipse = circles::Ellipse(a: 1.0, b: 2.0);
+  #assert(shapes::sidesOf(&ellipse) == 0);
+}
+
+unit_test "A call written in any module dispatches the same way" {
+  // This module imports `shapes` only through its qualifier, and still
+  // reaches the implementation for `Circle` that `circles` declares.
+  auto circle = circles::Circle(radius: 2.0);
+  #assert(shapes::area(&circle) == 12.0);
+}
+
+unit_test "A union argument dispatches each case" {
+  // The contract takes the tag, so the call visits the union and dispatches
+  // each case to its own implementation.
+  for (int i = 0; i < 2; i++) {
+    auto shape = i == 0 ? circles::Circle(radius: 1.0) : shapes::Square(side: 2.0);
+    #assert(shapes::area(&shape) == (i == 0 ? 3.0 : 4.0));
+  }
+}

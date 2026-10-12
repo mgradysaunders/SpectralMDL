@@ -57,26 +57,25 @@ public:
   [[nodiscard]] float alphaDraine() const noexcept { return alpha_; }
 
   /// The Draine lobe's weight in the mixture, which is also the
-  /// probability `sample()` picks it.
+  /// probability `draw()` picks it.
   [[nodiscard]] float weightDraine() const noexcept { return wd_; }
 
   /// \}
 
   /// The phase function of the deflection cosine `u`.
-  [[nodiscard]] float evaluate(float u) const noexcept;
+  [[nodiscard]] float eval(float u) const noexcept;
 
   /// The phase function of a direction pair, both pointing away from
   /// the scattering vertex.
-  [[nodiscard]] float evaluate(const float3 &wo,
-                               const float3 &wi) const noexcept {
-    return evaluate(-dot(wo, wi));
+  [[nodiscard]] float eval(const float3 &wo, const float3 &wi) const noexcept {
+    return eval(-dot(wo, wi));
   }
 
   /// Sample the phase function, returning its value, which is also the
   /// solid-angle density of the sample. The third component of `xi`
   /// picks the lobe.
-  [[nodiscard]] float sample(float3 xi, const float3 &wo,
-                             float3 &wi) const noexcept;
+  [[nodiscard]] float draw(float3 xi, const float3 &wo,
+                           float3 &wi) const noexcept;
 
 private:
   float ghg_{};

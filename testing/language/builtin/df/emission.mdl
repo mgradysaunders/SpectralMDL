@@ -25,7 +25,7 @@ EmissionResult evaluate(&material mat, const float3 wi) {
   color Le = color(0);
   float3 wiCopy = wi;
   const bool isNonZero =
-    bool(df::_emissionEvaluate(&eval, &wiCopy, &pdf, cast<&float>(&Le)));
+    bool(df::_emissionEval(&eval, &wiCopy, &pdf, cast<&float>(&Le)));
   return EmissionResult(Le, pdf, isNonZero);
 }
 
@@ -46,7 +46,7 @@ EmissionSample sample(&material mat, const float4 xi) {
   float pdf = 0;
   color Le = color(0);
   const bool isNonZero =
-    bool(df::_emissionSample(&eval, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
+    bool(df::_emissionDraw(&eval, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
   return EmissionSample(wi, Le, pdf, isNonZero);
 }
 

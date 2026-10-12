@@ -1361,9 +1361,9 @@ auto Parser::parseAttributes_() -> std::optional<ast::Decl::Attributes> {
   if (!srcParenL)
     srcLoc0.throwError("Expected '@(...)' syntax for function attributes");
   attributes.srcParenL = *srcParenL;
-  static constexpr std::array<std::string_view, 11> attrNames{
-      "alwaysinline", "cold",    "fastmath", "foreign", "hot",    "macro",
-      "noinline",     "optnone", "optsize",  "pure",    "visible"};
+  static constexpr std::array<std::string_view, 12> attrNames{
+      "alwaysinline", "cold", "fastmath", "foreign", "hot",  "macro",
+      "noinline",     "open", "optnone",  "optsize", "pure", "visible"};
   while (true) {
     std::optional<std::string_view> attr{
         [&]() -> std::optional<std::string_view> {

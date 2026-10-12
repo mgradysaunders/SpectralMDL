@@ -183,7 +183,7 @@ unit_test "A defaulted layer normal follows the material geometry normal" {
 unit_test "A micrograin layer samples its base in the inherited frame" {
   // The grains sit on the substrate and orient themselves; they do not
   // reorient it. So the base is sampled in the frame this layer inherited,
-  // which is where `scatterEvaluate` evaluates it and so where the density
+  // which is where `scatterEval` evaluates it and so where the density
   // reported for the draw comes from. A Dirac base makes the frame directly
   // observable: the reflection is about whichever normal the base was
   // handed, and about the grain normal it would be a draw from one
@@ -374,7 +374,7 @@ unit_test "The normal density integrates to one under a tilted layer normal" {
   double integral = 0;
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      const auto wm = sampling::uniform_hemisphere_sample(float2(
+      const auto wm = sampling::uniform_hemisphere_draw(float2(
         (i + 0.5) / n, (j + 0.5) / n));
       integral += scatter::normalEvaluate(scattering, wm);
       integral += scatter::normalEvaluate(scattering, wm * float3(1, 1, -1));

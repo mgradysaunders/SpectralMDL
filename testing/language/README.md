@@ -34,7 +34,8 @@ with the same stem, since a package and a module cannot share a name.
 `lang/` reads in this order, which is not the order the filenames sort in:
 
     types  operators  control_flow  functions  lambdas  structs  unions
-    comptime  modules  search_dir  color  intrinsics  aggregate_abi
+    comptime  modules  open_functions  search_dir  color  intrinsics
+    aggregate_abi
 
 Companion modules that exist only to be imported live under
 `lang/packages/`, and two of them carry the one test that can only be

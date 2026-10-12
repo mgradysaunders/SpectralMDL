@@ -70,18 +70,18 @@ unit_test "Sampling matches the reference implementation" {
   // The analytic CDF inversions, against the independent Python
   // implementation that was validated by brute-force CDF inversion.
   // Draine at (g, alpha) of the fitted parameters per diameter.
-  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.1) ~== |1e-5| 0.35738498);
-  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.5) ~== |1e-5| 0.87946407);
-  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.9) ~== |1e-5| 0.98376952);
-  #assert(df::_fogDraineSample(0.42197278, 14.340509, 0.25) ~== |1e-5| 0.5857715);
-  #assert(df::_fogDraineSample(0.63576461, 250.0, 0.7) ~== |1e-5| 0.96125226);
+  #assert(df::_fogDraineDraw(0.54106367, 20.325685, 0.1) ~== |1e-5| 0.35738498);
+  #assert(df::_fogDraineDraw(0.54106367, 20.325685, 0.5) ~== |1e-5| 0.87946407);
+  #assert(df::_fogDraineDraw(0.54106367, 20.325685, 0.9) ~== |1e-5| 0.98376952);
+  #assert(df::_fogDraineDraw(0.42197278, 14.340509, 0.25) ~== |1e-5| 0.5857715);
+  #assert(df::_fogDraineDraw(0.63576461, 250.0, 0.7) ~== |1e-5| 0.96125226);
   // The near-isotropic Cardano branch.
-  #assert(df::_fogDraineSample(0.0025661182, 250.0, 0.5) ~== |1e-5| 0.0);
+  #assert(df::_fogDraineDraw(0.0025661182, 250.0, 0.5) ~== |1e-5| 0.0);
   // Henyey-Greenstein.
-  #assert(df::_fogHGSample(0.98446929, 0.1) ~== |1e-5| 0.98943122);
-  #assert(df::_fogHGSample(0.98446929, 0.5) ~== |1e-5| 0.99964007);
-  #assert(df::_fogHGSample(0.85487959, 0.7) ~== |1e-5| 0.98878436);
-  #assert(df::_fogHGSample(0.0345, 0.5) ~== |1e-5| 0.051729468);
+  #assert(df::_fogHGDraw(0.98446929, 0.1) ~== |1e-5| 0.98943122);
+  #assert(df::_fogHGDraw(0.98446929, 0.5) ~== |1e-5| 0.99964007);
+  #assert(df::_fogHGDraw(0.85487959, 0.7) ~== |1e-5| 0.98878436);
+  #assert(df::_fogHGDraw(0.0345, 0.5) ~== |1e-5| 0.051729468);
 }
 
 unit_test "The phase function integrates to one" {
@@ -112,9 +112,9 @@ unit_test "A tinted VDF folds its tint to the average" {
     tint: color(0.5), base: df::anisotropic_vdf(directional_bias: 0.4))));
   // The volume entry point takes the VDF itself rather than the instance.
   const auto pPlain =
-    df::_volumeScatterEvaluate(&matPlain.volume.scattering, &wo, &wi);
+    df::_volumeScatterEval(&matPlain.volume.scattering, &wo, &wi);
   const auto pTinted =
-    df::_volumeScatterEvaluate(&matTinted.volume.scattering, &wo, &wi);
+    df::_volumeScatterEval(&matTinted.volume.scattering, &wo, &wi);
   #assert(pPlain > 0.0);
   // The scalar volume entry point folds a color tint to its average.
   #assert(pTinted ~== |1e-6| 0.5 * pPlain);

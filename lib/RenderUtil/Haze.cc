@@ -73,7 +73,7 @@ namespace {
 
 // Sample the deflection cosine of the Henyey-Greenstein phase function
 // by analytic CDF inversion.
-[[nodiscard]] float hgSample(float g, float xi) noexcept {
+[[nodiscard]] float hgDraw(float g, float xi) noexcept {
   if (std::abs(g) < 1e-3f) return 1.0f - 2.0f * xi;
   const float t{(1.0f - g * g) / (1.0f - g + 2.0f * g * xi)};
   return (1.0f + g * g - t * t) / (2.0f * g);
@@ -89,12 +89,12 @@ namespace {
 // Sample the deflection cosine of the Draine phase function by analytic
 // CDF inversion: the quartic solution of the Jendersie and d'Eon
 // supplemental, in the numerically robust factoring the builtin
-// `df::_fogDraineSample` carries, evaluated in double because the
+// `df::_fogDraineDraw` carries, evaluated in double because the
 // factoring cancels heavily.
-[[nodiscard]] float draineSample(float gf, float af, float xif) noexcept {
+[[nodiscard]] float draineDraw(float gf, float af, float xif) noexcept {
   // Degenerates to Henyey-Greenstein as `alpha` vanishes, where the
   // quartic terms divide by zero.
-  if (af < 1e-3f) return hgSample(gf, xif);
+  if (af < 1e-3f) return hgDraw(gf, xif);
   const double g{gf}, a{af}, xi{xif};
   if (std::abs(g) < 0.01) {
     // Near-isotropic: the `g` of zero CDF is a depressed cubic with one
@@ -136,20 +136,20 @@ namespace {
 
 } // namespace
 
-float MiePhase::evaluate(float u) const noexcept {
+float MiePhase::eval(float u) const noexcept {
   return (1.0f - wd_) * hgPhase(ghg_, u) + wd_ * drainePhase(gd_, alpha_, u);
 }
 
-float MiePhase::sample(float3 xi, const float3 &wo, float3 &wi) const noexcept {
+float MiePhase::draw(float3 xi, const float3 &wo, float3 &wi) const noexcept {
   // Pick the lobe by the mixture weight and sample it exactly, so the
   // mixture density of the sampled direction is the phase value itself.
-  const float u{xi.z < wd_ ? draineSample(gd_, alpha_, xi.x)
-                           : hgSample(ghg_, xi.x)};
+  const float u{xi.z < wd_ ? draineDraw(gd_, alpha_, xi.x)
+                           : hgDraw(ghg_, xi.x)};
   const float sinTheta{std::sqrt(std::max(0.0f, 1.0f - u * u))};
   const float phi{TWO_PI * xi.y};
   wi = coordinateSystem(wo) *
        float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), -u);
-  return evaluate(u);
+  return eval(u);
 }
 
 namespace {

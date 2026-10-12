@@ -60,8 +60,8 @@ public:
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.
   /// \param[out] pmf      If non-null, receives the associated PMF.
   ///
-  [[nodiscard]] int indexSample(float xi, float *xiRemap = {},
-                                float *pmf = {}) const noexcept;
+  [[nodiscard]] int indexDraw(float xi, float *xiRemap = {},
+                              float *pmf = {}) const noexcept;
 
   /// The unnormalized sum.
   [[nodiscard]] float unnormalizedSum() const noexcept {
@@ -114,7 +114,7 @@ public:
   /// that entry and its alias. For `xi` uniform the scaled sample's
   /// integer and fractional parts are independent, so this is exact and
   /// costs one dimension where two would do.
-  [[nodiscard]] int indexSample(float xi) const noexcept {
+  [[nodiscard]] int indexDraw(float xi) const noexcept {
     SMDL_SANITY_CHECK(!empty());
     const float scaled{float(size()) * std::clamp(xi, 0.0f, ALMOST_ONE)};
     const int entry{std::clamp(int(scaled), 0, size() - 1)};
@@ -181,7 +181,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] SMDL_EXPORT float2 uniformDiskSample(float2 xi) noexcept;
+[[nodiscard]] SMDL_EXPORT float2 uniformDiskDraw(float2 xi) noexcept;
 
 /// Uniform triangle sample, as the barycentric coordinates of the point.
 /// The three weights sum to 1 and each is nonnegative, so the caller
@@ -190,7 +190,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] inline float3 uniformTriangleSample(float2 xi) noexcept {
+[[nodiscard]] inline float3 uniformTriangleDraw(float2 xi) noexcept {
   const float sqrtXi{std::sqrt(xi.x)};
   return {1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y};
 }
@@ -213,8 +213,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] inline float3 cosineHemisphereSample(float2 xi) noexcept {
-  float2 sinTheta{uniformDiskSample(xi)};
+[[nodiscard]] inline float3 cosineHemisphereDraw(float2 xi) noexcept {
+  float2 sinTheta{uniformDiskDraw(xi)};
   float cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
   return {sinTheta.x, sinTheta.y, cosTheta};
 }
@@ -247,7 +247,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] inline float3 uniformSphereSample(float2 xi) noexcept {
+[[nodiscard]] inline float3 uniformSphereDraw(float2 xi) noexcept {
   float cosTheta{std::clamp(2.0f * xi.x - 1.0f, -1.0f, 1.0f)};
   float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
   float phi{2.0f * PI * xi.y};
@@ -275,8 +275,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] inline float3 uniformConeSample(float cosThetaC,
-                                              float2 xi) noexcept {
+[[nodiscard]] inline float3 uniformConeDraw(float cosThetaC,
+                                            float2 xi) noexcept {
   float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
   if (cosTheta < -1.0f) cosTheta = -1.0f;
   if (cosTheta > +1.0f) cosTheta = +1.0f;
@@ -287,7 +287,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 
 /// The solid angle of a cone whose half angle has versine `oneMinusCos`,
 /// which is what a draw over it is weighed by; see
-/// `uniformConeSampleVersine()`.
+/// `uniformConeDrawVersine()`.
 template <typename T>
 [[nodiscard]] SMDL_ALWAYS_INLINE T coneSolidAngle(T oneMinusCos) noexcept {
   static_assert(std::is_floating_point_v<T>);
@@ -299,7 +299,7 @@ template <typename T>
 /// and `xiX` and `xiY` the pair the draw spends.
 ///
 /// Parametrized on the versine and not on the cosine, as
-/// `uniformConeSample()` is, which is what lets one sampler serve a cone
+/// `uniformConeDraw()` is, which is what lets one sampler serve a cone
 /// of any size. A cone the size of the sun's disk has a cosine within a
 /// few ulps of one, so a draw that interpolates the cosine covers
 /// whatever solid angle those few representable values happen to span
@@ -309,7 +309,7 @@ template <typename T>
 /// reported.
 template <typename T>
 [[nodiscard]] SMDL_ALWAYS_INLINE Vector<T, 3>
-uniformConeSampleVersine(T oneMinusCos, T xiX, T xiY) noexcept {
+uniformConeDrawVersine(T oneMinusCos, T xiX, T xiY) noexcept {
   static_assert(std::is_floating_point_v<T>);
   const T versine{xiX * oneMinusCos};
   const T sinTheta{std::sqrt(versine * (T(2) - versine))};
@@ -333,7 +333,7 @@ uniformConeSampleVersine(T oneMinusCos, T xiX, T xiY) noexcept {
 }
 
 /// The standard normal distribution sample.
-[[nodiscard]] inline float standardNormalSample(float xi) noexcept {
+[[nodiscard]] inline float standardNormalDraw(float xi) noexcept {
   return /*sqrt(2)=*/1.41421356237f * erfInverse(2 * xi - 1);
 }
 
@@ -342,12 +342,12 @@ uniformConeSampleVersine(T oneMinusCos, T xiX, T xiY) noexcept {
 /// Box-Muller transform in double precision.
 ///
 /// For a caller that needs the tails as they are, which the
-/// single-precision `erfInverse()` behind `standardNormalSample()` holds
+/// single-precision `erfInverse()` behind `standardNormalDraw()` holds
 /// to 5e-7 relative and no further out than its last float allows. The
 /// price is stratification: the pair is not a monotone image of either
 /// sample.
 [[nodiscard]] inline std::pair<double, double>
-standardNormalSamplePair(double xi0, double xi1) noexcept {
+standardNormalDrawPair(double xi0, double xi1) noexcept {
   const double r{std::sqrt(-2.0 * std::log(xi0))};
   const double theta{/*2pi=*/6.283185307179586476925 * xi1};
   return {r * std::cos(theta), r * std::sin(theta)};
@@ -360,7 +360,7 @@ namespace simd {
 /// The inverse error function of every element, each in \f$ [-1, 1] \f$,
 /// to 5e-7 relative, exactly odd, and nondecreasing up to 2 ulp of the
 /// result, which is what keeps stratified samples stratified through
-/// `standardNormalSample`.
+/// `standardNormalDraw`.
 ///
 /// Giles' single-precision approximation (M. Giles, "Approximating the
 /// erfinv function", GPU Computing Gems Jade Edition, 2011): with
@@ -400,10 +400,10 @@ erfInverse(const Pack<float, N> &y) noexcept {
 }
 
 /// The standard normal distribution sample of every element, each a
-/// canonical sample in \f$ (0,1) \f$; the packed `smdl::standardNormalSample`.
+/// canonical sample in \f$ (0,1) \f$; the packed `smdl::standardNormalDraw`.
 template <std::size_t N>
 [[nodiscard]] inline Pack<float, N>
-standardNormalSample(const Pack<float, N> &xi) noexcept {
+standardNormalDraw(const Pack<float, N> &xi) noexcept {
   using P = Pack<float, N>;
   return P(/*sqrt(2)=*/1.41421356237f) * erfInverse(P(2.0f) * xi - P(1.0f));
 }
@@ -458,8 +458,8 @@ public:
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.
   /// \param[out] pmf      If non-null, receives the associated PMF.
   ///
-  [[nodiscard]] int2 pixelSample(float2 xi, float2 *xiRemap = {},
-                                 float *pmf = {}) const noexcept;
+  [[nodiscard]] int2 pixelDraw(float2 xi, float2 *xiRemap = {},
+                               float *pmf = {}) const noexcept;
 
   /// The direction PDF.
   ///
@@ -488,8 +488,8 @@ public:
   /// \param[out] iPixel  If non-null, receives the associated pixel index.
   /// \param[out] pdf     If non-null, receives the associated PDF.
   ///
-  [[nodiscard]] float3 directionSample(float2 xi, int2 *iPixel = {},
-                                       float *pdf = {}) const noexcept;
+  [[nodiscard]] float3 directionDraw(float2 xi, int2 *iPixel = {},
+                                     float *pdf = {}) const noexcept;
 
 private:
   int numTexelsX_{};

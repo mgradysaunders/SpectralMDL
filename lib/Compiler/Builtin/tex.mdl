@@ -948,13 +948,13 @@ export color lookup_color_lod(
   color(lookup_float4_lod(tex, coord, lod, wrap_u, wrap_v, crop_u, crop_v).xyz);
 
 @(foreign)
-void smdlPtexEvaluate(&void tex, int gamma, int first, int num, &float result);
+void smdlPtexEval(&void tex, int gamma, int first, int num, &float result);
 
 /// The Ptex lookup of four channels starting at `channel` as `float4`.
 @(macro)
 export float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
   float4 result;
-  smdlPtexEvaluate(tex.ptr, tex.gamma, channel, 4, &result[0]);
+  smdlPtexEval(tex.ptr, tex.gamma, channel, 4, &result[0]);
   return result;
 }
 
@@ -962,7 +962,7 @@ export float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
 @(macro)
 export float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
   float3 result;
-  smdlPtexEvaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
+  smdlPtexEval(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return result;
 }
 
@@ -970,7 +970,7 @@ export float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
 @(macro)
 export float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
   float2 result;
-  smdlPtexEvaluate(tex.ptr, tex.gamma, channel, 2, &result[0]);
+  smdlPtexEval(tex.ptr, tex.gamma, channel, 2, &result[0]);
   return result;
 }
 
@@ -978,7 +978,7 @@ export float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
 @(macro)
 export float lookup_float(const texture_ptex tex, const int channel = 0) {
   float result;
-  smdlPtexEvaluate(tex.ptr, tex.gamma, channel, 1, &result);
+  smdlPtexEval(tex.ptr, tex.gamma, channel, 1, &result);
   return result;
 }
 
@@ -986,6 +986,6 @@ export float lookup_float(const texture_ptex tex, const int channel = 0) {
 @(macro)
 export color lookup_color(const texture_ptex tex, const int channel = 0) {
   float3 result;
-  smdlPtexEvaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
+  smdlPtexEval(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return color(result);
 }

@@ -78,7 +78,7 @@ public:
   ///
   [[nodiscard]] float3 interpolate(float3 wo, float3 wi) const noexcept;
 
-  /// The direction PDF of `directionSample()` with respect to solid angle,
+  /// The direction PDF of `directionDraw()` with respect to solid angle,
   /// conditioned on the outgoing direction `wo`.
   [[nodiscard]] float directionPDF(float3 wo, float3 wi) const noexcept;
 
@@ -100,8 +100,8 @@ public:
   /// caller is responsible for flipping it below the horizon for
   /// `KIND_TRANSMISSION` measurements.
   ///
-  [[nodiscard]] float3 directionSample(float2 xi, float3 wo,
-                                       float *pdf = {}) const noexcept;
+  [[nodiscard]] float3 directionDraw(float2 xi, float3 wo,
+                                     float *pdf = {}) const noexcept;
 
 public:
   /// The kind.
@@ -128,7 +128,7 @@ public:
   /// Each is built on load over the `numTheta` by `numPhi` table slice for
   /// the corresponding outgoing angle, weighted by the projected solid angle
   /// of the incoming direction, and backs `directionPDF()` and
-  /// `directionSample()`.
+  /// `directionDraw()`.
   ///
   std::vector<Distribution2D> distributions;
 };

@@ -669,7 +669,7 @@ double SunSky::moonMultiplier(double wavelenNm, double phaseDeg,
   return roloMoon::moonMultiplier(wavelenNm, phaseDeg, distanceScale);
 }
 
-float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
+float3 SunSky::draw(float2 xi, float *pdf) const noexcept {
   if (skyDistr_.getNumTexelsX() == 0) {
     if (pdf) *pdf = 0.0f;
     return {0.0f, 0.0f, 1.0f};
@@ -677,14 +677,14 @@ float3 SunSky::sample(float2 xi, float *pdf) const noexcept {
   const float pmfSun = sunSelectionChance_;
   if (xi.x < pmfSun) {
     xi.x /= pmfSun; // remap
-    const float3 wi = coordinateSystem(sunDir_) *
-                      uniformConeSample(COS_SUN_ANGULAR_RADIUS, xi);
+    const float3 wi =
+        coordinateSystem(sunDir_) * uniformConeDraw(COS_SUN_ANGULAR_RADIUS, xi);
     if (pdf) *pdf = this->pdf(wi);
     return wi;
   }
   xi.x = (xi.x - pmfSun) / (1.0f - pmfSun); // remap
   float pdfSky{};
-  const float3 wi = skyDistr_.directionSample(xi, nullptr, &pdfSky);
+  const float3 wi = skyDistr_.directionDraw(xi, nullptr, &pdfSky);
   if (pdf) {
     *pdf = (1.0f - pmfSun) * pdfSky;
     if (pmfSun > 0 && dot(wi, sunDir_) >= COS_SUN_ANGULAR_RADIUS)

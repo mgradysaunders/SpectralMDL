@@ -17,7 +17,7 @@ float3 outgoing(const float e, const float psi) =
 float3 incoming(const float i) = float3(#sin(i), 0.0, #cos(i));
 
 // The bidirectional reflectance itself, recovered by dividing out the cosine that
-// `ScatterEvaluateResult.f` carries.
+// `ScatterEvalResult.f` carries.
 float reflectance(
   const bsdf scattering, const float i, const float e, const float psi) {
   const auto wi = incoming(i);
@@ -110,8 +110,8 @@ float whiteSkyAlbedo(const bsdf scattering, const int numSamples) = $PI * float(
     numSamples,
     float4(0.317, 0.631, 0.208, 0.874),
     \(const float4 xi) {
-      const auto wo = sampling::cosine_hemisphere_sample(xi.xy);
-      const auto wi = sampling::cosine_hemisphere_sample(xi.zw);
+      const auto wo = sampling::cosine_hemisphere_draw(xi.xy);
+      const auto wi = sampling::cosine_hemisphere_draw(xi.zw);
       return scatter::evaluate(scattering, wo, wi).f[0] / #max(#abs(wi.z), 1e-4);
     }));
 

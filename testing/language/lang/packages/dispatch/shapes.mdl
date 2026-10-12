@@ -1,0 +1,33 @@
+/// A library that dispatches on a tag its users implement, for
+/// `open_functions.mdl`: the shape of what `::df` does with `scatterEval`
+/// on a `bsdf`.
+#smdl
+
+export tag shape;
+
+// The contract: every shape has an area, and nothing here provides one.
+@(pure open)
+export float area(const &shape this);
+
+// A default, which a shape may override.
+@(pure open)
+export int sides(const &shape this [[anno::unused()]]) = 0;
+
+// A shape the library provides itself.
+export struct Square: shape {
+  float side;
+};
+
+@(pure)
+float area(const &Square this) = this.side * this.side;
+
+@(pure)
+int sides(const &Square this [[anno::unused()]]) = 4;
+
+// Calls made inside the library, where only its own overloads are in
+// lexical scope.
+@(pure macro)
+export float areaOf(const auto ptr) = area(ptr);
+
+@(pure macro)
+export int sidesOf(const auto ptr) = sides(ptr);

@@ -27,7 +27,7 @@ export float4 next_low_discrepancy(const &float4 xi) =
 
 /// Bool sample with `chance` probability of returning `true`.
 @(pure macro)
-export bool bool_sample(const &float xi, const float chance) {
+export bool bool_draw(const &float xi, const float chance) {
   if (*xi < chance) {
     *xi = (*xi / chance);
     return true;
@@ -39,7 +39,7 @@ export bool bool_sample(const &float xi, const float chance) {
 
 /// Uniform wavelength index sample.
 @(pure macro)
-export int uniform_wavelength_index_sample(const &float xi) {
+export int uniform_wavelength_index_draw(const &float xi) {
   const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
   *xi -= i;
   return i;
@@ -47,7 +47,7 @@ export int uniform_wavelength_index_sample(const &float xi) {
 
 /// Uniform disk sample.
 @(pure)
-export float2 uniform_disk_sample(float2 xi) {
+export float2 uniform_disk_draw(float2 xi) {
   xi = 2 * xi - 1;
   xi = #select(xi == 0, 1e-6, xi);
   const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
@@ -59,13 +59,13 @@ export float2 uniform_disk_sample(float2 xi) {
 
 /// Cosine-weighted hemisphere sample.
 @(pure)
-export float3 cosine_hemisphere_sample(float2 xi) {
-  return float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
+export float3 cosine_hemisphere_draw(float2 xi) {
+  return float3((p := uniform_disk_draw(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 }
 
 /// Uniform hemisphere sample.
 @(pure)
-export float3 uniform_hemisphere_sample(float2 xi) {
+export float3 uniform_hemisphere_draw(float2 xi) {
   const float cosTheta = saturate(xi.x);
   const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
   return float3(
@@ -77,7 +77,7 @@ export float3 uniform_hemisphere_sample(float2 xi) {
 
 /// Uniform sphere sample.
 @(pure)
-export float3 uniform_sphere_sample(float2 xi) {
+export float3 uniform_sphere_draw(float2 xi) {
   const float cosTheta = 2 * saturate(xi.x) - 1;
   const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
   return float3(

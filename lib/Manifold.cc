@@ -492,8 +492,7 @@ ManifoldClaim manifoldClaim(const jit::Material &material, bool isBackface,
   // the header.
   if ((dfLobes & DF_SETS_NORMAL) != 0) return claim;
   if (material.def->canRemapNormal() &&
-      (!material.def->geometryNormalEvaluate ||
-       (dfLobes & DF_CAN_SET_NORMAL) != 0))
+      (!material.def->geometryNormalEval || (dfLobes & DF_CAN_SET_NORMAL) != 0))
     return claim;
   const bool bends{!material.isThinWalled() &&
                    std::abs(material.getIOR() - material.getExteriorIOR()) >

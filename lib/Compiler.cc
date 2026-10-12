@@ -789,7 +789,7 @@ readsOnlyStateBytes(const llvm::DataLayout &layout, const llvm::Argument *arg,
 //
 // `FunctionType::initializeMaterialFunctions_` fills the type-level
 // (`#isDefault`-derived) bits of `staticFlags`/`staticFlagsKnown` at
-// emit time and also emits, per material, the `.opacityEvaluate` entry
+// emit time and also emits, per material, the `.opacityEval` entry
 // point and a `.thinWalledProbe` scaffolding function. After the
 // optimizer runs, a body that reduces to returning a constant proves the
 // corresponding flag bit for every possible instance, so it is marked
@@ -817,15 +817,13 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   }};
   for (auto &jitMaterial : materials) {
     // Recover the symbol base from the evaluate-opacity entry point name,
-    // '<symbolBase>.opacityEvaluate'.
-    std::string_view symbolBase{
-        std::string_view(jitMaterial.opacityEvaluate.name)};
-    SMDL_SANITY_CHECK(
-        llvm::StringRef(symbolBase).ends_with(".opacityEvaluate"));
-    symbolBase.remove_suffix(std::string_view(".opacityEvaluate").size());
+    // '<symbolBase>.opacityEval'.
+    std::string_view symbolBase{std::string_view(jitMaterial.opacityEval.name)};
+    SMDL_SANITY_CHECK(llvm::StringRef(symbolBase).ends_with(".opacityEval"));
+    symbolBase.remove_suffix(std::string_view(".opacityEval").size());
     if (const llvm::ConstantFP *opacity{
             llvm::dyn_cast_if_present<llvm::ConstantFP>(
-                foldedReturnValue(jitMaterial.opacityEvaluate.name))}) {
+                foldedReturnValue(jitMaterial.opacityEval.name))}) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_CUTOUT;
       if (opacity->getValueAPF().convertToFloat() < 1.0f)
         jitMaterial.staticFlags |= MATERIAL_HAS_CUTOUT;
@@ -864,7 +862,7 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
         jitMaterial.staticFlags |= MATERIAL_REMAPS_NORMAL;
     }
     // A material with no volume is trivially point-independent, and so
-    // is a '.volumeEvaluate' body that reads nothing of its '%state'
+    // is a '.volumeEval' body that reads nothing of its '%state'
     // argument but the fields constant along a path (an RGB constant
     // reads the wavelength grid, a texel fetch nothing at all). Either
     // way mark 'MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS' known and
@@ -874,30 +872,30 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // lookup anywhere in the material body); hosts treat unknown as
     // heterogeneous, which is the conservative direction. See
     // 'jit::MaterialDef::hasHomogeneousCoefficients()'.
-    llvm::Function *volumeEvaluateFunc{
-        llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
+    llvm::Function *volumeEvalFunc{
+        llvmModule.getFunction(jitMaterial.volumeEval.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
-        (volumeEvaluateFunc && !volumeEvaluateFunc->isDeclaration() &&
-         volumeEvaluateFunc->arg_size() >= 1 &&
+        (volumeEvalFunc && !volumeEvalFunc->isDeclaration() &&
+         volumeEvalFunc->arg_size() >= 1 &&
          readsOnlyPathConstantState(llvmModule.getDataLayout(),
-                                    volumeEvaluateFunc->getArg(0)))) {
+                                    volumeEvalFunc->getArg(0)))) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_COEFFICIENTS;
     }
-    // The phase function likewise, through '.vdfEvaluate', whose body
+    // The phase function likewise, through '.vdfEval', whose body
     // copies 'volume.scattering' out of the material and so reads
     // exactly what the VDF reads plus the allocator the copy needs. It
     // is emitted only for a material with a volume; every other material
     // has the default 'vdf()' and is settled structurally. See
     // 'jit::MaterialDef::hasHomogeneousVDF()'.
-    llvm::Function *vdfEvaluateFunc{
-        jitMaterial.vdfEvaluate.name.empty()
+    llvm::Function *vdfEvalFunc{
+        jitMaterial.vdfEval.name.empty()
             ? nullptr
-            : llvmModule.getFunction(jitMaterial.vdfEvaluate.name)};
+            : llvmModule.getFunction(jitMaterial.vdfEval.name)};
     if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
-        (vdfEvaluateFunc && !vdfEvaluateFunc->isDeclaration() &&
-         vdfEvaluateFunc->arg_size() >= 1 &&
+        (vdfEvalFunc && !vdfEvalFunc->isDeclaration() &&
+         vdfEvalFunc->arg_size() >= 1 &&
          readsOnlyPathConstantState(llvmModule.getDataLayout(),
-                                    vdfEvaluateFunc->getArg(0)))) {
+                                    vdfEvalFunc->getArg(0)))) {
       jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_VDF;
     }
     // What the entry points that take a surface point still read of the
@@ -911,8 +909,8 @@ void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // a march reads the two together.
     std::bitset<sizeof(State)> surfaceReads{};
     for (const std::string *name :
-         {&jitMaterial.evaluate.name, &jitMaterial.opacityEvaluate.name,
-          &jitMaterial.geometryNormalEvaluate.name}) {
+         {&jitMaterial.evaluate.name, &jitMaterial.opacityEval.name,
+          &jitMaterial.geometryNormalEval.name}) {
       if (name->empty()) continue;
       const llvm::Function *func{llvmModule.getFunction(*name)};
       if (!func || func->isDeclaration() || func->arg_size() < 1) {
@@ -1647,27 +1645,26 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     jitLookup_(rgbToColor_);
     for (auto &jitMaterial : materialDefs_) {
       jitLookup_(jitMaterial.evaluate);
-      jitLookup_(jitMaterial.opacityEvaluate);
-      jitLookup_(jitMaterial.displacementEvaluate);
-      jitLookup_(jitMaterial.volumeEvaluate);
+      jitLookup_(jitMaterial.opacityEval);
+      jitLookup_(jitMaterial.displacementEval);
+      jitLookup_(jitMaterial.volumeEval);
       // Emitted only for a material with a volume.
-      if (!jitMaterial.vdfEvaluate.name.empty())
-        jitLookup_(jitMaterial.vdfEvaluate);
-      jitLookup_(jitMaterial.scatterEvaluate);
-      jitLookup_(jitMaterial.scatterSample);
+      if (!jitMaterial.vdfEval.name.empty()) jitLookup_(jitMaterial.vdfEval);
+      jitLookup_(jitMaterial.scatterEval);
+      jitLookup_(jitMaterial.scatterDraw);
       // Emitted only when the host asked for them; see
       // 'Compiler::shouldEmitScatterNormal'.
-      if (!jitMaterial.scatterNormalSample.name.empty()) {
-        jitLookup_(jitMaterial.scatterNormalEvaluate);
-        jitLookup_(jitMaterial.scatterNormalSample);
-        jitLookup_(jitMaterial.geometryNormalEvaluate);
+      if (!jitMaterial.scatterNormalDraw.name.empty()) {
+        jitLookup_(jitMaterial.scatterNormalEval);
+        jitLookup_(jitMaterial.scatterNormalDraw);
+        jitLookup_(jitMaterial.geometryNormalEval);
       }
-      jitLookup_(jitMaterial.emissionEvaluate);
-      jitLookup_(jitMaterial.emissionSample);
-      jitLookup_(jitMaterial.volumeScatterEvaluate);
-      jitLookup_(jitMaterial.volumeScatterSample);
-      jitLookup_(jitMaterial.hairScatterEvaluate);
-      jitLookup_(jitMaterial.hairScatterSample);
+      jitLookup_(jitMaterial.emissionEval);
+      jitLookup_(jitMaterial.emissionDraw);
+      jitLookup_(jitMaterial.volumeScatterEval);
+      jitLookup_(jitMaterial.volumeScatterDraw);
+      jitLookup_(jitMaterial.hairScatterEval);
+      jitLookup_(jitMaterial.hairScatterDraw);
     }
     for (auto &jitUnitTest : unitTests_) jitLookup_(jitUnitTest.test);
     for (auto &jitExec : execs_) jitLookup_(jitExec);
@@ -1922,9 +1919,8 @@ private:
 
 extern "C" {
 
-SMDL_EXPORT void smdlPtexEvaluate(const void *state,
-                                  const ::smdl::Ptexture *ptex, int gamma,
-                                  int first, int num, float *out) {
+SMDL_EXPORT void smdlPtexEval(const void *state, const ::smdl::Ptexture *ptex,
+                              int gamma, int first, int num, float *out) {
   SMDL_SANITY_CHECK(state != nullptr);
   SMDL_SANITY_CHECK(out != nullptr);
   std::fill_n(out, num, 0.0f);

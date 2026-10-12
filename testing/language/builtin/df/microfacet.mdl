@@ -40,7 +40,7 @@ float integrateSmithNormalPDF(
   float2 xi = float2(0.228, 0.712);
   for (int i = 0; i < n; i++, sampling::next_low_discrepancy(&xi)) {
     fSum += df::microfacet::smith_normal_pdf(
-      distr, alpha, sampling::cosine_hemisphere_sample(xi));
+      distr, alpha, sampling::cosine_hemisphere_draw(xi));
   }
   return $PI * fSum / n;
 }

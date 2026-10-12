@@ -1,0 +1,364 @@
+/// Distributions declared outside `::df`, implementing its open contracts
+/// beside their own structs with nothing but its exported API, and reached
+/// through the entry points a renderer calls. Most reimplement a `::df`
+/// distribution, so that what they must match is known exactly.
+#smdl
+
+import ::df::*;
+import ::math::*;
+using sampling = ::extras::sampling;
+import sampling::*;
+using scatter = ::support::scatter;
+import scatter::*;
+
+//--{ Distributions
+// `df::diffuse_reflection_bsdf` without roughness.
+struct Lambert: bsdf {
+  color tint = color(1.0);
+
+  static const int _lobes = df::DF_MATTE_BRDF;
+};
+
+@(pure)
+auto scatterEval(
+  const &Lambert this, inline const &df::ScatterEvalParams params) {
+  return df::ScatterEvalResult(isBlack: true) if (
+           mode != df::scatter_reflect || !df::recalculateTangentSpace(params));
+  const float2 cosTheta(#abs(float2(wi.z, wo.z)));
+  return df::ScatterEvalResult(isBlack: true) if (
+           !(#minValue(cosTheta) > df::MIN_COS_THETA));
+  const float2 pdf(cosTheta / $PI);
+  auto result(df::ScatterEvalResult(f: this.tint * pdf[0], pdf: pdf));
+  result.f *= shadingNormalCorrection if (isImportance);
+  return result;
+}
+
+@(pure)
+auto scatterDraw(
+  const &Lambert this [[anno::unused()]],
+  inline const &df::ScatterDrawParams params) {
+  if ((tbn := df::recalculateTangentSpace(params)))
+    return df::ScatterDrawResult(
+             wi: (*tbn) * sampling::cosine_hemisphere_draw(xi.xy),
+             mode: df::scatter_reflect);
+  return df::ScatterDrawResult();
+}
+
+// `df::specular_bsdf` in its default reflecting mode.
+struct Mirror: bsdf {
+  color tint = color(1.0);
+
+  static const int _lobes = df::DF_DIRAC_BRDF;
+};
+
+@(pure)
+auto scatterEval(
+  const &Mirror this [[anno::unused()]],
+  const &df::ScatterEvalParams params [[anno::unused()]]) =
+  df::ScatterEvalResult(isBlack: true);
+
+@(pure)
+auto scatterDraw(const &Mirror this, inline const &df::ScatterDrawParams params) {
+  if ((tbn := df::recalculateTangentSpace(params)))
+    return df::ScatterDrawResult(
+             wi: (*tbn) * df::specular::reflect(wo, float3(0, 0, 1)),
+             mode: df::scatter_reflect,
+             fDirac: this.tint);
+  return df::ScatterDrawResult();
+}
+
+// Two combinators over whatever BSDF they hold. The first forwards
+// scattering alone, so its normal queries reach the defaults; the second
+// forwards those as well.
+struct ScatterOnly: bsdf {
+  bsdf base;
+
+  const int _lobes = base._lobes;
+};
+
+@(macro)
+auto scatterEval(
+  const &ScatterOnly this, inline const &df::ScatterEvalParams params) =
+  df::scatterEvalMasked(visit &this.base, params);
+
+@(macro)
+auto scatterDraw(
+  const &ScatterOnly this, inline const &df::ScatterDrawParams params) =
+  df::scatterDrawMasked(visit &this.base, params);
+
+struct Forwarding: bsdf {
+  bsdf base;
+
+  const int _lobes = base._lobes;
+};
+
+@(macro)
+auto scatterEval(
+  const &Forwarding this, inline const &df::ScatterEvalParams params) =
+  df::scatterEvalMasked(visit &this.base, params);
+
+@(macro)
+auto scatterDraw(
+  const &Forwarding this, inline const &df::ScatterDrawParams params) =
+  df::scatterDrawMasked(visit &this.base, params);
+
+@(macro)
+auto normalDraw(const &Forwarding this, const &df::ScatterNormalParams params) =
+  df::normalDrawMasked(visit &this.base, params);
+
+@(macro)
+auto normalEval(const &Forwarding this, const &df::ScatterNormalParams params) =
+  df::normalEvalMasked(visit &this.base, params);
+
+@(macro)
+auto normalAlpha(const &Forwarding this, const &df::ScatterNormalParams params) =
+  df::normalAlphaMasked(visit &this.base, params);
+
+// `df::diffuse_edf`.
+struct UniformEmitter: edf {
+  static const int _lobes = 0;
+};
+
+@(pure)
+auto emissionEval(
+  const &UniformEmitter this [[anno::unused()]],
+  inline const &df::EmissionEvalParams params) {
+  return df::EmissionEvalResult(isBlack: true) if (
+           !df::recalculateTangentSpace(params));
+  return df::EmissionEvalResult(f: 1.0 / $PI, pdf: wi.z / $PI);
+}
+
+@(pure)
+auto emissionDraw(
+  const &UniformEmitter this [[anno::unused()]],
+  inline const &df::EmissionDrawParams params) =
+  df::EmissionDrawResult(
+    wi: df::calculateTangentSpace(normal, tangent_u) * sampling::cosine_hemisphere_draw(xi.xy),
+    isValid: true);
+
+// `df::anisotropic_vdf` without a directional bias.
+struct Isotropic: vdf {
+  static const int _lobes = 0;
+};
+
+@(macro)
+auto scatterEval(
+  const &Isotropic this [[anno::unused()]],
+  const &df::ScatterEvalParams params [[anno::unused()]]) =
+  df::ScatterEvalResult(f: 0.25 / $PI, pdf: float2(0.25 / $PI));
+
+@(macro)
+auto scatterDraw(
+  const &Isotropic this [[anno::unused()]],
+  inline const &df::ScatterDrawParams params) =
+  df::ScatterDrawResult(
+    wi: sampling::uniform_sphere_draw(xi.xy),
+    mode: df::scatter_reflect_transmit);
+
+// A hair BSDF that scatters uniformly over the sphere, which is all the
+// hair entry points need to show that they reach it.
+struct UniformHair: hair_bsdf {
+  color tint = color(1.0);
+
+  static const int _lobes = df::DF_MATTE;
+};
+
+@(pure)
+auto scatterEval(
+  const &UniformHair this, const &df::ScatterEvalParams params [[anno::unused()]]) =
+  df::ScatterEvalResult(f: this.tint * (0.25 / $PI), pdf: float2(0.25 / $PI));
+
+@(pure)
+auto scatterDraw(
+  const &UniformHair this [[anno::unused()]],
+  inline const &df::ScatterDrawParams params) {
+  const auto wiDrawn(sampling::uniform_sphere_draw(xi.xy));
+  return df::ScatterDrawResult(
+           wi: wiDrawn,
+           mode: (wiDrawn.z < 0) == (wo.z < 0) ? df::scatter_reflect : df::scatter_transmit);
+}
+//--}
+
+unit_test "Values match the reference implementation" {
+  const auto mine = Lambert(tint: color(0.6));
+  const auto reference = df::diffuse_reflection_bsdf(tint: color(0.6));
+  const auto bentNormal = math::normalize(float3(0.2, -0.1, 1.0));
+  for (int i = 0; i < 4; i++) {
+    // The last pair is a transmission, which both report black.
+    const auto wo = math::normalize(float3(0.3 * i - 0.5, 0.2, 0.6));
+    const auto wi = math::normalize(float3(-0.4, 0.1 * i, i == 3 ? -0.5 : 0.7));
+    for (int j = 0; j < 2; j++) {
+      const bool isImportance = j == 1;
+      const auto a = scatter::evaluate(mine, wo, wi, isImportance, bentNormal);
+      const auto b =
+        scatter::evaluate(reference, wo, wi, isImportance, bentNormal);
+      #assert(a.success == b.success);
+      #assert(#all(a.f == b.f));
+      #assert(#all(a.pdf == b.pdf));
+    }
+  }
+}
+
+unit_test "Sampling agrees with the reported density" {
+  scatter::checkDensityAgainstAcceptance(
+    Lambert(), math::normalize(float3(0.3, -0.2, 0.9)), 1.0);
+}
+
+unit_test "Evaluation is reciprocal" {
+  scatter::checkBidirectionalConsistency(
+    Lambert(tint: color(0.5)),
+    math::normalize(float3(0.3, -0.2, 0.9)),
+    math::normalize(float3(-0.6, 0.1, 0.5)));
+}
+
+unit_test "Energy is conserved in a white furnace" {
+  const auto E =
+    scatter::furnaceIntegral(Lambert(), math::normalize(float3(0.4, 0.1, 0.8)));
+  #assert((0.97 < E) & (E < 1.03));
+}
+
+unit_test "The host reads the lobes a distribution declares" {
+  #assert(scatter::surfaceLobes(Lambert()) == df::DF_MATTE_BRDF);
+  #assert(scatter::surfaceLobes(Mirror()) == df::DF_DIRAC_BRDF);
+  const auto r = scatter::sample(
+    Lambert(), float4(0.3, 0.6, 0.5, 0.5), math::normalize(float3(0.1, 0.2, 0.9)));
+  #assert(r.success);
+  #assert(r.sampledLobe == df::DF_MATTE_BRDF);
+}
+
+unit_test "A Dirac draw matches the reference implementation" {
+  const auto wo = math::normalize(float3(0.3, -0.4, 0.7));
+  const auto xi = float4(0.3, 0.6, 0.5, 0.5);
+  const auto a = scatter::sample(Mirror(tint: color(0.7)), xi, wo);
+  const auto b = scatter::sample(df::specular_bsdf(tint: color(0.7)), xi, wo);
+  #assert(a.success & b.success);
+  #assert(a.isDirac & b.isDirac);
+  #assert(a.sampledLobe == b.sampledLobe);
+  #assert(#all(a.wi == b.wi));
+  #assert(#all(a.f == b.f));
+}
+
+unit_test "The df combinators compose with a distribution declared outside df" {
+  const auto wo = math::normalize(float3(0.3, -0.2, 0.9));
+  const auto wi = math::normalize(float3(-0.6, 0.1, 0.5));
+  const auto bare = scatter::evaluate(Lambert(tint: color(0.8)), wo, wi);
+  const auto tinted =
+    scatter::evaluate(df::tint(color(0.5), Lambert(tint: color(0.8))), wo, wi);
+  #assert(tinted.f[0] ~== |1e-6| 0.5 * bare.f[0]);
+  // In place of the `::df` BSDF it reimplements, a layer changes nothing.
+  const auto layered = df::weighted_layer(
+    weight: 0.5,
+    layer: Lambert(tint: color(0.8)),
+    base: df::diffuse_reflection_bsdf(tint: color(0.2)));
+  const auto reference = df::weighted_layer(
+    weight: 0.5,
+    layer: df::diffuse_reflection_bsdf(tint: color(0.8)),
+    base: df::diffuse_reflection_bsdf(tint: color(0.2)));
+  const auto a = scatter::evaluate(layered, wo, wi);
+  const auto b = scatter::evaluate(reference, wo, wi);
+  #assert(#all(a.f == b.f));
+  #assert(#all(a.pdf == b.pdf));
+  scatter::checkDensityAgainstAcceptance(layered, wo, 1.0);
+}
+
+unit_test "A combinator declared outside df forwards to what it holds" {
+  const auto glossy = df::microfacet_ggx_smith_bsdf(roughness_u: 0.3);
+  const auto wo = math::normalize(float3(0.3, -0.2, 0.9));
+  const auto wi = math::normalize(float3(-0.4, 0.3, 0.8));
+  const auto a = scatter::evaluate(ScatterOnly(base: glossy), wo, wi);
+  const auto b = scatter::evaluate(glossy, wo, wi);
+  #assert(a.success & b.success);
+  #assert(#all(a.f == b.f));
+  #assert(#all(a.pdf == b.pdf));
+  scatter::checkDensityAgainstAcceptance(ScatterOnly(base: glossy), wo, 1.0);
+}
+
+unit_test "The normal queries default to no distribution and an override replaces them" {
+  const auto glossy = df::microfacet_ggx_smith_bsdf(roughness_u: 0.3);
+  const auto xi = float4(0.3, 0.6, 0.5, 0.5);
+  const auto wm = math::normalize(float3(0.1, -0.1, 1.0));
+  // The lobes promise a normal distribution, so nothing prunes the query
+  // before it reaches the default.
+  #assert(!scatter::normalSample(ScatterOnly(base: glossy), xi).success);
+  #assert(scatter::normalEvaluate(ScatterOnly(base: glossy), wm) == 0.0);
+  const auto a = scatter::normalSample(Forwarding(base: glossy), xi);
+  const auto b = scatter::normalSample(glossy, xi);
+  #assert(a.success & b.success);
+  #assert(#all(a.wm == b.wm));
+  #assert(a.pdf == b.pdf);
+  #assert(#all(a.alpha == b.alpha));
+  #assert(
+    scatter::normalEvaluate(Forwarding(base: glossy), wm) ==
+    scatter::normalEvaluate(glossy, wm));
+}
+
+unit_test "An EDF matches the reference implementation" {
+  auto mine = material(surface: material_surface(emission: material_emission(
+    emission: UniformEmitter(), intensity: color(2.0))));
+  auto reference = material(surface: material_surface(emission: material_emission(
+    emission: df::diffuse_edf(), intensity: color(2.0))));
+  auto evalMine = _MaterialEval(&mine);
+  auto evalReference = _MaterialEval(&reference);
+  for (int i = 0; i < 3; i++) {
+    float3 we = math::normalize(float3(0.4 * i - 0.4, 0.2, 0.5));
+    float pdfMine = 0;
+    float pdfReference = 0;
+    color leMine = color(0);
+    color leReference = color(0);
+    #assert(bool(df::_emissionEval(
+      &evalMine, &we, &pdfMine, cast<&float>(&leMine))));
+    #assert(bool(df::_emissionEval(
+      &evalReference, &we, &pdfReference, cast<&float>(&leReference))));
+    #assert(pdfMine == pdfReference);
+    #assert(#all(leMine == leReference));
+  }
+  float4 xi = float4(0.3, 0.6, 0.5, 0.5);
+  float3 weMine = float3(0);
+  float3 weReference = float3(0);
+  float pdfMine = 0;
+  float pdfReference = 0;
+  color leMine = color(0);
+  color leReference = color(0);
+  #assert(bool(df::_emissionDraw(
+    &evalMine, &xi, &weMine, &pdfMine, cast<&float>(&leMine))));
+  #assert(bool(df::_emissionDraw(
+    &evalReference, &xi, &weReference, &pdfReference, cast<&float>(&leReference))));
+  #assert(#all(weMine == weReference));
+  #assert(pdfMine == pdfReference);
+}
+
+unit_test "A VDF matches the reference implementation" {
+  auto mine = material(volume: material_volume(scattering: Isotropic()));
+  auto reference = material(volume: material_volume(
+    scattering: df::anisotropic_vdf(directional_bias: 0.0)));
+  auto wo = math::normalize(float3(0.1, 0.2, 1.0));
+  auto wi = math::normalize(float3(-0.3, 0.5, -0.8));
+  #assert(
+    df::_volumeScatterEval(&mine.volume.scattering, &wo, &wi) ~== |1e-7|
+    df::_volumeScatterEval(&reference.volume.scattering, &wo, &wi));
+  float4 xi = float4(0.3, 0.6, 0.5, 0.5);
+  float3 wiDrawn = float3(0);
+  #assert(
+    df::_volumeScatterDraw(&mine.volume.scattering, &xi, &wo, &wiDrawn) ~==
+    |1e-7| 0.25 / $PI);
+  #assert(math::length(wiDrawn) ~== |1e-5| 1.0);
+}
+
+unit_test "A hair BSDF is reached through the hair entry points" {
+  auto mat = material(hair: UniformHair(tint: color(0.5)));
+  auto eval = _MaterialEval(&mat);
+  float3 wo = math::normalize(float3(0.3, 0.2, -0.4));
+  float3 wi = math::normalize(float3(-0.1, 0.6, 0.5));
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  #assert(bool(df::_hairScatterEval(
+    &eval, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f))));
+  #assert(f[0] ~== |1e-6| 0.5 * 0.25 / $PI);
+  #assert(pdfFwd ~== |1e-6| 0.25 / $PI);
+  float4 xi = float4(0.3, 0.6, 0.5, 0.5);
+  float3 wiDrawn = float3(0);
+  #assert(bool(df::_hairScatterDraw(
+    &eval, &xi, &wo, &wiDrawn, &pdfFwd, &pdfRev, cast<&float>(&f))));
+  #assert(pdfFwd ~== |1e-6| 0.25 / $PI);
+}
