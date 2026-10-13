@@ -89,7 +89,7 @@ at each shading point. JIT-compiled code points into data the `Compiler`
 owns, and calling `compile()` again invalidates every function pointer
 taken from the previous compile.
 
-## The `smdl` program
+## The SMDL program
 
 The library comes with a command-line program, `smdl`, with these
 subcommands.
