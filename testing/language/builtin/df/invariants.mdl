@@ -152,6 +152,12 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
     wi,
     ns);
   scatter::checkBidirectionalConsistency(
+    df::directional_factor(
+      normal_tint: 0.9, grazing_tint: 0.3, f82_factor: 0.6, base: ggx),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
     df::fresnel_factor(ior: 1.5, extinction_coefficient: 2.0, base: ggx),
     wo,
     wi,
@@ -201,6 +207,19 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
     df::color_custom_curve_layer(
       normal_reflectivity: color(0.3),
       grazing_reflectivity: color(0.9),
+      weight: color(0.7),
+      layer: ggx,
+      base: df::diffuse_reflection_bsdf(tint: 0.5),
+    ),
+    wo,
+    wi,
+    ns,
+  );
+  scatter::checkBidirectionalConsistency(
+    df::color_custom_curve_layer(
+      normal_reflectivity: color(0.3),
+      grazing_reflectivity: color(0.9),
+      f82_factor: color(0.6),
       weight: color(0.7),
       layer: ggx,
       base: df::diffuse_reflection_bsdf(tint: 0.5),

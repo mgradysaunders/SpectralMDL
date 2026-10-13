@@ -1,7 +1,9 @@
 /// Composition: the curve layers, the three mixer policies, and the
 /// factor modifiers, on the evaluation path and the sampling path alike.
 /// The clear coat's absorption is held to the path lengths of NVIDIA's
-/// reference implementation, `coat_absorption` in the MDL SDK's libbsdf.
+/// reference implementation, `coat_absorption` in the MDL SDK's libbsdf,
+/// and the F82 curve to a double-precision port of its
+/// `generalized_custom_curve_factor`.
 #smdl
 #search_dir "../../fixtures"
 
@@ -53,6 +55,88 @@ unit_test "A custom curve layer blends by Schlick at the half vector" {
     #assert(r.success && r.isDirac);
     #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
+}
+
+unit_test "The F82 tint bends the curve as the reference implementation does" {
+  // With `wo` and `wi` mirrored about the normal, the half vector is the
+  // normal, so the curve is read at the cosine of either direction. The
+  // third cosine is 1/7, where the curve is the F82 tint times the
+  // Schlick curve.
+  const auto lambert = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto mu = float[4](0.6, 0.3, 1.0 / 7.0, 0.3);
+  const auto F0 = float[4](0.9, 0.9, 0.9, 0.5);
+  const auto F90 = float[4](1.0, 1.0, 1.0, 0.9);
+  const auto F82 = float[4](0.8, 0.8, 0.8, 0.6);
+  const auto exponent = float[4](5.0, 5.0, 5.0, 3.0);
+  const auto expected = float[4](
+    0.8928141842962963, 0.7989021406585649, 0.7570131492830368,
+    0.4498276576206276);
+  for (int i = 0; i < 4; i++) {
+    const float s = #sqrt(1 - mu[i] * mu[i]);
+    const auto wo = float3(s, 0, mu[i]);
+    const auto wi = float3(-s, 0, mu[i]);
+    const auto fBase = scatter::evaluate(lambert, wo, wi).f;
+    const auto fFactor = scatter::evaluate(
+      df::directional_factor(
+        normal_tint: F0[i],
+        grazing_tint: F90[i],
+        exponent: exponent[i],
+        f82_factor: F82[i],
+        base: lambert),
+      wo, wi).f;
+    #assert(#all(fFactor ~== (1e-5) expected[i] * fBase));
+    // A curve layer over nothing is the curve times its layer.
+    const auto fLayer = scatter::evaluate(
+      df::color_custom_curve_layer(
+        normal_reflectivity: color(F0[i]),
+        grazing_reflectivity: color(F90[i]),
+        exponent: exponent[i],
+        f82_factor: color(F82[i]),
+        layer: lambert),
+      wo, wi).f;
+    #assert(#all(fLayer ~== (1e-5) expected[i] * fBase));
+  }
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  // A tint of one is the Schlick curve exactly.
+  #assert(#all(
+    scatter::evaluate(
+      df::directional_factor(normal_tint: 0.4, f82_factor: 1.0, base: lambert),
+      wo, wi).f ==
+    scatter::evaluate(df::directional_factor(normal_tint: 0.4, base: lambert), wo, wi).f));
+  // The tint comes after the parameters it precedes in MDL 1.10, so that a
+  // call written to an earlier version binds its exponent and base by
+  // position as it always has.
+  #assert(#all(
+    scatter::evaluate(df::directional_factor(0.5, 1.0, 3.0, lambert), wo, wi).f ==
+    scatter::evaluate(
+      df::directional_factor(
+        normal_tint: 0.5, grazing_tint: 1.0, exponent: 3.0, base: lambert),
+      wo, wi).f));
+  // The selection chance bends with the curve, so sampling agrees with the
+  // density, and a Dirac draw from the layer is weighted by the curve over
+  // the chance of drawing it, which is one for a uniform tint.
+  scatter::checkDensityAgainstAcceptance(
+    df::custom_curve_layer(
+      normal_reflectivity: 0.2,
+      f82_factor: 0.5,
+      weight: 0.8,
+      layer: df::sheen_bsdf(tint: 1.0, roughness: 0.4),
+      base: df::diffuse_reflection_bsdf(tint: 0.3)),
+    wo,
+    1.0,
+    isStochastic: true);
+  const auto r = scatter::sample(
+    df::custom_curve_layer(
+      normal_reflectivity: 0.2,
+      f82_factor: 0.5,
+      weight: 0.8,
+      layer: df::specular_bsdf(tint: 1.0),
+      base: lambert),
+    float4(0.3, 0.4, 0.05, 0.6),
+    wo);
+  #assert(r.success && r.isDirac);
+  #assert(#all(r.f ~== |1e-5| color(1.0)));
 }
 
 unit_test "The three mixer policies differ only above weight one" {

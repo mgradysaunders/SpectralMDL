@@ -544,6 +544,28 @@ export auto schlick_fresnel(
   const float exponent = 5,
 ) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cosTheta), 0), exponent);
 
+/// The F82 generalization of the Schlick approximation of Hoffman,
+/// "Generalization of Adobe's Fresnel Model" (2023): the Schlick curve less
+/// `a cosTheta (1 - cosTheta)^6`, with `a` such that at `cosTheta = 1/7`,
+/// about 82 degrees, the curve is `F82` times the Schlick curve there. An
+/// `F82` of one leaves the Schlick curve as it is. Below one the curve can
+/// dip below zero, so it is clamped there.
+@(pure macro)
+export auto schlick_f82_fresnel(
+  const auto cosTheta,
+  const auto F0,
+  const auto F90,
+  const auto F82,
+  const float exponent = 5,
+) {
+  // `1 / (cos (1 - cos)^6)` at `cos = 1/7`, which is `7^7 / 6^6`.
+  const auto a(
+    schlick_fresnel(1.0 / 7.0, F0, F90, exponent) * (1 - F82) * (823543.0 / 46656.0));
+  const float mu(#min(#abs(cosTheta), 1.0));
+  return #max(
+    schlick_fresnel(mu, F0, F90, exponent) - a * (mu * #pow(1 - mu, 6)), 0.0);
+}
+
 /// The exact unpolarized Fresnel reflectance of a dielectric interface
 /// with the given relative IOR, folding total internal reflection to 1.
 @(pure)
@@ -5721,9 +5743,32 @@ export struct directional_factor: bsdf, edf {
   ///
   auto base = bsdf();
 
+  /// The reflectivity tint at 82 degrees, which bends the curve toward
+  /// that of a conductor (see `specular::schlick_f82_fresnel()`).
+  ///
+  /// > The reflectivity tint at an angle of 82 degrees.
+  ///
+  /// NOTE: `none` is the specification's `color(1.0)`, the Schlick curve
+  /// as it is. The specification gives it to the BSDF form only; over an
+  /// EDF it bends the curve all the same. MDL 1.10 puts it before
+  /// `exponent`, where it would take the place of `exponent` in a call
+  /// written to an earlier version, so it comes last here.
+  const $(?(color | float)) f82_factor = none;
+
   /// The flags.
   const int _lobes = base._lobes;
 };
+
+/// The curve of a directional factor at `cosTheta`.
+@(macro)
+auto directionalFactorCurve(
+  const &directional_factor this, const float cosTheta) {
+  if (#hasField(this, "f82_factor"))
+    return specular::schlick_f82_fresnel(
+      cosTheta, this.normal_tint, this.grazing_tint, this.f82_factor, this.exponent);
+  return specular::schlick_fresnel(
+    cosTheta, this.normal_tint, this.grazing_tint, this.exponent);
+}
 
 @(macro)
 auto scatterEval(
@@ -5731,8 +5776,7 @@ auto scatterEval(
 factorScatterEval(
   this,
   params,
-  \(const float3 h) = specular::schlick_fresnel(
-    dot(params.wo, h), this.normal_tint, this.grazing_tint, this.exponent),
+  \(const float3 h) = directionalFactorCurve(this, dot(params.wo, h)),
 );
 
 @(macro)
@@ -5756,8 +5800,7 @@ auto scatterDraw(
 factorScatterDraw(
   this,
   params,
-  \(const float3 h) = specular::schlick_fresnel(
-    dot(params.wo, h), this.normal_tint, this.grazing_tint, this.exponent),
+  \(const float3 h) = directionalFactorCurve(this, dot(params.wo, h)),
 );
 
 @(macro)
@@ -5768,9 +5811,7 @@ auto emissionEval(
   auto result(emissionEval(visit &this.base, params));
   if (!result.isBlack)
     return EmissionEvalResult(
-             f: specular::schlick_fresnel(
-                  cosTheta, this.normal_tint, this.grazing_tint, this.exponent) * result.f,
-             pdf: result.pdf);
+             f: directionalFactorCurve(this, cosTheta) * result.f, pdf: result.pdf);
   return result;
 }
 
@@ -6573,6 +6614,16 @@ export struct custom_curve_layer: bsdf {
   ///
   $(?float3) normal = none;
 
+  /// The reflectivity tint at 82 degrees (see
+  /// `specular::schlick_f82_fresnel()`), which the specification gives
+  /// `color_custom_curve_layer`, and which `custom_curve_layer` takes too.
+  ///
+  /// NOTE: `none` is the specification's `color(1.0)`, the Schlick curve
+  /// as it is. MDL 1.10 puts it before `exponent`, where it would take the
+  /// place of `exponent` in a call written to an earlier version, so it
+  /// comes last here.
+  const $(?(color | float)) f82_factor = none;
+
   /// The precomputed average normal reflectivity.
   float _averageNormalReflectivity = 0.0;
 
@@ -6598,6 +6649,39 @@ export struct custom_curve_layer: bsdf {
   }
 };
 
+/// The curve of a custom curve layer at `cosTheta`. The F82 curve can rise
+/// above one, which a layer weight cannot.
+@(macro)
+auto customCurve(const &custom_curve_layer this, const float cosTheta) {
+  if (#hasField(this, "f82_factor"))
+    return saturate(specular::schlick_f82_fresnel(
+      cosTheta,
+      this.normal_reflectivity,
+      this.grazing_reflectivity,
+      this.f82_factor,
+      this.exponent));
+  return specular::schlick_fresnel(
+    cosTheta, this.normal_reflectivity, this.grazing_reflectivity, this.exponent);
+}
+
+/// The curve of a custom curve layer at `cosTheta` over its averages, which
+/// sets the chance of selecting the layer.
+@(macro)
+auto customCurveChance(const &custom_curve_layer this, const float cosTheta) {
+  if (#hasField(this, "f82_factor"))
+    return saturate(specular::schlick_f82_fresnel(
+      cosTheta,
+      this._averageNormalReflectivity,
+      this._averageGrazingReflectivity,
+      average(this.f82_factor),
+      this.exponent));
+  return specular::schlick_fresnel(
+    cosTheta,
+    this._averageNormalReflectivity,
+    this._averageGrazingReflectivity,
+    this.exponent);
+}
+
 @(macro)
 auto scatterEval(
   const &custom_curve_layer this, inline const &ScatterEvalParams params) = //
@@ -6605,16 +6689,8 @@ layerScatterEval(
   this,
   params,
   \() = ior,
-  \(const float3 h) = specular::schlick_fresnel(
-    dot(wo, h),
-    this.normal_reflectivity,
-    this.grazing_reflectivity,
-    this.exponent),
-  \(const float cosTheta) = specular::schlick_fresnel(
-    cosTheta,
-    this._averageNormalReflectivity,
-    this._averageGrazingReflectivity,
-    this.exponent),
+  \(const float3 h) = customCurve(this, dot(wo, h)),
+  \(const float cosTheta) = customCurveChance(this, cosTheta),
 );
 
 @(macro)
@@ -6639,16 +6715,8 @@ layerScatterDraw(
   this,
   params,
   \() = ior,
-  \(const float3 h) = specular::schlick_fresnel(
-    dot(wo, h),
-    this.normal_reflectivity,
-    this.grazing_reflectivity,
-    this.exponent),
-  \(const float cosTheta) = specular::schlick_fresnel(
-    cosTheta,
-    this._averageNormalReflectivity,
-    this._averageGrazingReflectivity,
-    this.exponent),
+  \(const float3 h) = customCurve(this, dot(wo, h)),
+  \(const float cosTheta) = customCurveChance(this, cosTheta),
 );
 
 /// The `color_custom_curve_layer` is also implemented by the `custom_curve_layer`.
