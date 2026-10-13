@@ -9,6 +9,7 @@ namespace smdl {
 /// \addtogroup renderutil
 /// \{
 
+// TODO Drop the `class`, rename these to `METAL_AG`, `METAL_AL`, `METAL_AU`, ...
 /// The metals with builtin complex IOR tables.
 enum class Metal : int {
   Ag = 0,     ///< Silver.

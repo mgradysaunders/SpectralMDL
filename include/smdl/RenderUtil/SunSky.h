@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "smdl/Export.h"
-#include "smdl/RenderUtil/MonteCarlo.h"
+#include "smdl/RenderUtil/Distribution2D.h"
 #include "smdl/Support/VectorMath.h"
 
 namespace smdl {

@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "smdl/RenderUtil/FastMath.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Support/Macros.h"
 #include "smdl/Support/SIMD.h"
 

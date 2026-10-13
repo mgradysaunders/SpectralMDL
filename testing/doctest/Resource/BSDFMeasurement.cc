@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Resource/BSDFMeasurement.h"
 
 namespace {

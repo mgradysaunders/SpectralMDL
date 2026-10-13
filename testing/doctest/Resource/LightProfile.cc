@@ -2,6 +2,7 @@
 
 #include <random>
 
+#include "smdl/RenderUtil/MonteCarlo.h"
 #include "smdl/Resource/LightProfile.h"
 
 namespace {

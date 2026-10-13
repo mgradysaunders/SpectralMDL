@@ -4,7 +4,7 @@
 #include <unordered_map>
 
 #include "smdl/Common.h"
-#include "smdl/RenderUtil/MonteCarlo.h"
+#include "smdl/RenderUtil/Distribution2D.h"
 
 namespace smdl {
 

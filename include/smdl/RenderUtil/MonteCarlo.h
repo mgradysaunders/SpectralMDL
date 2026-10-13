@@ -3,135 +3,19 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <random>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "smdl/Export.h"
 #include "smdl/Support/Macros.h"
 #include "smdl/Support/SIMD.h"
-#include "smdl/Support/Span.h"
 #include "smdl/Support/VectorMath.h"
 
 namespace smdl {
 
 /// \addtogroup renderutil
 /// \{
-
-/// A data-driven distribution in 1 dimension.
-class SMDL_EXPORT Distribution1D final {
-public:
-  /// Default constructor.
-  Distribution1D() = default;
-
-  /// Constructor.
-  Distribution1D(Span<const float> values);
-
-public:
-  /// Clear.
-  void clear() noexcept {
-    totalSum_ = 0;
-    cmfs_.clear();
-  }
-
-  /// The number of indexes.
-  [[nodiscard]] int size() const noexcept { return int(cmfs_.size()) - 1; }
-
-  /// The index probability mass function (PMF). Inline, because a
-  /// light sampler asks for it per sample.
-  [[nodiscard]] float indexPMF(int i) const noexcept {
-    if (0 <= i && i < size())
-      return float(INV_CMF_SCALE * double(cmfs_[i + 1] - cmfs_[i]));
-    return 0.0f;
-  }
-
-  /// The index cumulative mass function (CMF).
-  [[nodiscard]] float indexCMF(int i) const noexcept {
-    if (0 <= i && i < size()) return float(INV_CMF_SCALE * double(cmfs_[i]));
-    return i < 0 ? 0.0f : 1.0f;
-  }
-
-  /// The index sampling routine. Never an index with no probability,
-  /// even at the bottom of the range, so long as some index has one.
-  ///
-  /// \param[in]  xi       The random sample \f$ \xi \in (0,1) \f$.
-  /// \param[out] xiRemap  If non-null, receives the remapped random sample.
-  /// \param[out] pmf      If non-null, receives the associated PMF.
-  ///
-  [[nodiscard]] int indexDraw(float xi, float *xiRemap = {},
-                              float *pmf = {}) const noexcept;
-
-  /// The unnormalized sum.
-  [[nodiscard]] float unnormalizedSum() const noexcept {
-    return static_cast<float>(totalSum_);
-  }
-
-private:
-  double totalSum_{};
-
-  /// The cumulative mass function over the unit interval, as 32-bit
-  /// fixed point: half the size of a table of `double`, and unlike a
-  /// table of `float` the difference of two entries stays exact, which
-  /// is what `indexPMF()` reads.
-  std::vector<std::uint32_t> cmfs_{};
-
-  /// The unit of `cmfs_`, `2^-32`.
-  static constexpr double INV_CMF_SCALE = 1.0 / 4294967296.0;
-};
-
-/// A discrete distribution sampled in constant time (Walker, "New Fast
-/// Method for Generating Discrete Random Numbers with Arbitrary Frequency
-/// Distributions," Electronics Letters 10(8) 1974; built by Vose's
-/// linear-time algorithm).
-///
-/// The draw is exactly in proportion to the weights. A caller that
-/// weighs a draw against a per-entry quantity needs that exactness: a
-/// distribution over triangle areas, divided by the area of the face it
-/// draws, is uniform over the surface exactly, and the two cancel rather
-/// than nearly cancel.
-///
-/// Two words an entry, against the one `Distribution1D` spends, bought
-/// with the binary search that table costs on every draw.
-class SMDL_EXPORT AliasTable final {
-public:
-  AliasTable() = default;
-
-  /// Build over `weights`, in proportion to them. A negative or NaN
-  /// weight counts as zero. An empty span, or one summing to zero,
-  /// leaves the table empty.
-  explicit AliasTable(Span<const float> weights);
-
-  [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
-
-  /// The number of indexes.
-  [[nodiscard]] int size() const noexcept { return int(entries_.size()); }
-
-  /// Draw an index in `[0, size())` from the sample `xi` in `(0,1)`.
-  ///
-  /// The sample is spent twice, on the entry and on the choice between
-  /// that entry and its alias. For `xi` uniform the scaled sample's
-  /// integer and fractional parts are independent, so this is exact and
-  /// costs one dimension where two would do.
-  [[nodiscard]] int indexDraw(float xi) const noexcept {
-    SMDL_SANITY_CHECK(!empty());
-    const float scaled{float(size()) * std::clamp(xi, 0.0f, ALMOST_ONE)};
-    const int entry{std::clamp(int(scaled), 0, size() - 1)};
-    const Entry &e{entries_[entry]};
-    return scaled - float(entry) < e.threshold ? entry : int(e.alias);
-  }
-
-private:
-  /// One entry: the share of it that stays with the entry itself, and
-  /// the index the rest of it is given away to.
-  struct Entry final {
-    float threshold{1.0f};
-    std::uint32_t alias{};
-  };
-
-  std::vector<Entry> entries_{};
-};
 
 /// \name Functions (sampling)
 /// \{
@@ -168,51 +52,28 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 }
 
 /// Uniform disk PDF.
-///
-/// \f[ p(\mathbf{X}) = \frac{1}{\pi r^2} \f]
-///
 [[nodiscard]] inline float uniformDiskPDF(float r = 1) noexcept {
   return 1.0f / (PI * r * r);
 }
 
 /// Uniform disk sample using concentric mapping to better preserve
 /// stratification.
-///
-/// \param[in] xi
-/// The random sample \f$ \xi \in (0,1)^2 \f$.
-///
 [[nodiscard]] SMDL_EXPORT float2 uniformDiskDraw(float2 xi) noexcept;
 
 /// Uniform triangle sample, as the barycentric coordinates of the point.
 /// The three weights sum to 1 and each is nonnegative, so the caller
 /// interpolates whatever the triangle's corners carry.
-///
-/// \param[in] xi
-/// The random sample \f$ \xi \in (0,1)^2 \f$.
-///
 [[nodiscard]] inline float3 uniformTriangleDraw(float2 xi) noexcept {
   const float sqrtXi{std::sqrt(xi.x)};
   return {1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y};
 }
 
 /// Cosine-weighted hemisphere direction PDF.
-///
-/// \f[
-///   p(\omega) = \frac{\max(\omega\cdot\hat{z}, 0)}{\pi}
-/// \f]
-///
-/// \param[in] cosTheta
-/// The cosine of the sampled direction \f$ \omega\cdot\hat{z} \f$.
-///
 [[nodiscard]] inline float cosineHemispherePDF(float cosTheta) noexcept {
   return std::max(cosTheta, 0.0f) / PI;
 }
 
 /// Cosine-weighted hemisphere direction sample.
-///
-/// \param[in] xi
-/// The random sample \f$ \xi \in (0,1)^2 \f$.
-///
 [[nodiscard]] inline float3 cosineHemisphereDraw(float2 xi) noexcept {
   float2 sinTheta{uniformDiskDraw(xi)};
   float cosTheta{std::sqrt(std::max(0.0f, 1.0f - lengthSquared(sinTheta)))};
@@ -227,7 +88,6 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// This is written as \f$ 1/(1+(q/p)^2) \f$ rather than the equivalent
 /// \f$ p^2/(p^2+q^2) \f$ to avoid overflowing on the enormous PDFs that
 /// near-specular lobes produce.
-///
 [[nodiscard]] inline float powerHeuristic(float pdf0, float pdf1) noexcept {
   if (!(pdf0 > 0)) return 0.0f;
   float ratio{pdf1 / pdf0};
@@ -235,23 +95,23 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 }
 
 /// Uniform sphere direction PDF.
-///
-/// \f[
-///   p(\omega) = \frac{1}{4\pi}
-/// \f]
-///
 [[nodiscard]] inline float uniformSpherePDF() noexcept { return 0.25f / PI; }
 
 /// Uniform sphere direction sample.
-///
-/// \param[in] xi
-/// The random sample \f$ \xi \in (0,1)^2 \f$.
-///
 [[nodiscard]] inline float3 uniformSphereDraw(float2 xi) noexcept {
   float cosTheta{std::clamp(2.0f * xi.x - 1.0f, -1.0f, 1.0f)};
   float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
   float phi{2.0f * PI * xi.y};
   return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
+
+/// The solid angle of a cone whose half angle has versine `oneMinusCos`,
+/// which is what a draw over it is weighed by; see
+/// `uniformConeDrawVersine()`.
+template <typename T>
+[[nodiscard]] SMDL_ALWAYS_INLINE T coneSolidAngle(T oneMinusCos) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  return T(TWO_PI) * oneMinusCos;
 }
 
 /// Uniform cone direction PDF.
@@ -264,7 +124,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// The cosine of the cone angle \f$ \theta_C \f$.
 ///
 [[nodiscard]] inline float uniformConePDF(float cosThetaC) noexcept {
-  return 0.5f / (PI * (1.0f - cosThetaC));
+  return 1.0f / coneSolidAngle(1.0f - cosThetaC);
 }
 
 /// Uniform cone direction sample.
@@ -283,15 +143,6 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
   float phi{TWO_PI * xi.y};
   return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
-}
-
-/// The solid angle of a cone whose half angle has versine `oneMinusCos`,
-/// which is what a draw over it is weighed by; see
-/// `uniformConeDrawVersine()`.
-template <typename T>
-[[nodiscard]] SMDL_ALWAYS_INLINE T coneSolidAngle(T oneMinusCos) noexcept {
-  static_assert(std::is_floating_point_v<T>);
-  return T(TWO_PI) * oneMinusCos;
 }
 
 /// A direction drawn uniformly over a cone, in the cone's own frame with
@@ -409,94 +260,6 @@ standardNormalDraw(const Pack<float, N> &xi) noexcept {
 }
 
 } // namespace simd
-
-/// A data-driven distribution in 2 dimensions.
-class SMDL_EXPORT Distribution2D final {
-public:
-  /// Default constructor.
-  Distribution2D() = default;
-
-  /// Constructor.
-  ///
-  /// \param[in] numTexelsX  The number of texels in X.
-  /// \param[in] numTexelsY  The number of texels in Y.
-  /// \param[in] values      The values in row-major order.
-  ///
-  explicit Distribution2D(int numTexelsX, int numTexelsY,
-                          Span<const float> values);
-
-public:
-  /// Clear.
-  void clear() noexcept {
-    numTexelsX_ = 0;
-    numTexelsY_ = 0;
-    conditionals_.clear();
-    marginal_.clear();
-  }
-
-  /// The number of pixels in X.
-  [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX_; }
-
-  /// The number of pixels in Y.
-  [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY_; }
-
-  /// The unnormalized sum over all values.
-  [[nodiscard]] float unnormalizedSum() const noexcept {
-    return marginal_.unnormalizedSum();
-  }
-
-  /// The pixel probability mass function (PMF).
-  [[nodiscard]] float pixelPMF(int2 i) const noexcept {
-    if (0 <= i.y && i.y < numTexelsY_)
-      return marginal_.indexPMF(i.y) * conditionals_[i.y].indexPMF(i.x);
-    return 0.0f;
-  }
-
-  /// The pixel sampling routine.
-  ///
-  /// \param[in]  xi       The random sample \f$ \xi \in (0,1)^2 \f$.
-  /// \param[out] xiRemap  If non-null, receives the remapped random sample.
-  /// \param[out] pmf      If non-null, receives the associated PMF.
-  ///
-  [[nodiscard]] int2 pixelDraw(float2 xi, float2 *xiRemap = {},
-                               float *pmf = {}) const noexcept;
-
-  /// The direction PDF.
-  ///
-  /// \param[in]  wi      The incident direction \f$ \omega_i \f$.
-  /// \param[out] iPixel  If non-null, receives the associated pixel index.
-  ///
-  [[nodiscard]] float directionPDF(float3 wi, int2 *iPixel = {}) const noexcept;
-
-  /// The direction sampling routine.
-  ///
-  /// The pixel and the density both come back from `directionPDF()` of
-  /// the direction returned, rather than from the pixel the draw picked.
-  /// The two disagree whenever rounding puts the direction across a pixel
-  /// boundary from the rectangle it was drawn in, and where the
-  /// neighboring pixel is much darker the density reported that way is
-  /// wrong by that whole ratio, which multiple importance sampling then
-  /// divides by. Reporting the density of the direction in hand costs one
-  /// more arccosine and arctangent and makes the two exactly agree.
-  ///
-  /// A direction whose recovered density is zero comes back with a pdf of
-  /// zero and a pixel index of `(-1, -1)`, which callers already have to
-  /// handle: it means this direction cannot be drawn, so the sample
-  /// carries nothing.
-  ///
-  /// \param[in]  xi      The random sample \f$ \xi \in (0,1)^2 \f$.
-  /// \param[out] iPixel  If non-null, receives the associated pixel index.
-  /// \param[out] pdf     If non-null, receives the associated PDF.
-  ///
-  [[nodiscard]] float3 directionDraw(float2 xi, int2 *iPixel = {},
-                                     float *pdf = {}) const noexcept;
-
-private:
-  int numTexelsX_{};
-  int numTexelsY_{};
-  std::vector<Distribution1D> conditionals_{};
-  Distribution1D marginal_{};
-};
 
 /// \}
 
