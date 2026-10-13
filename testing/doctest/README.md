@@ -7,11 +7,11 @@ ctest --test-dir build          # this and smdl-language
 ./build/bin/smdl-doctest        # the library
 ```
 
-131 test cases and 525 subcases, about twenty-five seconds.
-Useful flags, all of which work because `doctest.cc` forwards the command
-line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
-filter by case, subcase, and source file, `-s` reports the passing
-assertions too, and `-d` gives the per-case durations.
+A full run takes about half a minute. Useful flags, all of which work
+because `doctest.cc` forwards the command line untouched: `-ltc` lists the
+case names and counts them, `-tc=` and `-sc=` and `-sf=` filter by case,
+subcase, and source file, `-s` reports the passing assertions too, and `-d`
+gives the per-case durations.
 
 The suite runs in a **random order** (`-ob=rand` with the seed CTest
 prints), so a case that only passes after another case ran shows up here
@@ -138,13 +138,12 @@ their own header comments; regenerate rather than editing.
 The mirror rule turns the gaps into a list, and it is a long one. This is a
 record, not a plan.
 
-On the library side `lib/Compiler/Type.cc` (3520 lines) has no test at all,
-and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
-`lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc`,
-`lib/Support/Parallel.cc` and `lib/Support/Environment.cc`. The last reads
-every `SMDL_*` variable once per process, so a `ScopedEnv` in one case
-could not reliably reach it. `lib/Formatter.cc`
-(648 lines) has exactly one subcase, and it lives in `Module.cc`.
+On the library side `lib/Compiler/Type.cc` has no test at all, and nor do
+`lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`, `lib/Compiler/llvm.cc`,
+`lib/Compiler/Intrinsics.cc`, `lib/Support/Parallel.cc` and
+`lib/Support/Environment.cc`. The last reads every `SMDL_*` variable once
+per process, so a `ScopedEnv` in one case could not reliably reach it.
+`lib/Formatter.cc` has exactly one subcase, and it lives in `Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero
