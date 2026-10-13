@@ -157,6 +157,12 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
     wi,
     ns);
   scatter::checkBidirectionalConsistency(
+    df::coat_absorption_factor(
+      ior: 1.5, absorption_coefficient: 500.0, thickness: 0.001, base: ggx),
+    wo,
+    wi,
+    ns);
+  scatter::checkBidirectionalConsistency(
     df::measured_curve_factor(
       curve_values: color[3](color(0.9), color(0.5), color(0.2)), base: ggx),
     wo,

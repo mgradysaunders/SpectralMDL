@@ -356,6 +356,21 @@ auto relativeIOR(const auto params, const auto absoluteIOR) {
   }
 }
 
+// Convert a user-facing absolute IOR to one relative to the medium on the
+// incident side, for a modifier that models something lying on the surface,
+// as a film or a coat does. From outside, the incident medium is the
+// exterior. From inside a solid (a backface hit), it is the base itself,
+// whose absolute index equals `params.ior * params.exterior_ior` after the
+// `finalize` reciprocation.
+@(pure macro)
+auto incidentRelativeIOR(const auto params, const auto absoluteIOR) {
+  if (params.hitBackface & !params.thin_walled) {
+    return absoluteIOR / (params.ior * params.exterior_ior);
+  } else {
+    return absoluteIOR / params.exterior_ior;
+  }
+}
+
 /// An orthonormal basis whose third column is the unit vector `z`.
 @(pure macro)
 export float3x3 orthonormalBasis(float3 z) {
@@ -5573,20 +5588,6 @@ auto thinFilmFactor(
          : color(1.0);
 }
 
-/// The film IOR relative to the incident medium. The user-facing film IOR is
-/// absolute. From outside, the incident medium is the exterior. From inside
-/// a solid (a backface hit), the incident medium is the base itself, whose
-/// absolute index equals `params.ior * params.exterior_ior` after the
-/// `finalize` reciprocation.
-@(macro)
-auto thinFilmIncidentRelativeIOR(const &thin_film this, const auto params) {
-  if (params.hitBackface & !params.thin_walled) {
-    return this.ior / (params.ior * params.exterior_ior);
-  } else {
-    return this.ior / params.exterior_ior;
-  }
-}
-
 // The base IOR `1 / params.ior` is the far-side index relative to the
 // incident side, which is correct from either side of the interface.
 @(macro)
@@ -5597,7 +5598,7 @@ factorScatterEval(
   params,
   \(const float3 h) = thinFilmFactor(
     this.thickness,
-    thinFilmIncidentRelativeIOR(this, params),
+    incidentRelativeIOR(params, this.ior),
     1 / params.ior,
     #abs(dot(params.wo, h)),
     this.wavelengths),
@@ -5622,7 +5623,7 @@ factorScatterDraw(
   params,
   \(const float3 h) = thinFilmFactor(
     this.thickness,
-    thinFilmIncidentRelativeIOR(this, params),
+    incidentRelativeIOR(params, this.ior),
     1 / params.ior,
     #abs(dot(params.wo, h)),
     this.wavelengths),
@@ -5690,9 +5691,11 @@ factorScatterDraw(
 //--}
 
 //--{ directional_factor
-/// The directional factor, modulating the base BSDF by a Schlick-style
-/// curve from `normal_tint` to `grazing_tint`.
-export struct directional_factor: bsdf {
+/// The directional factor, modulating the base BSDF or EDF by a
+/// Schlick-style curve from `normal_tint` to `grazing_tint`. Over a BSDF the
+/// curve runs over the half direction, and over an EDF over the emission
+/// direction, which emits nothing below the normal.
+export struct directional_factor: bsdf, edf {
   /// The normal tint.
   ///
   /// > Color scaling factor at the normal.
@@ -5712,11 +5715,11 @@ export struct directional_factor: bsdf {
   ///
   float exponent = 5.0;
 
-  /// The base BSDF.
+  /// The base BSDF or EDF.
   ///
-  /// > Base BSDF to be modified by directional factor.
+  /// > Base BSDF or EDF to be modified by directional factor.
   ///
-  bsdf base = bsdf();
+  auto base = bsdf();
 
   /// The flags.
   const int _lobes = base._lobes;
@@ -5756,6 +5759,125 @@ factorScatterDraw(
   \(const float3 h) = specular::schlick_fresnel(
     dot(params.wo, h), this.normal_tint, this.grazing_tint, this.exponent),
 );
+
+@(macro)
+auto emissionEval(
+  const &directional_factor this, const &EmissionEvalParams params) {
+  const float cosTheta(dot(params.wi, params.normal));
+  return EmissionEvalResult(isBlack: true) if (!(cosTheta > 0.0));
+  auto result(emissionEval(visit &this.base, params));
+  if (!result.isBlack)
+    return EmissionEvalResult(
+             f: specular::schlick_fresnel(
+                  cosTheta, this.normal_tint, this.grazing_tint, this.exponent) * result.f,
+             pdf: result.pdf);
+  return result;
+}
+
+@(macro)
+auto emissionDraw(
+  const &directional_factor this, const &EmissionDrawParams params) =
+  emissionDraw(visit &this.base, params);
+//--}
+
+//--{ coat_absorption_factor
+/// The coat absorption factor, attenuating the base BSDF by the absorption
+/// of a clear coat over it, along the paths refracted into the coat.
+///
+/// > Directionally-dependent volume absorption for rays traveling through
+/// > clear coat layers.
+///
+/// NOTE: As in NVIDIA's reference implementation, a transmitted path crosses
+/// the coat once, so it travels half as far as a reflected one, and a coat
+/// with a lower index than the incident medium absorbs nothing.
+export struct coat_absorption_factor: bsdf {
+  /// The index of refraction.
+  ///
+  /// > IOR of the clear coat.
+  ///
+  $(color | float) ior = 1.0;
+
+  /// The absorption coefficient, per meter.
+  ///
+  /// > Absorption coefficient of the clear coat.
+  ///
+  $(color | float) absorption_coefficient = 0.0;
+
+  /// The thickness.
+  ///
+  /// > Thickness of the coat in meters.
+  ///
+  float thickness = 0.0;
+
+  /// The base BSDF.
+  ///
+  /// > Base BSDF below the coat.
+  ///
+  bsdf base = bsdf();
+
+  /// The flags.
+  const int _lobes = base._lobes;
+};
+
+/// The transmittance of the coat along the path that enters it toward `wo`
+/// and leaves it toward `wi` in `mode`, either way round. Each direction
+/// crosses the coat at its angle refracted into the coat, whose cosine is
+/// clamped away from zero with the incident one.
+@(macro)
+auto coatTransmittance(
+  const &coat_absorption_factor this,
+  const auto params,
+  const float3 wi,
+  const scatter_mode mode) {
+  const auto opticalDepth(
+    #max(this.absorption_coefficient, 0.0) * #max(this.thickness, 0.0));
+  // The incident index over the coat index.
+  const auto eta(1 / incidentRelativeIOR(params, this.ior));
+  const float cosThetao(#max(#abs(dot(params.wo, params.normal)), MIN_COS_THETA));
+  const float cosThetai(#max(#abs(dot(wi, params.normal)), MIN_COS_THETA));
+  const auto pathLength(
+    1 / #sqrt(#max(1 - eta * eta * (1 - cosThetao * cosThetao), 0.0)) +
+    1 / #sqrt(#max(1 - eta * eta * (1 - cosThetai * cosThetai), 0.0)));
+  return #select(
+    eta <= 1.0,
+    #exp(-opticalDepth * pathLength * (mode == scatter_transmit ? 0.5 : 1.0)),
+    1.0);
+}
+
+@(macro)
+auto scatterEval(
+  const &coat_absorption_factor this, const &ScatterEvalParams params) {
+  auto result(scatterEvalMasked(visit &this.base, params));
+  if (!result.isBlack)
+    return ScatterEvalResult(
+             f: coatTransmittance(this, params, params.wi, params.mode) * result.f,
+             pdf: result.pdf);
+  return result;
+}
+
+@(macro)
+auto normalDraw(
+  const &coat_absorption_factor this, const &ScatterNormalParams params) =
+  factorNormalDraw(this, params);
+
+@(macro)
+auto normalEval(
+  const &coat_absorption_factor this, const &ScatterNormalParams params) =
+  factorNormalEval(this, params);
+
+@(macro)
+auto normalAlpha(
+  const &coat_absorption_factor this, const &ScatterNormalParams params) =
+  factorNormalAlpha(this, params);
+
+@(macro)
+auto scatterDraw(
+  const &coat_absorption_factor this, const &ScatterDrawParams params) {
+  auto result(scatterDrawMasked(visit &this.base, params));
+  if ((result.mode != scatter_none) & bool(result.fDirac))
+    *result.fDirac *= coatTransmittance(this, params, result.wi, result.mode);
+  return result;
+}
 //--}
 
 //--{ measured_curve_factor

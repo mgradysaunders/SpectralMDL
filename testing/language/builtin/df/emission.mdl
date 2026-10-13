@@ -306,6 +306,27 @@ unit_test "A tint scales the radiance and a mix combines by weight" {
   #assert(resultMix.pdf ~== |1e-5| 0.5 * (wi.z / $PI) + 0.5 * (1.0 / $TWO_PI));
 }
 
+// `directional_factor` over an EDF scales the radiance by the Schlick curve
+// over the angle from the normal without touching the PDF, so its sampled
+// exitance has to agree with its quadrature.
+unit_test "A directional factor shapes the radiance by the angle from the normal" {
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(
+        emission: df::directional_factor(
+          normal_tint: 1.0, grazing_tint: 0.25, base: df::diffuse_edf()),
+        intensity: 3.0),
+    ),
+  );
+  #assert(evaluate(&mat, float3(0, 0, 1)).Le[0] ~== |1e-5| 3.0 / $PI);
+  // At 60 degrees, the curve is `1 + (0.25 - 1) * (1 - 0.5)^5`.
+  const auto wi = normalize(float3(#sqrt(0.75), 0.0, 0.5));
+  const auto result = evaluate(&mat, wi);
+  #assert(result.Le[0] ~== |1e-5| (1 - 0.75 * #pow(0.5, 5)) * 3.0 / $PI);
+  #assert(result.pdf ~== |1e-5| wi.z / $PI);
+  #assert(exitanceEstimate(&mat) ~== |1e-2| exitanceQuadrature(&mat, 256));
+}
+
 // The evaluation must advertise emission through the flags, the
 // intensity pointers, and the intensity modes.
 unit_test "The emission flags and modes reach the evaluation" {

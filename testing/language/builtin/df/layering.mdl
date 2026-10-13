@@ -1,5 +1,7 @@
 /// Composition: the curve layers, the three mixer policies, and the
 /// factor modifiers, on the evaluation path and the sampling path alike.
+/// The clear coat's absorption is held to the path lengths of NVIDIA's
+/// reference implementation, `coat_absorption` in the MDL SDK's libbsdf.
 #smdl
 #search_dir "../../fixtures"
 
@@ -222,6 +224,11 @@ unit_test "Every factor modifier survives the sampling path" {
     #assert(#any(r.f > 0.0));
   }
   {
+    const auto r = scatter::sample(df::coat_absorption_factor(ior: 1.5, absorption_coefficient: 500.0, thickness: 0.001, base: base), xi, wo);
+    #assert(r.success);
+    #assert(#any(r.f > 0.0));
+  }
+  {
     const auto r = scatter::sample(df::measured_curve_factor(curve_values: color[3](color(0.9), color(0.5), color(0.2)), base: base), xi, wo);
     #assert(r.success);
     #assert(#any(r.f > 0.0));
@@ -236,6 +243,42 @@ unit_test "Every factor modifier survives the sampling path" {
     #assert(r.success);
     #assert(#any(r.f > 0.0));
   }
+}
+
+unit_test "A clear coat absorbs along the paths refracted into it" {
+  // A coat of index 1.5 and optical depth 1 straight through: a path at
+  // normal incidence crosses it twice, and an oblique one crosses at the
+  // angle it refracts to.
+  const auto coat = \(const bsdf base) = df::coat_absorption_factor(
+    ior: 1.5, absorption_coefficient: 1000.0, thickness: 0.001, base: base);
+  const auto lambert = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto n = float3(0, 0, 1);
+  #assert(scatter::evaluate(coat(lambert), n, n).f[0] ~== (1e-5) #exp(-2.0) / $PI);
+  const auto wo = float3(0.8, 0.0, 0.6);
+  const auto wi = float3(-0.8, 0.0, 0.6);
+  const float crossing = 1 / #sqrt(1 - 0.64 / 2.25);
+  #assert(
+    scatter::evaluate(coat(lambert), wo, wi).f[0] ~== (1e-5)
+    #exp(-2 * crossing) * 0.6 / $PI);
+  // A transmitted path crosses the coat once, so it travels half as far.
+  #assert(
+    scatter::evaluate(coat(df::diffuse_transmission_bsdf(tint: 1.0)), n, -n).f[0] ~==
+    (1e-5) #exp(-1.0) / $PI);
+  // A Dirac draw is attenuated as an evaluation would be.
+  const auto r = scatter::sample(coat(df::specular_bsdf(tint: 1.0)), float4(0.5), wo);
+  #assert(r.success);
+  #assert(r.f[0] ~== (1e-5) #exp(-2 * crossing));
+  // A coat with no thickness, or with a lower index than the incident
+  // medium, absorbs nothing.
+  #assert(#all(
+    scatter::evaluate(
+      df::coat_absorption_factor(ior: 1.5, absorption_coefficient: 1000.0, base: lambert),
+      wo, wi).f == scatter::evaluate(lambert, wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(
+      df::coat_absorption_factor(
+        ior: 0.9, absorption_coefficient: 1000.0, thickness: 0.001, base: lambert),
+      wo, wi).f == scatter::evaluate(lambert, wo, wi).f));
 }
 
 unit_test "A two-value tint tints each side by its own tint" {
