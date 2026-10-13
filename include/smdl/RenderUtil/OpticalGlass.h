@@ -26,10 +26,10 @@ namespace smdl {
 /// `(ng - nF) / (nF - nC)`.
 ///
 /// \{
-inline constexpr float FRAUNHOFER_D_LINE = 587.5618f;
-inline constexpr float FRAUNHOFER_F_LINE = 486.1327f;
-inline constexpr float FRAUNHOFER_C_LINE = 656.2725f;
-inline constexpr float FRAUNHOFER_G_LINE = 435.8343f;
+constexpr float FRAUNHOFER_D_LINE = 587.5618f;
+constexpr float FRAUNHOFER_F_LINE = 486.1327f;
+constexpr float FRAUNHOFER_C_LINE = 656.2725f;
+constexpr float FRAUNHOFER_G_LINE = 435.8343f;
 /// \}
 
 /// The domain, in nanometers: what every glass is validated over, and what
@@ -39,8 +39,8 @@ inline constexpr float FRAUNHOFER_G_LINE = 435.8343f;
 /// short end extrapolates it.
 ///
 /// \{
-inline constexpr float OPTICAL_GLASS_WAVELENGTH_MIN = 300.0f;
-inline constexpr float OPTICAL_GLASS_WAVELENGTH_MAX = 2500.0f;
+constexpr float OPTICAL_GLASS_WAVELENGTH_MIN = 300.0f;
+constexpr float OPTICAL_GLASS_WAVELENGTH_MAX = 2500.0f;
 /// \}
 
 /// The index of refraction of a glass, relative to air, across wavelength.
