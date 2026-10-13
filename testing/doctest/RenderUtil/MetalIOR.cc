@@ -74,7 +74,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // Every valid metal must have a table that respects the documented
     // invariants: at least two entries, wavelengths positive, at most
     // 14000nm, and strictly increasing, with n > 0 and k >= 0.
-    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+    for (int i = smdl::METAL_FIRST; i <= smdl::METAL_LAST; i++) {
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(smdl::Metal(i), &metalIOR) == 1);
       REQUIRE(metalIOR.table != nullptr);
@@ -100,13 +100,13 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     CHECK(metalIOR.table == nullptr);
     CHECK(metalIOR.tableSize == 0);
     CHECK(smdl::smdlFindMetalIOR(smdl::Metal(17), &metalIOR) == 0);
-    CHECK(smdl::smdlFindMetalIOR(smdl::Metal::Au, nullptr) == 0);
+    CHECK(smdl::smdlFindMetalIOR(smdl::METAL_AU, nullptr) == 0);
   }
   SUBCASE("smdlEvalMetalIOR reproduces the table at its own wavelengths") {
     // Evaluating all table wavelengths at once must reproduce the table
     // exactly. This exercises the sorted-wavelength scan over each entire
     // table, including both endpoints.
-    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+    for (int i = smdl::METAL_FIRST; i <= smdl::METAL_LAST; i++) {
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(smdl::Metal(i), &metalIOR) == 1);
       std::vector<float> wavelens(metalIOR.tableSize);
@@ -129,11 +129,11 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
       "smdlEvalMetalIOR interpolates between rows and clamps past the ends") {
     // The evaluation must interpolate linearly between table entries.
     smdl::MetalIOR metalIOR{};
-    REQUIRE(smdl::smdlFindMetalIOR(smdl::Metal::Au, &metalIOR) == 1);
+    REQUIRE(smdl::smdlFindMetalIOR(smdl::METAL_AU, &metalIOR) == 1);
     const smdl::MetalIORTableEntry &entry0{metalIOR.table[10]};
     const smdl::MetalIORTableEntry &entry1{metalIOR.table[11]};
     smdl::float2 ior =
-        evalMetalIOR(smdl::Metal::Au, 0.5f * (entry0.wavelen + entry1.wavelen));
+        evalMetalIOR(smdl::METAL_AU, 0.5f * (entry0.wavelen + entry1.wavelen));
     CHECK(ior[0] == doctest::Approx(0.5f * (entry0.ior[0] + entry1.ior[0])));
     CHECK(ior[1] == doctest::Approx(0.5f * (entry0.ior[1] + entry1.ior[1])));
 
@@ -142,14 +142,14 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     const smdl::MetalIORTableEntry &entryFirst{metalIOR.table[0]};
     const smdl::MetalIORTableEntry &entryLast{
         metalIOR.table[metalIOR.tableSize - 1]};
-    CHECK(evalMetalIOR(smdl::Metal::Au, 10.0f)[0] == entryFirst.ior[0]);
-    CHECK(evalMetalIOR(smdl::Metal::Au, 10.0f)[1] == entryFirst.ior[1]);
-    CHECK(evalMetalIOR(smdl::Metal::Au, 100000.0f)[0] == entryLast.ior[0]);
-    CHECK(evalMetalIOR(smdl::Metal::Au, 100000.0f)[1] == entryLast.ior[1]);
+    CHECK(evalMetalIOR(smdl::METAL_AU, 10.0f)[0] == entryFirst.ior[0]);
+    CHECK(evalMetalIOR(smdl::METAL_AU, 10.0f)[1] == entryFirst.ior[1]);
+    CHECK(evalMetalIOR(smdl::METAL_AU, 100000.0f)[0] == entryLast.ior[0]);
+    CHECK(evalMetalIOR(smdl::METAL_AU, 100000.0f)[1] == entryLast.ior[1]);
   }
   SUBCASE("smdlEvalMetalIOR handles an empty and a non-finite argument") {
     // Null arguments must not crash.
-    smdl::smdlEvalMetalIOR(smdl::Metal::Au, 1, nullptr, nullptr, nullptr);
+    smdl::smdlEvalMetalIOR(smdl::METAL_AU, 1, nullptr, nullptr, nullptr);
 
     // An invalid metal must fill the outputs with zeros.
     float wavelens[2] = {400.0f, 700.0f};
@@ -162,12 +162,12 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     CHECK(iorK[1] == 0.0f);
 
     // Either output may be null to skip it.
-    smdl::smdlEvalMetalIOR(smdl::Metal::Au, 2, wavelens, iorN, nullptr);
-    smdl::smdlEvalMetalIOR(smdl::Metal::Au, 2, wavelens, nullptr, iorK);
-    CHECK(iorN[0] == evalMetalIOR(smdl::Metal::Au, 400.0f)[0]);
-    CHECK(iorK[0] == evalMetalIOR(smdl::Metal::Au, 400.0f)[1]);
-    CHECK(iorN[1] == evalMetalIOR(smdl::Metal::Au, 700.0f)[0]);
-    CHECK(iorK[1] == evalMetalIOR(smdl::Metal::Au, 700.0f)[1]);
+    smdl::smdlEvalMetalIOR(smdl::METAL_AU, 2, wavelens, iorN, nullptr);
+    smdl::smdlEvalMetalIOR(smdl::METAL_AU, 2, wavelens, nullptr, iorK);
+    CHECK(iorN[0] == evalMetalIOR(smdl::METAL_AU, 400.0f)[0]);
+    CHECK(iorK[0] == evalMetalIOR(smdl::METAL_AU, 400.0f)[1]);
+    CHECK(iorN[1] == evalMetalIOR(smdl::METAL_AU, 700.0f)[0]);
+    CHECK(iorK[1] == evalMetalIOR(smdl::METAL_AU, 700.0f)[1]);
   }
   SUBCASE("smdlEvalMetalIOR matches the published values") {
     // Spot check against the underlying refractiveindex.info datasets. The
@@ -178,10 +178,10 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
       float wavelen{};
       smdl::float2 expectedIOR{};
     } static const SPOTS[] = {
-        {smdl::Metal::Ag, 649.9f, {0.06061f, 4.283f}},      // Yang
-        {smdl::Metal::Au, 650.0f, {0.1546f, 3.647f}},       // Olmon
-        {smdl::Metal::Cu, 650.0f, {0.326f, 3.4f}},          // Querry
-        {smdl::Metal::CuZn, 10000.0f, {16.878f, 51.601f}}}; // Querry
+        {smdl::METAL_AG, 649.9f, {0.06061f, 4.283f}},      // Yang
+        {smdl::METAL_AU, 650.0f, {0.1546f, 3.647f}},       // Olmon
+        {smdl::METAL_CU, 650.0f, {0.326f, 3.4f}},          // Querry
+        {smdl::METAL_CUZN, 10000.0f, {16.878f, 51.601f}}}; // Querry
     for (const auto &spot : SPOTS) {
       smdl::float2 ior = evalMetalIOR(spot.metal, spot.wavelen);
       CHECK(ior[0] == doctest::Approx(spot.expectedIOR[0]).epsilon(0.01));
@@ -191,15 +191,15 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // Physical sanity of normal-incidence reflectance: silver is highly
     // reflective across the visible range, and gold is much more
     // reflective in red than in blue, which is why it looks yellow.
-    CHECK(reflectance(evalMetalIOR(smdl::Metal::Ag, 550.0f)) > 0.9f);
-    CHECK(reflectance(evalMetalIOR(smdl::Metal::Au, 650.0f)) > 0.9f);
-    CHECK(reflectance(evalMetalIOR(smdl::Metal::Au, 450.0f)) < 0.5f);
+    CHECK(reflectance(evalMetalIOR(smdl::METAL_AG, 550.0f)) > 0.9f);
+    CHECK(reflectance(evalMetalIOR(smdl::METAL_AU, 650.0f)) > 0.9f);
+    CHECK(reflectance(evalMetalIOR(smdl::METAL_AU, 450.0f)) < 0.5f);
 
     // The tin table below 730nm is a Drude-Lorentz extrapolation with
     // roughly 0.1 uncertainty in reflectance, so only pin down that it
     // stays a plausible silvery metal through the visible range.
     for (float wavelen : {380.0f, 550.0f, 700.0f}) {
-      smdl::float2 ior = evalMetalIOR(smdl::Metal::Sn, wavelen);
+      smdl::float2 ior = evalMetalIOR(smdl::METAL_SN, wavelen);
       CHECK(ior[0] > 0.0f);
       CHECK(ior[1] > ior[0]);
       CHECK(reflectance(ior) > 0.65f);
@@ -212,7 +212,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // on the same bracketing pair the search does, so the interpolation is
     // the same arithmetic on the same two entries and the result agrees to
     // the bit. Anything less would shift rendered appearance.
-    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+    for (int i = smdl::METAL_FIRST; i <= smdl::METAL_LAST; i++) {
       const smdl::Metal metal{i};
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);
@@ -238,7 +238,7 @@ TEST_CASE("MetalIOR: the tabulated indices and the lookup that finds them") {
     // arrive in cannot matter. Carrying a lower bound forward from the
     // wavelength before is the tempting optimization, and it would return
     // wrong values for unsorted input rather than merely being slower.
-    for (int i = int(smdl::Metal::First); i <= int(smdl::Metal::Last); i++) {
+    for (int i = smdl::METAL_FIRST; i <= smdl::METAL_LAST; i++) {
       const smdl::Metal metal{i};
       smdl::MetalIOR metalIOR{};
       REQUIRE(smdl::smdlFindMetalIOR(metal, &metalIOR) == 1);

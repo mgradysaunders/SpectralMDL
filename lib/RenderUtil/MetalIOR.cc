@@ -880,7 +880,7 @@ constexpr int EVAL_TILE = 16;
 } // namespace
 
 int smdlFindMetalIOR(Metal metal, MetalIOR *metalIOR) {
-  if (metalIOR && Metal::First <= metal && metal <= Metal::Last) {
+  if (metalIOR && METAL_FIRST <= metal && metal <= METAL_LAST) {
     *metalIOR = METAL_IORS[int(metal)];
     return 1;
   } else {

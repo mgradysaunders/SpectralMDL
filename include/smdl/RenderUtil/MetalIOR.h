@@ -9,28 +9,27 @@ namespace smdl {
 /// \addtogroup renderutil
 /// \{
 
-// TODO Drop the `class`, rename these to `METAL_AG`, `METAL_AL`, `METAL_AU`, ...
 /// The metals with builtin complex IOR tables.
-enum class Metal : int {
-  Ag = 0,     ///< Silver.
-  Al,         ///< Aluminum.
-  Au,         ///< Gold.
-  Co,         ///< Cobalt.
-  Cu,         ///< Copper.
-  CuZn,       ///< Copper+Zinc, also known as brass.
-  Fe,         ///< Iron.
-  Hg,         ///< Mercury.
-  Li,         ///< Lithium.
-  Mg,         ///< Magnesium.
-  Na,         ///< Sodium.
-  Ni,         ///< Nickel.
-  Pb,         ///< Lead.
-  Pt,         ///< Platinum.
-  Sn,         ///< Tin.
-  Ti,         ///< Titanium.
-  Zn,         ///< Zinc.
-  First = Ag, ///< The first valid metal.
-  Last = Zn   ///< The last valid metal.
+enum Metal : int {
+  METAL_AG = 0,           ///< Silver.
+  METAL_AL,               ///< Aluminum.
+  METAL_AU,               ///< Gold.
+  METAL_CO,               ///< Cobalt.
+  METAL_CU,               ///< Copper.
+  METAL_CUZN,             ///< Copper+Zinc, also known as brass.
+  METAL_FE,               ///< Iron.
+  METAL_HG,               ///< Mercury.
+  METAL_LI,               ///< Lithium.
+  METAL_MG,               ///< Magnesium.
+  METAL_NA,               ///< Sodium.
+  METAL_NI,               ///< Nickel.
+  METAL_PB,               ///< Lead.
+  METAL_PT,               ///< Platinum.
+  METAL_SN,               ///< Tin.
+  METAL_TI,               ///< Titanium.
+  METAL_ZN,               ///< Zinc.
+  METAL_FIRST = METAL_AG, ///< The first valid metal.
+  METAL_LAST = METAL_ZN   ///< The last valid metal.
 };
 
 /// An entry in a metal IOR lookup table.
