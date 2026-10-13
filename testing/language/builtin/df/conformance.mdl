@@ -1,0 +1,67 @@
+/// What `::df` owes a material written to the specification, beyond the
+/// behavior of its lobes: every elemental distribution accepts the
+/// specification's `handle`, which changes nothing, and a distribution
+/// with every parameter at its default is a distribution like any other,
+/// not the absence of one.
+#smdl
+#search_dir "../../fixtures"
+
+import ::df::*;
+import ::math::*;
+using scatter = ::support::scatter;
+import scatter::*;
+
+unit_test "Every elemental distribution accepts a handle that changes nothing" {
+  // The specification gives every elemental distribution a `uniform string
+  // handle`. It names the distribution for a renderer's light path
+  // expressions and has no effect here, but a material that passes one is
+  // written to the specification and has to compile.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
+  const auto wiT = math::normalize(float3(+0.5, 0.2, -0.9));
+  #assert(#all(
+    scatter::evaluate(df::diffuse_reflection_bsdf(tint: 0.8, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::diffuse_reflection_bsdf(tint: 0.8), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(df::diffuse_transmission_bsdf(tint: 0.8, handle: "h"), wo, wiT).f ==
+    scatter::evaluate(df::diffuse_transmission_bsdf(tint: 0.8), wo, wiT).f));
+  #assert(#all(
+    scatter::evaluate(df::simple_glossy_bsdf(roughness_u: 0.3, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::simple_glossy_bsdf(roughness_u: 0.3), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(df::sheen_bsdf(roughness: 0.3, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::sheen_bsdf(roughness: 0.3), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(df::ward_geisler_moroder_bsdf(roughness_u: 0.3, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::ward_geisler_moroder_bsdf(roughness_u: 0.3), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(df::measured_bsdf(measurement: bsdf_measurement("test.mbsdf"), handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::measured_bsdf(measurement: bsdf_measurement("test.mbsdf")), wo, wi).f));
+  // A Dirac lobe has no value to compare, and neither do the emission,
+  // volume, and hair distributions here, so these only have to construct.
+  #assert(df::specular_bsdf(handle: "h") <: bsdf);
+  #assert(df::diffuse_edf(handle: "h") <: edf);
+  #assert(df::spot_edf(exponent: 1.0, handle: "h") <: edf);
+  #assert(df::measured_edf(profile: light_profile("isotropic.ies"), handle: "h") <: edf);
+  #assert(df::anisotropic_vdf(handle: "h") <: vdf);
+  #assert(df::chiang_hair_bsdf(handle: "h") <: hair_bsdf);
+}
+
+unit_test "A distribution at its defaults is not the absence of one" {
+  // `#isDefault` is how a material tells a surface, an emission, or a hair
+  // that is there from one that is not, so it must answer for what was
+  // written, not for whether every parameter kept its default.
+  #assert(#isDefault(bsdf()));
+  #assert(#isDefault(edf()));
+  #assert(#isDefault(vdf()));
+  #assert(#isDefault(hair_bsdf()));
+  #assert(!#isDefault(df::diffuse_reflection_bsdf()));
+  #assert(!#isDefault(df::diffuse_edf()));
+  #assert(!#isDefault(df::anisotropic_vdf()));
+  #assert(!#isDefault(df::chiang_hair_bsdf()));
+  // The containers a material is built from still are default when every
+  // field is.
+  #assert(#isDefault(material_surface()));
+  #assert(#isDefault(material_emission()));
+  #assert(#isDefault(material_volume()));
+}

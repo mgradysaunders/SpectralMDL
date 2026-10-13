@@ -124,8 +124,15 @@ bool Type::isDefault() const {
              structType->tags[0]->defaultType == structType;
     } else {
       // The struct is considered 'default' if it is the default
-      // instantiation of an abstract struct.
-      return structType->isDefaultInstance;
+      // instantiation of an abstract struct that has no tag, such as
+      // 'material_surface', or that is the default type for its first tag.
+      // Any other tagged struct is a distribution or the like, whose
+      // default instantiation is as real as any other: 'diffuse_edf()' is
+      // an EDF, not the absence of one.
+      const StructType *abstractType{structType->instanceOf};
+      return structType->isDefaultInstance &&
+             (abstractType->tags.empty() ||
+              abstractType->tags[0]->defaultType == abstractType);
     }
   }
   return false;
@@ -634,7 +641,16 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isOnePositional(this)) {
     return emitter.rvalue(args[0].value);
   }
-  if (args.isAllPositional() && args.size() == size) {
+  // A lone argument that is an array of this size is converted element by
+  // element below. With a size of one it also reads as the one element,
+  // so it is taken as the element only if it converts to the element type.
+  const bool isArrayToConvert{[&] {
+    if (!args.isOnePositional()) return false;
+    auto arrType{llvm::dyn_cast<ArrayType>(args[0].value.type)};
+    return arrType && arrType->size == size &&
+           !emitter.context.isExplicitlyConvertible(arrType, elemType);
+  }()};
+  if (args.isAllPositional() && args.size() == size && !isArrayToConvert) {
     if (isAbstract()) {
       Type *argElemType{emitter.context.getCommonType(
           args.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
@@ -2385,9 +2401,11 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
               emitter.accessField(invoke(emitter, {}, decl.srcLoc),
                                   "geometry"sv, decl.srcLoc),
               "normal"sv, decl.srcLoc)};
-          Value stateNormal{emitter.accessField(
-              emitter.resolveIdentifier("$state"sv, decl.srcLoc), "normal"sv,
-              decl.srcLoc)};
+          // 'emitter.state' rather than resolving '$state' by name, since
+          // the name resolves only in an SMDL module, and the material
+          // may be declared in a conformant one.
+          Value stateNormal{
+              emitter.accessField(emitter.state, "normal"sv, decl.srcLoc)};
           Value delta{emitter.emitOp(BINOP_SUB, materialNormal, stateNormal,
                                      decl.srcLoc)};
           // The default fast-math flags lack 'nnan'/'ninf', under which

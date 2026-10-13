@@ -232,6 +232,26 @@ unit_test "An inferred size binds per call and reaches the defaults" {
     "shared size name must accept equal sizes");
 }
 
+// A one-element array is also the shape of a constructor call with one
+// element, so an array of one has to bind an inferred size as the array it
+// is and convert element by element, as an array of any other size does.
+// An element type that is a tag is where the two readings part: the
+// elements carry the tag and the array does not.
+tag Shape;
+
+struct Circle: Shape {
+  float radius = 1.0;
+};
+
+float firstRadius(const Shape[<N>] shapes) = shapes[0].radius;
+
+unit_test "An array of one binds an inferred size as an array" {
+  #assert(firstRadius(Circle[](Circle(3.0))) == 3.0);
+  #assert(firstRadius(Circle[](Circle(3.0), Circle())) == 3.0);
+  #assert(arraySum(int[1](4)) == 4.0);
+  #assert(float[1](int[1](7))[0] == 7.0);
+}
+
 // Overload ranking consults the arguments, not the declaration order. The
 // two parameter types here convert implicitly to each other, so a ranking
 // that did not look at the arguments would simply take the first

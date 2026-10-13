@@ -59,7 +59,8 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
       "export material mat_emissive() = material(\n"
       "  surface: material_surface(\n"
       "    scattering: df::diffuse_reflection_bsdf(),\n"
-      "    emission: material_emission(emission: df::diffuse_edf())));\n");
+      "    emission: material_emission(emission: df::diffuse_edf())));\n"
+      "export material mat_hair() = material(hair: df::chiang_hair_bsdf());\n");
   smdl::Compiler compiler{};
   REQUIRE_OK(compiler.add((tmpDir / "root").string()));
   REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_O2));
@@ -133,6 +134,12 @@ TEST_CASE("MaterialDef: the flags a compile can prove") {
     CHECK((matEmissive->staticFlags & smdl::MATERIAL_HAS_SURFACE_EMISSION) !=
           0);
     CHECK(matEmissive->isAlwaysOpaque());
+    // A distribution with every parameter at its default is still there:
+    // 'mat_emissive' above holds 'diffuse_edf()' to that, and this holds a
+    // hair BSDF with every one of its parameters at its default.
+    const smdl::jit::MaterialDef *matHair{
+        requireMaterial(compiler, "mat_hair")};
+    CHECK((matHair->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
   }
   SUBCASE("Runtime-dependent bits degrade to unknown") {
     const smdl::jit::MaterialDef *matCutoutRuntime{

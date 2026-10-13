@@ -204,7 +204,8 @@ public:
 
   /// Is "default" in the sense of the `#isDefault` intrinsic? True for
   /// a struct type that is either the default type for its first tag or
-  /// the default instantiation of an abstract struct. This is the single
+  /// the default instantiation of an abstract struct that has no tag or
+  /// is the default type for its first tag. This is the single
   /// definition shared by the intrinsic and the static material flags
   /// (see `FunctionType::initializeMaterialFunctions_`).
   [[nodiscard]] bool isDefault() const;

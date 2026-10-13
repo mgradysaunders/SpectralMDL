@@ -171,6 +171,29 @@ unit_test "A color mixer agrees with the float mixer at uniform weights" {
   }
 }
 
+unit_test "A mix of one component is that component at its weight" {
+  // The specification spells a mix of one as an array of one literal
+  // component, which every mixer's inferred-size parameter has to take as
+  // the array it is.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto lobe = df::diffuse_reflection_bsdf(tint: 0.8);
+  const auto f = scatter::evaluate(lobe, wo, wi).f;
+  const auto components = df::bsdf_component[](
+    df::bsdf_component(weight: 0.5, component: lobe));
+  const auto componentsC = df::color_bsdf_component[](
+    df::color_bsdf_component(weight: color(0.5), component: lobe));
+  #assert(#all(scatter::evaluate(df::normalized_mix(components), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(#all(scatter::evaluate(df::clamped_mix(components), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(#all(scatter::evaluate(df::unbounded_mix(components), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(#all(scatter::evaluate(df::color_normalized_mix(componentsC), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(#all(scatter::evaluate(df::color_clamped_mix(componentsC), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(#all(scatter::evaluate(df::color_unbounded_mix(componentsC), wo, wi).f ~== |1e-5| 0.5 * f));
+  #assert(scatter::sample(df::normalized_mix(components), xi, wo).success);
+  #assert(scatter::sample(df::color_normalized_mix(componentsC), xi, wo).success);
+}
+
 unit_test "Every factor modifier survives the sampling path" {
   // Every factor modifier has to compile and execute through the sampling
   // entry point as well as the evaluation one. A modifier whose sampling
@@ -212,5 +235,47 @@ unit_test "Every factor modifier survives the sampling path" {
     const auto r = scatter::sample(df::horizon_shadow_factor(slopes: float4(0.0), base: base), xi, wo);
     #assert(r.success);
     #assert(#any(r.f > 0.0));
+  }
+}
+
+unit_test "A two-value tint tints each side by its own tint" {
+  // Evaluation knows the side from the direction pair, and sampling from
+  // the side the draw landed on, so each path chooses the tint its own way
+  // and both are held to it. Each draw is compared with the same draw of
+  // the untinted base.
+  const auto reflectionTint = color(0.5);
+  const auto transmissionTint = color(0.25);
+  {
+    const auto base = df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.4, roughness_v: 0.4, tint: 1.0, mode: df::scatter_reflect_transmit);
+    const auto tinted = df::tint(
+      reflection_tint: reflectionTint, transmission_tint: transmissionTint, base: base);
+    const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+    const auto wiR = math::normalize(float3(+0.5, 0.2, 0.9));
+    const auto wiT = math::normalize(float3(+0.5, 0.2, -0.9));
+    const auto fR = scatter::evaluate(base, wo, wiR).f;
+    const auto fT = scatter::evaluate(base, wo, wiT).f;
+    #assert(#any(fR > 0.0) && #any(fT > 0.0));
+    #assert(#all(scatter::evaluate(tinted, wo, wiR).f ~== |1e-5| reflectionTint * fR));
+    #assert(#all(scatter::evaluate(tinted, wo, wiT).f ~== |1e-5| transmissionTint * fT));
+  }
+  {
+    const auto base = df::specular_bsdf(mode: df::scatter_reflect_transmit);
+    const auto tinted = df::tint(
+      reflection_tint: reflectionTint, transmission_tint: transmissionTint, base: base);
+    const auto wo = math::normalize(float3(0.9, 0.0, 0.2));
+    bool sawReflection = false;
+    bool sawTransmission = false;
+    for (int i = 0; i < 32; i++) {
+      const auto xi = float4((float(i) + 0.5) / 32.0);
+      const auto r0 = scatter::sample(base, xi, wo);
+      const auto r1 = scatter::sample(tinted, xi, wo);
+      #assert(r0.success && r1.success);
+      const bool isReflection = r1.wi.z > 0.0;
+      sawReflection = sawReflection || isReflection;
+      sawTransmission = sawTransmission || !isReflection;
+      #assert(#all(r1.f ~== |1e-5| (isReflection ? reflectionTint : transmissionTint) * r0.f));
+    }
+    #assert(sawReflection && sawTransmission);
   }
 }

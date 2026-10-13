@@ -4,9 +4,10 @@
 /// combinators, and the mixers, plus the internal scattering and
 /// emission entry points the compiler exposes to renderers.
 ///
-/// NOTE: The `handle` of every distribution function here should be a
-/// `string` by the specification, but we `void` it because we have no
-/// use for it.
+/// NOTE: The `handle` of every distribution function here is a `string`
+/// by the specification, but we have no use for it, so it is optional
+/// rather than `string`: it takes no storage unless a material passes
+/// one, and a material that passes one is accepted as written.
 ///
 /// NOTE: The `multiscatter_tint` contract is uniform across the lobes
 /// that have one: `0.0` disables the multiple-scattering lobe and `1.0`
@@ -1499,7 +1500,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   const float roughness = 0.0;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The multiscatter tint.
   ///
@@ -1611,7 +1612,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   const $(color | float) tint = 1.0;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags.
   static const int _lobes = DF_MATTE_BTDF;
@@ -1669,7 +1670,7 @@ export struct specular_bsdf: bsdf {
   const scatter_mode mode = scatter_reflect;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags.
   const int _lobes = modeLobes(int(mode), DF_DIRAC);
@@ -1798,7 +1799,7 @@ export struct measured_bsdf: bsdf {
   scatter_mode mode = scatter_reflect;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags. `DF_MATTE` rather than `DF_GLOSS` because tabulated
   /// data has no normal distribution behind it to sample a half vector
@@ -2360,7 +2361,7 @@ export struct sheen_bsdf: bsdf {
   void multiscatter = none;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags.
   static const int _lobes = DF_MATTE_BRDF;
@@ -2513,7 +2514,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   float3 tangent_u = $state.textureTangentU[0];
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags: the lobe's kind by its width, see `microfacetKind`.
   const int _lobes =
@@ -4163,7 +4164,7 @@ export struct hapke_bsdf: bsdf {
   float _tanMeanSlope = 0.0;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags.
   static const int _lobes = DF_MATTE_BRDF;
@@ -4579,7 +4580,7 @@ export struct chiang_hair_bsdf: hair_bsdf {
   const float ior = 1.55;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags. `DF_GLOSS` is deliberately absent: hair scatters about
   /// a fiber axis rather than a surface half vector, so there is no
@@ -4786,7 +4787,7 @@ auto scatterDraw(
 /// constant radiance over the upper hemisphere.
 export struct diffuse_edf: edf {
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags. Always zero: the `DF_` flags describe how a surface
   /// scatters, and emission does not scatter.
@@ -4849,7 +4850,7 @@ export struct spot_edf: edf {
   void global_frame = float3x3(1.0);
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The precomputed cosine of the cone half angle.
   const float _cosSpread = #cos(0.5 * #min(#max(spread, 1e-6), $PI));
@@ -4988,7 +4989,7 @@ export struct measured_edf: edf {
   float3 tangent_u = $state.textureTangentU[0];
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The precomputed scale, folding the multiplier and the normalization
   /// by the maximum intensity of the profile.
@@ -5169,7 +5170,7 @@ auto scatterDraw(const &tint1 this, const &ScatterDrawParams params) {
 auto scatterDraw(const &tint2 this, const &ScatterDrawParams params) {
   auto result(scatterDrawMasked(visit &this.base, params));
   if ((result.mode != scatter_none) & bool(result.fDirac)) {
-    if (params.mode == scatter_reflect) {
+    if (result.mode == scatter_reflect) {
       *result.fDirac *= this.reflection_tint;
     } else {
       *result.fDirac *= this.transmission_tint;
@@ -6813,7 +6814,7 @@ export struct anisotropic_vdf: vdf {
   float directional_bias = 0.0;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The flags.
   static const int _lobes = 0;
@@ -6866,7 +6867,7 @@ export struct fog_vdf: vdf {
   float particle_size = 8.0;
 
   /// The handle.
-  void handle = "";
+  $(?string) handle = none;
 
   /// The fitted Henyey-Greenstein lobe anisotropy. This and the three
   /// fields below are computed by `finalize` from `particle_size`;
