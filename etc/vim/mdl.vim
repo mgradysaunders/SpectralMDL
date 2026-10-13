@@ -93,15 +93,25 @@ syn match mdlDocTag contained display "[\\@]\%(\a\|-\)\+"
 
 syn region mdlLineComment start="//" end="$" keepend
       \ contains=mdlTodo,mdlFormatDirective,@Spell
-syn region mdlComment start="/\*" end="\*/" extend
-      \ contains=mdlTodo,mdlFormatDirective,@Spell
+
+" Block comments nest, as of MDL 1.8: a `/*` inside one opens a comment that
+" its own `*/` closes, so the outer one runs on to the `*/` that balances it,
+" and a `//` inside one starts nothing. The nested region is transparent and
+" has no `contains` of its own, so it takes the highlighting and the contents
+" of whichever comment holds it, itself included, to any depth. Every block
+" comment region gives its delimiters a `matchgroup`, without which the
+" nested region would also match the `/*` that opens its container.
+syn region mdlCommentNest contained transparent matchgroup=mdlComment
+      \ start="/\*" end="\*/"
+syn region mdlComment matchgroup=mdlComment start="/\*" end="\*/" extend
+      \ contains=mdlCommentNest,mdlTodo,mdlFormatDirective,@Spell
 
 " Documentation comments are defined after the ordinary ones so that they win
 " the tie at the same starting position.
 syn region mdlDocLineComment start="///" end="$" keepend
       \ contains=mdlTodo,mdlDocTag,@Spell
-syn region mdlDocComment start="/\*\*\%(/\)\@!" end="\*/" extend
-      \ contains=mdlTodo,mdlDocTag,@Spell
+syn region mdlDocComment matchgroup=mdlDocComment start="/\*\*\%(/\)\@!"
+      \ end="\*/" extend contains=mdlCommentNest,mdlTodo,mdlDocTag,@Spell
 "--}
 
 "--{ Literals
