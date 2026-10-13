@@ -641,35 +641,40 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isOnePositional(this)) {
     return emitter.rvalue(args[0].value);
   }
-  // A lone argument that is an array of this size is converted element by
-  // element below. With a size of one it also reads as the one element,
-  // so it is taken as the element only if it converts to the element type.
-  const bool isArrayToConvert{[&] {
-    if (!args.isOnePositional()) return false;
-    auto arrType{llvm::dyn_cast<ArrayType>(args[0].value.type)};
-    return arrType && arrType->size == size &&
-           !emitter.context.isExplicitlyConvertible(arrType, elemType);
-  }()};
-  if (args.isAllPositional() && args.size() == size && !isArrayToConvert) {
+  // Construct from one argument per element.
+  auto fromElements{[&](const ArgumentList &elemArgs) -> Value {
     if (isAbstract()) {
       Type *argElemType{emitter.context.getCommonType(
-          args.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
+          elemArgs.getTypes(), /*shouldDefaultToUnion=*/true, srcLoc)};
       if (!emitter.context.isPerfectlyConvertible(argElemType, elemType))
         srcLoc.throwError("Cannot construct abstract array ",
                           SpellQuoted(displayName), " from element ",
                           SpellQuoted(argElemType->displayName));
       return emitter.invoke(emitter.context.getArrayType(argElemType, size),
-                            args, srcLoc);
-    } else {
-      // If we can construct all elements directly from arguments, construct the
-      // array by converting each argument.
-      Value result{Value::zero(this)};
-      for (uint32_t i = 0; i < size; i++)
-        result = emitter.insert(
-            result, emitter.invoke(elemType, args[i].value, srcLoc), i, srcLoc);
-      return result;
+                            elemArgs, srcLoc);
     }
-  }
+    Value result{Value::zero(this)};
+    for (uint32_t i = 0; i < size; i++)
+      result = emitter.insert(
+          result, emitter.invoke(elemType, elemArgs[i].value, srcLoc), i,
+          srcLoc);
+    return result;
+  }};
+  // A lone argument that is an array of this size is converted element by
+  // element below, as 'InferredSizeArrayType::invoke()' assumes when it
+  // sizes an array after one. With a size of one it also reads as the one
+  // element, which it is taken as only if it converts to the element type
+  // and its own elements do not.
+  const bool isArrayToConvert{[&] {
+    if (!args.isOnePositional()) return false;
+    auto arrType{llvm::dyn_cast<ArrayType>(args[0].value.type)};
+    return arrType && arrType->size == size &&
+           (emitter.context.isExplicitlyConvertible(arrType->elemType,
+                                                    elemType) ||
+            !emitter.context.isExplicitlyConvertible(arrType, elemType));
+  }()};
+  if (args.isAllPositional() && args.size() == size && !isArrayToConvert)
+    return fromElements(args);
   if (args.isOnePositional()) {
     Value value{args[0].value};
     // If constructing from array type of identical size but different element
@@ -680,7 +685,9 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
           value, size, srcLoc, [&](unsigned, Value elem) {
             return emitter.invoke(elemType, elem, srcLoc);
           })};
-      return invoke(emitter, llvm::ArrayRef<Value>(elems), srcLoc);
+      // Not 'invoke()' again, which would read a lone element that is
+      // itself an array of one as another array to convert.
+      return fromElements(llvm::ArrayRef<Value>(elems));
     }
     // If constructing from pointer to element type, load from the pointer.
     if (std::optional<Value> loaded{

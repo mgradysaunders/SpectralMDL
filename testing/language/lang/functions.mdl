@@ -236,7 +236,9 @@ unit_test "An inferred size binds per call and reaches the defaults" {
 // element, so an array of one has to bind an inferred size as the array it
 // is and convert element by element, as an array of any other size does.
 // An element type that is a tag is where the two readings part: the
-// elements carry the tag and the array does not.
+// elements carry the tag and the array does not. With `auto`, which both
+// readings satisfy, the array still wins, so `auto[](a)` is `a` itself at
+// every size; an array of one array is converted one level only.
 tag Shape;
 
 struct Circle: Shape {
@@ -245,11 +247,20 @@ struct Circle: Shape {
 
 float firstRadius(const Shape[<N>] shapes) = shapes[0].radius;
 
+auto firstOf(const auto[<N>] x) = x[0];
+
 unit_test "An array of one binds an inferred size as an array" {
   #assert(firstRadius(Circle[](Circle(3.0))) == 3.0);
   #assert(firstRadius(Circle[](Circle(3.0), Circle())) == 3.0);
   #assert(arraySum(int[1](4)) == 4.0);
   #assert(float[1](int[1](7))[0] == 7.0);
+  #assert(firstOf(int[1](4)) <: int);
+  #assert(firstOf(int[1](4)) == 4);
+  const auto single = float[1](1.0);
+  #assert(#typeOf(auto[](single)) == #typeOf(single));
+  const auto nested = int[1][1](int[1](4));
+  #assert(#typeOf(auto[](nested)) == #typeOf(nested));
+  #assert(firstOf(nested)[0] == 4);
 }
 
 // Overload ranking consults the arguments, not the declaration order. The
