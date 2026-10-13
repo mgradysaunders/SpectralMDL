@@ -285,17 +285,15 @@ TEST_CASE("Compiler: a function declared ahead of its definition") {
         "[<string ::diag>:2:1], may have");
   }
   SUBCASE("A call compiled before the definition says so") {
-    // A material compiles where it is declared, so a definition below it
-    // is one it cannot reach.
-    CHECK_CONTAINS(
-        compileError(
-            "mdl 1.9;\nfloat f(float x);\n"
-            "export material m() = material(surface: material_surface(\n"
-            "  emission: material_emission(intensity: color(f(1.0)))));\n"
-            "float f(float x) { return x; }\n")
-            .message,
-        "Function \"f\" declared at [<string ::diag>:2:1] is not defined "
-        "before this call");
+    // A constant compiles where it is declared, so a definition below it is
+    // one it cannot reach. A material compiles at the end of its module,
+    // so it can (see 'testing/language/lang/packages/conformant.mdl').
+    CHECK_CONTAINS(compileError("mdl 1.9;\nfloat f(float x);\n"
+                                "const float k = f(1.0);\n"
+                                "float f(float x) { return x; }\n")
+                       .message,
+                   "Function \"f\" declared at [<string ::diag>:2:1] is not "
+                   "defined before this call");
   }
 }
 
@@ -498,14 +496,23 @@ TEST_CASE("Compiler: what the author of a distribution is told") {
                    "while generating the \"scatterEval\" entry point of "
                    "material \"::diag::mine\" declared at [<string ::diag>:6:");
   }
-  SUBCASE("A material before the implementations it needs names them") {
+  SUBCASE("A material sees the implementations declared after it") {
+    // A material compiles at the end of its module, by which time every
+    // implementation beside its distribution has been declared.
+    CHECK(compileError(
+              withBSDF("df::DF_MATTE_BRDF", smdl::concat(material, eval, draw)))
+              .message == "compiled without error");
+    // Code that compiles where it is declared does not see them, and is
+    // told which were declared after it.
     smdl::Error error{compileError(
-        withBSDF("df::DF_MATTE_BRDF", smdl::concat(material, eval)))};
-    CHECK_CONTAINS(error.message, "[<string ::diag>:3:8] Open function "
-                                  "\"scatterEval\" has no implementation for "
-                                  "\"MyBSDF\"");
+        "#smdl\ntag shape;\n@(pure open) float area(const &shape this);\n"
+        "struct Square: shape { float side = 1.0; };\n"
+        "exec { auto s = Square(); #assert(area(&s) == 1.0); }\n"
+        "@(pure) float area(const &Square this) = this.side;\n")};
+    CHECK_CONTAINS(error.message, "Open function \"area\" has no "
+                                  "implementation for \"Square\"");
     CHECK_CONTAINS(error.message, "declared after the code that needs it: "
-                                  "\"scatterEval\" at [<string ::diag>:5:");
+                                  "\"area\" at [<string ::diag>:6:");
     // A struct carrying several tags reaches the open declarations of all of
     // them, which together are no more an implementation than one is.
     smdl::Error errorTwoTags{compileError(smdl::concat(

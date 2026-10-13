@@ -696,6 +696,22 @@ public:
     return Value();
   }
 
+  /// Compile the materials declared in this module, in declaration order,
+  /// each in the scope and the namespace it was declared in. A material
+  /// waits for the end of its module, where every declaration of the
+  /// module has been made, as a function waits for its first call. It
+  /// still sees only the declarations before it, but a function it calls
+  /// that was declared ahead of it may be defined after it.
+  void compileMaterials() {
+    SMDL_PRESERVE(scope, context.currentNamespacePath);
+    for (auto &[func, materialScope, namespacePath] : declaredMaterials) {
+      scope = materialScope;
+      context.currentNamespacePath = namespacePath;
+      func->compileMaterial(*this);
+    }
+    declaredMaterials.clear();
+  }
+
   /// Check every struct this emitter declared against the open functions
   /// its tags require, which is only possible once the module is compiled,
   /// since an implementation may follow its struct anywhere in it.
@@ -1442,6 +1458,23 @@ public:
 
   /// The structs declared so far, for `checkOpenImplementations()`.
   llvm::SmallVector<StructType *> declaredStructs{};
+
+  /// A material declared at module scope, which compiles at the end of
+  /// its module. See `compileMaterials()`.
+  struct DeclaredMaterial final {
+    /// The material.
+    FunctionType *func{};
+
+    /// The scope it was declared in.
+    Scope *scope{};
+
+    /// The namespace path it was declared in, which its qualified name
+    /// takes.
+    llvm::SmallVector<std::string_view, 4> namespacePath{};
+  };
+
+  /// The materials declared so far and not yet compiled.
+  llvm::SmallVector<DeclaredMaterial> declaredMaterials{};
 
   /// The memory slots holding spilled rvalues, keyed by the LLVM value and
   /// the SMDL type (the same LLVM constant may stand for more than one).

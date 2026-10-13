@@ -207,7 +207,7 @@ public:
   /// the default instantiation of an abstract struct that has no tag or
   /// is the default type for its first tag. This is the single
   /// definition shared by the intrinsic and the static material flags
-  /// (see `FunctionType::initializeMaterialFunctions_`).
+  /// (see `FunctionType::compileMaterial`).
   [[nodiscard]] bool isDefault() const;
 
   /// Is instance of `UnionType` or multi-level `PointerType`
@@ -964,8 +964,10 @@ public:
   /// chain, are never declared into any scope, and are implicitly macros.
   const bool isLambda{};
 
-private:
-  void initializeMaterialFunctions_(Emitter &emitter);
+  /// Compile this material: register its `jit::MaterialDef` under the
+  /// qualified name the current namespace path gives it, and emit its
+  /// entry points.
+  void compileMaterial(Emitter &emitter);
 };
 
 /// An inferred-size array type.

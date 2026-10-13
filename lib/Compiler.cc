@@ -792,7 +792,7 @@ readsOnlyStateBytes(const llvm::DataLayout &layout, const llvm::Argument *arg,
 
 // Derive the value-dependent static material flags after optimization.
 //
-// `FunctionType::initializeMaterialFunctions_` fills the type-level
+// `FunctionType::compileMaterial` fills the type-level
 // (`#isDefault`-derived) bits of `staticFlags`/`staticFlagsKnown` at
 // emit time and also emits, per material, the `.opacityEval` entry
 // point and a `.thinWalledProbe` scaffolding function. After the

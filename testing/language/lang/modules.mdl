@@ -141,6 +141,8 @@ unit_test "A conformant overload set resolves as the specification has it" {
   #assert(packages::conformant::conformantSumOfOne(1.0) == 3.0);
   #assert(packages::conformant::conformantSum(1.0) == 3.0);
   #assert(packages::conformant::conformantSum(1.0, y: 5.0) == 6.0);
+  const auto summed = packages::conformant::conformantSumMaterial();
+  #assert(#all(summed.surface.emission.intensity == color(3.0)));
 }
 
 unit_test "A conformant struct casts to another whose fields cast in order" {

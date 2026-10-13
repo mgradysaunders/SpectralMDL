@@ -1519,7 +1519,15 @@ void FunctionType::initialize(Emitter &emitter) {
       decl.srcLoc.throwError("Material ", SpellQuoted(declName),
                              " must not be declared '@(open)'");
     isMaterial = true;
-    initializeMaterialFunctions_(emitter);
+    // A material declared at module scope compiles once every declaration
+    // of its module has, as a function compiles at its first call, so that
+    // a function it calls may be declared ahead of the material and defined
+    // after it (see 'Emitter::compileMaterials()').
+    if (emitter.getLLVMFunction())
+      compileMaterial(emitter);
+    else
+      emitter.declaredMaterials.push_back(
+          {this, emitter.scope, context.currentNamespacePath});
   }
 }
 
@@ -2165,7 +2173,7 @@ void verifyMaterialEvalLayout(Context &context, Type *type,
 }
 } // namespace
 
-void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
+void FunctionType::compileMaterial(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
   Context &context{emitter.context};
   Compiler &compiler{context.compiler};

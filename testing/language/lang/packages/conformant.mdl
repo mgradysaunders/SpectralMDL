@@ -89,10 +89,14 @@ export int conformantPrefixed(
   int a [[anno::unused()]], int b = 0 [[anno::unused()]]) = 2;
 
 // A function declared ahead of its definition, with the default
-// initializers on the declaration, and called in between.
+// initializers on the declaration, and called in between, by a function
+// and by a material, which compiles at the end of the module.
 export float conformantSum(float x, float y = 2.0);
 
 export float conformantSumOfOne(float x) = conformantSum(x);
+
+export material conformantSumMaterial() = material(surface: material_surface(
+  emission: material_emission(intensity: color(conformantSum(1.0)))));
 
 export float conformantSum(float x, float y) {
   return x + y;
