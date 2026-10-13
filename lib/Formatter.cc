@@ -335,8 +335,8 @@ void Formatter::write_(const ast::File &file) {
            file.srcSemicolonAfterModule, DELIM_NEWLINE);
   }
   for (const auto &decl : file.globalDecls) {
-    write_(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
-           DELIM_NEWLINE);
+    write_(decl->attributes, decl->srcKwExport, DELIM_SPACE,
+           decl->srcKwDeclarative, DELIM_SPACE, decl, DELIM_NEWLINE);
   }
   write_(DELIM_NEWLINE);
 }
@@ -344,9 +344,9 @@ void Formatter::write_(const ast::File &file) {
 //--{ Write: Decls
 void Formatter::write_(const ast::Decl &decl) {
   writeTypeSwitch_<ast::AnnotationDecl, ast::Enum, ast::Exec, ast::Function,
-                   ast::Import, ast::Namespace, ast::Struct, ast::Tag,
-                   ast::Typedef, ast::UnitTest, ast::UsingAlias,
-                   ast::UsingImport, ast::Variable>(decl);
+                   ast::Import, ast::Namespace, ast::Struct,
+                   ast::StructCategory, ast::Tag, ast::Typedef, ast::UnitTest,
+                   ast::UsingAlias, ast::UsingImport, ast::Variable>(decl);
 }
 
 void Formatter::write_(const ast::Enum &decl) {
@@ -394,6 +394,8 @@ void Formatter::write_(const ast::Function &decl) {
 
 void Formatter::write_(const ast::Struct &decl) {
   write_(decl.srcKwStruct, DELIM_SPACE, decl.name);
+  if (!decl.srcKwIn.empty())
+    write_(DELIM_SPACE, decl.srcKwIn, DELIM_SPACE, decl.category);
   if (!decl.srcColonBeforeTags.empty()) {
     write_(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
     writeList_(decl.tags.size(), decl.hasTrailingCommaOnTags(),

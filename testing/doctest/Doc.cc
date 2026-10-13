@@ -229,6 +229,21 @@ export const int X = 0 [[ anno::description("The described constant.") ]];
 )")};
     CHECK(entryNamed(mod, "X").docText == "The described constant.");
   }
+  SUBCASE("A declarative declaration keeps its keyword and its category") {
+    DocModule mod{extractFromSource(R"(mdl 1.9;
+export struct_category looks [[ anno::description("The category.") ]];
+export declarative struct look in looks { color tint = color(1.0); };
+export declarative look make_look() = look();
+)")};
+    const DocEntry &looks{entryNamed(mod, "looks")};
+    CHECK(looks.kind == "struct_category");
+    CHECK(looks.signature == "export struct_category looks");
+    CHECK(looks.docText == "The category.");
+    CHECK(entryNamed(mod, "look").signature ==
+          "export declarative struct look in looks");
+    CHECK(entryNamed(mod, "make_look").signature ==
+          "export declarative look make_look()");
+  }
   SUBCASE("findSymbol finds what removeHidden has not taken away") {
     DocDatabase docs{};
     docs.modules.push_back(extractFromSource(R"(#smdl

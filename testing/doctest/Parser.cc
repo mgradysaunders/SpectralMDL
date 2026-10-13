@@ -440,6 +440,33 @@ TEST_CASE("Parser: a unicode identifier") {
   }
 }
 
+TEST_CASE("Parser: a declarative declaration") {
+  SUBCASE("The keyword and the category are kept as written") {
+    ParsedModule parsed{"mdl 1.9;\nstruct_category looks;\n"
+                        "export declarative struct look in looks {};\n"
+                        "declarative look make_look() = look();\n"};
+    const auto &looks{parsed.declAs<ast::StructCategory>(0)};
+    CHECK(looks.name.srcName == "looks");
+    const auto &look{parsed.declAs<ast::Struct>(1)};
+    CHECK(look.srcKwDeclarative == "declarative");
+    CHECK(look.isExported());
+    CHECK(look.srcKwIn == "in");
+    CHECK(look.category.srcName == "looks");
+    const auto &makeLook{parsed.declAs<ast::Function>(2)};
+    CHECK(makeLook.srcKwDeclarative == "declarative");
+    CHECK(!makeLook.isExported());
+  }
+  SUBCASE("Only a struct or a function is declarative") {
+    CHECK_CONTAINS(
+        parseError("mdl 1.9;\nexport declarative const int x = 1;\n"),
+        "Expected a struct or a function after 'declarative'");
+  }
+  SUBCASE("A struct in a category names it") {
+    CHECK_CONTAINS(parseError("mdl 1.9;\nstruct look in { float x; };\n"),
+                   "Expected structure category after 'struct ... in'");
+  }
+}
+
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};

@@ -41,6 +41,8 @@ std::string_view to_string(DeclKind declKind) {
     return "Namespace";
   case DeclKind::Struct:
     return "Struct";
+  case DeclKind::StructCategory:
+    return "StructCategory";
   case DeclKind::Tag:
     return "Tag";
   case DeclKind::Typedef:

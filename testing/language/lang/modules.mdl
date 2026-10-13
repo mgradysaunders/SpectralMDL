@@ -195,6 +195,15 @@ unit_test "A conformant module adds overloads to a function it imports" {
   #assert(math::max(1.0d, 2.0d) == 2.0d);
 }
 
+unit_test "A conformant declarative declaration is an ordinary one" {
+  const auto look = packages::conformant::conformantLook(color(0.5));
+  #assert(#all(look.tint == color(0.5)));
+  #assert(#all(packages::conformant::ConformantLook().tint == color(0.25)));
+  #assert(packages::conformant::ConformantMaterialLike().roughness == 0.0);
+  const auto lookMaterial = packages::conformant::conformantLookMaterial();
+  #assert(#all(lookMaterial.surface.emission.intensity == color(0.5)));
+}
+
 unit_test "A conformant module names another in single quotes" {
   #assert(packages::conformant::conformantQuotedOne() == 1);
   #assert(packages::conformant::conformantUsedOne() == 1);

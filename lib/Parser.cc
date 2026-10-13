@@ -280,11 +280,21 @@ auto Parser::parseSimpleName_() -> std::optional<ast::Name> {
   if (std::optional<std::string_view> name{nextWord_()}) {
     // NOTE: These must remain sorted for `std::binary_search`!
     static constexpr std::string_view keywords[]{
-        "break",  "case",    "cast",   "const",  "continue", "default",
-        "do",     "else",    "enum",   "export", "false",    "for",
-        "if",     "import",  "let",    "module", "operator", "package",
-        "return", "struct",  "switch", "true",   "typedef",  "uniform",
-        "using",  "varying", "while",
+        "break",    "case",
+        "cast",     "const",
+        "continue", "declarative",
+        "default",  "do",
+        "else",     "enum",
+        "export",   "false",
+        "for",      "if",
+        "import",   "let",
+        "module",   "operator",
+        "package",  "return",
+        "struct",   "struct_category",
+        "switch",   "true",
+        "typedef",  "uniform",
+        "using",    "varying",
+        "while",
     };
     static constexpr std::string_view keywordsSMDLSyntax[]{
         "defer",  "inline", "namespace",   "return_from",
@@ -1478,8 +1488,12 @@ auto Parser::parseGlobalDeclaration_() -> BumpPtr<ast::Decl> {
   std::string_view srcDocComment{getDocCommentBefore_(srcLoc0.i)};
   std::optional<ast::Decl::Attributes> attributes{parseAttributes_()};
   std::optional<std::string_view> srcKwExport{nextKeyword_("export")};
+  std::optional<Parser::ParsedToken> kwDeclarative{
+      nextKeywordAndLocation_("declarative")};
   BumpPtr<ast::Decl> decl{[&]() -> BumpPtr<ast::Decl> {
     if (BumpPtr<ast::Decl> decl{parseAnnotationDeclaration_()}) return decl;
+    if (BumpPtr<ast::StructCategory> decl{parseStructCategoryDeclaration_()})
+      return decl;
     if (BumpPtr<ast::Function> decl{parseFunctionDeclaration_()}) return decl;
     if (BumpPtr<ast::Decl> decl{parseTypeDeclaration_()}) return decl;
     if (BumpPtr<ast::Variable> decl{parseVariableDeclaration_()}) return decl;
@@ -1498,12 +1512,35 @@ auto Parser::parseGlobalDeclaration_() -> BumpPtr<ast::Decl> {
                          "at the top of the file");
     return nullptr;
   }
+  if (kwDeclarative) {
+    if (!llvm::isa<ast::Struct>(decl.get()) &&
+        !llvm::isa<ast::Function>(decl.get()))
+      kwDeclarative->srcLoc.throwError(
+          "Expected a struct or a function after 'declarative'");
+    decl->srcKwDeclarative = kwDeclarative->src;
+  }
   decl->isGlobal = true;
   decl->srcDocComment = srcDocComment;
   if (attributes) decl->attributes = std::move(attributes);
   if (srcKwExport) decl->srcKwExport = *srcKwExport;
   accept_();
   return decl;
+}
+
+auto Parser::parseStructCategoryDeclaration_() -> BumpPtr<ast::StructCategory> {
+  std::optional<Parser::ParsedToken> kwStructCategory{
+      nextKeywordAndLocation_("struct_category")};
+  if (!kwStructCategory) return nullptr;
+  SourceLocation srcLoc0{kwStructCategory->srcLoc};
+  std::optional<ast::Name> name{parseSimpleName_()};
+  if (!name) srcLoc0.throwError("Expected name after 'struct_category'");
+  BumpPtr<ast::AnnotationBlock> annotations{parseAnnotationBlock_()};
+  std::optional<std::string_view> srcSemicolon{nextDelimiter_(";")};
+  if (!srcSemicolon)
+    srcLoc0.throwError("Expected ';' after 'struct_category ...'");
+  return allocate_<ast::StructCategory>(srcLoc0, std::in_place,
+                                        kwStructCategory->src, *name,
+                                        std::move(annotations), *srcSemicolon);
 }
 
 auto Parser::parseAnnotationDeclaration_() -> BumpPtr<ast::Decl> {
@@ -1560,6 +1597,10 @@ auto Parser::parseStructTypeDeclaration_() -> BumpPtr<ast::Struct> {
   }
   std::optional<ast::Name> name{parseSimpleName_()};
   if (!name) srcLoc0.throwError("Expected name after 'struct'");
+  std::optional<std::string_view> srcKwIn{nextKeyword_("in")};
+  std::optional<ast::Name> category{};
+  if (srcKwIn && !(category = parseSimpleName_()))
+    srcLoc0.throwError("Expected structure category after 'struct ... in'");
   std::vector<ast::Struct::Tag> tags{};
   std::optional<std::string_view> srcColonBeforeTags{nextDelimiter_(":")};
   if (srcColonBeforeTags) {
@@ -1622,11 +1663,16 @@ auto Parser::parseStructTypeDeclaration_() -> BumpPtr<ast::Struct> {
   if (!srcSemicolon)
     srcLoc0.throwError("Expected ';' after 'struct ... { ... }'");
   accept_();
-  return allocate_<ast::Struct>(
+  BumpPtr<ast::Struct> result{allocate_<ast::Struct>(
       srcLoc0, std::in_place, *srcKwStruct, *name, orEmpty_(srcColonBeforeTags),
       std::move(tags), std::move(annotations), *srcBraceL,
       std::move(constructors), std::move(fields), orEmpty_(srcKwFinalize),
-      std::move(stmtFinalize), *srcBraceR, *srcSemicolon);
+      std::move(stmtFinalize), *srcBraceR, *srcSemicolon)};
+  if (srcKwIn) {
+    result->srcKwIn = *srcKwIn;
+    result->category = *category;
+  }
+  return result;
 }
 
 auto Parser::parseStructConstructor_()

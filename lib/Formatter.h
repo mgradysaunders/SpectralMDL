@@ -388,12 +388,17 @@ private:
     write_(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
            decl.srcBraceL, DELIM_NEWLINE);
     for (const auto &subDecl : decl.decls)
-      write_(subDecl->attributes, subDecl->srcKwExport, DELIM_SPACE, subDecl,
-             DELIM_NEWLINE);
+      write_(subDecl->attributes, subDecl->srcKwExport, DELIM_SPACE,
+             subDecl->srcKwDeclarative, DELIM_SPACE, subDecl, DELIM_NEWLINE);
     write_(decl.srcBraceR, DELIM_NEWLINE);
   }
 
   void write_(const ast::Struct &decl);
+
+  void write_(const ast::StructCategory &decl) {
+    write_(decl.srcKwStructCategory, DELIM_SPACE, decl.name, decl.annotations,
+           decl.srcSemicolon);
+  }
 
   void write_(const ast::Tag &decl) {
     write_(decl.srcKwTag, DELIM_SPACE, decl.name, decl.srcSemicolon);

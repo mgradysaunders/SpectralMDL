@@ -617,6 +617,14 @@ public:
   /// The name.
   Name name;
 
+  /// The keyword `in` before the structure category. This may be empty!
+  std::string_view srcKwIn;
+
+  /// The structure category, as `material_category` in MDL 1.9's
+  /// `struct material in material_category`. SMDL treats a struct in a
+  /// category as an ordinary struct. This may be empty!
+  Name category;
+
   /// The colon `:` before the tags. This may be empty!
   std::string_view srcColonBeforeTags;
 
@@ -651,6 +659,35 @@ public:
   [[nodiscard]] bool hasTrailingCommaOnTags() const {
     return !tags.empty() && !tags.back().srcComma.empty();
   }
+};
+
+/// A `struct_category` declaration, which declares a structure category
+/// for declarative structs to be `in`, as MDL 1.9 does. SMDL parses it and
+/// declares nothing.
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// struct_category shading_category;
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class SMDL_EXPORT StructCategory final
+    : public DeclSubclass<DeclKind::StructCategory> {
+public:
+  explicit StructCategory(std::string_view srcKwStructCategory, Name name,
+                          BumpPtr<AnnotationBlock> annotations,
+                          std::string_view srcSemicolon)
+      : srcKwStructCategory(srcKwStructCategory), name(std::move(name)),
+        annotations(std::move(annotations)), srcSemicolon(srcSemicolon) {}
+
+  /// The keyword `struct_category`.
+  std::string_view srcKwStructCategory;
+
+  /// The name.
+  Name name;
+
+  /// The annotations. This may be null!
+  BumpPtr<AnnotationBlock> annotations;
+
+  /// The semicolon `;`.
+  std::string_view srcSemicolon;
 };
 
 /// A `tag` declaration. (This is an extension!)

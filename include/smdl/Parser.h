@@ -484,6 +484,9 @@ private:
 
   [[nodiscard]] auto parseStructTypeDeclaration_() -> BumpPtr<ast::Struct>;
 
+  [[nodiscard]] auto parseStructCategoryDeclaration_()
+      -> BumpPtr<ast::StructCategory>;
+
   [[nodiscard]] auto parseStructConstructor_()
       -> std::optional<ast::Struct::Constructor>;
 

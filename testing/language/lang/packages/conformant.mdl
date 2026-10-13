@@ -194,3 +194,23 @@ export float conformantMaxLocal() = max(1, 2.0f);
 export int conformantMaxImported() = max(1, 2);
 
 export double conformantMaxHiding() = max(1.0d, 2.0d);
+
+// MDL 1.9 marks a struct or a function that describes a material
+// declarative, and may put a declarative struct in a structure category,
+// as `material` is in `material_category`. Here they are ordinary.
+export struct_category conformant_category;
+
+export declarative struct ConformantLook in conformant_category {
+  color tint = color(0.25);
+};
+
+export declarative struct ConformantMaterialLike in material_category {
+  float roughness = 0.0;
+};
+
+export declarative ConformantLook conformantLook(color tint) =
+  ConformantLook(tint);
+
+export declarative material conformantLookMaterial(color tint = color(0.5)) =
+  material(surface: material_surface(emission: material_emission(
+    intensity: conformantLook(tint).tint)));

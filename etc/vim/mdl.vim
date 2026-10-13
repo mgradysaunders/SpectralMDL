@@ -157,7 +157,7 @@ syn match mdlFloat display "\<\d\%(['0-9]*\d\)\=\%(j[dDfF]\=\|[dDfF]\)\w\@!"
 syn keyword mdlConditional if else switch case default
 syn keyword mdlRepeat for while do
 syn keyword mdlStatement return break continue
-syn keyword mdlKeyword let in cast operator
+syn keyword mdlKeyword let in cast operator declarative
 syn keyword mdlStorageClass const uniform varying
 syn keyword mdlInclude module import using export package
 syn keyword mdlStructure typedef
@@ -172,7 +172,7 @@ syn keyword smdlStorageClass static inline
 syn keyword smdlKeyword exec unit_test
 
 " Declarations that name the thing they declare.
-syn keyword mdlStructure struct enum annotation
+syn keyword mdlStructure struct enum annotation struct_category
       \ nextgroup=mdlDeclName skipwhite skipempty
 syn keyword smdlStructure tag
       \ nextgroup=mdlDeclName skipwhite skipempty

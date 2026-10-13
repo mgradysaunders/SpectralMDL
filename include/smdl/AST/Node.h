@@ -105,6 +105,7 @@ enum class DeclKind : uint8_t {
   Import,
   Namespace,
   Struct,
+  StructCategory,
   Tag,
   Typedef,
   UnitTest,
@@ -154,6 +155,12 @@ public:
 
   /// The keyword `export`. This may be empty!
   std::string_view srcKwExport{};
+
+  /// The keyword `declarative`, before a struct or a function, which MDL
+  /// 1.9 has to mark what describes a material rather than computing a
+  /// value. SMDL treats a declarative declaration as an ordinary one. This
+  /// may be empty!
+  std::string_view srcKwDeclarative{};
 
   /// Has the given attribute?
   [[nodiscard]] bool hasAttribute(std::string_view attr) const {

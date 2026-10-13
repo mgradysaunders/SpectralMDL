@@ -672,10 +672,10 @@ Value Emitter::emit(ast::Node &node) {
 
 //--{ Emit: Decl
 Value Emitter::emit(ast::Decl &decl) {
-  return emitTypeSwitch<ast::AnnotationDecl, ast::Enum, ast::Exec,
-                        ast::Function, ast::Import, ast::Namespace, ast::Struct,
-                        ast::Tag, ast::Typedef, ast::UnitTest, ast::UsingAlias,
-                        ast::UsingImport, ast::Variable>(decl);
+  return emitTypeSwitch<
+      ast::AnnotationDecl, ast::Enum, ast::Exec, ast::Function, ast::Import,
+      ast::Namespace, ast::Struct, ast::StructCategory, ast::Tag, ast::Typedef,
+      ast::UnitTest, ast::UsingAlias, ast::UsingImport, ast::Variable>(decl);
 }
 
 Value Emitter::emit(ast::Exec &decl) {

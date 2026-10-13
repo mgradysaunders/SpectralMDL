@@ -720,6 +720,11 @@ public:
       structType->checkOpenImplementations(*this);
   }
 
+  /// Emit structure category declaration, which declares nothing: SMDL
+  /// treats a struct in a category as an ordinary struct (see
+  /// `ast::StructCategory`).
+  Value emit(ast::StructCategory & /*decl*/) { return Value(); }
+
   /// Emit tag declaration.
   Value emit(ast::Tag &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);

@@ -44,6 +44,15 @@ TEST_CASE("Formatter: the syntax it writes back as written") {
                            "+ operator[](a, 1);\n"};
     CHECK(format(text) == text);
   }
+  SUBCASE("A declarative declaration") {
+    const std::string text{"mdl 1.9;\n\n"
+                           "export struct_category looks;\n\n"
+                           "export declarative struct look in looks {\n"
+                           "  color tint = color(1.0);\n"
+                           "};\n\n"
+                           "export declarative look make_look() = look();\n"};
+    CHECK(format(text) == text);
+  }
   SUBCASE("A unicode identifier") {
     const std::string text{"mdl 1.9;\n\n"
                            "import .::'\\u00fcn\\u00ef'::*;\n\n"

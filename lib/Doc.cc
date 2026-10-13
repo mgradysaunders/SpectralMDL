@@ -222,6 +222,7 @@ private:
       prefix += ") ";
     }
     if (decl.isExported()) prefix += "export ";
+    if (!decl.srcKwDeclarative.empty()) prefix += "declarative ";
     return prefix;
   }
 
@@ -275,8 +276,8 @@ private:
   }
 
   // Extract a declaration whose entire signature runs from its own
-  // source location to its semicolon, i.e., `ast::Tag` and
-  // `ast::Typedef`.
+  // source location to its semicolon, i.e., `ast::StructCategory`,
+  // `ast::Tag`, and `ast::Typedef`.
   template <typename Decl>
   void extractSimpleDecl_(const ast::Decl &decl, const char *kind,
                           std::vector<DocEntry> &out) {
@@ -285,7 +286,10 @@ private:
     setSignature_(entry, declPrefix_(decl),
                   slice_(decl.srcLoc.i, beginOf_(d.srcSemicolon)),
                   d.name.srcName);
-    entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
+    const ast::AnnotationBlock *annotations{};
+    if constexpr (std::is_same_v<Decl, ast::StructCategory>)
+      annotations = d.annotations.get();
+    entry.docText = docTextOf(decl.srcDocComment, {}, annotations);
     out.push_back(std::move(entry));
   }
 
@@ -306,6 +310,9 @@ private:
       break;
     case ast::DeclKind::Struct:
       extractStruct_(static_cast<const ast::Struct &>(decl), out);
+      break;
+    case ast::DeclKind::StructCategory:
+      extractSimpleDecl_<ast::StructCategory>(decl, "struct_category", out);
       break;
     case ast::DeclKind::Tag:
       extractSimpleDecl_<ast::Tag>(decl, "tag", out);
@@ -386,7 +393,9 @@ private:
   void extractStruct_(const ast::Struct &decl, std::vector<DocEntry> &out) {
     DocEntry entry{makeEntry_(decl, "struct", decl.name.srcName)};
     setSignature_(entry, declPrefix_(decl),
-                  slice_(decl.srcLoc.i, endOf_(decl.name.srcName)),
+                  slice_(decl.srcLoc.i,
+                         endOf_(decl.srcKwIn.empty() ? decl.name.srcName
+                                                     : decl.category.srcName)),
                   decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &field : decl.fields) {
