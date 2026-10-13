@@ -7,7 +7,7 @@ ctest --test-dir build          # this and smdl-language
 ./build/bin/smdl-doctest        # the library
 ```
 
-102 test cases and 451 subcases, about thirty seconds.
+131 test cases and 525 subcases, about twenty-five seconds.
 Useful flags, all of which work because `doctest.cc` forwards the command
 line untouched: `-ltc` lists the case names, `-tc=` and `-sc=` and `-sf=`
 filter by case, subcase, and source file, `-s` reports the passing
@@ -49,7 +49,7 @@ positive behavior lives there, and neither is a duplicate of the other.
 
 **A test name is `Subject: what it is about`.** The subject is the type,
 function, or facility the case is about, spelled as the source spells it
-(`Image`, `MaterialDef`, `smdlEvalMetalIOR`, `findMaterial`), then a colon
+(`Image`, `MaterialDef`, `scatterEval`, `findMaterial`), then a colon
 and a lowercase phrase. That phrase is a claim when the case proves one
 thing and a topic when it groups subcases that each prove one. The reporter
 prints the file above the name, so the three lines read together:
@@ -63,7 +63,7 @@ out the subject the case already supplies. Two carve-outs: a claim whose
 subject is an identifier keeps the identifier's own spelling
 (`reset rewinds into the first slab`), and where subcases parameterize a
 claim the case has already stated in full, they name the parameter instead
-(`With a pinhole`, `With variants`, `On a struct field`). A bare label is
+(`With a color registered`, `With none registered`, `On a struct field`). A bare label is
 not a name anywhere else. No two names inside one file are the same;
 across files they often are, on purpose.
 
@@ -138,11 +138,13 @@ their own header comments; regenerate rather than editing.
 The mirror rule turns the gaps into a list, and it is a long one. This is a
 record, not a plan.
 
-On the library side `lib/Compiler/Type.cc` (2990 lines) has no test at all,
+On the library side `lib/Compiler/Type.cc` (3520 lines) has no test at all,
 and nor do `lib/Compiler/Context.cc`, `lib/Compiler/Value.cc`,
-`lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc` and
-`lib/Support/Parallel.cc`. `lib/Formatter.cc`
-(641 lines) has exactly one subcase, and it lives in `Module.cc`.
+`lib/Compiler/llvm.cc`, `lib/Compiler/Intrinsics.cc`,
+`lib/Support/Parallel.cc` and `lib/Support/Environment.cc`. The last reads
+every `SMDL_*` variable once per process, so a `ScopedEnv` in one case
+could not reliably reach it. `lib/Formatter.cc`
+(648 lines) has exactly one subcase, and it lives in `Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero
