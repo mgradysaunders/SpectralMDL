@@ -1305,6 +1305,7 @@ void FunctionType::appendImplementations(
 void FunctionType::initialize(Emitter &emitter) {
   Context &context{emitter.context};
   // Find previous overload.
+  FunctionType *prevImported{};
   if (Value prev{emitter.resolveIdentifier(decl.name, decl.srcLoc,
                                            /*shouldDefaultToVoid=*/true)};
       !prev.isVoid()) {
@@ -1314,13 +1315,16 @@ void FunctionType::initialize(Emitter &emitter) {
     if (!prevType || !prevType->isFunction())
       decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                              " shadows non-function");
-    // Only overload within a single module. A declaration over a function
-    // imported from another module shadows it instead: linking would mutate
-    // the imported module's interned `FunctionType` and leak this (possibly
+    // Link only within a single module. A declaration over a function
+    // imported from another module joins its overload set without linking
+    // to it (see 'importedOverload'), since linking would mutate the
+    // imported module's interned 'FunctionType' and leak this (possibly
     // non-exported) function into every other importer's overload
     // resolution.
     FunctionType *prevFunc{static_cast<FunctionType *>(prevType)};
-    if (prevFunc->decl.srcLoc.module == decl.srcLoc.module) {
+    if (prevFunc->decl.srcLoc.module != decl.srcLoc.module) {
+      prevImported = prevFunc;
+    } else {
       if (prevFunc->isVariant())
         decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                                " must not overload function variant");
@@ -1338,9 +1342,14 @@ void FunctionType::initialize(Emitter &emitter) {
       prevOverload->nextOverload = this;
     }
   }
-  // Declare the function name.
+  // Declare the function name. A function variant is made of a function
+  // declared before it, so its body resolves names as they were before its
+  // own declaration: 'v(*) = v(x: 5.0)' varies the 'v' it shadows, where
+  // it would otherwise expand itself without end. Any other function may
+  // call itself.
+  if (isVariant()) emitter.captureResolutionAnchor(params);
   emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
-  emitter.captureResolutionAnchor(params);
+  if (!isVariant()) emitter.captureResolutionAnchor(params);
   // Initialize parameters and return type, in that order, since the return
   // type may name a size a parameter declares, as in `int[n] id(int[<n>] a)`.
   SMDL_PRESERVE(emitter.sizeNames);
@@ -1352,6 +1361,14 @@ void FunctionType::initialize(Emitter &emitter) {
   emitter.sizeNames.clear();
   rejectDuplicateParameterNames(params,
                                 concat("function ", SpellQuoted(declName)));
+  // A function variant, a foreign function, and a material are never
+  // overloaded, so one shadows an imported function of its name instead,
+  // and so does any function over one of those.
+  if (prevImported && !isVariant() && !isForeign() &&
+      returnType != context.materialType_ && !prevImported->isVariant() &&
+      !prevImported->isForeign() &&
+      prevImported->returnType != context.materialType_)
+    importedOverload = prevImported;
   // Initialize whether parameter list is variadic.
   params.isVariadic = decl.isVariadic();
   if (decl.hasAttribute("macro") && decl.isVariadic()) {
@@ -1704,12 +1721,33 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // implementation with its type and the lookup independent of what the
   // caller imports. A declaration that another of the same function stands
   // for is no candidate of its own.
+  //
+  // This overload set is the overloads of this module, newest first, then
+  // those of the imported set each joins (see 'importedOverload'), but for
+  // any with the parameter types of one already in the set, which hides it.
   llvm::SmallVector<FunctionType *> candidates{};
   FunctionType *openFunc{};
-  for (auto func{lastOverload(this)}; func; func = func->prevOverload) {
-    if (func->supersededBy) continue;
-    candidates.push_back(func);
-    if (!openFunc && func->isOpen()) openFunc = func;
+  llvm::SmallVector<FunctionType *, 2> overloadSets{lastOverload(this)};
+  for (size_t i{}; i < overloadSets.size(); i++) {
+    const size_t numHiding{candidates.size()};
+    for (auto func{overloadSets[i]}; func; func = func->prevOverload) {
+      if (func->importedOverload) {
+        FunctionType *importedSet{lastOverload(func->importedOverload)};
+        if (!llvm::is_contained(overloadSets, importedSet))
+          overloadSets.push_back(importedSet);
+      }
+      if (func->supersededBy) continue;
+      if (llvm::any_of(llvm::ArrayRef(candidates).take_front(numHiding),
+                       [&](FunctionType *other) {
+                         return other->params.isVariadic ==
+                                    func->params.isVariadic &&
+                                other->params.getTypes() ==
+                                    func->params.getTypes();
+                       }))
+        continue;
+      candidates.push_back(func);
+      if (!openFunc && func->isOpen()) openFunc = func;
+    }
   }
   const size_t numOwnCandidates{candidates.size()};
   const Argument *dispatchArg{};
@@ -1870,7 +1908,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   FunctionType *viableContract{};
   for (const auto &overload : overloads) {
     if (!overload.func->isOpen() ||
-        overload.func->decl.srcLoc.module != decl.srcLoc.module)
+        !llvm::is_contained(
+            llvm::ArrayRef(candidates).take_front(numOwnCandidates),
+            overload.func))
       continue;
     if (viableContract) {
       viableContract = nullptr;

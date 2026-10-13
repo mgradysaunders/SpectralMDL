@@ -182,6 +182,17 @@ TEST_CASE("Compiler: the overloads a rejected call names") {
                                   "[<string ::diag>:2:");
     CHECK_CONTAINS(error.message, "expected at most 1, got 2");
   }
+  SUBCASE("A rejected call names the overloads its module imports too") {
+    // A module adds to the overloads of a function it imports unqualified,
+    // so a call there is resolved against both, and a rejection names both.
+    smdl::Error error{compileError(
+        "mdl 1.9;\nusing ::tex import width;\nint width(int x) = x;\n"
+        "export material m() = material(surface: material_surface(emission:\n"
+        "  material_emission(intensity: color(float(width(\"two\"))))));\n")};
+    CHECK_CONTAINS(error.message, "candidate rejected: width(int x) declared "
+                                  "at [<string ::diag>:3:1]");
+    CHECK_CONTAINS(error.message, "candidate rejected: width(texture_2d tex");
+  }
   SUBCASE("Every overload of a builtin is told apart") {
     smdl::Error error{compileError(
         "#smdl\nimport ::tex::*;\n"

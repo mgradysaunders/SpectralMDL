@@ -862,7 +862,7 @@ public:
 
   /// Has no overloads?
   [[nodiscard]] bool hasNoOverloads() const {
-    return !prevOverload && !nextOverload;
+    return !prevOverload && !nextOverload && !importedOverload;
   }
 
   /// Resolve overload.
@@ -929,6 +929,16 @@ public:
 
   /// The next overload by declaration order.
   FunctionType *nextOverload{};
+
+  /// The function imported unqualified under this name, if this is the
+  /// first declaration of the name in its module: the overload set it
+  /// joins, as MDL lets a module add overloads to a function it imports,
+  /// so that `max(1, 1.0f)` may call a local `max(int, float)` and
+  /// `max(1, 1)` the imported `max(int, int)`. The imported set is left as
+  /// it is, so the joined set is this module's alone, and an imported
+  /// overload with the parameter types of one declared here is hidden by
+  /// it. See `resolveOverload`.
+  FunctionType *importedOverload{};
 
   /// The declaration of the same function that stands for this one, if
   /// any: the one with the definition, or the newest if neither has one.

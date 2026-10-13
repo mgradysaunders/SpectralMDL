@@ -1,0 +1,32 @@
+/// Private declarations over imported names. A function joins the imported
+/// overload set in this module, as MDL lets a module add overloads to a
+/// function it imports unqualified. The imported set itself is left as it
+/// is: changing it would leak this declaration into every other importer's
+/// overload resolution. A function variant, which is never overloaded,
+/// shadows the imported function instead, and is made of it.
+#smdl
+
+using .::overloads import overloadTarget, scaledTarget;
+
+@(pure)
+int overloadTarget(int v [[anno::unused()]]) = 2;
+
+unit_test "A local declaration joins the overload set it imports" {
+  // The local declaration is the exact match for an `int`, and the
+  // imported one still takes what only it accepts.
+  #assert(overloadTarget(5) == 2);
+  #assert(overloadTarget(1.5) == 1);
+  // The qualified name resolves against the exporting module's overloads
+  // only.
+  #assert(overloads::overloadTarget(5) == 1);
+}
+
+// A variant's call names the function the variant shadows, not the variant
+// itself, since a variant is made of a function declared before it.
+int scaledTarget(*) = scaledTarget(k: 10);
+
+unit_test "A variant over an imported name varies the imported function" {
+  #assert(scaledTarget(2) == 20);
+  #assert(scaledTarget(2, k: 3) == 6);
+  #assert(overloads::scaledTarget(2) == 2);
+}

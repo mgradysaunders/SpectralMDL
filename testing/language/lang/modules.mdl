@@ -29,11 +29,12 @@ import quoted::*;
 import reexported::*;
 import .::packages::one::*;
 import .::packages::overloads::*;
-// Importing `shadowing` guarantees it compiles before the tests below are
+// Importing `extending` guarantees it compiles before the tests below are
 // emitted: its private `overloadTarget(int)` declaration is exactly what
 // the cross-module leak test needs to have happened already.
-import .::packages::shadowing::*;
+import .::packages::extending::*;
 import .::packages::conformant::*;
+import ::math::*;
 
 // A universal using-import, which opens the module for unqualified lookup.
 // The second one is three components deep, which the lookup has to carry.
@@ -63,11 +64,11 @@ unit_test "A universal using-import works at any path depth" {
 }
 
 unit_test "A private overload does not leak across modules" {
-  // `packages/shadowing.mdl` declares a private `overloadTarget(int)`
-  // over the name it imports from here. That declaration must not join
-  // this overload set: `int` converts implicitly to `(int | float)` but not
-  // the other way, so a leaked overload would deterministically win both
-  // calls below and return 2.
+  // `packages/extending.mdl` declares a private `overloadTarget(int)`
+  // over the name it imports from `packages/overloads.mdl`, which joins
+  // that overload set there and only there: `int` converts implicitly to
+  // `(int | float)` but not the other way, so a leaked overload would
+  // deterministically win both calls below and return 2.
   #assert(packages::overloads::overloadTarget(5) == 1);
   #assert(packages::overloads::overloadTarget(1.5) == 1);
 }
@@ -182,6 +183,14 @@ unit_test "A conformant operator is called as a function" {
   #assert(!packages::conformant::conformantBoth(true, false));
   // The shift is logical, so the sign bit comes down as a one.
   #assert(packages::conformant::conformantShiftedRight(-1) == 15);
+}
+
+unit_test "A conformant module adds overloads to a function it imports" {
+  #assert(packages::conformant::conformantMaxLocal() == 13.0);
+  #assert(packages::conformant::conformantMaxImported() == 2);
+  #assert(packages::conformant::conformantMaxHiding() == -7.0d);
+  // The imported set is as it was everywhere else.
+  #assert(math::max(1.0d, 2.0d) == 2.0d);
 }
 
 unit_test "A conformant module names another in single quotes" {

@@ -7,6 +7,7 @@ import ::df::*;
 // a literal string. Any name may be written so: these are `one.mdl`.
 import .::'one'::*;
 using .::'\u006fne' import shadowed;
+using ::std import max;
 
 /* Block comments nest, /* so this one closes here */ and the outer one
    goes on to its own close, and a // inside one starts nothing. */
@@ -176,3 +177,16 @@ export int conformantShiftedRight(int x) = operator>>>(x, 28);
 export int conformantQuotedOne() = 'one'::shadowed;
 
 export int conformantUsedOne() = shadowed;
+
+// A module adds overloads to a function it imports unqualified, as the
+// specification's example adds `max(int, float)` to those of `::std`, and
+// one with the parameter types of an imported overload hides it.
+float max(int a, float b) = 10.0 + float(a) + b;
+
+double max(double a, double b) = a + b - 10.0d;
+
+export float conformantMaxLocal() = max(1, 2.0f);
+
+export int conformantMaxImported() = max(1, 2);
+
+export double conformantMaxHiding() = max(1.0d, 2.0d);
