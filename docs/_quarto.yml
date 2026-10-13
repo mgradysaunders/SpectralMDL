@@ -9,3 +9,23 @@ project:
 website:
   title: SpectralMDL
   site-url: https://mgradysaunders.github.io/SpectralMDL/
+  repo-url: https://github.com/mgradysaunders/SpectralMDL
+  navbar:
+    left:
+      - text: Home
+        href: index.qmd
+      - text: API Reference
+        href: doxygen/html/index.html
+    right:
+      - icon: github
+        href: https://github.com/mgradysaunders/SpectralMDL
+        aria-label: GitHub
+
+format:
+  html:
+    # The theme listed first is the default, and a toggle in the navbar
+    # switches to the other.
+    theme:
+      dark: darkly
+      light: flatly
+    toc: true

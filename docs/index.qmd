@@ -1,10 +1,129 @@
 ---
 title: SpectralMDL
+subtitle: A spectral, LLVM-based JIT compiler for the Material Definition Language
 ---
 
-SpectralMDL is a spectral, LLVM-based JIT compiler for the
-[Material Definition Language](https://www.nvidia.com/en-us/design-visualization/technologies/material-definition-language),
-intended as a middleware C++ library in offline physically-based rendering
-programs.
+SpectralMDL compiles materials written in NVIDIA's
+[Material Definition Language](https://www.nvidia.com/en-us/design-visualization/technologies/material-definition-language)
+(MDL) to native code, and is intended to be useful as a middleware C++
+library in offline physically-based rendering programs. It is developed at
+the [Digital Imaging and Remote Sensing (DIRS)](https://www.rit.edu/dirs)
+laboratory at the Rochester Institute of Technology in support of the
+[DIRSIG](http://dirsig.cis.rit.edu) simulation tool.
 
-See the [API reference](doxygen/html/index.html).
+## Features
+
+- **Spectral.** A `color` is a spectrum of wavelength samples, 16 by
+  default, rather than an RGB triple.
+- **Just-in-time compiled.** Modules are parsed, emitted as LLVM-IR, and
+  compiled to native code with LLVM's ORC JIT.
+- **The MDL standard library.** The builtin modules, such as `::df`,
+  `::math`, `::state`, and `::tex`, are embedded in the library.
+- **Resources.** Images, spectra, measured BSDFs, light profiles, and voxel
+  grids, with optional Ptex and NanoVDB support.
+- **Renderer utilities.** Monte Carlo sampling, a sun-sky model, and
+  manifold next-event estimation, usable by any renderer.
+- **The SMDL dialect.** A module that opens with `#smdl` gains intrinsics,
+  attributes, unit tests, `defer`, and more, and can add its own
+  distributions beside the builtin ones.
+
+## Building
+
+SpectralMDL needs a C++17 compiler, CMake 3.28 or newer, and LLVM 22.1 or
+newer. Ptex and NanoVDB, which are on by default, are fetched and built
+along with it.
+
+```sh
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/path/to/llvm
+ninja -C build
+ctest --test-dir build
+```
+
+| Option | Default | Effect |
+|---------------------|----------|---------------------------------------|
+| `SMDL_BUILD_LLVM` | `OFF` | Build LLVM rather than find an installed one. |
+| `SMDL_ENABLE_PTEX` | `ON` | Build with Ptex integration. |
+| `SMDL_ENABLE_NANOVDB` | `ON` | Build with NanoVDB integration. |
+| `SMDL_RTTI` | `ON` | Build with C++ run-time type information. |
+| `SMDL_CXX_NATIVE` | `OFF` | Compile for the build machine's CPU, at the cost of portability. |
+| `SMDL_INSTALL` | top level only | Generate install rules. |
+
+Turning off both `SMDL_ENABLE_PTEX` and `SMDL_ENABLE_NANOVDB` lowers the
+CMake requirement to 3.21.
+
+## Using the library
+
+An installed SpectralMDL is found as a CMake package. Its version check
+accepts only the exact version requested.
+
+```cmake
+find_package(SpectralMDL REQUIRED)
+target_link_libraries(renderer PRIVATE SpectralMDL::SpectralMDL)
+```
+
+A host adds modules to a [`Compiler`](doxygen/html/classsmdl_1_1Compiler.html),
+compiles them, and looks up the materials it wants. Each step that can fail
+returns an `std::optional<smdl::Error>`. Errors and warnings go to the
+library's logger, which prints nothing until the host gives it a sink.
+
+```cpp
+#include "smdl/Compiler.h"
+#include "smdl/Support/Logger.h"
+
+smdl::Logger::get().addSink<smdl::LogSinks::PrintToCerr>();
+smdl::Compiler compiler;
+if (auto error = compiler.add("materials")) // A file or a directory
+  error->printAndExit();
+if (auto error = compiler.compile())
+  error->printAndExit();
+if (auto error = compiler.jitCompile())
+  error->printAndExit();
+const smdl::jit::MaterialDef *materialDef = compiler.findMaterial("glass");
+```
+
+The host then evaluates a [`jit::Material`](doxygen/html/structsmdl_1_1jit_1_1Material.html)
+from the [`jit::MaterialDef`](doxygen/html/structsmdl_1_1jit_1_1MaterialDef.html)
+at each shading point. JIT-compiled code points into data the `Compiler`
+owns, and calling `compile()` again invalidates every function pointer
+taken from the previous compile.
+
+## The `smdl` program
+
+The library comes with a command-line program, `smdl`, with these
+subcommands.
+
+| Subcommand | Purpose |
+|-------------|------------------------------------------------|
+| `smdl doc` | Show documentation. |
+| `smdl dump` | Dump as LLVM-IR or native assembly. |
+| `smdl format` | Format source code. |
+| `smdl list` | List all materials. |
+| `smdl run` | Run execs. |
+| `smdl test` | Run execs and unit tests. |
+| `smdl volume` | Convert voxel grids between `.vol` and `.nvdb`. |
+
+Environment variables such as `SMDL_DUMP_IR` and `SMDL_OPT_LEVEL` debug a
+compile without the host program's help. The
+[README](https://github.com/mgradysaunders/SpectralMDL#environment-variables)
+lists them.
+
+## API reference
+
+The [API reference](doxygen/html/index.html) is generated from the headers
+with Doxygen, and is organized into these groups.
+
+- [Compiler](doxygen/html/group__compiler.html): turning MDL source code
+  into native code, and the `jit` interface that materials are called
+  through.
+- [Resources](doxygen/html/group__resource.html): images, spectra, measured
+  BSDFs, light profiles, scene data, and the shading `State`.
+- [Render Utilities](doxygen/html/group__renderutil.html): spectral
+  containers, Monte Carlo sampling, illuminants, and the sun-sky model.
+- [Manifold](doxygen/html/group__manifold.html): manifold next-event
+  estimation and specular manifold sampling.
+- [Abstract Syntax Tree](doxygen/html/group__ast.html): the parsed
+  representation of an MDL module.
+- [Support](doxygen/html/group__support.html): math, strings, files,
+  logging, hashing, random numbers, and allocation.
