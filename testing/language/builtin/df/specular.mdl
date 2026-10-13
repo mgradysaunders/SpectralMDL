@@ -105,7 +105,7 @@ unit_test "A Fresnel layer's density is its chance times its layer's" {
       scatter::evaluate(layerB, wo, wi, false, float3(0, 0, 1), false, 1.8);
     const auto rLayered =
       scatter::evaluate(layered, wo, wi, false, float3(0, 0, 1), false, 1.8);
-    #assert(rLayered.pdf[0] ~== |1e-5| chance * rBare.pdf[0]);
+    #assert(rLayered.pdf ~== |1e-5| chance * rBare.pdf);
   }
   // The layered transmission must also satisfy the full bidirectional
   // consistency identities even when the layer interface disagrees with the
@@ -164,10 +164,10 @@ unit_test "An exterior IOR is the relative IOR in vacuum" {
     1.0);
   #assert(#any(e1.f > 0.0));
   #assert(#all(e1.f ~== |1e-5| e2.f));
-  #assert(#all(e1.pdf ~== |1e-5| e2.pdf));
+  #assert(e1.pdf ~== |1e-5| e2.pdf);
 }
 
-// The reflect-transmit selection chance carried by the PDF lanes: the
+// The reflect-transmit selection chance carried by the PDF: the
 // dielectric Fresnel term clamped into the selection floor. Mirrors
 // `MIN_CHANCE` in the df builtin.
 float selectionChance(const float F) = math::clamp(F, 0.1, 0.9);
@@ -175,10 +175,9 @@ float selectionChance(const float F) = math::clamp(F, 0.1, 0.9);
 unit_test "The Fresnel-weighted lobe decomposes into reflection and transmission" {
   // With `scatter_reflect_transmit`, the microfacet lobe must be the pure
   // reflect and transmit lobes weighted by the dielectric Fresnel term: the
-  // scattering function by the term at the half vector, and the PDFs by the
-  // selection chance at the macro normal (forward lane from the wo side,
-  // reverse lane from the wi side), which is the Fresnel term clamped into
-  // the selection floor.
+  // scattering function by the term at the half vector, and the PDF by the
+  // selection chance at the macro normal on the wo side, which is the
+  // Fresnel term clamped into the selection floor.
   const auto eta = 1 / 1.4; // Entering relative ratio at the default material IOR
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
   const auto wiR = math::normalize(float3(+0.5, 0.2, 0.9));
@@ -196,35 +195,27 @@ unit_test "The Fresnel-weighted lobe decomposes into reflection and transmission
     const auto r2 = scatter::evaluate(bRT, wo, wiR);
     const auto h = math::normalize(wo + wiR);
     const auto Fh = df::specular::dielectric_fresnel(math::dot(wo, h), eta);
-    const auto Fi = df::specular::dielectric_fresnel(wiR.z, eta);
     #assert(#any(r1.f > 0.0));
     #assert(#all(r2.f ~== |1e-5| Fh * r1.f));
-    // The pure reflect lobe reports bounded-VNDF densities (Eto and
+    // The pure reflect lobe reports the bounded-VNDF density (Eto and
     // Tokuyoshi 2023) while the reflect-transmit lobe samples the full
     // spherical cap, so undo the bound before comparing the PDFs.
     const auto alpha = float2(0.5 * 0.5);
     const auto kO = df::microfacet::ggx_bounded_cap_factor(alpha, wo);
-    const auto kI = df::microfacet::ggx_bounded_cap_factor(alpha, wiR);
     const auto tO = math::length(float3(alpha.x * wo.x, alpha.y * wo.y, wo.z));
-    const auto tI =
-      math::length(float3(alpha.x * wiR.x, alpha.y * wiR.y, wiR.z));
-    const auto unbound =
-      float2((kO * wo.z + tO) / (wo.z + tO), (kI * wiR.z + tI) / (wiR.z + tI));
-    #assert(#all(
-      r2.pdf ~== |1e-5| float2(selectionChance(Fo), selectionChance(Fi)) * r1.pdf * unbound));
+    const auto unbound = (kO * wo.z + tO) / (wo.z + tO);
+    #assert(r2.pdf ~== |1e-5| selectionChance(Fo) * r1.pdf * unbound);
   }
-  // Transmission pair. The reverse PDF lane sees the reciprocal ratio.
+  // Transmission pair.
   {
     const auto r1 = scatter::evaluate(bT, wo, wiT);
     const auto r2 = scatter::evaluate(bRT, wo, wiT);
     const auto h =
       math::normalize(df::specular::refraction_half_vector(wo, wiT, eta));
     const auto Fh = df::specular::dielectric_fresnel(math::dot(wo, h), eta);
-    const auto Fi = df::specular::dielectric_fresnel(-wiT.z, 1 / eta);
     #assert(#any(r1.f > 0.0));
     #assert(#all(r2.f ~== |1e-5| (1 - Fh) * r1.f));
-    #assert(#all(
-      r2.pdf ~== |1e-5| (1 - float2(selectionChance(Fo), selectionChance(Fi))) * r1.pdf));
+    #assert(r2.pdf ~== |1e-5| (1 - selectionChance(Fo)) * r1.pdf);
   }
 }
 
@@ -291,7 +282,7 @@ unit_test "A thin film cancels the band its thickness selects" {
     const auto result1 = scatter::evaluate(
       df::thin_film(thickness: 0.0, ior: 1.5, base: base), wo, wi);
     #assert(#all(result1.f ~== |1e-5| result0.f));
-    #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
+    #assert(result1.pdf ~== |1e-6| result0.pdf); // The factor must not affect the PDFs
   }
   {
     const auto result1 = scatter::evaluate(

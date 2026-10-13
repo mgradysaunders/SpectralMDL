@@ -22,23 +22,23 @@ unit_test "A custom curve layer blends by Schlick at the half vector" {
   {
     const auto r = scatter::evaluate(df::custom_curve_layer(normal_reflectivity: 0.2, weight: 0.0, layer: layerB, base: baseB), wo, wi);
     #assert(#all(r.f ~== |1e-6| rBase.f));
-    #assert(#all(r.pdf ~== |1e-6| rBase.pdf));
+    #assert(r.pdf ~== |1e-6| rBase.pdf);
   }
   // A unit curve with unit weight selects the layer.
   {
     const auto r = scatter::evaluate(df::custom_curve_layer(normal_reflectivity: 1.0, grazing_reflectivity: 1.0, weight: 1.0, layer: layerB, base: baseB), wo, wi);
     #assert(#all(r.f ~== |1e-6| rLayer.f));
-    #assert(#all(r.pdf ~== |1e-6| rLayer.pdf));
+    #assert(r.pdf ~== |1e-6| rLayer.pdf);
   }
   // Otherwise blend by the Schlick-style curve, evaluated at the half vector for the
-  // scattering function and at the normal cosines for the PDFs.
+  // scattering function and at the outgoing cosine for the PDF.
   {
     const auto r = scatter::evaluate(df::custom_curve_layer(normal_reflectivity: 0.2, grazing_reflectivity: 0.9, exponent: 4.0, weight: 0.8, layer: layerB, base: baseB), wo, wi);
     const auto h = math::normalize(wo + wi);
     const auto fWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - #abs(math::dot(wo, h)), 0), 4.0));
-    const auto pWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - float2(wo.z, wi.z), 0), 4.0));
+    const auto pWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - wo.z, 0), 4.0));
     #assert(#all(r.f ~== |1e-5| math::lerp(rBase.f, rLayer.f, fWeight)));
-    #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
+    #assert(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight));
   }
   // A Dirac sample from the layer compensates the selection chance exactly when the
   // weight is uniform and the shading normal is default, so the tint passes through.
@@ -76,8 +76,8 @@ unit_test "The three mixer policies differ only above weight one" {
     #assert(#all(rN.f ~== |1e-5| 0.3 * fA + 0.4 * fB));
     #assert(#all(rC.f ~== |1e-5| rN.f));
     #assert(#all(rU.f ~== |1e-5| rN.f));
-    #assert(#all(rC.pdf ~== |1e-5| rN.pdf));
-    #assert(#all(rU.pdf ~== |1e-5| rN.pdf));
+    #assert(rC.pdf ~== |1e-5| rN.pdf);
+    #assert(rU.pdf ~== |1e-5| rN.pdf);
     #assert(scatter::sample(df::normalized_mix(components), xi, wo).success);
     #assert(scatter::sample(df::clamped_mix(components), xi, wo).success);
     #assert(scatter::sample(df::unbounded_mix(components), xi, wo).success);
@@ -108,7 +108,7 @@ unit_test "The three mixer policies differ only above weight one" {
     const auto pB = scatter::evaluate(lobeB, wo, wi).pdf;
     const auto rC = scatter::evaluate(df::clamped_mix(components), wo, wi);
     #assert(#all(rC.f ~== |1e-5| 0.7 * fA + 0.3 * fB));
-    #assert(#all(rC.pdf ~== |1e-5| (0.7 * pA + 0.5 * pB) / 1.2));
+    #assert(rC.pdf ~== |1e-5| (0.7 * pA + 0.5 * pB) / 1.2);
     #assert(df::clamped_mix(components)._lobes == df::normalized_mix(components)._lobes);
   }
 }
@@ -136,7 +136,7 @@ unit_test "A color mixer agrees with the float mixer at uniform weights" {
     const auto rC = scatter::evaluate(df::color_clamped_mix(componentsC), wo, wi);
     const auto rU = scatter::evaluate(df::color_unbounded_mix(componentsC), wo, wi);
     #assert(#all(rN.f ~== |1e-5| rF.f));
-    #assert(#all(rN.pdf ~== |1e-5| rF.pdf));
+    #assert(rN.pdf ~== |1e-5| rF.pdf);
     #assert(#all(rC.f ~== |1e-5| rF.f));
     #assert(#all(rU.f ~== |1e-5| rF.f));
     #assert(scatter::sample(df::color_normalized_mix(componentsC), xi, wo).success);
@@ -156,7 +156,7 @@ unit_test "A color mixer agrees with the float mixer at uniform weights" {
       df::color_bsdf_component(weight: wA, component: lobeA),
       df::color_bsdf_component(weight: wB, component: lobeB))), wo, wi);
     #assert(#all(r.f ~== |1e-5| (scale * wA) * fA + (scale * wB) * fB));
-    #assert(#all(r.pdf ~== |1e-5| (chanceA * pA + chanceB * pB) / (chanceA + chanceB)));
+    #assert(r.pdf ~== |1e-5| (chanceA * pA + chanceB * pB) / (chanceA + chanceB));
   }
   // The clamp is also per channel: the second weight is truncated to
   // the per-channel budget left by the first.

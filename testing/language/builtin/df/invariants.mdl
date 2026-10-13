@@ -38,7 +38,6 @@ unit_test "A deep layered stack is reciprocal" {
     );
   const auto result0 = scatter::evaluate(f, wo, wi);
   const auto result1 = scatter::evaluate(f, wi, wo);
-  #assert(#all(result0.pdf ~== |1e-6| result1.pdf.yx));
   #assert(#all(result0.f / #abs(wi.z) ~== |1e-6| result1.f / #abs(wo.z)));
 }
 

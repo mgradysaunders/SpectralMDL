@@ -169,7 +169,7 @@ unit_test "The layer degenerates to its base as the pores vanish" {
     const auto r0 = scatter::evaluate(baseD, wo, wi);
     const auto r1 = scatter::evaluate(m, wo, wi);
     #assert(#all(r1.f ~== |1e-3| r0.f));
-    #assert(#all(r1.pdf ~== |1e-3| r0.pdf));
+    #assert(r1.pdf ~== |1e-3| r0.pdf);
   }
   // Single-scattering energy bound: conductor micrograins on a black base
   // and on a diffuse base stay below 1 in the furnace.

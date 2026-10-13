@@ -2023,12 +2023,11 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   //     &_MaterialEval eval,
   //     &float3 wo,
   //     &float3 wi,
-  //     &float pdfFwd,
-  //     &float pdfRev,
+  //     &float pdf,
   //     &float f,
   //     int lobeMask) {
   //   return ::df::_scatterEval(
-  //     eval, wo, wi, pdfFwd, pdfRev, f, lobeMask);
+  //     eval, wo, wi, pdf, f, lobeMask);
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // The leading pointer is the evaluated material for every wrapper but
@@ -2116,16 +2115,14 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   makeDFWrapper(jitMaterial.scatterEval, "scatterEval", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
-                 {"pdfFwd", floatType},
-                 {"pdfRev", floatType},
+                 {"pdf", floatType},
                  {"f", floatType, colorSize},
                  {"lobeMask", intType, 1, /*isByValue=*/true}});
   makeDFWrapper(jitMaterial.scatterDraw, "scatterDraw", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},
-                 {"pdfFwd", floatType},
-                 {"pdfRev", floatType},
+                 {"pdf", floatType},
                  {"f", floatType, colorSize},
                  {"lobe", intType},
                  {"lobeMask", intType, 1, /*isByValue=*/true},
@@ -2164,15 +2161,13 @@ void FunctionType::initializeMaterialFunctions_(Emitter &emitter) {
   makeDFWrapper(jitMaterial.hairScatterEval, "hairScatterEval", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
-                 {"pdfFwd", floatType},
-                 {"pdfRev", floatType},
+                 {"pdf", floatType},
                  {"f", floatType, colorSize}});
   makeDFWrapper(jitMaterial.hairScatterDraw, "hairScatterDraw", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
                  {"wi", float3Type},
-                 {"pdfFwd", floatType},
-                 {"pdfRev", floatType},
+                 {"pdf", floatType},
                  {"f", floatType, colorSize}});
   {
     // Generate the opacity evaluate function:

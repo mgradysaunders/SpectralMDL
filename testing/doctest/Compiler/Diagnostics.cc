@@ -444,13 +444,12 @@ TEST_CASE("Compiler: what the author of a distribution is told") {
                          "  float4 xi = float4(0.5);\n"
                          "  float3 wo = float3(0, 0, 1);\n"
                          "  float3 wi = float3(0);\n"
-                         "  float pdfFwd = 0;\n"
-                         "  float pdfRev = 0;\n"
+                         "  float pdf = 0;\n"
                          "  color f = color(0);\n"
                          "  int lobe = 0;\n"
                          "  float lobeChance = 1;\n"
                          "  #print(df::_scatterDraw(&eval, &xi, &wo, &wi, "
-                         "&pdfFwd, &pdfRev, cast<&float>(&f), &lobe, "
+                         "&pdf, cast<&float>(&f), &lobe, "
                          "df::DF_ALL, &lobeChance));\n"
                          "}\n"))));
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));

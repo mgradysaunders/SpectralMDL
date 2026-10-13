@@ -172,13 +172,13 @@ unit_test "Removing a kind kills only that leaf's domain" {
   // sampling cap and its densities are not comparable across modes.
   const auto glassT = df::microfacet_ggx_smith_bsdf(
     roughness_u: 0.3, roughness_v: 0.3, mode: df::scatter_transmit);
-  #assert(#all(scatter::evaluate(glass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSS_BRDF).pdf
-               ~== |1e-5| scatter::evaluate(glassT, wo, wiT).pdf));
+  #assert(scatter::evaluate(glass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSS_BRDF).pdf
+          ~== |1e-5| scatter::evaluate(glassT, wo, wiT).pdf);
   const auto beck = df::microfacet_beckmann_smith_bsdf(
     roughness_u: 0.3, roughness_v: 0.3, mode: df::scatter_reflect_transmit);
   const auto beckR = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3);
-  #assert(#all(scatter::evaluate(beck, wo, wiR, lobeMask: df::DF_ALL & ~df::DF_GLOSS_BTDF).pdf
-               ~== |1e-5| scatter::evaluate(beckR, wo, wiR).pdf));
+  #assert(scatter::evaluate(beck, wo, wiR, lobeMask: df::DF_ALL & ~df::DF_GLOSS_BTDF).pdf
+          ~== |1e-5| scatter::evaluate(beckR, wo, wiR).pdf);
   // Sampling never lands in the dead kind's domain, for the rough glass
   // and for the Dirac one.
   const auto mirror = df::specular_bsdf(mode: df::scatter_reflect_transmit);
@@ -211,7 +211,7 @@ unit_test "A mask keeps the kinds apart across a layering" {
   // The masked transmission is all Dirac, which no evaluation sees.
   const auto masked = scatter::evaluate(mixedGlass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSS_BTDF);
   #assert(!#any(masked.f > 0.0));
-  #assert(!#any(masked.pdf > 0.0));
+  #assert(!(masked.pdf > 0.0));
   // A masked sample transmits only through the Dirac lobe.
   for (int i = 0; i < 16; i++) {
     const auto xi = float4(0.3, 0.7, (i + 0.5) / 16, 0.5);
@@ -286,12 +286,12 @@ unit_test "Masked values sum to the unmasked value" {
   // lobe's own, undiluted by the selection chances the mask removed.
   const auto glossyAlone = scatter::evaluate(df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.9), wo, wi);
   const auto diffuseAlone = scatter::evaluate(df::diffuse_reflection_bsdf(tint: 0.7), wo, wi);
-  #assert(#all(ndf.pdf ~== |1e-4| glossyAlone.pdf));
-  #assert(#all(density.pdf ~== |1e-4| diffuseAlone.pdf));
-  #assert(!#any(dirac.pdf > 0.0)); // A Dirac lobe has no density to report.
+  #assert(ndf.pdf ~== |1e-4| glossyAlone.pdf);
+  #assert(density.pdf ~== |1e-4| diffuseAlone.pdf);
+  #assert(!(dirac.pdf > 0.0)); // A Dirac lobe has no density to report.
   // The unmasked density is the mixture of the two, so it lands strictly
   // below their sum.
-  #assert(#all(all.pdf < ndf.pdf + density.pdf));
+  #assert(all.pdf < ndf.pdf + density.pdf);
   // A mask naming no lobe of the distribution evaluates to nothing.
   #assert(!#any(scatter::evaluate(scattering, wo, wi, lobeMask: 0).f > 0.0));
 }
@@ -308,12 +308,12 @@ unit_test "A masked density is the restricted sampler's own" {
   const auto masked = scatter::sample(scattering, float4(0.3, 0.7, 0.9, 0.5), wo, lobeMask: df::DF_GLOSS);
   #assert(masked.success);
   #assert(!masked.isDirac);
-  #assert(masked.pdf.x > 0.0);
+  #assert(masked.pdf > 0.0);
   // The mask leaves only the layer, so that is what the sampler drew from.
-  #assert(masked.pdf.x ~== |1e-3| scatter::evaluate(layer, wo, masked.wi).pdf.x);
+  #assert(masked.pdf ~== |1e-3| scatter::evaluate(layer, wo, masked.wi).pdf);
   // And the mixture density, which is what the unmasked sampler draws from,
   // is a strictly smaller number at the same direction.
-  #assert(scatter::evaluate(scattering, wo, masked.wi).pdf.x < masked.pdf.x);
+  #assert(scatter::evaluate(scattering, wo, masked.wi).pdf < masked.pdf);
 }
 
 // Sample under a mask naming one lobe, assert the sample says it came from
@@ -326,7 +326,7 @@ int checkSampledLobe(const bsdf scattering, const float4 xi, const float3 wo, co
   // The domain agrees with the hemispheres the sample actually landed in,
   // and the Dirac bit agrees with the unit density a Dirac lobe reports.
   #assert(((lobe & df::DF_BRDF) != 0) == ((wo.z < 0.0) == (r.wi.z < 0.0)));
-  #assert(((lobe & df::DF_DIRAC) != 0) == (r.pdf.x == 1.0));
+  #assert(((lobe & df::DF_DIRAC) != 0) == (r.pdf == 1.0));
   return r.sampledLobe;
 }
 
@@ -370,7 +370,7 @@ unit_test "A sample reports the one lobe it came from" {
     #assert((r.sampledLobe != 0) & ((r.sampledLobe & (r.sampledLobe - 1)) == 0));
     #assert((r.sampledLobe & declared) == r.sampledLobe);
     #assert(((r.sampledLobe & df::DF_BRDF) != 0) == ((wo.z < 0.0) == (r.wi.z < 0.0)));
-    #assert(((r.sampledLobe & df::DF_DIRAC) != 0) == (r.pdf.x == 1.0));
+    #assert(((r.sampledLobe & df::DF_DIRAC) != 0) == (r.pdf == 1.0));
   }
   // Nothing sampled, nothing reported.
   #assert(scatter::sample(df::diffuse_reflection_bsdf(tint: 0.7), float4(0.3), wo,
@@ -414,11 +414,10 @@ unit_test "Multiscatter compensation is a lobe of its own" {
   // Each masked density is the restricted sampler's. The compensation alone
   // is the cosine hemisphere, undiluted by the mixture chance the mask
   // removed, and the unmasked density is a strict mixture of the two.
-  #assert(comp.pdf.x ~== |1e-5| #abs(wi.z) / $PI);
-  #assert(comp.pdf.y ~== |1e-5| #abs(wo.z) / $PI);
-  #assert(ndf.pdf.x > 0.0);
-  #assert(!(ndf.pdf.x ~== |1e-3| comp.pdf.x)); // Else the mixture is invisible
-  #assert((#min(ndf.pdf.x, comp.pdf.x) < all.pdf.x) & (all.pdf.x < #max(ndf.pdf.x, comp.pdf.x)));
+  #assert(comp.pdf ~== |1e-5| #abs(wi.z) / $PI);
+  #assert(ndf.pdf > 0.0);
+  #assert(!(ndf.pdf ~== |1e-3| comp.pdf)); // Else the mixture is invisible
+  #assert((#min(ndf.pdf, comp.pdf) < all.pdf) & (all.pdf < #max(ndf.pdf, comp.pdf)));
 }
 
 // Drawing the compensation lobe is a selection like any other: the mask
@@ -450,8 +449,8 @@ unit_test "The compensation lobe's selection chance is the unmasked one" {
     #assert(matteOnly.lobeChance ~== |1e-5| comp.lobeChance);
     #assert(glossyOnly.lobeChance ~== |1e-5| ndf.lobeChance);
     // And what a masked sample reports is the density it drew from.
-    #assert(matteOnly.pdf.x ~== |1e-5| scatter::evaluate(rough, wo, matteOnly.wi, lobeMask: df::DF_MATTE).pdf.x);
-    #assert(glossyOnly.pdf.x ~== |1e-3| scatter::evaluate(rough, wo, glossyOnly.wi, lobeMask: df::DF_GLOSS).pdf.x);
+    #assert(matteOnly.pdf ~== |1e-5| scatter::evaluate(rough, wo, matteOnly.wi, lobeMask: df::DF_MATTE).pdf);
+    #assert(glossyOnly.pdf ~== |1e-3| scatter::evaluate(rough, wo, glossyOnly.wi, lobeMask: df::DF_GLOSS).pdf);
   }
 }
 
@@ -494,7 +493,7 @@ unit_test "A microfacet lobe wider than the glossy cutoff is matte" {
   const auto glossy = scatter::evaluate(wide, wo, wi, lobeMask: df::DF_GLOSS);
   #assert(all.success & #any(all.f > 0.0)); // Else the checks pass vacuously
   #assert(#all(matte.f ~== |1e-5| all.f));
-  #assert(matte.pdf.x ~== |1e-5| all.pdf.x);
+  #assert(matte.pdf ~== |1e-5| all.pdf);
   #assert(!glossy.success | #all(glossy.f == 0.0));
   for (int i = 0; i < 4; i++) {
     const auto xi = float4(0.3, 0.7, 0.5, (i + 0.5) / 4);

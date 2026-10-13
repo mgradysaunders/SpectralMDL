@@ -915,8 +915,7 @@ TEST_CASE("hairScatterEval: a hair material and the default one") {
   smdl::float3 wi{0.6f, -0.64f, -0.48f};
   std::vector<float> f(size_t(compiler.wavelengthBaseMax));
   smdl::Span<float> fSpan(f.data(), f.size());
-  float pdfFwd{};
-  float pdfRev{};
+  float pdf{};
   SUBCASE("A hair material evaluates and samples through the entry points") {
     const smdl::jit::MaterialDef *materialDef{
         requireMaterial(compiler, "hair_brown")};
@@ -925,17 +924,16 @@ TEST_CASE("hairScatterEval: a hair material and the default one") {
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
     smdl::jit::Material material{state, materialDef};
     CHECK(material.hasHair());
-    CHECK(material.hairScatterEval(wo, wi, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd > 0.0f);
-    CHECK(pdfRev > 0.0f);
+    CHECK(material.hairScatterEval(wo, wi, pdf, fSpan));
+    CHECK(pdf > 0.0f);
     for (float fValue : f) {
       CHECK(fValue > 0.0f);
       CHECK(std::isfinite(fValue));
     }
     smdl::float4 xi{0.3f, 0.4f, 0.5f, 0.6f};
     smdl::float3 wiSampled{};
-    CHECK(material.hairScatterDraw(xi, wo, wiSampled, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd > 0.0f);
+    CHECK(material.hairScatterDraw(xi, wo, wiSampled, pdf, fSpan));
+    CHECK(pdf > 0.0f);
     float lengthSquared{wiSampled.x * wiSampled.x + wiSampled.y * wiSampled.y +
                         wiSampled.z * wiSampled.z};
     CHECK(lengthSquared == doctest::Approx(1.0f).epsilon(1e-3));
@@ -948,9 +946,8 @@ TEST_CASE("hairScatterEval: a hair material and the default one") {
     CHECK((materialDef->staticFlags & smdl::MATERIAL_HAS_HAIR) == 0);
     smdl::jit::Material material{state, materialDef};
     CHECK(!material.hasHair());
-    CHECK(!material.hairScatterEval(wo, wi, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd == 0.0f);
-    CHECK(pdfRev == 0.0f);
+    CHECK(!material.hairScatterEval(wo, wi, pdf, fSpan));
+    CHECK(pdf == 0.0f);
     for (float fValue : f) {
       CHECK(fValue == 0.0f);
     }
@@ -978,15 +975,13 @@ TEST_CASE("scatterDraw: a rough reflector sampled and evaluated back") {
   const smdl::float3 wo{0.0f, 0.6f, 0.8f};
   std::vector<float> f(size_t(compiler.wavelengthBaseMax));
   smdl::Span<float> fSpan(f.data(), f.size());
-  float pdfFwd{};
-  float pdfRev{};
+  float pdf{};
   SUBCASE("The sample agrees with the evaluation at its direction") {
     smdl::float3 wi{};
     int lobe{};
     float lobeChance{};
     REQUIRE(material.scatterDraw(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f), wo, wi,
-                                 pdfFwd, pdfRev, fSpan, lobe, smdl::DF_ALL,
-                                 &lobeChance));
+                                 pdf, fSpan, lobe, smdl::DF_ALL, &lobeChance));
     // Exactly one reflective bit, drawn with a proper chance.
     CHECK(lobe != 0);
     CHECK((lobe & smdl::DF_BRDF) == lobe);
@@ -994,23 +989,19 @@ TEST_CASE("scatterDraw: a rough reflector sampled and evaluated back") {
     CHECK(lobeChance > 0.0f);
     CHECK(lobeChance <= 1.0f);
     const std::vector<float> fSampled{f};
-    float pdfFwdEvaluated{};
-    float pdfRevEvaluated{};
-    REQUIRE(
-        material.scatterEval(wo, wi, pdfFwdEvaluated, pdfRevEvaluated, fSpan));
-    CHECK(pdfFwdEvaluated == doctest::Approx(pdfFwd));
-    CHECK(pdfRevEvaluated == doctest::Approx(pdfRev));
+    float pdfEvaluated{};
+    REQUIRE(material.scatterEval(wo, wi, pdfEvaluated, fSpan));
+    CHECK(pdfEvaluated == doctest::Approx(pdf));
     for (size_t i = 0; i < f.size(); i++)
       CHECK(f[i] == doctest::Approx(fSampled[i]));
   }
   SUBCASE("A mask without the query's domain excludes the query") {
     // Mirrored about the normal, so the pair is a reflection.
     const smdl::float3 wi{0.0f, -0.6f, 0.8f};
-    CHECK(material.scatterEval(wo, wi, pdfFwd, pdfRev, fSpan));
-    CHECK(pdfFwd > 0.0f);
-    CHECK(!material.scatterEval(wo, wi, pdfFwd, pdfRev, fSpan, smdl::DF_BTDF));
-    CHECK(pdfFwd == 0.0f);
-    CHECK(pdfRev == 0.0f);
+    CHECK(material.scatterEval(wo, wi, pdf, fSpan));
+    CHECK(pdf > 0.0f);
+    CHECK(!material.scatterEval(wo, wi, pdf, fSpan, smdl::DF_BTDF));
+    CHECK(pdf == 0.0f);
   }
 }
 
@@ -1035,8 +1026,8 @@ auto scatterEval(
   const &Lambert this, inline const &df::ScatterEvalParams params) {
   return df::ScatterEvalResult(isBlack: true) if (
            mode != df::scatter_reflect || !df::recalculateTangentSpace(params));
-  const float2 pdf(#abs(float2(wi.z, wo.z)) / $PI);
-  return df::ScatterEvalResult(f: this.tint * pdf[0], pdf: pdf);
+  const float pdf(#abs(wi.z) / $PI);
+  return df::ScatterEvalResult(f: this.tint * pdf, pdf: pdf);
 }
 
 @(pure)
@@ -1076,17 +1067,13 @@ export material reference() = material(
   std::vector<float> fReference(size_t(compiler.wavelengthBaseMax));
   smdl::Span<float> fMineSpan(fMine.data(), fMine.size());
   smdl::Span<float> fReferenceSpan(fReference.data(), fReference.size());
-  float pdfFwdMine{};
-  float pdfRevMine{};
-  float pdfFwdReference{};
-  float pdfRevReference{};
+  float pdfMine{};
+  float pdfReference{};
   SUBCASE("The evaluation matches the reference") {
     const smdl::float3 wi{0.6f, 0.0f, 0.8f};
-    REQUIRE(mine.scatterEval(wo, wi, pdfFwdMine, pdfRevMine, fMineSpan));
-    REQUIRE(reference.scatterEval(wo, wi, pdfFwdReference, pdfRevReference,
-                                  fReferenceSpan));
-    CHECK(pdfFwdMine == doctest::Approx(pdfFwdReference));
-    CHECK(pdfRevMine == doctest::Approx(pdfRevReference));
+    REQUIRE(mine.scatterEval(wo, wi, pdfMine, fMineSpan));
+    REQUIRE(reference.scatterEval(wo, wi, pdfReference, fReferenceSpan));
+    CHECK(pdfMine == doctest::Approx(pdfReference));
     for (size_t i = 0; i < fMine.size(); i++)
       CHECK(fMine[i] == doctest::Approx(fReference[i]));
   }
@@ -1095,9 +1082,9 @@ export material reference() = material(
     smdl::float3 wi{};
     int lobe{};
     REQUIRE(mine.scatterDraw(smdl::float4(0.25f, 0.5f, 0.5f, 0.5f), wo, wi,
-                             pdfFwdMine, pdfRevMine, fMineSpan, lobe));
+                             pdfMine, fMineSpan, lobe));
     CHECK(lobe == smdl::DF_MATTE_BRDF);
-    CHECK(pdfFwdMine > 0.0f);
+    CHECK(pdfMine > 0.0f);
   }
 }
 

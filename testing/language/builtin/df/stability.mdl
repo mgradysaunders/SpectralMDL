@@ -61,19 +61,18 @@ unit_test "The Lambda and projected-area closed forms hold at both limits" {
 unit_test "A near-mirror lobe reproduces its analytic peak" {
   // The incoming direction mirrors the outgoing, so the half vector is
   // exactly the normal and the evaluation must reproduce the analytic
-  // peak `D / (4 cos(theta))` in both the value and the densities.
+  // peak `D / (4 cos(theta))` in both the value and the density.
   const auto wo = math::normalize(float3(0.05, -0.03, 1.0));
   const auto wi = float3(-wo.x, -wo.y, wo.z);
   const float expected = 1 / ($PI * 1.0e-8) / (4 * wo.z);
   const auto rGGX = scatter::evaluate(
     df::microfacet_ggx_smith_bsdf(roughness_u: 0.01, tint: 1.0), wo, wi);
   #assert(math::average(rGGX.f) ~== (1e-2) expected);
-  #assert(rGGX.pdf[0] ~== (1e-2) expected);
-  #assert(rGGX.pdf[1] ~== (1e-2) expected);
+  #assert(rGGX.pdf ~== (1e-2) expected);
   const auto rBeckmann = scatter::evaluate(
     df::microfacet_beckmann_smith_bsdf(roughness_u: 0.01, tint: 1.0), wo, wi);
   #assert(math::average(rBeckmann.f) ~== (1e-2) expected);
-  #assert(rBeckmann.pdf[0] ~== (1e-2) expected);
+  #assert(rBeckmann.pdf ~== (1e-2) expected);
   scatter::checkBidirectionalConsistency(
     df::microfacet_ggx_smith_bsdf(roughness_u: 0.01, tint: 1.0),
     wo,
@@ -149,9 +148,9 @@ unit_test "A low-roughness sample reports an uncapped density" {
   // The reported density of a near-specular sample is genuinely huge;
   // an absolute epsilon in the denominator caps it orders of magnitude
   // too low, which silently breaks multiple importance sampling.
-  #assert(r.pdf[0] > 1.0e6);
+  #assert(r.pdf > 1.0e6);
   // The bounded-VNDF throughput weight never exceeds unity.
-  #assert(math::average(r.f) / r.pdf[0] < 1.001);
+  #assert(math::average(r.f) / r.pdf < 1.001);
 }
 
 unit_test "Grazing directions stay reciprocal" {
@@ -226,7 +225,7 @@ unit_test "Horizon culls zero value and densities together" {
       base: df::diffuse_reflection_bsdf(tint: 0.5)),
     math::normalize(float3(0.3, -0.2, 0.9)),
     wiUp);
-  #assert(rGrain.success & #any(rGrain.f > 0.0) & (rGrain.pdf[0] > 0.0));
+  #assert(rGrain.success & #any(rGrain.f > 0.0) & (rGrain.pdf > 0.0));
 }
 
 unit_test "Thin film amplification is capped" {
@@ -285,7 +284,7 @@ unit_test "Blinn exponent is exact below the cap" {
   const auto r = scatter::evaluate(
     df::simple_glossy_bsdf(roughness_u: 0.05, tint: 1.0), wo, wi);
   #assert(math::average(r.f) ~== (1e-2) float((2 + e) / (2 * $PI) / (4 * wo.z)));
-  #assert(r.pdf[0] ~== (1e-2) float((1 + e) / (2 * $PI) / (4 * wo.z)));
+  #assert(r.pdf ~== (1e-2) float((1 + e) / (2 * $PI) / (4 * wo.z)));
 }
 
 unit_test "Clamped Fresnel selection keeps densities live at TIR" {
@@ -304,8 +303,8 @@ unit_test "Clamped Fresnel selection keeps densities live at TIR" {
     -woIn,
     -wt);
   #assert(r.success & #any(r.f > 0.0));
-  #assert(r.pdf[0] > 0.0);
-  #assert(math::average(r.f) < 300.0 * r.pdf[0]);
+  #assert(r.pdf > 0.0);
+  #assert(math::average(r.f) < 300.0 * r.pdf);
 }
 
 unit_test "A Dirac component divides by its selection chance" {
@@ -341,7 +340,7 @@ unit_test "Layer weights saturate to the specified range" {
     wo,
     wi);
   #assert(#all(r1.f ~== (1e-5) r2.f));
-  #assert(#all(r1.pdf ~== (1e-5) r2.pdf));
+  #assert(r1.pdf ~== (1e-5) r2.pdf);
 }
 
 unit_test "A sampler at the pole returns the pole exactly" {

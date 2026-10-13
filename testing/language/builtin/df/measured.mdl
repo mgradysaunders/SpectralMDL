@@ -33,7 +33,7 @@ unit_test "A measured BSDF is consistent and its multiplier scales only the valu
     df::measured_bsdf(measurement: m, multiplier: 2.0), wo, wi);
   #assert(#any(result1.f > 0.0));
   #assert(#all(result2.f ~== |1e-5| 2.0 * result1.f));
-  #assert(#all(result2.pdf ~== |1e-6| result1.pdf));
+  #assert(result2.pdf ~== |1e-6| result1.pdf);
 }
 
 unit_test "A measured curve factor interpolates and leaves the density alone" {
@@ -51,7 +51,7 @@ unit_test "A measured curve factor interpolates and leaves the density alone" {
         wo,
         wi);
     #assert(#all(result1.f ~== |1e-6| 0.25 * result0.f));
-    #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
+    #assert(result1.pdf ~== |1e-6| result0.pdf); // The factor must not affect the PDFs
   }
   // An all-ones curve is the identity.
   {
@@ -103,7 +103,7 @@ unit_test "A measured texture factor looks up by the two angles" {
     #assert(#any(expected > 0.0));
   }
   #assert(#all(result1.f ~== |1e-6| expected * result0.f));
-  #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
+  #assert(result1.pdf ~== |1e-6| result0.pdf); // The factor must not affect the PDFs
 }
 
 unit_test "A measured curve layer blends by the curve at the half vector" {
@@ -124,7 +124,7 @@ unit_test "A measured curve layer blends by the curve at the half vector" {
       wo,
       wi);
     #assert(#all(r.f ~== |1e-6| rBase.f));
-    #assert(#all(r.pdf ~== |1e-6| rBase.pdf));
+    #assert(r.pdf ~== |1e-6| rBase.pdf);
   }
   // A unit curve with unit weight selects the layer.
   {
@@ -137,7 +137,7 @@ unit_test "A measured curve layer blends by the curve at the half vector" {
       wo,
       wi);
     #assert(#all(r.f ~== |1e-6| rLayer.f));
-    #assert(#all(r.pdf ~== |1e-6| rLayer.pdf));
+    #assert(r.pdf ~== |1e-6| rLayer.pdf);
   }
   // Otherwise blend by the interpolated curve, evaluated at the half vector for the
   // scattering function and at the normal cosines for the PDFs.
@@ -157,11 +157,8 @@ unit_test "A measured curve layer blends by the curve at the half vector" {
       math::saturate(math::acos(math::saturate(math::dot(wo, h))) * (2 / $PI)));
     const auto pWeight =
       0.8 * math::lerp(
-        float2(0.9),
-        float2(0.1),
-        math::saturate(
-          math::acos(math::saturate(float2(wo.z, wi.z))) * (2 / $PI)));
+        0.9, 0.1, math::saturate(math::acos(math::saturate(wo.z)) * (2 / $PI)));
     #assert(#all(r.f ~== |1e-5| math::lerp(rBase.f, rLayer.f, fWeight)));
-    #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
+    #assert(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight));
   }
 }

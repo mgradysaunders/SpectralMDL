@@ -749,15 +749,17 @@ public:
   /// \param[in]  eval      The evaluated material.
   /// \param[in]  wo        The outgoing direction in world space.
   /// \param[in]  wi        The incoming direction in world space.
-  /// \param[out] pdfFwd    The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev    The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf       The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f         The scattering spectrum.
   /// \param[in]  lobeMask  The lobes to consider, `DF_ALL` is every lobe.
   ///
   /// \return `true` if the result is non-zero.
   ///
-  Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
-               float &pdfFwd, float &pdfRev, float *f, int lobeMask)>
+  /// The density of sampling `wo` given `wi` is a second call with the
+  /// directions exchanged.
+  ///
+  Function<int(const Eval &eval, const float3 &wo, const float3 &wi, float &pdf,
+               float *f, int lobeMask)>
       scatterEval{};
 
   /// The scatter sample function.
@@ -766,8 +768,7 @@ public:
   /// \param[in]  xi          The canonical random sample.
   /// \param[in]  wo          The outgoing direction in world space.
   /// \param[out] wi          The incoming direction in world space.
-  /// \param[out] pdfFwd      The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev      The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf         The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f           The scattering spectrum.
   /// \param[out] lobe        The sampled lobe, exactly one bit, or `0` if none.
   /// \param[in]  lobeMask    The lobes to consider, `DF_ALL` is every lobe.
@@ -777,7 +778,7 @@ public:
   /// \return `true` if the result is non-zero.
   ///
   /// `lobe & DF_DIRAC` is the Dirac test, and a Dirac lobe has no density,
-  /// so for one both PDFs are 1.
+  /// so for one the PDF is 1.
   ///
   /// A masked call renormalizes its own chances over the lobes the mask
   /// keeps, so `lobeChance` is the only way back to what the whole BSDF
@@ -787,7 +788,7 @@ public:
   /// every mask. Exactly 1 when nothing chose.
   ///
   Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
-               float &pdfFwd, float &pdfRev, float *f, int &lobe, int lobeMask,
+               float &pdf, float *f, int &lobe, int lobeMask,
                float &lobeChance)>
       scatterDraw{};
 
@@ -967,8 +968,7 @@ public:
   /// \param[in]  eval    The evaluated material.
   /// \param[in]  wo      The outgoing direction in world space.
   /// \param[in]  wi      The incoming direction in world space.
-  /// \param[out] pdfFwd  The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev  The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf     The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f       The scattering spectrum.
   ///
   /// \return `true` if the result is non-zero.
@@ -988,8 +988,8 @@ public:
   /// gate calls on `hasHair()`; calling anyway is safe because the
   /// default `hair_bsdf()` reports black.
   ///
-  Function<int(const Eval &eval, const float3 &wo, const float3 &wi,
-               float &pdfFwd, float &pdfRev, float *f)>
+  Function<int(const Eval &eval, const float3 &wo, const float3 &wi, float &pdf,
+               float *f)>
       hairScatterEval{};
 
   /// The hair scatter sample function.
@@ -998,8 +998,7 @@ public:
   /// \param[in]  xi      The canonical random sample.
   /// \param[in]  wo      The outgoing direction in world space.
   /// \param[out] wi      The incoming direction in world space.
-  /// \param[out] pdfFwd  The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev  The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf     The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f       The scattering spectrum.
   ///
   /// \return `true` if the result is non-zero.
@@ -1010,7 +1009,7 @@ public:
   /// reports neither a sampled lobe nor a Dirac flag.
   ///
   Function<int(const Eval &eval, const float4 &xi, const float3 &wo, float3 &wi,
-               float &pdfFwd, float &pdfRev, float *f)>
+               float &pdf, float *f)>
       hairScatterDraw{};
 };
 
@@ -1292,19 +1291,18 @@ public:
   ///
   /// \param[in]  wo        The outgoing direction in world space.
   /// \param[in]  wi        The incoming direction in world space.
-  /// \param[out] pdfFwd    The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev    The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf       The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f         The scattering spectrum.
   /// \param[in]  lobeMask  The lobes to consider, `DF_ALL` is every lobe.
   ///
   /// \return `true` if the result is non-zero.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterEval(const float3 &wo, const float3 &wi, float &pdfFwd, float &pdfRev,
-              Span<float> f, int lobeMask = DF_ALL) const {
+  scatterEval(const float3 &wo, const float3 &wi, float &pdf, Span<float> f,
+              int lobeMask = DF_ALL) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->scatterEval(eval, wo, wi, pdfFwd, pdfRev, f.data(), lobeMask);
+    return def->scatterEval(eval, wo, wi, pdf, f.data(), lobeMask);
   }
 
   /// The scatter sample function.
@@ -1312,8 +1310,7 @@ public:
   /// \param[in]  xi          The canonical random sample.
   /// \param[in]  wo          The outgoing direction in world space.
   /// \param[out] wi          The incoming direction in world space.
-  /// \param[out] pdfFwd      The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev      The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf         The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f           The scattering spectrum.
   /// \param[out] lobe        The sampled lobe, exactly one bit, or `0` if none.
   /// \param[in]  lobeMask    The lobes to consider, `DF_ALL` is every lobe.
@@ -1322,18 +1319,17 @@ public:
   ///
   /// \return `true` if the result is non-zero.
   ///
-  /// See `MaterialDef::scatterDraw` for the Dirac PDFs and for what
+  /// See `MaterialDef::scatterDraw` for the Dirac PDF and for what
   /// `lobeChance` is for.
   ///
   [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  scatterDraw(const float4 &xi, const float3 &wo, float3 &wi, float &pdfFwd,
-              float &pdfRev, Span<float> f, int &lobe, int lobeMask = DF_ALL,
+  scatterDraw(const float4 &xi, const float3 &wo, float3 &wi, float &pdf,
+              Span<float> f, int &lobe, int lobeMask = DF_ALL,
               float *lobeChance = nullptr) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
     float lobeChanceLocal{1};
-    return def->scatterDraw(eval, xi, wo, wi, pdfFwd, pdfRev, f.data(), lobe,
-                            lobeMask,
+    return def->scatterDraw(eval, xi, wo, wi, pdf, f.data(), lobe, lobeMask,
                             lobeChance ? *lobeChance : lobeChanceLocal);
   }
 
@@ -1486,8 +1482,7 @@ public:
   ///
   /// \param[in]  wo      The outgoing direction in world space.
   /// \param[in]  wi      The incoming direction in world space.
-  /// \param[out] pdfFwd  The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev  The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf     The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f       The scattering spectrum.
   ///
   /// \return `true` if the result is non-zero.
@@ -1495,12 +1490,13 @@ public:
   /// See `MaterialDef::hairScatterEval` for the state contract at a
   /// hair hit.
   ///
-  [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  hairScatterEval(const float3 &wo, const float3 &wi, float &pdfFwd,
-                  float &pdfRev, Span<float> f) const {
+  [[nodiscard]] SMDL_ALWAYS_INLINE bool hairScatterEval(const float3 &wo,
+                                                        const float3 &wi,
+                                                        float &pdf,
+                                                        Span<float> f) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->hairScatterEval(eval, wo, wi, pdfFwd, pdfRev, f.data());
+    return def->hairScatterEval(eval, wo, wi, pdf, f.data());
   }
 
   /// The hair scatter sample function.
@@ -1508,8 +1504,7 @@ public:
   /// \param[in]  xi      The canonical random sample.
   /// \param[in]  wo      The outgoing direction in world space.
   /// \param[out] wi      The incoming direction in world space.
-  /// \param[out] pdfFwd  The solid-angle PDF of sampling `wi` given `wo`.
-  /// \param[out] pdfRev  The solid-angle PDF of sampling `wo` given `wi`.
+  /// \param[out] pdf     The solid-angle PDF of sampling `wi` given `wo`.
   /// \param[out] f       The scattering spectrum.
   ///
   /// \return `true` if the result is non-zero.
@@ -1518,12 +1513,13 @@ public:
   /// See `MaterialDef::hairScatterEval` for the state contract at a
   /// hair hit.
   ///
-  [[nodiscard]] SMDL_ALWAYS_INLINE bool
-  hairScatterDraw(const float4 &xi, const float3 &wo, float3 &wi, float &pdfFwd,
-                  float &pdfRev, Span<float> f) const {
+  [[nodiscard]] SMDL_ALWAYS_INLINE bool hairScatterDraw(const float4 &xi,
+                                                        const float3 &wo,
+                                                        float3 &wi, float &pdf,
+                                                        Span<float> f) const {
     SMDL_DEBUG_CHECK(def && eval);
     SMDL_DEBUG_CHECK(f.size() == size_t(eval.wavelengthCount));
-    return def->hairScatterDraw(eval, xi, wo, wi, pdfFwd, pdfRev, f.data());
+    return def->hairScatterDraw(eval, xi, wo, wi, pdf, f.data());
   }
 
 public:

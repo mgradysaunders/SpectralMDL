@@ -50,7 +50,7 @@ unit_test "The bend recovers a view below the shading horizon" {
     df::diffuse_reflection_bsdf(tint: 1.0), wo, wi, normal: TILTED);
   #assert(result.success);
   #assert(#all(result.f > 0.0));
-  #assert(#all(result.pdf > 0.0));
+  #assert(result.pdf > 0.0);
 }
 
 unit_test "The bend recovers a transmitted direction" {
@@ -63,7 +63,7 @@ unit_test "The bend recovers a transmitted direction" {
     df::diffuse_transmission_bsdf(tint: 1.0), wo, wi, normal: TILTED);
   #assert(result.success);
   #assert(#all(result.f > 0.0));
-  #assert(#all(result.pdf > 0.0));
+  #assert(result.pdf > 0.0);
 }
 
 unit_test "The bend is continuous through the horizon" {
@@ -129,7 +129,7 @@ unit_test "The bend covers a layer's own normal" {
   const auto result = scatter::evaluate(layered, wo, wi, normal: TILTED);
   #assert(result.success);
   #assert(#all(result.f > 0.0));
-  #assert(#all(result.pdf > 0.0));
+  #assert(result.pdf > 0.0);
   // Nesting a layer under a layer, which is what a foliage material does,
   // must not reintroduce it either.
   const auto nested = df::weighted_layer(
@@ -166,7 +166,7 @@ unit_test "A defaulted layer normal follows the material geometry normal" {
   #assert(a.success & b.success);
   #assert(#any(a.f > 0.0)); // Else the comparison passes vacuously
   #assert(#all(a.f ~== (1e-5) b.f));
-  #assert(#all(a.pdf ~== (1e-5) b.pdf));
+  #assert(a.pdf ~== (1e-5) b.pdf);
   // And the defaulted tree must NOT be the one pinned to the state normal,
   // which is what the geometry normal was remapped away from.
   const auto pinned = df::weighted_layer(
@@ -217,7 +217,7 @@ unit_test "The bend recovers sampling below the shading horizon" {
   #assert(s.success);
   #assert(s.wi.z > 0.0); // Reflection, in the natural tangent space
   #assert(#all(s.f > 0.0));
-  #assert(s.pdf[0] > 0.0);
+  #assert(s.pdf > 0.0);
 }
 
 // `DF_GLOSS` promises a normal distribution behind the lobe, and these two
