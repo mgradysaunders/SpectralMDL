@@ -1,0 +1,10 @@
+---
+title: SpectralMDL
+---
+
+SpectralMDL is a spectral, LLVM-based JIT compiler for the
+[Material Definition Language](https://www.nvidia.com/en-us/design-visualization/technologies/material-definition-language),
+intended as a middleware C++ library in offline physically-based rendering
+programs.
+
+See the [API reference](doxygen/html/index.html).

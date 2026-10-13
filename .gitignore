@@ -3,4 +3,3 @@ __pycache__/
 *.swp
 compile_commands.json
 .cache/
-docs/doxygen

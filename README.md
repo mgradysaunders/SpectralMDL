@@ -13,7 +13,7 @@ SpectralMDL is developed at the
 at the Rochester Institute of Technology in support of the [DIRSIG](http://dirsig.cis.rit.edu)
 simulation tool.
 
-See [the documentation](https://mgradysaunders.github.io/SpectralMDL/docs/index) for more information.
+See [the documentation](https://mgradysaunders.github.io/SpectralMDL/) for more information.
 
 ## Environment variables
 

@@ -1,0 +1,56 @@
+name: Docs
+
+# Renders the Quarto site in docs/, with the Doxygen API reference that its
+# pre-render step generates, and deploys it to GitHub Pages. The repository's
+# Pages source must be set to GitHub Actions.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/docs.yml
+      - CMakeLists.txt
+      - Doxyfile
+      - Groups.dox
+      - README.md
+      - docs/**
+      - include/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.10.18"
+      - uses: ssciwr/doxygen-install@v2
+        with:
+          version: "1.15.0"
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+      - name: Render
+        run: quarto render docs
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,11 @@
+project:
+  type: website
+  pre-render: ./doxygen.sh
+  # Quarto copies only the files a page links to, so the rest of the Doxygen
+  # output (search, styles, graphs) has to be listed.
+  resources:
+    - "doxygen/html/**"
+
+website:
+  title: SpectralMDL
+  site-url: https://mgradysaunders.github.io/SpectralMDL/
