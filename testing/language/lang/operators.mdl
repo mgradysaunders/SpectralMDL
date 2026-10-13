@@ -11,7 +11,8 @@
 /// The short-circuit operators and `#select` are here because both decide
 /// what gets evaluated: `&&` and `||` must not evaluate their right operand
 /// when the left settles the answer, and `#select` takes its extent from
-/// the condition rather than from the values it chooses between.
+/// the condition rather than from the values it chooses between. So is an
+/// operator called by name, as `operator&&(x, y)`, which evaluates both.
 #smdl
 
 unit_test "The approximate comparison takes an absolute or a relative tolerance" {
@@ -114,4 +115,17 @@ unit_test "The logic operators short circuit" {
   #assert(r2 && n == 1);
   bool r3 = f || ((n = n + 1) > 1);
   #assert(r3 && n == 2);
+}
+
+// An operator may be called by name, as MDL 1.8 allows, with its arguments
+// by position or by name as in any call. So every argument is evaluated
+// before the operator applies, and `operator&&` and `operator?` do not
+// short circuit, which the specification leaves to the implementation.
+unit_test "An operator called by name evaluates every argument" {
+  int n = 0;
+  bool f = false;
+  #assert(!operator&&(f, (n = n + 1) > 0) && n == 1);
+  #assert(operator?(true, 1, n = n + 1) == 1 && n == 2);
+  #assert(operator+(y: 2, x: 1) == 3);
+  #assert(#all(operator*(float3(1.0, 2.0, 3.0), 2.0) == float3(2.0, 4.0, 6.0)));
 }

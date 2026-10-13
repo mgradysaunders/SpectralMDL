@@ -323,6 +323,34 @@ TEST_CASE("Compiler: what a cast between structs refuses") {
   }
 }
 
+TEST_CASE("Compiler: what an operator called by name refuses") {
+  // The arguments bind as in any call, to 'x' and 'y', to 'a' and 'i' for
+  // '[]', and to 'cond', 'true_exp', and 'false_exp' for '?'.
+  auto compileOp{[](std::string_view expr) {
+    return compileError(
+               smdl::concat("mdl 1.9;\nexport material m() = material(surface: "
+                            "material_surface(\n  emission: "
+                            "material_emission(intensity: "
+                            "color(float(",
+                            expr, ")))));\n"))
+        .message;
+  }};
+  SUBCASE("A unary operator takes one argument") {
+    CHECK_CONTAINS(compileOp("operator!(true, false)"),
+                   "Too many arguments: expected at most 1, got 2");
+  }
+  SUBCASE("A binary operator names its parameters 'x' and 'y'") {
+    CHECK_CONTAINS(compileOp("operator+(z: 1, y: 2)"),
+                   "No parameter named \"z\"; did you mean \"x\"?");
+    CHECK_CONTAINS(compileOp("operator*(1)"),
+                   "Missing argument for parameter \"y\"");
+  }
+  SUBCASE("The array access operator takes an index 'i'") {
+    CHECK_CONTAINS(compileOp("operator[](int[2](1, 2))"),
+                   "Missing argument for parameter \"i\"");
+  }
+}
+
 TEST_CASE("Compiler: what an open function refuses") {
   SUBCASE("An open function has a parameter to dispatch on") {
     CHECK_CONTAINS(compileError("#smdl\n@(open) int f();\n").message,

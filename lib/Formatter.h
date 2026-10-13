@@ -473,8 +473,8 @@ private:
   void write_(const ast::Call &expr) { write_(expr.expr, expr.args); }
 
   void write_(const ast::Identifier &expr) {
-    for (const auto &[srcDoubleColon, name] : expr.elements) {
-      write_(srcDoubleColon, name);
+    for (const auto &element : expr.elements) {
+      write_(element.srcDoubleColon, element.name);
     }
   }
 
@@ -503,6 +503,10 @@ private:
       if (i > 0) write_(DELIM_UNNECESSARY_SPACE);
       write_(expr.srcValues[i]);
     }
+  }
+
+  void write_(const ast::OperatorCall &expr) {
+    write_(expr.srcKwOperator, expr.srcOp, expr.srcOpClose, expr.args);
   }
 
   void write_(const ast::Parens &expr) {

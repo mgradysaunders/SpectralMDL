@@ -365,6 +365,81 @@ TEST_CASE("Parser: a floating point literal") {
   }
 }
 
+TEST_CASE("Parser: an operator called by name") {
+  SUBCASE("The operator and its arguments are kept as written") {
+    ParsedModule parsed{"mdl 1.9;\nexport const int x = operator>>>(y: 2, x: "
+                        "1), y = operator[](a, 0);\n"};
+    const ast::Variable &decl{parsed.declAs<ast::Variable>(0)};
+    REQUIRE(decl.declarators.size() == 2);
+    const ast::Expr *x{decl.declarators[0].exprInit.get()};
+    const ast::Expr *y{decl.declarators[1].exprInit.get()};
+    REQUIRE(ast::OperatorCall::classof(x));
+    REQUIRE(ast::OperatorCall::classof(y));
+    const auto &callX{*static_cast<const ast::OperatorCall *>(x)};
+    const auto &callY{*static_cast<const ast::OperatorCall *>(y)};
+    CHECK(callX.getOp() == ">>>");
+    REQUIRE(callX.args.size() == 2);
+    CHECK(callX.args[0].name.srcName == "y");
+    CHECK(callX.args[1].name.srcName == "x");
+    CHECK(callY.getOp() == "[]");
+    CHECK(callY.srcOp == "[");
+    CHECK(callY.srcOpClose == "]");
+  }
+  SUBCASE("An operator that is not a function is refused") {
+    // An assignment needs an lvalue, which no argument is, and the comma
+    // sequences what a declarative expression has no use for.
+    CHECK_CONTAINS(parseError("mdl 1.9;\nexport const int x = operator=(1, "
+                              "2);\n"),
+                   "Expected an operator after 'operator'");
+    CHECK_CONTAINS(parseError("mdl 1.9;\nexport const int x = operator,(1, "
+                              "2);\n"),
+                   "Expected an operator after 'operator'");
+  }
+  SUBCASE("'operator' is a reserved word") {
+    CHECK_CONTAINS(parseError("#smdl\nexec { int operator = 1; }\n"),
+                   "but found \"operator\"");
+  }
+}
+
+TEST_CASE("Parser: a unicode identifier") {
+  SUBCASE("An import path names the module its escapes spell") {
+    ParsedModule parsed{"mdl 1.9;\nimport .::'\\u00fcn\\u00ef'::*;\n"
+                        "using .::'\xc3\xbcn\xc3\xaf' import g;\n"};
+    REQUIRE(parsed.root().importDecls.size() == 2);
+    const ast::Decl *decl0{parsed.root().importDecls[0].get()};
+    const ast::Decl *decl1{parsed.root().importDecls[1].get()};
+    REQUIRE(ast::Import::classof(decl0));
+    REQUIRE(ast::UsingImport::classof(decl1));
+    const ast::ImportPath &path0{static_cast<const ast::Import *>(decl0)
+                                     ->importPathWrappers[0]
+                                     .importPath};
+    const ast::ImportPath &path1{
+        static_cast<const ast::UsingImport *>(decl1)->importPath};
+    REQUIRE(path0.size() == 3);
+    CHECK(path0.elementViews[1] == "\xc3\xbcn\xc3\xaf");
+    REQUIRE(path1.size() == 2);
+    CHECK(path1.elementViews[1] == "\xc3\xbcn\xc3\xaf");
+  }
+  SUBCASE("A qualified name keeps its quotes and names the module") {
+    ParsedModule parsed{"mdl 1.9;\nexport const float x = "
+                        "'\xc3\xbcn\xc3\xaf'::g(1.0);\n"};
+    const ast::Expr *x{
+        parsed.declAs<ast::Variable>(0).declarators[0].exprInit.get()};
+    REQUIRE(ast::Call::classof(x));
+    const ast::Expr *callee{static_cast<const ast::Call *>(x)->expr.get()};
+    REQUIRE(ast::Identifier::classof(callee));
+    const auto &identifier{*static_cast<const ast::Identifier *>(callee)};
+    REQUIRE(identifier.size() == 2);
+    CHECK(identifier.elements[0].name.srcName == "'\xc3\xbcn\xc3\xaf'");
+    CHECK(identifier.elementViews[0] == "\xc3\xbcn\xc3\xaf");
+    CHECK(identifier.elementViews[1] == "g");
+  }
+  SUBCASE("A unicode identifier is not empty") {
+    CHECK_CONTAINS(parseError("mdl 1.9;\nimport .::''::*;\n"),
+                   "Expected a unicode identifier between the quotes");
+  }
+}
+
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};

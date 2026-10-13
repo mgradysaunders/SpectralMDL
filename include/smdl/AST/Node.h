@@ -196,6 +196,7 @@ enum class ExprKind : uint8_t {
   LiteralFloat,
   LiteralInt,
   LiteralString,
+  OperatorCall,
   Parens,
   ReturnFrom,
   Select,

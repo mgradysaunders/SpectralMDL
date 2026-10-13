@@ -460,6 +460,15 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
         pointerTypeB && arrayTypeA->elemType == pointerTypeB->pointeeType) {
       return CONVERSION_RULE_IMPLICIT;
     }
+    // If the destination type is an array of the same size of an abstract
+    // element type, conversion is whatever the element conversion is, as for
+    // an inferred-size array. So an array of textures, which are instances
+    // of 'texture_2d', converts to 'texture_2d[2]'.
+    if (ArrayType *arrayTypeB{llvm::dyn_cast<ArrayType>(typeB)};
+        arrayTypeB && arrayTypeB->isAbstract() &&
+        arrayTypeA->size == arrayTypeB->size) {
+      return getConversionRule(arrayTypeA->elemType, arrayTypeB->elemType);
+    }
     // If the destination type is an array with the same size, conversion is
     // explicit. NOTE: At this point, we know the source type is not equivalent
     // to the destination type, so we know the element types are different.

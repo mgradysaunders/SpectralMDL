@@ -853,11 +853,12 @@ Value Emitter::emit(ast::Variable &decl) {
 
 //--{ Emit: Expr
 Value Emitter::emit(ast::Expr &expr) {
-  return emitTypeSwitch<
-      ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
-      ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let, ast::LiteralBool,
-      ast::LiteralFloat, ast::LiteralInt, ast::LiteralString, ast::Parens,
-      ast::ReturnFrom, ast::Select, ast::Type, ast::TypeCast, ast::Unary>(expr);
+  return emitTypeSwitch<ast::AccessField, ast::AccessIndex, ast::Binary,
+                        ast::Call, ast::Identifier, ast::Intrinsic, ast::Lambda,
+                        ast::Let, ast::LiteralBool, ast::LiteralFloat,
+                        ast::LiteralInt, ast::LiteralString, ast::OperatorCall,
+                        ast::Parens, ast::ReturnFrom, ast::Select, ast::Type,
+                        ast::TypeCast, ast::Unary>(expr);
 }
 
 Value Emitter::emit(ast::AccessIndex &expr) {
@@ -1072,6 +1073,55 @@ Value Emitter::emit(ast::Select &expr) {
       cond, "select", [&] { return emit(expr.exprThen); },
       expr.exprThen->srcLoc, [&] { return emit(expr.exprElse); },
       expr.exprElse->srcLoc, expr.srcLoc);
+}
+
+Value Emitter::emit(ast::OperatorCall &expr) {
+  const std::string_view op{expr.getOp()};
+  const SourceLocation &srcLoc{expr.srcLoc};
+  ArgumentList args{emit(expr.args)};
+  // Bind the arguments to the parameters of the operator, by position or
+  // by name: 'x' and 'y', but for the array access and conditional
+  // operators, whose parameters the specification names otherwise. Every
+  // argument is evaluated, which the specification allows of '&&', '||',
+  // and '?' alike.
+  auto resolve{[&](std::initializer_list<std::string_view> names) {
+    ParameterList params{};
+    for (std::string_view name : names)
+      params.push_back(Parameter{context.getAutoType(), name});
+    return resolveArguments(params, args, srcLoc).values;
+  }};
+  if (op == "[]") {
+    auto values{resolve({"a", "i"})};
+    return accessIndex(values[0],
+                       invoke(context.getIntType(), values[1], srcLoc), srcLoc);
+  }
+  if (op == "?") {
+    auto values{resolve({"cond", "true_exp", "false_exp"})};
+    Value cond{invoke(context.getBoolType(), values[0], srcLoc)};
+    if (cond.isComptimeInt()) return values[cond.getComptimeInt() ? 1 : 2];
+    return emitTwoArmMerge(
+        cond, "select", [&] { return values[1]; }, srcLoc,
+        [&] { return values[2]; }, srcLoc, srcLoc);
+  }
+  if (op == "!" || op == "~" ||
+      (args.size() == 1 && (op == "+" || op == "-"))) {
+    for (UnaryOp unaryOp : {UNOP_POS, UNOP_NEG, UNOP_NOT, UNOP_LOGIC_NOT})
+      if (op == to_string(unaryOp))
+        return emitOp(unaryOp, resolve({"x"})[0], srcLoc);
+  }
+  auto values{resolve({"x", "y"})};
+  if (op == "&&" || op == "||")
+    return emitOp(op == "&&" ? BINOP_AND : BINOP_OR,
+                  invoke(context.getBoolType(), values[0], srcLoc),
+                  invoke(context.getBoolType(), values[1], srcLoc), srcLoc);
+  for (BinaryOp binaryOp :
+       {BINOP_ADD, BINOP_SUB, BINOP_MUL, BINOP_DIV, BINOP_REM, BINOP_AND,
+        BINOP_OR, BINOP_XOR, BINOP_SHL, BINOP_ASHR, BINOP_LSHR, BINOP_CMP_EQ,
+        BINOP_CMP_NE, BINOP_CMP_LT, BINOP_CMP_GT, BINOP_CMP_LE, BINOP_CMP_GE})
+    if (op == to_string(binaryOp))
+      return emitOp(binaryOp, values[0], values[1], srcLoc);
+  SMDL_SANITY_CHECK_MSG(false, "Unexpected operator!");
+  return Value();
 }
 
 Value Emitter::emitTwoArmMerge(Value cond, const char *name,

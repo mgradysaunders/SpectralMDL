@@ -1,6 +1,6 @@
 /// `::tex` two-dimensional lookups over the checked-in 4x4 fixtures: the
-/// mip chain's extents and texels, the wrap modes, the sRGB decode, and
-/// what an opt-in mip filter changes.
+/// mip chain's extents and texels, the wrap modes, the sRGB decode, what an
+/// opt-in mip filter changes, and an array of textures as a parameter.
 #smdl
 #search_dir "../../fixtures"
 
@@ -275,4 +275,18 @@ unit_test "The 3D and cube stubs read as invalid" {
   #assert(#all(tex::lookup_float2(tc, float3(0.5)) == float2(0.0)));
   #assert(tex::lookup_float(tc, float3(0.5)) == 0.0);
   #assert(#all(tex::lookup_color(tc, float3(0.5)) == color(0.0)));
+}
+
+// Textures over different images are instances of `texture_2d` of different
+// types, so an array of them holds their union, and a lookup dispatches on
+// the element it reads.
+int widthAt(const texture_2d[2] textures, const int i) =
+  tex::width(textures[i]);
+
+unit_test "An array of textures is a parameter of fixed size" {
+  const auto small = texture_2d("4x4.png", tex::gamma_linear);
+  const auto large = texture_2d("ridge_16.png", tex::gamma_linear);
+  #assert(widthAt(texture_2d[](small, small), 1) == 4);
+  #assert(widthAt(texture_2d[](small, large), 0) == 4);
+  #assert(widthAt(texture_2d[](small, large), 1) == 16);
 }

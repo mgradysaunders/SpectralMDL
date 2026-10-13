@@ -171,3 +171,23 @@ unit_test "A conformant size-deferred parameter reuses the size of another" {
   #assert(#typeOf(doubled) == int[3]);
   #assert(doubled[2] == 6);
 }
+
+unit_test "A conformant operator is called as a function" {
+  #assert(packages::conformant::conformantDifference(5, 3) == 2);
+  #assert(packages::conformant::conformantNegated(5) == -5);
+  #assert(packages::conformant::conformantElement(int[3](4, 5, 6), 2) == 6);
+  #assert(packages::conformant::conformantChosen(true) == 1.0);
+  #assert(packages::conformant::conformantChosen(false) == 2.0);
+  #assert(packages::conformant::conformantBoth(true, true));
+  #assert(!packages::conformant::conformantBoth(true, false));
+  // The shift is logical, so the sign bit comes down as a one.
+  #assert(packages::conformant::conformantShiftedRight(-1) == 15);
+}
+
+unit_test "A conformant module names another in single quotes" {
+  #assert(packages::conformant::conformantQuotedOne() == 1);
+  #assert(packages::conformant::conformantUsedOne() == 1);
+  // A qualified name may quote its module names too.
+  #assert(packages::'conformant'::conformantAnswer == 42);
+  #assert('\u0070ackages'::conformant::conformantAnswer == 42);
+}

@@ -2,6 +2,11 @@ mdl 1.9;
 
 import ::anno::*;
 import ::df::*;
+// A module or package name in single quotes is a unicode identifier, which
+// is how a name that is not an identifier is written, with the escapes of
+// a literal string. Any name may be written so: these are `one.mdl`.
+import .::'one'::*;
+using .::'\u006fne' import shadowed;
 
 /* Block comments nest, /* so this one closes here */ and the outer one
    goes on to its own close, and a // inside one starts nothing. */
@@ -150,3 +155,24 @@ export int[n] conformantDoubled(int[<n>] a) {
     result[i] = 2 * a[i];
   return result;
 }
+
+// An operator may be called as a function, with the arguments by position
+// or by name: `x` and `y`, but `a` and `i` for `[]` and `cond`,
+// `true_exp`, and `false_exp` for `?`.
+export int conformantDifference(int x, int y) = operator-(y: y, x: x);
+
+export int conformantNegated(int x) = operator-(x);
+
+export int conformantElement(int[3] a, int i) = operator[](i: i, a: a);
+
+export float conformantChosen(bool cond) =
+  operator?(cond, false_exp: 2.0, true_exp: 1.0);
+
+export bool conformantBoth(bool x, bool y) = operator&&(x, y);
+
+export int conformantShiftedRight(int x) = operator>>>(x, 28);
+
+// A name reached through a unicode identifier, and one it imported.
+export int conformantQuotedOne() = 'one'::shadowed;
+
+export int conformantUsedOne() = shadowed;

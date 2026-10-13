@@ -212,6 +212,21 @@ TEST_CASE("Compiler: a relative import loads the file it names") {
     REQUIRE_OK(compiler.jitCompile());
     CHECK(compiler.findMaterials("helper_mat").size() == 1);
   }
+  SUBCASE("A unicode identifier names a file that is not an identifier") {
+    // MDL 1.8 writes such a name in single quotes, with the escapes of a
+    // literal string, in an import path and in a qualified name alike.
+    tmpDir.write("dir/\xc3\xbcn\xc3\xaf.mdl",
+                 "mdl 1.9;\nexport float g() = 7.0;\n");
+    tmpDir.write("dir/main.mdl",
+                 "mdl 1.9;\nimport .::'\\u00fcn\\u00ef'::*;\n"
+                 "using .::'\xc3\xbcn\xc3\xaf' import g;\n"
+                 "export material main_ok() = material(surface: "
+                 "material_surface(\n  emission: material_emission(intensity: "
+                 "color('\xc3\xbcn\xc3\xaf'::g() + g()))));\n");
+    smdl::Compiler compiler{};
+    REQUIRE(buildAll(compiler, {tmpDir / "dir" / "main.mdl"}) == "");
+    CHECK(compiler.findMaterial("main_ok") != nullptr);
+  }
   SUBCASE("An import that climbs with '..' loads nothing") {
     tmpDir.write("dir/p2/helper.mdl", helper);
     tmpDir.write("dir/p1/main.mdl", "#smdl\nimport ..::p2::helper::marker;\n");

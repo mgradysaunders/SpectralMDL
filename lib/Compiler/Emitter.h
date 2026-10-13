@@ -843,6 +843,9 @@ public:
     return context.getComptimeString(expr.value);
   }
 
+  /// Emit operator call expression.
+  Value emit(ast::OperatorCall &expr);
+
   /// Emit parenthesized expression.
   Value emit(ast::Parens &expr);
 

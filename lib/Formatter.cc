@@ -470,9 +470,9 @@ void Formatter::write_(const ast::Expr &expr) {
   writeTypeSwitch_<ast::AccessField, ast::AccessIndex, ast::Binary, ast::Call,
                    ast::Identifier, ast::Intrinsic, ast::Lambda, ast::Let,
                    ast::LiteralBool, ast::LiteralFloat, ast::LiteralInt,
-                   ast::LiteralString, ast::Parens, ast::ReturnFrom,
-                   ast::Select, ast::SizeName, ast::Type, ast::TypeCast,
-                   ast::Unary>(expr);
+                   ast::LiteralString, ast::OperatorCall, ast::Parens,
+                   ast::ReturnFrom, ast::Select, ast::SizeName, ast::Type,
+                   ast::TypeCast, ast::Unary>(expr);
 }
 
 void Formatter::write_(const ast::Lambda &expr) {

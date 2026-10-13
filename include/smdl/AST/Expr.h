@@ -340,6 +340,27 @@ public:
   ArgumentList args{};
 };
 
+/// A literal string expression.
+class SMDL_EXPORT LiteralString final
+    : public ExprSubclass<ExprKind::LiteralString> {
+public:
+  explicit LiteralString(std::vector<std::string_view> srcValues,
+                         std::string value)
+      : srcValues(std::move(srcValues)), value(std::move(value)) {}
+
+  /// The source(s) of the literal value.
+  ///
+  /// \note
+  /// This is a vector and not just a string view because adjacent literal
+  /// source strings like `"Hello "/* A comment */"world!"` form just 1 logical
+  /// literal string `"Hello world!"`.
+  ///
+  std::vector<std::string_view> srcValues;
+
+  /// The literal value.
+  std::string value{};
+};
+
 /// An identifier expression.
 class SMDL_EXPORT Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
@@ -349,14 +370,24 @@ public:
     /// the first name!
     std::string_view srcDoubleColon;
 
-    /// The name.
+    /// The name, as written, so with its quotes if it is a unicode
+    /// identifier.
     Name name;
+
+    /// The unicode identifier, as `'ünï'` in `'ünï'::g`, whose value is
+    /// the name of a module or package. This may be null!
+    BumpPtr<LiteralString> literalString;
+
+    /// Is unicode identifier and not a simple name?
+    [[nodiscard]] bool isLiteralString() const { return literalString; }
   };
 
   explicit Identifier(std::vector<Element> elems) : elements(std::move(elems)) {
     elementViews.resize(elements.size());
     for (size_t i = 0; i < elements.size(); i++)
-      elementViews[i] = elements[i].name.srcName;
+      elementViews[i] = elements[i].isLiteralString()
+                            ? std::string_view(elements[i].literalString->value)
+                            : elements[i].name.srcName;
   }
 
   /// The number of names.
@@ -496,25 +527,38 @@ public:
   double value{};
 };
 
-/// A literal string expression.
-class SMDL_EXPORT LiteralString final
-    : public ExprSubclass<ExprKind::LiteralString> {
+/// An operator called as a function, as MDL 1.8 allows.
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// operator+(1, 2)
+/// operator+(y: 2, x: 1)
+/// operator[](values, 1)
+/// operator?(cond, then_value, else_value)
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class SMDL_EXPORT OperatorCall final
+    : public ExprSubclass<ExprKind::OperatorCall> {
 public:
-  explicit LiteralString(std::vector<std::string_view> srcValues,
-                         std::string value)
-      : srcValues(std::move(srcValues)), value(std::move(value)) {}
+  explicit OperatorCall(std::string_view srcKwOperator, std::string_view srcOp,
+                        std::string_view srcOpClose, ArgumentList args)
+      : srcKwOperator(srcKwOperator), srcOp(srcOp), srcOpClose(srcOpClose),
+        args(std::move(args)) {}
 
-  /// The source(s) of the literal value.
-  ///
-  /// \note
-  /// This is a vector and not just a string view because adjacent literal
-  /// source strings like `"Hello "/* A comment */"world!"` form just 1 logical
-  /// literal string `"Hello world!"`.
-  ///
-  std::vector<std::string_view> srcValues;
+  /// The operator, as `+`, with `[]` whole.
+  [[nodiscard]] std::string_view getOp() const {
+    return srcOpClose.empty() ? srcOp : "[]";
+  }
 
-  /// The literal value.
-  std::string value{};
+  /// The keyword `operator`.
+  std::string_view srcKwOperator;
+
+  /// The operator, as `+`, or the bracket `[` of `[]`.
+  std::string_view srcOp;
+
+  /// The bracket `]` of `[]`. This may be empty!
+  std::string_view srcOpClose;
+
+  /// The arguments.
+  ArgumentList args{};
 };
 
 /// An expression in parentheses.

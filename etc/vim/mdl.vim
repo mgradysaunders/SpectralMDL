@@ -131,6 +131,12 @@ syn match mdlStringEscape contained display "\\[^0-7xuU]"
 syn region mdlString start=+"+ skip=+\\.+ end=+"+ oneline
       \ contains=mdlStringEscape,mdlStringEscapeError,@Spell
 
+" A unicode identifier, as `'ünï'` in `import .::'ünï'::*;`, names a module or
+" a package that is not an identifier, and takes the escapes of a literal
+" string. A digit separator, as in `1'000`, follows a digit, so begins none.
+syn match mdlUnicodeIdentifier display "\%(\w\|'\)\@<!'[^'\n]\+'"
+      \ contains=mdlStringEscape,mdlStringEscapeError
+
 " Integer literals. Every radix admits `'` digit separators.
 syn match mdlNumber display "\<0[xX]\x\%(['[:xdigit:]]*\x\)\=\>"
 syn match mdlNumber display "\<0[bB][01]\%(['01]*[01]\)\=\>"
@@ -151,7 +157,7 @@ syn match mdlFloat display "\<\d\%(['0-9]*\d\)\=\%(j[dDfF]\=\|[dDfF]\)\w\@!"
 syn keyword mdlConditional if else switch case default
 syn keyword mdlRepeat for while do
 syn keyword mdlStatement return break continue
-syn keyword mdlKeyword let in cast
+syn keyword mdlKeyword let in cast operator
 syn keyword mdlStorageClass const uniform varying
 syn keyword mdlInclude module import using export package
 syn keyword mdlStructure typedef
@@ -310,6 +316,7 @@ hi def link mdlNumber           Number
 hi def link mdlFloat            Float
 hi def link mdlString           String
 hi def link mdlStringEscape     SpecialChar
+hi def link mdlUnicodeIdentifier Identifier
 
 hi def link mdlOperator         Operator
 

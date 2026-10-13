@@ -3240,6 +3240,12 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional()) {
+    // A union of instances of this struct is one already, as an instance
+    // is, so an array of two textures, whose element is a union of two
+    // instances of 'texture_2d', converts to 'texture_2d[2]'.
+    if (UnionType *unionType{llvm::dyn_cast<UnionType>(args[0].value.type)};
+        unionType && unionType->isAlwaysInstanceOf(this))
+      return emitter.rvalue(args[0].value);
     if (StructType *
         structType{llvm::dyn_cast<StructType>(args[0].value.type)}) {
       if (structType == this || structType->isInstanceOf(this)) {

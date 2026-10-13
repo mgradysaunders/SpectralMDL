@@ -337,6 +337,13 @@ private:
   [[nodiscard]] auto parseLiteralStringExpression_()
       -> BumpPtr<ast::LiteralString>;
 
+  /// Parse a unicode identifier, as `'ünï'`, which names a module or a
+  /// package that is not a valid identifier. It takes the escapes of a
+  /// literal string, and is not joined to one after it.
+  [[nodiscard]] auto parseUnicodeIdentifier_() -> BumpPtr<ast::LiteralString>;
+
+  [[nodiscard]] auto parseQuoted_(char quote) -> BumpPtr<ast::LiteralString>;
+
   [[nodiscard]] auto parseLiteralNumberExpression_() -> BumpPtr<ast::Expr>;
 
   struct ParsedUnaryOp final {

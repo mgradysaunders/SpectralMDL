@@ -95,7 +95,9 @@ std::string Parser::explainToken_(std::string_view token) const {
       {"union", "'union' is not a keyword; union types are written '(A | B)'"},
       {"#define", "there is no preprocessor; use 'const' or 'typedef'"},
       {"#include", "there is no '#include'; use 'import'"},
-      {"'", "there are no character literals; strings use double quotes"},
+      {"'", "there are no character literals; strings use double quotes, "
+            "and single quotes enclose only a module name, as in "
+            "'my module'::f"},
   };
   for (const auto &[spelling, advice] : foreign)
     if (token == spelling) return concat("; ", advice);
@@ -278,11 +280,11 @@ auto Parser::parseSimpleName_() -> std::optional<ast::Name> {
   if (std::optional<std::string_view> name{nextWord_()}) {
     // NOTE: These must remain sorted for `std::binary_search`!
     static constexpr std::string_view keywords[]{
-        "break",   "case",   "cast", "const",   "continue", "default",
-        "do",      "else",   "enum", "export",  "false",    "for",
-        "if",      "import", "let",  "module",  "package",  "return",
-        "struct",  "switch", "true", "typedef", "uniform",  "using",
-        "varying", "while",
+        "break",  "case",    "cast",   "const",  "continue", "default",
+        "do",     "else",    "enum",   "export", "false",    "for",
+        "if",     "import",  "let",    "module", "operator", "package",
+        "return", "struct",  "switch", "true",   "typedef",  "uniform",
+        "using",  "varying", "while",
     };
     static constexpr std::string_view keywordsSMDLSyntax[]{
         "defer",  "inline", "namespace",   "return_from",
@@ -304,10 +306,33 @@ auto Parser::parseSimpleName_() -> std::optional<ast::Name> {
 auto Parser::parseIdentifier_() -> BumpPtr<ast::Identifier> {
   SourceLocation srcLoc0{checkpoint_()};
   std::vector<ast::Identifier::Element> elements{};
+  // The name of a module or a package may be a unicode identifier, as
+  // `'ünï'` in `'ünï'::g`, and is then followed by `::`. Nothing else in
+  // single quotes is one, so a character literal, which MDL does not have,
+  // is still called out as one.
+  auto isUnicodeModuleName{[&] {
+    std::string_view rest{getRemainingSourceCode_()};
+    if (rest.empty() || rest[0] != '\'') return false;
+    const size_t close{rest.find_first_of("'\n", 1)};
+    if (close == std::string_view::npos || rest[close] != '\'') return false;
+    rest.remove_prefix(close + 1);
+    while (!rest.empty() && isSpace(rest[0])) rest.remove_prefix(1);
+    return startsWith(rest, "::");
+  }};
+  auto parseElement{[&](std::string_view srcDoubleColon)
+                        -> std::optional<ast::Identifier::Element> {
+    if (std::optional<ast::Name> name{parseSimpleName_()})
+      return ast::Identifier::Element{srcDoubleColon, *name, nullptr};
+    if (!isUnicodeModuleName()) return std::nullopt;
+    BumpPtr<ast::LiteralString> literalString{parseUnicodeIdentifier_()};
+    ast::Name name{literalString->srcLoc, literalString->srcValues[0]};
+    return ast::Identifier::Element{srcDoubleColon, name,
+                                    std::move(literalString)};
+  }};
   std::optional<std::string_view> srcDoubleColon{next_("::")};
-  if (std::optional<ast::Name> name{parseSimpleName_()}) {
-    elements.push_back(
-        ast::Identifier::Element{orEmpty_(srcDoubleColon), *name});
+  if (std::optional<ast::Identifier::Element> element{
+          parseElement(orEmpty_(srcDoubleColon))}) {
+    elements.push_back(std::move(*element));
   } else {
     if (srcDoubleColon) {
       srcLoc0.throwError("Expected name after '::'");
@@ -319,8 +344,9 @@ auto Parser::parseIdentifier_() -> BumpPtr<ast::Identifier> {
   while (true) {
     checkpoint_();
     if (srcDoubleColon = next_("::"); srcDoubleColon) {
-      if (std::optional<ast::Name> name{parseSimpleName_()}) {
-        elements.push_back(ast::Identifier::Element{*srcDoubleColon, *name});
+      if (std::optional<ast::Identifier::Element> element{
+              parseElement(*srcDoubleColon)}) {
+        elements.push_back(std::move(*element));
         accept_();
         continue;
       }
@@ -830,6 +856,32 @@ auto Parser::parsePrimaryExpression_() -> BumpPtr<ast::Expr> {
   if (BumpPtr<ast::Expr> expr{parseLiteralExpression_()}) return expr;
   if (BumpPtr<ast::Identifier> expr{parseIdentifier_()}) return expr;
   SourceLocation srcLoc0{srcLoc_};
+  if (std::optional<std::string_view> srcKwOperator{nextKeyword_("operator")}) {
+    // The operators that may be called as functions, each before any
+    // operator it begins, so that `<<` is not read as `<`.
+    static constexpr std::string_view ops[]{
+        ">>>", ">>", ">=", ">", "<<", "<=", "<", "==", "!=", "!", "&&",
+        "&",   "||", "|",  "^", "~",  "+",  "-", "*",  "/",  "%", "?"};
+    std::optional<std::string_view> srcOp{nextDelimiter_("[")};
+    std::optional<std::string_view> srcOpClose{};
+    if (srcOp) {
+      srcOpClose = nextDelimiter_("]");
+      if (!srcOpClose) srcLoc0.throwError("Expected ']' after 'operator['");
+    } else {
+      for (std::string_view op : ops)
+        if ((srcOp = nextDelimiter_(op))) break;
+      if (!srcOp)
+        srcLoc0.throwError("Expected an operator after 'operator', such as "
+                           "'+' or '[]'");
+    }
+    std::optional<ast::ArgumentList> args{parseArgumentList_()};
+    if (!args)
+      srcLoc0.throwError("Expected arguments after 'operator",
+                         srcOpClose ? std::string_view("[]") : *srcOp, "'");
+    return allocate_<ast::OperatorCall>(srcLoc0, std::in_place, *srcKwOperator,
+                                        *srcOp, orEmpty_(srcOpClose),
+                                        std::move(*args));
+  }
   if (std::optional<std::string_view> srcKwCast{nextKeyword_("cast")}) {
     std::optional<std::string_view> srcAngleL{nextDelimiter_("<")};
     if (!srcAngleL) srcLoc0.throwError("Expected opening '<' after 'cast'");
@@ -882,8 +934,22 @@ auto Parser::parseLiteralBoolExpression_() -> BumpPtr<ast::LiteralBool> {
 }
 
 auto Parser::parseLiteralStringExpression_() -> BumpPtr<ast::LiteralString> {
+  return parseQuoted_('"');
+}
+
+auto Parser::parseUnicodeIdentifier_() -> BumpPtr<ast::LiteralString> {
+  BumpPtr<ast::LiteralString> literal{parseQuoted_('\'')};
+  if (literal && literal->value.empty())
+    literal->srcLoc.throwError(
+        "Expected a unicode identifier between the quotes");
+  return literal;
+}
+
+auto Parser::parseQuoted_(char quote) -> BumpPtr<ast::LiteralString> {
   skip_();
-  if (peek_() != '"') return nullptr;
+  if (peek_() != quote) return nullptr;
+  const std::string_view srcQuote{&quote, 1};
+  const char *kind{quote == '"' ? "literal string" : "unicode identifier"};
   std::string str{};
   SourceLocation srcLoc0{srcLoc_};
   auto appendCodepointAsUTF8{[&](uint32_t codepoint) {
@@ -897,12 +963,11 @@ auto Parser::parseLiteralStringExpression_() -> BumpPtr<ast::LiteralString> {
   // The start of the current string segment, which advances past `srcLoc0`
   // when adjacent string literals are concatenated.
   SourceLocation srcLocSeg{srcLoc0};
-  while (nextDelimiter_("\"")) {
+  while (nextDelimiter_(srcQuote)) {
     while (true) {
-      if (isEOF_()) srcLocSeg.throwError("Unexpected EOF in literal string");
-      if (peek_() == '\n')
-        srcLocSeg.throwError("Unexpected EOL in literal string");
-      if (peek_() == '"') break;
+      if (isEOF_()) srcLocSeg.throwError("Unexpected EOF in ", kind);
+      if (peek_() == '\n') srcLocSeg.throwError("Unexpected EOL in ", kind);
+      if (peek_() == quote) break;
       if (char ch{next_()}; ch != '\\') {
         str += ch;
       } else {
@@ -966,9 +1031,12 @@ auto Parser::parseLiteralStringExpression_() -> BumpPtr<ast::LiteralString> {
         }
       }
     }
-    if (!nextDelimiter_("\""))
-      srcLocSeg.throwError("Expected '\"' to close literal string");
+    if (!nextDelimiter_(srcQuote))
+      srcLocSeg.throwError("Expected '", srcQuote, "' to close ", kind);
     srcValues.push_back(getSourceCodeBetween_(srcLocSeg, srcLoc_));
+    // Adjacent literal strings are one, and a unicode identifier is
+    // never joined to anything.
+    if (quote != '"') break;
     skip_();
     srcLocSeg = srcLoc_;
   }
@@ -1256,6 +1324,9 @@ auto Parser::parseImportPath_() -> std::optional<ast::ImportPath> {
       element.srcName = name->srcName;
     } else if (BumpPtr<ast::LiteralString> literalString{
                    parseLiteralStringExpression_()}) {
+      element.literalString = std::move(literalString);
+    } else if (BumpPtr<ast::LiteralString> literalString{
+                   parseUnicodeIdentifier_()}) {
       element.literalString = std::move(literalString);
     } else {
       reject_();

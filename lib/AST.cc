@@ -85,6 +85,8 @@ std::string_view to_string(ExprKind exprKind) {
     return "LiteralInt";
   case ExprKind::LiteralString:
     return "LiteralString";
+  case ExprKind::OperatorCall:
+    return "OperatorCall";
   case ExprKind::Parens:
     return "Parens";
   case ExprKind::ReturnFrom:
